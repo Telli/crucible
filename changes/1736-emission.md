@@ -1,0 +1,1 @@
+- add-explosion fireball emission is 8.4 instead of 14 at the reference size, so the core no longer clips to white and the edge falloff reaches 0.78 of the Cycles frame on a flat background (was 0.71) (#1736)
