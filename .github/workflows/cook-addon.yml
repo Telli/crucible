@@ -391,6 +391,7 @@ on:
       - 'tests/native-session.test.js'
       - 'tests/native-shadow-only.test.js'
       - 'tests/native-shared-material-records.test.js'
+      - 'tests/native-light-bounce-limit.test.js'
       - 'tests/native-soft-falloff-light.test.js'
       - 'tests/native-surface-depth.test.js'
       - 'tests/native-temporal.test.js'

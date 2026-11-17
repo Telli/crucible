@@ -241,9 +241,13 @@ export function packSubsurface(materials) {
 
 const LIGHT_TYPES = { point: 0, spot: 1, area: 2 };
 
+// The light's own bounce limit plus one (its `maxBounces`, already checked by buildTraceScene), or 0 for none.
+const bounceLimitCode = light => (light.maxBounces === undefined ? 0 : light.maxBounces + 1);
+
 /**
  * Six texels per point, spot or area light, in the order the tracer samples them. The third float of the last texel is 1 for a point or
- * spot light with `softFalloff` (an oriented disk, read by the `cycles` kernel only) and 0 for every other light.
+ * spot light with `softFalloff` (an oriented disk, read by the `cycles` kernel only) and 0 for every other light. The fourth float is
+ * the light's own bounce limit plus one (0 for none), also read by the `cycles` kernel only.
  */
 export function packLights(lights) {
   const entries = [
@@ -261,13 +265,13 @@ export function packLights(lights) {
       data.set([...light.normal, light.width], base + 8);
       data.set([...light.across, light.height], base + 12);
       data.set([...light.along, 0], base + 16);
-      data.set([light.intensity, 0, 0, 0], base + 20);
+      data.set([light.intensity, 0, 0, bounceLimitCode(light)], base + 20);
       return;
     }
     data.set([...(light.direction ?? [0, 0, 0]), light.radius], base + 8);
     data.set([0, 0, 0, light.cosineHalfAngle ?? 0], base + 12);
     data.set([0, 0, 0, light.blend ?? 0], base + 16);
-    data.set([light.intensity, light.range, light.softFalloff === true ? 1 : 0, 0], base + 20);
+    data.set([light.intensity, light.range, light.softFalloff === true ? 1 : 0, bounceLimitCode(light)], base + 20);
   });
   return { table, count: entries.length };
 }

@@ -151,10 +151,24 @@ def write_radiance_hdr(path, linear_rgb_top_first):
         handle.write(rgbe_bytes(linear_rgb_top_first))
 
 
-def light_feature_notes(light_name, light_type, use_temperature, use_shadow, diffuse_factor, specular_factor, light_max_bounces=None, scene_max_bounces=None):
-    """What a light carries that Cook does not read, one sentence each. Node trees are handled by `resolve_light_nodes`.
+def light_bounce_limit(light_max_bounces, scene_max_bounces):
+    """The light's own Cycles `max_bounces` when it stops the light short of the scene's, else None (no per-light limit to carry).
 
-    `light_max_bounces` is the light's own Cycles limit and `scene_max_bounces` the scene's; either is None when unreadable."""
+    Either value is None when unreadable. A light's limit defaults to 1024, above any scene's, so most lights carry none."""
+    if light_max_bounces is None or scene_max_bounces is None or light_max_bounces >= scene_max_bounces:
+        return None
+    return max(0, int(light_max_bounces))
+
+
+def with_bounce_limit(entry, bounce_limit):
+    """The light entry with `maxBounces` set when the light has its own limit, otherwise unchanged."""
+    if bounce_limit is not None:
+        entry["maxBounces"] = bounce_limit
+    return entry
+
+
+def light_feature_notes(light_name, light_type, use_temperature, use_shadow, diffuse_factor, specular_factor):
+    """What a light carries that Cook does not read, one sentence each. Node trees are handled by `resolve_light_nodes`."""
     notes = []
     if use_temperature:
         notes.append(f"light {light_name} uses a blackbody temperature; Cook uses its plain colour")
@@ -162,8 +176,6 @@ def light_feature_notes(light_name, light_type, use_temperature, use_shadow, dif
         notes.append(f"light {light_name} has shadows off; Cook casts them")
     if abs(diffuse_factor - 1.0) > 1e-6 or abs(specular_factor - 1.0) > 1e-6:
         notes.append(f"light {light_name} has a diffuse or specular factor other than 1; Cook ignores the factors")
-    if light_max_bounces is not None and scene_max_bounces is not None and light_max_bounces < scene_max_bounces:
-        notes.append(f"light {light_name} has max bounces {light_max_bounces}, below the scene's {scene_max_bounces}; not reproduced, Cook applies one bounce limit to every light")
     return notes
 
 

@@ -449,6 +449,21 @@ function softFalloffOf(light, label) {
   return light.softFalloff ? { softFalloff: true } : {};
 }
 
+// The most bounces a light's own limit may name: Cook keeps it in 8 bits as the limit plus one.
+const MAXIMUM_LIGHT_BOUNCES = 254;
+
+/**
+ * A light's own bounce limit, as the `max_bounces` of a Cycles light: the light adds direct light only at path vertices 0 to the limit,
+ * on top of the scene's bounces. Left out, the light runs to the scene limit. Only the native cycles kernel reads it.
+ */
+function maxBouncesOf(value, label) {
+  if (value === undefined) return {};
+  if (!Number.isInteger(value) || value < 0 || value > MAXIMUM_LIGHT_BOUNCES) {
+    throw new RangeError(`${label} is a whole number of bounces from 0 to ${MAXIMUM_LIGHT_BOUNCES}, got ${JSON.stringify(value)}. Leave it out for no limit beyond the scene's bounces.`);
+  }
+  return { maxBounces: value };
+}
+
 // Missing colour and intensity default as in the rasterizer (lighting.js); a value that is given must be usable.
 function lightEmission(light, label) {
   const color = light.color ?? [1, 1, 1];
@@ -476,7 +491,7 @@ function resolveAreaLight(light, index) {
   }
   const across = rawAcrossLength < MINIMUM_ACROSS_LENGTH ? [1, 0, 0] : normalized(rawAcross);
   const along = [normal[1] * across[2] - normal[2] * across[1], normal[2] * across[0] - normal[0] * across[2], normal[0] * across[1] - normal[1] * across[0]];
-  return { bit: AREA_FIRST_BIT + index, position: light.position, ...lightEmission(light, label), width: light.width, height: light.height, normal, across, along, profile: traceProfile(light) };
+  return { bit: AREA_FIRST_BIT + index, position: light.position, ...lightEmission(light, label), width: light.width, height: light.height, normal, across, along, profile: traceProfile(light), ...maxBouncesOf(light.maxBounces, `${label}.maxBounces`) };
 }
 
 /**
@@ -530,10 +545,14 @@ function resolveLights(environment, limit = resolveLightLimit(), parts = []) {
     refuseLinkingBeyondMaskBits(environment, parts);
   }
   return {
-    sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: sunColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS } : null,
-    points: (environment.pointLights ?? []).map((light, index) => ({ bit: POINT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.pointLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`) })),
+    sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: sunColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS, ...maxBouncesOf(environment.sunMaxBounces, 'environment.sunMaxBounces') } : null,
+    points: (environment.pointLights ?? []).map((light, index) => ({
+      bit: POINT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.pointLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`),
+      ...maxBouncesOf(light.maxBounces, `environment.pointLights[${index}].maxBounces`),
+    })),
     spots: (environment.spotLights ?? []).map((light, index) => ({
       bit: SPOT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.spotLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.spotLights[${index}]`),
+      ...maxBouncesOf(light.maxBounces, `environment.spotLights[${index}].maxBounces`),
       direction: normalized(light.direction),
       cosineHalfAngle: Math.cos(light.angle),
       profile: traceProfile(light),

@@ -1092,6 +1092,8 @@ The bridge is not exact. Cycles on the exported JSON has a mean radiance of 0.17
 
 The gap is now the other way round: the export is 1.6 times brighter, not 10 times dimmer, so the sun fix is in and the sun-only gate is not met. The sun in the file has a per-light limit of 2 bounces (`cyclesSettings.max_bounces`), which the JSON format cannot carry, so the original's sun light stops at two bounces and the export's runs to eight. Capping the whole export at 2 bounces lands within 4 to 9 percent of the original `[inferred: it caps camera paths and every other light as well, which are off here, so only the sun matters; a run that clears the sun's limit in the original would settle it]`; the remainder is not explained. Cook was not measured: its native addon is not built on this machine. This does not affect the Cook against Cycles comparison above, which reads one file on both sides; it means the scene Cook was tested on is a faithful reading of the Classroom only in its camera, the 886 instances it exports, the sun and the world.
 
+Since #2015 the format carries it: the exporter writes `environment.sunMaxBounces` (and `maxBounces` on point, spot and area lights) for every light whose own limit is below the scene's, and the native `cycles` kernel stops that light after its bounces ([lighting guide](lighting.md#a-lights-own-bounce-limit)). A light without the field runs as before, so no scene changes unless it names a limit. Not measured yet: the Classroom sun-only run against the original needs the GPU, so the "within 10 percent mean RGB" gate stays open until it is rendered.
+
 ### Commands
 
 On a machine with Blender 5.3, Node, `uv` and the built Cook addon (a GPU):

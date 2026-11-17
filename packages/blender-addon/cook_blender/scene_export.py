@@ -121,27 +121,33 @@ def add_light_entry(environment, light_object, light_matrix, report):
     for note in conversions.light_feature_notes(
         light_object.name, light_data.type, getattr(light_data, "use_temperature", False), getattr(light_data, "use_shadow", True),
         getattr(light_data, "diffuse_factor", 1.0), getattr(light_data, "specular_factor", 1.0),
-        getattr(getattr(light_data, "cycles", None), "max_bounces", None), getattr(getattr(bpy.context.scene, "cycles", None), "max_bounces", None),
     ):
         if note not in report["notes"]:
             report["notes"].append(note)
     position = to_yup(light_matrix.translation)
     emission_direction = to_yup((light_matrix.to_3x3() @ Vector((0.0, 0.0, -1.0))).normalized())
+    bounce_limit = conversions.light_bounce_limit(
+        getattr(getattr(light_data, "cycles", None), "max_bounces", None), getattr(getattr(bpy.context.scene, "cycles", None), "max_bounces", None),
+    )
     if light_data.type == "SUN":
         if report["lightCounts"].get("SUN", 0) > 0:
             report["notes"].append(f"sun {light_object.name} is ignored: Cook takes one sun per scene")
             return
         environment.update(conversions.sun_environment_fields(color, energy, emission_direction, light_data.angle))
+        if bounce_limit is not None:
+            environment["sunMaxBounces"] = bounce_limit
     elif light_data.type == "POINT":
-        environment["pointLights"].append(conversions.point_light_entry(position, color, energy, light_data.shadow_soft_size))
+        environment["pointLights"].append(conversions.with_bounce_limit(conversions.point_light_entry(position, color, energy, light_data.shadow_soft_size), bounce_limit))
     elif light_data.type == "SPOT":
-        environment["spotLights"].append(conversions.spot_light_entry(position, color, energy, light_data.shadow_soft_size, emission_direction, light_data.spot_size, light_data.spot_blend))
+        spot_entry = conversions.spot_light_entry(position, color, energy, light_data.shadow_soft_size, emission_direction, light_data.spot_size, light_data.spot_blend)
+        environment["spotLights"].append(conversions.with_bounce_limit(spot_entry, bounce_limit))
     elif light_data.type == "AREA":
         scale = light_matrix.to_scale()
         local_up = to_yup((light_matrix.to_3x3() @ Vector((0.0, 1.0, 0.0))).normalized())
-        environment["areaLights"].append(conversions.area_light_entry(
+        area_entry = conversions.area_light_entry(
             position, color, energy, emission_direction, local_up, light_data.shape, light_data.size, light_data.size_y, scale.x, scale.y, light_data.spread,
-        ))
+        )
+        environment["areaLights"].append(conversions.with_bounce_limit(area_entry, bounce_limit))
         if getattr(light_data, "normalize", True) is False:
             report["notes"].append(f"area light {light_object.name} has Normalize off, which the bench format cannot carry")
     report["lightCounts"][light_data.type] = report["lightCounts"].get(light_data.type, 0) + 1
