@@ -166,6 +166,8 @@ The maintainer sets labels and the milestone, so you do not need to. Every issue
 
 The milestones are `0 Measure`, `1 Lighter`, `2 Modeling`, `3 Look`, `4 Motion and simulation`, `5 Agent surface` and `6 Games`. [docs/goal.md](docs/goal.md) explains each one. A pull request that misses a label or the milestone gets `needs-triage` until the maintainer sets them.
 
+A bot (`.github/workflows/sync-pr-metadata.yml`) assigns the maintainer on every new pull request and issue, and copies the milestone and the `priority:*` and `goal:*` labels of the issue a pull request names. It only adds, so name the issue in the description and leave these fields to it.
+
 ## Triage
 
 ### How urgent a bug is
