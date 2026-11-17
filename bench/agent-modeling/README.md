@@ -152,6 +152,7 @@ pass when the statue's material is red and the plinth is not recoloured. A test 
 A mark may carry `"lasso":[[x,y],...]` (3 to 64 points inside the frame) instead of `pixel`; the answer then lists the parts under the outline.
 `ask-user-lasso` (`ask-user-lasso.json`) outlines the statue and the plinth with the note "make these blue"; its checks pass when both are blue
 and the floor, which shares the plinth's stone material, is not.
+`ask-user-pin-shared` (`ask-user-pin-shared.json`) pins the plinth with the note "make this red"; its checks pass when the plinth is red and the floor, which shares its stone material, is not (#1972).
 
 ### Several runs and several models
 
