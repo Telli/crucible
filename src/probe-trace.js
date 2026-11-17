@@ -322,7 +322,10 @@ export function traceProbes(parts, lighting, specs, options = {}) {
   const sceneRadius = roomCentreProbe(parts).radius * 2;
   const started = performance.now();
   const positions = requested.map(probe => probe.position);
-  const maps = requested.length === 0 ? [] : traceProbeMaps(parts, lighting, positions, { width: PROBE_MAP_WIDTH, samples, bounces, rotation, missRadiance: environmentMap ? environmentMissRadiance(environmentMap) : skyMissRadiance(environment), maxSeconds });
+  // A probe placed by hand sits in an open scene as often as in a room, so the buildings it sees take the light of the environment map
+  // too; the automatic room probe is for enclosed rooms, where the sky does not reach the walls.
+  const skyIrradiance = environmentMap && !automatic ? environmentSkyIrradiance(environmentMap) : null;
+  const maps = requested.length === 0 ? [] : traceProbeMaps(parts, lighting, positions, { width: PROBE_MAP_WIDTH, samples, bounces, rotation, missRadiance: environmentMap ? environmentMissRadiance(environmentMap) : skyMissRadiance(environment), skyIrradiance, maxSeconds });
   const traced = [];
   requested.forEach((spec, index) => {
     if (automatic && maps[index].hitFraction < ENCLOSED_HIT_FRACTION) {
