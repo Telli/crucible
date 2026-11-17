@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -42,30 +42,40 @@ function gridRecipe(volume) {
   };
 }
 
-async function startServer(context) {
-  const directory = await mkdtemp(join(tmpdir(), 'crucible-grid-mcp-'));
-  const gridFolder = join(directory, 'grids');
-  await mkdir(gridFolder);
-  await writeFile(join(gridFolder, 'left.67vg'), halfBoxGrid('left'));
-  await writeFile(join(gridFolder, 'right.67vg'), halfBoxGrid('right'));
-  const previousFolder = process.env[GRID_DIRECTORY_VARIABLE];
-  process.env[GRID_DIRECTORY_VARIABLE] = gridFolder;
-  const runtime = createAgentRuntime({ backend: 'cpu', memory: 192, jobs: join(directory, 'jobs') });
-  const server = createAgentMcpServer(runtime);
-  const client = new Client({ name: 'grid-volume-test', version: '1' });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  context.after(async () => {
-    await client.close();
-    await server.close();
-    await runtime.close();
-    if (previousFolder === undefined) delete process.env[GRID_DIRECTORY_VARIABLE];
-    else process.env[GRID_DIRECTORY_VARIABLE] = previousFolder;
-    await rm(directory, { recursive: true, force: true });
-  });
-  return { client, gridFolder };
+// One server for the file: its tests make their own sessions, so they share only the runtime and its preview browser, whose start costs
+// seconds per test. The grid folder holds only the two small grids; the tests that write large files make a folder of their own.
+let sharedServerPromise = null;
+let closeSharedServer = async () => {};
+
+function sharedServer() {
+  sharedServerPromise ??= (async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'crucible-grid-mcp-'));
+    const gridFolder = join(directory, 'grids');
+    await mkdir(gridFolder);
+    await writeFile(join(gridFolder, 'left.67vg'), halfBoxGrid('left'));
+    await writeFile(join(gridFolder, 'right.67vg'), halfBoxGrid('right'));
+    const previousFolder = process.env[GRID_DIRECTORY_VARIABLE];
+    process.env[GRID_DIRECTORY_VARIABLE] = gridFolder;
+    const runtime = createAgentRuntime({ backend: 'cpu', memory: 192, jobs: join(directory, 'jobs') });
+    const server = createAgentMcpServer(runtime);
+    const client = new Client({ name: 'grid-volume-test', version: '1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeSharedServer = async () => {
+      await client.close();
+      await server.close();
+      await runtime.close();
+      if (previousFolder === undefined) delete process.env[GRID_DIRECTORY_VARIABLE];
+      else process.env[GRID_DIRECTORY_VARIABLE] = previousFolder;
+      await rm(directory, { recursive: true, force: true });
+    };
+    return { client, gridFolder };
+  })();
+  return sharedServerPromise;
 }
+
+after(() => closeSharedServer());
 
 async function call(client, name, argumentsValue) {
   const result = await client.callTool({ name, arguments: argumentsValue }, { timeout: 120000 });
@@ -90,15 +100,15 @@ async function renderStill(client, sessionId, revision, start) {
   return { bytes, left: meanBrightness(picture, LEFT_HALF), right: meanBrightness(picture, RIGHT_HALF) };
 }
 
-test('a render job draws a still grid volume from a file in the grid folder', { timeout: 180000 }, async context => {
-  const { client } = await startServer(context);
+test('a render job draws a still grid volume from a file in the grid folder', { timeout: 180000 }, async () => {
+  const { client } = await sharedServer();
   const created = await call(client, 'scene_create', { recipe: gridRecipe({ grid: 'left.67vg' }) });
   const shot = await renderStill(client, created.sessionId, created.revision ?? 0);
   assert.ok(shot.left - shot.right > MINIMUM_SIDE_DIFFERENCE, `the left half holds the density: left ${shot.left}, right ${shot.right}`);
 });
 
-test('a render job draws the grid frame its motion time selects, and scene_apply swaps the grid', { timeout: 240000 }, async context => {
-  const { client } = await startServer(context);
+test('a render job draws the grid frame its motion time selects, and scene_apply swaps the grid', { timeout: 240000 }, async () => {
+  const { client } = await sharedServer();
   const created = await call(client, 'scene_create', { recipe: gridRecipe({ frames: ['left.67vg', 'right.67vg'], fps: FRAMES_PER_SECOND }) });
   const revision = created.revision ?? 0;
   const firstFrame = await renderStill(client, created.sessionId, revision, 0.01);
@@ -115,8 +125,8 @@ test('a render job draws the grid frame its motion time selects, and scene_apply
   assert.ok(swapped.right - swapped.left > MINIMUM_SIDE_DIFFERENCE, `an applied grid draws too: left ${swapped.left}, right ${swapped.right}`);
 });
 
-test('a grid name that is not a file in the grid folder is refused with what to pass instead', { timeout: 60000 }, async context => {
-  const { client } = await startServer(context);
+test('a grid name that is not a file in the grid folder is refused with what to pass instead', { timeout: 60000 }, async () => {
+  const { client } = await sharedServer();
   for (const [grid, message] of [['absent.67vg', /not in the grid folder/], ['../left.67vg', /never a path/], ['left', /file name such as "blast\.67vg"/]]) {
     const refused = await client.callTool({ name: 'scene_create', arguments: { recipe: gridRecipe({ grid }) } });
     assert.equal(refused.isError, true, grid);
@@ -125,7 +135,8 @@ test('a grid name that is not a file in the grid folder is refused with what to 
 });
 
 test('grid bytes are bounded by name: one sequence may not pass its byte budget', async context => {
-  const { gridFolder } = await startServer(context);
+  const gridFolder = await mkdtemp(join(tmpdir(), 'crucible-grid-big-'));
+  context.after(() => rm(gridFolder, { recursive: true, force: true }));
   const frames = Array.from({ length: 4 }, (unused, index) => `big${index}.67vg`);
   const bigGrid = Buffer.alloc(64 * 1024 * 1024 + 100);
   for (const name of frames) await writeFile(join(gridFolder, name), bigGrid);
@@ -175,7 +186,7 @@ test('volumeGridFileBytes counts one add-explosion at exactly the bytes it bakes
 });
 
 test('scene_apply refuses distinct add-explosion operations over the combined limit before baking any of them (#1903)', { timeout: 120000 }, async context => {
-  const { client } = await startServer(context);
+  const { client } = await sharedServer();
   const created = await call(client, 'scene_create', { recipe: gridRecipe({ grid: 'left.67vg' }) });
   let bakeAttempts = 0;
   setExplosionBakeStore({ load: () => { bakeAttempts += 1; return null; }, save: () => {} });
