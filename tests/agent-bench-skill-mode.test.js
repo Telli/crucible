@@ -90,8 +90,8 @@ test('suggestSubset picks skill mode references for a skills/ change and the kin
 });
 
 test('bench.mjs --suggest prints the skill mode and the same-mode base advice, and --dry-run rejects an unknown mode', () => {
-  const branchPoint = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { cwd: repository, encoding: 'utf8' }).trim();
-  const output = execFileSync(process.execPath, [benchPath, '--suggest', branchPoint, '--dry-run'], { cwd: repository, encoding: 'utf8' });
+  // HEAD as the base: CI checks out one commit with no origin/main, and an empty diff still prints the summary line.
+  const output = execFileSync(process.execPath, [benchPath, '--suggest', 'HEAD', '--dry-run'], { cwd: repository, encoding: 'utf8' });
   assert.match(output, /changed files against/);
   assert.throws(() => execFileSync(process.execPath, [benchPath, '--skill-mode', 'bogus', '--dry-run'], { cwd: repository, encoding: 'utf8', stdio: 'pipe' }), /--skill-mode must be one of/);
   const dryRun = execFileSync(process.execPath, [benchPath, '--skill-mode', 'references', '--kinds', 'light', '--dry-run'], { cwd: repository, encoding: 'utf8' });
