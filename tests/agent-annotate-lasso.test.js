@@ -167,9 +167,25 @@ test('a part under 15 percent of the picked pixels is marked edge: true and stay
   assert.equal(ANNOTATE_LIMITS.edgeCoverage, 0.15);
 });
 
-test('a pin result is unchanged by partMaterials', () => {
+test('a pin result gains materialSharedWith only when partMaterials shows other parts on its material', () => {
   const pin = { x: 100, y: 100, note: 'pin' };
   const expected = { number: 1, pixel: [100, 100], note: 'pin', partId: 'wall', point: [-1, 0, 0], normal: [0, 0, 1], distance: 10, material: 'plaster' };
   assert.deepEqual(describeMarks([pin], camera, { ...view, raycast: wallLampSky })[0], expected);
-  assert.deepEqual(describeMarks([pin], camera, { ...view, raycast: wallLampSky, partMaterials: { wall: 'plaster', other: 'plaster' } })[0], expected);
+  assert.deepEqual(describeMarks([pin], camera, { ...view, raycast: wallLampSky, partMaterials: { wall: 'plaster', other: 'paint' } })[0], expected, 'a unique material has no field');
+  assert.deepEqual(
+    describeMarks([pin], camera, { ...view, raycast: wallLampSky, partMaterials: { wall: 'plaster', zeta: 'plaster', alpha: 'plaster' } })[0],
+    { ...expected, materialSharedWith: ['alpha', 'zeta'] },
+  );
+});
+
+test('a pin on empty sky has no materialSharedWith, and a pin list caps it at 8 with a count of the rest', () => {
+  const sky = { x: 100, y: 100, note: 'sky' };
+  assert.equal('materialSharedWith' in describeMarks([sky], camera, { ...view, raycast: () => null, partMaterials: { wall: 'plaster' } })[0], false);
+  const raycast = () => ({ id: 'plinth', point: [0, 0, 0], normal: [0, 1, 0], distance: 5, material: 'stone' });
+  const partMaterials = { plinth: 'stone' };
+  for (let index = 0; index < 11; index++) partMaterials[`floor-${String(index).padStart(2, '0')}`] = 'stone';
+  const [pin] = describeMarks([{ x: 100, y: 100, note: 'pin' }], camera, { ...view, raycast, partMaterials });
+  assert.equal(pin.materialSharedWith.length, 8);
+  assert.equal(pin.materialSharedWith[0], 'floor-00');
+  assert.equal(pin.materialSharedWithMore, 3);
 });

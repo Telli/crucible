@@ -159,6 +159,24 @@ test('the variable is in no flag list and no tool schema', async () => {
   assert.ok(mentions.every(line => !/register\(|z\.|describe\(/.test(line)), mentions.join('\n'));
 });
 
+test('the bench pin on the plinth lands on it at the stage camera and warns that the floor shares its stone (#1972)', async () => {
+  const task = taskById('ask-user-pin-shared');
+  assert.ok(BENCH_TASKS.find(candidate => candidate.id === 'ask-user-pin-shared').topics.includes('askUser'));
+  const sharedFixture = join(import.meta.dirname, '..', 'bench', 'agent-modeling', 'ask-user-pin-shared.json');
+  assert.deepEqual(askUserEnvironment(task), { [ASK_USER_FIXTURE_VARIABLE]: resolve(sharedFixture) });
+  const fixture = loadFrom(sharedFixture);
+  const { preview } = previewHarness();
+  preview.create({ recipe: structuredClone(task.startRecipe), sessionId: 'pin-shared', backend: 'cpu', memoryBudgetMiB: 64 });
+  const frame = preview.annotateFrame({ sessionId: 'pin-shared' });
+  const picked = await preview.pickMarks({ sessionId: 'pin-shared', camera: frame.camera, width: frame.width, height: frame.height, marks: fixture.marks });
+  const [mark] = picked.marks;
+  assert.equal(mark.partId, 'plinth');
+  assert.equal(mark.note, 'make this red');
+  assert.deepEqual(mark.materialSharedWith, ['floor']);
+  const statuePick = await preview.pickMarks({ sessionId: 'pin-shared', camera: frame.camera, width: frame.width, height: frame.height, marks: loadFrom(benchFixture).marks });
+  assert.equal('materialSharedWith' in statuePick.marks[0], false, 'the statue has a material of its own');
+});
+
 test('only a bench task tagged askUser gets the fixture, and its pin lands on the statue at the bench camera', async () => {
   const task = taskById('ask-user-pin');
   assert.ok(BENCH_TASKS.find(candidate => candidate.id === 'ask-user-pin').topics.includes('askUser'));
