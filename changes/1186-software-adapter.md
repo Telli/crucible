@@ -1,1 +1,0 @@
-- A native render job on a software Vulkan adapter (lavapipe on a Linux runner without a GPU) gets 2304 MiB more memory allowance, so the first 960 x 540 job no longer fails the memory guard (#1186)

@@ -1,15 +1,24 @@
 import './support/load-agent-scene-modules.mjs';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene, loadPhysicsEngine } from '../src/agent-scene.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
 import { createHash } from 'node:crypto';
-import { EXPLOSION_EMPTY_GRID, EXPLOSION_EMPTY_VELOCITY_GRID, explosionGridBytes } from '../src/explosion-grids.js';
+import { EXPLOSION_EMPTY_GRID, EXPLOSION_EMPTY_VELOCITY_GRID, explosionGridBytes, setExplosionBakeStore } from '../src/explosion-grids.js';
 import { decodeVolumeGrid, hasGridVelocity } from '../src/volume-grid.js';
 import { readVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { agentSceneModulesNeeded, needsPhysics } from '../src/agent-scene-modules.js';
 
 await loadPhysicsEngine();
+
+// The bake cache in explosion-grids.js keeps 4 bakes and drops the oldest, so this file's blasts (about 10 seeds and fuels) would bake the same
+// grids again after they were evicted. A store that keeps every bake in memory for the file lets each fuel, seed and velocity bake once.
+const keptBakes = new Map();
+setExplosionBakeStore({
+  load: descriptor => keptBakes.get(JSON.stringify(descriptor)) ?? null,
+  save: (descriptor, frames) => keptBakes.set(JSON.stringify(descriptor), frames),
+});
+after(() => setExplosionBakeStore(null));
 
 function setRecipe() {
   return {
@@ -144,6 +153,7 @@ test('the fireball is a gas-sim grid volume scaled to the blast size: box, densi
   assert.equal(large.fps, 12);
   assert.equal(small.density / large.density, 4);
   assert.equal(small.emissionStrength / large.emissionStrength, 4);
+  assert.equal(small.emissionStrength, 9.5, 'the reference-size emission that keeps the core from clipping to white and the edge soft like the Cycles frame (#1736)');
   assert.deepEqual(small.center, [0, 4, 0]);
   const oily = applyBlast(blast({ size: 2.5, fuel: 'oily' })).recipe.environment.localVolumes[0];
   assert.equal(oily.density, 1.5 * small.density);
@@ -153,17 +163,17 @@ test('the fireball is a gas-sim grid volume scaled to the blast size: box, densi
 });
 
 test('the grids the recipe names are baked from the name, byte for byte, and tied to the seed and the fuel', () => {
-  const { frames } = applyBlast(blast({ seed: 3 })).recipe.environment.localVolumes[0];
+  const { frames } = applyBlast(blast({ seed: 1 })).recipe.environment.localVolumes[0];
   assert.equal(frames.length, 72);
-  assert.equal(frames[0], 'explosion-dry-3-velocity_0000.67vg');
+  assert.equal(frames[0], 'explosion-dry-1-velocity_0000.67vg');
   const first = explosionGridBytes(frames[10]);
   const again = explosionGridBytes(frames[10]);
   assert.ok(first.length > 1000);
   assert.deepEqual(first, again);
-  assert.notDeepEqual(first, explosionGridBytes('explosion-dry-4-velocity_0010.67vg'));
-  assert.notDeepEqual(first, explosionGridBytes('explosion-oily-3-velocity_0010.67vg'));
-  assert.equal(explosionGridBytes('explosion-dry-3-velocity_0072.67vg'), null);
-  assert.equal(explosionGridBytes('explosion-dry-3-fast_0010.67vg'), null);
+  assert.notDeepEqual(first, explosionGridBytes('explosion-dry-5-velocity_0010.67vg'));
+  assert.notDeepEqual(first, explosionGridBytes('explosion-oily-1-velocity_0010.67vg'));
+  assert.equal(explosionGridBytes('explosion-dry-1-velocity_0072.67vg'), null);
+  assert.equal(explosionGridBytes('explosion-dry-1-fast_0010.67vg'), null);
   assert.equal(explosionGridBytes('blast.67vg'), null);
   assert.ok(explosionGridBytes(EXPLOSION_EMPTY_GRID).length > 1000);
 });
@@ -182,22 +192,22 @@ test('a scene with a grid volume already refuses the blast and says how to make 
 });
 
 test('the MCP server finds the grids an add-explosion operation will name, so the page gets them with the call', () => {
-  const files = readVolumeGridFiles([blast({ seed: 9, fuel: 'oily', start: 1 })], '.');
+  const files = readVolumeGridFiles([blast({ seed: 1, fuel: 'oily', start: 1 })], '.');
   assert.equal(files.size, 73);
-  assert.ok(files.has('explosion-oily-9-velocity_0000.67vg'));
+  assert.ok(files.has('explosion-oily-1-velocity_0000.67vg'));
   assert.ok(files.has(EXPLOSION_EMPTY_VELOCITY_GRID));
-  const sharp = readVolumeGridFiles([blast({ seed: 9, motionBlur: false })], '.');
+  const sharp = readVolumeGridFiles([blast({ seed: 1, motionBlur: false })], '.');
   assert.equal(sharp.size, 73);
-  assert.ok(sharp.has('explosion-dry-9_0071.67vg'));
+  assert.ok(sharp.has('explosion-dry-1_0071.67vg'));
   assert.ok(sharp.has(EXPLOSION_EMPTY_GRID));
   assert.equal(readVolumeGridFiles([blast({ fuel: 'nuclear' })], '.').size, 0);
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
 });
 
-// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775).
+// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change).
 const FIRST_RELEASE_HASHES = new Map([
-  ['{}', '3dc6ef8f1af3a05fba20d399846f8aaa1559ae3652d06181b249487074d7414e'],
-  ['{"start":0.5,"fuel":"oily","seed":7}', 'f677a321407728c72f05370db069291885d96c451b691248ea967754bb4f3e78'],
+  ['{}', 'f4243c2be216986f1db1dbd8a20f32a0e76bebb01d361c1973f00bc939bf8a79'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', 'eea21da58c694709f99fab840c6b73e58ef9b7cf3b8720db00ed8a3d7fb67f61'],
 ]);
 
 test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {

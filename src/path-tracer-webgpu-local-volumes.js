@@ -4,6 +4,7 @@ import { LOCAL_VOLUME_RAMP_STOPS, rampSourceCode } from './local-volume-ramp.js'
 import { bakeEmissionRamp } from './local-volume-ramp-bake.js';
 import { meanEnvironmentRadiance } from './path-tracer-volume.js';
 import { bakedGridEmission, GRID_MOTION_TIME_STEP, gridUnitVelocity, volumeGridFloats } from './volume-grid.js';
+import { STEP_INTEGRAL_WGSL } from './volume-step-integral.js';
 
 // Local volumes (environment.localVolumes: boxes and spheres of absorbing, emitting and scattering medium) on the WebGPU path
 // tracer (#1048). The WGSL is the march of createLocalVolumeCrossing in path-tracer-volume.js: the same step count, jittered
@@ -162,6 +163,7 @@ export function packWebGpuGrid(volume) {
  * splice the fractal noise and the ramp light the same way.
  */
 export const buildLocalVolumeFunctions = ({ hasGrid = false, hasNoiseOctaves = false, hasEmissionRamp = false } = {}) => /* wgsl */ `
+${STEP_INTEGRAL_WGSL}
 const LOCAL_VOLUME_TEXELS: i32 = ${LOCAL_VOLUME_TEXELS};
 const LOCAL_VOLUME_HEADER_TEXELS: i32 = ${LOCAL_VOLUME_HEADER_TEXELS};
 const LOCAL_VOLUME_LIMIT: i32 = ${MAX_LOCAL_VOLUMES};
@@ -368,8 +370,8 @@ ${hasGrid ? `    if (localVolumeTexel(volume, 0).w < -0.5) {
       if (profile <= 0.0) { continue; }
       let width = profile * stepLength;
       if (scatters) { emitted += throughput * localScatteredLight(volume, point, width); }
-      emitted += throughput * emission * width;
-${hasEmissionRamp ? `      emitted += throughput * localEmissionRampLight(volume, vec3<f32>(profile), stepLength);
+      emitted += throughput * emission * width * volumeStepIntegral(extinction * width);
+${hasEmissionRamp ? `      emitted += throughput * localEmissionRampLight(volume, vec3<f32>(profile), stepLength) * volumeStepIntegral(extinction * width);
 ` : ''}      throughput *= exp(-extinction * width);
     }
   }
@@ -526,8 +528,8 @@ fn crossLocalGrid(volume: i32, origin: vec3<f32>, entry: f32, span: f32, jitter:
     let cell = localGridSample(volume, localGridMotionPoint(volume, point, timeFraction));
     let width = cell.density * stepLength;
     if (width > 0.0 && scatters) { emitted += throughput * localScatteredLight(volume, point, width); }
-    emitted += throughput * (emission * cell.flame * stepLength + cell.glow * blackbodyWeight * stepLength);
-${hasEmissionRamp ? `    emitted += throughput * localEmissionRampLight(volume, vec3<f32>(cell.density, cell.temperature, cell.flame), stepLength);
+    emitted += throughput * (emission * cell.flame * stepLength + cell.glow * blackbodyWeight * stepLength) * volumeStepIntegral(extinction * width);
+${hasEmissionRamp ? `    emitted += throughput * localEmissionRampLight(volume, vec3<f32>(cell.density, cell.temperature, cell.flame), stepLength) * volumeStepIntegral(extinction * width);
 ` : ''}    throughput *= exp(-extinction * width);
   }
   return emitted;

@@ -1,2 +1,0 @@
-- entry:light-bake-gpu+lazy: the ramp light, fractal noise and ramp packer add about 1 KB gzip to the same lazy WebGPU chunk (#1785); the core entries do not grow.
-- entry:path-tracer+lazy: the same lazy WebGPU chunk (grid march, ramp light, fractal noise and packers, #1785); loads only for backend "webgpu", and the non-lazy entry grows by 55 bytes.

@@ -120,6 +120,38 @@ Final alpha is the base map alpha (when `material.map` is set) times `opacity`. 
 
 glTF import maps `alphaMode` MASK and BLEND, `alphaCutoff`, `doubleSided` and `baseColorFactor[3]` (to `opacity`) onto these fields, and keeps the base color texture alpha. `exportGlb` writes them back. glTF has no additive blending, so an `add` material is exported as `BLEND` and loads back as `blend`.
 
+## Retro look
+
+ gives the PlayStation 1 look in the raster renderer:
+
+\
+| Field | Accepts | Does |
+|---|---|---|
+|  | , whole numbers from 16 to 4096 | Rounds each vertex to a width by height grid across the screen, so vertices jitter as the camera moves. |
+|  |  | Interpolates texture coordinates without perspective correction, so textures swim on large triangles. |
+
+- Set either or both. Anything else, or an empty object, throws with what to pass.
+- Raster only. The path tracer ignores it, and shadow maps are drawn from the unsnapped mesh.
+- A material without  compiles to the same shader as before. The snap grid and the affine switch are batch state like : parts that differ never share a draw call, and  rejects changes after upload.
+
+## Retro look
+
+`material.retro` gives the PlayStation 1 look in the raster renderer:
+
+```json
+{ "retro": { "vertexSnap": [160, 120], "affineUV": true } }
+```
+
+| Field | Accepts | Does |
+|---|---|---|
+| `vertexSnap` | `[width, height]`, whole numbers from 16 to 4096 | Rounds each vertex to a width by height grid across the screen, so vertices jitter as the camera moves. |
+| `affineUV` | `true` | Interpolates texture coordinates without perspective correction, so textures swim on large triangles. |
+
+- Set either or both. Anything else, or an empty object, throws with what to pass.
+- Raster only. The path tracer ignores it, and shadow maps are drawn from the unsnapped mesh.
+- The code is the lazy `retro-shader` addon (`@codepawlhq/crucible/addons/retro-shader`; a recipe loads it on its own). A renderer that draws a retro part without it throws an error that names the import. A material without `retro` compiles to the same shader as before.
+- The snap grid and the affine switch are batch state like `doubleSided`: parts with different `retro` objects never share a draw call. `updateParts` rejects a `retro` change after the part is created with an error that says to set it when the part is made, which needs a new renderer.
+
 ## Moss layer
 
 A standard-tag material can grow moss: `moss` (0 to 1, default 0) sets how much of the up-facing surface it covers, and `mossColor` (linear RGB, default `[0.05, 0.085, 0.02]`) its colour.

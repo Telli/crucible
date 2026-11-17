@@ -210,6 +210,7 @@ test('the checked in 32 cube explosion frame decodes to a plausible fireball', (
 
 // Local volumes without a grid keep their bytes: these fingerprints were taken on main before the grid code and must not move.
 // The box and the sphere overlap along the ray, so the crossing fingerprint was retaken when overlapping volumes began to march together (#1722).
+// It was retaken again when each step began to weight its glow by the exact step integral (#1894).
 test('volumes without a grid pack, profile and trace to the same bytes as before', () => {
   const volumes = resolveLocalVolumes([
     { shape: 'box', center: [0, 1, 0], size: [2, 2, 2], density: 2, falloff: 0.4, noiseAmount: 0.5, noiseScale: 2, emission: [1, 0.4, 0.1], emissionStrength: 3, scatter: 0.5, steps: 12 },
@@ -231,7 +232,7 @@ test('volumes without a grid pack, profile and trace to the same bytes as before
   const fingerprint = values => createHash('sha256').update(Buffer.from(new Float64Array(values).buffer)).digest('hex').slice(0, 16);
   assert.equal(packed.digest('hex').slice(0, 16), '622e0fbca427f116');
   assert.equal(fingerprint(profiles), '0039eaf64dc4fe26');
-  assert.equal(fingerprint(results), 'a6e4ff7148ecc6e3');
+  assert.equal(fingerprint(results), '3ccaa9894a0a331a');
 });
 
 test('the MCP grid folder loads name.67vg files and nothing that looks like a path', async () => {

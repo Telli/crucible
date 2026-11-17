@@ -271,6 +271,7 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
     note: MATERIAL_LAYER_NOTES[field],
   })]))),
   materialSubsurface: 'material.subsurface { weight, radius, scale, color } as Blender Principled BSDF Subsurface; surface tag, rasterizer only. Ranges in scene_create.',
+  materialRetro: 'material.retro { vertexSnap [width, height] (whole numbers 16 to 4096), affineUV true }: the PS1 look. vertexSnap rounds each vertex to a width by height screen grid so vertices jitter as the camera moves; affineUV interpolates texture coordinates without perspective correction so textures swim on large triangles. Set either or both. Raster renders only; the path tracer ignores it. Shadows ignore it. A material without retro renders exactly as before.',
   materialWear: 'material.wear { mask, threshold 0.5, softness 0.25, metal { color, metallic 1, roughness 0.3 }, dirt { mask, threshold, softness, color, roughness 0.9 } }: the material own color, metallic and roughness are the paint; per pixel it turns to the metal layer where the vertex group mask is high, then to dirt (no metal, rougher) where the dirt group is high. Masks are vertex groups of the node mesh (vertex_group measure edge, curvature or occlusion), so a mesh with no UVs works. Rasterizer only; not with baked sky visibility.',
   alphaModes: RECIPE_ALPHA_MODES,
   materialPatterns: MATERIAL_PATTERN_TYPES, maxMaterialPatterns: MAX_MATERIAL_PATTERNS,
