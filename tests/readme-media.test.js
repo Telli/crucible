@@ -3,10 +3,18 @@ import { readFileSync, existsSync } from 'node:fs';
 import test from 'node:test';
 
 const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-const previewUrlPattern = /https:\/\/crucible\.codepawl\.com\/previews\/([\w.-]+\.webp)/g;
+const webpUrlPattern = /https:\/\/[^\s"')<>]+\.webp/g;
+const previewFilePattern = /^\/previews\/([\w.-]+\.webp)$/;
 
+// Parse each URL and compare the host exactly, so only renders served from the Crucible site count.
 function previewFilesIn(text) {
-  return [...text.matchAll(previewUrlPattern)].map((match) => match[1]);
+  const files = [];
+  for (const [address] of text.matchAll(webpUrlPattern)) {
+    const url = new URL(address);
+    const match = url.pathname.match(previewFilePattern);
+    if (url.hostname === 'crucible.codepawl.com' && match) files.push(match[1]);
+  }
+  return files;
 }
 
 function previewPath(fileName) {
