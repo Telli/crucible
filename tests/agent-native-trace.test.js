@@ -391,3 +391,25 @@ test('clampNegativeColor returns a buffer without negatives as the same array', 
   assert.deepEqual([...clampNegativeColor(signed)], [0, 0.5, 0]);
   assert.deepEqual([...signed], [...new Float32Array([-0.1, 0.5, -2])], 'the input is not edited');
 });
+
+const STALE_ADDON_MESSAGE = 'The Cook addon at "/build/render-native.node" does not match this package: built for 0.1.0, expected 0.2.0. Run `npx cook fetch-addon` after a release, or rebuild it.';
+
+test('a stale addon is reported with the load error as written, not as a missing Vulkan adapter', async () => {
+  const staleEngine = { ...fakeEngine(), loadNativeAddon() { throw new Error(STALE_ADDON_MESSAGE); } };
+  const locator = locatorFor(async () => staleEngine);
+  const found = await locator.find();
+  assert.equal(found.reason, STALE_ADDON_MESSAGE);
+  assert.equal(found.tracer, undefined);
+  const choice = await chooseTraceBackend({ requested: 'native', runtimeBackend: 'gpu', locator });
+  assert.equal(choice.backend, 'gpu');
+  assert.doesNotMatch(choice.note, /Vulkan/);
+  assert.match(choice.note, /npx cook fetch-addon/);
+});
+
+test('an addon that loads fine is used as before, and a package without loadNativeAddon still works', async () => {
+  let loads = 0;
+  const loadingEngine = { ...fakeEngine(), loadNativeAddon() { loads += 1; return {}; } };
+  assert.ok((await locatorFor(async () => loadingEngine).find()).tracer);
+  assert.equal(loads, 1);
+  assert.ok((await locatorFor(async () => fakeEngine()).find()).tracer);
+});
