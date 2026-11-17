@@ -425,6 +425,12 @@ vec3 localGridMotionPosition(int index, vec3 position, float timeFraction) {
 const LOCAL_MOTION_SAMPLE_POSITION = `vec3 samplePosition = localGridMotionPosition(nearest, position, fract(gridJitter + float(step) * ${GRID_MOTION_TIME_STEP}));
         vec3 cell = localGridSample(nearest, samplePosition);`;
 
+// The shadow of a blurred grid (#1763): each tap of the surface shadow reads the grid at its own time in the shutter, spread by the golden ratio like the march, so the
+// shadow smears the way the gas does. A pixel's jitter starts the spread and the taps of that pixel cover the shutter between them.
+const LOCAL_MOTION_SHADOW_PROFILE = `vec3 tapPosition = position + towardSun * (entry + (span.y - entry) * (float(tap) + 0.5) / taps);
+      if (isGrid) tapPosition = localGridMotionPosition(index, tapPosition, fract(localVolumeJitter() + float(tap) * ${GRID_MOTION_TIME_STEP}));
+      float profile = localVolumeProfile(index, tapPosition, true);`;
+
 // Each volume is marched on its own between its entry and exit (cut at the first surface) and composited nearest first: the colour
 // behind it is dimmed by exp(-absorption * profile * step) and its emission is added, both per colour channel.
 // With `motion` the grid march reads the point its shutter time selects; without it the source is exactly what it was before the blur existed.
@@ -583,7 +589,7 @@ vec3 localVolumeSurfaceShadow(vec3 position, vec3 towardSun) {
       // A grid reads its simulated density as it is: the saturation and strength below tune the faded skin of a box or sphere, not a measured density.
       if (!isGrid && tap >= ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}) break;
       float taps = isGrid ? ${LOCAL_VOLUME_GRID_SHADOW_TAPS}.0 : ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}.0;
-      float profile = localVolumeProfile(index, position + towardSun * (entry + (span.y - entry) * (float(tap) + 0.5) / taps), true);
+      ${motion ? LOCAL_MOTION_SHADOW_PROFILE : 'float profile = localVolumeProfile(index, position + towardSun * (entry + (span.y - entry) * (float(tap) + 0.5) / taps), true);'}
       profileSum += isGrid ? profile : min(profile * ${LOCAL_VOLUME_LIGHT_DEPTH_SATURATION.toFixed(3)}, 1.0);
     }
     vec3 depth = localVolumeAbsorption[index].rgb * (profileSum * (span.y - entry) / (isGrid ? ${LOCAL_VOLUME_GRID_SHADOW_TAPS}.0 : ${LOCAL_VOLUME_SURFACE_SHADOW_TAPS}.0));
