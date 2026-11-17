@@ -590,6 +590,9 @@ const driver = z.strictObject({
   target: z.union([
     z.strictObject({ kind: z.literal('node'), id: identifier, property: z.enum(['translation', 'rotation', 'scale']), component: axisName }),
     z.strictObject({ kind: z.literal('material'), id: identifier, property: z.enum(['color', 'emissiveColor', 'emission', 'metallic', 'roughness']), component: axisName.optional() }),
+    z.strictObject({ kind: z.literal('light'), id: identifier.describe('point:N, spot:N or area:N'), property: z.enum(['intensity', 'color']), component: axisName.optional() }),
+    z.strictObject({ kind: z.literal('morph'), id: identifier, property: z.literal('weight') }),
+    z.strictObject({ kind: z.literal('camera'), property: z.enum(['eye', 'target', 'fov', 'roll']), component: axisName.optional() }),
   ]),
   expression,
 });
