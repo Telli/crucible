@@ -79,19 +79,19 @@ test('bench.mjs --dry-run lists the selected tasks and rejects unknown values wi
   assert.throws(() => execFileSync(process.execPath, [benchPath, '--topics', 'nope', '--dry-run'], { encoding: 'utf8', stdio: 'pipe' }), /Unknown topic nope/);
 });
 
-test('--tasks accepts a scene task that the default run leaves out, and the default run stays on the 32 bench tasks', () => {
+test('--tasks accepts a scene task that the default run leaves out, and the default run stays on the 33 bench tasks', () => {
   assert.deepEqual(OPTIONAL_TASK_IDS, ['findings-fix']);
   assert.deepEqual(selectTasks({ tasks: 'findings-fix' }, BENCH_TASKS, OPTIONAL_TASK_IDS), ['findings-fix']);
   assert.deepEqual(selectTasks({ tasks: 'findings-fix,bolt' }, BENCH_TASKS, OPTIONAL_TASK_IDS), ['bolt', 'findings-fix']);
-  assert.equal(selectTasks({}, BENCH_TASKS, OPTIONAL_TASK_IDS).length, 32);
+  assert.equal(selectTasks({}, BENCH_TASKS, OPTIONAL_TASK_IDS).length, 33);
   assert.equal(selectTasks({ kinds: 'light' }, BENCH_TASKS, OPTIONAL_TASK_IDS).includes('findings-fix'), false);
   assert.throws(() => selectTasks({ tasks: 'nope' }, BENCH_TASKS, OPTIONAL_TASK_IDS), /Unknown task nope\. Valid tasks: crate,.*findings-fix\./);
 });
 
-test('bench.mjs --tasks findings-fix --dry-run selects it, an unknown id lists the valid ids, the default dry run selects 32 tasks', () => {
+test('bench.mjs --tasks findings-fix --dry-run selects it, an unknown id lists the valid ids, the default dry run selects 33 tasks', () => {
   const run = argumentsList => execFileSync(process.execPath, [benchPath, ...argumentsList, '--dry-run'], { encoding: 'utf8', stdio: 'pipe' });
-  assert.match(run(['--tasks', 'findings-fix']), /^1 of 32 tasks: findings-fix/);
-  assert.match(run([]), /^32 of 32 tasks: crate,/);
+  assert.match(run(['--tasks', 'findings-fix']), /^1 of 33 tasks: findings-fix/);
+  assert.match(run([]), /^33 of 33 tasks: crate,/);
   assert.throws(() => run(['--tasks', 'nope']), /Unknown task nope\. Valid tasks: crate,.*findings-fix\./s);
 });
 

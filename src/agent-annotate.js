@@ -206,13 +206,14 @@ function describeLasso(mark, index, camera, { width, height, raycast, partMateri
 /**
  * Numbers the marks and attaches what each one points at: part ID, world point, normal and distance, or null on empty sky.
  * A lasso also returns kind, points and parts (the parts under its outline); its partId and point are the most covered part's.
- * partMaterials ({ partId: material }, optional) lets each lasso part list materialSharedWith, the unmarked parts on its material.
+ * partMaterials ({ partId: material }, optional) lets each lasso part, and the part a pin lands on, list materialSharedWith: the unmarked parts on its material.
  * A part covering under ANNOTATE_LIMITS.edgeCoverage of the picked pixels is marked edge: true and stays listed.
  */
 export function describeMarks(marks, camera, { width, height, raycast, partMaterials }) {
   return marks.map((mark, index) => {
     if (mark.kind === 'lasso') return describeLasso(mark, index, camera, { width, height, raycast, partMaterials });
     const hit = raycast(pixelRay(camera, mark.x, mark.y, width, height));
-    return { number: index + 1, pixel: [mark.x, mark.y], note: mark.note, ...hitFields(hit) };
+    const shared = hit ? sharedMaterialFields(hit.material ?? null, new Set([hit.id]), partMaterials, hit.id) : {};
+    return { number: index + 1, pixel: [mark.x, mark.y], note: mark.note, ...hitFields(hit), ...shared };
   });
 }
