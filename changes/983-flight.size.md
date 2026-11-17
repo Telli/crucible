@@ -1,2 +1,3 @@
 - entry:vehicle: 735 bytes gzip for `detachedPartFlight`, the seeded launch, tumble and ground bounce of a part a crash tears off, which the addon did not have (#983).
+- goal:agent-scene: 772 bytes gzip for the same function; the lead accepted the +735 B gzip growth because it is a visible new capability.
 - scene:agent-scene+lazy: 772 bytes gzip for the same function inside the lazy `vehicle-damage` module, which loads only for a recipe with a `dented` geometry.
