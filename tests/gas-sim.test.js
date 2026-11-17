@@ -82,8 +82,22 @@ test('a bake with velocity keeps the exact bytes it had before positions were lo
   assert.equal(hash.digest('hex'), 'af906fb809df1d869d7008851c1325dbdddda7eb223e4838ca249c63d8ccaf9d');
 });
 
-test('the plume rises over the first second', () => {
-  const bake = bakeGasSim({ ...SMALL, frames: 24 });
+// The default small bake, shared by the plume, burning and timing tests: the frames before frame 24 do not depend on how many frames are asked
+// for, so one 36 frame bake serves all three.
+let defaultBakePromise = null;
+let defaultBakeSeconds = 0;
+function defaultSmallBake() {
+  defaultBakePromise ??= Promise.resolve().then(() => {
+    const started = performance.now();
+    const bake = bakeGasSim({ ...SMALL, frames: 36 });
+    defaultBakeSeconds = (performance.now() - started) / 1000;
+    return bake;
+  });
+  return defaultBakePromise;
+}
+
+test('the plume rises over the first second', async () => {
+  const bake = await defaultSmallBake();
   const early = densityCentroidHeight(bake.frames[5], bake);
   const late = densityCentroidHeight(bake.frames[23], bake);
   assert.ok(late > early + 0.5, `the smoke centroid went from ${early.toFixed(2)} m to ${late.toFixed(2)} m`);
@@ -137,8 +151,8 @@ test('vorticity confinement makes the silhouette more ragged', () => {
   assert.ok(confinedRoughness > smoothRoughness * 1.3, `roughness ${smoothRoughness.toFixed(2)} without, ${confinedRoughness.toFixed(2)} with confinement`);
 });
 
-test('burning makes flame and heat that die away', () => {
-  const bake = bakeGasSim({ ...SMALL, frames: 36 });
+test('burning makes flame and heat that die away', async () => {
+  const bake = await defaultSmallBake();
   const peak = frame => Math.max(...frame.flame);
   assert.ok(peak(bake.frames[3]) > 0.05, 'the burst burns');
   assert.ok(peak(bake.frames[35]) < peak(bake.frames[3]) * 0.2, 'the flame dies away');
@@ -189,10 +203,9 @@ test('bakeGasSimToGrids registers one grid per frame that a grid volume can play
   assert.throws(() => bakeGasSimToGrids({}, ''), /namePrefix/);
 });
 
-test('a 32 cubed bake of 24 frames takes a few seconds', t => {
-  const started = performance.now();
-  bakeGasSim({ ...SMALL, frames: 24 });
-  t.diagnostic(`32^3 x 24 frames: ${((performance.now() - started) / 1000).toFixed(2)} s`);
+test('a 32 cubed bake of 36 frames takes a few seconds', async t => {
+  await defaultSmallBake();
+  t.diagnostic(`32^3 x 36 frames: ${defaultBakeSeconds.toFixed(2)} s`);
 });
 
 test('detail 0 leaves the bake byte for byte as it was and detail adds small puffs without moving the cloud', () => {
