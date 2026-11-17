@@ -1,0 +1,62 @@
+name: Probe 1760
+on:
+  push:
+    branches: [1760-avx512-override]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      LP_NATIVE_VECTOR_WIDTH: '256'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - name: Work out the addon cache key
+        id: addon-key
+        run: |
+          rustc_line=$(cd node_modules/@codepawlhq/cook && rustc --version)
+          node scripts/cook-addon-cache-key.mjs "$RUNNER_OS" "$RUNNER_ARCH" "$rustc_line" | tee -a "$GITHUB_OUTPUT"
+      - id: addon-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/@codepawlhq/cook/build
+          key: ${{ steps.addon-key.outputs.key }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.addon-cache.outputs.cache-hit != 'true'
+        with:
+          workspaces: node_modules/@codepawlhq/cook
+      - if: steps.addon-cache.outputs.cache-hit != 'true'
+        run: npm run cook:build
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mesa-vulkan-drivers vulkan-tools ffmpeg
+          grep -m1 'model name' /proc/cpuinfo
+          grep -o -m1 'avx512[a-z]*' /proc/cpuinfo | sort -u | tr '\n' ' ' || true
+          npm run build
+          node scripts/build-mcp.mjs
+      - name: Variants
+        run: |
+          files="tests/native-texture-mips.test.js tests/native-light-tree-kernel.test.js tests/native-albedo-reference.test.js tests/native-instancing-equivalence.test.js tests/native-job-materials.test.js"
+          opts="--test-concurrency=2 --import ./scripts/test-hang-guard.mjs --test-timeout=300000"
+          run_variant() {
+            name="$1"; shift
+            echo "=== variant $name"
+            env "$@" node --test $opts $files > "variant-$name.log" 2>&1
+            echo "exit $?"
+            grep -E "^# (pass|fail)|^not ok|^    not ok" "variant-$name.log" | head -20 || true
+          }
+          run_variant default A=1
+          run_variant avx2 GALLIUM_OVERRIDE_CPU_CAPS=avx2
+          run_variant avx GALLIUM_OVERRIDE_CPU_CAPS=avx
+          run_variant noavx512 GALLIUM_OVERRIDE_CPU_CAPS=noavx512f
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: variants-${{ matrix.runner }}
+          path: variant-*.log
