@@ -61,6 +61,14 @@ function checkNativePackage(imported) {
     return { reason: `renderer.backend "native" cannot find the binary of ${NATIVE_PACKAGE}: ${error.message}` };
   }
   if (!addonPath) return { reason: `renderer.backend "native" needs the built binary of ${NATIVE_PACKAGE} (npm run build in that package, or COOK_ADDON_PATH for a build elsewhere).` };
+  // A package newer than the pinned one checks the addon's build info on load; its message (stale addon, wrong platform) is the reason as written.
+  if (typeof imported.module.loadNativeAddon === 'function') {
+    try {
+      imported.module.loadNativeAddon();
+    } catch (error) {
+      return { reason: error.message };
+    }
+  }
   const limits = clampLimitsByEngine(DEFAULT_ENGINE_LIMITS, checked.description.limits);
   return { tracer: checked.engine, description: checked.description, limits };
 }
@@ -125,31 +133,10 @@ function readChunkedManifest(manifest, capacity, caller) {
 }
 
 /**
- * Reads every table of a chunked export (the `manifest` of splitExportForChunks) and returns the export with its `tables` as
- * bytes, which traceFrameNative takes like the base64 of a one-message export. `readChunk(name, offset)` resolves with the
- * base64 of one chunk. No single string holds a whole table, so the scene is bounded by memory, not by a message.
- */
-export async function collectExportChunks(manifest, readChunk, { capacity } = {}) {
-  const { chunks, exported, capacityUse } = readChunkedManifest(manifest, capacity, 'collectExportChunks');
-  const tables = {};
-  for (const [name, byteLength] of Object.entries(chunks.tables)) {
-    const bytes = new Uint8Array(byteLength);
-    for (let offset = 0; offset < byteLength; offset += chunks.chunkBytes) {
-      const chunk = Buffer.from(await readChunk(name, offset), 'base64');
-      const expectedLength = Math.min(chunks.chunkBytes, byteLength - offset);
-      if (chunk.length !== expectedLength) {
-        throw new RangeError(`The native scene export sent ${chunk.length} bytes of table "${name}" at offset ${offset}, expected ${expectedLength}. The page changed the export while it was read.`);
-      }
-      bytes.set(chunk, offset);
-    }
-    tables[name] = bytes;
-  }
-  return { ...exported, tables, ...(capacityUse ? { capacityUse } : {}) };
-}
-
-/**
- * The same result as collectExportChunks for a page that holds the tables as one Blob, back to back in manifest order.
- * `readBlob(byteLength)` resolves with all of its bytes; each table is copied out into a buffer of its own.
+ * Reads every table of a chunked export (the `manifest` of splitExportForChunks) from a page that holds them as one Blob, back to
+ * back in manifest order, and returns the export with its `tables` as bytes, which traceFrameNative takes like the base64 of a
+ * one-message export. `readBlob(byteLength)` resolves with all of its bytes; each table is copied out into a buffer of its own.
+ * No single string holds a table, so the scene is bounded by memory, not by a message.
  */
 export async function collectExportBlob(manifest, readBlob, { capacity } = {}) {
   const { chunks, exported, capacityUse } = readChunkedManifest(manifest, capacity, 'collectExportBlob');
@@ -174,14 +161,29 @@ export async function collectExportBlob(manifest, readBlob, { capacity } = {}) {
  * when the read ends, whether it succeeded or not. `capacity` (from readNativeCapacity) makes a scene the adapter cannot hold
  * fail before its tables are read.
  */
-export async function fetchNativeExport(page, input, { capacity, session: givenSession } = {}) {
+export async function fetchNativeExport(page, input, { capacity, session } = {}) {
   const maximumTriangles = chunkedTriangleBound(capacity?.maxUniqueTriangles);
   const manifest = await page.evaluate(request => window.__agentPreview.exportNativeScene(request), { ...input, chunked: true, maximumTriangles });
+  return readHeldNativeExport(page, manifest, {
+    blobExpression: 'window.__agentPreview.nativeExportBlob()',
+    release: () => window.__agentPreview.releaseNativeExport(),
+    capacity,
+    session,
+  });
+}
+
+/**
+ * Reads the chunked export a page holds, given the `manifest` it answered with (fetchNativeExport and the render-file CLI both
+ * end here). `blobExpression` evaluates to the Blob of the tables in the page and `release` runs there when the read ends,
+ * whether it succeeded or not. The Blob comes over the DevTools stream of `session` (made and detached here when none is
+ * passed); `capacity` fails a scene the adapter cannot hold before any byte is read.
+ */
+export async function readHeldNativeExport(page, manifest, { blobExpression, release, capacity, session: givenSession }) {
   const session = givenSession ?? await page.context().newCDPSession(page);
   try {
-    return await collectExportBlob(manifest, byteLength => readBlobBytes(session, 'window.__agentPreview.nativeExportBlob()', byteLength), { capacity });
+    return await collectExportBlob(manifest, byteLength => readBlobBytes(session, blobExpression, byteLength), { capacity });
   } finally {
-    await page.evaluate(() => window.__agentPreview.releaseNativeExport()).catch(() => {});
+    await page.evaluate(release).catch(() => {});
     if (!givenSession) await session.detach().catch(() => {});
   }
 }
