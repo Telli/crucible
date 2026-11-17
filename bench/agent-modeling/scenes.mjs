@@ -86,6 +86,13 @@ const FINDINGS_CHECKS = [
   { kind: 'centreAt', node: 'statue', position: STATUE_CENTRE },
 ];
 
+const ASK_USER_PIN_CHECKS = [
+  { kind: 'lint' },
+  { kind: 'parts', min: 3, max: 3 },
+  { kind: 'materialOf', node: 'statue', red: true, label: 'the pinned statue is red' },
+  { kind: 'materialOf', node: 'plinth', red: false, label: 'the plinth is not recoloured' },
+];
+
 export const SCENE_TASKS = [
   {
     id: 'camera-closeup',
@@ -155,6 +162,16 @@ colour so it turns warmer (red up, blue down) between time 0 and time 4. ${FINIS
     checks: SUNSET_CHECKS,
   },
   {
+    // The answer comes from bench/agent-modeling/ask-user-pin.json: run.mjs hands it to the server as CRUCIBLE_ASK_USER_FIXTURE.
+    id: 'ask-user-pin',
+    askUserFixture: 'ask-user-pin.json',
+    startRecipe: stageRecipe(),
+    ownPreamble: true,
+    prompt: `${PLAIN_PREAMBLE} ${STAGE} A person has pinned one spot on the picture of this scene and left a note about a change to make there.
+Read their pin with scene_ask_user (it returns the part under the pin and their note), then make that change to that part and nothing else. ${FINISH}`,
+    checks: ASK_USER_PIN_CHECKS,
+  },
+  {
     id: 'film-reveal',
     startRecipe: stageRecipe(),
     ownPreamble: true,
@@ -217,6 +234,11 @@ export const SCENE_REFERENCES = {
       ],
     },
   }),
+  'ask-user-pin': (() => {
+    const recipe = stageRecipe();
+    recipe.materials = recipe.materials.map(material => (material.id === 'bronze' ? { id: 'bronze', color: [0.85, 0.12, 0.1] } : material));
+    return recipe;
+  })(),
   'film-reveal': stageRecipe({
     motion: {
       duration: 6,

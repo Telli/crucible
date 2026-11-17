@@ -34,6 +34,7 @@ import { countFixRounds, isMcpRender, isMcpWrite } from './fix-rounds.mjs';
 import { scoreLookSafely } from './look.mjs';
 import { classifyZeroCalls } from './zero-calls.mjs';
 import { PROMPT_PREAMBLE, TASKS, taskById, taskPrompt } from './tasks.mjs';
+import { askUserEnvironment } from './ask-user-environment.mjs';
 
 const repository = resolve(import.meta.dirname, '../..');
 const MCP_SERVER_NAME = 'crucible';
@@ -65,9 +66,11 @@ const runName = options.resume ?? options['run-name'] ?? `${new Date().toISOStri
 const rawDirectory = join(repository, 'artifacts', 'agent-modeling', runName);
 const resultsDirectory = join(repository, 'bench', 'agent-modeling', 'results');
 
-function mcpConfig(assetDirectory) {
+function mcpConfig(assetDirectory, task) {
+  const environment = askUserEnvironment(task);
   return { mcpServers: { [MCP_SERVER_NAME]: {
     command: process.execPath,
+    ...(environment ? { env: environment } : {}),
     args: [join(repository, 'scripts', 'mcp-server.mjs'), '--backend', options.backend, '--memory', '192', '--branches', options.branches, '--relations', options.relations, '--findings', options.findings, ...(assetDirectory ? ['--assets', assetDirectory] : [])],
   } } };
 }
@@ -175,7 +178,7 @@ async function runTask(task, attempt) {
       await mkdir(assetDirectory);
       await copyFile(join(repository, 'tests', 'fixtures', 'RobotExpressive.glb'), join(assetDirectory, 'robot.glb'));
     }
-    await writeFile(configPath, JSON.stringify(mcpConfig(assetDirectory)));
+    await writeFile(configPath, JSON.stringify(mcpConfig(assetDirectory, task)));
     const text = taskPrompt(task);
     const prompt = task.ownPreamble ? text : `${PROMPT_PREAMBLE}\n\n${text}`;
     const skillPromptPath = await writeSkillPromptFile(workingDirectory, await skillPromptFor(skillMode, task, repository));
