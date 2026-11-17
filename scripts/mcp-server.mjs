@@ -663,7 +663,7 @@ const motion = z.strictObject({
     motionTrack('camera', 'roll', finite, finite),
     motionTrack('geometry', 'oceanTime', finite.min(-1e6).max(1e6), finite),
     lookTrack,
-  ], { error: motionTrackUnionMessage })).max(128),
+  ], { error: motionTrackUnionMessage })).max(128).optional().describe('Keyframe tracks; leave out for a motion made only of drivers, ik or constraints.'),
 }).describe('One absolute-time procedural clip. Local node transforms propagate through parents. Cubic tangents are derivatives per second. Backend checks references, duplicate tracks, 2048 total keys and every sampled pose.');
 const physicsBody = z.strictObject({
   node: identifier.describe('Root node with a geometry; the collider is fitted to it and the body drives its pose.'),

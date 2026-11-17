@@ -24,7 +24,7 @@ function boxRecipe(drivers) {
     materials: [{ id: 'white', color: [1, 1, 1], emission: 1, emissiveColor: [1, 1, 1] }],
     nodes: [{ id: 'box', geometry: 'cube', material: 'white' }],
     camera: { eye: [0, 0, 8], target: [0, 0, 0], fov: 40 },
-    motion: { duration: 2, tracks: [], drivers },
+    motion: { duration: 2, drivers },
   };
 }
 
@@ -102,4 +102,14 @@ test('scene_create takes a light driver target and names what a camera eye drive
   const refused = await client.callTool({ name: 'scene_create', arguments: { recipe: boxRecipe([{ target: { kind: 'camera', property: 'eye' }, expression: 1 }]) } });
   assert.equal(refused.isError, true);
   assert.match(refused.content.find(item => item.type === 'text').text, /camera eye needs a component/);
+});
+
+test('scene_create takes a driver-only motion without tracks and refuses a motion with neither tracks nor drivers', async () => {
+  const client = await sharedServer();
+  const driverOnly = boxRecipe([fovDriver]);
+  assert.equal(Object.hasOwn(driverOnly.motion, 'tracks'), false);
+  await call(client, 'scene_create', { recipe: driverOnly });
+  const refused = await client.callTool({ name: 'scene_create', arguments: { recipe: { ...boxRecipe([]), motion: { duration: 2 } } } });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content.find(item => item.type === 'text').text, /at least one track or driver/);
 });
