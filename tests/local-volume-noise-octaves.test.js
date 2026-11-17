@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { resolveLocalVolumes, localVolumeProfile, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_NOISE_OCTAVES } from '../src/local-volumes.js';
 import { localVolumeNoise, localVolumeFractalNoise } from '../src/local-volume-noise.js';
 import { createPostFragment, createLocalVolumeCompositeFragment, SHAPE_ONLY_STEP, NOISE_OCTAVES_STEP } from '../src/post.js';
-import { assertWebGpuLocalVolumes } from '../src/path-tracer-webgpu-local-volumes.js';
+import { assertWebGpuLocalVolumes, webGpuVolumeFeatures } from '../src/path-tracer-webgpu-local-volumes.js';
 import '../src/fog-shader.js';
 
 const SPHERE = { shape: 'sphere', center: [0, 0, 0], radius: 1, falloff: 0.8, noiseAmount: 0.8, noiseScale: 2 };
@@ -90,8 +90,9 @@ test('a frame without octaves compiles the shader it had, and a frame with them 
   assert.match(createLocalVolumeCompositeFragment(false, 'shape', true), /localVolumeFractalNoise/);
 });
 
-test('the WebGPU path tracer refuses octaves and names the backend that draws them', () => {
+test('the WebGPU path tracer draws octaves (#1785): it accepts them and compiles the fractal noise in only for a scene that has them', () => {
   const scene = { localVolumes: resolveLocalVolumes([{ ...SPHERE, noiseOctaves: 2 }]) };
-  assert.throws(() => assertWebGpuLocalVolumes(scene), /localVolumes\[0\]\.noiseOctaves .*backend "cpu"/);
-  assert.doesNotThrow(() => assertWebGpuLocalVolumes({ localVolumes: resolveLocalVolumes([SPHERE]) }));
+  assert.doesNotThrow(() => assertWebGpuLocalVolumes(scene));
+  assert.equal(webGpuVolumeFeatures(scene.localVolumes).hasNoiseOctaves, true);
+  assert.equal(webGpuVolumeFeatures(resolveLocalVolumes([SPHERE])).hasNoiseOctaves, false);
 });
