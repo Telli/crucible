@@ -62,7 +62,7 @@ function outlineAnswer(topic, branchName, schema) {
   const known = branches ? [...branches.keys()] : Object.keys(ownProperties);
   const sharedField = branches && [...branches.values()].some(branch => Object.hasOwn(branch.properties ?? {}, branchName));
   const fieldNote = sharedField ? ` ${branchName} is a field of those branches, not a branch: open one branch to see it.` : '';
-  throw new Error(`Topic ${topic} has no ${branches ? 'branch' : 'field'} ${branchName}. ${branches ? 'Branches' : 'Fields'}: ${known.join(', ') || 'none'}.${fieldNote}`);
+  throw new TopicEntryError(`Topic ${topic} has no ${branches ? 'branch' : 'field'} ${branchName}. ${branches ? 'Branches' : 'Fields'}: ${known.join(', ') || 'none'}.${fieldNote}`);
 }
 
 /** A near miss of a topic name: a leading "scene." is dropped, and a name that contains or is contained by exactly one topic (uvs for meshUv) stands for it. */
@@ -104,6 +104,16 @@ function suggestTopics(name, allNames) {
   }).slice(0, 3);
 }
 
+/** The dotted topics (meshEdit.uv_unwrap) whose branch is the given name, for a bare op name or the wrong plural form. */
+function branchTopicsNamed(branchName, outlineSources) {
+  const found = [];
+  for (const [topic, schema] of outlineSources) {
+    const branches = unionBranches(inputJsonSchema(schema));
+    if (branches?.has(branchName)) found.push(`${topic}.${branchName}`);
+  }
+  return found.slice(0, MAX_SUGGESTIONS);
+}
+
 /** The topics a caller can ask for, by name. */
 export function capabilityTopicNames(capabilities, outlineSources) {
   const names = {
@@ -117,11 +127,22 @@ export function capabilityTopicNames(capabilities, outlineSources) {
 /** The most topics one scene_capabilities call may list. */
 export const MAX_TOPICS_PER_CALL = 8;
 
-/** Thrown when a topic name matches nothing; the note names the entry and what it may have meant. */
-class UnknownTopicError extends Error {
-  constructor(note, allNames) {
-    super(`${note} Topics: ${allNames.join(', ')}.`);
+/** The most unknown entries a partial list answer reports, and the most suggestions each one carries. */
+const MAX_REPORTED_UNKNOWN = 4;
+const MAX_SUGGESTIONS = 3;
+
+/** Thrown when one entry of a topic request cannot be answered; the note says why and what it may have meant. */
+class TopicEntryError extends Error {
+  constructor(note, suffix = '') {
+    super(`${note}${suffix}`);
     this.note = note;
+  }
+}
+
+/** Thrown when a topic name matches nothing; the message also lists every topic. */
+class UnknownTopicError extends TopicEntryError {
+  constructor(note, allNames) {
+    super(note, ` Topics: ${allNames.join(', ')}.`);
   }
 }
 
@@ -147,7 +168,7 @@ function answerOneTopic(capabilities, topic, names, outlineSources) {
   const source = outlineSources.get(name);
   const found = [notes, runtime, source].some(value => value !== undefined);
   if (!found) {
-    const suggestions = suggestTopics(requestedName, allNames);
+    const suggestions = [...new Set([...suggestTopics(requestedName, allNames), ...branchTopicsNamed(requestedName, outlineSources)])].slice(0, MAX_SUGGESTIONS);
     const didYouMean = suggestions.length ? ` Did you mean ${suggestions.join(' or ')}?` : '';
     throw new UnknownTopicError(`Unknown topic ${topic}.${didYouMean}`, allNames);
   }
@@ -158,7 +179,9 @@ function answerOneTopic(capabilities, topic, names, outlineSources) {
   if (branchName === undefined) return { topic: answeredTopic, value: content };
   const entries = content !== null && typeof content === 'object' ? content : {};
   if (!Object.hasOwn(entries, branchName)) {
-    throw new Error(`Topic ${name} has no entry ${branchName}. Entries: ${Object.keys(entries).join(', ') || 'none'}.`);
+    const opTopics = branchTopicsNamed(branchName, outlineSources);
+    const opHint = opTopics.length ? ` ${branchName} is a branch: ask ${opTopics.join(' or ')}.` : '';
+    throw new TopicEntryError(`Topic ${name} has no entry ${branchName}. Entries: ${Object.keys(entries).join(', ') || 'none'}.${opHint}`);
   }
   return { topic: answeredTopic, value: entries[branchName] };
 }
@@ -176,20 +199,22 @@ function checkTopicList(topics) {
 function answerTopicList(capabilities, topics, names, outlineSources) {
   checkTopicList(topics);
   const answers = {};
-  const unknownNotes = [];
+  const unanswered = [];
   for (const topic of topics) {
     try {
       answers[topic] = answerOneTopic(capabilities, topic, names, outlineSources);
     } catch (error) {
-      if (!(error instanceof UnknownTopicError)) throw error;
-      unknownNotes.push(error.note);
+      if (!(error instanceof TopicEntryError)) throw error;
+      unanswered.push(error.note);
     }
   }
-  if (unknownNotes.length) {
-    const allNames = [...names.scene, ...names.runtime, ...names.schemas];
-    throw new Error(`${unknownNotes.join(' ')} Topics: ${allNames.join(', ')}.`);
+  if (unanswered.length === 0) return { answers };
+  // One bad name does not fail the call: the valid topics answer and the rest are listed beside them.
+  if (Object.keys(answers).length > 0) {
+    return { answers, unknown: unanswered.slice(0, MAX_REPORTED_UNKNOWN), ...(unanswered.length > MAX_REPORTED_UNKNOWN ? { moreUnknown: unanswered.length - MAX_REPORTED_UNKNOWN } : {}), use: 'Call scene_capabilities with no topic for the list of topic names.' };
   }
-  return { answers };
+  const allNames = [...names.scene, ...names.runtime, ...names.schemas];
+  throw new Error(`${unanswered.join(' ')} Topics: ${allNames.join(', ')}.`);
 }
 
 /** The index with no topic, the detail of one topic, or { answers } keyed by name for a list of topics. */
