@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmod, copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -31,33 +31,17 @@ const jobs = join(workDirectory, 'jobs');
 await mkdir(assets);
 await mkdir(outputDirectory, { recursive: true });
 
-async function downloadBounded(url, maximumBytes) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Downloading ${url} failed with HTTP ${response.status}. Check the network and that the file still exists.`);
-  }
-  const declaredBytes = Number(response.headers.get('content-length'));
-  if (declaredBytes > maximumBytes) {
-    throw new Error(`${url} declares ${declaredBytes} bytes, over the ${maximumBytes} byte limit. Check that FOX_URL still points at the Fox model.`);
-  }
-  const chunks = [];
-  let receivedBytes = 0;
-  for await (const chunk of response.body) {
-    receivedBytes += chunk.length;
-    if (receivedBytes > maximumBytes) {
-      throw new Error(`${url} sent more than the ${maximumBytes} byte limit. Check that FOX_URL still points at the Fox model.`);
-    }
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
+// curl writes the file, so the bytes never pass through this script before the hash check, and --max-filesize bounds the size.
+const foxPath = join(assets, 'fox.glb');
+const download = spawnSync('curl', ['--fail', '--silent', '--show-error', '--location', '--max-filesize', String(FOX_MAXIMUM_BYTES), '--output', foxPath, FOX_URL], { encoding: 'utf8' });
+if (download.status !== 0) {
+  throw new Error(`Downloading ${FOX_URL} failed (curl exit ${download.status}): ${download.stderr || download.error}. Check the network, that curl is installed and that the file is under ${FOX_MAXIMUM_BYTES} bytes.`);
 }
-
-const foxBytes = await downloadBounded(FOX_URL, FOX_MAXIMUM_BYTES);
-const assetId = createHash('sha256').update(foxBytes).digest('hex');
+const assetId = createHash('sha256').update(await readFile(foxPath)).digest('hex');
 if (assetId !== FOX_SHA256) {
+  await rm(foxPath);
   throw new Error(`The downloaded Fox.glb has sha256 ${assetId}, expected ${FOX_SHA256}. Check the file at ${FOX_URL} and update FOX_SHA256 only if the new file is the same fox.`);
 }
-await writeFile(join(assets, 'fox.glb'), foxBytes);
 
 let browserPath = process.env.CHROME_PATH;
 if (browserPath && process.env.PROOF_CHROME_FLAGS) {
