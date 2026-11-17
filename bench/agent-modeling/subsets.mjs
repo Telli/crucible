@@ -32,12 +32,16 @@ export function parseList(text) {
   return (text ?? '').split(',').map(item => item.trim()).filter(Boolean);
 }
 
-/** The task ids a run selects. --tasks, --kinds and --topics add to each other (a union); none given selects every task, in suite order. */
-export function selectTasks({ tasks, kinds, topics }, benchTasks) {
+/**
+ * The task ids a run selects. --tasks, --kinds and --topics add to each other (a union); none given selects every task, in suite order.
+ * --tasks also accepts the ids in `optionalTaskIds` (tasks that exist but stay out of the default run); they come after the suite tasks, in the order named.
+ */
+export function selectTasks({ tasks, kinds, topics }, benchTasks, optionalTaskIds = []) {
   const wantedTasks = parseList(tasks);
   const wantedKinds = parseList(kinds);
   const wantedTopics = parseList(topics);
-  const knownIds = benchTasks.map(task => task.id);
+  const suiteIds = benchTasks.map(task => task.id);
+  const knownIds = [...suiteIds, ...optionalTaskIds.filter(id => !suiteIds.includes(id))];
   const knownKinds = [...new Set(benchTasks.map(task => task.kind))];
   const unknownIds = wantedTasks.filter(id => !knownIds.includes(id));
   if (unknownIds.length) throw new RangeError(`Unknown task ${unknownIds.join(', ')}. Valid tasks: ${knownIds.join(', ')}.`);
@@ -50,10 +54,12 @@ export function selectTasks({ tasks, kinds, topics }, benchTasks) {
     const detail = untagged.length ? ` ${untagged.join(', ')} is a scene_capabilities topic that no bench task exercises yet.` : '';
     throw new RangeError(`Unknown topic ${unknownTopics.join(', ')}.${detail} Topics with a bench task: ${taggedTopics.join(', ')}.`);
   }
-  if (!wantedTasks.length && !wantedKinds.length && !wantedTopics.length) return knownIds;
-  return benchTasks
+  if (!wantedTasks.length && !wantedKinds.length && !wantedTopics.length) return suiteIds;
+  const selectedSuiteIds = benchTasks
     .filter(task => wantedTasks.includes(task.id) || wantedKinds.includes(task.kind) || (task.topics ?? []).some(topic => wantedTopics.includes(topic)))
     .map(task => task.id);
+  const selectedOptionalIds = wantedTasks.filter(id => !suiteIds.includes(id));
+  return [...selectedSuiteIds, ...new Set(selectedOptionalIds)];
 }
 
 /** What the changed paths ask of the bench: { full, fullPaths, kinds, topics, unmapped }. */
