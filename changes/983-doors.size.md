@@ -1,0 +1,1 @@
+- entry:vehicle: 976 bytes gzip for `hingedDoorSwing`, the torque-driven hinge swing of a damaged door (damping, a stop at maxAngle with a bounce, a rest, and the door transform about the hinge line), which the addon did not have (#983). It is opt-in and only ships in the vehicle addon entry.
