@@ -52,15 +52,57 @@ test('a string topic keeps its shape, and the index says a list is allowed', asy
   assert.match(index.structuredContent.how, /list of up to 8 names/);
 });
 
-test('every unknown entry of a list is named with its own suggestion, in one error', async context => {
+test('a list with unknown entries answers the valid ones and reports each unknown with its suggestion', async context => {
   const client = await connectClient(context);
   const result = await ask(client, { topic: ['geometres', 'meshEdit.inset_region', 'materialFeilds'] });
+  assert.notEqual(result.isError, true);
+  const { answers, unknown } = result.structuredContent;
+  assert.deepEqual(Object.keys(answers), ['meshEdit.inset_region']);
+  const single = await ask(client, { topic: 'meshEdit.inset_region' });
+  assert.deepEqual(answers['meshEdit.inset_region'], single.structuredContent);
+  assert.equal(unknown.length, 2);
+  assert.match(unknown[0], /Unknown topic geometres\. Did you mean geometries\?/);
+  assert.match(unknown[1], /Unknown topic materialFeilds\. Did you mean materialFields\?/);
+});
+
+// Issue 1929: Haiku sent select and mesh beside valid topics and lost the whole answer.
+test('the unknown names beside valid topics stay bounded', async context => {
+  const client = await connectClient(context);
+  const topic = ['meshUv', 'bogusa', 'bogusb', 'bogusc', 'bogusd', 'boguse', 'bogusf'];
+  const result = await ask(client, { topic });
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(Object.keys(result.structuredContent.answers), ['meshUv']);
+  assert.equal(result.structuredContent.unknown.length, 4);
+  assert.equal(result.structuredContent.moreUnknown, 2);
+  assert.doesNotMatch(JSON.stringify(result.structuredContent.unknown), /Topics: /);
+});
+
+test('a list where nothing is known still fails, with every topic named once', async context => {
+  const client = await connectClient(context);
+  const result = await ask(client, { topic: ['bogusa', 'bogusb'] });
   assert.equal(result.isError, true);
-  const text = result.content[0].text;
-  assert.match(text, /Unknown topic geometres\. Did you mean geometries\?/);
-  assert.match(text, /Unknown topic materialFeilds\. Did you mean materialFields\?/);
-  assert.doesNotMatch(text, /Unknown topic meshEdit/);
-  assert.equal(text.match(/Topics: /g).length, 1);
+  assert.match(result.content[0].text, /Unknown topic bogusa\..*Unknown topic bogusb\./);
+  assert.equal(result.content[0].text.match(/Topics: /g).length, 1);
+});
+
+test('a bad branch of a valid topic in a list is reported beside the other answers', async context => {
+  const client = await connectClient(context);
+  const result = await ask(client, { topic: ['meshUv', 'meshEdit.no_such_op'] });
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(Object.keys(result.structuredContent.answers), ['meshUv']);
+  assert.match(result.structuredContent.unknown[0], /Topic meshEdit has no branch no_such_op/);
+});
+
+test('a bare op name or the plural meshEdits form names the dotted meshEdit.<op> topic', async context => {
+  const client = await connectClient(context);
+  const bare = await ask(client, { topic: 'uv_unwrap' });
+  assert.equal(bare.isError, true);
+  assert.match(bare.content[0].text, /Did you mean [^?]*meshEdit\.uv_unwrap/);
+  const plural = await ask(client, { topic: 'meshEdits.uv_unwrap' });
+  assert.equal(plural.isError, true);
+  assert.match(plural.content[0].text, /uv_unwrap is a branch: ask .*meshEdit\.uv_unwrap/);
+  const inList = await ask(client, { topic: ['meshUv', 'uv_unwrap'] });
+  assert.match(inList.structuredContent.unknown[0], /meshEdit\.uv_unwrap/);
 });
 
 test('a list is bounded and holds no repeats', async context => {
