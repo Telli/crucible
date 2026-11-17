@@ -54,6 +54,10 @@ const splats = await createGaussianSplatsAsync(data, options);
 - The header checks, size limits and count limit run first and reject exactly as in the sync functions. `createGaussianSplatsAsync` takes `matrix` and `maximumCount` too.
 - Measured with `node bench/gaussian-splats/async-block.mjs` on 1,000,000 generated splats: the longest block drops from about 275 ms to about 22 ms, and the total time is the same (about 255 ms). The sort order buffers `createGaussianSplatsAsync` allocates at the end are not sliced.
 
+## Hand-built data
+
+Data written by code, not parsed, is checked at the call. `count` must be a whole number, `positions` and `scales` need `count * 3` values (Float32Array or Float64Array), `rotations` `count * 4` (w, x, y, z) and `colors` `count * 4` bytes (Uint8Array, starting on a 4-byte boundary of its buffer). A longer array is fine, a shorter or missing one throws an error that names the field, the length it needs and the length it got. `matrix` and the options object must be left out or be a 16-number array and an object; `null` throws. The same checks run in `createGaussianSplatsAsync` before any splat is packed.
+
 ## What it draws
 
 - Each splat is a screen-space quad shaped by its 3D covariance, projected through the camera as in the original paper. Colour is the stored colour, as 3DGS viewers show it, not converted from sRGB. The opacity falls off as a Gaussian toward the quad edge.
