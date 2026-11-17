@@ -1,1 +1,0 @@
-- scene:agent-scene+lazy: 209 bytes gzip for the `catalog` line of the texture sequence topic, the `catalog` field name and its advice error, so one folder name replaces thousands of frame IDs in a recipe (415,855 bytes down to 173 for the catalog listing of 2,700 frames).

@@ -1,1 +1,0 @@
-- `@codepawlhq/crucible-denoise-oidn` is now published to npm beside Crucible, so OIDN installs with an npm install of Crucible (#1327)

@@ -1,1 +1,0 @@
-- `bakeGasSim` takes `detail` (0 to 1, default 0): a noise upres of each frame's smoke density, so a coarse sim breaks into puffs and gaps below its cell size; 0 keeps the bytes of every existing bake (#1735)

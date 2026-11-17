@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { previewCallTimeoutMs, recipeHasGridVolume, operationsAddGridVolume } from './agent-evaluation-timeout.mjs';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { totalmem } from 'node:os';
@@ -86,8 +87,6 @@ const PAGE_HANDOFF_TIMEOUT_MS = 4 * EVALUATION_TIMEOUT_MS;
 const QUERY_ONLY_TIMEOUT_MS = 120000;
 /** A bake runs on a worker for up to its own limit, so a call that bakes gets that much more than a plain call. */
 const BAKE_EVALUATION_TIMEOUT_MS = EVALUATION_TIMEOUT_MS + BAKE_WORKER_MAXIMUM_SECONDS * 1000;
-/** The first draw of a grid volume compiles its shader, which took 23 to 29 s on a loaded GPU, so an add-explosion apply (which adds one) gets twice a plain call. */
-const GRID_VOLUME_EVALUATION_TIMEOUT_MS = 2 * EVALUATION_TIMEOUT_MS;
 
 /** The last set-bake among the operations decides: a bake object adds one, null clears it. Undefined when there is none. */
 function bakeAfterOperations(operations) {
@@ -1215,7 +1214,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await boot();
         const sessionId = randomUUID();
         const createInput ={ recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) };
-        const result = await evaluate('create', createInput, page, recipe?.bake ? BAKE_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS);
+        const result = await evaluate('create', createInput, page, previewCallTimeoutMs({ bakes: Boolean(recipe?.bake), addsGridVolume: recipeHasGridVolume(recipe), plainTimeoutMs: EVALUATION_TIMEOUT_MS, bakeTimeoutMs: BAKE_EVALUATION_TIMEOUT_MS }));
         registerCreatedScene(sessionId, result, Boolean(recipe?.bake));
         return result;
       }, { recoversFailedRuntime: true });
@@ -1296,8 +1295,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const placedValue = gameAssets?.recipe ?? input.operations;
         await assertSceneAssetsFitAfterEdit(input.sessionId, placedValue);
         const applyInput = { ...input, ...(await motionSources(motions, placedValue)), ...(await placedAssetData(placedValue)), ...(gameAssets ? { assetNeeds: gameAssets.recipe } : {}) };
-        const addsGridVolume = (input.operations ?? []).some(operation => operation.type === 'add-explosion');
-        const applyTimeout = rebakes ? BAKE_EVALUATION_TIMEOUT_MS : addsGridVolume ? GRID_VOLUME_EVALUATION_TIMEOUT_MS : EVALUATION_TIMEOUT_MS;
+        const applyTimeout = previewCallTimeoutMs({ bakes: rebakes, addsGridVolume: operationsAddGridVolume(input.operations), plainTimeoutMs: EVALUATION_TIMEOUT_MS, bakeTimeoutMs: BAKE_EVALUATION_TIMEOUT_MS });
         const applied = await invoke('apply', applyInput, applyTimeout);
         if (bakeAfter ?? hadBake) bakedSessionIds.add(input.sessionId);
         else bakedSessionIds.delete(input.sessionId);
