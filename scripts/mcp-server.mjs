@@ -29,6 +29,7 @@ import { bakeCacheDirectory, createExplosionBakeCache } from '../src/explosion-b
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from '../src/light-limits.js';
 import { currentFormatName, warnLegacyOnce } from '../src/legacy-names.js';
 import { annotateViewHtml, clientSupportsMcpApps, ANNOTATE_VIEW_URI, MCP_APPS_MIME_TYPE } from './annotate-app-view.mjs';
+import { loadAskUserFixture, describeAskUserFixture } from './ask-user-fixture.mjs';
 import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
 
 function acceptLegacyFormat(value) {
@@ -1151,7 +1152,10 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   if (bakeCache) setExplosionBakeStore(createExplosionBakeCache(bakeCache));
   // Not awaited: the check fills in while the client connects and never delays or fails the start.
   const updateCheck = startUpdateCheck({ currentVersion: version });
-  const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl }), { version, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
+  // Test-only: answers for scene_ask_user from a file, set by whoever starts the server (#1956). Read once, here.
+  const askUserFixture = loadAskUserFixture();
+  if (askUserFixture) console.error(describeAskUserFixture(askUserFixture));
+  const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl, askUserFixture }), { version, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
     transport: new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 2 * 1024 * 1024 }),
     onerror: error => console.error(`Crucible MCP error: ${error.message}`),
   });

@@ -11,8 +11,8 @@ import { taskById } from '../bench/agent-modeling/tasks.mjs';
 
 const failedKinds = grade => grade.results.filter(result => !result.pass).map(result => result.label ?? result.kind);
 
-test('the bench has 20 to 30 tasks, each known to the suite, covering every kind of work', () => {
-  assert.ok(BENCH_TASKS.length >= 20 && BENCH_TASKS.length <= 30, `${BENCH_TASKS.length} tasks`);
+test('the bench has 20 to 32 tasks, each known to the suite, covering every kind of work', () => {
+  assert.ok(BENCH_TASKS.length >= 20 && BENCH_TASKS.length <= 32, `${BENCH_TASKS.length} tasks`);
   assert.equal(new Set(BENCH_TASKS.map(task => task.id)).size, BENCH_TASKS.length);
   for (const { id } of BENCH_TASKS) assert.ok(taskById(id).checks.length > 0, id);
   for (const id of SMOKE_TASKS) assert.ok(BENCH_TASKS.some(task => task.id === id), id);

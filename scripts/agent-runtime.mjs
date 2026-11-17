@@ -131,7 +131,7 @@ export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg',
 
 export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', browser: browserPath, memory = 192, assets: assetRoot, packs: packsRoot,
   jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, gpuQueue, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
-  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem() } = {}) {
+  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem(), askUserFixture } = {}) {
   if (!['gpu', 'cpu'].includes(backend)) {
     throw new RangeError('backend must be gpu or cpu.');
   }
@@ -1348,6 +1348,11 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       const timeoutSeconds = input.timeoutSeconds ?? ANNOTATE_LIMITS.defaultTimeoutSeconds;
       const frame = await captureAnnotateFrame(input.sessionId, width, height);
       if (closing) throw new Error('The agent runtime is closing.');
+      if (askUserFixture) {
+        // Test-only (#1956): the fixture stands in for the person, and its marks go through the same pick as a browser answer.
+        const marks = validateMarks(askUserFixture.marks, { width: frame.width, height: frame.height, maxMarks });
+        return resolveSentMarks({ sessionId: input.sessionId, frame, marks, image: frame.data });
+      }
       if (input.inline) {
         // The nonce goes to the view in the result's _meta only, never in the content the model reads: the model cannot call the
         // app-only submit tool with a person's marks because it never sees the nonce.
