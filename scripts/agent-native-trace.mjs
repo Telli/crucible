@@ -61,6 +61,14 @@ function checkNativePackage(imported) {
     return { reason: `renderer.backend "native" cannot find the binary of ${NATIVE_PACKAGE}: ${error.message}` };
   }
   if (!addonPath) return { reason: `renderer.backend "native" needs the built binary of ${NATIVE_PACKAGE} (npm run build in that package, or COOK_ADDON_PATH for a build elsewhere).` };
+  // A package newer than the pinned one checks the addon's build info on load; its message (stale addon, wrong platform) is the reason as written.
+  if (typeof imported.module.loadNativeAddon === 'function') {
+    try {
+      imported.module.loadNativeAddon();
+    } catch (error) {
+      return { reason: error.message };
+    }
+  }
   const limits = clampLimitsByEngine(DEFAULT_ENGINE_LIMITS, checked.description.limits);
   return { tracer: checked.engine, description: checked.description, limits };
 }
