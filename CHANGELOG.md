@@ -307,6 +307,15 @@
 - `hingedDoorSwing` in `crucible/addons/vehicle` swings a damaged door open on its hinge: a torque-driven, damped swing that stops at `maxAngle` with a small bounce and rests (#983)
 - `detachedPartFlight` in `crucible/addons/vehicle` gives a loose part torn off by a crash a seeded flight: launch from the impulse above its threshold, tumble, bounce and rest on the ground (#983)
 - `crucible/addons/vehicle` dents vehicle parts on impact, finds the moment a drive meets a wall and lists the parts that tear off, and recipes get a `dented` geometry (#983)
+- `scene_capabilities` answers `meshEdit` and `meshStack` with each op's arguments (`name:type`, `?` for optional) and the face, edge and vertex rules once, so one call is enough before editing a mesh (#1929)
+- The agent bench can answer `scene_ask_user` from a test-only fixture file (`CRUCIBLE_ASK_USER_FIXTURE`, set only by whoever starts the server), with a new `ask-user-pin` task, so tool schema changes to that tool can be benched (#1956)
+- `scene_ask_user`: a pin on a part whose material other parts also use returns `materialSharedWith` (and `materialSharedWithMore`) like a lasso part, so an agent gives the part its own material before recolouring it; the bench has a new task, `ask-user-pin-shared` (#1972).
+- Auto-framed camera and the preview ground of a skinned asset now use the drawn (skinned) bounds instead of the bind-pose bounds (#1976).
+- The render-crucible-media skill matches 0.21.0 again: quality tiers, estimate and budget, transparent `stillCount` sequences, grid volumes in Cook, streamed texture sequences, caches, new limits and error rows (#1979)
+- Audit the scene skill for 0.21.0: fix stale claims (motion duration range, emissiveColor tracks, ask-user wording), add explosion, retro, vehicle damage, pins and lasso, review page, splat palette and turntable how-tos in a new effects-and-feedback reference, and steer agents to the asset catalog, `scene_capabilities` and `scene_look` before guessing, boxing real objects or rendering (#1979).
+- The showcase page has a Made with Crucible section for picked community work, and Show and tell asks for the credit, the licence and permission to feature it (#1980)
+- `scene_ask_user`: the annotate page has a lasso tool; a lasso mark comes back with `kind` `"lasso"`, its `points` and the `parts` under the outline (most covered first, with `coverage`, `edge` below 0.15 and `materialSharedWith` for a material also used outside the mark), and the test-only answer fixture accepts `lasso` marks (#922).
+- `scene_ask_user` takes an optional `motionTime`: the person marks the scene at that moment of its authored motion, and the answer's `view.motionTime` names it (#922).
 
 ## 0.20.0
 
