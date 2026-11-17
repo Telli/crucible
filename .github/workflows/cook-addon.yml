@@ -343,6 +343,7 @@ on:
       - 'src/view-transform.js'
       - 'src/volume-grid-sequence.js'
       - 'src/volume-grid.js'
+      - 'src/volume-step-integral.js'
       - 'src/volumetric.js'
       - 'src/water-mirror-glsl.js'
       - 'src/world-material-shader.js'

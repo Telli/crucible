@@ -7,6 +7,7 @@ import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
 import { GRID_BORDER_VOXELS, GRID_MOTION_TIME_STEP, HALF_FLOAT_MAXIMUM, bakedGridEmission, floatToHalf, gridUnitVelocity } from './volume-grid.js';
+import { STEP_INTEGRAL_GLSL } from './volume-step-integral.js';
 import { drawMeshVolumes } from './mesh-volume-pass.js';
 import { FogFieldTexture, createFogLightBuffers, packFogLights, volumeShadowAmbient, DEFAULT_FLOW_STRENGTH, DEFAULT_FLOW_PERIOD, resolveFogDetail, fogUsesDetail } from './fog-field.js';
 
@@ -520,7 +521,7 @@ vec3 localGridBlackbody(int index, vec3 position) {
   vec3 paddedSize = vec3(textureSize(localGridEmissionTexture, 0));
   return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
 }
-` : ''}${motion ? LOCAL_MOTION_POSITION_FUNCTION : ''}// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
+` : ''}${motion ? LOCAL_MOTION_POSITION_FUNCTION : ''}${STEP_INTEGRAL_GLSL}// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
 // code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and
 // the emission strength applied. The light fades to nothing with the source, so a cold cell gives none.
 vec3 localVolumeRampLight(int index, float value) {
@@ -700,8 +701,9 @@ ${withGrid ? `    if (localVolumeGrid[nearest].x > 0.5) {
         vec3 position = origin + direction * (entry + (float(step) + gridJitter) * gridStepSize);
         ${motion ? LOCAL_MOTION_SAMPLE_POSITION : 'vec3 cell = localGridSample(nearest, position);'}
         vec3 extinction = localVolumeAbsorption[nearest].rgb * (cell.x * gridStepSize);
-        radiance += transmittance * (localVolumeEmission[nearest].rgb * cell.z + localGridBlackbody(nearest, ${motion ? 'samplePosition' : 'position'}) * localVolumeGrid[nearest].z) * gridStepSize;
-        if (localVolumeRampSetup[nearest].y > 0.5) radiance += transmittance * localVolumeRampLight(nearest, localVolumeRampSetup[nearest].x < 1.5 ? cell.x : (localVolumeRampSetup[nearest].x < 2.5 ? cell.y : cell.z)) * gridStepSize;
+        vec3 gridStepLight = (localVolumeEmission[nearest].rgb * cell.z + localGridBlackbody(nearest, ${motion ? 'samplePosition' : 'position'}) * localVolumeGrid[nearest].z) * gridStepSize;
+        if (localVolumeRampSetup[nearest].y > 0.5) gridStepLight += localVolumeRampLight(nearest, localVolumeRampSetup[nearest].x < 1.5 ? cell.x : (localVolumeRampSetup[nearest].x < 2.5 ? cell.y : cell.z)) * gridStepSize;
+        radiance += transmittance * gridStepLight * volumeStepIntegral(extinction);
         if (gridScatter > 0.0 && cell.x > 0.0) radiance += transmittance * (gridScatter * (1.0 - exp(-extinction))) * localVolumeInScatterGrid(nearest, position, direction);
         transmittance *= exp(-extinction);
         blurDepth += localVolumeSteps[nearest].w * dot(extinction, vec3(0.3333));
@@ -729,18 +731,20 @@ ${withGrid ? `    if (localVolumeGrid[nearest].x > 0.5) {
     for (int step = 0; step < ${noiseOctaves ? LOCAL_VOLUME_MAXIMUM_OCTAVE_STEPS : 32}; step++) {
       if (step >= steps) break;
       vec3 stepExtinction = vec3(0.0);
+      vec3 stepLight = vec3(0.0);
       for (int lane = 0; lane < 2; lane++) {
         int member = lane == 0 ? nearest : partner;
         if (member < 0) break;
         vec3 position = origin + direction * (entry + (float(step) + (lane == 0 ? jitter : jitterSecond)) * stepSize);
         float profile = localVolumeProfile(member, position, true);
-        radiance += transmittance * localVolumeEmission[member].rgb * (profile * stepSize);
-        if (localVolumeRampSetup[member].y > 0.5) radiance += transmittance * localVolumeRampLight(member, profile) * stepSize;
+        stepLight += localVolumeEmission[member].rgb * (profile * stepSize);
+        if (localVolumeRampSetup[member].y > 0.5) stepLight += localVolumeRampLight(member, profile) * stepSize;
         vec3 extinction = localVolumeAbsorption[member].rgb * (profile * stepSize);
         if (localVolumeSteps[member].z > 0.0 && profile > 0.0) radiance += transmittance * (localVolumeSteps[member].z * (1.0 - exp(-extinction))) * localVolumeInScatterShape(member, position, direction);
         stepExtinction += extinction;
         blurDepth += localVolumeSteps[member].w * dot(extinction, vec3(0.3333));
       }
+      radiance += transmittance * stepLight * volumeStepIntegral(stepExtinction);
       transmittance *= exp(-stepExtinction);
     }
     blurEntry = min(blurEntry, entry);
