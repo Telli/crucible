@@ -541,3 +541,52 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Reach: command `npm run preflight`
 - Source: `package.json`
 - Drive: none: not a page
+
+### `npm-test-affected`
+- Name: Runs every test file that mentions the files you changed, or a module that re-exports them
+- Surface: CLI
+- Reach: command `npm run test:affected`
+- Source: `scripts/test-affected.mjs`
+- Drive: none: not a page
+
+### `npm-test-fast`
+- Name: Runs a deterministic 10 percent of the test files, seeded by the branch name
+- Surface: CLI
+- Reach: command `npm run test:fast`
+- Source: `scripts/test-fast.mjs`
+- Drive: none: not a page
+
+### `npm-test-mutation-check`
+- Name: Reverts your src, bin and packages changes, runs a test file and fails when it still passes
+- Surface: CLI
+- Reach: command `npm run test:mutation-check`
+- Source: `scripts/test-mutation-check.mjs`
+- Drive: none: not a page
+
+### `npm-smoke-line-art-nodes`
+- Name: Smoke test of per-node line art settings and the objectId node map, on a GPU
+- Surface: CLI
+- Reach: command `npm run smoke:line-art-nodes`
+- Source: `scripts/smoke-line-art-nodes.mjs`
+- Drive: none: not a page
+
+### `npm-smoke-agent-texture-sequence-streamed`
+- Name: Smoke test of a material map.sequence of more than 64 frames that streams frame by frame
+- Surface: CLI
+- Reach: command `npm run smoke:agent-texture-sequence-streamed`
+- Source: `scripts/smoke-agent-texture-sequence-streamed.mjs`
+- Drive: none: not a page
+
+### `open-pr`
+- Name: Opens a pull request that passes the PR metadata check, pushing evidence pictures for the new number
+- Surface: CLI
+- Reach: command `node scripts/open-pr.mjs`
+- Source: `scripts/open-pr.mjs`
+- Drive: none: not a page
+
+### `push-evidence`
+- Name: Pushes pictures and clips to the evidence-pr-<number> branch without touching the working tree
+- Surface: CLI
+- Reach: command `node scripts/push-evidence.mjs`
+- Source: `scripts/push-evidence.mjs`
+- Drive: none: not a page
