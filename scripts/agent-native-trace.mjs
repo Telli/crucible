@@ -349,18 +349,10 @@ const NOTEWORTHY_COMPILE_SECONDS = 1;
 /**
  * The sentence for a frame that spent seconds compiling its kernel, or undefined when it did not. Cook compiles one kernel per
  * scene variant (a scene with no emitter is a different variant from a lit one), and the first trace of a variant pays for it.
- * `pipelineCache` is Cook's report of its on-disk cache: "warm", "cold", "off" or "unsupported" (absent on an older Cook).
  */
-export function describeKernelCompile({ compileSeconds, pipelineCache }) {
+export function describeKernelCompile({ compileSeconds }) {
   if (!(compileSeconds >= NOTEWORTHY_COMPILE_SECONDS)) return undefined;
-  const spent = `This frame spent ${compileSeconds.toFixed(1)} s compiling the kernel variant its scene needs, which is not trace time.`;
-  const reuse = 'Later frames of this job reuse it.';
-  if (pipelineCache === 'warm' || pipelineCache === 'cold') {
-    return `${spent} ${reuse} Cook saved it in its pipeline cache, so the next process that renders the same scene variant skips the compile.`;
-  }
-  if (pipelineCache === 'off') return `${spent} ${reuse} Cook's pipeline cache is off (COOK_PIPELINE_CACHE=off), so every new process compiles it again.`;
-  if (pipelineCache === 'unsupported') return `${spent} ${reuse} This adapter has no pipeline cache, so every new process compiles it again.`;
-  return `${spent} ${reuse}`;
+  return `This frame spent ${compileSeconds.toFixed(1)} s compiling the kernel variant its scene needs, which is not trace time. Later frames of this job reuse it.`;
 }
 
 /**
@@ -421,11 +413,10 @@ async function traceOneFrameNative({ tracer, exported, width, height, samples, b
   normalizeNormals(features.normal);
   const averageSamples = traced.averageSamples ?? samples;
   const estimatedNoise = estimateRelativeNoise({ color: features.color, variance: features.variance, averageSamples });
-  const kernelCompileNote = describeKernelCompile({ compileSeconds: traced.compileSeconds, pipelineCache: traced.pipelineCache });
+  const kernelCompileNote = describeKernelCompile({ compileSeconds: traced.compileSeconds });
   const report = { width, height, samples, bounces, seed, denoised: false, denoiser: 'none', threads: 1, backend: 'native',
     gpu: traced.adapter, nativeBackend: traced.backend, nativeFeatures: traced.features, setupSeconds: traced.setupSeconds, compileSeconds: traced.compileSeconds,
     uploadSeconds: traced.uploadSeconds, accelerationBuildSeconds: traced.accelerationBuildSeconds,
-    ...(traced.pipelineCache === undefined ? {} : { pipelineCache: traced.pipelineCache }),
     ...(traced.tracedSeconds === undefined ? {} : { gpuTraceSeconds: traced.tracedSeconds }),
     ...(kernelCompileNote ? { kernelCompileNote } : {}),
     kernel, averageSamples, noiseThreshold, ...(estimatedNoise === null ? {} : { estimatedNoise }), triangles: exported.triangles, inputBytes: tableBytes(tables), ...(exported.instances === undefined ? {} : { instances: exported.instances }),
