@@ -1,0 +1,3 @@
+- scene:agent-scene: the lasso mark lets a person mean "these parts" in one gesture instead of pinning each part; the point-in-polygon, outline check and part resolution add about 116 bytes gzip, an agent-facing capability of issue 922.
+- scene:agent-scene+lazy: the same code, about 107 bytes gzip.
+- goal:agent-scene: the lasso is an agent-facing capability with no smaller home, since pick resolution and the mark validator already live in src/agent-annotate.js.
