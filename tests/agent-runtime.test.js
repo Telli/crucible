@@ -112,8 +112,8 @@ async function importedBindings(source) {
 
 const ANNOTATE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
 const ANNOTATE_CAMERA = { eye: [0, 0, 10], target: [0, 0, 0], up: [0, 1, 0], fov: 60, near: 0.1, far: 100 };
-function annotateFrameOf({ width, height }, revision) {
-  return { mimeType: 'image/png', data: ANNOTATE_PNG, metadata: { width, height, revision }, width, height, camera: ANNOTATE_CAMERA };
+function annotateFrameOf({ width, height }, revision, motionTime) {
+  return { mimeType: 'image/png', data: ANNOTATE_PNG, metadata: { width, height, revision, motionTime: motionTime ?? null }, width, height, camera: ANNOTATE_CAMERA };
 }
 // A scene with one lamp on the view axis: a ray that starts left of the axis misses it, the others hit it.
 function hitNearestLamp(ray) {
@@ -179,7 +179,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
         const { width, height } = this.viewport;
         return { mimeType: 'image/png', data: Buffer.alloc(Math.round(width * height * lookBytesPerPixel)).toString('base64'), metadata: { width, height } };
       }
-      if (method === 'annotateFrame') return annotateFrameOf(this.viewport, sourceRevision);
+      if (method === 'annotateFrame') return annotateFrameOf(this.viewport, sourceRevision, input.motionTime);
       if (method === 'pickMarks') return { revision: sourceRevision, marks: describeMarks(validateMarks(input.marks, input), input.camera, { width: input.width, height: input.height, raycast: hitNearestLamp }) };
       if (method === 'reviewResult') return { mimeType: 'image/png',
         data: Buffer.alloc(oversize ? 1024 * 1024 + 1 : 16).toString('base64') };
@@ -690,6 +690,19 @@ runTest('an inline scene_ask_user hands its nonce to the view only and resolves 
   assert.equal(sent.image, png);
   assert.deepEqual(Object.keys(sent.content).sort(), ['marks', 'outcome', 'revision', 'sessionId', 'view']);
   await assert.rejects(runtime.submitAskUser({ nonce, marks: [{ x: 5, y: 5 }], image: png }), /only accepts the marks of an open annotate view/);
+  await runtime.close();
+});
+
+runTest('scene_ask_user draws the view at motionTime, names it in the answer and puts the scene back there to pick the marks (#922)', async () => {
+  const { runtime, sessionId, sourceCalls } = await reviewRuntimeHarness({ contextOverrides: { runAnnotateSession: async () => ({ outcome: 'sent', image: ANNOTATE_PNG, marks: [{ x: 384, y: 256, note: 'too bright now' }] }) } });
+  const sent = await runtime.askUser({ sessionId, motionTime: 2.5 });
+  assert.equal(sourceCalls.find(call => call.method === 'annotateFrame').input.motionTime, 2.5);
+  assert.equal(sourceCalls.find(call => call.method === 'pickMarks').input.motionTime, 2.5);
+  assert.equal(sent.content.view.motionTime, 2.5);
+  assert.equal(sent.content.marks[0].partId, 'lamp');
+  const still = await runtime.askUser({ sessionId });
+  assert.equal('motionTime' in still.content.view, false, 'a view with no time leaves the field out');
+  assert.equal('motionTime' in sourceCalls.filter(call => call.method === 'pickMarks').at(-1).input, false);
   await runtime.close();
 });
 

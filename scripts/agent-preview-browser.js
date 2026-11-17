@@ -1330,14 +1330,16 @@ window.__agentPreview = {
     return { diagnostics: viewProblems(record, record.scene.camera, undefined, { placement: true }) };
   },
   // One frame for scene_ask_user: the look, plus the camera it was drawn with so the marks can be turned into rays later.
-  annotateFrame({ sessionId }) {
-    const frame = this.look({ sessionId });
+  annotateFrame({ sessionId, motionTime }) {
+    const frame = this.look({ sessionId, motionTime });
     const camera = Object.fromEntries(Object.entries(requireSession(sessionId).scene.camera)
       .map(([field, value]) => [field, ArrayBuffer.isView(value) ? Array.from(value) : value]));
     return { ...frame, width: canvas.width, height: canvas.height, camera };
   },
-  async pickMarks({ sessionId, camera, marks, width, height }) {
+  async pickMarks({ sessionId, camera, marks, width, height, motionTime }) {
     const record = requireSession(sessionId);
+    // The marks were made at this time: put the scene back there so a look taken since does not move the parts under the pins.
+    if (motionTime !== undefined) sampleMotionTime(record.scene, motionTime);
     if (!allAgentSceneModulesLoaded()) await loadAllAgentSceneModules();
     const clean = validateMarks(marks, { width, height });
     const query = sceneQueryFor(record);
