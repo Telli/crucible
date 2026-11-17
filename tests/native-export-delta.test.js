@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
-import { collectExportBlob, fetchNativeExport } from '../scripts/agent-native-trace.mjs';
+import { collectExportBlob, createNativeTracerLocator, fetchNativeExport } from '../scripts/agent-native-trace.mjs';
 import {
   DELTA_GAP_BYTES, DELTA_MAXIMUM_RANGES, applyExportDelta, changedRanges, deltaByteLength, deltaPieces, planExportDelta,
 } from '../scripts/native-export-delta.js';
@@ -230,7 +230,7 @@ async function renderClip(workDirectory, label, deltaSwitch) {
       if (['completed', 'cancelled', 'failed'].includes(record.state)) break;
       await delay(200);
     }
-    assert.equal(record.state, 'completed', record.error);
+    assert.equal(record.state, 'completed', `the ${label} job ${record.state}: ${record.error ?? JSON.stringify(record)}`);
     const result = (await call('scene_render_result', { jobId, response_format: 'detailed' })).structuredContent;
     const videoPath = join(workDirectory, `${label}.mp4`);
     await copyFile(result.artifacts[0].path, videoPath);
@@ -240,8 +240,27 @@ async function renderClip(workDirectory, label, deltaSwitch) {
   }
 }
 
+// Why this machine cannot trace on the native backend, or null when it can: no Cook, no built addon, an addon that does not load
+// (the same look the job runner makes) or no Vulkan ray query adapter (the capacity read needs one).
+async function nativeTracingUnavailable() {
+  if (!cookInstalled) return 'Cook is not installed';
+  const found = await createNativeTracerLocator().find();
+  if (!found.tracer) return found.reason;
+  try {
+    if (typeof found.tracer.readAdapterCapacity === 'function') found.tracer.readAdapterCapacity();
+  } catch (error) {
+    return `no Vulkan ray query adapter (${error.message})`;
+  }
+  return null;
+}
+
 test('a native clip with moving particles is byte for byte the same video with the delta on and off',
-  { skip: (!cookInstalled && 'Cook is not installed') || (!hasBuild && 'run npm run build:lib first') || (!hasBrowser && 'no Chrome'), timeout: 900000 }, async context => {
+  { skip: (!hasBuild && 'run npm run build:lib first') || (!hasBrowser && 'no Chrome'), timeout: 900000 }, async context => {
+    const unavailable = await nativeTracingUnavailable();
+    if (unavailable) {
+      context.skip(`native tracing cannot run here: ${unavailable}`);
+      return;
+    }
     const workDirectory = await mkdtemp(join(tmpdir(), 'crucible-export-delta-'));
     context.after(() => rm(workDirectory, { recursive: true, force: true }));
     const full = await renderClip(workDirectory, 'full', 'off');
