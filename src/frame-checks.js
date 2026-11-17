@@ -335,7 +335,7 @@ export function pathTracerFindingsLimit() {
     severity: 'info',
     target: 'renderer',
     message: 'This job is path traced. The tracer writes the lit image only, so exposure findings and the object ID, depth and normal passes are unavailable; the page draws no raster frame to read them from.',
-    fix: 'Check exposure with scene_look or a raster job (leave renderer out), then trace. Part findings (framing, floating, intersecting, textures, z-fighting) are reported as usual.',
+    fix: 'Check exposure with scene_look or a raster job (leave renderer out), then trace. On a daylit interior the traced frame comes out about 1 to 2 stops brighter than the raster one at the same effects.exposure, because the tracer adds the light the room bounces around and the raster fill is lower (docs/path-tracer.md, Exposure): lower effects.exposure for the trace instead of raising it. Part findings (framing, floating, intersecting, textures, z-fighting) are reported as usual.',
   };
 }
 
