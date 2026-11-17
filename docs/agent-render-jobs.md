@@ -260,6 +260,7 @@ await jobs.close();
 The defaults are 24 fps and one second.
 Images sample `animation.start` without requiring the default duration to fit the clip.
 Stills and videos require the entire requested animation range to fit the selected clip.
+A scene with no clips rejects `settings.animation` with an error that says so; drop `animation` or add a clip first.
 Renderer time defaults to `{ start: 0, rate: 1 }` and remains separate from animation sampling.
 
 `progress(update)` accepts monotonic `frames` and a `maximumPendingFrames` value of zero or one.

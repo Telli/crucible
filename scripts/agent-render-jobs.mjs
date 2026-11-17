@@ -108,7 +108,7 @@ export function normalizeJobSettings(input, clips, recipe) {
   return settingsFrom(input, clips, recipe);
 }
 
-function settingsFrom(input, clips, recipe) {
+function settingsFrom(input, clips = [], recipe) {
   objectKeys(input, ['kind', 'width', 'height', 'fps', 'duration', 'animation', 'motion', 'rendererTime', 'passes', 'renderer', 'timeline', 'audio', 'encoder', 'transparent', 'format', 'multilayer', 'region', 'quality', 'stillCount'], 'settings');
   if (!['image', 'stills', 'video'].includes(input.kind)) throw new TypeError('kind must be image, stills or video.');
   const largeFrame = input.kind === 'image';
@@ -178,6 +178,7 @@ function settingsFrom(input, clips, recipe) {
   }
   if (input.animation !== undefined) {
     objectKeys(input.animation, ['clip', 'start'], 'animation');
+    if (clips.length === 0) throw new RangeError('animation needs an animation clip, and this scene has none. Drop animation from the settings, or add a clip to the scene first.');
     const clip = boundedNumber(input.animation.clip, 0, clips.length - 1, 'clip', true);
     const start = boundedNumber(input.animation.start ?? 0, 0, clips[clip].duration, 'animation start');
     if (input.kind !== 'image' && start + duration > clips[clip].duration) throw new RangeError('Animation range exceeds the selected clip duration.');
