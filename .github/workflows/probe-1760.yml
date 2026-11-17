@@ -42,19 +42,19 @@ jobs:
           node scripts/build-mcp.mjs
       - name: Variants
         run: |
-          files="tests/native-texture-mips.test.js tests/native-light-tree-kernel.test.js tests/native-albedo-reference.test.js tests/native-instancing-equivalence.test.js tests/native-job-materials.test.js"
+          files="tests/native-texture-mips.test.js tests/native-light-tree-kernel.test.js tests/native-albedo-reference.test.js tests/native-instancing-equivalence.test.js tests/native-job-materials.test.js tests/native-camera-environment.test.js tests/native-texture-sampler.test.js"
           opts="--test-concurrency=2 --import ./scripts/test-hang-guard.mjs --test-timeout=300000"
           run_variant() {
             name="$1"; shift
             echo "=== variant $name"
-            env "$@" node --test $opts $files > "variant-$name.log" 2>&1
-            echo "exit $?"
-            grep -E "^# (pass|fail)|^not ok|^    not ok" "variant-$name.log" | head -20 || true
+            timeout 1200 env "$@" node --test $opts $files > "variant-$name.log" 2>&1
+            echo "exit $? at $SECONDS s"
+            grep -E "^. (pass|fail) |✖|not ok" "variant-$name.log" | head -20 || true
           }
           run_variant default A=1
           run_variant avx2 GALLIUM_OVERRIDE_CPU_CAPS=avx2
           run_variant avx GALLIUM_OVERRIDE_CPU_CAPS=avx
-          run_variant noavx512 GALLIUM_OVERRIDE_CPU_CAPS=noavx512f
+          run_variant nopt GALLIVM_PERF=nopt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
