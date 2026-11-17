@@ -313,6 +313,56 @@ function keepOnCarSide(state, flight) {
   for (let axis = 0; axis < 3; axis++) state.velocity[axis] -= (1 + restitution) * approach * wall.normal[axis];
 }
 
+const WORLD_UP = [0, 1, 0];
+
+function crossProduct(first, second) {
+  return [
+    first[1] * second[2] - first[2] * second[1],
+    first[2] * second[0] - first[0] * second[2],
+    first[0] * second[1] - first[1] * second[0],
+  ];
+}
+
+/** The Euler angles (XYZ order) of the rotation whose columns are the three world directions of the box axes. */
+function eulerFromAxes(columns) {
+  const element = (row, column) => columns[column][row];
+  const sineY = Math.max(-1, Math.min(1, element(0, 2)));
+  const angleY = Math.asin(sineY);
+  if (Math.abs(sineY) > 0.9999999) return [Math.atan2(element(2, 1), element(1, 1)), angleY, 0];
+  return [Math.atan2(-element(1, 2), element(2, 2)), angleY, Math.atan2(-element(0, 1), element(0, 0))];
+}
+
+/** The nearest rotation that lies the box on a face: the axis closest to vertical becomes vertical, the yaw is kept. */
+function restingRotation(rotation) {
+  const columns = [0, 1, 2].map(axis => {
+    const unitAxis = [0, 0, 0];
+    unitAxis[axis] = 1;
+    return rotateByEuler(rotation, unitAxis);
+  });
+  const verticalAxis = [0, 1, 2].reduce((best, axis) => (Math.abs(columns[axis][1]) > Math.abs(columns[best][1]) ? axis : best), 0);
+  const first = (verticalAxis + 1) % 3;
+  const second = (verticalAxis + 2) % 3;
+  const up = columns[verticalAxis][1] < 0 ? [0, -1, 0] : WORLD_UP;
+  const flat = [columns[first][0], 0, columns[first][2]];
+  const flatLength = Math.hypot(...flat);
+  const firstAxis = flatLength < 1e-9 ? [1, 0, 0] : flat.map(component => component / flatLength);
+  const rebuilt = [null, null, null];
+  rebuilt[verticalAxis] = up;
+  rebuilt[first] = firstAxis;
+  rebuilt[second] = crossProduct(up, firstAxis);
+  return eulerFromAxes(rebuilt);
+}
+
+function settle(state, flight) {
+  state.velocity.fill(0);
+  state.spin.fill(0);
+  state.settled = true;
+  if (!flight.halfExtents) return;
+  state.rotation = restingRotation(state.rotation);
+  keepOnCarSide(state, flight);
+  state.position[1] = flight.groundY + reachAlong(WORLD_UP, state.rotation, flight.halfExtents);
+}
+
 function advanceFlight(state, flight, seconds) {
   const steps = Math.round(seconds / FLIGHT_STEP_SECONDS);
   for (let step = 0; step < steps && !state.settled; step++) {
@@ -320,17 +370,14 @@ function advanceFlight(state, flight, seconds) {
     for (let axis = 0; axis < 3; axis++) state.position[axis] += state.velocity[axis] * FLIGHT_STEP_SECONDS;
     for (let axis = 0; axis < 3; axis++) state.rotation[axis] += state.spin[axis] * FLIGHT_STEP_SECONDS;
     keepOnCarSide(state, flight);
-    if (state.position[1] > flight.groundY) continue;
-    state.position[1] = flight.groundY;
+    const lowestCentreHeight = flight.groundY + reachAlong(WORLD_UP, state.rotation, flight.halfExtents);
+    if (state.position[1] > lowestCentreHeight) continue;
+    state.position[1] = lowestCentreHeight;
     state.velocity[1] = -state.velocity[1] * flight.restitution;
     state.velocity[0] *= GROUND_FRICTION;
     state.velocity[2] *= GROUND_FRICTION;
     for (let axis = 0; axis < 3; axis++) state.spin[axis] *= GROUND_FRICTION;
-    if (Math.hypot(...state.velocity) < SETTLE_SPEED) {
-      state.velocity.fill(0);
-      state.spin.fill(0);
-      state.settled = true;
-    }
+    if (Math.hypot(...state.velocity) < SETTLE_SPEED) settle(state, flight);
   }
 }
 
@@ -338,7 +385,7 @@ function advanceFlight(state, flight, seconds) {
  * The flight of a loose part a hit tears off. `part` is `{ id, threshold, mass, position, size }` (N s, kg, the part's centre in
  * metres, `size` its box as three extents in metres, optional); `hit` is `{ impulse, direction, point }` from `findDriveImpact` (`point` is optional and defaults to the part's centre). Returns null when the impulse stays below the
  * threshold, so the part stays on. Otherwise it returns `{ id, launchVelocity, sample(time) }`: the part leaves mostly
- * sideways (a seeded sign, across `direction`) with a small rebound along `direction` and an up kick, tumbles, falls under gravity and bounces on the ground plane `groundY`. No corner of its box (turned by the Euler angles in XYZ order) crosses the wall plane through `point` with normal `direction`; a part with no `size` is held by its centre only.
+ * sideways (a seeded sign, across `direction`) with a small rebound along `direction` and an up kick, tumbles, falls under gravity and bounces on the ground plane `groundY` (the top of the ground, not the centre height: with a `size` the lowest corner touches it, and at rest the box lies on a face with its lowest corner exactly on `groundY`; without a `size` the centre is held at `groundY` and the rotation is not snapped). No corner of its box (turned by the Euler angles in XYZ order) crosses the wall plane through `point` with normal `direction`; a part with no `size` is held by its centre only.
  * `sample(time)` gives `{ position, rotation (Euler radians), velocity, settled }` for 0 to 30 s, and the same inputs
  * with the same `seed` give the same numbers on every run.
  */

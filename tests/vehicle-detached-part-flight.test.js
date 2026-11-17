@@ -95,3 +95,25 @@ test('a part with a size is checked and one without keeps the centre-only hold',
   assert.throws(() => detachedPartFlight({ ...BUMPER, size: [1, 1] }, WALL_HIT), /part\.size/);
   assert.ok(detachedPartFlight(BUMPER, WALL_HIT, { seed: 1 }).sample(1));
 });
+
+test('a sized part never sinks into the ground and lies on a face at rest, for 4 seeds, every 1/60 s', () => {
+  const groundY = 0.1;
+  for (const seed of [1, 2, 3, 4]) {
+    const flight = detachedPartFlight(SIZED_BUMPER, WALL_HIT, { seed, groundY });
+    for (let step = 0; step <= 10 * 60; step++) {
+      const sample = flight.sample(step / 60);
+      const lowest = Math.min(...boxCorners(sample.position, sample.rotation, SIZED_BUMPER.size).map(corner => corner[1]));
+      assert.ok(lowest >= groundY - 1e-6, `seed ${seed} step ${step} lowest corner ${lowest} is below the ground`);
+    }
+    const rest = flight.sample(30);
+    assert.equal(rest.settled, true);
+    const heights = boxCorners(rest.position, rest.rotation, SIZED_BUMPER.size).map(corner => corner[1]);
+    const lowest = Math.min(...heights);
+    const standing = Math.max(...heights) - lowest;
+    assert.ok(Math.abs(lowest - groundY) < 1e-6, `seed ${seed} rests with its lowest corner at ${lowest}`);
+    assert.ok(SIZED_BUMPER.size.some(extent => Math.abs(standing - extent) < 1e-6), `seed ${seed} rests ${standing} tall, not on a face`);
+    for (const corner of boxCorners(rest.position, rest.rotation, SIZED_BUMPER.size)) {
+      assert.ok((corner[2] - WALL_HIT.point[2]) * WALL_HIT.direction[2] >= -1e-6, `seed ${seed} rests across the wall`);
+    }
+  }
+});

@@ -1,0 +1,1 @@
+- `createGaussianSplats` takes `palette` (2 to 256 colours) and `dither` (`bayer4` or `bayer8`) to snap `alphaCut` splats to a palette for a pixel-art look (#1744)
