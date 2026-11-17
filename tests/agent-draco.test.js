@@ -53,9 +53,14 @@ async function encodeBox() {
   return { geometry, compressed, positionId, normalId };
 }
 
-async function dracoBoxGlb() {
+const SPARSE_POSITION = [7, 8, 9];
+
+async function dracoBoxGlb({ withSparse = false } = {}) {
   const { geometry, compressed, positionId, normalId } = await encodeBox();
   const pointCount = geometry.positions.length / 3;
+  const compressedChunk = padded(compressed, 0);
+  const sparseIndices = Buffer.from(new Uint16Array([0, 0]).buffer);
+  const sparseValues = Buffer.from(new Float32Array(SPARSE_POSITION).buffer);
   const document = {
     asset: { version: '2.0' },
     extensionsUsed: [DRACO_EXTENSION],
@@ -71,9 +76,17 @@ async function dracoBoxGlb() {
       { componentType: 5125, count: geometry.indices.length, type: 'SCALAR' },
     ],
     bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: compressed.length }],
-    buffers: [{ byteLength: padded(compressed, 0).length }],
+    buffers: [{ byteLength: compressedChunk.length }],
   };
-  return { geometry, bytes: glb(document, compressed) };
+  let binary = compressed;
+  if (withSparse) {
+    document.bufferViews.push({ buffer: 0, byteOffset: compressedChunk.length, byteLength: 2 });
+    document.bufferViews.push({ buffer: 0, byteOffset: compressedChunk.length + 4, byteLength: sparseValues.length });
+    document.accessors[0].sparse = { count: 1, indices: { bufferView: 1, componentType: 5123 }, values: { bufferView: 2 } };
+    binary = Buffer.concat([compressedChunk, sparseIndices, sparseValues]);
+    document.buffers[0].byteLength = binary.length;
+  }
+  return { geometry, bytes: glb(document, binary) };
 }
 
 function triangleKeys(positions, indices) {
@@ -115,6 +128,15 @@ test('a Draco GLB decodes to plain buffer views with the same triangles and no e
   assert.equal(asset.parts.length, 1);
   const decoded = asset.parts[0].geometry;
   assert.deepEqual(triangleKeys(decoded.positions, decoded.indices), triangleKeys(geometry.positions, geometry.indices));
+});
+
+test('a sparse block on a Draco accessor survives decoding and substitutes in the plain loader', async () => {
+  const { geometry, bytes } = await dracoBoxGlb({ withSparse: true });
+  const result = await decompressDracoGlb(bytes, { filename: 'sparse.glb' });
+  const asset = await parseGltf(result.bytes.buffer.slice(result.bytes.byteOffset, result.bytes.byteOffset + result.bytes.length));
+  const decoded = asset.parts[0].geometry;
+  assert.deepEqual(Array.from(decoded.positions.subarray(0, 3)), SPARSE_POSITION);
+  assert.notDeepEqual(Array.from(geometry.positions.subarray(0, 3)), SPARSE_POSITION);
 });
 
 test('the catalog lists a Draco GLB and hands the preview page a decoded file', async context => {

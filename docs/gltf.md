@@ -204,6 +204,7 @@ A flat, smooth, transmissive part with an `ior` below 1.45 (water is 1.33) also 
 A transmissive part with an `ior` of 1.45 or more, or none (glass is 1.5), is not taken for water. A vertical glass wall shows the environment only, not the building beside it.
 
 Without the matching decoder, a file that uses Draco or KTX2 fails with `Unsupported glTF extension` and the option name. Meshopt needs no option.
+A `sparse` block on an accessor of a Draco-compressed primitive is applied on top of the decoded data, as it is for any other accessor.
 Through MCP an agent cannot pass a decoder, so the server decodes Draco catalog assets itself with the optional `draco3d` package, and transcodes KTX2 textures to PNG with the Basis transcoder of the optional `three` package (base mip level only, so the GPU-compressed upload of a `ktx2` loader does not apply) ([mcp.md](mcp.md)).
 
 ### Decoders
