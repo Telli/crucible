@@ -245,6 +245,7 @@ const FLIGHT_STEP_SECONDS = 1 / 120;
 const LAUNCH_IMPULSE_PER_KILOGRAM = 100;
 const LAUNCH_UPWARD_SHARE = 0.5;
 const SPREAD_SHARE = 0.3;
+const REBOUND_SHARE = 0.2;
 const MAX_SPIN_RADIANS_PER_SECOND = 12;
 const GROUND_FRICTION = 0.6;
 const SETTLE_SPEED = 0.2;
@@ -259,18 +260,32 @@ function seededUnitSequence(seed) {
   };
 }
 
+function sidewaysOf(direction) {
+  const horizontalLength = Math.hypot(direction[0], direction[2]);
+  return horizontalLength < 1e-6 ? [1, 0, 0] : [-direction[2] / horizontalLength, 0, direction[0] / horizontalLength];
+}
+
 function launchVelocityOf(part, hit, nextUnit) {
   const direction = normalized(hit.direction);
+  const sideways = sidewaysOf(direction);
   const speed = Math.min(MAX_LAUNCH_SPEED, (hit.impulse - part.threshold) / (part.mass * LAUNCH_IMPULSE_PER_KILOGRAM));
-  const horizontalLength = Math.hypot(direction[0], direction[2]);
-  const sideways = horizontalLength < 1e-6 ? [1, 0, 0] : [-direction[2] / horizontalLength, 0, direction[0] / horizontalLength];
-  const sidewaysKick = (nextUnit() < 0.5 ? -1 : 1) * (0.5 + nextUnit() * 0.5) * SPREAD_SHARE;
-  const upwardKick = LAUNCH_UPWARD_SHARE + nextUnit() * SPREAD_SHARE;
+  const sidewaysShare = nextUnit() < 0.5 ? -1 : 1;
+  const reboundShare = REBOUND_SHARE * (0.5 + nextUnit() * 0.5);
+  const upwardShare = LAUNCH_UPWARD_SHARE + nextUnit() * SPREAD_SHARE;
   return [
-    (-direction[0] + sideways[0] * sidewaysKick) * speed,
-    (-direction[1] + upwardKick) * speed,
-    (-direction[2] + sideways[2] * sidewaysKick) * speed,
+    (sideways[0] * sidewaysShare + direction[0] * reboundShare) * speed,
+    (direction[1] * reboundShare + upwardShare) * speed,
+    (sideways[2] * sidewaysShare + direction[2] * reboundShare) * speed,
   ];
+}
+
+function keepOnCarSide(state, wall, restitution) {
+  const depth = (state.position[0] - wall.point[0]) * wall.normal[0] + (state.position[1] - wall.point[1]) * wall.normal[1] + (state.position[2] - wall.point[2]) * wall.normal[2];
+  if (depth >= 0) return;
+  for (let axis = 0; axis < 3; axis++) state.position[axis] -= depth * wall.normal[axis];
+  const approach = state.velocity[0] * wall.normal[0] + state.velocity[1] * wall.normal[1] + state.velocity[2] * wall.normal[2];
+  if (approach >= 0) return;
+  for (let axis = 0; axis < 3; axis++) state.velocity[axis] -= (1 + restitution) * approach * wall.normal[axis];
 }
 
 function advanceFlight(state, flight, seconds) {
@@ -279,6 +294,7 @@ function advanceFlight(state, flight, seconds) {
     state.velocity[1] -= flight.gravity * FLIGHT_STEP_SECONDS;
     for (let axis = 0; axis < 3; axis++) state.position[axis] += state.velocity[axis] * FLIGHT_STEP_SECONDS;
     for (let axis = 0; axis < 3; axis++) state.rotation[axis] += state.spin[axis] * FLIGHT_STEP_SECONDS;
+    keepOnCarSide(state, flight.wall, flight.restitution);
     if (state.position[1] > flight.groundY) continue;
     state.position[1] = flight.groundY;
     state.velocity[1] = -state.velocity[1] * flight.restitution;
@@ -295,9 +311,9 @@ function advanceFlight(state, flight, seconds) {
 
 /**
  * The flight of a loose part a hit tears off. `part` is `{ id, threshold, mass, position }` (N s, kg, the part's centre in
- * metres); `hit` is `{ impulse, direction }` from `findDriveImpact`. Returns null when the impulse stays below the
- * threshold, so the part stays on. Otherwise it returns `{ id, launchVelocity, sample(time) }`: the part leaves away from
- * the car, against `direction`, with a seeded sideways kick, an up kick and tumble, falls under gravity and bounces on the ground plane `groundY`.
+ * metres); `hit` is `{ impulse, direction, point }` from `findDriveImpact` (`point` is optional and defaults to the part's centre). Returns null when the impulse stays below the
+ * threshold, so the part stays on. Otherwise it returns `{ id, launchVelocity, sample(time) }`: the part leaves mostly
+ * sideways (a seeded sign, across `direction`) with a small rebound along `direction` and an up kick, tumbles, falls under gravity and bounces on the ground plane `groundY`. It never crosses the wall plane through `point` with normal `direction`.
  * `sample(time)` gives `{ position, rotation (Euler radians), velocity, settled }` for 0 to 30 s, and the same inputs
  * with the same `seed` give the same numbers on every run.
  */
@@ -311,6 +327,7 @@ export function detachedPartFlight(part, hit, { seed = 0, gravity = 9.81, ground
   requireNumber(hit.impulse, 'hit.impulse', 0, 1e9, 16800);
   const rawDirection = requireVector3(hit.direction, 'hit.direction', '[0, 0, -1]');
   if (Math.hypot(...rawDirection) < 1e-6) throw invalidField('hit.direction', rawDirection, 'a vector that is not zero, such as [0, 0, -1]');
+  if (hit.point !== undefined) requireVector3(hit.point, 'hit.point', '[0, 0.5, 2.1]');
   requireNumber(seed, 'seed', 0, 4294967295, 7);
   requireNumber(gravity, 'gravity', 0, 100, 9.81);
   requireNumber(groundY, 'groundY', -1e4, 1e4, 0);
@@ -319,7 +336,8 @@ export function detachedPartFlight(part, hit, { seed = 0, gravity = 9.81, ground
   const nextUnit = seededUnitSequence(seed);
   const launchVelocity = launchVelocityOf(part, hit, nextUnit);
   const spin = [0, 1, 2].map(() => (nextUnit() * 2 - 1) * MAX_SPIN_RADIANS_PER_SECOND);
-  const flight = { gravity, groundY, restitution };
+  const wall = { point: hit.point ?? part.position, normal: normalized(rawDirection) };
+  const flight = { gravity, groundY, restitution, wall };
   return {
     id: part.id,
     launchVelocity,
