@@ -10,7 +10,7 @@ test('a part below its threshold stays on, and one above it flies off', () => {
   const flight = detachedPartFlight(BUMPER, WALL_HIT, { seed: 7 });
   assert.equal(flight.id, 'front-bumper');
   const later = flight.sample(0.5);
-  assert.ok(later.position[2] < BUMPER.position[2] - 1, `moved ${later.position}`);
+  assert.ok(later.position[2] > BUMPER.position[2] + 1, `moved ${later.position}`);
 });
 
 test('the same seed gives the same transform, a different seed another', () => {
@@ -35,4 +35,14 @@ test('bad input says what to pass instead', () => {
   assert.throws(() => detachedPartFlight(BUMPER, { impulse: 1, direction: [0, 0, 0] }), /hit\.direction/);
   assert.throws(() => detachedPartFlight(BUMPER, WALL_HIT, { restitution: 2 }), /restitution/);
   assert.throws(() => detachedPartFlight(BUMPER, WALL_HIT).sample(31), /time/);
+});
+
+test('the part leaves away from the car, with a sideways kick and an up kick', () => {
+  for (const seed of [1, 2, 3, 4]) {
+    const [velocityX, velocityY, velocityZ] = detachedPartFlight(BUMPER, WALL_HIT, { seed }).launchVelocity;
+    const awayFromCar = velocityX * WALL_HIT.direction[0] + velocityZ * WALL_HIT.direction[2];
+    assert.ok(awayFromCar < 0, `seed ${seed} horizontal velocity dot direction ${awayFromCar}`);
+    assert.ok(velocityY > 0);
+    assert.notEqual(velocityX, 0);
+  }
 });

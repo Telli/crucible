@@ -262,11 +262,14 @@ function seededUnitSequence(seed) {
 function launchVelocityOf(part, hit, nextUnit) {
   const direction = normalized(hit.direction);
   const speed = Math.min(MAX_LAUNCH_SPEED, (hit.impulse - part.threshold) / (part.mass * LAUNCH_IMPULSE_PER_KILOGRAM));
-  const spread = () => (nextUnit() * 2 - 1) * SPREAD_SHARE;
+  const horizontalLength = Math.hypot(direction[0], direction[2]);
+  const sideways = horizontalLength < 1e-6 ? [1, 0, 0] : [-direction[2] / horizontalLength, 0, direction[0] / horizontalLength];
+  const sidewaysKick = (nextUnit() < 0.5 ? -1 : 1) * (0.5 + nextUnit() * 0.5) * SPREAD_SHARE;
+  const upwardKick = LAUNCH_UPWARD_SHARE + nextUnit() * SPREAD_SHARE;
   return [
-    (direction[0] + spread()) * speed,
-    (direction[1] + LAUNCH_UPWARD_SHARE + Math.abs(spread())) * speed,
-    (direction[2] + spread()) * speed,
+    (-direction[0] + sideways[0] * sidewaysKick) * speed,
+    (-direction[1] + upwardKick) * speed,
+    (-direction[2] + sideways[2] * sidewaysKick) * speed,
   ];
 }
 
@@ -293,8 +296,8 @@ function advanceFlight(state, flight, seconds) {
 /**
  * The flight of a loose part a hit tears off. `part` is `{ id, threshold, mass, position }` (N s, kg, the part's centre in
  * metres); `hit` is `{ impulse, direction }` from `findDriveImpact`. Returns null when the impulse stays below the
- * threshold, so the part stays on. Otherwise it returns `{ id, launchVelocity, sample(time) }`: the part leaves along
- * `direction` with a seeded sideways spread and tumble, falls under gravity and bounces on the ground plane `groundY`.
+ * threshold, so the part stays on. Otherwise it returns `{ id, launchVelocity, sample(time) }`: the part leaves away from
+ * the car, against `direction`, with a seeded sideways kick, an up kick and tumble, falls under gravity and bounces on the ground plane `groundY`.
  * `sample(time)` gives `{ position, rotation (Euler radians), velocity, settled }` for 0 to 30 s, and the same inputs
  * with the same `seed` give the same numbers on every run.
  */
