@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { MeshoptEncoder } from 'meshoptimizer';
 import { createAccessorReader } from '../src/gltf-accessors.js';
+import { decodeMeshoptViews } from '../src/gltf-meshopt.js';
 import { parseGltf } from '../src/gltf.js';
 
 const MESHOPT = 'EXT_meshopt_compression';
@@ -236,4 +237,53 @@ test('the public showcase and sample GLBs load without a decoder option', async 
   const bytes = await readFile(new URL('../public/wall-e.glb', import.meta.url));
   const asset = await parseGltf(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), { maxVertices: 500000 });
   assert.ok(asset.parts.length > 0);
+});
+
+/** One valid small view whose extension fields are then overridden, read with a decoder that counts its calls. */
+async function loadWithExtensionOverrides(overrides, mode = 'ATTRIBUTES') {
+  const byteStride = mode === 'ATTRIBUTES' ? 4 : 2;
+  const count = mode === 'TRIANGLES' ? 3 : 4;
+  const { encoded, view } = compressedView({ data: new Uint8Array(count * byteStride), count, byteStride, mode });
+  const bufferView = view(0);
+  Object.assign(bufferView.extensions[MESHOPT], overrides);
+  let decoderCalls = 0;
+  const countingDecoder = { ready: Promise.resolve(), decodeGltfBuffer() { decoderCalls++; } };
+  await decodeMeshoptViews([bufferView], () => encoded, countingDecoder);
+  return decoderCalls;
+}
+
+const FIELD = String.raw`bufferViews\[0\]\.extensions\.EXT_meshopt_compression\.`;
+
+test('a valid view of every mode reaches the decoder', async () => {
+  for (const mode of ['ATTRIBUTES', 'TRIANGLES', 'INDICES']) assert.equal(await loadWithExtensionOverrides({}, mode), 1, mode);
+});
+
+test('a meshopt view with a bad byteStride names the field and the allowed values without calling the decoder', async () => {
+  for (const byteStride of [3, 0, 260, 6, -4, 4.5]) {
+    await assert.rejects(loadWithExtensionOverrides({ byteStride }), new RegExp(`${FIELD}byteStride .*expected a multiple of 4 from 4 to 256 for ATTRIBUTES`), String(byteStride));
+  }
+  for (const mode of ['TRIANGLES', 'INDICES']) {
+    await assert.rejects(loadWithExtensionOverrides({ byteStride: 3 }, mode), new RegExp(`${FIELD}byteStride 3: expected 2 or 4 for ${mode}`));
+  }
+});
+
+test('a negative, fractional or non-numeric byteOffset is named instead of reaching the decoder', async () => {
+  for (const byteOffset of [-8, 1.5, '0']) {
+    await assert.rejects(loadWithExtensionOverrides({ byteOffset }), new RegExp(`${FIELD}byteOffset .*expected a non-negative safe integer`), String(byteOffset));
+  }
+});
+
+test('a zero or missing byteLength and count are named', async () => {
+  await assert.rejects(loadWithExtensionOverrides({ byteLength: 0 }), new RegExp(`${FIELD}byteLength 0: expected a positive safe integer`));
+  await assert.rejects(loadWithExtensionOverrides({ count: 0 }), new RegExp(`${FIELD}count 0: expected a positive safe integer`));
+  await assert.rejects(loadWithExtensionOverrides({ count: undefined }), new RegExp(`${FIELD}count undefined: expected a positive safe integer`));
+});
+
+test('a TRIANGLES count that is not a multiple of 3 is named', async () => {
+  await assert.rejects(loadWithExtensionOverrides({ count: 4 }, 'TRIANGLES'), new RegExp(`${FIELD}count 4: expected a multiple of 3 for TRIANGLES`));
+});
+
+test('an unknown mode or filter is named with the allowed values', async () => {
+  await assert.rejects(loadWithExtensionOverrides({ mode: 'STRIPS' }), new RegExp(`${FIELD}mode "STRIPS": expected one of ATTRIBUTES, TRIANGLES, INDICES`));
+  await assert.rejects(loadWithExtensionOverrides({ filter: 'FANCY' }), new RegExp(`${FIELD}filter "FANCY": expected one of NONE, OCTAHEDRAL, QUATERNION, EXPONENTIAL`));
 });
