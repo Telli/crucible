@@ -32,7 +32,7 @@ function gridBytesForCycles(bytes, flameTemperature) {
   return encodeVolumeGrid({ resolution: grid.resolution, size: grid.size, channels: { ...grid.channels, temperature: Uint16Array.from(remapped, floatToHalf) } });
 }
 
-/** Renders `frameIndex` of the grid volume with Cycles and returns the path of the PNG. */
+/** Renders `frameIndex` of the grid volume with Cycles and returns the path of the PNG. `floor` null draws the gas on the flat background alone. */
 export async function renderCyclesReference({ volume, frameIndex, camera, floor, floorColor, folder, width, height, samples, blender = DEFAULT_BLENDER }) {
   await mkdir(folder, { recursive: true });
   const name = volume.frames[frameIndex];
@@ -43,7 +43,7 @@ export async function renderCyclesReference({ volume, frameIndex, camera, floor,
   const spec = {
     vdb: [`${name.replace(/\.67vg$/, '')}.vdb`], frame: 0, volume: volumeFields,
     camera: { eye: camera.eye, target: camera.target, up: [0, 1, 0], fov: camera.fov },
-    floor: { y: floor, color: floorColor }, background: [0.2, 0.22, 0.25],
+    ...(floor === null ? {} : { floor: { y: floor, color: floorColor } }), background: [0.2, 0.22, 0.25],
     image: { width, height, samples, device: 'GPU' },
   };
   await writeFile(join(folder, 'spec.json'), JSON.stringify(spec, null, 2));

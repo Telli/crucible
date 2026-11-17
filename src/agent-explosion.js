@@ -246,9 +246,8 @@ function addBlastVolume(candidate, plan) {
     lightsScene: true,
   });
   environment.localVolumes = existing;
-  // The volume's own light (lightsScene) follows the fire, so the old point light and its track are gone. A stronger bloom lets the glow spill.
-  const bloom = candidate.effects.bloom ?? {};
-  candidate.effects.bloom = { ...bloom, strength: Math.max(bloom.strength ?? 0, 0.5) };
+  // The volume's own light (lightsScene) follows the fire, so the old point light and its track are gone. The bloom stays as the scene has it: raising it to 0.5
+  // made the fireball glow where Cycles has no glare, and without the raise the blast is closer to Cycles at 0.1 and 0.45 s and equal at 1.2 s (#1735).
   if (plan.motionBlur) openShutter(candidate);
 }
 

@@ -204,10 +204,10 @@ test('the MCP server finds the grids an add-explosion operation will name, so th
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
 });
 
-// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap).
+// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom).
 const FIRST_RELEASE_HASHES = new Map([
-  ['{}', 'd391923bb69c2e00dbe3cb82811dc3a8cb0f76f5f3a3d9c0ec5cd8ec39b7ac24'],
-  ['{"start":0.5,"fuel":"oily","seed":7}', '48ede2e133f804d0a35b675edbd031289702993cdbcbc60ec0872e132ec1dfc0'],
+  ['{}', 'df70567bd19d0d575a77bf3d6b8209768f859d0ac689986baa46c15075f1b7f0'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', '9c8225756d33fd331a836f0018a4c78200f1d9a55a41d91355c833eebf8f535e'],
 ]);
 
 test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {
@@ -257,6 +257,14 @@ test('by default the sparks are streaks born at start and the fireball grid carr
   assert.ok(hasGridVelocity(decodeVolumeGrid(explosionGridBytes(volume.frames.at(-1)))));
   assert.ok(hasGridVelocity(decodeVolumeGrid(explosionGridBytes(EXPLOSION_EMPTY_VELOCITY_GRID))));
   assert.equal(applyBlast(blast({ fuel: 'oily' })).recipe.particles.systems[0].count, 900);
+});
+
+test('the blast leaves the scene bloom as it is, so the fire glows only as far as its own emission (#1735)', () => {
+  const plain = applyBlast(blast()).recipe.effects.bloom;
+  assert.equal(plain.strength, 0.12);
+  const withBloom = setRecipe();
+  withBloom.effects = { bloom: { strength: 0.3 } };
+  assert.equal(applyBlast(blast(), withBloom).recipe.effects.bloom.strength, 0.3);
 });
 
 test('motionBlur takes the shutter the scene already has, and leaves the effects alone when off', () => {
