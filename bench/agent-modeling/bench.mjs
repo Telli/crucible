@@ -6,7 +6,8 @@
 //   [--tasks crate,look-fog] [--kinds look,light] [--topics relations,explosion] [--dry-run] [--suggest <base ref>] [--smoke] [--findings off] [--backend gpu|cpu] [--budget 3] [--timeout 1200] [--resume]
 //
 // --tasks, --kinds and --topics add to each other (a union of the tasks named, of the kinds and of the tasks tagged with a topic);
-// with none of them the bench runs every task. An unknown task, kind or topic is an error that lists the valid ones. --dry-run
+// with none of them the bench runs every task in suite.mjs. --tasks also takes the tasks scenes.mjs defines that the default run
+// leaves out (findings-fix). An unknown task, kind or topic is an error that lists the valid ones. --dry-run
 // prints the selected tasks and stops. --suggest <base ref> prints the bench command for the current branch's diff against that
 // ref (a full bench for the MCP server file or a skill, a subset otherwise) and stops. Bench what changed (subsets.mjs); the full
 // bench runs for those shared changes and once before a release cut.
@@ -19,7 +20,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { benchSummary, formatSummaryTable } from './bench-summary.mjs';
-import { BENCH_TASKS, SMOKE_TASKS } from './suite.mjs';
+import { BENCH_TASKS, OPTIONAL_TASK_IDS, SMOKE_TASKS } from './suite.mjs';
 import { selectTasks, subsetCommand, suggestSubset } from './subsets.mjs';
 
 const resultsDirectory = join(resolve(import.meta.dirname), 'results');
@@ -56,7 +57,7 @@ if (options.suggest) {
   process.exit(0);
 }
 const hasSelection = options.tasks || options.kinds || options.topics;
-const taskIds = options.smoke && !hasSelection ? SMOKE_TASKS : selectTasks(options, BENCH_TASKS);
+const taskIds = options.smoke && !hasSelection ? SMOKE_TASKS : selectTasks(options, BENCH_TASKS, OPTIONAL_TASK_IDS);
 if (options['dry-run']) {
   console.log(`${taskIds.length} of ${BENCH_TASKS.length} tasks: ${taskIds.join(', ')}`);
   process.exit(0);

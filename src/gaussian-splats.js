@@ -154,14 +154,55 @@ function createSplatPacker(data) {
   return { packRange, packed: { words, rows } };
 }
 
-function checkSplatInput(data, matrix, maximumCount, caller) {
+// Per-splat arrays the packer reads: how many values each splat takes and which typed arrays are accepted. colors are read
+// as one 32-bit word per splat, so they must be bytes (red, green, blue, opacity).
+const SPLAT_ARRAYS = [
+  { field: 'positions', stride: 3, types: [Float32Array, Float64Array], meaning: 'x, y, z per splat' },
+  { field: 'scales', stride: 3, types: [Float32Array, Float64Array], meaning: 'three axis lengths per splat' },
+  { field: 'rotations', stride: 4, types: [Float32Array, Float64Array], meaning: 'quaternion w, x, y, z per splat' },
+  { field: 'colors', stride: 4, types: [Uint8Array, Uint8ClampedArray], meaning: 'red, green, blue, opacity bytes per splat' },
+];
+
+function checkSplatArray(data, { field, stride, types, meaning }, caller) {
+  const values = data[field];
+  const expectedLength = data.count * stride;
+  const typeNames = types.map(type => type.name).join(' or ');
+  if (!types.some(type => values instanceof type)) {
+    throw new TypeError(`${caller} needs data.${field} as a ${typeNames} of ${expectedLength} values (${data.count} splats x ${stride}: ${meaning}), got ${values === null ? 'null' : typeof values === 'object' ? values.constructor?.name ?? 'an object' : typeof values}`);
+  }
+  if (values.length < expectedLength) {
+    throw new RangeError(`${caller} needs data.${field} to hold ${expectedLength} values (${data.count} splats x ${stride}: ${meaning}), got ${values.length}. Pass ${field} with ${stride} values for every splat, or lower data.count to ${Math.floor(values.length / stride)}`);
+  }
+  if (field === 'colors' && values.byteOffset % 4 !== 0) {
+    throw new RangeError(`${caller} needs data.colors to start on a 4-byte boundary of its buffer (byteOffset ${values.byteOffset}). Pass a copy made with colors.slice()`);
+  }
+}
+
+function resolveSplatOptions(options, caller) {
+  if (options === undefined) return {};
+  if (options === null || typeof options !== 'object') {
+    throw new TypeError(`${caller} options must be an object such as { matrix, maximumCount, alphaCut } or left out, got ${options === null ? 'null' : typeof options}`);
+  }
+  return options;
+}
+
+function resolveMatrix(matrix, caller) {
+  if (matrix === undefined) return mat4.create();
+  if (!(Array.isArray(matrix) || ArrayBuffer.isView(matrix)) || matrix.length !== 16 || !Array.from(matrix).every(Number.isFinite)) {
+    throw new TypeError(`${caller} matrix must be 16 finite numbers (a column-major 4x4 array) or left out for identity, got ${matrix === null ? 'null' : Array.isArray(matrix) || ArrayBuffer.isView(matrix) ? `${matrix.length} values` : typeof matrix}`);
+  }
+  return matrix;
+}
+
+function checkSplatInput(data, maximumCount, caller) {
   if (!(typeof maximumCount === 'number' && maximumCount > 0)) {
     throw new RangeError(`maximumCount must be a positive number (it is capped at ${MAXIMUM_SPLAT_COUNT}), got ${String(maximumCount)}`);
   }
   const limit = Math.min(maximumCount, MAXIMUM_SPLAT_COUNT);
   if (!(data?.count > 0)) throw new Error(`${caller} needs parsed splat data with at least one splat`);
+  if (!Number.isInteger(data.count)) throw new RangeError(`${caller} needs data.count to be a whole number of splats, got ${data.count}`);
   if (data.count > limit) throw new RangeError(`Gaussian splat scene holds ${data.count} splats, over the limit of ${limit}`);
-  if (matrix.length !== 16 || !Array.from(matrix).every(Number.isFinite)) throw new TypeError('matrix must be 16 finite numbers');
+  for (const description of SPLAT_ARRAYS) checkSplatArray(data, description, caller);
 }
 
 function resolveAlphaCut(alphaCut, caller) {
@@ -188,9 +229,12 @@ function buildSplats(data, matrix, packed, alphaCut) {
  * The returned object has `count`, `matrix`, `bounds` and `statistics` (`count`, `visibleCount`, `sortMilliseconds`,
  * `gpuBytes`, `cpuBytes`).
  */
-export function createGaussianSplats(data, { matrix = mat4.create(), maximumCount = GAUSSIAN_SPLAT_LIMITS.maximumCount, alphaCut } = {}) {
-  checkSplatInput(data, matrix, maximumCount, 'createGaussianSplats');
-  const resolvedAlphaCut = resolveAlphaCut(alphaCut, 'createGaussianSplats');
+export function createGaussianSplats(data, options) {
+  const resolvedOptions = resolveSplatOptions(options, 'createGaussianSplats');
+  const { maximumCount = GAUSSIAN_SPLAT_LIMITS.maximumCount } = resolvedOptions;
+  checkSplatInput(data, maximumCount, 'createGaussianSplats');
+  const matrix = resolveMatrix(resolvedOptions.matrix, 'createGaussianSplats');
+  const resolvedAlphaCut = resolveAlphaCut(resolvedOptions.alphaCut, 'createGaussianSplats');
   const { packRange, packed } = createSplatPacker(data);
   packRange(0, data.count);
   return buildSplats(data, matrix, packed, resolvedAlphaCut);
@@ -201,9 +245,11 @@ export function createGaussianSplats(data, { matrix = mat4.create(), maximumCoun
  * macrotask between slices. `onProgress(fraction)` rises to exactly 1 and an aborted `signal` rejects with an error named
  * `AbortError`. Input checks run first and reject before any splat is packed.
  */
-export async function createGaussianSplatsAsync(data, options = {}) {
-  const { matrix = mat4.create(), maximumCount = GAUSSIAN_SPLAT_LIMITS.maximumCount } = options;
-  checkSplatInput(data, matrix, maximumCount, 'createGaussianSplatsAsync');
+export async function createGaussianSplatsAsync(data, rawOptions) {
+  const options = resolveSplatOptions(rawOptions, 'createGaussianSplatsAsync');
+  const { maximumCount = GAUSSIAN_SPLAT_LIMITS.maximumCount } = options;
+  checkSplatInput(data, maximumCount, 'createGaussianSplatsAsync');
+  const matrix = resolveMatrix(options.matrix, 'createGaussianSplatsAsync');
   const alphaCut = resolveAlphaCut(options.alphaCut, 'createGaussianSplatsAsync');
   const { packRange, packed } = createSplatPacker(data);
   await runInChunks(data.count, options, 'createGaussianSplatsAsync', packRange);

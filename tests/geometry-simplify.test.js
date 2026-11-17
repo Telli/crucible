@@ -193,3 +193,34 @@ test('addLodsToDenseParts rejects bad ratios on a sparse scene too', () => {
   const parts = [surfacePart('ball', sphere(8, 8))];
   assert.throws(() => addLodsToDenseParts(parts, { pixels: 1e9, ratios: [2] }), /ratios must be strictly decreasing/);
 });
+
+test('simplifyGeometry names an index past the vertex count instead of crashing in the collapser (#1900)', () => {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const geometry = { positions, indices: new Uint32Array([0, 1, 2, 0, 2, 9]) };
+  assert.throws(() => simplifyGeometry(geometry), error => {
+    assert.ok(error instanceof RangeError);
+    assert.match(error.message, /index 9 at indices\[5\]/);
+    assert.match(error.message, /4 vertices/);
+    return true;
+  });
+  assert.throws(() => simplifyGeometry({ positions, indices: new Uint16Array([0, 1, 4]) }), /index 4 at indices\[2\]/);
+});
+
+test('simplifyGeometry names a positions length that is not a multiple of three (#1900)', () => {
+  const geometry = { positions: new Float32Array(10), indices: new Uint32Array([0, 1, 2]) };
+  assert.throws(() => simplifyGeometry(geometry), error => error instanceof RangeError && /length of 10/.test(error.message));
+});
+
+test('simplifyGeometry treats null options as the defaults (#1900)', () => {
+  const geometry = sphere(16, 8);
+  const withNull = simplifyGeometry(geometry, null);
+  const withDefaults = simplifyGeometry(geometry);
+  assert.deepEqual(withNull.map(level => level.triangles), withDefaults.map(level => level.triangles));
+  assert.equal(withNull.length, 2);
+});
+
+test('simplifyGeometry still takes an index equal to the last vertex (#1900)', () => {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]);
+  const geometry = { positions, indices: new Uint32Array([0, 1, 2, 0, 2, 3]) };
+  assert.equal(simplifyGeometry(geometry, { ratios: [0.5] }).length, 1);
+});

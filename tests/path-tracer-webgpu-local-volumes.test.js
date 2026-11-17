@@ -8,7 +8,7 @@ import { resolveLocalVolumes } from '../src/local-volumes.js';
 import { buildTraceScene, refuseLocalVolumes } from '../src/path-tracer-scene.js';
 import { bindLocalVolumeParts } from '../src/local-volume-parts.js';
 import { buildMegakernelSource, MEGAKERNEL_SOURCE } from '../src/path-tracer-webgpu-kernel.js';
-import { assertWebGpuLocalVolumes, buildLocalVolumeFunctions, LOCAL_VOLUME_FUNCTIONS, LOCAL_VOLUME_GRID_HEADER_TEXELS, LOCAL_VOLUME_GRID_SHAPE, LOCAL_VOLUME_HEADER_TEXELS, LOCAL_VOLUME_TEXELS, packWebGpuLocalVolumes } from '../src/path-tracer-webgpu-local-volumes.js';
+import { assertWebGpuLocalVolumes, buildLocalVolumeFunctions, LOCAL_VOLUME_FUNCTIONS, LOCAL_VOLUME_GRID_HEADER_TEXELS, LOCAL_VOLUME_GRID_SHAPE, LOCAL_VOLUME_HEADER_TEXELS, LOCAL_VOLUME_RAMP_TEXELS, LOCAL_VOLUME_TEXELS, packWebGpuLocalVolumes, webGpuVolumeFeatures } from '../src/path-tracer-webgpu-local-volumes.js';
 import { decodeVolumeGrid, encodeVolumeGrid, registerVolumeGrid } from '../src/volume-grid.js';
 import { renderBlastBothBackends } from './helpers/grid-blast-render.js';
 import { traceOnWebGpu } from '../src/path-tracer-webgpu.js';
@@ -203,5 +203,112 @@ test('on a WebGPU adapter the #1735 blast grid matches the CPU tracer, and its m
     assert.ok(Math.max(...webgpuChange.map(Math.abs)) > 0.02, 'the shutter changes the WebGPU frame');
     const agreement = correlation(cpuChange, webgpuChange);
     assert.ok(agreement > 0.8, `the blur changes both frames the same way: correlation ${agreement.toFixed(3)}`);
+  }, { hardwareOnly: true });
+});
+
+const OCTAVE_SMOKE = { shape: 'sphere', center: [0, 1, 0], radius: 1.2, density: 1.5, falloff: 0.6, emission: [0.3, 0.2, 0.1], emissionStrength: 2, noiseAmount: 0.8, noiseScale: 3, noiseOctaves: 4, steps: 32 };
+const RAMP_FIRE = { shape: 'box', center: [0, 1, 0], size: [2, 2, 2], density: 1, falloff: 0.5, emissionStrength: 3, steps: 32, emissionRamp: { source: 'density', stops: [[0, 0, 0], [1, 0.3, 0], [1, 0.9, 0.6]], exposure: 1.5 } };
+
+test('noiseOctaves and emissionRamp no longer throw on the WebGPU tracer', () => {
+  const volumes = resolveLocalVolumes([OCTAVE_SMOKE, RAMP_FIRE], 'volumes');
+  assert.doesNotThrow(() => assertWebGpuLocalVolumes({ localVolumes: volumes }));
+  assert.deepEqual(webGpuVolumeFeatures(volumes), { hasGridVolume: false, hasNoiseOctaves: true, hasEmissionRamp: true });
+  assert.deepEqual(webGpuVolumeFeatures(resolveLocalVolumes([SMOKE_BOX, PUFF], 'volumes')), { hasGridVolume: false, hasNoiseOctaves: false, hasEmissionRamp: false });
+});
+
+test('the table keeps the octaves after the first in vector 5 and the ramp number in vector 7, and a ramp block follows with the stops baked', () => {
+  const [smoke, fire] = resolveLocalVolumes([OCTAVE_SMOKE, RAMP_FIRE], 'volumes');
+  const table = packWebGpuLocalVolumes([smoke, fire], null);
+  const tableLength = (LOCAL_VOLUME_HEADER_TEXELS + 2 * LOCAL_VOLUME_TEXELS) * 4;
+  const first = LOCAL_VOLUME_HEADER_TEXELS * 4;
+  const second = first + LOCAL_VOLUME_TEXELS * 4;
+  assert.equal(table[first + 23], 3, 'four octaves are stored as three after the first');
+  assert.equal(table[first + 31], 0, 'the sphere has no ramp');
+  assert.equal(table[second + 23], 0, 'one octave stores 0');
+  assert.equal(table[second + 31], 1, 'ramp number 1');
+  assert.equal(table.length, tableLength + LOCAL_VOLUME_RAMP_TEXELS * 4);
+  const ramp = table.subarray(tableLength);
+  assert.deepEqual(rounded(ramp.subarray(0, 4)), [1, 3, 0, 1], 'source density is code 1, three stops, range 0 to 1');
+  assert.equal(ramp[4], 3, 'emission strength');
+  assert.deepEqual(rounded(ramp.subarray(12, 16)), [1.5, 0.45, 0, 0], 'the second stop times the exposure');
+  assert.deepEqual(rounded(ramp.subarray(16, 20)), [1.5, 1.35, 0.9, 0]);
+  assert.deepEqual(rounded(ramp.subarray(20, 24)), [0, 0, 0, 0], 'unused stops are 0');
+  assert.equal(packWebGpuLocalVolumes([smoke], null).length, (LOCAL_VOLUME_HEADER_TEXELS + LOCAL_VOLUME_TEXELS) * 4, 'no ramp, no ramp block');
+});
+
+test('a grid with a ramp packs its temperature channel, and the ramp block sits after the grid block', () => {
+  const grid = boundGrid({});
+  const withRamp = { ...grid, emissionRamp: { source: 'temperature', range: [0, 3], exposure: 1, stops: [[0, 0, 0], [1, 1, 1]] } };
+  const plain = packWebGpuLocalVolumes([grid], null);
+  const ramped = packWebGpuLocalVolumes([withRamp], null);
+  const voxels = (LOCAL_VOLUME_HEADER_TEXELS + LOCAL_VOLUME_TEXELS + LOCAL_VOLUME_GRID_HEADER_TEXELS) * 4;
+  assert.deepEqual([0, 1, 2, 3].map(voxel => plain[voxels + voxel * 4 + 2]), [0, 0, 0, 0], 'without a ramp the third float of a voxel is 0');
+  assert.deepEqual([0, 1, 2, 3].map(voxel => ramped[voxels + voxel * 4 + 2]), [0, 0, 2, 3], 'with a ramp it is the temperature');
+  assert.equal(ramped.length, plain.length + LOCAL_VOLUME_RAMP_TEXELS * 4);
+  assert.deepEqual(rounded(ramped.subarray(plain.length, plain.length + 4)), [2, 2, 0, 3], 'temperature is source 2');
+});
+
+test('the fractal noise and the ramp light are compiled only for a scene that uses them, and the other kernels stay as they were', () => {
+  const plain = buildMegakernelSource({ hasLocalVolumes: true, hasGridVolume: true });
+  assert.doesNotMatch(plain, /localVolumeFractalNoise|localEmissionRampLight|localRampBase|temperature: f32/);
+  assert.equal(buildLocalVolumeFunctions({ hasGrid: true, hasNoiseOctaves: false, hasEmissionRamp: false }), buildLocalVolumeFunctions({ hasGrid: true }));
+  const octaves = buildMegakernelSource({ hasLocalVolumes: true, hasNoiseOctaves: true });
+  assert.match(octaves, /fn localVolumeFractalNoise\(position: vec3<f32>, octaves: i32\) -> f32/);
+  assert.match(octaves, /noise = localVolumeFractalNoise\(point \* noiseScale, i32\(localVolumeTexel\(volume, 5\)\.w\) \+ 1\);/);
+  assert.match(octaves, /weight \*= 0\.5;\n\s+frequency \*= 2\.0;/, 'the gain and lacunarity of localVolumeFractalNoise');
+  assert.doesNotMatch(octaves, /localEmissionRampLight/);
+  const ramp = buildMegakernelSource({ hasLocalVolumes: true, hasEmissionRamp: true });
+  assert.match(ramp, /emitted \+= throughput \* localEmissionRampLight\(volume, vec3<f32>\(profile\), stepLength\);/);
+  assert.doesNotMatch(ramp, /localVolumeFractalNoise|GridCell/);
+  assert.doesNotMatch(ramp, /resolution\.x \* resolution\.y/, 'without a grid the ramp block follows the table');
+  const gridRamp = buildMegakernelSource({ hasLocalVolumes: true, hasGridVolume: true, hasEmissionRamp: true });
+  assert.match(gridRamp, /localEmissionRampLight\(volume, vec3<f32>\(cell\.density, cell\.temperature, cell\.flame\), stepLength\);/);
+  assert.match(gridRamp, /cell\.temperature \+= found\.weight \* values\.z;/);
+  assert.match(gridRamp, /resolution\.x \* resolution\.y \* resolution\.z \* i32\(materials\[base \+ 1\]\.w\)/, 'the ramp block follows the grid block');
+});
+
+// Mean relative difference and RMSE between the two backends of a rendered pair, and how many values are lit.
+function compareBackends({ cpu, webgpu }) {
+  let difference = 0;
+  let reference = 0;
+  let squared = 0;
+  let lit = 0;
+  cpu.linear.forEach((value, index) => {
+    const delta = value - webgpu.linear[index];
+    difference += Math.abs(delta);
+    squared += delta * delta;
+    reference += value;
+    if (value > 0.05) lit++;
+  });
+  return { relative: difference / reference, rmse: Math.sqrt(squared / cpu.linear.length), lit };
+}
+
+test('on a WebGPU adapter fractal noise octaves and an emission ramp match the CPU tracer', { timeout: 600000 }, async context => {
+  await withWebGpuPage(context, async page => {
+    const frame = { width: 48, height: 30, samples: 32 };
+    for (const [label, volumes] of [['noiseOctaves', [OCTAVE_SMOKE]], ['emissionRamp', [RAMP_FIRE]]]) {
+      const pair = await page.evaluate(renderBothBackends, { volumes, ...frame });
+      const { relative, lit } = compareBackends(pair);
+      assert.ok(lit > 100, `${label} shows in the frame: ${lit} lit values`);
+      assert.ok(relative < 0.05, `${label}: mean relative difference ${relative.toFixed(4)}`);
+    }
+    const oneOctave = await page.evaluate(renderBothBackends, { volumes: [{ ...OCTAVE_SMOKE, noiseOctaves: 1 }], ...frame });
+    const fourOctaves = await page.evaluate(renderBothBackends, { volumes: [OCTAVE_SMOKE], ...frame });
+    const octaveChange = compareBackends({ cpu: oneOctave.webgpu, webgpu: fourOctaves.webgpu }).rmse;
+    assert.ok(octaveChange > 5 * compareBackends(fourOctaves).rmse, `the octaves change the WebGPU frame (rmse ${octaveChange}) well above the backend difference`);
+  }, { hardwareOnly: true });
+});
+
+test('on a WebGPU adapter the #1735 blast with an emission ramp matches the CPU tracer', { timeout: 600000 }, async context => {
+  await withWebGpuPage(context, async page => {
+    const emissionRamp = { source: 'temperature', range: [0, 1], exposure: 6, stops: [[0, 0, 0], [1, 0.25, 0], [1, 0.8, 0.4]] };
+    const frame = { resolution: 32, width: 64, height: 40, samples: 48, volumeTime: 3 / 24, volumeShutter: 0 };
+    const withoutRamp = await page.evaluate(renderBlastBothBackends, frame);
+    const withRamp = await page.evaluate(renderBlastBothBackends, { ...frame, volumeExtra: { emissionRamp } });
+    const { relative } = compareBackends(withRamp);
+    assert.deepEqual(withRamp.webgpu.ignored, []);
+    assert.ok(relative < 0.05, `mean relative difference ${relative.toFixed(4)}`);
+    const rampChange = compareBackends({ cpu: withoutRamp.webgpu, webgpu: withRamp.webgpu }).rmse;
+    assert.ok(rampChange > 5 * compareBackends(withRamp).rmse, `the ramp changes the WebGPU frame (rmse ${rampChange}) well above the backend difference`);
   }, { hardwareOnly: true });
 });

@@ -5,6 +5,8 @@
 // `topics` names the scene_capabilities topics a task clearly exercises, only where it does. bench.mjs --kinds and --topics
 // select tasks by `kind` and `topics`, so a one-topic change runs only its related tasks (subsets.mjs).
 
+import { SCENE_TASKS } from './scenes.mjs';
+
 export const BENCH_TASKS = [
   { id: 'crate', kind: 'modeling', topics: ['meshEdits'] },
   { id: 'bolt', kind: 'modeling' },
@@ -37,6 +39,10 @@ export const BENCH_TASKS = [
   { id: 'sunset-timelapse', kind: 'film', topics: ['filmTimeline'] },
   { id: 'film-reveal', kind: 'film', topics: ['filmTimeline'] },
 ];
+
+// Tasks that scenes.mjs defines but the default run leaves out (findings-fix tests the findings channel, not a tool schema).
+// `--tasks` accepts them by id; `--kinds`, `--topics` and the default run stay on BENCH_TASKS.
+export const OPTIONAL_TASK_IDS = SCENE_TASKS.map(task => task.id).filter(id => !BENCH_TASKS.some(task => task.id === id));
 
 export const SMOKE_TASKS = ['bolt', 'camera-closeup'];
 
