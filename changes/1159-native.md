@@ -1,1 +1,0 @@
-- The native `cycles` tracer now starts camera rays at `camera.clipStart`, so a wall between the eye and the clip start is not drawn, and `report.ignored` no longer lists it (#1159).
