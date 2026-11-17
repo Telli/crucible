@@ -27,6 +27,8 @@ export const BENCH_TASKS = [
   { id: 'look-pick', kind: 'look' },
   { id: 'look-metal', kind: 'look' },
   { id: 'look-fog', kind: 'look' },
+  { id: 'ask-user-pin', kind: 'look', topics: ['askUser'] },
+  { id: 'ask-user-lasso', kind: 'look', topics: ['askUser'] },
   { id: 'render-pick', kind: 'light' },
   { id: 'light-pick-hard', kind: 'light' },
   { id: 'light-key-fill', kind: 'light' },

@@ -666,6 +666,60 @@ runTest('runtime close settles a pending scene_ask_user at once and stops its pa
   assert.ok(performance.now() - started < 3000);
 });
 
+runTest('a scene_ask_user fixture answers without a browser, in the same shape as the browser answer, and unset changes nothing (#1956)', async () => {
+  const fixtureMarks = [{ x: 384, y: 256, note: 'make this red' }, { x: 40, y: 60, note: 'and this' }];
+  let browserSessions = 0;
+  const browserAnswer = async () => {
+    browserSessions++;
+    return { outcome: 'sent', marks: fixtureMarks, image: ANNOTATE_PNG };
+  };
+  const browser = await reviewRuntimeHarness({ contextOverrides: { runAnnotateSession: browserAnswer } });
+  const fromBrowser = await browser.runtime.askUser({ sessionId: browser.sessionId });
+  assert.equal(browserSessions, 1, 'without the fixture the browser flow runs');
+
+  const fixture = await reviewRuntimeHarness({
+    runtimeOptions: { askUserFixture: { name: 'pin.json', marks: fixtureMarks } },
+    contextOverrides: { runAnnotateSession: browserAnswer } });
+  const fromFixture = await fixture.runtime.askUser({ sessionId: fixture.sessionId });
+  assert.equal(browserSessions, 1, 'with the fixture no browser session opens');
+
+  assert.equal(fromFixture.content.outcome, 'sent');
+  assert.equal(fromFixture.content.marks[0].note, 'make this red');
+  assert.equal(fromFixture.content.marks[0].partId, 'lamp');
+  assert.equal(fromFixture.content.marks[1].partId, null);
+  assert.equal(typeof fromFixture.image, 'string');
+  assert.deepEqual(Object.keys(fromFixture), Object.keys(fromBrowser));
+  // The runtime runs in a vm, so compare the JSON the tool sends, as the MCP server does.
+  const asSent = answer => JSON.parse(JSON.stringify(answer.content));
+  assert.deepEqual(asSent(fromFixture), { ...asSent(fromBrowser), sessionId: fixture.sessionId });
+  const inline = await fixture.runtime.askUser({ sessionId: fixture.sessionId, inline: true });
+  assert.equal(inline.content.outcome, 'sent', 'an inline ask is answered by the fixture too');
+  await assert.rejects(fixture.runtime.askUser({ sessionId: fixture.sessionId, maxMarks: 1 }), /at most 1 marks/);
+});
+
+runTest('a lasso mark resolves to the parts under its outline, through the same pick as a pin, and a lasso over sky has none (#922)', async () => {
+  const wholeView = [[0, 0], [768, 0], [768, 512], [0, 512]];
+  const skyCorner = [[10, 10], [60, 10], [60, 100], [10, 100]];
+  const fixture = await reviewRuntimeHarness({
+    runtimeOptions: { askUserFixture: { name: 'lasso.json', marks: [
+      { kind: 'lasso', points: wholeView, note: 'make these blue' }, { kind: 'lasso', points: skyCorner, note: 'nothing here' }, { x: 384, y: 256, note: 'a pin' }] } } });
+  const answer = JSON.parse(JSON.stringify((await fixture.runtime.askUser({ sessionId: fixture.sessionId })).content));
+  const [whole, corner, pin] = answer.marks;
+  assert.equal(whole.kind, 'lasso');
+  assert.deepEqual(whole.points, wholeView);
+  assert.equal(whole.note, 'make these blue');
+  assert.equal(whole.partId, 'lamp');
+  assert.deepEqual(whole.parts.map(part => part.partId), ['lamp']);
+  assert.ok(whole.parts[0].coverage > 0.5 && whole.parts[0].coverage < 1, 'the left of the view is sky, so the lamp covers only part of the outline');
+  assert.equal(whole.parts[0].material, 'brass');
+  assert.equal(corner.partId, null);
+  assert.deepEqual(corner.parts, []);
+  assert.equal('kind' in pin, false, 'a pin keeps its old shape');
+  assert.equal(pin.partId, 'lamp');
+  const pickCall = fixture.sourceCalls.find(call => call.method === 'pickMarks');
+  assert.equal(pickCall.input.marks[0].kind, 'lasso', 'the lasso reaches the page as an outline, not as a pixel');
+});
+
 runTest('an inline scene_ask_user hands its nonce to the view only and resolves marks once (#923)', async () => {
   let browserSessions = 0;
   const { runtime, sessionId } = await reviewRuntimeHarness({ contextOverrides: { runAnnotateSession: async () => { browserSessions++; return { outcome: 'timeout' }; } } });
