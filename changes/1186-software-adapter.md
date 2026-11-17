@@ -1,1 +1,1 @@
-- A native render job on a software Vulkan adapter (lavapipe on a Linux runner without a GPU) gets 2304 MiB more memory allowance, since that adapter keeps its device buffers and compiled kernel in the server process; the first 960 x 540 job on a fresh runner no longer fails the memory guard, and jobs on a GPU keep the same limit (#1186).
+- A native render job on a software Vulkan adapter (lavapipe on a Linux runner without a GPU) gets 2304 MiB more memory allowance, so the first 960 x 540 job no longer fails the memory guard (#1186)

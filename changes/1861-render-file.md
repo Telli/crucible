@@ -1,1 +1,0 @@
-- `npm run render:file-cook` reads its scene tables from the page as one Blob over the DevTools stream, like a native render job, which cuts the export of a 17.5 MB scene from 0.32 s to 0.20 s (#1861)
