@@ -142,7 +142,9 @@ node bench/agent-modeling/bench.mjs --suggest origin/main     # prints the comma
 node bench/agent-modeling/bench.mjs --kinds light --topics relations --models haiku --runs 3 --label <branch> --backend cpu
 ```
 
-Name the task ids you ran in the pull request (`--dry-run` lists them). Skipped baseline tasks are listed by `compare-bench.mjs` and never count as failures. The full bench runs for a change every task reads (the tool schemas and server instructions in `scripts/mcp-server.mjs`, or a skill), and once before each release cut.
+Name the task ids you ran in the pull request (`--dry-run` lists them). Skipped baseline tasks are listed by `compare-bench.mjs` and never count as failures. The full bench runs for a change every task reads (the tool schemas and server instructions in `scripts/mcp-server.mjs`, or `skills/build-crucible-scene/SKILL.md`), and once before each release cut.
+
+**A skill change is benched in skill mode `references`.** By default the bench agent sees no skill, so an edit to a skill file could not change a result. Under `skills/build-crucible-scene/`, run with `--skill-mode references`: the agent's system prompt then holds `SKILL.md` plus the reference files its task kind points to (`KIND_REFERENCES` in `bench/agent-modeling/suite.mjs`: light tasks get `light.md`, look tasks `look.md`, and so on), and `--suggest` adds the flag and picks the kinds that load the reference you changed. The stored `bench-baseline.json` has no skill, so compare base and head instead: run the same command on `origin/main` (label `base`) and on your branch, then `compare-bench.mjs bench-base.json bench-<branch>.json`. `compare-bench.mjs` refuses two files made in different skill modes.
 
 ### Look changes
 
