@@ -69,6 +69,8 @@ export const KIND_REFERENCES = {
 export const TOPIC_REFERENCES = {
   placedAssets: ['game.md'],
   motionIk: ['film-and-animation.md'],
+  explosion: ['effects-and-feedback.md'],
+  askUser: ['effects-and-feedback.md'],
 };
 
 // Reference files no bench task loads, each with the reason. A new file under references/ must be reachable from a kind or listed here.
