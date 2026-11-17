@@ -239,6 +239,96 @@ export function findDriveImpact(drive, wall, { mass, frontOffset = 0, restitutio
   return null;
 }
 
+export const MAX_FLIGHT_SECONDS = 30;
+export const MAX_LAUNCH_SPEED = 30;
+const FLIGHT_STEP_SECONDS = 1 / 120;
+const LAUNCH_IMPULSE_PER_KILOGRAM = 100;
+const LAUNCH_UPWARD_SHARE = 0.5;
+const SPREAD_SHARE = 0.3;
+const MAX_SPIN_RADIANS_PER_SECOND = 12;
+const GROUND_FRICTION = 0.6;
+const SETTLE_SPEED = 0.2;
+
+function seededUnitSequence(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), state | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function launchVelocityOf(part, hit, nextUnit) {
+  const direction = normalized(hit.direction);
+  const speed = Math.min(MAX_LAUNCH_SPEED, (hit.impulse - part.threshold) / (part.mass * LAUNCH_IMPULSE_PER_KILOGRAM));
+  const spread = () => (nextUnit() * 2 - 1) * SPREAD_SHARE;
+  return [
+    (direction[0] + spread()) * speed,
+    (direction[1] + LAUNCH_UPWARD_SHARE + Math.abs(spread())) * speed,
+    (direction[2] + spread()) * speed,
+  ];
+}
+
+function advanceFlight(state, flight, seconds) {
+  const steps = Math.round(seconds / FLIGHT_STEP_SECONDS);
+  for (let step = 0; step < steps && !state.settled; step++) {
+    state.velocity[1] -= flight.gravity * FLIGHT_STEP_SECONDS;
+    for (let axis = 0; axis < 3; axis++) state.position[axis] += state.velocity[axis] * FLIGHT_STEP_SECONDS;
+    for (let axis = 0; axis < 3; axis++) state.rotation[axis] += state.spin[axis] * FLIGHT_STEP_SECONDS;
+    if (state.position[1] > flight.groundY) continue;
+    state.position[1] = flight.groundY;
+    state.velocity[1] = -state.velocity[1] * flight.restitution;
+    state.velocity[0] *= GROUND_FRICTION;
+    state.velocity[2] *= GROUND_FRICTION;
+    for (let axis = 0; axis < 3; axis++) state.spin[axis] *= GROUND_FRICTION;
+    if (Math.hypot(...state.velocity) < SETTLE_SPEED) {
+      state.velocity.fill(0);
+      state.spin.fill(0);
+      state.settled = true;
+    }
+  }
+}
+
+/**
+ * The flight of a loose part a hit tears off. `part` is `{ id, threshold, mass, position }` (N s, kg, the part's centre in
+ * metres); `hit` is `{ impulse, direction }` from `findDriveImpact`. Returns null when the impulse stays below the
+ * threshold, so the part stays on. Otherwise it returns `{ id, launchVelocity, sample(time) }`: the part leaves along
+ * `direction` with a seeded sideways spread and tumble, falls under gravity and bounces on the ground plane `groundY`.
+ * `sample(time)` gives `{ position, rotation (Euler radians), velocity, settled }` for 0 to 30 s, and the same inputs
+ * with the same `seed` give the same numbers on every run.
+ */
+export function detachedPartFlight(part, hit, { seed = 0, gravity = 9.81, groundY = 0, restitution = 0.3 } = {}) {
+  requirePlainObject(part, 'part', '{ "id": "front-bumper", "threshold": 9000, "mass": 12, "position": [0, 0.5, 2] }');
+  if (typeof part.id !== 'string' || part.id === '') throw invalidField('part.id', part.id, 'the id of a part, such as "front-bumper"', TypeError);
+  requireNumber(part.threshold, 'part.threshold', 1e-6, 1e9, 9000);
+  requireNumber(part.mass, 'part.mass', 1e-3, 1e5, 12);
+  requireVector3(part.position, 'part.position', '[0, 0.5, 2]');
+  requirePlainObject(hit, 'hit', '{ "impulse": 16800, "direction": [0, 0, -1] }');
+  requireNumber(hit.impulse, 'hit.impulse', 0, 1e9, 16800);
+  const rawDirection = requireVector3(hit.direction, 'hit.direction', '[0, 0, -1]');
+  if (Math.hypot(...rawDirection) < 1e-6) throw invalidField('hit.direction', rawDirection, 'a vector that is not zero, such as [0, 0, -1]');
+  requireNumber(seed, 'seed', 0, 4294967295, 7);
+  requireNumber(gravity, 'gravity', 0, 100, 9.81);
+  requireNumber(groundY, 'groundY', -1e4, 1e4, 0);
+  requireNumber(restitution, 'restitution', 0, 1, 0.3);
+  if (hit.impulse < part.threshold) return null;
+  const nextUnit = seededUnitSequence(seed);
+  const launchVelocity = launchVelocityOf(part, hit, nextUnit);
+  const spin = [0, 1, 2].map(() => (nextUnit() * 2 - 1) * MAX_SPIN_RADIANS_PER_SECOND);
+  const flight = { gravity, groundY, restitution };
+  return {
+    id: part.id,
+    launchVelocity,
+    sample(time) {
+      requireNumber(time, 'time', 0, MAX_FLIGHT_SECONDS, 1);
+      const state = { position: [...part.position], rotation: [0, 0, 0], velocity: [...launchVelocity], spin: [...spin], settled: false };
+      advanceFlight(state, flight, time);
+      return { position: state.position, rotation: state.rotation, velocity: state.velocity, settled: state.settled };
+    },
+  };
+}
+
 /**
  * The vertex estimate of a recipe `dented` geometry, which is its source's: checks the dent fields and that the source
  * is a geometry of the recipe that is not itself a fragment or a dent. `estimateSource` estimates a source record.
