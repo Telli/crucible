@@ -697,6 +697,29 @@ runTest('a scene_ask_user fixture answers without a browser, in the same shape a
   await assert.rejects(fixture.runtime.askUser({ sessionId: fixture.sessionId, maxMarks: 1 }), /at most 1 marks/);
 });
 
+runTest('a lasso mark resolves to the parts under its outline, through the same pick as a pin, and a lasso over sky has none (#922)', async () => {
+  const wholeView = [[0, 0], [768, 0], [768, 512], [0, 512]];
+  const skyCorner = [[10, 10], [60, 10], [60, 100], [10, 100]];
+  const fixture = await reviewRuntimeHarness({
+    runtimeOptions: { askUserFixture: { name: 'lasso.json', marks: [
+      { kind: 'lasso', points: wholeView, note: 'make these blue' }, { kind: 'lasso', points: skyCorner, note: 'nothing here' }, { x: 384, y: 256, note: 'a pin' }] } } });
+  const answer = JSON.parse(JSON.stringify((await fixture.runtime.askUser({ sessionId: fixture.sessionId })).content));
+  const [whole, corner, pin] = answer.marks;
+  assert.equal(whole.kind, 'lasso');
+  assert.deepEqual(whole.points, wholeView);
+  assert.equal(whole.note, 'make these blue');
+  assert.equal(whole.partId, 'lamp');
+  assert.deepEqual(whole.parts.map(part => part.partId), ['lamp']);
+  assert.ok(whole.parts[0].coverage > 0.5 && whole.parts[0].coverage < 1, 'the left of the view is sky, so the lamp covers only part of the outline');
+  assert.equal(whole.parts[0].material, 'brass');
+  assert.equal(corner.partId, null);
+  assert.deepEqual(corner.parts, []);
+  assert.equal('kind' in pin, false, 'a pin keeps its old shape');
+  assert.equal(pin.partId, 'lamp');
+  const pickCall = fixture.sourceCalls.find(call => call.method === 'pickMarks');
+  assert.equal(pickCall.input.marks[0].kind, 'lasso', 'the lasso reaches the page as an outline, not as a pixel');
+});
+
 runTest('an inline scene_ask_user hands its nonce to the view only and resolves marks once (#923)', async () => {
   let browserSessions = 0;
   const { runtime, sessionId } = await reviewRuntimeHarness({ contextOverrides: { runAnnotateSession: async () => { browserSessions++; return { outcome: 'timeout' }; } } });

@@ -38,6 +38,13 @@ test('the camera, light, look and film tasks reject plausible wrong answers', as
   assert.deepEqual(failedKinds(await wrong('sunset-timelapse', recipe => { recipe.motion.tracks[1].keyframes[1].value = [1, 1, 1]; })), ['sun colour gets warmer']);
   assert.deepEqual(failedKinds(await wrong('film-reveal', recipe => { recipe.motion.tracks[0].keyframes[1].value = [0, 3, 9]; })), ['cameraDolly']);
   assert.deepEqual(failedKinds(await wrong('film-reveal', recipe => { recipe.motion.tracks.pop(); })), ['exposure fades up']);
+  assert.deepEqual(failedKinds(await wrong('ask-user-lasso', recipe => { recipe.materials.find(material => material.id === 'bronze').color = [0.45, 0.3, 0.2]; })), ['the lassoed statue is blue']);
+  assert.deepEqual(failedKinds(await wrong('ask-user-lasso', recipe => { recipe.nodes.find(node => node.id === 'plinth').material = 'stone'; })), ['the lassoed plinth is blue']);
+  // The shared stone material: colouring it blue colours the floor too, which the lasso did not cover.
+  assert.deepEqual(failedKinds(await wrong('ask-user-lasso', recipe => {
+    recipe.materials.find(material => material.id === 'stone').color = [0.1, 0.2, 0.85];
+    recipe.nodes.find(node => node.id === 'plinth').material = 'stone';
+  })), ['the floor outside the lasso is not recoloured']);
 });
 
 const record = (task, pass, extra = {}) => ({ task, pass, toolCalls: 10, toolErrors: 1, inputTokens: 1000, outputTokens: 100, wallSeconds: 30, ...extra });

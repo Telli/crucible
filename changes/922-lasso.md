@@ -1,0 +1,1 @@
+- `scene_ask_user`: the annotate page has a lasso tool; a lasso mark comes back with `kind` `"lasso"`, its `points` and the `parts` under the outline (most covered first, with `coverage`), and the test-only answer fixture accepts `lasso` marks (#922).

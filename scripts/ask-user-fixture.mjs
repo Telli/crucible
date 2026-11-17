@@ -39,21 +39,40 @@ function readFixtureText(filePath) {
   }
 }
 
+function isPixelPair(value) {
+  return Array.isArray(value) && value.length === 2
+    && value.every(coordinate => Number.isFinite(coordinate) && coordinate >= 0 && coordinate <= ASK_USER_FIXTURE_LIMITS.maxPixel);
+}
+
+function validatePixel(pixel, where) {
+  if (!isPixelPair(pixel)) throw fixtureError(`${where} pixel must be [x, y], two numbers from 0 to ${ASK_USER_FIXTURE_LIMITS.maxPixel}. Or give lasso [[x, y], ...] instead.`);
+}
+
+function validateLassoPoints(lasso, where) {
+  const { minLassoPoints, maxLassoPoints } = ANNOTATE_LIMITS;
+  if (!Array.isArray(lasso) || lasso.length < minLassoPoints || lasso.length > maxLassoPoints) {
+    throw fixtureError(`${where} lasso must be an array of ${minLassoPoints} to ${maxLassoPoints} [x, y] points.`);
+  }
+  const badIndex = lasso.findIndex(point => !isPixelPair(point));
+  if (badIndex >= 0) throw fixtureError(`${where} lasso point ${badIndex + 1} must be [x, y], two numbers from 0 to ${ASK_USER_FIXTURE_LIMITS.maxPixel}.`);
+}
+
 function validateFixtureMark(mark, index, name) {
   const where = `${name} mark ${index + 1}`;
   if (!mark || typeof mark !== 'object' || Array.isArray(mark)) throw fixtureError(`${where} must be an object with pixel and note.`);
-  const { pixel, note = '', motionTime } = mark;
-  const validPixel = Array.isArray(pixel) && pixel.length === 2
-    && pixel.every(value => Number.isFinite(value) && value >= 0 && value <= ASK_USER_FIXTURE_LIMITS.maxPixel);
-  if (!validPixel) throw fixtureError(`${where} pixel must be [x, y], two numbers from 0 to ${ASK_USER_FIXTURE_LIMITS.maxPixel}.`);
+  const { pixel, lasso, note = '', motionTime } = mark;
+  if (pixel !== undefined && lasso !== undefined) throw fixtureError(`${where} has both pixel and lasso. Keep one of them.`);
+  if (lasso !== undefined) validateLassoPoints(lasso, where);
+  else validatePixel(pixel, where);
   if (typeof note !== 'string' || note.length > ANNOTATE_LIMITS.maxNoteLength) {
     throw fixtureError(`${where} note must be text of at most ${ANNOTATE_LIMITS.maxNoteLength} characters.`);
   }
   if (motionTime !== undefined && !(Number.isFinite(motionTime) && motionTime >= 0 && motionTime <= ASK_USER_FIXTURE_LIMITS.maxMotionTime)) {
     throw fixtureError(`${where} motionTime must be a number of seconds from 0 to ${ASK_USER_FIXTURE_LIMITS.maxMotionTime}.`);
   }
-  // Marks of the browser flow are { x, y, note }; motionTime is checked and then ignored, the pick is of the still frame.
-  return { x: pixel[0], y: pixel[1], note };
+  // Marks of the browser flow are { x, y, note } or { kind: 'lasso', points, note }; motionTime is checked and then ignored, the
+  // pick is of the still frame.
+  return lasso === undefined ? { x: pixel[0], y: pixel[1], note } : { kind: 'lasso', points: lasso, note };
 }
 
 /**

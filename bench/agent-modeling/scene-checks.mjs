@@ -131,6 +131,11 @@ function isRed([red, green, blue]) {
   return red >= 0.6 && red >= 2 * green && red >= 2 * blue;
 }
 
+// Blue: a strong blue channel, at least twice the red and the green.
+function isBlue([red, green, blue]) {
+  return blue >= 0.6 && blue >= 2 * red && blue >= 2 * green;
+}
+
 function materialOf(check, recipe) {
   const node = recipe.nodes.find(candidate => candidate.id === check.node);
   const material = recipe.materials.find(candidate => candidate.id === node?.material);
@@ -141,6 +146,7 @@ function materialOf(check, recipe) {
   if (check.roughness && !inRange(roughness, check.roughness)) problems.push(`roughness ${roughness}`);
   if (check.warm && !(color[0] > color[2])) problems.push('colour is not warm');
   if (check.red !== undefined && isRed(color) !== check.red) problems.push(check.red ? `colour ${color.map(round)} is not red` : `colour ${color.map(round)} is red`);
+  if (check.blue !== undefined && isBlue(color) !== check.blue) problems.push(check.blue ? `colour ${color.map(round)} is not blue` : `colour ${color.map(round)} is blue`);
   return { pass: problems.length === 0, detail: problems.join('; ') || `metallic ${metallic}, roughness ${roughness}` };
 }
 
