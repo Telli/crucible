@@ -296,3 +296,11 @@ test('bad sparks and motionBlur values name the field and a valid value', () => 
   ];
   for (const [operation, pattern] of cases) assert.throws(() => applyBlast(operation), pattern, JSON.stringify(operation));
 });
+
+test('the fireball emits by the Blender flame remap, 1500 K to 3000 K, at every size and fuel (#1735)', () => {
+  for (const extra of [{ size: 2.5 }, { size: 10 }, { fuel: 'oily' }]) {
+    const volume = applyBlast(blast(extra)).recipe.environment.localVolumes[0];
+    assert.deepEqual(volume.flameTemperature, { ignition: 1.5, maximum: 3 });
+    assert.equal(volume.temperatureScale, 1000);
+  }
+});
