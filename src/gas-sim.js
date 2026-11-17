@@ -7,7 +7,6 @@
 // Layout: index = x + nx * (y + ny * z), x fastest, y up, the floor is the plane y = 0 (solid); the sides and the top are open.
 // Cells are cubes of `cellSize` metres. Velocity is in metres per second, density is smoke, fuel and flame are 0 to 1 per cell.
 
-import { addGasDetail } from './gas-sim-detail.js';
 import { encodeVolumeGrid, registerVolumeGrid } from './volume-grid.js';
 import { VOLUME_GRID_SEQUENCE_MAX_BYTES } from './volume-grid-sequence.js';
 
@@ -129,6 +128,24 @@ function valueNoise(seed, x, y, z) {
   const lowY = (1 - fx) * ((1 - fz) * corner(0, 0, 0) + fz * corner(0, 0, 1)) + fx * ((1 - fz) * corner(1, 0, 0) + fz * corner(1, 0, 1));
   const highY = (1 - fx) * ((1 - fz) * corner(0, 1, 0) + fz * corner(0, 1, 1)) + fx * ((1 - fz) * corner(1, 1, 0) + fz * corner(1, 1, 1));
   return (1 - fy) * lowY + fy * highY;
+}
+
+// Noise upres of a baked density (#1735): multiplies each smoke cell by 1 + 4 * detail * noise, two octaves about 5 and 2.5 cells wide that rise with the
+// frame, so thin smoke breaks into puffs and gaps below the grid's resolution. Empty cells stay empty. The solver never reads the result back.
+function addSmokeDetail(smoke, options, frameIndex) {
+  const [nx, ny, nz] = options.resolution;
+  const rise = frameIndex * 0.15;
+  for (let z = 0; z < nz; z++) {
+    for (let y = 0; y < ny; y++) {
+      for (let x = 0; x < nx; x++) {
+        const index = x + nx * (y + ny * z);
+        if (smoke[index] === 0) continue;
+        const large = valueNoise(options.seed + 101, x / 5, (y - rise) / 5, z / 5);
+        const small = valueNoise(options.seed + 102, x / 2.5, (y - rise) / 2.5, z / 2.5);
+        smoke[index] *= Math.max(1 + 4 * options.detail * ((large + 0.5 * small) / 1.5 - 0.5), 0);
+      }
+    }
+  }
 }
 
 function createSolver(options) {
@@ -486,7 +503,8 @@ function createSolver(options) {
   function snapshot(frameIndex) {
     const kelvinPerUnit = 1 / GAS_SIM_TEMPERATURE_UNIT;
     const excess = temperature.map(kelvin => (kelvin - options.ambientTemperature) * kelvinPerUnit);
-    const channels = addGasDetail({ density: density.slice(), temperature: excess, flame: flame.slice() }, options.resolution, options.detail, options.seed, frameIndex);
+    const channels = { density: density.slice(), temperature: excess, flame: flame.slice() };
+    if (options.detail > 0) addSmokeDetail(channels.density, options, frameIndex);
     // The velocity channels are written only on request (#1759), so a bake without them is byte for byte what it was.
     if (options.velocity) Object.assign(channels, { velocityX: velocityX.slice(), velocityY: velocityY.slice(), velocityZ: velocityZ.slice() });
     return channels;
