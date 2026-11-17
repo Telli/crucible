@@ -117,3 +117,40 @@ test('a sized part never sinks into the ground and lies on a face at rest, for 4
     }
   }
 });
+
+const SEEDS = Array.from({ length: 32 }, (_, index) => index + 1);
+
+function restingExtent(rest) {
+  const heights = boxCorners(rest.position, rest.rotation, SIZED_BUMPER.size).map(corner => corner[1]);
+  return Math.max(...heights) - Math.min(...heights);
+}
+
+test('a sized bumper rests on its largest face in most of 32 seeds', () => {
+  const facesByExtent = {};
+  for (const seed of SEEDS) {
+    const rest = detachedPartFlight(SIZED_BUMPER, WALL_HIT, { seed }).sample(30);
+    const extent = restingExtent(rest).toFixed(2);
+    facesByExtent[extent] = (facesByExtent[extent] ?? 0) + 1;
+  }
+  console.log('resting vertical extent (m): seed count', JSON.stringify(facesByExtent));
+  assert.ok((facesByExtent['0.20'] ?? 0) >= 24, `only ${facesByExtent['0.20'] ?? 0} of ${SEEDS.length} seeds rest on the 0.2 m face: ${JSON.stringify(facesByExtent)}`);
+  assert.equal(facesByExtent['1.70'] ?? 0, 0, `a seed stands on its end: ${JSON.stringify(facesByExtent)}`);
+});
+
+test('for 16 seeds the lowest corner stays on or above the ground every 1/60 s, the wall holds, and rest is on a face', () => {
+  for (const seed of SEEDS.slice(0, 16)) {
+    const flight = detachedPartFlight(SIZED_BUMPER, WALL_HIT, { seed, groundY: 0 });
+    for (let step = 0; step <= 10 * 60; step++) {
+      const sample = flight.sample(step / 60);
+      for (const corner of boxCorners(sample.position, sample.rotation, SIZED_BUMPER.size)) {
+        assert.ok(corner[1] >= -1e-6, `seed ${seed} step ${step} corner height ${corner[1]}`);
+        assert.ok((corner[2] - WALL_HIT.point[2]) * WALL_HIT.direction[2] >= -1e-6, `seed ${seed} step ${step} corner past the wall`);
+      }
+    }
+    const rest = flight.sample(30);
+    const heights = boxCorners(rest.position, rest.rotation, SIZED_BUMPER.size).map(corner => corner[1]);
+    assert.ok(Math.abs(Math.min(...heights)) < 1e-6, `seed ${seed} lowest corner ${Math.min(...heights)}`);
+    const extent = Math.max(...heights) - Math.min(...heights);
+    assert.ok(SIZED_BUMPER.size.some(side => Math.abs(extent - side) < 1e-6), `seed ${seed} rests ${extent} tall`);
+  }
+});
