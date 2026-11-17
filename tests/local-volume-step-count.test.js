@@ -56,9 +56,10 @@ test('a volume with octaves counts from its finest cell and one without keeps th
 const hashOf = text => createHash('sha256').update(text).digest('hex').slice(0, 16);
 
 // The fingerprints were retaken when each march step began to weight its glow by the exact step integral (#1894).
+// The motion-blur variant was retaken again when its shadow taps began to read the grid at their own shutter time (#1763).
 test('the shader text without octaves is the text from before #1855, and with octaves the march loop and the count follow the finest cell', () => {
   assert.equal(hashOf(createLocalVolumeCompositeFragment(false, 'both', false)), '7c95f86996fce6b5');
-  assert.equal(hashOf(createLocalVolumeCompositeFragment(true, 'both', false)), '66ab9af1bb2dd308');
+  assert.equal(hashOf(createLocalVolumeCompositeFragment(true, 'both', false)), '248f95dd58627477');
   assert.equal(hashOf(createLocalVolumeCompositeFragment(false, 'shape', false)), '15d1d093b6d8b4a6');
   const withOctaves = createLocalVolumeCompositeFragment(false, 'both', true);
   assert.match(withOctaves, new RegExp(`min\\(${LOCAL_VOLUME_MAXIMUM_OCTAVE_STEPS}, int\\(ceil\\(length \\* localVolumeEmission\\[index\\]\\.w \\* exp2\\(float\\(octaves - 1\\)\\) \\* 2\\.0\\)\\)\\)`));
