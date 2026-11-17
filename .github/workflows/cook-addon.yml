@@ -301,6 +301,7 @@ on:
       - 'src/reflection-probes.js'
       - 'src/render-culling.js'
       - 'src/retarget.js'
+      - 'src/retro-shader.js'
       - 'src/rig-presets.js'
       - 'src/rig.js'
       - 'src/rotation-euler.js'

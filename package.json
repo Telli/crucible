@@ -127,6 +127,7 @@
     "./addons/world-material-shader": "./build/world-material-shader.js",
     "./addons/splat-shader": "./build/splat-shader.js",
     "./addons/subsurface-shader": "./build/subsurface-shader.js",
+    "./addons/retro-shader": "./build/retro-shader.js",
     "./addons/fog-shader": "./build/fog-shader.js",
     "./addons/linear-output-shader": "./build/linear-output-shader.js",
     "./addons/light-linking": "./build/light-linking.js",
