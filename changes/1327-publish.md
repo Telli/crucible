@@ -1,1 +1,1 @@
-- The Publish workflow now also publishes `@codepawlhq/crucible-denoise-oidn` through the same trusted publisher whenever its version is not on npm, so OIDN can be installed beside an npm install of Crucible; a new addon that is not yet set up on npm warns on the run page instead of stopping the core release (#1327).
+- `@codepawlhq/crucible-denoise-oidn` is now published to npm beside Crucible, so OIDN installs with an npm install of Crucible (#1327)
