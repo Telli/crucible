@@ -2,7 +2,7 @@
 // `claude -p`, and the browser page waits for Send, so a bench task could never finish. Whoever starts the server may set
 // CRUCIBLE_ASK_USER_FIXTURE to an absolute path of a small JSON file; scene_ask_user then answers from its marks instead of opening
 // a browser. The variable is read once at start, never appears in a tool schema or the flag list, and no tool call can set it.
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { basename, extname, isAbsolute } from 'node:path';
 import { ANNOTATE_LIMITS } from '../src/agent-annotate.js';
 
@@ -16,16 +16,27 @@ function fixtureError(detail) {
 function readFixtureText(filePath) {
   if (!isAbsolute(filePath)) throw fixtureError(`must be an absolute path to a .json file, got "${filePath}". Pass the full path.`);
   if (extname(filePath).toLowerCase() !== '.json') throw fixtureError(`must point to a .json file, got "${basename(filePath)}". Rename the file or point to another one.`);
-  let size;
+  let descriptor;
   try {
-    size = statSync(filePath).size;
+    descriptor = openSync(filePath, 'r');
   } catch (error) {
     throw fixtureError(`cannot read ${basename(filePath)}: ${error.code ?? error.message}. Point it to an existing file.`);
   }
-  if (size > ASK_USER_FIXTURE_LIMITS.maxBytes) {
-    throw fixtureError(`file ${basename(filePath)} is ${size} bytes, over the ${ASK_USER_FIXTURE_LIMITS.maxBytes} byte limit. Keep only the marks.`);
+  // Size check and read go through one open descriptor, so the file cannot be swapped between them.
+  try {
+    const size = fstatSync(descriptor).size;
+    if (size > ASK_USER_FIXTURE_LIMITS.maxBytes) {
+      throw fixtureError(`file ${basename(filePath)} is ${size} bytes, over the ${ASK_USER_FIXTURE_LIMITS.maxBytes} byte limit. Keep only the marks.`);
+    }
+    const buffer = Buffer.alloc(ASK_USER_FIXTURE_LIMITS.maxBytes + 1);
+    const bytesRead = readSync(descriptor, buffer, 0, buffer.length, 0);
+    if (bytesRead > ASK_USER_FIXTURE_LIMITS.maxBytes) {
+      throw fixtureError(`file ${basename(filePath)} grew past the ${ASK_USER_FIXTURE_LIMITS.maxBytes} byte limit while it was read. Keep only the marks.`);
+    }
+    return buffer.toString('utf8', 0, bytesRead);
+  } finally {
+    closeSync(descriptor);
   }
-  return readFileSync(filePath, 'utf8');
 }
 
 function validateFixtureMark(mark, index, name) {
