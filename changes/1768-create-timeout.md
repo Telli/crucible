@@ -1,1 +1,0 @@
-- A `scene_create` whose recipe has a grid volume may run 60 s instead of 30 s, the same limit `add-explosion` already had, because the first draw compiles its shader in the graphics driver (#1768)

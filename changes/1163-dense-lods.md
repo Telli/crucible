@@ -1,1 +1,0 @@
-- `generateGeometryLods` keeps uvs, colours and normals, so a textured part with levels draws, and `addLodsToDenseParts(parts, { pixels })` gives levels to the big parts of a scene with more than one triangle per pixel (#1163)
