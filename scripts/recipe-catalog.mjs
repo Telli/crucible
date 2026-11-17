@@ -26,7 +26,7 @@ export const RECIPES = [
     title: 'View transform: ACES against AgX on a warm lamp',
     summary: 'The same lamp, the same light, two display curves.',
     why: [
-      'The view transform turns scene light into the pixels on screen. ACES pushes a strong orange toward yellow and adds contrast. AgX keeps the orange orange and rolls bright areas off gently.',
+      'The view transform turns scene light into the pixels on screen. ACES pushes the bright orange of the bulb toward yellow and adds contrast. AgX keeps the shade orange and rolls the bulb off to a warm white.',
       'Pick it on purpose: ACES is the default, AgX suits lit scenes and matches Blender, neutral keeps product colours as authored.',
     ],
     frames: [

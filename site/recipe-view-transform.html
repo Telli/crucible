@@ -19,7 +19,7 @@
       <p class="recipe-back"><a href="/recipes.html"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>Recipes</a></p>
       <h1>View transform: ACES against AgX on a warm lamp</h1>
       <div class="recipe-pair"><figure><img src="/recipes/view-transform-before.webp" width="960" height="540" alt="View transform: ACES against AgX on a warm lamp: ACES" /><figcaption>ACES</figcaption></figure><figure><img src="/recipes/view-transform-after.webp" width="960" height="540" alt="View transform: ACES against AgX on a warm lamp: AgX" /><figcaption>AgX</figcaption></figure></div>
-      <div class="recipe-why"><p>The view transform turns scene light into the pixels on screen. ACES pushes a strong orange toward yellow and adds contrast. AgX keeps the orange orange and rolls bright areas off gently.</p><p>Pick it on purpose: ACES is the default, AgX suits lit scenes and matches Blender, neutral keeps product colours as authored.</p></div>
+      <div class="recipe-why"><p>The view transform turns scene light into the pixels on screen. ACES pushes the bright orange of the bulb toward yellow and adds contrast. AgX keeps the shade orange and rolls the bulb off to a warm white.</p><p>Pick it on purpose: ACES is the default, AgX suits lit scenes and matches Blender, neutral keeps product colours as authored.</p></div>
       <section class="recipe-code" aria-labelledby="scene-code-title">
         <div class="recipe-code-heading"><h2 id="scene-code-title">Scene code</h2><button type="button" data-copy-code="scene-code">Copy</button></div>
         <pre><code id="scene-code">{
@@ -34,7 +34,7 @@
   ],
   &quot;materials&quot;: [
     { &quot;id&quot;: &quot;brass&quot;, &quot;color&quot;: [0.6, 0.38, 0.12], &quot;metallic&quot;: 0.9, &quot;roughness&quot;: 0.3 },
-    { &quot;id&quot;: &quot;shade&quot;, &quot;color&quot;: [0.9, 0.45, 0.12], &quot;metallic&quot;: 0, &quot;roughness&quot;: 0.7, &quot;emission&quot;: 0.7, &quot;emissiveColor&quot;: [1, 0.35, 0.05] },
+    { &quot;id&quot;: &quot;shade&quot;, &quot;color&quot;: [0.9, 0.45, 0.12], &quot;metallic&quot;: 0, &quot;roughness&quot;: 0.7, &quot;emission&quot;: 0.3, &quot;emissiveColor&quot;: [1, 0.35, 0.05] },
     { &quot;id&quot;: &quot;glow&quot;, &quot;color&quot;: [1, 0.35, 0.05], &quot;emission&quot;: 3, &quot;emissiveColor&quot;: [1, 0.35, 0.05] },
     { &quot;id&quot;: &quot;table&quot;, &quot;color&quot;: [0.36, 0.22, 0.14], &quot;metallic&quot;: 0, &quot;roughness&quot;: 0.5 },
     { &quot;id&quot;: &quot;wall&quot;, &quot;color&quot;: [0.12, 0.1, 0.1], &quot;metallic&quot;: 0, &quot;roughness&quot;: 0.9 }
