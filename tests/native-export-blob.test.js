@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { collectExportBlob, collectExportChunks } from '../scripts/agent-native-trace.mjs';
+import { collectExportBlob, readHeldNativeExport } from '../scripts/agent-native-trace.mjs';
 import { readBlobBytes } from '../scripts/cdp-blob-read.mjs';
 
 const MEGABYTE = 1024 ** 2;
@@ -62,16 +62,17 @@ test('readBlobBytes names the expression when it is not a Blob, and refuses a si
   assert.equal(session.calls.length, 0, 'an empty export asks the browser for nothing');
 });
 
-test('collectExportBlob returns the same tables as collectExportChunks for the same export', async () => {
+test('collectExportBlob returns the tables that were held, byte for byte', async () => {
   const tables = { triangles: patternBytes(40, 3), materials: patternBytes(16, 9), atlas: patternBytes(8, 5) };
   const manifest = { schemaVersion: 2, counts: { triangleCount: 2 }, chunks: { tables: { triangles: 40, materials: 16, atlas: 8 }, chunkBytes: 16 } };
-  const viaChunks = await collectExportChunks(structuredClone(manifest), async (name, offset) => Buffer.from(tables[name].subarray(offset, offset + 16)).toString('base64'));
   const whole = Uint8Array.from(Object.values(tables).flatMap(bytes => [...bytes]));
   const viaBlob = await collectExportBlob(structuredClone(manifest), async byteLength => {
     assert.equal(byteLength, 64);
     return whole;
   });
-  assert.deepEqual(viaBlob, viaChunks);
+  assert.deepEqual(viaBlob.tables, tables);
+  assert.equal(viaBlob.chunks, undefined);
+  assert.equal(viaBlob.counts.triangleCount, 2);
   for (const bytes of Object.values(viaBlob.tables)) assert.equal(bytes.byteOffset, 0, 'a table starts its own buffer, so any typed array can view it');
 });
 
@@ -79,6 +80,38 @@ test('collectExportBlob refuses a blob of the wrong length and a manifest withou
   const manifest = { chunks: { tables: { triangles: 8 }, chunkBytes: 8 } };
   await assert.rejects(collectExportBlob(manifest, async () => new Uint8Array(5)), /sent 5 bytes, expected 8/);
   await assert.rejects(collectExportBlob({ tables: {} }, async () => new Uint8Array(0)), /carries no `chunks` manifest/);
+});
+
+function fakePage(blobBytes) {
+  const session = fakeSession(blobBytes);
+  const page = {
+    session,
+    detached: false,
+    released: 0,
+    context: () => ({ newCDPSession: async () => Object.assign(session, { detach: async () => { page.detached = true; } }) }),
+    evaluate: async release => { release(); },
+  };
+  return page;
+}
+
+test('readHeldNativeExport reads the held blob, releases the page copy and detaches the session it made', async () => {
+  const tables = { triangles: patternBytes(40, 3), atlas: patternBytes(8, 5) };
+  const manifest = { counts: { triangleCount: 2 }, chunks: { tables: { triangles: 40, atlas: 8 }, chunkBytes: 16 } };
+  const page = fakePage(Uint8Array.from(Object.values(tables).flatMap(bytes => [...bytes])));
+  const exported = await readHeldNativeExport(page, manifest, { blobExpression: 'window.held()', release: () => { page.released++; } });
+  assert.deepEqual(exported.tables, tables);
+  assert.equal(page.released, 1);
+  assert.equal(page.detached, true);
+  assert.equal(page.session.calls.find(call => call.method === 'Runtime.evaluate').parameters.expression, 'window.held()');
+});
+
+test('readHeldNativeExport still releases the page copy when the read fails, and keeps a session it was given', async () => {
+  const manifest = { chunks: { tables: { triangles: 8 }, chunkBytes: 8 } };
+  const page = fakePage(new Uint8Array(3));
+  const givenSession = fakeSession(new Uint8Array(3));
+  await assert.rejects(readHeldNativeExport(page, manifest, { blobExpression: 'window.held()', release: () => { page.released++; }, session: givenSession }), /sent \d+ bytes at offset \d+, expected \d+/);
+  assert.equal(page.released, 1);
+  assert.equal(page.detached, false, 'a session the caller made is the caller\'s to detach');
 });
 
 test('the bytes read from a real browser Blob equal what an evaluate returns as base64', async t => {
