@@ -142,6 +142,7 @@ on:
       - 'src/game-rules.js'
       - 'src/game-setup.js'
       - 'src/gas-sim.js'
+      - 'src/gas-sim-detail.js'
       - 'src/geometry-normals.js'
       - 'src/geometry-simplify.js'
       - 'src/geometry.js'

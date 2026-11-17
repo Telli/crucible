@@ -7,6 +7,7 @@
 // Layout: index = x + nx * (y + ny * z), x fastest, y up, the floor is the plane y = 0 (solid); the sides and the top are open.
 // Cells are cubes of `cellSize` metres. Velocity is in metres per second, density is smoke, fuel and flame are 0 to 1 per cell.
 
+import { addGasDetail } from './gas-sim-detail.js';
 import { encodeVolumeGrid, registerVolumeGrid } from './volume-grid.js';
 import { VOLUME_GRID_SEQUENCE_MAX_BYTES } from './volume-grid-sequence.js';
 
@@ -48,7 +49,8 @@ const NUMBER_OPTIONS = {
   burstTemperature: [2400, 300, MAXIMUM_TEMPERATURE, false], // K
   burstSpeed: [6, 0, 100, false], // m/s outward at the core
   burstSeconds: [0.2, 0.001, 5, false], // how long the source feeds in
-  turbulence: [0.35, 0, 1, false] // how far noise pushes the burst's shape and clumps
+  turbulence: [0.35, 0, 1, false], // how far noise pushes the burst's shape and clumps
+  detail: [0, 0, 1, false] // noise upres of the smoke density in each baked frame, 1 mottles it by about half (0 leaves the bake as it was)
 };
 
 function checkNumber(name, value, [fallback, minimum, maximum, integer]) {
@@ -481,10 +483,10 @@ function createSolver(options) {
     applyCombustion(dt);
   }
 
-  function snapshot() {
+  function snapshot(frameIndex) {
     const kelvinPerUnit = 1 / GAS_SIM_TEMPERATURE_UNIT;
     const excess = temperature.map(kelvin => (kelvin - options.ambientTemperature) * kelvinPerUnit);
-    const channels = { density: density.slice(), temperature: excess, flame: flame.slice() };
+    const channels = addGasDetail({ density: density.slice(), temperature: excess, flame: flame.slice() }, options.resolution, options.detail, options.seed, frameIndex);
     // The velocity channels are written only on request (#1759), so a bake without them is byte for byte what it was.
     if (options.velocity) Object.assign(channels, { velocityX: velocityX.slice(), velocityY: velocityY.slice(), velocityZ: velocityZ.slice() });
     return channels;
@@ -508,7 +510,7 @@ function runGasSim(options, onFrame) {
     if (elapsed > options.maxSeconds) {
       throw new RangeError(`bakeGasSim: maxSeconds ${options.maxSeconds} passed after ${elapsed.toFixed(1)} s at frame ${frame + 1} of ${options.frames}; lower resolution, frames or substeps, or raise maxSeconds`);
     }
-    onFrame(solver.snapshot(), frame);
+    onFrame(solver.snapshot(frame), frame);
   }
 }
 
