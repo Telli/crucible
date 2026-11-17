@@ -354,6 +354,7 @@ on:
       - 'tests/cycles-sphere-light-parity.test.js'
       - 'tests/denoise-oidn-persistent.test.js'
       - 'tests/helpers/camera-environment-scenes.js'
+      - 'tests/native-albedo-reference.test.js'
       - 'tests/native-bake.test.js'
       - 'tests/native-camera-environment.test.js'
       - 'tests/native-camera-params.test.js'
