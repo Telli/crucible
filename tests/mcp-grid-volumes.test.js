@@ -154,8 +154,10 @@ function totalBytes(files) {
   return [...files.values()].reduce((sum, bytes) => sum + bytes.length, 0);
 }
 
-test('volumeGridFileBytes counts one add-explosion at exactly the bytes it bakes, and distinct blasts once each (#1903)', { timeout: 120000 }, () => {
-  const emptyFolder = join(tmpdir(), 'crucible-no-grids-here');
+test('volumeGridFileBytes counts one add-explosion at exactly the bytes it bakes, and distinct blasts once each (#1903)', { timeout: 120000 }, async context => {
+  // A fresh private folder with no .67vg files, so every add-explosion grid is counted as baked, not read from disk.
+  const emptyFolder = await mkdtemp(join(tmpdir(), 'crucible-no-grids-'));
+  context.after(() => rm(emptyFolder, { recursive: true, force: true }));
   for (const motionBlur of [true, false]) {
     const operations = [{ type: 'add-explosion', seed: 3, motionBlur }];
     const counted = volumeGridFileBytes(operations, emptyFolder);
