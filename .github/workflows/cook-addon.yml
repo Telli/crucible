@@ -47,6 +47,7 @@ on:
       - 'scripts/agent-native-temporal.mjs'
       - 'scripts/agent-native-trace.mjs'
       - 'scripts/asset-server.mjs'
+      - 'scripts/cdp-blob-read.mjs'
       - 'scripts/file-scene.mjs'
       - 'scripts/make-spark-spec.mjs'
       - 'scripts/native-bake-page.js'
@@ -504,8 +505,21 @@ jobs:
           # and with the default concurrency the light-tree file crashed (SIGSEGV) and byte-for-byte tests differed, while each
           # passed alone and two runs of one render were byte-identical on lavapipe (#1717).
           set +e
-          node --test --test-concurrency=2 --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --test-reporter=tap --test-reporter-destination=addon-tests.tap $(git grep -l "support/cook.js" -- tests)
+          # With the vector width pinned, two files still failed on AMD EPYC 9V74 and 9V45 and on Intel Xeon 6975P-C and 8573C (#1760):
+          # the mip level 0 read (difference 8.6 to 80, expected 0) and the light tree mean. With LLVM's optimisation passes off
+          # (GALLIVM_PERF=nopt) both passed on 5 of 5 runners across those CPUs, and with them on both failed on 4 of 5 (a different
+          # CPU on each run), so an optimisation pass in lavapipe's JIT changes the kernel's result. Switching the passes off for
+          # every file made the first native job run past its 10 minute cap, so only these two files run that way.
+          # Drop the split once Mesa's LLVM stops doing that.
+          jit_sensitive_tests="tests/native-texture-mips.test.js tests/native-light-tree-kernel.test.js"
+          other_tests=$(git grep -l "support/cook.js" -- tests | grep -vxF -e tests/native-texture-mips.test.js -e tests/native-light-tree-kernel.test.js)
+          test_options="--test-concurrency=2 --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --test-reporter=tap"
+          node --test $test_options --test-reporter-destination=addon-tests.tap $other_tests
           status=$?
+          GALLIVM_PERF=nopt node --test $test_options --test-reporter-destination=addon-tests-jit-sensitive.tap $jit_sensitive_tests
+          sensitive_status=$?
+          cat addon-tests-jit-sensitive.tap >> addon-tests.tap
+          if [ "$sensitive_status" -ne 0 ]; then status=$sensitive_status; fi
           echo "test_seconds=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           echo "node --test exit code $status"
       - name: Write ran and skipped counts to the job summary, fail on a real failure
