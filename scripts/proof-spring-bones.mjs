@@ -16,6 +16,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 const FOX_URL = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/Fox/glTF-Binary/Fox.glb';
 // The file is written to disk only when it matches this hash.
 const FOX_SHA256 = 'd97044e701822bac5a62696459b27d7b375aada5de8574ed4362edbba94771f7';
+const FOX_MAXIMUM_BYTES = 4 * 1024 * 1024;
 const outputDirectory = resolve(process.argv[2] ?? 'artifacts/981');
 const backend = process.env.PROOF_BACKEND ?? 'gpu';
 const WIDTH = 640;
@@ -30,7 +31,28 @@ const jobs = join(workDirectory, 'jobs');
 await mkdir(assets);
 await mkdir(outputDirectory, { recursive: true });
 
-const foxBytes = Buffer.from(await (await fetch(FOX_URL)).arrayBuffer());
+async function downloadBounded(url, maximumBytes) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Downloading ${url} failed with HTTP ${response.status}. Check the network and that the file still exists.`);
+  }
+  const declaredBytes = Number(response.headers.get('content-length'));
+  if (declaredBytes > maximumBytes) {
+    throw new Error(`${url} declares ${declaredBytes} bytes, over the ${maximumBytes} byte limit. Check that FOX_URL still points at the Fox model.`);
+  }
+  const chunks = [];
+  let receivedBytes = 0;
+  for await (const chunk of response.body) {
+    receivedBytes += chunk.length;
+    if (receivedBytes > maximumBytes) {
+      throw new Error(`${url} sent more than the ${maximumBytes} byte limit. Check that FOX_URL still points at the Fox model.`);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+const foxBytes = await downloadBounded(FOX_URL, FOX_MAXIMUM_BYTES);
 const assetId = createHash('sha256').update(foxBytes).digest('hex');
 if (assetId !== FOX_SHA256) {
   throw new Error(`The downloaded Fox.glb has sha256 ${assetId}, expected ${FOX_SHA256}. Check the file at ${FOX_URL} and update FOX_SHA256 only if the new file is the same fox.`);

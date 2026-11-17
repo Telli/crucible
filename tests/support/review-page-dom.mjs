@@ -77,7 +77,7 @@ class FakeElement {
  * (what the Save file button would write), and the elements. The stage is shown at its natural pixel size.
  */
 export function openReviewPage(html) {
-  const scripts = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)];
+  const scripts = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script\s*>/gi)];
   const config = scripts.find(([, type]) => type.includes('application/json'))[2];
   const code = scripts.find(([, type]) => type.trim() === '')[2];
   const { width, height } = JSON.parse(config);
