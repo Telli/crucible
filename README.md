@@ -54,6 +54,8 @@ Scenes built with Crucible open live in the browser on the [showcase](https://cr
   <a href="https://crucible.codepawl.com/object.html"><img src="https://crucible.codepawl.com/previews/wall-e.webp" alt="A robot model in the object studio, rendered by Crucible" width="49%"></a>
 </p>
 
+Made something with Crucible? [Post it in Show and tell](https://github.com/codepawl/crucible/discussions/new?category=show-and-tell). We feature picked work on the [showcase](https://crucible.codepawl.com/showcase.html#community), with credit.
+
 ## What it is
 
 Crucible is a 3D engine for AI agents and for pages. It has a real-time rasterizer, a path tracer, addons for terrain, vegetation, characters, liquid, vehicles and media export, and an MCP server. A scene is plain data: each part has a geometry, a matrix and a material.
@@ -271,7 +273,7 @@ They compare matching scenes on the same hardware. They do not show a general sp
 
 Read [CONTRIBUTING.md](https://github.com/codepawl/crucible/blob/main/CONTRIBUTING.md) before you open a pull request. It covers setup, checks, code style and the release flow.
 Coding agents start with [AGENTS.md](https://github.com/codepawl/crucible/blob/main/AGENTS.md), and `npm run preflight` runs the pull request checks locally.
-Questions, ideas and what you made go in [Discussions](https://github.com/codepawl/crucible/discussions). Bug reports: [SUPPORT.md](https://github.com/codepawl/crucible/blob/main/.github/SUPPORT.md).
+Questions and ideas go in [Discussions](https://github.com/codepawl/crucible/discussions), and what you made goes in [Show and tell](https://github.com/codepawl/crucible/discussions/new?category=show-and-tell). Bug reports: [SUPPORT.md](https://github.com/codepawl/crucible/blob/main/.github/SUPPORT.md).
 
 ## Sponsors
 
