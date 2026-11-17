@@ -242,8 +242,8 @@ function localGridTexture(renderer, grid) {
 
 function localGridEmissionTexture(renderer, volume) {
   const grid = volume?.gridData ?? null;
-  const baked = grid ? bakedGridEmission(grid, volume.temperatureScale) : null;
-  return uploadGridTexture(renderer, 'localGridEmissionCache', grid, volume?.temperatureScale ?? 0, (texels, voxel, texel) => {
+  const baked = grid ? bakedGridEmission(grid, volume.temperatureScale, volume.flameTemperature) : null;
+  return uploadGridTexture(renderer, 'localGridEmissionCache', grid, `${volume?.temperatureScale ?? 0}|${volume?.flameTemperature?.ignition}|${volume?.flameTemperature?.maximum}`, (texels, voxel, texel) => {
     texels[texel] = floatToHalf(Math.min(baked.red[voxel], HALF_FLOAT_MAXIMUM));
     texels[texel + 1] = floatToHalf(Math.min(baked.green[voxel], HALF_FLOAT_MAXIMUM));
     texels[texel + 2] = floatToHalf(Math.min(baked.blue[voxel], HALF_FLOAT_MAXIMUM));

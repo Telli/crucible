@@ -180,7 +180,10 @@ function addAirSteps(candidate, plan) {
 // background; at 9.5 (on top of the exact step integral, #1894) the edge falloff is 0.79 of the Cycles one and the RMSE drops from 0.030 to 0.020.
 // steps 32 is one step per voxel of the 32 cubed grid: against 96 steps the picture differs by an RMSE of 0.003 (linear, 0 to 1), and a CPU preview
 // look costs a third (SwiftShader, 768 x 432: first look 11.7 s to 4.9 s, later looks 4.2 s to 1.7 s), which keeps scene_look well under its 30 s limit.
+// flameTemperature is Blender's fire remap (#1735): every voxel with flame emits at 1500 K up to 3000 K by its flame value, whatever its smoke density, which
+// is the orange rim Cycles draws along the smoke edge (the temperature channel alone cools to nothing there).
 const BLAST_VOLUME = Object.freeze({
+  flameTemperature: Object.freeze({ ignition: 1.5, maximum: 3 }),
   density: 3, emission: [1, 0.45, 0.12], emissionStrength: 9.5, blackbodyIntensity: 0.3, absorption: [1, 1, 1], steps: 32,
 });
 const OILY_DENSITY_GAIN = 1.5;
@@ -236,6 +239,7 @@ function addBlastVolume(candidate, plan) {
     emission: [...BLAST_VOLUME.emission],
     emissionStrength: round(BLAST_VOLUME.emissionStrength / scale),
     temperatureScale: GAS_SIM_TEMPERATURE_UNIT,
+    flameTemperature: { ...BLAST_VOLUME.flameTemperature },
     blackbodyIntensity: BLAST_VOLUME.blackbodyIntensity,
     steps: BLAST_VOLUME.steps,
     castShadow: true,
