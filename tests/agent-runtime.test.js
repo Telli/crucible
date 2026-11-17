@@ -401,6 +401,27 @@ runTest('a job cut short by its deadline leaves the runtime usable although the 
   } finally { await runtime.close(); }
 });
 
+runTest('scene_render_status of a finished job still answers while a newer job holds the renderer', async () => {
+  const finishedJobId = randomUUID();
+  const runningJobId = randomUUID();
+  const records = [{ jobId: finishedJobId, state: 'completed' }, { jobId: runningJobId, state: 'running' }];
+  const controller = {
+    list: () => records,
+    status: jobId => records.find(record => record.jobId === jobId),
+    close: async () => {},
+    submit: async () => ({ jobId: runningJobId }),
+  };
+  const { runtime, sessionId } = await reviewRuntimeHarness({
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async () => controller } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    assert.equal((await runtime.jobStatus({ jobId: runningJobId })).state, 'running');
+    assert.equal((await runtime.jobStatus({ jobId: finishedJobId })).state, 'completed');
+    assert.equal((await runtime.capabilities()).phase, 'rendering', 'the renderer stays leased to the running job');
+  } finally { await runtime.close(); }
+});
+
 async function runOversizeJob({ requested, jobRender, memory }) {
   let runJob;
   const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };

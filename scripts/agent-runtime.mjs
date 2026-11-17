@@ -333,14 +333,19 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return { path, filename, mimeType: 'model/gltf-binary', bytes: bytes.length,
       sha256: createHash('sha256').update(bytes).digest('hex'), keptExports: savedGlbPaths.length };
   }
-  async function requirePreviewRenderer() {
-    if (phase !== 'rendering') return;
+  /** True while the renderer is still leased: a render job exists that has not reached a terminal state. */
+  async function rendererStillLeased() {
+    if (phase !== 'rendering') return false;
     const terminal = ['completed', 'cancelled', 'failed', 'interrupted'];
-    if ((await jobs()).list().some(record => !terminal.includes(record.state))) {
-      throw new Error('The renderer is leased to a render job. Wait for completion or cancel the job.');
-    }
+    if ((await jobs()).list().some(record => !terminal.includes(record.state))) return true;
     // A queued job can be cancelled before its runner acquires the renderer.
     phase = 'ready';
+    return false;
+  }
+  async function requirePreviewRenderer() {
+    if (await rendererStillLeased()) {
+      throw new Error('The renderer is leased to a render job. Wait for completion or cancel the job.');
+    }
   }
   function catalog() {
     if (!assetRoot && !packsRoot) throw new Error('Configure --assets or --packs with an absolute directory before importing GLB assets.');
@@ -1655,9 +1660,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     },
     async jobStatus({ jobId }) {
       const record = (await jobs()).status(jobId);
-      if (phase === 'rendering' && ['completed', 'cancelled', 'failed', 'interrupted'].includes(record.state)) {
-        await requirePreviewRenderer();
-      }
+      // Reading a job never fails because a newer job holds the renderer; it only hands the renderer back once none does.
+      if (['completed', 'cancelled', 'failed', 'interrupted'].includes(record.state)) await rendererStillLeased();
       return record;
     },
     async cancelJob({ jobId }) {
