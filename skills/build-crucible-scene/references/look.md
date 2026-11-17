@@ -34,7 +34,7 @@ Time of day comes from the sun alone: `"sky": { "type": "physical", "preset": "g
 Call `scene_asset_catalog` (no arguments). It lists two shipped HDRIs, `sky-clouds` and `studio-softbox`, two shipped
 looks, `teal-orange` and `noir`, and every `.hdr` (kind `environment`) and `.cube` (kind `look`) file in the server's
 `--assets` folder as a 64-character ID. A recipe names an entry and never carries a path or URL. For a bigger HDRI,
-tell the user to put a 1k or 2k `.hdr` (4 MiB at most) in the assets folder and restart the server for its ID.
+tell the user to put a 1k or 2k `.hdr` (8 MiB at most) in the assets folder and restart the server for its ID.
 
 Tool `scene_apply`:
 
