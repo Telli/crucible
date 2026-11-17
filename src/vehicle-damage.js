@@ -279,8 +279,33 @@ function launchVelocityOf(part, hit, nextUnit) {
   ];
 }
 
-function keepOnCarSide(state, wall, restitution) {
-  const depth = (state.position[0] - wall.point[0]) * wall.normal[0] + (state.position[1] - wall.point[1]) * wall.normal[1] + (state.position[2] - wall.point[2]) * wall.normal[2];
+function rotateByEuler(rotation, vector) {
+  const [x, y, z] = vector;
+  const [cosZ, sinZ] = [Math.cos(rotation[2]), Math.sin(rotation[2])];
+  const aroundZ = [x * cosZ - y * sinZ, x * sinZ + y * cosZ, z];
+  const [cosY, sinY] = [Math.cos(rotation[1]), Math.sin(rotation[1])];
+  const aroundY = [aroundZ[0] * cosY + aroundZ[2] * sinY, aroundZ[1], -aroundZ[0] * sinY + aroundZ[2] * cosY];
+  const [cosX, sinX] = [Math.cos(rotation[0]), Math.sin(rotation[0])];
+  return [aroundY[0], aroundY[1] * cosX - aroundY[2] * sinX, aroundY[1] * sinX + aroundY[2] * cosX];
+}
+
+/** How far the part's box (`halfExtents`, turned by `rotation`) reaches along `normal` from its centre; 0 for a part with no size. */
+function reachAlong(normal, rotation, halfExtents) {
+  if (!halfExtents) return 0;
+  let reach = 0;
+  for (let axis = 0; axis < 3; axis++) {
+    const unitAxis = [0, 0, 0];
+    unitAxis[axis] = halfExtents[axis];
+    const turned = rotateByEuler(rotation, unitAxis);
+    reach += Math.abs(turned[0] * normal[0] + turned[1] * normal[1] + turned[2] * normal[2]);
+  }
+  return reach;
+}
+
+function keepOnCarSide(state, flight) {
+  const { wall, halfExtents, restitution } = flight;
+  const centreDepth = (state.position[0] - wall.point[0]) * wall.normal[0] + (state.position[1] - wall.point[1]) * wall.normal[1] + (state.position[2] - wall.point[2]) * wall.normal[2];
+  const depth = centreDepth - reachAlong(wall.normal, state.rotation, halfExtents);
   if (depth >= 0) return;
   for (let axis = 0; axis < 3; axis++) state.position[axis] -= depth * wall.normal[axis];
   const approach = state.velocity[0] * wall.normal[0] + state.velocity[1] * wall.normal[1] + state.velocity[2] * wall.normal[2];
@@ -294,7 +319,7 @@ function advanceFlight(state, flight, seconds) {
     state.velocity[1] -= flight.gravity * FLIGHT_STEP_SECONDS;
     for (let axis = 0; axis < 3; axis++) state.position[axis] += state.velocity[axis] * FLIGHT_STEP_SECONDS;
     for (let axis = 0; axis < 3; axis++) state.rotation[axis] += state.spin[axis] * FLIGHT_STEP_SECONDS;
-    keepOnCarSide(state, flight.wall, flight.restitution);
+    keepOnCarSide(state, flight);
     if (state.position[1] > flight.groundY) continue;
     state.position[1] = flight.groundY;
     state.velocity[1] = -state.velocity[1] * flight.restitution;
@@ -310,10 +335,10 @@ function advanceFlight(state, flight, seconds) {
 }
 
 /**
- * The flight of a loose part a hit tears off. `part` is `{ id, threshold, mass, position }` (N s, kg, the part's centre in
- * metres); `hit` is `{ impulse, direction, point }` from `findDriveImpact` (`point` is optional and defaults to the part's centre). Returns null when the impulse stays below the
+ * The flight of a loose part a hit tears off. `part` is `{ id, threshold, mass, position, size }` (N s, kg, the part's centre in
+ * metres, `size` its box as three extents in metres, optional); `hit` is `{ impulse, direction, point }` from `findDriveImpact` (`point` is optional and defaults to the part's centre). Returns null when the impulse stays below the
  * threshold, so the part stays on. Otherwise it returns `{ id, launchVelocity, sample(time) }`: the part leaves mostly
- * sideways (a seeded sign, across `direction`) with a small rebound along `direction` and an up kick, tumbles, falls under gravity and bounces on the ground plane `groundY`. It never crosses the wall plane through `point` with normal `direction`.
+ * sideways (a seeded sign, across `direction`) with a small rebound along `direction` and an up kick, tumbles, falls under gravity and bounces on the ground plane `groundY`. No corner of its box (turned by the Euler angles in XYZ order) crosses the wall plane through `point` with normal `direction`; a part with no `size` is held by its centre only.
  * `sample(time)` gives `{ position, rotation (Euler radians), velocity, settled }` for 0 to 30 s, and the same inputs
  * with the same `seed` give the same numbers on every run.
  */
@@ -323,6 +348,9 @@ export function detachedPartFlight(part, hit, { seed = 0, gravity = 9.81, ground
   requireNumber(part.threshold, 'part.threshold', 1e-6, 1e9, 9000);
   requireNumber(part.mass, 'part.mass', 1e-3, 1e5, 12);
   requireVector3(part.position, 'part.position', '[0, 0.5, 2]');
+  if (part.size !== undefined) {
+    requireVector3(part.size, 'part.size', '[1.7, 0.35, 0.2], the box of the part in metres').forEach((extent, axis) => requireNumber(extent, `part.size[${axis}]`, 1e-3, 100, 0.5));
+  }
   requirePlainObject(hit, 'hit', '{ "impulse": 16800, "direction": [0, 0, -1] }');
   requireNumber(hit.impulse, 'hit.impulse', 0, 1e9, 16800);
   const rawDirection = requireVector3(hit.direction, 'hit.direction', '[0, 0, -1]');
@@ -337,7 +365,8 @@ export function detachedPartFlight(part, hit, { seed = 0, gravity = 9.81, ground
   const launchVelocity = launchVelocityOf(part, hit, nextUnit);
   const spin = [0, 1, 2].map(() => (nextUnit() * 2 - 1) * MAX_SPIN_RADIANS_PER_SECOND);
   const wall = { point: hit.point ?? part.position, normal: normalized(rawDirection) };
-  const flight = { gravity, groundY, restitution, wall };
+  const halfExtents = part.size ? part.size.map(extent => extent / 2) : null;
+  const flight = { gravity, groundY, restitution, wall, halfExtents };
   return {
     id: part.id,
     launchVelocity,

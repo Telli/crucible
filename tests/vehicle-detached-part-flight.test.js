@@ -59,3 +59,39 @@ test('a part thrown at the wall is held on the car side of its plane', () => {
   const towardWall = detachedPartFlight({ ...BUMPER, position: [0, 0.5, 2.09] }, { ...WALL_HIT, direction: [0, 0, -1], point: [0, 0.5, 2.1] }, { seed: 2 });
   assert.ok(towardWall.sample(1).position[2] <= 2.1 + 1e-6);
 });
+
+const SIZED_BUMPER = { ...BUMPER, position: [0, 0.5, 1.95], size: [1.7, 0.35, 0.2] };
+
+function boxCorners(position, rotation, size) {
+  const [x, y, z] = rotation;
+  const turn = ([vx, vy, vz]) => {
+    const aroundZ = [vx * Math.cos(z) - vy * Math.sin(z), vx * Math.sin(z) + vy * Math.cos(z), vz];
+    const aroundY = [aroundZ[0] * Math.cos(y) + aroundZ[2] * Math.sin(y), aroundZ[1], -aroundZ[0] * Math.sin(y) + aroundZ[2] * Math.cos(y)];
+    return [aroundY[0], aroundY[1] * Math.cos(x) - aroundY[2] * Math.sin(x), aroundY[1] * Math.sin(x) + aroundY[2] * Math.cos(x)];
+  };
+  const corners = [];
+  for (const signX of [-1, 1]) for (const signY of [-1, 1]) for (const signZ of [-1, 1]) {
+    const offset = turn([signX * size[0] / 2, signY * size[1] / 2, signZ * size[2] / 2]);
+    corners.push(offset.map((component, axis) => position[axis] + component));
+  }
+  return corners;
+}
+
+test('no corner of a sized part crosses the wall plane, for 4 seeds, every 1/60 s', () => {
+  for (const seed of [1, 2, 3, 4]) {
+    const flight = detachedPartFlight(SIZED_BUMPER, WALL_HIT, { seed });
+    for (let step = 0; step <= 10 * 60; step++) {
+      const sample = flight.sample(step / 60);
+      for (const corner of boxCorners(sample.position, sample.rotation, SIZED_BUMPER.size)) {
+        const behindWall = (corner[2] - WALL_HIT.point[2]) * WALL_HIT.direction[2];
+        assert.ok(behindWall >= -1e-6, `seed ${seed} step ${step} corner ${corner} is ${behindWall} past the wall`);
+      }
+    }
+  }
+});
+
+test('a part with a size is checked and one without keeps the centre-only hold', () => {
+  assert.throws(() => detachedPartFlight({ ...BUMPER, size: [1, 0, 1] }, WALL_HIT), /part\.size/);
+  assert.throws(() => detachedPartFlight({ ...BUMPER, size: [1, 1] }, WALL_HIT), /part\.size/);
+  assert.ok(detachedPartFlight(BUMPER, WALL_HIT, { seed: 1 }).sample(1));
+});
