@@ -439,14 +439,6 @@ const DOOR_REST_SPEED = 0.05;
 const DEFAULT_DOOR_MAX_ANGLE_DEGREES = 70;
 const DEFAULT_DOOR_DAMPING = 3;
 
-function crossProduct(first, second) {
-  return [
-    first[1] * second[2] - first[2] * second[1],
-    first[2] * second[0] - first[0] * second[2],
-    first[0] * second[1] - first[1] * second[0],
-  ];
-}
-
 function dotProduct(first, second) {
   return first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
 }
