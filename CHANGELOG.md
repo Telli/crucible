@@ -316,6 +316,7 @@
 - The showcase page has a Made with Crucible section for picked community work, and Show and tell asks for the credit, the licence and permission to feature it (#1980)
 - `scene_ask_user`: the annotate page has a lasso tool; a lasso mark comes back with `kind` `"lasso"`, its `points` and the `parts` under the outline (most covered first, with `coverage`, `edge` below 0.15 and `materialSharedWith` for a material also used outside the mark), and the test-only answer fixture accepts `lasso` marks (#922).
 - `scene_ask_user` takes an optional `motionTime`: the person marks the scene at that moment of its authored motion, and the answer's `view.motionTime` names it (#922).
+- The marketplace lists the companion packages CodePawl publishes on npm (`@codepawlhq/crucible-*`) in their own section with an install command, and `@codepawlhq/crucible-three-bridge` drops the `crucible-addon` keyword because it is a library that registers nothing (#1988)
 
 ## 0.20.0
 
