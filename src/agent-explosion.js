@@ -176,10 +176,12 @@ function addAirSteps(candidate, plan) {
 // per-voxel temperature, with its shadow on the floor. The bake is fixed (one grid per fuel and seed, explosion-grids.js) and the volume's
 // box scales it: the box is EXPLOSION_GRID_BOX metres at the reference size, the density and emission shrink with the box so the blast keeps
 // its optical depth, and the playback speed follows the square root of the scale, the way a bigger fire rises slower.
+// emissionStrength 8.4 (#1736): at 14 the core clipped to white and the edge fell off about 29% faster than the Cycles frame of the same grid on a flat
+// background; at 8.4 the edge falloff is 0.78 of the Cycles one and the colour histogram distance drops from 0.021 to 0.006.
 // steps 32 is one step per voxel of the 32 cubed grid: against 96 steps the picture differs by an RMSE of 0.003 (linear, 0 to 1), and a CPU preview
 // look costs a third (SwiftShader, 768 x 432: first look 11.7 s to 4.9 s, later looks 4.2 s to 1.7 s), which keeps scene_look well under its 30 s limit.
 const BLAST_VOLUME = Object.freeze({
-  density: 3, emission: [1, 0.45, 0.12], emissionStrength: 14, blackbodyIntensity: 0.3, absorption: [1, 1, 1], steps: 32,
+  density: 3, emission: [1, 0.45, 0.12], emissionStrength: 8.4, blackbodyIntensity: 0.3, absorption: [1, 1, 1], steps: 32,
 });
 const OILY_DENSITY_GAIN = 1.5;
 const HOLD_SECONDS = 1;

@@ -144,6 +144,7 @@ test('the fireball is a gas-sim grid volume scaled to the blast size: box, densi
   assert.equal(large.fps, 12);
   assert.equal(small.density / large.density, 4);
   assert.equal(small.emissionStrength / large.emissionStrength, 4);
+  assert.equal(small.emissionStrength, 8.4, 'the reference-size emission that keeps the core from clipping to white and the edge soft like the Cycles frame (#1736)');
   assert.deepEqual(small.center, [0, 4, 0]);
   const oily = applyBlast(blast({ size: 2.5, fuel: 'oily' })).recipe.environment.localVolumes[0];
   assert.equal(oily.density, 1.5 * small.density);
@@ -194,10 +195,10 @@ test('the MCP server finds the grids an add-explosion operation will name, so th
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
 });
 
-// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775).
+// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change).
 const FIRST_RELEASE_HASHES = new Map([
-  ['{}', '3dc6ef8f1af3a05fba20d399846f8aaa1559ae3652d06181b249487074d7414e'],
-  ['{"start":0.5,"fuel":"oily","seed":7}', 'f677a321407728c72f05370db069291885d96c451b691248ea967754bb4f3e78'],
+  ['{}', '54881b598a405fb7e83a1339c38324ba18d38aee26721f93bf9d8da55efa4bc9'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', '142d513422a41a4374450eaeccdd6390cb80132001f90974cc9db23bc93bd129'],
 ]);
 
 test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {
