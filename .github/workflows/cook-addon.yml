@@ -366,6 +366,7 @@ on:
       - 'tests/native-dispersion.test.js'
       - 'tests/native-exit-code.test.js'
       - 'tests/native-filter.test.js'
+      - 'tests/native-glass-albedo.test.js'
       - 'tests/native-grid-volumes.test.js'
       - 'tests/native-instancing-emissive-offsets.test.js'
       - 'tests/native-instancing-equivalence.test.js'
