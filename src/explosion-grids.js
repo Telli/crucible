@@ -121,6 +121,18 @@ export function explosionGridNamesFor(operation) {
   return [...explosionGridNames(fuel, seed, velocity), explosionEmptyGridName(velocity)];
 }
 
+/**
+ * The length in bytes of an explosion grid file by name, or null when the name is not one add-explosion writes. Nothing is baked: every frame of
+ * a bake has the channels of the empty frame at the same resolution, so the empty frame's length is the length of each of them (#1903).
+ */
+export function explosionGridByteLength(name) {
+  if (name === EXPLOSION_EMPTY_GRID) return emptyFrame(false).length;
+  if (name === EXPLOSION_EMPTY_VELOCITY_GRID) return emptyFrame(true).length;
+  const match = typeof name === 'string' ? NAME_PATTERN.exec(name) : null;
+  if (!match || Number(match[2]) > 4294967295 || Number(match[4]) >= EXPLOSION_GRID_FRAMES) return null;
+  return emptyFrame(Boolean(match[3])).length;
+}
+
 /** The bytes of an explosion grid file by name, baked on first use, or null when the name is not one add-explosion writes. */
 export function explosionGridBytes(name) {
   if (name === EXPLOSION_EMPTY_GRID) return emptyFrame(false);

@@ -9,6 +9,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { createAgentRuntime } from '../scripts/agent-runtime.mjs';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
 import { encodeVolumeGrid } from '../src/volume-grid.js';
+import { EXPLOSION_EMPTY_VELOCITY_GRID, explosionGridByteLength, setExplosionBakeStore } from '../src/explosion-grids.js';
 import { GRID_DIRECTORY_VARIABLE, readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
 import { decodePngPixels, meanBrightness } from './support/png-pixels.mjs';
 
@@ -147,4 +148,39 @@ test('volumeGridFileBytes sums distinct file sizes, stops at the combined limit 
   for (const name of copies) await writeFile(join(folder, name), Buffer.alloc(40 * 1024 * 1024));
   const total = volumeGridFileBytes(gridRecipe({ frames: ['big.67vg', ...copies] }), folder);
   assert.equal(total, 64 * 1024 * 1024 + 1, 'counting stops at the first file that passes the limit');
+});
+
+function totalBytes(files) {
+  return [...files.values()].reduce((sum, bytes) => sum + bytes.length, 0);
+}
+
+test('volumeGridFileBytes counts one add-explosion at exactly the bytes it bakes, and distinct blasts once each (#1903)', { timeout: 120000 }, () => {
+  const emptyFolder = join(tmpdir(), 'crucible-no-grids-here');
+  for (const motionBlur of [true, false]) {
+    const operations = [{ type: 'add-explosion', seed: 3, motionBlur }];
+    const counted = volumeGridFileBytes(operations, emptyFolder);
+    assert.ok(counted > 0, 'an add-explosion has grid bytes to count');
+    assert.equal(counted, totalBytes(readVolumeGridFiles(operations, emptyFolder)), `motionBlur ${motionBlur}: counted bytes equal the baked bytes`);
+    assert.equal(volumeGridFileBytes([...operations, { type: 'add-explosion', seed: 3, motionBlur }], emptyFolder), counted, 'the same blast twice counts once');
+  }
+  const one = volumeGridFileBytes([{ type: 'add-explosion', seed: 1 }], emptyFolder);
+  const sharedEmptyFrame = explosionGridByteLength(EXPLOSION_EMPTY_VELOCITY_GRID);
+  // Two blasts stay under the combined limit, where counting stops early.
+  const two = volumeGridFileBytes(Array.from({ length: 2 }, (unused, index) => ({ type: 'add-explosion', seed: index + 1 })), emptyFolder);
+  assert.equal(two, 2 * (one - sharedEmptyFrame) + sharedEmptyFrame, 'two seeds count two sets of frames and one shared empty frame');
+  const twelve = volumeGridFileBytes(Array.from({ length: 12 }, (unused, index) => ({ type: 'add-explosion', seed: index + 1 })), emptyFolder);
+  assert.ok(twelve > 64 * 1024 * 1024, 'twelve distinct blasts pass the combined limit');
+});
+
+test('scene_apply refuses distinct add-explosion operations over the combined limit before baking any of them (#1903)', { timeout: 120000 }, async context => {
+  const { client } = await startServer(context);
+  const created = await call(client, 'scene_create', { recipe: gridRecipe({ grid: 'left.67vg' }) });
+  let bakeAttempts = 0;
+  setExplosionBakeStore({ load: () => { bakeAttempts += 1; return null; }, save: () => {} });
+  context.after(() => setExplosionBakeStore(null));
+  const operations = Array.from({ length: 3 }, (unused, index) => ({ type: 'add-explosion', id: `blast${index}`, center: [index, 0, 0], size: 2, seed: index + 1 }));
+  const refused = await client.callTool({ name: 'scene_apply', arguments: { sessionId: created.sessionId, expectedRevision: created.revision ?? 0, operations } });
+  assert.equal(refused.isError, true);
+  assert.match(refused.content.find(item => item.type === 'text').text, /67108864/);
+  assert.equal(bakeAttempts, 0, 'no explosion was baked before the refusal');
 });
