@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { createCamera } from '../src/path-tracer.js';
 import * as pack from '../src/path-tracer-gpu-pack.js';
 import { buildTraceScene } from '../src/path-tracer-scene.js';
-import { cookModule, cookTest } from './support/cook.js';
+import { cookInstalled, cookModule, cookTest } from './support/cook.js';
+
+const { findNativeAddon } = (await cookModule()) ?? {};
+const skipWithoutAddon = !cookInstalled || !findNativeAddon() ? 'the native addon is not built' : false;
 
 // The albedo pass records the colour of the first surface a ray meets, also when that surface is glass (#1918). The glass
 // scene of native-job-materials.test.js has four quads in one plane, so which quad wins a pixel is a tie that a real GPU and
@@ -35,7 +38,7 @@ function assertColour(actual, expected, message) {
   actual.forEach((channel, index) => assert.ok(Math.abs(channel - expected[index]) < 1e-3, `${message}: ${actual} is not ${expected}`));
 }
 
-cookTest('the albedo of a pixel behind a glass pane is the glass, and the wall beside it keeps its own colour', async t => {
+cookTest('the albedo of a pixel behind a glass pane is the glass, and the wall beside it keeps its own colour', { skip: skipWithoutAddon }, async t => {
   const cook = await cookModule();
   const { buildNativeInput } = await cookModule('pack-input');
   const parts = [
