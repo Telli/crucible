@@ -26,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createRunGuard } from './run-guard.mjs';
+import { claudeArguments, writeSkillPromptFile } from './claude-arguments.mjs';
 import { resolveSkillMode, skillPromptFor } from './skill-prompt.mjs';
 import { removeLocalPaths, totalsByModel, totalsOf } from './aggregate.mjs';
 import { gradeRecipe, recipeFeatures } from './check.mjs';
@@ -71,19 +72,15 @@ function mcpConfig(assetDirectory) {
   } } };
 }
 
-function runClaude(prompt, workingDirectory, configPath, systemPromptAddition) {
-  const argumentsList = [
-    '-p', prompt,
-    '--model', options.model,
-    '--output-format', 'stream-json', '--verbose',
-    '--mcp-config', configPath, '--strict-mcp-config',
-    '--allowedTools', `mcp__${MCP_SERVER_NAME}`,
-    '--disallowedTools', ...BUILT_IN_TOOLS,
-    '--permission-mode', 'dontAsk',
-    '--setting-sources', 'project',
-    '--no-session-persistence',
-    ...(systemPromptAddition ? ['--append-system-prompt', systemPromptAddition] : []),
-  ];
+function runClaude(prompt, workingDirectory, configPath, skillPromptPath) {
+  const argumentsList = claudeArguments({
+    prompt,
+    model: options.model,
+    configPath,
+    serverName: MCP_SERVER_NAME,
+    builtInTools: BUILT_IN_TOOLS,
+    skillPromptPath,
+  });
   return new Promise(resolvePromise => {
     const started = performance.now();
     const child = spawn(options.claude, argumentsList, { cwd: workingDirectory, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -181,8 +178,8 @@ async function runTask(task, attempt) {
     await writeFile(configPath, JSON.stringify(mcpConfig(assetDirectory)));
     const text = taskPrompt(task);
     const prompt = task.ownPreamble ? text : `${PROMPT_PREAMBLE}\n\n${text}`;
-    const systemPromptAddition = await skillPromptFor(skillMode, task, repository);
-    const run = await runClaude(prompt, workingDirectory, configPath, systemPromptAddition);
+    const skillPromptPath = await writeSkillPromptFile(workingDirectory, await skillPromptFor(skillMode, task, repository));
+    const run = await runClaude(prompt, workingDirectory, configPath, skillPromptPath);
     const transcript = readTranscript(run.output);
     await writeFile(join(rawDirectory, `${fileStem}.jsonl`), run.output);
     if (run.errors) await writeFile(join(rawDirectory, `${fileStem}.stderr.txt`), run.errors);
