@@ -1,1 +1,0 @@
-- The WebGPU path tracer now draws local volumes with `emissionRamp` and `noiseOctaves`, matching the CPU tracer; before, backend "webgpu" threw for both (#1785).

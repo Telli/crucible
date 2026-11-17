@@ -1,1 +1,0 @@
-- scene:agent-scene+lazy: the store hook and bake descriptor in explosion-grids.js (71 bytes gzip) let the MCP server reuse baked blasts across processes, saving about 5 s per first grid scene

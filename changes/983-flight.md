@@ -1,1 +1,0 @@
-- `detachedPartFlight` in `crucible/addons/vehicle` gives a loose part torn off by a crash a seeded flight: launch from the impulse above its threshold, tumble, bounce and rest on the ground (#983)

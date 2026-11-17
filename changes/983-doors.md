@@ -1,1 +1,0 @@
-- `hingedDoorSwing` in `crucible/addons/vehicle` swings a damaged door open on its hinge: a torque-driven, damped swing that stops at `maxAngle` with a small bounce and rests (#983)
