@@ -1,5 +1,5 @@
 {
- "archiveBytes": 1951497,
+ "archiveBytes": 1963387,
  "goals": {
   "lit-box": 50000,
   "gltf-box": 80000,
@@ -50,10 +50,10 @@
   "entry:path-tracer-realtime": 54600,
   "entry:path-tracer-realtime+lazy": 97100,
   "entry:texture-set": 900,
-  "entry:agent-scene": 97000,
-  "entry:agent-scene+lazy": 591200,
-  "entry:agent-asset": 152900,
-  "entry:agent-asset+lazy": 603600,
+  "entry:agent-scene": 97200,
+  "entry:agent-scene+lazy": 591400,
+  "entry:agent-asset": 153400,
+  "entry:agent-asset+lazy": 604100,
   "entry:hdri": 7900,
   "entry:camera-effects": 9400,
   "entry:water-reflection": 15000,
@@ -95,18 +95,18 @@
   "entry:animation-graph": 14000,
   "entry:player": 7400,
   "entry:game-rules": 4800,
-  "entry:game": 220900,
-  "entry:game+lazy": 707800,
+  "entry:game": 221300,
+  "entry:game+lazy": 708200,
   "entry:update-part-vertices": 800,
   "entry:reflection-probes": 21400,
   "entry:fracture": 3000,
   "entry:morph": 9900,
-  "entry:skinning": 8600,
+  "entry:skinning": 8800,
   "scene:lit-box": 63400,
   "scene:lit-box+lazy": 64800,
   "scene:gltf-box": 98800,
   "scene:gltf-box+lazy": 120300,
-  "scene:agent-scene": 146100,
-  "scene:agent-scene+lazy": 627200
+  "scene:agent-scene": 146300,
+  "scene:agent-scene+lazy": 627400
  }
 }

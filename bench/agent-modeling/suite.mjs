@@ -27,6 +27,9 @@ export const BENCH_TASKS = [
   { id: 'look-pick', kind: 'look' },
   { id: 'look-metal', kind: 'look' },
   { id: 'look-fog', kind: 'look' },
+  { id: 'ask-user-pin', kind: 'look', topics: ['askUser'] },
+  { id: 'ask-user-pin-shared', kind: 'look', topics: ['askUser'] },
+  { id: 'ask-user-lasso', kind: 'look', topics: ['askUser'] },
   { id: 'render-pick', kind: 'light' },
   { id: 'light-pick-hard', kind: 'light' },
   { id: 'light-key-fill', kind: 'light' },
@@ -66,6 +69,8 @@ export const KIND_REFERENCES = {
 export const TOPIC_REFERENCES = {
   placedAssets: ['game.md'],
   motionIk: ['film-and-animation.md'],
+  explosion: ['effects-and-feedback.md'],
+  askUser: ['effects-and-feedback.md'],
 };
 
 // Reference files no bench task loads, each with the reason. A new file under references/ must be reachable from a kind or listed here.

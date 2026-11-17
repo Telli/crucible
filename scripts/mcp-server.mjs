@@ -29,6 +29,7 @@ import { bakeCacheDirectory, createExplosionBakeCache } from '../src/explosion-b
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from '../src/light-limits.js';
 import { currentFormatName, warnLegacyOnce } from '../src/legacy-names.js';
 import { annotateViewHtml, clientSupportsMcpApps, ANNOTATE_VIEW_URI, MCP_APPS_MIME_TYPE } from './annotate-app-view.mjs';
+import { loadAskUserFixture, describeAskUserFixture } from './ask-user-fixture.mjs';
 import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
 
 function acceptLegacyFormat(value) {
@@ -1037,7 +1038,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     const metadata = findings ? lookMetadata : metadataWithoutFindings;
     return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(metadata) }], structuredContent: metadata };
   });
-  const askUserTool = register('scene_ask_user', 'Open the view in the browser so the person pins points with notes; waits for Send. Use for a change hard to say in words. Returns marks with partId, point, normal, note, and the marked PNG. reviewFile: the text a review page saved, read instead of opening the browser.', z.strictObject({ ...sessionFields, reviewFile: z.string().max(16384).optional().describe('Text of the file a scene_export_web review page saved.'), prompt: z.string().max(200).optional().describe('Line shown above the picture.'), maxMarks: z.number().int().min(1).max(16).default(16), timeoutSeconds: z.number().int().min(10).max(900).default(300) }), askUser, async argumentsValue => {
+  const askUserTool = register('scene_ask_user', 'Open the view in the browser so the person pins points with notes; waits for Send. Use for a change hard to say in words. Returns marks with partId, point, normal, note, and the marked PNG. materialSharedWith: own material first. reviewFile: the text a review page saved, read instead of opening the browser.', z.strictObject({ ...sessionFields, reviewFile: z.string().max(16384).optional().describe('Text of the file a scene_export_web review page saved.'), prompt: z.string().max(200).optional().describe('Line shown above the picture.'), motionTime: z.number().min(0).max(3600).optional(), maxMarks: z.number().int().min(1).max(16).default(16), timeoutSeconds: z.number().int().min(10).max(900).default(300) }), askUser, async argumentsValue => {
     const { content, image, viewMeta } = await runtime.askUser(clientShowsApps ? { ...argumentsValue, inline: true } : argumentsValue);
     return { content: [...(image ? [{ type: 'image', data: image, mimeType: 'image/png' }] : []), { type: 'text', text: JSON.stringify(content) }], ...(viewMeta ? { _meta: { 'crucible/annotate': viewMeta } } : {}) };
   });
@@ -1152,7 +1153,10 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   if (bakeCache) setExplosionBakeStore(createExplosionBakeCache(bakeCache));
   // Not awaited: the check fills in while the client connects and never delays or fails the start.
   const updateCheck = startUpdateCheck({ currentVersion: version });
-  const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl }), { version, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
+  // Test-only: answers for scene_ask_user from a file, set by whoever starts the server (#1956). Read once, here.
+  const askUserFixture = loadAskUserFixture();
+  if (askUserFixture) console.error(describeAskUserFixture(askUserFixture));
+  const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl, askUserFixture }), { version, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
     transport: new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 2 * 1024 * 1024 }),
     onerror: error => console.error(`Crucible MCP error: ${error.message}`),
   });

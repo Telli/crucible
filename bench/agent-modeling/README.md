@@ -139,6 +139,21 @@ drops by more than `--tolerance` (0.05) or when infra runs pass `--infra-bound` 
 then rests on too few runs. The infra count prints next to pass@1. Use the same models, `--runs` and backend on both sides. A task that moves by one
 run out of three is noise; read the totals and the tasks that moved by two runs or more.
 
+### scene_ask_user task (test-only fixture, #1956)
+
+`scene_ask_user` opens a browser page and waits for a person, so a bench run could never finish it. A task tagged `topics: ['askUser']`
+therefore starts the server with `CRUCIBLE_ASK_USER_FIXTURE=<absolute path>`, the task's `askUserFixture` file in this folder
+(`ask-user-pin.json` for `ask-user-pin`). The variable is **test-only**: only whoever starts the server sets it, it is read once at start,
+it is in no tool schema or flag list, and the server logs `scene_ask_user answers come from the fixture <file>` when it is set. The file is an
+absolute `.json` path under 64 KB: `{"marks":[{"pixel":[x,y],"note":"..."}]}` with 1 to 16 marks, pixels inside the 768x512 frame, notes of
+at most 280 characters (an optional `motionTime` is checked and ignored). The marks go through the same pick as a browser answer, so the agent
+gets the part, point and normal under the pixel. `ask-user-pin` pins the statue of the stage scene with the note "make this red"; its checks
+pass when the statue's material is red and the plinth is not recoloured. A test pins the fixture pixel to the statue at the stage camera.
+A mark may carry `"lasso":[[x,y],...]` (3 to 64 points inside the frame) instead of `pixel`; the answer then lists the parts under the outline.
+`ask-user-lasso` (`ask-user-lasso.json`) outlines the statue and the plinth with the note "make these blue"; its checks pass when both are blue
+and the floor, which shares the plinth's stone material, is not.
+`ask-user-pin-shared` (`ask-user-pin-shared.json`) pins the plinth with the note "make this red"; its checks pass when the plinth is red and the floor, which shares its stone material, is not (#1972).
+
 ### Several runs and several models
 
 `--runs 3` repeats every task three times, each in a fresh session. Raw files are named `<task>-<attempt>`, each record
