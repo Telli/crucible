@@ -15,6 +15,7 @@ Start the server with `npx --package @codepawlhq/crucible crucible-mcp --backend
 1. `scene_capabilities`: with no arguments it returns a short index of features, limits and topic names. Pass
    `topic` (one name or a list of up to 8) for the field list of a feature (`environment`, `materialFields`, `geometries`, `meshEdit.bevel`,
    `motion`) or `examples.scene_apply` for a complete call of a hard tool. Tool schemas list only common fields, so read the topic before a feature you have not used.
+   In a list, a wrong name does not fail the call: the valid topics answer and the wrong ones come back in `unknown` with suggestions.
 2. `scene_create` with a `recipe`: `{ "format": "crucible.scene", "schemaVersion": 1, "geometries": [], "materials": [], "nodes": [] }`
    plus optional `camera`, `environment`, `effects`, `shadow`, `motion`, `bake`, `timeline`.
 3. `scene_inspect`: node IDs, bounds, `diagnostics`, current `revision`.
@@ -25,7 +26,9 @@ Start the server with `npx --package @codepawlhq/crucible crucible-mcp --backend
 
 Beside the loop: `mesh_inspect`, `mesh_edit` and `mesh_stack` edit polygon meshes (see the modeling row below), and
 `scene_walkmap` returns a grid of walkable and blocked cells for placing characters and paths. `scene_ask_user`, where the
-server lists it, opens the view for the person to pin notes on: use it when a change is hard to put in words.
+server lists it, opens the view for the person to pin notes on: use it when a change is hard to put in words. In an MCP Apps
+host the view opens in the chat and the call returns `outcome: "pending"` at once. For a person on a phone, `scene_export_web`
+with `review: true` writes a page to host. Pass the text of the file it saves to `scene_ask_user` as `reviewFile` to read the marks. Each export reads once.
 
 `sessionId` may be left out: the last used scene is meant. With two scenes open, pass it on every call. The server keeps 4 scenes and closes the least recently used (`evictedSessions` in the create result), and 16 checkpoints per scene, oldest first (`evictedCheckpointIds`).
 Variants: `scene_apply` with a `branch` name, compare in one `scene_review` (a `branch` per shot), keep one with `scene_restore`.
@@ -64,6 +67,10 @@ Variants: `scene_apply` with a `branch` name, compare in one `scene_review` (a `
 - Characters and creatures: recipe `armatures` plus `skin` per mesh node, `motion.ik`, imported GLBs through the
   `asset` node field and `scene_asset_catalog`. Physics, cloth, particles and hair are recipe sections.
   `scene_inspect` reports their results; read those instead of guessing from a picture.
+- A catalog GLB ID is the file's SHA-256 and changes on a re-export. Place by name instead: `asset: { "name": "sheep_body.glb" }`
+  (`assetName` in `scene_create_asset`); pass `id` or `name`, not both.
+- A folder of more than 256 numbered images appears once under `sequences` in `scene_asset_catalog`. Use
+  `map: { sequence: { catalog: "frame_####.png", fps } }` on a material, not a `frames` list.
 - Third-party controller or camera kinds exist only when the server owner started it with `--addons` and `--allow-addon`:
   read `scene_capabilities` topic `addons` for the names, then set `game.player.controller` or `game.camera` to one.
   You cannot load an addon from a tool.

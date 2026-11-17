@@ -1,0 +1,1 @@
+- The shipped skills now cover review links with `reviewFile`, placing a GLB by file name, catalog image sequences, topic lists with `unknown`, `stillCount` stills jobs and the no-clips `animation` error
