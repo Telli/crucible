@@ -1,1 +1,0 @@
-- scene:agent-scene+lazy: the gas sim's detail option is about 160 bytes gzip of noise code, the first noise upres for a baked explosion's smoke (#1735)

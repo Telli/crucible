@@ -1,1 +1,0 @@
-- glTF import names the field and index of a `null` or non-object entry in `nodes`, `meshes`, `accessors` and the other arrays instead of a "Cannot read properties" TypeError (#1248)

@@ -1,1 +1,0 @@
-- A folder of more than 256 consecutively numbered images is now one `sequences` entry in `scene_asset_catalog` (pattern, first, last, frames, size) instead of one entry per frame, and a material `map.sequence` can name it with `catalog` instead of listing the frame IDs; the frames are hashed when named, not at startup (#1852).

@@ -1,15 +1,24 @@
 import './support/load-agent-scene-modules.mjs';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene, loadPhysicsEngine } from '../src/agent-scene.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
 import { createHash } from 'node:crypto';
-import { EXPLOSION_EMPTY_GRID, EXPLOSION_EMPTY_VELOCITY_GRID, explosionGridBytes } from '../src/explosion-grids.js';
+import { EXPLOSION_EMPTY_GRID, EXPLOSION_EMPTY_VELOCITY_GRID, explosionGridBytes, setExplosionBakeStore } from '../src/explosion-grids.js';
 import { decodeVolumeGrid, hasGridVelocity } from '../src/volume-grid.js';
 import { readVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { agentSceneModulesNeeded, needsPhysics } from '../src/agent-scene-modules.js';
 
 await loadPhysicsEngine();
+
+// The bake cache in explosion-grids.js keeps 4 bakes and drops the oldest, so this file's blasts (about 10 seeds and fuels) would bake the same
+// grids again after they were evicted. A store that keeps every bake in memory for the file lets each fuel, seed and velocity bake once.
+const keptBakes = new Map();
+setExplosionBakeStore({
+  load: descriptor => keptBakes.get(JSON.stringify(descriptor)) ?? null,
+  save: (descriptor, frames) => keptBakes.set(JSON.stringify(descriptor), frames),
+});
+after(() => setExplosionBakeStore(null));
 
 function setRecipe() {
   return {
@@ -154,17 +163,17 @@ test('the fireball is a gas-sim grid volume scaled to the blast size: box, densi
 });
 
 test('the grids the recipe names are baked from the name, byte for byte, and tied to the seed and the fuel', () => {
-  const { frames } = applyBlast(blast({ seed: 3 })).recipe.environment.localVolumes[0];
+  const { frames } = applyBlast(blast({ seed: 1 })).recipe.environment.localVolumes[0];
   assert.equal(frames.length, 72);
-  assert.equal(frames[0], 'explosion-dry-3-velocity_0000.67vg');
+  assert.equal(frames[0], 'explosion-dry-1-velocity_0000.67vg');
   const first = explosionGridBytes(frames[10]);
   const again = explosionGridBytes(frames[10]);
   assert.ok(first.length > 1000);
   assert.deepEqual(first, again);
-  assert.notDeepEqual(first, explosionGridBytes('explosion-dry-4-velocity_0010.67vg'));
-  assert.notDeepEqual(first, explosionGridBytes('explosion-oily-3-velocity_0010.67vg'));
-  assert.equal(explosionGridBytes('explosion-dry-3-velocity_0072.67vg'), null);
-  assert.equal(explosionGridBytes('explosion-dry-3-fast_0010.67vg'), null);
+  assert.notDeepEqual(first, explosionGridBytes('explosion-dry-5-velocity_0010.67vg'));
+  assert.notDeepEqual(first, explosionGridBytes('explosion-oily-1-velocity_0010.67vg'));
+  assert.equal(explosionGridBytes('explosion-dry-1-velocity_0072.67vg'), null);
+  assert.equal(explosionGridBytes('explosion-dry-1-fast_0010.67vg'), null);
   assert.equal(explosionGridBytes('blast.67vg'), null);
   assert.ok(explosionGridBytes(EXPLOSION_EMPTY_GRID).length > 1000);
 });
@@ -183,13 +192,13 @@ test('a scene with a grid volume already refuses the blast and says how to make 
 });
 
 test('the MCP server finds the grids an add-explosion operation will name, so the page gets them with the call', () => {
-  const files = readVolumeGridFiles([blast({ seed: 9, fuel: 'oily', start: 1 })], '.');
+  const files = readVolumeGridFiles([blast({ seed: 1, fuel: 'oily', start: 1 })], '.');
   assert.equal(files.size, 73);
-  assert.ok(files.has('explosion-oily-9-velocity_0000.67vg'));
+  assert.ok(files.has('explosion-oily-1-velocity_0000.67vg'));
   assert.ok(files.has(EXPLOSION_EMPTY_VELOCITY_GRID));
-  const sharp = readVolumeGridFiles([blast({ seed: 9, motionBlur: false })], '.');
+  const sharp = readVolumeGridFiles([blast({ seed: 1, motionBlur: false })], '.');
   assert.equal(sharp.size, 73);
-  assert.ok(sharp.has('explosion-dry-9_0071.67vg'));
+  assert.ok(sharp.has('explosion-dry-1_0071.67vg'));
   assert.ok(sharp.has(EXPLOSION_EMPTY_GRID));
   assert.equal(readVolumeGridFiles([blast({ fuel: 'nuclear' })], '.').size, 0);
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
