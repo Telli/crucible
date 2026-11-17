@@ -410,6 +410,11 @@ on:
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      glass_dump:
+        description: 'Dump the glass scene frames of #1918 (default JIT and GALLIVM_PERF=nopt) as the glass-frames artifact and skip the tests'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -487,7 +492,19 @@ jobs:
       # A fresh runner has an empty Mesa shader cache, so the first native job compiles the kernel cold on lavapipe. That job
       # once failed the memory guard (#1186); this step runs it first, with the cache off, and fails the job if it does not
       # complete on the native backend.
+      - name: Dump the glass scene frames with the default JIT and with LLVM optimisation off
+        if: ${{ inputs.glass_dump }}
+        run: |
+          node scripts/dump-glass-frames.mjs glass-frames/default
+          GALLIVM_PERF=nopt node scripts/dump-glass-frames.mjs glass-frames/nopt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ always() && inputs.glass_dump }}
+        with:
+          name: glass-frames
+          path: glass-frames
+          if-no-files-found: ignore
       - name: First native render job on a fresh runner completes under the memory guard
+        if: ${{ !inputs.glass_dump }}
         env:
           MESA_SHADER_CACHE_DISABLE: 'true'
           PROBE_FRAMES: '12'
@@ -498,6 +515,7 @@ jobs:
           node scripts/build-mcp.mjs
           node scripts/check-first-native-job.mjs . 960x540
       - name: Run the addon tests
+        if: ${{ !inputs.glass_dump }}
         run: |
           start=$(date +%s)
           # The summary step decides pass or fail: tests that lose the device on lavapipe are counted apart.
@@ -523,6 +541,7 @@ jobs:
           echo "test_seconds=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
           echo "node --test exit code $status"
       - name: Write ran and skipped counts to the job summary, fail on a real failure
+        if: ${{ !inputs.glass_dump }}
         run: |
           set +e
           node scripts/summarize-addon-tests.mjs addon-tests.tap --title 'Tests that load Cook, addon built, lavapipe adapter' \n            --gpu-bound 'a process that rendered with the native addon exits with code 0' > summary.md
