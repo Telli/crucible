@@ -974,6 +974,12 @@ export class CrucibleRenderer {
   async prepareFrame(frame, { timeoutMilliseconds = 6000 } = {}) {
     await this.programsReady();
     if (this.disposed) return false;
+    // The bloom targets take the driver tens of milliseconds under load: a frame that blooms allocates them in a task of its own, not inside the draw.
+    if (!this.benchmark && !this.bloomTargets.length && resolveEffects(frame.effects).bloom.strength > 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (this.disposed) return false;
+      this.ensureBloomTargets();
+    }
     const context = this.context;
     const deadline = performance.now() + timeoutMilliseconds;
     setPreparing(context, true);
