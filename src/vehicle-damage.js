@@ -239,6 +239,193 @@ export function findDriveImpact(drive, wall, { mass, frontOffset = 0, restitutio
   return null;
 }
 
+export const MAX_FLIGHT_SECONDS = 30;
+export const MAX_LAUNCH_SPEED = 30;
+const FLIGHT_STEP_SECONDS = 1 / 120;
+const LAUNCH_IMPULSE_PER_KILOGRAM = 100;
+const LAUNCH_UPWARD_SHARE = 0.5;
+const SPREAD_SHARE = 0.3;
+const REBOUND_SHARE = 0.2;
+const MAX_SPIN_RADIANS_PER_SECOND = 12;
+const GROUND_FRICTION = 0.6;
+const SETTLE_SPEED = 0.2;
+
+function seededUnitSequence(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), state | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function sidewaysOf(direction) {
+  const horizontalLength = Math.hypot(direction[0], direction[2]);
+  return horizontalLength < 1e-6 ? [1, 0, 0] : [-direction[2] / horizontalLength, 0, direction[0] / horizontalLength];
+}
+
+function launchVelocityOf(part, hit, nextUnit) {
+  const direction = normalized(hit.direction);
+  const sideways = sidewaysOf(direction);
+  const speed = Math.min(MAX_LAUNCH_SPEED, (hit.impulse - part.threshold) / (part.mass * LAUNCH_IMPULSE_PER_KILOGRAM));
+  const sidewaysShare = nextUnit() < 0.5 ? -1 : 1;
+  const reboundShare = REBOUND_SHARE * (0.5 + nextUnit() * 0.5);
+  const upwardShare = LAUNCH_UPWARD_SHARE + nextUnit() * SPREAD_SHARE;
+  return [
+    (sideways[0] * sidewaysShare + direction[0] * reboundShare) * speed,
+    (direction[1] * reboundShare + upwardShare) * speed,
+    (sideways[2] * sidewaysShare + direction[2] * reboundShare) * speed,
+  ];
+}
+
+function rotateByEuler(rotation, vector) {
+  const [x, y, z] = vector;
+  const [cosZ, sinZ] = [Math.cos(rotation[2]), Math.sin(rotation[2])];
+  const aroundZ = [x * cosZ - y * sinZ, x * sinZ + y * cosZ, z];
+  const [cosY, sinY] = [Math.cos(rotation[1]), Math.sin(rotation[1])];
+  const aroundY = [aroundZ[0] * cosY + aroundZ[2] * sinY, aroundZ[1], -aroundZ[0] * sinY + aroundZ[2] * cosY];
+  const [cosX, sinX] = [Math.cos(rotation[0]), Math.sin(rotation[0])];
+  return [aroundY[0], aroundY[1] * cosX - aroundY[2] * sinX, aroundY[1] * sinX + aroundY[2] * cosX];
+}
+
+/** How far the part's box (`halfExtents`, turned by `rotation`) reaches along `normal` from its centre; 0 for a part with no size. */
+function reachAlong(normal, rotation, halfExtents) {
+  if (!halfExtents) return 0;
+  let reach = 0;
+  for (let axis = 0; axis < 3; axis++) {
+    const unitAxis = [0, 0, 0];
+    unitAxis[axis] = halfExtents[axis];
+    const turned = rotateByEuler(rotation, unitAxis);
+    reach += Math.abs(turned[0] * normal[0] + turned[1] * normal[1] + turned[2] * normal[2]);
+  }
+  return reach;
+}
+
+function keepOnCarSide(state, flight) {
+  const { wall, halfExtents, restitution } = flight;
+  const centreDepth = (state.position[0] - wall.point[0]) * wall.normal[0] + (state.position[1] - wall.point[1]) * wall.normal[1] + (state.position[2] - wall.point[2]) * wall.normal[2];
+  const depth = centreDepth - reachAlong(wall.normal, state.rotation, halfExtents);
+  if (depth >= 0) return;
+  for (let axis = 0; axis < 3; axis++) state.position[axis] -= depth * wall.normal[axis];
+  const approach = state.velocity[0] * wall.normal[0] + state.velocity[1] * wall.normal[1] + state.velocity[2] * wall.normal[2];
+  if (approach >= 0) return;
+  for (let axis = 0; axis < 3; axis++) state.velocity[axis] -= (1 + restitution) * approach * wall.normal[axis];
+}
+
+const WORLD_UP = [0, 1, 0];
+
+function crossProduct(first, second) {
+  return [
+    first[1] * second[2] - first[2] * second[1],
+    first[2] * second[0] - first[0] * second[2],
+    first[0] * second[1] - first[1] * second[0],
+  ];
+}
+
+/** The Euler angles (XYZ order) of the rotation whose columns are the three world directions of the box axes. */
+function eulerFromAxes(columns) {
+  const element = (row, column) => columns[column][row];
+  const sineY = Math.max(-1, Math.min(1, element(0, 2)));
+  const angleY = Math.asin(sineY);
+  if (Math.abs(sineY) > 0.9999999) return [Math.atan2(element(2, 1), element(1, 1)), angleY, 0];
+  return [Math.atan2(-element(1, 2), element(2, 2)), angleY, Math.atan2(-element(0, 1), element(0, 0))];
+}
+
+/** The nearest rotation that lies the box on a face: the axis closest to vertical becomes vertical, the yaw is kept. */
+function restingRotation(rotation) {
+  const columns = [0, 1, 2].map(axis => {
+    const unitAxis = [0, 0, 0];
+    unitAxis[axis] = 1;
+    return rotateByEuler(rotation, unitAxis);
+  });
+  const verticalAxis = [0, 1, 2].reduce((best, axis) => (Math.abs(columns[axis][1]) > Math.abs(columns[best][1]) ? axis : best), 0);
+  const first = (verticalAxis + 1) % 3;
+  const second = (verticalAxis + 2) % 3;
+  const up = columns[verticalAxis][1] < 0 ? [0, -1, 0] : WORLD_UP;
+  const flat = [columns[first][0], 0, columns[first][2]];
+  const flatLength = Math.hypot(...flat);
+  const firstAxis = flatLength < 1e-9 ? [1, 0, 0] : flat.map(component => component / flatLength);
+  const rebuilt = [null, null, null];
+  rebuilt[verticalAxis] = up;
+  rebuilt[first] = firstAxis;
+  rebuilt[second] = crossProduct(up, firstAxis);
+  return eulerFromAxes(rebuilt);
+}
+
+function settle(state, flight) {
+  state.velocity.fill(0);
+  state.spin.fill(0);
+  state.settled = true;
+  if (!flight.halfExtents) return;
+  state.rotation = restingRotation(state.rotation);
+  keepOnCarSide(state, flight);
+  state.position[1] = flight.groundY + reachAlong(WORLD_UP, state.rotation, flight.halfExtents);
+}
+
+function advanceFlight(state, flight, seconds) {
+  const steps = Math.round(seconds / FLIGHT_STEP_SECONDS);
+  for (let step = 0; step < steps && !state.settled; step++) {
+    state.velocity[1] -= flight.gravity * FLIGHT_STEP_SECONDS;
+    for (let axis = 0; axis < 3; axis++) state.position[axis] += state.velocity[axis] * FLIGHT_STEP_SECONDS;
+    for (let axis = 0; axis < 3; axis++) state.rotation[axis] += state.spin[axis] * FLIGHT_STEP_SECONDS;
+    keepOnCarSide(state, flight);
+    const lowestCentreHeight = flight.groundY + reachAlong(WORLD_UP, state.rotation, flight.halfExtents);
+    if (state.position[1] > lowestCentreHeight) continue;
+    state.position[1] = lowestCentreHeight;
+    state.velocity[1] = -state.velocity[1] * flight.restitution;
+    state.velocity[0] *= GROUND_FRICTION;
+    state.velocity[2] *= GROUND_FRICTION;
+    for (let axis = 0; axis < 3; axis++) state.spin[axis] *= GROUND_FRICTION;
+    if (Math.hypot(...state.velocity) < SETTLE_SPEED) settle(state, flight);
+  }
+}
+
+/**
+ * The flight of a loose part a hit tears off. `part` is `{ id, threshold, mass, position, size }` (N s, kg, the part's centre in
+ * metres, `size` its box as three extents in metres, optional); `hit` is `{ impulse, direction, point }` from `findDriveImpact` (`point` is optional and defaults to the part's centre). Returns null when the impulse stays below the
+ * threshold, so the part stays on. Otherwise it returns `{ id, launchVelocity, sample(time) }`: the part leaves mostly
+ * sideways (a seeded sign, across `direction`) with a small rebound along `direction` and an up kick, tumbles, falls under gravity and bounces on the ground plane `groundY` (the top of the ground, not the centre height: with a `size` the lowest corner touches it, and at rest the box lies on a face with its lowest corner exactly on `groundY`; without a `size` the centre is held at `groundY` and the rotation is not snapped). No corner of its box (turned by the Euler angles in XYZ order) crosses the wall plane through `point` with normal `direction`; a part with no `size` is held by its centre only.
+ * `sample(time)` gives `{ position, rotation (Euler radians), velocity, settled }` for 0 to 30 s, and the same inputs
+ * with the same `seed` give the same numbers on every run.
+ */
+export function detachedPartFlight(part, hit, { seed = 0, gravity = 9.81, groundY = 0, restitution = 0.3 } = {}) {
+  requirePlainObject(part, 'part', '{ "id": "front-bumper", "threshold": 9000, "mass": 12, "position": [0, 0.5, 2] }');
+  if (typeof part.id !== 'string' || part.id === '') throw invalidField('part.id', part.id, 'the id of a part, such as "front-bumper"', TypeError);
+  requireNumber(part.threshold, 'part.threshold', 1e-6, 1e9, 9000);
+  requireNumber(part.mass, 'part.mass', 1e-3, 1e5, 12);
+  requireVector3(part.position, 'part.position', '[0, 0.5, 2]');
+  if (part.size !== undefined) {
+    requireVector3(part.size, 'part.size', '[1.7, 0.35, 0.2], the box of the part in metres').forEach((extent, axis) => requireNumber(extent, `part.size[${axis}]`, 1e-3, 100, 0.5));
+  }
+  requirePlainObject(hit, 'hit', '{ "impulse": 16800, "direction": [0, 0, -1] }');
+  requireNumber(hit.impulse, 'hit.impulse', 0, 1e9, 16800);
+  const rawDirection = requireVector3(hit.direction, 'hit.direction', '[0, 0, -1]');
+  if (Math.hypot(...rawDirection) < 1e-6) throw invalidField('hit.direction', rawDirection, 'a vector that is not zero, such as [0, 0, -1]');
+  if (hit.point !== undefined) requireVector3(hit.point, 'hit.point', '[0, 0.5, 2.1]');
+  requireNumber(seed, 'seed', 0, 4294967295, 7);
+  requireNumber(gravity, 'gravity', 0, 100, 9.81);
+  requireNumber(groundY, 'groundY', -1e4, 1e4, 0);
+  requireNumber(restitution, 'restitution', 0, 1, 0.3);
+  if (hit.impulse < part.threshold) return null;
+  const nextUnit = seededUnitSequence(seed);
+  const launchVelocity = launchVelocityOf(part, hit, nextUnit);
+  const spin = [0, 1, 2].map(() => (nextUnit() * 2 - 1) * MAX_SPIN_RADIANS_PER_SECOND);
+  const wall = { point: hit.point ?? part.position, normal: normalized(rawDirection) };
+  const halfExtents = part.size ? part.size.map(extent => extent / 2) : null;
+  const flight = { gravity, groundY, restitution, wall, halfExtents };
+  return {
+    id: part.id,
+    launchVelocity,
+    sample(time) {
+      requireNumber(time, 'time', 0, MAX_FLIGHT_SECONDS, 1);
+      const state = { position: [...part.position], rotation: [0, 0, 0], velocity: [...launchVelocity], spin: [...spin], settled: false };
+      advanceFlight(state, flight, time);
+      return { position: state.position, rotation: state.rotation, velocity: state.velocity, settled: state.settled };
+    },
+  };
+}
+
 /**
  * The vertex estimate of a recipe `dented` geometry, which is its source's: checks the dent fields and that the source
  * is a geometry of the recipe that is not itself a fragment or a dent. `estimateSource` estimates a source record.
