@@ -156,14 +156,14 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 | `mesh_edit` | `sessionId`, `expectedRevision`, `geometry`, `edits`, optional `replace` | Updated revision, render status and the mesh report with per-edit results |
 | `mesh_stack` | `sessionId`, `expectedRevision`, `geometry`, optional `stack`, `apply` | Updated revision, render status and the mesh report with per-node results |
 | `scene_look` | `sessionId`, optional `width`, `height`, `motionTime`, `labels` | PNG image and metadata |
-| `scene_ask_user` | `sessionId`, optional `prompt`, `maxMarks`, `timeoutSeconds` | Opens the view in the browser, waits for Send, returns numbered marks with `partId`, `point`, `normal`, `note`, the camera and the marked PNG |
+| `scene_ask_user` | `sessionId`, optional `prompt`, `maxMarks`, `timeoutSeconds`, `reviewFile` {since 0.21.0} | Opens the view in the browser, waits for Send, returns numbered marks with `partId`, `point`, `normal`, `note`, the camera and the marked PNG. With `reviewFile` it reads the marks a [review page](#review-link) saved instead (no browser, no image) |
 | `scene_review` | `sessionId`, `expectedRevision`, `shots` (each with an optional `branch`), optional `width`, `height`, `labels`, `response_format` | Labeled PNG grid and metadata from an isolated snapshot |
 | `scene_checkpoint` | `sessionId` | Checkpoint ID, session ID, and revision |
 | `scene_restore` | `sessionId`, `expectedRevision`, and a `checkpointId`, a `revision` or a `branch` | Updated revision and render status |
 | `scene_release_checkpoint` | `sessionId`, `checkpointId` | Release confirmation |
 | `scene_export_recipe` | `sessionId` | Canonical recipe and revision |
 | `scene_export_glb` | `sessionId`, optional `clip`, `motionTime`, `maxTextureSize` | A GLB file under `<jobs>/exports/` with a server-chosen name: path, bytes, SHA-256. See [GLB export](export-glb.md) |
-| `scene_export_web` | `sessionId`, optional `title` | A static web build folder under `<jobs>/exports/`: path of `index.html`, file count, bytes. Needs a `game` set with `set-game`. See [Game](game.md) |
+| `scene_export_web` | `sessionId`, optional `title`, `review` {since 0.21.0} | A static web build folder under `<jobs>/exports/`: path of `index.html`, file count, bytes. Needs a `game` set with `set-game`, unless `review` is true. See [Game](game.md) and [Review link](#review-link) |
 | `scene_dispose` | `sessionId` | Disposal confirmation |
 | `scene_render_submit` | `sessionId`, `expectedRevision`, `settings` | Snapshot job ID and queued record |
 | `scene_render_status` | `jobId`, optional `response_format` | State and durable frame progress |
@@ -176,6 +176,12 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 One server keeps up to 4 scenes open, within 96 MiB of resident geometry together. Creating a scene past either cap closes the least recently used scene, and the create result lists it under `evictedSessions`; a later call with that ID fails with an `evicted` error. Save a scene with `scene_export_recipe` before it can be evicted. Only one scene holds the preview renderer at a time, so a call on another scene rebuilds it first; that costs a moment, so finish a batch of calls on one scene before switching.
 
 Each scene keeps up to 16 checkpoints. `scene_checkpoint` returns `checkpointId`; past the limit the oldest checkpoint is evicted and the result lists it under `evictedCheckpointIds`. A `checkpointId` belongs to the scene that returned it. A render job stays tied to the scene it was submitted for. While a job runs the preview renderer is leased, so `scene_create`, edits and disposal wait for it, as before.
+
+### Review link
+
+A person who is not at the agent's keyboard can mark a scene on a phone. `scene_export_web` with `review: true` needs no game: it renders the current view and writes `index.html` and `frame.png` under `<jobs>/exports/`, in the same folder and with the same newest-four retention as game builds. Host the folder on any static server or send it as is. The reviewer taps the picture to drop a pin (up to 16), writes a note for each, and presses Save file or Copy. Two fingers zoom and move the picture and never drop a pin. The page is a still, so it does not orbit.
+
+Pass the text of the saved file to `scene_ask_user` as `reviewFile` {since 0.21.0} (at most 16 KiB). The answer has the same fields as a local `scene_ask_user` call (`marks` with `partId`, `point`, `normal`, `note`, and `view`), without the marked PNG. The server keeps the camera of the last 8 review exports in memory, so the file carries only the marks and cannot choose the camera the server casts their rays from. Each export is read once: a second read of the same file, a file from an earlier server run, from an export dropped after 8 newer ones or disposed with its scene, or for another scene is refused with a message that says to export again. A review file proves nothing about who made it: the review ID is written into the exported page, so anyone who can read that folder, a model with file access included, can write a valid file. Unlike the inline view's nonce, which the model never sees, treat a review file's marks as notes from whoever had the page.
 
 ### Tool errors
 
