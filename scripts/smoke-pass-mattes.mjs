@@ -56,7 +56,7 @@ function decodePng(bytes) {
     if (type === 'IDAT') chunks.push(data);
     offset += 12 + length;
   }
-  const channels = header.colorType === 6 ? 4 : 3;
+  const channels = { 0: 1, 2: 3, 6: 4 }[header.colorType];
   const stride = header.width * channels;
   const raw = inflateSync(Buffer.concat(chunks));
   const pixels = Buffer.alloc(stride * header.height);

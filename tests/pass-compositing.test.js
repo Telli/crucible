@@ -9,8 +9,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { artifactNames, createAgentRenderJobs, normalizeJobSettings } from '../scripts/agent-render-jobs.mjs';
-import { renderJobMattes } from '../scripts/job-mattes.mjs';
-import { encodePng } from '../src/export-png.js';
+import { encodeMattePng, renderJobMattes } from '../scripts/job-mattes.mjs';
+import { inflateSync } from 'node:zlib';
 
 const rgba = (...pixels) => Uint8Array.from(pixels.flat());
 
@@ -109,13 +109,26 @@ test('renderJobMattes builds one PNG per matte from the object and cryptomatte p
   };
   const results = await renderJobMattes({ mattes: [{ object: 'hero' }, { object: 'floor' }, { material: 'stone' }], renderPass });
   assert.deepEqual(seen, ['objectId', 'cryptomatte'], 'each pass renders once');
-  assert.deepEqual([...results[0].bytes], [...encodePng(matteToGrayRgba(Uint8Array.from([255, 0, 0, 0])), 2, 2)]);
-  assert.deepEqual([...results[1].bytes], [...encodePng(matteToGrayRgba(Uint8Array.from([0, 255, 255, 0])), 2, 2)]);
-  assert.deepEqual([...results[2].bytes], [...encodePng(matteToGrayRgba(Uint8Array.from([0, 255, 255, 0])), 2, 2)]);
+  assert.deepEqual([...results[0].bytes], [...encodeMattePng(Uint8Array.from([255, 0, 0, 0]), 2, 2)]);
+  assert.deepEqual([...results[1].bytes], [...encodeMattePng(Uint8Array.from([0, 255, 255, 0]), 2, 2)]);
+  assert.deepEqual([...results[2].bytes], [...encodeMattePng(Uint8Array.from([0, 255, 255, 0]), 2, 2)]);
   assert.deepEqual(results.map(result => result.metric.coveragePixels), [1, 2, 2]);
   assert.deepEqual(results[0].metric.partIds, [1]);
   await assert.rejects(renderJobMattes({ mattes: [{ object: 'chair' }], renderPass }), /no part named "chair".*hero, floor/);
   await assert.rejects(renderJobMattes({ mattes: [{ material: 'glass' }], renderPass }), /no material named "glass".*steel, stone/);
+});
+
+test('encodeMattePng writes an 8-bit gray PNG whose rows are the mask', () => {
+  const png = encodeMattePng(Uint8Array.from([255, 0, 0, 255, 255, 0]), 3, 2);
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(png.readUInt32BE(16), 3);
+  assert.equal(png.readUInt32BE(20), 2);
+  assert.equal(png[24], 8, 'bit depth');
+  assert.equal(png[25], 0, 'gray colour type');
+  const dataLength = png.readUInt32BE(33);
+  const rows = inflateSync(png.subarray(41, 41 + dataLength));
+  assert.deepEqual([...rows], [0, 255, 0, 0, 0, 255, 255, 0]);
+  assert.throws(() => encodeMattePng(Uint8Array.from([1, 2]), 3, 2), /one byte per pixel/);
 });
 
 test('settings.mattes is validated and adds one file per matte and frame', () => {

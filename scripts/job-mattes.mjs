@@ -1,10 +1,26 @@
-import { encodePng } from '../src/export-png.js';
-import { cryptomatteByte, cryptomatteMatte, floatPassToBytes, matteToGrayRgba, objectIdMatte } from '../src/pass-compositing.js';
+import { deflateSync } from 'node:zlib';
+
+import { PNG_SIGNATURE, pngChunk } from '../src/export-png.js';
+import { cryptomatteByte, cryptomatteMatte, floatPassToBytes, objectIdMatte } from '../src/pass-compositing.js';
 
 // The ID mattes of a render job (settings.mattes): one gray PNG per matte, white where the named part or material is drawn.
 // Parts come from the exact 24-bit object ID pass, materials from the Cryptomatte pass (an 8-bit hash that two names can share).
 
 const NAMES_IN_ERROR = 20;
+const PNG_GRAY_COLOR_TYPE = 0;
+
+/** An 8-bit gray PNG of a 0/255 mask (one byte per pixel, top row first), deflated: a matte is mostly flat runs, so it stays small at 4K. */
+export function encodeMattePng(mask, width, height) {
+  if (mask.length !== width * height) throw new RangeError('The mask needs one byte per pixel at the frame size.');
+  const rows = Buffer.alloc((width + 1) * height);
+  for (let row = 0; row < height; row++) Buffer.from(mask.buffer, mask.byteOffset + row * width, width).copy(rows, row * (width + 1) + 1);
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = PNG_GRAY_COLOR_TYPE;
+  return Buffer.concat([Buffer.from(PNG_SIGNATURE), pngChunk('IHDR', header), pngChunk('IDAT', deflateSync(rows, { level: 6 })), pngChunk('IEND', new Uint8Array(0))]);
+}
 
 function nameList(names) {
   const shown = names.slice(0, NAMES_IN_ERROR).join(', ');
@@ -60,7 +76,7 @@ export async function renderJobMattes({ mattes, renderPass }) {
       : materialMatte({ target: matte.material, index, cryptomattePass: await passBytes('cryptomatte') });
     const { width, height } = passes.get(matte.object !== undefined ? 'objectId' : 'cryptomatte');
     results.push({
-      bytes: encodePng(matteToGrayRgba(built.mask), width, height),
+      bytes: encodeMattePng(built.mask, width, height),
       metric: { ...built.metric, coveragePixels: coverageOf(built.mask) },
     });
   }
