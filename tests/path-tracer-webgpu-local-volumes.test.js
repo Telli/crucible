@@ -258,11 +258,11 @@ test('the fractal noise and the ramp light are compiled only for a scene that us
   assert.match(octaves, /weight \*= 0\.5;\n\s+frequency \*= 2\.0;/, 'the gain and lacunarity of localVolumeFractalNoise');
   assert.doesNotMatch(octaves, /localEmissionRampLight/);
   const ramp = buildMegakernelSource({ hasLocalVolumes: true, hasEmissionRamp: true });
-  assert.match(ramp, /emitted \+= throughput \* localEmissionRampLight\(volume, vec3<f32>\(profile\), stepLength\);/);
+  assert.match(ramp, /emitted \+= throughput \* localEmissionRampLight\(volume, vec3<f32>\(profile\), stepLength\) \* volumeStepIntegral\(extinction \* width\);/);
   assert.doesNotMatch(ramp, /localVolumeFractalNoise|GridCell/);
   assert.doesNotMatch(ramp, /resolution\.x \* resolution\.y/, 'without a grid the ramp block follows the table');
   const gridRamp = buildMegakernelSource({ hasLocalVolumes: true, hasGridVolume: true, hasEmissionRamp: true });
-  assert.match(gridRamp, /localEmissionRampLight\(volume, vec3<f32>\(cell\.density, cell\.temperature, cell\.flame\), stepLength\);/);
+  assert.match(gridRamp, /localEmissionRampLight\(volume, vec3<f32>\(cell\.density, cell\.temperature, cell\.flame\), stepLength\) \* volumeStepIntegral\(extinction \* width\);/);
   assert.match(gridRamp, /cell\.temperature \+= found\.weight \* values\.z;/);
   assert.match(gridRamp, /resolution\.x \* resolution\.y \* resolution\.z \* i32\(materials\[base \+ 1\]\.w\)/, 'the ramp block follows the grid block');
 });
