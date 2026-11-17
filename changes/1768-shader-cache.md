@@ -1,1 +1,0 @@
-- The MCP server keeps Chrome's compiled GPU shaders between runs, so the first volume `scene_create` of a new server process takes about 0.8 s instead of 4.9 s; `CRUCIBLE_SHADER_CACHE=0` turns it off (#1768)
