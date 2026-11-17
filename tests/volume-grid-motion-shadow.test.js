@@ -1,8 +1,8 @@
 // The shadow of a blurred grid volume (#1763): the surface shadow taps read the grid at their own time in the shutter, only in the 'gridMotion' program, and the WebGPU path tracer
-// still leaves grid volumes to the CPU tracer, which draws their motion blur.
+// draws grid volumes itself since #1785, each march step read at its own shutter time.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertWebGpuLocalVolumes } from '../src/path-tracer-webgpu-local-volumes.js';
+import { assertWebGpuLocalVolumes, buildLocalVolumeFunctions, webGpuVolumeFeatures } from '../src/path-tracer-webgpu-local-volumes.js';
 import { gridMotionTimeFraction } from '../src/volume-grid.js';
 
 const SHARP_SHADOW_TAP = 'float profile = localVolumeProfile(index, position + towardSun * (entry + (span.y - entry) * (float(tap) + 0.5) / taps), true);';
@@ -21,7 +21,14 @@ test('the surface shadow of a grid reads each tap at its own time in the shutter
   assert.equal(Number(shiftedTap[1]), gridMotionTimeFraction(0, 1), 'with the golden ratio spread the march uses');
 });
 
-test('a grid volume is refused by the WebGPU tracer whatever the shutter, and the error names the CPU tracer that draws its motion blur', () => {
+// Before #1785 the WebGPU tracer refused grid volumes and left their motion blur to the CPU tracer; it now draws both, so this pins that it does.
+test('the WebGPU tracer accepts a moving grid volume and its grid march reads each step at its own time in the shutter', () => {
   const movingGrid = { shape: 'grid', gridData: {}, motionShutter: 0.5 };
-  assert.throws(() => assertWebGpuLocalVolumes({ localVolumes: [movingGrid] }), /localVolumes\[0\] is a grid volume, which only backend "cpu" traces/);
+  assert.doesNotThrow(() => assertWebGpuLocalVolumes({ localVolumes: [movingGrid] }));
+  assert.equal(webGpuVolumeFeatures([movingGrid]).hasGridVolume, true, 'the grid march is spliced into the kernel');
+  const gridKernel = buildLocalVolumeFunctions({ hasGrid: true });
+  assert.ok(gridKernel.includes('fn localGridMotionPoint(volume: i32, point: vec3<f32>, timeFraction: f32)'));
+  assert.ok(gridKernel.includes('localGridSample(volume, localGridMotionPoint(volume, point, timeFraction))'), 'each grid sample moves along the velocity by its shutter time');
+  assert.doesNotMatch(buildLocalVolumeFunctions(), /localGridMotionPoint/, 'a scene without a grid compiles no grid motion');
+  assert.throws(() => assertWebGpuLocalVolumes({ localVolumes: [{ shape: 'mesh', part: { name: 'room' }, motionShutter: 0.5 }] }), /localVolumes\[0\] is a mesh volume, which only backend "cpu" traces/);
 });
