@@ -169,7 +169,7 @@ export function createAccessorReader(document, bufferBytes, meshoptDecoder) {
     return finishAccessor(plan, packed);
   }
 
-  function applySparse(accessor, array, itemSize) {
+  function applySparse(accessor, array, itemSize, elementCount = accessor.count) {
     checkSparseShape(accessor);
     const { count, indices, values } = accessor.sparse;
     const IndexType = SPARSE_INDEX_COMPONENT_TYPES.includes(indices.componentType) ? COMPONENT_TYPES[indices.componentType] : null;
@@ -180,10 +180,24 @@ export function createAccessorReader(document, bufferBytes, meshoptDecoder) {
     const valueBytes = copyElements(viewBytes(values.bufferView), values.byteOffset ?? 0, itemBytes, count, itemBytes);
     const sparseValues = new array.constructor(valueBytes.buffer);
     for (let item = 0; item < count; item++) {
-      if (sparseIndices[item] >= accessor.count) throw new Error('Sparse accessor index is out of range.');
+      if (sparseIndices[item] >= elementCount) throw new Error('Sparse accessor index is out of range.');
       array.set(sparseValues.subarray(item * itemSize, (item + 1) * itemSize), sparseIndices[item] * itemSize);
     }
   }
 
-  return { prepare, readAccessor, readAccessorInSlices, viewBytes };
+  /**
+   * Applies the sparse block of an accessor to data that did not come from its buffer view, such as a Draco-decoded attribute.
+   * KHR_draco_mesh_compression only replaces the accessor's bufferView and byteOffset, so sparse still substitutes on top.
+   */
+  function applySparseToDecoded(index, attribute) {
+    const accessor = document.accessors?.[index];
+    if (!accessor?.sparse) return;
+    const ArrayType = COMPONENT_TYPES[accessor.componentType];
+    if (attribute.array.constructor !== ArrayType) {
+      throw new Error(`Accessor ${index} has a sparse block but its Draco data decoded as ${attribute.array.constructor.name}, not ${ArrayType?.name}. Fix: make the accessor componentType match the compressed attribute.`);
+    }
+    applySparse(accessor, attribute.array, attribute.itemSize, attribute.count);
+  }
+
+  return { prepare, readAccessor, readAccessorInSlices, viewBytes, applySparseToDecoded };
 }
