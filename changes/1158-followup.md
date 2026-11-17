@@ -1,1 +1,0 @@
-- A native trace of zero parts is refused with a message that says to pass a part, and the docs name the tracers that still keep 1,024 parts (#1158)
