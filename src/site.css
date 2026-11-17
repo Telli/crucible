@@ -254,6 +254,7 @@ body.site > main > section { scroll-margin-top: 96px; }
 .site .section-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; }
 .site .section-heading a { color: var(--muted); font-size: 15px; }
 .site .section-heading a:hover { color: var(--text); text-decoration: underline; }
+.site .section-heading-links { display: flex; flex-wrap: wrap; gap: 8px 20px; }
 
 .site .site-footer { width: var(--page); margin-inline: auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 24px; padding-block: 24px 32px; color: var(--muted); font-size: 14px; }
 .site .site-footer .brand { font-size: 14px; font-weight: 600; }
