@@ -30,7 +30,7 @@ import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMU
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
 import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
-import { namesCatalogFiles, resolveAssetPlacementNames } from '../src/agent-asset-names.js';
+import { namesCatalogFiles, resolveAssetPlacementNames, namesCatalogSequences, resolveCatalogSequenceNames } from '../src/agent-asset-names.js';
 import { sequenceFrameIds, hasStreamedSequence } from '../src/agent-texture-sequence.js';
 import { readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
 import { catalogLookReferences, BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES } from '../src/look-catalog.js';
@@ -282,6 +282,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   /** Replaces each `asset: { name }` placement of a recipe or edit list with its catalog id, so everything after this holds the pinned hash. */
   async function pinNamedAssets(value) {
     if (namesCatalogFiles(value)) resolveAssetPlacementNames(value, (await catalog()).resolveName);
+    if (namesCatalogSequences(value)) await resolveCatalogSequenceNames(value, pattern => catalog().then(assets => assets.resolveSequence(pattern)));
   }
 
   /** The same for the asset recipe of scene_create_asset: `assetName` (a catalog file name) becomes `assetId`. */
