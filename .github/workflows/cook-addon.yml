@@ -354,6 +354,7 @@ on:
       - 'tests/cycles-sphere-light-parity.test.js'
       - 'tests/denoise-oidn-persistent.test.js'
       - 'tests/helpers/camera-environment-scenes.js'
+      - 'tests/native-albedo-reference.test.js'
       - 'tests/native-bake.test.js'
       - 'tests/native-camera-environment.test.js'
       - 'tests/native-camera-params.test.js'
@@ -510,10 +511,11 @@ jobs:
           # the mip level 0 read (difference 8.6 to 80, expected 0) and the light tree mean. With LLVM's optimisation passes off
           # (GALLIVM_PERF=nopt) both passed on 5 of 5 runners across those CPUs, and with them on both failed on 4 of 5 (a different
           # CPU on each run), so an optimisation pass in lavapipe's JIT changes the kernel's result. Switching the passes off for
-          # every file made the first native job run past its 10 minute cap, so only these two files run that way.
+          # every file made the first native job run past its 10 minute cap, so only these files run that way. The albedo reference
+          # (#1911) joined them: its sum matches an RTX 3060 within 0.1 percent with the passes off and is 0.9 percent low with them on.
           # Drop the split once Mesa's LLVM stops doing that.
-          jit_sensitive_tests="tests/native-texture-mips.test.js tests/native-light-tree-kernel.test.js"
-          other_tests=$(git grep -l "support/cook.js" -- tests | grep -vxF -e tests/native-texture-mips.test.js -e tests/native-light-tree-kernel.test.js)
+          jit_sensitive_tests="tests/native-texture-mips.test.js tests/native-light-tree-kernel.test.js tests/native-albedo-reference.test.js"
+          other_tests=$(git grep -l "support/cook.js" -- tests | grep -vxF -e tests/native-texture-mips.test.js -e tests/native-light-tree-kernel.test.js -e tests/native-albedo-reference.test.js)
           test_options="--test-concurrency=2 --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --test-reporter=tap"
           node --test $test_options --test-reporter-destination=addon-tests.tap $other_tests
           status=$?
