@@ -21,6 +21,19 @@ function totalDensity(frame) {
   return total;
 }
 
+// Mean and spread of detailed density over plain density across the cells that hold smoke, and how many empty cells stayed empty.
+function modulationStatistics(plainFrame, detailedFrame) {
+  const ratios = [];
+  let filledEmptyCells = 0;
+  plainFrame.density.forEach((plainDensity, index) => {
+    if (plainDensity === 0) filledEmptyCells += detailedFrame.density[index] === 0 ? 0 : 1;
+    else if (plainDensity > 0.01) ratios.push(detailedFrame.density[index] / plainDensity);
+  });
+  const mean = ratios.reduce((sum, ratio) => sum + ratio, 0) / ratios.length;
+  const spread = Math.sqrt(ratios.reduce((sum, ratio) => sum + (ratio - mean) ** 2, 0) / ratios.length);
+  return { mean, spread, filledEmptyCells, count: ratios.length };
+}
+
 function densityCentroidHeight(frame, bake) {
   const [nx, ny] = bake.resolution;
   const cellSize = bake.size[0] / nx;
@@ -180,4 +193,35 @@ test('a 32 cubed bake of 24 frames takes a few seconds', t => {
   const started = performance.now();
   bakeGasSim({ ...SMALL, frames: 24 });
   t.diagnostic(`32^3 x 24 frames: ${((performance.now() - started) / 1000).toFixed(2)} s`);
+});
+
+test('detail 0 leaves the bake byte for byte as it was and detail adds small puffs without moving the cloud', () => {
+  const options = { resolution: 32, frames: 24, seed: 5 };
+  const plain = bakeGasSim(options);
+  const explicitZero = bakeGasSim({ ...options, detail: 0 });
+  assert.deepEqual(frameHashes(explicitZero), frameHashes(plain));
+
+  const detailed = bakeGasSim({ ...options, detail: 1 });
+  assert.deepEqual(frameHashes(bakeGasSim({ ...options, detail: 1 })), frameHashes(detailed), 'the same seed gives the same bytes');
+  assert.notDeepEqual(frameHashes(detailed), frameHashes(plain));
+
+  const lastIndex = options.frames - 1;
+  const plainMass = totalDensity(plain.frames[lastIndex]);
+  const detailedMass = totalDensity(detailed.frames[lastIndex]);
+  assert.ok(Math.abs(detailedMass / plainMass - 1) < 0.15, `noise keeps the smoke mass within 15 percent, got ${detailedMass / plainMass}`);
+  assert.ok(Math.abs(densityCentroidHeight(detailed.frames[lastIndex], detailed) - densityCentroidHeight(plain.frames[lastIndex], plain)) < 0.4, 'the cloud stays where the sim put it');
+  for (const value of detailed.frames[lastIndex].density) assert.ok(Number.isFinite(value) && value >= 0);
+
+  const statistics = modulationStatistics(plain.frames[lastIndex], detailed.frames[lastIndex]);
+  assert.ok(statistics.count > 500, `the frame holds smoke to measure, got ${statistics.count} cells`);
+  assert.ok(statistics.spread > 0.2, `detail 1 mottles the smoke, got a spread of ${statistics.spread}`);
+  assert.ok(Math.abs(statistics.mean - 1) < 0.15, `the mean stays near 1, got ${statistics.mean}`);
+  assert.equal(statistics.filledEmptyCells, 0, 'empty cells stay empty');
+});
+
+test('detail is checked and the velocity channels are not warped', () => {
+  assert.throws(() => bakeGasSim({ resolution: 16, frames: 1, detail: 2 }), /detail must be a number from 0 to 1/);
+  const withVelocity = bakeGasSim({ resolution: 16, frames: 2, velocity: true, detail: 1 });
+  const plainVelocity = bakeGasSim({ resolution: 16, frames: 2, velocity: true });
+  assert.deepEqual(withVelocity.frames[1].velocityX, plainVelocity.frames[1].velocityX);
 });
