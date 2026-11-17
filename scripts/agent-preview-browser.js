@@ -1096,7 +1096,7 @@ window.__agentPreview = {
   },
   // The scene at one instant packed into the tables the native ray query tracer reads (renderer.backend "native"). The job
   // runner traces them outside the page; each table comes back as base64 bytes. With `chunked` the answer holds a `chunks`
-  // manifest instead of the tables, which stay here for readNativeExportChunk, so no one message bounds the scene.
+  // manifest instead of the tables, which stay here for nativeExportBlob, so no one message bounds the scene.
   async exportNativeScene({ sessionId, animation, motionTime, options, chunked = false, maximumTriangles }) {
     const record = requireSession(sessionId);
     if (record.asset && (animation !== undefined || motionTime !== undefined)) {
