@@ -128,13 +128,13 @@ Sky colors use display RGB, matching the renderer's existing environment contrac
 | `specularAntiAliasing` | `1` | Absent unless set. `0` to `4`. Widens highlights where the shading normal or normal map detail changes within a pixel (geometric specular anti-aliasing plus a Toksvig term read from the filtered normal map length), so grainy or scanned metal stops sparkling from frame to frame at grazing angles. `0` gives a highlight that follows every texel; above `1` is softer. |
 | `sunBounce` | `1` | Absent unless set. A number of 0 or more. A closed room a sun lights gets a few point lights at its sunlit patches (`withSunBounce`, found when the scene is prepared), so the floor, walls and pillars around a patch are lit by the light it bounces and the far end of the room less. `0` turns it off and gives the look without it; `1` is fitted to Cycles; above `1` is stronger. A value that is not a number of 0 or more is refused. Open scenes and rooms with no sun are left as they are. It loads lazily with the sun, and the lights take up to 6 of the 16 point light slots. |
 | `setup` | `daylight` | `daylight`, `overcast`, `sunset` or `studio`. See Lighting setups |
-| `environmentIntensity` | `1` | `0` to `100`. Scales the setup's environment light and reflections |
+| `environmentIntensity` | `1` | `0` to `100`. Scales the setup's environment light and reflections, multiplied by `ambientIntensity` |
 | `environmentRotation` | `0` | `-100` to `100` radians around the vertical axis |
 | `lightDirection` | the setup's | Components within ±1000000, length at least `0.000001` |
 | `keyColor` | the setup's | Components from `0` to `1000` |
 | `keyIntensity` | `1` | `0` to `100` |
 | `fillIntensity` | `0` | `0` to `100` |
-| `ambientIntensity` | `1` | `0` to `100`. Scales the environment light |
+| `ambientIntensity` | `1` | `0` to `100`. Scales the sky ambient and also the diffuse light and reflections of the setup environment map or HDRI, so `0` renders an HDRI-lit scene black whatever `environmentIntensity` is. For an HDRI-only scene keep it above `0` and set `keyIntensity` and `fillIntensity` to `0` |
 | `daylight` | `1` | `0` to `100` |
 | `pointLights` | `[]` | At most 16 point light records |
 | `skyTop` | `[0.2, 0.38, 0.52]` | Components from `0` to `1` |
