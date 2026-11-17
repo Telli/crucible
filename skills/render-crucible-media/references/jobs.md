@@ -31,6 +31,9 @@ render the video.
 { "expectedRevision": 3, "settings": { "kind": "stills", "width": 640, "height": 360, "duration": 4, "motion": { "start": 0 } } }
 ```
 
+`stillCount` (2 to 300) writes that many numbered PNGs instead, one per 1/`fps` s of the motion clock. Leave `duration` out: it is
+`(stillCount - 1) / fps`. With `transparent: true` this gives an overlay in one job. For a longer clip, submit the next job with `motion.start` advanced by `stillCount / fps`.
+
 ## MP4 of recipe motion
 
 ```json
@@ -128,4 +131,4 @@ The OIDN package `@codepawlhq/crucible-denoise-oidn` is a separate package: `npm
 ## Imported character clips
 
 `animation: { "clip": 0, "start": 1 }` samples an imported asset's clip and `rendererTime` sets shader time. They
-are separate clocks from `motion`. Clip ids come from `scene_inspect`.
+are separate clocks from `motion`. Clip ids come from `scene_inspect`. A scene with no clips rejects `animation`: drop it or add a clip.
