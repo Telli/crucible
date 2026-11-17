@@ -43,7 +43,7 @@ import { framingProblems, placementProblems, textureProblems, exposureProblems, 
 import { BRANCH_LIMITS, createBranchStore, printableLabel } from '../src/agent-branches.js';
 import { agentAssetDecodeOptions, withCatalogLimitAdvice } from '../src/agent-asset-limits.js';
 import { describeMarks, validateMarks } from '../src/agent-annotate.js';
-import { sceneQueryFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache } from './agent-walkmap.js';
+import { sceneQueryFor, partMaterialsFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache } from './agent-walkmap.js';
 
 // Open scenes by sessionId, least recently used first. One canvas serves them all, so at most one record owns a renderer;
 // a call on another scene hands the canvas over (the scene data stays, the renderer is rebuilt).
@@ -1341,7 +1341,7 @@ window.__agentPreview = {
     if (!allAgentSceneModulesLoaded()) await loadAllAgentSceneModules();
     const clean = validateMarks(marks, { width, height });
     const query = sceneQueryFor(record);
-    return { revision: record.scene.revision, marks: describeMarks(clean, camera, { width, height, raycast: ray => query.raycast(ray) }) };
+    return { revision: record.scene.revision, marks: describeMarks(clean, camera, { width, height, raycast: ray => query.raycast(ray), partMaterials: partMaterialsFor(record) }) };
   },
   checkpoint({ sessionId, checkpointId }) {
     const record = requireSession(sessionId);

@@ -106,3 +106,70 @@ test('the annotate page offers the lasso tool and returns a validated lasso mark
   assert.equal((await send([{ kind: 'lasso', points: square, note: 'these' }])).status, 200);
   assert.deepEqual((await session).marks, [{ kind: 'lasso', points: square, note: 'these' }]);
 });
+
+// Columns of the picture are three parts: two on "stone" (one marked, one outside the lasso), one on unique "bronze".
+function columns(rayDirections) {
+  return ray => {
+    const found = rayDirections.find(([limit]) => ray.direction[0] < limit);
+    if (!found) return null;
+    const [, id, material] = found;
+    return { id, point: [0, 0, 0], normal: [0, 1, 0], distance: 5, material };
+  };
+}
+const lassoRegion = { kind: 'lasso', points: [[100, 50], [300, 50], [300, 150], [100, 150]], note: 'make these blue' };
+
+test('a lasso part lists the unmarked parts on its material in materialSharedWith, sorted by ID', () => {
+  const raycast = columns([[-0.0001, 'plinth', 'stone'], [1, 'statue', 'bronze']]);
+  const partMaterials = { zeta: 'stone', plinth: 'stone', alpha: 'stone', statue: 'bronze', lamp: 'brass' };
+  const [mark] = describeMarks([lassoRegion], camera, { ...view, raycast, partMaterials });
+  const plinth = mark.parts.find(part => part.partId === 'plinth');
+  const statue = mark.parts.find(part => part.partId === 'statue');
+  assert.deepEqual(plinth.materialSharedWith, ['alpha', 'zeta']);
+  assert.equal('materialSharedWithMore' in plinth, false);
+  assert.equal('materialSharedWith' in statue, false, 'a unique material has no field');
+});
+
+test('a part whose material is shared only with parts inside the same mark gets no materialSharedWith', () => {
+  const raycast = columns([[-0.0001, 'left', 'stone'], [1, 'right', 'stone']]);
+  const [mark] = describeMarks([lassoRegion], camera, { ...view, raycast, partMaterials: { left: 'stone', right: 'stone' } });
+  assert.equal(mark.parts.some(part => 'materialSharedWith' in part), false);
+});
+
+test('materialSharedWith lists at most 8 IDs and counts the rest in materialSharedWithMore', () => {
+  const raycast = columns([[1, 'plinth', 'stone']]);
+  const partMaterials = { plinth: 'stone' };
+  for (let index = 0; index < 11; index++) partMaterials[`floor-${String(index).padStart(2, '0')}`] = 'stone';
+  const [mark] = describeMarks([lassoRegion], camera, { ...view, raycast, partMaterials });
+  const [plinth] = mark.parts;
+  assert.deepEqual(plinth.materialSharedWith, ['floor-00', 'floor-01', 'floor-02', 'floor-03', 'floor-04', 'floor-05', 'floor-06', 'floor-07']);
+  assert.equal(plinth.materialSharedWithMore, 3);
+  partMaterials['floor-11'] = 'other';
+  delete partMaterials['floor-10'];
+  delete partMaterials['floor-09'];
+  delete partMaterials['floor-08'];
+  const [exact] = describeMarks([lassoRegion], camera, { ...view, raycast, partMaterials });
+  assert.equal(exact.parts[0].materialSharedWith.length, 8);
+  assert.equal('materialSharedWithMore' in exact.parts[0], false, 'exactly 8 needs no count');
+});
+
+test('a part under 15 percent of the picked pixels is marked edge: true and stays listed', () => {
+  // The sliver is the strip of rays right of x = 0.46 at the far right of the outline.
+  const raycast = ray => ({ id: ray.direction[0] > 0.46 ? 'floor' : 'plinth', point: [0, 0, 0], normal: [0, 1, 0], distance: 5, material: 'stone' });
+  const [mark] = describeMarks([lassoRegion], camera, { ...view, raycast });
+  const floor = mark.parts.find(part => part.partId === 'floor');
+  const plinth = mark.parts.find(part => part.partId === 'plinth');
+  assert.ok(floor && floor.coverage > 0 && floor.coverage < ANNOTATE_LIMITS.edgeCoverage, `floor coverage ${floor?.coverage}`);
+  assert.equal(floor.edge, true);
+  assert.deepEqual(plinth.materialSharedWith, undefined, 'no partMaterials given, so nothing is claimed');
+  assert.equal('edge' in plinth, false);
+  const atThreshold = describeMarks([lassoRegion], camera, { ...view, raycast: () => ({ id: 'only', point: [0, 0, 0], normal: [0, 1, 0], distance: 1, material: null }) })[0];
+  assert.equal('edge' in atThreshold.parts[0], false, 'full coverage is not an edge');
+  assert.equal(ANNOTATE_LIMITS.edgeCoverage, 0.15);
+});
+
+test('a pin result is unchanged by partMaterials', () => {
+  const pin = { x: 100, y: 100, note: 'pin' };
+  const expected = { number: 1, pixel: [100, 100], note: 'pin', partId: 'wall', point: [-1, 0, 0], normal: [0, 0, 1], distance: 10, material: 'plaster' };
+  assert.deepEqual(describeMarks([pin], camera, { ...view, raycast: wallLampSky })[0], expected);
+  assert.deepEqual(describeMarks([pin], camera, { ...view, raycast: wallLampSky, partMaterials: { wall: 'plaster', other: 'plaster' } })[0], expected);
+});

@@ -110,6 +110,11 @@ test('the bench lasso outlines the statue and the plinth, not the floor, at the 
   const covered = Object.fromEntries(mark.parts.map(part => [part.partId, part.coverage]));
   assert.ok(covered.statue > 0.25 && covered.plinth > 0.25, JSON.stringify(covered));
   assert.ok((covered.floor ?? 0) < 0.15, `the floor stays a sliver: ${JSON.stringify(covered)}`);
+  const byId = Object.fromEntries(mark.parts.map(part => [part.partId, part]));
+  assert.deepEqual(byId.plinth.materialSharedWith, ['floor'], 'the plinth shares stone with the unmarked floor');
+  assert.equal('materialSharedWith' in byId.statue, false);
+  assert.equal(byId.floor.edge, true);
+  assert.equal('edge' in byId.plinth, false);
 });
 
 function startServer(environmentOverrides) {

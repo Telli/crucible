@@ -15,6 +15,8 @@ export const ANNOTATE_LIMITS = Object.freeze({
   minLassoPoints: 3,
   maxLassoPoints: 64,
   lassoSamplesPerAxis: 24,
+  edgeCoverage: 0.15,
+  maxSharedMaterialParts: 8,
 });
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47];
@@ -163,9 +165,18 @@ export function lassoSamplePixels(points) {
   return samples;
 }
 
+// The other parts, outside the mark, that use the same material: recolouring that material would change them too.
+function sharedMaterialFields(material, markedIds, partMaterials, ownId) {
+  if (material === null || !partMaterials) return {};
+  const others = Object.keys(partMaterials).filter(id => partMaterials[id] === material && id !== ownId && !markedIds.has(id)).sort();
+  if (others.length === 0) return {};
+  const cap = ANNOTATE_LIMITS.maxSharedMaterialParts;
+  return { materialSharedWith: others.slice(0, cap), ...(others.length > cap ? { materialSharedWithMore: others.length - cap } : {}) };
+}
+
 // The parts under a lasso, most covered first. Each carries its share of the picked pixels; the lasso's own hit fields are the
 // most covered part's hit nearest the outline's centre.
-function describeLasso(mark, index, camera, { width, height, raycast }) {
+function describeLasso(mark, index, camera, { width, height, raycast, partMaterials }) {
   const centre = polygonCentre(mark.points);
   const samples = lassoSamplePixels(mark.points);
   const groups = new Map();
@@ -179,8 +190,15 @@ function describeLasso(mark, index, camera, { width, height, raycast }) {
     groups.set(hit.id, group);
   }
   const ranked = [...groups.entries()].sort(([firstId, first], [secondId, second]) => second.count - first.count || (firstId < secondId ? -1 : 1));
-  const parts = ranked.map(([partId, group]) => ({
+  const measured = ranked.map(([partId, group]) => ({
     partId, samples: group.count, coverage: Math.round(group.count / samples.length * 100) / 100, material: group.hit.material ?? null,
+  }));
+  // A grazed edge part is listed but not meant by the outline, so its material still counts as shared with it.
+  const markedIds = new Set(measured.filter(part => part.coverage >= ANNOTATE_LIMITS.edgeCoverage).map(part => part.partId));
+  const parts = measured.map(part => ({
+    ...part,
+    ...(markedIds.has(part.partId) ? {} : { edge: true }),
+    ...sharedMaterialFields(part.material, markedIds, partMaterials, part.partId),
   }));
   return { number: index + 1, kind: 'lasso', pixel: centre, points: mark.points, note: mark.note, ...hitFields(ranked[0]?.[1].hit), parts };
 }
@@ -188,10 +206,12 @@ function describeLasso(mark, index, camera, { width, height, raycast }) {
 /**
  * Numbers the marks and attaches what each one points at: part ID, world point, normal and distance, or null on empty sky.
  * A lasso also returns kind, points and parts (the parts under its outline); its partId and point are the most covered part's.
+ * partMaterials ({ partId: material }, optional) lets each lasso part list materialSharedWith, the unmarked parts on its material.
+ * A part covering under ANNOTATE_LIMITS.edgeCoverage of the picked pixels is marked edge: true and stays listed.
  */
-export function describeMarks(marks, camera, { width, height, raycast }) {
+export function describeMarks(marks, camera, { width, height, raycast, partMaterials }) {
   return marks.map((mark, index) => {
-    if (mark.kind === 'lasso') return describeLasso(mark, index, camera, { width, height, raycast });
+    if (mark.kind === 'lasso') return describeLasso(mark, index, camera, { width, height, raycast, partMaterials });
     const hit = raycast(pixelRay(camera, mark.x, mark.y, width, height));
     return { number: index + 1, pixel: [mark.x, mark.y], note: mark.note, ...hitFields(hit) };
   });
