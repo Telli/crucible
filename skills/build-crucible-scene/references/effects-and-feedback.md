@@ -78,8 +78,8 @@ pin up to 16 points with a note each. A mark returns `partId`, `point`, `normal`
   covered first). A part with `edge: true` (coverage under 0.15) only grazes the outline: skip it when the note does not fit.
   Only the browser view makes lassos; the inline chat view and the review page take pins only.
 - `outcome` `cancelled` or `timeout` returns no marks: ask in plain text. Edits made while they mark change `revision`; the result warns.
-- `scene_ask_user` has no `motionTime` field: marks are not made at a film time yet (issue #922). For a film moment, `scene_look` with
-  `motionTime` and ask in words, or ask on the base pose.
+- For a film scene, pass `motionTime` (0 to 3600 s): the view is seeked to that moment before they mark, the marks are resolved
+  at it, and `view.motionTime` in the answer names it (left out for a scene with no motion). Without it they mark the current pose.
 
 ## Review page for a phone
 
