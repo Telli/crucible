@@ -133,3 +133,8 @@ test('an outline scene draws the grown quads first, without depth write, then th
 test('the outline vertex shader refuses a vertex shader it cannot grow', () => {
   assert.throws(() => buildOutlineVertexSource('void main() {}'), /no longer contains/);
 });
+
+test('the outline fragment shader tests the distance to the disc edge against the width', () => {
+  assert.match(OUTLINE_FRAGMENT_SOURCE, /dFdx\(inside\), dFdy\(inside\)/);
+  assert.match(OUTLINE_FRAGMENT_SOURCE, /if \(-inside \/ gradient > outlineWidth\) discard;/);
+});
