@@ -31,6 +31,12 @@
   <sub>Classroom by Christophe Seux, CC0, from the Blender demo files, path traced in Crucible with Cook</sub>
 </p>
 
+<p align="center">
+  <img src="https://crucible.codepawl.com/previews/feature-clockwork.webp" alt="A gold and steel gyroscope with a glowing teal core, turning, rendered by Crucible" width="32%">
+  <img src="https://crucible.codepawl.com/previews/feature-flicker-fixed.webp" alt="A low camera pan over a warehouse floor with yellow lines and racks, drawn without flicker" width="32%">
+  <img src="https://crucible.codepawl.com/previews/feature-cook-dof.webp" alt="The native path tracer focusing from a red sphere in front to a gold and a purple sphere behind it" width="32%">
+</p>
+
 Crucible is a 3D engine for JavaScript with an MCP server for AI agents. It makes 3D easy to understand and easy to do.
 
 > **67js → Crucible.** 67js is the old name. The `@codepawlhq/67js` package is deprecated: install `@codepawlhq/crucible` instead. Old 67js.codepawl.com links redirect here.
@@ -38,6 +44,15 @@ Crucible is a 3D engine for JavaScript with an MCP server for AI agents. It make
 The agent knows every part of Crucible and carries the heavy steps. It builds the scene, lights it, checks the preview and renders the result. You keep the creative choices and stay in the loop, because the agent shows previews and asks when a matter of taste is open.
 
 Scenes built with Crucible open live in the browser on the [showcase](https://crucible.codepawl.com/showcase.html).
+
+## Gallery
+
+<p align="center">
+  <a href="https://crucible.codepawl.com/showcase.html?scene=airport"><img src="https://crucible.codepawl.com/previews/showcase-airport.webp" alt="Airport ramp, rendered by Crucible" width="49%"></a>
+  <a href="https://crucible.codepawl.com/showcase.html?scene=port"><img src="https://crucible.codepawl.com/previews/showcase-port.webp" alt="Container port, rendered by Crucible" width="49%"></a>
+  <a href="https://crucible.codepawl.com/showcase.html"><img src="https://crucible.codepawl.com/previews/cook-monk.webp" alt="A monastery courtyard with a stone well, seen from a desk with an open book, path traced by Cook" width="49%"></a>
+  <a href="https://crucible.codepawl.com/object.html"><img src="https://crucible.codepawl.com/previews/wall-e.webp" alt="A robot model in the object studio, rendered by Crucible" width="49%"></a>
+</p>
 
 ## What it is
 
