@@ -1,0 +1,1 @@
+- `scene_capabilities` answers `meshEdit` and `meshStack` with each op's arguments (`name:type`, `?` for optional) and the face, edge and vertex rules once, so one call is enough before editing a mesh (#1929)
