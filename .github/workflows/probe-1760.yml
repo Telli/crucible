@@ -42,6 +42,7 @@ jobs:
           node scripts/build-mcp.mjs
       - name: Variants
         run: |
+          set +e
           files="tests/native-texture-mips.test.js tests/native-light-tree-kernel.test.js tests/native-albedo-reference.test.js tests/native-instancing-equivalence.test.js tests/native-job-materials.test.js tests/native-camera-environment.test.js tests/native-texture-sampler.test.js"
           opts="--test-concurrency=2 --import ./scripts/test-hang-guard.mjs --test-timeout=300000"
           run_variant() {
