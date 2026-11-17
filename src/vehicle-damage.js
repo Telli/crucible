@@ -426,6 +426,146 @@ export function detachedPartFlight(part, hit, { seed = 0, gravity = 9.81, ground
   };
 }
 
+export const MAX_SWING_SECONDS = 30;
+export const MAX_SWING_SPEED = 15;
+export const MAX_DOOR_ANGLE_DEGREES = 170;
+export const MAX_DOOR_DAMPING = 20;
+const DOOR_STEP_SECONDS = 1 / 240;
+const DOOR_IMPULSE_SHARE = 0.01;
+const DOOR_SPEED_JITTER = 0.1;
+const DOOR_STOP_BOUNCE = 0.1;
+const DOOR_DRY_FRICTION = 2;
+const DOOR_REST_SPEED = 0.05;
+const DEFAULT_DOOR_MAX_ANGLE_DEGREES = 70;
+const DEFAULT_DOOR_DAMPING = 3;
+
+function dotProduct(first, second) {
+  return first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
+}
+
+function subtract(first, second) {
+  return [first[0] - second[0], first[1] - second[1], first[2] - second[2]];
+}
+
+/** Rotate `vector` by `angle` radians about the unit `axis` (Rodrigues). */
+function rotateAboutAxis(vector, axis, angle) {
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  const crossed = crossProduct(axis, vector);
+  const along = dotProduct(axis, vector) * (1 - cosine);
+  return [0, 1, 2].map(index => vector[index] * cosine + crossed[index] * sine + axis[index] * along);
+}
+
+/** Euler angles (radians, XYZ order, like `detachedPartFlight`) of the turn by `angle` about the unit `axis`. */
+function eulerOfAxisAngle(axis, angle) {
+  const [columnX, columnY, columnZ] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map(unit => rotateAboutAxis(unit, axis, angle));
+  const sineY = Math.max(-1, Math.min(1, columnZ[0]));
+  if (Math.abs(sineY) > 0.9999999) return [Math.atan2(columnY[2], columnY[1]), Math.asin(sineY), 0];
+  return [Math.atan2(-columnZ[1], columnZ[2]), Math.asin(sineY), Math.atan2(-columnY[0], columnX[0])];
+}
+
+function swingInertia(part, hingePoint, axis) {
+  const toCentre = subtract(part.position, hingePoint);
+  const alongAxis = dotProduct(toCentre, axis);
+  const centreDistance = Math.hypot(toCentre[0] - axis[0] * alongAxis, toCentre[1] - axis[1] * alongAxis, toCentre[2] - axis[2] * alongAxis);
+  if (centreDistance < 1e-3) throw invalidField('hinge.point', hingePoint, 'a point on the hinge line, which must pass at least 1 mm from the door centre, such as [0.8, 0.6, -0.1]');
+  const longestSide = part.size ? Math.max(...part.size) : 0;
+  return part.mass * (centreDistance * centreDistance + (longestSide * longestSide) / 12);
+}
+
+function initialSwingSpeed(part, hit, hinge, inertia, nextUnit) {
+  const lever = subtract(hit.point ?? part.position, hinge.point);
+  const excessImpulse = hit.impulse - part.threshold;
+  const push = normalized(hit.direction).map(component => component * excessImpulse * DOOR_IMPULSE_SHARE);
+  const torque = dotProduct(hinge.axis, crossProduct(lever, push));
+  const jitter = 1 + (nextUnit() * 2 - 1) * DOOR_SPEED_JITTER;
+  return Math.max(-MAX_SWING_SPEED, Math.min(MAX_SWING_SPEED, (torque / inertia) * jitter));
+}
+
+/** Advance the opening of the door (0 shut to `swing.maxAngle` open, speed positive while opening) by `seconds`. */
+function advanceSwing(state, swing, seconds) {
+  let remaining = seconds;
+  while (remaining > 0 && !state.settled) {
+    const step = Math.min(DOOR_STEP_SECONDS, remaining);
+    const heading = Math.sign(state.speed);
+    let speed = state.speed - (swing.damping * state.speed + DOOR_DRY_FRICTION * heading) * step;
+    if (Math.sign(speed) !== heading) speed = 0;
+    state.opening += speed * step;
+    if (state.opening >= swing.maxAngle) {
+      state.opening = swing.maxAngle;
+      speed = -speed * DOOR_STOP_BOUNCE;
+    } else if (state.opening <= 0) {
+      state.opening = 0;
+      speed = -speed * DOOR_STOP_BOUNCE;
+    }
+    state.speed = speed;
+    state.settled = Math.abs(speed) < DOOR_REST_SPEED;
+    if (state.settled) state.speed = 0;
+    remaining -= step;
+  }
+}
+
+/**
+ * A door swings open on its hinge instead of tearing off. `part` is `{ id, threshold, mass, position, size }` (the door's
+ * centre; `size` is optional and sets its inertia), `hit` is `{ impulse, direction, point }` as for `detachedPartFlight`,
+ * and `hinge` is `{ point, axis }`: a point on the hinge line and its direction (any length but zero). Returns null while
+ * the impulse stays below `threshold`. Otherwise `swing.sample(time)` gives `{ angle, angularVelocity, position, rotation,
+ * quaternion, settled }` for 0 to 30 s: the door turns about the hinge line at the speed the hit's torque gives it
+ * (a share of `impulse - threshold` about the lever from `point` to the hinge, over the door's inertia, at most 15 rad/s),
+ * slows by `damping` and dry friction, stops at `maxAngle` degrees (0 to 170, default 70) with a small bounce and rests. It never swings back past shut, since the frame stops it.
+ * `angle` is in radians and its sign follows the hit; `position` is the door centre and `rotation` (Euler XYZ) and
+ * `quaternion` ([x, y, z, w]) its turn, so the hinge line stays fixed. A hit along the hinge line gives no torque, so
+ * the door does not move. The same inputs and `seed` give the same numbers.
+ */
+export function hingedDoorSwing(part, hit, { hinge, maxAngle = DEFAULT_DOOR_MAX_ANGLE_DEGREES, damping = DEFAULT_DOOR_DAMPING, seed = 0 } = {}) {
+  requirePlainObject(part, 'part', '{ "id": "door-left", "threshold": 9000, "mass": 20, "position": [0.8, 0.6, 0.4] }');
+  if (typeof part.id !== 'string' || part.id === '') throw invalidField('part.id', part.id, 'the id of a part, such as "door-left"', TypeError);
+  requireNumber(part.threshold, 'part.threshold', 1e-6, 1e9, 9000);
+  requireNumber(part.mass, 'part.mass', 1e-3, 1e5, 20);
+  requireVector3(part.position, 'part.position', '[0.8, 0.6, 0.4]');
+  if (part.size !== undefined) {
+    requireVector3(part.size, 'part.size', '[0.1, 0.9, 1.0], the box of the door in metres').forEach((extent, axis) => requireNumber(extent, `part.size[${axis}]`, 1e-3, 100, 0.5));
+  }
+  requirePlainObject(hit, 'hit', '{ "impulse": 16800, "direction": [1, 0, 0], "point": [0.8, 0.6, 0.9] }');
+  requireNumber(hit.impulse, 'hit.impulse', 0, 1e9, 16800);
+  const rawDirection = requireVector3(hit.direction, 'hit.direction', '[1, 0, 0]');
+  if (Math.hypot(...rawDirection) < 1e-6) throw invalidField('hit.direction', rawDirection, 'a vector that is not zero, such as [1, 0, 0]');
+  if (hit.point !== undefined) requireVector3(hit.point, 'hit.point', '[0.8, 0.6, 0.9]');
+  requirePlainObject(hinge, 'hinge', '{ "point": [0.8, 0.6, -0.1], "axis": [0, 1, 0] }');
+  const hingePoint = requireVector3(hinge.point, 'hinge.point', '[0.8, 0.6, -0.1]');
+  const rawAxis = requireVector3(hinge.axis, 'hinge.axis', '[0, 1, 0]');
+  if (Math.hypot(...rawAxis) < 1e-6) throw invalidField('hinge.axis', rawAxis, 'a direction that is not zero, such as [0, 1, 0]');
+  requireNumber(maxAngle, 'maxAngle', 0, MAX_DOOR_ANGLE_DEGREES, DEFAULT_DOOR_MAX_ANGLE_DEGREES);
+  requireNumber(damping, 'damping', 0, MAX_DOOR_DAMPING, DEFAULT_DOOR_DAMPING);
+  requireNumber(seed, 'seed', 0, 4294967295, 7);
+  const axis = normalized(rawAxis);
+  const inertia = swingInertia(part, hingePoint, axis);
+  if (hit.impulse < part.threshold) return null;
+  const initialSpeed = initialSwingSpeed(part, hit, { point: hingePoint, axis }, inertia, seededUnitSequence(seed));
+  const swing = { damping, maxAngle: (maxAngle * Math.PI) / 180 };
+  const toCentre = subtract(part.position, hingePoint);
+  return {
+    id: part.id,
+    initialAngularVelocity: initialSpeed,
+    sample(time) {
+      requireNumber(time, 'time', 0, MAX_SWING_SECONDS, 1);
+      const state = { opening: 0, speed: Math.abs(initialSpeed), settled: initialSpeed === 0 };
+      advanceSwing(state, swing, time);
+      const angle = Math.sign(initialSpeed) * state.opening + 0;
+      const turned = rotateAboutAxis(toCentre, axis, angle);
+      const half = Math.sin(angle / 2);
+      return {
+        angle,
+        angularVelocity: Math.sign(initialSpeed) * state.speed + 0,
+        position: [hingePoint[0] + turned[0], hingePoint[1] + turned[1], hingePoint[2] + turned[2]],
+        rotation: eulerOfAxisAngle(axis, angle),
+        quaternion: [axis[0] * half, axis[1] * half, axis[2] * half, Math.cos(angle / 2)],
+        settled: state.settled,
+      };
+    },
+  };
+}
+
 /**
  * The vertex estimate of a recipe `dented` geometry, which is its source's: checks the dent fields and that the source
  * is a geometry of the recipe that is not itself a fragment or a dent. `estimateSource` estimates a source record.
