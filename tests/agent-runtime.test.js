@@ -39,7 +39,8 @@ import { filmTimelineDuration, filmTimelineShotStarts, sampleFilmTimeline } from
 import { normalizeReview, REVIEW_LIMITS } from '../scripts/agent-review.mjs';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
-import { ANNOTATE_LIMITS } from '../src/agent-annotate.js';
+import { ANNOTATE_LIMITS, describeMarks, validateMarks } from '../src/agent-annotate.js';
+import { openReviewPage } from './support/review-page-dom.mjs';
 import * as packLimits from '../src/pack-manifest.js';
 import { createPackRegistry } from '../scripts/agent-packs.mjs';
 
@@ -109,6 +110,16 @@ async function importedBindings(source) {
   return bindings;
 }
 
+const ANNOTATE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
+const ANNOTATE_CAMERA = { eye: [0, 0, 10], target: [0, 0, 0], up: [0, 1, 0], fov: 60, near: 0.1, far: 100 };
+function annotateFrameOf({ width, height }, revision) {
+  return { mimeType: 'image/png', data: ANNOTATE_PNG, metadata: { width, height, revision }, width, height, camera: ANNOTATE_CAMERA };
+}
+// A scene with one lamp on the view axis: a ray that starts left of the axis misses it, the others hit it.
+function hitNearestLamp(ray) {
+  return ray.direction[0] < -0.2 ? null : { id: 'lamp', point: [0, 1, 0], normal: [0, 1, 0], distance: 10, material: 'brass' };
+}
+
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
   failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, disposeGate, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
   const events = [];
@@ -168,8 +179,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
         const { width, height } = this.viewport;
         return { mimeType: 'image/png', data: Buffer.alloc(Math.round(width * height * lookBytesPerPixel)).toString('base64'), metadata: { width, height } };
       }
-      if (method === 'annotateFrame') return { mimeType: 'image/png', data: 'iVBORw0KGgo=', width: 64, height: 48, camera: {}, metadata: { revision: sourceRevision } };
-      if (method === 'pickMarks') return { revision: sourceRevision, marks: input.marks.map((mark, index) => ({ number: index + 1, pixel: [mark.x, mark.y], note: mark.note, partId: 'lamp' })) };
+      if (method === 'annotateFrame') return annotateFrameOf(this.viewport, sourceRevision);
+      if (method === 'pickMarks') return { revision: sourceRevision, marks: describeMarks(validateMarks(input.marks, input), input.camera, { width: input.width, height: input.height, raycast: hitNearestLamp }) };
       if (method === 'reviewResult') return { mimeType: 'image/png',
         data: Buffer.alloc(oversize ? 1024 * 1024 + 1 : 16).toString('base64') };
       if (method === 'dispose' && failDispose) throw new Error('Injected disposal failure');
@@ -645,13 +656,13 @@ runTest('an inline scene_ask_user hands its nonce to the view only and resolves 
   const { nonce } = pending.viewMeta;
   assert.match(nonce, /^[a-f0-9]{32}$/);
   assert.ok(!JSON.stringify(pending.content).includes(nonce), 'the nonce is not in what the model reads');
-  assert.deepEqual([pending.content.view.width, pending.content.view.height], [64, 48]);
+  assert.deepEqual([pending.content.view.width, pending.content.view.height], [768, 512]);
   assert.ok(pending.image);
   await assert.rejects(runtime.submitAskUser({ nonce: 'f'.repeat(32), marks: [{ x: 5, y: 5 }], image: png }), /only accepts the marks of an open annotate view/);
-  await assert.rejects(runtime.submitAskUser({ nonce, marks: [{ x: 500, y: 5, note: 'outside' }], image: png }), /x must be a pixel from 0 to 64/);
+  await assert.rejects(runtime.submitAskUser({ nonce, marks: [{ x: 5000, y: 5, note: 'outside' }], image: png }), /x must be a pixel from 0 to 768/);
   await assert.rejects(runtime.submitAskUser({ nonce, marks: [], image: png }), /at least one pin/);
   await assert.rejects(runtime.submitAskUser({ nonce, marks: [{ x: 5, y: 5, note: 'dull' }], image: 'not a png' }), /PNG/);
-  const sent = await runtime.submitAskUser({ nonce, marks: [{ x: 5, y: 5, note: ' dull ' }], image: png });
+  const sent = await runtime.submitAskUser({ nonce, marks: [{ x: 384, y: 256, note: ' dull ' }], image: png });
   assert.equal(sent.content.outcome, 'sent');
   assert.equal(sent.content.marks[0].partId, 'lamp');
   assert.equal(sent.content.marks[0].note, 'dull');
@@ -986,7 +997,7 @@ runTest('the preview server accepts only its own loopback host', () => {
   assert.equal(isPreviewHost(undefined, 4100), false);
 });
 
-async function webExportHarness({ exportedRecipe, failCopy = () => false, seedJobsDirectory } = {}) {
+async function webExportHarness({ exportedRecipe, failCopy = () => false, seedJobsDirectory, extraOverrides = {} } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'crucible-web-runtime-'));
   const buildDirectory = join(root, 'build');
   await mkdir(join(buildDirectory, 'mcp'), { recursive: true });
@@ -1004,7 +1015,7 @@ async function webExportHarness({ exportedRecipe, failCopy = () => false, seedJo
   const harness = await reviewRuntimeHarness({
     exportedRecipe,
     runtimeOptions: { jobs: jobsDirectory, previewUrl: pathToFileURL(join(buildDirectory, 'mcp', 'preview.js')) },
-    contextOverrides: { writeWebBuild: failingWriteWebBuild },
+    contextOverrides: { writeWebBuild: failingWriteWebBuild, ...extraOverrides },
   });
   const keptBuilds = async () => (await readdir(join(jobsDirectory, EXPORT_DIRECTORY_NAME))).filter(name => name.startsWith('web-'));
   after(() => harness.runtime.close());
@@ -1188,4 +1199,72 @@ runTest('without --gpu-queue the job store gets no card hook', async () => {
     contextOverrides: { createAgentRenderJobs: async hooks => { jobHooks = hooks; return controller; } } });
   await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
   assert.equal(jobHooks.acquireGpu, undefined);
+});
+
+runTest('a review page export, marks saved in the page and read back equal the local scene_ask_user answer (#924)', async () => {
+  const { runtime, sessionId } = await webExportHarness({ exportedRecipe: PLAYABLE_RECIPE });
+  const exported = await runtime.exportWeb({ sessionId, title: 'Kitchen', review: true });
+  assert.equal(exported.review, true);
+  assert.ok((await stat(join(dirname(exported.entry), 'frame.png'))).isFile());
+  const page = openReviewPage(await readFile(exported.entry, 'utf8'));
+  page.tap(384, 256);
+  page.tap(40, 60);
+  page.write(1, 'brass looks dull');
+  const reviewFile = page.saveFileText();
+
+  const fromReview = await runtime.askUser({ sessionId, reviewFile });
+
+  const savedMarks = JSON.parse(reviewFile).marks;
+  const local = await webExportHarness({ exportedRecipe: PLAYABLE_RECIPE,
+    extraOverrides: { runAnnotateSession: async () => ({ outcome: 'sent', marks: savedMarks, image: ANNOTATE_PNG }) } });
+  const fromLocal = await local.runtime.askUser({ sessionId: local.sessionId });
+
+  assert.equal(fromReview.image, undefined);
+  assert.equal(fromLocal.content.marks.length, 2);
+  assert.equal(fromLocal.content.marks[1].partId, null);
+  // The runtime runs in a vm, so compare the JSON the tool sends, as the MCP server does.
+  assert.deepEqual(JSON.parse(JSON.stringify(fromReview.content)), JSON.parse(JSON.stringify({ ...fromLocal.content, sessionId })));
+});
+
+runTest('a review file is refused when it is forged, for another scene, empty or too long (#924)', async () => {
+  const { runtime, sessionId } = await webExportHarness({ exportedRecipe: PLAYABLE_RECIPE });
+  const exported = await runtime.exportWeb({ sessionId, review: true });
+  const page = openReviewPage(await readFile(exported.entry, 'utf8'));
+  page.tap(100, 100);
+  const file = JSON.parse(page.saveFileText());
+  const forged = JSON.stringify({ ...file, reviewId: 'f'.repeat(32) });
+  await assert.rejects(runtime.askUser({ sessionId, reviewFile: forged }), /Export the review page again/);
+  await assert.rejects(runtime.askUser({ sessionId: 'other-scene', reviewFile: JSON.stringify(file) }), /Unknown|other-scene|made for scene/);
+  await assert.rejects(runtime.askUser({ sessionId, reviewFile: JSON.stringify({ ...file, marks: [] }) }), /no marks/);
+  await assert.rejects(runtime.askUser({ sessionId, reviewFile: JSON.stringify({ ...file, marks: [{ x: 9999, y: 1, note: '' }] }) }), /mark 1 x/);
+  await assert.rejects(runtime.askUser({ sessionId, reviewFile: 'x'.repeat(20000) }), /over 16384 bytes/);
+});
+
+runTest('a review file is read once, is forgotten when its scene is disposed, and keeps the page limit of 16 marks (#924)', async () => {
+  const { runtime, sessionId } = await webExportHarness({ exportedRecipe: PLAYABLE_RECIPE });
+  const exported = await runtime.exportWeb({ sessionId, review: true });
+  const page = openReviewPage(await readFile(exported.entry, 'utf8'));
+  page.tap(384, 256);
+  const reviewFile = page.saveFileText();
+  const file = JSON.parse(reviewFile);
+  const seventeenMarks = Array.from({ length: 17 }, (unused, index) => ({ x: 10 + index, y: 10, note: '' }));
+  await assert.rejects(runtime.askUser({ sessionId, reviewFile: JSON.stringify({ ...file, marks: seventeenMarks }), maxMarks: 32 }), /at most 16 marks/);
+  const first = await runtime.askUser({ sessionId, reviewFile });
+  assert.equal(first.content.outcome, 'sent');
+  await assert.rejects(runtime.askUser({ sessionId, reviewFile }), /already read by an earlier scene_ask_user call/);
+
+  const second = await runtime.exportWeb({ sessionId, review: true });
+  const secondFile = openReviewPage(await readFile(second.entry, 'utf8'));
+  secondFile.tap(384, 256);
+  const secondText = secondFile.saveFileText();
+  await runtime.dispose({ sessionId });
+  await assert.rejects(runtime.askUser({ sessionId, reviewFile: secondText }), /does not match a review page exported by this server run/);
+});
+
+runTest('a review page needs no game and is kept with the newest four web builds (#924)', async () => {
+  const { runtime, sessionId, keptBuilds } = await webExportHarness({ exportedRecipe: { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] } });
+  const entries = [];
+  for (let index = 0; index < 5; index++) entries.push((await runtime.exportWeb({ sessionId, review: true })).entry);
+  assert.equal((await keptBuilds()).length, 4);
+  await assert.rejects(stat(entries[0]), { code: 'ENOENT' });
 });

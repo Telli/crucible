@@ -16,7 +16,7 @@ export const WAVEFRONT_WORKGROUP_SIZE = 64;
 /** vec4 slots of path state per path; the wavefront section below names each one. */
 export const PATH_STATE_VECTORS = 9;
 
-const buildCommonSource = ({ hasVolume = false, hasLocalVolumes = false, hasGridVolume = false } = {}) => /* wgsl */ `
+const buildCommonSource = ({ hasVolume = false, hasLocalVolumes = false, hasGridVolume = false, hasNoiseOctaves = false, hasEmissionRamp = false } = {}) => /* wgsl */ `
 const PI: f32 = 3.14159265358979;
 const TWO_PI: f32 = 6.28318530717959;
 const TRIANGLE_TEXELS: i32 = 10;
@@ -882,7 +882,7 @@ fn addDirect(depth: i32, normal: vec3<f32>, distance: f32, weightMode: i32) {
 }
 
 ${hasVolume ? VOLUME_FUNCTIONS : hasLocalVolumes ? PHASE_FUNCTIONS : ''}
-${hasLocalVolumes ? buildLocalVolumeFunctions({ hasGrid: hasGridVolume }) : ''}
+${hasLocalVolumes ? buildLocalVolumeFunctions({ hasGrid: hasGridVolume, hasNoiseOctaves, hasEmissionRamp }) : ''}
 fn flushShadowRay() {
   if (!shadowPending) { return; }
   shadowPending = false;
@@ -1179,7 +1179,7 @@ fn bakeTexels(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgro
 `;
 
 // `realtime` is the set of WGSL pieces of path-tracer-realtime-webgpu-kernel.js (REALTIME_KERNEL_PIECES); the real-time tracer passes them in, so other bundles do not carry them.
-export const buildMegakernelSource = ({ hasVolume = false, hasLocalVolumes = false, hasGridVolume = false, hasSubsurface = false, texelBake = false, realtime = null } = {}) => buildCommonSource({ hasVolume, hasLocalVolumes, hasGridVolume }) + /* wgsl */ `
+export const buildMegakernelSource = ({ hasVolume = false, hasLocalVolumes = false, hasGridVolume = false, hasNoiseOctaves = false, hasEmissionRamp = false, hasSubsurface = false, texelBake = false, realtime = null } = {}) => buildCommonSource({ hasVolume, hasLocalVolumes, hasGridVolume, hasNoiseOctaves, hasEmissionRamp }) + /* wgsl */ `
 ${realtime ? realtime.declarations + realtime.addLights : `// The first hit lights from every emitter; later hits draw one, and divide by the chance of drawing it.
 fn addLights(depth: i32, normal: vec3<f32>) {
   let emitterCount = params.emittersFlagsSample.x;

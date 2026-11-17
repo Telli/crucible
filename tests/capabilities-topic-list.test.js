@@ -82,3 +82,25 @@ test('concise format drops the notes inside each listed topic', async context =>
   const singleConcise = await ask(client, { topic: 'environment', response_format: 'concise' });
   assert.deepEqual(concise.structuredContent.answers.environment, singleConcise.structuredContent);
 });
+
+// Issue 1904: names inherited from Object.prototype are not fields or entries.
+test('a field name inherited from Object.prototype is not a field of a topic', async context => {
+  const client = await connectClient(context);
+  for (const inherited of ['constructor', '__proto__', 'toString']) {
+    const result = await ask(client, { topic: `environment.${inherited}` });
+    assert.equal(result.isError, true, inherited);
+    assert.match(result.content[0].text, new RegExp(`Topic environment has no field ${inherited}\\. Fields: `));
+  }
+});
+
+test('a dotted suffix that is not an entry of a plain topic names the entries', async context => {
+  const client = await connectClient(context);
+  for (const topic of ['particles.nonexistent', 'particles.constructor', 'examples.nonexistent']) {
+    const result = await ask(client, { topic });
+    assert.equal(result.isError, true, topic);
+    const [name, entry] = topic.split('.');
+    assert.match(result.content[0].text, new RegExp(`Topic ${name} has no (entry|field) ${entry}\\. (Entries|Fields): `));
+  }
+  const real = await ask(client, { topic: 'examples.scene_apply' });
+  assert.notEqual(real.isError, true);
+});

@@ -1,5 +1,7 @@
 import { LOCAL_VOLUME_KEY_GAIN, LOCAL_VOLUME_LIGHT_DEPTH_SATURATION, LOCAL_VOLUME_SHADOW_STRENGTH, LOCAL_VOLUME_SKY_GAIN, LOCAL_VOLUME_SUN_FLATTEN, LOCAL_VOLUME_EDGE_WARP, LOCAL_VOLUME_STEPS_PER_NOISE_CELL } from './local-volumes.js';
 import { LOCAL_VOLUME_MAXIMUM_STEPS, MAX_LOCAL_VOLUMES } from './local-volume-resolve.js';
+import { LOCAL_VOLUME_RAMP_STOPS, rampSourceCode } from './local-volume-ramp.js';
+import { bakeEmissionRamp } from './local-volume-ramp-bake.js';
 import { meanEnvironmentRadiance } from './path-tracer-volume.js';
 import { bakedGridEmission, GRID_MOTION_TIME_STEP, gridUnitVelocity, volumeGridFloats } from './volume-grid.js';
 
@@ -16,6 +18,8 @@ export const LOCAL_VOLUME_TEXELS = 8;
 export const LOCAL_VOLUME_HEADER_TEXELS = 2;
 /** The shape code of a grid volume in the table (box 0, sphere 1). Negative so the box and sphere tests of the kernel never match it. */
 export const LOCAL_VOLUME_GRID_SHAPE = -1;
+/** Vectors of one emission ramp in the ramp block: the source, stop count and range, the emission strength, then up to LOCAL_VOLUME_RAMP_STOPS colours. */
+export const LOCAL_VOLUME_RAMP_TEXELS = 2 + LOCAL_VOLUME_RAMP_STOPS;
 /** Vectors in front of a grid's voxels: the resolution and blackbody weight, then the shutter, the two optional channel flags and the voxel stride. */
 export const LOCAL_VOLUME_GRID_HEADER_TEXELS = 2;
 
@@ -27,13 +31,16 @@ export function assertWebGpuLocalVolumes(scene) {
     if (volume.shape === 'mesh' || volume.part) {
       throw new RangeError(`environment.localVolumes[${index}] is a mesh volume, which only backend "cpu" traces; the WebGPU path tracer draws box, sphere and grid volumes. Use backend "cpu" or make it a box or sphere.`);
     }
-    if (volume.noiseOctaves > 1) {
-      throw new RangeError(`environment.localVolumes[${index}].noiseOctaves is read by the rasterizer and backend "cpu"; the WebGPU path tracer draws one octave. Use backend "cpu" or drop noiseOctaves.`);
-    }
-    if (volume.emissionRamp) {
-      throw new RangeError(`environment.localVolumes[${index}].emissionRamp is read by the rasterizer and backend "cpu"; the WebGPU path tracer has no room for the ramp. Use backend "cpu" or drop the ramp.`);
-    }
   });
+}
+
+/** The optional WGSL parts a scene's volumes need, as the kernel variant flags; a part is spliced in only when a volume uses it. */
+export function webGpuVolumeFeatures(volumes) {
+  return {
+    hasGridVolume: Boolean(volumes?.some(volume => volume.shape === 'grid')),
+    hasNoiseOctaves: Boolean(volumes?.some(volume => volume.noiseAmount > 0 && volume.noiseOctaves > 1)),
+    hasEmissionRamp: Boolean(volumes?.some(volume => volume.emissionRamp)),
+  };
 }
 
 /**
@@ -41,9 +48,12 @@ export function assertWebGpuLocalVolumes(scene) {
  * followed by eight vectors per volume:
  *   0 centre, shape (0 box, 1 sphere)   1 half extents, falloff   2 absorption times density, noise amount
  *   3 emission times strength, noise scale   4 steps, scatter, anisotropy, radius   5-7 the three rows of the box axes.
+ * The fourth float of vector 5 is the noise octaves minus one and that of vector 7 is the ramp number plus one (0 for no ramp); a ramp block follows the table
+ * and the grid block (packWebGpuEmissionRamps).
  */
 export function packWebGpuLocalVolumes(volumes, environment) {
   if (volumes.length > MAX_LOCAL_VOLUMES) throw new RangeError(`The WebGPU path tracer holds at most ${MAX_LOCAL_VOLUMES} local volumes, got ${volumes.length}`);
+  const rampVolumes = volumes.filter(volume => volume.emissionRamp);
   const table = new Float32Array((LOCAL_VOLUME_HEADER_TEXELS + volumes.length * LOCAL_VOLUME_TEXELS) * 4);
   table.set([volumes.length, 0, 0, 0], 0);
   table.set([...meanEnvironmentRadiance(environment), 0], 4);
@@ -58,14 +68,42 @@ export function packWebGpuLocalVolumes(volumes, environment) {
     table.set([...volume.absorption.map(channel => channel * volume.density), volume.noiseAmount], at + 8);
     table.set([...volume.emission.map(channel => channel * volume.emissionStrength), volume.noiseScale], at + 12);
     table.set([volume.steps, volume.scatter ?? 0, volume.anisotropy ?? 0, isSphere ? volume.radius : 0], at + 16);
-    for (let row = 0; row < 3; row++) table.set([axes[row * 3], axes[row * 3 + 1], axes[row * 3 + 2], 0], at + 20 + row * 4);
+    const octavesAfterFirst = (volume.noiseOctaves ?? 1) - 1;
+    const rampNumber = volume.emissionRamp ? rampVolumes.indexOf(volume) + 1 : 0;
+    for (let row = 0; row < 3; row++) table.set([axes[row * 3], axes[row * 3 + 1], axes[row * 3 + 2], row === 0 ? octavesAfterFirst : row === 2 ? rampNumber : 0], at + 20 + row * 4);
   });
   const gridVolume = volumes.find(volume => volume.shape === 'grid');
-  if (!gridVolume) return table;
-  const withGrid = new Float32Array(table.length + gridBlockLength(gridVolume));
-  withGrid.set(table);
-  withGrid.set(packWebGpuGrid(gridVolume), table.length);
-  return withGrid;
+  const blocks = [table];
+  if (gridVolume) blocks.push(packWebGpuGrid(gridVolume));
+  if (rampVolumes.length > 0) blocks.push(packWebGpuEmissionRamps(rampVolumes));
+  return blocks.length === 1 ? table : concatenateFloats(blocks);
+}
+
+function concatenateFloats(blocks) {
+  const joined = new Float32Array(blocks.reduce((length, block) => length + block.length, 0));
+  let at = 0;
+  for (const block of blocks) {
+    joined.set(block, at);
+    at += block.length;
+  }
+  return joined;
+}
+
+/**
+ * The ramp block, the last block of the buffer: LOCAL_VOLUME_RAMP_TEXELS vectors per volume that has an emissionRamp, in volume order:
+ *   0  source (1 density, 2 temperature, 3 flame), stop count, low end of the range, high end   1  emissionStrength
+ *   2 to 9  the baked colours with the exposure applied (bakeEmissionRamp), the unused stops 0.
+ */
+export function packWebGpuEmissionRamps(rampVolumes) {
+  const block = new Float32Array(rampVolumes.length * LOCAL_VOLUME_RAMP_TEXELS * 4);
+  rampVolumes.forEach((volume, index) => {
+    const at = index * LOCAL_VOLUME_RAMP_TEXELS * 4;
+    const baked = bakeEmissionRamp(volume.emissionRamp);
+    block.set([rampSourceCode(volume.emissionRamp.source), baked.count, ...volume.emissionRamp.range], at);
+    block[at + 4] = volume.emissionStrength;
+    for (let stop = 0; stop < baked.count; stop++) block.set(baked.colors.subarray(stop * 3, stop * 3 + 3), at + 8 + stop * 4);
+  });
+  return block;
 }
 
 function gridBlockLength(volume) {
@@ -81,7 +119,7 @@ function gridVoxelStride(volume) {
  * The grid block that follows the volume table: a header of two vectors, then one run of vectors per voxel (x fastest, then y, then z, the grid file's order):
  *   header 0  resolution x, y, z, blackbody weight (blackbodyIntensity times emissionStrength)
  *   header 1  shutter seconds (0 is off), has baked blackbody, has velocity, vectors per voxel
- *   voxel     density, flame (the density when the grid has no flame channel), 0, 0
+ *   voxel     density, flame (the density when the grid has no flame channel), the temperature when the volume has an emissionRamp (else 0), 0
  *             then, with blackbodyIntensity above 0, the baked blackbody radiance (bakedGridEmission) as red, green, blue, 0
  *             then, with a shutter open, the unit velocity (gridUnitVelocity: box fractions per second) as x, y, z, 0.
  * A voxel is 16 to 48 bytes, so a 128 cubed grid with all three is about 100 MB: lower the resolution of a grid that does not fit the device's storage buffer.
@@ -97,6 +135,7 @@ export function packWebGpuGrid(volume) {
   block.set([volume.motionShutter ?? 0, withBlackbody ? 1 : 0, withVelocity ? 1 : 0, stride], 4);
   const floats = volumeGridFloats(gridData);
   const flame = floats.flame ?? floats.density;
+  const temperature = volume.emissionRamp ? floats.temperature : null;
   const baked = withBlackbody ? bakedGridEmission(gridData, volume.temperatureScale) : null;
   const velocity = withVelocity ? gridUnitVelocity(gridData, volume.size) : null;
   const voxelCount = width * height * depth;
@@ -104,6 +143,7 @@ export function packWebGpuGrid(volume) {
     let at = (LOCAL_VOLUME_GRID_HEADER_TEXELS + voxel * stride) * 4;
     block[at] = floats.density[voxel];
     block[at + 1] = flame[voxel];
+    if (temperature) block[at + 2] = temperature[voxel];
     if (baked) {
       at += 4;
       block.set([baked.red[voxel], baked.green[voxel], baked.blue[voxel]], at);
@@ -118,9 +158,10 @@ export function packWebGpuGrid(volume) {
 
 /**
  * The march. `params.seedAndAtlas.w` is the vector index of the table header in the materials buffer. With `hasGrid` the grid march and sampler are
- * spliced in; without it the text is what it was before grids, so a scene without a grid compiles the same kernel.
+ * spliced in; without it the text is what it was before grids, so a scene without a grid compiles the same kernel. `hasNoiseOctaves` and `hasEmissionRamp`
+ * splice the fractal noise and the ramp light the same way.
  */
-export const buildLocalVolumeFunctions = ({ hasGrid = false } = {}) => /* wgsl */ `
+export const buildLocalVolumeFunctions = ({ hasGrid = false, hasNoiseOctaves = false, hasEmissionRamp = false } = {}) => /* wgsl */ `
 const LOCAL_VOLUME_TEXELS: i32 = ${LOCAL_VOLUME_TEXELS};
 const LOCAL_VOLUME_HEADER_TEXELS: i32 = ${LOCAL_VOLUME_HEADER_TEXELS};
 const LOCAL_VOLUME_LIMIT: i32 = ${MAX_LOCAL_VOLUMES};
@@ -162,7 +203,7 @@ fn localVolumeNoise(position: vec3<f32>) -> f32 {
   return mix(lower, upper, smoothed.z);
 }
 
-fn localFadeProfile(ratio: f32) -> f32 {
+${hasNoiseOctaves ? FRACTAL_NOISE_FUNCTION : ''}fn localFadeProfile(ratio: f32) -> f32 {
   let clamped = clamp(ratio, 0.0, 1.0);
   return 1.0 - clamped * clamped * (3.0 - 2.0 * clamped);
 }
@@ -186,7 +227,7 @@ ${hasGrid ? `  if (localVolumeTexel(volume, 0).w < -0.5) { return localGridSampl
   let offset = localAxesOffset(volume, point - centre.xyz);
   let noisy = withNoise && noiseAmount > 0.0;
   var noise = 0.5;
-  if (noisy) { noise = localVolumeNoise(point * noiseScale); }
+  if (noisy) { noise = ${hasNoiseOctaves ? 'localVolumeFractalNoise(point * noiseScale, i32(localVolumeTexel(volume, 5).w) + 1)' : 'localVolumeNoise(point * noiseScale)'}; }
   let falloff = extents.w;
   var profile = 1.0;
   if (centre.w > 0.5) {
@@ -328,22 +369,73 @@ ${hasGrid ? `    if (localVolumeTexel(volume, 0).w < -0.5) {
       let width = profile * stepLength;
       if (scatters) { emitted += throughput * localScatteredLight(volume, point, width); }
       emitted += throughput * emission * width;
-      throughput *= exp(-extinction * width);
+${hasEmissionRamp ? `      emitted += throughput * localEmissionRampLight(volume, vec3<f32>(profile), stepLength);
+` : ''}      throughput *= exp(-extinction * width);
     }
   }
   addRadiance(depth, emitted);
 }
-${hasGrid ? GRID_FUNCTIONS : ''}`;
+${hasEmissionRamp ? buildRampFunctions(hasGrid) : ''}${hasGrid ? buildGridFunctions({ hasEmissionRamp }) : ''}`;
+
+// The fractal value noise of localVolumeFractalNoise in local-volume-noise.js: octaves at twice the frequency and half the weight, divided by the weights.
+const FRACTAL_NOISE_FUNCTION = /* wgsl */ `fn localVolumeFractalNoise(position: vec3<f32>, octaves: i32) -> f32 {
+  var sum = 0.0;
+  var weight = 1.0;
+  var weightSum = 0.0;
+  var frequency = 1.0;
+  for (var octave = 0; octave < octaves; octave++) {
+    sum += weight * localVolumeNoise(position * frequency);
+    weightSum += weight;
+    weight *= 0.5;
+    frequency *= 2.0;
+  }
+  return sum / weightSum;
+}
+
+`;
+
+/**
+ * The emission ramp light of one step (addRampLight in the CPU tracer): the baked ramp colour at the source value, times the emission strength, the position
+ * along the ramp and the step length. `sources` is (density, temperature, flame); a box or sphere passes its profile in all three. The ramp block is the last
+ * block of the buffer, after the grid block, whose size the grid header gives.
+ */
+const buildRampFunctions = hasGrid => /* wgsl */ `
+const LOCAL_RAMP_TEXELS: i32 = ${LOCAL_VOLUME_RAMP_TEXELS};
+
+fn localRampBase() -> i32 {
+  let first = i32(params.seedAndAtlas.w);
+  var base = first + LOCAL_VOLUME_HEADER_TEXELS + i32(materials[first].x) * LOCAL_VOLUME_TEXELS;
+${hasGrid ? `  let resolution = vec3<i32>(materials[base].xyz);
+  base += ${LOCAL_VOLUME_GRID_HEADER_TEXELS} + resolution.x * resolution.y * resolution.z * i32(materials[base + 1].w);
+` : ''}  return base;
+}
+
+fn localEmissionRampLight(volume: i32, sources: vec3<f32>, stepLength: f32) -> vec3<f32> {
+  let rampNumber = i32(localVolumeTexel(volume, 7).w);
+  if (rampNumber == 0) { return vec3<f32>(0.0); }
+  let at = localRampBase() + (rampNumber - 1) * LOCAL_RAMP_TEXELS;
+  let header = materials[at];
+  let position = clamp((sources[i32(header.x) - 1] - header.z) / (header.w - header.z), 0.0, 1.0);
+  if (position <= 0.0) { return vec3<f32>(0.0); }
+  let stops = i32(header.y);
+  let scaled = position * f32(stops - 1);
+  let lower = min(i32(floor(scaled)), stops - 1);
+  let upper = min(lower + 1, stops - 1);
+  let colour = mix(materials[at + 2 + lower].xyz, materials[at + 2 + upper].xyz, scaled - f32(lower));
+  return colour * materials[at + 1].x * position * stepLength;
+}
+`;
 
 /** The WGSL march and trilinear sampler of a grid volume (crossGridStep and sampleVolumeGrid in the CPU tracer); the block layout is packWebGpuGrid's. */
-const GRID_FUNCTIONS = /* wgsl */ `
+const buildGridFunctions = ({ hasEmissionRamp }) => /* wgsl */ `
 const LOCAL_GRID_HEADER_TEXELS: i32 = ${LOCAL_VOLUME_GRID_HEADER_TEXELS};
 const LOCAL_GRID_TIME_STEP: f32 = ${GRID_MOTION_TIME_STEP};
 
 struct GridCell {
   density: f32,
   flame: f32,
-  glow: vec3<f32>,
+  glow: vec3<f32>,${hasEmissionRamp ? `
+  temperature: f32,` : ''}
 }
 
 struct GridCorner {
@@ -380,7 +472,7 @@ fn localGridOutside(unit: vec3<f32>) -> bool {
 }
 
 fn localGridSample(volume: i32, point: vec3<f32>) -> GridCell {
-  var cell = GridCell(0.0, 0.0, vec3<f32>(0.0));
+  var cell = GridCell(0.0, 0.0, vec3<f32>(0.0)${hasEmissionRamp ? ', 0.0' : ''});
   let unit = localGridUnit(volume, point);
   if (localGridOutside(unit)) { return cell; }
   let base = localGridBase();
@@ -394,7 +486,8 @@ fn localGridSample(volume: i32, point: vec3<f32>) -> GridCell {
     let values = materials[at];
     cell.density += found.weight * values.x;
     cell.flame += found.weight * values.y;
-    if (withGlow) { cell.glow += found.weight * materials[at + 1].xyz; }
+${hasEmissionRamp ? `    cell.temperature += found.weight * values.z;
+` : ''}    if (withGlow) { cell.glow += found.weight * materials[at + 1].xyz; }
   }
   return cell;
 }
@@ -434,7 +527,8 @@ fn crossLocalGrid(volume: i32, origin: vec3<f32>, entry: f32, span: f32, jitter:
     let width = cell.density * stepLength;
     if (width > 0.0 && scatters) { emitted += throughput * localScatteredLight(volume, point, width); }
     emitted += throughput * (emission * cell.flame * stepLength + cell.glow * blackbodyWeight * stepLength);
-    throughput *= exp(-extinction * width);
+${hasEmissionRamp ? `    emitted += throughput * localEmissionRampLight(volume, vec3<f32>(cell.density, cell.temperature, cell.flame), stepLength);
+` : ''}    throughput *= exp(-extinction * width);
   }
   return emitted;
 }

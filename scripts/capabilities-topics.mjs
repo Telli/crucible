@@ -57,10 +57,10 @@ function outlineAnswer(topic, branchName, schema) {
   if (prefixed.length === 1) return outlineSchema(withDefinitions(prefixed[0][1]));
   if (prefixed.length > 1) return unionIndex(topic, new Map(prefixed));
   // A dotted field of a plain topic, such as environment.spotLights, is that field's outline.
-  const field = jsonSchema.properties?.[branchName];
-  if (!branches && field) return outlineSchema(withDefinitions(field));
-  const known = branches ? [...branches.keys()] : Object.keys(jsonSchema.properties ?? {});
-  const sharedField = branches && [...branches.values()].some(branch => branch.properties?.[branchName]);
+  const ownProperties = jsonSchema.properties ?? {};
+  if (!branches && Object.hasOwn(ownProperties, branchName)) return outlineSchema(withDefinitions(ownProperties[branchName]));
+  const known = branches ? [...branches.keys()] : Object.keys(ownProperties);
+  const sharedField = branches && [...branches.values()].some(branch => Object.hasOwn(branch.properties ?? {}, branchName));
   const fieldNote = sharedField ? ` ${branchName} is a field of those branches, not a branch: open one branch to see it.` : '';
   throw new Error(`Topic ${topic} has no ${branches ? 'branch' : 'field'} ${branchName}. ${branches ? 'Branches' : 'Fields'}: ${known.join(', ') || 'none'}.${fieldNote}`);
 }
@@ -154,9 +154,13 @@ function answerOneTopic(capabilities, topic, names, outlineSources) {
   const answeredTopic = [name, branchName].filter(Boolean).join('.');
   if (source) return { topic: answeredTopic, ...(notes === undefined ? {} : { notes }), fields: outlineAnswer(name, branchName, source) };
   // A dotted name picks one entry of a plain topic: examples.scene_apply.
-  const entry = notes !== null && typeof notes === 'object' && branchName !== undefined && Object.hasOwn(notes, branchName);
-  if (entry) return { topic: answeredTopic, value: notes[branchName] };
-  return { topic: answeredTopic, value: notes ?? runtime };
+  const content = notes ?? runtime;
+  if (branchName === undefined) return { topic: answeredTopic, value: content };
+  const entries = content !== null && typeof content === 'object' ? content : {};
+  if (!Object.hasOwn(entries, branchName)) {
+    throw new Error(`Topic ${name} has no entry ${branchName}. Entries: ${Object.keys(entries).join(', ') || 'none'}.`);
+  }
+  return { topic: answeredTopic, value: entries[branchName] };
 }
 
 function checkTopicList(topics) {

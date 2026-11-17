@@ -53,3 +53,37 @@ test('scene_ask_user returns text only for a timeout and rejects out-of-range ar
     assert.equal(rejected.isError, true, JSON.stringify(argumentsValue));
   }
 });
+
+test('scene_ask_user passes a review file instead of opening the browser, and bounds its size (#924)', async context => {
+  const calls = [];
+  const client = await connect(context, {
+    activeSessionId: () => 'scene-1',
+    async close() {},
+    async askUser(input) {
+      calls.push(input);
+      return { content: { sessionId: input.sessionId, outcome: 'sent', marks: [] } };
+    },
+  });
+  const result = await client.callTool({ name: 'scene_ask_user', arguments: { reviewFile: '{"format":"crucible.review"}' } });
+  assert.equal(result.isError, undefined);
+  assert.equal(calls[0].reviewFile, '{"format":"crucible.review"}');
+  assert.deepEqual(result.content.map(part => part.type), ['text']);
+  const tooLong = await client.callTool({ name: 'scene_ask_user', arguments: { reviewFile: 'x'.repeat(16385) } }).catch(error => ({ isError: true, message: error.message }));
+  assert.equal(tooLong.isError, true);
+});
+
+test('scene_export_web passes the review flag and rejects other values (#924)', async context => {
+  const calls = [];
+  const client = await connect(context, {
+    activeSessionId: () => 'scene-1',
+    async close() {},
+    async exportWeb(input) {
+      calls.push(input);
+      return { sessionId: input.sessionId, review: input.review === true };
+    },
+  });
+  await client.callTool({ name: 'scene_export_web', arguments: { review: true } });
+  assert.equal(calls[0].review, true);
+  const rejected = await client.callTool({ name: 'scene_export_web', arguments: { review: 'yes' } }).catch(error => ({ isError: true, message: error.message }));
+  assert.equal(rejected.isError, true);
+});
