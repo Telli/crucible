@@ -290,6 +290,12 @@ test('a path traced job says why exposure findings and passes are unavailable', 
   assert.match(limit.fix, /scene_look/);
 });
 
+test('the path traced exposure advice says a daylit interior traces brighter and to lower the exposure, not raise it', () => {
+  const { fix } = pathTracerFindingsLimit();
+  assert.match(fix, /brighter than the raster one/);
+  assert.match(fix, /lower effects\.exposure/);
+});
+
 test('a scene reports the z-fighting its ranking left over, and none when it opted out', async () => {
   const { loadAgentSceneModules } = await import('../src/agent-scene-modules.js');
   await loadAgentSceneModules({ environment: { resolveCoplanar: 'offset' } });
