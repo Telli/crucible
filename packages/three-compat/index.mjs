@@ -464,12 +464,12 @@ export function createThreeCompat(core) {
     }
   }
 
-  // MeshPhongMaterial: shininess becomes roughness with the usual Blinn-Phong to GGX fit, roughness = sqrt(2 / (shininess + 2)).
+  // MeshPhongMaterial: shininess becomes roughness with the usual Blinn-Phong to GGX fit, alpha = sqrt(2 / (shininess + 2)) and Crucible roughness is perceptual (alpha = roughness squared), so roughness = (2 / (shininess + 2)) ** 0.25.
   // The specular color has no Crucible field and is ignored.
   class MeshPhongMaterial extends MeshStandardMaterial {
     constructor(parameters = {}) {
       const shininess = parameters.shininess ?? 30;
-      super({ ...parameters, metalness: 0, roughness: Math.sqrt(2 / (shininess + 2)) });
+      super({ ...parameters, metalness: 0, roughness: (2 / (shininess + 2)) ** 0.25 });
       this.shininess = shininess;
     }
   }

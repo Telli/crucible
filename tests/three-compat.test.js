@@ -154,9 +154,9 @@ test('MeshLambertMaterial and MeshPhongMaterial build matte Crucible materials',
   assert.deepEqual(lambert.color, new THREE.Color(0xff0000).toArray());
   const defaultPhong = new THREE.MeshPhongMaterial({ color: 0x00ff00 }).toMaterial();
   assert.equal(defaultPhong.metallic, 0);
-  assert.ok(Math.abs(defaultPhong.roughness - Math.sqrt(2 / 32)) < 1e-9);
+  assert.ok(Math.abs(defaultPhong.roughness - 0.5) < 1e-9);
   const shiny = new THREE.MeshPhongMaterial({ shininess: 198, specular: 0xffffff }).toMaterial();
-  assert.ok(Math.abs(shiny.roughness - 0.1) < 1e-9);
+  assert.ok(Math.abs(shiny.roughness - 0.01 ** 0.25) < 1e-9);
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshPhongMaterial());
   assert.ok(mesh.material instanceof THREE.MeshStandardMaterial);
   assert.ok(!unsupportedNames.includes('MeshLambertMaterial') && !unsupportedNames.includes('MeshPhongMaterial'));

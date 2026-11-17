@@ -36,7 +36,7 @@ If you would rather write three.js-shaped code, the optional addon `packages/thr
 | --- | --- |
 | `new THREE.MeshStandardMaterial({ color, metalness, roughness })` | `material: { color, metallic, roughness }`. `color` is three linear numbers from 0 to 1, not a hex number. |
 | `new THREE.MeshLambertMaterial({ color })` | `material: { color, metallic: 0, roughness: 1 }`. |
-| `new THREE.MeshPhongMaterial({ color, shininess })` | `material: { color, metallic: 0, roughness }`. The addon turns `shininess` into `roughness` (the square root of 2 divided by shininess plus 2) and ignores `specular`. |
+| `new THREE.MeshPhongMaterial({ color, shininess })` | `material: { color, metallic: 0, roughness }`. The addon turns `shininess` into `roughness` (the fourth root of 2 divided by shininess plus 2, so the default shininess 30 gives 0.5) and ignores `specular`. |
 | `emissive` and `emissiveIntensity` | `material.emission` and `material.emissiveColor`. |
 | `map`, `normalMap` | `material.map` and `material.normalMap`, each `{ image, colorSpace }`. |
 | `transparent` and `opacity` | `material.alphaMode` set to `'blend'`, and `material.opacity`. |
