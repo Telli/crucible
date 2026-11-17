@@ -5,10 +5,10 @@ import { createAgentScene } from '../src/agent-scene.js';
 import { MAX_BAKE_PARTS, MAX_GPU_BAKE_PARTS } from '../src/light-bake.js';
 import { traceIrradianceGrid } from '../src/irradiance-grid.js';
 import { traceProbeMaps } from '../src/probe-trace.js';
-import { largeRoom } from './support/agent-bake-rooms.mjs';
+import { growToOversizedOperations, shrinkFromOversizedOperations, largeRoom, oversizedRoom } from './support/agent-bake-rooms.mjs';
 
 const FITTING_BAKE = { samples: 8, bounces: 1, texelsPerUnit: 2 };
-const OVER_THE_PATH_WORK_LIMIT = { preset: 'draft', samples: 256, bounces: 3, texelsPerUnit: 12 };
+const OVER_THE_PATH_WORK_LIMIT = { samples: 32, bounces: 2, texelsPerUnit: 3 };
 
 function tooManyParts() {
   return Array.from({ length: MAX_BAKE_PARTS + 1 }, () => ({}));
@@ -30,25 +30,25 @@ test('an edit whose rebake cannot run stays applied, drops the old bake and warn
   const bakedFloor = scene.parts.find(part => part.material.emissiveMap);
   assert.ok(bakedFloor, 'a part carries a lightmap');
 
-  scene.apply([{ type: 'set-bake', bake: OVER_THE_PATH_WORK_LIMIT }, { type: 'set-camera', fov: 33 }], { expectedRevision: 0 });
+  scene.apply([{ type: 'set-bake', bake: OVER_THE_PATH_WORK_LIMIT }, { type: 'set-camera', fov: 33 }, ...growToOversizedOperations(OVER_THE_PATH_WORK_LIMIT)], { expectedRevision: 0 });
   const inspected = scene.inspect();
   assert.equal(inspected.revision, 1);
   assert.equal(inspected.bake, undefined, 'the old bake is dropped');
   assert.equal(scene.parts.some(part => part.material.emissiveMap), false, 'no part keeps the old lightmap');
   const warning = inspected.diagnostics.find(diagnostic => diagnostic.kind === 'bake-skipped');
   assert.equal(warning.severity, 'warning');
-  assert.match(warning.message, /path steps/);
+  assert.match(warning.message, /texels/);
   assert.match(warning.fix, /fewer parts|lower bake\.samples/);
 
   scene.apply([{ type: 'set-camera', fov: 40 }], { expectedRevision: 1 });
   assert.ok(scene.inspect().diagnostics.some(diagnostic => diagnostic.kind === 'bake-skipped'), 'an unrelated edit keeps the warning');
 
-  scene.apply([{ type: 'set-bake', bake: FITTING_BAKE }], { expectedRevision: 2 });
+  scene.apply([{ type: 'set-bake', bake: FITTING_BAKE }, ...shrinkFromOversizedOperations(FITTING_BAKE)], { expectedRevision: 2 });
   const recovered = scene.inspect();
   assert.ok(recovered.bake, 'a bake that fits runs again');
   assert.equal((recovered.diagnostics ?? []).some(diagnostic => diagnostic.kind === 'bake-skipped'), false);
 });
 
 test('a scene whose first bake cannot run still fails to build', () => {
-  assert.throws(() => createAgentScene(largeRoom(OVER_THE_PATH_WORK_LIMIT)), /path steps/);
+  assert.throws(() => createAgentScene(oversizedRoom(OVER_THE_PATH_WORK_LIMIT)), /Even samples 16, bounces 1 and texelsPerUnit 1 is \d+ texels/);
 });
