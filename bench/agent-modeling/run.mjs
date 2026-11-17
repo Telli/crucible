@@ -2,7 +2,7 @@
 // server, then grades the recipe the agent exported.
 //
 // node bench/agent-modeling/run.mjs --claude <claude executable> [--model sonnet] [--tasks crate,bolt]
-//   [--runs 3] [--run-name <name>] [--budget 3] [--timeout 1200] [--label baseline] [--skill] [--branches off] [--relations off] [--findings off] [--backend gpu|cpu] [--resume <run name>]
+//   [--runs 3] [--run-name <name>] [--budget 3] [--timeout 1200] [--label baseline] [--skill-mode none|legacy|references] [--branches off] [--relations off] [--findings off] [--backend gpu|cpu] [--resume <run name>]
 //
 // --runs repeats every task that many times, each in a fresh session; the summary reports success rate, tool calls,
 // tool errors, tokens and cost for the model and for each task.
@@ -13,8 +13,10 @@
 // scene_capabilities. Records carry relationCalls, the tool calls that sent a relations list.
 // --findings off hides the structured findings (`diagnostics`) from scene_look, the control for measuring what they are worth.
 // Records carry imagesRead, the tool results that held a picture.
-// --skill puts the build-crucible-scene entry point and its mesh reference in the system prompt. That measures what the
-// skill's knowledge is worth, not whether an agent would load the skill on its own.
+// --skill-mode puts the build-crucible-scene skill in the system prompt (skill-prompt.mjs): `none` (default) nothing, `legacy`
+// the entry point and its mesh reference for every task (--skill is the same), `references` the entry point and the reference
+// files the task's kind and topics point to. That measures what the skill's knowledge is worth, not whether an agent would load
+// the skill on its own. Bench a change under skills/ in `references`, base and head in the same mode.
 //
 // Raw transcripts and recipes go to artifacts/agent-modeling/<run>/ (ignored by Git); the summary goes to
 // bench/agent-modeling/results/<run>.json.
@@ -24,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createRunGuard } from './run-guard.mjs';
+import { resolveSkillMode, skillPromptFor } from './skill-prompt.mjs';
 import { removeLocalPaths, totalsByModel, totalsOf } from './aggregate.mjs';
 import { gradeRecipe, recipeFeatures } from './check.mjs';
 import { countFixRounds, isMcpRender, isMcpWrite } from './fix-rounds.mjs';
@@ -46,6 +49,7 @@ const { values: options } = parseArgs({
     timeout: { type: 'string', default: '1200' },
     label: { type: 'string', default: 'run' },
     skill: { type: 'boolean', default: false },
+    'skill-mode': { type: 'string' },
     branches: { type: 'string', default: 'on' },
     relations: { type: 'string', default: 'on' },
     findings: { type: 'string', default: 'on' },
@@ -55,16 +59,10 @@ const { values: options } = parseArgs({
   },
 });
 
+const skillMode = resolveSkillMode({ skillMode: options['skill-mode'], skill: options.skill });
 const runName = options.resume ?? options['run-name'] ?? `${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}-${options.model}-${options.label}`;
 const rawDirectory = join(repository, 'artifacts', 'agent-modeling', runName);
 const resultsDirectory = join(repository, 'bench', 'agent-modeling', 'results');
-
-async function skillPrompt() {
-  const skillDirectory = join(repository, 'skills', 'build-crucible-scene');
-  const entryPoint = await readFile(join(skillDirectory, 'SKILL.md'), 'utf8');
-  const meshReference = await readFile(join(skillDirectory, 'references', 'mesh-modeling.md'), 'utf8');
-  return `${entryPoint}\n\n${meshReference}`;
-}
 
 function mcpConfig(assetDirectory) {
   return { mcpServers: { [MCP_SERVER_NAME]: {
@@ -169,7 +167,7 @@ async function removeWorkingDirectory(workingDirectory) {
   }
 }
 
-async function runTask(task, attempt, systemPromptAddition) {
+async function runTask(task, attempt) {
   const fileStem = `${task.id}-${attempt}`;
   const workingDirectory = await mkdtemp(join(tmpdir(), 'crucible-agent-task-'));
   try {
@@ -183,6 +181,7 @@ async function runTask(task, attempt, systemPromptAddition) {
     await writeFile(configPath, JSON.stringify(mcpConfig(assetDirectory)));
     const text = taskPrompt(task);
     const prompt = task.ownPreamble ? text : `${PROMPT_PREAMBLE}\n\n${text}`;
+    const systemPromptAddition = await skillPromptFor(skillMode, task, repository);
     const run = await runClaude(prompt, workingDirectory, configPath, systemPromptAddition);
     const transcript = readTranscript(run.output);
     await writeFile(join(rawDirectory, `${fileStem}.jsonl`), run.output);
@@ -226,11 +225,11 @@ async function runTask(task, attempt, systemPromptAddition) {
 // An infra failure (claude -p or the MCP server never got going) says nothing about the schemas, so the run is tried
 // once more. The retry's record replaces the first; it keeps the first cause in retriedAfter. A second infra failure
 // stays marked infra and is left out of pass@1.
-async function runTaskWithInfraRetry(task, attempt, systemPromptAddition) {
-  const first = await runTask(task, attempt, systemPromptAddition);
+async function runTaskWithInfraRetry(task, attempt) {
+  const first = await runTask(task, attempt);
   if (!first.infra) return first;
   console.log(`${task.id.padEnd(16)} #${attempt} infra ${first.zeroCalls.cause}: retrying once`);
-  const second = await runTask(task, attempt, systemPromptAddition, '-retry');
+  const second = await runTask(task, attempt);
   return { ...second, retriedAfter: first.zeroCalls.cause };
 }
 
@@ -240,7 +239,6 @@ if (!['on', 'off'].includes(options.findings)) throw new RangeError('--findings 
 const tasks = options.tasks ? options.tasks.split(',').map(taskById) : TASKS;
 await mkdir(rawDirectory, { recursive: true });
 await mkdir(resultsDirectory, { recursive: true });
-const systemPromptAddition = options.skill ? await skillPrompt() : null;
 const summaryPath = join(resultsDirectory, `${runName}.json`);
 const records = options.resume ? JSON.parse(await readFile(summaryPath, 'utf8')).records : [];
 const attempts = Number(options.runs);
@@ -253,7 +251,8 @@ function summarize() {
     run: runName,
     model: records.find(record => record.model)?.model ?? options.model,
     date: new Date().toISOString(),
-    skill: options.skill,
+    skill: skillMode !== 'none',
+    skillMode,
     branches: options.branches,
     relations: options.relations,
     findings: options.findings,
@@ -275,7 +274,7 @@ for (let attempt = 1; attempt <= attempts; attempt++) {
 }
 
 for (const { task, attempt } of pending) {
-  const record = await runTaskWithInfraRetry(task, attempt, systemPromptAddition);
+  const record = await runTaskWithInfraRetry(task, attempt);
   records.push(record);
   const label = record.infra ? `INFRA ${record.zeroCalls.cause}` : record.pass ? 'PASS' : `FAIL${record.zeroCalls ? ` ${record.zeroCalls.cause}` : ''}`;
   console.log(`${record.task.padEnd(16)} #${attempt} ${label} ${record.passed}/${record.total}  calls ${record.toolCalls} (errors ${record.toolErrors})  $${record.costUsd ?? '?'}  ${record.wallSeconds}s${record.failed.length ? `  ${record.failed.join(' | ')}` : ''}`);
