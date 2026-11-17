@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  chooseNativeKernel, chooseTraceBackend, clampNegativeColor, createNativeTracerLocator, isNativeTimeLimitError, traceFrameNative, yieldToEventLoop,
+  chooseNativeKernel, chooseTraceBackend, clampNegativeColor, describeKernelCompile, createNativeTracerLocator, isNativeTimeLimitError, traceFrameNative, yieldToEventLoop,
 } from '../scripts/agent-native-trace.mjs';
 
 // These tests use fake engines, so they run with and without Cook installed; a COOK_DISABLE from the suite's absent-mode run
@@ -149,6 +149,37 @@ function tracerRecording(calls) {
     },
   };
 }
+
+function tracerWithCompile(timings) {
+  const traced = tracerRecording([]).traceNative();
+  return { traceNative: () => ({ ...traced, ...timings }) };
+}
+
+test('a frame that spent seconds compiling says so apart from the trace time, and what the pipeline cache does about it', async () => {
+  const frame = { exported: emptyExport, width: 4, height: 4, samples: 8, denoise: 'none' };
+  const cold = await traceFrameNative({ ...frame, tracer: tracerWithCompile({ compileSeconds: 7.04, tracedSeconds: 0.017, pipelineCache: 'cold' }) });
+  assert.equal(cold.report.compileSeconds, 7.04);
+  assert.equal(cold.report.gpuTraceSeconds, 0.017);
+  assert.equal(cold.report.pipelineCache, 'cold');
+  assert.match(cold.report.kernelCompileNote, /spent 7\.0 s compiling the kernel variant/);
+  assert.match(cold.report.kernelCompileNote, /next process that renders the same scene variant skips the compile/);
+  const off = await traceFrameNative({ ...frame, tracer: tracerWithCompile({ compileSeconds: 3, pipelineCache: 'off' }) });
+  assert.match(off.report.kernelCompileNote, /COOK_PIPELINE_CACHE=off/);
+  const unsupported = await traceFrameNative({ ...frame, tracer: tracerWithCompile({ compileSeconds: 3, pipelineCache: 'unsupported' }) });
+  assert.match(unsupported.report.kernelCompileNote, /no pipeline cache/);
+});
+
+test('a frame whose kernel was cached or compiled quickly carries no compile note, and an older Cook adds no cache fields', async () => {
+  const frame = { exported: emptyExport, width: 4, height: 4, samples: 8, denoise: 'none' };
+  const warm = await traceFrameNative({ ...frame, tracer: tracerWithCompile({ compileSeconds: 0.05, tracedSeconds: 0.02, pipelineCache: 'warm' }) });
+  assert.equal(warm.report.kernelCompileNote, undefined);
+  assert.equal(warm.report.pipelineCache, 'warm');
+  const older = await traceFrameNative({ ...frame, tracer: tracerRecording([]) });
+  assert.equal('pipelineCache' in older.report, false);
+  assert.equal('gpuTraceSeconds' in older.report, false);
+  assert.equal(describeKernelCompile({ compileSeconds: 2 }).includes('pipeline cache'), false);
+  assert.equal(describeKernelCompile({ compileSeconds: undefined, pipelineCache: 'cold' }), undefined);
+});
 
 const emptyExport = {
   triangleCount: 0, triangles: 0, ignored: [],
