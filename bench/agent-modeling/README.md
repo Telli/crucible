@@ -149,6 +149,9 @@ absolute `.json` path under 64 KB: `{"marks":[{"pixel":[x,y],"note":"..."}]}` wi
 at most 280 characters (an optional `motionTime` is checked and ignored). The marks go through the same pick as a browser answer, so the agent
 gets the part, point and normal under the pixel. `ask-user-pin` pins the statue of the stage scene with the note "make this red"; its checks
 pass when the statue's material is red and the plinth is not recoloured. A test pins the fixture pixel to the statue at the stage camera.
+A mark may carry `"lasso":[[x,y],...]` (3 to 64 points inside the frame) instead of `pixel`; the answer then lists the parts under the outline.
+`ask-user-lasso` (`ask-user-lasso.json`) outlines the statue and the plinth with the note "make these blue"; its checks pass when both are blue
+and the floor, which shares the plinth's stone material, is not.
 
 ### Several runs and several models
 

@@ -70,6 +70,53 @@ test('the loader checks the marks against the limits of real marks', async conte
   }
 });
 
+test('a fixture mark may carry a lasso instead of a pixel, and the loader checks its points and count (#922)', async context => {
+  const outline = [[10, 10], [100, 10], [100, 80]];
+  const filePath = await fixtureFile(context, 'lasso.json', { marks: [{ lasso: outline, note: 'make these blue' }, { pixel: [1, 2] }] });
+  assert.deepEqual(loadFrom(filePath), { name: 'lasso.json', marks: [{ kind: 'lasso', points: outline, note: 'make these blue' }, { x: 1, y: 2, note: '' }] });
+  const tooMany = Array.from({ length: 65 }, (unused, index) => [index, 5]);
+  const cases = [
+    [{ marks: [{ lasso: [[1, 1], [2, 2]] }] }, /mark 1 lasso must be an array of 3 to 64 \[x, y\] points/],
+    [{ marks: [{ lasso: tooMany }] }, /mark 1 lasso must be an array of 3 to 64 \[x, y\] points/],
+    [{ marks: [{ lasso: 'around the statue' }] }, /mark 1 lasso must be an array of 3 to 64/],
+    [{ marks: [{ lasso: [[1, 1], [2, 2], [3]] }] }, /mark 1 lasso point 3 must be \[x, y\], two numbers from 0 to 1024/],
+    [{ marks: [{ lasso: [[1, 1], [2, 2], [3, 1025]] }] }, /mark 1 lasso point 3 must be \[x, y\]/],
+    [{ marks: [{ lasso: [[1, 1], [2, 2], [-3, 1]] }] }, /mark 1 lasso point 3 must be \[x, y\]/],
+    [{ marks: [{ lasso: outline, pixel: [1, 1] }] }, /mark 1 has both pixel and lasso/],
+    [{ marks: [{ lasso: outline, note: 'x'.repeat(281) }] }, /mark 1 note must be text of at most 280 characters/],
+  ];
+  for (const [content, message] of cases) {
+    const caseFile = await fixtureFile(context, 'case.json', content);
+    assert.throws(() => loadFrom(caseFile), message, JSON.stringify(content).slice(0, 80));
+  }
+  const atLimit = await fixtureFile(context, 'limit.json', { marks: [{ lasso: tooMany.slice(0, 64).map(([x]) => [x * 10, 500 + x]) }] });
+  assert.equal(loadFrom(atLimit).marks[0].points.length, 64);
+});
+
+test('the bench lasso outlines the statue and the plinth, not the floor, at the stage camera (#922)', async () => {
+  const task = taskById('ask-user-lasso');
+  assert.ok(BENCH_TASKS.find(candidate => candidate.id === 'ask-user-lasso').topics.includes('askUser'));
+  const lassoFixture = join(import.meta.dirname, '..', 'bench', 'agent-modeling', 'ask-user-lasso.json');
+  assert.deepEqual(askUserEnvironment(task), { [ASK_USER_FIXTURE_VARIABLE]: resolve(lassoFixture) });
+
+  const fixture = loadFrom(lassoFixture);
+  const { preview } = previewHarness();
+  preview.create({ recipe: structuredClone(task.startRecipe), sessionId: 'lasso', backend: 'cpu', memoryBudgetMiB: 64 });
+  const frame = preview.annotateFrame({ sessionId: 'lasso' });
+  const picked = await preview.pickMarks({ sessionId: 'lasso', camera: frame.camera, width: frame.width, height: frame.height, marks: fixture.marks });
+  const [mark] = picked.marks;
+  assert.equal(mark.kind, 'lasso');
+  assert.equal(mark.note, 'make these blue');
+  const covered = Object.fromEntries(mark.parts.map(part => [part.partId, part.coverage]));
+  assert.ok(covered.statue > 0.25 && covered.plinth > 0.25, JSON.stringify(covered));
+  assert.ok((covered.floor ?? 0) < 0.15, `the floor stays a sliver: ${JSON.stringify(covered)}`);
+  const byId = Object.fromEntries(mark.parts.map(part => [part.partId, part]));
+  assert.deepEqual(byId.plinth.materialSharedWith, ['floor'], 'the plinth shares stone with the unmarked floor');
+  assert.equal('materialSharedWith' in byId.statue, false);
+  assert.equal(byId.floor.edge, true);
+  assert.equal('edge' in byId.plinth, false);
+});
+
 function startServer(environmentOverrides) {
   const child = spawn(process.execPath, [serverScript], { env: { ...process.env, ...environmentOverrides }, stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
   let errors = '';
