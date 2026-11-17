@@ -77,3 +77,9 @@ test('the page stops at the pin limit', () => {
   for (let index = 0; index < ANNOTATE_LIMITS.maxMarks + 4; index++) page.tap(10 + index, 10);
   assert.equal(page.elements.rows.children.length, ANNOTATE_LIMITS.maxMarks);
 });
+
+test('validateReviewMarks keeps the page limit of 16 marks whatever maxMarks the caller passes', () => {
+  const seventeenMarks = Array.from({ length: 17 }, (unused, index) => ({ x: index, y: 1, note: '' }));
+  assert.throws(() => validateReviewMarks(seventeenMarks, { width: 64, height: 48, maxMarks: 32 }), /at most 16 marks/);
+  assert.equal(validateReviewMarks(seventeenMarks.slice(0, 16), { width: 64, height: 48, maxMarks: 32 }).length, 16);
+});

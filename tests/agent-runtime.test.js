@@ -1240,6 +1240,27 @@ runTest('a review file is refused when it is forged, for another scene, empty or
   await assert.rejects(runtime.askUser({ sessionId, reviewFile: 'x'.repeat(20000) }), /over 16384 bytes/);
 });
 
+runTest('a review file is read once, is forgotten when its scene is disposed, and keeps the page limit of 16 marks (#924)', async () => {
+  const { runtime, sessionId } = await webExportHarness({ exportedRecipe: PLAYABLE_RECIPE });
+  const exported = await runtime.exportWeb({ sessionId, review: true });
+  const page = openReviewPage(await readFile(exported.entry, 'utf8'));
+  page.tap(384, 256);
+  const reviewFile = page.saveFileText();
+  const file = JSON.parse(reviewFile);
+  const seventeenMarks = Array.from({ length: 17 }, (unused, index) => ({ x: 10 + index, y: 10, note: '' }));
+  await assert.rejects(runtime.askUser({ sessionId, reviewFile: JSON.stringify({ ...file, marks: seventeenMarks }), maxMarks: 32 }), /at most 16 marks/);
+  const first = await runtime.askUser({ sessionId, reviewFile });
+  assert.equal(first.content.outcome, 'sent');
+  await assert.rejects(runtime.askUser({ sessionId, reviewFile }), /already read by an earlier scene_ask_user call/);
+
+  const second = await runtime.exportWeb({ sessionId, review: true });
+  const secondFile = openReviewPage(await readFile(second.entry, 'utf8'));
+  secondFile.tap(384, 256);
+  const secondText = secondFile.saveFileText();
+  await runtime.dispose({ sessionId });
+  await assert.rejects(runtime.askUser({ sessionId, reviewFile: secondText }), /does not match a review page exported by this server run/);
+});
+
 runTest('a review page needs no game and is kept with the newest four web builds (#924)', async () => {
   const { runtime, sessionId, keptBuilds } = await webExportHarness({ exportedRecipe: { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] } });
   const entries = [];

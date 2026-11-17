@@ -58,7 +58,8 @@ export function parseReviewFile(text) {
 
 /** Checks the marks of a review file against the exported view and requires at least one, as the local page does. */
 export function validateReviewMarks(marks, { width, height, maxMarks = ANNOTATE_LIMITS.maxMarks }) {
-  const clean = validateMarks(marks, { width, height, maxMarks });
+  // The review page lets a person pin at most ANNOTATE_LIMITS.maxMarks, so a larger maxMarks from a caller cannot raise it.
+  const clean = validateMarks(marks, { width, height, maxMarks: Math.min(maxMarks, ANNOTATE_LIMITS.maxMarks) });
   if (!clean.length) throw invalidReviewFile('it holds no marks. Ask the reviewer to pin the view and save again.');
   return clean;
 }

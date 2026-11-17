@@ -169,8 +169,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   let cancelReview;
   // One per scene_ask_user call that is waiting for the person; close() aborts them so the page server and its timer end at once.
   const pendingAskControllers = new Set();
-  // The view each exported review page shows (reviewId to sessionId, revision and camera), so a saved review file needs no camera of its
-  // own and a forged file cannot aim a ray. Oldest first, bounded.
+  // The view each exported review page shows (reviewId to sessionId, revision and camera), so a saved review file carries only marks and
+  // cannot choose the camera its rays are cast from. The reviewId sits in the exported page, so a file proves nothing about who wrote it.
+  // Each entry is read once; oldest first, bounded.
   const rememberedReviews = new Map();
   // Views shown inline by an MCP Apps host (#923): the person's marks come back in a later call, so the frame they marked is kept here.
   const inlineAsks = new Map();
@@ -266,12 +267,18 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (!review) {
       throw new Error('This review file does not match a review page exported by this server run (or its export was dropped after eight newer ones). Export the review page again with scene_export_web review: true and ask for a new file.');
     }
+    if (review.consumed) {
+      throw new Error('This review file was already read by an earlier scene_ask_user call. Each export is read once: export the review page again with scene_export_web review: true and ask for a new file.');
+    }
     if (review.sessionId !== input.sessionId) {
       throw new Error(`This review file was made for scene ${review.sessionId}, not ${input.sessionId}. Pass that sessionId.`);
     }
-    const marks = validateReviewMarks(rawMarks, { width: review.view.width, height: review.view.height, maxMarks: input.maxMarks });
+    const maxMarks = Math.min(input.maxMarks ?? ANNOTATE_LIMITS.maxMarks, ANNOTATE_LIMITS.maxMarks);
+    const marks = validateReviewMarks(rawMarks, { width: review.view.width, height: review.view.height, maxMarks });
     const base = { sessionId: review.sessionId, revision: review.revision, view: review.view };
-    return { content: await sentMarksContent(base, review.view.camera, marks, 'after the review page was exported') };
+    const content = await sentMarksContent(base, review.view.camera, marks, 'after the review page was exported');
+    review.consumed = true;
+    return { content };
   }
   // Capabilities must work without the job store: a store that cannot open is reported here, not thrown.
   async function jobRecords() {
@@ -1555,6 +1562,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         const result = await invoke('dispose', input);
         forgetSession(input.sessionId);
         for (const [nonce, pending] of inlineAsks) if (pending.sessionId === input.sessionId) inlineAsks.delete(nonce);
+        for (const [reviewId, review] of rememberedReviews) if (review.sessionId === input.sessionId) rememberedReviews.delete(reviewId);
         return result;
       });
     },
