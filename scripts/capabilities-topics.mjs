@@ -2,7 +2,7 @@
 // A topic is a key of the scene capabilities, a runtime section (jobs, assets, ...) or the outline of a full input schema
 // (motion, environment, meshEdit, ...). A union such as meshEdit takes a branch: meshEdit.bevel.
 import * as z from 'zod/v4';
-import { outlineSchema, unionBranches } from './schema-outline.mjs';
+import { compactType, outlineSchema, unionBranches } from './schema-outline.mjs';
 import { AGENT_TOOL_EXAMPLES } from './tool-examples.mjs';
 
 const RUNTIME_SECTIONS = ['sceneLimits', 'preview', 'review', 'assets', 'packs', 'jobs', 'addons', 'unsupported'];
@@ -35,27 +35,61 @@ function inputJsonSchema(schema) {
   return z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' });
 }
 
-function branchSummary(branch) {
-  const fields = Object.keys(branch.properties ?? {}).filter(name => !(branch.properties[name].const !== undefined));
-  return { fields, ...(branch.description ? { note: firstSentence(branch.description) } : {}) };
+const RULE_KINDS = /^(Face|Edge|Vertex) rule/;
+
+/** A rule argument (select, edges, verts) is typed faceRule, edgeRule or vertexRule, so the answer can state each rule once. */
+function argumentType(property, definitions) {
+  const kind = RULE_KINDS.exec(property.description ?? '');
+  return kind ? `${kind[1].toLowerCase()}Rule` : compactType(property, definitions);
 }
 
-function unionIndex(topic, branches) {
+/** One line of arguments for a branch: "width:number, segments?:int[1..16]"; ? marks an optional one, the discriminator is left out. */
+function branchArguments(branch, definitions) {
+  const required = new Set(branch.required ?? []);
+  return Object.entries(branch.properties ?? {})
+    .filter(([, property]) => property.const === undefined)
+    .map(([name, property]) => `${name}${required.has(name) ? '' : '?'}:${argumentType(property, definitions)}`)
+    .join(', ');
+}
+
+function branchSummary(branch, definitions) {
+  return { args: branchArguments(branch, definitions), ...(branch.description ? { note: firstSentence(branch.description) } : {}) };
+}
+
+/** Each rule type once, from the first branch that spells it out, so a rule is not repeated for every op that takes it. */
+function ruleLegend(branches) {
+  const legend = {};
+  for (const branch of branches.values()) {
+    for (const property of Object.values(branch.properties ?? {})) {
+      const kind = /^(Face|Edge|Vertex) rule:/.exec(property.description ?? '');
+      const name = kind ? `${kind[1].toLowerCase()}Rule` : undefined;
+      if (name && legend[name] === undefined) legend[name] = property.description;
+    }
+  }
+  return legend;
+}
+
+function unionIndex(topic, branches, definitions = {}) {
   const entries = {};
-  for (const [name, branch] of branches) entries[name] = branchSummary(branch);
-  return { branches: entries, use: `topic ${topic}.<name> for the fields of one branch; modifier ops not listed here are in meshModifiers` };
+  for (const [name, branch] of branches) entries[name] = branchSummary(branch, definitions);
+  const rules = ruleLegend(branches);
+  return {
+    branches: entries,
+    ...(Object.keys(rules).length ? { rules } : {}),
+    use: `args are name:type, ? marks optional; topic ${topic}.<name> for the notes of every field of one branch; modifier ops not listed here are in meshModifiers`,
+  };
 }
 
 function outlineAnswer(topic, branchName, schema) {
   const jsonSchema = inputJsonSchema(schema);
   const branches = unionBranches(jsonSchema);
   const withDefinitions = part => ({ ...part, ...(jsonSchema.$defs ? { $defs: jsonSchema.$defs } : {}) });
-  if (!branchName) return branches ? unionIndex(topic, branches) : outlineSchema(jsonSchema);
+  if (!branchName) return branches ? unionIndex(topic, branches, jsonSchema.$defs) : outlineSchema(jsonSchema);
   if (branches?.has(branchName)) return outlineSchema(withDefinitions(branches.get(branchName)));
   // A short name such as inset or extrude stands for every branch that starts with it: inset_region and inset_individual.
   const prefixed = branches ? [...branches].filter(([name]) => name.startsWith(`${branchName}_`)) : [];
   if (prefixed.length === 1) return outlineSchema(withDefinitions(prefixed[0][1]));
-  if (prefixed.length > 1) return unionIndex(topic, new Map(prefixed));
+  if (prefixed.length > 1) return unionIndex(topic, new Map(prefixed), jsonSchema.$defs);
   // A dotted field of a plain topic, such as environment.spotLights, is that field's outline.
   const ownProperties = jsonSchema.properties ?? {};
   if (!branches && Object.hasOwn(ownProperties, branchName)) return outlineSchema(withDefinitions(ownProperties[branchName]));
