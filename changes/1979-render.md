@@ -1,1 +1,0 @@
-- The render-crucible-media skill matches 0.21.0 again: quality tiers, estimate and budget, transparent `stillCount` sequences, grid volumes in Cook, streamed texture sequences, caches, new limits and error rows (#1979)
