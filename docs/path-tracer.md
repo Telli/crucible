@@ -194,6 +194,15 @@ OIDN at 16 samples does not score at or below the wavelet filter at 64 on any of
 
 Time of the denoise step alone, 1920 by 1080 demo room: 1.6 s for OIDN against about 9 s for the wavelet filter (measured once each, machine loaded by other jobs; the 960 by 540 captures took 0.45 to 0.67 s against 2.1 to 3.2 s). The whole still at 16 samples took 138 s with OIDN (113 s tracing) and 105 s with the wavelet filter (85 s tracing); the tracing times differ because of load, not of the filters. A 64 sample wavelet still of that room took 586 s (above), so 16 samples with OIDN is about four times faster at a FLIP score 0.001 to 0.002 higher on these scenes.
 
+### What the albedo image holds
+
+The CPU tracer and Cook's `cycles` kernel write different albedo images today, so their albedo sums do not agree and must not be compared directly (issue #1911):
+
+- **Sky.** The CPU tracer writes 1 for a pixel whose camera ray escapes. Cook writes the escaped sky radiance clamped to 0 to 1, so a black environment gives 0.
+- **Surfaces.** The CPU tracer writes the base colour of the first hit, or 1 for glass. Cook writes the sum of the lobe weights at the first hit (`closure_eval_albedo`): the diffuse weight, plus the specular and coat weights times their Fresnel term.
+
+On the 200-copy scene of `tests/native-albedo-reference.test.js` (128 by 96, seed 1), Cook's sum is 2489.36 on an RTX 3060. The CPU tracer gives 35042.39 at 64 samples, because about 10,500 sky pixels add 3 each. With its sky set to 0 it gives 2300.81, 7.6 percent below Cook, which is the surface difference. The CPU sum moves 0.2 percent between 16 and 64 samples, so the gap is the definition, not noise (measured 2026-11-17). One shared definition is tracked in #1941.
+
 OIDN's output is the same bytes run to run on one machine (the CPU device, two runs on each of the 24 captures, and two identical PNGs from an MCP job); it was not compared across machines or CPU generations, where OIDN does not promise it.
 
 ## Path trace a GLB file with Cook
