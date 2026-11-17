@@ -146,3 +146,47 @@ test('without a decoder the error tells the agent to install draco3d or re-expor
   const loadDecoder = () => Promise.reject(new Error(`This GLB uses ${DRACO_EXTENSION} and the draco3d decoder is not installed. ${DRACO_MISSING_ADVICE}`));
   await assert.rejects(decompressDracoGlb(bytes, { loadDecoder }), /npm install draco3d.*untick Compression/);
 });
+
+function damagedGlb({ binaryLength = 16, jsonLength, version = 2, totalLength, extraBinary = false, trailing = Buffer.alloc(0) } = {}) {
+  const json = padded(Buffer.from(JSON.stringify({ asset: { version: '2.0' }, buffers: [{ byteLength: 16 }] })), 0x20);
+  const binaryChunk = Buffer.alloc(8 + 16);
+  binaryChunk.writeUInt32LE(binaryLength, 0);
+  binaryChunk.writeUInt32LE(0x004e4942, 4);
+  const header = Buffer.alloc(20);
+  header.writeUInt32LE(0x46546c67, 0);
+  header.writeUInt32LE(version, 4);
+  header.writeUInt32LE(jsonLength ?? json.length, 12);
+  header.writeUInt32LE(0x4e4f534a, 16);
+  const parts = [header, json, binaryChunk];
+  if (extraBinary) parts.push(binaryChunk);
+  const bytes = Buffer.concat([...parts, trailing]);
+  bytes.writeUInt32LE(totalLength ?? bytes.length, 8);
+  return bytes;
+}
+
+const stubDecoder = async () => ({});
+
+test('a damaged GLB header or chunk length is refused with an error that names the chunk and the lengths', async () => {
+  const jsonLength = damagedGlb().readUInt32LE(12);
+  const cases = [
+    ['BIN length past the file end', damagedGlb({ binaryLength: 0xfffffff0 }), /BIN chunk declares 4294967280 bytes but only 16 remain in the \d+ byte file/],
+    ['BIN length of zero with data after it', damagedGlb({ binaryLength: 0 }), /BIN chunk declares 0 bytes/],
+    ['BIN length that is not a multiple of 4', damagedGlb({ binaryLength: 15 }), /BIN chunk declares 15 bytes, which is not a multiple of 4/],
+    ['JSON length past the file end', damagedGlb({ jsonLength: 0xfffffff0 }), /JSON chunk declares 4294967280 bytes but only \d+ remain in the \d+ byte file/],
+    ['JSON length that is not a multiple of 4', damagedGlb({ jsonLength: jsonLength - 3 }), /JSON chunk declares \d+ bytes, which is not a multiple of 4/],
+    ['header version 1', damagedGlb({ version: 1 }), /header version is 1/],
+    ['header total length that disagrees with the file', damagedGlb({ totalLength: 9999 }), /header declares a total length of 9999 bytes but the file is \d+ bytes/],
+    ['a second BIN chunk', damagedGlb({ extraBinary: true }), /second BIN chunk at byte \d+/],
+    ['stray bytes after the last chunk', damagedGlb({ trailing: Buffer.alloc(4) }), /4 stray bytes after its last chunk/],
+  ];
+  for (const [name, bytes, message] of cases) {
+    await assert.rejects(decompressDracoGlb(bytes, { loadDecoder: stubDecoder }), message, name);
+  }
+});
+
+test('a well formed GLB with an unknown chunk after the binary chunk is still read', async () => {
+  const unknownChunk = Buffer.alloc(12);
+  unknownChunk.writeUInt32LE(4, 0);
+  unknownChunk.writeUInt32LE(0x12345678, 4);
+  await decompressDracoGlb(damagedGlb({ trailing: unknownChunk }), { loadDecoder: stubDecoder });
+});
