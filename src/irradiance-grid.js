@@ -83,7 +83,8 @@ function nodePoint(layout, node, point) {
   point[2] = layout.origin[2] + Math.floor(node / (width * height)) * layout.cellSize;
 }
 
-function gridLayout(parts, resolution) {
+/** The grid origin, cell size and node counts for the parts' bounds: no side has more than `resolution` nodes. */
+export function gridLayout(parts, resolution) {
   const minimum = [Infinity, Infinity, Infinity];
   const maximum = [-Infinity, -Infinity, -Infinity];
   for (const part of parts) {

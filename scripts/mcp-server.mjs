@@ -330,7 +330,7 @@ const effects = z.strictObject({
   temperature: bounded(-1, 1).optional(),
   vignette: unit.optional(),
   grain: bounded(0, 0.1).optional(),
-  ambientOcclusion: unit.optional().describe('Screen-space contact darkening, 0 off to 1 full. Default 0.7 when unset; 0 skips the pass.'),
+  ambientOcclusion: unit.optional().describe('Screen-space contact darkening, 0 off to 1 full. Default 0 (off) when unset; above 0 turns the pass on.'),
   ambientOcclusionRadius: bounded(0.01, 100).optional().describe('World-space reach of the occlusion; default 0.5.'),
   bloom: z.strictObject({
     strength: bounded(0, 2).optional(),
