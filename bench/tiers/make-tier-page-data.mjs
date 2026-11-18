@@ -15,7 +15,7 @@ export const DEFAULT_RESULTS_PATH = resolve(HERE, 'results', 'matrix-960.json');
 const COOK_SAMPLES = 256;
 
 // What each tier runs and what sits beside it in Blender. Time is a frame for the real-time tiers and a whole picture for final.
-const TIER_PLAN = [
+export const TIER_PLAN = [
   { id: 'draft', crucible: { engine: 'glaze-draft', label: 'Glaze draft', timeMeans: 'a frame, draw and pixel read' }, blender: { engine: 'eevee-lowest', label: 'EEVEE, 1 sample', timeMeans: 'a render call' }, timeUnit: 'ms', timeSource: 'primaryMilliseconds', timeScale: 1 },
   { id: 'realtime', crucible: { engine: 'glaze-realtime', label: 'Glaze realtime', timeMeans: 'a frame, draw and pixel read' }, blender: { engine: 'eevee-default', label: 'EEVEE, 64 samples', timeMeans: 'a render call' }, timeUnit: 'ms', timeSource: 'primaryMilliseconds', timeScale: 1 },
   { id: 'realtime-high', planned: true, issues: [901, 902] },
@@ -35,13 +35,13 @@ function validateMatrix(matrix) {
   }
 }
 
-function spread(values, digits) {
+export function spread(values, digits) {
   const finite = values.filter(value => typeof value === 'number' && Number.isFinite(value));
   if (finite.length === 0) return null;
   return { median: median(finite), low: Math.min(...finite), high: Math.max(...finite), runs: finite.length, digits };
 }
 
-function usableCells(matrix, scene, part) {
+export function usableCells(matrix, scene, part) {
   const cells = matrix.cells.filter(cell => cell.status === 'ok' && cell.scene === scene && cell.engine === part.engine && (part.samples === undefined || cell.samples === part.samples));
   const usable = cells.filter(cell => !cell.contended);
   if (usable.length === 0) fail(`no usable run of ${part.engine}${part.samples ? ` at ${part.samples} samples` : ''} on scene "${scene}" (${cells.length} found, all contended or failed); rerun that cell on an idle card`);
