@@ -325,7 +325,7 @@ const environment = z.strictObject({
   sunBounce: z.number().min(0).optional().describe('Sun bounce in a closed room: 0 off, 1 default.'),
   specularAntiAliasing: z.number().min(0).max(4).optional().describe('Specular anti-aliasing: 0 off, 1 default; widens highlights that sparkle on grainy normal-mapped metal.'),
   resolveCoplanar: z.union([z.literal('offset'), z.literal(false)]).optional().describe("Flush faces are ranked at draw time by default ('offset'); false opts out."),
-  viewTransform: z.enum(VIEW_TRANSFORM_NAMES).optional().describe('Display transform, for example agx to compare with Blender.'),
+  viewTransform: z.enum(VIEW_TRANSFORM_NAMES).optional().describe('Display transform, agx or standard to compare with Blender.'),
   look: catalogReference([...LOOK_NAMES, ...BUNDLED_CUBE_LOOK_NAMES], '.cube').nullable().optional().describe('Look preset or .cube; scene_capabilities catalogLooks. null clears.'),
   sky: z.record(z.string(), z.unknown()).nullable().optional().describe('Physical sky: {type:"physical", sunElevation, sunRotation, turbidity, groundAlbedo, aerialPerspective}; sets key light, sky and fog. Or {type:"gradient", stops:[{at,color}], horizonGlow:{color,width,intensity}}. Fields in scene_capabilities physicalSky, gradientSky.'),
   wind: z.strictObject({ strength: bounded(0, 4).optional(), direction: bounded(-360, 360).optional().describe('Degrees: 0 toward +x, 90 toward +z.') }).optional().describe('Sway of foliage and grass materials; strength defaults to 0.3.'),
@@ -406,6 +406,7 @@ const meshEdit = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('delete'), select: selectRule }),
   z.strictObject({ op: z.literal('flip_normals'), select: selectRule.optional() }),
   z.strictObject({ op: z.literal('translate'), select: selectRule.optional(), offset: vector3, falloff: z.strictObject({ radius: finite, curve: z.enum(['smooth', 'sphere', 'root', 'sharp', 'linear', 'constant', 'inverseSquare']).optional(), connected: z.boolean().optional().describe('Measure distance along edges instead of straight lines.') }).optional() }),
+  z.strictObject({ op: z.literal('transform_selection'), select: selectRule.optional(), pivot: vector3.optional().describe('Point to turn and scale about. Defaults to the mean of the selected vertices.'), rotation: z.strictObject({ axis: vector3, angle: bounded(-6.283185307179586, 6.283185307179586).describe('Radians, not degrees: 90 degrees is 1.5708.') }).optional(), scale: z.union([bounded(0.000001, 1000), z.array(bounded(0.000001, 1000)).length(3)]).optional().describe('Factor above 0, or one per axis; applied before the rotation.'), falloff: z.strictObject({ radius: finite, curve: z.enum(['smooth', 'sphere', 'root', 'sharp', 'linear', 'constant', 'inverseSquare']).optional(), connected: z.boolean().optional().describe('Measure distance along edges instead of straight lines.') }).optional() }).describe('Rotate and/or scale the selected vertices about a pivot; falloff fades the move to nothing at its radius.'),
   z.strictObject({ op: z.literal('merge_by_distance'), distance: finite.optional() }),
   z.strictObject({
     op: z.literal('loop_cut'), name: editName,
