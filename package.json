@@ -180,6 +180,8 @@
     "test:coverage": "node --test --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --experimental-test-coverage --test-coverage-exclude=\"tests/**\" --test-coverage-exclude=\"scripts/**\" --test-coverage-exclude=\"build/**\"",
     "coverage:gate": "node scripts/coverage-gate.mjs",
     "cook:build": "node node_modules/@codepawlhq/cook/build.mjs",
+    "cook:check": "node scripts/cook-install-check.mjs",
+    "cook:fetch": "node node_modules/@codepawlhq/cook/fetch-addon.mjs",
     "preflight": "node scripts/preflight.mjs",
     "render:file-cook": "node scripts/render-file-native.mjs",
     "smoke": "node scripts/smoke.mjs",
