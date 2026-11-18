@@ -11,7 +11,7 @@ const UP_AXES = Object.freeze({ x: 0, y: 1, z: 2 });
 const MAX_SEED = 0x7fffffff;
 
 /** Displace every vertex by the sea and write the vertex group `foam`; `axis` is the up axis of the sea. A `wake` adds foam and a trough along its points. */
-export function oceanMesh(mesh, { axis, windSpeed, direction, choppiness, size, seed, time, resolution, wake }) {
+export function oceanMesh(mesh, { axis, windSpeed, direction, choppiness, size, seed, time, resolution, coverage = 0, wake }) {
   const waves = oceanWaves({ windSpeed, direction, size, seed, resolution });
   if (waves.length * mesh.vertexCount > MAX_OCEAN_WORK) {
     throw new RangeError(`ocean would make ${waves.length * mesh.vertexCount} wave evaluations, over the limit of ${MAX_OCEAN_WORK}. Lower resolution or use a coarser grid.`);
@@ -25,7 +25,7 @@ export function oceanMesh(mesh, { axis, windSpeed, direction, choppiness, size, 
   const positions = new Float32Array(mesh.positions);
   const foam = new Float32Array(mesh.vertexCount);
   for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
-    const surface = oceanSurfaceAt(waves, positions[vertex * 3 + first], positions[vertex * 3 + second], time, choppiness);
+    const surface = oceanSurfaceAt(waves, positions[vertex * 3 + first], positions[vertex * 3 + second], time, choppiness, coverage);
     positions[vertex * 3 + up] += surface.height;
     positions[vertex * 3 + first] += surface.moveX;
     positions[vertex * 3 + second] += surface.moveZ;
@@ -52,6 +52,7 @@ function normalizeOcean(edit, normalized, index, { finiteNumber, integerInRange 
   normalized.size = edit.size === undefined ? 100 : finiteNumber(edit.size, index, 'size', { minimum: 1, maximum: 10_000 });
   normalized.seed = edit.seed === undefined ? 0 : integerInRange(edit.seed, index, 'seed', 0, MAX_SEED);
   normalized.time = edit.time === undefined ? 0 : finiteNumber(edit.time, index, 'time', { minimum: -1e6, maximum: 1e6 });
+  normalized.coverage = edit.coverage === undefined ? 0 : finiteNumber(edit.coverage, index, 'coverage', { minimum: -1, maximum: 1 });
   normalized.resolution = edit.resolution === undefined ? 8 : integerInRange(edit.resolution, index, 'resolution', 1, MAX_OCEAN_RESOLUTION);
   if (edit.wake !== undefined) normalized.wake = normalizeWake(edit.wake, `Mesh edit ${index} wake`);
 }

@@ -67,7 +67,7 @@ test('the ocean foam of a rough sea reaches the water material as 1 - foam', () 
 test('wind ripples break the glint into facets and the foam into streaks', () => {
   const shader = createFragmentShader(['water', 'vertexColors']);
   assert.match(shader, /vec2 waterDetailSlope\(/);
-  assert.match(shader, /float foamBand = 0\.13 \+ 1\.5 \* fwidth\(foamDensity\)/);
+  assert.ok(shader.includes("float foamBand = mix(0.13, 0.0, foamHard) + 1.5 * fwidth(foamDensity)"));
   assert.match(shader, /rippleTilt\.xz \+= detailSlope/);
   assert.match(shader, /terrainNoise\(position \* wavenumber \* 0\.09/);
   assert.match(shader, /1\.0 \/ \(1\.0 \/ 500\.0 \+ 0\.35 \* waterLostVariance\)/);
@@ -84,4 +84,30 @@ test('a ripple stays whole down to five pixels per wave and is gone at the two-p
   assert.equal(fadeStart, 0.2, 'the fade starts at five pixels per wavelength');
   assert.equal(fadeEnd, 0.5, 'the fade ends at two pixels per wavelength, the sampling limit');
   assert.ok(fadeStart < fadeEnd, 'the fade runs from a smaller to a larger footprint');
+});
+
+test('a hard foam edge is a flat shape with a one pixel edge, and the soft default keeps its lace', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  assert.match(shader, /uniform vec2 waterFoamStyle/);
+  assert.match(shader, /float foamHard = waterFoamStyle.x/);
+  assert.ok(shader.includes("waterFoam = mix(max(foamBody"));
+});
+
+function waterRecipe(fields) {
+  const recipe = seaRecipe({ tag: 'water' });
+  Object.assign(recipe.materials[0], fields);
+  return recipe;
+}
+
+test('a water material takes foamEdge and foamWidth, and other materials refuse them', () => {
+  const material = createAgentScene(waterRecipe({ foamEdge: 'hard', foamWidth: 2 })).parts[0].material;
+  assert.equal(material.foamEdge, 'hard');
+  assert.equal(material.foamWidth, 2);
+  assert.equal(createAgentScene(waterRecipe({})).parts[0].material.foamEdge, undefined);
+  for (const bad of [{ foamEdge: 'sharp' }, { foamWidth: 0 }, { foamWidth: 5 }, { foamWidth: 'wide' }]) {
+    assert.throws(() => createAgentScene(waterRecipe(bad)), /foamEdge|foamWidth/, JSON.stringify(bad));
+  }
+  const plain = seaRecipe({});
+  plain.materials[0].foamEdge = 'hard';
+  assert.throws(() => createAgentScene(plain), /need the water tag/);
 });

@@ -11,6 +11,8 @@ import { seededRandom } from './seeded-random.js';
 const SIGNIFICANT_HEIGHT_PER_WIND_SQUARED = 0.21;
 const FOAM_START = 0.75;
 const FOAM_FULL = 0.25;
+// Coverage moves both thresholds, as Blender's Ocean Foam Coverage does: positive folds less to count as foam, negative keeps only the top peaks.
+const FOAM_COVERAGE_SHIFT = 0.5;
 const CHANNEL_GAUSSIAN_RADIUS = 40;
 const CHANNEL_GAUSSIAN_ANGLE = 41;
 const CHANNEL_PHASE = 42;
@@ -61,8 +63,8 @@ export function oceanWaves({ windSpeed, direction, size, seed, resolution }) {
   return waves;
 }
 
-/** Height, horizontal move and foam of the sea at one rest point and time. */
-export function oceanSurfaceAt(waves, restX, restZ, time, choppiness) {
+/** Height, horizontal move and foam of the sea at one rest point and time; `coverage` (-1 to 1, default 0) shifts how much of the sea foams. */
+export function oceanSurfaceAt(waves, restX, restZ, time, choppiness, coverage = 0) {
   let height = 0;
   let moveX = 0;
   let moveZ = 0;
@@ -84,6 +86,7 @@ export function oceanSurfaceAt(waves, restX, restZ, time, choppiness) {
     squeezeXZ -= directionX * directionZ * slope;
   }
   const jacobian = (1 + squeezeXX) * (1 + squeezeZZ) - squeezeXZ * squeezeXZ;
-  const foam = Math.min(1, Math.max(0, (FOAM_START - jacobian) / (FOAM_START - FOAM_FULL)));
+  const shift = FOAM_COVERAGE_SHIFT * coverage;
+  const foam = Math.min(1, Math.max(0, (FOAM_START + shift - jacobian) / (FOAM_START - FOAM_FULL)));
   return { height, moveX, moveZ, foam };
 }

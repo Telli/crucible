@@ -37,7 +37,7 @@ export function resolveWaterMaterial({ waterPreset, absorption, turbidity } = {}
 
 /** Copies a recipe material's water fields: a water material always carries the resolved absorption, turbidity and preset. */
 export function copyWaterFields(value, result, toVector) {
-  const given = ['waterPreset', 'absorption', 'turbidity'].filter(field => value[field] !== undefined);
+  const given = ['waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth'].filter(field => value[field] !== undefined);
   if (result.tag !== 'water') {
     if (given.length > 0) {
       throw new RangeError(`${given.join(', ')} need the water tag.`);
@@ -45,7 +45,29 @@ export function copyWaterFields(value, result, toVector) {
     return;
   }
   const absorption = value.absorption === undefined ? undefined : toVector(value.absorption, 3, 'absorption');
-  Object.assign(result, resolveWaterMaterial({ ...value, absorption }));
+  Object.assign(result, resolveWaterMaterial({ ...value, absorption }), resolveWaterFoamStyle(value));
+}
+
+export const WATER_FOAM_EDGES = Object.freeze(['soft', 'hard']);
+export const WATER_FOAM_WIDTH_RANGE = Object.freeze([0.25, 4]);
+
+/** The foam style fields of a water material: `foamEdge` soft (default, lace) or hard (painted shape), `foamWidth` 0.25 to 4 (default 1) scales how far foam spreads from the crest. Unset fields stay unset. */
+export function resolveWaterFoamStyle({ foamEdge, foamWidth }) {
+  const style = {};
+  if (foamEdge !== undefined) {
+    if (!WATER_FOAM_EDGES.includes(foamEdge)) {
+      throw new RangeError(`foamEdge must be one of ${WATER_FOAM_EDGES.join(', ')}, such as hard.`);
+    }
+    style.foamEdge = foamEdge;
+  }
+  if (foamWidth !== undefined) {
+    const [minimum, maximum] = WATER_FOAM_WIDTH_RANGE;
+    if (!Number.isFinite(foamWidth) || foamWidth < minimum || foamWidth > maximum) {
+      throw new RangeError(`foamWidth must be a number from ${minimum} to ${maximum}, such as 1.`);
+    }
+    style.foamWidth = foamWidth;
+  }
+  return style;
 }
 
 function partBounds(part) {
@@ -146,10 +168,27 @@ function bindWaterBody(renderer) {
   }
 }
 
+const foamStyleLocations = new WeakMap();
+
+/** Sends the foam style of a water batch: 1 for a hard edge, and the width factor. Other batches get the soft default. */
+function bindWaterFoamStyle(renderer, batch) {
+  if (!renderer.shaderFeatures?.has('water')) {
+    return;
+  }
+  let location = foamStyleLocations.get(renderer);
+  if (location?.program !== renderer.program) {
+    location = { program: renderer.program, style: renderer.context.getUniformLocation(renderer.program, 'waterFoamStyle') };
+    foamStyleLocations.set(renderer, location);
+  }
+  const material = batch.parts[0].material;
+  renderer.context.uniform2f(location.style, material.foamEdge === 'hard' ? 1 : 0, material.foamWidth ?? 1);
+}
+
 const previousBind = layerTextureSupport.bind;
 layerTextureSupport.bind = (renderer, mapState, layerState, batch) => {
   previousBind?.(renderer, mapState, layerState, batch);
   bindWaterBody(renderer);
+  bindWaterFoamStyle(renderer, batch);
 };
 
 // Wind for the foliage (4) and grass (7) tags, shared by the colour and shadow vertex shaders so both
@@ -168,6 +207,7 @@ export const worldMaterialSlots = {
   // Shadow of a surface under murky water: the classic shadow map read over a wider disc. A cascaded map is read through
   // its own macro and keeps its filter.
   declarations: `uniform vec4 waterBody;
+uniform vec2 waterFoamStyle;
 uniform vec3 waterAbsorption;
 uniform sampler2D waterScene;
 uniform mat4 viewProjection;
@@ -384,11 +424,13 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     float fineLace = terrainNoise(crestPosition * vec2(3.1, 14.0) + 3.9).x;
     float lace = broadLace * 0.5 + midLace * 0.3 + fineLace * 0.2;
     float foamMask = clamp(2.0 * (1.0 - vertexSkyVisibility) - 1.0, 0.0, 1.0);
-    float foamDensity = foamMask * 1.25 + (lace - 0.5) * 0.9;
-    float foamBand = 0.13 + 1.5 * fwidth(foamDensity);
+    // waterFoamStyle is (hard edge 0 or 1, width): a hard edge draws the mask as a flat painted shape with a one pixel edge and no veins.
+    float foamHard = waterFoamStyle.x;
+    float foamDensity = foamMask * 1.25 * waterFoamStyle.y + (lace - 0.5) * mix(0.9, 0.3, foamHard);
+    float foamBand = mix(0.13, 0.0, foamHard) + 1.5 * fwidth(foamDensity);
     float foamBody = smoothstep(0.5 - foamBand, 0.5 + foamBand, foamDensity) * smoothstep(0.03, 0.25, foamMask);
-    float foamVeins = pow(1.0 - abs(2.0 * midLace - 1.0), 3.0) * smoothstep(0.45, 0.9, foamMask) * (1.0 - foamBody) * 0.32;
-    waterFoam = max(foamBody * mix(0.5, 1.0, smoothstep(0.3, 0.95, foamMask)) * (0.78 + 0.22 * smoothstep(0.25, 0.75, fineLace * 0.6 + midLace * 0.4)), foamVeins);
+    float foamVeins = pow(1.0 - abs(2.0 * midLace - 1.0), 3.0) * smoothstep(0.45, 0.9, foamMask) * (1.0 - foamBody) * 0.32 * (1.0 - foamHard);
+    waterFoam = mix(max(foamBody * mix(0.5, 1.0, smoothstep(0.3, 0.95, foamMask)) * (0.78 + 0.22 * smoothstep(0.25, 0.75, fineLace * 0.6 + midLace * 0.4)), foamVeins), foamBody, foamHard);
     float grazing = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
     color = mix(color, vec3(0.0137, 0.147, 0.195), grazing * 0.85);
     color = mix(color, vec3(0.92, 0.95, 0.97) * (0.68 + 0.32 * (fineLace * 0.5 + midLace * 0.5)), waterFoam);

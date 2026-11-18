@@ -88,3 +88,36 @@ test('a sea over too many vertices is refused before it runs', () => {
 test('the capability notes describe the ocean modifier', () => {
   assert.match(MESH_MODIFIER_NOTES.ocean, /foam/);
 });
+
+function foamFraction(coverage, threshold) {
+  const waves = oceanWaves({ windSpeed: 16, direction: 0, size: 50, seed: 3, resolution: 3 });
+  let counted = 0;
+  let total = 0;
+  for (let x = -25; x < 25; x += 1) {
+    for (let z = -25; z < 25; z += 1) {
+      total += 1;
+      if (oceanSurfaceAt(waves, x, z, 0, 1.5, coverage).foam > threshold) counted += 1;
+    }
+  }
+  return counted / total;
+}
+
+test('coverage below zero keeps the top peaks and above zero adds foam, and zero is the old sea', () => {
+  const waves = oceanWaves({ windSpeed: 16, direction: 0, size: 50, seed: 3, resolution: 3 });
+  assert.equal(oceanSurfaceAt(waves, 3, 4, 0, 1.5).foam, oceanSurfaceAt(waves, 3, 4, 0, 1.5, 0).foam);
+  const fewer = foamFraction(-0.8, 0.05);
+  const normal = foamFraction(0, 0.05);
+  const more = foamFraction(0.8, 0.05);
+  assert.ok(fewer < normal && normal < more, `coverage orders the foam: ${fewer} < ${normal} < ${more}`);
+  assert.ok(normal > 0.1, 'the sea of the look test has crests that foam');
+});
+
+test('the ocean edit takes coverage from -1 to 1 and refuses the rest with the edit number', () => {
+  const grid = flatGrid(4, 20);
+  const plain = applyMeshEdits(grid, [ocean()]).mesh;
+  const covered = applyMeshEdits(grid, [ocean({ coverage: 1 })]).mesh;
+  assert.ok(vertexGroupWeights(covered, 'foam').some((weight, vertex) => weight > vertexGroupWeights(plain, 'foam')[vertex]));
+  for (const bad of [{ coverage: 1.5 }, { coverage: -2 }, { coverage: 'high' }]) {
+    assert.throws(() => applyMeshEdits(grid, [ocean(bad)]), TypeError, JSON.stringify(bad));
+  }
+});
