@@ -147,7 +147,7 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 | --- | --- | --- |
 | `scene_capabilities` | `topic` (optional; a name or a list of up to 8; in a list, unknown names come back in `unknown` with suggestions beside the answers of the valid ones) | A short index of topics; with a topic, its limits and fields (`motion`, `environment`, `materialFields`, `meshEdit` (each op with its arguments as `name:type`, `?` for optional, and the face, edge and vertex rules once), `meshEdit.<op>` (every field with its notes), `physics`, `jobs`, `examples` and more; `examples.<tool>` is a complete call for `scene_create`, `scene_apply`, `scene_create_asset` or `scene_render_submit`) |
 | `scene_create` | `recipe` | Session ID, revision, inspection, and render status |
-| `scene_asset_catalog` | None | Configured catalog and content-bound GLB, image, `.hdr` (kind `environment`) and `.cube` (kind `look`) IDs; an ID goes in `environment.hdri` or `environment.look`, see [agent-look](agent-look.md#catalog-hdris-and-looks). A file over its limit (an `.hdr` over 8 MiB, a `.cube` over 4 MiB, an image over 1024 pixels a side or 64 MiB decoded, read from its header) is left out and listed with a reason in `skipped`, so the other IDs still list. A folder of more than 256 consecutively numbered images is listed once under `sequences` (`name` such as `frame_####.png`, `first`, `last`, `frames`, `width`, `height`), and a material `map.sequence` names it with `catalog` instead of listing the frame IDs, see [agent-scene](agent-scene.md#image-sequence-maps) |
+| `scene_asset_catalog` | None | Configured catalog and content-bound GLB, image, `.hdr` (kind `environment`) and `.cube` (kind `look`) IDs; an ID goes in `environment.hdri` or `environment.look`, see [agent-look](agent-look.md#catalog-hdris-and-looks). A file over its limit (an `.hdr` over 8 MiB, a `.cube` over 4 MiB, an image over 1024 pixels a side or 64 MiB decoded, read from its header), or a GLB whose image is missing next to it (the reason says which file to copy), is left out and listed with a reason in `skipped`, so the other IDs still list. A folder of more than 256 consecutively numbered images is listed once under `sequences` (`name` such as `frame_####.png`, `first`, `last`, `frames`, `width`, `height`), and a material `map.sequence` names it with `catalog` instead of listing the frame IDs, see [agent-scene](agent-scene.md#image-sequence-maps) |
 | `scene_create_asset` | `recipe` using `crucible.asset` | Imported scene ID, revision, inspection and render status |
 | `scene_inspect` | `sessionId`, optional `ids`, `limit`, `includeBounds` | Compact node records and revision |
 | `scene_apply` | `sessionId`, `expectedRevision`, `operations` | Updated revision, render status, results and diff |
@@ -162,7 +162,7 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 | `scene_restore` | `sessionId`, `expectedRevision`, and a `checkpointId`, a `revision` or a `branch` | Updated revision and render status |
 | `scene_release_checkpoint` | `sessionId`, `checkpointId` | Release confirmation |
 | `scene_export_recipe` | `sessionId` | Canonical recipe and revision |
-| `scene_export_glb` | `sessionId`, optional `clip`, `motionTime`, `maxTextureSize` | A GLB file under `<jobs>/exports/` with a server-chosen name: path, bytes, SHA-256. See [GLB export](export-glb.md) |
+| `scene_export_glb` | `sessionId`, optional `clip` (index or name), `motionTime`, `maxTextureSize` | A GLB file under `<jobs>/exports/` with a server-chosen name: path, bytes, SHA-256. See [GLB export](export-glb.md) |
 | `scene_export_web` | `sessionId`, optional `title`, `review` | A static web build folder under `<jobs>/exports/`: path of `index.html`, file count, bytes. Needs a `game` set with `set-game`, unless `review` is true. See [Game](game.md) and [Review link](#review-link) |
 | `scene_dispose` | `sessionId` | Disposal confirmation |
 | `scene_render_submit` | `sessionId`, `expectedRevision`, `settings` | Snapshot job ID and queued record |
@@ -322,7 +322,7 @@ Build from an empty recipe by adding resources and nodes in one revisioned batch
 ]
 ```
 
-Use `remove-node`, `remove-geometry` and `remove-material` with an `id` to remove entries.
+Use `remove-node`, `remove-geometry` and `remove-material` with an `id` to remove entries. A geometry or material that nodes still use cannot be removed: the error names those nodes, so `set-node` them to another one or `remove-node` them first.
 References must resolve after the complete batch. Removing a parent leaves its children unchanged unless `recursive: true` removes its subtree.
 Reparent or remove those children before the parent removal command to avoid rejection.
 The [scene contract](agent-scene.md) defines the geometry fields, transforms, materials, and atomic validation rules.

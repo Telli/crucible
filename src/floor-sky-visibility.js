@@ -310,6 +310,63 @@ function seesSun(tracer, point, normal, offset, sunDirection) {
   return tracer.trace(point[0] + normal[0] * offset, point[1] + normal[1] * offset, point[2] + normal[2] * offset, sunDirection[0], sunDirection[1], sunDirection[2], Infinity, true).nearestTriangle < 0;
 }
 
+// Directions that no wall or floor lines up with, so a point on a face is never tested along that face.
+const BURIAL_DIRECTIONS = [[0.3713, 0.8123, 0.4521], [-0.6431, 0.2917, 0.7102]].map(raw => {
+  const length = Math.hypot(...raw);
+  return raw.map(value => value / length);
+});
+
+function triangleSeenFromBehind(world, triangle, direction) {
+  const [first, second, third] = [0, 1, 2].map(slot => world.indices[triangle * 3 + slot] * 3);
+  const { positions } = world;
+  const edgeOne = [0, 1, 2].map(axis => positions[second + axis] - positions[first + axis]);
+  const edgeTwo = [0, 1, 2].map(axis => positions[third + axis] - positions[first + axis]);
+  const normal = [edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1], edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2], edgeOne[0] * edgeTwo[1] - edgeOne[1] * edgeTwo[0]];
+  return normal[0] * direction[0] + normal[1] * direction[1] + normal[2] * direction[2] > 0;
+}
+
+/**
+ * True when the point lies inside a solid: along one of a few fixed directions, or its opposite, the first surface met is seen from
+ * behind. Touching boxes share their faces, so one direction can stop at the neighbour's face from outside; any direction that
+ * leaves through the back of a surface is enough. A wall's end or a floor's rim that runs into the wall beside it is buried this way,
+ * and its traced value is meaningless: the triangles around it are large, so it would smear a bright share onto the visible face (#2166).
+ */
+function isBuried(tracer, world, point) {
+  for (const base of BURIAL_DIRECTIONS) {
+    for (const sign of [1, -1]) {
+      const direction = base.map(value => value * sign);
+      const hit = tracer.trace(point[0], point[1], point[2], direction[0], direction[1], direction[2], Infinity, false);
+      if (hit.nearestTriangle >= 0 && triangleSeenFromBehind(world, hit.nearestTriangle, direction)) return true;
+    }
+  }
+  return false;
+}
+
+// The mean of the triangle centres around each vertex, in the part's own space: a vertex on the rim of a face moves toward its own face from there.
+function incidentCentres(positions, indices, vertexCount) {
+  const sums = new Float64Array(vertexCount * 3);
+  const counts = new Uint32Array(vertexCount);
+  for (let corner = 0; corner < indices.length; corner += 3) {
+    for (let axis = 0; axis < 3; axis++) {
+      const centre = (positions[indices[corner] * 3 + axis] + positions[indices[corner + 1] * 3 + axis] + positions[indices[corner + 2] * 3 + axis]) / 3;
+      for (let slot = 0; slot < 3; slot++) sums[indices[corner + slot] * 3 + axis] += centre;
+    }
+    for (let slot = 0; slot < 3; slot++) counts[indices[corner + slot]]++;
+  }
+  return { sums, counts };
+}
+
+// The vertex moved a little off its face and toward the middle of its own triangles, so a vertex exactly on another part's face is tested inside that part.
+function isBuriedInside(tracer, world, point, worldNormal, offset, centres, vertex, matrix) {
+  const count = centres.counts[vertex] || 1;
+  const local = [0, 1, 2].map(axis => centres.sums[vertex * 3 + axis] / count);
+  const middle = [0, 1, 2].map(axis => matrix[axis] * local[0] + matrix[4 + axis] * local[1] + matrix[8 + axis] * local[2] + matrix[12 + axis]);
+  const toMiddle = [0, 1, 2].map(axis => middle[axis] - point[axis]);
+  const length = Math.hypot(...toMiddle) || 1;
+  const probe = [0, 1, 2].map(axis => point[axis] + worldNormal[axis] * offset + (toMiddle[axis] / length) * offset * 2);
+  return isBuried(tracer, world, probe);
+}
+
 function fixedSamples(sampleCount) {
   return Array.from({ length: sampleCount }, (unused, sample) => [(sample + 0.5) / sampleCount, (radicalInverse(sample) + FIXED_ROTATION) % 1]);
 }
@@ -374,6 +431,7 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
     const escapedShares = new Float32Array(vertexCount);
     const nearShares = new Float32Array(vertexCount);
     const sunlit = new Uint8Array(vertexCount);
+    const centres = everySurface ? incidentCentres(builder.positions, indices, vertexCount) : null;
     for (const vertex of tracedVertices) {
       if (performance.now() - started > maxSeconds * 1000) return unchanged('passed maxSeconds');
       const local = builder.positions.slice(vertex * 3, vertex * 3 + 3);
@@ -384,6 +442,10 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
       worldNormal[0] /= length;
       worldNormal[1] /= length;
       worldNormal[2] /= length;
+      if (centres && isBuriedInside(tracer, world, point, worldNormal, offset, centres, vertex, matrix)) {
+        skyVisibility[vertex] = 1 - strength;
+        continue;
+      }
       let escaped = 0;
       let near = 0;
       for (const [firstUnit, secondUnit] of samples) {
