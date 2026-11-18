@@ -5,25 +5,25 @@
 const SAMPLE_SCALE = 8;
 
 // Offsets are world-space translations in model units after SAMPLE_SCALE (the microscope stands 3.7 tall and rests on y = 0).
-// The exploded view keeps the base on the floor and fans the rest into three columns that never overlap: the optical
-// path rises above the base, the lower assembly (illumination, focus, condenser) stands to the left and the
-// objectives with the stage clips and eyepiece lenses to the right.
+// The exploded view keeps the base on the floor and lifts each part just clear of its mount, with a gap of about 0.2: the optical path
+// stacks above the base (stage, head, prism housing, eyepiece mounts, tubes and lenses), the illuminator, focus knobs and rack post stand
+// 1.9 to the left, the condenser and its lens stand in front, and the objectives, nosepiece and stage clips stand 1.55 to the right.
 const SAMPLE_PARTS = Object.freeze({
   base_stand: { label: 'Base and arm', layer: 'exterior', section: 'Stand', offset: [0, 0, 0] },
-  rack_post: { label: 'Rack post', layer: 'exterior', section: 'Stand', offset: [-2.3, 1.69, 0] },
-  illuminator: { label: 'Illuminator', layer: 'interior', section: 'Illumination', offset: [-2.3, -0.22, 0] },
-  condenser: { label: 'Condenser', layer: 'interior', section: 'Illumination', offset: [-2.3, 2.3, 0] },
-  condenser_lens: { label: 'Condenser lens', layer: 'interior', section: 'Illumination', offset: [-2.3, 2.99, 0] },
-  focus_knobs: { label: 'Focus knobs', layer: 'exterior', section: 'Focus', offset: [-2.3, 0.59, 0] },
-  stage: { label: 'Stage', layer: 'exterior', section: 'Stage', offset: [0, 1.65, 0] },
-  stage_clips: { label: 'Stage clips', layer: 'exterior', section: 'Stage', offset: [2.3, 0.54, 0] },
-  objectives: { label: 'Objectives', layer: 'interior', section: 'Optics', offset: [2.3, 0.71, 0] },
-  nosepiece: { label: 'Nosepiece', layer: 'interior', section: 'Optics', offset: [2.3, 1.16, 0] },
-  head: { label: 'Head', layer: 'exterior', section: 'Head', offset: [0, 1.03, 0] },
-  prism_housing: { label: 'Prism housing', layer: 'exterior', section: 'Head', offset: [0, 1.7, 0] },
-  eyepiece_mounts: { label: 'Eyepiece mounts', layer: 'interior', section: 'Optics', offset: [0, 2.34, 0] },
-  eyepiece_tubes: { label: 'Eyepiece tubes', layer: 'exterior', section: 'Head', offset: [0, 2.98, 0] },
-  eyepiece_lenses: { label: 'Eyepiece lenses', layer: 'interior', section: 'Optics', offset: [2.3, 2.73, 0] },
+  rack_post: { label: 'Rack post', layer: 'exterior', section: 'Stand', offset: [-1.9, 1.66, 0] },
+  illuminator: { label: 'Illuminator', layer: 'interior', section: 'Illumination', offset: [-1.9, 0, 0] },
+  condenser: { label: 'Condenser', layer: 'interior', section: 'Illumination', offset: [0, 0.35, 1.7] },
+  condenser_lens: { label: 'Condenser lens', layer: 'interior', section: 'Illumination', offset: [0, 0.95, 1.7] },
+  focus_knobs: { label: 'Focus knobs', layer: 'exterior', section: 'Focus', offset: [-1.9, 0.68, 0] },
+  stage: { label: 'Stage', layer: 'exterior', section: 'Stage', offset: [0, 1.4, 0] },
+  stage_clips: { label: 'Stage clips', layer: 'exterior', section: 'Stage', offset: [1.55, 1.4, 0] },
+  objectives: { label: 'Objectives', layer: 'interior', section: 'Optics', offset: [1.55, -0.87, 0] },
+  nosepiece: { label: 'Nosepiece', layer: 'interior', section: 'Optics', offset: [1.55, -0.49, 0] },
+  head: { label: 'Head', layer: 'exterior', section: 'Head', offset: [0, 0.67, 0] },
+  prism_housing: { label: 'Prism housing', layer: 'exterior', section: 'Head', offset: [0, 1.23, 0] },
+  eyepiece_mounts: { label: 'Eyepiece mounts', layer: 'interior', section: 'Optics', offset: [0, 1.75, 0] },
+  eyepiece_tubes: { label: 'Eyepiece tubes', layer: 'exterior', section: 'Head', offset: [0, 2.27, 0] },
+  eyepiece_lenses: { label: 'Eyepiece lenses', layer: 'interior', section: 'Optics', offset: [0, 2.66, 0] },
 });
 
 export const SAMPLE_PART_NAMES = Object.freeze(Object.values(SAMPLE_PARTS).map(entry => entry.label));
