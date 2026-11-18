@@ -31,7 +31,7 @@ The store records UUIDs that `scene_capabilities` lists after a restart.
 
 The runtime captures the source recipe and verified asset bytes before returning a job ID.
 The job uses a separate browser page and temporarily leases the single renderer.
-Preview rendering and edits pause during a job. Inspection and recipe export remain available.
+While a job runs, these tools fail until it finishes or is cancelled: `scene_create`, `scene_create_asset`, `scene_apply`, `mesh_edit`, `mesh_stack`, `scene_look`, `scene_review`, `scene_checkpoint`, `scene_restore`, `scene_release_checkpoint`, `scene_export_glb`, `scene_export_web`, `scene_dispose` and `scene_render_submit`. Inspection (`scene_inspect`, `mesh_inspect`, `scene_walkmap`), `scene_export_recipe` and the `scene_render_*` status, cancel, result and release tools stay available. The error names the running job, how many frames it has done and the two tools to call: `scene_render_status` with its `jobId`, or `scene_render_cancel`.
 The source revision, pose and checkpoints survive completion or cancellation.
 Cancellation becomes terminal after the owned encoder and job page stop and the preview recovers.
 
