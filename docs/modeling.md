@@ -46,7 +46,7 @@ The base contour validation does not establish that an arbitrary bevel produces 
 `tube(path, { radius = 0.1, segments = 64, radialSegments = 12, closed = false, maxVertices = 250000 })`
 sweeps a circular cross-section along a centripetal Catmull-Rom curve through XYZ points.
 Open paths need two points. Closed paths need three. Closed paths join the final sample back to the first.
-Open tube ends have no caps. Paths can intersect themselves.
+Open tube ends have no caps. Paths can intersect themselves. A bad radius, `closed` flag, profile, contour or torus arc throws an error that names the field, the value received and an example; in a scene recipe the field starts with `geometries[i]`.
 
 Segments range from 3 to 2048. Radial segments range from 3 to 128.
 
@@ -134,6 +134,23 @@ through its depth. `"\n"` starts a new line 1.2 em lower. `size` is the em heigh
 - `curveSegments` straight pieces per outline curve (1 to 16). Rings inside an odd number of others become holes.
 - One glyph and a word match Blender 5.2 with the same font in volume, area and bounds to 2e-5. Blender's text size unit is not the em,
   so the golden script calibrates it on the capital I. There is no kerning, bevel or text on a curve.
+
+## Cloud
+
+`cloudGeometry({ seed, puffs, width, height, flatBase, resolution })` builds a cumulus as one closed mesh: a wide base of big lobes with smaller puffs on a dome above it, joined by a smooth union and meshed by surface nets. The same record gives the same bytes. Shade it with `toon` (for example `"toon": 3`) and the lobes read as clean bands.
+
+| Field | Default | Range | Meaning |
+| --- | --- | --- | --- |
+| `seed` | 1 | whole, 0 to 2147483647 | Another seed makes another cloud. |
+| `puffs` | 14 | whole, 2 to 48 | Lobes in the cluster. |
+| `width` | 10 | 0.5 to 2000 | Widest side in metres, centred on x and z. |
+| `height` | 5 | 0.25 to 2000 | Top to base in metres, measured before the base is cut. |
+| `flatBase` | 0.6 | 0 to 1 | 0 keeps a round underside; 1 cuts it flat the furthest. The base always sits on y = 0. |
+| `resolution` | 48 | whole, 16 to 96 | Cells along the longest side; it sets the triangle count. |
+
+A scene geometry takes the same fields with `"type": "cloud"` (see `scene_capabilities` `cloud`). A bad value throws an error that names the field and the accepted range. Lobes are stretched with the box, so a tall or flat cloud has taller or flatter puffs.
+
+For a sky with many clouds, keep `resolution` at 48 or lower and repeat a few cloud shapes with a node's `instances` (see [agent-scene.md](agent-scene.md)) instead of building one mesh per cloud. Triangles grow with the square of `resolution`.
 
 ## Resource and precision limits
 
