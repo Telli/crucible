@@ -138,6 +138,7 @@ test('the rasterizer breaks a constant grid into detail around the same mean, an
     assert.equal(detailed.glError, 0);
     assert.ok(flat.spread < 1.5, `a constant grid draws flat, spread ${flat.spread}`);
     assert.ok(detailed.spread > flat.spread + 3, `the noise shows: spread ${detailed.spread} against ${flat.spread}`);
+    assert.ok(detailed.spread > flat.spread + 4.5, `the contrast curve crisps the clumps: spread ${detailed.spread} against ${flat.spread}, 3.6 without it`);
     assert.ok(Math.abs(detailed.mean - flat.mean) < 12, `the noise averages out: mean ${detailed.mean} against ${flat.mean}`);
   } finally {
     await browser?.close();

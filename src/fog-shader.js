@@ -450,7 +450,9 @@ const LOCAL_MOTION_SHADOW_PROFILE = `vec3 tapPosition = position + towardSun * (
 // Each volume is marched on its own between its entry and exit (cut at the first surface) and composited nearest first: the colour
 // behind it is dimmed by exp(-absorption * profile * step) and its emission is added, both per colour channel.
 // With `motion` the grid march reads the point its shutter time selects; without it the source is exactly what it was before the blur existed.
-const localVolumeFunctions = (motion, kind = 'both', noiseOctaves = false, gridDetail = false) => {
+// The fractal noise of a grid volume sits in a narrow band around 0.5; stretching it by this much before a smoothstep gives the clumps crisp edges (#2289).
+const GRID_DETAIL_CONTRAST = 1.1;
+const localVolumeFunctions =(motion, kind = 'both', noiseOctaves = false, gridDetail = false) => {
   const withGrid = kind !== 'shape';
   const withShape = kind !== 'grid';
   // A frame whose grid volume asks for fine detail (#2289) compiles the noise into the grid march; every other grid program keeps the source it had.
@@ -538,7 +540,8 @@ float localGridDetail(int index, vec3 position) {
   float noiseAmount = localVolumeAbsorption[index].w;
   if (noiseAmount <= 0.0) return 1.0;
   float noise = ${noiseOctaves ? 'localVolumeFractalNoise(position * localVolumeEmission[index].w, 1 + int(localVolumeAxes[index * 3 + 1].w + 0.5))' : 'localVolumeNoise(position * localVolumeEmission[index].w)'};
-  return 1.0 + (2.0 * noise - 1.0) * noiseAmount;
+  float stretched = clamp((noise - 0.5) * ${GRID_DETAIL_CONTRAST.toFixed(1)} + 0.5, 0.0, 1.0);
+  return 1.0 + (2.0 * (stretched * stretched * (3.0 - 2.0 * stretched)) - 1.0) * noiseAmount;
 }
 ` : ''}// A grid cell at a world point: x density, y temperature, z flame, all linear taps of the padded texture (a texel centre is at i + 0.5).
 vec3 localGridSample(int index, vec3 position) {
