@@ -98,6 +98,7 @@ on:
       - 'src/camera-path.js'
       - 'src/camera.js'
       - 'src/cascaded-shadows.js'
+      - 'src/clear-colour.js'
       - 'src/clip-strip.js'
       - 'src/closed-room.js'
       - 'src/cloth-bending.js'
