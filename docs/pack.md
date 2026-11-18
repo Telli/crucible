@@ -2,7 +2,7 @@
 
 `crucible pack` compiles a recipe (`format: "crucible.scene"`) in Node into a compact data file, so a web page loads the renderer and the data but not the recipe compiler. The page uses a `<crucible-scene>` element: it shows a poster picture first, then swaps in live 3D when the scene is ready.
 
-This is slice 1 of #2178. It packs a still scene. Scroll, hover and click triggers, and baked lightmaps, come in later slices.
+This is slice 1 of #2178. It packs a still scene. Triggers are below; baked lightmaps come in a later slice.
 
 ## Pack a scene
 
@@ -51,3 +51,21 @@ Measured on `public/recipes/view-transform.json` (a lamp, six parts), Chrome, gz
 | Total | 232,182 B | 228,641 B |
 
 The JavaScript halves. The data does not shrink for this scene, because the baked reflection probes of its two metal parts are 196 KB before gzip. A scene without baked probes pays much less data.
+
+## Triggers
+
+Three attributes move the camera from the page, with no script. The element draws only while a trigger is moving the camera, and goes back to sleeping when it settles.
+
+```html
+<crucible-scene src="https://example.com/scene/scene.pack" poster="https://example.com/scene/poster.webp" scroll="orbit 0 90, dolly 1 0.6" hover-tilt="6" view="wide">
+  <script type="application/json">{ "wide": {}, "close": { "orbit": 40, "elevation": 10, "dolly": 0.5 } }</script>
+</crucible-scene>
+```
+
+| Attribute | What it does |
+| --- | --- |
+| `scroll="orbit 0 90"` | Scrubs the camera with the element's pass through the viewport: the first number is the value when its top edge enters at the bottom, the second when its bottom edge leaves at the top. Kinds: `orbit` (degrees around the up axis), `elevation` (degrees, kept under 85) and `dolly` (distance scale, 0.1 to 10). Join kinds with commas. The scroll listener is attached only while the element is on screen. |
+| `hover-tilt="6"` | Leans the camera up to 6 degrees (at most 30) toward the pointer, and eases back when it leaves. Off under `prefers-reduced-motion: reduce`. |
+| `view="close"` | Moves the camera to a named view with a short ease. Views are declared in a `<script type="application/json">` child as `orbit`, `elevation` and `dolly` offsets from the scene camera. Remove the attribute to go back. The name is `view`, not `state`, because `state` already reports `loading`, `live` or `error`. Under reduced motion the camera jumps instead of easing. |
+
+The three add up: scroll plus tilt plus the named view. A wrong attribute or an undeclared view name fires `crucible-scene-error` with what to write instead and is ignored; the scene stays `live`. Views read from the pack itself are not supported yet.

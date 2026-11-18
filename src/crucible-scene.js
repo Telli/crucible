@@ -3,6 +3,7 @@
 // agent-scene module: the recipe was compiled ahead of time, so the page pays for the renderer and nothing else.
 import { decodePack } from './scene-pack-format.js';
 import { loadPackShaderModules } from './scene-pack-shaders.js';
+import { TriggerAnimator, applyViewToCamera, parseHoverTiltAttribute, parseScrollAttribute, parseViews, scrollProgress } from './scene-triggers.js';
 
 export const SCENE_STATES = Object.freeze(['loading', 'live', 'error']);
 
@@ -52,11 +53,12 @@ async function createLiveRenderer(canvas, scene) {
 }
 
 export class CrucibleSceneElement extends HTMLElement {
-  static observedAttributes = ['src', 'poster'];
+  static observedAttributes = ['src', 'poster', 'scroll', 'hover-tilt', 'view'];
 
   #renderer = null;
   #frame = null;
   #resizeObserver = null;
+  #triggers = null;
   #loadToken = 0;
   // An element that upgrades after parsing gets its attributes before connectedCallback; only a change after the first load reloads.
   #started = false;
@@ -81,6 +83,8 @@ export class CrucibleSceneElement extends HTMLElement {
     if (!this.#started) return;
     if (name === 'poster') this.#showPoster();
     if (name === 'src') this.#load();
+    if (name === 'view') this.#triggers?.changeView();
+    if (name === 'scroll' || name === 'hover-tilt') this.#triggers?.configure();
   }
 
   get state() {
@@ -98,6 +102,8 @@ export class CrucibleSceneElement extends HTMLElement {
     this.#loadToken += 1;
     this.#resizeObserver?.disconnect();
     this.#resizeObserver = null;
+    this.#triggers?.stop();
+    this.#triggers = null;
     if (this.#frame !== null) cancelAnimationFrame(this.#frame);
     this.#frame = null;
     this.#renderer?.dispose?.();
@@ -129,19 +135,133 @@ export class CrucibleSceneElement extends HTMLElement {
     }
   }
 
-  // A still scene draws again only when the element changes size.
+  // A still scene draws again only when the element changes size, or while a trigger is still moving the camera.
   #startDrawing(scene, environment) {
-    const draw = () => {
-      this.#frame = null;
-      this.#renderer.resize();
-      this.#renderer.render({ ...scene.camera, environment, effects: scene.effects, exposure: scene.effects.exposure, time: 0 });
-    };
     const schedule = () => {
       if (this.#frame === null) this.#frame = requestAnimationFrame(draw);
     };
+    const triggers = new SceneTriggers(this, schedule, message => this.#reportTriggerError(message));
+    const draw = now => {
+      this.#frame = null;
+      this.#renderer.resize();
+      const { camera, animating } = triggers.frame(scene.camera, now);
+      this.#renderer.render({ ...camera, environment, effects: scene.effects, exposure: scene.effects.exposure, time: 0 });
+      if (animating) schedule();
+    };
+    this.#triggers = triggers;
+    triggers.configure();
     this.#resizeObserver = new ResizeObserver(schedule);
     this.#resizeObserver.observe(this);
     schedule();
+  }
+
+  // A bad trigger attribute is reported and ignored: the scene keeps drawing, so state stays "live".
+  #reportTriggerError(message) {
+    this.dispatchEvent(new CustomEvent('crucible-scene-error', { detail: { message } }));
+  }
+}
+
+/** Reads the trigger attributes of one element, listens only for what they ask and asks for a frame when something moves. */
+class SceneTriggers {
+  #element;
+  #schedule;
+  #report;
+  #animator = new TriggerAnimator();
+  #visibilityObserver = null;
+  #listening = false;
+  #cleanups = [];
+
+  constructor(element, schedule, report) {
+    this.#element = element;
+    this.#schedule = schedule;
+    this.#report = report;
+  }
+
+  configure() {
+    this.stop();
+    const element = this.#element;
+    const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    const animator = new TriggerAnimator({ reducedMotion });
+    this.#animator = animator;
+    const attempt = action => {
+      try {
+        action();
+      } catch (error) {
+        this.#report(error.message);
+      }
+    };
+    attempt(() => { if (element.hasAttribute('scroll')) animator.scroll = parseScrollAttribute(element.getAttribute('scroll')); });
+    attempt(() => { if (element.hasAttribute('hover-tilt')) animator.hoverTilt = parseHoverTiltAttribute(element.getAttribute('hover-tilt')); });
+    attempt(() => {
+      const declaration = element.querySelector('script[type="application/json"]');
+      if (declaration) animator.views = parseViews(declaration.textContent);
+    });
+    attempt(() => { if (element.hasAttribute('view')) animator.setViewName(element.getAttribute('view')); });
+    if (animator.scroll) this.#watchScroll();
+    if (animator.hoverTilt > 0) this.#watchPointer(reducedMotion);
+    this.#schedule();
+  }
+
+  // A new view name moves the camera there with the ease; the other values stay as they are.
+  changeView() {
+    try {
+      this.#animator.setViewName(this.#element.getAttribute('view'));
+    } catch (error) {
+      this.#report(error.message);
+    }
+    this.#schedule();
+  }
+
+  stop() {
+    this.#visibilityObserver?.disconnect();
+    this.#visibilityObserver = null;
+    for (const cleanup of this.#cleanups) cleanup();
+    this.#cleanups = [];
+  }
+
+  frame(camera, now) {
+    const animator = this.#animator;
+    if (animator.scroll) animator.setProgress(scrollProgress(this.#element.getBoundingClientRect(), window.innerHeight));
+    const { view, animating } = animator.advance(now);
+    return { camera: applyViewToCamera(camera, view), animating };
+  }
+
+  // The scroll listener exists only while the element is on screen.
+  #watchScroll() {
+    const onScroll = () => this.#schedule();
+    this.#visibilityObserver = new IntersectionObserver(entries => {
+      const visible = entries.some(entry => entry.isIntersecting);
+      if (visible === this.#listening) return;
+      this.#listening = visible;
+      if (visible) window.addEventListener('scroll', onScroll, { passive: true });
+      else window.removeEventListener('scroll', onScroll);
+      this.#schedule();
+    });
+    this.#visibilityObserver.observe(this.#element);
+    this.#cleanups.push(() => {
+      window.removeEventListener('scroll', onScroll);
+      this.#listening = false;
+    });
+  }
+
+  #watchPointer(reducedMotion) {
+    if (reducedMotion) return;
+    const element = this.#element;
+    const onMove = event => {
+      const box = element.getBoundingClientRect();
+      this.#animator.setPointer({ x: ((event.clientX - box.left) / box.width) * 2 - 1, y: ((event.clientY - box.top) / box.height) * 2 - 1 });
+      this.#schedule();
+    };
+    const onLeave = () => {
+      this.#animator.setPointer(null);
+      this.#schedule();
+    };
+    element.addEventListener('pointermove', onMove);
+    element.addEventListener('pointerleave', onLeave);
+    this.#cleanups.push(() => {
+      element.removeEventListener('pointermove', onMove);
+      element.removeEventListener('pointerleave', onLeave);
+    });
   }
 }
 
