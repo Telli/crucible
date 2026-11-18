@@ -76,6 +76,14 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `site/recipe-dolly-zoom.html`, `public/recipes/dolly-zoom.json`
 - Drive: `node scripts/drive.mjs shot recipe-dolly-zoom`
 
+### `studio`
+- Name: Scene studio
+- Surface: Site
+- Reach: `/studio.html`
+- Source: `site/studio.html`, `src/studio-page.js`, `src/studio.js`
+- Ready: `Boolean(window.__studioPage?.renderer)`
+- Drive: `node scripts/drive.mjs shot studio`
+
 ### `object`
 - Name: Object studio
 - Surface: Site

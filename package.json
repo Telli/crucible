@@ -58,6 +58,7 @@
     "docs/user-passes.md",
     "docs/addons.md",
     "docs/skeleton-pose.md",
+    "docs/studio.md",
     "docs/verification.md"
   ],
   "main": "./build/67.module.js",
@@ -154,6 +155,7 @@
     "./addons/fracture": "./build/fracture.js",
     "./addons/morph": "./build/morph.js",
     "./addons/skinning": "./build/skinning.js",
+    "./addons/studio": "./build/studio.js",
     "./package.json": "./package.json"
   },
   "scripts": {

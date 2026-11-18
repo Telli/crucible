@@ -46,6 +46,7 @@ export default defineConfig({
       input: {
         home: 'site/index.html',
         downloads: 'site/downloads.html',
+        studio: 'site/studio.html',
         object: 'site/object.html',
         nature: 'site/nature.html',
         film: 'site/film.html',
