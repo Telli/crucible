@@ -295,6 +295,7 @@ on:
       - 'src/path-tracer-shading.js'
       - 'src/path-tracer-subsurface.js'
       - 'src/path-tracer-volume.js'
+      - 'src/path-tracer-webgpu-instancing.js'
       - 'src/path-tracer-webgpu-kernel.js'
       - 'src/path-tracer-webgpu-local-volumes.js'
       - 'src/path-tracer-webgpu-medium.js'

@@ -1,7 +1,9 @@
 import { buildMegakernelSource, PATH_STATE_VECTORS, WAVEFRONT_SOURCE, WAVEFRONT_WORKGROUP_SIZE, WORKGROUP_SIZE } from './path-tracer-webgpu-kernel.js';
 import { resolveLightSelection } from './path-tracer-light-tree.js';
 import { gpuTriangleCapacity, packAtlas, packEnvironment, packLightTree, packLights, packMaterials, packNodes, packSubsurface, packTriangles, sceneUsesSubsurface } from './path-tracer-gpu-pack.js';
-import { MAX_GPU_TRACE_TRIANGLES, MAX_TRACE_TRIANGLES } from './path-tracer-scene.js';
+import { WEBGPU_INSTANCE_VECTORS } from './path-tracer-webgpu-instancing.js';
+import { packInstancedScene } from './path-tracer-gpu-instance-pack.js';
+import { isInstancedScene, MAX_GPU_TRACE_TRIANGLES, MAX_TRACE_TRIANGLES, uniqueTriangleCount } from './path-tracer-scene.js';
 import { assertWebGpuLocalVolumes, packWebGpuLocalVolumes, webGpuVolumeFeatures } from './path-tracer-webgpu-local-volumes.js';
 
 // The WebGPU backend of the path tracer (issue #625): the same scene tables, camera, options and random numbers as the
@@ -83,10 +85,10 @@ async function getSession() {
 }
 
 /** The WGSL and entry points of a kernel variant; a variant is one of the two kernels, with the optional parts a scene needs. */
-function describeVariant({ kernel, hasVolume, hasLocalVolumes, hasGridVolume, hasNoiseOctaves, hasEmissionRamp, hasMeshVolume, hasSubsurface, texelBake, realtime }) {
+function describeVariant({ kernel, hasVolume, hasLocalVolumes, hasGridVolume, hasNoiseOctaves, hasEmissionRamp, hasMeshVolume, hasSubsurface, texelBake, realtime, instanced = false }) {
   if (kernel === 'wavefront') return { code: WAVEFRONT_SOURCE, entryPoints: WAVEFRONT_ENTRY_POINTS };
-  if (realtime) return { code: buildMegakernelSource({ hasVolume, hasLocalVolumes, hasGridVolume, hasNoiseOctaves, hasEmissionRamp, hasMeshVolume, hasSubsurface, realtime }), entryPoints: ['traceRealtime'] };
-  return { code: buildMegakernelSource({ hasVolume, hasLocalVolumes, hasGridVolume, hasNoiseOctaves, hasEmissionRamp, hasMeshVolume, hasSubsurface, texelBake }), entryPoints: [texelBake ? 'bakeTexels' : 'main'] };
+  if (realtime) return { code: buildMegakernelSource({ hasVolume, hasLocalVolumes, hasGridVolume, hasNoiseOctaves, hasEmissionRamp, hasMeshVolume, hasSubsurface, realtime, instanced }), entryPoints: ['traceRealtime'] };
+  return { code: buildMegakernelSource({ hasVolume, hasLocalVolumes, hasGridVolume, hasNoiseOctaves, hasEmissionRamp, hasMeshVolume, hasSubsurface, texelBake, instanced }), entryPoints: [texelBake ? 'bakeTexels' : 'main'] };
 }
 
 async function compileKernel(current, variant) {
@@ -103,14 +105,14 @@ async function compileKernel(current, variant) {
 }
 
 async function getKernel(current, variant) {
-  const key = [variant.kernel, variant.hasVolume, variant.hasLocalVolumes, variant.hasGridVolume, variant.hasNoiseOctaves, variant.hasEmissionRamp, variant.hasMeshVolume, variant.hasSubsurface, variant.texelBake, Boolean(variant.realtime)].join(':');
+  const key = [variant.kernel, variant.hasVolume, variant.hasLocalVolumes, variant.hasGridVolume, variant.hasNoiseOctaves, variant.hasEmissionRamp, variant.hasMeshVolume, variant.hasSubsurface, variant.texelBake, Boolean(variant.realtime), Boolean(variant.instanced)].join(':');
   if (!current.kernels.has(key)) current.kernels.set(key, compileKernel(current, variant));
   return current.kernels.get(key);
 }
 
 /** The optional parts the scene needs, as the kernel variant flags. */
 function sceneFeatures(scene) {
-  return { hasVolume: Boolean(scene.volume), hasLocalVolumes: Boolean(scene.localVolumes), ...webGpuVolumeFeatures(scene.localVolumes), hasSubsurface: sceneUsesSubsurface(scene.materials), texelBake: false };
+  return { hasVolume: Boolean(scene.volume), hasLocalVolumes: Boolean(scene.localVolumes), ...webGpuVolumeFeatures(scene.localVolumes), hasSubsurface: sceneUsesSubsurface(scene.materials), texelBake: false, instanced: isInstancedScene(scene) };
 }
 
 function createStorageBuffer(device, data, label) {
@@ -122,6 +124,27 @@ function createStorageBuffer(device, data, label) {
 
 function atlasWords(atlas) {
   return new Uint32Array(atlas.data.buffer, atlas.data.byteOffset, Math.floor(atlas.data.byteLength / 4));
+}
+
+/**
+ * The node and triangle tables of a scene. A flat scene has one BVH over all its triangles. An instanced scene holds each distinct mesh
+ * once (path-tracer-gpu-instance-pack.js); its instance records follow the nodes in the same buffer, behind a header vector that names
+ * the top-level root, so the binding count stays what the flat scene uses. `instanceHeader` is the vector index of that header, 0 for a flat scene.
+ */
+function packGeometryTables(device, scene) {
+  if (!isInstancedScene(scene)) return { nodeTable: packNodes(scene.bvh), triangleData: packTriangles(scene, { secondUvSet: true }).data, instanceHeader: 0 };
+  const packed = packInstancedScene(scene);
+  const nodeFloats = packed.nodes.data.length;
+  const recordFloats = scene.instances.length * WEBGPU_INSTANCE_VECTORS * 4;
+  const data = new Float32Array(nodeFloats + 4 + recordFloats);
+  data.set(packed.nodes.data);
+  data[nodeFloats] = packed.topRoot;
+  data.set(packed.instances.data.subarray(0, recordFloats), nodeFloats + 4);
+  const limit = device.limits.maxStorageBufferBindingSize;
+  if (data.byteLength > limit) {
+    throw new RangeError(`The instanced scene needs ${data.byteLength} bytes for its BVH nodes and ${scene.instances.length} instance records, and this WebGPU adapter binds at most ${limit} bytes in one storage buffer. Remove copies or merge small meshes, or use backend "gpu".`);
+  }
+  return { nodeTable: { data }, triangleData: packed.triangles.data, instanceHeader: nodeFloats / 4 };
 }
 
 export function uploadScene(device, scene, requestedLightSelection = 'uniform') {
@@ -159,12 +182,13 @@ export function uploadScene(device, scene, requestedLightSelection = 'uniform') 
   const materialsWithTables = new Float32Array(materialsWithSubsurface.length + localVolumeData.length);
   materialsWithTables.set(materialsWithSubsurface);
   materialsWithTables.set(localVolumeData, materialsWithSubsurface.length);
-  const triangleCount = scene.indices.length / 3;
+  const triangleCount = uniqueTriangleCount(scene);
   const largeScene = triangleCount > MAX_TRACE_TRIANGLES;
+  const { nodeTable, triangleData, instanceHeader } = packGeometryTables(device, scene);
   if (largeScene) device.pushErrorScope('out-of-memory');
   const buffers = [
-    createStorageBuffer(device, packNodes(scene.bvh).data, 'bvh nodes'),
-    createStorageBuffer(device, packTriangles(scene, { secondUvSet: true }).data, 'triangles'),
+    createStorageBuffer(device, nodeTable.data, 'bvh nodes'),
+    createStorageBuffer(device, triangleData, 'triangles'),
     createStorageBuffer(device, materialsWithTables, 'materials'),
     createStorageBuffer(device, lightsWithTree, 'lights'),
     createStorageBuffer(device, atlasWords(atlas), 'texture atlas'),
@@ -175,7 +199,7 @@ export function uploadScene(device, scene, requestedLightSelection = 'uniform') 
   const allocationCheck = largeScene ? device.popErrorScope().then((error) => {
     if (error) throw new Error(`The GPU ran out of memory while allocating the scene buffers for ${triangleCount} triangles. Simplify or drop meshes to stay near ${MAX_TRACE_TRIANGLES} triangles, or render the frame with the native Cook backend.`);
   }) : Promise.resolve();
-  return { allocationCheck, buffers, lightCount: lights.count, lightTreeBase, atlasWidth: atlas.width, subsurfaceOffset, localVolumeOffset };
+  return { allocationCheck, buffers, lightCount: lights.count, lightTreeBase, atlasWidth: atlas.width, subsurfaceOffset, localVolumeOffset, instanceHeader };
 }
 
 /** The words of one uniform block: the 12 vectors of the megakernel parameters, then the tile and shadow slot words. */
@@ -198,6 +222,7 @@ function createParameterTemplate(scene, camera, options, uploaded, emitterCount)
   integers.set([options.width, options.height, options.bounces, uploaded.lightCount], 36);
   integers.set([emitterCount, sun ? 1 : 0, environment ? 1 : 0, 0], 40);
   unsigned.set([options.seed >>> 0, uploaded.atlasWidth, uploaded.subsurfaceOffset, uploaded.localVolumeOffset], 44);
+  unsigned[INSTANCE_HEADER_WORD] = uploaded.instanceHeader;
   const { volume } = scene;
   floats.set([...(volume?.minimum ?? [0, 0, 0]), volume?.density ?? 0], 56);
   floats.set([...(volume?.maximum ?? [0, 0, 0]), volume?.anisotropy ?? 0], 60);
@@ -206,6 +231,8 @@ function createParameterTemplate(scene, camera, options, uploaded, emitterCount)
 }
 
 const SAMPLE_INDEX_WORD = 43;
+// The fourth word of the shadow slot vector: the vector index of the instance table header (path-tracer-webgpu-instancing.js), 0 without instances.
+const INSTANCE_HEADER_WORD = 55;
 const TILE_WORD = 48;
 const SHADOW_SLOT_WORD = 52;
 const SORT_FLAG_WORD = 53;
@@ -298,6 +325,9 @@ export async function traceOnWebGpu(scene, camera, options, shouldStop) {
   if (kernel === 'wavefront' && (features.hasVolume || features.hasLocalVolumes || features.hasSubsurface)) {
     throw new RangeError('The WebGPU wavefront kernel does not trace volume fog, local volumes or subsurface scattering. Use the megakernel, the default.');
   }
+  if (kernel === 'wavefront' && features.instanced) {
+    throw new RangeError('The WebGPU wavefront kernel does not read instanced scenes. Build the scene without instancing, or use the megakernel, the default.');
+  }
   assertWebGpuLocalVolumes(scene);
   const current = await getSession();
   const { device } = current;
@@ -365,6 +395,9 @@ export async function traceOnWebGpu(scene, camera, options, shouldStop) {
  * parameter block for a camera (the caller sets the sample index and the cache words).
  */
 export async function prepareRealtimeKernel(scene, options, realtimePieces) {
+  if (isInstancedScene(scene)) {
+    throw new RangeError('The WebGPU real-time tracer does not read instanced scenes yet. Build the scene for it without instancing (buildTraceSceneForDevice with a module that does not set supportsInstancing).');
+  }
   const current = await getSession();
   const { device } = current;
   const { pipelines, compileSeconds } = await getKernel(current, { kernel: 'megakernel', ...sceneFeatures(scene), realtime: realtimePieces });
@@ -455,6 +488,10 @@ export async function traceTexelsOnWebGpu(scene, texels, options, shouldStop) {
   for (const buffer of [...uploaded.buffers, accumulation, parameters, ...texelBuffers]) buffer.destroy();
   return { radiance, escaped, gpu: current.gpu, compileSeconds };
 }
+
+// The megakernel reads instanced scenes (path-tracer-webgpu-instancing.js): buildTraceSceneForDevice keeps copies of one mesh as instances for it.
+// The wavefront kernel and the real-time tracer do not, and their callers ask for a flat scene.
+export const supportsInstancing = true;
 
 // The names path-tracer.js looks for in a backend module, the same as path-tracer-gpu.js.
 export { traceOnWebGpu as traceOnGpu, webGpuKernelCompileCount as gpuKernelCompileCount, webGpuTriangleLimit as gpuTriangleLimit };
