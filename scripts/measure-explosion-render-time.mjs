@@ -8,14 +8,14 @@
 // Options: --runs <n>, --duration <seconds>, --width, --height, --fps, --size <metres>, --seed, --backend gpu|cpu, --out <folder>, --max-seconds <limit that aborts a run>.
 import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir, constants, setPriority } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
-export const DEFAULT_OPTIONS = { runs: 3, duration: 8, width: 1920, height: 1080, fps: 24, size: 4, seed: 1, backend: 'gpu', out: 'artifacts/1050/timing', maxSeconds: 180 };
+export const DEFAULT_OPTIONS = { runs: 3, duration: 8, width: 1920, height: 1080, fps: 24, size: 4, seed: 1, backend: 'gpu', out: 'artifacts/1050/timing', maxSeconds: 180, bakeCache: 'default' };
 const NUMBER_OPTIONS = ['runs', 'duration', 'width', 'height', 'fps', 'size', 'seed', 'maxSeconds'];
-const OPTION_NAMES = { 'max-seconds': 'maxSeconds' };
-const USAGE = 'use [--runs 3] [--duration 8] [--width 1920] [--height 1080] [--fps 24] [--size 4] [--seed 1] [--backend gpu|cpu] [--out <folder>] [--max-seconds 180].';
+const OPTION_NAMES = { 'max-seconds': 'maxSeconds', 'bake-cache': 'bakeCache' };
+const USAGE = 'use [--runs 3] [--duration 8] [--width 1920] [--height 1080] [--fps 24] [--size 4] [--seed 1] [--backend gpu|cpu] [--out <folder>] [--max-seconds 180] [--bake-cache off|<absolute folder>].';
 
 export const SCENE = {
   format: 'crucible.scene', schemaVersion: 1,
@@ -39,6 +39,7 @@ export function parseArguments(argv) {
     }
   }
   if (!['gpu', 'cpu'].includes(options.backend)) throw new Error(`--backend takes gpu or cpu, got ${options.backend}.`);
+  if (options.bakeCache !== 'default' && options.bakeCache !== 'off' && !isAbsolute(options.bakeCache)) throw new Error(`--bake-cache takes off or an absolute folder, got ${options.bakeCache}.`);
   return options;
 }
 
@@ -69,12 +70,17 @@ export function shapeReport({ options, runIndex, buildSeconds, submitSeconds, jo
   };
 }
 
+// The server reads CRUCIBLE_BAKE_CACHE (#1876): "off" times a cold bake every run; a folder is empty on its first run and warm after it.
+export function serverEnvironment(options, baseEnvironment) {
+  return options.bakeCache === 'default' ? baseEnvironment : { ...baseEnvironment, CRUCIBLE_BAKE_CACHE: options.bakeCache };
+}
+
 async function openClient(options, runIndex) {
   const { Client } = await import('@modelcontextprotocol/client');
-  const { StdioClientTransport } = await import('@modelcontextprotocol/client/stdio');
+  const { StdioClientTransport, getDefaultEnvironment } = await import('@modelcontextprotocol/client/stdio');
   const directory = join(tmpdir(), `crucible-explosion-time-${process.pid}-${runIndex}`);
   await mkdir(directory, { recursive: true });
-  const transport = new StdioClientTransport({ command: process.execPath, args: [resolve('bin/crucible-mcp.mjs'), '--backend', options.backend, '--memory', '512', '--jobs', join(directory, 'jobs')], cwd: directory, stderr: 'pipe' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [resolve('bin/crucible-mcp.mjs'), '--backend', options.backend, '--memory', '512', '--jobs', join(directory, 'jobs')], cwd: directory, env: serverEnvironment(options, getDefaultEnvironment()), stderr: 'pipe' });
   const client = new Client({ name: 'measure-explosion-render-time', version: '1' });
   await client.connect(transport, { timeout: 240000 });
   return client;
