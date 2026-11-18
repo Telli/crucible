@@ -1,4 +1,5 @@
 import { createEnvironmentMap } from './environment.js';
+import { applyGradientSky, createGradientSkyMap } from './gradient-sky.js';
 
 // environment.sky { type: 'physical' }: a clear-sky model driven by the sun alone. It is an analytic single-scattering
 // approximation (Rayleigh and Henyey-Greenstein aerosol, Kasten-Young air mass), not the Nishita integration Blender uses.
@@ -49,7 +50,7 @@ const LOW_SUN_KEY_BOOST = 1.2;
 export function resolvePhysicalSky(input, fail) {
   const unknown = Object.keys(input).filter(key => key !== 'preset' && !PHYSICAL_SKY_FIELDS.includes(key));
   if (unknown.length > 0 || input.type !== 'physical') {
-    throw fail('environment.sky', input.type !== 'physical' ? input.type : unknown[0], `type 'physical' with fields ${[...PHYSICAL_SKY_FIELDS.slice(1), 'preset'].join(', ')}`);
+    throw fail('environment.sky', input.type !== 'physical' ? input.type : unknown[0], `type 'physical' or 'gradient'; physical takes fields ${[...PHYSICAL_SKY_FIELDS.slice(1), 'preset'].join(', ')}`);
   }
   if (input.preset !== undefined && !Object.hasOwn(PHYSICAL_SKY_PRESETS, input.preset)) {
     throw fail('environment.sky.preset', input.preset, `one of ${PHYSICAL_SKY_PRESET_NAMES.join(', ')}`);
@@ -172,8 +173,15 @@ export function physicalSkyFields(sky) {
   return fields;
 }
 
-/** A physical sky owns the sun and the haze: its key light, background gradient and aerial perspective replace those fields. */
+/**
+ * A physical sky owns the sun and the haze: its key light, background gradient and aerial perspective replace those fields.
+ * A `type: 'gradient'` sky takes the same entry point and only supplies the sky colours.
+ */
 export function applyPhysicalSky(input, environment, fail) {
+  if (input.type === 'gradient') {
+    applyGradientSky(input, environment, fail);
+    return;
+  }
   const sky = resolvePhysicalSky(input, fail);
   const { aerialDensity, ...fields } = physicalSkyFields(sky);
   Object.assign(environment, fields, { sky, fogDensity: aerialDensity });
@@ -221,7 +229,11 @@ function buildMapData(sky) {
 }
 
 /** The environment map of a physical sky; the same object returns while sky, strength, rotation and background hold. */
-export function createPhysicalSkyMap({ sky, environmentIntensity: intensity, environmentRotation: rotation, world: showBackground }) {
+export function createPhysicalSkyMap(environment) {
+  if (environment.sky.type === 'gradient') {
+    return createGradientSkyMap(environment);
+  }
+  const { sky, environmentIntensity: intensity, environmentRotation: rotation, world: showBackground } = environment;
   const key = [...PHYSICAL_SKY_FIELDS.slice(1).map(field => sky[field]), intensity, rotation, showBackground].join('|');
   if (!mapsByKey.has(key)) {
     if (mapsByKey.size >= MAXIMUM_CACHED_MAPS) {
