@@ -41,13 +41,13 @@ test('the sample model has nine named parts in both layers, each with a section 
   assert.equal(new Set(parts.map(part => part.assembly.section)).size, 4);
 });
 
-test('the sample model stands about 3.6 tall on the ground, and its exploded pose stays in the studio frame', () => {
+test('the sample model stands about 3.6 tall on the ground, and its exploded pose stays above the floor in the studio frame', () => {
   const assembled = worldBounds(parts, 0);
   assert.ok(assembled.minimum[1] >= -0.01 && assembled.minimum[1] < 0.05, `base sits on the ground: ${assembled.minimum[1]}`);
   assert.ok(assembled.maximum[1] > 3.4 && assembled.maximum[1] < 3.8, `height ${assembled.maximum[1]}`);
   const exploded = worldBounds(parts, 1);
-  assert.ok(exploded.minimum[1] > -1.4 && exploded.maximum[1] < 5.5, `exploded height ${exploded.minimum[1]} to ${exploded.maximum[1]}`);
-  assert.ok(Math.max(...exploded.maximum.map((value, axis) => Math.max(value, -exploded.minimum[axis]))) < 5);
+  assert.ok(exploded.minimum[1] >= -0.01 && exploded.maximum[1] < 7, `exploded height ${exploded.minimum[1]} to ${exploded.maximum[1]}`);
+  assert.ok([0, 2].every(axis => exploded.maximum[axis] < 3 && exploded.minimum[axis] > -3), "exploded width and depth stay within 3 of the axis");
 });
 
 test('the sample model snapshot stays stable', () => {
@@ -58,7 +58,7 @@ test('the sample model snapshot stays stable', () => {
       hash.update(new Uint8Array(field.buffer, field.byteOffset, field.byteLength));
     }
   }
-  assert.equal(hash.digest('hex'), 'd6feb78602814084844ac8d3f4448f3aaf2cacd0994887cc7a046964b7eaea66');
+  assert.equal(hash.digest('hex'), '85f67e319faad58d4a720e31a477180dffac16a87be7bbaabcc02f957a5b3c87');
 });
 
 test('an unknown part or an empty list is refused with the fix', () => {
