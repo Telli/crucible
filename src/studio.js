@@ -700,7 +700,8 @@ export function createStudio(container, {
       announce(error.message);
     }
   });
-  addPopover.append(primitiveGrid, addPointLightButton, addSpotLightButton);
+  primitiveGrid.append(addPointLightButton, addSpotLightButton);
+  addPopover.append(primitiveGrid);
 
   const syncStatusNote = createElement(documentReference, 'p', {
     className: 'crucible-studio-popover-note',
