@@ -1143,6 +1143,26 @@ uv run --no-project --with numpy --with pillow python bench/cycles-parity/make-d
 
 Not covered: the legacy kernel, the WebGPU and WebGL tracers, the raster renderer and glTF `KHR_materials_diffuse_transmission` import ignore the field; a base colour map or vertex colours with a transmitting sheet (Cook tints the far-side lobe by them; `render-cycles.py` refuses that case); a material that also has a specular lobe, coat or sheen, as above; metal, glass and subsurface (refused by the reference script).
 
+## Dispersion (#1714)
+
+A glass material with `dispersion` above 0 (`20 / Abbe number`, Blender 5.3's Principled BSDF `Dispersion`) is traced spectrally by the `cycles` kernel: one hero wavelength per path, refracted by a Cauchy index. The parity scenes live with the kernel in the Cook repository, in `tools/dispersion-scenes.mjs`, which both renderers read: Cook packs them, and `tools/dispersion-parity-cycles.py` builds the same meshes, materials and camera in Blender 5.3 Cycles from the JSON `tools/dispersion-parity.mjs` writes.
+
+| Scene | What it shows | Status |
+| :--- | :--- | :--- |
+| `prism-view` | a prism in front of a row of thin bright slits on black: each slit seen through the glass is a spectrum | measured |
+| `gem` | a round brilliant gem on black under four small lights | measured |
+| `prism-floor` | a prism lying under a small sun over a grey floor: the rainbow on the floor | not resolved: it is a caustic, which Cook does not trace smoothly yet (#1715) |
+
+`[measured]` on an RTX 3060 at 256 samples: the prism and gem views take Cook 3.1 to 4.5 s against Cycles 1.0 to 1.8 s, and with the signed spectral weights (codepawl/cook#53) the prism view's fringe saturation is 0.94 times Cycles' and its mean colour is within 0.2%. The numbers and the 1080p times (8.6 s at 64 samples, 34.1 s at 256, 138 s at 1024) are in [path-tracer.md](path-tracer.md#dispersion-issue-1714), and the pictures are in the pull request that landed the field (#1764).
+
+Commands, in a Cook checkout on a machine with Blender 5.3, Node, `uv`, a GPU and the built addon:
+
+```sh
+node tools/dispersion-parity.mjs gem artifacts/gem --samples 256
+blender -b --factory-startup --python tools/dispersion-parity-cycles.py -- artifacts/gem.scene.json artifacts/gem --samples 256
+uv run --no-project --with numpy python tools/dispersion-parity-compare.py artifacts/gem
+```
+
 ## Reproducible Commands
 
 Run from the repository root in PowerShell. Set `$env:BLENDER_BIN` if Blender 5.3 is installed outside `C:\Program Files\Blender Foundation\Blender 5.3\blender.exe`, and pass an untracked `<out-dir>` (such as `artifacts/cycles-parity`) so binary `.exr` and `.npy` files stay out of Git:
