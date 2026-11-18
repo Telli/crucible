@@ -81,6 +81,8 @@ const MAXIMUM_KEPT_WEB_BUILDS = 4;
 const EXPORTED_GLB_NAME = /^[0-9a-f-]{36}\.glb$/;
 const EXPORTED_WEB_BUILD_NAME = /^web-[0-9a-f-]{36}$/;
 const EVALUATION_TIMEOUT_MS = 30000;
+// A browser stuck in a long shader compile may never answer the close request; teardown waits this long, then goes on (#2200).
+const BROWSER_CLOSE_TIMEOUT_MS = 5000;
 const RECOVERY_HINT = 'The scenes in this runtime are lost. Call scene_create (or scene_create_asset) to start a fresh runtime; no server restart is needed.';
 const FAILED_RUNTIME_MESSAGE = `The agent runtime is failed. ${RECOVERY_HINT}`;
 // Handing the scene page to a render job or review and bringing it back gets longer than an ordinary call. A job cut short by its deadline usually ran
@@ -558,9 +560,19 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return result;
   }
 
+  // Closing the browser that just timed out can hang as long as its stuck operation does. The scenes are already forgotten, so the
+  // teardown does not wait for a browser that will not answer, and the next call launches a fresh one instead of queueing behind it (#2200).
+  async function closeBrowserWithinLimit(browser) {
+    if (!browser) return;
+    let timer;
+    const closed = browser.close().catch(() => {});
+    await Promise.race([closed, new Promise(resolve => { timer = setTimeout(resolve, BROWSER_CLOSE_TIMEOUT_MS); })]);
+    clearTimeout(timer);
+  }
+
   async function shutdownResources() {
     try {
-      await browserInstance?.close();
+      await closeBrowserWithinLimit(browserInstance);
     } finally {
       browserInstance = undefined;
       page = undefined;
@@ -635,10 +647,21 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     });
   }
 
+  // A start that fails on its page load is tried once more on a fresh browser: right after a timeout the old browser may still be
+  // dying and hold the card, and the caller would otherwise need several retries before the runtime came back (#2200).
   async function boot() {
     if (page) {
       return;
     }
+    try {
+      await bootOnce();
+    } catch (error) {
+      if (closing || !/page.goto|Timeout d+ms exceeded/i.test(String(error?.message))) throw error;
+      await bootOnce();
+    }
+  }
+
+  async function bootOnce() {
     phase = 'starting';
     try {
       const [{ chromium }, code] = await Promise.all([
@@ -796,6 +819,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return evaluate(method, input, page, timeoutMs);
   }
 
+  // Names the call that ran long: its method, and for an edit list the kinds of operation it carried, so the caller knows what to split (#2200).
+  function describeOperation(method, input) {
+    const kinds = Array.isArray(input?.operations) ? [...new Set(input.operations.map(operation => operation?.type).filter(Boolean))] : [];
+    return kinds.length ? `"${method}" (${input.operations.length} operations: ${kinds.join(', ')})` : `"${method}"`;
+  }
+
   async function evaluate(method, input, target = page, timeoutMs = EVALUATION_TIMEOUT_MS) {
     assertCombinedAssetBytes(input);
     let timer;
@@ -808,8 +837,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             timedOut = true;
             if (target === page) phase = 'failed';
             reject(new Error(target === page
-              ? `The preview operation exceeded ${timeoutMs / 1000} seconds. ${RECOVERY_HINT}`
-              : `The private render operation exceeded ${timeoutMs / 1000} seconds.`));
+              ? `The preview operation ${describeOperation(method, input)} exceeded ${timeoutMs / 1000} seconds. ${RECOVERY_HINT}`
+              : `The private render operation ${describeOperation(method, input)} exceeded ${timeoutMs / 1000} seconds.`));
           }, timeoutMs);
         }),
       ]);
@@ -1171,7 +1200,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       return { artifacts, metrics };
     } catch (error) {
       if (signal.aborted || !isBrowserLoss(error)) throw error;
-      browserLossFailure = describeBrowserLoss({ error, frameIndex, frameCount: settings.frameCount, width: settings.width, height: settings.height, passes: settings.passes, memoryMiB: memory });
+      browserLossFailure = describeBrowserLoss({ error, frameIndex, frameCount: settings.frameCount, width: settings.width, height: settings.height, passes: settings.passes, memoryMiB: memory, estimatedPeakMemoryMiB: estimate?.peakMemoryMiB });
       throw browserLossFailure;
     } finally {
       signal.removeEventListener('abort', abort);
@@ -1182,9 +1211,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       finally {
         try {
           if (jobPage && !jobPage.isClosed()) {
-            // A crashed page cannot dispose its scene; the close below frees it, and the failure that matters is the job's own.
-            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!browserLossFailure) throw error; }); }
-            finally { await jobPage.close().catch(error => { if (!browserLossFailure) throw error; }); }
+            // A crashed or navigated page cannot dispose its scene (its bridge is gone: "reading 'dispose'"); the close below frees it, and the failure that matters is the job's own (#2198).
+            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!browserLossFailure && !isBrowserLoss(error)) throw error; }); }
+            finally { await jobPage.close().catch(error => { if (!browserLossFailure && !isBrowserLoss(error)) throw error; }); }
           }
         }
         finally {
