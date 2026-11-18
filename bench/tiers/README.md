@@ -112,3 +112,7 @@ So draft is 1.7 times cheaper in queued frame time, and the 8 bit target and the
 - The other five scenes (`spot-area`, `light-linking`, `metal`, `glass`, `outdoor-hdri`) have no committed runs; `run-all.mjs` exports, references and measures them (the full matrix has not been run yet).
 - Lit-interior at 1920 by 1080 for the real-time rows, and the settle runs at that size.
 - three.js 0.187 against Glaze on `bench/runtime`'s scenes: not run here; `bench/runtime/README.md` has its own results.
+
+## The home page cards
+
+The tier cards on the home page (`site/index.html`, between the `tier-cards` markers) are written from `results/matrix-960.json`, never typed. After a new matrix run, regenerate them with `node bench/tiers/make-home-tiers.mjs --write`; `tests/home-tier-cards.test.js` fails when the page and the matrix differ.
