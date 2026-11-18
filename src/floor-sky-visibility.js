@@ -44,6 +44,32 @@ export function interiorSkyFill(openShare, meanAlbedo) {
   return Math.min(INTERIOR_FILL_MAXIMUM, (INTERIOR_FILL_GAIN * albedo * open) / (1 - albedo * (1 - open)));
 }
 
+// The hue of the daylit ambient light that the shader's sky term gives a surface (blue-white). The fill is bounced light, so it has
+// the room's albedo hue, and dividing that by this hue makes the shader's blue ambient come out as the bounce colour. Fitted on the window room.
+export const INTERIOR_SKY_HUE = Object.freeze([0.82, 1, 1.75]);
+// How much of the fill a point loses where its rays meet a surface close by (a corner or a wall/floor junction): the fill is spread over the points so its room-wide mean stays the same.
+export const INTERIOR_CORNER_FALLOFF = 0.4;
+// "Close by" is this share of the room's smallest span.
+export const INTERIOR_NEAR_SPAN_SHARE = 0.15;
+
+const LUMINANCE_WEIGHTS = [0.2126, 0.7152, 0.0722];
+
+/**
+ * The colour factor that gives the fill the hue of the light a room bounces: the area-weighted mean albedo of its surfaces over the
+ * daylight hue, scaled to the same luminance so the tint moves hue only, never the level. Neutral albedo gives a factor that undoes
+ * the blue of the sky term.
+ */
+export function interiorFillTint(meanAlbedo) {
+  const raw = meanAlbedo.map((value, channel) => Math.max(value, 0.01) / INTERIOR_SKY_HUE[channel]);
+  const luminance = raw.reduce((total, value, channel) => total + value * LUMINANCE_WEIGHTS[channel], 0);
+  return raw.map(value => value / luminance);
+}
+
+/** How strongly a point is lit by the fill relative to the room mean: 1 in the open, lower the more of its rays meet a surface close by. */
+export function interiorCornerWeight(nearShare) {
+  return Math.max(0, 1 - INTERIOR_CORNER_FALLOFF * nearShare);
+}
+
 // A traced point sees the room from inside when at most this share of its rays escape; the outer face of a wall (about half, the ground hides the rest) and the lawn see the sky and are not part of the room.
 const INTERIOR_MAXIMUM_ESCAPE = 0.25;
 
@@ -54,22 +80,32 @@ function isInteriorVertex(escapedShare) {
 /**
  * The fill for the traced parts of a closed room: `openShare` is what the room opens to the sky (1 minus the closed-room ray share); the mean albedo is taken over the points that see
  * the room from inside (the cut gives every part about the same area per point), and only those points get the fill.
- * Each traced part is `{ skyVisibility, escapedShares, tracedVertices, albedo }`; their `skyVisibility` is raised in place.
+ * The fill is scaled by `interiorCornerWeight` (less in corners and at junctions) and tinted by `interiorFillTint` through the vertex
+ * colour, in proportion to the share of the point's light that is fill and not at all where the sun reaches the point.
+ * Each traced part is `{ skyVisibility, escapedShares, nearShares, sunlit, colors, tracedVertices, albedo }`; their `skyVisibility` and `colors` are changed in place.
  */
 function applyInteriorFill(tracedParts, openShare) {
   let count = 0;
-  let albedoTotal = 0;
-  for (const { escapedShares, tracedVertices, albedo } of tracedParts) {
+  const albedoTotal = [0, 0, 0];
+  for (const { escapedShares, nearShares, tracedVertices, albedo } of tracedParts) {
     for (const vertex of tracedVertices) {
       if (!isInteriorVertex(escapedShares[vertex])) continue;
       count++;
-      albedoTotal += albedo;
+      for (let channel = 0; channel < 3; channel++) albedoTotal[channel] += albedo[channel];
     }
   }
-  const fill = count > 0 ? interiorSkyFill(openShare, albedoTotal / count) : 0;
-  for (const { skyVisibility, escapedShares, tracedVertices } of tracedParts) {
+  if (count === 0) return 0;
+  const meanAlbedo = albedoTotal.map(total => total / count);
+  const fill = interiorSkyFill(openShare, (meanAlbedo[0] + meanAlbedo[1] + meanAlbedo[2]) / 3);
+  const tint = interiorFillTint(meanAlbedo);
+  for (const { skyVisibility, escapedShares, nearShares, sunlit, colors, tracedVertices } of tracedParts) {
     for (const vertex of tracedVertices) {
-      if (isInteriorVertex(escapedShares[vertex])) skyVisibility[vertex] = Math.min(1, skyVisibility[vertex] + fill);
+      if (!isInteriorVertex(escapedShares[vertex])) continue;
+      const pointFill = fill * interiorCornerWeight(nearShares[vertex]);
+      const lifted = Math.min(1, skyVisibility[vertex] + pointFill);
+      const fillShare = sunlit[vertex] || lifted === 0 ? 0 : (lifted - skyVisibility[vertex]) / lifted;
+      skyVisibility[vertex] = lifted;
+      for (let channel = 0; channel < 3; channel++) colors[vertex * 3 + channel] *= 1 + fillShare * (tint[channel] - 1);
     }
   }
   return fill;
@@ -262,6 +298,18 @@ function cutGeometry(geometry, matrix, maximumEdge, onlyUpward = true) {
   return { builder, indices, tracedVertices };
 }
 
+// A trace of the surfaces near a point stops at this distance: `INTERIOR_NEAR_SPAN_SHARE` of the smallest span of the parts.
+function nearDistanceOf(parts, partIndices) {
+  const { minimum, maximum } = sceneBoundsOf(partIndices.map(index => worldBounds(parts[index])));
+  return INTERIOR_NEAR_SPAN_SHARE * Math.min(maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2]);
+}
+
+// True when the sun reaches the point: its light keeps the colour it has, so the fill's tint leaves the point alone.
+function seesSun(tracer, point, normal, offset, sunDirection) {
+  if (normal[0] * sunDirection[0] + normal[1] * sunDirection[1] + normal[2] * sunDirection[2] <= 0) return false;
+  return tracer.trace(point[0] + normal[0] * offset, point[1] + normal[1] * offset, point[2] + normal[2] * offset, sunDirection[0], sunDirection[1], sunDirection[2], Infinity, true).nearestTriangle < 0;
+}
+
 function fixedSamples(sampleCount) {
   return Array.from({ length: sampleCount }, (unused, sample) => [(sample + 0.5) / sampleCount, (radicalInverse(sample) + FIXED_ROTATION) % 1]);
 }
@@ -273,7 +321,7 @@ function fixedSamples(sampleCount) {
  * larger than the bake's triangle limit, or the trace passes `maxSeconds`. It reads no clock to decide anything else, and
  * the rays are a fixed set, so the same scene gives the same bytes.
  */
-export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors' } = {}) {
+export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors', sunDirection = null } = {}) {
   const started = performance.now();
   const unchanged = reason => ({ parts, report: { floors: [], texels: 0, rays: 0, seconds: (performance.now() - started) / 1000, reason } });
   const floorIndices = findFloorParts(parts);
@@ -311,6 +359,7 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
   const samples = fixedSamples(raysPerTexel);
   const direction = [0, 0, 0];
   const worldNormal = [0, 0, 0];
+  const nearDistance = everySurface ? nearDistanceOf(parts, cutPartIndices) : 0;
   const floors = [];
   let totalRays = 0;
   const tracedParts = [];
@@ -323,6 +372,8 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
     const vertexCount = builder.positions.length / 3;
     const skyVisibility = new Float32Array(vertexCount).fill(1);
     const escapedShares = new Float32Array(vertexCount);
+    const nearShares = new Float32Array(vertexCount);
+    const sunlit = new Uint8Array(vertexCount);
     for (const vertex of tracedVertices) {
       if (performance.now() - started > maxSeconds * 1000) return unchanged('passed maxSeconds');
       const local = builder.positions.slice(vertex * 3, vertex * 3 + 3);
@@ -334,11 +385,15 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
       worldNormal[1] /= length;
       worldNormal[2] /= length;
       let escaped = 0;
+      let near = 0;
       for (const [firstUnit, secondUnit] of samples) {
         cosineDirection(worldNormal, firstUnit, secondUnit, direction);
         const hit = tracer.trace(point[0] + worldNormal[0] * offset, point[1] + worldNormal[1] * offset, point[2] + worldNormal[2] * offset, direction[0], direction[1], direction[2], Infinity, true);
         if (hit.nearestTriangle < 0) escaped++;
+        else if (everySurface && tracer.trace(point[0] + worldNormal[0] * offset, point[1] + worldNormal[1] * offset, point[2] + worldNormal[2] * offset, direction[0], direction[1], direction[2], nearDistance, true).nearestTriangle >= 0) near++;
       }
+      nearShares[vertex] = near / raysPerTexel;
+      if (everySurface && sunDirection && isInteriorVertex(escaped / raysPerTexel)) sunlit[vertex] = seesSun(tracer, point, worldNormal, offset, sunDirection) ? 1 : 0;
       skyVisibility[vertex] = 1 - strength * (1 - escaped / raysPerTexel);
       escapedShares[vertex] = escaped / raysPerTexel;
       totalRays += raysPerTexel;
@@ -352,11 +407,13 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
     };
     if (builder.hasUvs) cutGeometryResult.uvs = new Float32Array(builder.uvs);
     if (builder.hasColors) cutGeometryResult.colors = new Float32Array(builder.colors);
+    // The fill tints the colour of a closed room's points, so every part of one carries a colour (white where it had none).
+    if (everySurface && !builder.hasColors) cutGeometryResult.colors = new Float32Array(vertexCount * 3).fill(1);
     nextParts[index] = Object.freeze({ ...part, geometry: Object.freeze(cutGeometryResult) });
     const floor = { name: part.name, texels: tracedVertices.size, triangles: indices.length / 3, meanVisibility: 1 };
     floors.push(floor);
     const albedo = partDiffuseAlbedo(part.material ?? {});
-    tracedParts.push({ floor, skyVisibility, escapedShares, tracedVertices, albedo: (albedo[0] + albedo[1] + albedo[2]) / 3 });
+    tracedParts.push({ floor, skyVisibility, escapedShares, nearShares, sunlit, colors: cutGeometryResult.colors, tracedVertices, albedo });
   }
   // A closed room also gets the sky light its surfaces bounce on to each other (#1334): without it every point the window cannot see is as dark as a sealed room.
   const interiorFill = everySurface ? applyInteriorFill(tracedParts, 1 - roomShare) : 0;
@@ -376,6 +433,13 @@ export function environmentHasSun(environment) {
   return (environment?.keyIntensity ?? 1) * (keyColor[0] + keyColor[1] + keyColor[2]) > 0;
 }
 
+function unitSunDirection(environment) {
+  const direction = environment?.lightDirection;
+  if (!direction) return null;
+  const length = Math.hypot(...direction);
+  return length > 0 ? direction.map(component => component / length) : null;
+}
+
 /**
  * The default for a scene: a closed room a sun lights gets the sky trace at `FLOOR_SKY_ROOM_STRENGTH`, and every other scene (open ground,
  * a room lit by lamps alone) comes back unchanged, because the trace made those worse against Cycles. `environment.floorSkyTrace: false`
@@ -383,7 +447,7 @@ export function environmentHasSun(environment) {
  */
 export function applyDefaultFloorSky(parts, environment, options = {}) {
   if (environment?.floorSkyTrace === false || !environmentHasSun(environment)) return { parts, report: null };
-  return applyFloorSkyVisibility(parts, { onlyClosedRooms: true, surfaces: 'all', ...options });
+  return applyFloorSkyVisibility(parts, { onlyClosedRooms: true, surfaces: 'all', sunDirection: unitSunDirection(environment), ...options });
 }
 
 const defaultResults = new WeakMap();
