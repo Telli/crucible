@@ -212,14 +212,10 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
     createElement(documentReference, 'span', { textContent: title }),
   );
   if (lockToggle) {
-    const lockButton = createElement(documentReference, 'button', {
-      type: 'button',
-      textContent: 'Lock',
-      attributes: { 'aria-pressed': 'false', 'aria-label': `${title} uniform lock` },
+    const lockButton = createIconButton(documentReference, 'link', 'Keep the three axes together', {
+      className: 'crucible-studio-mini-btn',
+      attributes: { 'aria-pressed': 'false' },
     });
-    lockButton.style.minBlockSize = '22px';
-    lockButton.style.padding = '1px 7px';
-    lockButton.style.fontSize = '11px';
     lockButton.addEventListener('click', () => {
       locked = !locked;
       lockButton.setAttribute('aria-pressed', locked ? 'true' : 'false');
@@ -793,14 +789,14 @@ export function createStudio(container, {
       const rectangle = triggerButton.getBoundingClientRect();
       const viewportWidth = documentReference.defaultView?.innerWidth ?? 1280;
       const viewportHeight = documentReference.defaultView?.innerHeight ?? 800;
-      const wantedLeft = beside ? rectangle.right + 10 : rectangle.left;
-      const wantedTop = beside ? rectangle.top - 8 : rectangle.bottom + 10;
+      const wantedLeft = beside ? rectangle.right + 16 : rectangle.left - 5;
+      const wantedTop = beside ? rectangle.top - 8 : rectangle.bottom + 14;
       const clampedLeft = Math.max(8, Math.min(wantedLeft, Math.max(8, viewportWidth - 256)));
       const clampedTop = Math.max(8, Math.min(wantedTop, Math.max(8, viewportHeight - 300)));
       // A trigger in the right half opens towards the left, so the menu never leaves the window.
       const opensLeftward = !beside && rectangle.left > viewportWidth / 2;
       popoverElement.style.left = opensLeftward ? 'auto' : `${Math.round(clampedLeft)}px`;
-      popoverElement.style.right = opensLeftward ? `${Math.round(Math.max(8, viewportWidth - rectangle.right))}px` : 'auto';
+      popoverElement.style.right = opensLeftward ? `${Math.round(Math.max(8, viewportWidth - rectangle.right - 5))}px` : 'auto';
       popoverElement.style.top = `${Math.round(clampedTop)}px`;
     });
   }
@@ -1341,7 +1337,9 @@ export function createStudio(container, {
   container.append(root);
 
   function syncFileBanner() {
-    filePill.textContent = `${activeFileName}${isDirty ? ' ●' : ''}`;
+    filePill.textContent = activeFileName;
+    filePill.dataset.dirty = isDirty ? 'true' : 'false';
+    filePill.title = isDirty ? `${activeFileName} has changes that are not saved` : activeFileName;
     filePill.title = activeFilePath ?? activeFileName;
     watchPill.hidden = !activeFilePath;
     syncStatusNote.textContent = activeFilePath

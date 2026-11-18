@@ -3,10 +3,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAgentScene } from '../src/agent-scene.js';
 import {
+  STUDIO_PRIMITIVES,
   STUDIO_TABS,
+  STUDIO_TEMPLATES,
   STUDIO_TOOLS,
+  buildTemplateRecipe,
   createStudioController,
 } from '../src/studio.js';
+import { STUDIO_ICON_NAMES, STUDIO_ICON_PATHS, studioIconPath } from '../src/studio-icons.js';
+import { primitiveGeometrySpec } from '../src/studio-templates.js';
 
 function makeStudioRecipe({ animated = false, loop = true } = {}) {
   const recipe = {
@@ -421,4 +426,43 @@ test('selectionOutline wraps the selected object on screen and follows it', () =
   const orbRadii = controller.selectionOutline().map(point => Math.hypot(point[0] - orbCentre.x, point[1] - orbCentre.y));
   assert.ok(Math.max(...orbRadii) - Math.min(...orbRadii) < 6, 'a sphere outline is round');
   controller.dispose();
+});
+
+test('every Studio template builds a scene the agent recipe accepts, and unknown names say what to pass', () => {
+  for (const templateName of Object.keys(STUDIO_TEMPLATES)) {
+    const recipe = buildTemplateRecipe(templateName);
+    assert.equal(recipe.format, 'crucible.scene');
+    const scene = createAgentScene(recipe);
+    assert.ok(scene.parts.length >= 1, `${templateName} has no parts`);
+    const controller = createStudioController({ scene, viewportWidth: 800, viewportHeight: 600 });
+    assert.deepEqual(controller.exportRecipe().nodes.map(node => node.id), recipe.nodes.map(node => node.id));
+  }
+  assert.deepEqual(buildTemplateRecipe(), buildTemplateRecipe('showcase'));
+  assert.throws(() => buildTemplateRecipe('castle'), /Unknown Studio template "castle"\. Use one of showcase, pedestal, courtyard, empty\./);
+});
+
+test('every Studio primitive has a starting shape that sits on the ground and builds', () => {
+  for (const primitiveType of STUDIO_PRIMITIVES) {
+    const spec = primitiveGeometrySpec(primitiveType);
+    assert.ok(spec.labelPrefix.length > 0);
+    assert.equal(spec.translation.length, 3);
+    assert.equal(spec.rotation.length, 4);
+    assert.equal(spec.scale.length, 3);
+    const scene = createAgentScene({
+      format: 'crucible.scene',
+      schemaVersion: 1,
+      geometries: [{ id: 'shape', ...spec.geometry }],
+      materials: [{ id: 'paint', tag: 'surface', color: [0.5, 0.5, 0.5], roughness: 0.5, metallic: 0 }],
+      nodes: [{ id: 'node', geometry: 'shape', material: 'paint', translation: spec.translation, rotation: spec.rotation, scale: spec.scale }],
+    });
+    assert.equal(scene.parts.length, 1, `${primitiveType} did not build one part`);
+  }
+});
+
+test('every Studio tool and tab has an icon, and an unknown icon name lists the valid ones', () => {
+  for (const name of [...STUDIO_TOOLS, ...STUDIO_TABS]) {
+    assert.match(studioIconPath(name), /^M[\d.]/, `${name} has no path`);
+  }
+  assert.equal(new Set(Object.values(STUDIO_ICON_PATHS)).size, STUDIO_ICON_NAMES.length, 'two icons share one drawing');
+  assert.throws(() => studioIconPath('rocket'), /Unknown Studio icon "rocket"\. Use one of: select, translate/);
 });

@@ -1,1 +1,1 @@
-- Studio follows the brand kit colours and fonts, undo takes back one whole drag at a time and leaves the viewport camera where you left it (#2177).
+- Studio is now one full-screen viewport with floating controls and icons, its handles follow the object's own axes, the selected object gets an outline, undo takes back one whole drag and leaves the camera alone, and the colours and fonts come from the brand kit (#2177).
