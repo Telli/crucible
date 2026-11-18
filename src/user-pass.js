@@ -10,7 +10,7 @@ import { MAXIMUM_MASK_OBJECTS, resolveObjectNames, objectIdentifierSlots, unbind
 // A snippet is checked by shader-snippet-validator.js before it is ever compiled.
 
 /** Names the engine provides to a snippet; a uniform cannot take one. */
-export const USER_PASS_INPUTS = Object.freeze(['sceneColor', 'sceneDepth', 'resolution', 'time', 'depthAt', 'worldPointAt', 'worldNormalAt', 'objectSlotAt', 'sceneObjectIds', 'userPass']);
+export const USER_PASS_INPUTS = Object.freeze(['sceneColor', 'sceneDepth', 'resolution', 'time', 'depthAt', 'worldPointAt', 'worldNormalAt', 'pixelFootprintAt', 'worldFootprintAt', 'bandLimitedLine', 'objectSlotAt', 'sceneObjectIds', 'userPass']);
 export const USER_PASS_SCALE = Object.freeze({ min: 0.05, max: 1 });
 const PASS_NAME_PATTERN = /^[a-z][A-Za-z0-9-]{0,31}$/;
 const PASS_FIELDS = ['name', 'fragment', 'uniforms', 'scale', 'objects'];
@@ -48,7 +48,7 @@ export function normalizeUserPasses(input) {
 /** What scene_capabilities reports under postPasses; it lives here so the scene entry does not carry the text. */
 export const USER_PASS_CAPABILITIES = Object.freeze({
   fields: 'name, fragment (defines vec4 userPass(vec2 uv)), uniforms, scale 0.05-1 (1), objects (1-16 part names)',
-  inputs: 'sceneColor, sceneDepth (sampler2D), resolution (vec2, this pass), time (s; the motion time when the frame has one, else the renderer time), depthAt(uv), worldPointAt(uv), worldNormalAt(uv, from depth), objectSlotAt(uv) (position of the part under uv in the pass objects list, or -1); gl_FragCoord',
+  inputs: 'sceneColor, sceneDepth (sampler2D), resolution (vec2, this pass), time (s; the motion time when the frame has one, else the renderer time), depthAt(uv), worldPointAt(uv), worldNormalAt(uv, from depth), pixelFootprintAt(uv) (vec2, world size of one pixel along screen x and y, 0 in sky), worldFootprintAt(uv, direction) (how far dot(worldPointAt, direction) changes over one pixel), bandLimitedLine(coordinate, pitch, width, footprint) (coverage 0-1 of repeating lines averaged over footprint), objectSlotAt(uv) (position of the part under uv in the pass objects list, or -1); gl_FragCoord',
   uniforms: 'a number is float, [x,y(,z(,w))] is vec2-4, {type:"int",value} is int; name ^[a-z][A-Za-z0-9]{0,31}$',
   rules: 'no # lines, while, do, uniform/layout declarations, gl_ names but gl_FragCoord, or u67_ names; for loops only as for (int i = 0; i < N; i++) { } with literal bounds, 64 iterations at most, loop work under 4096',
   limits: Object.freeze({ maxPasses: SNIPPET_LIMITS.maxPasses, maxBytes: SNIPPET_LIMITS.maxBytes, maxUniforms: SNIPPET_LIMITS.maxUniforms, maxLoopIterations: SNIPPET_LIMITS.maxLoopIterations, maxLoopWork: SNIPPET_LIMITS.maxLoopWork }),
@@ -107,6 +107,43 @@ vec3 worldNormalAt(vec2 uv) {
   vec3 normal = cross(dot(right, right) < dot(left, left) ? right : left, dot(up, up) < dot(down, down) ? up : down);
   float size = length(normal);
   return size > 1e-12 ? normal / size : vec3(0.0, 1.0, 0.0);
+}
+// Pixel footprint: how far one pixel of this pass reaches on the surface, so a pattern drawn by the pass can be filtered.
+// A neighbour that is sky or off screen does not count, and the smaller of the two steps wins, so a depth edge or a
+// silhouette does not stretch the footprint across the gap.
+bool u67_isSurface(vec2 uv) {
+  return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 && depthAt(uv) < 1.0;
+}
+vec3 u67_pixelStep(vec2 uv, vec2 pixelOffset) {
+  vec3 center = worldPointAt(uv);
+  bool hasForward = u67_isSurface(uv + pixelOffset);
+  bool hasBackward = u67_isSurface(uv - pixelOffset);
+  vec3 forward = hasForward ? worldPointAt(uv + pixelOffset) - center : vec3(0.0);
+  vec3 backward = hasBackward ? center - worldPointAt(uv - pixelOffset) : vec3(0.0);
+  if (!hasForward) return backward;
+  if (!hasBackward) return forward;
+  return dot(forward, forward) < dot(backward, backward) ? forward : backward;
+}
+vec2 pixelFootprintAt(vec2 uv) {
+  if (!u67_isSurface(uv)) return vec2(0.0);
+  vec2 pixel = 1.0 / resolution;
+  return vec2(length(u67_pixelStep(uv, vec2(pixel.x, 0.0))), length(u67_pixelStep(uv, vec2(0.0, pixel.y))));
+}
+float worldFootprintAt(vec2 uv, vec3 direction) {
+  if (!u67_isSurface(uv)) return 0.0;
+  vec2 pixel = 1.0 / resolution;
+  return length(vec2(dot(u67_pixelStep(uv, vec2(pixel.x, 0.0)), direction), dot(u67_pixelStep(uv, vec2(0.0, pixel.y)), direction)));
+}
+// Lines of the given width repeating every pitch along coordinate, averaged over footprint (all in the same units).
+// Exact for a box filter while a pixel is narrower than a third of the pitch; wider than that it fades to the mean coverage.
+float bandLimitedLine(float coordinate, float pitch, float width, float footprint) {
+  float safePitch = max(pitch, 1e-6);
+  float filterWidth = max(footprint, 1e-6);
+  float distanceToLine = abs(fract(coordinate / safePitch + 0.5) - 0.5) * safePitch;
+  float overlap = max(0.0, min(distanceToLine + 0.5 * filterWidth, 0.5 * width) - max(distanceToLine - 0.5 * filterWidth, -0.5 * width));
+  float sharp = clamp(overlap / filterWidth, 0.0, 1.0);
+  float mean = clamp(width / safePitch, 0.0, 1.0);
+  return mix(sharp, mean, smoothstep(0.33, 1.0, filterWidth / safePitch));
 }
 `;
 const FRAGMENT_FOOTER = '\nvoid main() { u67_output = userPass(textureCoordinate); }\n';

@@ -32,6 +32,9 @@ You do not declare uniforms or the version line; the engine writes them. A snipp
 | `time` | `float` | Frame time in seconds. A frame drawn at a motion time (a render job with `motion`, a `scene_look` or `scene_review` motion time) reads that motion time, so a still at `motion.start: 6.5` gets 6.5, the same value the video frame at 6.5 s gets. Without a motion time it is the renderer time, which is 0 in a still. |
 | `depthAt(uv)`, `worldPointAt(uv)` | functions | Raw depth, and the world position of the pixel. |
 | `worldNormalAt(uv)` | function | The surface normal, found from neighbouring depth samples. It is exact on flat faces and wrong at silhouettes and in the sky. |
+| `pixelFootprintAt(uv)` | function | `vec2`: the world distance one pixel of this pass covers along screen x and y. 0 in the sky. [How to use it](#filter-a-thin-pattern-with-the-pixel-footprint). |
+| `worldFootprintAt(uv, direction)` | function | How far `dot(worldPointAt(uv), direction)` changes over one pixel. |
+| `bandLimitedLine(coordinate, pitch, width, footprint)` | function | Coverage 0 to 1 of lines that repeat every `pitch`, averaged over `footprint`. |
 | `objectSlotAt(uv)` | function | The position in the pass's `objects` list of the part under `uv`, or -1 for the background, any other part, and a pass with no `objects`. A name that matches several parts gives all of them its one position. Edges are hard: an object ID cannot be antialiased. A name that is not a part in the frame fails the render and lists part names to use. |
 | `gl_FragCoord` | `vec4` | The pixel position inside this pass. |
 
@@ -130,6 +133,28 @@ A material can carry its own fragment code: a GLSL function that changes the sur
 | `mask` | Optional, `"map"`: the snippet may sample `snippetMask` (a `sampler2D`), which is the material's own map or pattern. Load the image as the material `map`; there are no remote URLs. |
 
 Inputs: `color` is the base colour after the map and the vertex tint, `alpha` is the map alpha before the material opacity, `uv` is the texture coordinate and `worldPosition` the position in the world. `discard` removes the fragment in every alpha mode. A lowered `alpha` cuts only when the material has `alphaMode: "mask"`.
+
+## Filter a thin pattern with the pixel footprint
+
+A pass reads one depth sample per pixel, so a pattern it draws itself (lines, a grid, stripes) turns into moire where the pattern is finer than a pixel. MSAA and FXAA run before the passes and cannot fix that. Ask how far one pixel reaches on the surface, and average the pattern over that distance:
+
+- `pixelFootprintAt(uv)` gives the world distance one pixel covers along screen x and along screen y. It is exact on a flat surface. At a depth edge or a silhouette it takes the neighbour on the near surface's side, so the step does not stretch across the gap. It is `vec2(0.0)` in the sky, and wherever the depth buffer is off.
+- `worldFootprintAt(uv, direction)` gives how far the number `dot(worldPointAt(uv), direction)` changes over one pixel. Use it as the footprint of a pattern that is a straight coordinate: `vec3(0.0, 1.0, 0.0)` for rings of height, a plane normal for slices.
+- `bandLimitedLine(coordinate, pitch, width, footprint)` gives the share of a pixel covered by lines of `width` that repeat every `pitch` along `coordinate`, all in the same units. While a pixel is narrower than a third of the pitch it is the exact box-filtered coverage; as the pixel grows to the pitch it fades to the mean coverage `width / pitch`, which is what a super-sampled frame converges to.
+
+Height lines that stay 1.5 pixels wide at any distance:
+
+```glsl
+vec4 userPass(vec2 uv) {
+  vec3 base = texture(sceneColor, uv).rgb;
+  float footprint = worldFootprintAt(uv, vec3(0.0, 1.0, 0.0));
+  if (footprint <= 0.0) return vec4(base, 1.0);
+  float coverage = bandLimitedLine(worldPointAt(uv).y, 0.12, 1.5 * footprint, footprint);
+  return vec4(mix(base, vec3(0.0), coverage), 1.0);
+}
+```
+
+Measured on a 1280 by 720 slab running to the horizon, against a 3x super-sampled reference (green-channel RMSE over the far third of the ground): the same lines drawn with a plain `step` read 46.0, with the helper 26.5. A 24-frame dolly, mean frame-to-frame RMSE: 43.2 plain, 21.7 with the helper, 27.1 for the reference (which includes the real motion). Each call reads a few extra depth samples, so call it once per pixel and reuse the result. A pattern that is not a straight coordinate in world space (noise, a texture) is not covered; filter it by sampling it a few times across the footprint.
 
 ## A water hook, after lighting
 
