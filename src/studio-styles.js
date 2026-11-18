@@ -1,11 +1,11 @@
+// Studio is one full-bleed viewport with floating islands on top: the scene keeps the screen.
 export const STUDIO_CSS = `
 .crucible-studio {
   position: relative;
-  display: grid;
-  grid-template-rows: 42px minmax(0, 1fr) 46px;
+  display: block;
   width: 100%;
   height: 100%;
-  min-height: 540px;
+  min-height: 480px;
   overflow: hidden;
   --studio-bg: var(--site-bg, #17161a);
   --studio-panel: var(--site-sidebar, #201f24);
@@ -14,9 +14,14 @@ export const STUDIO_CSS = `
   --studio-muted: var(--site-muted, #a09ea6);
   --studio-border: var(--site-border, #fefefd1f);
   --studio-accent: var(--site-focus, #fc9132);
+  --studio-ok: #5fc48a;
   --studio-font: Inter, system-ui, sans-serif;
   --studio-font-heading: 'Plus Jakarta Sans', Inter, system-ui, sans-serif;
   --studio-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --studio-edge: 12px;
+  --studio-top: 68px;
+  --studio-rail: 44px;
+  --studio-shadow: 0 10px 28px rgb(0 0 0 / 0.26);
   background: var(--studio-bg);
   color: var(--studio-text);
   font-family: var(--studio-font);
@@ -39,23 +44,36 @@ export const STUDIO_CSS = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  min-inline-size: 28px;
-  min-block-size: 28px;
-  padding: 4px 9px;
+  gap: 6px;
+  min-inline-size: 32px;
+  min-block-size: 32px;
+  padding: 4px 10px;
   border: 1px solid transparent;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--studio-text) 4%, transparent);
+  border-radius: 8px;
+  background: transparent;
   cursor: pointer;
   white-space: nowrap;
 }
+.crucible-studio button[data-icon] {
+  inline-size: 32px;
+  padding: 0;
+  flex-shrink: 0;
+}
+.crucible-studio-icon {
+  inline-size: 17px;
+  block-size: 17px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .crucible-studio button[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--studio-accent) 13%, transparent);
-  border-color: color-mix(in srgb, var(--studio-accent) 40%, transparent);
-  color: var(--studio-accent);
+  background: color-mix(in srgb, var(--studio-text) 14%, transparent);
 }
 .crucible-studio button[aria-disabled="true"] {
-  opacity: 0.38;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 .crucible-studio :focus-visible {
@@ -63,13 +81,13 @@ export const STUDIO_CSS = `
   outline-offset: 2px;
 }
 @media (hover: hover) {
-  .crucible-studio button:not([aria-disabled="true"]):hover {
-    background: color-mix(in srgb, var(--studio-text) 9%, transparent);
+  .crucible-studio button:not([aria-disabled="true"]):not([aria-pressed="true"]):hover {
+    background: color-mix(in srgb, var(--studio-text) 8%, transparent);
   }
 }
 @media (prefers-reduced-motion: no-preference) {
   .crucible-studio button {
-    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+    transition: background 140ms ease, color 140ms ease, opacity 140ms ease;
   }
 }
 @media (pointer: coarse) {
@@ -77,242 +95,25 @@ export const STUDIO_CSS = `
     min-inline-size: 40px;
     min-block-size: 40px;
   }
+  .crucible-studio button[data-icon] { inline-size: 40px; }
+  .crucible-studio { --studio-rail: 52px; }
 }
 
-.crucible-studio-menubar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 12px;
-  background: var(--studio-bg);
-  z-index: 6;
-}
-.crucible-studio[data-desktop="true"] .crucible-studio-menubar {
-  -webkit-app-region: drag;
-  padding-inline-end: 146px;
-}
-.crucible-studio[data-desktop="true"] .crucible-studio-menubar button,
-.crucible-studio[data-desktop="true"] .crucible-studio-menubar [popover],
-.crucible-studio[data-desktop="true"] .crucible-studio-menubar input {
-  -webkit-app-region: no-drag;
-}
-.crucible-studio-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: -0.02em;
-  color: var(--studio-text);
-  padding-inline-end: 4px;
-}
-.crucible-studio-brand svg {
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-}
-.crucible-studio-filepill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 210px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--studio-text) 4%, transparent);
-  font-size: 12px;
-  color: var(--studio-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.crucible-studio-watch-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: var(--studio-surface);
-  color: var(--studio-accent);
-  font-size: 11px;
-  font-weight: 600;
-}
-.crucible-studio-watch-pill[hidden] { display: none; }
-.crucible-studio-menu-cluster {
+.crucible-studio-island {
   display: flex;
   align-items: center;
   gap: 4px;
-}
-.crucible-studio-spacer { flex: 1 1 auto; }
-.crucible-studio-primary-btn {
-  background: color-mix(in srgb, var(--studio-accent) 15%, transparent);
-  border-color: color-mix(in srgb, var(--studio-accent) 33%, transparent);
-  color: var(--studio-accent);
-  font-weight: 600;
-}
-
-.crucible-studio-popover {
-  margin: 0;
-  inset: auto;
-  top: 44px;
-  padding: 8px;
-  min-width: 224px;
-  border: 1px solid color-mix(in srgb, var(--studio-text) 11%, transparent);
-  border-radius: 12px;
+  padding: 5px;
+  border: 1px solid var(--studio-border);
+  border-radius: 13px;
   background: var(--studio-panel);
-  color: var(--studio-text);
-  box-shadow: 0 18px 40px #00000066;
-}
-.crucible-studio-popover:popover-open {
-  display: grid;
-  gap: 6px;
-}
-.crucible-studio-popover-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-.crucible-studio-popover button {
-  justify-content: flex-start;
-  width: 100%;
-  padding: 6px 10px;
-  text-align: left;
-}
-.crucible-studio-popover-note {
-  margin: 2px 4px;
-  font-size: 11.5px;
-  color: var(--studio-muted);
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-.crucible-studio-workspace {
-  display: grid;
-  grid-template-columns: 236px minmax(0, 1fr) 296px;
-  gap: 8px;
-  padding: 8px;
-  min-height: 0;
-}
-.crucible-studio[data-outliner-collapsed="true"] .crucible-studio-workspace {
-  grid-template-columns: 0px minmax(0, 1fr) 296px;
-}
-.crucible-studio[data-inspector-collapsed="true"] .crucible-studio-workspace {
-  grid-template-columns: 236px minmax(0, 1fr) 0px;
-}
-.crucible-studio[data-outliner-collapsed="true"][data-inspector-collapsed="true"] .crucible-studio-workspace {
-  grid-template-columns: 0px minmax(0, 1fr) 0px;
-}
-
-.crucible-studio-dock {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  border: 1px solid color-mix(in srgb, var(--studio-text) 7%, transparent);
-  border-radius: 12px;
-  background: var(--studio-panel);
-  overflow: hidden;
-}
-.crucible-studio[data-outliner-collapsed="true"] .crucible-studio-outliner,
-.crucible-studio[data-inspector-collapsed="true"] .crucible-studio-inspector {
-  visibility: hidden;
-  pointer-events: none;
-  border-width: 0;
-}
-.crucible-studio-dock-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  background: var(--studio-panel);
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--studio-text);
-}
-.crucible-studio-search {
-  padding: 8px 10px 4px;
-}
-.crucible-studio-tree {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  padding: 4px 8px 8px;
-  display: grid;
-  align-content: start;
-  gap: 3px;
-}
-.crucible-studio-tree-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  background: transparent;
-}
-.crucible-studio-tree-row[data-selected="true"] {
-  background: color-mix(in srgb, var(--studio-accent) 11%, transparent);
-  border-color: color-mix(in srgb, var(--studio-accent) 28%, transparent);
-}
-.crucible-studio-tree-select {
-  flex: 1 1 auto;
-  min-width: 0;
-  justify-content: flex-start;
-  padding: 2px 4px;
-  background: transparent;
-  border: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.crucible-studio-tree-select:hover { background: transparent !important; }
-.crucible-studio-tree-badge {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-.crucible-studio-tree-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.crucible-studio-tree-eye {
-  min-inline-size: 26px;
-  min-block-size: 26px;
-  padding: 2px 6px;
-  font-size: 11px;
-}
-.crucible-studio-palette-section {
-  padding: 10px;
-  background: var(--studio-bg);
-  display: grid;
-  gap: 8px;
-}
-.crucible-studio-swatches {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.crucible-studio-swatch-btn {
-  min-inline-size: 26px;
-  min-block-size: 26px;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border-radius: 999px;
-  border: 2px solid color-mix(in srgb, var(--studio-text) 19%, transparent);
-}
-.crucible-studio-swatch-btn[aria-pressed="true"] {
-  border-color: var(--studio-accent);
-  box-shadow: 0 0 0 2px var(--studio-bg);
+  box-shadow: var(--studio-shadow);
+  pointer-events: auto;
 }
 
 .crucible-studio-viewport {
-  position: relative;
-  min-width: 0;
-  min-height: 0;
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--studio-text) 7%, transparent);
+  position: absolute;
+  inset: 0;
   background: var(--studio-bg);
   overflow: hidden;
 }
@@ -335,17 +136,25 @@ export const STUDIO_CSS = `
   pointer-events: all;
   cursor: pointer;
 }
+.crucible-studio-selection-outline {
+  fill: none;
+  stroke: var(--studio-accent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
 .crucible-studio-drop-overlay {
   position: absolute;
-  inset: 12px;
+  inset: var(--studio-edge);
   display: none;
   place-items: center;
-  border: 2px dashed color-mix(in srgb, var(--studio-accent) 60%, transparent);
-  border-radius: 12px;
+  border: 2px dashed color-mix(in srgb, var(--studio-text) 45%, transparent);
+  border-radius: 13px;
   background: color-mix(in srgb, var(--studio-bg) 85%, transparent);
-  color: var(--studio-accent);
+  color: var(--studio-text);
+  font-family: var(--studio-font-heading);
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15px;
   pointer-events: none;
   z-index: 8;
 }
@@ -353,112 +162,316 @@ export const STUDIO_CSS = `
   display: grid;
 }
 
-.crucible-studio-surface {
-  background: color-mix(in srgb, var(--studio-panel) 88%, transparent);
-  backdrop-filter: blur(14px);
-  border: 1px solid color-mix(in srgb, var(--studio-text) 9%, transparent);
-  border-radius: 11px;
+.crucible-studio-menubar {
+  position: absolute;
+  inset: var(--studio-edge) var(--studio-edge) auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 6;
 }
+.crucible-studio[data-desktop="true"] .crucible-studio-menubar {
+  -webkit-app-region: drag;
+  pointer-events: auto;
+  padding-inline-end: 146px;
+}
+.crucible-studio[data-desktop="true"] .crucible-studio-menubar button,
+.crucible-studio[data-desktop="true"] .crucible-studio-menubar a,
+.crucible-studio[data-desktop="true"] .crucible-studio-menubar [popover],
+.crucible-studio[data-desktop="true"] .crucible-studio-menubar input {
+  -webkit-app-region: no-drag;
+}
+.crucible-studio-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 32px;
+  block-size: 32px;
+  border-radius: 8px;
+  color: var(--studio-text);
+}
+.crucible-studio-brand svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.crucible-studio button.crucible-studio-filepill {
+  display: inline-block;
+  max-inline-size: 220px;
+  padding: 4px 8px;
+  font-family: var(--studio-font-heading);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  line-height: 22px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crucible-studio-watch-pill {
+  inline-size: 8px;
+  block-size: 8px;
+  margin-inline: 2px 8px;
+  border-radius: 999px;
+  background: var(--studio-ok);
+  flex-shrink: 0;
+}
+.crucible-studio-watch-pill[hidden] { display: none; }
+.crucible-studio-spacer { flex: 1 1 auto; }
+.crucible-studio button.crucible-studio-primary-btn {
+  padding-inline: 12px 14px;
+  background: var(--studio-text);
+  color: var(--studio-bg);
+  font-weight: 600;
+}
+@media (hover: hover) {
+  .crucible-studio button.crucible-studio-primary-btn:not([aria-disabled="true"]):hover {
+    background: color-mix(in srgb, var(--studio-text) 86%, var(--studio-bg));
+  }
+}
+
+.crucible-studio-popover {
+  margin: 0;
+  inset: auto;
+  padding: 6px;
+  min-width: 224px;
+  border: 1px solid var(--studio-border);
+  border-radius: 13px;
+  background: var(--studio-panel);
+  color: var(--studio-text);
+  box-shadow: var(--studio-shadow);
+}
+.crucible-studio-popover:popover-open {
+  display: grid;
+  gap: 2px;
+}
+.crucible-studio-popover-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+}
+.crucible-studio-popover button {
+  justify-content: flex-start;
+  width: 100%;
+  padding: 6px 10px;
+  text-align: left;
+}
+.crucible-studio-popover-note {
+  margin: 8px 10px 2px;
+  font-size: 11.5px;
+  color: var(--studio-muted);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
 .crucible-studio-toolbar {
   position: absolute;
-  top: 12px;
-  left: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
-  padding: 5px;
-  max-width: calc(100% - 210px);
-  z-index: 4;
+  inset-block-start: var(--studio-top);
+  inset-inline-start: var(--studio-edge);
+  flex-direction: column;
+  gap: 12px;
+  z-index: 5;
 }
 .crucible-studio-group {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
-.crucible-studio-separator {
-  inline-size: 1px;
-  block-size: 18px;
-  margin-inline: 3px;
-  border-inline-start: 1px solid color-mix(in srgb, var(--studio-text) 13%, transparent);
-}
-.crucible-studio-viewcube {
+
+.crucible-studio-dock {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  display: grid;
-  gap: 5px;
-  padding: 6px;
+  inset-block-start: var(--studio-top);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--studio-border);
+  border-radius: 13px;
+  background: var(--studio-panel);
+  box-shadow: var(--studio-shadow);
+  overflow: hidden;
   z-index: 4;
 }
-.crucible-studio-viewcube-row {
+.crucible-studio-outliner {
+  inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
+  inline-size: 228px;
+  max-block-size: min(440px, calc(100% - var(--studio-top) - 84px));
+}
+.crucible-studio-inspector {
+  inset-inline-end: var(--studio-edge);
+  inline-size: 284px;
+  max-block-size: calc(100% - var(--studio-top) - 84px);
+}
+.crucible-studio[data-outliner-collapsed="true"] .crucible-studio-outliner,
+.crucible-studio[data-inspector-collapsed="true"] .crucible-studio-inspector {
+  display: none;
+}
+.crucible-studio-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 4px 12px;
+  font-family: var(--studio-font-heading);
+  font-weight: 600;
+  font-size: 13px;
+}
+.crucible-studio-dock-head input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  font-family: var(--studio-font);
+  font-weight: 400;
+  font-size: 12px;
+}
+.crucible-studio-tree {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px 6px 8px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
+  align-content: start;
+  gap: 1px;
 }
-.crucible-studio-viewcube button {
-  min-inline-size: 32px;
-  min-block-size: 26px;
-  padding: 3px 6px;
-  font-size: 11px;
+.crucible-studio-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 0 6px;
+  border-radius: 8px;
 }
+.crucible-studio-tree-row[data-selected="true"] {
+  background: color-mix(in srgb, var(--studio-text) 11%, transparent);
+}
+.crucible-studio button.crucible-studio-tree-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-start;
+  padding: 2px 4px;
+  background: transparent;
+  overflow: hidden;
+}
+.crucible-studio-tree-select[data-hidden="true"] { color: var(--studio-muted); }
+.crucible-studio-tree-badge {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.crucible-studio-tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crucible-studio button.crucible-studio-tree-eye {
+  min-inline-size: 28px;
+  min-block-size: 28px;
+  inline-size: 28px;
+  color: var(--studio-muted);
+  opacity: 0;
+}
+.crucible-studio-tree-row:hover .crucible-studio-tree-eye,
+.crucible-studio-tree-row:focus-within .crucible-studio-tree-eye,
+.crucible-studio-tree-row[data-selected="true"] .crucible-studio-tree-eye,
+.crucible-studio-tree-eye[data-hidden="true"] { opacity: 1; }
+@media (hover: none) {
+  .crucible-studio button.crucible-studio-tree-eye { opacity: 1; }
+}
+.crucible-studio-palette-section {
+  padding: 8px 12px 12px;
+}
+.crucible-studio-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.crucible-studio button.crucible-studio-swatch-btn,
+.crucible-studio button.crucible-studio-swatch-add {
+  min-inline-size: 24px;
+  min-block-size: 24px;
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 0;
+  border-radius: 999px;
+}
+.crucible-studio button.crucible-studio-swatch-btn {
+  border: 1px solid var(--studio-border);
+}
+.crucible-studio button.crucible-studio-swatch-btn[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--studio-panel), 0 0 0 3.5px var(--studio-text);
+}
+.crucible-studio button.crucible-studio-swatch-add {
+  color: var(--studio-muted);
+  border: 1px dashed color-mix(in srgb, var(--studio-text) 30%, transparent);
+}
+.crucible-studio-swatch-add .crucible-studio-icon {
+  inline-size: 13px;
+  block-size: 13px;
+}
+
 .crucible-studio-hintbar {
   position: absolute;
-  left: 12px;
-  bottom: 12px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--studio-bg) 72%, transparent);
-  color: var(--studio-muted);
-  font-size: 11px;
+  inset-inline-start: 50%;
+  inset-block-end: 76px;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--studio-panel);
+  border: 1px solid var(--studio-border);
+  color: var(--studio-text);
+  font-family: var(--studio-font-mono);
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   pointer-events: none;
   z-index: 3;
 }
+.crucible-studio-hintbar:empty { display: none; }
 .crucible-studio-status {
   position: absolute;
-  left: 50%;
-  bottom: 14px;
+  inset-inline-start: 50%;
+  inset-block-start: 18px;
   transform: translateX(-50%);
+  max-inline-size: calc(100% - 420px);
   margin: 0;
-  padding: 6px 12px;
+  padding: 6px 14px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--studio-bg) 95%, transparent);
-  border: 1px solid color-mix(in srgb, var(--studio-accent) 27%, transparent);
+  background: var(--studio-panel);
+  border: 1px solid var(--studio-border);
+  box-shadow: var(--studio-shadow);
   font-size: 12px;
-  color: var(--studio-accent);
+  color: var(--studio-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   pointer-events: none;
-  z-index: 6;
+  z-index: 7;
 }
 .crucible-studio-status:empty { display: none; }
 
 .crucible-studio-tablist {
   display: flex;
   gap: 2px;
-  padding: 6px 8px 0;
-  background: var(--studio-panel);
-  overflow-x: auto;
-  scrollbar-width: none;
+  padding: 5px;
 }
 .crucible-studio-tablist button {
   position: relative;
-  flex: 1 0 auto;
-  background: transparent;
-  border-radius: 7px 7px 0 0;
+  flex: 1 1 0;
+  inline-size: auto;
   color: var(--studio-muted);
-  font-size: 12px;
 }
 .crucible-studio-tablist button[aria-selected="true"] {
   color: var(--studio-text);
+  background: color-mix(in srgb, var(--studio-text) 11%, transparent);
 }
 .crucible-studio-tablist button[aria-selected="true"]::after {
   content: "";
   position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 0;
-  height: 2px;
-  border-radius: 2px;
+  inset-inline-start: calc(50% - 2px);
+  inset-block-end: 2px;
+  inline-size: 4px;
+  block-size: 4px;
+  border-radius: 999px;
   background: var(--studio-accent);
 }
 .crucible-studio-panels {
@@ -467,12 +480,24 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-panel-body {
   display: grid;
-  gap: 12px;
-  padding: 12px;
+  gap: 14px;
+  padding: 8px 12px 14px;
+}
+.crucible-studio-name-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.crucible-studio-name-row input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  margin-inline-end: 4px;
+  font-family: var(--studio-font-heading);
+  font-weight: 600;
 }
 .crucible-studio-field {
   display: grid;
-  gap: 5px;
+  gap: 6px;
 }
 .crucible-studio-field-head {
   display: flex;
@@ -510,12 +535,17 @@ export const STUDIO_CSS = `
 .crucible-studio select,
 .crucible-studio textarea {
   width: 100%;
-  padding: 6px 8px;
-  border: 1px solid color-mix(in srgb, var(--studio-text) 10%, transparent);
-  border-radius: 7px;
-  background: var(--studio-bg);
+  min-block-size: 30px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--studio-text) 7%, transparent);
   color: var(--studio-text);
   font-variant-numeric: tabular-nums;
+}
+.crucible-studio select option {
+  background: var(--studio-panel);
+  color: var(--studio-text);
 }
 .crucible-studio input[type="range"] {
   width: 100%;
@@ -526,15 +556,39 @@ export const STUDIO_CSS = `
   width: 100%;
   height: 30px;
   padding: 2px;
-  border: 1px solid color-mix(in srgb, var(--studio-text) 10%, transparent);
-  border-radius: 7px;
-  background: var(--studio-bg);
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: transparent;
   cursor: pointer;
 }
 .crucible-studio-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
+}
+.crucible-studio-chips button,
+.crucible-studio-panel-body > button,
+.crucible-studio-bookmark-row button,
+.crucible-studio-viewcube button {
+  background: color-mix(in srgb, var(--studio-text) 6%, transparent);
+}
+.crucible-studio-chips button[aria-pressed="true"],
+.crucible-studio-viewcube button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--studio-text) 18%, transparent);
+}
+.crucible-studio-viewcube {
+  display: grid;
+  gap: 4px;
+}
+.crucible-studio-viewcube-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+.crucible-studio-viewcube button {
+  min-inline-size: 0;
+  padding: 3px 6px;
+  font-size: 11.5px;
 }
 .crucible-studio-sunpad {
   width: 120px;
@@ -542,7 +596,7 @@ export const STUDIO_CSS = `
   justify-self: center;
   border-radius: 999px;
   background: radial-gradient(circle at 50% 50%, var(--studio-surface), var(--studio-bg));
-  border: 1px solid color-mix(in srgb, var(--studio-text) 12%, transparent);
+  border: 1px solid var(--studio-border);
   cursor: crosshair;
   touch-action: none;
 }
@@ -557,53 +611,80 @@ export const STUDIO_CSS = `
 }
 
 .crucible-studio-bottombar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 12px;
-  background: var(--studio-bg);
-  z-index: 4;
+  position: absolute;
+  inset-inline-start: 50%;
+  inset-block-end: var(--studio-edge);
+  transform: translateX(-50%);
+  inline-size: min(620px, calc(100% - var(--studio-edge) * 2));
+  gap: 8px;
+  z-index: 5;
 }
 .crucible-studio-scrub {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex: 1 1 240px;
+  min-inline-size: 0;
+}
+.crucible-studio-scrub input[type="range"] {
+  flex: 1 1 auto;
+  min-inline-size: 60px;
+  margin-inline: 6px;
 }
 .crucible-studio-scrub output {
   white-space: nowrap;
   flex-shrink: 0;
+  padding-inline-end: 8px;
+  font-family: var(--studio-font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  color: var(--studio-text);
-}
-.crucible-studio-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--studio-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
-.crucible-studio-gpu-badge {
-  padding: 3px 8px;
+.crucible-studio-shots {
+  display: flex;
+  gap: 4px;
+  max-inline-size: 42%;
+  overflow: hidden;
+}
+.crucible-studio-shots:empty { display: none; }
+.crucible-studio-shots button {
+  min-block-size: 28px;
+  padding: 2px 10px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--studio-text) 4%, transparent);
-  color: var(--studio-accent);
-  font-size: 11px;
+  background: color-mix(in srgb, var(--studio-text) 7%, transparent);
+  font-size: 11.5px;
 }
+
+.crucible-studio[data-compact="true"] .crucible-studio-outliner {
+  inline-size: min(228px, calc(100% - var(--studio-edge) * 3 - var(--studio-rail)));
+  max-block-size: min(300px, calc(100% - var(--studio-top) - 84px));
+  z-index: 5;
+}
+.crucible-studio[data-compact="true"] .crucible-studio-inspector {
+  inset-block-start: auto;
+  inset-block-end: 72px;
+  inset-inline: var(--studio-edge);
+  inline-size: auto;
+  max-block-size: min(46%, 360px);
+}
+.crucible-studio[data-compact="true"] .crucible-studio-shots { display: none; }
+.crucible-studio[data-compact="true"] .crucible-studio-status {
+  inset-block-start: var(--studio-top);
+  max-inline-size: calc(100% - 140px);
+}
+.crucible-studio[data-compact="true"] button.crucible-studio-filepill { max-inline-size: 120px; }
 
 .crucible-studio dialog {
   width: min(560px, calc(100vw - 32px));
   padding: 18px;
-  border: 1px solid color-mix(in srgb, var(--studio-text) 13%, transparent);
+  border: 1px solid var(--studio-border);
   border-radius: 14px;
   background: var(--studio-panel);
   color: var(--studio-text);
 }
 .crucible-studio dialog h2 {
   margin: 0 0 10px;
+  font-family: var(--studio-font-heading);
   font-size: 15px;
 }
 .crucible-studio dialog:modal {
@@ -620,10 +701,13 @@ export const STUDIO_CSS = `
   gap: 8px;
   margin-top: 12px;
 }
+.crucible-studio dialog button {
+  background: color-mix(in srgb, var(--studio-text) 7%, transparent);
+}
 .crucible-studio-shortcuts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 16px;
+  gap: 6px 16px;
   font-size: 12.5px;
 }
 .crucible-studio-shortcut-item {
@@ -631,23 +715,15 @@ export const STUDIO_CSS = `
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  padding: 4px 6px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--studio-text) 3%, transparent);
+  padding: 3px 0;
 }
 .crucible-studio kbd {
   padding: 2px 6px;
   border-radius: 5px;
-  background: var(--studio-bg);
-  border: 1px solid color-mix(in srgb, var(--studio-text) 13%, transparent);
+  background: color-mix(in srgb, var(--studio-text) 8%, transparent);
   font-family: var(--studio-font-mono);
   font-size: 11px;
-  color: var(--studio-accent);
-}
-@media (max-width: 960px) {
-  .crucible-studio-workspace {
-    grid-template-columns: 0px minmax(0, 1fr) 264px;
-  }
+  color: var(--studio-text);
 }
 @media (forced-colors: active) {
   .crucible-studio button[aria-pressed="true"] {

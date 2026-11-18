@@ -93,7 +93,7 @@ async function mountStudioPage() {
     return;
   }
   await loadAllAgentSceneModules();
-  const studio = createStudio(root, { recipe: defaultStudioRecipe() });
+  const studio = createStudio(root, { recipe: defaultStudioRecipe(), homeHref: './' });
   studio.selectNode('gyro-ring');
   window.__studioPage = studio;
 }

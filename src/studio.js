@@ -9,6 +9,7 @@ import { exportGlb } from './export.js';
 import { encodePack } from './scene-pack-format.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
+import { studioIconPath } from './studio-icons.js';
 import {
   STUDIO_LENS_PRESETS,
   STUDIO_MATERIAL_PRESETS,
@@ -45,7 +46,7 @@ const AXIS_COLORS = Object.freeze({ x: '#ee7a6c', y: '#5fc48a', z: '#5ea8ff' });
 const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
 const STUDIO_STYLE_ID = 'crucible-studio-styles';
-const VIEWPORT_HINT_TEXT = 'Click pick · Drag orbit · Shift+Drag pan · Wheel zoom · G Move · R Rotate · S Scale · Q Select · F Frame';
+const COMPACT_WIDTH = 820;
 
 function injectStudioStyles(documentReference) {
   let style = documentReference.getElementById(STUDIO_STYLE_ID);
@@ -82,6 +83,27 @@ function createSvgElement(documentReference, tagName, attributes = {}) {
     element.setAttribute(name, String(value));
   }
   return element;
+}
+
+function createIcon(documentReference, iconName) {
+  const icon = createSvgElement(documentReference, 'svg', { viewBox: '0 0 24 24', class: 'crucible-studio-icon', 'aria-hidden': 'true' });
+  icon.append(createSvgElement(documentReference, 'path', { d: studioIconPath(iconName) }));
+  return icon;
+}
+
+function setButtonIcon(button, iconName, label) {
+  if (button.dataset.icon !== iconName) {
+    button.dataset.icon = iconName;
+    button.replaceChildren(createIcon(button.ownerDocument, iconName));
+  }
+  button.setAttribute('aria-label', label);
+  button.title = label;
+}
+
+function createIconButton(documentReference, iconName, label, properties = {}) {
+  const button = createElement(documentReference, 'button', { type: 'button', ...properties });
+  setButtonIcon(button, iconName, label);
+  return button;
 }
 
 function wireRovingFocusFallback(container, items, { vertical = false, followFocus = false, onSelect } = {}) {
@@ -371,13 +393,20 @@ function buildBrandMarkSvg(documentReference) {
 
 function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
   gizmoSvg.replaceChildren();
+  const width = controller.viewportWidth;
+  const height = controller.viewportHeight;
+  gizmoSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  const outline = controller.selectionOutline();
+  if (outline) {
+    gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
+      class: 'crucible-studio-selection-outline',
+      points: outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
+    }));
+  }
   const handles = controller.gizmoHandles();
   if (!handles || !handles.origin.visible) {
     return;
   }
-  const width = controller.viewportWidth;
-  const height = controller.viewportHeight;
-  gizmoSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   const origin = handles.origin;
   const tool = controller.tool;
 
@@ -538,6 +567,7 @@ export function createStudio(container, {
   rendererOptions = {},
   desktop = null,
   fileName: initialFileName = 'untitled.scene.json',
+  homeHref = null,
   watchedPath: initialWatchedPath = null,
   onDirtyChange,
 } = {}) {
@@ -589,16 +619,26 @@ export function createStudio(container, {
   });
 
   // Top Workspace Header Bar
-  const filePill = createElement(documentReference, 'span', { className: 'crucible-studio-filepill', textContent: activeFileName });
-  const watchPill = createElement(documentReference, 'span', { className: 'crucible-studio-watch-pill', textContent: 'AI Live', hidden: !activeFilePath });
-  const newMenuButton = createElement(documentReference, 'button', { type: 'button', textContent: 'New ▾', attributes: { popovertarget: 'crucible-studio-pop-new' } });
-  const openButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Open' });
+  const filePill = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-filepill', textContent: activeFileName, attributes: { popovertarget: 'crucible-studio-pop-new' } });
+  const watchPill = createElement(documentReference, 'span', {
+    className: 'crucible-studio-watch-pill',
+    hidden: !activeFilePath,
+    title: 'Reloads when the agent edits this file',
+    attributes: { role: 'img', 'aria-label': 'Reloads when the agent edits this file' },
+  });
+  const openButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Open…' });
   const saveButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save' });
-  const saveAsButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save As' });
-  const addMenuButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-primary-btn', textContent: '+ Add ▾', attributes: { popovertarget: 'crucible-studio-pop-add' } });
-  const aiSyncMenuButton = createElement(documentReference, 'button', { type: 'button', textContent: 'AI Sync ▾', attributes: { popovertarget: 'crucible-studio-pop-sync' } });
-  const exportMenuButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Export ▾', attributes: { popovertarget: 'crucible-studio-pop-export' } });
-  const shortcutsButton = createElement(documentReference, 'button', { type: 'button', textContent: '?', attributes: { 'aria-label': 'Keyboard shortcuts' } });
+  const saveAsButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save as…' });
+  const addMenuButton = createIconButton(documentReference, 'add', 'Add an object or a light', { attributes: { popovertarget: 'crucible-studio-pop-add' } });
+  const aiSyncMenuButton = createIconButton(documentReference, 'agent', 'Work with an AI agent', { attributes: { popovertarget: 'crucible-studio-pop-sync' } });
+  const exportMenuButton = createElement(
+    documentReference,
+    'button',
+    { type: 'button', className: 'crucible-studio-primary-btn', attributes: { popovertarget: 'crucible-studio-pop-export' } },
+    createIcon(documentReference, 'export'),
+    createElement(documentReference, 'span', { textContent: 'Export' }),
+  );
+  const shortcutsButton = createIconButton(documentReference, 'help', 'Keyboard shortcuts');
 
   const newPopover = createElement(documentReference, 'div', {
     id: 'crucible-studio-pop-new',
@@ -629,7 +669,7 @@ export function createStudio(container, {
   const primitiveGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid' });
   for (const primitiveType of STUDIO_PRIMITIVES) {
     const label = primitiveType === 'icoSphere' ? 'Icosphere' : primitiveType[0].toUpperCase() + primitiveType.slice(1);
-    const addPrimitiveButton = createElement(documentReference, 'button', { type: 'button', textContent: `+ ${label}` });
+    const addPrimitiveButton = createElement(documentReference, 'button', { type: 'button', textContent: label });
     addPrimitiveButton.addEventListener('click', async () => {
       addPopover.hidePopover?.();
       try {
@@ -644,8 +684,8 @@ export function createStudio(container, {
     });
     primitiveGrid.append(addPrimitiveButton);
   }
-  const addPointLightButton = createElement(documentReference, 'button', { type: 'button', textContent: '+ Point light' });
-  const addSpotLightButton = createElement(documentReference, 'button', { type: 'button', textContent: '+ Spot light' });
+  const addPointLightButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Point light' });
+  const addSpotLightButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Spot light' });
   addPointLightButton.addEventListener('click', () => {
     addPopover.hidePopover?.();
     try {
@@ -668,11 +708,11 @@ export function createStudio(container, {
 
   const syncStatusNote = createElement(documentReference, 'p', {
     className: 'crucible-studio-popover-note',
-    textContent: activeFilePath ? `Watching: ${activeFilePath}` : 'Save or open a .json file to sync two-way with AI agents on disk.',
+    textContent: activeFilePath ? `Watching: ${activeFilePath}` : 'Save the scene to a file and the agent can edit it while you watch.',
   });
   const autoReloadButton = createElement(documentReference, 'button', {
     type: 'button',
-    textContent: 'Auto-reload AI file edits',
+    textContent: 'Reload when the agent edits',
     attributes: { 'aria-pressed': 'true' },
   });
   autoReloadButton.addEventListener('click', () => {
@@ -680,7 +720,7 @@ export function createStudio(container, {
     autoReloadButton.setAttribute('aria-pressed', autoReloadWatch ? 'true' : 'false');
     announce(autoReloadWatch ? 'Auto-reload enabled' : 'Auto-reload paused');
   });
-  const copyPromptButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Copy AI agent handoff' });
+  const copyPromptButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Copy a prompt for the agent' });
   copyPromptButton.addEventListener('click', async () => {
     aiSyncPopover.hidePopover?.();
     const target = activeFilePath ?? activeFileName;
@@ -698,79 +738,95 @@ export function createStudio(container, {
     attributes: { popover: 'auto' },
   }, syncStatusNote, autoReloadButton, copyPromptButton);
 
-  const exportPngButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save PNG still' });
-  const exportGlbButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Export GLB mesh' });
-  const exportPackButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Pack Web (<crucible-scene>)' });
-  const editJsonButton = createElement(documentReference, 'button', { type: 'button', textContent: 'View / Paste Recipe JSON' });
+  const exportPngButton = createElement(documentReference, 'button', { type: 'button', textContent: 'PNG image' });
+  const exportGlbButton = createElement(documentReference, 'button', { type: 'button', textContent: 'GLB model' });
+  const exportPackButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Web pack' });
+  const editJsonButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Recipe JSON' });
   const exportPopover = createElement(documentReference, 'div', {
     id: 'crucible-studio-pop-export',
     className: 'crucible-studio-popover',
     attributes: { popover: 'auto' },
-  }, exportPngButton, exportGlbButton, exportPackButton, editJsonButton);
+  }, exportPngButton, exportGlbButton, exportPackButton);
+  newPopover.prepend(
+    openButton,
+    saveButton,
+    saveAsButton,
+    editJsonButton,
+    createElement(documentReference, 'p', { className: 'crucible-studio-popover-note', textContent: 'New scene' }),
+  );
+  for (const popoverElement of [newPopover, addPopover, exportPopover]) {
+    popoverElement.addEventListener('click', event => {
+      if (event.target.closest?.('button')) popoverElement.hidePopover?.();
+    });
+  }
 
   const menubarElement = createElement(
     documentReference,
     'header',
-    { className: 'crucible-studio-menubar', attributes: { 'aria-label': 'Studio workspace bar' } },
-    createElement(documentReference, 'span', { className: 'crucible-studio-brand' }, buildBrandMarkSvg(documentReference), createElement(documentReference, 'span', { textContent: 'Crucible Studio' })),
-    filePill,
-    watchPill,
-    createElement(documentReference, 'div', { className: 'crucible-studio-menu-cluster' }, newMenuButton, openButton, saveButton, saveAsButton, addMenuButton),
+    { className: 'crucible-studio-menubar', attributes: { 'aria-label': 'Studio' } },
+    createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-island' },
+      createElement(
+        documentReference,
+        homeHref ? 'a' : 'span',
+        homeHref
+          ? { className: 'crucible-studio-brand', href: homeHref, attributes: { 'aria-label': 'Crucible home' } }
+          : { className: 'crucible-studio-brand' },
+        buildBrandMarkSvg(documentReference),
+      ),
+      filePill,
+      watchPill,
+    ),
     createElement(documentReference, 'span', { className: 'crucible-studio-spacer' }),
-    createElement(documentReference, 'div', { className: 'crucible-studio-menu-cluster' }, aiSyncMenuButton, exportMenuButton, shortcutsButton),
+    createElement(documentReference, 'div', { className: 'crucible-studio-island' }, aiSyncMenuButton, shortcutsButton, exportMenuButton),
     newPopover,
     addPopover,
     aiSyncPopover,
     exportPopover,
   );
 
-  function bindPopoverAnchor(triggerButton, popoverElement) {
+  function bindPopoverAnchor(triggerButton, popoverElement, { beside = false } = {}) {
     popoverElement.addEventListener('beforetoggle', event => {
       if (event.newState !== 'open') return;
       const rectangle = triggerButton.getBoundingClientRect();
       const viewportWidth = documentReference.defaultView?.innerWidth ?? 1280;
-      const clampedLeft = Math.max(8, Math.min(rectangle.left, Math.max(8, viewportWidth - 256)));
-      popoverElement.style.left = `${Math.round(clampedLeft)}px`;
-      popoverElement.style.top = `${Math.round(rectangle.bottom + 6)}px`;
+      const viewportHeight = documentReference.defaultView?.innerHeight ?? 800;
+      const wantedLeft = beside ? rectangle.right + 10 : rectangle.left;
+      const wantedTop = beside ? rectangle.top - 8 : rectangle.bottom + 10;
+      const clampedLeft = Math.max(8, Math.min(wantedLeft, Math.max(8, viewportWidth - 256)));
+      const clampedTop = Math.max(8, Math.min(wantedTop, Math.max(8, viewportHeight - 300)));
+      // A trigger in the right half opens towards the left, so the menu never leaves the window.
+      const opensLeftward = !beside && rectangle.left > viewportWidth / 2;
+      popoverElement.style.left = opensLeftward ? 'auto' : `${Math.round(clampedLeft)}px`;
+      popoverElement.style.right = opensLeftward ? `${Math.round(Math.max(8, viewportWidth - rectangle.right))}px` : 'auto';
+      popoverElement.style.top = `${Math.round(clampedTop)}px`;
     });
   }
-  bindPopoverAnchor(newMenuButton, newPopover);
-  bindPopoverAnchor(addMenuButton, addPopover);
+  bindPopoverAnchor(filePill, newPopover);
+  bindPopoverAnchor(addMenuButton, addPopover, { beside: true });
   bindPopoverAnchor(aiSyncMenuButton, aiSyncPopover);
   bindPopoverAnchor(exportMenuButton, exportPopover);
 
   // Left Outliner + Material Palette Dock
-  const outlinerSearch = createElement(documentReference, 'input', { type: 'search', placeholder: 'Filter nodes…', attributes: { 'aria-label': 'Filter scene nodes' } });
+  const outlinerSearch = createElement(documentReference, 'input', { type: 'search', placeholder: 'Filter', attributes: { 'aria-label': 'Filter the scene list' } });
   const outlinerTree = createElement(documentReference, 'div', { className: 'crucible-studio-tree', attributes: { role: 'tree', 'aria-label': 'Scene hierarchy' } });
   const swatchContainer = createElement(documentReference, 'div', { className: 'crucible-studio-swatches' });
-  const newMaterialQuickButton = createElement(documentReference, 'button', { type: 'button', textContent: '+ Mat' });
-  newMaterialQuickButton.style.minBlockSize = '24px';
-  newMaterialQuickButton.style.padding = '2px 8px';
-  newMaterialQuickButton.style.fontSize = '11px';
+  const newMaterialQuickButton = createIconButton(documentReference, 'add', 'New material', { className: 'crucible-studio-swatch-add' });
   newMaterialQuickButton.addEventListener('click', () => {
     const created = controller.createMaterial({ assignToNodeId: controller.selectedNodeId });
     selectInspectorTab('material');
     announce(`Created ${created.id}`);
   });
-  const collapseOutlinerButton = createElement(documentReference, 'button', { type: 'button', textContent: '⟨', attributes: { 'aria-label': 'Collapse outliner' } });
-  collapseOutlinerButton.style.minBlockSize = '24px';
-  collapseOutlinerButton.style.padding = '2px 7px';
-  collapseOutlinerButton.addEventListener('click', () => setOutlinerCollapsed(true));
 
   const outlinerDock = createElement(
     documentReference,
     'aside',
     { className: 'crucible-studio-dock crucible-studio-outliner', attributes: { 'aria-label': 'Scene outliner' } },
-    createElement(documentReference, 'div', { className: 'crucible-studio-dock-head' }, createElement(documentReference, 'span', { textContent: 'Outliner' }), collapseOutlinerButton),
-    createElement(documentReference, 'div', { className: 'crucible-studio-search' }, outlinerSearch),
+    createElement(documentReference, 'div', { className: 'crucible-studio-dock-head' }, createElement(documentReference, 'span', { textContent: 'Scene' }), outlinerSearch),
     outlinerTree,
-    createElement(
-      documentReference,
-      'div',
-      { className: 'crucible-studio-palette-section' },
-      createElement(documentReference, 'div', { className: 'crucible-studio-field-head' }, createElement(documentReference, 'span', { textContent: 'Scene materials' }), newMaterialQuickButton),
-      swatchContainer,
-    ),
+    createElement(documentReference, 'div', { className: 'crucible-studio-palette-section' }, swatchContainer),
   );
   outlinerSearch.addEventListener('input', () => syncUi());
 
@@ -786,8 +842,8 @@ export function createStudio(container, {
   }
   const gizmoSvg = createSvgElement(documentReference, 'svg', { class: 'crucible-studio-gizmo', 'aria-hidden': 'true' });
   const statusRegion = createElement(documentReference, 'p', { className: 'crucible-studio-status', attributes: { role: 'status' } });
-  const hintBar = createElement(documentReference, 'div', { className: 'crucible-studio-hintbar', textContent: VIEWPORT_HINT_TEXT });
-  const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: 'Drop .scene.json to load in Crucible Studio' });
+  const hintBar = createElement(documentReference, 'div', { className: 'crucible-studio-hintbar' });
+  const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: 'Drop a scene.json to open it' });
 
   function announce(message) {
     statusRegion.textContent = message;
@@ -799,9 +855,8 @@ export function createStudio(container, {
 
   // Viewport Top-Left Toolbar (Modern Web Guidance: toolbar pattern)
   const toolLabels = { select: 'Select', translate: 'Move', rotate: 'Rotate', scale: 'Scale', snap: 'Snap' };
-  const toolButtons = STUDIO_TOOLS.map(tool => createElement(documentReference, 'button', {
-    type: 'button',
-    textContent: toolLabels[tool],
+  const toolShortcuts = { select: 'Q', translate: 'G', rotate: 'R', scale: 'S', snap: 'T' };
+  const toolButtons = STUDIO_TOOLS.map(tool => createIconButton(documentReference, tool, `${toolLabels[tool]} (${toolShortcuts[tool]})`, {
     dataset: { tool },
     attributes: { 'aria-pressed': tool === controller.tool ? 'true' : 'false' },
   }));
@@ -809,12 +864,12 @@ export function createStudio(container, {
     button.addEventListener('click', () => controller.setTool(button.dataset.tool));
   });
 
-  const undoButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Undo', attributes: { 'aria-disabled': 'true' } });
-  const redoButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Redo', attributes: { 'aria-disabled': 'true' } });
-  const duplicateButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Dup', title: 'Duplicate selected node (Ctrl+D)' });
-  const deleteButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Del', title: 'Delete selected node (Del)' });
-  const frameButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Frame' });
-  const toggleDocksButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Panels', attributes: { 'aria-pressed': 'true' } });
+  const undoButton = createIconButton(documentReference, 'undo', 'Undo (Ctrl+Z)', { attributes: { 'aria-disabled': 'true' } });
+  const redoButton = createIconButton(documentReference, 'redo', 'Redo (Ctrl+Shift+Z)', { attributes: { 'aria-disabled': 'true' } });
+  const duplicateButton = createIconButton(documentReference, 'duplicate', 'Duplicate (Ctrl+D)');
+  const deleteButton = createIconButton(documentReference, 'remove', 'Delete (Del)');
+  const frameButton = createIconButton(documentReference, 'frame', 'Frame in view (F)');
+  const toggleDocksButton = createIconButton(documentReference, 'panels', 'Show or hide the panels', { attributes: { 'aria-pressed': 'true' } });
 
   undoButton.addEventListener('click', () => {
     if (undoButton.getAttribute('aria-disabled') === 'true') return;
@@ -856,14 +911,14 @@ export function createStudio(container, {
     documentReference,
     'div',
     {
-      className: 'crucible-studio-toolbar crucible-studio-surface',
-      attributes: { role: 'toolbar', focusgroup: 'toolbar wrap', 'aria-label': 'Viewport transform tools', 'aria-controls': canvas.id },
+      className: 'crucible-studio-toolbar crucible-studio-island',
+      attributes: { role: 'toolbar', focusgroup: 'toolbar wrap', 'aria-orientation': 'vertical', 'aria-label': 'Tools', 'aria-controls': canvas.id },
     },
-    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Transform mode' } }, ...toolButtons),
-    createElement(documentReference, 'span', { className: 'crucible-studio-separator', attributes: { role: 'separator', 'aria-orientation': 'vertical' } }),
-    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Edit actions' } }, undoButton, redoButton, duplicateButton, deleteButton, frameButton, toggleDocksButton),
+    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Transform tool' } }, ...toolButtons),
+    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'History' } }, undoButton, redoButton),
+    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Scene' } }, addMenuButton, toggleDocksButton),
   );
-  wireRovingFocusFallback(toolbarElement, [...toolButtons, undoButton, redoButton, duplicateButton, deleteButton, frameButton, toggleDocksButton]);
+  wireRovingFocusFallback(toolbarElement, [...toolButtons, undoButton, redoButton, addMenuButton, toggleDocksButton], { vertical: true });
 
   // Viewport Top-Right 3D View Widget
   const viewPresetButtons = ['front', 'right', 'top', 'isometric'].map(preset => {
@@ -883,19 +938,17 @@ export function createStudio(container, {
   const viewCubeElement = createElement(
     documentReference,
     'div',
-    { className: 'crucible-studio-viewcube crucible-studio-surface', attributes: { role: 'group', 'aria-label': 'Camera view presets' } },
+    { className: 'crucible-studio-viewcube', attributes: { role: 'group', 'aria-label': 'Camera view presets' } },
     createElement(documentReference, 'div', { className: 'crucible-studio-viewcube-row' }, ...viewPresetButtons),
     projectionPillButton,
   );
 
-  viewportElement.append(canvas, gizmoSvg, toolbarElement, viewCubeElement, hintBar, statusRegion, dropOverlay);
+  viewportElement.append(canvas, gizmoSvg, hintBar, statusRegion, dropOverlay);
 
   // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
   const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
-  const tabButtons = STUDIO_TABS.map(tab => createElement(documentReference, 'button', {
-    type: 'button',
+  const tabButtons = STUDIO_TABS.map(tab => createIconButton(documentReference, tab, tabLabels[tab], {
     id: `crucible-studio-tab-${tab}`,
-    textContent: tabLabels[tab],
     dataset: { tab },
     attributes: {
       'aria-selected': tab === controller.activeTab ? 'true' : 'false',
@@ -916,9 +969,9 @@ export function createStudio(container, {
   // Tab 1: Object Panel
   const nodeLabelInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Node label', attributes: { 'aria-label': 'Node label' } });
   const nodeParentSelect = createElement(documentReference, 'select', { attributes: { 'aria-label': 'Parent node' } });
-  const visibleToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Visible', attributes: { 'aria-pressed': 'true' } });
-  const castShadowToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Cast shadow', attributes: { 'aria-pressed': 'true' } });
-  const receiveShadowToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Receive shadow', attributes: { 'aria-pressed': 'true' } });
+  const visibleToggle = createIconButton(documentReference, 'eye', 'Hide');
+  const castShadowToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Casts shadow', attributes: { 'aria-pressed': 'true' } });
+  const receiveShadowToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Receives shadow', attributes: { 'aria-pressed': 'true' } });
 
   nodeLabelInput.addEventListener('change', () => {
     if (controller.selectedNodeId) controller.updateNodeTransform(controller.selectedNodeId, { label: nodeLabelInput.value });
@@ -951,7 +1004,7 @@ export function createStudio(container, {
   const positionRow = createVectorRow(documentReference, 'Position', values => {
     if (controller.selectedNodeId) controller.updateNodeTransform(controller.selectedNodeId, { translation: values });
   }, { sensitivity: 0.015 });
-  const rotationRow = createVectorRow(documentReference, 'Rotation (deg)', values => {
+  const rotationRow = createVectorRow(documentReference, 'Rotation °', values => {
     if (controller.selectedNodeId) controller.updateNodeTransform(controller.selectedNodeId, { rotationDegrees: values });
   }, { sensitivity: 0.5 });
   const scaleRow = createVectorRow(documentReference, 'Scale', values => {
@@ -964,7 +1017,7 @@ export function createStudio(container, {
     documentReference,
     'div',
     { className: 'crucible-studio-panel-body' },
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'div', { className: 'crucible-studio-field-head' }, createElement(documentReference, 'span', { textContent: 'Name' }), visibleToggle), nodeLabelInput),
+    createElement(documentReference, 'div', { className: 'crucible-studio-name-row' }, nodeLabelInput, visibleToggle, frameButton, duplicateButton, deleteButton),
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Parent' }), nodeParentSelect),
     positionRow.container,
     rotationRow.container,
@@ -1033,15 +1086,15 @@ export function createStudio(container, {
     documentReference,
     'div',
     { className: 'crucible-studio-panel-body' },
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Active material' }), materialSelect),
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Material' }), materialSelect),
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Presets' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...materialPresetChips)),
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Base color' }), colorInput),
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Color' }), colorInput),
     roughnessField.container,
     metallicField.container,
     clearcoatField.container,
     opacityField.container,
     emissionField.container,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Emissive tint' }), emissiveColorInput),
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Glow color' }), emissiveColorInput),
   );
 
   // Tab 3: Look Panel
@@ -1054,9 +1107,7 @@ export function createStudio(container, {
     onDragStart: () => controller.beginUndoGroup(),
     onDragEnd: () => controller.endUndoGroup(),
   });
-  const azimuthField = createSliderField(documentReference, 'Sun azimuth', { min: -180, max: 180, step: 1, value: -35 }, value => controller.setSunAngles({ azimuthDegrees: value }));
-  const elevationField = createSliderField(documentReference, 'Sun elevation', { min: 2, max: 88, step: 1, value: 50 }, value => controller.setSunAngles({ elevationDegrees: value }));
-  const keyIntensityField = createSliderField(documentReference, 'Key intensity', { min: 0, max: 8, step: 0.1, value: 1.7 }, value => controller.updateLook({ environment: { keyIntensity: value } }));
+  const keyIntensityField = createSliderField(documentReference, 'Sun strength', { min: 0, max: 8, step: 0.1, value: 1.7 }, value => controller.updateLook({ environment: { keyIntensity: value } }));
   const exposureField = createSliderField(documentReference, 'Exposure', { min: 0.2, max: 3, step: 0.05, value: 1 }, value => controller.updateLook({ effects: { exposure: value } }));
   const contrastField = createSliderField(documentReference, 'Contrast', { min: 0.4, max: 1.8, step: 0.02, value: 1 }, value => controller.updateLook({ effects: { contrast: value } }));
   const saturationField = createSliderField(documentReference, 'Saturation', { min: 0, max: 2, step: 0.02, value: 1 }, value => controller.updateLook({ effects: { saturation: value } }));
@@ -1072,18 +1123,16 @@ export function createStudio(container, {
     controller.updateLook({ environment: { viewTransform } });
   });
   const bloomField = createSliderField(documentReference, 'Bloom', { min: 0, max: 1, step: 0.02, value: 0.1 }, value => controller.updateLook({ effects: { bloom: { strength: value } } }));
-  const fogField = createSliderField(documentReference, 'Fog density', { min: 0, max: 0.1, step: 0.002, value: 0 }, value => controller.updateLook({ environment: { fogDensity: value } }));
+  const fogField = createSliderField(documentReference, 'Fog', { min: 0, max: 0.1, step: 0.002, value: 0 }, value => controller.updateLook({ environment: { fogDensity: value } }));
 
   const lookPanelBody = createElement(
     documentReference,
     'div',
     { className: 'crucible-studio-panel-body' },
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lighting setup' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...setupButtons)),
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Sun dome' }), sunPad.element),
-    azimuthField.container,
-    elevationField.container,
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lighting' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...setupButtons)),
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Sun' }), sunPad.element),
     keyIntensityField.container,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'View transform' }), viewTransformSelect),
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Color look' }), viewTransformSelect),
     exposureField.container,
     contrastField.container,
     saturationField.container,
@@ -1092,17 +1141,15 @@ export function createStudio(container, {
   );
 
   // Tab 4: Camera Panel
-  const inspectorProjectionButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Orthographic mode', attributes: { 'aria-pressed': 'false' } });
-  inspectorProjectionButton.addEventListener('click', () => controller.toggleCameraProjection());
   const lensChips = STUDIO_LENS_PRESETS.map(millimetres => {
     const button = createElement(documentReference, 'button', { type: 'button', textContent: `${millimetres}mm`, dataset: { focal: String(millimetres) }, attributes: { 'aria-pressed': 'false' } });
     button.addEventListener('click', () => controller.setCameraLensMillimetres(millimetres));
     return button;
   });
   const fovField = createSliderField(documentReference, 'Field of view', { min: 15, max: 110, step: 1, value: 45 }, value => controller.updateCamera({ fov: value }));
-  const orthoScaleField = createSliderField(documentReference, 'Ortho scale (m)', { min: 1, max: 40, step: 0.5, value: 6 }, value => controller.updateCamera({ projection: 'orthographic', orthoScale: value }));
-  const bookmarkNameInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Bookmark name', attributes: { 'aria-label': 'Bookmark name', maxlength: '24' } });
-  const saveBookmarkButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save view' });
+  const orthoScaleField = createSliderField(documentReference, 'Orthographic size', { min: 1, max: 40, step: 0.5, value: 6 }, value => controller.updateCamera({ projection: 'orthographic', orthoScale: value }));
+  const bookmarkNameInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Shot name', attributes: { 'aria-label': 'Shot name', maxlength: '24' } });
+  const saveBookmarkButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save shot' });
   const bookmarkListElement = createElement(documentReference, 'div', { className: 'crucible-studio-field' });
   saveBookmarkButton.addEventListener('click', async () => {
     const name = bookmarkNameInput.value.trim().replace(/\s+/g, '-') || `shot-${controller.listBookmarks().length + 1}`;
@@ -1119,11 +1166,11 @@ export function createStudio(container, {
     documentReference,
     'div',
     { className: 'crucible-studio-panel-body' },
-    inspectorProjectionButton,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lens focal length' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...lensChips)),
+    viewCubeElement,
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lens' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...lensChips)),
     fovField.container,
     orthoScaleField.container,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Camera bookmarks' }), createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, bookmarkNameInput, saveBookmarkButton), bookmarkListElement),
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Shots' }), createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, bookmarkNameInput, saveBookmarkButton), bookmarkListElement),
   );
 
   const panelsByTab = {
@@ -1169,35 +1216,23 @@ export function createStudio(container, {
     createElement(documentReference, 'div', { className: 'crucible-studio-panels' }, panelsByTab.node, panelsByTab.material, panelsByTab.look, panelsByTab.camera),
   );
 
-  const workspaceElement = createElement(
-    documentReference,
-    'div',
-    { className: 'crucible-studio-workspace' },
-    outlinerDock,
-    viewportElement,
-    inspectorElement,
-  );
-
   // Bottom Timeline & Telemetry Bar
-  const playButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Play', attributes: { 'aria-pressed': 'false' } });
-  const keyframeButton = createElement(documentReference, 'button', { type: 'button', textContent: '+ Key', title: 'Insert translation/rotation/scale keyframe at playhead (K)' });
+  const playButton = createIconButton(documentReference, 'play', 'Play (Space)', { attributes: { 'aria-pressed': 'false' } });
+  const keyframeButton = createIconButton(documentReference, 'keyframe', 'Add a keyframe here (K)');
   const timeOutput = createElement(documentReference, 'output', { textContent: '0.00 s' });
   const scrubInput = createElement(documentReference, 'input', { type: 'range', min: '0', max: '4', step: '0.02', value: '0', attributes: { 'aria-label': 'Timeline scrub' } });
-  const quickBookmarksRow = createElement(documentReference, 'div', { className: 'crucible-studio-chips' });
-  const statsLabel = createElement(documentReference, 'span', {});
-  const gpuStateBadge = createElement(documentReference, 'span', { className: 'crucible-studio-gpu-badge', textContent: 'Idle 0% GPU' });
+  const quickBookmarksRow = createElement(documentReference, 'div', { className: 'crucible-studio-shots' });
   const fileInput = createElement(documentReference, 'input', { type: 'file', accept: '.json,application/json', hidden: true });
 
   playButton.addEventListener('click', () => {
     if (!hasAnimatedData(controller.exportRecipe())) {
-      announce('Press + Key or load motion tracks to animate');
+      announce('Add a keyframe first (K)');
       return;
     }
     playing = !playing;
     lastFrameTime = 0;
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
-    playButton.textContent = playing ? 'Pause' : 'Play';
-    gpuStateBadge.textContent = playing ? 'Playing GPU' : 'Idle 0% GPU';
+    setButtonIcon(playButton, playing ? 'pause' : 'play', playing ? 'Pause (Space)' : 'Play (Space)');
     if (playing) requestFrame();
   });
   keyframeButton.addEventListener('click', async () => {
@@ -1219,10 +1254,9 @@ export function createStudio(container, {
   const bottomElement = createElement(
     documentReference,
     'footer',
-    { className: 'crucible-studio-bottombar', attributes: { 'aria-label': 'Timeline and engine status' } },
+    { className: 'crucible-studio-bottombar crucible-studio-island', attributes: { 'aria-label': 'Timeline' } },
     createElement(documentReference, 'div', { className: 'crucible-studio-scrub' }, playButton, keyframeButton, scrubInput, timeOutput),
     quickBookmarksRow,
-    createElement(documentReference, 'div', { className: 'crucible-studio-meta' }, statsLabel, gpuStateBadge),
   );
 
   // Native Dialogs (Modern Web Guidance: native <dialog>, aria-labelledby, form method="dialog", returnValue reset)
@@ -1303,7 +1337,7 @@ export function createStudio(container, {
   });
   shortcutsButton.addEventListener('click', () => shortcutsDialog.showModal());
 
-  root.append(menubarElement, workspaceElement, bottomElement, fileInput, recipeDialog, shortcutsDialog);
+  root.append(viewportElement, menubarElement, toolbarElement, outlinerDock, inspectorElement, bottomElement, fileInput, recipeDialog, shortcutsDialog);
   container.append(root);
 
   function syncFileBanner() {
@@ -1312,7 +1346,7 @@ export function createStudio(container, {
     watchPill.hidden = !activeFilePath;
     syncStatusNote.textContent = activeFilePath
       ? `Watching ${activeFilePath} (${autoReloadWatch ? 'auto-reload on' : 'paused'}).`
-      : 'Save or open a .json file to sync two-way with AI agents on disk.';
+      : 'Save the scene to a file and the agent can edit it while you watch.';
     if (onDirtyChange) {
       onDirtyChange({ filePath: activeFilePath, fileName: activeFileName, dirty: isDirty });
     }
@@ -1588,12 +1622,9 @@ export function createStudio(container, {
       } else {
         lastFrameTime = timestamp;
       }
-      gpuStateBadge.textContent = playing ? 'Playing GPU' : 'Rendering GPU';
       renderPass();
       if (playing && !frameHandle) {
         requestFrame();
-      } else if (!playing) {
-        gpuStateBadge.textContent = 'Idle 0% GPU';
       }
     });
   }
@@ -1625,7 +1656,7 @@ export function createStudio(container, {
       const selectButton = createElement(
         documentReference,
         'button',
-        { type: 'button', className: 'crucible-studio-tree-select' },
+        { type: 'button', className: 'crucible-studio-tree-select', dataset: { hidden: node.visible === false ? 'true' : 'false' } },
         badge,
         createElement(documentReference, 'span', { className: 'crucible-studio-tree-label', textContent: node.label ?? node.id }),
       );
@@ -1637,11 +1668,10 @@ export function createStudio(container, {
         nodeLabelInput.focus();
         nodeLabelInput.select();
       });
-      const eyeButton = createElement(documentReference, 'button', {
-        type: 'button',
+      const hidden = node.visible === false;
+      const eyeButton = createIconButton(documentReference, hidden ? 'eyeOff' : 'eye', `${hidden ? 'Show' : 'Hide'} ${node.label ?? node.id}`, {
         className: 'crucible-studio-tree-eye',
-        textContent: node.visible === false ? 'Off' : 'On',
-        attributes: { 'aria-pressed': node.visible === false ? 'false' : 'true', 'aria-label': `Toggle ${node.label ?? node.id} visibility` },
+        dataset: { hidden: hidden ? 'true' : 'false' },
       });
       eyeButton.addEventListener('click', () => controller.updateNodeTransform(node.id, { visible: !(node.visible ?? true) }));
       return createElement(
@@ -1665,7 +1695,7 @@ export function createStudio(container, {
       const swatch = createElement(documentReference, 'button', {
         type: 'button',
         className: 'crucible-studio-swatch-btn',
-        title: `${material.id} (click to assign & inspect)`,
+        title: material.id,
         attributes: { 'aria-pressed': material.id === boundMaterialId ? 'true' : 'false', 'aria-label': `Material ${material.id}` },
       });
       swatch.style.background = hex;
@@ -1680,7 +1710,7 @@ export function createStudio(container, {
         selectInspectorTab('material');
       });
       return swatch;
-    }));
+    }), newMaterialQuickButton);
   }
 
   function syncUi() {
@@ -1691,6 +1721,7 @@ export function createStudio(container, {
     const selectedNode = recipe.nodes.find(node => node.id === controller.selectedNodeId) ?? null;
     const hasNode = Boolean(selectedNode);
     duplicateButton.setAttribute('aria-disabled', hasNode ? 'false' : 'true');
+    frameButton.setAttribute('aria-disabled', hasNode ? 'false' : 'true');
     deleteButton.setAttribute('aria-disabled', hasNode ? 'false' : 'true');
 
     renderOutliner(recipe);
@@ -1717,7 +1748,7 @@ export function createStudio(container, {
     if (selectedNode) {
       nodeLabelInput.value = selectedNode.label ?? selectedNode.id;
       nodeParentSelect.value = selectedNode.parent ?? '';
-      visibleToggle.setAttribute('aria-pressed', selectedNode.visible === false ? 'false' : 'true');
+      setButtonIcon(visibleToggle, selectedNode.visible === false ? 'eyeOff' : 'eye', selectedNode.visible === false ? 'Show' : 'Hide');
       castShadowToggle.setAttribute('aria-pressed', selectedNode.castShadow === false ? 'false' : 'true');
       receiveShadowToggle.setAttribute('aria-pressed', selectedNode.receiveShadow === false ? 'false' : 'true');
     } else {
@@ -1757,8 +1788,6 @@ export function createStudio(container, {
     setupButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.setup === activeSetup ? 'true' : 'false'));
     const sunAngles = directionToSunAngles(environment.lightDirection);
     sunPad.setAngles(sunAngles.azimuthDegrees, sunAngles.elevationDegrees);
-    azimuthField.setValue(sunAngles.azimuthDegrees);
-    elevationField.setValue(sunAngles.elevationDegrees);
     keyIntensityField.setValue(environment.keyIntensity ?? 1.5);
     viewTransformSelect.value = environment.viewTransform ?? 'aces';
     exposureField.setValue(effects.exposure ?? 1);
@@ -1771,7 +1800,6 @@ export function createStudio(container, {
     const isOrthographic = camera.projection === 'orthographic';
     projectionPillButton.textContent = isOrthographic ? 'Orthographic' : 'Perspective';
     projectionPillButton.setAttribute('aria-pressed', isOrthographic ? 'true' : 'false');
-    inspectorProjectionButton.setAttribute('aria-pressed', isOrthographic ? 'true' : 'false');
     fovField.setValue(Math.round(camera.fov ?? 45));
     orthoScaleField.setValue(roundValue(camera.orthoScale ?? 6, 10));
     lensChips.forEach(chip => chip.setAttribute('aria-pressed', !isOrthographic && Number(chip.dataset.focal) === Math.round(camera.focalLength ?? 0) ? 'true' : 'false'));
@@ -1788,10 +1816,7 @@ export function createStudio(container, {
         return createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, applyButton, removeButton);
       }));
       quickBookmarksRow.replaceChildren(...bookmarks.slice(0, 5).map(shot => {
-        const pill = createElement(documentReference, 'button', { type: 'button', textContent: shot.name });
-        pill.style.minBlockSize = '26px';
-        pill.style.padding = '2px 8px';
-        pill.style.fontSize = '11.5px';
+        const pill = createElement(documentReference, 'button', { type: 'button', textContent: shot.name, title: `Jump to shot ${shot.name}` });
         pill.addEventListener('click', () => controller.applyBookmark(shot.name));
         return pill;
       }));
@@ -1804,10 +1829,9 @@ export function createStudio(container, {
     scrubInput.disabled = !animated;
     playButton.setAttribute('aria-disabled', animated ? 'false' : 'true');
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
-    playButton.textContent = playing ? 'Pause' : 'Play';
-    timeOutput.textContent = `${controller.motionTime.toFixed(2)} s / ${duration.toFixed(1)} s`;
-    statsLabel.textContent = `${controller.scene.parts.length} parts · Rev ${controller.scene.revision}`;
-    hintBar.textContent = liveDeltaLabel || VIEWPORT_HINT_TEXT;
+    setButtonIcon(playButton, playing ? 'pause' : 'play', playing ? 'Pause (Space)' : 'Play (Space)');
+    timeOutput.textContent = `${controller.motionTime.toFixed(1)} / ${duration.toFixed(1)} s`;
+    hintBar.textContent = liveDeltaLabel;
     syncFileBanner();
   }
 
@@ -1993,8 +2017,23 @@ export function createStudio(container, {
     requestFrame();
   };
 
+  // Below the compact width the panels start closed, so the scene keeps the screen.
+  function syncCompactLayout() {
+    const compact = root.clientWidth > 0 && root.clientWidth < COMPACT_WIDTH;
+    if ((root.dataset.compact === 'true') === compact) {
+      return;
+    }
+    root.dataset.compact = compact ? 'true' : 'false';
+    setOutlinerCollapsed(compact);
+    setInspectorCollapsed(compact);
+  }
+  syncCompactLayout();
+
   if (typeof ResizeObserver === 'function') {
-    resizeObserver = new ResizeObserver(() => requestFrame());
+    resizeObserver = new ResizeObserver(() => {
+      syncCompactLayout();
+      requestFrame();
+    });
     resizeObserver.observe(viewportElement);
   }
   if (typeof IntersectionObserver === 'function') {

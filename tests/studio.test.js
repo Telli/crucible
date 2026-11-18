@@ -390,3 +390,35 @@ test('Studio undo restores the camera when the undone step was a camera edit', (
   assert.deepEqual([...controller.scene.camera.eye], eyeBefore);
   controller.dispose();
 });
+
+test('selectionOutline wraps the selected object on screen and follows it', () => {
+  const scene = createAgentScene(makeStudioRecipe());
+  const controller = createStudioController({ scene, viewportWidth: 800, viewportHeight: 600 });
+  controller.selectNode(null);
+  assert.equal(controller.selectionOutline(), null);
+
+  controller.selectNode('hero');
+  const outline = controller.selectionOutline();
+  assert.ok(outline.length >= 4);
+  const centre = controller.projectWorldPoint([0, 0.5, 0]);
+  const bounds = points => ({
+    left: Math.min(...points.map(point => point[0])),
+    right: Math.max(...points.map(point => point[0])),
+    top: Math.min(...points.map(point => point[1])),
+    bottom: Math.max(...points.map(point => point[1])),
+  });
+  const heroBounds = bounds(outline);
+  assert.ok(heroBounds.left < centre.x && centre.x < heroBounds.right);
+  assert.ok(heroBounds.top < centre.y && centre.y < heroBounds.bottom);
+  const corner = controller.projectWorldPoint([0.5, 1, 0.5]);
+  assert.ok(outline.some(point => Math.hypot(point[0] - corner.x, point[1] - corner.y) < 8), 'the outline passes by the near top corner of the bevelled box');
+
+  controller.updateNodeTransform('hero', { translation: [1.5, 0.5, 0] });
+  assert.ok(bounds(controller.selectionOutline()).left > heroBounds.left + 40);
+
+  controller.selectNode('orb');
+  const orbCentre = controller.projectWorldPoint([2.2, 0.5, 0]);
+  const orbRadii = controller.selectionOutline().map(point => Math.hypot(point[0] - orbCentre.x, point[1] - orbCentre.y));
+  assert.ok(Math.max(...orbRadii) - Math.min(...orbRadii) < 6, 'a sphere outline is round');
+  controller.dispose();
+});

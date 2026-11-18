@@ -21,6 +21,7 @@ const GIZMO_SCREEN_PIXELS = 74;
 const ROTATION_RING_SEGMENTS = 32;
 const WORLD_BASIS = Object.freeze({ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] });
 const AXIS_PARALLEL_LIMIT = 0.002;
+const OUTLINE_VERTEX_BUDGET = 4000;
 const RING_EDGE_ON_LIMIT = 0.12;
 const ROTATION_DEGREES_PER_PIXEL = 0.75;
 const ROTATION_SNAP_DEGREES = 15;
@@ -231,6 +232,27 @@ function buildNodeWorldMatrices(nodes) {
     resolveWorldMatrix(node.id, new Set());
   }
   return worldMatrices;
+}
+
+// Andrew's monotone chain over [x, y] points, returned counter-clockwise without the repeated first point.
+function convexHull(points) {
+  const sorted = [...points].sort((first, second) => first[0] - second[0] || first[1] - second[1]);
+  if (sorted.length < 3) {
+    return sorted;
+  }
+  const turn = (origin, first, second) => (first[0] - origin[0]) * (second[1] - origin[1]) - (first[1] - origin[1]) * (second[0] - origin[0]);
+  const buildChain = ordered => {
+    const chain = [];
+    for (const candidate of ordered) {
+      while (chain.length >= 2 && turn(chain[chain.length - 2], chain[chain.length - 1], candidate) <= 0) {
+        chain.pop();
+      }
+      chain.push(candidate);
+    }
+    chain.pop();
+    return chain;
+  };
+  return [...buildChain(sorted), ...buildChain([...sorted].reverse())];
 }
 
 function descendantIdsOf(nodes, rootId) {
@@ -721,6 +743,36 @@ export function createStudioController({
         z: ringPoints('z'),
       },
     };
+  }
+
+  // Screen outline of the selection: the convex hull of its projected vertices, so the selected object reads in the viewport.
+  function selectionOutline() {
+    if (!selectedNodeId) {
+      return null;
+    }
+    const memberIds = descendantIdsOf(currentScene.exportRecipe().nodes, selectedNodeId);
+    const memberParts = currentScene.parts.filter(part => memberIds.has(part.name) && part.matrix && part.geometry?.positions);
+    const totalVertices = memberParts.reduce((count, part) => count + part.geometry.positions.length / 3, 0);
+    if (totalVertices === 0) {
+      return null;
+    }
+    const stride = Math.max(1, Math.ceil(totalVertices / OUTLINE_VERTEX_BUDGET));
+    const point = vec3.create();
+    const screenPoints = [];
+    for (const part of memberParts) {
+      const positions = part.geometry.positions;
+      for (let offset = 0; offset < positions.length; offset += 3 * stride) {
+        vec3.set(point, positions[offset], positions[offset + 1], positions[offset + 2]);
+        vec3.transformMat4(point, point, part.matrix);
+        const projected = projectWorldPoint([point[0], point[1], point[2]]);
+        if (!projected.visible) {
+          return null;
+        }
+        screenPoints.push([projected.x, projected.y]);
+      }
+    }
+    const hull = convexHull(screenPoints);
+    return hull.length >= 3 ? hull : null;
   }
 
   function computeSnapTranslation(nodeId, pixelX, pixelY) {
@@ -1531,6 +1583,7 @@ export function createStudioController({
     screenRay,
     pickAt,
     gizmoHandles,
+    selectionOutline,
     beginGizmoDrag,
     updateGizmoDrag,
     endGizmoDrag,
