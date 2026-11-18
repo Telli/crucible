@@ -1,6 +1,6 @@
 # Ocean and boat wake
 
-![A fishing boat turning through ocean waves, with a wake of foam behind it](/previews/feature-ocean-wake.webp)
+![A fishing boat under way through ocean waves, with a wake of foam behind it](/previews/feature-ocean-wake.webp)
 
 The `ocean` mesh edit draws a sea, and a crate or a boat that you mark as floating rides its waves. The picture is one frame of the boat scene, rendered by Crucible through the MCP render job.
 
