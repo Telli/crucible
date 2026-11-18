@@ -47,8 +47,8 @@ submit call fails: tell the user which launch option is missing.
   job holds the first pose, which is the usual reason a video is a still frame. A recipe with a `timeline` uses
   `settings.timeline` and rejects `motion` and `animation`.
 - A recipe whose only motion is `physics` (or `cloth`, `particles`), a grid volume sequence or a texture sequence is
-  filmed with the same `motion: { "start": 0 }`; the job plays the bake on the scene clock, so do not `bake-motion`
-  first. Video `duration` defaults to the bake length.
+  filmed with `motion: { "start": 0 }`; the job plays the bake on the scene clock, so do not `bake-motion` first. Physics,
+  cloth and particles start at 0 when `motion` is left out; sequences need it set. Video `duration` defaults to the bake length.
 - Imported clips use `settings.animation`; the two clocks are independent.
 - For compositing, `settings.transparent`, `settings.format` (`png16`, `exr`) and `settings.region` are off by default; a
   transparent frame sequence is one `stills` job with `stillCount`; video runs up to 60 fps (`references/jobs.md`).
