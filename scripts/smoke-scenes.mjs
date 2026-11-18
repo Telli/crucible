@@ -24,6 +24,24 @@ try {
     await page.setViewportSize(size);
     await page.goto('http://127.0.0.1:5179/object.html');
     await page.waitForSelector('#benchmark');
+    const toolbarProblems = await page.evaluate(() => {
+      const bar = document.querySelector('.toolbar').getBoundingClientRect();
+      const items = [...document.querySelectorAll('.toolbar .brand, .toolbar .studio-nav a, .toolbar-actions button')];
+      const boxes = items.map((item) => ({ name: item.textContent.trim(), box: item.getBoundingClientRect() }));
+      const problems = [];
+      for (const [index, { name, box }] of boxes.entries()) {
+        if (box.left < bar.left - 0.5 || box.right > bar.right + 0.5) problems.push(`${name} overflows the toolbar`);
+        if (box.height > 0 && box.height < 32) problems.push(`${name} is under 32 px tall`);
+        for (const other of boxes.slice(index + 1)) {
+          if (box.left < other.box.right && box.right > other.box.left && box.top < other.box.bottom && box.bottom > other.box.top) problems.push(`${name} overlaps ${other.name}`);
+        }
+      }
+      const actions = [...document.querySelectorAll('.toolbar-actions button')];
+      if (actions.some((button) => button.getBoundingClientRect().height > 50)) problems.push('a toolbar button label wraps');
+      if (document.documentElement.scrollWidth > window.innerWidth) problems.push('the page scrolls sideways');
+      return problems;
+    });
+    assert.deepEqual(toolbarProblems, [], `Object studio toolbar does not fit at ${size.width}x${size.height}.`);
     const overlaps = await page.evaluate(() => {
       const panel = document.querySelector('.controls').getBoundingClientRect();
       const footerItems = ['#benchmark', '#cpu', '#parts'].map((selector) => document.querySelector(selector).getBoundingClientRect());
