@@ -24,7 +24,7 @@ test('every sample part but the base lifts off, keeps distinct offsets and rests
   for (const part of parts) {
     assert.deepEqual(assemblyOffset(part, 0), [0, 0, 0], part.name);
     const full = assemblyOffset(part, 1);
-    if (part.name === 'Base') assert.deepEqual(full, [0, 0, 0], 'the base stays on the floor as the anchor');
+    if (part.name === 'Base and arm') assert.deepEqual(full, [0, 0, 0], 'the base stays on the floor as the anchor');
     else assert.ok(Math.hypot(...full) > 0.5, `${part.name} moves visibly`);
     const key = full.join(',');
     assert.ok(!offsets.has(key), `${part.name} has its own offset`);
@@ -45,7 +45,7 @@ test('the fully exploded sample keeps every part above the floor and the parts s
     return [part.name, { lowest: Math.min(...heights), center: (Math.min(...heights) + Math.max(...heights)) / 2 }];
   }));
   for (const [name, { lowest }] of exploded) assert.ok(lowest >= -1e-6, `${name} stays above the floor when exploded (lowest ${lowest.toFixed(2)})`);
-  const spine = ['Base', 'Limb and rack', 'Objective turret', 'Eyepiece tube'].map(name => exploded.get(name).center);
+  const spine = ['Base and arm', 'Stage', 'Head', 'Eyepiece tubes'].map(name => exploded.get(name).center);
   assert.deepEqual([...spine].sort((first, second) => first - second), spine, 'the central parts rise in assembly order');
 });
 

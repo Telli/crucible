@@ -25,8 +25,8 @@ function worldBounds(list, amount) {
   return { minimum, maximum };
 }
 
-test('the sample model has nine named parts in both layers, each with a section and an offset', () => {
-  assert.equal(parts.length, 9);
+test('the sample model has fifteen named parts in both layers, each with a section and an offset', () => {
+  assert.equal(parts.length, 15);
   assert.deepEqual(parts.map(part => part.name).sort(), [...SAMPLE_PART_NAMES].sort());
   for (const part of parts) {
     assert.ok(['exterior', 'interior'].includes(part.assembly.layer), part.name);
@@ -36,18 +36,18 @@ test('the sample model has nine named parts in both layers, each with a section 
     assert.ok(part.matrix instanceof Float32Array && Array.from(part.matrix).every(Number.isFinite));
     assert.ok(part.geometry.indices.length > 0 && part.geometry.indices.length % 3 === 0);
   }
-  assert.equal(parts.filter(part => part.assembly.layer === 'exterior').length, 5);
-  assert.equal(parts.filter(part => part.assembly.layer === 'interior').length, 4);
-  assert.equal(new Set(parts.map(part => part.assembly.section)).size, 4);
+  assert.equal(parts.filter(part => part.assembly.layer === 'exterior').length, 8);
+  assert.equal(parts.filter(part => part.assembly.layer === 'interior').length, 7);
+  assert.equal(new Set(parts.map(part => part.assembly.section)).size, 6);
 });
 
-test('the sample model stands about 3.6 tall on the ground, and its exploded pose stays above the floor in the studio frame', () => {
+test('the sample model stands about 3.7 tall on the ground, and its exploded pose stays above the floor in the studio frame', () => {
   const assembled = worldBounds(parts, 0);
   assert.ok(assembled.minimum[1] >= -0.01 && assembled.minimum[1] < 0.05, `base sits on the ground: ${assembled.minimum[1]}`);
   assert.ok(assembled.maximum[1] > 3.4 && assembled.maximum[1] < 3.8, `height ${assembled.maximum[1]}`);
   const exploded = worldBounds(parts, 1);
   assert.ok(exploded.minimum[1] >= -0.01 && exploded.maximum[1] < 7, `exploded height ${exploded.minimum[1]} to ${exploded.maximum[1]}`);
-  assert.ok([0, 2].every(axis => exploded.maximum[axis] < 3 && exploded.minimum[axis] > -3), "exploded width and depth stay within 3 of the axis");
+  assert.ok([0, 2].every(axis => exploded.maximum[axis] < 3.5 && exploded.minimum[axis] > -3.5), "exploded width and depth stay within 3.5 of the axis");
 });
 
 test('the sample model snapshot stays stable', () => {
@@ -58,7 +58,7 @@ test('the sample model snapshot stays stable', () => {
       hash.update(new Uint8Array(field.buffer, field.byteOffset, field.byteLength));
     }
   }
-  assert.equal(hash.digest('hex'), '0442c6ad61ae3c426cb76c4289f2d9a3d6cd51ee523048e2e852b265ec8907b9');
+  assert.equal(hash.digest('hex'), '6712bb124461ea2e7c4f93f266ae9fdda85656ed9e198dc29c176577726f627f');
 });
 
 test('an unknown part or an empty list is refused with the fix', () => {

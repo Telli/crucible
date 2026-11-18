@@ -220,8 +220,8 @@ if (${!published}) {
   parsedAgentAsset.dispose();
 }
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-const parts = assembleSampleModel(['vintage_microscope_base', 'vintage_microscope_eye_piece'].map(name => ({ name, matrix: identity })));
-assert.deepEqual(parts.map(part => part.name), ['Base', 'Eyepiece tube']);
+const parts = assembleSampleModel(['stage', 'eyepiece_tubes'].map(name => ({ name, matrix: identity })));
+assert.deepEqual(parts.map(part => part.name), ['Stage', 'Eyepiece tubes']);
 assert.throws(() => assembleSampleModel([{ name: 'unknown', matrix: identity }]), /no assembly entry/);
 await assert.rejects(() => loadSampleModel(), /URL, File or Blob/);
 assert.ok(parts.every(part => assemblyOffset(part, 1).some(value => value !== 0)));

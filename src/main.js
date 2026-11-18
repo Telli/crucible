@@ -43,8 +43,8 @@ function notify(message, failure = false) {
 }
 
 // The microscope's black stand and foot crush into the floor under the default studio light, so this studio lifts the ambient and fill terms.
-const MICROSCOPE_AMBIENT = 2.5;
-const MICROSCOPE_FILL = 2;
+const MICROSCOPE_AMBIENT = 1.3;
+const MICROSCOPE_FILL = 1.1;
 // The default studio floor is as dark as the backdrop, so the black stand sinks into it. This sample stands on a floor that is about twice as light
 // (the floor shader scales its tone by the floor colour), which the stand and its shadow read against.
 const MICROSCOPE_FLOOR_COLOR = [0.08, 0.1, 0.12];

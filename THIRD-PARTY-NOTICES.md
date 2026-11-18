@@ -78,9 +78,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-## Vintage Microscope (sample model, not in the npm package)
+## Microscope (sample model, not in the npm package)
 
-`public/sample-model.glb` is the Poly Haven model "Vintage Microscope" (https://polyhaven.com/a/vintage_microscope) by Luis José Fernández Rodríguez, under CC0-1.0. It was downscaled to 512 px JPEG textures and quantized; the eight parts keep their original node names.
+`public/sample-model.glb` is the Sketchfab model "Microscope" (https://sketchfab.com/3d-models/microscope-dd9e73d51edb43198bd40d0bbd2dd54e) by lionclaw0612, a modern binocular laboratory microscope, under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). It was changed: the 15 meshes were renamed, moved to rest on y = 0, given one material each, black plastic lifted from pure black to 0.03, and the two glass parts turned into alpha-blended materials. The mesh itself is unchanged.
 
 ## Built files
 
