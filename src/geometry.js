@@ -314,21 +314,23 @@ export function cylinder(segments = 80, bevel = 0.025, bevelSegments = 6) {
   return geometry(positions, normals, indices);
 }
 
-export function box(bevel = 0.08, subdivisions = 6) {
+/** `splitFlatFaces` cuts a sharp box (bevel 0) into an n by n grid per face, so a mesh built on it has vertices to edit (#2201). */
+export function box(bevel = 0.08, subdivisions = 6, splitFlatFaces = false) {
   finiteFloat(bevel, 'bevel');
   // A bevel below about 3e-17 leaves the core at exactly 0.5, so every face normal would divide by zero; 1e-16 is the round floor.
   if (bevel < 0 || bevel > 0.5 || bevel > 0 && bevel < 1e-16) {
     throw new RangeError('Box bevel must be 0 or from 1e-16 to 0.5: a smaller bevel underflows and gives NaN normals.');
   }
   integer(subdivisions, 1, 128, 'subdivisions');
-  primitiveBudget(bevel === 0 ? 24 : 6 * (2 * subdivisions + 2) ** 2);
+  primitiveBudget(bevel === 0 ? (splitFlatFaces ? 6 * (subdivisions + 1) ** 2 : 24) : 6 * (2 * subdivisions + 2) ** 2);
   const positions = [];
   const normals = [];
   const indices = [];
   const coreExtent = 0.5 - bevel;
   const coordinates = [];
   if (bevel === 0) {
-    coordinates.push(-0.5, 0.5);
+    const spans = splitFlatFaces ? subdivisions : 1;
+    for (let index = 0; index <= spans; index++) coordinates.push(index / spans - 0.5);
   } else {
     // Sample the curved border in angular steps, leaving the planar center as one span.
     // Uniform grids miss narrow fillets and interpolate across the whole face instead.
