@@ -635,6 +635,9 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
       if (!Array.isArray(knots) || knots.length < 2 || knots.length > CURVE_TEXT_LIMITS.maxCurvePoints) {
         throw invalidField('points', Array.isArray(knots) ? `${knots.length} points` : knots, `a list of 2 to ${CURVE_TEXT_LIMITS.maxCurvePoints} points, such as [[0, 0, 0], [0, 1, 0]]`);
       }
+      const curveChecks = agentSceneModule('modeling');
+      curveChecks.checkCurveRadius(value.radius ?? 0.05);
+      curveChecks.checkClosedFlag(value.closed ?? false);
       const sides = value.profile === undefined ? detail('radialSegments', 8, 3, 128) : points(value.profile, 2, 3, 'profile');
       const rings = (value.closed ? knots.length : knots.length - 1) * detail('resolution', 12, 1, 64) + 1;
       return rings * sides * 2 + 2 * (sides + 1);
