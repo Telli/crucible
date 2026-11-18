@@ -10,9 +10,10 @@ export const HORIZON_GLOW_FIELDS = Object.freeze(['color', 'width', 'intensity']
 export const MAXIMUM_GRADIENT_STOPS = 8;
 
 const GLOW_DEFAULTS = Object.freeze({ width: 6, intensity: 1 });
+// intensity multiplies the glow colour at the horizon: 1 shows the colour itself, above 1 pushes it brighter.
 const GLOW_LIMITS = Object.freeze({
   width: [0.5, 45, 'the glow half width in degrees of elevation, such as 6'],
-  intensity: [0, 20, 'a brightness multiplier from 0 to 20, such as 2'],
+  intensity: [0, 20, 'a multiplier of the glow colour from 0 to 20, 1 shows the colour as given, such as 1.5'],
 });
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 const COLOR_EXAMPLE = 'a hex colour such as "#0e5d73"';
@@ -124,11 +125,12 @@ function buildMapData(sky) {
     // Each row is one elevation: the gradient and the glow depend on the angle above the horizon only.
     const elevation = 90 - ((row + 0.5) / MAP_HEIGHT) * 180;
     const base = colorAtHeight(stops, Math.max(0, elevation) / 90);
-    const glowShare = glow ? glow.intensity * Math.exp(-((elevation / glow.width) ** 2)) : 0;
+    const glowShare = glow ? Math.exp(-((elevation / glow.width) ** 2)) : 0;
     for (let column = 0; column < MAP_WIDTH; column++) {
       const offset = (row * MAP_WIDTH + column) * 3;
       for (let channel = 0; channel < 3; channel++) {
-        data[offset + channel] = base[channel] + (glowColor ? glowColor[channel] * glowShare : 0);
+        // The band blends toward the glow colour instead of adding it, so it keeps its hue as it brightens and never washes to white.
+        data[offset + channel] = glowColor ? base[channel] + (glowColor[channel] * glow.intensity - base[channel]) * glowShare : base[channel];
       }
     }
   }

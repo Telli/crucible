@@ -7,7 +7,7 @@ import { agentEnvironmentMap, normalizeAgentLook } from '../src/agent-look.js';
 import { linearColorFromHex } from '../src/gradient-sky.js';
 
 const TEAL_STOPS = [{ at: 0, color: '#1a8a9c' }, { at: 1, color: '#0e5d73' }];
-const GLOW = { color: '#7ff4ff', width: 3, intensity: 2 };
+const GLOW = { color: '#19d0e8', width: 3, intensity: 1 };
 
 function gradientEnvironment(sky, extra = {}) {
   return normalizeAgentLook({ environment: { sky: { type: 'gradient', stops: TEAL_STOPS, ...sky }, ...extra } }).environment;
@@ -42,8 +42,10 @@ test('the horizon glow is a band: bright at the horizon and gone well above it',
   const plain = agentEnvironmentMap(gradientEnvironment({}));
   const glowColor = linearColorFromHex(GLOW.color);
   const [atHorizon, high] = [mapPixel(map, 0.2), mapPixel(map, 30)];
-  assert.ok(atHorizon[0] > mapPixel(plain, 0.2)[0] + glowColor[0] * 1.5);
-  assert.ok(atHorizon[2] > glowColor[2] * 1.5);
+  atHorizon.forEach((value, channel) => assert.ok(Math.abs(value - glowColor[channel] * GLOW.intensity) < 0.02));
+  assert.ok(atHorizon[1] > mapPixel(plain, 0.2)[1] + 0.2);
+  // Hue is kept: the band is the glow colour scaled, so the red to green ratio of the peak is the glow's, not the sky's.
+  assert.ok(Math.abs(atHorizon[0] / atHorizon[1] - glowColor[0] / glowColor[1]) < 0.02);
   assert.ok(Math.abs(high[1] - mapPixel(plain, 30)[1]) < 1e-4);
   assert.ok(map.data.every(Number.isFinite));
 });
@@ -68,6 +70,6 @@ test('set-environment switches between a physical and a gradient sky and edits o
   assert.equal(session.environment.sky.type, 'gradient');
   assert.equal(session.environment.sky.sunElevation, undefined);
   session.apply([{ type: 'set-environment', environment: { sky: { horizonGlow: GLOW } } }], { expectedRevision: 1 });
-  assert.equal(session.environment.sky.horizonGlow.color, '#7ff4ff');
+  assert.equal(session.environment.sky.horizonGlow.color, GLOW.color);
   assert.equal(session.environment.sky.stops.length, 2);
 });
