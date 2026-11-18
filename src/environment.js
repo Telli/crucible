@@ -97,7 +97,12 @@ function sphericalHarmonicBasis(x, y, z) {
 
 // Returns 27 floats (9 RGB triples) with basis constants and the Lambert kernel folded in,
 // so evaluateIrradiance(coefficients, normal) is the diffuse radiance for a white surface.
-const IRRADIANCE_ROWS_PER_STEP = 32;
+// Texels one step of a pass over the whole map handles, so a step costs about the same on a small map and a large one.
+const PIXELS_PER_STEP = 65536;
+
+function rowsPerStep(width) {
+  return Math.max(1, Math.floor(PIXELS_PER_STEP / width));
+}
 
 // One step per few rows of the map, so a caller can hand the thread back between steps.
 function* irradianceSteps(map) {
@@ -112,6 +117,7 @@ function* irradianceSteps(map) {
   }
   const sums = new Float64Array(27);
   const pixelSolidAngleScale = (2 * Math.PI / width) * (Math.PI / height);
+  const stepRows = rowsPerStep(width);
   for (let row = 0; row < height; row++) {
     const polar = (row + 0.5) / height * Math.PI;
     const sinePolar = Math.sin(polar);
@@ -127,7 +133,7 @@ function* irradianceSteps(map) {
         sums[term * 3 + 2] += data[offset + 2] * termWeight;
       }
     }
-    if (row % IRRADIANCE_ROWS_PER_STEP === IRRADIANCE_ROWS_PER_STEP - 1) yield;
+    if (row % stepRows === stepRows - 1) yield;
   }
   const coefficients = new Float32Array(27);
   for (let term = 0; term < 9; term++) {
@@ -147,13 +153,14 @@ const IRRADIANCE_ROWS_PER_GRID_STEP = 4;
 
 // Averages the map down to at most 128 by 64 texels, weighting rows by their solid angle, so the cosine integral below
 // costs about four million multiply-adds however large the map is. Light is conserved, so a sun stays as bright overall.
-function irradianceSourceTexels(map) {
+function* irradianceSourceTexelSteps(map) {
   const { width, height, channels, data } = map;
   const scale = Math.min(1, MAXIMUM_IRRADIANCE_SOURCE_WIDTH / width);
   const sourceWidth = Math.max(4, Math.round(width * scale));
   const sourceHeight = Math.max(2, Math.round(height * scale));
   const sums = new Float64Array(sourceWidth * sourceHeight * 3);
   const weights = new Float64Array(sourceWidth * sourceHeight);
+  const stepRows = rowsPerStep(width);
   for (let row = 0; row < height; row++) {
     const rowWeight = Math.sin((row + 0.5) / height * Math.PI);
     const targetRow = Math.min(sourceHeight - 1, Math.floor(row * sourceHeight / height));
@@ -165,6 +172,7 @@ function irradianceSourceTexels(map) {
       sums[target * 3 + 2] += data[offset + 2] * rowWeight;
       weights[target] += rowWeight;
     }
+    if (row % stepRows === stepRows - 1) yield;
   }
   const texelCount = sourceWidth * sourceHeight;
   const directions = new Float64Array(texelCount * 3);
@@ -193,7 +201,7 @@ function irradianceSourceTexels(map) {
 // convolution, so a strong sun does not ring the way a nine-term spherical harmonic fit does.
 function* irradianceGridSteps(map) {
   assertEnvironmentMap(map);
-  const { texelCount, directions, radiance } = irradianceSourceTexels(map);
+  const { texelCount, directions, radiance } = yield* irradianceSourceTexelSteps(map);
   const grid = new Float32Array(ENVIRONMENT_IRRADIANCE_WIDTH * ENVIRONMENT_IRRADIANCE_HEIGHT * 3);
   for (let row = 0; row < ENVIRONMENT_IRRADIANCE_HEIGHT; row++) {
     const polar = (row + 0.5) / ENVIRONMENT_IRRADIANCE_HEIGHT * Math.PI;
@@ -445,8 +453,9 @@ function* environmentResourceSteps(context, map, { compileProgram, fullscreenVer
   const layout = environmentSpecularLayout(map);
   const sourceLevelCount = Math.floor(Math.log2(Math.max(map.width, map.height))) + 1;
   const sourceTexture = createHalfFloatTexture(context, context.RGBA16F, sourceLevelCount, map.width, map.height, { wrapHorizontally: true });
-  for (let firstRow = 0; firstRow < map.height; firstRow += UPLOAD_ROWS_PER_STEP) {
-    const rowCount = Math.min(UPLOAD_ROWS_PER_STEP, map.height - firstRow);
+  const uploadRows = Math.min(UPLOAD_ROWS_PER_STEP, rowsPerStep(map.width));
+  for (let firstRow = 0; firstRow < map.height; firstRow += uploadRows) {
+    const rowCount = Math.min(uploadRows, map.height - firstRow);
     context.texSubImage2D(context.TEXTURE_2D, 0, 0, firstRow, map.width, rowCount, context.RGBA, context.FLOAT, paddedHalfFloatRows(map, firstRow, rowCount));
     yield;
   }

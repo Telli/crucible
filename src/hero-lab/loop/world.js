@@ -53,7 +53,8 @@ function inWholeWorldOrder(files) {
 
 const TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
 const SLICE_MILLISECONDS = 6;
-const REPLACE_SLICES = 8;
+const FIRST_REPLACE_SLICES = 8;
+const MAXIMUM_REPLACE_SLICES = 32;
 
 // Each texture upload is a synchronous GL call. The renderer caches uploads by descriptor, so uploading them here, a few
 // milliseconds at a time with a yield between slices, leaves nothing for replaceParts to do in one block.
@@ -83,7 +84,10 @@ const isPinnedPart = part => Boolean(part.skin || part.morph || part.crowd || pa
 
 // replaceParts builds every batch, buffer and culling table in one call. Feeding it the world in growing prefixes that
 // end on a geometry boundary keeps each call small, because the batches it already built are kept as they are.
-async function replacePartsInSlices(renderer, parts) {
+// The first slice is a guess (an eighth of the world); every slice after it is sized from how long the last one took, so a call
+// lasts about `sliceMilliseconds` on a slow phone as well as on a fast desktop. Each call also pays for the parts before it
+// (grouping checks, the part table), so a slice never shrinks below a thirty-second of the world.
+export async function replacePartsInSlices(renderer, parts, { sliceMilliseconds = SLICE_MILLISECONDS, now = () => performance.now(), pause = yieldToMain } = {}) {
   const partsByGeometry = new Map();
   const pinned = parts.filter(isPinnedPart);
   for (const part of parts) {
@@ -91,17 +95,22 @@ async function replacePartsInSlices(renderer, parts) {
     if (!partsByGeometry.has(part.geometry)) partsByGeometry.set(part.geometry, []);
     partsByGeometry.get(part.geometry).push(part);
   }
+  const weightOf = (geometry, sharing) => geometry.indices.length + sharing.length * 300;
   const prefix = [...pinned];
-  const totalWeight = [...partsByGeometry].reduce((total, [geometry, sharing]) => total + geometry.indices.length + sharing.length * 300, 0);
-  const sliceWeight = totalWeight / REPLACE_SLICES;
+  const totalWeight = [...partsByGeometry].reduce((total, [geometry, sharing]) => total + weightOf(geometry, sharing), 0);
+  const smallestSliceWeight = totalWeight / MAXIMUM_REPLACE_SLICES;
+  let targetWeight = totalWeight / FIRST_REPLACE_SLICES;
   let weight = 0;
   for (const [geometry, sharing] of partsByGeometry) {
     prefix.push(...sharing);
-    weight += geometry.indices.length + sharing.length * 300;
-    if (weight < sliceWeight) continue;
-    weight = 0;
+    weight += weightOf(geometry, sharing);
+    if (weight < targetWeight) continue;
+    const started = now();
     renderer.replaceParts([...prefix], { retainedUnchanged: true });
-    await yieldToMain();
+    const elapsed = now() - started;
+    if (elapsed > 0) targetWeight = Math.max(smallestSliceWeight, weight * sliceMilliseconds / elapsed);
+    weight = 0;
+    await pause();
   }
   renderer.replaceParts(parts, { retainedUnchanged: true });
 }
