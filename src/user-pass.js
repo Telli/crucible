@@ -66,6 +66,11 @@ export function describeUserPasses(passes) {
   }));
 }
 
+// The footprint helpers in the header below. Pixel footprint: how far one pixel of this pass reaches on the surface, so a pattern drawn by the pass can be filtered.
+// A neighbour that is sky or off screen does not count, and the smaller of the two steps wins, so a depth edge or a
+// silhouette does not stretch the footprint across the gap.
+// Lines of the given width repeating every pitch along coordinate, averaged over footprint (all in the same units).
+// Exact for a box filter while a pixel is narrower than a third of the pitch; wider than that it fades to the mean coverage.
 const FRAGMENT_HEADER = `#version 300 es
 precision highp float;
 precision highp int;
@@ -108,9 +113,6 @@ vec3 worldNormalAt(vec2 uv) {
   float size = length(normal);
   return size > 1e-12 ? normal / size : vec3(0.0, 1.0, 0.0);
 }
-// Pixel footprint: how far one pixel of this pass reaches on the surface, so a pattern drawn by the pass can be filtered.
-// A neighbour that is sky or off screen does not count, and the smaller of the two steps wins, so a depth edge or a
-// silhouette does not stretch the footprint across the gap.
 bool u67_isSurface(vec2 uv) {
   return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 && depthAt(uv) < 1.0;
 }
@@ -134,8 +136,6 @@ float worldFootprintAt(vec2 uv, vec3 direction) {
   vec2 pixel = 1.0 / resolution;
   return length(vec2(dot(u67_pixelStep(uv, vec2(pixel.x, 0.0)), direction), dot(u67_pixelStep(uv, vec2(0.0, pixel.y)), direction)));
 }
-// Lines of the given width repeating every pitch along coordinate, averaged over footprint (all in the same units).
-// Exact for a box filter while a pixel is narrower than a third of the pitch; wider than that it fades to the mean coverage.
 float bandLimitedLine(float coordinate, float pitch, float width, float footprint) {
   float safePitch = max(pitch, 1e-6);
   float filterWidth = max(footprint, 1e-6);
