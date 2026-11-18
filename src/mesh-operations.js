@@ -35,6 +35,7 @@ export const MESH_EDIT_OPERATIONS = /* @__PURE__ */ Object.freeze({
   delete: { fields: ['select'], tags: [] },
   flip_normals: { fields: ['select'], tags: [] },
   translate: { fields: ['select', 'offset', 'falloff'], tags: [] },
+  transform_selection: { fields: ['select', 'pivot', 'rotation', 'scale', 'falloff'], tags: [] },
   merge_by_distance: { fields: ['distance'], tags: [] },
   tag: { fields: ['select', 'name'], tags: [] },
   boolean: { fields: ['name', 'operation', 'cutter', 'translation', 'rotation', 'scale'], tags: ['cut'] },
