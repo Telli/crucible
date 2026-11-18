@@ -42,12 +42,14 @@ Pack names the recipe field and what to change. For now it refuses `motion`, `ti
 
 ## What it costs
 
-Measured on `public/recipes/view-transform.json` (a lamp, six parts), Chrome, gzip of every file the page downloaded, with the same lighting and the same still:
+Measured on `public/recipes/view-transform.json` (a lamp, six parts), gzip -9 of each file, with the same lighting and the same still. The JavaScript numbers are the slice 1 measurement of every file the page downloaded in Chrome; the runtime changed only by the small RGBE decoder.
 
-| | Recipe build (compiler + renderer + recipe) | Packed bundle |
-| --- | --- | --- |
-| JavaScript | 232,047 B | 113,960 B |
-| Data | the recipe JSON, inside the JavaScript | `scene.pack`, 114,681 B |
-| Total | 232,182 B | 228,641 B |
+| | Recipe build (compiler + renderer + recipe) | Packed bundle, probes as floats | Packed bundle, probes as RGBE |
+| --- | --- | --- | --- |
+| JavaScript | 232,047 B | 113,960 B | 113,960 B |
+| Data | the recipe JSON, inside the JavaScript | `scene.pack`, 112,645 B | `scene.pack`, 50,583 B |
+| Total | 232,182 B | 226,605 B | 164,543 B |
 
-The JavaScript halves. The data does not shrink for this scene, because the baked reflection probes of its two metal parts are 196 KB before gzip. A scene without baked probes pays much less data.
+The baked reflection probes of the lamp's two metal parts were 196 KB of the 351 KB raw pack. A probe is a map of linear colour, so the pack stores it as RGBE (three 8 bit mantissas and one shared exponent per pixel, 4 bytes instead of 12) and the runtime expands it to the `Float32Array` the renderer already takes. Every channel keeps within 1/128 of the brightest channel of its pixel. Raw `scene.pack` went from 350,824 B to 219,764 B. The rest is geometry, which the renderer needs as Float32 positions and normals and Uint32 indices, so pack leaves it as it is.
+
+A glossy variant of `packs/example-starter/recipes/crates.json` (metal crate trim at roughness 0.25, one probe) went from 54,836 B to 42,679 B of gzip data. The still of both scenes, drawn by the packed element, differs from the recipe build by at most 2 of 255 levels in any channel (RMSE 0.014 and 0.047).
