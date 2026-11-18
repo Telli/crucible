@@ -6,8 +6,8 @@ import { buildCopyScene } from '../bench/instancing/copies-scene.mjs';
 import { createEnvironmentMap } from '../src/environment.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 
-// The albedo guide of the CPU tracer is the definition Cook's `cycles` kernel writes (#1941): the sky radiance clamped to 0 to 1
-// for a ray that finds nothing, the sum of the lobe weights (diffuse, plus specular and coat times Fresnel) at the first
+// The albedo guide of the CPU tracer is the definition Cook's `cycles` kernel writes (#1941), except 1 for a ray that finds
+// nothing, where Cook writes the clamped sky: the sum of the lobe weights (diffuse, plus specular and coat times Fresnel) at the first
 // surface, and a glass lobe adding its Fresnel reflection plus the base colour times the rest.
 
 const QUAD = {
@@ -38,10 +38,11 @@ function assertClose(actual, expected, label) {
   actual.forEach((value, channel) => assert.ok(Math.abs(value - expected[channel]) < 1e-3, `${label} channel ${channel}: ${value} is not ${expected[channel]}`));
 }
 
-test('a ray that escapes writes the sky radiance clamped to 0 to 1, and 0 without an environment', async () => {
+test('a ray that escapes writes 1 whatever the sky, and 0 without an environment', async () => {
   const part = { name: 'floor', geometry: QUAD, matrix: IDENTITY, material: { tag: 'surface', color: [0.8, 0.8, 0.8], metallic: 0, roughness: 0.5 } };
   const albedoOf = async environment => (await renderPathTracedImage({ parts: [part], environment, camera: LOOKING_UP }, SMALL)).features.albedo[CENTER * 3];
-  assert.ok(Math.abs(await albedoOf({ map: constantSky(0.4) }) - 0.4) < 1e-4);
+  assert.equal(await albedoOf({ map: constantSky(0.4) }), 1);
+  assert.equal(await albedoOf({ map: constantSky(0) }), 1);
   assert.equal(await albedoOf({ map: constantSky(3) }), 1);
   assert.equal(await albedoOf({}), 0);
 });

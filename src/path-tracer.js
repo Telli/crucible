@@ -811,8 +811,7 @@ function createPathTracer(scene, options) {
       weight = previousPdf * previousPdf / (previousPdf * previousPdf + environmentSide * environmentSide);
     }
     addRadiance(depth, throughput[0] * sky[0] * weight, throughput[1] * sky[1] * weight, throughput[2] * sky[2] * weight);
-    // A ray that finds nothing has the sky it sees as its albedo, clamped to 0 to 1: one definition for every tracer (#1941).
-    if (!featuresRecorded) writeEscapedAlbedo(features.albedo, sky);
+    if (!featuresRecorded) writeEscapedAlbedo(features.albedo);
   }
 
   function recordFeatures(normal, viewX, viewY, viewZ) {

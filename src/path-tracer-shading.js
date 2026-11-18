@@ -278,9 +278,12 @@ export function writeFirstHitAlbedo(out, surface, material, baseColor, transmiss
   }
 }
 
-/** Writes the sky radiance a camera ray sees, clamped to 0 to 1, as the albedo guide of a ray that finds nothing. */
-export function writeEscapedAlbedo(out, skyRadiance) {
-  for (let channel = 0; channel < 3; channel++) out[channel] = Math.min(1, Math.max(0, skyRadiance[channel]));
+/**
+ * Writes 1 as the albedo guide of a camera ray that finds nothing. Cook writes the sky radiance clamped to 0 to 1 there;
+ * on an outdoor scene that raised OIDN's error by 12 seed deviations at 8 samples, and 1 brings it back to main's level (#1941).
+ */
+export function writeEscapedAlbedo(out) {
+  out.fill(1);
 }
 
 /**
