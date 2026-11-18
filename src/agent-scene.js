@@ -430,9 +430,13 @@ function nodeFrom(value) {
 /** Sets the given camera fields on a camera; a focal length replaces fov and a fov replaces focal length and sensor, never both. */
 export function applyCameraFields(camera, fields) {
   rejectFovWithFocalLength(fields);
+  rejectFocusDistanceWithoutFStop(fields);
   for (const field of CAMERA_FIELDS) {
     if (Object.hasOwn(fields, field)) camera[field] = fields[field];
   }
+  // null clears: fStop takes focusDistance with it, focusDistance clears only itself.
+  if (fields.fStop === null) delete camera.fStop;
+  if (fields.fStop === null || fields.focusDistance === null) delete camera.focusDistance;
   if (Object.hasOwn(fields, 'focalLength')) delete camera.fov;
   // Back to a perspective view: the old orthographic size no longer applies.
   if (fields.projection === 'perspective' && !Object.hasOwn(fields, 'orthoScale')) delete camera.orthoScale;
@@ -441,6 +445,12 @@ export function applyCameraFields(camera, fields) {
     delete camera.sensorWidth;
   }
   return camera;
+}
+
+function rejectFocusDistanceWithoutFStop(fields) {
+  if (fields.fStop === null && fields.focusDistance !== undefined && fields.focusDistance !== null) {
+    throw invalidField('camera.focusDistance', fields.focusDistance, 'null or left out: fStop null already clears focusDistance; to keep depth of field pass a number fStop such as 2.8');
+  }
 }
 
 function rejectFovWithFocalLength(fields) {
@@ -1090,7 +1100,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
   }
   Object.assign(recipe, normalizeAgentLook(look));
   if (recipe.camera.fStop !== undefined && recipe.effects?.depthOfField.blur > 0) {
-    throw invalidField('camera.fStop', recipe.camera.fStop, 'a camera without effects.depthOfField.blur above 0; set blur to 0 or remove fStop');
+    throw invalidField('camera.fStop', recipe.camera.fStop, 'a camera without effects.depthOfField.blur above 0; set blur to 0 or set-camera fStop null');
   }
   checkLightLinkNames(recipe);
   checkLineNodeNames(recipe);

@@ -8,7 +8,7 @@ Every tool error names what failed and what to do next, so read the message befo
 | Message or sign | Cause | Do |
 |---|---|---|
 | `expectedRevision must match the current revision.` | Another call changed the scene, or you used an old number. | `scene_inspect`, take its `revision`, resend the same batch. |
-| `Camera fStop drives depth of field; set effects.depthOfField.blur to 0 or remove fStop.` | Both depth of field controls are on. | Keep one: `fStop` on the camera, or `effects.depthOfField.blur`. See `camera.md`. |
+| `Camera fStop drives depth of field; set effects.depthOfField.blur to 0 or remove fStop.` | Both depth of field controls are on. | Keep one: `fStop` on the camera, or `effects.depthOfField.blur`. To drop the camera one, send `{ "type": "set-camera", "fStop": null }`. See `camera.md`. |
 | `Give a camera fov or a focalLength, not both.` | Both lens fields in one command. | Send only one; `focalLength` replaces `fov`. |
 | `bake.gridFog needs bake.irradianceGrid.` | `gridFog` alone. | Add `irradianceGrid: true`. See `light.md`. |
 | `Shot <name> reads motion up to N s but the motion lasts M s.` | A timeline longer than a non-looping motion. | Lengthen the motion, set `loop: true` or a shot `motionStart`. |
