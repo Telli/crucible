@@ -29,6 +29,7 @@ import { createAgentAssetScene } from '../src/agent-asset.js';
 import { parseGltf } from '../src/gltf.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { exportGlb } from '../src/export.js';
+import { matrixFrame } from '../src/export-skeleton.js';
 import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
@@ -777,7 +778,20 @@ function seekForExport(record, motionTime) {
 // The scene's parts already carry the current pose, including IK and node overrides, so skinned parts export it as is.
 function posedExport(record) {
   const rig = record.scene.rigExport?.() ?? { nodes: [], clips: [] };
-  return { parts: record.scene.parts.map(withoutRoundoffShear), options: rig.nodes.length ? rig : {} };
+  const options = rig.nodes.length ? rig : {};
+  return { parts: record.scene.parts.map(withoutRoundoffShear), options: { ...options, nodePaths: nodePathsOf(record.scene.exportRecipe().nodes) } };
+}
+
+/** "parent > child" for each node that has a parent, so an export error says where the node sits. */
+function nodePathsOf(nodes = []) {
+  const parentOf = new Map(nodes.map(node => [node.id, node.parent]));
+  const paths = {};
+  for (const node of nodes) {
+    const chain = [node.id];
+    for (let parent = node.parent; parent && chain.length <= nodes.length; parent = parentOf.get(parent)) chain.unshift(parent);
+    if (chain.length > 1) paths[node.id] = chain.join(' > ');
+  }
+  return paths;
 }
 
 // Chains of bone transforms leave world matrices with Float32 roundoff that the exporter reads as shear. Real shear
@@ -793,9 +807,7 @@ function withoutRoundoffShear(part) {
   });
   const dots = [[0, 1], [0, 2], [1, 2]].map(([first, second]) => Math.abs(columns[first].reduce((sum, value, axis) => sum + value * columns[second][axis], 0)));
   if (Math.max(...dots) > ROUNDOFF_SHEAR_LIMIT) return part;
-  const scale = mat4.getScaling([0, 0, 0], part.matrix);
-  const rotation = mat4.getRotation([0, 0, 0, 1], part.matrix);
-  const translation = mat4.getTranslation([0, 0, 0], part.matrix);
+  const { translation, rotation, scale } = matrixFrame(part.matrix);
   return { ...part, matrix: mat4.fromRotationTranslationScale(mat4.create(), rotation, translation, scale) };
 }
 
