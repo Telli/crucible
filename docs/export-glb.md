@@ -141,7 +141,7 @@ The file goes to `<jobs>/exports/<uuid>.glb`; the call takes no path and the res
 The newest eight files stay, counting the ones an earlier server run left in the folder, the GLB is at most 32 MiB, and `maxTextureSize` goes up to 4096.
 Without `clip` it writes the current pose: pattern and imported textures, skins, morph weights and IK as posed.
 `motionTime` seeks authored motion first and leaves the preview there, like `scene_look`.
-With `clip` (imported assets) it writes that source clip, translation, rotation, scale and weights, on the source skeleton, so the scene must carry no animation, node overrides or motion.
+With `clip` (imported assets, an index or the clip name from `scene_asset_catalog` or `scene_inspect`; an unknown name lists the valid ones) it writes that source clip, translation, rotation, scale and weights, on the source skeleton, so the scene must carry no animation, node overrides or motion.
 `node scripts/smoke-glb-export.mjs cpu` runs a patterned recipe, the robot with IK and its Walking clip through the real server and leaves the files in `artifacts/`.
 
 ## OBJ and STL
