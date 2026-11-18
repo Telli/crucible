@@ -46,3 +46,15 @@ test('the water shader carries a contact foam function that is off unless a mate
   assert.match(shader, /if \(waterContact\.w < 0\.5 \|\| waterBody\.w < 0\.5\) return 0\.0;/);
   assert.match(shader, /waterFoam = max\(waterFoam, waterContactShare\)/);
 });
+
+test('contact foam skips water whose scene behind it is more than half a metre away, so far water and the horizon stay clear', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  const functionStart = shader.indexOf('float waterContactFoam(');
+  const body = shader.slice(functionStart, shader.indexOf('#ifndef shadowVisibility', functionStart));
+  const gapLine = body.indexOf('float gap = abs(surfacePosition.y - waterBody.x + sceneDepth);');
+  const reachLine = body.indexOf('if (gap > 0.5) return 0.0;');
+  const pixelsLine = body.indexOf('float gapPixels = gap * pixelsPerMetre;');
+  assert.ok(gapLine >= 0, 'the gap is measured in metres');
+  assert.ok(reachLine > gapLine, 'a gap over half a metre returns no foam');
+  assert.ok(reachLine < pixelsLine, 'the metre limit applies before the width in pixels, which is huge far away');
+});
