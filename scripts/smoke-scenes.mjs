@@ -20,6 +20,25 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  for (const size of [{ width: 1280, height: 800 }, { width: 1024, height: 700 }]) {
+    await page.setViewportSize(size);
+    await page.goto('http://127.0.0.1:5179/object.html');
+    await page.waitForSelector('#benchmark');
+    const overlaps = await page.evaluate(() => {
+      const panel = document.querySelector('.controls').getBoundingClientRect();
+      const footerItems = ['#benchmark', '#cpu', '#parts'].map((selector) => document.querySelector(selector).getBoundingClientRect());
+      return footerItems.filter((item) => item.width > 0 && item.left < panel.right && item.right > panel.left && item.top < panel.bottom && item.bottom > panel.top).length;
+    });
+    assert.equal(overlaps, 0, `Object studio footer overlaps the settings panel at ${size.width}x${size.height}.`);
+    const lastRowReachable = await page.evaluate(() => {
+      const panel = document.querySelector('.controls');
+      panel.scrollTop = panel.scrollHeight;
+      const lastRow = document.querySelector('#quality').getBoundingClientRect();
+      return lastRow.bottom <= panel.getBoundingClientRect().bottom;
+    });
+    assert.ok(lastRowReachable, `Object studio Resolution row cannot be scrolled into view at ${size.width}x${size.height}.`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('http://127.0.0.1:5179/nature.html');
   await page.waitForFunction(() => window.__nature?.renderer);
   assert.equal(await page.evaluate(() => window.__nature.state.paused), true);
