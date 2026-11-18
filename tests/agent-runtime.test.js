@@ -1078,6 +1078,56 @@ runTest('scene_create_asset opens a catalog GLB by assetName and refuses assetNa
   await assert.rejects(runtime.createAsset({ recipe: { ...assetRecipe, assetId: sheepId, assetName: 'sheep_body.glb' } }), /exactly one of recipe\.assetId/);
 });
 
+// Files that arrive or leave the --assets folder after the server started (#2209).
+async function rescanHarness(context) {
+  const directory = await mkdtemp(join(tmpdir(), 'crucible-rescan-assets-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  await cp(new URL('./fixtures/kenney-boat/', import.meta.url), directory, { recursive: true });
+  const boatBytes = await readFile(join(directory, 'boat-fishing-small.glb'));
+  await rm(join(directory, 'boat-fishing-small.glb'));
+  await writeFile(join(directory, 'first.glb'), boatBytes);
+  const harness = await reviewRuntimeHarness({ runtimeOptions: { assets: directory } });
+  const addGlb = (name, marker) => writeFile(join(directory, name), withDistinctDocument(boatBytes, marker));
+  return { ...harness, directory, addGlb };
+}
+
+function radianceFile() {
+  return Buffer.concat([Buffer.from('#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 2 +X 4\n'), Buffer.alloc(2 * 4 * 4, 128)]);
+}
+
+const listedNames = async runtime => (await runtime.assetCatalog()).assets.map(asset => asset.name);
+
+runTest('a GLB and an HDRI copied into --assets after start are listed by the next catalog call and placed by name (#2209)', async context => {
+  const { runtime, sessionId, sourceCalls, directory, addGlb } = await rescanHarness(context);
+  assert.deepEqual(await listedNames(runtime), ['first.glb']);
+  await addGlb('downloaded.glb', 'downloaded');
+  await writeFile(join(directory, 'sky.hdr'), radianceFile());
+  const listing = await runtime.assetCatalog();
+  assert.deepEqual(listing.assets.map(asset => asset.name).sort(), ['downloaded.glb', 'first.glb', 'sky.hdr']);
+  const downloadedId = listing.assets.find(asset => asset.name === 'downloaded.glb').assetId;
+  await runtime.apply({ sessionId, operations: [{ type: 'add-node', node: { id: 'new-boat', asset: { name: 'downloaded.glb' } } }] });
+  assert.deepEqual(sourceCalls.filter(call => call.method === 'apply').at(-1).input.operations[0].node.asset, { id: downloadedId });
+});
+
+runTest('an asset name that appeared since the last catalog call is found without listing the catalog first (#2209)', async context => {
+  const { runtime, sessionId, sourceCalls, addGlb } = await rescanHarness(context);
+  await listedNames(runtime);
+  await addGlb('late.glb', 'late');
+  await runtime.apply({ sessionId, operations: [{ type: 'add-node', node: { id: 'late-boat', asset: { name: 'late.glb' } } }] });
+  assert.equal(sourceCalls.filter(call => call.method === 'apply').at(-1).input.operations[0].node.asset.id.length, 64);
+});
+
+runTest('a file removed from --assets leaves the catalog and a rewritten file gets its new id (#2209)', async context => {
+  const { runtime, directory, addGlb } = await rescanHarness(context);
+  await addGlb('temporary.glb', 'one');
+  const before = (await runtime.assetCatalog()).assets.find(asset => asset.name === 'temporary.glb').assetId;
+  await addGlb('temporary.glb', 'two');
+  const after = (await runtime.assetCatalog()).assets.find(asset => asset.name === 'temporary.glb').assetId;
+  assert.notEqual(after, before);
+  await rm(join(directory, 'temporary.glb'));
+  assert.deepEqual(await listedNames(runtime), ['first.glb']);
+});
+
 // The same GLB with one extra field in its JSON chunk, so the catalog gives it another asset id.
 function withDistinctDocument(bytes, marker) {
   const jsonLength = bytes.readUInt32LE(12);

@@ -358,6 +358,30 @@ async function hashFrames(sequence, frameEntries) {
 }
 
 /**
+ * A cheap summary of the catalog files in `root` (name, size and modification time, no bytes read), so the runtime can tell whether a
+ * file was added, removed or rewritten since the catalog was built (#2209). Only the files the catalog lists are looked at, and at
+ * most as many as the catalog accepts plus one, so a huge folder costs a bounded number of stats.
+ */
+export async function fingerprintAssetDirectory(root) {
+  let directory;
+  let listing;
+  try {
+    directory = await realpath(root);
+    listing = await readdir(directory, { withFileTypes: true });
+  } catch {
+    // An unreadable folder has no fingerprint; building the catalog reports the real error with its own advice.
+    return 'unreadable';
+  }
+  const names = listing.filter(entry => /\.(glb|png|jpe?g|webp|hdr|cube)$/i.test(entry.name)).map(entry => entry.name).sort();
+  const parts = [`${names.length}`];
+  for (const name of names.slice(0, MAXIMUM_ASSETS + TEXTURE_SEQUENCE_LIMITS.maxFrames + 1)) {
+    const status = await lstat(join(directory, name)).catch(() => null);
+    parts.push(`${name}:${status ? `${status.size}:${status.mtimeMs}` : 'gone'}`);
+  }
+  return parts.join('|');
+}
+
+/**
  * Explicit local directory catalog. IDs bind bytes, rather than agent-supplied file paths.
  * `packFiles` adds the validated GLB, image, .hdr and .cube files of installed packs (scripts/agent-packs.mjs),
  * each `{ directory, filename, assetId, metadata }`. With a null root only pack files are listed.
