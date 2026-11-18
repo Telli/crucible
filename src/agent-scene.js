@@ -5,7 +5,7 @@ import { currentFormatName } from './legacy-names.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
 import { applyProjection, validateCameraShift, CAMERA_LENS_FIELDS } from './camera.js';
 import { checkLocalVolumePartNames } from './local-volume-resolve.js';
-import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, VOLUME_FOG_FIELDS } from './agent-look.js';
+import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, SKY_OVERRIDABLE_FIELDS, VOLUME_FOG_FIELDS } from './agent-look.js';
 import { postStepSupport } from './shader-registry.js';
 import { agentSceneModule, agentSceneModuleLoaded } from './agent-scene-modules.js';
 import { CURVE_TEXT_LIMITS, AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, MAX_MATERIAL_PATTERNS, RECIPE_ALPHA_MODES } from './agent-scene-capabilities.js';
@@ -2063,8 +2063,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   }
 
   function commit(stagedState, incrementRevision) {
-    publishPose(stagedState, stagedState.initialPose);
-    if (stagedState.topologyChanged) {
+    // A pose that swaps in new parts (particles, cloth) is a topology change too: a renderer holding the old parts would
+    // otherwise try to update parts it never saw, which failed with "Unknown part identity" (#2204).
+    const posedPartsChanged = publishPose(stagedState, stagedState.initialPose);
+    if (stagedState.topologyChanged || posedPartsChanged) {
       topologyRevision++;
     }
     if (incrementRevision && state) {
@@ -2237,6 +2239,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
             const type = patch.sky.type ?? kept?.type ?? 'physical';
             merged.sky = { ...!patch.sky.preset && kept?.type === type && kept, type, ...patch.sky };
           }
+          // The sky's derived colours kept from an earlier sky or setup are not choices: only the patch's own values beat the sky.
+          if (lookField === 'environment' && merged.sky?.type === 'physical') {
+            for (const field of SKY_OVERRIDABLE_FIELDS) if (!Object.hasOwn(patch, field)) delete merged[field];
+          }
           candidate[lookField] = merged;
           continue;
         }
@@ -2398,7 +2404,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         return result;
       });
       const resident = geometryStats(ownedGeometryRecords());
-      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...coplanarProblems(), ...(state.particleSampler?.diagnostics() ?? [])];
+      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...coplanarProblems(), ...(agentSceneModuleLoaded('unsupportedPart') ? agentSceneModule('unsupportedPart').unsupportedPartProblems(state.parts, state.recipe, revision) : []), ...(state.particleSampler?.diagnostics() ?? [])];
       return {
         revision, topologyRevision,
         ...(state.recipe.motion?.ik?.length ? { motionIk: agentSceneModule('motion').compileAgentMotion(state.recipe.motion, state.recipe).sweepIk() } : {}),

@@ -69,6 +69,13 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `site/recipes.html`, `site/recipe-*.html`, `public/recipes/`, `scripts/recipe-catalog.mjs`, `scripts/make-recipe-pages.mjs`, `src/recipes.js`
 - Drive: `node scripts/drive.mjs shot recipes`
 
+### `tiers`
+- Name: Render tiers (draft, realtime, final: time, card memory and error beside Blender, from the tier matrix)
+- Surface: Site
+- Reach: `/tiers.html`
+- Source: `site/tiers.html`, `src/tiers.js`, `src/tiers-model.js`, `src/tiers.css`, `bench/tiers/results/tier-page-lit-interior.json`, `bench/tiers/make-tier-page-data.mjs`
+- Drive: `node scripts/drive.mjs shot tiers`
+
 ### `recipe-dolly-zoom`
 - Name: Recipe page, dolly zoom
 - Surface: Site
