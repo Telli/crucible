@@ -50,21 +50,21 @@ export function copyWaterFields(value, result, toVector) {
 
 export const WATER_FOAM_EDGES = Object.freeze(['soft', 'hard']);
 export const WATER_FOAM_WIDTH_RANGE = Object.freeze([0.25, 4]);
-export const WATER_FOAM_VEIN_RANGES = Object.freeze({ amount: [0, 1], scale: [0.25, 4], stretch: [1, 8] });
-export const WATER_FOAM_VEIN_DEFAULTS = Object.freeze({ amount: 0.6, scale: 1, stretch: 3 });
+export const WATER_FOAM_VEIN_RANGES = Object.freeze({ amount: [0, 1], scale: [0.25, 4] });
+export const WATER_FOAM_VEIN_DEFAULTS = Object.freeze({ amount: 0.6, scale: 1 });
 
 /**
- * The foam veins of a water material: streaks that trail down the wave face from a crest, fading away from it. `amount` 0 (off) to 1
- * (default 0.6 once `foamVeins` is given), `scale` 0.25 to 4 (1 default, larger streaks are finer) and `stretch` 1 to 8 (3 default, how
- * much longer than wide a streak is). An `amount` of 0 draws nothing.
+ * The foam veins of a water material: a net of thin foam lines that spreads from a crest and fades away from it. They are sampled on the
+ * world position with the same step in every direction, so a cell is as long as it is wide. `amount` 0 (off) to 1 (default 0.6 once
+ * `foamVeins` is given) and `scale` 0.25 to 4 (1 default, larger cells are finer). An `amount` of 0 draws nothing.
  */
 export function resolveWaterFoamVeins(foamVeins) {
   if (foamVeins === null || typeof foamVeins !== 'object' || Array.isArray(foamVeins)) {
-    throw new TypeError('foamVeins must be an object such as { "amount": 0.6, "scale": 1, "stretch": 3 }.');
+    throw new TypeError('foamVeins must be an object such as { "amount": 0.6, "scale": 1 }.');
   }
   const unknown = Object.keys(foamVeins).filter(key => !(key in WATER_FOAM_VEIN_DEFAULTS));
   if (unknown.length > 0) {
-    throw new TypeError(`foamVeins has no field ${unknown.join(', ')}; pass amount, scale or stretch.`);
+    throw new TypeError(`foamVeins has no field ${unknown.join(', ')}; pass amount or scale.`);
   }
   const resolved = { ...WATER_FOAM_VEIN_DEFAULTS, ...foamVeins };
   for (const [field, [minimum, maximum]] of Object.entries(WATER_FOAM_VEIN_RANGES)) {
@@ -237,7 +237,7 @@ function bindWaterBody(renderer) {
 
 const foamVeinLocations = new WeakMap();
 
-/** Sends the foam veins of a water batch: amount, scale and stretch. Amount 0 turns the veins off, which is every batch without `foamVeins`. */
+/** Sends the foam veins of a water batch: amount and scale. Amount 0 turns the veins off, which is every batch without `foamVeins`. */
 function bindWaterFoamVeins(renderer, batch) {
   if (!renderer.shaderFeatures?.has('water')) {
     return;
@@ -249,7 +249,7 @@ function bindWaterFoamVeins(renderer, batch) {
   }
   const veins = batch.parts[0].material.foamVeins ?? WATER_FOAM_VEIN_DEFAULTS;
   const amount = batch.parts[0].material.foamVeins ? veins.amount : 0;
-  renderer.context.uniform3f(location.veins, amount, veins.scale, veins.stretch);
+  renderer.context.uniform2f(location.veins, amount, veins.scale);
 }
 
 /** The `waterContact` uniform: width, hardness, noise and 1 while the rim is drawn. No contact foam, or `rim` false, sends 0 and the shader draws no line. */
@@ -305,7 +305,7 @@ export const worldMaterialSlots = {
   // Shadow of a surface under murky water: the classic shadow map read over a wider disc. A cascaded map is read through
   // its own macro and keeps its filter.
   declarations: `uniform vec4 waterBody;
-uniform vec3 waterFoamVeins;
+uniform vec2 waterFoamVeins;
 uniform vec2 waterFoamStyle;
 uniform vec4 waterContact;
 uniform float waterContactDrift;
@@ -567,12 +567,13 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     }
     waterContactShare = waterContactFoam(worldPosition, contactNoise) * contactTear;
     waterFoam = max(waterFoam, waterContactShare);
-    // waterFoamVeins is (amount, scale, stretch). Streaks trail down the wave face from the crest: ridged noise, warped by a second
-    // noise, is stretched across the crest, and its lines widen where the foam mask is high, so they fade out away from the crest.
+    // waterFoamVeins is (amount, scale). Veins are ridged noise, warped by a second noise, on the world position: one step in every direction
+    // and no frame that turns with the surface normal, so a cell is as long as it is wide and does not smear. Lines widen where the foam mask is
+    // high, so they fade out away from the crest.
     if (waterFoamVeins.x > 0.0) {
-      vec2 veinPosition = crestPosition * 4.0 * vec2(waterFoamVeins.y, waterFoamVeins.y / waterFoamVeins.z);
+      vec2 veinPosition = worldPosition.xz * 4.0 * waterFoamVeins.y;
       vec2 veinWarp = terrainNoise(veinPosition * 0.7 + 17.1).xy - 0.5;
-      float veinRidge = 1.0 - abs(2.0 * terrainNoise(veinPosition * vec2(2.2, 1.0) + veinWarp * 0.9 + 5.7).x - 1.0);
+      float veinRidge = 1.0 - abs(2.0 * terrainNoise(veinPosition * 1.6 + veinWarp * 0.9 + 5.7).x - 1.0);
       float veinReach = sqrt(smoothstep(0.0, 0.6, foamMask));
       float veinLine = smoothstep(1.0 - 0.4 * veinReach - 0.02 - fwidth(veinRidge), 1.0 - 0.4 * veinReach + fwidth(veinRidge), veinRidge);
       waterFoam = max(waterFoam, veinLine * veinReach * waterFoamVeins.x);
