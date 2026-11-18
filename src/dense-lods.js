@@ -6,7 +6,8 @@ import { DENSE_TRIANGLES_PER_PIXEL, partTakesLods } from './renderer.js';
 // fewest triangles whose error stays under `lodPixelError` pixels (#1163). On such a scene every pixel is shaded about
 // once per triangle that touches it, so a level with a quarter of the triangles shades far fewer quads.
 
-const DEFAULT_MINIMUM_TRIANGLES = 20000;
+// Meshes of a few thousand triangles, many of them, are as dense as a few huge scans, so the floor sits low (#2144).
+export const DEFAULT_MINIMUM_TRIANGLES = 1500;
 
 /** Triangles over pixels for these parts on a canvas of `pixels` pixels (the canvas size times the pixel ratio squared). */
 export function trianglesPerPixel(parts, pixels) {

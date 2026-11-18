@@ -30,10 +30,10 @@ try {
       const name = new URL(request.url()).pathname.split('/').pop();
       await route.fulfill({ path: `${directory}/${name}` });
     });
-    await page.goto(`${serverUrl}/bench/glaze-passes/harness.html`);
+    await page.goto(`${serverUrl}/bench/glaze-passes/${overrides.engine === 'three' ? 'threejs-harness.html' : 'harness.html'}`);
     await page.waitForFunction(() => window.harnessReady, null, { timeout: 120000 });
     results[basename(directory)] = await page.evaluate(
-      options => window.measureScene(options),
+      options => (options.engine === 'three' ? window.measureThree(options) : window.measureScene(options)),
       { description, glbUrl: `/__scene/${description.glb}`, hdriUrl: `/__scene/${description.hdri}`, segmented: mode !== 'whole', ...overrides },
     );
     const { capturedFrame, ...summary } = results[basename(directory)];

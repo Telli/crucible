@@ -90,7 +90,7 @@ function replaceColourShaders(replaceVertex) {
   };
 }
 
-window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, denseLods = false, experiment = null }) {
+window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, denseLods = false, denseLodsMinimumTriangles = undefined, experiment = null }) {
   const canvas = document.querySelector('#viewport');
   const experiments = new Set(String(experiment ?? '').split(','));
   if (experiments.has('no-invariant')) {
@@ -125,7 +125,10 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
   const asset = await loadGltf(model, { baseUrl: new URL('.', new URL(glbUrl, location.href)).href, sharedTextures: createSharedTextures(), ...(description.gltfOptions ?? {}) });
   const rendererOptions = description.renderer ?? {};
   const shadowCascades = rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined;
-  const renderer = new CrucibleRenderer(canvas, denseLods ? addLodsToDenseParts(asset.parts, { pixels: width * height }) : asset.parts, {
+  const lodStarted = performance.now();
+  const renderedParts = denseLods ? addLodsToDenseParts(asset.parts, { pixels: width * height, minimumTriangles: denseLodsMinimumTriangles }) : asset.parts;
+  const lodBuildMs = Number((performance.now() - lodStarted).toFixed(0));
+  const renderer = new CrucibleRenderer(canvas, renderedParts, {
     ground: false, hdr: true, samples: 4, ...rendererOptions, shadowCascades,
     environment: { ...(rendererOptions.environment ?? {}), map },
   });
@@ -192,6 +195,16 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
     await new Promise(resolve => setTimeout(resolve, 10));
     timer.drain().forEach(record);
   }
+  // One counted frame: the triangles and draw calls Glaze sends after culling and level selection.
+  const drawCounts = { drawCalls: 0, triangles: 0 };
+  const originalDrawInstanced = context.drawElementsInstanced.bind(context);
+  context.drawElementsInstanced = (mode, count, type, offset, instances) => {
+    drawCounts.drawCalls++;
+    drawCounts.triangles += (count / 3) * instances;
+    return originalDrawInstanced(mode, count, type, offset, instances);
+  };
+  renderer.render(frame);
+  context.drawElementsInstanced = originalDrawInstanced;
   let capturedFrame = null;
   if (capture) {
     // One more frame, read back whole in the same task, so the canvas still holds it.
@@ -202,6 +215,7 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
     for (let offset = 0; offset < pixels.length; offset += 0x8000) binary += String.fromCharCode(...pixels.subarray(offset, offset + 0x8000));
     capturedFrame = btoa(binary);
   }
+  if (experiment === "probe") return probeAlongView(asset.parts, description.eye, description.target);
   const geometries = new Set(asset.parts.map(part => part.geometry));
   const geometryStats = {
     vertices: [...geometries].reduce((sum, geometry) => sum + geometry.positions.length / 3, 0),
@@ -214,6 +228,8 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
   return {
     geometryStats,
     parts: asset.parts.length,
+    lodBuildMs,
+    drawCounts,
     canvas: [canvas.width, canvas.height],
     samples: totals.length,
     wallMedianMs: Number(median(wallMilliseconds).toFixed(3)),
@@ -232,3 +248,40 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
   };
 };
 window.harnessReady = true;
+
+// Experiment only: the parts whose bounding box the view ray crosses, nearest first, with their material.
+function probeAlongView(parts, eye, target) {
+  const direction = [0, 1, 2].map(axis => target[axis] - eye[axis]);
+  const length = Math.hypot(...direction);
+  const unit = direction.map(value => value / length);
+  const hits = [];
+  parts.forEach((part, index) => {
+    const positions = part.geometry.positions;
+    const low = [Infinity, Infinity, Infinity];
+    const high = [-Infinity, -Infinity, -Infinity];
+    const matrix = part.matrix ?? [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    for (let offset = 0; offset < positions.length; offset += 3 * 8) {
+      const [x, y, z] = [positions[offset], positions[offset + 1], positions[offset + 2]];
+      for (let axis = 0; axis < 3; axis++) {
+        const value = matrix[axis] * x + matrix[4 + axis] * y + matrix[8 + axis] * z + matrix[12 + axis];
+        low[axis] = Math.min(low[axis], value);
+        high[axis] = Math.max(high[axis], value);
+      }
+    }
+    let near = 0;
+    let far = 200;
+    for (let axis = 0; axis < 3; axis++) {
+      if (Math.abs(unit[axis]) < 1e-9) {
+        if (eye[axis] < low[axis] || eye[axis] > high[axis]) { near = Infinity; break; }
+        continue;
+      }
+      const first = (low[axis] - eye[axis]) / unit[axis];
+      const second = (high[axis] - eye[axis]) / unit[axis];
+      near = Math.max(near, Math.min(first, second));
+      far = Math.min(far, Math.max(first, second));
+    }
+    if (near <= far) hits.push({ index, name: part.name, near: Number(near.toFixed(2)), far: Number(far.toFixed(2)), size: low.map((value, axis) => Number((high[axis] - value).toFixed(1))), material: part.material });
+  });
+  hits.sort((first, second) => first.near - second.near);
+  return { hits: hits.slice(0, 12) };
+}
