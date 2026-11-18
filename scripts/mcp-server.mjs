@@ -16,6 +16,7 @@ import packageMetadata from '../package.json' with { type: 'json' };
 import { MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from '../src/view-transform-names.js';
 import { BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES, CATALOG_FILE_ID } from '../src/look-catalog.js';
+import { describeReceived } from '../src/field-error.js';
 import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES } from '../src/agent-scene-capabilities.js';
 import { MATERIAL_LAYER_SCALAR_RANGES, MATERIAL_LAYER_COLOR_RANGES, TOON_COLOR_MAXIMUM } from '../src/material-layers.js';
 import { SUBSURFACE_RANGES } from '../src/subsurface-limits.js';
@@ -251,12 +252,18 @@ const volumeFog = z.strictObject({
 const affects = z.array(z.string()).optional();
 const iesProfile = z.any().optional();
 const lines = z.record(z.string(), z.unknown()).describe('Outlines, toon light and polylines as plain JSON; fields and limits in scene_capabilities lineArt. null clears.');
+// An invalid name says which names work. The union alone reports only its 64-hex branch (issue 2049).
+function catalogReference(names, fileKind) {
+  const error = issue => `Invalid value: expected a built-in name (${names.join(', ')}), or a 64-character ${fileKind} ID from scene_asset_catalog (got ${describeReceived(issue.input)})`;
+  return z.union([z.enum(names, { error }), z.string().regex(CATALOG_FILE_ID, { error })], { error });
+}
+
 const environment = z.strictObject({
   world: z.boolean().optional().describe('Draw the sky and apply surface fog.'),
   ground: z.boolean().optional().describe('false: no automatic floor.'),
   setup: z.enum(LIGHTING_SETUP_NAMES).optional().describe('Named lighting; resets key, fill and ambient fields. Default daylight.'),
   environmentIntensity: bounded(0, 100).optional().describe('Scales the setup environment light and its reflections.'),
-  hdri: z.union([z.enum(BUNDLED_ENVIRONMENT_NAMES), z.string().regex(CATALOG_FILE_ID)]).nullable().optional().describe('HDRI instead of the setup sky; scene_capabilities catalogLooks.'),
+  hdri: catalogReference(BUNDLED_ENVIRONMENT_NAMES, '.hdr').nullable().optional().describe('HDRI instead of the setup sky; scene_capabilities catalogLooks.'),
   environmentRotation: bounded(-100, 100).optional().describe('Turns the setup environment around the vertical axis, in radians.'),
   lightDirection: boundedVector(-1e6, 1e6).optional().describe('Direction toward the key light; shadows follow.'),
   keyColor: boundedVector(0, 1000).optional(),
@@ -316,7 +323,7 @@ const environment = z.strictObject({
   specularAntiAliasing: z.number().min(0).max(4).optional().describe('Specular anti-aliasing: 0 off, 1 default; widens highlights that sparkle on grainy normal-mapped metal.'),
   resolveCoplanar: z.union([z.literal('offset'), z.literal(false)]).optional().describe("Flush faces are ranked at draw time by default ('offset'); false opts out."),
   viewTransform: z.enum(VIEW_TRANSFORM_NAMES).optional().describe('Display transform, for example agx to compare with Blender.'),
-  look: z.union([z.enum([...LOOK_NAMES, ...BUNDLED_CUBE_LOOK_NAMES]), z.string().regex(CATALOG_FILE_ID)]).nullable().optional().describe('Look preset or .cube; scene_capabilities catalogLooks. null clears.'),
+  look: catalogReference([...LOOK_NAMES, ...BUNDLED_CUBE_LOOK_NAMES], '.cube').nullable().optional().describe('Look preset or .cube; scene_capabilities catalogLooks. null clears.'),
   sky: z.record(z.string(), z.unknown()).nullable().optional().describe('Physical sky: {type:"physical", sunElevation, sunRotation, turbidity, groundAlbedo, aerialPerspective}; sets key light, sky and fog. Fields in scene_capabilities physicalSky.'),
   wind: z.strictObject({ strength: bounded(0, 4).optional(), direction: bounded(-360, 360).optional().describe('Degrees: 0 toward +x, 90 toward +z.') }).optional().describe('Sway of foliage and grass materials; strength defaults to 0.3.'),
 });
