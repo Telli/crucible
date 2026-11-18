@@ -6,7 +6,7 @@ message first: each one names the cause and the next step.
 | Sign | Cause | Do |
 |---|---|---|
 | Submit says render jobs need a job store | The server started without `--jobs`. | Ask the user to restart with `--jobs <abs private dir>`; an agent cannot add it. |
-| `expectedRevision must match the current revision.` | The scene changed since you read it. | `scene_inspect`, resubmit with the new revision. |
+| `expectedRevision` rejected with `the current revision` and `scene_inspect returns it` | The scene changed since you read it. | `scene_inspect`, resubmit with the new revision. |
 | Settings rejected as unknown field | A typo, or a field of another tool (for example `time`). | Use the names in `jobs.md`; `scene_render_submit` lists the schema. |
 | Video is a still frame | No `motion: { "start": 0 }`. | Add it and resubmit. |
 | Sampled time past the motion | A nonlooping motion is shorter than `start + duration`. | Lengthen the motion, set `loop: true` or shorten the job. |
@@ -19,7 +19,7 @@ message first: each one names the cause and the next step.
 | Smaller output than asked | The memory budget reduced it. | Report the actual size; ask for a larger `--memory` if size matters. |
 | State `failed` with a time limit | The job passed 60 s plus 2 s per frame of render time. | Lower the size, fps or samples, or split the film into parts. Under a shared GPU the message says to submit again. |
 | `Motion settings require a recipe with authored motion, physics...` | Nothing in the recipe moves. | Add motion, physics, a placed clip, a map sequence or a grid volume sequence, or drop `motion`. |
-| `duration is (stillCount - 1) / fps` | `stillCount` came with another `duration`. | Leave `duration` out. |
+| `(stillCount - 1) / fps` | `stillCount` came with another `duration`. | Leave `duration` out. |
 | `transparent`, `format` or `region` refused | Combined with `renderer` (traced PNG is opaque 8-bit) or, for `transparent` and `format`, with `kind: "video"`. | Drop `renderer` (or use a raster `quality`), or use `stills`. |
 | `quality final` ran as another tier | `final` cannot draw `passes`, `transparent`, `region`, `multilayer` or a non-png `format`, or one frame would pass `maxSeconds`. | Read `quality.steps`; ask for the raster tier you want, or a smaller traced frame. |
 | A path traced job is refused with a triangle count | The `cpu` tracer takes about 400,000 triangles; `native` is bounded by the adapter. | Use `backend: "native"` or `gpu`, or lower the scene. |
