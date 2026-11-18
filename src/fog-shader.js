@@ -4,6 +4,7 @@ import { createLocalVolumeCompositeFragment } from './post.js';
 import { compileProgram, fullscreenVertex } from './gl-program.js';
 import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
+import { installRenderPasses } from './render-passes.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
 import { GRID_BORDER_VOXELS, GRID_MOTION_TIME_STEP, HALF_FLOAT_MAXIMUM, bakedGridEmission, floatToHalf, gridUnitVelocity } from './volume-grid.js';
@@ -225,6 +226,27 @@ function bindLocalVolumes(renderer, post, frame, environment) {
     context.bindTexture(context.TEXTURE_3D, localGridVelocityTexture(renderer, buffers.gridVolume));
     context.uniform1i(locate('localGridVelocityTexture'), 10);
   }
+  // The emission of the glowing surfaces, when the frame drew it (drawEmissionMask): the surface shadow leaves it alone.
+  const maskReady = renderer.localEmissionMaskReady === true;
+  context.activeTexture(context.TEXTURE11);
+  context.bindTexture(context.TEXTURE_2D, maskReady ? renderer.passSupport.texture : renderer.whiteTexture);
+  context.uniform1i(locate('localEmissionMask'), 11);
+  context.uniform1f(locate('localEmissionMaskReady'), maskReady ? 1 : 0);
+}
+
+/**
+ * Draws the emission of the opaque surfaces as a float pass into the render pass target, before the frame itself, when a volume with `castShadow` sits over glowing parts,
+ * so the post pass can leave their emission out of the light it dims (#1360). Returns whether it drew the mask; a frame with nothing to mask costs nothing.
+ */
+function drawEmissionMask(renderer, frame) {
+  const environment = { ...renderer.environment, ...frame.environment };
+  const volumes = environment.localVolumes;
+  if (!Array.isArray(volumes) || !renderer.depth || !renderer.hdr || !((environment.keyIntensity ?? 1) > 0)) return false;
+  const shadowing = volumes.some(volume => volume?.shape !== 'mesh' && volume?.castShadow === true && (volume?.density ?? 1) > 0);
+  if (!shadowing || !renderer.sceneParts.some(part => (part.material?.emission ?? 0) > 0)) return false;
+  installRenderPasses(renderer);
+  renderer.render({ ...frame, pass: 'emission', passFloat: true, emissionMaskPass: true });
+  return true;
 }
 
 // The two 3D textures of a grid volume, RGBA16F, linear and clamped, uploaded once per grid (and per temperature scale for the emission): `localGridTexture` holds
@@ -408,6 +430,8 @@ uniform vec4 localVolumeGrid[8];
 uniform vec4 localVolumeRampSetup[8];
 uniform vec4 localVolumeRamp[${MAX_LOCAL_VOLUMES * LOCAL_VOLUME_RAMP_STOPS}];
 uniform highp sampler3D localGridTexture;
+uniform highp sampler2D localEmissionMask;
+uniform float localEmissionMaskReady;
 uniform highp sampler3D localGridEmissionTexture;
 `;
 
@@ -767,7 +791,9 @@ ${withGrid ? `    if (localVolumeGrid[nearest].x > 0.5) {
   if (blurDepth > 0.0) background = localVolumeBlurred(background, blurDepth, blurEntry, origin, direction);
   if (depth < 1.0 && surfacePoint.w > 0.0 && max(volumeLightColor.r, max(volumeLightColor.g, volumeLightColor.b)) > 0.0) {
     vec3 surfaceWorld = surfacePoint.xyz / surfacePoint.w;
-    background *= mix(vec3(1.0), localVolumeSurfaceShadow(surfaceWorld, normalize(volumeLightDirection)), keyVisibility(surfaceWorld));
+    vec3 shade = mix(vec3(1.0), localVolumeSurfaceShadow(surfaceWorld, normalize(volumeLightDirection)), keyVisibility(surfaceWorld));
+    vec3 glow = localEmissionMaskReady > 0.5 ? texelFetch(localEmissionMask, ivec2(gl_FragCoord.xy), 0).rgb : vec3(0.0);
+    background = localEmissionMaskReady > 0.5 ? glow + max(background - glow, vec3(0.0)) * shade : background * shade;
   }
   return background * transmittance + radiance;
 }
@@ -805,7 +831,7 @@ function packLights(renderer) {
 
 registerShaderFeatureCode('volumeFog', {
   // The JavaScript half, which the renderer calls for a frame that draws a volume fog.
-  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights, compositeLocalVolumes, releaseLocalVolumeComposite },
+  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights, drawEmissionMask, compositeLocalVolumes, releaseLocalVolumeComposite },
   keyDeclarations: KEY_LIGHT_DECLARATIONS,
   keyFunctions: KEY_LIGHT_FUNCTIONS,
   localDeclarations: LOCAL_VOLUME_DECLARATIONS,
