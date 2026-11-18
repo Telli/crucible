@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { constants, setPriority } from 'node:os';
 import * as RealThree from 'three';
 import * as core from '../src/index.js';
@@ -329,4 +330,12 @@ test('a torus with radius 0 throws an error that names the radius', () => {
   assert.throws(() => new THREE.TorusGeometry(0, 0.4), /TorusGeometry radius is 0.*positive/);
   assert.throws(() => new THREE.TorusGeometry(Number.NaN, 0.4), /TorusGeometry radius is NaN/);
   assert.doesNotThrow(() => new THREE.TorusGeometry(2, 0.4));
+});
+
+test('the addon stays outside the core bundles and under its size ceiling', async () => {
+  const addonBytes = statSync(new URL('../packages/three-compat/index.mjs', import.meta.url)).size;
+  assert.ok(addonBytes < 40000, `the addon is ${addonBytes} bytes; record the growth in changes/986.size.md and raise this ceiling`);
+  assert.ok(snippets.length >= 10, `only ${snippets.length} three.js-style snippets; the issue asks for at least 10`);
+  const coreSource = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
+  assert.ok(!coreSource.includes('three-compat'), 'the core must not import the addon');
 });
