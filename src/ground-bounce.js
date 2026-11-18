@@ -1,6 +1,7 @@
 import { computeIrradianceCoefficients, createEnvironmentMap, evaluateIrradiance } from './environment.js'
 import { CLOSED_ROOM_SHARE, closedRoomShare, partMatrixLookup } from './closed-room.js'
 import { worldBounds } from './probe-trace.js'
+import { emittingAreaLights } from './area-light-portal.js'
 
 // The ground of a scene is its floor: a part that spans the scene (the same test as the automatic floor of agent scenes),
 // is thin and is the lowest geometry. Its albedo comes from its material.
@@ -238,7 +239,7 @@ function lightFlux(environment, room) {
   }
   for (const light of environment.pointLights ?? []) add(light, FULL_SPHERE)
   for (const light of environment.spotLights ?? []) add(light, 2 * Math.PI * (1 - Math.cos(light.angle ?? Math.PI / 4)))
-  for (const light of environment.areaLights ?? []) add(light, Math.PI)
+  for (const light of emittingAreaLights(environment.areaLights)) add(light, Math.PI)
   return flux
 }
 
@@ -315,7 +316,7 @@ function roomBounceEnvironment(parts, environment) {
 // it would not count, so it would take the sky's own light away from the lower half and darken the scene (measured on
 // `light-linking` and `spot-area`).
 function hasLocalLights(environment) {
-  return [environment.pointLights, environment.spotLights, environment.areaLights].some(lights => lights?.length > 0)
+  return [environment.pointLights, environment.spotLights, emittingAreaLights(environment.areaLights)].some(lights => lights?.length > 0)
 }
 
 // Under a low sun a shadow is lit by more than the sky and the level ground: slopes, walls and roofs that face the sun send

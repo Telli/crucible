@@ -1,4 +1,5 @@
 import { invalidField } from './field-error.js';
+import { emittingAreaLights } from './area-light-portal.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
 import { buildTriangleBvh } from './triangle-bvh.js';
 import { readTriangle } from './triangle-math.js';
@@ -168,7 +169,7 @@ export function normalizeLights(lighting) {
     return { position: Array.from(light.position), color: Array.from(light.color ?? [1, 1, 1]), intensity: light.intensity, range, radius };
   });
   const spotSources = lighting.spotLights ?? [];
-  const areaSources = lighting.areaLights ?? [];
+  const areaSources = emittingAreaLights(lighting.areaLights);
   const spotLights = withAffects(normalizeSpotLights(spotSources), spotSources);
   const areaLights = withAffects(normalizeAreaLights(areaSources), areaSources);
   const keyColor = lighting.keyColor ?? [0, 0, 0];
