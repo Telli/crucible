@@ -526,6 +526,7 @@ function createPathTracer(scene, options) {
   // The denoiser's features come from the first surface a camera ray meets, not from fog in front of it.
   let featuresRecorded = false;
   const { lights, environment } = scene;
+  const cameraBackground = scene.cameraBackground ?? null;
   // With portals the sky is drawn through them (#1144); a scene with none samples the whole map as before.
   const portals = environment ? lights.portals ?? [] : [];
   if (lights.sun) buildFrame(lights.sun.direction, sunFrame);
@@ -802,7 +803,13 @@ function createPathTracer(scene, options) {
     else addOneLight(depth, normal);
   }
 
-  function addEscape(depth, previousPdf, afterMirror, originX, originY, originZ) {
+  // A ray that has only gone straight on or through glass is a camera ray: with world false it sees the flat background the
+  // rasterizer clears to, not the map (the map still lights the scene through the escapes of every other ray, #2016).
+  function addEscape(depth, previousPdf, afterMirror, originX, originY, originZ, isCameraRay) {
+    if (isCameraRay && cameraBackground) {
+      addRadiance(depth, throughput[0] * cameraBackground[0], throughput[1] * cameraBackground[1], throughput[2] * cameraBackground[2]);
+      return;
+    }
     if (!environment) return;
     environmentRadiance(environment, direction[0], direction[1], direction[2], sky);
     let weight = 1;
@@ -935,6 +942,7 @@ function createPathTracer(scene, options) {
     let positionZ = originZ;
     let previousPdf = 0;
     let afterMirror = true;
+    let isCameraRay = true;
     for (let depth = 0; depth <= options.bounces; depth++) {
       const found = intersect(scene, positionX, positionY, positionZ, direction[0], direction[1], direction[2], hit, depth === 0);
       const scattersInFog = scene.volume && scatterInFog(positionX, positionY, positionZ, found ? hit.distance : scene.farDistance);
@@ -946,6 +954,7 @@ function createPathTracer(scene, options) {
       if (scattersInFog) {
         previousPdf = scatterInMedium(depth);
         afterMirror = false;
+        isCameraRay = false;
         positionX = hit.point[0];
         positionY = hit.point[1];
         positionZ = hit.point[2];
@@ -953,7 +962,7 @@ function createPathTracer(scene, options) {
         continue;
       }
       if (!found) {
-        addEscape(depth, previousPdf, afterMirror, positionX, positionY, positionZ);
+        addEscape(depth, previousPdf, afterMirror, positionX, positionY, positionZ, isCameraRay);
         break;
       }
       const material = hit.material;
@@ -978,6 +987,7 @@ function createPathTracer(scene, options) {
         const alpha = roughnessToAlpha(hit.roughness);
         if (!sampleGlass(normal, viewX, viewY, viewZ, entering, material.ior, alpha, random.next(), random.next(), random.next(), direction)) break;
         const refracted = direction[0] * normal[0] + direction[1] * normal[1] + direction[2] * normal[2] < 0;
+        if (!refracted) isCameraRay = false;
         if (refracted) {
           throughput[0] *= hit.color[0];
           throughput[1] *= hit.color[1];
@@ -985,6 +995,7 @@ function createPathTracer(scene, options) {
         }
         afterMirror = true;
       } else {
+        isCameraRay = false;
         prepareSurface(surface, material, hit.metallic, hit.roughness, hit.color, normal, viewX, viewY, viewZ, hit.clearcoat);
         const subsurface = material.subsurface;
         if (subsurface) splitSubsurface(surface, subsurface.weight);
@@ -1054,7 +1065,8 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   if (hasGridVolume && kernelMaterials && environment.volumeShutter > 0) notes.add('environment.volumeShutter is ignored for a grid volume: Cook draws the grid as it is at the frame time, with no motion blur from its velocity channel. Use backend "cpu" or "webgpu" for a blurred blast.');
   if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
   if (environment?.fillIntensity > 0) notes.add('fillIntensity is ignored: the two fixed fill lights are rasterizer only. Add a point or area light, or raise environmentIntensity, to light the shadow side of a trace.');
-  if (environment?.world === true) notes.add('world: true is ignored: the outdoor haze shading is rasterizer only, and a trace draws the environment map behind the picture and lights with it whatever world says.');
+  if (environment?.world === true) notes.add('world: true is ignored: the outdoor haze shading is rasterizer only, and a trace draws the environment map behind the picture and lights with it.');
+  if (environment?.world === false && (kernelMaterials || backend !== 'cpu')) notes.add('world: false draws the flat background colour behind the picture only in the CPU tracer: this tracer draws the environment map there, as it lights with it.');
   if (environment?.cameraIntensity !== undefined && !kernelMaterials) notes.add('cameraIntensity is ignored: only the native cycles kernel draws the sky a camera ray sees at its own strength, the other tracers use the map intensity.');
   for (const part of parts) {
     const material = part.material ?? {};

@@ -11,6 +11,7 @@ import { lightShapeSupport } from './shader-registry.js';
 import { flushOrderOf } from './depth-layer.js';
 import { liftRankedTriangles } from './flush-lift.js';
 import { RAY_VISIBILITY_BITS } from './ray-visibility.js';
+import { DEFAULT_BACKGROUND } from './clear-colour.js';
 
 // The scene a path trace reads: every part flattened into one world-space triangle soup with per-vertex normals, UVs
 // and colours, one resolved material per part, the lights in plain arrays, and the environment map as a sampling table.
@@ -574,6 +575,18 @@ function resolveEnvironment(map, cameraIntensity) {
   return resolved;
 }
 
+/**
+ * The colour a camera ray sees where it escapes the scene. The rasterizer clears to its flat background colour unless
+ * `environment.world` is true, which draws the sky; a recipe states `world` as a boolean, so `world: false` gets the same
+ * colour here (#2016) and the map keeps lighting the scene. A bare environment that leaves `world` out keeps the map behind the picture.
+ * Returns null where the map is the picture.
+ */
+export function resolveCameraBackground(environment) {
+  if (environment.world !== false) return null;
+  const [red, green, blue] = DEFAULT_BACKGROUND;
+  return [red, green, blue];
+}
+
 /** `environment.cameraIntensity` is the sky strength a camera ray sees (through glass too), in the units of the map intensity. */
 function requireCameraIntensity(map, cameraIntensity) {
   if (cameraIntensity === undefined) return;
@@ -857,6 +870,7 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
     traceMaterials,
     lights: resolveLights(environment, limits.lights, parts),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
+    cameraBackground: resolveCameraBackground(environment),
     volume: resolveTraceVolume(environment.volumeFog),
     localVolumes,
     surfaceOffset: extent * 1e-5,
@@ -925,6 +939,7 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
     partRayVisibility: flattenedRayVisibility(parts),
     lights: resolveLights(environment, limits.lights, parts),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
+    cameraBackground: resolveCameraBackground(environment),
     volume: resolveTraceVolume(environment.volumeFog),
     localVolumes,
     surfaceOffset: extent * 1e-5,
