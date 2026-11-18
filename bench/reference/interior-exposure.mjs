@@ -1,7 +1,7 @@
 // Draws one daylit room with the raster renderer and with the path tracer from the same recipe, and prints the mean luminance
 // of each (issue #1334). The room is closed except for one window; the only light is the sun and a physical sky.
 //   node bench/reference/interior-exposure.mjs <output directory> [--samples 48] [--sun-bounce 2] [--exposure 3.6]
-//     [--environment-intensity 0.3] [--backend gpu|cpu] [--key-intensity 1] [--sealed]
+//     [--environment-intensity 0.3] [--backend gpu|cpu] [--key-intensity 1] [--sealed] [--width 960] [--height 540] [--denoise]
 // Run it through gpu-lock.sh. Files are <output directory>/raster.png and path-traced.png; build the MCP server first
 // (`npm run build && node scripts/build-mcp.mjs`).
 import assert from 'node:assert/strict';
@@ -35,8 +35,10 @@ const tightShadow = argumentsGiven.includes('--tight-shadow');
 // --raster-only skips the path tracer, for sweeps of the raster alone; --shadow-extent <metres> fits the sun's shadow view to that half width around the room.
 const rasterOnly = argumentsGiven.includes('--raster-only');
 const shadowExtent = numberAfter('--shadow-extent', 0);
-const WIDTH = 960;
-const HEIGHT = 540;
+const WIDTH = numberAfter('--width', 960);
+const HEIGHT = numberAfter('--height', 540);
+// --denoise runs the OIDN denoiser on the path traced frame (the default leaves it off so the mean is the raw estimate).
+const denoise = argumentsGiven.includes('--denoise') ? 'oidn' : false;
 
 const ROOM = { halfWidth: 4, front: -3, back: 3.5, height: 3, wall: 0.2 };
 const WINDOW = { halfWidth: 1.4, bottom: 0.9, top: 2.4 };
@@ -118,7 +120,7 @@ async function render(sessionId, name, renderer) {
 
 async function traceAndReport(sessionId) {
   const traced = await render(sessionId, 'path-traced', {
-    type: 'pathTracer', backend, samples, bounces: 6, denoise: false, seed: 1, maxSeconds: 120,
+    type: 'pathTracer', backend, samples, bounces: 6, denoise, seed: 1, maxSeconds: 120,
   });
   console.log(JSON.stringify({ ignored: traced.metrics?.pathTracer?.ignored, diagnostics: traced.diagnostics }, null, 1));
   console.log(`wrote ${outputDirectory}/raster.png and path-traced.png`);
