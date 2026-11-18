@@ -38,12 +38,14 @@ async function startServer(port) {
 }
 
 // Renders each volume list in order on one renderer, so a frame that follows another shows what the first left behind.
-async function rasterFrames(page, volumeLists) {
-  const task = async ({ size, lists, camera, light, emission, glowingX, litX, width }) => {
+async function rasterFrames(page, volumeLists, preload = true) {
+  const task = async ({ size, lists, camera, light, emission, glowingX, litX, width, preload }) => {
     const { box } = await import('/src/geometry.js');
     const { CrucibleRenderer } = await import('/src/renderer.js');
     const { createFloatOutput, readFloatPixels } = await import('/src/float-output.js');
-    await import('/src/fog-shader.js');
+    const fogShader = await import('/src/fog-shader.js');
+    // The mask code is a lazy chunk: a host that renders a shadowing volume loads it first (loadEmissionMask), or the first frames dim the glow as before.
+    if (preload) await fogShader.loadEmissionMask();
     const canvas = document.createElement('canvas');
     canvas.width = size;
     canvas.height = size;
@@ -56,16 +58,18 @@ async function rasterFrames(page, volumeLists) {
     const parts = [ground, slab('glowing', glowingX, { ...lit, emission }), slab('lit', litX, lit)];
     const renderer = new CrucibleRenderer(canvas, parts, { hdr: true, depth: true, samples: 1, pixelRatio: 1, ground: false });
     const output = createFloatOutput(renderer.context, size, size);
-    const frames = lists.map(localVolumes => {
+    const frames = [];
+    for (const localVolumes of lists) {
       renderer.render({ ...camera, time: 0, environment: { ...light, localVolumes }, outputFramebuffer: output.framebuffer });
-      return Array.from(readFloatPixels(renderer.context, output.framebuffer, size, size));
-    });
+      frames.push(Array.from(readFloatPixels(renderer.context, output.framebuffer, size, size)));
+      if (!preload) await new Promise(resolve => setTimeout(resolve, 400));
+    }
     const glError = renderer.context.getError();
     output.dispose();
     renderer.dispose?.();
     return { frames, glError };
   };
-  return page.evaluate(task, { size: SIZE, lists: volumeLists, camera: CAMERA, light: SUN, emission: EMISSION, glowingX: GLOWING_CENTER_X, litX: LIT_CENTER_X, width: SLAB_WIDTH });
+  return page.evaluate(task, { size: SIZE, lists: volumeLists, camera: CAMERA, light: SUN, emission: EMISSION, glowingX: GLOWING_CENTER_X, litX: LIT_CENTER_X, width: SLAB_WIDTH, preload });
 }
 
 // Mean green over the middle of a slab (rows run bottom up in the float frames, four floats a pixel).
@@ -143,6 +147,13 @@ test('a shadowing volume dims the light a lit slab receives and leaves a glowing
     assert.ok(numbers.glowingShadowed > numbers.litShadowed + 0.2, `the glowing slab stays brighter than the shadowed lit slab: ${numbers.glowingShadowed} against ${numbers.litShadowed}`);
     for (const later of [2, 3, 5]) assert.deepEqual(frames[later], shadowed, `frame ${later} draws the same shadowed picture as frame 0, so the volumes survive the emission pass`);
     assert.deepEqual(frames[4], unshadowed, 'a frame without castShadow after a shadowed one draws as before');
+    // Without the preload the chunk loads during the first frame: that frame dims the glow as before, the next one has the mask and matches the preloaded picture.
+    const freshPage = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
+    await freshPage.goto(`http://127.0.0.1:${port}/`);
+    const lazy = await rasterFrames(freshPage, [[SMOKE], [SMOKE]], false);
+    assert.equal(lazy.glError, 0);
+    assert.ok(slabMean(lazy.frames[0], GLOWING_CENTER_X) / numbers.glowingOpen < 0.85, 'the first frame, before the chunk has loaded, dims the glow as it did before the mask');
+    assert.deepEqual(lazy.frames[1], shadowed, 'once the chunk has loaded the frame matches the preloaded one');
   } finally {
     await browser?.close();
     server.kill();

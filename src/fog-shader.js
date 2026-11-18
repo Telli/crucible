@@ -4,7 +4,6 @@ import { createLocalVolumeCompositeFragment } from './post.js';
 import { compileProgram, fullscreenVertex } from './gl-program.js';
 import { LOCAL_VOLUME_RAMP_STOPS } from './local-volume-ramp.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
-import { installRenderPasses } from './render-passes.js';
 import { fireLightsOf } from './local-volume-fire-light.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
 import { GRID_BORDER_VOXELS, GRID_MOTION_TIME_STEP, HALF_FLOAT_MAXIMUM, bakedGridEmission, floatToHalf, gridUnitVelocity } from './volume-grid.js';
@@ -234,9 +233,24 @@ function bindLocalVolumes(renderer, post, frame, environment) {
   context.uniform1f(locate('localEmissionMaskReady'), maskReady ? 1 : 0);
 }
 
+let emissionMaskDrawer = null;
+let emissionMaskLoad = null;
+
+/** volume-emission-mask.js calls this on import with the function that draws the mask. */
+export function registerEmissionMaskDrawer(drawer) {
+  emissionMaskDrawer = drawer;
+}
+
+/** Loads the mask code (the render pass code rides with it) and resolves once it is registered; a host that renders a shadowing volume awaits it before its first frame. */
+export function loadEmissionMask() {
+  emissionMaskLoad ??= import('./volume-emission-mask.js');
+  return emissionMaskLoad;
+}
+
 /**
  * Draws the emission of the opaque surfaces as a float pass into the render pass target, before the frame itself, when a volume with `castShadow` sits over glowing parts,
  * so the post pass can leave their emission out of the light it dims (#1360). Returns whether it drew the mask; a frame with nothing to mask costs nothing.
+ * The drawing code is a lazy chunk: until it has loaded (loadEmissionMask, or the `volumeEmissionMask` agent scene module) a frame dims the glow as before.
  */
 function drawEmissionMask(renderer, frame) {
   const environment = { ...renderer.environment, ...frame.environment };
@@ -244,8 +258,11 @@ function drawEmissionMask(renderer, frame) {
   if (!Array.isArray(volumes) || !renderer.depth || !renderer.hdr || !((environment.keyIntensity ?? 1) > 0)) return false;
   const shadowing = volumes.some(volume => volume?.shape !== 'mesh' && volume?.castShadow === true && (volume?.density ?? 1) > 0);
   if (!shadowing || !renderer.sceneParts.some(part => (part.material?.emission ?? 0) > 0)) return false;
-  installRenderPasses(renderer);
-  renderer.render({ ...frame, pass: 'emission', passFloat: true, emissionMaskPass: true });
+  if (!emissionMaskDrawer) {
+    loadEmissionMask().catch(() => {});
+    return false;
+  }
+  emissionMaskDrawer(renderer, frame);
   return true;
 }
 
