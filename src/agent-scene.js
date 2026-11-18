@@ -5,7 +5,7 @@ import { currentFormatName } from './legacy-names.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
 import { applyProjection, validateCameraShift, CAMERA_LENS_FIELDS } from './camera.js';
 import { checkLocalVolumePartNames } from './local-volume-resolve.js';
-import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, VOLUME_FOG_FIELDS } from './agent-look.js';
+import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, SKY_OVERRIDABLE_FIELDS, VOLUME_FOG_FIELDS } from './agent-look.js';
 import { postStepSupport } from './shader-registry.js';
 import { agentSceneModule, agentSceneModuleLoaded } from './agent-scene-modules.js';
 import { CURVE_TEXT_LIMITS, AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, MAX_MATERIAL_PATTERNS, RECIPE_ALPHA_MODES } from './agent-scene-capabilities.js';
@@ -2236,6 +2236,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
             const kept = candidate[lookField].sky;
             const type = patch.sky.type ?? kept?.type ?? 'physical';
             merged.sky = { ...!patch.sky.preset && kept?.type === type && kept, type, ...patch.sky };
+          }
+          // The sky's derived colours kept from an earlier sky or setup are not choices: only the patch's own values beat the sky.
+          if (lookField === 'environment' && merged.sky?.type === 'physical') {
+            for (const field of SKY_OVERRIDABLE_FIELDS) if (!Object.hasOwn(patch, field)) delete merged[field];
           }
           candidate[lookField] = merged;
           continue;
