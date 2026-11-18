@@ -202,6 +202,8 @@ export const GRID_ONLY_STEP = 'localGridOnly';
 export const SHAPE_ONLY_STEP = 'localShapeOnly';
 // A marker step like the two below: a frame with a box or sphere volume that asks for noise octaves compiles the fractal noise in. Every other program keeps the source it had.
 export const NOISE_OCTAVES_STEP = 'localNoiseOctaves';
+// A marker step for a frame whose grid volume has noiseAmount (#2289): the grid march compiles the detail noise in.
+export const GRID_DETAIL_STEP = 'localGridDetail';
 const LOCAL_VOLUME_KIND_STEPS = { grid: GRID_ONLY_STEP, shape: SHAPE_ONLY_STEP };
 
 /** The marker step for the kind of volume a frame draws ('grid', 'shape' or 'both'), or an empty list for 'both'. */
@@ -234,7 +236,7 @@ function fogCodeFor(enabledSteps) {
     const code = requireFeatureCode('volumeFog');
     const motion = enabledSteps.has(GRID_MOTION_STEP);
     declarations += code.localDeclarations + (motion ? code.localMotionDeclarations : '');
-    functions += code.localFunctions(motion, localVolumeKindOf(enabledSteps), enabledSteps.has(NOISE_OCTAVES_STEP));
+    functions += code.localFunctions(motion, localVolumeKindOf(enabledSteps), enabledSteps.has(NOISE_OCTAVES_STEP), enabledSteps.has(GRID_DETAIL_STEP));
   } else {
     functions += LOCAL_VOLUMES_STUB;
   }
@@ -248,8 +250,8 @@ const LOCAL_VOLUME_COMPOSITE_MAIN = `void main() {
 }`;
 
 /** The fragment shader that composites the local volumes over the frame and nothing else (no anti-aliasing, bloom, fog or tone map). */
-export function createLocalVolumeCompositeFragment(motion = false, kind = 'both', noiseOctaves = false) {
-  const enabled = new Set(['local', ...(motion ? [GRID_MOTION_STEP] : []), ...localVolumeKindSteps(kind), ...(noiseOctaves ? [NOISE_OCTAVES_STEP] : [])]);
+export function createLocalVolumeCompositeFragment(motion = false, kind = 'both', noiseOctaves = false, gridDetail = false) {
+  const enabled = new Set(['local', ...(motion ? [GRID_MOTION_STEP] : []), ...localVolumeKindSteps(kind), ...(noiseOctaves ? [NOISE_OCTAVES_STEP] : []), ...(gridDetail ? [GRID_DETAIL_STEP] : [])]);
   const definitions = Object.entries(POST_STEP_CONDITIONS)
     .map(([step, [macro, condition]]) => `#define ${macro} ${enabled.has(step) ? `(${condition})` : 'false'}`)
     .join('\n');

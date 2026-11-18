@@ -9,6 +9,8 @@ import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
 import { encodeVolumeGrid } from '../src/volume-grid.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes } from '../src/local-volumes.js';
 import { describeIgnoredFeatures } from '../src/path-tracer.js';
+import { createPostFragment, GRID_ONLY_STEP, GRID_DETAIL_STEP, NOISE_OCTAVES_STEP } from '../src/post.js';
+import '../src/fog-shader.js';
 import { createAgentScene } from '../src/agent-scene.js';
 import { setExplosionBakeStore } from '../src/explosion-grids.js';
 
@@ -30,8 +32,21 @@ test('a grid volume keeps its noise fields, packs them like a box volume and say
   assert.equal(buffers.absorption[3].toFixed(2), '0.70');
   assert.equal(buffers.emission[3], 5);
   assert.equal(buffers.noiseOctaves, true, 'the shader variant with the fractal noise compiles in');
+  assert.equal(buffers.gridDetail, true, 'and so does the detail in the grid march');
   assert.ok(describeIgnoredFeatures([], { localVolumes: [volume] }, 'cpu').some(note => IGNORED_NOTE.test(note)));
   assert.equal(describeIgnoredFeatures([], { localVolumes: [{ ...volume, noiseAmount: 0 }] }, 'cpu').some(note => IGNORED_NOTE.test(note)), false);
+});
+
+test('only a frame whose grid has noise compiles the detail into the grid march', () => {
+  const plain = createPostFragment(['local', GRID_ONLY_STEP]);
+  const detailed = createPostFragment(['local', GRID_ONLY_STEP, GRID_DETAIL_STEP]);
+  const fractal = createPostFragment(['local', GRID_ONLY_STEP, GRID_DETAIL_STEP, NOISE_OCTAVES_STEP]);
+  assert.doesNotMatch(plain, /localGridDetail|localVolumeNoise\(/);
+  assert.match(detailed, /float localGridDetail\(int index, vec3 position\)/);
+  assert.match(detailed, /localVolumeNoise\(position \* localVolumeEmission\[index\]\.w\)/);
+  assert.match(fractal, /localVolumeFractalNoise\(position \* localVolumeEmission\[index\]\.w/);
+  assert.doesNotMatch(detailed, /localVolumeShapeProfile/, 'a grid-only program still has no box and sphere march');
+  assert.equal(packLocalVolumes([{ ...resolveLocalVolumes([{ shape: 'grid', grid: 'smoke', center: [0, 1, 0], size: [3, 3, 3] }])[0], gridData: { channels: {} } }], createLocalVolumeBuffers()).gridDetail, false);
 });
 
 test('a blast carries noise cells that follow its box, so the detail is as fine at every size', () => {
