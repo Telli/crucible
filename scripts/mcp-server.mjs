@@ -17,7 +17,7 @@ import { MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from '../src/view-transform-names.js';
 import { BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES, CATALOG_FILE_ID } from '../src/look-catalog.js';
 import { describeReceived } from '../src/field-error.js';
-import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES } from '../src/agent-scene-capabilities.js';
+import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES, RECIPE_ALPHA_MODES } from '../src/agent-scene-capabilities.js';
 import { MATERIAL_LAYER_SCALAR_RANGES, MATERIAL_LAYER_COLOR_RANGES, TOON_COLOR_MAXIMUM } from '../src/material-layers.js';
 import { SUBSURFACE_RANGES } from '../src/subsurface-limits.js';
 import { responseFormatField, chosenFormat, conciseReview, conciseJobStatus, conciseJobResult, conciseCapabilities } from './mcp-response-format.mjs';
@@ -141,6 +141,7 @@ const materialLayerFields = {
   transmission: layerNumber('transmission'),
   thickness: layerNumber('thickness'),
   ior: layerNumber('ior'),
+  dispersion: layerNumber('dispersion'),
   attenuationColor: layerColor('attenuationColor'),
   attenuationDistance: z.number().positive('attenuationDistance must be above 0. Leave it out for no absorption.').max(3.4e38).describe('Metres to reach attenuationColor.').optional(),
   sheenColor: layerColor('sheenColor'),
@@ -177,6 +178,7 @@ const materialFields = {
   snippet: z.record(z.string(), z.unknown()).nullable().optional().describe('GLSL fragment hook; scene_capabilities materialSnippet.'),
   wear: z.record(z.string(), z.unknown()).nullable().optional().describe('Metal showing through paint and dirt, from vertex groups; scene_capabilities materialWear.'),
   retro: z.record(z.string(), z.unknown()).nullable().optional().describe('PS1 look, raster only: vertexSnap [w, h] and affineUV; scene_capabilities materialRetro.'),
+  waterGlint: z.record(z.string(), z.unknown()).nullable().optional().describe('Water tag only, raster only: stylized highlights, edge { threshold } and sparkle { density, size, shape dot or star }; scene_capabilities materialWaterGlint.'),
   pattern: listed('pattern', materialPattern, 'Procedural texture; box mapping needs no UVs. type is a preset or graph (give graph); also mapping, colors, size, count, bump, seed, axis, resolution; see scene_capabilities pattern.', coreOf(materialPattern.shape, ['type'])).optional(),
   map: z.strictObject({ sequence: z.strictObject({
     frames: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(2).max(TEXTURE_SEQUENCE_LIMITS.maxFrames),
@@ -189,13 +191,13 @@ const materialFields = {
   emission: nonnegative.optional().describe('Emission multiplier. Backend checks Float32 radiance products.'),
   emissiveColor: z.tuple([nonnegative, nonnegative, nonnegative]).optional().describe('Independent linear RGB emission color.'),
   opacity: unit.optional().describe('Surface opacity. Any value below one draws the material blended (glass, windows, visors).'),
-  alphaMode: z.enum(['opaque', 'blend']).optional().describe('blend draws after opaque geometry, sorted back to front.'),
+  alphaMode: z.enum(RECIPE_ALPHA_MODES).optional().describe('blend draws after opaque geometry, sorted back to front; add adds its light to what is behind it.'),
   doubleSided: z.boolean().optional().describe('Draw and light both faces (thin sheets, leaves, cloth).'),
   aov: z.union([unit, color]).optional(),
 };
 const materialTag = z.enum(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']).optional().describe('Surface kind; liquid, foam, foliage, grass and water change how it renders: see scene_capabilities materialTags and water.');
 const materialCore = coreOf(materialFields, ['color', 'metallic', 'roughness', 'emission', 'opacity']);
-const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
+const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
 const materialListed = (strictSchema, description, extraCore) => listed('materialFields', strictSchema, `${description} ${materialMore}`, { ...extraCore, ...materialCore });
 const liquidOptics = z.strictObject({
   thickness: z.number().min(0).max(100).optional().describe('Metres of liquid where it faces the camera.'),
@@ -324,7 +326,7 @@ const environment = z.strictObject({
   resolveCoplanar: z.union([z.literal('offset'), z.literal(false)]).optional().describe("Flush faces are ranked at draw time by default ('offset'); false opts out."),
   viewTransform: z.enum(VIEW_TRANSFORM_NAMES).optional().describe('Display transform, for example agx to compare with Blender.'),
   look: catalogReference([...LOOK_NAMES, ...BUNDLED_CUBE_LOOK_NAMES], '.cube').nullable().optional().describe('Look preset or .cube; scene_capabilities catalogLooks. null clears.'),
-  sky: z.record(z.string(), z.unknown()).nullable().optional().describe('Physical sky: {type:"physical", sunElevation, sunRotation, turbidity, groundAlbedo, aerialPerspective}; sets key light, sky and fog. Fields in scene_capabilities physicalSky.'),
+  sky: z.record(z.string(), z.unknown()).nullable().optional().describe('Physical sky: {type:"physical", sunElevation, sunRotation, turbidity, groundAlbedo, aerialPerspective}; sets key light, sky and fog. Or {type:"gradient", stops:[{at,color}], horizonGlow:{color,width,intensity}}. Fields in scene_capabilities physicalSky, gradientSky.'),
   wind: z.strictObject({ strength: bounded(0, 4).optional(), direction: bounded(-360, 360).optional().describe('Degrees: 0 toward +x, 90 toward +z.') }).optional().describe('Sway of foliage and grass materials; strength defaults to 0.3.'),
 });
 // Every tool lists the same short environment; the full schema is served by scene_capabilities topic environment.
@@ -372,7 +374,7 @@ function curveAndTextGeometries(id) {
       .describe('Sweep along points, a shape or splines; see scene_capabilities curveText.'),
     z.strictObject({ ...id, type: z.literal('sdf'), root: z.record(z.string(), z.unknown()), resolution: looseField }).describe('Signed-distance shapes with smooth union; see scene_capabilities curveText.'),
     z.strictObject({ ...id, type: z.literal('text'), text: z.string().max(256), size: looseField, depth: looseField, font: looseField, align: looseField, curveSegments: looseField }).describe('3D text; see scene_capabilities curveText.'),
-    z.strictObject({ ...id, type: z.literal('cloud'), seed: looseField, puffs: looseField, width: looseField, height: looseField, flatBase: looseField, resolution: looseField }).describe('Seeded cumulus of round puffs; see scene_capabilities cloud.'),
+    z.strictObject({ ...id, type: z.literal('cloud'), seed: looseField, puffs: looseField, width: looseField, height: looseField, flatBase: looseField, resolution: looseField, levels: z.array(z.unknown()).max(4).optional(), upBias: looseField, unionSoftness: looseField }).describe('Seeded cumulus of round puffs; see scene_capabilities cloud.'),
     z.strictObject({ ...id, type: z.literal('terrain'), size: looseField, resolution: looseField, seed: looseField, amplitude: looseField, holes: z.array(z.unknown()).max(16).optional() }).describe('Hills with round holes; see scene_capabilities terrain.'),
   ];
 }
@@ -584,7 +586,7 @@ const expression = z.lazy(() => z.union([
   z.literal('time'),
   z.strictObject({ node: identifier, property: z.enum(['translation', 'rotation', 'scale']), component: axisName, space: z.enum(['local', 'world']).optional() }),
   z.record(z.string().max(24), z.union([z.array(expression).min(1).max(8), expression])),
-])).describe('Number, "time", {"node","property","component","space"} read, or an operator like {"mul":[2,"time"]}, {"neg":x} too. Operators as in field expressions (scene_capabilities), no vectors, attributes or noise. At most 64 parts, 8 deep.');
+])).describe('Number, "time", {"node","property","component","space"} read, or an operator like {"mul":[2,"time"]}, {"neg":x} too. Operators as in field expressions (scene_capabilities), no vectors, attributes or noise. At most 64 parts, 8 deep.').meta({ id: 'Expression' });
 const influence = z.union([unit, expression]).optional().describe('0 to 1 blend of the constraint, or an expression.');
 const constraint = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('copy_location'), node: identifier, target: identifier, axes: axisNames.optional(), invert: axisNames.optional(), offset: z.boolean().optional(), space: constraintSpace, influence }),

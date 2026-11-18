@@ -244,7 +244,7 @@ const hasBuild = existsSync(new URL('../build/mcp/server.mjs', import.meta.url))
 const chromePath = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const hasBrowser = existsSync(chromePath) || Boolean(process.env.CI);
 
-function particleRecipe() {
+function particleRecipe({ flushRanking = false } = {}) {
   const nodes = [{ id: 'ground', geometry: 'floor', material: 'stone', translation: [0, -0.1, -1], scale: [12, 0.2, 12] }];
   for (let index = 0; index < 4; index++) nodes.push({ id: `ball-${index}`, geometry: 'ball', material: 'stone', scale: [0.5, 0.5, 0.5], translation: [index * 1.6 - 2.4, 0.6, -1] });
   nodes.push({ id: 'dust', geometry: 'speck', material: 'ember' });
@@ -252,7 +252,10 @@ function particleRecipe() {
     geometries: [{ id: 'floor', type: 'box', bevel: 0 }, { id: 'ball', type: 'sphere', segments: 16 }, { id: 'speck', type: 'box', bevel: 0 }],
     materials: [{ id: 'stone', color: [0.6, 0.55, 0.5] }, { id: 'ember', color: [1, 0.6, 0.2] }], nodes,
     particles: { systems: [{ node: 'dust', seed: 1, count: 200, lifetime: 3, speed: 1, size: 0.03 }] },
-    environment: { setup: 'sunset' }, camera: { eye: [0, 3, 6], target: [0, 0.5, -1], fov: 50 } };
+    // Dust is born at the origin, on the floor's top face. With the flush ranking on (the default) each pose cuts the faces hidden
+    // under that face, so the triangle table changes length every frame and the delta must send it whole (#2171). The clip
+    // measures the delta, not the ranking, so the ranking is off unless a test asks for it to pin the prefix patch.
+    environment: { setup: 'sunset', ...(flushRanking ? {} : { resolveCoplanar: false }) }, camera: { eye: [0, 3, 6], target: [0, 0.5, -1], fov: 50 } };
 }
 
 // The tables of the particle clip's frames, packed the way the page exports them for the native tracer, without the tracer.
@@ -277,7 +280,7 @@ async function exportClipTables(recipe, frameTimes) {
 
 test('the frames of the particle clip with flush ranking on change table lengths, and the delta sends no more than the 60 percent a same-length frame needs',
   { skip: !cookInstalled && 'Cook is not installed' }, async () => {
-    const frames = await exportClipTables(particleRecipe(), [1, 1 + 1 / 6, 1 + 2 / 6, 1 + 3 / 6, 1 + 4 / 6, 2]);
+    const frames = await exportClipTables(particleRecipe({ flushRanking: true }), [1, 1 + 1 / 6, 1 + 2 / 6, 1 + 3 / 6, 1 + 4 / 6, 2]);
     let lengthChanges = 0;
     for (let frame = 1; frame < frames.length; frame++) {
       const previous = frames[frame - 1];
@@ -290,6 +293,18 @@ test('the frames of the particle clip with flush ranking on change table lengths
       assert.ok(deltaByteLength(ranges) < total * 0.6, `frame ${frame} sent ${sent.byteLength} of ${total} bytes`);
     }
     assert.ok(lengthChanges > 0, 'the clip no longer changes a table length, so it does not pin the prefix patch');
+});
+
+test('the frames of the particle clip keep every table the same length, so the delta sends less than half of them',
+  { skip: !cookInstalled && 'Cook is not installed' }, async () => {
+    const frames = await exportClipTables(particleRecipe(), [0, 1 / 6, 2 / 6, 3 / 6]);
+    for (let frame = 1; frame < frames.length; frame++) {
+      const lengths = tables => Object.fromEntries(Object.entries(tables).map(([name, bytes]) => [name, bytes.byteLength]));
+      assert.deepEqual(lengths(frames[frame]), lengths(frames[frame - 1]), `frame ${frame} has tables of another length than the frame before, so the delta sends them whole`);
+      const sent = deltaByteLength(planExportDelta(frames[frame - 1], frames[frame]));
+      const total = Object.values(frames[frame]).reduce((sum, bytes) => sum + bytes.byteLength, 0);
+      assert.ok(sent < total / 2, `frame ${frame} sent ${sent} of ${total} bytes`);
+    }
   });
 
 async function renderClip(workDirectory, label, deltaSwitch) {

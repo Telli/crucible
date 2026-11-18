@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sphere } from '../src/geometry.js';
-import { partsForRendererOptions } from '../src/dense-lods.js';
+import { partsForRendererOptions, SCENE_FILE_LOD_PIXEL_ERROR, withSceneFileRendererDefaults } from '../src/dense-lods.js';
 
 function scanPart() {
   return { name: 'scan', geometry: sphere(200, 100), matrix: new Float32Array(16), material: { tag: 'surface', color: [0.5, 0.5, 0.5], metallic: 0, roughness: 0.5 } };
@@ -40,4 +40,12 @@ test('the pixel ratio counts: the same scan is sparse on a big canvas', () => {
 
 test('denseLods must be a boolean, and the error says so', () => {
   assert.throws(() => partsForRendererOptions([scanPart()], SMALL_CANVAS, { denseLods: 'yes' }), /renderer\.denseLods must be true or false/);
+});
+
+test('a scene file picks levels at 0.5 pixels of error unless its renderer says otherwise (#2157)', () => {
+  assert.equal(SCENE_FILE_LOD_PIXEL_ERROR, 0.5);
+  assert.equal(withSceneFileRendererDefaults().lodPixelError, 0.5);
+  assert.equal(withSceneFileRendererDefaults({ samples: 2 }).lodPixelError, 0.5);
+  assert.equal(withSceneFileRendererDefaults({ lodPixelError: 2 }).lodPixelError, 2);
+  assert.equal(withSceneFileRendererDefaults({ samples: 2 }).samples, 2);
 });
