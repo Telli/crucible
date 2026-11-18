@@ -41,7 +41,7 @@ export {
 };
 
 const AXIS_NAMES = Object.freeze(['x', 'y', 'z']);
-const AXIS_COLORS = Object.freeze({ x: '#f26b5b', y: '#7be082', z: '#5ea8ff' });
+const AXIS_COLORS = Object.freeze({ x: '#ee7a6c', y: '#5fc48a', z: '#5ea8ff' });
 const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
 const STUDIO_STYLE_ID = 'crucible-studio-styles';
@@ -281,7 +281,7 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
     cy: '60',
     r: '52',
     fill: 'none',
-    stroke: '#ffffff1e',
+    stroke: 'color-mix(in srgb, var(--studio-text) 12%, transparent)',
     'stroke-width': '1',
   });
   const midRing = createSvgElement(documentReference, 'circle', {
@@ -289,7 +289,7 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
     cy: '60',
     r: '28',
     fill: 'none',
-    stroke: '#ffffff14',
+    stroke: 'color-mix(in srgb, var(--studio-text) 8%, transparent)',
     'stroke-dasharray': '3 3',
     'stroke-width': '1',
   });
@@ -298,15 +298,15 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
     y1: '60',
     x2: '40',
     y2: '34',
-    stroke: '#ffd580aa',
+    stroke: '#f0b34aaa',
     'stroke-width': '2',
   });
   const sunKnob = createSvgElement(documentReference, 'circle', {
     cx: '40',
     cy: '34',
     r: '7',
-    fill: '#ffd580',
-    stroke: '#161a1f',
+    fill: '#f0b34a',
+    stroke: 'var(--studio-bg)',
     'stroke-width': '2',
   });
   padSvg.append(outerRing, midRing, sunRay, sunKnob);
@@ -357,13 +357,13 @@ function buildBrandMarkSvg(documentReference) {
   mark.append(
     createSvgElement(documentReference, 'polygon', {
       points: '12,2 21,7 21,17 12,22 3,17 3,7',
-      fill: '#b7eddf22',
-      stroke: '#b7eddf',
+      fill: 'color-mix(in srgb, var(--studio-accent) 13%, transparent)',
+      stroke: 'var(--studio-accent)',
       'stroke-width': '1.8',
     }),
     createSvgElement(documentReference, 'polygon', {
       points: '12,6.5 17,9.5 17,15 12,18 7,15 7,9.5',
-      fill: '#b7eddf',
+      fill: 'var(--studio-accent)',
     }),
   );
   return mark;
@@ -386,8 +386,8 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
       cx: origin.x.toFixed(1),
       cy: origin.y.toFixed(1),
       r: '8',
-      fill: '#b7eddf26',
-      stroke: '#b7eddf',
+      fill: 'color-mix(in srgb, var(--studio-accent) 15%, transparent)',
+      stroke: 'var(--studio-accent)',
       'stroke-width': '2',
       'data-gizmo-axis': 'screen',
     }));
@@ -412,15 +412,15 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
       cx: origin.x.toFixed(1),
       cy: origin.y.toFixed(1),
       r: '5',
-      fill: '#edf0ef',
-      stroke: '#13171b',
+      fill: 'var(--studio-text)',
+      stroke: 'var(--studio-bg)',
       'stroke-width': '1.8',
     }));
     return;
   }
 
   if (tool === 'translate') {
-    const planeColors = { xy: '#5ea8ff', xz: '#7be082', yz: '#f26b5b' };
+    const planeColors = { xy: '#5ea8ff', xz: '#5fc48a', yz: '#ee7a6c' };
     for (const planeAxis of ['xy', 'xz', 'yz']) {
       const corners = handles.planes[planeAxis];
       if (!corners || corners.some(point => !point.visible)) continue;
@@ -456,7 +456,7 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
         height: '12',
         rx: '2',
         fill: AXIS_COLORS[axis],
-        stroke: '#13171b',
+        stroke: 'var(--studio-bg)',
         'stroke-width': '1.5',
         'data-gizmo-axis': axis,
       }));
@@ -466,7 +466,7 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
         cy: tip.y.toFixed(1),
         r: '7',
         fill: AXIS_COLORS[axis],
-        stroke: '#13171b',
+        stroke: 'var(--studio-bg)',
         'stroke-width': '1.5',
         'data-gizmo-axis': axis,
       }));
@@ -477,8 +477,8 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
     cx: origin.x.toFixed(1),
     cy: origin.y.toFixed(1),
     r: '6.5',
-    fill: tool === 'snap' ? '#7be082' : '#edf0ef',
-    stroke: '#13171b',
+    fill: tool === 'snap' ? '#5fc48a' : 'var(--studio-text)',
+    stroke: 'var(--studio-bg)',
     'stroke-width': '2',
     'data-gizmo-axis': tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen',
   }));
@@ -1618,7 +1618,7 @@ export function createStudio(container, {
     lastTreeKey = treeKey;
     outlinerTree.replaceChildren(...ordered.map(({ node, depth }) => {
       const material = node.material ? materialsById.get(node.material) : null;
-      const swatchHex = material ? linearRgbToHex(material.color) : '#64727a';
+      const swatchHex = material ? linearRgbToHex(material.color) : 'var(--studio-muted)';
       const selected = node.id === controller.selectedNodeId;
       const badge = createElement(documentReference, 'span', { className: 'crucible-studio-tree-badge' });
       badge.style.background = swatchHex;

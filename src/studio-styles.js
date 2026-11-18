@@ -7,9 +7,19 @@ export const STUDIO_CSS = `
   height: 100%;
   min-height: 540px;
   overflow: hidden;
-  background: #13171b;
-  color: #edf0ef;
-  font-family: 'DM Sans', system-ui, sans-serif;
+  --studio-bg: var(--site-bg, #17161a);
+  --studio-panel: var(--site-sidebar, #201f24);
+  --studio-surface: var(--site-surface, #2a282d);
+  --studio-text: var(--site-text, #f1f0ec);
+  --studio-muted: var(--site-muted, #a09ea6);
+  --studio-border: var(--site-border, #fefefd1f);
+  --studio-accent: var(--site-focus, #fc9132);
+  --studio-font: Inter, system-ui, sans-serif;
+  --studio-font-heading: 'Plus Jakarta Sans', Inter, system-ui, sans-serif;
+  --studio-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  background: var(--studio-bg);
+  color: var(--studio-text);
+  font-family: var(--studio-font);
   font-size: 12.5px;
   user-select: none;
 }
@@ -35,26 +45,26 @@ export const STUDIO_CSS = `
   padding: 4px 9px;
   border: 1px solid transparent;
   border-radius: 7px;
-  background: #ffffff0a;
+  background: color-mix(in srgb, var(--studio-text) 4%, transparent);
   cursor: pointer;
   white-space: nowrap;
 }
 .crucible-studio button[aria-pressed="true"] {
-  background: #b7eddf22;
-  border-color: #b7eddf66;
-  color: #b7eddf;
+  background: color-mix(in srgb, var(--studio-accent) 13%, transparent);
+  border-color: color-mix(in srgb, var(--studio-accent) 40%, transparent);
+  color: var(--studio-accent);
 }
 .crucible-studio button[aria-disabled="true"] {
   opacity: 0.38;
   cursor: not-allowed;
 }
 .crucible-studio :focus-visible {
-  outline: 2px solid #b7eddf;
+  outline: 2px solid var(--studio-accent);
   outline-offset: 2px;
 }
 @media (hover: hover) {
   .crucible-studio button:not([aria-disabled="true"]):hover {
-    background: #ffffff18;
+    background: color-mix(in srgb, var(--studio-text) 9%, transparent);
   }
 }
 @media (prefers-reduced-motion: no-preference) {
@@ -74,7 +84,7 @@ export const STUDIO_CSS = `
   align-items: center;
   gap: 8px;
   padding: 5px 12px;
-  background: #161a1f;
+  background: var(--studio-bg);
   z-index: 6;
 }
 .crucible-studio[data-desktop="true"] .crucible-studio-menubar {
@@ -93,7 +103,7 @@ export const STUDIO_CSS = `
   font-weight: 700;
   font-size: 13px;
   letter-spacing: -0.02em;
-  color: #f4f7f6;
+  color: var(--studio-text);
   padding-inline-end: 4px;
 }
 .crucible-studio-brand svg {
@@ -108,9 +118,9 @@ export const STUDIO_CSS = `
   max-width: 210px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: #ffffff09;
+  background: color-mix(in srgb, var(--studio-text) 4%, transparent);
   font-size: 12px;
-  color: #cdd6d9;
+  color: var(--studio-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -121,8 +131,8 @@ export const STUDIO_CSS = `
   gap: 5px;
   padding: 3px 8px;
   border-radius: 999px;
-  background: #23473e;
-  color: #9bf0d8;
+  background: var(--studio-surface);
+  color: var(--studio-accent);
   font-size: 11px;
   font-weight: 600;
 }
@@ -134,9 +144,9 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-spacer { flex: 1 1 auto; }
 .crucible-studio-primary-btn {
-  background: #b7eddf26;
-  border-color: #b7eddf55;
-  color: #d6fff4;
+  background: color-mix(in srgb, var(--studio-accent) 15%, transparent);
+  border-color: color-mix(in srgb, var(--studio-accent) 33%, transparent);
+  color: var(--studio-accent);
   font-weight: 600;
 }
 
@@ -146,10 +156,10 @@ export const STUDIO_CSS = `
   top: 44px;
   padding: 8px;
   min-width: 224px;
-  border: 1px solid #ffffff1c;
+  border: 1px solid color-mix(in srgb, var(--studio-text) 11%, transparent);
   border-radius: 12px;
-  background: #1d2228;
-  color: #edf0ef;
+  background: var(--studio-panel);
+  color: var(--studio-text);
   box-shadow: 0 18px 40px #00000066;
 }
 .crucible-studio-popover:popover-open {
@@ -170,7 +180,7 @@ export const STUDIO_CSS = `
 .crucible-studio-popover-note {
   margin: 2px 4px;
   font-size: 11.5px;
-  color: #9daab0;
+  color: var(--studio-muted);
   line-height: 1.4;
   word-break: break-word;
 }
@@ -197,9 +207,9 @@ export const STUDIO_CSS = `
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border: 1px solid #ffffff12;
+  border: 1px solid color-mix(in srgb, var(--studio-text) 7%, transparent);
   border-radius: 12px;
-  background: #1b2025;
+  background: var(--studio-panel);
   overflow: hidden;
 }
 .crucible-studio[data-outliner-collapsed="true"] .crucible-studio-outliner,
@@ -214,10 +224,10 @@ export const STUDIO_CSS = `
   justify-content: space-between;
   gap: 8px;
   padding: 8px 10px;
-  background: #20262c;
+  background: var(--studio-panel);
   font-weight: 600;
   font-size: 12px;
-  color: #dce4e6;
+  color: var(--studio-text);
 }
 .crucible-studio-search {
   padding: 8px 10px 4px;
@@ -240,8 +250,8 @@ export const STUDIO_CSS = `
   background: transparent;
 }
 .crucible-studio-tree-row[data-selected="true"] {
-  background: #b7eddf1c;
-  border-color: #b7eddf48;
+  background: color-mix(in srgb, var(--studio-accent) 11%, transparent);
+  border-color: color-mix(in srgb, var(--studio-accent) 28%, transparent);
 }
 .crucible-studio-tree-select {
   flex: 1 1 auto;
@@ -274,7 +284,7 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-palette-section {
   padding: 10px;
-  background: #171b20;
+  background: var(--studio-bg);
   display: grid;
   gap: 8px;
 }
@@ -290,11 +300,11 @@ export const STUDIO_CSS = `
   height: 26px;
   padding: 0;
   border-radius: 999px;
-  border: 2px solid #ffffff30;
+  border: 2px solid color-mix(in srgb, var(--studio-text) 19%, transparent);
 }
 .crucible-studio-swatch-btn[aria-pressed="true"] {
-  border-color: #b7eddf;
-  box-shadow: 0 0 0 2px #171b20;
+  border-color: var(--studio-accent);
+  box-shadow: 0 0 0 2px var(--studio-bg);
 }
 
 .crucible-studio-viewport {
@@ -302,8 +312,8 @@ export const STUDIO_CSS = `
   min-width: 0;
   min-height: 0;
   border-radius: 12px;
-  border: 1px solid #ffffff12;
-  background: #121519;
+  border: 1px solid color-mix(in srgb, var(--studio-text) 7%, transparent);
+  background: var(--studio-bg);
   overflow: hidden;
 }
 .crucible-studio-canvas {
@@ -330,10 +340,10 @@ export const STUDIO_CSS = `
   inset: 12px;
   display: none;
   place-items: center;
-  border: 2px dashed #b7eddf99;
+  border: 2px dashed color-mix(in srgb, var(--studio-accent) 60%, transparent);
   border-radius: 12px;
-  background: #141a1fd9;
-  color: #d8fff5;
+  background: color-mix(in srgb, var(--studio-bg) 85%, transparent);
+  color: var(--studio-accent);
   font-weight: 600;
   font-size: 14px;
   pointer-events: none;
@@ -344,9 +354,9 @@ export const STUDIO_CSS = `
 }
 
 .crucible-studio-surface {
-  background: #1d2228e0;
+  background: color-mix(in srgb, var(--studio-panel) 88%, transparent);
   backdrop-filter: blur(14px);
-  border: 1px solid #ffffff16;
+  border: 1px solid color-mix(in srgb, var(--studio-text) 9%, transparent);
   border-radius: 11px;
 }
 .crucible-studio-toolbar {
@@ -370,7 +380,7 @@ export const STUDIO_CSS = `
   inline-size: 1px;
   block-size: 18px;
   margin-inline: 3px;
-  border-inline-start: 1px solid #ffffff22;
+  border-inline-start: 1px solid color-mix(in srgb, var(--studio-text) 13%, transparent);
 }
 .crucible-studio-viewcube {
   position: absolute;
@@ -398,8 +408,8 @@ export const STUDIO_CSS = `
   bottom: 12px;
   padding: 5px 10px;
   border-radius: 8px;
-  background: #14181cb8;
-  color: #9ba8ae;
+  background: color-mix(in srgb, var(--studio-bg) 72%, transparent);
+  color: var(--studio-muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
@@ -413,10 +423,10 @@ export const STUDIO_CSS = `
   margin: 0;
   padding: 6px 12px;
   border-radius: 999px;
-  background: #161c21f2;
-  border: 1px solid #b7eddf44;
+  background: color-mix(in srgb, var(--studio-bg) 95%, transparent);
+  border: 1px solid color-mix(in srgb, var(--studio-accent) 27%, transparent);
   font-size: 12px;
-  color: #b7eddf;
+  color: var(--studio-accent);
   pointer-events: none;
   z-index: 6;
 }
@@ -426,7 +436,7 @@ export const STUDIO_CSS = `
   display: flex;
   gap: 2px;
   padding: 6px 8px 0;
-  background: #20262c;
+  background: var(--studio-panel);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -435,11 +445,11 @@ export const STUDIO_CSS = `
   flex: 1 0 auto;
   background: transparent;
   border-radius: 7px 7px 0 0;
-  color: #9ca9af;
+  color: var(--studio-muted);
   font-size: 12px;
 }
 .crucible-studio-tablist button[aria-selected="true"] {
-  color: #edf0ef;
+  color: var(--studio-text);
 }
 .crucible-studio-tablist button[aria-selected="true"]::after {
   content: "";
@@ -449,7 +459,7 @@ export const STUDIO_CSS = `
   bottom: 0;
   height: 2px;
   border-radius: 2px;
-  background: #b7eddf;
+  background: var(--studio-accent);
 }
 .crucible-studio-panels {
   flex: 1 1 auto;
@@ -470,11 +480,11 @@ export const STUDIO_CSS = `
   align-items: center;
   gap: 8px;
   font-size: 11.5px;
-  color: #b4c0c5;
+  color: var(--studio-muted);
 }
 .crucible-studio-field output {
   font-variant-numeric: tabular-nums;
-  color: #edf0ef;
+  color: var(--studio-text);
 }
 .crucible-studio-vector {
   display: grid;
@@ -485,7 +495,7 @@ export const STUDIO_CSS = `
   display: grid;
   gap: 3px;
   font-size: 11px;
-  color: #96a4ac;
+  color: var(--studio-muted);
 }
 .crucible-studio-axis-scrub {
   display: inline-flex;
@@ -501,24 +511,24 @@ export const STUDIO_CSS = `
 .crucible-studio textarea {
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid #ffffff1a;
+  border: 1px solid color-mix(in srgb, var(--studio-text) 10%, transparent);
   border-radius: 7px;
-  background: #13171b;
-  color: #edf0ef;
+  background: var(--studio-bg);
+  color: var(--studio-text);
   font-variant-numeric: tabular-nums;
 }
 .crucible-studio input[type="range"] {
   width: 100%;
-  accent-color: #b7eddf;
+  accent-color: var(--studio-accent);
   cursor: pointer;
 }
 .crucible-studio input[type="color"] {
   width: 100%;
   height: 30px;
   padding: 2px;
-  border: 1px solid #ffffff1a;
+  border: 1px solid color-mix(in srgb, var(--studio-text) 10%, transparent);
   border-radius: 7px;
-  background: #13171b;
+  background: var(--studio-bg);
   cursor: pointer;
 }
 .crucible-studio-chips {
@@ -531,8 +541,8 @@ export const STUDIO_CSS = `
   height: 120px;
   justify-self: center;
   border-radius: 999px;
-  background: radial-gradient(circle at 50% 50%, #24303a, #14191e);
-  border: 1px solid #ffffff1e;
+  background: radial-gradient(circle at 50% 50%, var(--studio-surface), var(--studio-bg));
+  border: 1px solid color-mix(in srgb, var(--studio-text) 12%, transparent);
   cursor: crosshair;
   touch-action: none;
 }
@@ -551,7 +561,7 @@ export const STUDIO_CSS = `
   align-items: center;
   gap: 12px;
   padding: 6px 12px;
-  background: #161a1f;
+  background: var(--studio-bg);
   z-index: 4;
 }
 .crucible-studio-scrub {
@@ -565,32 +575,32 @@ export const STUDIO_CSS = `
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
-  color: #d6e0de;
+  color: var(--studio-text);
 }
 .crucible-studio-meta {
   display: flex;
   align-items: center;
   gap: 10px;
   font-size: 12px;
-  color: #9ba8ae;
+  color: var(--studio-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .crucible-studio-gpu-badge {
   padding: 3px 8px;
   border-radius: 999px;
-  background: #ffffff0a;
-  color: #b7eddf;
+  background: color-mix(in srgb, var(--studio-text) 4%, transparent);
+  color: var(--studio-accent);
   font-size: 11px;
 }
 
 .crucible-studio dialog {
   width: min(560px, calc(100vw - 32px));
   padding: 18px;
-  border: 1px solid #ffffff20;
+  border: 1px solid color-mix(in srgb, var(--studio-text) 13%, transparent);
   border-radius: 14px;
-  background: #1e242a;
-  color: #edf0ef;
+  background: var(--studio-panel);
+  color: var(--studio-text);
 }
 .crucible-studio dialog h2 {
   margin: 0 0 10px;
@@ -600,7 +610,7 @@ export const STUDIO_CSS = `
   overscroll-behavior: contain;
 }
 .crucible-studio dialog::backdrop {
-  background: #0b0e12bd;
+  background: color-mix(in srgb, var(--studio-bg) 74%, transparent);
   overflow: hidden;
   overscroll-behavior: contain;
 }
@@ -623,16 +633,16 @@ export const STUDIO_CSS = `
   gap: 8px;
   padding: 4px 6px;
   border-radius: 6px;
-  background: #ffffff07;
+  background: color-mix(in srgb, var(--studio-text) 3%, transparent);
 }
 .crucible-studio kbd {
   padding: 2px 6px;
   border-radius: 5px;
-  background: #111519;
-  border: 1px solid #ffffff20;
-  font-family: ui-monospace, monospace;
+  background: var(--studio-bg);
+  border: 1px solid color-mix(in srgb, var(--studio-text) 13%, transparent);
+  font-family: var(--studio-font-mono);
   font-size: 11px;
-  color: #b7eddf;
+  color: var(--studio-accent);
 }
 @media (max-width: 960px) {
   .crucible-studio-workspace {
