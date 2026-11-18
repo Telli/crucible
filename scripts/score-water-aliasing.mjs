@@ -2,9 +2,13 @@
 //   errorEnergy  mean square of the high-pass of (frame - supersampled reference): the aliasing the frame adds
 //   frameEnergy  mean square of the high-pass of the frame; referenceEnergy the same for the reference
 //   flicker      mean square change of (frame - reference) between pan steps: shimmer that is not real motion
-//   node scripts/score-water-aliasing.mjs <directory with the stills> [more directories to compare]
+//   node scripts/score-water-aliasing.mjs [--reference <directory with the *-ref.png stills>] <directory with the stills> [more directories]
+// Always pass one fixed --reference when you compare two checkouts. Without it each directory is scored against the *-ref.png stills
+// beside its own frames, and a change to the water shader also changes that reference, so the scores are not comparable (#2167: main read
+// 97.9 against its own reference and 22.7 against the pre-#910 one).
 import sharp from 'sharp';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const VIEWS = ['beauty', 'low'];
 const PAN_COUNT = 3;
@@ -69,7 +73,40 @@ function difference(first, second) {
   return first.map((value, index) => value - second[index]);
 }
 
-async function scoreDirectory(directory) {
+export function parseArguments(argumentList) {
+  const frameDirectories = [];
+  let referenceDirectory;
+  for (let index = 0; index < argumentList.length; index += 1) {
+    const argument = argumentList[index];
+    if (argument === '--reference') {
+      referenceDirectory = argumentList[index + 1];
+      if (!referenceDirectory || referenceDirectory.startsWith('--')) {
+        throw new Error('--reference needs a directory that holds the *-ref.png stills: --reference <directory>');
+      }
+      index += 1;
+    } else if (argument.startsWith('--')) {
+      throw new Error(`Unknown option ${argument}. Use --reference <directory> and list the directories with the frames.`);
+    } else {
+      frameDirectories.push(argument);
+    }
+  }
+  if (frameDirectories.length === 0) {
+    throw new Error('Pass at least one directory with the *-n.png stills: node scripts/score-water-aliasing.mjs [--reference <directory>] <directory>...');
+  }
+  return {
+    frameDirectories: frameDirectories.map((directory) => resolve(directory)),
+    referenceDirectory: referenceDirectory === undefined ? undefined : resolve(referenceDirectory),
+  };
+}
+
+export function framePaths(frameDirectory, referenceDirectory, view, pan) {
+  return {
+    frame: join(frameDirectory, `${view}-${pan}-n.png`),
+    reference: join(referenceDirectory ?? frameDirectory, `${view}-${pan}-ref.png`),
+  };
+}
+
+async function scoreDirectory(directory, referenceDirectory) {
   const report = {};
   for (const view of VIEWS) {
     const errors = [];
@@ -80,8 +117,9 @@ async function scoreDirectory(directory) {
     let region;
     let frameWidth;
     for (let pan = 0; pan < PAN_COUNT; pan += 1) {
-      const frame = await luminanceOf(join(directory, `${view}-${pan}-n.png`), 1);
-      const reference = await luminanceOf(join(directory, `${view}-${pan}-ref.png`), SUPERSAMPLE);
+      const paths = framePaths(directory, referenceDirectory, view, pan);
+      const frame = await luminanceOf(paths.frame, 1);
+      const reference = await luminanceOf(paths.reference, SUPERSAMPLE);
       const { width, height } = frame;
       frameWidth = width;
       const horizon = horizonRow(reference.luminance, width, height);
@@ -108,6 +146,9 @@ async function scoreDirectory(directory) {
   return report;
 }
 
-for (const directory of process.argv.slice(2)) {
-  console.log(directory, JSON.stringify(await scoreDirectory(resolve(directory)), null, 1));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const { frameDirectories, referenceDirectory } = parseArguments(process.argv.slice(2));
+  for (const directory of frameDirectories) {
+    console.log(directory, JSON.stringify(await scoreDirectory(directory, referenceDirectory), null, 1));
+  }
 }
