@@ -322,7 +322,7 @@ Build from an empty recipe by adding resources and nodes in one revisioned batch
 ]
 ```
 
-Use `remove-node`, `remove-geometry` and `remove-material` with an `id` to remove entries.
+Use `remove-node`, `remove-geometry` and `remove-material` with an `id` to remove entries. A geometry or material that nodes still use cannot be removed: the error names those nodes, so `set-node` them to another one or `remove-node` them first.
 References must resolve after the complete batch. Removing a parent leaves its children unchanged unless `recursive: true` removes its subtree.
 Reparent or remove those children before the parent removal command to avoid rejection.
 The [scene contract](agent-scene.md) defines the geometry fields, transforms, materials, and atomic validation rules.
