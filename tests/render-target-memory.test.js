@@ -205,6 +205,8 @@ test('a device that refuses the compact framebuffer gets the RGBA16F targets bac
     if (name === 'checkFramebufferStatus') return () => { statusChecks += 1; return statusChecks <= 2 || renderer.compactColor === false ? target.FRAMEBUFFER_COMPLETE : 0; };
     return target[name];
   } });
+  // The backend allocates the frame targets with its own context, so it gets the refusing one too.
+  renderer.backend = new WebGL2GlazeBackend(renderer.context);
   renderer.allocateFrameTargets(64, 64);
   assert.equal(renderer.compactColor, false);
   assert.equal(renderer.colorFormat, 'RGBA16F');
