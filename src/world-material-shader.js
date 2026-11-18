@@ -54,7 +54,18 @@ const WATER_RAMP_FIELDS = Object.freeze(['colors', 'drivers', 'heightRange', 'st
 const WATER_RAMP_STEPS = Object.freeze(['hard', 'soft']);
 const WATER_RAMP_DEFAULT_HEIGHT_RANGE = Object.freeze([-1, 1]);
 
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+function srgbByteToLinear(byte) {
+  const encoded = byte / 255;
+  return encoded <= 0.04045 ? encoded / 12.92 : ((encoded + 0.055) / 1.055) ** 2.4;
+}
+
+/** A ramp colour: three linear numbers (0 to 16) whose sRGB encoding is the colour shown, or a `#rrggbb` hex shown as that hex. */
 function rampColor(value, name, toVector) {
+  if (typeof value === 'string' && HEX_COLOR.test(value)) {
+    return Object.freeze([1, 3, 5].map(offset => srgbByteToLinear(Number.parseInt(value.slice(offset, offset + 2), 16))));
+  }
   const color = toVector(value, 3, name);
   if (color.some(component => !Number.isFinite(component) || component < 0 || component > 16)) {
     throw new RangeError(`${name} must be three numbers from 0 to 16, such as [0.1, 0.5, 0.6].`);
@@ -496,7 +507,7 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
       vec3 rampTone = waterRampTone(worldPosition.y, 1.0 - max(dot(normal, viewDirection), 0.0), rampSun);
       float crestEdge = waterRampHead.y > 0.5 ? 0.15 : max(1.5 * fwidth(foamMask), 0.0001);
       float crestAmount = waterRampCrest.w * smoothstep(0.2 - crestEdge, 0.2 + crestEdge, foamMask);
-      waterRampRadiance = mix(rampTone, waterRampCrest.rgb, crestAmount);
+      waterRampRadiance = waterRampRadianceFor(mix(rampTone, waterRampCrest.rgb, crestAmount));
       waterRampOwns = 1.0;
     }
   }
@@ -578,6 +589,24 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
       alpha = 1.0;
     }
   }
+`,
+  // The ramp colours are display colours: the radiance a ramp writes is the one the view transform maps back to the colour asked for.
+  libraries: `// Radiance that exposure and the view transform turn into the display colour whose sRGB encoding is the asked linear colour.
+// Newton steps on the renderer's own curve (ACES, AgX or Neutral), so a ramp stop given as a hex shows as that hex.
+vec3 waterRampRadianceFor(vec3 asked) {
+  vec3 encoded = mix(asked * 12.92, 1.055 * pow(max(asked, vec3(0.0031308)), vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), asked));
+  vec3 target = pow(clamp(encoded, 0.0, 1.0), vec3(2.2));
+  vec3 guess = target;
+  for (int iteration = 0; iteration < 24; iteration++) {
+    vec3 here = toneMap(guess);
+    vec3 slope = (toneMap(guess + 0.002) - here) / 0.002;
+    guess = max(guess + (target - here) / max(slope, vec3(0.05)), vec3(0.0));
+  }
+  return guess / max(exposure, 0.0001);
+}
+`,
+  // A ramp stands clear of the distance haze, which would shift the colour it was asked to show.
+  worldFogScale: `  if (waterRampOwns > 0.5) fog = 0.0;
 `,
   worldFinal: `  if (waterDepth > 0.0 && waterBody.w > 0.5 && alphaMode < 0.5) alpha = 0.5 + 0.498 * clamp(waterDepth / 8.0, 0.0, 1.0);
   if (TAG_FIRE) {

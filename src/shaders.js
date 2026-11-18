@@ -924,7 +924,7 @@ ${featureCode("afterEmission")}${featureCode("worldAfterEmission")}  if (TAG_FLO
     radiance = mix(radiance, vec3(0.018, 0.022, 0.026), fog);
   }
 ${featureCode("worldFinal")}  float fog = 1.0 - exp(-length(worldPosition - eye) * fogDensity);
-  // Additive light fades to black through fog; mixing it toward the fog colour would add a glow of fog.
+${featureCode("worldFogScale")}  // Additive light fades to black through fog; mixing it toward the fog colour would add a glow of fog.
   radiance = alphaMode > 2.5 ? radiance * (1.0 - fog * worldMode) : mix(radiance, fogColor, fog * worldMode);
   if (inspection > 0.5) radiance = normal * 0.5 + 0.5;
   vec3 displayedColor = displayRadiance(radiance);

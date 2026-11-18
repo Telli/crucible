@@ -92,3 +92,19 @@ test('a batch with a ramp sends it and a batch without one turns it off', () => 
   assert.deepEqual(sent.waterRampColors.slice(9), new Array(6).fill(0));
   assert.deepEqual(sentUniforms({ tag: 'water' }).waterRampHead, [0, 0, 0, 0]);
 });
+
+test('a ramp colour given as a hex is stored as the linear colour that shows as that hex', () => {
+  const ramp = rampOf({ colors: ['#19617c', '#38aabc', '#95edf3'], crestTint: { color: '#ffffff' } });
+  const encode = linear => Math.round(255 * (linear <= 0.0031308 ? 12.92 * linear : 1.055 * linear ** (1 / 2.4) - 0.055));
+  assert.deepEqual(ramp.colors.map(color => color.map(encode)), [[0x19, 0x61, 0x7c], [0x38, 0xaa, 0xbc], [0x95, 0xed, 0xf3]]);
+  assert.deepEqual(ramp.crestTint.color, [1, 1, 1]);
+  assert.throws(() => rampOf({ colors: ['#19617', COLORS[1], COLORS[2]] }), /colors\[0\]/);
+});
+
+test('the water shader maps the ramp back through the view transform and keeps the haze off it', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  assert.match(shader, /vec3 waterRampRadianceFor\(vec3 asked\)/);
+  assert.match(shader, /toneMap\(guess \+ 0\.002\)/);
+  assert.match(shader, /waterRampRadiance = waterRampRadianceFor\(/);
+  assert.match(shader, /if \(waterRampOwns > 0\.5\) fog = 0\.0;/);
+});
