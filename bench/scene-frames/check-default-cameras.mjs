@@ -1,5 +1,6 @@
 // Renders each scene file's own camera small and fails when a frame is nearly one colour:
 //   node bench/scene-frames/check-default-cameras.mjs <scene-directory>[,<scene-directory>...] [--width 320] [--height 180]
+// A committed override in camera-overrides.json replaces the eye and target of scenes whose exported camera is flat (#2158).
 // A scene directory holds scene.json, scene.glb and sky.hdr (see bench/glaze-passes/run.mjs). Exit code 1 lists the flat scenes.
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -7,11 +8,13 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodePng } from '../agent-modeling/png-check.mjs';
+import { applyCameraOverrideToDirectory } from './camera-overrides.mjs';
 import { MINIMUM_MEAN_LUMINANCE_STEP, meanLuminanceStep } from './uniform-frame.mjs';
 
 const RENDER_MEDIA = fileURLToPath(new URL('../../scripts/render-media.mjs', import.meta.url));
 
 function renderDefaultCamera(directory, width, height) {
+  applyCameraOverrideToDirectory(directory);
   const work = mkdtempSync(join(tmpdir(), 'scene-frame-'));
   try {
     const output = join(work, 'frame.png');
