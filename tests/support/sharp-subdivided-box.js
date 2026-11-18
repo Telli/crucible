@@ -28,3 +28,29 @@ export function sharpSubdividedBox(spans) {
   }
   return meshFromGeometry({ positions: new Float32Array(positions), indices: new Uint32Array(indices) });
 }
+
+/** How far a rim vertex may stand out from a neighbour on one of its sides, per unit of edge length, before it counts as overhanging. */
+const OVERHANG_SLOPE = 0.5;
+
+/**
+ * Vertices on an edge of a sharp box that stand out from a neighbour on one of their sides by more than OVERHANG_SLOPE
+ * per unit of edge length: the rim juts past the side face next to it and the strip between them tilts toward its underside.
+ */
+export function overhangingEdgeVertices(box, displaced) {
+  const onEdge = vertex => [0, 1, 2].filter(axis => Math.abs(box.positions[vertex * 3 + axis]) > 0.5 - 1e-6).length >= 2;
+  const overhanging = new Set();
+  for (let edge = 0; edge < box.edgeCount; edge++) {
+    const pair = [box.edgeVertices[edge * 2], box.edgeVertices[edge * 2 + 1]];
+    for (const [rim, neighbour] of [pair, [pair[1], pair[0]]]) {
+      if (!onEdge(rim) || onEdge(neighbour)) continue;
+      for (let axis = 0; axis < 3; axis++) {
+        if (Math.abs(box.positions[rim * 3 + axis]) < 0.5 - 1e-6 || box.positions[rim * 3 + axis] !== box.positions[neighbour * 3 + axis]) continue;
+        const outward = Math.sign(box.positions[rim * 3 + axis]);
+        const standOut = ((displaced.positions[rim * 3 + axis] - box.positions[rim * 3 + axis]) - (displaced.positions[neighbour * 3 + axis] - box.positions[neighbour * 3 + axis])) * outward;
+        const length = Math.hypot(...[0, 1, 2].map(other => box.positions[rim * 3 + other] - box.positions[neighbour * 3 + other]));
+        if (standOut > OVERHANG_SLOPE * length) overhanging.add(rim);
+      }
+    }
+  }
+  return overhanging.size;
+}

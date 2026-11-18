@@ -6,7 +6,7 @@ import { applyMeshEdits, meshFromGeometry } from '../src/mesh.js';
 import { evaluateField, meshFieldContext } from '../src/mesh-fields.js';
 import { lintMesh } from '../src/mesh-lint.js';
 import { vertexNormals } from '../src/mesh-normals.js';
-import { sharpSubdividedBox } from './support/sharp-subdivided-box.js';
+import { overhangingEdgeVertices, sharpSubdividedBox } from './support/sharp-subdivided-box.js';
 
 const noiseDisplace = [{ op: 'displace', field: { noise: { scale: 3, seed: 7 } }, strength: 0.4 }];
 
@@ -20,6 +20,15 @@ test('a noise displace of a subdivided sharp box leaves no folded edge (#2224)',
   assert.equal(problemCounts(box)['folded-face'], undefined);
   const displaced = applyMeshEdits(box, noiseDisplace).mesh;
   assert.equal(problemCounts(displaced)['folded-face'], undefined);
+});
+
+test('no rim vertex of a displaced sharp box stands out from the side face next to it (#2224)', () => {
+  for (const [spans, scale] of [[64, 3], [24, 6]]) {
+    const box = sharpSubdividedBox(spans);
+    const displaced = applyMeshEdits(box, [{ op: 'displace', field: { noise: { scale, seed: 7 } }, strength: 0.4 }]).mesh;
+    assert.equal(overhangingEdgeVertices(box, displaced), 0, `${spans} spans, noise scale ${scale}`);
+    assert.equal(problemCounts(displaced)['folded-face'], undefined);
+  }
 });
 
 test('a coarse sharp box displaces without NaN and keeps every vertex near its start', () => {
