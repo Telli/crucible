@@ -116,3 +116,27 @@ test('a GPU light bake of a spot cone too narrow to change its cosine keeps a fi
   await bakeLightmapsAsync([floor], { spotLights: [spot], keyColor: [0, 0, 0] }, { samples: 2, bounces: 1, texelsPerUnit: 2, maxResolution: 8, backend: 'native', texelTracer });
   assert.ok(Number.isFinite(spotBlend), `blend ${spotBlend}`);
 });
+
+test('the atlas error counts point, spot and area lights and names the field to turn off (#2092)', () => {
+  const caster = { castShadow: true };
+  const environment = {
+    pointLights: Array.from({ length: 3 }, () => ({ position: [0, 1, 0], ...caster })),
+    spotLights: Array.from({ length: 5 }, () => ({ position: [0, 2, 0], direction: [0, -1, 0], ...caster })),
+    areaLights: Array.from({ length: 2 }, () => ({ ...areaLight, ...caster })),
+  };
+  assert.throws(() => updateLightingState(createLightingState(), environment), error => {
+    assert.match(error.message, /need 25 atlas tiles, and the atlas holds 24/);
+    assert.match(error.message, /3 point lights x 6 tiles, 5 spot, 2 area x 1/);
+    assert.match(error.message, /castShadow false on some environment\.pointLights\[i\]/);
+    return true;
+  });
+  const spotsOnly = { ...environment, areaLights: [], spotLights: Array.from({ length: 8 }, () => ({ position: [0, 2, 0], direction: [0, -1, 0], ...caster })), pointLights: Array.from({ length: 4 }, () => ({ position: [0, 1, 0], ...caster })) };
+  assert.throws(() => updateLightingState(createLightingState(), spotsOnly), /need 32 atlas tiles.*4 point lights x 6 tiles, 8 spot, 0 area x 1/);
+});
+
+test('scene_capabilities localShadows lists area lights and their tile cost (#2092)', async () => {
+  const { AGENT_SCENE_CAPABILITIES } = await import('../src/agent-scene-capabilities.js');
+  const { localShadows } = AGENT_SCENE_CAPABILITIES;
+  assert.deepEqual(localShadows.lights, ['pointLights', 'spotLights', 'areaLights']);
+  assert.equal(localShadows.areaLightTiles, 1);
+});

@@ -200,3 +200,10 @@ test('the same realize spec gets the same geometry record, and different specs n
   assert.equal(realizedGeometry(JSON.stringify(other)).positions.length, 4 * surface.positions.length);
   assert.deepEqual(realizeBase(scatter(3)), first);
 });
+
+test('a where that drops every candidate point names the node, the count and the fix (#2094)', () => {
+  const scatter = { count: 5, min: [0, 0, 0], max: [1, 1, 1] };
+  assert.throws(() => expand({ scatter, where: 0 }), /node "rock" instances.where dropped all 5 candidate points.*remove where/);
+  assert.throws(() => expand({ scatter: { ...scatter, count: 1 }, where: 0 }), /dropped all 1 candidate point. /);
+  assert.equal(children(expand({ scatter, where: 1 })).length, 5);
+});
