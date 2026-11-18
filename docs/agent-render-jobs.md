@@ -9,7 +9,7 @@ Release `0.6.0` includes five MCP tools for asynchronous image and video renderi
 3. Create a scene and inspect its current revision.
 4. Submit `scene_render_submit` with the session ID, current revision and render settings.
 5. Poll `scene_render_status` until the job reaches a terminal state. The job tools take `jobId` alone; a `sessionId` is refused with that hint. A path traced job on the default cpu backend whose scene is estimated above twice 400000 triangles (the estimate can run 1.5 times high on non-indexed geometry) is refused at submit with the count, instead of failing after it started; a scene between the cap and that margin is checked exactly when the trace starts.
-6. Read `scene_render_result` after completion to obtain output paths, and SHA-256 hashes with `response_format: "detailed"`.
+6. Read `scene_render_result` after completion to obtain output paths, and SHA-256 hashes with `response_format: "detailed"`. The answer attaches every PNG of the job (up to 1 MiB each) as an image, whatever `response_format` is, and adds a resource link to each file; a harness that keeps the transcript pays for those pictures on every later turn, so pass `images: false` to get the paths, sizes and metrics only. Video is never attached.
 7. Release unwanted outputs with `scene_render_release`.
 
 For MP4 jobs, FFmpeg must be on PATH or configured with `--ffmpeg` and an absolute executable path.
