@@ -95,3 +95,33 @@ test('a metallic scene over the bake triangle limit applies and skips the automa
   const revision = scene.inspect().revision;
   scene.apply([{ type: 'add-material', material: { id: 'iron', color: [0.04, 0.04, 0.05], roughness: 0.2, metallic: 0.6 } }], { expectedRevision: revision });
 });
+
+function overTheTriangleLimit() {
+  const recipe = stillLife();
+  recipe.geometries.push({ id: 'dense', type: 'sphere', segments: 400, rings: 300 });
+  recipe.nodes.push({ id: 'dense', geometry: 'dense', material: 'floor', translation: [2, 0.5, 0], scale: [0.5, 0.5, 0.5] });
+  return recipe;
+}
+
+function skipDiagnostic(scene) {
+  return (scene.inspect().diagnostics ?? []).find(diagnostic => diagnostic.kind === 'reflection-skipped');
+}
+
+test('skipped automatic probes show in scene_inspect with the triangle count, the limit and the fix (#2221)', () => {
+  const scene = createAgentScene(overTheTriangleLimit());
+  const warning = skipDiagnostic(scene);
+  assert.equal(warning.severity, 'warning');
+  assert.match(warning.message, /\d{6} triangles, more than the 200000/);
+  assert.match(warning.fix, /environment\.objectReflections to false/);
+  assert.match(warning.fix, /fewer triangles/);
+
+  scene.apply([{ type: 'set-camera', fov: 40 }], { expectedRevision: scene.inspect().revision });
+  assert.ok(skipDiagnostic(scene), 'an unrelated edit keeps the warning');
+  scene.apply([{ type: 'set-environment', environment: { objectReflections: false } }], { expectedRevision: scene.inspect().revision });
+  assert.equal(skipDiagnostic(scene), undefined, 'turning the probes off clears it');
+});
+
+test('scenes with probes placed, or with nothing to reflect, carry no reflection-skipped diagnostic (#2221)', () => {
+  assert.equal(skipDiagnostic(createAgentScene(stillLife())), undefined);
+  assert.equal(skipDiagnostic(createAgentScene(stillLife(0.9))), undefined);
+});
