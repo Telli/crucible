@@ -150,6 +150,8 @@ through its depth. `"\n"` starts a new line 1.2 em lower. `size` is the em heigh
 
 A scene geometry takes the same fields with `"type": "cloud"` (see `scene_capabilities` `cloud`). A bad value throws an error that names the field and the accepted range. Lobes are stretched with the box, so a tall or flat cloud has taller or flatter puffs.
 
+For a sky with many clouds, keep `resolution` at 48 or lower and repeat a few cloud shapes with a node's `instances` (see [agent-scene.md](agent-scene.md)) instead of building one mesh per cloud. Triangles grow with the square of `resolution`.
+
 ## Resource and precision limits
 
 Each generator accepts at most 4096 input points. Extrusion applies that limit across its contour and holes.
