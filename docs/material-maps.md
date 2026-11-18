@@ -167,7 +167,7 @@ glTF import maps `alphaMode` MASK and BLEND, `alphaCutoff`, `doubleSided` and `b
 | `sparkle` | `density` | 0 to 1 (0.35) | Share of cells that carry a sparkle. |
 | `sparkle` | `size` | 0.02 to 2 m (0.12) | Width of a cell on the water, so how big a sparkle is. |
 | `sparkle` | `threshold` | 0.9 to 0.9999 (0.985) | A sparkle lights when its mirror direction has at least this cosine to the sun. Higher is fewer and tighter. |
-| `sparkle` | `shape` | `dot` or `star` (`dot`) | Round dot or four-point star. |
+| `sparkle` | `shape` | `dot` or `star` (`star`) | Four-point star, or a round dot. |
 | `sparkle` | `twinkle` | 0 to 8 per second (1) | How fast each facet turns; 0 keeps them still, though waves and camera still move them. |
 | `sparkle` | `intensity` | 0 to 4 (1) | Brightness. |
 

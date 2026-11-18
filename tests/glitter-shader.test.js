@@ -79,3 +79,9 @@ test('a material with waterGlint is not snapshotted, so a change to it is seen',
 test('the capabilities name the fields and the raster-only limit', () => {
   assert.match(AGENT_SCENE_CAPABILITIES.materialWaterGlint, /edge[\s\S]*sparkle[\s\S]*density[\s\S]*twinkle[\s\S]*path tracer ignores it/);
 });
+
+test('sparkles are four-point stars unless the shape says dot (#2036)', () => {
+  assert.equal(normalizeWaterGlint({ sparkle: {} }).sparkle.shape, 'star');
+  assert.equal(normalizeWaterGlint({ sparkle: { density: 0.5 } }).sparkle.shape, 'star');
+  assert.equal(normalizeWaterGlint({ sparkle: { shape: 'dot' } }).sparkle.shape, 'dot');
+});

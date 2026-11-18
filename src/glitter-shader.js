@@ -7,7 +7,7 @@ import { layerTextureSupport, registerShaderFeatureCode } from './shader-registr
 //   sparkle: glitter on the sun path. The water is cut into cells `size` metres wide. Each cell holds a tiny facet that tilts with the
 //            wave under it and turns over time; it lights up when its mirror direction falls within `threshold` (cosine) of the
 //            sun, so sparkles twinkle as the camera, the waves and the clock move, and none appear on the side away from the sun.
-//            `density` is the share of cells that carry a facet, `shape` is a round dot or a four-point star.
+//            `density` is the share of cells that carry a facet, `shape` is a four-point star (the default) or a round dot.
 // The GLSL lives here, outside world-material-shader.js, so a scene without the field never compiles it: the renderer asks for the
 // `waterGlint` feature only when a part has the field, and importing this module (or loadAgentSceneModules) registers it.
 // The code runs in the worldFinal slot, after the water mirror and refraction have been mixed, so the light is not mixed away.
@@ -147,7 +147,7 @@ function normalizeEdge(value) {
 function normalizeSparkle(value) {
   requireObject(value, 'waterGlint.sparkle', '{ density: 0.35, size: 0.12, shape: "star" }');
   rejectUnknownKeys(value, 'waterGlint.sparkle', SPARKLE_FIELDS);
-  const shape = value.shape ?? 'dot';
+  const shape = value.shape ?? 'star';
   if (!WATER_GLINT_SHAPES.includes(shape)) {
     throw invalidField('waterGlint.sparkle.shape', value.shape, `one of ${WATER_GLINT_SHAPES.join(', ')}, such as "star"`);
   }
