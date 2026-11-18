@@ -92,5 +92,6 @@ the server remembers the camera of the last 8 exports, so export again after a s
 
 Library code, not a recipe field: `createGaussianSplats(data, { alphaCut: 0.5, palette: ['#1b1b2f', '#c8553d', '#ffd166'], dither: 'bayer4' })`
 from `@codepawlhq/crucible/addons/gaussian-splats`. `palette` is 2 to 256 colours (hex strings or `[r, g, b]` of 0 to 1) and needs
-`alphaCut`; `dither` is `none`, `bayer4` or `bayer8`. Only opaque splat pixels snap. There is no outline option on splats yet, so do not
-promise one (`docs/gaussian-splats.md`).
+`alphaCut`; `dither` is `none`, `bayer4` or `bayer8`. Only opaque splat pixels snap. `outline: { color, width }` adds a pixel outline round the silhouette:
+`width` is a whole number from 1 to 4, and it needs `alphaCut`. Fills cover it, so it follows the outer edge and holes, not every disc
+(`docs/gaussian-splats.md`).

@@ -550,7 +550,7 @@ square the islands cover. Measured on this machine: a cube gives six equal squar
 cylinder three islands with no distortion, a 48 x 24 sphere six charts with 0.09, and a 96 x 48 sphere (4,608 faces)
 unwraps in about 0.3 s. There is no angle-based (ABF) or SLIM solver and no packing into an existing layout.
 
-Knife and bisect are planned next.
+Cutting by a plane or a path is in the edit table: `bisect_plane` and `knife_project`.
 
 ## MCP
 

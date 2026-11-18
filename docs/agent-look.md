@@ -183,7 +183,7 @@ The MCP preview adds an automatic floor: a light grey disc under the scene's low
 Each point light requires a world-space `position`.
 The renderer uses inverse-square attenuation outside its radius.
 Radius limits attenuation rather than creating an area emitter or softening shadows.
-Point lights currently cast no local shadows and do not scatter through volume fog.
+Point lights do not scatter through volume fog. A point light casts a local shadow only with `castShadow: true` (see [Local shadows](lighting.md#local-shadows)).
 
 | Field | Default | Range |
 | --- | --- | --- |
@@ -194,8 +194,7 @@ Point lights currently cast no local shadows and do not scatter through volume f
 | `range` | `0` | `0` for unlimited falloff, otherwise `0.001` to `1000000` |
 
 Range values between zero and `0.001` reject.
-The existing directional shadow map remains the source of shadows.
-Point lights can illuminate through opaque walls.
+The directional shadow map shadows the sun. A point light with `castShadow: true` also draws its own shadow; without it the light can illuminate through opaque walls.
 
 ## Outlines and toon light
 
