@@ -7,7 +7,7 @@ import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_
 import { parseQuality } from './agent-render-quality.mjs';
 import { estimateFrameBytes } from '../src/budget.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
-import { recipePlaysSimulation } from '../src/motion-hint.js';
+import { recipeMoves } from '../src/motion-hint.js';
 import { normalizeFilmTimeline, filmTimelineDuration, videoFrameCount } from '../src/film-timeline.js';
 import { OIDN_DEFAULT_SAMPLES, PATH_TRACER_DENOISERS, PATH_TRACER_JOB_LIMITS } from '../src/path-tracer-capabilities.js';
 import { AGENT_ASSET_LIMITS, describeAssetBytes } from '../src/agent-asset-limits.js';
@@ -110,7 +110,7 @@ function playsPhysics(recipe) {
  */
 function playsSimulationFromStart(input, recipe, timelineStart) {
   return input.kind !== 'image' && timelineStart === undefined && input.animation === undefined
-    && recipe?.format === 'crucible.scene' && recipePlaysSimulation(recipe);
+    && recipe?.format === 'crucible.scene' && recipeMoves(recipe);
 }
 
 /** The settings of a job as the store keeps them: every default filled in, every limit checked. */

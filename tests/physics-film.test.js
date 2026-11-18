@@ -257,3 +257,22 @@ test('a fixed camera stays locked while a fractured wall flies apart', { skip: !
     `the static marker moved on screen from ${JSON.stringify(first)} to ${JSON.stringify(last)}`);
   await call('scene_dispose', { sessionId });
 });
+
+function trackOnlyScene(motion) {
+  return { ...sceneWithGround([{ id: 'box', geometry: 'slab', material: 'steel', translation: [-1.5, 0.5, 0], scale: [0.8, 1, 0.8] }]), motion };
+}
+
+// A recipe whose only motion is tracks, filmed with no settings.motion, still plays from second 0 (#2052).
+for (const [label, track] of [
+  ['node', { kind: 'node', id: 'box', property: 'translation', keyframes: [{ time: 0, value: [-1.5, 0.5, 0] }, { time: 1, value: [1.5, 0.5, 0] }] }],
+  ['camera', { kind: 'camera', property: 'eye', keyframes: [{ time: 0, value: [4, 2.5, 7] }, { time: 1, value: [-4, 2.5, 7] }] }],
+]) {
+  test(`a video job of a ${label}-track-only recipe moves without a motion setting`, { skip: !hasFfmpeg && 'ffmpeg is not installed' }, async () => {
+    const { sessionId } = await call('scene_create', { recipe: trackOnlyScene({ duration: 1, tracks: [track] }) });
+    const result = await submitJob(sessionId, 'video', { duration: 1 });
+    const frames = decodedFrames(result.artifacts[0].path, FRAME_WIDTH, FRAME_HEIGHT);
+    assert.ok(frames.length > 2);
+    assert.notDeepEqual(frames[0], frames[frames.length - 1], 'the first and last frames differ');
+    await call('scene_dispose', { sessionId });
+  });
+}

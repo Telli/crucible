@@ -52,7 +52,7 @@ import { BRANCH_LIMITS, createBranchStore, printableLabel } from '../src/agent-b
 import { agentAssetDecodeOptions, withCatalogLimitAdvice } from '../src/agent-asset-limits.js';
 import { describeMarks, validateMarks } from '../src/agent-annotate.js';
 import { sceneQueryFor, partMaterialsFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache } from './agent-walkmap.js';
-import { MOTION_NOT_SET_HINT, recipePlaysSimulation } from '../src/motion-hint.js';
+import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 
 // Open scenes by sessionId, least recently used first. One canvas serves them all, so at most one record owns a renderer;
 // a call on another scene hands the canvas over (the scene data stays, the renderer is rebuilt).
@@ -1341,7 +1341,7 @@ window.__agentPreview = {
       mimeType: 'image/png',
       metadata: { sessionId, revision: record.scene.revision, topologyRevision: record.scene.topologyRevision,
         motionTime: record.scene.motionTime ?? null, ...render, ...(labels ? { labels } : {}),
-        ...(motionTime === undefined && recipePlaysSimulation(record.scene.exportRecipe()) ? { hints: [MOTION_NOT_SET_HINT] } : {}) },
+        ...(motionTime === undefined && recipeMoves(record.scene.exportRecipe()) ? { hints: [MOTION_NOT_SET_HINT] } : {}) },
     };
   },
   // The findings of a view without drawing it, for a job whose frames the page does not draw (the path tracer). Exposure is

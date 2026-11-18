@@ -39,10 +39,10 @@ nodeTest('an image job and a recipe with nothing simulated get no implied motion
 });
 
 nodeTest('the motion-not-set hint says what to pass', async () => {
-  const { MOTION_NOT_SET_HINT, recipePlaysSimulation } = await import('../src/motion-hint.js');
+  const { MOTION_NOT_SET_HINT, recipeMoves } = await import('../src/motion-hint.js');
   assert.match(MOTION_NOT_SET_HINT.fix, /motionTime/);
-  assert.equal(recipePlaysSimulation(particleRecipe), true);
-  assert.equal(recipePlaysSimulation({ format: 'crucible.scene' }), false);
+  assert.equal(recipeMoves(particleRecipe), true);
+  assert.equal(recipeMoves({ format: 'crucible.scene' }), false);
 });
 
 const tracksRecipe = {
@@ -63,8 +63,10 @@ nodeTest('a tracks job longer than the authored motion keeps the held pose inste
 });
 
 nodeTest('the motion-not-set hint covers motion tracks, and an empty track list does not count', async () => {
-  const { MOTION_NOT_SET_HINT, recipePlaysSimulation } = await import('../src/motion-hint.js');
+  const { MOTION_NOT_SET_HINT, recipeMoves } = await import('../src/motion-hint.js');
   assert.match(MOTION_NOT_SET_HINT.message, /motion tracks/);
-  assert.equal(recipePlaysSimulation(tracksRecipe), true);
-  assert.equal(recipePlaysSimulation({ format: 'crucible.scene', motion: { duration: 2, tracks: [] } }), false);
+  assert.equal(recipeMoves(tracksRecipe), true);
+  assert.equal(recipeMoves({ format: 'crucible.scene', motion: { duration: 2, tracks: [] } }), false);
+  const holdTrack = { kind: 'node', id: 'box', property: 'translation', keyframes: [{ time: 0, value: [0, 0, 0] }] };
+  assert.equal(recipeMoves({ format: 'crucible.scene', motion: { duration: 2, tracks: [holdTrack] } }), false, 'one keyframe never moves');
 });
