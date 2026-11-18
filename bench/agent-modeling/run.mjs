@@ -28,6 +28,7 @@ import { parseArgs } from 'node:util';
 import { createRunGuard } from './run-guard.mjs';
 import { claudeArguments, writeSkillPromptFile } from './claude-arguments.mjs';
 import { resolveSkillMode, skillPromptFor } from './skill-prompt.mjs';
+import { resolvePromptNote, withPromptNote } from './prompt-note.mjs';
 import { removeLocalPaths, totalsByModel, totalsOf } from './aggregate.mjs';
 import { gradeRecipe, recipeFeatures } from './check.mjs';
 import { countFixRounds, isMcpRender, isMcpWrite } from './fix-rounds.mjs';
@@ -58,10 +59,12 @@ const { values: options } = parseArgs({
     resume: { type: 'string' },
     'run-name': { type: 'string' },
     backend: { type: 'string', default: 'gpu' },
+    'prompt-note': { type: 'string' },
   },
 });
 
 const skillMode = resolveSkillMode({ skillMode: options['skill-mode'], skill: options.skill });
+const promptNote = resolvePromptNote(options['prompt-note']);
 const runName = options.resume ?? options['run-name'] ?? `${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}-${options.model}-${options.label}`;
 const rawDirectory = join(repository, 'artifacts', 'agent-modeling', runName);
 const resultsDirectory = join(repository, 'bench', 'agent-modeling', 'results');
@@ -180,7 +183,7 @@ async function runTask(task, attempt) {
     }
     await writeFile(configPath, JSON.stringify(mcpConfig(assetDirectory, task)));
     const text = taskPrompt(task);
-    const prompt = task.ownPreamble ? text : `${PROMPT_PREAMBLE}\n\n${text}`;
+    const prompt = withPromptNote(task.ownPreamble ? text : `${PROMPT_PREAMBLE}\n\n${text}`, promptNote);
     const skillPromptPath = await writeSkillPromptFile(workingDirectory, await skillPromptFor(skillMode, task, repository));
     const run = await runClaude(prompt, workingDirectory, configPath, skillPromptPath);
     const transcript = readTranscript(run.output);
@@ -253,6 +256,7 @@ function summarize() {
     date: new Date().toISOString(),
     skill: skillMode !== 'none',
     skillMode,
+    promptNote,
     branches: options.branches,
     relations: options.relations,
     findings: options.findings,
