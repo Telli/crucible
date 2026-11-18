@@ -44,7 +44,7 @@ const MATERIAL_LAYER_NOTES = Object.freeze({
   iridescence: 'Thin-film colour shift on reflections.',
   iridescenceIor: 'Film index of refraction.',
   iridescenceThickness: 'Film nanometres; colours cycle as it grows.',
-  toon: 'Light steps (toon); 0 off.',
+  toon: 'Light steps (toon); 0 off. Add toonColors, one linear [r,g,b] (0-4) per step from darkest to lightest and as many as toon, to give each step its own colour; the side facing away from the light shows ambient.',
 });
 
 export const MATERIAL_PATTERN_TYPES =Object.freeze(['noise', 'wood', 'planks', 'bricks', 'tiles', 'marble', 'stone', 'concrete', 'metal', 'rust', 'fabric']);
