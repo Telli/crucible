@@ -8,9 +8,11 @@ import { resolveLocalVolumes } from '../src/local-volumes.js';
 import { buildTraceScene, refuseLocalVolumes } from '../src/path-tracer-scene.js';
 import { bindLocalVolumeParts } from '../src/local-volume-parts.js';
 import { buildMegakernelSource, MEGAKERNEL_SOURCE } from '../src/path-tracer-webgpu-kernel.js';
-import { assertWebGpuLocalVolumes, buildLocalVolumeFunctions, LOCAL_VOLUME_FUNCTIONS, LOCAL_VOLUME_GRID_HEADER_TEXELS, LOCAL_VOLUME_GRID_SHAPE, LOCAL_VOLUME_HEADER_TEXELS, LOCAL_VOLUME_RAMP_TEXELS, LOCAL_VOLUME_TEXELS, packWebGpuLocalVolumes, webGpuVolumeFeatures } from '../src/path-tracer-webgpu-local-volumes.js';
+import { assertWebGpuLocalVolumes, buildLocalVolumeFunctions, LOCAL_VOLUME_FUNCTIONS, LOCAL_VOLUME_GRID_HEADER_TEXELS, LOCAL_VOLUME_GRID_SHAPE, LOCAL_VOLUME_HEADER_TEXELS, LOCAL_VOLUME_MESH_SHAPE, LOCAL_VOLUME_RAMP_TEXELS, LOCAL_VOLUME_TEXELS, MAX_WEBGPU_MESH_VOLUME_TRIANGLES, MESH_VOLUME_STEP_OFFSET_FRACTION, MESH_VOLUME_TRIANGLE_TEXELS, packWebGpuLocalVolumes, packWebGpuMeshVolumes, webGpuVolumeFeatures } from '../src/path-tracer-webgpu-local-volumes.js';
 import { decodeVolumeGrid, encodeVolumeGrid, registerVolumeGrid } from '../src/volume-grid.js';
+import { meshVolumeSegments } from '../src/path-tracer-volume.js';
 import { renderBlastBothBackends } from './helpers/grid-blast-render.js';
+import { renderMeshVolumeBothBackends } from './helpers/mesh-volume-render.js';
 import { traceOnWebGpu } from '../src/path-tracer-webgpu.js';
 import { withWebGpuPage } from './helpers/webgpu-page.js';
 
@@ -66,14 +68,208 @@ test('the march is compiled into the megakernel only for a scene that has local 
   assert.match(both, /fn scatterInFog\(/);
 });
 
-test('a mesh volume is refused on the WebGPU tracer with the backend that draws it, and a grid volume is not', async () => {
-  assert.throws(() => assertWebGpuLocalVolumes({ localVolumes: [{ shape: 'box' }, { shape: 'mesh', part: { name: 'room' } }] }), /localVolumes\[1\] is a mesh volume, which only backend "cpu" traces/);
+// A closed L-shaped prism (three unit squares in x and z, the notch at x and z in 1..2, extruded in y from 0 to 1) and two unit boxes with a gap of two units: the shapes of the mesh volume tests.
+function lPrismMesh() {
+  const outline = [[0, 0], [1, 0], [2, 0], [2, 1], [1, 1], [1, 2], [0, 2], [0, 1]];
+  const positions = [];
+  for (const height of [0, 1]) for (const [x, z] of outline) positions.push(x, height, z);
+  const indices = [];
+  const top = outline.length;
+  for (const [firstCorner, secondCorner, thirdCorner, fourthCorner] of [[0, 1, 4, 7], [1, 2, 3, 4], [7, 4, 5, 6]]) {
+    indices.push(firstCorner, secondCorner, thirdCorner, firstCorner, thirdCorner, fourthCorner, top + firstCorner, top + thirdCorner, top + secondCorner, top + firstCorner, top + fourthCorner, top + thirdCorner);
+  }
+  for (let corner = 0; corner < outline.length; corner++) {
+    const next = (corner + 1) % outline.length;
+    indices.push(corner, next, top + next, corner, top + next, top + corner);
+  }
+  return { positions: new Float32Array(positions), indices: new Uint32Array(indices) };
+}
+
+function dumbbellMesh() {
+  const corners = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1];
+  const faces = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5];
+  const positions = [...corners];
+  for (let index = 0; index < corners.length; index += 3) positions.push(corners[index] + 3, corners[index + 1], corners[index + 2]);
+  return { positions: new Float32Array(positions), indices: new Uint32Array([...faces, ...faces.map(index => index + 8)]) };
+}
+
+const MESH_SMOKE = { shape: 'mesh', part: 'room', fit: 'mesh', density: 1.2, falloff: 0, steps: 24, emission: [0.9, 0.45, 0.15], emissionStrength: 1.5 };
+
+// The trace scene of a hidden part of that shape with a mesh volume over it: its volumes are what the WebGPU tracer receives (the mesh BVH built by buildTraceScene).
+function meshVolumeScene(mesh, matrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])) {
+  const room = { name: 'room', visible: false, geometry: { ...mesh, normals: new Float32Array(mesh.positions.length) }, matrix, material: { color: [0.5, 0.5, 0.5] } };
+  return buildTraceScene([floorPart(), room], { localVolumes: [MESH_SMOKE] });
+}
+
+test('a mesh volume is drawn by the WebGPU tracer once its BVH is built, and a part that was never prepared is refused with what to do', () => {
+  const scene = meshVolumeScene(lPrismMesh());
+  assert.doesNotThrow(() => assertWebGpuLocalVolumes(scene));
+  assert.equal(webGpuVolumeFeatures(scene.localVolumes).hasMeshVolume, true);
+  assert.equal(webGpuVolumeFeatures(resolveLocalVolumes([SMOKE_BOX, PUFF], 'volumes')).hasMeshVolume, false);
+  assert.throws(() => assertWebGpuLocalVolumes({ localVolumes: [{ shape: 'box' }, { shape: 'mesh', part: { name: 'room' } }] }), /localVolumes\[1\] is a mesh volume that was not prepared for tracing; build the scene with buildTraceScene/);
   assert.doesNotThrow(() => assertWebGpuLocalVolumes({ localVolumes: [{ shape: 'grid', gridData: {} }] }));
   assert.doesNotThrow(() => assertWebGpuLocalVolumes({ localVolumes: resolveLocalVolumes([SMOKE_BOX, PUFF], 'volumes') }));
   assert.doesNotThrow(() => assertWebGpuLocalVolumes({}));
-  const scene = buildTraceScene([floorPart()], { localVolumes: [SMOKE_BOX] });
-  scene.localVolumes = [{ ...scene.localVolumes[0], shape: 'mesh', part: { name: 'room' } }];
-  await assert.rejects(traceOnWebGpu(scene, {}, { width: 2, height: 2, samples: 1, bounces: 1 }, () => {}), /is a mesh volume, which only backend "cpu" traces/);
+});
+
+test('a mesh volume packs the mesh shape code and its mesh number in its table row, and the header says where the mesh block starts', () => {
+  const scene = meshVolumeScene(lPrismMesh());
+  const table = packWebGpuLocalVolumes(scene.localVolumes, null);
+  const row = LOCAL_VOLUME_HEADER_TEXELS * 4;
+  assert.equal(table[row + 3], LOCAL_VOLUME_MESH_SHAPE);
+  assert.equal(table[row + 19], 0, 'the first mesh volume');
+  assert.equal(table[1], LOCAL_VOLUME_HEADER_TEXELS + LOCAL_VOLUME_TEXELS, 'the block follows the one table row, counted in vectors');
+  assert.deepEqual(rounded(table.subarray(row + 16, row + 19)), [24, 0, 0], 'the steps of the volume, no scatter');
+  const [plainBox] = resolveLocalVolumes([SMOKE_BOX], 'volumes');
+  assert.equal(packWebGpuLocalVolumes([plainBox], null)[1], 0, 'a scene without a mesh volume keeps 0 in the second header float');
+});
+
+// The packed mesh block read the way the WGSL reads it, with a plain loop over the leaves instead of the stack walk: the nearest surface along a ray, or -1.
+function nearestPackedSurface(block, meshNumber, origin, direction) {
+  const descriptor = (1 + meshNumber) * 4;
+  const nodeStart = block[descriptor];
+  const triangleStart = block[descriptor + 1];
+  const nodeCount = block[descriptor + 3];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  let nearest = Infinity;
+  for (let node = 0; node < nodeCount; node++) {
+    const header = (nodeStart + node * 2) * 4;
+    const leafCount = -block[header + 3];
+    if (!(leafCount > 0)) continue;
+    const first = block[header + 7];
+    for (let slot = first; slot < first + leafCount; slot++) {
+      const base = (triangleStart + slot * 3) * 4;
+      const corner = [block[base], block[base + 1], block[base + 2]];
+      const edgeFirst = [block[base + 4], block[base + 5], block[base + 6]];
+      const edgeSecond = [block[base + 8], block[base + 9], block[base + 10]];
+      const pivot = cross(direction, edgeSecond);
+      const determinant = dot(edgeFirst, pivot);
+      if (determinant === 0) continue;
+      const offset = origin.map((value, axis) => value - corner[axis]);
+      const firstWeight = dot(offset, pivot) / determinant;
+      if (firstWeight < 0 || firstWeight > 1) continue;
+      const query = cross(offset, edgeFirst);
+      const secondWeight = dot(direction, query) / determinant;
+      if (secondWeight < 0 || firstWeight + secondWeight > 1) continue;
+      const distance = dot(edgeSecond, query) / determinant;
+      if (distance >= 0 && distance < nearest) nearest = distance;
+    }
+  }
+  return nearest === Infinity ? -1 : nearest;
+}
+
+// The inside segments of the packed mesh volume by the crossing walk of meshVolumeSegments in the WGSL.
+function packedSegments(table, origin, direction, limit) {
+  const block = table.subarray(table[1] * 4);
+  const stepOffset = block[6];
+  const crossings = [];
+  let cursor = 0;
+  while (crossings.length < 64) {
+    const distance = nearestPackedSurface(block, 0, origin.map((value, axis) => value + direction[axis] * cursor), direction);
+    if (distance < 0) break;
+    cursor += distance;
+    crossings.push(cursor);
+    cursor += stepOffset;
+  }
+  let inside = crossings.length % 2 === 1;
+  let start = 0;
+  const segments = [];
+  for (const crossing of crossings) {
+    if (inside) {
+      const end = Math.min(crossing, limit);
+      if (end > start) segments.push([start, end]);
+    } else {
+      start = crossing;
+    }
+    inside = !inside;
+  }
+  return segments;
+}
+
+test('the packed mesh block gives the segments the CPU tracer finds: an L arm, the notch, a ray that leaves and comes back, and a ray that starts inside', () => {
+  const cpuSegments = (scene, origin, direction, limit) => {
+    const out = new Float64Array(64);
+    const count = meshVolumeSegments(scene.localVolumes[0], ...origin, ...direction, limit, out);
+    return Array.from({ length: count }, (value, segment) => [out[segment * 2], out[segment * 2 + 1]]);
+  };
+  const close = (actual, expected, label) => {
+    const message = `${label}: ${JSON.stringify(actual)} against ${JSON.stringify(expected)}`;
+    assert.equal(actual.length, expected.length, message);
+    actual.forEach((segment, index) => segment.forEach((value, end) => assert.ok(Math.abs(value - expected[index][end]) < 1e-3, message)));
+  };
+  const lShape = meshVolumeScene(lPrismMesh());
+  const lTable = packWebGpuLocalVolumes(lShape.localVolumes, null);
+  const rays = [
+    ['through the long arm', [-1, 0.37, 0.43], [1, 0, 0], 10],
+    ['through the notch', [-1, 0.37, 1.5], [1, 0, 0], 10],
+    ['down through the corner', [0.5, 5, 0.5], [0, -1, 0], 20],
+    ['starting inside', [0.5, 0.5, 0.5], [1, 0, 0], 10],
+    ['clipped by the limit', [-1, 0.37, 0.43], [1, 0, 0], 2],
+    ['a miss', [-1, 3, 0.43], [1, 0, 0], 10],
+  ];
+  for (const [label, origin, direction, limit] of rays) close(packedSegments(lTable, origin, direction, limit), cpuSegments(lShape, origin, direction, limit), label);
+  assert.equal(cpuSegments(lShape, [-1, 0.37, 1.5], [1, 0, 0], 10).length, 1, 'the notch ray crosses the first arm only');
+  const twoShells = meshVolumeScene(dumbbellMesh());
+  const through = cpuSegments(twoShells, [-1, 0.5, 0.5], [1, 0, 0], 20);
+  assert.equal(through.length, 2, 'the ray leaves the first box and enters the second');
+  close(packedSegments(packWebGpuLocalVolumes(twoShells.localVolumes, null), [-1, 0.5, 0.5], [1, 0, 0], 20), through, 'a ray that leaves and comes back');
+});
+
+test('the mesh block holds the triangles in world space, the BVH nodes of packNodes and a step offset past a crossing', () => {
+  const placed = new Float32Array([2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 10, 0, 0, 1]);
+  const scene = meshVolumeScene(dumbbellMesh(), placed);
+  const [volume] = scene.localVolumes;
+  const table = packWebGpuLocalVolumes(scene.localVolumes, null);
+  const block = table.subarray(table[1] * 4);
+  const { bvh, indices, positions } = volume.mesh;
+  assert.equal(block[0], 1, 'one mesh volume');
+  assert.equal(block[7], bvh.nodeCount);
+  assert.ok(Math.abs(block[6] - Math.hypot(...volume.size) * MESH_VOLUME_STEP_OFFSET_FRACTION) < 1e-6, 'a fraction of the volume diagonal');
+  const triangleBase = block[5] * 4;
+  const triangle = bvh.triangleOrder[0];
+  const cornerAt = vertex => Array.from(positions.subarray(indices[triangle * 3 + vertex] * 3, indices[triangle * 3 + vertex] * 3 + 3));
+  assert.deepEqual(rounded(block.subarray(triangleBase, triangleBase + 3)), rounded(cornerAt(0)), 'the first corner of the first leaf slot, in world space');
+  assert.deepEqual(rounded(block.subarray(triangleBase + 4, triangleBase + 7)), rounded(cornerAt(1).map((value, axis) => value - cornerAt(0)[axis])), 'then the edge to the second corner');
+  assert.ok(Math.min(...positions.filter((value, index) => index % 3 === 0)) >= 10, 'the part matrix moved the mesh');
+  assert.equal(block.length, (1 + 1 + bvh.nodeCount * 2 + (indices.length / 3) * MESH_VOLUME_TRIANGLE_TEXELS) * 4, 'header, descriptor, nodes and triangles');
+});
+
+test('the mesh volumes of one scene may hold at most the triangle limit, and the error says what to pass instead', () => {
+  const tooMany = { mesh: { indices: new Uint32Array(3 * (MAX_WEBGPU_MESH_VOLUME_TRIANGLES + 1)) } };
+  assert.throws(() => packWebGpuMeshVolumes([tooMany]), /at most 262144 triangles across mesh local volumes, got 262145; simplify the parts or use backend "cpu"/);
+});
+
+test('the mesh march is compiled only for a scene that has a mesh volume, and any other scene gets the kernel it had before mesh volumes', () => {
+  assert.equal(LOCAL_VOLUME_FUNCTIONS, buildLocalVolumeFunctions({ hasMesh: false }));
+  assert.equal(buildLocalVolumeFunctions({ hasGrid: true, hasNoiseOctaves: true, hasEmissionRamp: true }), buildLocalVolumeFunctions({ hasGrid: true, hasNoiseOctaves: true, hasEmissionRamp: true, hasMesh: false }));
+  const plain = buildMegakernelSource({ hasLocalVolumes: true, hasGridVolume: true, hasNoiseOctaves: true, hasEmissionRamp: true });
+  assert.doesNotMatch(plain, /mesh|Mesh/);
+  assert.match(plain, /if \(!localVolumeInterval\(volume, origin, direction, segmentLength\)\) \{ continue; \}\n    entries\[volume\] = localSpan\.x;/);
+  const withMesh = buildMegakernelSource({ hasLocalVolumes: true, hasMeshVolume: true });
+  assert.match(withMesh, /fn meshVolumeSegments\(volume: i32, origin: vec3<f32>, rayDirection: vec3<f32>, limit: f32\) -> i32/);
+  assert.match(withMesh, /fn meshNearestSurface\(/);
+  assert.match(withMesh, /emitted \+= crossLocalMesh\(volume, origin, segmentLength, jitter\);/);
+  assert.match(withMesh, /localSpan = vec2<f32>\(meshSegments\[0\], meshSegments\[segmentCount \* 2 - 1\]\);/);
+  assert.match(withMesh, /let steps = max\(1, i32\(floor\(volumeSteps \* segmentLength \/ total \+ 0\.5\)\)\);/, 'the steps are shared by segment length, rounded half up as Math.round does');
+  assert.match(withMesh, /var inside = \(crossingCount % 2\) == 1;/, 'the origin is inside when the crossings ahead are odd');
+});
+
+test('on a WebGPU adapter a mesh volume over an L-shaped room matches the CPU tracer', { timeout: 300000 }, async context => {
+  await withWebGpuPage(context, async page => {
+    const { cpu, webgpu } = await page.evaluate(renderMeshVolumeBothBackends, { width: 48, height: 30, samples: 32 });
+    let difference = 0;
+    let reference = 0;
+    let lit = 0;
+    cpu.linear.forEach((value, index) => {
+      difference += Math.abs(value - webgpu.linear[index]);
+      reference += value;
+      if (value > 0.05) lit++;
+    });
+    assert.deepEqual(webgpu.ignored, []);
+    assert.ok(lit > 200, `the room shows in the frame: ${lit} lit values`);
+    assert.ok(difference / reference < 0.05, `mean relative difference ${(difference / reference).toFixed(4)}`);
+  }, { hardwareOnly: true });
 });
 
 // A 2 x 2 x 1 grid with distinct values per voxel, bound as a volume with the options a test turns on.
@@ -246,8 +442,8 @@ const RAMP_FIRE = { shape: 'box', center: [0, 1, 0], size: [2, 2, 2], density: 1
 test('noiseOctaves and emissionRamp no longer throw on the WebGPU tracer', () => {
   const volumes = resolveLocalVolumes([OCTAVE_SMOKE, RAMP_FIRE], 'volumes');
   assert.doesNotThrow(() => assertWebGpuLocalVolumes({ localVolumes: volumes }));
-  assert.deepEqual(webGpuVolumeFeatures(volumes), { hasGridVolume: false, hasNoiseOctaves: true, hasEmissionRamp: true });
-  assert.deepEqual(webGpuVolumeFeatures(resolveLocalVolumes([SMOKE_BOX, PUFF], 'volumes')), { hasGridVolume: false, hasNoiseOctaves: false, hasEmissionRamp: false });
+  assert.deepEqual(webGpuVolumeFeatures(volumes), { hasGridVolume: false, hasNoiseOctaves: true, hasEmissionRamp: true, hasMeshVolume: false });
+  assert.deepEqual(webGpuVolumeFeatures(resolveLocalVolumes([SMOKE_BOX, PUFF], 'volumes')), { hasGridVolume: false, hasNoiseOctaves: false, hasEmissionRamp: false, hasMeshVolume: false });
 });
 
 test('the table keeps the octaves after the first in vector 5 and the ramp number in vector 7, and a ramp block follows with the stops baked', () => {

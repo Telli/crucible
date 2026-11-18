@@ -5,12 +5,13 @@ import { bakeEmissionRamp } from './local-volume-ramp-bake.js';
 import { meanEnvironmentRadiance } from './path-tracer-volume.js';
 import { bakedGridEmission, GRID_MOTION_TIME_STEP, gridUnitVelocity, volumeGridFloats } from './volume-grid.js';
 import { STEP_INTEGRAL_WGSL } from './volume-step-integral.js';
+import { packNodes } from './path-tracer-gpu-pack.js';
 
 // Local volumes (environment.localVolumes: boxes and spheres of absorbing, emitting and scattering medium) on the WebGPU path
 // tracer (#1048). The WGSL is the march of createLocalVolumeCrossing in path-tracer-volume.js: the same step count, jittered
 // midpoints, profile with falloff and noise, and the same sun and sky terms for a scattering volume, so the two tracers draw one
 // picture and differ by noise only. The march is spliced into the megakernel only for a scene that has volumes.
-// Mesh volumes need a BVH the table below has no room for and stay on backend "cpu". A grid volume (#1785) rides in the same buffer after the
+// A mesh volume (#2004) carries its own triangles and BVH in a block at the end of the buffer and is marched over the inside segments of the closed mesh, as the CPU tracer does. A grid volume (#1785) rides in the same buffer after the
 // table: the megakernel's one bind group holds storage buffers only, so the voxels are float vectors read with the trilinear weights of
 // sampleVolumeGrid, not a 3D texture. The motion blur reads each step at its shutter time, as the CPU tracer does.
 
@@ -19,6 +20,16 @@ export const LOCAL_VOLUME_TEXELS = 8;
 export const LOCAL_VOLUME_HEADER_TEXELS = 2;
 /** The shape code of a grid volume in the table (box 0, sphere 1). Negative so the box and sphere tests of the kernel never match it. */
 export const LOCAL_VOLUME_GRID_SHAPE = -1;
+/** The shape code of a mesh volume in the table. */
+export const LOCAL_VOLUME_MESH_SHAPE = -2;
+/** The most triangles the mesh volumes of one scene may hold together: 262144 triangles are about 30 MB of nodes and corners in the volume buffer. */
+export const MAX_WEBGPU_MESH_VOLUME_TRIANGLES = 262144;
+/** Vectors per triangle of a mesh volume: the corner and the two edges. */
+export const MESH_VOLUME_TRIANGLE_TEXELS = 3;
+/** The most surface crossings along one ray and the most inside segments they make (MAXIMUM_MESH_CROSSINGS and MAXIMUM_MESH_SEGMENTS of path-tracer-volume.js). */
+export const MESH_VOLUME_MAXIMUM_CROSSINGS = 64;
+/** A crossing at a distance cannot be told from the surface it left by less than this fraction of the volume's diagonal (the CPU tracer steps 1e-6 in 64 bit; 32 bit needs more). */
+export const MESH_VOLUME_STEP_OFFSET_FRACTION = 1e-5;
 /** Vectors of one emission ramp in the ramp block: the source, stop count and range, the emission strength, then up to LOCAL_VOLUME_RAMP_STOPS colours. */
 export const LOCAL_VOLUME_RAMP_TEXELS = 2 + LOCAL_VOLUME_RAMP_STOPS;
 /** Vectors in front of a grid's voxels: the resolution and blackbody weight, then the shutter, the two optional channel flags and the voxel stride. */
@@ -26,11 +37,11 @@ export const LOCAL_VOLUME_GRID_HEADER_TEXELS = 2;
 
 const IDENTITY_AXES = Object.freeze([1, 0, 0, 0, 1, 0, 0, 0, 1]);
 
-/** Throws for a volume the WebGPU tracer cannot draw, naming the kind and the backend that can; does nothing for a scene without volumes. */
+/** Throws for a volume the WebGPU tracer cannot draw; does nothing for a scene without volumes. A mesh volume has to come prepared (its part bound and its BVH built by the trace scene). */
 export function assertWebGpuLocalVolumes(scene) {
   scene.localVolumes?.forEach((volume, index) => {
-    if (volume.shape === 'mesh' || volume.part) {
-      throw new RangeError(`environment.localVolumes[${index}] is a mesh volume, which only backend "cpu" traces; the WebGPU path tracer draws box, sphere and grid volumes. Use backend "cpu" or make it a box or sphere.`);
+    if (volume.part && !volume.mesh) {
+      throw new RangeError(`environment.localVolumes[${index}] is a mesh volume that was not prepared for tracing; build the scene with buildTraceScene, which builds its BVH, or use fit "bounds".`);
     }
   });
 }
@@ -41,6 +52,7 @@ export function webGpuVolumeFeatures(volumes) {
     hasGridVolume: Boolean(volumes?.some(volume => volume.shape === 'grid')),
     hasNoiseOctaves: Boolean(volumes?.some(volume => volume.noiseAmount > 0 && volume.noiseOctaves > 1)),
     hasEmissionRamp: Boolean(volumes?.some(volume => volume.emissionRamp)),
+    hasMeshVolume: Boolean(volumes?.some(volume => volume.mesh)),
   };
 }
 
@@ -49,12 +61,15 @@ export function webGpuVolumeFeatures(volumes) {
  * followed by eight vectors per volume:
  *   0 centre, shape (0 box, 1 sphere)   1 half extents, falloff   2 absorption times density, noise amount
  *   3 emission times strength, noise scale   4 steps, scatter, anisotropy, radius   5-7 the three rows of the box axes.
+ * A mesh volume has shape code LOCAL_VOLUME_MESH_SHAPE and its number among the mesh volumes in the radius slot of vector 4; its table row is otherwise a box's, so the same fields set its steps, absorption and emission.
+ * The second float of the header is the vector index of the mesh block, relative to the table (0 without mesh volumes); the mesh block is the last block of the buffer.
  * The fourth float of vector 5 is the noise octaves minus one and that of vector 7 is the ramp number plus one (0 for no ramp); a ramp block follows the table
  * and the grid block (packWebGpuEmissionRamps).
  */
 export function packWebGpuLocalVolumes(volumes, environment) {
   if (volumes.length > MAX_LOCAL_VOLUMES) throw new RangeError(`The WebGPU path tracer holds at most ${MAX_LOCAL_VOLUMES} local volumes, got ${volumes.length}`);
   const rampVolumes = volumes.filter(volume => volume.emissionRamp);
+  const meshVolumes = volumes.filter(volume => volume.mesh);
   const table = new Float32Array((LOCAL_VOLUME_HEADER_TEXELS + volumes.length * LOCAL_VOLUME_TEXELS) * 4);
   table.set([volumes.length, 0, 0, 0], 0);
   table.set([...meanEnvironmentRadiance(environment), 0], 4);
@@ -62,13 +77,14 @@ export function packWebGpuLocalVolumes(volumes, environment) {
     const at = (LOCAL_VOLUME_HEADER_TEXELS + index * LOCAL_VOLUME_TEXELS) * 4;
     const isSphere = volume.shape === 'sphere';
     const isGrid = volume.shape === 'grid';
+    const isMesh = Boolean(volume.mesh);
     const half = isSphere ? [volume.radius, volume.radius, volume.radius] : volume.size.map(extent => extent / 2);
     const axes = volume.axes ?? IDENTITY_AXES;
-    table.set([...volume.center, isGrid ? LOCAL_VOLUME_GRID_SHAPE : isSphere ? 1 : 0], at);
+    table.set([...volume.center, isGrid ? LOCAL_VOLUME_GRID_SHAPE : isMesh ? LOCAL_VOLUME_MESH_SHAPE : isSphere ? 1 : 0], at);
     table.set([...half, volume.falloff], at + 4);
     table.set([...volume.absorption.map(channel => channel * volume.density), volume.noiseAmount], at + 8);
     table.set([...volume.emission.map(channel => channel * volume.emissionStrength), volume.noiseScale], at + 12);
-    table.set([volume.steps, volume.scatter ?? 0, volume.anisotropy ?? 0, isSphere ? volume.radius : 0], at + 16);
+    table.set([volume.steps, volume.scatter ?? 0, volume.anisotropy ?? 0, isSphere ? volume.radius : isMesh ? meshVolumes.indexOf(volume) : 0], at + 16);
     const octavesAfterFirst = (volume.noiseOctaves ?? 1) - 1;
     const rampNumber = volume.emissionRamp ? rampVolumes.indexOf(volume) + 1 : 0;
     for (let row = 0; row < 3; row++) table.set([axes[row * 3], axes[row * 3 + 1], axes[row * 3 + 2], row === 0 ? octavesAfterFirst : row === 2 ? rampNumber : 0], at + 20 + row * 4);
@@ -77,6 +93,10 @@ export function packWebGpuLocalVolumes(volumes, environment) {
   const blocks = [table];
   if (gridVolume) blocks.push(packWebGpuGrid(gridVolume));
   if (rampVolumes.length > 0) blocks.push(packWebGpuEmissionRamps(rampVolumes));
+  if (meshVolumes.length > 0) {
+    table[1] = blocks.reduce((length, block) => length + block.length, 0) / 4;
+    blocks.push(packWebGpuMeshVolumes(meshVolumes));
+  }
   return blocks.length === 1 ? table : concatenateFloats(blocks);
 }
 
@@ -103,6 +123,45 @@ export function packWebGpuEmissionRamps(rampVolumes) {
     block.set([rampSourceCode(volume.emissionRamp.source), baked.count, ...volume.emissionRamp.range], at);
     block[at + 4] = volume.emissionStrength;
     for (let stop = 0; stop < baked.count; stop++) block.set(baked.colors.subarray(stop * 3, stop * 3 + 3), at + 8 + stop * 4);
+  });
+  return block;
+}
+
+/**
+ * The mesh block, the last block of the buffer: the mesh count, then one descriptor vector per mesh volume, then each mesh's BVH nodes and triangles.
+ *   header 0   mesh count, 0, 0, 0
+ *   header 1+  node start, triangle start (vector indices from the block), the step offset past a crossing, node count
+ *   nodes      two vectors a node as packNodes writes them (minimum and right child or minus the leaf count, maximum and first slot)
+ *   triangles  MESH_VOLUME_TRIANGLE_TEXELS vectors a leaf slot: the first corner, then the two edges, in world space
+ */
+export function packWebGpuMeshVolumes(meshVolumes) {
+  const triangleTotal = meshVolumes.reduce((total, volume) => total + volume.mesh.indices.length / 3, 0);
+  if (triangleTotal > MAX_WEBGPU_MESH_VOLUME_TRIANGLES) {
+    throw new RangeError(`The WebGPU path tracer holds at most ${MAX_WEBGPU_MESH_VOLUME_TRIANGLES} triangles across mesh local volumes, got ${triangleTotal}; simplify the parts or use backend "cpu".`);
+  }
+  const headerTexels = 1 + meshVolumes.length;
+  const sizes = meshVolumes.map(volume => ({ nodes: volume.mesh.bvh.nodeCount * 2, triangles: (volume.mesh.indices.length / 3) * MESH_VOLUME_TRIANGLE_TEXELS }));
+  const block = new Float32Array((headerTexels + sizes.reduce((total, size) => total + size.nodes + size.triangles, 0)) * 4);
+  block[0] = meshVolumes.length;
+  let cursor = headerTexels;
+  meshVolumes.forEach((volume, index) => {
+    const { positions, indices, bvh } = volume.mesh;
+    const diagonal = Math.hypot(...volume.size);
+    block.set([cursor, cursor + sizes[index].nodes, diagonal * MESH_VOLUME_STEP_OFFSET_FRACTION, bvh.nodeCount], (1 + index) * 4);
+    block.set(packNodes(bvh).data.subarray(0, sizes[index].nodes * 4), cursor * 4);
+    const triangleBase = (cursor + sizes[index].nodes) * 4;
+    for (let slot = 0; slot < bvh.triangleOrder.length; slot++) {
+      const triangle = bvh.triangleOrder[slot];
+      const first = indices[triangle * 3] * 3;
+      const second = indices[triangle * 3 + 1] * 3;
+      const third = indices[triangle * 3 + 2] * 3;
+      for (let axis = 0; axis < 3; axis++) {
+        block[triangleBase + slot * 12 + axis] = positions[first + axis];
+        block[triangleBase + slot * 12 + 4 + axis] = positions[second + axis] - positions[first + axis];
+        block[triangleBase + slot * 12 + 8 + axis] = positions[third + axis] - positions[first + axis];
+      }
+    }
+    cursor += sizes[index].nodes + sizes[index].triangles;
   });
   return block;
 }
@@ -160,9 +219,9 @@ export function packWebGpuGrid(volume) {
 /**
  * The march. `params.seedAndAtlas.w` is the vector index of the table header in the materials buffer. With `hasGrid` the grid march and sampler are
  * spliced in; without it the text is what it was before grids, so a scene without a grid compiles the same kernel. `hasNoiseOctaves` and `hasEmissionRamp`
- * splice the fractal noise and the ramp light the same way.
+ * splice the fractal noise and the ramp light the same way, and `hasMesh` the mesh volume march.
  */
-export const buildLocalVolumeFunctions = ({ hasGrid = false, hasNoiseOctaves = false, hasEmissionRamp = false } = {}) => /* wgsl */ `
+export const buildLocalVolumeFunctions = ({ hasGrid = false, hasNoiseOctaves = false, hasEmissionRamp = false, hasMesh = false } = {}) => /* wgsl */ `
 ${STEP_INTEGRAL_WGSL}
 const LOCAL_VOLUME_TEXELS: i32 = ${LOCAL_VOLUME_TEXELS};
 const LOCAL_VOLUME_HEADER_TEXELS: i32 = ${LOCAL_VOLUME_HEADER_TEXELS};
@@ -339,8 +398,13 @@ fn crossLocalVolumes(depth: i32, origin: vec3<f32>, segmentLength: f32) {
   var order: array<i32, ${MAX_LOCAL_VOLUMES}>;
   var crossed = 0;
   for (var volume = 0; volume < count; volume++) {
-    if (!localVolumeInterval(volume, origin, direction, segmentLength)) { continue; }
-    entries[volume] = localSpan.x;
+${hasMesh ? `    if (localVolumeTexel(volume, 0).w < -1.5) {
+      let segmentCount = meshVolumeSegments(volume, origin, direction, segmentLength);
+      if (segmentCount == 0) { continue; }
+      localSpan = vec2<f32>(meshSegments[0], meshSegments[segmentCount * 2 - 1]);
+    } else if (!localVolumeInterval(volume, origin, direction, segmentLength)) { continue; }
+` : `    if (!localVolumeInterval(volume, origin, direction, segmentLength)) { continue; }
+`}    entries[volume] = localSpan.x;
     exits[volume] = localSpan.y;
     var slot = crossed;
     crossed++;
@@ -353,7 +417,11 @@ fn crossLocalVolumes(depth: i32, origin: vec3<f32>, segmentLength: f32) {
   var emitted = vec3<f32>(0.0);
   for (var rank = 0; rank < crossed; rank++) {
     let volume = order[rank];
-${hasGrid ? `    if (localVolumeTexel(volume, 0).w < -0.5) {
+${hasMesh ? `    if (localVolumeTexel(volume, 0).w < -1.5) {
+      emitted += crossLocalMesh(volume, origin, segmentLength, jitter);
+      continue;
+    }
+` : ''}${hasGrid ? `    if (localVolumeTexel(volume, 0).w < -0.5) {
       emitted += crossLocalGrid(volume, origin, entries[volume], exits[volume] - entries[volume], jitter);
       continue;
     }
@@ -377,7 +445,7 @@ ${hasEmissionRamp ? `      emitted += throughput * localEmissionRampLight(volume
   }
   addRadiance(depth, emitted);
 }
-${hasEmissionRamp ? buildRampFunctions(hasGrid) : ''}${hasGrid ? buildGridFunctions({ hasEmissionRamp }) : ''}`;
+${hasEmissionRamp ? buildRampFunctions(hasGrid) : ''}${hasGrid ? buildGridFunctions({ hasEmissionRamp }) : ''}${hasMesh ? MESH_FUNCTIONS : ''}`;
 
 // The fractal value noise of localVolumeFractalNoise in local-volume-noise.js: octaves at twice the frequency and half the weight, divided by the weights.
 const FRACTAL_NOISE_FUNCTION = /* wgsl */ `fn localVolumeFractalNoise(position: vec3<f32>, octaves: i32) -> f32 {
@@ -531,6 +599,146 @@ fn crossLocalGrid(volume: i32, origin: vec3<f32>, entry: f32, span: f32, jitter:
     emitted += throughput * (emission * cell.flame * stepLength + cell.glow * blackbodyWeight * stepLength) * volumeStepIntegral(extinction * width);
 ${hasEmissionRamp ? `    emitted += throughput * localEmissionRampLight(volume, vec3<f32>(cell.density, cell.temperature, cell.flame), stepLength) * volumeStepIntegral(extinction * width);
 ` : ''}    throughput *= exp(-extinction * width);
+  }
+  return emitted;
+}
+`;
+
+/**
+ * The WGSL of a mesh volume (marchMeshVolume and meshVolumeSegments of the CPU tracer): the ray is walked from surface crossing to surface crossing through the mesh's own
+ * BVH, the parity of the crossings says where it is inside, and the inside segments share the volume's steps by length. The block layout is packWebGpuMeshVolumes'.
+ */
+const MESH_FUNCTIONS = /* wgsl */ `
+const MESH_MAXIMUM_CROSSINGS: i32 = ${MESH_VOLUME_MAXIMUM_CROSSINGS};
+const MESH_MAXIMUM_SEGMENTS: i32 = ${MESH_VOLUME_MAXIMUM_CROSSINGS / 2};
+const MESH_TRIANGLE_TEXELS: i32 = ${MESH_VOLUME_TRIANGLE_TEXELS};
+
+var<private> meshCrossings: array<f32, ${MESH_VOLUME_MAXIMUM_CROSSINGS}>;
+var<private> meshSegments: array<f32, ${MESH_VOLUME_MAXIMUM_CROSSINGS}>;
+var<private> meshNodeStack: array<i32, 128>;
+var<private> meshEntryStack: array<f32, 128>;
+
+// The vector index of the mesh block: the second float of the table header says how far it is from the table.
+fn meshBlockBase() -> i32 {
+  let first = i32(params.seedAndAtlas.w);
+  return first + i32(materials[first].y);
+}
+
+fn meshBoxEntry(nodeBase: i32, node: i32, origin: vec3<f32>, inverse: vec3<f32>) -> f32 {
+  let low = materials[nodeBase + node * 2];
+  let high = materials[nodeBase + node * 2 + 1];
+  let first = (low.xyz - origin) * inverse;
+  let second = (high.xyz - origin) * inverse;
+  let nearest = min(first, second);
+  let farthest = max(first, second);
+  let entry = max(max(max(nearest.x, nearest.y), nearest.z), 0.0);
+  let exitDistance = min(min(farthest.x, farthest.y), farthest.z);
+  return select(1e30, entry, entry <= exitDistance * (1.0 + 1e-6) + 1e-6);
+}
+
+// The distance to the nearest surface of a mesh volume along a ray, either side, or -1 when there is none.
+fn meshNearestSurface(nodeBase: i32, triangleBase: i32, origin: vec3<f32>, rayDirection: vec3<f32>) -> f32 {
+  var nearest = 1e30;
+  let inverse = safeInverse(rayDirection);
+  var stackSize = 1;
+  meshNodeStack[0] = 0;
+  meshEntryStack[0] = 0.0;
+  while (stackSize > 0) {
+    stackSize--;
+    let node = meshNodeStack[stackSize];
+    if (!(meshEntryStack[stackSize] < nearest)) { continue; }
+    let header = materials[nodeBase + node * 2];
+    if (header.w < 0.0) {
+      let start = i32(materials[nodeBase + node * 2 + 1].w);
+      let end = start + i32(-header.w);
+      for (var slot = start; slot < end; slot++) {
+        let base = triangleBase + slot * MESH_TRIANGLE_TEXELS;
+        let corner = materials[base].xyz;
+        let edgeFirst = materials[base + 1].xyz;
+        let edgeSecond = materials[base + 2].xyz;
+        let pivot = cross(rayDirection, edgeSecond);
+        let determinant = dot(edgeFirst, pivot);
+        if (determinant == 0.0) { continue; }
+        let offset = origin - corner;
+        let firstWeight = dot(offset, pivot) / determinant;
+        if (firstWeight < 0.0 || firstWeight > 1.0) { continue; }
+        let query = cross(offset, edgeFirst);
+        let secondWeight = dot(rayDirection, query) / determinant;
+        if (secondWeight < 0.0 || firstWeight + secondWeight > 1.0) { continue; }
+        let distance = dot(edgeSecond, query) / determinant;
+        if (distance < 0.0 || distance >= nearest) { continue; }
+        nearest = distance;
+      }
+      continue;
+    }
+    let left = node + 1;
+    let right = i32(header.w);
+    let leftEntry = meshBoxEntry(nodeBase, left, origin, inverse);
+    let rightEntry = meshBoxEntry(nodeBase, right, origin, inverse);
+    let nearFirst = leftEntry <= rightEntry;
+    meshNodeStack[stackSize] = select(left, right, nearFirst);
+    meshEntryStack[stackSize] = select(leftEntry, rightEntry, nearFirst);
+    meshNodeStack[stackSize + 1] = select(right, left, nearFirst);
+    meshEntryStack[stackSize + 1] = select(rightEntry, leftEntry, nearFirst);
+    stackSize += 2;
+  }
+  return select(nearest, -1.0, nearest >= 1e30);
+}
+
+// Where a ray is inside a closed mesh volume, clipped to [0, limit]: the [entry, exit] pairs go to meshSegments and their number is returned.
+fn meshVolumeSegments(volume: i32, origin: vec3<f32>, rayDirection: vec3<f32>, limit: f32) -> i32 {
+  let block = meshBlockBase();
+  let descriptor = materials[block + 1 + i32(localVolumeTexel(volume, 4).w)];
+  let nodeBase = block + i32(descriptor.x);
+  let triangleBase = block + i32(descriptor.y);
+  var crossingCount = 0;
+  var cursor = 0.0;
+  while (crossingCount < MESH_MAXIMUM_CROSSINGS) {
+    let distance = meshNearestSurface(nodeBase, triangleBase, origin + rayDirection * cursor, rayDirection);
+    if (distance < 0.0) { break; }
+    cursor += distance;
+    meshCrossings[crossingCount] = cursor;
+    crossingCount++;
+    cursor += descriptor.z;
+  }
+  var inside = (crossingCount % 2) == 1;
+  var start = 0.0;
+  var segmentCount = 0;
+  for (var crossing = 0; crossing < crossingCount; crossing++) {
+    let distance = meshCrossings[crossing];
+    if (inside) {
+      let end = min(distance, limit);
+      if (end > start && segmentCount < MESH_MAXIMUM_SEGMENTS) {
+        meshSegments[segmentCount * 2] = start;
+        meshSegments[segmentCount * 2 + 1] = end;
+        segmentCount++;
+      }
+    } else {
+      start = distance;
+    }
+    inside = !inside;
+  }
+  return segmentCount;
+}
+
+// One mesh volume along the ray: its steps are shared between the inside segments in proportion to their length, and the profile is 1.
+fn crossLocalMesh(volume: i32, origin: vec3<f32>, limit: f32, jitter: f32) -> vec3<f32> {
+  let segmentCount = meshVolumeSegments(volume, origin, direction, limit);
+  var total = 0.0;
+  for (var segment = 0; segment < segmentCount; segment++) { total += meshSegments[segment * 2 + 1] - meshSegments[segment * 2]; }
+  let extinction = localVolumeTexel(volume, 2).xyz;
+  let emission = localVolumeTexel(volume, 3).xyz;
+  let volumeSteps = localVolumeTexel(volume, 4).x;
+  var emitted = vec3<f32>(0.0);
+  for (var segment = 0; segment < segmentCount; segment++) {
+    let entry = meshSegments[segment * 2];
+    let segmentLength = meshSegments[segment * 2 + 1] - entry;
+    let steps = max(1, i32(floor(volumeSteps * segmentLength / total + 0.5)));
+    let stepLength = segmentLength / f32(steps);
+    for (var stepIndex = 0; stepIndex < steps; stepIndex++) {
+      emitted += throughput * emission * stepLength * volumeStepIntegral(extinction * stepLength);
+      throughput *= exp(-extinction * stepLength);
+    }
   }
   return emitted;
 }
