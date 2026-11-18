@@ -2,7 +2,7 @@
 import { CrucibleRenderer } from '../../src/renderer.js';
 import { createSharedTextures, loadGltf } from '../../src/gltf.js';
 import { loadHdri } from '../../src/hdri.js';
-import { addLodsToDenseParts } from '../../src/dense-lods.js';
+import { addLodsToDenseParts, withSceneFileRendererDefaults } from '../../src/dense-lods.js';
 import { createCascadedShadows } from '../../src/cascaded-shadows.js';
 
 const WARMUP_FRAMES = 20;
@@ -123,7 +123,7 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
     loadHdri(hdriUrl, description.hdriOptions ?? {}),
   ]);
   const asset = await loadGltf(model, { baseUrl: new URL('.', new URL(glbUrl, location.href)).href, sharedTextures: createSharedTextures(), ...(description.gltfOptions ?? {}) });
-  const rendererOptions = description.renderer ?? {};
+  const rendererOptions = withSceneFileRendererDefaults(description.renderer);
   const shadowCascades = rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined;
   const lodStarted = performance.now();
   const renderedParts = denseLods ? addLodsToDenseParts(asset.parts, { pixels: width * height, minimumTriangles: denseLodsMinimumTriangles }) : asset.parts;
