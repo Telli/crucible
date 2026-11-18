@@ -9,12 +9,16 @@ export const WATER_TRACE_IOR = 1.33;
 export const WATER_TRACE_DEFAULT_ROUGHNESS = 0.05;
 // Light reaching a surface under the water is dimmed to exp(-extinction * metres). One metre is the reference distance.
 export const WATER_TRACE_ATTENUATION_DISTANCE = 1;
+// The tracers tint light by the base colour at every refraction, and a path to the bed and back crosses the surface four
+// times: a teal water colour of 0.3 would keep 0.3^4 of the light, so the bed went black. The tint is the attenuation's job.
+export const WATER_TRACE_COLOR = Object.freeze([1, 1, 1]);
 
 /**
  * The material a water part is traced with: a clear dielectric (IOR 1.33, transmission 1, no metal, the material's own roughness
  * when set) that absorbs light like the water body does. Per colour channel the extinction per metre is the material's
  * `absorption` plus its `turbidity` (murky water dims every colour alike; the scatter that makes it murky is not traced), so the
- * attenuation colour kept after one metre is exp(-(absorption + turbidity)). `ior`, `transmission` and an explicit attenuation
+ * attenuation colour kept after one metre is exp(-(absorption + turbidity)). The base colour becomes white, since the tracers tint
+ * by it at every refraction; a material with its own `transmission` keeps its colour. `ior`, `transmission` and an explicit attenuation
  * on the material win over these values. A material that is not water is returned as it is.
  */
 export function waterTraceMaterial(material) {
@@ -23,6 +27,7 @@ export function waterTraceMaterial(material) {
   const hasOwnAttenuation = material.attenuationDistance !== undefined;
   return {
     ...material,
+    color: material.transmission === undefined ? WATER_TRACE_COLOR : material.color,
     metallic: 0,
     roughness: material.roughness ?? WATER_TRACE_DEFAULT_ROUGHNESS,
     transmission: material.transmission ?? 1,

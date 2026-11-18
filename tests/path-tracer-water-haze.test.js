@@ -26,6 +26,8 @@ test('a water part becomes a glossy dielectric with attenuation from its absorpt
   assert.equal(material.ior, 1.33);
   assert.equal(material.metallic, 0);
   assert.equal(material.roughness, 0.2);
+  // The bed under the water stays lit: the tint is left to the attenuation, not the base colour applied at every refraction.
+  assert.deepEqual(Array.from(material.color), [1, 1, 1]);
   const [own] = scene.partMaterials;
   assert.equal(own.attenuationDistance, 1);
   const expected = [0.5, 0.1, 0.05].map(channel => Math.exp(-(channel + 0.1)));

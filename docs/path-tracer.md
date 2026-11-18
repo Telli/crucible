@@ -75,7 +75,7 @@ A glass part with a material `dispersion` above 0 splits white light into colour
 
 A part whose material has the `water` tag is exported as a glossy dielectric, so the traced picture shows the sky and objects reflected in it and the bed seen through it (CPU, WebGL, WebGPU and native `cycles` tracers):
 
-- IOR 1.33, transmission 1, metallic 0 (the rasterizer's water is a mirror; a metal would not transmit), roughness from the material or 0.05. A `ior`, `transmission` or `attenuationColor` with `attenuationDistance` set on the material wins.
+- IOR 1.33, transmission 1, metallic 0 (the rasterizer's water is a mirror; a metal would not transmit), roughness from the material or 0.05, white base colour (the tracers tint light by the base colour at each refraction, and a path to the bed and back crosses the surface four times, so the water's own colour would turn the bed black; the tint comes from the attenuation, which only native Cook draws). A `ior`, `transmission` or `attenuationColor` with `attenuationDistance` set on the material wins.
 - Light that travels through the water is absorbed per channel by exp(-(absorption + turbidity) * metres), with `absorption` and `turbidity` as the water body reads them (`waterPreset` fills in what the material leaves out). It is exported as an attenuation colour of exp(-(absorption + turbidity)) at 1 metre. Only the native `cycles` tracer draws attenuation; the other tracers draw the dielectric without it.
 - Not drawn, and named in `report.ignored`: ripples (the surface keeps its geometry normals), foam (the `foam` vertex group), `waterGlint`, `waterRamp`, and the scatter of turbidity that softens shadows (it only dims here).
 
