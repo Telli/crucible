@@ -460,7 +460,7 @@ const localVolumeFunctions = (motion, kind = 'both', noiseOctaves = false) => {
 float localVolumeJitter() {
   return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
 }
-${withShape ? `// Value noise on a hash of plain multiplies, adds and fract, which rounds the same way on SwiftShader, where it was measured, and is unchecked on hardware GPUs (a sine hash does not: its error
+${withShape || withGrid ? `// Value noise on a hash of plain multiplies, adds and fract, which rounds the same way on SwiftShader, where it was measured, and is unchecked on hardware GPUs (a sine hash does not: its error
 // grows with the argument). local-volume-noise.js repeats it for the CPU path tracer, so keep the two in step.
 float localVolumeCellHash(vec3 cell) {
   vec3 scrambled = fract(cell * 0.1031);
@@ -528,17 +528,27 @@ float localVolumeWarpedFade(float position, float noiseAmount, float noise) {
 }
 ` : ''}${withGrid ? `// A grid volume (#1045) reads its box as a 3D texture: x density, y temperature, z flame. localVolumeGrid holds, per volume, x 1 for a grid, y the temperature
 // scale, z the blackbody intensity times the emission strength and w the anisotropy. volume-grid.js (blackbodyRadiance) repeats the blackbody.
+// The fine detail a grid volume with noiseAmount adds to its density and flame (#2289): the grid's cells are the coarsest structure of the smoke, and the noise (the
+// one of the box and sphere volumes, in world metres) breaks them into the small clumps a close camera expects. It averages 1, so the far look keeps its optical depth.
+float localGridDetail(int index, vec3 position) {
+  float noiseAmount = localVolumeAbsorption[index].w;
+  if (noiseAmount <= 0.0) return 1.0;
+  float noise = ${noiseOctaves ? 'localVolumeFractalNoise(position * localVolumeEmission[index].w, 1 + int(localVolumeAxes[index * 3 + 1].w + 0.5))' : 'localVolumeNoise(position * localVolumeEmission[index].w)'};
+  return 1.0 + (2.0 * noise - 1.0) * noiseAmount;
+}
 // A grid cell at a world point: x density, y temperature, z flame, all linear taps of the padded texture (a texel centre is at i + 0.5).
 vec3 localGridSample(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   vec3 paddedSize = vec3(textureSize(localGridTexture, 0));
-  return textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+  vec3 cell = textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+  float detail = localGridDetail(index, position);
+  return vec3(cell.x * detail, cell.y, cell.z * detail);
 }
 ` : ''}${withGrid ? `// The baked blackbody radiance at a world point (volume-grid.js bakedGridEmission), before the blackbody intensity and the emission strength.
 vec3 localGridBlackbody(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   vec3 paddedSize = vec3(textureSize(localGridEmissionTexture, 0));
-  return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+  return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb * localGridDetail(index, position);
 }
 ` : ''}${motion ? LOCAL_MOTION_POSITION_FUNCTION : ''}${STEP_INTEGRAL_GLSL}// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
 // code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and

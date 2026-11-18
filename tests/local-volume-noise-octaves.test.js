@@ -25,8 +25,10 @@ test('a volume without the field, or with 1, resolves to the same object as befo
   assert.deepEqual(resolveLocalVolumes([resolveLocalVolumes([{ ...SPHERE, noiseOctaves: 3 }])[0]])[0], resolveLocalVolumes([{ ...SPHERE, noiseOctaves: 3 }])[0], 'a resolved volume resolves again');
 });
 
-test('a grid volume refuses octaves, since its detail comes from the grid', () => {
-  assert.throws(() => resolveLocalVolumes([{ shape: 'grid', center: [0, 0, 0], grid: 'smoke', noiseOctaves: 3 }]), /noiseOctaves does not apply to a grid volume/);
+test('a grid volume takes octaves as fine detail on top of its cells (#2289)', () => {
+  const [volume] = resolveLocalVolumes([{ shape: 'grid', center: [0, 0, 0], grid: 'smoke', noiseAmount: 0.5, noiseOctaves: 3 }]);
+  assert.equal(volume.noiseOctaves, 3);
+  assert.throws(() => resolveLocalVolumes([{ shape: 'grid', center: [0, 0, 0], grid: 'smoke', noiseOctaves: 9 }]), /noiseOctaves must be a whole number from 1 to 5/);
 });
 
 test('one octave is the plain noise and several are a deterministic, different field', () => {
@@ -84,7 +86,7 @@ test('a frame without octaves compiles the shader it had, and a frame with them 
     assert.match(fractal, /localVolumeFractalNoise\(position \* localVolumeEmission\[index\]\.w, 1 \+ int\(localVolumeAxes\[index \* 3 \+ 1\]\.w \+ 0\.5\)\)/);
     // The octave variant also counts its march steps from the finest cell (#1855): drop that block and the longer loop bound too.
     const withoutOctaveSteps = fractal.replace(/  int octaves = 1 \+ int\([^\n]*\n  if \([^\n]*octaves > 1\) return [^\n]*\n/, '').replace('step < 96; step++', 'step < 32; step++');
-    assert.equal(withoutOctaveSteps.replace(/\/\/ Fractal value noise[\s\S]*?\n}\n/, '').replace(/localVolumeFractalNoise\(position \* localVolumeEmission\[index\]\.w, [^\n]*?\)\) :/, 'localVolumeNoise(position * localVolumeEmission[index].w) :'), plain);
+    assert.equal(withoutOctaveSteps.replace(/\/\/ Fractal value noise[\s\S]*?\n}\n/, '').replace(/localVolumeFractalNoise\(position \* localVolumeEmission\[index\]\.w, [^\n]*?\)\) :/, 'localVolumeNoise(position * localVolumeEmission[index].w) :').replace(/float noise = localVolumeFractalNoise\(position \* localVolumeEmission\[index\]\.w, [^\n]*?\);/, 'float noise = localVolumeNoise(position * localVolumeEmission[index].w);'), plain);
   }
   assert.equal(createLocalVolumeCompositeFragment(false, 'both', false), createLocalVolumeCompositeFragment(false, 'both'));
   assert.match(createLocalVolumeCompositeFragment(false, 'shape', true), /localVolumeFractalNoise/);

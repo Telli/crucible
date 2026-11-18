@@ -80,7 +80,7 @@ test('a resolved grid volume resolves again to the same volume, as a scene does 
     const once = resolveLocalVolumes([volume]);
     assert.deepEqual(resolveLocalVolumes(once), once);
   }
-  assert.throws(() => resolveLocalVolumes([{ shape: 'grid', grid: 'still', center: [0, 1, 0], noiseAmount: 0.3 }]), /noiseAmount does not apply to a grid volume/);
+  assert.throws(() => resolveLocalVolumes([{ shape: 'grid', grid: 'still', center: [0, 1, 0], falloff: 0.3 }]), /falloff does not apply to a grid volume/);
 });
 
 test('frames that carry different channels are refused, with the converter run that fixes it', () => {

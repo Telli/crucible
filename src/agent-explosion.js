@@ -180,12 +180,17 @@ function addAirSteps(candidate, plan) {
 // background; at 9.5 (on top of the exact step integral, #1894) the edge falloff is 0.79 of the Cycles one and the RMSE drops from 0.030 to 0.020.
 // steps 32 is one step per voxel of the 32 cubed grid: against 96 steps the picture differs by an RMSE of 0.003 (linear, 0 to 1), and a CPU preview
 // look costs a third (SwiftShader, 768 x 432: first look 11.7 s to 4.9 s, later looks 4.2 s to 1.7 s), which keeps scene_look well under its 30 s limit.
+// The grid has 32 cells a side, so a cell is 0.4 m at size 4 and the smoke seen from a few metres is a soft blob with no structure finer than that (#2289: more steps, a
+// smoother filter and the jitter were already there and changed the picture by an RMSE of 0.001 to 0.004; the cells themselves are the limit, and a 64 cubed bake would
+// cost 8 times the files and a cold bake of minutes). So the volume carries fractal noise that scales with the box: NOISE_CELLS_PER_BOX noise cells across it, 2.5 per grid cell, three octaves,
+// modulating the density and flame around their mean, so the far look and the optical depth stay and only the small clumps are new.
 // flameTemperature is Blender's fire remap (#1735): every voxel with flame emits at 1500 K up to 3000 K by its flame value, whatever its smoke density, which
 // is the orange rim Cycles draws along the smoke edge (the temperature channel alone cools to nothing there).
 const BLAST_VOLUME = Object.freeze({
   flameTemperature: Object.freeze({ ignition: 1.5, maximum: 3 }),
-  density: 3, emission: [1, 0.45, 0.12], emissionStrength: 9.5, blackbodyIntensity: 0.3, absorption: [1, 1, 1], steps: 32,
+  noiseAmount: 0.9, noiseOctaves: 3, density: 3, emission: [1, 0.45, 0.12], emissionStrength: 9.5, blackbodyIntensity: 0.3, absorption: [1, 1, 1], steps: 32,
 });
+const NOISE_CELLS_PER_BOX = 80;
 const OILY_DENSITY_GAIN = 1.5;
 const HOLD_SECONDS = 1;
 
@@ -242,6 +247,9 @@ function addBlastVolume(candidate, plan) {
     flameTemperature: { ...BLAST_VOLUME.flameTemperature },
     blackbodyIntensity: BLAST_VOLUME.blackbodyIntensity,
     steps: BLAST_VOLUME.steps,
+    noiseAmount: BLAST_VOLUME.noiseAmount,
+    noiseScale: round(NOISE_CELLS_PER_BOX / box),
+    noiseOctaves: BLAST_VOLUME.noiseOctaves,
     castShadow: true,
     lightsScene: true,
   });

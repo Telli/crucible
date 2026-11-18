@@ -50,7 +50,7 @@ export function packLocalVolumes(volumes, buffers) {
   const hasGrid = volumes.some(volume => volume.shape === 'grid');
   const hasShape = volumes.some(volume => volume.shape !== 'grid' && !volume.part);
   buffers.kind = hasGrid && !hasShape ? 'grid' : (hasShape && !hasGrid ? 'shape' : 'both');
-  buffers.noiseOctaves = volumes.some(volume => volume.shape !== 'grid' && volume.noiseAmount > 0 && volume.noiseOctaves > 1);
+  buffers.noiseOctaves = volumes.some(volume => volume.noiseAmount > 0 && volume.noiseOctaves > 1);
   buffers.grid.fill(0);
   buffers.rampSetup.fill(0);
   buffers.blurred = volumes.some(volume => volume.blur > 0 && volume.density > 0);
