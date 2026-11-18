@@ -1,0 +1,1 @@
+- Studio follows the brand kit colours and fonts, undo takes back one whole drag at a time and leaves the viewport camera where you left it (#2177).
