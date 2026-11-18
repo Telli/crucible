@@ -324,6 +324,7 @@ on:
       - 'src/rig-presets.js'
       - 'src/rig.js'
       - 'src/rotation-euler.js'
+      - 'src/room-box-joins.js'
       - 'src/scene-graph.js'
       - 'src/sculpt-strokes.js'
       - 'src/seeded-random.js'
