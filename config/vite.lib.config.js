@@ -37,7 +37,7 @@ export default defineConfig({
   build: {
     copyPublicDir: false,
     rolldownOptions: {
-      external: ['@dimforge/rapier3d-compat', 'jolt-physics', 'manifold-3d'],
+      external: ['@dimforge/rapier3d-compat', 'jolt-physics', 'manifold-3d', /^node:/],
       output: { banner: legalBanner },
     },
     outDir: 'build',
@@ -73,6 +73,8 @@ export default defineConfig({
         grass: 'src/grass.js',
         clutter: 'src/clutter.js',
         'light-bake': 'src/light-bake.js',
+        'scene-pack': 'src/scene-pack.js',
+        'crucible-scene': 'src/crucible-scene.js',
         'light-bake-gpu': 'src/light-bake-gpu.js',
         'ground-bounce': 'src/ground-bounce.js',
         'floor-sky-visibility': 'src/floor-sky-visibility.js',

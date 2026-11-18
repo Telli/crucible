@@ -472,6 +472,13 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `bin/crucible-mcp.mjs`
 - Drive: none: not a page
 
+### `crucible-pack`
+- Name: Compiles a recipe into a runtime-only web bundle with a `<crucible-scene>` element (docs/pack.md)
+- Surface: CLI
+- Reach: command `npx crucible pack <scene.json> --out <dir>`
+- Source: `bin/crucible.mjs`, `src/scene-pack.js`, `src/crucible-scene.js`
+- Drive: none: not a page
+
 ### `crucible-addon-check`
 - Name: Checks an addon folder against the addon contract (docs/addons.md)
 - Surface: CLI
