@@ -725,7 +725,8 @@ vec3 sheenLayer(vec3 baseRadiance, vec3 normal, vec3 viewDirection, float visibi
 vec3 renderPassValue(vec3 color, vec3 normal, vec3 emission) {
   if (renderPassMode < 1.5) return clamp(color, 0.0, 1.0);
   if (renderPassMode < 2.5) return normal * 0.5 + 0.5;
-  if (renderPassMode < 3.5) return clamp(emission, 0.0, 1.0);
+  // A float target keeps the whole emission (the mask of a volume shadow reads it); an 8-bit target clamps it on write.
+  if (renderPassMode < 3.5) return emission;
   if (renderPassMode < 4.5) {
     float steps = floor(clamp(length(worldPosition - eye) / renderPassDepthRange, 0.0, 1.0) * 65535.0 + 0.5);
     float high = floor(steps / 256.0);

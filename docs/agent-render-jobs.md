@@ -115,7 +115,7 @@ Only opaque and cutout geometry appears. Liquid, foam and blended parts, the sky
 | --- | --- |
 | `albedo` | Base colour after maps and vertex colour, as stored |
 | `normal` | World-space normal after normal maps, `normal * 0.5 + 0.5` |
-| `emission` | Emissive colour times strength, clamped to 1 |
+| `emission` | Emissive colour times strength (an 8-bit pass clamps it at 1, an `exr` float pass keeps the whole value) |
 | `depth` | Metres from the camera over 100 m as a 16-bit value, high byte in red and low byte in green. Background is `255, 255, 0` |
 | `objectId` | 24-bit ID, low byte in red, then green, then blue. Zero is background |
 | `diffuse` | Linear diffuse light (every light, sky and bounce) times exposure, before fog and without emission. Background 0 |

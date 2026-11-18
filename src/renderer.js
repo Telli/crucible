@@ -1179,7 +1179,14 @@ export class CrucibleRenderer {
     const missing = features.filter(feature => !this.shaderFeatures.has(feature));
     if (missing.length === 0) return;
     missing.forEach(feature => this.shaderFeatures.add(feature));
-    this.rebuildMainProgram();
+    try {
+      this.rebuildMainProgram();
+    } catch (error) {
+      // A program that is still linking (ProgramNotReady) leaves the old main program in place. Forget the features, so the draw that comes back asks for them again
+      // and finds the program built; keeping them would draw the old program with no render pass code, and the emission mask would read the lit image (#1360).
+      missing.forEach(feature => this.shaderFeatures.delete(feature));
+      throw error;
+    }
   }
 
   rebuildMainProgram() {

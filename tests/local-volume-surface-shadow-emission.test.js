@@ -42,7 +42,7 @@ async function startServer(port) {
 }
 
 // Renders each volume list in order on one renderer, so a frame that follows another shows what the first left behind.
-async function rasterFrames(page, volumeLists, { preload = true, effects = undefined, glowingEmission = EMISSION, groundColor = [0.8, 0.8, 0.8], light = SUN } = {}) {
+async function rasterFrames(page, volumeLists, { preload = true, effects = undefined, glowingEmission = EMISSION, groundColor = [0.8, 0.8, 0.8], light = SUN, camera = CAMERA } = {}) {
   const task = async ({ size, lists, camera, light, emission, glowingX, litX, width, preload, effects, groundColor }) => {
     const { box } = await import('/src/geometry.js');
     const { CrucibleRenderer } = await import('/src/renderer.js');
@@ -75,7 +75,7 @@ async function rasterFrames(page, volumeLists, { preload = true, effects = undef
     renderer.dispose?.();
     return { frames, glError };
   };
-  return page.evaluate(task, { size: SIZE, lists: volumeLists, camera: CAMERA, light, emission: glowingEmission, glowingX: GLOWING_CENTER_X, litX: LIT_CENTER_X, width: SLAB_WIDTH, preload, effects, groundColor });
+  return page.evaluate(task, { size: SIZE, lists: volumeLists, camera, light, emission: glowingEmission, glowingX: GLOWING_CENTER_X, litX: LIT_CENTER_X, width: SLAB_WIDTH, preload, effects, groundColor });
 }
 
 // Mean green over the middle of a slab (rows run bottom up in the float frames, four floats a pixel).
@@ -229,6 +229,57 @@ test('the bloom of a glowing slab survives a shadowing volume over it (#1360)', 
     // The medium dims the halo by its transmittance and blurs the frame behind it, but the bloom is not part of that frame: neither the blur nor the surface shadow may take it.
     assert.ok(haloOpen > 0.3 * haloClear, `a medium over the glowing slab dims the halo by its transmittance, not by its blur: ${haloOpen} of ${haloClear}`);
     assert.ok(Math.abs(haloShadowed - haloOpen) < 0.05 * haloOpen, `the shadowing volume keeps the halo the open one leaves: ${haloShadowed} against ${haloOpen}`);
+  } finally {
+    await browser?.close();
+    server.kill();
+  }
+});
+
+const PERSPECTIVE_CAMERA = { eye: [4.2, 3, 6.2], target: [0, 0.9, 0], up: [0, 1, 0], fov: 45 };
+const PERSPECTIVE_SMOKE = { ...SMOKE, center: [0, 1.4, 0], size: [4, 2.8, 4], density: 0.5 };
+const PERSPECTIVE_SUN_TOWARD = [0.6, 1, 0.3].map(component => component / Math.hypot(0.6, 1, 0.3));
+const PERSPECTIVE_LIGHT = { ...SUN, keyColor: [1.6, 1.6, 1.6], lightDirection: PERSPECTIVE_SUN_TOWARD };
+
+// Mean green over the floor around the slabs in a perspective frame (rows run bottom up): the part of the floor the smoke shadows.
+function frontFloorMean(frame) {
+  let total = 0;
+  let count = 0;
+  for (let row = Math.round(SIZE * 0.2); row < Math.round(SIZE * 0.5); row++) {
+    for (let column = Math.round(SIZE * 0.25); column < Math.round(SIZE * 0.68); column++) {
+      total += frame[(row * SIZE + column) * 4 + 1];
+      count++;
+    }
+  }
+  return total / count;
+}
+
+test('a lit floor still takes the shadow of a volume seen in perspective, beside a strong glow (#1360)', async context => {
+  let chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    skipOrThrow(context, 'playwright is not installed');
+    return;
+  }
+  const port = await freePort();
+  const server = await startServer(port);
+  let browser;
+  try {
+    try {
+      browser = await launchChrome(chromium);
+    } catch (error) {
+      skipOrThrow(context, `Chrome did not start: ${error.message.split('\n')[0]}`);
+      return;
+    }
+    const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
+    await page.goto(`http://127.0.0.1:${port}/`);
+    const bloom = { bloom: { strength: 0.6, threshold: 1, radius: 3 } };
+    // A glow of 10 is far above what a mask clamped at 1 can hold.
+    const { frames, glError } = await rasterFrames(page, [[PERSPECTIVE_SMOKE], [{ ...PERSPECTIVE_SMOKE, castShadow: false }]], { camera: PERSPECTIVE_CAMERA, light: PERSPECTIVE_LIGHT, effects: bloom, glowingEmission: 10, groundColor: [0.25, 0.25, 0.25] });
+    assert.equal(glError, 0);
+    const numbers = { floorShadowed: frontFloorMean(frames[0]), floorOpen: frontFloorMean(frames[1]) };
+    context.diagnostic(JSON.stringify(numbers));
+    assert.ok(numbers.floorShadowed < 0.9 * numbers.floorOpen, `the lit floor is darkened by the volume's shadow: it keeps ${numbers.floorShadowed / numbers.floorOpen} of its light`);
   } finally {
     await browser?.close();
     server.kill();
