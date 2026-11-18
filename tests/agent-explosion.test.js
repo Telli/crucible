@@ -205,10 +205,10 @@ test('the MCP server finds the grids an add-explosion operation will name, so th
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
 });
 
-// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom).
+// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom, and #2289's grid noise).
 const FIRST_RELEASE_HASHES = new Map([
-  ['{}', 'df70567bd19d0d575a77bf3d6b8209768f859d0ac689986baa46c15075f1b7f0'],
-  ['{"start":0.5,"fuel":"oily","seed":7}', '9c8225756d33fd331a836f0018a4c78200f1d9a55a41d91355c833eebf8f535e'],
+  ['{}', '3409fc0fcd5cc9c748558ad48e8584b2530ecf8426ad4983d210540916b82ff3'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', '689902e3f01f00239fda8d9f1414f17ebb27ae5d736b5f9c981f0c0ce332b95e'],
 ]);
 
 test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {
