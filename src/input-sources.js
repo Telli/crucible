@@ -122,7 +122,7 @@ export function touchSource(options = {}) {
     if (event.pointerType !== 'touch') return;
     const stick = findFreeStick(event.clientX, event.clientY);
     if (stick) {
-      stickTouches.set(event.pointerId, { stick, originX: event.clientX, originY: event.clientY });
+      stickTouches.set(event.pointerId, { stick, originX: event.clientX, originY: event.clientY, dragX: 0, dragY: 0 });
       emit(`${stick.name}Active`, 1);
       return;
     }
@@ -138,6 +138,8 @@ export function touchSource(options = {}) {
   function handlePointerMove(emit, event) {
     const stickTouch = stickTouches.get(event.pointerId);
     if (stickTouch) {
+      stickTouch.dragX = event.clientX - stickTouch.originX;
+      stickTouch.dragY = event.clientY - stickTouch.originY;
       emit(`${stickTouch.stick.name}X`, clampUnit((event.clientX - stickTouch.originX) / stickTouch.stick.radius));
       emit(`${stickTouch.stick.name}Y`, clampUnit((event.clientY - stickTouch.originY) / stickTouch.stick.radius));
       return;
@@ -185,6 +187,10 @@ export function touchSource(options = {}) {
       };
       for (const type of eventTypes) target.addEventListener(type, handlers[type]);
       blurTarget.addEventListener?.('blur', handlers.blur);
+    },
+    // Where each held stick sits, for a drawn overlay: client pixels of the touch-down point, the raw drag from it and the stick radius.
+    stickStates() {
+      return [...stickTouches.values()].map(({ stick, originX, originY, dragX, dragY }) => ({ name: stick.name, originX, originY, dragX, dragY, radius: stick.radius }));
     },
     endSample(emit) {
       for (const name of pulses) emit(name, 0);

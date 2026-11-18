@@ -244,7 +244,8 @@ test('the web export bundles the physics engine and its wasm beside the page onl
   assert.ok(summary.bytes > 1024 * 1024 && summary.bytes < WEB_EXPORT_LIMITS.maxEngineBytes, `physics export bytes ${summary.bytes}`);
   const html = await (await import('node:fs/promises')).readFile(join(withPhysics, 'index.html'), 'utf8');
   assert.match(html, /const physicsUrl = "\.\/engine\/physics\/jolt-physics\.wasm\.js";/);
-  assert.match(html, /startGame\(canvas, recipe, \{ replay, assetUrls, physicsUrl \}\)/);
+  assert.ok(html.includes('startGame(canvas, recipe, { replay, touchControls, assetUrls, physicsUrl })'));
+  assert.ok(html.includes("const touchControls = matchMedia('(pointer: coarse)').matches;"));
   assert.doesNotMatch(html, /https?:\/\//);
   assert.doesNotMatch(indexHtml('plain'), /physicsUrl/);
 });
