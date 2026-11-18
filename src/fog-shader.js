@@ -60,6 +60,7 @@ function bindDetail(context, post, volume) {
   context.uniform1f(locate('volumeMultiAnisotropy'), detail.multiAnisotropy);
   context.uniform1f(locate('volumeKeyTransmittance'), detail.keyTransmittance);
   context.uniform1f(locate('volumeSurfaceTransmittance'), detail.surfaceTransmittance);
+  context.uniform1f(locate('volumeBeamRadius'), detail.beamRadius);
 }
 
 // The fog's field texture and light buffers; a program without those steps has no such uniforms, and a null location is ignored.
@@ -847,6 +848,7 @@ uniform float volumeMultiExtinction;
 uniform float volumeMultiAnisotropy;
 uniform float volumeKeyTransmittance;
 uniform float volumeSurfaceTransmittance;
+uniform float volumeBeamRadius;
 uniform int volumeLightCount;
 uniform vec4 volumeLightPositions[8];
 uniform vec4 volumeLightColors[8];
@@ -951,7 +953,15 @@ float sunOpticalDepth(vec3 position, vec3 towardSun) {
 }
 // The sun's in-scatter at a point. The octave sum approximates multiple scattering (Wrenninge et al. 2015, "Oz: the great and
 // volumetric"): octave n scatters multiScatter^n as much, sees half^n of the extinction and has half^n of the anisotropy.
-float keyInScatter(float cosine, float opticalDepth) {
+// With beamRadius above 0 the octaves beyond the first count only as far as the sun reaches around the point: multiple scattering
+// of a narrow shaft leaves it sideways, so its glow stays narrow, and a wide beam keeps all of it. beamShare is the lit share of four taps that far
+// off the point across the sun's direction.
+float beamShare(vec3 position, vec3 towardSun) {
+  vec3 across = normalize(cross(towardSun, abs(towardSun.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0)));
+  vec3 upward = cross(towardSun, across);
+  return 0.25 * (keyVisibility(position + across * volumeBeamRadius) + keyVisibility(position - across * volumeBeamRadius) + keyVisibility(position + upward * volumeBeamRadius) + keyVisibility(position - upward * volumeBeamRadius));
+}
+float keyInScatter(float cosine, float opticalDepth, float octaveShare) {
   float total = 0.0;
   float weight = 1.0;
   float extinction = 1.0;
@@ -959,7 +969,7 @@ float keyInScatter(float cosine, float opticalDepth) {
   for (int octave = 0; octave < 4; octave++) {
     if (octave >= volumeScatterOctaves) break;
     total += weight * henyeyGreenstein(cosine, anisotropy) * exp(-opticalDepth * volumeKeyTransmittance * extinction);
-    weight *= volumeMultiScatter;
+    weight *= volumeMultiScatter * octaveShare;
     extinction *= volumeMultiExtinction;
     anisotropy *= volumeMultiAnisotropy;
   }
@@ -1011,7 +1021,9 @@ vec3 volumeFog(vec3 background) {
     if (volumeGridFog > 0.5) ambientShare = min(1.0, 30.0 * skyCell.r);
     float opticalDepth = 0.0;
     if (sunTransmittance && visibility > 0.001) opticalDepth = sunOpticalDepth(position, towardSun);
-    float phase = keyInScatter(cosine, opticalDepth);
+    float octaveShare = 1.0;
+    if (volumeBeamRadius > 0.0 && volumeScatterOctaves > 1 && visibility > 0.001) octaveShare = beamShare(position, towardSun);
+    float phase = keyInScatter(cosine, opticalDepth, octaveShare);
     vec3 scattering = volumeColor * (volumeAmbient * ambientShare + 0.6 * skyCell.gba + volumeLightColor * (phase * visibility * volumeKeyScattering));
     if (POST_LIGHTS) scattering += volumeColor * fogLightScattering(position, direction);
     accumulated += transmittance * opacity * scattering;

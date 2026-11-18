@@ -58,6 +58,7 @@ renderer.render({ eye: [0, 2, 5], target: [0, 1, 0], time: 0 });
 | `multiScatter`, `multiExtinction`, `multiAnisotropy` | `0.5`, `0.5`, `0.5` | `0…1` each; the octave factors above. They act only with `scatterOctaves` above 1 |
 | `keyTransmittance` | `0` | `0…1`; how much of the fog between a point and the sun dims the key light scattered there (three taps along the light, to the box exit). 0 keeps today's look |
 | `surfaceTransmittance` | `0` | `0…1`; the same dimming for the key light on a lit surface inside the box, so a dense haze dims a sunlit floor. 0 keeps today's look |
+| `beamRadius` | `0` | `0…20` metres; above 0 the octaves beyond the first count only as far as the sun reaches around the point: four shadow-map taps this far off, across the sun's direction, give the lit share that scales them. A narrow shaft keeps a narrow glow and a wide beam keeps all of it. 0 keeps every octave as is. Acts only with `scatterOctaves` above 1 |
 
 Values must be finite numbers, and the detail fields are checked with the rest when the scene or a `set-environment` edit is built. Active volume fog accepts finite frame time within ±1,000,000 seconds and a nonzero light direction with components within ±1,000,000. Noise samples absolute time, so backward seeks reproduce earlier density.
 
