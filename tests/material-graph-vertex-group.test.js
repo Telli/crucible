@@ -5,6 +5,8 @@ import { createAgentScene } from '../src/agent-scene.js';
 import { compileMaterialGraph } from '../src/material-graph.js';
 import { bakeMaterialPattern, normalizeMaterialPattern } from '../src/material-patterns.js';
 import { vertexGroupMap } from '../src/material-vertex-group-map.js';
+import { packAtlas } from '../src/path-tracer-gpu-pack.js';
+import { buildTraceScene } from '../src/path-tracer-scene.js';
 
 const EDGE_GRAPH = { color: { mul: [[1, 1, 1], { vertexGroup: { name: 'edge' } }] } };
 
@@ -85,4 +87,22 @@ test('the part bakes the graph with its own mesh weights; a graph without the no
   const plain = createAgentScene(recipeWith({ edits: withUvs, pattern: plainPattern })).parts[0];
   const direct = bakeMaterialPattern(normalizeMaterialPattern(plainPattern));
   assert.deepEqual(redChannel(plain.material.map), redChannel(direct.map), 'a graph without the node bakes exactly as before');
+});
+
+test('the baked weight map reaches the GPU tracer texture list and the atlas holds its texels', () => {
+  const scene = createAgentScene(recipeWith({ edits: withUvs, pattern: graphPattern(EDGE_GRAPH) }));
+  const traced = buildTraceScene(scene.parts, {});
+  const [material] = traced.materials;
+  assert.ok(material.texture, 'the traced material carries the baked graph as its colour texture');
+  const baked = redChannel(scene.parts[0].material.map);
+  assert.equal(material.texture.width * material.texture.height, baked.length);
+  const atlas = packAtlas(traced.materials);
+  const placement = atlas.placements.get(material.texture.data);
+  assert.ok(placement, 'the atlas placed the baked texture');
+  const atlasTexels = [];
+  for (let row = 0; row < material.texture.height; row++) {
+    const start = ((placement.y + row) * atlas.width + placement.x) * 4;
+    for (let column = 0; column < material.texture.width; column++) atlasTexels.push(atlas.data[start + column * 4]);
+  }
+  assert.ok(atlasTexels.some(value => value > 200) && atlasTexels.some(value => value < 40), 'the atlas keeps the bright edge and dark interior of the weight map');
 });
