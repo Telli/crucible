@@ -127,8 +127,10 @@ function supportingSamples(renderer, samples) {
   renderer.context = new Proxy(base, { get: (target, name) => (name === 'getInternalformatParameter' ? () => samples : target[name]) });
 }
 
-test('without the compact colour addon the frame and multisample colour stay RGBA16F', () => {
+test('compactColor false keeps the frame and multisample colour RGBA16F', () => {
   const renderer = frameTargetRenderer(false);
+  renderer.compactColor = false;
+  supportingSamples(renderer, [4]);
   renderer.allocateFrameTargets(1920, 1080);
   const byName = Object.fromEntries(renderer.memoryReport().targets.map(target => [target.name, target]));
   assert.equal(byName.multisampleColor.format, 'RGBA16F');
@@ -138,6 +140,7 @@ test('without the compact colour addon the frame and multisample colour stay RGB
 test('compact colour halves the frame and multisample colour and keeps the other targets', () => {
   const renderer = frameTargetRenderer(false);
   renderer.canvas = { width: 1920, height: 1080 };
+  renderer.compactColor = false;
   supportingSamples(renderer, [4, 8]);
   renderer.allocateFrameTargets(1920, 1080);
   const before = Object.fromEntries(renderer.memoryReport().targets.map(target => [target.name, target]));
@@ -156,4 +159,56 @@ test('compact colour needs HDR, an opaque canvas and a sample count the format s
   const unsupported = frameTargetRenderer(false);
   supportingSamples(unsupported, [2]);
   assert.throws(() => useCompactColor(unsupported), /does not support 4 samples/);
+});
+
+function byTargetName(renderer) {
+  return Object.fromEntries(renderer.memoryReport().targets.map(target => [target.name, target]));
+}
+
+test('an opaque HDR canvas takes compact colour by itself and saves 39.55 MB at 1080p with 4 samples', () => {
+  const legacy = frameTargetRenderer(false);
+  legacy.compactColor = false;
+  legacy.allocateFrameTargets(1920, 1080);
+  const automatic = frameTargetRenderer(false);
+  supportingSamples(automatic, [4, 8]);
+  automatic.allocateFrameTargets(1920, 1080);
+  const saved = legacy.memoryReport().totalBytes - automatic.memoryReport().totalBytes;
+  assert.equal(Number((saved / BYTES_PER_MEGABYTE).toFixed(2)), 39.55);
+  assert.equal(byTargetName(automatic).multisampleColor.format, 'R11F_G11F_B10F');
+  assert.equal(automatic.colorFormat, 'R11F_G11F_B10F');
+});
+
+test('a transparent canvas, a device without the format and a non-HDR canvas keep their old colour format', () => {
+  const transparent = frameTargetRenderer(false);
+  transparent.transparent = true;
+  supportingSamples(transparent, [4]);
+  transparent.allocateFrameTargets(64, 64);
+  assert.equal(byTargetName(transparent).frameColor.format, 'RGBA16F');
+  const unsupported = frameTargetRenderer(false);
+  supportingSamples(unsupported, [2]);
+  unsupported.allocateFrameTargets(64, 64);
+  assert.equal(byTargetName(unsupported).frameColor.format, 'RGBA16F');
+  const standard = frameTargetRenderer(false);
+  standard.hdr = false;
+  supportingSamples(standard, [4]);
+  standard.allocateFrameTargets(64, 64);
+  assert.equal(byTargetName(standard).frameColor.format, 'RGBA8');
+});
+
+test('a device that refuses the compact framebuffer gets the RGBA16F targets back', () => {
+  const renderer = frameTargetRenderer(false);
+  const base = renderer.context;
+  let statusChecks = 0;
+  renderer.context = new Proxy(base, { get(target, name) {
+    if (name === 'getInternalformatParameter') return () => [4];
+    // The first allocation checks the multisample and resolve framebuffers; the compact respecify then checks them again and fails.
+    if (name === 'checkFramebufferStatus') return () => { statusChecks += 1; return statusChecks <= 2 || renderer.compactColor === false ? target.FRAMEBUFFER_COMPLETE : 0; };
+    return target[name];
+  } });
+  // The backend allocates the frame targets with its own context, so it gets the refusing one too.
+  renderer.backend = new WebGL2GlazeBackend(renderer.context);
+  renderer.allocateFrameTargets(64, 64);
+  assert.equal(renderer.compactColor, false);
+  assert.equal(renderer.colorFormat, 'RGBA16F');
+  assert.equal(byTargetName(renderer).frameColor.format, 'RGBA16F');
 });

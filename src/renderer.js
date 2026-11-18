@@ -23,6 +23,7 @@ import { materialLayerState, materialLayerValue } from './material-layers.js';
 import { MaterialSnapshot } from './material-snapshot.js';
 import { wearUniformValues } from './material-wear.js';
 import { fittedFogDensity } from './fog-fit.js';
+import { canUseCompactColor, respecifyColorTargets } from './compact-color.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
 import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope } from './shadow-light.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
@@ -705,7 +706,7 @@ export function samplesForDensity(parts, canvas, pixelRatio, samples, denseSampl
 }
 
 export class CrucibleRenderer {
-  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', exactFrames = false, deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
+  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, compactColor = true, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', exactFrames = false, deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
     this.background = background ? resolveBackground(background) : null;
     this.canvas = canvas;
     this.sceneParts = parts;
@@ -763,6 +764,7 @@ export class CrucibleRenderer {
     this.lookSource = null;
     this.selectViewTransform(viewTransform, look);
     this.hdr = Boolean(hdr && !benchmark && this.context.getExtension('EXT_color_buffer_float'));
+    this.compactColor = compactColor !== false;
     if (volume.density > 0 && !this.hdr) throw new Error('Volume fog requires EXT_color_buffer_float for HDR rendering');
     this.baseSamples = samples;
     this.denseSamples = denseSamples;
@@ -2124,6 +2126,20 @@ export class CrucibleRenderer {
     this.bloomWidth = Math.max(1, Math.ceil(width / 2));
     this.bloomHeight = Math.max(1, Math.ceil(height / 2));
     this.backend.bindCanvasTarget();
+    this.chooseColorFormat(width, height);
+  }
+
+  // An opaque canvas never reads the frame's alpha, so the frame and multisample colour take 4 bytes a pixel instead of 8 (#2179).
+  // A device that refuses the compact framebuffers gets the RGBA16F targets back.
+  chooseColorFormat(width, height) {
+    this.colorFormat = this.hdr ? 'RGBA16F' : 'RGBA8';
+    if (!canUseCompactColor(this)) return;
+    try {
+      respecifyColorTargets(this, width, height);
+    } catch {
+      this.compactColor = false;
+      this.allocateFrameTargets(width, height);
+    }
   }
 
   // The prefilter and BRDF programs build while the other programs do, instead of after them.
