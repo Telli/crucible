@@ -172,6 +172,7 @@ const waterFields = {
     hardness: unit.optional().describe('0 soft edge to 1 one pixel edge, 1 default.'),
     noise: unit.optional().describe('How much the edge breaks up, 0.3 default.'),
     drift: unit.optional().describe('0 static rim (default); above 0 the rim tears into segments that slide with time.'),
+    rim: z.boolean().optional().describe('false draws no contact line (default true).'),
     color: z.array(z.number().min(0).max(1)).length(3).optional().describe('RGB, white default.'),
   }).optional().describe('Water tag with alphaMode blend: foam line where the water meets other surfaces.'),
 };

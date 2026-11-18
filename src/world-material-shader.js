@@ -99,12 +99,12 @@ export function resolveWaterFoamStyle({ foamEdge, foamWidth, foamVeins }) {
 }
 
 export const CONTACT_FOAM_RANGES = Object.freeze({ width: [1, 64], hardness: [0, 1], noise: [0, 1], drift: [0, 1] });
-export const CONTACT_FOAM_DEFAULTS = Object.freeze({ width: 6, hardness: 1, noise: 0.3, drift: 0, color: Object.freeze([0.92, 0.95, 0.97]) });
+export const CONTACT_FOAM_DEFAULTS = Object.freeze({ width: 6, hardness: 1, noise: 0.3, drift: 0, rim: true, color: Object.freeze([0.92, 0.95, 0.97]) });
 
 /**
  * The contact foam of a water material: a line where the water meets another surface, from the gap between the water and what lies
  * behind it. `width` is the line's width in screen pixels (1 to 64, 6 default), `hardness` 0 (soft edge) to 1 (a one pixel edge),
- * `noise` 0 to 1 (how much the edge breaks up, 0.3 default), `drift` 0 to 1 (0 default, a static rim; above 0 the rim tears into segments that slide with time) and `color` three numbers from 0 to 1. Only water blended at an opacity below 1 reads what lies behind it.
+ * `noise` 0 to 1 (how much the edge breaks up, 0.3 default), `drift` 0 to 1 (0 default, a static rim; above 0 the rim tears into segments that slide with time), `rim` (true default; false draws no contact line at all) and `color` three numbers from 0 to 1. Only water blended at an opacity below 1 reads what lies behind it.
  */
 export function resolveContactFoam({ contactFoam }, { alphaMode, opacity }) {
   if (contactFoam === undefined) {
@@ -115,7 +115,7 @@ export function resolveContactFoam({ contactFoam }, { alphaMode, opacity }) {
   }
   const unknown = Object.keys(contactFoam).filter(key => !(key in CONTACT_FOAM_DEFAULTS));
   if (unknown.length > 0) {
-    throw new TypeError(`contactFoam has no field ${unknown.join(', ')}; pass width, hardness, noise, drift or color.`);
+    throw new TypeError(`contactFoam has no field ${unknown.join(', ')}; pass width, hardness, noise, drift, rim or color.`);
   }
   if (alphaMode !== 'blend' || !(opacity < 1)) {
     throw new RangeError('contactFoam needs blended water that reads what lies behind it; pass alphaMode "blend" and an opacity below 1, such as 0.98.');
@@ -126,6 +126,9 @@ export function resolveContactFoam({ contactFoam }, { alphaMode, opacity }) {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
       throw new RangeError(`contactFoam.${field} must be a number from ${minimum} to ${maximum}, such as ${CONTACT_FOAM_DEFAULTS[field]}.`);
     }
+  }
+  if (typeof resolved.rim !== 'boolean') {
+    throw new TypeError('contactFoam.rim must be true or false, such as true; false draws no contact line.');
   }
   const { color } = resolved;
   if (!Array.isArray(color) || color.length !== 3 || color.some(component => typeof component !== 'number' || !(component >= 0 && component <= 1))) {
@@ -249,6 +252,14 @@ function bindWaterFoamVeins(renderer, batch) {
   renderer.context.uniform3f(location.veins, amount, veins.scale, veins.stretch);
 }
 
+/** The `waterContact` uniform: width, hardness, noise and 1 while the rim is drawn. No contact foam, or `rim` false, sends 0 and the shader draws no line. */
+export function contactFoamUniform(contact) {
+  if (!contact?.rim) {
+    return [0, 0, 0, 0];
+  }
+  return [contact.width, contact.hardness, contact.noise, 1];
+}
+
 const foamStyleLocations = new WeakMap();
 
 /** Sends the foam style of a water batch: 1 for a hard edge, and the width factor. Other batches get the soft default. */
@@ -265,7 +276,7 @@ function bindWaterFoamStyle(renderer, batch) {
   const material = batch.parts[0].material;
   renderer.context.uniform2f(location.style, material.foamEdge === 'hard' ? 1 : 0, material.foamWidth ?? 1);
   const contact = material.contactFoam;
-  renderer.context.uniform4f(location.contact, contact?.width ?? 0, contact?.hardness ?? 0, contact?.noise ?? 0, contact ? 1 : 0);
+  renderer.context.uniform4f(location.contact, ...contactFoamUniform(contact));
   renderer.context.uniform1f(location.contactDrift, contact?.drift ?? 0);
   renderer.context.uniform3f(location.contactColor, ...(contact?.color ?? CONTACT_FOAM_DEFAULTS.color));
 }

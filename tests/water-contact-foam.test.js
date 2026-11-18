@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
 import { createFragmentShader } from '../src/shaders.js';
-import { CONTACT_FOAM_DEFAULTS } from '../src/world-material-shader.js';
+import { CONTACT_FOAM_DEFAULTS, contactFoamUniform } from '../src/world-material-shader.js';
 
 function waterRecipe(fields) {
   return {
@@ -74,4 +74,20 @@ test('the drifting rim is gated on drift above 0, so the static rim keeps its no
   assert.match(shader, /waterContactShare = waterContactFoam\(worldPosition, contactNoise\) \* contactTear;/);
   const driftBranch = shader.slice(shader.indexOf('if (waterContactDrift > 0.0) {'));
   assert.match(driftBranch.slice(0, 600), /time \*/, 'the drift moves with the water time');
+});
+
+test('contactFoam.rim defaults to true and refuses anything but a boolean with what to pass', () => {
+  assert.equal(createAgentScene(waterRecipe({ contactFoam: {} })).parts[0].material.contactFoam.rim, true);
+  assert.equal(createAgentScene(waterRecipe({ contactFoam: { rim: false } })).parts[0].material.contactFoam.rim, false);
+  for (const rim of [0, 'no', null]) {
+    assert.throws(() => createAgentScene(waterRecipe({ contactFoam: { rim } })), /contactFoam.rim must be true or false/, String(rim));
+  }
+});
+
+test('the rim reaches the shader as its on flag: drawn by default, absent with rim false or without contactFoam', () => {
+  const rimmed = createAgentScene(waterRecipe({ contactFoam: { width: 8, noise: 0.2 } })).parts[0].material.contactFoam;
+  const rimless = createAgentScene(waterRecipe({ contactFoam: { width: 8, noise: 0.2, rim: false } })).parts[0].material.contactFoam;
+  assert.deepEqual(contactFoamUniform(rimmed), [8, 1, 0.2, 1]);
+  assert.deepEqual(contactFoamUniform(rimless), [0, 0, 0, 0]);
+  assert.deepEqual(contactFoamUniform(undefined), [0, 0, 0, 0]);
 });
