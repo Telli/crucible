@@ -27,7 +27,7 @@ export const PROTECTED_FILES = Object.freeze({
 
 const userFacingPattern = /^(src|bin|packages|skills)\//;
 const shippedCodePattern = /^(src|bin|packages)\/|^package(-lock)?\.json$|^(config\/)?vite\.lib\.config\.js$|^scripts\/(build-mcp|vite-cook-optional)\.mjs$/;
-const toolCodePattern = /^(src\/agent-|src\/mcp|bin\/)|^scripts\/(build-mcp|measure-tool-cost|check-tool-cost|mcp-server|mcp-input-errors|capabilities-topics|tool-examples)/;
+const toolCodePattern = /^(src\/agent-|src\/mcp|bin\/)|^scripts\/(build-mcp|measure-tool-cost|check-tool-cost|mcp-server|mcp-(input|union)-errors|capabilities-topics|tool-examples)/;
 const linkedTextPattern = /\.(md|html)$/;
 const blenderAddonPattern = /^packages\/blender-addon\//;
 
