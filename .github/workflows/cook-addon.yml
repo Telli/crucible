@@ -284,6 +284,7 @@ on:
       - 'src/path-tracer-webgpu-medium.js'
       - 'src/path-tracer-webgpu.js'
       - 'src/path-tracer.js'
+      - 'src/gradient-sky.js'
       - 'src/physical-sky.js'
       - 'src/physics-boat.js'
       - 'src/physics-buoyancy.js'

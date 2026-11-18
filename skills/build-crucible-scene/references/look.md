@@ -35,6 +35,8 @@ target hex and scale `emission`.
 
 Time of day comes from the sun alone: `"sky": { "type": "physical", "preset": "golden-hour" }` (also `sunset`, `blue-hour`) sets sun elevation and azimuth, and the key, sky and haze follow from one atmosphere, so a low sun reads warm with no grading. Put `sunElevation` or `sunRotation` beside a preset to move the sun; a preset starts the sky again, so earlier sky fields are dropped.
 
+For a mood that physics does not give, pick the colours: `"sky": { "type": "gradient", "stops": [{ "at": 0, "color": "#1a8a9c" }, { "at": 1, "color": "#0e5d73" }], "horizonGlow": { "color": "#7ff4ff", "width": 2.5, "intensity": 1.3 } }` runs from the horizon (`at` 0) to the zenith (1), adds a bright band at the horizon, and lights the scene and shows in water like any sky. It leaves the sun to the setup.
+
 ## HDRI from the catalog
 
 Call `scene_asset_catalog` (no arguments). It lists two shipped HDRIs, `sky-clouds` and `studio-softbox`, two shipped
