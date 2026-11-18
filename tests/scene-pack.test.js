@@ -135,3 +135,9 @@ test('the <crucible-scene> runtime imports no agent-scene compiler code', async 
   const compilerModules = inputs.filter(path => /src\/(agent-scene(?!-capabilities)|agent-look|agent-apply|scene-pack\.js)/.test(path));
   assert.deepEqual(compilerModules, []);
 });
+
+test('the crucible-scene module imports in Node without a DOM, as the package smoke does', async () => {
+  assert.equal(typeof globalThis.HTMLElement, 'undefined');
+  const module = await import('../src/crucible-scene.js');
+  assert.equal(typeof module.CrucibleSceneElement, 'function');
+});
