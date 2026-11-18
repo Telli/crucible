@@ -168,6 +168,7 @@ const waterFields = {
   }).optional().describe('Water tag: foam veins spreading from the crests.'),
   foamEdge: z.enum(['soft', 'hard']).optional().describe('Water tag: soft lace (default) or a hard painted edge.'),
   foamWidth: z.number().min(0.25).max(4).optional().describe('Water tag: foam spread, 1 default.'),
+  waterRamp: z.record(z.string(), z.unknown()).optional().describe('Water tag: flat colour ramp, see scene_capabilities water.'),
 };
 const subsurfaceTriple = ([minimum, maximum]) => z.tuple([0, 1, 2].map(() => z.number().min(minimum).max(maximum)));
 const subsurface = z.strictObject({
@@ -203,7 +204,7 @@ const materialFields = {
 };
 const materialTag = z.enum(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']).optional().describe('Surface kind; liquid, foam, foliage, grass and water change how it renders: see scene_capabilities materialTags and water.');
 const materialCore = coreOf(materialFields, ['color', 'metallic', 'roughness', 'emission', 'opacity']);
-const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, foamEdge, foamWidth, foamVeins and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
+const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, foamEdge, foamWidth, foamVeins, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
 const materialListed = (strictSchema, description, extraCore) => listed('materialFields', strictSchema, `${description} ${materialMore}`, { ...extraCore, ...materialCore });
 const liquidOptics = z.strictObject({
   thickness: z.number().min(0).max(100).optional().describe('Metres of liquid where it faces the camera.'),
