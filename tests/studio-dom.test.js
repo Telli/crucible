@@ -1243,8 +1243,6 @@ test('file context set from outside shows in the file pill and the watch note', 
   assert.equal(ui.studio.shouldAutoReloadExternal(), false);
   assert.equal(reloadButton.getAttribute('aria-pressed'), 'false');
   assert.equal(ui.status(), 'Auto-reload paused');
-  // Known bug (src/studio.js:714): the toggle does not refresh the popover note, so it says "auto-reload on" until the next banner sync.
-  ui.studio.setFileContext({});
   assert.match(ui.root.querySelector('#crucible-studio-pop-sync .crucible-studio-popover-note').textContent, /paused/);
   reloadButton.click();
   assert.equal(ui.studio.shouldAutoReloadExternal(), true);

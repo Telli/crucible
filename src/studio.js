@@ -714,6 +714,7 @@ export function createStudio(container, {
   autoReloadButton.addEventListener('click', () => {
     autoReloadWatch = !autoReloadWatch;
     autoReloadButton.setAttribute('aria-pressed', autoReloadWatch ? 'true' : 'false');
+    syncWatchNote();
     announce(autoReloadWatch ? 'Auto-reload enabled' : 'Auto-reload paused');
   });
   const copyPromptButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Copy a prompt for the agent' });
@@ -1336,15 +1337,18 @@ export function createStudio(container, {
   root.append(viewportElement, menubarElement, toolbarElement, outlinerDock, inspectorElement, bottomElement, fileInput, recipeDialog, shortcutsDialog);
   container.append(root);
 
-  function syncFileBanner() {
-    filePill.textContent = activeFileName;
-    filePill.dataset.dirty = isDirty ? 'true' : 'false';
-    filePill.title = isDirty ? `${activeFileName} has changes that are not saved` : activeFileName;
-    filePill.title = activeFilePath ?? activeFileName;
-    watchPill.hidden = !activeFilePath;
+  function syncWatchNote() {
     syncStatusNote.textContent = activeFilePath
       ? `Watching ${activeFilePath} (${autoReloadWatch ? 'auto-reload on' : 'paused'}).`
       : 'Save the scene to a file and the agent can edit it while you watch.';
+  }
+
+  function syncFileBanner() {
+    filePill.textContent = activeFileName;
+    filePill.dataset.dirty = isDirty ? 'true' : 'false';
+    filePill.title = activeFilePath ?? activeFileName;
+    watchPill.hidden = !activeFilePath;
+    syncWatchNote();
     if (onDirtyChange) {
       onDirtyChange({ filePath: activeFilePath, fileName: activeFileName, dirty: isDirty });
     }
