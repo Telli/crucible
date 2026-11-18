@@ -17,7 +17,7 @@ import { MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from '../src/view-transform-names.js';
 import { BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES, CATALOG_FILE_ID } from '../src/look-catalog.js';
 import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES } from '../src/agent-scene-capabilities.js';
-import { MATERIAL_LAYER_SCALAR_RANGES, MATERIAL_LAYER_COLOR_RANGES } from '../src/material-layers.js';
+import { MATERIAL_LAYER_SCALAR_RANGES, MATERIAL_LAYER_COLOR_RANGES, TOON_COLOR_MAXIMUM } from '../src/material-layers.js';
 import { SUBSURFACE_RANGES } from '../src/subsurface-limits.js';
 import { responseFormatField, chosenFormat, conciseReview, conciseJobStatus, conciseJobResult, conciseCapabilities } from './mcp-response-format.mjs';
 import { resolveAddons } from './mcp-addons.mjs';
@@ -152,6 +152,7 @@ const materialLayerFields = {
   iridescenceIor: layerNumber('iridescenceIor'),
   iridescenceThickness: layerNumber('iridescenceThickness'),
   toon: layerNumber('toon'),
+  toonColors: z.array(z.array(z.number().min(0).max(TOON_COLOR_MAXIMUM)).length(3)).min(1).max(8).optional().describe('One linear [r,g,b] per toon step, darkest first; the count must equal toon.'),
 };
 
 
@@ -194,7 +195,7 @@ const materialFields = {
 };
 const materialTag = z.enum(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']).optional().describe('Surface kind; liquid, foam, foliage, grass and water change how it renders: see scene_capabilities materialTags and water.');
 const materialCore = coreOf(materialFields, ['color', 'metallic', 'roughness', 'emission', 'opacity']);
-const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon; see scene_capabilities materialFields.';
+const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
 const materialListed = (strictSchema, description, extraCore) => listed('materialFields', strictSchema, `${description} ${materialMore}`, { ...extraCore, ...materialCore });
 const liquidOptics = z.strictObject({
   thickness: z.number().min(0).max(100).optional().describe('Metres of liquid where it faces the camera.'),
@@ -299,6 +300,7 @@ const environment = z.strictObject({
     intensity: bounded(0, 1e5).optional().describe('Candela head on.'),
     castShadow: z.boolean().optional(),
     ies: iesProfile,
+    portal: z.boolean().optional().describe('Window: emits nothing, Cook samples the sky through it; raster ignores it.'),
     affects,
   })).max(MAX_AREA_LIGHTS).optional().describe('Replaces the list; [] clears.'),
   skyTop: color.optional(),
@@ -859,6 +861,7 @@ const checkpointFields = { ...sessionFields, checkpointId: z.uuid().describe('Ch
 const expectedRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).describe('Current revision returned by create, inspect, apply or restore. Stale edits fail atomically.');
 const jobFields = { jobId: z.uuid().describe('Render job UUID returned by scene_render_submit or capabilities jobs.records.') };
 const jobWithFormatFields = { ...jobFields, response_format: responseFormatField };
+const jobResultFields = { ...jobWithFormatFields, images: z.boolean().optional() };
 // Job tools take jobId alone; an agent that carries sessionId over from the scene tools gets told to drop it.
 function jobKeysHint(toolName, acceptedKeys) {
   const accepted = acceptedKeys.length > 1 ? `${acceptedKeys[0]} (and ${acceptedKeys.slice(1).join(', ')})` : acceptedKeys[0];
@@ -920,10 +923,10 @@ const OUTPUT_SCHEMAS = {
 const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const INLINE_IMAGE_MAXIMUM_BYTES = 1024 * 1024;
 
-async function renderResultContent(result, shown = result) {
+async function renderResultContent(result, shown = result, { attachImages = true } = {}) {
   const content = [{ type: 'text', text: JSON.stringify(shown) }];
   for (const artifact of result.artifacts) {
-    if (INLINE_IMAGE_TYPES.has(artifact.mimeType) && artifact.bytes <= INLINE_IMAGE_MAXIMUM_BYTES) {
+    if (attachImages && INLINE_IMAGE_TYPES.has(artifact.mimeType) && artifact.bytes <= INLINE_IMAGE_MAXIMUM_BYTES) {
       content.push({ type: 'image', data: (await readFile(artifact.path)).toString('base64'), mimeType: artifact.mimeType });
     }
     content.push({ type: 'resource_link', uri: pathToFileURL(artifact.path).href, name: artifact.filename, mimeType: artifact.mimeType, size: artifact.bytes });
@@ -1102,9 +1105,9 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     return jsonResult(chosenFormat('scene_render_status', response_format) === 'concise' ? conciseJobStatus(record) : record);
   });
   register('scene_render_cancel', 'Request cancellation of one job. Poll status until terminal before using the preview again.', z.strictObject(jobFields, { error: jobKeysHint('scene_render_cancel', Object.keys(jobFields)) }), { ...edit, idempotentHint: true }, async argumentsValue => jsonResult(await runtime.cancelJob(argumentsValue)));
-  register('scene_render_result', 'Read completed local output paths, MIME types, byte counts, SHA-256 digests and measured render metrics. Returns a PNG inline and a resource link to each file; video stays on disk.', z.strictObject(jobWithFormatFields, { error: jobKeysHint('scene_render_result', Object.keys(jobWithFormatFields)) }), readOnly, async ({ response_format, ...jobInput }) => {
+  register('scene_render_result', 'Read completed local output paths, MIME types, byte counts, SHA-256 digests and measured render metrics. Attaches each PNG (images: false for paths only) and a resource link per file; video stays on disk.', z.strictObject(jobResultFields, { error: jobKeysHint('scene_render_result', Object.keys(jobResultFields)) }), readOnly, async ({ response_format, images, ...jobInput }) => {
     const result = await runtime.jobResult(jobInput);
-    return renderResultContent(result, chosenFormat('scene_render_result', response_format) === 'concise' ? conciseJobResult(result) : result);
+    return renderResultContent(result, chosenFormat('scene_render_result', response_format) === 'concise' ? conciseJobResult(result) : result, { attachImages: images !== false });
   });
   register('scene_render_release', 'Delete the owned files and record for a terminal job, freeing store quota. Active jobs must be cancelled first.', z.strictObject(jobFields, { error: jobKeysHint('scene_render_release', Object.keys(jobFields)) }), destroy, async argumentsValue => jsonResult(await runtime.releaseJob(argumentsValue)));
   return server;

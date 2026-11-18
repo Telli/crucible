@@ -204,7 +204,7 @@ function stillsFrameCountFrom(input) {
 function stillsSequenceDuration(input, frames, fps) {
   const span = (frames - 1) / fps;
   if (input.duration !== undefined && Math.abs(input.duration - span) > 1e-9) {
-    throw new RangeError(`duration is (stillCount - 1) / fps = ${span} s when stillCount is set; leave duration out.`);
+    throw new RangeError(`Leave duration out when stillCount is set: it is (stillCount - 1) / fps = ${Number(span.toFixed(4))} s here, and you sent ${input.duration}.`);
   }
   return span;
 }

@@ -9,7 +9,7 @@ Release `0.6.0` includes five MCP tools for asynchronous image and video renderi
 3. Create a scene and inspect its current revision.
 4. Submit `scene_render_submit` with the session ID, current revision and render settings.
 5. Poll `scene_render_status` until the job reaches a terminal state. The job tools take `jobId` alone; a `sessionId` is refused with that hint. A path traced job on the default cpu backend whose scene is estimated above twice 400000 triangles (the estimate can run 1.5 times high on non-indexed geometry) is refused at submit with the count, instead of failing after it started; a scene between the cap and that margin is checked exactly when the trace starts.
-6. Read `scene_render_result` after completion to obtain output paths, and SHA-256 hashes with `response_format: "detailed"`.
+6. Read `scene_render_result` after completion to obtain output paths, and SHA-256 hashes with `response_format: "detailed"`. The answer attaches every PNG of the job (up to 1 MiB each) as an image, whatever `response_format` is, and adds a resource link to each file; a harness that keeps the transcript pays for those pictures on every later turn, so pass `images: false` to get the paths, sizes and metrics only. Video is never attached.
 7. Release unwanted outputs with `scene_render_release`.
 
 For MP4 jobs, FFmpeg must be on PATH or configured with `--ffmpeg` and an absolute executable path.
@@ -31,7 +31,7 @@ The store records UUIDs that `scene_capabilities` lists after a restart.
 
 The runtime captures the source recipe and verified asset bytes before returning a job ID.
 The job uses a separate browser page and temporarily leases the single renderer.
-Preview rendering and edits pause during a job. Inspection and recipe export remain available.
+While a job runs, these tools fail until it finishes or is cancelled: `scene_create`, `scene_create_asset`, `scene_apply`, `mesh_edit`, `mesh_stack`, `scene_look`, `scene_review`, `scene_checkpoint`, `scene_restore`, `scene_release_checkpoint`, `scene_export_glb`, `scene_export_web`, `scene_dispose` and `scene_render_submit`. Inspection (`scene_inspect`, `mesh_inspect`, `scene_walkmap`), `scene_export_recipe` and the `scene_render_*` status, cancel, result and release tools stay available. The error names the running job, how many frames it has done and the two tools to call: `scene_render_status` with its `jobId`, or `scene_render_cancel`.
 The source revision, pose and checkpoints survive completion or cancellation.
 Cancellation becomes terminal after the owned encoder and job page stop and the preview recovers.
 
