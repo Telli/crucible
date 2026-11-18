@@ -17,7 +17,7 @@ const SAME_SIDE_COSINE = 0.9;
 const MAX_SIDES = 3;
 /** A miter longer than this many times the largest side depth (a very acute edge) is shortened, so a spike cannot shoot off. */
 const MAX_MITER_RATIO = 2;
-const SINGULAR_DETERMINANT = 1e-9;
+const SINGULAR_DETERMINANT = 1e-4;
 /** How much deeper an inward move may get, and how far a sharp vertex may stand out from a neighbour, per unit of edge length. Below 1 so no strip tilts past 22 degrees from its side. */
 const SIDE_SLOPE = 0.4;
 
@@ -41,7 +41,7 @@ export function displacementOffsets(mesh, distances) {
   return offsets;
 }
 
-/** Map of vertex to { sides, shortestEdge } for vertices where flat sides meet at a sharp bend. */
+/** Map of vertex to { sides } for vertices where flat sides meet at a sharp bend. */
 function findSharpVertices(mesh) {
   const { normals: faceNormal, areas } = faceNormals(mesh);
   const facesOfVertex = Array.from({ length: mesh.vertexCount }, () => []);
@@ -54,7 +54,7 @@ function findSharpVertices(mesh) {
   const sharpVertices = new Map();
   for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
     const sides = sharpSides(facesOfVertex[vertex], faceNormal);
-    if (sides) sharpVertices.set(vertex, { sides, shortestEdge: shortestEdge(mesh, vertex, facesOfVertex[vertex]) });
+    if (sides) sharpVertices.set(vertex, { sides });
   }
   return sharpVertices;
 }
@@ -84,20 +84,6 @@ function sharpSides(faces, faceNormal) {
   });
 }
 
-function shortestEdge(mesh, vertex, faces) {
-  let shortest = Infinity;
-  for (const face of faces) {
-    const start = mesh.faceOffsets[face];
-    const end = mesh.faceOffsets[face + 1];
-    for (let corner = start; corner < end; corner++) {
-      if (mesh.cornerVertices[corner] !== vertex) continue;
-      const neighbours = [mesh.cornerVertices[corner === start ? end - 1 : corner - 1], mesh.cornerVertices[corner + 1 === end ? start : corner + 1]];
-      for (const neighbour of neighbours) shortest = Math.min(shortest, edgeLength(mesh, vertex, neighbour) || Infinity);
-    }
-  }
-  return shortest;
-}
-
 function edgeLength(mesh, first, second) {
   return Math.hypot(...[0, 1, 2].map(axis => mesh.positions[first * 3 + axis] - mesh.positions[second * 3 + axis]));
 }
@@ -107,12 +93,6 @@ function edgeLength(mesh, first, second) {
  * it. Returns the limit of every vertex.
  */
 function limitInwardDistances(mesh, distances, sharpVertices) {
-  const limits = new Float64Array(mesh.vertexCount).fill(Infinity);
-  const queue = [];
-  for (const [vertex, corner] of sharpVertices) {
-    limits[vertex] = corner.shortestEdge / 2;
-    queue.push(vertex);
-  }
   const neighbours = Array.from({ length: mesh.vertexCount }, () => []);
   for (let edge = 0; edge < mesh.edgeCount; edge++) {
     const first = mesh.edgeVertices[edge * 2];
@@ -121,6 +101,9 @@ function limitInwardDistances(mesh, distances, sharpVertices) {
     neighbours[first].push(second, length);
     neighbours[second].push(first, length);
   }
+  const limits = new Float64Array(mesh.vertexCount).fill(Infinity);
+  const queue = [...sharpVertices.keys()];
+  for (const vertex of queue) limits[vertex] = Math.min(...neighbours[vertex].filter((_, index) => index % 2)) / 2;
   // Label-correcting relaxation: a vertex is queued again whenever a shorter route lowers its limit.
   for (let head = 0; head < queue.length; head++) {
     const vertex = queue[head];
@@ -145,12 +128,16 @@ function limitInwardDistances(mesh, distances, sharpVertices) {
  */
 function miterOffset(mesh, vertex, { sides }, distances, sharpVertices, inwardLimit) {
   const depths = sides.map(side => sideDepth(mesh, vertex, side.faces, distances, sharpVertices, inwardLimit));
-  const gram = sides.map(first => sides.map(second => first.normal[0] * second.normal[0] + first.normal[1] * second.normal[1] + first.normal[2] * second.normal[2]));
-  const weights = solve(gram, depths);
-  if (!weights) return null;
+  // Three planes n_i . x = depth_i meet at x = sum(depth_i * (n_j x n_k)) / (n_1 . (n_2 x n_3)); two sides get the third plane
+  // along their edge, which holds no depth.
+  const normals = sides.map(side => side.normal);
+  if (normals.length === 2) normals.push(normalize(cross(normals[0], normals[1])));
+  const determinant = dot(normals[0], cross(normals[1], normals[2]));
+  if (!(Math.abs(determinant) >= SINGULAR_DETERMINANT)) return null;
   const offset = [0, 0, 0];
-  for (let side = 0; side < sides.length; side++) {
-    for (let axis = 0; axis < 3; axis++) offset[axis] += weights[side] * sides[side].normal[axis];
+  for (let side = 0; side < 3; side++) {
+    const across = cross(normals[(side + 1) % 3], normals[(side + 2) % 3]);
+    for (let axis = 0; axis < 3; axis++) offset[axis] += (depths[side] ?? 0) * across[axis] / determinant;
   }
   const largestDepth = Math.max(...depths.map(Math.abs));
   const length = Math.hypot(...offset);
@@ -179,16 +166,6 @@ function sideDepth(mesh, vertex, faces, distances, sharpVertices, inwardLimit) {
   return Math.max(Math.min(sum / seen.size, highest), -inwardLimit);
 }
 
-/** Solve gram * weights = depths for 2 or 3 sides by Cramer's rule; null when the matrix is singular. */
-function solve(gram, depths) {
-  const determinant = determinantOf(gram);
-  if (Math.abs(determinant) < SINGULAR_DETERMINANT) return null;
-  return depths.map((_, column) => determinantOf(gram.map((row, rowIndex) => row.map((value, index) => (index === column ? depths[rowIndex] : value)))) / determinant);
-}
-
-function determinantOf(matrix) {
-  if (matrix.length === 2) return matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
-  return matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
-    - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
-    + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]);
-}
+const dot = (first, second) => first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
+const cross = (first, second) => [first[1] * second[2] - first[2] * second[1], first[2] * second[0] - first[0] * second[2], first[0] * second[1] - first[1] * second[0]];
+const normalize = vector => vector.map(value => value / (Math.hypot(...vector) || 1));
