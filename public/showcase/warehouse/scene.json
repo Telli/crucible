@@ -7,6 +7,8 @@
   "hdriOptions": { "intensity": 0.7, "rotation": 0, "showBackground": true, "backgroundBlur": 0.6 },
   "gltfOptions": { "maxTexturePixels": 67108864 },
   "exposure": 1,
+  "eye": [22,3.2,9],
+  "target": [4,2.4,-3],
   "renderer": {
     "ground": false,
     "hdr": true,

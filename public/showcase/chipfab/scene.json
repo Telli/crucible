@@ -14,6 +14,8 @@
     "maxTexturePixels": 33554432
   },
   "exposure": 0.8,
+  "eye": [14,1.7,-0.6],
+  "target": [40,1.9,0.4],
   "renderer": {
     "ground": false,
     "hdr": true,

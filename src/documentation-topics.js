@@ -2,11 +2,13 @@
 // Ids are file names in docs/learn, or slugs of the `## ` headings in docs/guide.md.
 export const documentationGroups = [
   { title: 'Start here', icon: 'start', ids: ['introduction', 'install', 'first-scene', 'if-you-know-three-js', 'faq'] },
-  { title: 'Build a scene', icon: 'cube', ids: ['parts-and-geometry', 'materials-and-color', 'cameras-and-framing', 'effects-and-lighting', 'local-lights-and-volume-fog', 'hdr-environment-lighting', 'renderer-reference'] },
+  { title: 'Build a scene', icon: 'cube', ids: ['parts-and-geometry', 'materials-and-color', 'cameras-and-framing', 'renderer-reference'] },
+  { title: 'Look and light', icon: 'image', ids: ['effects-and-lighting', 'hdr-environment-lighting', 'local-lights-and-volume-fog', 'baked-liquid', 'ocean-and-boat-wake', 'explosions-and-volumes', 'bake-light', 'cook-path-tracer'] },
   { title: 'Model and fit surfaces', icon: 'cube', ids: ['procedural-modeling', 'sculpt-brushes', 'contact-detection', 'shrinkwrap-and-surface-patches', 'retained-surface-attachments'] },
-  { title: 'Worlds', icon: 'world', ids: ['terrain-and-ground-textures', 'trees-and-grass', 'grass-fields', 'wheeled-vehicles', 'baked-liquid'] },
+  { title: 'Worlds', icon: 'world', ids: ['terrain-and-ground-textures', 'trees-and-grass', 'grass-fields', 'wheeled-vehicles'] },
   { title: 'Animate and interact', icon: 'motion', ids: ['deterministic-animation', 'animation-curves-and-mixing', 'skeletal-and-morph-animation', 'humanoid-retargeting-and-crowds', 'recorded-physics', 'assemblies-and-interaction'] },
   { title: 'Assets and media', icon: 'image', ids: ['import-and-export-models', 'images-and-films', 'render-a-png-from-a-script-without-mcp'] },
+  { title: 'Ship to the web', icon: 'world', ids: ['pack-for-the-web'] },
   { title: 'Reference and workflows', icon: 'book', ids: ['api-reference', 'performance-and-memory', 'lifecycle-and-troubleshooting', 'connect-mcp', 'agent-workflows', 'optimize-for-agents', 'models-and-ai-agents', 'addons-and-limits', 'release-and-source-availability', 'resources'] },
 ];
 
