@@ -32,4 +32,10 @@ body.tiers-page > main { gap: 28px; width: var(--page); margin-inline: auto; pad
 @media (max-width: 640px) {
   .tiers-metric { padding: 18px 16px; }
   .tiers-bar-label strong { font-size: 22px; }
+  /* One row on a phone: no icons, tighter tabs, and a sideways scroll if a narrower screen still runs out of room. */
+  .tiers-switch { flex-wrap: nowrap; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  .tiers-switch::-webkit-scrollbar { display: none; }
+  .tiers-tab { flex: none; min-height: 40px; padding: 8px 12px; font-size: 14px; }
+  .tiers-tab-icon { display: none; }
+  .tiers-tab.is-planned { box-shadow: inset 0 0 0 1px var(--muted); }
 }
