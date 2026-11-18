@@ -58,3 +58,20 @@ test('contact foam skips water whose scene behind it is more than half a metre a
   assert.ok(reachLine > gapLine, 'a gap over half a metre returns no foam');
   assert.ok(reachLine < pixelsLine, 'the metre limit applies before the width in pixels, which is huge far away');
 });
+
+test('contactFoam.drift defaults to 0 and refuses values outside 0 to 1 with what to pass', () => {
+  assert.equal(createAgentScene(waterRecipe({ contactFoam: {} })).parts[0].material.contactFoam.drift, 0);
+  assert.equal(createAgentScene(waterRecipe({ contactFoam: { drift: 0.7 } })).parts[0].material.contactFoam.drift, 0.7);
+  for (const drift of [-0.1, 1.5, '1']) {
+    assert.throws(() => createAgentScene(waterRecipe({ contactFoam: { drift } })), /contactFoam\.drift must be a number from 0 to 1, such as 0/, String(drift));
+  }
+});
+
+test('the drifting rim is gated on drift above 0, so the static rim keeps its noise and its full width', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  assert.match(shader, /uniform float waterContactDrift;/);
+  assert.match(shader, /float contactNoise = terrainNoise\(worldPosition\.xz \* 1\.7 \+ 11\.3\)\.x;\s+float contactTear = 1\.0;\s+if \(waterContactDrift > 0\.0\) \{/);
+  assert.match(shader, /waterContactShare = waterContactFoam\(worldPosition, contactNoise\) \* contactTear;/);
+  const driftBranch = shader.slice(shader.indexOf('if (waterContactDrift > 0.0) {'));
+  assert.match(driftBranch.slice(0, 600), /time \*/, 'the drift moves with the water time');
+});
