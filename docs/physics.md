@@ -444,7 +444,7 @@ An `ocean` edit with `spray: true` writes the vertex group `spray` and the vecto
   "materials": [{ "id": "water", "color": [0.1, 0.3, 0.5] }, { "id": "foam", "color": [0.9, 0.95, 1] }],
   "geometries": [
     { "id": "sea", "type": "mesh", "base": { "type": "box", "bevel": 0 },
-      "edits": [{ "op": "subdivide", "levels": 4 }, { "op": "ocean", "windSpeed": 12, "choppiness": 2, "size": 2, "resolution": 4, "time": 1.5, "seed": 3, "spray": true }] },
+      "edits": [{ "op": "subdivide", "levels": 4 }, { "op": "ocean", "windSpeed": 12, "coverage": 1, "choppiness": 2, "size": 2, "resolution": 4, "time": 1.5, "seed": 3, "spray": true }] },
     { "id": "speck", "type": "box", "bevel": 0 }],
   "nodes": [
     { "id": "surface", "geometry": "sea", "material": "water" },

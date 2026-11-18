@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createMeshData, applyMeshEdits } from '../src/mesh.js';
 import { vertexGroupWeights } from '../src/mesh-data.js';
 import { oceanWaves, oceanSurfaceAt } from '../src/mesh-ocean-modifier.js';
+import { whitecapFraction, oceanFoamThreshold, oceanFoamWithMemory, foamFromJacobian } from '../src/ocean-waves.js';
 import { MESH_MODIFIER_NOTES } from '../src/agent-scene-capabilities.js';
 
 // A flat square of cells x cells quads in the x-z plane, centred on the origin.
@@ -89,27 +90,90 @@ test('the capability notes describe the ocean modifier', () => {
   assert.match(MESH_MODIFIER_NOTES.ocean, /foam/);
 });
 
-function foamFraction(coverage, threshold) {
-  const waves = oceanWaves({ windSpeed: 16, direction: 0, size: 50, seed: 3, resolution: 3 });
+// Share of rest points over one size of a sea where the foam is at least half, with no memory so it is the Jacobian alone.
+function foamFraction({ windSpeed, coverage = 0, choppiness = 1.5, seed = 3 }) {
+  const size = 200;
+  const waves = oceanWaves({ windSpeed, direction: 0, size, seed, resolution: 8 });
+  const threshold = oceanFoamThreshold(waves, { windSpeed, size, choppiness, coverage });
   let counted = 0;
   let total = 0;
-  for (let x = -25; x < 25; x += 1) {
-    for (let z = -25; z < 25; z += 1) {
+  for (let x = 0.5; x < size; x += 3.1) {
+    for (let z = 0.5; z < size; z += 3.1) {
       total += 1;
-      if (oceanSurfaceAt(waves, x, z, 0, 1.5, coverage).foam > threshold) counted += 1;
+      if (oceanSurfaceAt(waves, x, z, 0, choppiness, threshold).foam >= 0.5) counted += 1;
     }
   }
   return counted / total;
 }
 
-test('coverage below zero keeps the top peaks and above zero adds foam, and zero is the old sea', () => {
-  const waves = oceanWaves({ windSpeed: 16, direction: 0, size: 50, seed: 3, resolution: 3 });
-  assert.equal(oceanSurfaceAt(waves, 3, 4, 0, 1.5).foam, oceanSurfaceAt(waves, 3, 4, 0, 1.5, 0).foam);
-  const fewer = foamFraction(-0.8, 0.05);
-  const normal = foamFraction(0, 0.05);
-  const more = foamFraction(0.8, 0.05);
-  assert.ok(fewer < normal && normal < more, `coverage orders the foam: ${fewer} < ${normal} < ${more}`);
-  assert.ok(normal > 0.1, 'the sea of the look test has crests that foam');
+test('whitecap fraction follows the Monahan and O Muircheartaigh law and grows with the wind', () => {
+  assert.ok(Math.abs(whitecapFraction(10) - 3.84e-6 * 10 ** 3.41) < 1e-12);
+  let previous = -1;
+  for (const wind of [2, 5, 8, 12, 15, 20, 30, 60]) {
+    const fraction = whitecapFraction(wind);
+    assert.ok(fraction > previous && fraction <= 1, `whitecaps at ${wind} m/s: ${fraction}`);
+    previous = fraction;
+  }
+});
+
+test('the foam of a sea follows the wind speed: more wind, more whitecaps, near the law', () => {
+  const calm = foamFraction({ windSpeed: 8 });
+  const fresh = foamFraction({ windSpeed: 15 });
+  const gale = foamFraction({ windSpeed: 25 });
+  assert.ok(calm < fresh && fresh < gale, `foam follows wind: ${calm} < ${fresh} < ${gale}`);
+  assert.ok(Math.abs(fresh - whitecapFraction(15)) < 0.02, `15 m/s foams ${fresh}, the law gives ${whitecapFraction(15)}`);
+  assert.equal(foamFraction({ windSpeed: 15, choppiness: 0 }), 0, 'a sea with no choppiness never folds');
+});
+
+test('coverage biases the physical foam: below 0 keeps the top peaks and above 0 adds foam', () => {
+  const fewer = foamFraction({ windSpeed: 15, coverage: -0.8 });
+  const physical = foamFraction({ windSpeed: 15, coverage: 0 });
+  const more = foamFraction({ windSpeed: 15, coverage: 0.8 });
+  assert.ok(fewer < physical && physical < more, `coverage orders the foam: ${fewer} < ${physical} < ${more}`);
+});
+
+test('the foam of an ocean edit is identical for the same seed and bounded to 0 and 1', () => {
+  const grid = flatGrid(20, 60);
+  const first = vertexGroupWeights(applyMeshEdits(grid, [ocean({ windSpeed: 15, size: 60, foamMemory: 3 })]).mesh, 'foam');
+  const second = vertexGroupWeights(applyMeshEdits(grid, [ocean({ windSpeed: 15, size: 60, foamMemory: 3 })]).mesh, 'foam');
+  assert.deepEqual(Array.from(first), Array.from(second));
+  assert.ok(first.every(weight => weight >= 0 && weight <= 1));
+});
+
+test('foam memory only adds foam, and a sea with none is the Jacobian alone', () => {
+  const grid = flatGrid(20, 60);
+  const foamOf = foamMemory => vertexGroupWeights(applyMeshEdits(grid, [ocean({ windSpeed: 15, size: 60, time: 4, foamMemory })]).mesh, 'foam');
+  const none = foamOf(0);
+  const short = foamOf(0.5);
+  const long = foamOf(4);
+  let trailing = 0;
+  for (let vertex = 0; vertex < none.length; vertex++) {
+    assert.ok(short[vertex] >= none[vertex] && long[vertex] >= none[vertex], 'memory never removes foam');
+    if (long[vertex] > none[vertex] + 0.01) trailing++;
+  }
+  assert.ok(trailing > 0, 'a sea with memory has foam trailing behind the crests');
+});
+
+test('foam fades monotonically, and boundedly, after the crest that made it passes', () => {
+  // One travelling wave: the Jacobian is lowest at the crest time and rises as the crest moves away (within half a period).
+  const wave = { waveX: 0.2, waveZ: 0, waveNumber: 0.2, amplitude: 3, phase: 0, frequency: Math.sqrt(9.81 * 0.2) };
+  const waves = [wave];
+  const threshold = 0.5;
+  const crestTime = 2 * Math.PI / wave.frequency;
+  const foamAfter = (delay, memory) => {
+    const time = crestTime + delay;
+    const now = foamFromJacobian(oceanSurfaceAt(waves, 0, 0, time, 1, threshold).jacobian, threshold);
+    return oceanFoamWithMemory(waves, 0, 0, time, 1, threshold, memory, now);
+  };
+  assert.equal(foamAfter(0, 2), 1, 'full foam at the crest');
+  let previous = 1;
+  for (const delay of [1, 2, 3]) {
+    const foam = foamAfter(delay, 2);
+    assert.ok(foam <= previous + 1e-9 && foam >= 0 && foam <= 1, `foam ${foam} at ${delay} s after the crest, ${previous} before`);
+    assert.ok(foam >= Math.exp(-delay / 2) - 1e-9, 'on a sample it fades no faster than exp(-t / memory)');
+    previous = foam;
+  }
+  assert.ok(foamAfter(1, 2) > foamAfter(1, 0.25), 'a longer memory keeps more foam');
 });
 
 test('the ocean edit takes coverage from -1 to 1 and refuses the rest with the edit number', () => {

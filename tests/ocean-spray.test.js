@@ -7,7 +7,7 @@ import { createAgentScene } from '../src/agent-scene.js';
 import { extractRender } from '../src/mesh-render.js';
 import { createMeshSource } from '../src/particle-emitter-mesh.js';
 
-const SEA = { op: 'ocean', seed: 3, windSpeed: 12, size: 2, resolution: 4, choppiness: 2, time: 1.5 };
+const SEA = { op: 'ocean', coverage: 1, seed: 3, windSpeed: 12, size: 2, resolution: 4, choppiness: 2, time: 1.5 };
 
 function flatGrid(cells, extent) {
   const columns = cells + 1;
@@ -55,13 +55,14 @@ test('spray weighs foamy points where the surface rises, and its velocity is the
   }
   assert.ok(sprayVertices > 5, `a rough sea sprays at ${sprayVertices} vertices`);
   assert.ok(sprayVertices < sprayed.vertexCount, 'not every point sprays');
-  // The rise speed is the time derivative of the height: a small step in time agrees with it.
+  // The rise speed is the time derivative of the height: a central difference over a small step in time agrees with it.
   const step = 1e-3;
   const later = applyMeshEdits(grid, [{ ...SEA, spray: true, time: SEA.time + step }]).mesh;
+  const earlier = applyMeshEdits(grid, [{ ...SEA, spray: true, time: SEA.time - step }]).mesh;
   let compared = 0;
   for (let vertex = 0; vertex < sprayed.vertexCount; vertex++) {
     if (spray[vertex] === 0) continue;
-    const measured = (later.positions[vertex * 3 + 1] - sprayed.positions[vertex * 3 + 1]) / step;
+    const measured = (later.positions[vertex * 3 + 1] - earlier.positions[vertex * 3 + 1]) / (2 * step);
     assert.ok(Math.abs(measured - velocity[vertex * 3 + 1]) < 0.02 * Math.max(1, Math.abs(measured)), `rise ${velocity[vertex * 3 + 1]} against measured ${measured}`);
     compared++;
   }

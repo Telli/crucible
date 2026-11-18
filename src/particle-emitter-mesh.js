@@ -78,11 +78,18 @@ function surfaceSampler(triangles, vectors, weights, threshold) {
     let root = Math.sqrt(random());
     let along = random();
     // A point in a triangle with one painted corner is only painted near that corner: draw again until the interpolated weight reaches the threshold.
-    for (let attempt = 0; weights && threshold > 0 && attempt < MAX_THRESHOLD_TRIES; attempt++) {
-      const interpolated = weights[triangle.vertices[0]] * (1 - root) + weights[triangle.vertices[1]] * root * (1 - along) + weights[triangle.vertices[2]] * root * along;
-      if (interpolated >= threshold) break;
-      root = Math.sqrt(random());
-      along = random();
+    if (weights && threshold > 0) {
+      const interpolatedAt = (rootValue, alongValue) => weights[triangle.vertices[0]] * (1 - rootValue) + weights[triangle.vertices[1]] * rootValue * (1 - alongValue) + weights[triangle.vertices[2]] * rootValue * alongValue;
+      for (let attempt = 0; attempt < MAX_THRESHOLD_TRIES && interpolatedAt(root, along) < threshold; attempt++) {
+        root = Math.sqrt(random());
+        along = random();
+      }
+      // A faint corner can leave too little area above the threshold for a draw to land in: take the strongest corner, whose weight the threshold already keeps.
+      if (interpolatedAt(root, along) < threshold) {
+        const strongest = [0, 1, 2].reduce((best, corner) => (weights[triangle.vertices[corner]] > weights[triangle.vertices[best]] ? corner : best), 0);
+        root = strongest === 0 ? 0 : 1;
+        along = strongest === 1 ? 0 : 1;
+      }
     }
     const weightB = root * (1 - along);
     const weightC = root * along;
