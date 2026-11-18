@@ -12,6 +12,7 @@ import { applyWaterReflection, attachWaterReflection } from './water-reflection.
 // (issue #504), and An saw no stutter in a side-by-side. A still camera keeps its picture either way.
 const WATER_REFLECTION_OPTIONS = { updateEvery: 2 };
 import { renderCommunity } from './community-showcase.js';
+import { resolveRequestedScene } from './showcase-scene-request.js';
 import { createDownloadMeter, downloadBlob, inWholeWorldOrder, readByteLength, readPartRanks } from './showcase-download.js';
 
 // Each scene lives in public/showcase/<id>/scene.json: its GLB, sky, camera, renderer and frame options, and credits.
@@ -32,11 +33,13 @@ const KEY_MOVE_PER_SECOND = 0.6;
 const KEY_TURN_PER_SECOND = 1.6;
 
 const SPINNER_ICON = '<svg class="status-icon spinner" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="3"/><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>';
+const WARNING_ICON = '<svg class="status-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v5M12 7.8v.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 const ERROR_ICON = '<svg class="status-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3 2.5 20h19L12 3Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v4.5M12 17.2v.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 
 const canvas = document.querySelector('#showcase-viewport');
 const frame = document.querySelector('.showcase-frame');
 const status = document.querySelector('#showcase-status');
+const notice = document.querySelector('#showcase-notice');
 const tabs = document.querySelector('#showcase-tabs');
 const resetButton = document.querySelector('#showcase-reset');
 const title = document.querySelector('#showcase-title');
@@ -74,6 +77,15 @@ function showStatus(kind, message) {
   text.className = 'status-text';
   text.textContent = message;
   status.append(text);
+}
+
+// A notice stays up after the scene loads, unlike the loading chip, so a wrong link is still explained.
+function showNotice(message) {
+  notice.hidden = false;
+  notice.innerHTML = WARNING_ICON;
+  const text = document.createElement('span');
+  text.textContent = message;
+  notice.append(text);
 }
 
 // Real bytes fetched so far; the total appears once every file's size is known, so the figure never shrinks.
@@ -424,7 +436,8 @@ window.addEventListener('resize', () => {
 });
 
 renderTabs();
-const requested = new URLSearchParams(location.search).get('scene');
-selectScene(SCENE_IDS.includes(requested) ? requested : SCENE_IDS[0]);
+const requestedScene = resolveRequestedScene(new URLSearchParams(location.search).get('scene'), SCENE_IDS);
+if (requestedScene.notice) showNotice(requestedScene.notice);
+selectScene(requestedScene.id);
 
 renderCommunity({ grid: document.querySelector('#community-grid'), emailLink: document.querySelector('#community-email') });
