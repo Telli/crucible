@@ -192,28 +192,36 @@ A `png16` or `exr` frame is up to four times the 8-bit frame limit (48 MiB). A r
 | Field | Meaning |
 | --- | --- |
 | `items` | 1 to 256 catalog GLB names (as `scene_asset_catalog` lists them, inside `--assets` or `--packs`) or 64 character asset ids. Names are pinned to their asset id at submit. No paths outside the catalog and no URLs. |
-| `size` | 64, 128, 256 (default) or 512 pixels per icon side. The atlas side is at most 4096 px, so 512 takes up to 64 items. |
-| `style` | `clean` (default, the shaded render) or `toon` (outlines and three light bands, from [line art](line-art.md)). `sketch` is refused until it ships. |
+| `size` | 64, 128, 256 (default) or 512 pixels per icon side. The atlas side is at most 4096 px, so 512 takes up to 64 single-angle items. |
+| `style` | `clean` (default, the shaded render), `toon` (outlines and three light bands, from [line art](line-art.md)) or `sketch` (ink outline, pencil hatching that follows the light, paper fill; see below). |
 | `viewpoint` | `"three-quarter"` (default: azimuth 35, elevation 25 degrees) or `{ azimuth, elevation }` in degrees, from the front of the model (+Z in glTF). |
 | `scale` | `fit` (default): every item fills its icon. `relative`: one view height for the set, so the largest item fills its icon and a sword stays smaller than a chest. |
 | `padding` | The empty border as a fraction of the icon side, 0.02 to 0.4 (default 0.08), the same for every item. |
+| `angles` | 1 (default), 4 or 8: a turnaround per item, with that many views spaced evenly round the model starting at the viewpoint azimuth. The atlas gets one row per item and one column per angle. Items times `angles` is at most 256 and `angles` times `size` at most 4096. Each item keeps one view height across its views (under `relative`, the whole set shares one). |
+| `breakdown` | `true` (sketch only): per item, a strip of four steps (shaded, outline, hatching, final) drawn from the camera of the item's first view. |
+| `seed` | 0 to 65535 (sketch only, default 0): the line wobble. The same items, settings and seed give the same bytes. |
+| `sketch` | `{ inkColor, paperColor, hatchDensity, jitter }` (sketch only): ink `#rrggbb` (default `#2b2a33`), paper `#rrggbb` (`#f4ecd8`), hatch density 0.5 to 2 (1) and line jitter 0 to 1 (0.35). |
 
-The camera is orthographic, so an item's size does not depend on its distance, and the light is a fixed three-point rig that turns with the view, so every icon is lit from the same side. There is no ground and no sky: the background is transparent.
+The camera is orthographic, so an item's size does not depend on its distance, and the light is a fixed three-point rig that turns with the view, so every icon is lit from the same side. There is no ground and no sky: the background is transparent (a sketch icon is filled with its paper colour where the model is).
 
 Framing fits the silhouette, not the bounding sphere. The job draws the item once from a bounding sphere, measures the alpha box of what was drawn and moves the camera until that box is centred and spans the icon minus its padding (up to four draws per item). A thin or flat item such as a sword or a coin therefore fills its icon instead of drawing small. An item that draws nothing, or cannot be framed in four draws, fails the job and names the item.
 
-Output, all in the job's folder: `icon-0.png` to `icon-<n-1>.png` (one per item, in order), `atlas.png` (a near square grid, row by row, transparent where unused) and `icons.json`:
+### The sketch style
+
+Sketch is a [user pass](user-passes.md) on the shaded frame, so it has the same scene, camera and framing as the other styles. It inks the outline from the silhouette, the depth steps and the creases, hatches the shadow with pencil lines in three directions chosen by how dark the light is, and fills the model with paper. Hatch spacing is laid out in whole pixels (3 px at 64, growing with the icon) so the lines do not beat against the pixel grid. A test renders a model at 64 px and checks that the sketch stays a line pattern: the outline is inked along at least 95 percent of the silhouette, and in the hatched band at least 80 percent of the pixels are clearly paper or ink, not grey, with a contrast of at least 0.7 of the ink to paper range. [Icon sheets](learn/icon-sheets.md) (the docs guide page) shows the three styles and a breakdown.
+
+Output, all in the job's folder: `icon-0.png` to `icon-<n-1>.png` (one per frame, items first and then angles), `breakdown-<item>.png` (one strip per item, with `breakdown`), `atlas.png` (a near square grid, row by row, transparent where unused) and `icons.json`:
 
 ```json
 { "version": 1, "size": 256, "style": "toon", "scale": "relative", "padding": 0.08, "viewpoint": { "azimuth": 35, "elevation": 25 },
   "atlas": { "file": "atlas.png", "width": 512, "height": 512, "columns": 2, "rows": 2 },
-  "icons": [{ "name": "sword", "file": "icon-0.png", "source": "sword.glb", "asset": "<id>", "angle": 35,
+  "icons": [{ "name": "sword", "file": "icon-0.png", "source": "sword.glb", "asset": "<id>", "item": 0, "turn": 0, "angle": 35, "breakdown": "breakdown-0.png",
     "rect": { "x": 0, "y": 0, "width": 256, "height": 256 }, "bounds": { "x": 70, "y": 21, "width": 116, "height": 214 }, "viewHeight": 2.1 }] }
 ```
 
-`rect` is the icon's cell in the atlas, `bounds` the box of its pixels inside the icon, and `viewHeight` the metres the icon's height spans. The JSON is plain, so Godot, Unity, Phaser and web code read it without a converter. The same items and settings give byte-identical files on the `cpu` backend.
+A sketch job adds `angles`, `seed` and `sketch` at the top level. `item` is the item's index, `turn` the view's index and `angle` its azimuth in degrees; `breakdown` names the item's strip and appears on its first view only. `rect` is the icon's cell in the atlas, `bounds` the box of its pixels inside the icon, and `viewHeight` the metres the icon's height spans. The JSON is plain, so Godot, Unity, Phaser and web code read it without a converter. The same items and settings give byte-identical files on the `cpu` backend.
 
-Not in this release: `style: "sketch"`, turnaround sheets (`angles`), the `breakdown` strip, HDRI lighting, `background` and `outline` (issue #2031; each is refused by name), and scene node ids as items. `scene_capabilities` topic `jobs` lists the limits under `icons`. `node scripts/smoke-icons.mjs --assets <folder> --out <folder> --style toon` renders a folder of GLBs and checks every icon's frame.
+Not in this release: HDRI lighting, `background` and `outline` (issue #2031; each is refused by name), and scene node ids as items. The job's deadline grows with the frame count: about 4 s per frame (twice when the scale is shared across views) and 6 s per breakdown strip. `scene_capabilities` topic `jobs` lists the limits under `icons`. `node scripts/smoke-icons.mjs --assets <folder> --out <folder> --style toon` renders a folder of GLBs and checks every icon's frame.
 
 ## Path tracer
 

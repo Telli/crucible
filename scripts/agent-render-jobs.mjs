@@ -28,11 +28,25 @@ const DEFAULT_LIMITS = Object.freeze({ maxRecords: 32, maxStoreBytes: 512 * 1024
 /** Time the page needs to start, draw the scene and encode the PNG around a path trace that runs for its whole maxSeconds. */
 const PATH_TRACE_OVERHEAD_MS = 60 * 1000;
 
+const ICON_FRAME_ALLOWANCE_MS = 4000;
+const ICON_BREAKDOWN_ALLOWANCE_MS = 6000;
+
+/**
+ * An icon is its own scene: the job loads the GLB and draws it up to four times to frame it, and draws it all again when the
+ * set shares one scale (relative, or several angles). A breakdown adds three draws of each item. Measured on the cpu backend
+ * at about 5 s per icon with a breakdown and 3 s without.
+ */
+function iconDeadlineMs({ frameCount, scale, angles, breakdown, items }) {
+  const passes = scale === 'relative' || angles > 1 ? 2 : 1;
+  return BASE_DEADLINE_MS + frameCount * ICON_FRAME_ALLOWANCE_MS * passes + (breakdown ? items.length * ICON_BREAKDOWN_ALLOWANCE_MS : 0);
+}
+
 /**
  * 60 s plus 2 s per frame, scaled up for frames larger than 1024x576, never above the ceiling. A path trace may run for
  * its own maxSeconds on every frame, so its deadline also reaches that plus the overhead and the trace stops itself first.
  */
-export function jobDeadlineMs({ frameCount, width, height, renderer }, maximumMs = MAXIMUM_JOB_DEADLINE_MS) {
+export function jobDeadlineMs({ kind, frameCount, width, height, renderer, scale, angles, breakdown, items }, maximumMs = MAXIMUM_JOB_DEADLINE_MS) {
+  if (kind === 'icons') return Math.min(maximumMs, iconDeadlineMs({ frameCount, scale, angles, breakdown, items }));
   const sizeScale = Math.max(1, (width * height) / REFERENCE_FRAME_PIXELS);
   const frameDeadline = Math.ceil(BASE_DEADLINE_MS + frameCount * FRAME_ALLOWANCE_MS * sizeScale);
   const traceDeadline = renderer?.type === 'pathTracer' ? Math.ceil(renderer.maxSeconds * 1000 * frameCount) + PATH_TRACE_OVERHEAD_MS : 0;
@@ -304,10 +318,10 @@ function passesFrom(passes, kind) {
 }
 
 /** Every artifact filename of a job, lit image first and then each requested pass, frame by frame. */
-export function artifactNames(kind, passes = [], format = 'png', multilayer = false, stillCount = 8) {
+export function artifactNames(kind, passes = [], format = 'png', multilayer = false, stillCount = 8, iconSettings = {}) {
   if (kind === 'video') return ['render.mp4'];
-  // An icons job has one frame per item, so its frame count is its item count.
-  if (kind === 'icons') return iconArtifactNames(stillCount);
+  // An icons job has one frame per icon (an item at one angle); a breakdown adds one strip per item.
+  if (kind === 'icons') return iconArtifactNames(stillCount, { itemCount: iconSettings.breakdown ? iconSettings.items.length : 0 });
   const extension = format === 'exr' ? 'exr' : 'png';
   const stems = kind === 'image' ? ['render'] : Array.from({ length: stillCount }, (_, index) => `frame-${index}`);
   if (multilayer) return stems.map(stem => `${stem}.${extension}`);
@@ -354,7 +368,7 @@ function artifactByteLimit(settings, limits) {
 
 function allowedFile(name) {
   const passNames = RENDER_PASS_NAMES.join('|');
-  const artifact = new RegExp(`^(?:render\\.(?:png|mp4|exr)|(?:icon-\\d{1,3}|atlas)\\.png|icons\\.json|(?:render|frame-\\d{1,3})(?:-(?:${passNames}))?\\.(?:png|exr))(?:\\.partial)?$`);
+  const artifact = new RegExp(`^(?:render\\.(?:png|mp4|exr)|(?:icon-\\d{1,3}|breakdown-\\d{1,3}|atlas)\\.png|icons\\.json|(?:render|frame-\\d{1,3})(?:-(?:${passNames}))?\\.(?:png|exr))(?:\\.partial)?$`);
   return INTERNAL_FILES.has(name) || artifact.test(name);
 }
 
@@ -842,7 +856,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       boundedNumber(record.progress.maximumPendingFrames, 0, 1, 'persisted pending frames', true);
       if (record.metrics !== undefined) record.metrics = jsonCopy(record.metrics, 65536);
       if (record.reason !== undefined && (typeof record.reason !== 'string' || record.reason.length > 2048)) throw new Error('Invalid persisted job reason.');
-      const namesAllowed = artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer, settings.frameCount);
+      const namesAllowed = artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer, settings.frameCount, settings);
       if (!Array.isArray(record.artifacts) || record.artifacts.length > namesAllowed.length) throw new Error('Invalid persisted artifacts.');
       const seen = new Set();
       for (const artifact of record.artifacts) {
@@ -925,7 +939,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       record.state = 'finalizing';
       await persist(job);
       objectKeys(completed, ['artifacts', 'metrics'], 'runner result');
-      const expected = artifactNames(record.settings.kind, record.settings.passes, record.settings.format, record.settings.multilayer, record.settings.frameCount);
+      const expected = artifactNames(record.settings.kind, record.settings.passes, record.settings.format, record.settings.multilayer, record.settings.frameCount, record.settings);
       if (!Array.isArray(completed.artifacts) || completed.artifacts.length !== expected.length) throw new Error('Runner did not return the required fixed artifacts.');
       const directory = await directoryFor(record.jobId);
       const metrics = jsonCopy(completed.metrics ?? {}, 65536);

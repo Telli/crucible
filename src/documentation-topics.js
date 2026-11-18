@@ -6,7 +6,7 @@ export const documentationGroups = [
   { title: 'Model and fit surfaces', icon: 'cube', ids: ['procedural-modeling', 'sculpt-brushes', 'contact-detection', 'shrinkwrap-and-surface-patches', 'retained-surface-attachments'] },
   { title: 'Worlds', icon: 'world', ids: ['terrain-and-ground-textures', 'trees-and-grass', 'grass-fields', 'wheeled-vehicles', 'baked-liquid'] },
   { title: 'Animate and interact', icon: 'motion', ids: ['deterministic-animation', 'animation-curves-and-mixing', 'skeletal-and-morph-animation', 'humanoid-retargeting-and-crowds', 'recorded-physics', 'assemblies-and-interaction'] },
-  { title: 'Assets and media', icon: 'image', ids: ['import-and-export-models', 'images-and-films', 'render-a-png-from-a-script-without-mcp'] },
+  { title: 'Assets and media', icon: 'image', ids: ['import-and-export-models', 'images-and-films', 'icon-sheets', 'render-a-png-from-a-script-without-mcp'] },
   { title: 'Reference and workflows', icon: 'book', ids: ['api-reference', 'performance-and-memory', 'lifecycle-and-troubleshooting', 'connect-mcp', 'agent-workflows', 'optimize-for-agents', 'models-and-ai-agents', 'addons-and-limits', 'release-and-source-availability', 'resources'] },
 ];
 
