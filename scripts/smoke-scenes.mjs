@@ -37,6 +37,19 @@ try {
       return lastRow.bottom <= panel.getBoundingClientRect().bottom;
     });
     assert.ok(lastRowReachable, `Object studio Resolution row cannot be scrolled into view at ${size.width}x${size.height}.`);
+    const fade = await page.evaluate(async () => {
+      const panel = document.querySelector('.controls');
+      const read = async (top) => {
+        panel.scrollTop = top;
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return parseFloat(getComputedStyle(panel).getPropertyValue('--controls-fade')) || 0;
+      };
+      return { overflows: panel.scrollHeight > panel.clientHeight, atTop: await read(0), atBottom: await read(panel.scrollHeight) };
+    });
+    if (fade.overflows) {
+      assert.ok(fade.atTop > 0, `Object studio panel shows no fade while more controls are below at ${size.width}x${size.height}.`);
+      assert.equal(fade.atBottom, 0, `Object studio panel still fades at its bottom edge at ${size.width}x${size.height}.`);
+    }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('http://127.0.0.1:5179/nature.html');
