@@ -1,10 +1,10 @@
 import './style.css';
 import './brand.js';
-import { CrucibleRenderer } from './renderer.js';
+import { CrucibleRenderer, groundPart, studioFloorHeight } from './renderer.js';
 import { createAdaptiveResolution, createGpuTimer } from './adaptive-quality.js';
 import { loadSampleModel } from './model.js';
 import { downloadGlb } from './export.js';
-import { assemblyOffset } from './assembly.js';
+import { assemblyBounds, assemblyOffset, distanceToFill } from './assembly.js';
 import { approachValue } from './preview-transition.js';
 
 const canvas = document.querySelector('#viewport');
@@ -45,14 +45,31 @@ function notify(message, failure = false) {
 // The microscope's black stand and foot crush into the floor under the default studio light, so this studio lifts the ambient and fill terms.
 const MICROSCOPE_AMBIENT = 2.5;
 const MICROSCOPE_FILL = 2;
+// The default studio floor is as dark as the backdrop, so the black stand sinks into it. This sample stands on a floor that is about twice as light
+// (the floor shader scales its tone by the floor colour), which the stand and its shadow read against.
+const MICROSCOPE_FLOOR_COLOR = [0.08, 0.1, 0.12];
+function microscopeFloor(visibleParts) {
+  const floor = groundPart(studioFloorHeight(visibleParts));
+  return { ...floor, material: { ...floor.material, color: [...MICROSCOPE_FLOOR_COLOR] } };
+}
 // The settings panel covers the right 240 px and the title the left 340 px, so the model centres 50 px right of the canvas middle.
 const CENTER_SHIFT_PIXELS = 100;
+
+// The exploded pose is framed from its own bounds, so its parts fill most of the canvas whatever the layout.
+const EXPLODED_BOUNDS = assemblyBounds(parts, 1);
+const EXPLODED_CENTER_HEIGHT = (EXPLODED_BOUNDS.minimum[1] + EXPLODED_BOUNDS.maximum[1]) / 2;
+const EXPLODED_SIZE = [Math.hypot(EXPLODED_BOUNDS.maximum[0] - EXPLODED_BOUNDS.minimum[0], EXPLODED_BOUNDS.maximum[2] - EXPLODED_BOUNDS.minimum[2]), EXPLODED_BOUNDS.maximum[1] - EXPLODED_BOUNDS.minimum[1]];
+const EXPLODED_FILL = 0.8;
+const VERTICAL_FIELD_OF_VIEW = Math.PI / 5.5;
 
 function camera() {
   const mobile = canvas.clientWidth <= 700;
   if (renderer) renderer.projection[8] = mobile || state.exporting ? 0 : -CENTER_SHIFT_PIXELS / canvas.clientWidth;
-  const distance = state.distance * (mobile ? 1.05 : 1) + state.assembly * (mobile ? 7 : 6.5);
-  const target = [0, (mobile ? 1.8 : state.targetHeight) + state.assembly * 1.5, 0];
+  const assembledDistance = state.distance * (mobile ? 1.05 : 1);
+  const explodedDistance = distanceToFill(EXPLODED_SIZE, { verticalFov: VERTICAL_FIELD_OF_VIEW, aspect: canvas.clientWidth / canvas.clientHeight, fill: EXPLODED_FILL }) * (state.distance / 10.5);
+  const distance = assembledDistance + (explodedDistance - assembledDistance) * state.assembly;
+  const assembledHeight = mobile ? 1.8 : state.targetHeight;
+  const target = [0, assembledHeight + (EXPLODED_CENTER_HEIGHT - assembledHeight) * state.assembly, 0];
   // Looking down a little in the exploded view shows the flat mirror parts as discs instead of edge-on slivers.
   const elevation = state.elevation + state.assembly * 0.4;
   return {
@@ -101,7 +118,7 @@ function invalidate() {
 
 function initialize() {
   const visibleParts = state.layer === 'all' ? parts : parts.filter((part) => part.assembly?.layer === state.layer);
-  renderer = new CrucibleRenderer(canvas, visibleParts, { hdr: true, samples: Number(renderParameters.get('samples') ?? 4), memoryBudgetMiB: Number(renderParameters.get('memory') ?? 256), pixelRatio: selectedPixelRatio, createGpuTimer: isExport ? null : createGpuTimer, shadowBounds: { extent: 6, eye: [-3, 7, 4], target: [0, 1.5, 0] } });
+  renderer = new CrucibleRenderer(canvas, visibleParts, { hdr: true, samples: Number(renderParameters.get('samples') ?? 4), memoryBudgetMiB: Number(renderParameters.get('memory') ?? 256), pixelRatio: selectedPixelRatio, ground: microscopeFloor(visibleParts), createGpuTimer: isExport ? null : createGpuTimer, shadowBounds: { extent: 6, eye: [-3, 7, 4], target: [0, 1.5, 0] } });
   document.querySelector('#parts').textContent = `${visibleParts.length} parts · ${Math.round(renderer.triangles / 1000)}k triangles`;
   document.querySelector('#calls').textContent = `${renderer.batches.length} geometry draws`;
   invalidate();

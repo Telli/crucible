@@ -10,13 +10,13 @@ const SAMPLE_PREFIX = /^vintage_microscope_(01_)?/;
 // and never pushes a part below the floor.
 const SAMPLE_PARTS = Object.freeze({
   base: { label: 'Base', layer: 'exterior', section: 'Base and mirror', offset: [0, 0, 0] },
-  mirror_arm: { label: 'Mirror arm', layer: 'exterior', section: 'Base and mirror', offset: [-1.6, 0, 0] },
-  mirror_base: { label: 'Mirror frame', layer: 'exterior', section: 'Base and mirror', offset: [-1.6, 1.3, 0.3] },
-  mirror_base_1: { label: 'Mirror glass', layer: 'exterior', section: 'Base and mirror', offset: [-1.6, 2.1, 0.3] },
+  mirror_arm: { label: 'Mirror arm', layer: 'exterior', section: 'Base and mirror', offset: [-2.4, 0, 0] },
+  mirror_base: { label: 'Mirror frame', layer: 'exterior', section: 'Base and mirror', offset: [-2.4, 1.5, 0.3] },
+  mirror_base_1: { label: 'Mirror glass', layer: 'exterior', section: 'Base and mirror', offset: [-2.4, 2.8, 0.3] },
   rack_mount_support: { label: 'Limb and rack', layer: 'exterior', section: 'Limb', offset: [0, 1, 0] },
-  condenser: { label: 'Condenser', layer: 'interior', section: 'Optics', offset: [1.6, 0.8, 0] },
-  revolver: { label: 'Objective turret', layer: 'interior', section: 'Optics', offset: [0, 2.3, 0] },
-  adjustment: { label: 'Focus knobs', layer: 'interior', section: 'Focus', offset: [1.6, 1.6, 0] },
+  condenser: { label: 'Condenser', layer: 'interior', section: 'Optics', offset: [2.4, 0.6, 0] },
+  revolver: { label: 'Objective turret', layer: 'interior', section: 'Optics', offset: [0, 2.6, 0] },
+  adjustment: { label: 'Focus knobs', layer: 'interior', section: 'Focus', offset: [2.4, 1.9, 0] },
   eye_piece: { label: 'Eyepiece tube', layer: 'interior', section: 'Optics', offset: [0, 3, 0] },
 });
 

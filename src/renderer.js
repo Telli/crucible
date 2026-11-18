@@ -448,7 +448,8 @@ export function studioFloorHeight(parts) {
   return 0.019 - bottom > height * 0.1 ? bottom + height * 0.02 : 0.019;
 }
 
-function groundPart(height = 0.019) {
+/** The studio floor as a part: a 200 by 200 plane at `height` with the floor shader. */
+export function groundPart(height = 0.019) {
   return {
     name: 'Studio floor',
     geometry: {

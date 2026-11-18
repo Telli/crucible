@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assemblyOffset } from '../src/assembly.js';
+import { assemblyBounds, assemblyOffset, distanceToFill } from '../src/assembly.js';
 import { loadSampleParts } from './helpers/sample-model.js';
 
 test('export displacement exactly matches the staged shader smoothstep', () => {
@@ -47,4 +47,47 @@ test('the fully exploded sample keeps every part above the floor and the parts s
   for (const [name, { lowest }] of exploded) assert.ok(lowest >= -1e-6, `${name} stays above the floor when exploded (lowest ${lowest.toFixed(2)})`);
   const spine = ['Base', 'Limb and rack', 'Objective turret', 'Eyepiece tube'].map(name => exploded.get(name).center);
   assert.deepEqual([...spine].sort((first, second) => first - second), spine, 'the central parts rise in assembly order');
+});
+
+test('assemblyBounds measures the posed parts and refuses what it cannot measure', async () => {
+  const parts = await loadSampleParts();
+  const assembled = assemblyBounds(parts, 0);
+  const exploded = assemblyBounds(parts, 1);
+  assert.ok(assembled.maximum[1] > 3.4 && assembled.maximum[1] < 3.8, `assembled height ${assembled.maximum[1]}`);
+  assert.ok(exploded.maximum[1] > 6 && exploded.maximum[1] < 7, `exploded height ${exploded.maximum[1]}`);
+  assert.ok(exploded.maximum[0] - exploded.minimum[0] > 4.5, 'the fanned parts widen the exploded pose');
+  assert.throws(() => assemblyBounds([]), /non-empty array/);
+  assert.throws(() => assemblyBounds([{ name: 'bare' }]), /Part "bare" needs geometry\.positions and a matrix/);
+});
+
+test('no two parts of the fully exploded sample overlap, so every part can be told apart', async () => {
+  const parts = await loadSampleParts();
+  const boxes = parts.map(part => ({ name: part.name, ...assemblyBounds([part], 1) }));
+  for (let first = 0; first < boxes.length; first++) {
+    for (let second = first + 1; second < boxes.length; second++) {
+      const overlaps = [0, 1, 2].every(axis => boxes[first].minimum[axis] < boxes[second].maximum[axis] && boxes[second].minimum[axis] < boxes[first].maximum[axis]);
+      assert.ok(!overlaps, `${boxes[first].name} and ${boxes[second].name} overlap when exploded`);
+    }
+  }
+});
+
+test('distanceToFill returns the distance at which the box fills the asked share of the shorter view side', () => {
+  const verticalFov = Math.PI / 2;
+  assert.ok(Math.abs(distanceToFill([2, 4], { verticalFov, aspect: 1, fill: 1 }) - 2) < 1e-9);
+  assert.ok(Math.abs(distanceToFill([2, 4], { verticalFov, aspect: 1, fill: 0.5 }) - 4) < 1e-9);
+  assert.ok(Math.abs(distanceToFill([8, 2], { verticalFov, aspect: 2, fill: 1 }) - 2) < 1e-9, 'a wide box is limited by the width');
+  assert.ok(Math.abs(distanceToFill([1, 1], { verticalFov, aspect: 2 }) - 0.625) < 1e-9, 'fill defaults to 0.8');
+  for (const bad of [{ verticalFov: 0, aspect: 1 }, { verticalFov, aspect: 0 }, { verticalFov, aspect: 1, fill: 1.5 }, { verticalFov, aspect: NaN }]) {
+    assert.throws(() => distanceToFill([1, 1], bad), /distanceToFill needs/);
+  }
+  assert.throws(() => distanceToFill([NaN, 1], { verticalFov, aspect: 1 }), /distanceToFill needs/);
+});
+
+test('framing the exploded sample at the studio field of view fills most of the view height', async () => {
+  const parts = await loadSampleParts();
+  const { minimum, maximum } = assemblyBounds(parts, 1);
+  const verticalFov = Math.PI / 5.5;
+  const distance = distanceToFill([maximum[0] - minimum[0], maximum[1] - minimum[1]], { verticalFov, aspect: 1.6, fill: 0.8 });
+  const shownShare = (maximum[1] - minimum[1]) / (2 * distance * Math.tan(verticalFov / 2));
+  assert.ok(Math.abs(shownShare - 0.8) < 1e-9, `share ${shownShare}`);
 });

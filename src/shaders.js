@@ -934,6 +934,8 @@ ${featureCode("worldFinal")}  float fog = 1.0 - exp(-length(worldPosition - eye)
     float distanceFade = exp(-length(worldPosition.xz) * 0.08);
     float contact = 1.0 - 0.1 * exp(-dot(worldPosition.xz, worldPosition.xz) * 1.4);
     vec3 floorColor = mix(vec3(0.145, 0.162, 0.177), vec3(0.17, 0.19, 0.205), distanceFade);
+    // The default floor colour (0.04, 0.05, 0.06) leaves the tone alone; a lighter or darker floor colour scales it.
+    floorColor = clamp(floorColor * color / vec3(0.04, 0.05, 0.06), 0.0, 1.0);
     vec3 result = floorColor * (0.72 + 0.28 * visibility) * contact;
     outputColor = vec4(hdrEnabled > 0.5 ? pow(result, vec3(2.2)) : result, 1.0);
   }
