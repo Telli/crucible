@@ -46,7 +46,7 @@ The base contour validation does not establish that an arbitrary bevel produces 
 `tube(path, { radius = 0.1, segments = 64, radialSegments = 12, closed = false, maxVertices = 250000 })`
 sweeps a circular cross-section along a centripetal Catmull-Rom curve through XYZ points.
 Open paths need two points. Closed paths need three. Closed paths join the final sample back to the first.
-Open tube ends have no caps. Paths can intersect themselves.
+Open tube ends have no caps. Paths can intersect themselves. A bad radius, `closed` flag, profile, contour or torus arc throws an error that names the field, the value received and an example; in a scene recipe the field starts with `geometries[i]`.
 
 Segments range from 3 to 2048. Radial segments range from 3 to 128.
 

@@ -1,5 +1,5 @@
 import { mat4, mat3 } from 'gl-matrix';
-import { box, circle, cone, cylinder, grid, icoSphere, sphere, torus } from './geometry.js';
+import { box, checkTorusShape, circle, cone, cylinder, grid, icoSphere, sphere, torus } from './geometry.js';
 import { createSceneGraph } from './scene-graph.js';
 import { currentFormatName } from './legacy-names.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
@@ -595,14 +595,19 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
       return 2 * sides * 2 + 2 * (sides + 1);
     }
     case 'torus':
+      checkTorusShape(value.tubeRadius, value.arc);
       return (detail('segments', 96, 3, 2048) + 1) * (detail('sides', 24, 3, 128) + 1) + 2 * ((value.sides ?? 24) + 2);
-    case 'lathe':
-      return (detail('segments', 64, 3, 2048) + 1) * points(value.profile, 2, 2, 'profile');
+    case 'lathe': {
+      const profileCount = points(value.profile, 2, 2, 'profile');
+      agentSceneModule('modeling').checkLatheProfile(value.profile);
+      return (detail('segments', 64, 3, 2048) + 1) * profileCount;
+    }
     case 'tube':
       points(value.path, 3, value.closed ? 3 : 2, 'path');
       if (value.closed !== undefined && typeof value.closed !== 'boolean') {
         throw invalidField('closed', value.closed, 'true or false', TypeError);
       }
+      agentSceneModule('modeling').checkTubeInputs(value.path, value.radius ?? 0.1, value.closed ?? false);
       return (detail('segments', 64, 3, 2048) + 1) * (detail('radialSegments', 12, 3, 128) + 1);
     case 'curve': {
       if (['shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow'].some(field => value[field] !== undefined)) {
@@ -636,6 +641,7 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
       if (count > 4096) {
         throw invalidField('contour', `${count} points`, 'a contour and holes with at most 4096 points in total; simplify them');
       }
+      agentSceneModule('modeling').checkExtrudeRings(value.contour, holes);
       const beveled = (value.bevel ?? 0) > 0 || (value.bevelThickness ?? value.bevel ?? 0) > 0;
       return 6 * (count + holes.length * 2 - 2) + 6 * count * (detail('steps', 1, 1, 256) + (beveled ? detail('bevelSegments', 3, 1, 32) * 2 : 0));
     }
