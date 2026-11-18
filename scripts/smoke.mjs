@@ -4,16 +4,17 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import { viteChildEnvironment, viteOutputMentionsAddress } from './vite-output.mjs';
 
 const artifactDirectory = new URL('../artifacts/', import.meta.url);
 await mkdir(artifactDirectory, { recursive: true });
-const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5178', '--strictPort'], { cwd: new URL('..', import.meta.url), windowsHide: true, stdio: 'pipe' });
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5178', '--strictPort'], { cwd: new URL('..', import.meta.url), windowsHide: true, stdio: 'pipe', env: viteChildEnvironment() });
 let browser;
 try {
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Vite did not start.')), 15000);
     server.stdout.on('data', (data) => {
-      if (data.toString().includes('127.0.0.1:5178')) { clearTimeout(timeout); resolve(); }
+      if (viteOutputMentionsAddress(data, '127.0.0.1:5178')) { clearTimeout(timeout); resolve(); }
     });
     server.on('error', reject);
     server.on('exit', (code) => { clearTimeout(timeout); reject(new Error(`Vite exited ${code}`)); });
