@@ -24,7 +24,7 @@ import { chooseNativeTemporal, createTemporalAccumulator, temporalFrameSeed } fr
 import { readNativeCapacity } from './native-capacity.mjs';
 import { chooseNativeInstancing, chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, fetchNativeExport, isNativeTimeLimitError, traceFrameNative, traceTexelsNative } from './agent-native-trace.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from './mcp-addons.mjs';
-import { createAgentAssetCatalog } from './agent-asset-catalog.mjs';
+import { createAgentAssetCatalog, fingerprintAssetDirectory } from './agent-asset-catalog.mjs';
 import { launchWithShaderCache, shaderCacheDirectory } from './agent-shader-cache.mjs';
 import { createPackRegistry } from './agent-packs.mjs';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
@@ -199,6 +199,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   let queue = Promise.resolve();
   let closing;
   let catalogPromise;
+  let catalogFingerprint;
   let packsPromise;
   let jobsPromise;
   // Set by submitJob for the one job that may run; runJob takes it. Kept in the job folder, the history never leaves the machine.
@@ -372,6 +373,25 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     catalogPromise ??= packs().then(registry => createAgentAssetCatalog(assetRoot ?? null, registry?.files));
     return catalogPromise;
   }
+  /**
+   * The catalog after a stat-only look at the --assets folder: a file that appeared, vanished or was rewritten since the last build
+   * makes a new catalog (#2209), so a download made mid-session is listed and placeable by name. Used where an agent asks for the
+   * list or names a file; reads by asset ID keep the catalog they were pinned against.
+   */
+  async function rescannedCatalog() {
+    if (assetRoot) {
+      const fingerprint = await fingerprintAssetDirectory(assetRoot);
+      if (fingerprint !== catalogFingerprint) {
+        catalogFingerprint = fingerprint;
+        catalogPromise = undefined;
+      }
+    }
+    const ready = catalog();
+    ready.catch(() => {
+      if (catalogPromise === ready) catalogPromise = undefined;
+    });
+    return ready;
+  }
   // Installed data-only packs (docs/packs.md): checked once per runtime; their GLB, image, look and HDRI files join the catalog.
   function packs() {
     if (!packsRoot) return Promise.resolve(null);
@@ -381,15 +401,15 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   /** Replaces each `asset: { name }` placement of a recipe or edit list with its catalog id, so everything after this holds the pinned hash. */
   async function pinNamedAssets(value) {
-    if (namesCatalogFiles(value)) resolveAssetPlacementNames(value, (await catalog()).resolveName);
-    if (namesCatalogSequences(value)) await resolveCatalogSequenceNames(value, pattern => catalog().then(assets => assets.resolveSequence(pattern)));
+    if (namesCatalogFiles(value)) resolveAssetPlacementNames(value, (await rescannedCatalog()).resolveName);
+    if (namesCatalogSequences(value)) await resolveCatalogSequenceNames(value, pattern => rescannedCatalog().then(assets => assets.resolveSequence(pattern)));
   }
 
   /** The same for the asset recipe of scene_create_asset: `assetName` (a catalog file name) becomes `assetId`. */
   async function pinNamedAssetRecipe(recipe) {
     if (recipe?.assetName === undefined) return;
     if (recipe.assetId !== undefined) throw new TypeError('Pass exactly one of recipe.assetId (the pinned SHA-256) or recipe.assetName (the catalog file name), not both.');
-    recipe.assetId = (await catalog()).resolveName(recipe.assetName);
+    recipe.assetId = (await rescannedCatalog()).resolveName(recipe.assetName);
     delete recipe.assetName;
   }
 
@@ -443,7 +463,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
    */
   async function pinIconItems(settings) {
     if (!Array.isArray(settings.items)) return settings;
-    const readyCatalog = await catalog();
+    const readyCatalog = await rescannedCatalog();
     const items = await Promise.all(settings.items.map(async item => {
       if (typeof item !== 'string') return item;
       if (/^[0-9a-f]{64}$/.test(item)) {
@@ -1319,7 +1339,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           return { pack, [kind === 'recipes' ? 'recipe' : 'material']: recipe ?? material, json: (await packs()).read(kind, pack, recipe ?? material) };
         }
         if (!assetRoot && !packsRoot) return { configured: false, assets: [] };
-        return { configured: true, ...(await catalog()).list(), ...(packsRoot && { packs: (await packs()).list() }) };
+        return { configured: true, ...(await rescannedCatalog()).list(), ...(packsRoot && { packs: (await packs()).list() }) };
       });
     },
     createAsset({ recipe }) {
