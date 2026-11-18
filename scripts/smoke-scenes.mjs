@@ -20,7 +20,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  for (const size of [{ width: 1280, height: 800 }, { width: 1024, height: 700 }]) {
+  for (const size of [{ width: 1280, height: 800 }, { width: 1024, height: 700 }, { width: 1024, height: 768 }, { width: 1280, height: 720 }]) {
     await page.setViewportSize(size);
     await page.goto('http://127.0.0.1:5179/object.html');
     await page.waitForSelector('#benchmark');
@@ -48,6 +48,16 @@ try {
       return footerItems.filter((item) => item.width > 0 && item.left < panel.right && item.right > panel.left && item.top < panel.bottom && item.bottom > panel.top).length;
     });
     assert.equal(overlaps, 0, `Object studio footer overlaps the settings panel at ${size.width}x${size.height}.`);
+    const autoOrbitProblems = await page.evaluate(() => {
+      const orbit = document.querySelector('#rotate').getBoundingClientRect();
+      const panel = document.querySelector('.controls').getBoundingClientRect();
+      const problems = [];
+      if (orbit.left < 0 || orbit.top < 0 || orbit.right > window.innerWidth || orbit.bottom > window.innerHeight) problems.push('sits outside the viewport');
+      if (orbit.height < 32) problems.push('is under 32 px tall');
+      if (orbit.left < panel.right && orbit.right > panel.left && orbit.top < panel.bottom && orbit.bottom > panel.top) problems.push('overlaps the settings panel');
+      return problems;
+    });
+    assert.deepEqual(autoOrbitProblems, [], `Object studio Auto orbit button is not fully visible at ${size.width}x${size.height}.`);
     const lastRowReachable = await page.evaluate(() => {
       const panel = document.querySelector('.controls');
       panel.scrollTop = panel.scrollHeight;

@@ -110,7 +110,7 @@ h2 { font-weight: 500; font-size: 20px; margin: 0 0 15px; }
   .quality-label { display: none; }
   footer { inset: auto 20px 20px; display: grid; gap: 8px; }
   .metrics { margin: 0; font-size: 10px; justify-content: space-between; }
-  footer button { padding: 5px 0; text-align: left; font-size: 11px; background: transparent; }
+  footer button { padding: 5px 0; min-height: 32px; text-align: left; font-size: 11px; background: transparent; }
   .notice { bottom: 360px; }
   .benchmark-result { left: 20px; bottom: 85px; max-width: calc(100% - 40px); }
 }
