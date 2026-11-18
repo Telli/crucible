@@ -367,6 +367,18 @@ export function yieldToEventLoop() {
   return new Promise(resolve => setImmediate(resolve));
 }
 
+/** A kernel compile shorter than this is not worth a sentence in the report. */
+const NOTEWORTHY_COMPILE_SECONDS = 1;
+
+/**
+ * The sentence for a frame that spent seconds compiling its kernel, or undefined when it did not. Cook compiles one kernel per
+ * scene variant (a scene with no emitter is a different variant from a lit one), and the first trace of a variant pays for it.
+ */
+export function describeKernelCompile({ compileSeconds }) {
+  if (!(compileSeconds >= NOTEWORTHY_COMPILE_SECONDS)) return undefined;
+  return `This frame spent ${compileSeconds.toFixed(1)} s compiling the kernel variant its scene needs, which is not trace time. Later frames of this job reuse it.`;
+}
+
 /**
  * Traces one frame the page exported and returns the PNG (base64) with the job report. `denoise` is "none", "wavelet",
  * "atrous" (the tracer's GPU filter, which is also where a missing or failing OIDN lands) or "oidn"; `denoiser` is the
@@ -425,9 +437,12 @@ async function traceOneFrameNative({ tracer, exported, width, height, samples, b
   normalizeNormals(features.normal);
   const averageSamples = traced.averageSamples ?? samples;
   const estimatedNoise = estimateRelativeNoise({ color: features.color, variance: features.variance, averageSamples });
+  const kernelCompileNote = describeKernelCompile({ compileSeconds: traced.compileSeconds });
   const report = { width, height, samples, bounces, seed, denoised: false, denoiser: 'none', threads: 1, backend: 'native',
     gpu: traced.adapter, nativeBackend: traced.backend, nativeFeatures: traced.features, setupSeconds: traced.setupSeconds, compileSeconds: traced.compileSeconds,
     uploadSeconds: traced.uploadSeconds, accelerationBuildSeconds: traced.accelerationBuildSeconds,
+    ...(traced.tracedSeconds === undefined ? {} : { gpuTraceSeconds: traced.tracedSeconds }),
+    ...(kernelCompileNote ? { kernelCompileNote } : {}),
     kernel, averageSamples, noiseThreshold, ...(estimatedNoise === null ? {} : { estimatedNoise }), triangles: exported.triangles, inputBytes: tableBytes(tables), ...(exported.instances === undefined ? {} : { instances: exported.instances }),
     ...(exported.instancing === undefined ? {} : { instancing: exported.instancing, instancingReason: exported.instancingReason }),
     ...(exported.materialsReason === undefined ? {} : { materialsReason: exported.materialsReason }), tracedSeconds, ignored: exported.ignored,
