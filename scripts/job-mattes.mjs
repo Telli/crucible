@@ -33,22 +33,45 @@ function coverageOf(mask) {
   return covered;
 }
 
-function objectMatte({ target, index, objectPass }) {
+/** The object IDs (1 is the first name) of the parts called `target`; throws the matte error when the scene has none. */
+function objectIdsOf({ target, index, objectNames }) {
   const ids = [];
-  objectPass.info.objectNames.forEach((name, position) => { if (name === target) ids.push(position + 1); });
+  objectNames.forEach((name, position) => { if (name === target) ids.push(position + 1); });
   if (ids.length === 0) {
-    throw new Error(`mattes[${index}]: no part named "${target}" in this scene. Pass one of: ${nameList(objectPass.info.objectNames)}.`);
+    throw new Error(`mattes[${index}]: no part named "${target}" in this scene. Pass one of: ${nameList(objectNames)}.`);
   }
+  return ids;
+}
+
+function requireMaterialEntry({ target, index, materials }) {
+  const entry = materials[target];
+  if (!entry) {
+    throw new Error(`mattes[${index}]: no material named "${target}" in this scene. Pass one of: ${nameList(Object.keys(materials))}.`);
+  }
+  return entry;
+}
+
+/**
+ * Checks every matte of a job against the scene before anything renders: `objectNames` lists the parts in object ID order and
+ * `materialNames` the materials. Throws the error the job would end with, so a matte that can never be drawn is refused at submit.
+ */
+export function requireMatteTargets({ mattes, objectNames, materialNames }) {
+  const materials = Object.fromEntries(materialNames.map(name => [name, true]));
+  mattes.forEach((matte, index) => {
+    if (matte.object !== undefined) objectIdsOf({ target: matte.object, index, objectNames });
+    else requireMaterialEntry({ target: matte.material, index, materials });
+  });
+}
+
+function objectMatte({ target, index, objectPass }) {
+  const ids = objectIdsOf({ target, index, objectNames: objectPass.info.objectNames });
   const mask = objectIdMatte({ pixels: objectPass.bytes, width: objectPass.width, height: objectPass.height, ids });
   return { mask, metric: { object: target, partIds: ids } };
 }
 
 function materialMatte({ target, index, cryptomattePass }) {
   const { materials } = cryptomattePass.info.cryptomatte;
-  const entry = materials[target];
-  if (!entry) {
-    throw new Error(`mattes[${index}]: no material named "${target}" in this scene. Pass one of: ${nameList(Object.keys(materials))}.`);
-  }
+  const entry = requireMaterialEntry({ target, index, materials });
   const mask = cryptomatteMatte({ pixels: cryptomattePass.bytes, width: cryptomattePass.width, height: cryptomattePass.height, channel: 'material', value: entry.value });
   const sharedWith = Object.entries(materials)
     .filter(([name, other]) => name !== target && cryptomatteByte(other.value) === cryptomatteByte(entry.value))

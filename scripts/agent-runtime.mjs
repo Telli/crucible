@@ -39,12 +39,12 @@ import { TEXTURE_SEQUENCE_CAPABILITIES, TEXTURE_SEQUENCE_LIMITS } from '../src/t
 import { writeWebBuild } from './web-export.mjs';
 import { gameAssetIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
-import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError } from './agent-render-jobs.mjs';
+import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError, requireTracerBackendAvailable } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
 import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
 import { objectIdMetrics } from './agent-object-id-metrics.mjs';
-import { renderJobMattes } from './job-mattes.mjs';
+import { renderJobMattes, requireMatteTargets } from './job-mattes.mjs';
 import { encodeRenderOutput, encodeMultilayerExr } from './render-output-encoders.mjs';
 import { createFrameEncoder } from './frame-encoder.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
@@ -930,7 +930,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         if (streamedJob && frameInput.motionTime !== undefined) await supplyStreamedFrames(jobPage, jobId, frameInput.motionTime);
         if (settings.renderer) {
           const { type, ...tracerOptions } = settings.renderer;
-          if (settings.renderer.backend === 'gpu' && backend === 'cpu') throw new Error('renderer.backend "gpu" needs a runtime on the GPU backend, and this one runs on SwiftShader.');
+          requireTracerBackendAvailable(settings.renderer, backend);
           nativeTracerLocator ??= createNativeTracerLocator();
           const trace = await chooseTraceBackend({ requested: settings.renderer.backend, runtimeBackend: backend, locator: nativeTracerLocator });
           // Only a job that really traces on native defaults to OIDN; the cpu, gpu and webgpu defaults do not change.
@@ -1663,6 +1663,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           }
           const triangleProblem = pathTraceTriangleProblem(size, jobSettings?.renderer, { canChooseBackend: backend !== 'cpu', picksRenderer: settings?.budget !== undefined || settings?.quality !== undefined });
           if (triangleProblem) throw new RangeError(triangleProblem);
+          requireTracerBackendAvailable(jobSettings?.renderer, backend);
+          if (jobSettings?.mattes) requireMatteTargets({ mattes: jobSettings.mattes, ...(await invoke('matteTargets', { sessionId })) });
           const estimate = estimateOf(jobSettings);
           estimateForNextJob = estimate;
           try {

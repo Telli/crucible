@@ -305,7 +305,12 @@ function passesFrom(passes, kind) {
 const MAXIMUM_MATTES = 8;
 const MAXIMUM_MATTE_NAME_LENGTH = 120;
 
-/** The ID mattes of a job: each names one object (part) or one material, and writes one gray PNG per frame. */
+/** Refuses a path tracer backend this runtime cannot provide. The runner calls it for each frame and submit calls it first, so a doomed job is never queued. */
+export function requireTracerBackendAvailable(renderer, runtimeBackend) {
+  if (renderer?.backend === 'gpu' && runtimeBackend === 'cpu') throw new Error('renderer.backend "gpu" needs a runtime on the GPU backend, and this one runs on SwiftShader.');
+}
+
+/** The ID mattes of a job:each names one object (part) or one material, and writes one gray PNG per frame. */
 function mattesFrom(input) {
   const { mattes, kind, renderer, format, multilayer } = input;
   if (kind === 'video') throw new RangeError('mattes need kind image or stills; a video holds the lit image only.');

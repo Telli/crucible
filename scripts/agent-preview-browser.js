@@ -991,6 +991,11 @@ window.__agentPreview = {
     return { sourceRevision: record.scene.revision, recipe: record.scene.exportRecipe(),
       clips: record.asset?.animations.map(clip => ({ duration: clip.duration })) ?? [] };
   },
+  // The part and material names an ID matte can name, read from the loaded scene so a job submit can refuse a name no frame will contain.
+  matteTargets({ sessionId }) {
+    const { passSupport } = requireSession(sessionId).renderer;
+    return { objectNames: passSupport.objectNames(), materialNames: Object.keys(passSupport.cryptomatteManifest().materials) };
+  },
   suspend({ sessionId }) {
     const record = lookupSession(sessionId);
     if (leasedRecord) throw new Error('Scene renderer is already suspended.');

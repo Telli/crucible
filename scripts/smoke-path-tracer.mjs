@@ -106,10 +106,10 @@ try {
     assert.match(refused.content[0].text, message);
   }
 
-  // A SwiftShader runtime keeps the CPU tracer: a job that asks for the GPU backend fails instead of drawing something else.
+  // A SwiftShader runtime keeps the CPU tracer: a submit that asks for the GPU backend is refused instead of drawing something else.
   const gpuOnSwiftShader = await submit(sessionId, { ...base, renderer: { ...tracer, backend: 'gpu' } });
-  assert.equal(gpuOnSwiftShader.isError, undefined, gpuOnSwiftShader.content?.[0]?.text);
-  assert.equal((await finished(gpuOnSwiftShader.structuredContent.jobId)).state, 'failed', 'backend gpu must fail on a cpu runtime.');
+  assert.equal(gpuOnSwiftShader.isError, true, 'backend gpu must be refused at submit on a cpu runtime.');
+  assert.match(gpuOnSwiftShader.content[0].text, /renderer\.backend "gpu" needs a runtime on the GPU backend/);
 
   const slow = await submit(sessionId, { kind: 'image', width: 512, height: 512, renderer: { type: 'pathTracer', samples: 1024, maxSeconds: 1 } });
   assert.equal(slow.isError, undefined, slow.content?.[0]?.text);
