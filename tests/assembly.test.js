@@ -18,15 +18,33 @@ test('export displacement exactly matches the staged shader smoothstep', () => {
   assert.throws(() => assemblyOffset(part, Infinity), /finite/);
 });
 
-test('every sample part lifts off, keeps distinct offsets and rests at zero when assembled', async () => {
+test('every sample part but the base lifts off, keeps distinct offsets and rests at zero when assembled', async () => {
   const parts = await loadSampleParts();
   const offsets = new Set();
   for (const part of parts) {
     assert.deepEqual(assemblyOffset(part, 0), [0, 0, 0], part.name);
     const full = assemblyOffset(part, 1);
-    assert.ok(Math.hypot(...full) > 0.5, `${part.name} moves visibly`);
+    if (part.name === 'Base') assert.deepEqual(full, [0, 0, 0], 'the base stays on the floor as the anchor');
+    else assert.ok(Math.hypot(...full) > 0.5, `${part.name} moves visibly`);
     const key = full.join(',');
     assert.ok(!offsets.has(key), `${part.name} has its own offset`);
     offsets.add(key);
   }
+});
+
+test('the fully exploded sample keeps every part above the floor and the parts stacked in assembly order up the stand', async () => {
+  const parts = await loadSampleParts();
+  const exploded = new Map(parts.map(part => {
+    const offset = assemblyOffset(part, 1);
+    const heights = [];
+    const positions = part.geometry.positions;
+    for (let index = 0; index < positions.length; index += 3) {
+      const [x, y, z] = [positions[index], positions[index + 1], positions[index + 2]];
+      heights.push(part.matrix[1] * x + part.matrix[5] * y + part.matrix[9] * z + part.matrix[13] + offset[1]);
+    }
+    return [part.name, { lowest: Math.min(...heights), center: (Math.min(...heights) + Math.max(...heights)) / 2 }];
+  }));
+  for (const [name, { lowest }] of exploded) assert.ok(lowest >= -1e-6, `${name} stays above the floor when exploded (lowest ${lowest.toFixed(2)})`);
+  const spine = ['Base', 'Limb and rack', 'Objective turret', 'Eyepiece tube'].map(name => exploded.get(name).center);
+  assert.deepEqual([...spine].sort((first, second) => first - second), spine, 'the central parts rise in assembly order');
 });

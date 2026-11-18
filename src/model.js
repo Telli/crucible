@@ -1,21 +1,23 @@
-// The studio's sample model: a vintage brass microscope, eight separate parts, CC0 from Poly Haven
+// The studio's sample model: a vintage brass microscope, nine separate parts, CC0 from Poly Haven
 // (credit in THIRD-PARTY-NOTICES.md). public/sample-model.glb keeps its parts as separate glTF nodes, so each one
 // can lift off in the exploded view. `assembleSampleModel` gives every part its layer, section and explode offset.
 
 const SAMPLE_SCALE = 9;
 const SAMPLE_PREFIX = /^vintage_microscope_(01_)?/;
 
-// Offsets are world-space translations in model units after SAMPLE_SCALE (the microscope stands 3.6 tall).
+// Offsets are world-space translations in model units after SAMPLE_SCALE (the microscope stands 3.6 tall and rests on y = 0).
+// The exploded view stacks the parts up the stand's axis in assembly order, mirror and focus parts fanned to the sides,
+// and never pushes a part below the floor.
 const SAMPLE_PARTS = Object.freeze({
-  base: { label: 'Base', layer: 'exterior', section: 'Base and mirror', offset: [0, -0.9, 0] },
-  mirror_arm: { label: 'Mirror arm', layer: 'exterior', section: 'Base and mirror', offset: [-1.4, -0.5, 0.9] },
-  mirror_base: { label: 'Mirror frame', layer: 'exterior', section: 'Base and mirror', offset: [-1.4, -1.1, 1.4] },
-  mirror_base_1: { label: 'Mirror glass', layer: 'exterior', section: 'Base and mirror', offset: [-1.4, -1.1, 2] },
-  rack_mount_support: { label: 'Limb and rack', layer: 'exterior', section: 'Limb', offset: [0, 0, -1.5] },
-  condenser: { label: 'Condenser', layer: 'interior', section: 'Optics', offset: [1.4, -0.6, 0.6] },
-  revolver: { label: 'Objective turret', layer: 'interior', section: 'Optics', offset: [0, -0.2, 1.7] },
-  adjustment: { label: 'Focus knobs', layer: 'interior', section: 'Focus', offset: [1.6, 0.5, -0.4] },
-  eye_piece: { label: 'Eyepiece tube', layer: 'interior', section: 'Optics', offset: [0, 1.3, 0.4] },
+  base: { label: 'Base', layer: 'exterior', section: 'Base and mirror', offset: [0, 0, 0] },
+  mirror_arm: { label: 'Mirror arm', layer: 'exterior', section: 'Base and mirror', offset: [-1.6, 0, 0] },
+  mirror_base: { label: 'Mirror frame', layer: 'exterior', section: 'Base and mirror', offset: [-1.6, 1.3, 0.3] },
+  mirror_base_1: { label: 'Mirror glass', layer: 'exterior', section: 'Base and mirror', offset: [-1.6, 2.1, 0.3] },
+  rack_mount_support: { label: 'Limb and rack', layer: 'exterior', section: 'Limb', offset: [0, 1, 0] },
+  condenser: { label: 'Condenser', layer: 'interior', section: 'Optics', offset: [1.6, 0.8, 0] },
+  revolver: { label: 'Objective turret', layer: 'interior', section: 'Optics', offset: [0, 2.3, 0] },
+  adjustment: { label: 'Focus knobs', layer: 'interior', section: 'Focus', offset: [1.6, 1.6, 0] },
+  eye_piece: { label: 'Eyepiece tube', layer: 'interior', section: 'Optics', offset: [0, 3, 0] },
 });
 
 export const SAMPLE_PART_NAMES = Object.freeze(Object.values(SAMPLE_PARTS).map(entry => entry.label));

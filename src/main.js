@@ -14,14 +14,14 @@ const isExport = renderParameters.get('export') === '1';
 const adaptiveResolution = isExport ? null : createAdaptiveResolution({ exporting: false });
 let selectedPixelRatio = isExport ? 1 : 1.5;
 const parts = await loadSampleModel(new URL('sample-model.glb', document.baseURI));
-const state = { azimuth: 0.48, elevation: 0.18, distance: 9, exposure: 1, inspection: false, rotating: false, assembly: Math.max(0, Math.min(1, Number(new URLSearchParams(location.search).get('explosion')) || 0)), layer: 'all' };
+const state = { azimuth: 0.48, elevation: 0.18, distance: 10.5, exposure: 1.3, inspection: false, rotating: false, assembly: Math.max(0, Math.min(1, Number(new URLSearchParams(location.search).get('explosion')) || 0)), layer: 'all' };
 state.look = 'studio';
 state.targetHeight = 1.8;
 state.touring = false;
 state.assemblyTarget = state.assembly;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const looks = {
-  studio: { lightDirection: [-3, 6, 4], temperature: 0, contrast: 1.02 },
+  studio: { lightDirection: [-2, 5, 6], temperature: 0, contrast: 1.02 },
   warm: { lightDirection: [-5, 3, 2], temperature: 0.14, contrast: 1.06 },
   cool: { lightDirection: [4, 5, 3], temperature: -0.14, contrast: 1.05 },
 };
@@ -42,18 +42,26 @@ function notify(message, failure = false) {
   if (!failure) noticeTimer = setTimeout(() => { notice.hidden = true; }, 4000);
 }
 
+// The microscope's black stand and foot crush into the floor under the default studio light, so this studio lifts the ambient and fill terms.
+const MICROSCOPE_AMBIENT = 2.5;
+const MICROSCOPE_FILL = 2;
+// The settings panel covers the right 240 px and the title the left 340 px, so the model centres 50 px right of the canvas middle.
+const CENTER_SHIFT_PIXELS = 100;
+
 function camera() {
   const mobile = canvas.clientWidth <= 700;
-  if (renderer) renderer.projection[8] = mobile || state.exporting ? 0 : -0.25 + state.assembly * 0.15;
-  const distance = state.distance * (mobile ? 1.05 : 1) + state.assembly * (mobile ? 5 : 7);
-  const target = [0, (mobile ? 1.8 : state.targetHeight) + state.assembly * 0.35, 0];
+  if (renderer) renderer.projection[8] = mobile || state.exporting ? 0 : -CENTER_SHIFT_PIXELS / canvas.clientWidth;
+  const distance = state.distance * (mobile ? 1.05 : 1) + state.assembly * (mobile ? 7 : 6.5);
+  const target = [0, (mobile ? 1.8 : state.targetHeight) + state.assembly * 1.5, 0];
+  // Looking down a little in the exploded view shows the flat mirror parts as discs instead of edge-on slivers.
+  const elevation = state.elevation + state.assembly * 0.4;
   return {
     target,
-    eye: [Math.sin(state.azimuth) * Math.cos(state.elevation) * distance, target[1] + Math.sin(state.elevation) * distance, Math.cos(state.azimuth) * Math.cos(state.elevation) * distance],
+    eye: [Math.sin(state.azimuth) * Math.cos(elevation) * distance, target[1] + Math.sin(elevation) * distance, Math.cos(state.azimuth) * Math.cos(elevation) * distance],
     exposure: state.exposure,
     inspection: state.inspection,
     assemblyAmount: state.assembly,
-    environment: { lightDirection: looks[state.look].lightDirection },
+    environment: { lightDirection: looks[state.look].lightDirection, ambientIntensity: MICROSCOPE_AMBIENT, fillIntensity: MICROSCOPE_FILL },
     effects: { contrast: looks[state.look].contrast, temperature: looks[state.look].temperature, saturation: 1.02, vignette: 0.08, bloom: { strength: 0.12, threshold: 1.15, radius: 1 } },
   };
 }
@@ -132,14 +140,14 @@ document.querySelector('#assembly-tour').addEventListener('click', () => {
   if (state.touring) { stopTour(); return; }
   if (reducedMotion.matches) { state.assembly = state.assembly > 0.5 ? 0 : 1; syncAssembly(); invalidate(); return; }
   // A complete-model composition keeps all moving components in the frame.
-  Object.assign(state, { distance: 9, targetHeight: 1.8, touring: true });
+  Object.assign(state, { distance: 10.5, targetHeight: 1.8, touring: true });
   tourOrigin = performance.now();
   document.querySelector('#assembly-tour').textContent = 'Pause assembly';
   invalidate();
 });
 document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
   stopTour();
-  const views = { hero: [0.48, 0.18, 9, 1.8, 0], eyepiece: [0.12, 0.12, 4.2, 3.0, 0], parts: [0.7, 0.34, 6.8, 1.8, 0.65] };
+  const views = { hero: [0.48, 0.18, 10.5, 1.8, 0], eyepiece: [0.12, 0.12, 4.2, 3.0, 0], parts: [0.7, 0.34, 6.8, 1.8, 0.65] };
   const [azimuth, elevation, distance, targetHeight, assembly] = views[button.dataset.view];
   Object.assign(state, { azimuth, elevation, distance, targetHeight, assembly, assemblyTarget:assembly });
   document.querySelectorAll('[data-view]').forEach(control => control.setAttribute('aria-pressed', String(control === button)));
@@ -205,7 +213,7 @@ canvas.addEventListener('keydown', (event) => {
 });
 document.querySelector('#reset').addEventListener('click', () => {
   stopTour();
-  Object.assign(state, { azimuth: 0.48, elevation: 0.18, distance: 9, targetHeight: 1.8 });
+  Object.assign(state, { azimuth: 0.48, elevation: 0.18, distance: 10.5, targetHeight: 1.8 });
   invalidate();
 });
 document.querySelector('#exposure').addEventListener('input', (event) => {
