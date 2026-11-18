@@ -13,7 +13,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import packageMetadata from '../package.json' with { type: 'json' };
-import { MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
+import { MESH_EDIT_OPERATIONS, MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from '../src/view-transform-names.js';
 import { BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES, CATALOG_FILE_ID } from '../src/look-catalog.js';
 import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES } from '../src/agent-scene-capabilities.js';
@@ -385,6 +385,7 @@ const editName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/).optional(
 const edgeRule = z.record(z.string(), z.unknown()).describe('Edge rule: {"all":true}, {"angle":30}, {"along":[x,y,z]}, {"between":[faceRule,faceRule]}, {"boundaryOf":faceRule} or {"open":true} for boundary edges (also {"open":{"inside":{"min":[x,y,z],"max":[x,y,z]}}}).');
 const shortSelect = z.record(z.string(), z.unknown()).describe('Face rule, as in set_position.');
 const shortField = z.union([finite, z.record(z.string(), z.unknown())]);
+const vertexRule = z.record(z.string(), z.unknown()).describe('Vertex rule: {"all":true}, {"vertices":[indices]}, {"valence":2} or {"inside":{"min":[x,y,z],"max":[x,y,z]}}.');
 const meshEdit = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('extrude_face_region'), select: selectRule.optional(), name: editName, offset: finite.describe('Distance along each connected region\'s average normal (negative pushes in).'), direction: vector3.optional().describe('Move along this direction instead of the normal.'), alongNormals: z.boolean().optional().describe('Move each vertex along its own normal instead, keeping the region joined: use for rings and curved bands.') }),
   z.strictObject({ op: z.literal('extrude_individual'), select: selectRule.optional(), name: editName, offset: finite.describe('Distance along each face\'s own normal.'), direction: vector3.optional() }),
@@ -428,6 +429,11 @@ const meshEdit = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('symmetrize'), name: editName, axis: z.enum(['x', 'y', 'z']).optional(), keep: z.enum(['positive', 'negative']).optional().describe('Side of the plane kept and mirrored. Defaults to positive.'), distance: bounded(0, 1).optional().describe('Vertices this close to the plane count as on it. Defaults to 0.0001.') }).describe('Cut at the plane through the origin, drop the other half and mirror the kept half. Mirrored faces get <name>.mirrored.'),
   z.strictObject({ op: z.literal('scale_elements'), select: selectRule.optional(), scale: finite.describe('Factor above 0 about each connected group of selected faces.') }).describe('Scale connected groups of selected faces about their own centres.'),
   z.strictObject({ op: z.literal('extrude_edges'), name: editName, edges: edgeRule.describe('Edges to extrude, usually {"open":true} for a boundary.'), offset: vector3.describe('Where the copied vertices move.') }).describe('Extrude edges into quads, tagged <name>.side.'),
+  z.strictObject({ op: z.literal('split_edges'), name: editName, edges: edgeRule.describe('Edges to open.') }).describe('Open the surface along these edges.'),
+  z.strictObject({ op: z.literal('delete_loose') }).describe('Remove vertices no face uses.'),
+  z.strictObject({ op: z.literal('flatten'), verts: vertexRule, normal: vector3.optional().describe('Plane normal.'), factor: unit.optional().describe('0 to 1, default 1.') }).describe('Move vertices onto a plane.'),
+  z.strictObject({ op: z.literal('unsubdivide') }).describe('Reverse one Catmull-Clark level.'),
+  z.strictObject({ op: z.literal('circularize'), verts: vertexRule, factor: unit.optional().describe('0 to 1, default 1.'), regular: z.boolean().optional().describe('Default true.') }).describe('Put each closed loop of vertices on a circle.'),
   z.strictObject({ op: z.literal('tag'), select: selectRule, name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/).describe('Tag to add to the selected faces.') }),
   z.strictObject({
     op: z.literal('boolean'), name: editName,
@@ -505,6 +511,14 @@ const stackNodeUnion = z.union([z.discriminatedUnion('op', stackNodes), modifier
 const meshEditUnion = z.union([z.discriminatedUnion('op', [...meshEdit.options, ...stackNodes]), modifierRecord]);
 const stackOperationNames = [...stackNodes.map(node => node.shape.op.value), ...Object.keys(MODIFIER_OPERATIONS)];
 const editOperationNames = [...meshEdit.options.map(option => option.shape.op.value), ...stackOperationNames];
+// The tool's op list must be the engine's list (MESH_EDIT_OPERATIONS, also what scene_capabilities meshEdits reports): an op the engine
+// takes but this schema lacks, or the reverse, is refused here at load instead of by an agent mid-edit.
+const engineOperationNames = Object.keys(MESH_EDIT_OPERATIONS);
+const missingFromSchema = engineOperationNames.filter(name => !editOperationNames.includes(name));
+const missingFromEngine = editOperationNames.filter(name => !engineOperationNames.includes(name));
+if (missingFromSchema.length > 0 || missingFromEngine.length > 0) {
+  throw new Error(`mesh_edit schema and MESH_EDIT_OPERATIONS differ: schema lacks [${missingFromSchema.join(', ')}], engine lacks [${missingFromEngine.join(', ')}]. Add the op to both.`);
+}
 const meshStack = z.array(listed('meshStack', stackNodeUnion, 'Stack node { op, ...fields }; fields per op: scene_capabilities meshStack.', { op: z.enum(stackOperationNames) })).max(16);
 const meshEdits = z.array(listed('meshEdit', meshEditUnion, 'Edit { op, ...fields }, applied in order; fields per op: scene_capabilities meshEdit, or meshEdit.<op> for one op.', { op: z.enum(editOperationNames) })).max(64);
 // The full edit and stack schemas live in mesh_edit and mesh_stack. Repeating them in every recipe cost about 45 KB
