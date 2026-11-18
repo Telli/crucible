@@ -47,6 +47,8 @@ const MATERIAL_LAYER_NOTES = Object.freeze({
   toon: 'Light steps (toon); 0 off.',
 });
 
+// Recipe physics body shapes, the one list the validator, the MCP schema and scene_capabilities share.
+export const PHYSICS_BODY_SHAPES = Object.freeze(['box', 'ball', 'capsule', 'cylinder', 'cone', 'convex', 'trimesh', 'compound']);
 export const MATERIAL_PATTERN_TYPES =Object.freeze(['noise', 'wood', 'planks', 'bricks', 'tiles', 'marble', 'stone', 'concrete', 'metal', 'rust', 'fabric']);
 export const MAX_MATERIAL_PATTERNS = 16;
 // A material graph bakes to textures on the CPU and never becomes shader text. Its node and depth limits are the field
@@ -342,7 +344,8 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   // Recipe physics: Rapier (an optional peer) bakes bodies on nodes offline; playback is a seek into the bake.
   physics: Object.freeze({
     bodyTypes: Object.freeze(['dynamic', 'fixed', 'kinematic']),
-    shapes: Object.freeze(['box', 'ball', 'capsule', 'convex', 'trimesh']),
+    shapes: PHYSICS_BODY_SHAPES,
+    compound: 'shapes (1-16, with shape compound): { shape, translation, rotation, halfExtents, radius, halfHeight }',
     jointTypes: Object.freeze(['spherical', 'revolute', 'prismatic', 'fixed', 'spring']),
     jointFields: 'type, bodyA, bodyB, anchorA, anchorB, axis, limits, name (what jointMotor events refer to), contactsEnabled, motor {mode position|velocity, target, stiffness (position only), damping, maxForce}, breakImpulse (fixed only), restLength and stiffness and damping (spring only)',
     sensors: true, collisionLayers: 16,
