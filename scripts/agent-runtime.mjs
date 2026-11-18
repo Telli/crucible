@@ -59,7 +59,7 @@ import { ANNOTATE_LIMITS, validateMarks, isBoundedPng } from '../src/agent-annot
 import { REVIEW_LINK_LIMITS, newReviewId, parseReviewFile, validateReviewMarks } from '../src/review-link.js';
 import { writeReviewBuild } from './review-page.mjs';
 import { normalizeReview, reviewDeadlineMessage, REVIEW_LIMITS } from './agent-review.mjs';
-import { mergeFrameDiagnostics, pathTracerFindingsLimit } from '../src/frame-checks.js';
+import { mergeFrameDiagnostics, pathTracerFindingsLimit, pathTracerSkippedPassesWarning } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { createSharedGpuCard } from './agent-gpu-queue.mjs';
 import { isBrowserLoss, describeBrowserLoss } from './agent-browser-loss.mjs';
@@ -1080,7 +1080,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           metrics.pathTracer = traced.report;
           if (frame === 0) {
             const looked = await jobPage.evaluate(input => window.__agentPreview.findings(input), frameInput);
-            mergeFrameDiagnostics(metrics, [pathTracerFindingsLimit(), ...looked.diagnostics]);
+            mergeFrameDiagnostics(metrics, [pathTracerFindingsLimit(), pathTracerSkippedPassesWarning(snapshot.recipe.postPasses), ...looked.diagnostics].filter(Boolean));
           }
           if (traced.report.nativeSession) (metrics.nativeSessionRoutes ??= []).push(traced.report.nativeSession.path);
           const tracedBytes = Buffer.from(traced.data, 'base64');

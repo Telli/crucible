@@ -6,7 +6,7 @@ The same field works from three places: the `crucible/addons/user-pass` addon, t
 
 ## Where a pass runs
 
-Passes run in order on the finished frame: after depth of field, motion blur, line art, bloom, grading and the view transform, as the last step before the canvas. The first pass reads the frame as it would have been shown. Each next pass reads the one before. Colours are display-referred (0 to 1), so quantising and dithering work on the values people see. The path tracer does not apply passes. Render passes (`pass: 'depth'` and the others) and the water mirror are unaffected.
+Passes run in order on the finished frame: after depth of field, motion blur, line art, bloom, grading and the view transform, as the last step before the canvas. The first pass reads the frame as it would have been shown. Each next pass reads the one before. Colours are display-referred (0 to 1), so quantising and dithering work on the values people see. The path tracer does not apply passes: a path traced job (`renderer.type` `pathTracer`, any backend) returns the plain traced frame, because the tracer has no first-hit depth, normal or object ID buffer for a pass to read. The job still completes, and its `metrics.diagnostics` carries a `post-passes-skipped` warning (#2226) that names the passes it left out. A scene without `postPasses` gets no such entry. Render passes (`pass: 'depth'` and the others) and the water mirror are unaffected.
 
 ## A pass
 

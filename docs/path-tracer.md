@@ -75,6 +75,7 @@ A glass part with a material `dispersion` above 0 splits white light into colour
 
 `report.ignored` lists the ones this scene asks for; a render job returns it as `metrics.pathTracer.ignored`. It names occlusion maps, anisotropy, iridescence, sheen, moss, splat layers, baked `lightMap`s, tagged materials (foliage, liquid, water and the like, traced as plain surfaces), blended transparency, and the fog fields above.
 
+- `postPasses` (user post-process passes): the tracer writes the lit frame only and has no first-hit depth, normal or object ID buffer for a pass to read, so a render job returns the plain traced frame. The job completes and `metrics.diagnostics` carries a `post-passes-skipped` warning naming the passes (#2226; [user-passes.md](user-passes.md)). Render the look with a raster job.
 - The procedural sky when there is no environment map (the sky is black).
 
 The native `cycles` kernel reads an environment map as it is, as Blender Cycles does: a sun stored at tens of thousands lights the scene with all of it. Until #1172 its packer capped every texel at 16, which left a sunlit scene (Pavilion) at 0.77 of its Cycles brightness; without the cap it is at 1.01 ([numbers](https://github.com/codepawl/crucible/blob/main/docs/cycles-parity.md#the-environment-limit-of-16-1172)). A caller of the Cook package can still pass `hdriRadianceLimit` to cap the texels and trade that energy for less noise at low sample counts.
