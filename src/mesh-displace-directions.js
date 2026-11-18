@@ -123,8 +123,8 @@ function limitInwardDistances(mesh, distances, sharpVertices) {
 
 /**
  * The move that puts a sharp vertex on the offset plane of every side. A side moves by the mean distance of the smooth
- * vertices next to the vertex along its edges (the vertex's own distance when it has none), held within SIDE_SLOPE of
- * each of them and above the inward limit. Null when the sides are dependent.
+ * vertices of its faces (the vertex's own distance when it has none), held within SIDE_SLOPE of each neighbour along an
+ * edge and above the inward limit. Null when the sides are dependent.
  */
 function miterOffset(mesh, vertex, { sides }, distances, sharpVertices, inwardLimit) {
   const depths = sides.map(side => sideDepth(mesh, vertex, side.faces, distances, sharpVertices, inwardLimit));
@@ -151,15 +151,16 @@ function sideDepth(mesh, vertex, faces, distances, sharpVertices, inwardLimit) {
   let highest = Infinity;
   for (const face of faces) {
     const start = mesh.faceOffsets[face];
-    const end = mesh.faceOffsets[face + 1];
-    for (let corner = start; corner < end; corner++) {
-      if (mesh.cornerVertices[corner] !== vertex) continue;
-      for (const neighbour of [mesh.cornerVertices[corner === start ? end - 1 : corner - 1], mesh.cornerVertices[corner + 1 === end ? start : corner + 1]]) {
-        if (sharpVertices.has(neighbour) || seen.has(neighbour)) continue;
-        seen.add(neighbour);
-        sum += distances[neighbour];
-        highest = Math.min(highest, distances[neighbour] + SIDE_SLOPE * edgeLength(mesh, vertex, neighbour));
-      }
+    const size = mesh.faceOffsets[face + 1] - start;
+    let own = 0;
+    while (mesh.cornerVertices[start + own] !== vertex) own++;
+    for (let step = 1; step < size; step++) {
+      const other = mesh.cornerVertices[start + (own + step) % size];
+      if (sharpVertices.has(other) || seen.has(other)) continue;
+      seen.add(other);
+      sum += distances[other];
+      // Along an edge from the vertex, the neighbour sets how far above or below it the vertex may stand.
+      if (step === 1 || step === size - 1) highest = Math.min(highest, distances[other] + SIDE_SLOPE * edgeLength(mesh, vertex, other));
     }
   }
   if (!seen.size) return distances[vertex];
