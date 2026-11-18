@@ -569,6 +569,7 @@ A recipe geometry of type `mesh` starts from a primitive or profile and replays 
 Edges bending more than `smoothAngle` degrees (default 30, or 180 for a mesh with an `ocean` edit or stack node, so a choppy sea keeps its smooth normals) render hard. `mesh_edit` appends edits to such a
 geometry (or replaces its log with `replace: true`) as one atomic revision, so checkpoints and `expectedRevision`
 work as for `scene_apply`. It returns the render status and the mesh report below, including one result per edit.
+`mesh_edit` takes every op in the edit table; its op list comes from the same list as `scene_capabilities meshEdits`. `scene_apply` has no `edit-mesh` or `set-mesh-stack` type in MCP: those are the `mesh_edit` and `mesh_stack` tools.
 
 `mesh_inspect` runs the same conversion and lint on the geometries of a procedural recipe scene and returns one
 compact record per geometry:
