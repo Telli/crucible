@@ -448,7 +448,7 @@ What it writes (read it back with `scene_export_recipe`, then tweak any part):
 - The motion duration becomes at least `start` plus the playing time of the blast plus 1 s.
 
 It needs a scene with no grid volume yet (a scene draws one), a free local volume, 3 of the 4 particle systems, and a free flash and distortion slot, and fails naming the field otherwise.
-Gaps: the grid is 32 cubed, so the detail is coarser than the 64 cubed preview and the smoke holds its last frame after the simulation ends; the dust is a translucent puff of overlapping round spheres, not a flat ring; there is no crater.
+Gaps: the grid is 32 cubed, so the detail is coarser than the 64 cubed preview and the smoke holds its last frame after the simulation ends; the dust is a faint unlit brown haze of about 1100 small overlapping round puffs lifted slightly off the floor, with no soft-edge sprite, so a close look still shows round blotches, and it is not a flat ring; there is no crater.
 
 Timing: `node scripts/measure-explosion-render-time.mjs --runs 3` builds a blast over a floor disc through the MCP runtime, submits an 8 s 1080p video job and prints, per run, the seconds from `scene_create` to the encoded MP4 split into `scene_apply` (the grid bake and the first draw), drawing, frame capture and encoding. Each run starts a fresh server; with the default bake cache (#1876) only the first run on a machine bakes, and `--bake-cache off` forces a cold bake every run (or pass an absolute folder for a clean cache). Run it through `gpu-lock.sh`; it stops a run that passes `--max-seconds` (180).
 

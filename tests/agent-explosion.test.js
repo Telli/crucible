@@ -207,8 +207,8 @@ test('the MCP server finds the grids an add-explosion operation will name, so th
 
 // Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom, and for #2304's puff-shaped translucent dust).
 const FIRST_RELEASE_HASHES = new Map([
-  ['{}', 'cd4c758da5ffc760823c2b3e42ece076b93f331b4329735094772ab268342bdc'],
-  ['{"start":0.5,"fuel":"oily","seed":7}', '8f385ccba72462d1ad5315566b7548b0bd15fd31c722297ae1b60634c41a24bc'],
+  ['{}', 'bf73c8d0712520a71bf2fc78feafd5c06f6ed3b636b4f7874bf95682fb1aaf44'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', '7778e3b4dd0babbc815ce7be433dd9f7e621ebcf454b3432b43a0e959c190513'],
 ]);
 
 test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {
@@ -335,6 +335,10 @@ test('the blast dust is a translucent round puff that never fades to black, so i
   assert.equal(dustGeometry.type, 'sphere', 'dust is drawn as round puffs, not boxes');
   assert.ok(dustMaterial.opacity > 0 && dustMaterial.opacity < 1, `dust opacity ${dustMaterial.opacity} lets the floor show through`);
   assert.equal(dustMaterial.alphaMode, 'blend');
+  assert.equal(dustMaterial.tag, 'unlit', 'a lit puff shows a specular or Fresnel rim that outlines each sphere as a glassy bubble');
+  assert.ok(dustMaterial.color[0] > dustMaterial.color[2], 'dust is warm brown, never blue-grey');
+  assert.ok(dustMaterial.opacity <= 0.1, `dust opacity ${dustMaterial.opacity} is faint enough that overlapping puffs blend into haze, not domes`);
+  assert.ok(dustSystem.emitter.position[1] > 0, 'the dust starts above the floor so no puff is cut flat where it meets it');
   assert.equal(dustSystem.alpha, undefined, 'the renderer has no per-vertex alpha, so a dust alpha fade would darken each puff to black');
 });
 

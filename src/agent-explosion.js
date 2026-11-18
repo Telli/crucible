@@ -31,7 +31,9 @@ export const EXPLOSION_SPARKS_DEFAULT = 'streaks';
 export const EXPLOSION_DEFAULT_SHUTTER = 0.0417;
 
 // How much of the floor shows through a dust puff; puffs overlap, so the cloud still reads as dust (#2304).
-export const DUST_OPACITY = 0.28;
+export const DUST_OPACITY = 0.05;
+// Unlit, so no specular or Fresnel rim outlines a puff; a warm brown-tan that stays brown after the tone map.
+export const DUST_COLOR = Object.freeze([0.5, 0.38, 0.27]);
 const POSITION_LIMIT = 10000;
 const SHAKE_SECONDS = 1;
 const SHAKE_KEYS_PER_SECOND = 32;
@@ -288,15 +290,15 @@ function particleSystems(candidate, plan, random) {
   const piece = `${id}-speck`;
   candidate.geometries.push({ id: piece, type: 'box', bevel: 0 });
   // Dust is a soft round puff, never a box: the renderer has no per-vertex alpha, so a fading box ended its life as an opaque dark cube (#2304).
-  candidate.geometries.push({ id: `${id}-puff`, type: 'sphere', segments: 10, rings: 6 });
+  candidate.geometries.push({ id: `${id}-puff`, type: 'sphere', segments: 8, rings: 5 });
   // A spark streak writes its blackbody radiance as the vertex colour, so its material is unlit white (src/particle-sparks.js).
   if (plan.sparks.mode === 'streaks') addMaterial(candidate, `${id}-spark-glow`, { tag: 'unlit', color: [1, 1, 1], emission: 0 });
   if (plan.sparks.mode === 'specks') addMaterial(candidate, `${id}-spark-glow`, { color: [1, 0.5, 0.1], emission: 8, emissiveColor: [1, 0.5, 0.1], roughness: 1 });
-  addMaterial(candidate, `${id}-dust-grey`, { color: [0.36, 0.31, 0.25], roughness: 1, opacity: DUST_OPACITY });
+  addMaterial(candidate, `${id}-dust-grey`, { tag: 'unlit', color: [...DUST_COLOR], opacity: DUST_OPACITY });
   addMaterial(candidate, `${id}-rubble-grey`, { color: [0.12, 0.11, 0.1], roughness: 0.9 });
   const specification = [
     plan.sparks.mode === 'streaks' ? sparkStreakSpecification(plan) : { name: 'sparks', material: 'spark-glow', count: oily ? 900 : 700, lifetime: [0.6, 2], speed: [round(size * 1.5 + 3), round(size * 4 + 8)], size: round(0.012 * reach), spread: 85, drag: 0.5, scale: 'shrink', emitter: { shape: 'sphere', position: [...center], radius: round(size * 0.15) }, color: [[1, 0.9, 0.5], [0.8, 0.2, 0.05]] },
-    { name: 'dust', material: 'dust-grey', geometry: 'puff', count: 360, lifetime: [1.5, 3.2], speed: [round(size * 0.8), round(size * 2.2)], size: [round(0.08 * reach), round(0.22 * reach)], spread: 88, drag: 1.8, scale: 'grow', emitter: { shape: 'disc', position: [center[0], ground, center[2]], radius: round(size * 0.3) } },
+    { name: 'dust', material: 'dust-grey', geometry: 'puff', count: 1100, lifetime: [1.5, 3.2], speed: [round(size * 0.8), round(size * 2.2)], size: [round(0.05 * reach), round(0.14 * reach)], spread: 88, drag: 1.8, scale: 'grow', emitter: { shape: 'disc', position: [center[0], round(ground + 0.12 * reach), center[2]], radius: round(size * 0.3) } },
     { name: 'rubble', material: 'rubble-grey', count: 60, lifetime: [1.5, 3], speed: [round(size * 0.8 + 2), round(size * 2.4 + 5)], size: [0.04, round(0.1 + 0.03 * size)], spread: 70, drag: 0.1, floor: ground, bounce: 0.3, scale: 'constant', emitter: { shape: 'sphere', position: [...center], radius: round(size * 0.1) } },
   ];
   if (plan.sparks.mode === 'none') specification.shift();
