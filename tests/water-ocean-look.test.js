@@ -74,14 +74,35 @@ test('wind ripples break the glint into facets and the foam into streaks', () =>
   assert.match(shader, /terrainNoise\(crestPosition \* vec2\(3\.1, 14\.0\)/);
 });
 
-test('a ripple stays whole down to five pixels per wave and is gone at the two-pixel limit of the sampling', () => {
+// The GLSL function is plain scalar math, so its text runs as JavaScript once the types and the three built-ins are renamed.
+function waterWaveVisibilityOf(shader) {
+  const source = shader.match(/float waterWaveVisibility\(float footprint, float wavenumber\) \{([^}]*)\}/);
+  assert.ok(source, 'the shader has waterWaveVisibility(footprint, wavenumber)');
+  const body = source[1].replace(/\bfloat\b/g, 'let').replace(/\bsin\(/g, 'Math.sin(');
+  const clamp = (value, lowest, highest) => Math.min(Math.max(value, lowest), highest);
+  return new Function('clamp', 'footprint', 'wavenumber', body).bind(null, clamp);
+}
+
+test('a pixel keeps a wave scaled by the average over its own width, the limit a supersampled render converges to (#853)', () => {
   const shader = createFragmentShader(['water', 'vertexColors']);
-  const fade = shader.match(/float visible = 1\.0 - smoothstep\(([\d.]+), ([\d.]+), footprint \* wavenumber/);
-  assert.ok(fade, 'the detail slope fades each wave by its pixel footprint');
-  const fadeStart = Number(fade[1]);
-  const fadeEnd = Number(fade[2]);
-  // footprint * wavenumber / 2pi is the pixel size in wavelengths: 0.2 is five pixels per wave, 0.5 is the Nyquist limit.
-  assert.equal(fadeStart, 0.2, 'the fade starts at five pixels per wavelength');
-  assert.equal(fadeEnd, 0.5, 'the fade ends at two pixels per wavelength, the sampling limit');
-  assert.ok(fadeStart < fadeEnd, 'the fade runs from a smaller to a larger footprint');
+  const visibility = waterWaveVisibilityOf(shader);
+  const wavenumber = 2.1;
+  const wavelength = (2 * Math.PI) / wavenumber;
+  const sinc = pixelsPerWave => Math.sin(Math.PI / pixelsPerWave) / (Math.PI / pixelsPerWave);
+  assert.ok(Math.abs(visibility(0, wavenumber) - 1) < 1e-6, 'a pixel far narrower than the wave shows all of it');
+  for (const pixelsPerWave of [8, 5, 3, 2, 1.25]) {
+    const footprint = wavelength / pixelsPerWave;
+    assert.ok(Math.abs(visibility(footprint, wavenumber) - sinc(pixelsPerWave)) < 1e-6, `${pixelsPerWave} pixels per wave keep sinc of its width`);
+  }
+  assert.ok(visibility(wavelength / 2, wavenumber) > 0.6, 'at the two-pixel sampling limit a wave still shows, as an averaged wave, not a cut-off');
+  assert.ok(Math.abs(visibility(wavelength, wavenumber)) < 1e-6, 'one pixel per wavelength averages the wave to nothing');
+  assert.ok(Math.abs(visibility(wavelength * 20, wavenumber)) < 1e-6, 'finer waves stay at nothing instead of coming back as the sinc side lobes');
+});
+
+test('each detail wave is filtered by the pixel size along its own direction, and so are the two fixed swells', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  assert.match(shader, /float footprint = abs\(dot\(positionDx, direction\)\) \+ abs\(dot\(positionDy, direction\)\);\n\s+float visible = waterWaveVisibility\(footprint, wavenumber\);/);
+  assert.match(shader, /lostVariance \+= 0\.5 \* amplitude \* amplitude \* \(1\.0 - visible \* visible\)/);
+  assert.match(shader, /float swellVisibleX = waterWaveVisibility\(abs\(positionDx\.x\) \+ abs\(positionDy\.x\), 1\.4\)/);
+  assert.match(shader, /float swellVisibleZ = waterWaveVisibility\(abs\(positionDx\.y\) \+ abs\(positionDy\.y\), 1\.8\)/);
 });

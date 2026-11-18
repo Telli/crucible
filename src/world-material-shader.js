@@ -325,20 +325,30 @@ vec3 terrainNoise(vec2 position) {
 // stays whole while a pixel is under a fifth of its length and is gone at half (two pixels per wave, the limit of one sample per
 // pixel), so far water does not shimmer but keeps every wave a pixel can still show; the slope variance the faded waves
 // took with them comes back as lostVariance, to widen the glint instead.
-vec2 waterDetailSlope(vec2 position, float footprint, out float lostVariance) {
+// How much of a wave one pixel still shows, from the pixel's size along the wave's travel (footprint, world units) and the wave's
+// wavenumber (radians per unit). A pixel averages the wave over its own width, which scales the wave by sinc(pixel size in
+// wavelengths); it is zero at one pixel per wavelength. The averaged amplitude is what a supersampled render converges to, so far
+// water keeps the part of each wave a pixel can carry instead of cutting the wave off.
+float waterWaveVisibility(float footprint, float wavenumber) {
+  float phaseSpan = clamp(footprint * wavenumber * 0.5, 0.0001, 3.14159265);
+  return sin(phaseSpan) / phaseSpan;
+}
+
+vec2 waterDetailSlope(vec2 position, vec2 positionDx, vec2 positionDy, out float lostVariance) {
   vec2 slope = vec2(0.0);
   lostVariance = 0.0;
   float wavenumber = 2.1;
   float angle = 0.4;
   for (int index = 0; index < 8; index++) {
-    float visible = 1.0 - smoothstep(0.2, 0.5, footprint * wavenumber / 6.2831853);
     vec2 direction = vec2(cos(angle), sin(angle));
+    float footprint = abs(dot(positionDx, direction)) + abs(dot(positionDy, direction));
+    float visible = waterWaveVisibility(footprint, wavenumber);
     float drift = terrainNoise(position * wavenumber * 0.09 + float(index) * 9.17).x - 0.5;
     float strength = 0.15 + 1.7 * terrainNoise(position * wavenumber * 0.06 + float(index) * 23.9 + 4.0).x;
     float phase = dot(position, direction) * wavenumber + time * sqrt(9.81 * wavenumber) + float(index) * 1.7 + drift * 5.0;
     float amplitude = 0.085 * pow(wavenumber / 2.1, -0.3) * strength;
     slope += direction * cos(phase) * amplitude * visible;
-    lostVariance += 0.5 * amplitude * amplitude * (1.0 - visible);
+    lostVariance += 0.5 * amplitude * amplitude * (1.0 - visible * visible);
     wavenumber *= 1.7320508;
     angle += 2.399963;
   }
@@ -362,13 +372,16 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
   float waterLostVariance = 0.0;
   if (TAG_WATER) {
     // Small ripples tilt the surface's own normal, so a sea mesh keeps its waves; a flat sheet (normal up) gets the same ripples as before.
-    vec3 rippleTilt = vec3(-cos(worldPosition.x * 1.4 + time * 0.8) * 0.035, 0.0, -cos(worldPosition.z * 1.8 - time) * 0.036);
+    vec2 positionDx = dFdx(worldPosition.xz);
+    vec2 positionDy = dFdy(worldPosition.xz);
+    float swellVisibleX = waterWaveVisibility(abs(positionDx.x) + abs(positionDy.x), 1.4);
+    float swellVisibleZ = waterWaveVisibility(abs(positionDx.y) + abs(positionDy.y), 1.8);
+    vec3 rippleTilt = vec3(-cos(worldPosition.x * 1.4 + time * 0.8) * 0.035 * swellVisibleX, 0.0, -cos(worldPosition.z * 1.8 - time) * 0.036 * swellVisibleZ);
     float radius = length(worldPosition.xz - waterRipple.xz);
     float age = time - rippleTime;
     float wave = sin(radius * 11.0 - age * 8.0) * exp(-abs(radius - age * 1.4) * 1.5) * exp(-age * 0.7) * step(0.0, age);
     rippleTilt.xz += normalize(worldPosition.xz - waterRipple.xz + 0.001) * wave * 0.07;
-    float footprint = length(fwidth(worldPosition.xz));
-    vec2 detailSlope = waterDetailSlope(worldPosition.xz, footprint, waterLostVariance);
+    vec2 detailSlope = waterDetailSlope(worldPosition.xz, positionDx, positionDy, waterLostVariance);
     rippleTilt.xz += detailSlope;
     vec3 crestNormal = normal;
     normal = normalize(normal + rippleTilt);
