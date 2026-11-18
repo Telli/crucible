@@ -29,6 +29,7 @@ const MODULE_LOADERS = {
   subsurfaceShader: () => import('./subsurface-shader.js'),
   fogShader: () => import('./fog-shader.js'),
   retroShader: () => import('./retro-shader.js'),
+  glitterShader: () => import('./glitter-shader.js'),
   worldMaterials: () => import('./world-material-shader.js'),
   terrain: () => import('./agent-terrain.js'),
   navigation: () => import('./agent-navigation.js'),
@@ -83,6 +84,7 @@ const MODULE_MARKERS = {
   liquidShader: ['"transmission"', '"liquid"', '"foam"'],
   subsurfaceShader: ['"subsurface"'],
   retroShader: ['"retro"'],
+  glitterShader: ['"waterGlint"'],
   // Any mention loads it, because an edit can set the density through a path or the environment of an operation.
   fogShader: ['volumeFog', 'localVolumes', '"add-explosion"'],
   worldMaterials: ['"tag":"water"', '"waterPreset"', '"absorption"', '"turbidity"', '"vegetation":{', '"tag":"foliage"', '"tag":"grass"', '"tag":"terrain"', '"tag":"fire"', '"tag":"smoke"', '"moss"'],

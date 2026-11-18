@@ -103,6 +103,7 @@ export default defineConfig({
         'fog-shader': 'src/fog-shader.js',
         'linear-output-shader': 'src/linear-output-shader.js',
         'retro-shader': 'src/retro-shader.js',
+        'glitter-shader': 'src/glitter-shader.js',
         'light-linking': 'src/light-linking.js',
         'cascaded-shadows': 'src/cascaded-shadows.js',
         'light-shapes': 'src/light-shapes.js',
