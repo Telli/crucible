@@ -58,5 +58,10 @@
   },
   "remesh-torus": {
     "faceCount": "Both build a quad surface on a grid of the same voxel size, but the grids start at different points and Blender's OpenVDB mesher and the surface nets of Crucible cut the surface into different cells, so Crucible has 6.6% fewer quads. Volume, area and Hausdorff distance agree."
+  },
+  "displace-cube-constant-normal": {
+    "volume": "Crucible miters a sharp edge so each cube face moves exactly 0.2 along its own normal (side 1.4, volume 1.4^3 = 2.744, area 6 x 1.4^2 = 11.76). Blender moves each corner 0.2 along its averaged vertex normal, which grows the side by 0.2309 (side 1.2309, volume 1.865).",
+    "area": "Crucible miters a sharp edge so each cube face moves exactly 0.2 along its own normal (side 1.4, volume 1.4^3 = 2.744, area 6 x 1.4^2 = 11.76). Blender moves each corner 0.2 along its averaged vertex normal, which grows the side by 0.2309 (side 1.2309, volume 1.865).",
+    "positions": "Each corner of the cube ends 0.1464 from where Blender puts it, because Crucible miters sharp edges and Blender moves along the averaged vertex normal."
   }
 }
