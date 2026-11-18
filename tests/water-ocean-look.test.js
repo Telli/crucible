@@ -115,17 +115,17 @@ test('a water material takes foamEdge and foamWidth, and other materials refuse 
 
 test('a water material takes foamVeins with defaults, and refuses bad values with what to pass', () => {
   const defaults = createAgentScene(waterRecipe({ foamVeins: {} })).parts[0].material.foamVeins;
-  assert.deepEqual({ ...defaults }, { amount: 0.6, scale: 1, stretch: 3 });
-  const given = createAgentScene(waterRecipe({ foamVeins: { amount: 1, scale: 2, stretch: 8 } })).parts[0].material.foamVeins;
-  assert.deepEqual({ ...given }, { amount: 1, scale: 2, stretch: 8 });
+  assert.deepEqual({ ...defaults }, { amount: 0.6, scale: 1 });
+  const given = createAgentScene(waterRecipe({ foamVeins: { amount: 1, scale: 2 } })).parts[0].material.foamVeins;
+  assert.deepEqual({ ...given }, { amount: 1, scale: 2 });
   assert.equal(createAgentScene(waterRecipe({})).parts[0].material.foamVeins, undefined);
   const refusals = [
     [{ foamVeins: 0.5 }, /foamVeins must be an object such as/],
-    [{ foamVeins: { strength: 1 } }, /no field strength; pass amount, scale or stretch/],
+    [{ foamVeins: { strength: 1 } }, /no field strength; pass amount or scale/],
     [{ foamVeins: { amount: 2 } }, /foamVeins\.amount must be a number from 0 to 1, such as 0\.6/],
     [{ foamVeins: { scale: 0.1 } }, /foamVeins\.scale must be a number from 0\.25 to 4/],
-    [{ foamVeins: { stretch: 9 } }, /foamVeins\.stretch must be a number from 1 to 8, such as 3/],
-    [{ foamVeins: { stretch: 'long' } }, /foamVeins\.stretch/],
+    [{ foamVeins: { stretch: 3 } }, /no field stretch; pass amount or scale/],
+    [{ foamVeins: { scale: 'fine' } }, /foamVeins\.scale/],
   ];
   for (const [bad, message] of refusals) {
     assert.throws(() => createAgentScene(waterRecipe(bad)), message, JSON.stringify(bad));
@@ -137,13 +137,17 @@ test('a water material takes foamVeins with defaults, and refuses bad values wit
 
 test('foam veins are a ridged, warped streak mask gated on amount and the foam mask, so off draws nothing', () => {
   const shader = createFragmentShader(['water', 'vertexColors']);
-  assert.match(shader, /uniform vec3 waterFoamVeins/);
+  assert.match(shader, /uniform vec2 waterFoamVeins/);
   assert.ok(shader.includes('if (waterFoamVeins.x > 0.0) {'), 'amount 0 skips the veins');
   assert.ok(shader.includes('float veinRidge = 1.0 - abs(2.0 * terrainNoise('), 'ridged noise makes the lines');
   assert.ok(shader.includes('veinWarp'), 'a second noise warps them');
   assert.ok(shader.includes('float veinReach = sqrt(smoothstep(0.0, 0.6, foamMask))'), 'the lines fade out away from the crest foam');
   assert.ok(shader.includes('waterFoam = max(waterFoam, veinLine * veinReach * waterFoamVeins.x)'), 'veins only add foam');
-  assert.ok(shader.includes('crestPosition * 4.0 * vec2(waterFoamVeins.y, waterFoamVeins.y / waterFoamVeins.z)'), 'streaks stretch across the crest, down the face');
+  const veinPosition = shader.match(/vec2 veinPosition = ([^;]+);/)[1];
+  assert.equal(veinPosition, 'worldPosition.xz * 4.0 * waterFoamVeins.y', 'one scalar step on the world position, the same in every direction');
+  assert.ok(!veinPosition.includes('crestPosition'), 'no frame that turns with the surface normal, which smears the veins');
+  assert.ok(!/vec2\(/.test(veinPosition), 'no per axis factor: veins are not stretched along one axis');
+  assert.ok(!/veinPosition \* vec2\(|veinPosition\.[xy] \*|vec2\([^)]*\) \* veinPosition/.test(shader), 'the ridge noise is not scaled per axis either');
 });
 
 test('a water batch sends its veins, and a batch without foamVeins sends amount 0', () => {
@@ -155,13 +159,13 @@ test('a water batch sends its veins, and a batch without foamVeins sends amount 
     context: new Proxy({}, {
       get: (_target, name) => {
         if (name === 'getUniformLocation') return (_program, uniform) => uniform;
-        if (name === 'uniform3f') return (uniform, ...values) => uniform === 'waterFoamVeins' && sent.push(values);
+        if (name === 'uniform2f') return (uniform, ...values) => uniform === 'waterFoamVeins' && sent.push(values);
         return () => null;
       },
     }),
   };
   const bind = (material) => layerTextureSupport.bind(renderer, {}, {}, { parts: [{ material }] });
-  bind({ tag: 'water', foamVeins: { amount: 0.9, scale: 2, stretch: 5 } });
+  bind({ tag: 'water', foamVeins: { amount: 0.9, scale: 2 } });
   bind({ tag: 'water' });
-  assert.deepEqual(sent, [[0.9, 2, 5], [0, 1, 3]]);
+  assert.deepEqual(sent, [[0.9, 2], [0, 1]]);
 });

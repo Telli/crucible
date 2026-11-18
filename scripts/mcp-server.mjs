@@ -162,9 +162,8 @@ const waterFields = {
   turbidity: unit.optional().describe('Water tag: 0 clear to 1 murky.'),
   foamVeins: z.strictObject({
     amount: unit.optional().describe('0 off to 1, 0.6 default.'),
-    scale: z.number().min(0.25).max(4).optional().describe('Larger is finer streaks, 1 default.'),
-    stretch: z.number().min(1).max(8).optional().describe('Streak length over width, 3 default.'),
-  }).optional().describe('Water tag: foam streaks trailing down from the crests.'),
+    scale: z.number().min(0.25).max(4).optional().describe('Larger is finer veins, 1 default.'),
+  }).optional().describe('Water tag: foam veins spreading from the crests.'),
   foamEdge: z.enum(['soft', 'hard']).optional().describe('Water tag: soft lace (default) or a hard painted edge.'),
   foamWidth: z.number().min(0.25).max(4).optional().describe('Water tag: foam spread, 1 default.'),
 };
