@@ -243,8 +243,9 @@ function localGridTexture(renderer, grid) {
 function localGridEmissionTexture(renderer, volume) {
   const grid = volume?.gridData ?? null;
   // A grid without a temperature channel bakes to zeros: its texture is the zero fill, with no pass over the voxels.
-  const baked = grid?.channels.temperature ? bakedGridEmission(grid, volume.temperatureScale) : null;
-  return uploadGridTexture(renderer, 'localGridEmissionCache', grid, volume?.temperatureScale ?? 0, baked && ((texels, voxel, texel) => {
+  const baked = grid?.channels.temperature ? bakedGridEmission(grid, volume.temperatureScale, volume.flameTemperature) : null;
+  const cacheKey = `${volume?.temperatureScale ?? 0}|${volume?.flameTemperature?.ignition}|${volume?.flameTemperature?.maximum}`;
+  return uploadGridTexture(renderer, 'localGridEmissionCache', grid, cacheKey, baked && ((texels, voxel, texel) => {
     texels[texel] = floatToHalf(Math.min(baked.red[voxel], HALF_FLOAT_MAXIMUM));
     texels[texel + 1] = floatToHalf(Math.min(baked.green[voxel], HALF_FLOAT_MAXIMUM));
     texels[texel + 2] = floatToHalf(Math.min(baked.blue[voxel], HALF_FLOAT_MAXIMUM));
