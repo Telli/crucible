@@ -162,7 +162,7 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 | `scene_restore` | `sessionId`, `expectedRevision`, and a `checkpointId`, a `revision` or a `branch` | Updated revision and render status |
 | `scene_release_checkpoint` | `sessionId`, `checkpointId` | Release confirmation |
 | `scene_export_recipe` | `sessionId` | Canonical recipe and revision |
-| `scene_export_glb` | `sessionId`, optional `clip`, `motionTime`, `maxTextureSize` | A GLB file under `<jobs>/exports/` with a server-chosen name: path, bytes, SHA-256. See [GLB export](export-glb.md) |
+| `scene_export_glb` | `sessionId`, optional `clip` (index or name), `motionTime`, `maxTextureSize` | A GLB file under `<jobs>/exports/` with a server-chosen name: path, bytes, SHA-256. See [GLB export](export-glb.md) |
 | `scene_export_web` | `sessionId`, optional `title`, `review` | A static web build folder under `<jobs>/exports/`: path of `index.html`, file count, bytes. Needs a `game` set with `set-game`, unless `review` is true. See [Game](game.md) and [Review link](#review-link) |
 | `scene_dispose` | `sessionId` | Disposal confirmation |
 | `scene_render_submit` | `sessionId`, `expectedRevision`, `settings` | Snapshot job ID and queued record |
