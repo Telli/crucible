@@ -7,7 +7,7 @@ import { applyProjection, validateCameraShift, CAMERA_LENS_FIELDS } from './came
 import { checkLocalVolumePartNames } from './local-volume-resolve.js';
 import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, SKY_OVERRIDABLE_FIELDS, VOLUME_FOG_FIELDS } from './agent-look.js';
 import { postStepSupport } from './shader-registry.js';
-import { agentSceneModule, agentSceneModuleActive, agentSceneModuleLoaded, agentSceneModulesNeeded as modulesNeededBy } from './agent-scene-modules.js';
+import { agentSceneModule, agentSceneModuleActive, agentSceneModuleLoaded, defaultStageModulesNamed } from './agent-scene-modules.js';
 import { CURVE_TEXT_LIMITS, AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, MAX_MATERIAL_PATTERNS, RECIPE_ALPHA_MODES } from './agent-scene-capabilities.js';
 import { normalizeMaterialWear, geometryWithSurfaceMasks } from './material-wear.js';
 import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from './material-layers.js';
@@ -1602,7 +1602,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   const limits = resolveLimits(inputLimits);
   const assetOutputCache = new Map();
   // The on-demand modules this scene's recipe and edits named. Default stages (flush ranking, floor sky) run only for these.
-  const requestedModules = new Set(modulesNeededBy(input));
+  const requestedModules = new Set(defaultStageModulesNamed(input));
   let state = null;
   let revision = 0;
   let topologyRevision = 0;
@@ -2205,7 +2205,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         throw invalidField('operations', Array.isArray(inputOperations) ? `${inputOperations.length} operations` : inputOperations, `a list of 1 to ${limits.maxOperations} operations, such as [{ "type": "set-camera", "fov": 50 }]`);
       }
       const operations = copiedJson(inputOperations, limits.maxRecipeBytes);
-      for (const name of modulesNeededBy(operations)) requestedModules.add(name);
+      for (const name of defaultStageModulesNamed(operations)) requestedModules.add(name);
       const onlyFieldEdits = operations.every(operation => FIELD_EDIT_OPERATIONS.has(operation.type));
       const candidate = (onlyFieldEdits && fieldEditCandidate(state.recipe, operations)) || authoredRecipe(state.recipe);
       const removedNodes = new Set();

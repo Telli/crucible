@@ -60,6 +60,17 @@ let hostLoadedEveryModule = false;
 let manifoldLoader = null;
 let physicsLoader = null;
 
+// The two modules that switch a default stage on for every scene once loaded. Kept apart so createAgentScene can ask for just
+// these without carrying the whole marker table.
+const DEFAULT_STAGE_MARKERS = {
+  // Flush faces are ranked whenever this is loaded (issue #751): the MCP preview registers it, loadAllAgentSceneModules loads it,
+  // and so does a recipe that names resolveCoplanar or places an asset, since glTF models nest facades a few millimetres apart.
+  // A recipe of plain primitives in a host without it stays free of the 85 KB of flush code, so it needs no on-demand module.
+  coplanar: ['"resolveCoplanar"', '"asset":{'],
+  // A closed room a sun lights gets the floor sky trace by default. The recipe text can not say whether a room is closed, so a recipe that names its sun loads it and the module skips an open scene.
+  floorSky: ['"keyColor"', '"keyIntensity"'],
+};
+
 // Each test errs on the side of loading: a false positive costs a chunk, a false negative a clear error.
 const MODULE_MARKERS = {
   mesh: ['"type":"mesh"', '"instances"'],
@@ -105,11 +116,11 @@ const MODULE_MARKERS = {
   // Flush faces are ranked whenever this is loaded (issue #751): the MCP preview registers it, loadAllAgentSceneModules loads it,
   // and so does a recipe that names resolveCoplanar or places an asset, since glTF models nest facades a few millimetres apart.
   // A recipe of plain primitives in a host without it stays free of the 85 KB of flush code, so it needs no on-demand module.
-  coplanar: ['"resolveCoplanar"', '"asset":{'],
+  coplanar: DEFAULT_STAGE_MARKERS.coplanar,
   // The support check needs no recipe text: the MCP preview and loadAllAgentSceneModules load it, and a plain host stays free of it.
   unsupportedPart: [],
   // A closed room a sun lights gets the floor sky trace by default. The recipe text can not say whether a room is closed, so a recipe that names its sun loads it and the module skips an open scene.
-  floorSky: ['"keyColor"', '"keyIntensity"'],
+  floorSky: DEFAULT_STAGE_MARKERS.floorSky,
   physicalSky: ['"type":"physical"', '"type":"gradient"'],
   userPass: ['"postPasses"'],
   game: ['"game":{', '"set-game"'],
@@ -137,16 +148,25 @@ export function needsBuoyancy(value) {
   return JSON.stringify(value ?? null).includes('"float":{');
 }
 
-/** Names of the on-demand modules a recipe, or a list of edit operations, needs. */
-export function agentSceneModulesNeeded(value) {
+function namedModules(value, markers, fallback) {
   let text;
   try {
     text = JSON.stringify(value ?? null);
   } catch {
-    return Object.keys(MODULE_LOADERS);
+    return fallback;
   }
   const compact = text.replace(/"\s*:\s*/g, '":');
-  return Object.keys(MODULE_MARKERS).filter(name => MODULE_MARKERS[name].some(marker => (marker instanceof RegExp ? marker.test(compact) : compact.includes(marker))));
+  return Object.keys(markers).filter(name => markers[name].some(marker => (marker instanceof RegExp ? marker.test(compact) : compact.includes(marker))));
+}
+
+/** Names of the on-demand modules a recipe, or a list of edit operations, needs. */
+export function agentSceneModulesNeeded(value) {
+  return namedModules(value, MODULE_MARKERS, Object.keys(MODULE_LOADERS));
+}
+
+/** Which default-stage modules (flush ranking, floor sky) a recipe or a list of edit operations names. */
+export function defaultStageModulesNamed(value) {
+  return namedModules(value, DEFAULT_STAGE_MARKERS, Object.keys(DEFAULT_STAGE_MARKERS));
 }
 
 function loadModule(name) {
