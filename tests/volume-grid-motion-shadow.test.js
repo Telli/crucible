@@ -30,5 +30,5 @@ test('the WebGPU tracer accepts a moving grid volume and its grid march reads ea
   assert.ok(gridKernel.includes('fn localGridMotionPoint(volume: i32, point: vec3<f32>, timeFraction: f32)'));
   assert.ok(gridKernel.includes('localGridSample(volume, localGridMotionPoint(volume, point, timeFraction))'), 'each grid sample moves along the velocity by its shutter time');
   assert.doesNotMatch(buildLocalVolumeFunctions(), /localGridMotionPoint/, 'a scene without a grid compiles no grid motion');
-  assert.throws(() => assertWebGpuLocalVolumes({ localVolumes: [{ shape: 'mesh', part: { name: 'room' }, motionShutter: 0.5 }] }), /localVolumes\[0\] is a mesh volume, which only backend "cpu" traces/);
+  assert.throws(() => assertWebGpuLocalVolumes({ localVolumes: [{ shape: 'mesh', part: { name: 'room' }, motionShutter: 0.5 }] }), /localVolumes\[0\] is a mesh volume that was not prepared for tracing/);
 });
