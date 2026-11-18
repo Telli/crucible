@@ -1,8 +1,8 @@
-// A scene file's renderer option `denseLods` gives a dense scan levels of detail (#1163); without it the parts are untouched.
+// A scene file's renderer option `denseLods` gives a dense scan levels of detail, on by default (#1163); `false` leaves the parts untouched.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sphere } from '../src/geometry.js';
-import { partsForRendererOptions } from '../src/dense-lods.js';
+import { partsForRendererOptions, SCENE_FILE_LOD_PIXEL_ERROR, withSceneFileRendererDefaults } from '../src/dense-lods.js';
 
 function scanPart() {
   return { name: 'scan', geometry: sphere(200, 100), matrix: new Float32Array(16), material: { tag: 'surface', color: [0.5, 0.5, 0.5], metallic: 0, roughness: 0.5 } };
@@ -18,11 +18,18 @@ test('denseLods true gives levels to a scan that has more than one triangle per 
   assert.ok(result[0].lods.length > 1, 'the part carries levels');
 });
 
-test('without denseLods, or with it false, the same parts come back', () => {
+test('denseLods is on by default: a dense scan gets levels without the option', () => {
+  for (const options of [{ pixelRatio: 1 }, {}, undefined]) {
+    const parts = [scanPart()];
+    const result = partsForRendererOptions(parts, SMALL_CANVAS, options);
+    assert.notEqual(result, parts);
+    assert.ok(result[0].lods.length > 1, 'the part carries levels');
+  }
+});
+
+test('denseLods false returns the same parts', () => {
   const parts = [scanPart()];
-  assert.equal(partsForRendererOptions(parts, SMALL_CANVAS, {}), parts);
   assert.equal(partsForRendererOptions(parts, SMALL_CANVAS, { denseLods: false }), parts);
-  assert.equal(partsForRendererOptions(parts, SMALL_CANVAS), parts);
 });
 
 test('the pixel ratio counts: the same scan is sparse on a big canvas', () => {
@@ -33,4 +40,12 @@ test('the pixel ratio counts: the same scan is sparse on a big canvas', () => {
 
 test('denseLods must be a boolean, and the error says so', () => {
   assert.throws(() => partsForRendererOptions([scanPart()], SMALL_CANVAS, { denseLods: 'yes' }), /renderer\.denseLods must be true or false/);
+});
+
+test('a scene file picks levels at 0.5 pixels of error unless its renderer says otherwise (#2157)', () => {
+  assert.equal(SCENE_FILE_LOD_PIXEL_ERROR, 0.5);
+  assert.equal(withSceneFileRendererDefaults().lodPixelError, 0.5);
+  assert.equal(withSceneFileRendererDefaults({ samples: 2 }).lodPixelError, 0.5);
+  assert.equal(withSceneFileRendererDefaults({ lodPixelError: 2 }).lodPixelError, 2);
+  assert.equal(withSceneFileRendererDefaults({ samples: 2 }).samples, 2);
 });

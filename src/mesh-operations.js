@@ -18,13 +18,15 @@ export const MODIFIER_OPERATIONS = /* @__PURE__ */ Object.freeze({
   lattice: { fields: ['divisions', 'moves'], tags: [] },
   curve: { fields: ['path', 'axis'], tags: [] },
   hook: { fields: ['center', 'radius', 'translation', 'strength', 'falloff'], tags: [] },
+  smooth_laplacian: { fields: ['factor', 'iterations', 'preserveVolume', 'pinBoundary', 'group'], tags: [] },
+  warp: { fields: ['from', 'to', 'radius', 'curve', 'twist'], tags: [] },
   wave: { fields: ['height', 'width', 'narrowness', 'speed', 'time', 'timeOffset', 'start', 'cyclic', 'axes', 'normal'], tags: [] },
   weighted_normal: { fields: ['angle', 'weight'], tags: [] },
   smooth_by_angle: { fields: ['angle', 'ignoreSharp'], tags: [] },
   bounding_box: { fields: [], tags: [] },
   convex_hull: { fields: [], tags: [] },
   build: { fields: ['order', 'axis', 'seed', 'frame', 'start', 'length', 'reverse'], tags: [] },
-  ocean: { fields: ['axis', 'windSpeed', 'direction', 'choppiness', 'size', 'seed', 'time', 'resolution', 'wake'], tags: [] },
+  ocean: { fields: ['axis', 'windSpeed', 'direction', 'choppiness', 'size', 'seed', 'time', 'resolution', 'wake', 'spray'], tags: [] },
 });
 
 export const MESH_EDIT_OPERATIONS = /* @__PURE__ */ Object.freeze({
