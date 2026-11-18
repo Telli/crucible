@@ -87,7 +87,7 @@ test('denoise true picks OIDN on every backend when it is installed and says whi
     const withOidn = await chooseDenoiser(true, { native, loadOidn: async () => installed });
     assert.equal(withOidn.denoise, 'oidn');
     assert.equal(withOidn.denoiser, installed);
-    assert.match(withOidn.note, /denoise true used OIDN with the albedo and normal guides/);
+    assert.equal(withOidn.note, undefined, 'a filter that ran as asked is not a fallback, so it carries no note');
   }
   const withoutOnCpuOrGpu = await chooseDenoiser(true, { loadOidn: async () => null });
   assert.equal(withoutOnCpuOrGpu.denoise, 'wavelet');
@@ -133,7 +133,8 @@ test('a source checkout finds the fetched OIDN package without it being installe
 
 test('the job capability text says how to install the OIDN package from npm and what runs without it', () => {
   const { setting } = PATH_TRACER_CAPABILITIES;
-  assert.match(setting, /@codepawlhq\/crucible-denoise-oidn \(npm install it/);
+  assert.match(setting, /denoise true \(the default\) and "oidn" use OIDN when @codepawlhq\/crucible-denoise-oidn is installed \(npm install it/);
+  assert.match(setting, /final quality tier/);
   assert.match(setting, /fetch-oidn\.mjs/);
   assert.match(setting, /wavelet filter.*denoiserNote/s);
 });

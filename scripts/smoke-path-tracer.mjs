@@ -95,6 +95,19 @@ try {
     assert.equal(external.metrics.pathTracer.denoiser, 'wavelet');
     assert.match(external.metrics.pathTracer.denoiserNote, /wavelet filter ran instead/);
   }
+  // denoise true (the default) reaches the same package, keeps the samples it was asked for, and names the filter that ran.
+  const byDefault = await renderedBytes(sessionId, { ...base, renderer: { ...tracer, denoise: true } });
+  assert.equal(byDefault.metrics.pathTracer.samples, tracer.samples);
+  if (findOidnBinary()) {
+    assert.equal(byDefault.metrics.pathTracer.denoiser, 'oidn');
+    assert.deepEqual(byDefault.bytes, external.bytes, 'denoise true must run the same OIDN filter as "oidn" on the same samples.');
+  } else {
+    assert.equal(byDefault.metrics.pathTracer.denoiser, 'wavelet');
+    assert.match(byDefault.metrics.pathTracer.denoiserNote, /denoise true uses OIDN.*wavelet filter ran instead/s);
+  }
+  const explicitWavelet = await renderedBytes(sessionId, { ...base, renderer: { ...tracer, denoise: 'wavelet' } });
+  assert.equal(explicitWavelet.metrics.pathTracer.denoiser, 'wavelet');
+  assert.equal(explicitWavelet.metrics.pathTracer.denoiserNote, undefined);
   for (const [settings, message] of [
     [{ ...base, renderer: { ...tracer, samples: 99999 } }, /samples/],
     [{ ...base, renderer: { ...tracer, extra: 1 } }, /extra|Unrecognized|Unknown/],

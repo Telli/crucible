@@ -36,9 +36,7 @@ export async function chooseDenoiser(requested, { native = false, keepWavelet = 
   if (requested !== 'oidn' && !isDefault) return { denoise: requested };
   const denoiser = await loadOidn();
   if (denoiser) {
-    return isDefault
-      ? { denoise: 'oidn', denoiser, note: 'denoise true used OIDN with the albedo and normal guides because its package is installed; denoise "wavelet" picks the wavelet filter.' }
-      : { denoise: 'oidn', denoiser };
+    return { denoise: 'oidn', denoiser };
   }
   const reason = `needs ${OIDN_PACKAGE}, and its binary: npm install it, run \`node node_modules/@codepawlhq/crucible-denoise-oidn/fetch-oidn.mjs\`, or set OIDN_DENOISE_PATH`;
   const lead = isDefault ? 'denoise true uses OIDN, which' : 'denoise "oidn"';

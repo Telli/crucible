@@ -992,7 +992,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
                 nativeTemporalShotIndex = shotSample?.shotIndex;
               }
               traced = await traceFrameNative({ tracer: trace.tracer, sequence: nativeSequence, temporal: nativeTemporal, exported, width, height, samples: tracerOptions.samples, bounces: tracerOptions.bounces,
-                seed: frameSeed, denoise: choice.denoise === true ? 'wavelet' : choice.denoise === false ? 'none' : choice.denoise, denoiser: choice.denoiser,
+                seed: frameSeed, denoise: choice.denoise === false ? 'none' : choice.denoise, denoiser: choice.denoiser,
                 maxSeconds: tracerOptions.maxSeconds, noiseThreshold: tracerOptions.noiseThreshold, exposure: snapshot.recipe.effects?.exposure ?? 1 });
               nativeMemoryAllowance.grantForAdapter(traced.report.gpu);
             } catch (error) {
