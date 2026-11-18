@@ -53,7 +53,7 @@ Tool `scene_apply`:
 ```
 
 `keyIntensity: 0` drops the setup's sun when the HDRI has its own; keep it above 0 when you want shadows from the
-key light. `"hdri": null` clears it.
+key light. `"hdri": null` clears it. `ambientIntensity` also scales the HDRI's diffuse light and reflections, so `0` makes an HDRI-lit scene black even with a high `environmentIntensity`. For an HDRI-only scene set `keyIntensity` and `fillIntensity` to 0 and keep `ambientIntensity` above 0.
 
 ## Color look and tone mapping
 
