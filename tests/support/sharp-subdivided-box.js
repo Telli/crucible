@@ -54,3 +54,23 @@ export function overhangingEdgeVertices(box, displaced) {
   }
   return overhanging.size;
 }
+
+/**
+ * The largest stretch between a rim vertex and a neighbour that is not on an edge: how far their displacements differ,
+ * per unit of their starting edge length. A rim that rises on its own while the face below stays put stretches one quad
+ * tall and reads as a squared lip.
+ */
+export function largestRimStretch(box, displaced) {
+  const onEdge = vertex => [0, 1, 2].filter(axis => Math.abs(box.positions[vertex * 3 + axis]) > 0.5 - 1e-6).length >= 2;
+  const moved = (mesh, vertex, axis) => mesh.positions[vertex * 3 + axis] - box.positions[vertex * 3 + axis];
+  let largest = 0;
+  for (let edge = 0; edge < box.edgeCount; edge++) {
+    const first = box.edgeVertices[edge * 2];
+    const second = box.edgeVertices[edge * 2 + 1];
+    if (onEdge(first) === onEdge(second)) continue;
+    const length = Math.hypot(...[0, 1, 2].map(axis => box.positions[first * 3 + axis] - box.positions[second * 3 + axis]));
+    const difference = Math.hypot(...[0, 1, 2].map(axis => moved(displaced, first, axis) - moved(displaced, second, axis)));
+    largest = Math.max(largest, difference / length);
+  }
+  return largest;
+}

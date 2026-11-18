@@ -6,7 +6,7 @@ import { applyMeshEdits, meshFromGeometry } from '../src/mesh.js';
 import { evaluateField, meshFieldContext } from '../src/mesh-fields.js';
 import { lintMesh } from '../src/mesh-lint.js';
 import { vertexNormals } from '../src/mesh-normals.js';
-import { overhangingEdgeVertices, sharpSubdividedBox } from './support/sharp-subdivided-box.js';
+import { largestRimStretch, overhangingEdgeVertices, sharpSubdividedBox } from './support/sharp-subdivided-box.js';
 
 const noiseDisplace = [{ op: 'displace', field: { noise: { scale: 3, seed: 7 } }, strength: 0.4 }];
 
@@ -59,4 +59,13 @@ test('a smooth sphere still moves each vertex by distance times its angle-weight
     for (let axis = 0; axis < 3; axis++) reference[vertex * 3 + axis] += distance * normals[vertex * 3 + axis];
   }
   assert.deepEqual(Buffer.from(displaced.positions.buffer), Buffer.from(reference.buffer));
+});
+
+test('a rim vertex stays within 0.75 edge lengths of the face beside it, so no squared lip stands at the edge (#2224)', () => {
+  for (const [spans, scale] of [[64, 3], [24, 6]]) {
+    const box = sharpSubdividedBox(spans);
+    const displaced = applyMeshEdits(box, [{ op: 'displace', field: { noise: { scale, seed: 7 } }, strength: 0.4 }]).mesh;
+    const stretch = largestRimStretch(box, displaced);
+    assert.ok(stretch <= 0.75, `${spans} spans, noise scale ${scale}: rim stretch ${stretch.toFixed(2)}`);
+  }
 });

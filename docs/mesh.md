@@ -309,8 +309,10 @@ Uses:
   the texture: each vertex moves by `(field - midlevel) * strength` along `normal` (default), `x`, `y` or `z`.
   `displace` also takes `group`, the name of a vertex group: each move is scaled by the vertex's weight.
   Along `normal`, a vertex on a sharp edge (faces that bend apart by more than 60 degrees) moves to the meeting point of the
-  offset planes of its sides, so the faces stay unfolded; a move inward there is limited to half the edge length, growing
-  by 0.4 per unit of distance from the edge, because a deeper move would push the vertex past its neighbours. Smooth surfaces are unchanged.
+  offset planes of its sides, so the faces stay unfolded. The move fades to zero toward such an edge over a band as wide
+  as the largest requested move (at most a quarter of the mesh size), so a face eases into its rim instead of stepping up
+  from it; a move inward there is also limited to half the edge length, growing by 0.4 per unit of distance from the edge,
+  because a deeper move would push the vertex past its neighbours. Smooth surfaces are unchanged.
 - Both are also stack nodes, so a late change reuses the cached earlier nodes.
 - `vertex_group` (`name`, `select`, and one of `weight`, `field`, `gradient` or `measure`) writes the weights, 0 to 1, of a named group for the
   vertices of the selected faces; the others keep theirs (0 in a new group). `gradient` is `{ "axis": "y", "range": [0, 1], "weights": [0, 1] }`,

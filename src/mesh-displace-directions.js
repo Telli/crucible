@@ -9,6 +9,9 @@ import { faceNormals, vertexNormals } from './mesh-normals.js';
 // the shortest edge there, growing by SIDE_SLOPE per unit of distance along the surface, so it stays a slope. Outward,
 // a sharp vertex may rise above its neighbours on a side by at most SIDE_SLOPE per unit of edge length, so no rim
 // overhangs the face below it.
+// A rim that may slide only a little cannot follow a face that wants to move far, and the face would stand a hard lip above it.
+// So every move fades to zero toward a sharp vertex over a band measured along the surface in world units (the largest
+// requested move wide, at most a quarter of the mesh), and the face eases into its rim at any segment count.
 
 /** Adjacent faces that bend apart by more than 60 degrees make their shared vertices sharp. */
 const SHARP_BEND_COSINE = Math.cos(60 * Math.PI / 180);
@@ -20,6 +23,10 @@ const MAX_MITER_RATIO = 2;
 const SINGULAR_DETERMINANT = 1e-4;
 /** How much deeper an inward move may get, and how far a sharp vertex may stand out from a neighbour, per unit of edge length. Below 1 so no strip tilts past 22 degrees from its side. */
 const SIDE_SLOPE = 0.4;
+/** The fade band beside a sharp edge is this many times the largest requested distance wide. */
+const EDGE_BAND_PER_AMPLITUDE = 1;
+/** The fade band never exceeds this fraction of the mesh size. */
+const EDGE_BAND_MAX_EXTENT = 0.25;
 
 /**
  * The move of every vertex as xyz triples, given the signed distance each one is asked to move (positive is outward).
@@ -29,7 +36,13 @@ const SIDE_SLOPE = 0.4;
 export function displacementOffsets(mesh, distances) {
   const normals = vertexNormals(mesh);
   const sharpVertices = findSharpVertices(mesh);
-  const limits = sharpVertices.size ? limitInwardDistances(mesh, distances, sharpVertices) : null;
+  let limits = null;
+  if (sharpVertices.size) {
+    const neighbours = edgeNeighbours(mesh);
+    const distanceToSharp = surfaceDistanceToSharp(neighbours, sharpVertices);
+    fadeDistancesNearSharp(mesh, distances, distanceToSharp);
+    limits = limitInwardDistances(mesh, distances, neighbours, distanceToSharp, sharpVertices);
+  }
   const offsets = new Float64Array(mesh.vertexCount * 3);
   for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
     for (let axis = 0; axis < 3; axis++) offsets[vertex * 3 + axis] = distances[vertex] * normals[vertex * 3 + axis];
@@ -88,11 +101,8 @@ function edgeLength(mesh, first, second) {
   return Math.hypot(...[0, 1, 2].map(axis => mesh.positions[first * 3 + axis] - mesh.positions[second * 3 + axis]));
 }
 
-/**
- * Clamp inward distances (negative) to half the shortest edge at a sharp vertex plus SIDE_SLOPE per unit of distance from
- * it. Returns the limit of every vertex.
- */
-function limitInwardDistances(mesh, distances, sharpVertices) {
+/** The edge neighbours of every vertex as a flat [neighbour, length, neighbour, length, ...] list. */
+function edgeNeighbours(mesh) {
   const neighbours = Array.from({ length: mesh.vertexCount }, () => []);
   for (let edge = 0; edge < mesh.edgeCount; edge++) {
     const first = mesh.edgeVertices[edge * 2];
@@ -101,20 +111,73 @@ function limitInwardDistances(mesh, distances, sharpVertices) {
     neighbours[first].push(second, length);
     neighbours[second].push(first, length);
   }
-  const limits = new Float64Array(mesh.vertexCount).fill(Infinity);
+  return neighbours;
+}
+
+/** Distance along the surface from every vertex to the nearest sharp vertex. */
+function surfaceDistanceToSharp(neighbours, sharpVertices) {
+  const distanceToSharp = new Float64Array(neighbours.length).fill(Infinity);
+  const waiting = new Uint8Array(neighbours.length);
   const queue = [...sharpVertices.keys()];
-  for (const vertex of queue) limits[vertex] = Math.min(...neighbours[vertex].filter((_, index) => index % 2)) / 2;
-  // Label-correcting relaxation: a vertex is queued again whenever a shorter route lowers its limit.
+  for (const vertex of queue) {
+    distanceToSharp[vertex] = 0;
+    waiting[vertex] = 1;
+  }
+  // Label-correcting relaxation: a vertex is queued again, once, whenever a shorter route lowers its distance.
   for (let head = 0; head < queue.length; head++) {
     const vertex = queue[head];
+    waiting[vertex] = 0;
     const list = neighbours[vertex];
     for (let index = 0; index < list.length; index += 2) {
-      const reached = limits[vertex] + SIDE_SLOPE * list[index + 1];
-      if (reached >= limits[list[index]]) continue;
-      limits[list[index]] = reached;
+      const reached = distanceToSharp[vertex] + list[index + 1];
+      if (reached >= distanceToSharp[list[index]]) continue;
+      distanceToSharp[list[index]] = reached;
+      if (waiting[list[index]]) continue;
+      waiting[list[index]] = 1;
       queue.push(list[index]);
     }
   }
+  return distanceToSharp;
+}
+
+/**
+ * Fade the distances to zero toward every sharp vertex over a band of EDGE_BAND_PER_AMPLITUDE times the largest distance,
+ * so a face eases into its rim instead of stepping up from it: a rim cannot follow a face that moves further than its
+ * neighbours allow, and the face would stand a hard lip above it. The band is measured along the surface in world
+ * units, so it is the same at any segment count, and it never exceeds EDGE_BAND_MAX_EXTENT of the mesh size.
+ */
+function fadeDistancesNearSharp(mesh, distances, distanceToSharp) {
+  const amplitude = distances.reduce((largest, distance) => Math.max(largest, Math.abs(distance)), 0);
+  const bandWidth = Math.min(EDGE_BAND_PER_AMPLITUDE * amplitude, EDGE_BAND_MAX_EXTENT * meshExtent(mesh));
+  if (!(bandWidth > 0)) return;
+  for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
+    const along = distanceToSharp[vertex] / bandWidth;
+    if (along < 1) distances[vertex] *= along * along * (3 - 2 * along);
+  }
+}
+
+function meshExtent(mesh) {
+  let extent = 0;
+  for (let axis = 0; axis < 3; axis++) {
+    let low = Infinity;
+    let high = -Infinity;
+    for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
+      low = Math.min(low, mesh.positions[vertex * 3 + axis]);
+      high = Math.max(high, mesh.positions[vertex * 3 + axis]);
+    }
+    extent = Math.max(extent, high - low);
+  }
+  return extent;
+}
+
+/**
+ * Clamp inward distances (negative) to half the shortest edge at a sharp vertex plus SIDE_SLOPE per unit of distance from
+ * it. Returns the limit of every vertex.
+ */
+function limitInwardDistances(mesh, distances, neighbours, distanceToSharp, sharpVertices) {
+  const limits = new Float64Array(mesh.vertexCount);
+  for (let vertex = 0; vertex < mesh.vertexCount; vertex++) limits[vertex] = SIDE_SLOPE * distanceToSharp[vertex];
+  for (const vertex of sharpVertices.keys()) limits[vertex] = Math.min(...neighbours[vertex].filter((_, index) => index % 2)) / 2;
   for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
     if (distances[vertex] < -limits[vertex]) distances[vertex] = -limits[vertex];
   }
