@@ -61,11 +61,11 @@ test('a smooth sphere still moves each vertex by distance times its angle-weight
   assert.deepEqual(Buffer.from(displaced.positions.buffer), Buffer.from(reference.buffer));
 });
 
-test('a rim vertex stays within 0.75 edge lengths of the face beside it, so no squared lip stands at the edge (#2224)', () => {
+test('a rim vertex stays within 0.5 edge lengths of the face beside it, so no squared lip stands at the edge (#2224)', () => {
   for (const [spans, scale] of [[64, 3], [24, 6]]) {
     const box = sharpSubdividedBox(spans);
     const displaced = applyMeshEdits(box, [{ op: 'displace', field: { noise: { scale, seed: 7 } }, strength: 0.4 }]).mesh;
     const stretch = largestRimStretch(box, displaced);
-    assert.ok(stretch <= 0.75, `${spans} spans, noise scale ${scale}: rim stretch ${stretch.toFixed(2)}`);
+    assert.ok(stretch <= 0.5, `${spans} spans, noise scale ${scale}: rim stretch ${stretch.toFixed(2)}`);
   }
 });
