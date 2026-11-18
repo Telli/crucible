@@ -47,18 +47,25 @@ test('a part that is not water traces exactly as before', () => {
   assert.equal(scene.partMaterials[0].attenuationDistance, undefined);
 });
 
-test('fogDensity with world on becomes a homogeneous volume of that extinction and colour', () => {
+test('fogDensity with world on becomes a homogeneous volume of that extinction and colour, in the scene box plus a margin', () => {
   const scene = buildTraceScene([quadPart('Floor', PLAIN)], { world: true, fogDensity: 0.05, fogColor: [0.2, 0.3, 0.4] });
   assert.equal(scene.volume.density, 0.05);
   assert.deepEqual([...scene.volume.albedo], [0.2, 0.3, 0.4]);
   assert.equal(scene.volume.anisotropy, 0);
-  assert.equal(scene.volume.maxDistance, 3.5);
+  assert.deepEqual([...scene.volume.minimum], [-1.5, -0.5, -1.5]);
+  assert.deepEqual([...scene.volume.maximum], [1.5, 0.5, 1.5]);
 });
 
 test('no distance haze volume without fogDensity or without world, as the rasterizer draws none there', () => {
   assert.equal(buildTraceScene([quadPart('Floor', PLAIN)], { world: true }).volume, null);
   assert.equal(buildTraceScene([quadPart('Floor', PLAIN)], { world: true, fogDensity: 0 }).volume, null);
   assert.equal(buildTraceScene([quadPart('Floor', PLAIN)], { fogDensity: 0.05 }).volume, null);
+});
+
+test('fogDensity still maps when the recipe carries an unset volumeFog of density 0', () => {
+  const environment = { world: true, fogDensity: 0.05, volumeFog: { density: 0 } };
+  assert.equal(buildTraceScene([quadPart('Floor', PLAIN)], environment).volume.density, 0.05);
+  assert.match(describeIgnoredFeatures([quadPart('Floor', PLAIN)], environment).join(' '), /fogDensity is traced as a uniform medium/);
 });
 
 test('volumeFog wins over fogDensity', () => {

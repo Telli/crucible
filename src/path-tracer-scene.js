@@ -842,24 +842,31 @@ function instanceFor(part, geometry, partIndex, material, views) {
   return instance;
 }
 
-// The largest coordinate any instance reaches, from the corners of each geometry's box, so it never reads a whole copy.
-function instancedExtent(instances) {
+// The box around every instance, from the corners of each geometry's box, so it never reads a whole copy.
+function instancedBounds(instances) {
   const boxes = new Map();
-  let extent = 1e-3;
+  const low = [Infinity, Infinity, Infinity];
+  const high = [-Infinity, -Infinity, -Infinity];
   for (const { geometry, matrix } of instances) {
     if (!boxes.has(geometry)) boxes.set(geometry, boundingBoxOf(geometry.positions));
-    const { low, high } = boxes.get(geometry);
+    const box = boxes.get(geometry);
     for (let corner = 0; corner < 8; corner++) {
-      const x = corner & 1 ? high[0] : low[0];
-      const y = corner & 2 ? high[1] : low[1];
-      const z = corner & 4 ? high[2] : low[2];
-      extent = Math.max(extent,
-        Math.abs(matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12]),
-        Math.abs(matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13]),
-        Math.abs(matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14]));
+      const x = corner & 1 ? box.high[0] : box.low[0];
+      const y = corner & 2 ? box.high[1] : box.low[1];
+      const z = corner & 4 ? box.high[2] : box.low[2];
+      for (let axis = 0; axis < 3; axis++) {
+        const world = matrix[axis] * x + matrix[4 + axis] * y + matrix[8 + axis] * z + matrix[12 + axis];
+        low[axis] = Math.min(low[axis], world);
+        high[axis] = Math.max(high[axis], world);
+      }
     }
   }
-  return extent;
+  return { low, high };
+}
+
+// The largest coordinate a box reaches.
+function extentOf({ low, high }) {
+  return Math.max(1e-3, ...low.map(Math.abs), ...high.map(Math.abs));
 }
 
 function boundingBoxOf(positions) {
@@ -887,7 +894,8 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
   const materials = tracedPartMaterials.map((material, index) => ({ ...material, ...traceMaterials[index] }));
   const geometryViews = new Map();
   const instances = parts.map((part, index) => instanceFor(part, geometries[index], index, materials[index], geometryViews));
-  const extent = instancedExtent(instances);
+  const bounds = instancedBounds(instances);
+  const extent = extentOf(bounds);
   return {
     instances,
     materials,
@@ -896,7 +904,7 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
     ...(parts.some(part => part.shadowOnly === true) ? { shadowOnlyParts: Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) } : {}),
     lights: resolveLights(environment, limits.lights, parts),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
-    volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, extent),
+    volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, bounds),
     localVolumes,
     surfaceOffset: extent * 1e-5,
     farDistance: extent * 1e4,
@@ -966,8 +974,8 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
   }
   const geometry = flattenParts(parts, geometries, limits);
   const bvh = buildTriangleBvh(geometry.positions, geometry.indices);
-  let extent = 1e-3;
-  for (let index = 0; index < geometry.positions.length; index++) extent = Math.max(extent, Math.abs(geometry.positions[index]));
+  const bounds = boundingBoxOf(geometry.positions);
+  const extent = extentOf(bounds);
   const tracedPartMaterials = parts.map(tracedMaterialOf);
   return attachTracer({
     ...geometry,
@@ -980,7 +988,7 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
     partRayVisibility: flattenedRayVisibility(parts),
     lights: resolveLights(environment, limits.lights, parts),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
-    volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, extent),
+    volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, bounds),
     localVolumes,
     surfaceOffset: extent * 1e-5,
     farDistance: extent * 1e4,
