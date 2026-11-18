@@ -3,7 +3,7 @@
 // The page packs the whole scene every frame, and almost all of the bytes come out the same: the static meshes, the lights, the
 // environment. The page keeps the tables of its last export, finds the byte ranges that differ and puts only those in the Blob
 // the job runner reads. The job runner holds the tables it got last time and patches them, so it ends with the same bytes a full
-// export gives. This file is shared by the page (planning) and the job runner (patching); it touches no browser or Node API.
+// export gives; a table of another length patches the bytes it shares with the old one, then appends or cuts (#2180). This file is shared by the page (planning) and the job runner (patching); it touches no browser or Node API.
 
 /** Two changed words closer than this many bytes share one range, so a particle tail is a few ranges instead of thousands. */
 export const DELTA_GAP_BYTES = 1024;
@@ -56,14 +56,35 @@ export function changedRanges(before, after) {
 }
 
 /**
+ * The ranges that turn `before` into `after` when the two tables have different lengths: the changes inside the bytes both hold
+ * (the shared prefix), then everything past the old end when `after` is longer. A shorter `after` needs no more ranges, since the
+ * applier cuts the old table to the new length. Returns null when the prefix changes in too many places.
+ */
+export function prefixPatchRanges(before, after) {
+  const sharedBytes = Math.min(before.byteLength, after.byteLength);
+  const ranges = changedRanges(before.subarray(0, sharedBytes), after.subarray(0, sharedBytes));
+  if (ranges === null) return null;
+  if (after.byteLength === sharedBytes) return ranges;
+  const last = ranges[ranges.length - 1];
+  if (last && last[0] + last[1] === sharedBytes) {
+    last[1] = after.byteLength - last[0];
+  } else {
+    ranges.push([sharedBytes, after.byteLength - sharedBytes]);
+  }
+  return ranges;
+}
+
+/**
  * What to send of `tables` (name to Uint8Array) given the `previous` ones: name to a list of `[offset, length]` ranges. A table
- * with no previous one, another length or too many changes is one range over all of it; an unchanged table is an empty list.
+ * with no previous one or too many changes is one range over all of it; an unchanged table is an empty list. A table of another
+ * length than before sends the changes in the bytes it shares with the old one, then the bytes past the old end (#2180).
  */
 export function planExportDelta(previous, tables) {
   const ranges = {};
   for (const [name, bytes] of Object.entries(tables)) {
     const before = previous[name];
-    const changed = before && before.byteLength === bytes.byteLength ? changedRanges(before, bytes) : null;
+    let changed = null;
+    if (before) changed = before.byteLength === bytes.byteLength ? changedRanges(before, bytes) : prefixPatchRanges(before, bytes);
     ranges[name] = changed ?? [[0, bytes.byteLength]];
   }
   return ranges;
@@ -98,6 +119,17 @@ function requireRangesInside(name, list, byteLength) {
   }
 }
 
+// Whether the ranges (in order, not overlapping) between them cover every byte from `start` to the end of the table.
+function coversFrom(list, start, end) {
+  let covered = start;
+  for (const [offset, length] of list) {
+    if (offset + length <= covered) continue;
+    if (offset > covered) return false;
+    covered = offset + length;
+  }
+  return covered >= end;
+}
+
 /**
  * The full tables from the bytes a delta sent. `lengths` is the byte length of every table now, `ranges` what was sent, `sent` the
  * bytes of all ranges back to back, and `previous` the tables of the export the delta was made against. A table that changed gets a
@@ -121,10 +153,14 @@ export function applyExportDelta({ previous, lengths, ranges, sent }) {
       cursor += byteLength;
       continue;
     }
-    if (before?.byteLength !== byteLength) {
-      throw new RangeError(`The native scene export sent only part of table "${name}", but the tables held here have ${before ? before.byteLength : 'no'} bytes for it, not ${byteLength}. Export the scene again without a baseline.`);
+    if (!before) {
+      throw new RangeError(`The native scene export sent only part of table "${name}", but the tables held here have no bytes for it. Export the scene again without a baseline.`);
     }
-    const patched = before.slice();
+    if (before.byteLength < byteLength && !coversFrom(list, before.byteLength, byteLength)) {
+      throw new RangeError(`The native scene export grew table "${name}" from ${before.byteLength} to ${byteLength} bytes but sent nothing for the bytes past the old end. Export the scene again without a baseline.`);
+    }
+    const patched = new Uint8Array(byteLength);
+    patched.set(before.subarray(0, Math.min(before.byteLength, byteLength)));
     for (const [offset, length] of list) {
       patched.set(sent.subarray(cursor, cursor + length), offset);
       cursor += length;
