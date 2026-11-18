@@ -52,7 +52,11 @@ async function createLiveRenderer(canvas, scene) {
   return { renderer, environment };
 }
 
-export class CrucibleSceneElement extends HTMLElement {
+// The package is imported in Node too (server rendering, the package smoke), where there is no DOM;
+// the element only registers in a browser.
+const ElementBase = typeof HTMLElement === 'undefined' ? class {} : HTMLElement;
+
+export class CrucibleSceneElement extends ElementBase {
   static observedAttributes = ['src', 'poster', 'scroll', 'hover-tilt', 'view'];
 
   #renderer = null;

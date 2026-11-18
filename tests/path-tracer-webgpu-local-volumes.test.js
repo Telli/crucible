@@ -127,6 +127,40 @@ test('the grid march is compiled only for a scene that has a grid, and a scene w
   assert.match(withGrid, /const LOCAL_VOLUME_MAXIMUM_STEPS: f32 = \d+\.0;/);
 });
 
+// A grid that carries velocity, traced through buildTraceScene as the WebGPU tracer receives it, with the shutter value a test passes in the environment.
+function tracedGridScene(volumeShutter) {
+  const channels = { density: [0.25, 0.5, 0.75, 1], temperature: [0, 0, 2, 3], velocityX: [0.5, 1, 1.5, 2], velocityY: [0, 0, 0, 0], velocityZ: [0, 0, 0, 0] };
+  registerVolumeGrid('webgpu-grid-1785-moving', decodeVolumeGrid(encodeVolumeGrid({ resolution: [2, 2, 1], channels, size: [2, 2, 2] })));
+  const volume = { shape: 'grid', grid: 'webgpu-grid-1785-moving', center: [0, 1, 0], density: 2, emission: [1, 0.5, 0.25], emissionStrength: 4, steps: 24, blackbodyIntensity: 0.3, temperatureScale: 1000 };
+  return buildTraceScene([floorPart()], { localVolumes: [volume], ...(volumeShutter === undefined ? {} : { volumeShutter }) });
+}
+
+test('with the shutter off or unset a grid that carries velocity uploads the table and the kernel it had before shutter support (#1785)', () => {
+  const unset = tracedGridScene(undefined);
+  const off = tracedGridScene(0);
+  const unsetTable = packWebGpuLocalVolumes(unset.localVolumes, unset.environment);
+  const offTable = packWebGpuLocalVolumes(off.localVolumes, off.environment);
+  assert.deepEqual(Buffer.from(offTable.buffer), Buffer.from(unsetTable.buffer), 'volumeShutter 0 packs the same bytes as no volumeShutter');
+  const block = (LOCAL_VOLUME_HEADER_TEXELS + LOCAL_VOLUME_TEXELS) * 4;
+  assert.deepEqual([...offTable.subarray(block + 4, block + 8)], [0, 1, 0, 2], 'header: shutter 0, blackbody baked, no velocity, two vectors per voxel');
+  assert.equal(offTable.length, block + (LOCAL_VOLUME_GRID_HEADER_TEXELS + 4 * 2) * 4, 'no velocity vector per voxel is uploaded');
+  assert.equal(off.localVolumes[0].motionShutter, undefined, 'the bound volume carries no motion shutter');
+  const features = webGpuVolumeFeatures(off.localVolumes);
+  assert.equal(buildMegakernelSource({ hasLocalVolumes: true, ...features }), buildMegakernelSource({ hasLocalVolumes: true, hasGridVolume: true }), 'the shutter adds no kernel variant');
+  const open = tracedGridScene(1 / 12);
+  const openTable = packWebGpuLocalVolumes(open.localVolumes, open.environment);
+  assert.equal(openTable.length, offTable.length + 4 * 4, 'control: an open shutter adds one velocity vector per voxel');
+  assert.ok(Math.abs(openTable[block + 4] - 1 / 12) < 1e-6 && openTable[block + 6] === 1, 'control: the header carries the shutter and the velocity flag');
+});
+
+test('a scene without a grid packs and compiles the same whatever volumeShutter says (#1785)', () => {
+  const plain = buildTraceScene([floorPart()], { localVolumes: [SMOKE_BOX, PUFF] });
+  const shuttered = buildTraceScene([floorPart()], { localVolumes: [SMOKE_BOX, PUFF], volumeShutter: 1 / 12 });
+  assert.deepEqual(Buffer.from(packWebGpuLocalVolumes(shuttered.localVolumes, shuttered.environment).buffer), Buffer.from(packWebGpuLocalVolumes(plain.localVolumes, plain.environment).buffer));
+  assert.deepEqual(webGpuVolumeFeatures(shuttered.localVolumes), webGpuVolumeFeatures(plain.localVolumes));
+  assert.equal(webGpuVolumeFeatures(plain.localVolumes).hasGridVolume, false);
+});
+
 // How closely two difference images point the same way: the Pearson correlation of their pixels.
 function correlation(first, second) {
   const meanOf = values => values.reduce((total, value) => total + value, 0) / values.length;
