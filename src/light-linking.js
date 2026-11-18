@@ -73,15 +73,16 @@ export function applyLightLinks(parts, environment) {
 }
 
 /**
- * Names in a light's `affects` list that are not nodes of the recipe, as "where: name" strings. A linked light lights
- * only those nodes, so a misspelled name would silently darken a part; the caller fails with the next action instead.
+ * Names in a light's `affects` list that are not nodes of the recipe, as { field, name } entries where field is the
+ * environment path of the list that holds the name. A linked light lights only those nodes, so a misspelled name would
+ * silently darken a part; the caller fails with the next action instead.
  */
 export function unknownLightLinkNames(environment, nodes) {
   // Only a node with a geometry draws a part under its own name: a group has none, so a light linked to it would light nothing.
   const known = new Set(nodes.filter(node => node.geometry !== undefined).map(node => node.id));
   const lists = [['environment.keyAffects', environment.keyAffects]];
   for (const field of ['pointLights', 'spotLights', 'areaLights']) {
-    (environment[field] ?? []).forEach((light, index) => lists.push([`${field}[${index}].affects`, light.affects]));
+    (environment[field] ?? []).forEach((light, index) => lists.push([`environment.${field}[${index}].affects`, light.affects]));
   }
-  return lists.flatMap(([where, names]) => (names ?? []).filter(name => !known.has(name)).map(name => `${where}: ${name}`));
+  return lists.flatMap(([field, names]) => (names ?? []).filter(name => !known.has(name)).map(name => ({ field, name })));
 }

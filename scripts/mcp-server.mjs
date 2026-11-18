@@ -27,6 +27,7 @@ import { installVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { setExplosionBakeStore } from '../src/explosion-grids.js';
 import { bakeCacheDirectory, createExplosionBakeCache } from '../src/explosion-bake-cache.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from '../src/light-limits.js';
+import { MINIMUM_SPOT_ANGLE, MAXIMUM_SPOT_ANGLE, spotAngleExpectation } from '../src/spot-angle-advice.js';
 import { currentFormatName, warnLegacyOnce } from '../src/legacy-names.js';
 import { annotateViewHtml, clientSupportsMcpApps, ANNOTATE_VIEW_URI, MCP_APPS_MIME_TYPE } from './annotate-app-view.mjs';
 import { loadAskUserFixture, describeAskUserFixture } from './ask-user-fixture.mjs';
@@ -219,6 +220,8 @@ const cameraFields = {
   focusDistance: positive.optional(),
 };
 const bounded = (minimum, maximum) => z.number().min(minimum).max(maximum);
+const spotAngleMessage = issue => `expected ${spotAngleExpectation(issue.input)} (got ${issue.input})`;
+const spotAngle = z.number().min(MINIMUM_SPOT_ANGLE, { error: spotAngleMessage }).max(MAXIMUM_SPOT_ANGLE, { error: spotAngleMessage });
 const boundedVector = (minimum, maximum) => z.tuple([bounded(minimum, maximum), bounded(minimum, maximum), bounded(minimum, maximum)]);
 const volumeFog = z.strictObject({
   density: bounded(0, 10).optional(),
@@ -278,7 +281,7 @@ const environment = z.strictObject({
   spotLights: z.array(z.strictObject({
     position: boundedVector(-1e6, 1e6),
     direction: boundedVector(-1e6, 1e6).describe('Nonzero direction the cone points along.'),
-    angle: bounded(0.01, Math.PI / 2 - 0.01).optional().describe('Outer half angle, radians; default pi/4.'),
+    angle: spotAngle.optional().describe('Outer half angle in radians (not degrees), 0.01 to just under pi/2; default pi/4.'),
     penumbra: unit.optional().describe('Soft edge, 0 hard; default 0.15.'),
     color: color.optional(),
     intensity: bounded(0, 1e5).optional().describe('Candela.'),

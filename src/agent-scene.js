@@ -91,6 +91,14 @@ function knownKeys(value, allowed, label) {
   }
 }
 
+// An edit that names no field is almost always a typo or a dropped field name, so it fails and lists what the operation takes
+// instead of spending a revision on a change that changed nothing.
+function requireChange(namesAField, operation, acceptedFields) {
+  if (!namesAField) {
+    throw invalidField('operation', operation, `${operation.type} with at least one field to change: ${acceptedFields.join(', ')}`);
+  }
+}
+
 function resolveLimits(input) {
   knownKeys(input, Object.keys(DEFAULT_LIMITS), 'limits');
   const result = { ...DEFAULT_LIMITS, ...input };
@@ -988,6 +996,15 @@ function withDefaultMaterial(recipe) {
   return alreadyDefined ? materials : [...materials, { id: DEFAULT_MATERIAL_ID }];
 }
 
+const MAX_LISTED_NODE_IDS = 8;
+
+// The first node IDs an affects list can name, so an agent picks one that exists instead of guessing again.
+function listedNodeIds(nodes) {
+  const ids = nodes.filter(node => node.geometry !== undefined).map(node => node.id);
+  const shown = ids.slice(0, MAX_LISTED_NODE_IDS).join(', ');
+  return ids.length > MAX_LISTED_NODE_IDS ? `${shown}, and ${ids.length - MAX_LISTED_NODE_IDS} more (scene_inspect lists them)` : shown;
+}
+
 // A name that matches no node would leave the light lighting nothing without a sign, so it fails and says what to do.
 function checkLightLinkNames(recipe) {
   if (!environmentLinksLights(recipe.environment)) {
@@ -995,7 +1012,9 @@ function checkLightLinkNames(recipe) {
   }
   const unknown = agentSceneModule('lightLinking').unknownLightLinkNames(recipe.environment, recipe.nodes);
   if (unknown.length > 0) {
-    throw invalidField('environment.keyAffects', unknown.slice(0, 4), 'node IDs that exist in nodes in every affects list; scene_inspect lists them');
+    const { field } = unknown[0];
+    const missingNames = unknown.filter(entry => entry.field === field).map(entry => entry.name);
+    throw invalidField(field, missingNames.slice(0, MAX_LISTED_NODE_IDS), `node IDs of nodes with a geometry, such as ${listedNodeIds(recipe.nodes)}`);
   }
 }
 
@@ -2182,6 +2201,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           // Spot and area lights, cascades and sun links are absent from a recipe until it sets them.
           const optionalFields = lookField === 'environment' ? ['ground', 'spotLights', 'areaLights', 'shadowCascades', 'localVolumes', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'hdri', 'sky'] : lookField === 'effects' ? postStepSupport.fields : [];
           knownKeys(patch, [...Object.keys(candidate[lookField]), ...optionalFields], lookField);
+          requireChange(Object.keys(patch).length > 0, operation, [...Object.keys(candidate[lookField]), ...optionalFields]);
           const nestedField = lookField === 'environment' ? 'volumeFog' : 'bloom';
           const merged = { ...candidate[lookField], ...(lookField === 'environment' ? environmentPatchWithSetup(patch) : patch) };
           if (nestedField && Object.hasOwn(patch, nestedField)) {
@@ -2299,6 +2319,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         if (!target) {
           throw invalidField('id', operation.id, `the ID of an existing ${operation.type === 'set-node' ? 'node' : 'material'}; scene_inspect lists them, or add it first with an add operation`);
         }
+        requireChange(Object.keys(operation).some(key => fields.includes(key)), operation, fields);
         if (operation.type === 'set-camera') {
           applyCameraFields(target, operation);
         } else {

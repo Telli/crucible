@@ -47,7 +47,7 @@ test('a bad affects value is named in the error', () => {
 test('a group node is not a name a light can be linked to, since only nodes with a geometry draw a part', () => {
   const nodes = [{ id: 'room' }, { id: 'left', parent: 'room', geometry: 'box' }];
   const environment = { pointLights: [{ affects: ['room'] }, { affects: ['left'] }], keyAffects: ['room'] };
-  assert.deepEqual(unknownLightLinkNames(environment, nodes), ['environment.keyAffects: room', 'pointLights[0].affects: room']);
+  assert.deepEqual(unknownLightLinkNames(environment, nodes), [{ field: 'environment.keyAffects', name: 'room' }, { field: 'environment.pointLights[0].affects', name: 'room' }]);
 });
 
 test('lightMaskFor treats a null list as every part', () => {

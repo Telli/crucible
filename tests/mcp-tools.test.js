@@ -591,3 +591,16 @@ test('scene_create accepts a dented geometry and rejects bad impacts before disp
   await rejected(client, 'scene_create', { recipe: dentedRecipe([{ ...impact, speed: 3 }]) });
   assert.equal(calls(), before);
 });
+
+test('a spot light angle sent in degrees is refused with the unit and the radians value', async context => {
+  const { client } = await connect(context);
+  const operations = [{ type: 'set-environment', environment: { spotLights: [{ position: [0, 3, 0], direction: [0, -1, 0], angle: 90 }] } }];
+  let message;
+  try {
+    const result = await client.callTool({ name: 'scene_apply', arguments: { sessionId: randomUUID(), expectedRevision: 0, operations } });
+    message = JSON.stringify(result.content);
+  } catch (error) {
+    message = error.message;
+  }
+  assert.match(message, /angle.*outer half angle of the cone in radians.*90 looks like degrees, and 90 degrees is 1\.57 radians/);
+});

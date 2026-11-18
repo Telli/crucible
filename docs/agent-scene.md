@@ -395,6 +395,8 @@ It rejects an empty command list.
 Each successful application increments the revision once, including a command that retains existing values.
 Stale revisions and invalid commands leave canonical state, published matrices, materials, and the revision unchanged.
 Every command in a batch stages before any command publishes.
+An edit that names no field to change (`set-camera` alone, `set-node` or `set-material` with only an `id`, `set-shadow` with `{}`) is refused with the fields the operation takes, so a dropped or misspelled field name does not pass as a success that spends a revision.
+
 A batch of plain `set-node`, `set-material` and `set-camera` edits does not copy and check the whole recipe a second time, and part bounds are measured again only for parts whose matrix changed, so a pose edit at 961 parts takes about 9 ms instead of about 60 ms. Such a batch clones only the nodes it names, skips the validation compile of the scene graph when every geometry is already built (the compile that builds the graph runs once), and keeps the undo snapshot as a shared read-only recipe. A batch that only moves or shows nodes (`translation`, `rotation`, `scale`, `visible`) of a scene without relations, placed assets, armatures or motion also keeps the committed scene graph and moves the touched nodes in place instead of building the graph again, and nodes an earlier edit already checked are not checked again, so such an edit at 961 parts takes about 2 ms. A refused edit puts the graph back as it was. A scene with placed assets, armatures, relations or instances copies the whole recipe as before. The final recipe is still checked against `maxRecipeBytes`.
 
 Commands run sequentially against a private candidate recipe.

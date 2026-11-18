@@ -83,7 +83,7 @@ A point light casts a shadow only with `castShadow: true` (see [Local shadows](#
 
 ## Spot lights
 
-`environment.spotLights` holds at most eight lights. Each has `position` and `direction` (any nonzero length). Optional fields: `angle` (outer half angle in radians, 0.01 to just under pi/2, default pi/4), `penumbra` (0 to 1, default 0.15), `color`, `intensity`, `radius`, `range`, `castShadow` and `softFalloff`, with the point light defaults and limits.
+`environment.spotLights` holds at most eight lights. Each has `position` and `direction` (any nonzero length). Optional fields: `angle` (outer half angle in radians, not degrees, 0.01 to just under pi/2, default pi/4; a value above pi is refused with its radians value, such as "45 looks like degrees, and 45 degrees is 0.785 radians"), `penumbra` (0 to 1, default 0.15), `color`, `intensity`, `radius`, `range`, `castShadow` and `softFalloff`, with the point light defaults and limits.
 
 `intensity` is candela, so a spot light and a point light of the same intensity give the same light inside the cone. The cone mask is a smoothstep from the outer cosine to `outer + (1 - outer) * penumbra`, which is Blender's spot blend, so a `bench/reference` Blender spot with `spot_size = 2 * angle` and `spot_blend = penumbra` matches. Falloff, `radius` and `range` work as for point lights.
 
@@ -246,7 +246,7 @@ const renderer = new CrucibleRenderer(canvas, applyLightLinks(parts, environment
 
 A part gets a bit mask in `material.lightMask` (bit 0 the sun, bits 1 to 16 the point lights, 17 to 24 the spot lights, 25 to 31 the area lights, in list order); the shader skips a light whose bit is clear. Linking changes what a light adds, not what it shadows: a part a light does not reach still blocks that light for the others, and in Blender too. Parts with different masks are different batches. The path tracer ignores linking and says so in `report.ignored`; the light bake honours it, so a lamp linked to some parts bakes no light onto the others, not even as a bounce off a part it lights.
 
-Recipes reach it through `affects` (a list of node IDs) on a point, spot or area light and `environment.keyAffects` for the sun; a light without the list lights every node. A name that is not a node of the recipe is refused with the list of names to check (`scene_inspect`), and removing a node that a list names is refused until the list changes. `set-environment` carries the lists, `scene_export_recipe` keeps them, and the code loads on demand only for a recipe that names them. A scene without links compiles none of this code. The reference scene `light-linking` is the measured case.
+Recipes reach it through `affects` (a list of node IDs) on a point, spot or area light and `environment.keyAffects` for the sun; a light without the list lights every node. A name that is not a node of the recipe is refused at the list that holds it (such as `environment.spotLights[0].affects`) with the first node IDs to use instead (`scene_inspect` lists the rest), and removing a node that a list names is refused until the list changes. `set-environment` carries the lists, `scene_export_recipe` keeps them, and the code loads on demand only for a recipe that names them. A scene without links compiles none of this code. The reference scene `light-linking` is the measured case.
 
 ## Animation and resources
 
