@@ -141,8 +141,10 @@ test('foam veins are a ridged, warped streak mask gated on amount and the foam m
   assert.ok(shader.includes('if (waterFoamVeins.x > 0.0) {'), 'amount 0 skips the veins');
   assert.ok(shader.includes('float veinRidge = 1.0 - abs(2.0 * terrainNoise('), 'ridged noise makes the lines');
   assert.ok(shader.includes('veinWarp'), 'a second noise warps them');
-  assert.ok(shader.includes('float veinReach = sqrt(smoothstep(0.0, 0.6, foamMask))'), 'the lines fade out away from the crest foam');
-  assert.ok(shader.includes('waterFoam = max(waterFoam, veinLine * veinReach * waterFoamVeins.x)'), 'veins only add foam');
+  assert.ok(shader.includes('float veinTrail = smoothstep(0.0, 0.8, clamp(1.0 - vertexSkyVisibility, 0.0, 1.0))'), 'the reach reads the whole foam group, not only the crest cap mask, so lace trails out');
+  assert.ok(/float veinFade = smoothstep\(0\.0, 0\.6, veinTrail[^;]*veinPatch/.test(shader), 'a slow noise breaks the trail into patches as the foam weight falls');
+  assert.ok(shader.includes('waterFoam = max(waterFoam, veinLine * veinFade * waterFoamVeins.x)'), 'veins only add foam');
+  assert.ok(!/float veinReach/.test(shader), 'the reach is no longer gated by the crest cap mask');
   const veinPosition = shader.match(/vec2 veinPosition = ([^;]+);/)[1];
   assert.equal(veinPosition, 'worldPosition.xz * 4.0 * waterFoamVeins.y', 'one scalar step on the world position, the same in every direction');
   assert.ok(!veinPosition.includes('crestPosition'), 'no frame that turns with the surface normal, which smears the veins');

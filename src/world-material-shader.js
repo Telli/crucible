@@ -479,15 +479,18 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     float foamVeins = pow(1.0 - abs(2.0 * midLace - 1.0), 3.0) * smoothstep(0.45, 0.9, foamMask) * (1.0 - foamBody) * 0.32 * (1.0 - foamHard);
     waterFoam = mix(max(foamBody * mix(0.5, 1.0, smoothstep(0.3, 0.95, foamMask)) * (0.78 + 0.22 * smoothstep(0.25, 0.75, fineLace * 0.6 + midLace * 0.4)), foamVeins), foamBody, foamHard);
     // waterFoamVeins is (amount, scale). Veins are ridged noise, warped by a second noise, on the world position: one step in every direction
-    // and no frame that turns with the surface normal, so a cell is as long as it is wide and does not smear. Lines widen where the foam mask is
-    // high, so they fade out away from the crest.
+    // and no frame that turns with the surface normal, so a cell is as long as it is wide and does not smear. They read the whole foam group,
+    // not only its heavy half that makes the crest cap, so the lace trails out behind the crest: lines thin out and a slow noise breaks them
+    // into patches as the foam weight falls, instead of ending on one line along the crest.
     if (waterFoamVeins.x > 0.0) {
       vec2 veinPosition = worldPosition.xz * 4.0 * waterFoamVeins.y;
       vec2 veinWarp = terrainNoise(veinPosition * 0.7 + 17.1).xy - 0.5;
       float veinRidge = 1.0 - abs(2.0 * terrainNoise(veinPosition * 1.6 + veinWarp * 0.9 + 5.7).x - 1.0);
-      float veinReach = sqrt(smoothstep(0.0, 0.6, foamMask));
-      float veinLine = smoothstep(1.0 - 0.4 * veinReach - 0.02 - fwidth(veinRidge), 1.0 - 0.4 * veinReach + fwidth(veinRidge), veinRidge);
-      waterFoam = max(waterFoam, veinLine * veinReach * waterFoamVeins.x);
+      float veinTrail = smoothstep(0.0, 0.8, clamp(1.0 - vertexSkyVisibility, 0.0, 1.0));
+      float veinPatch = terrainNoise(veinPosition * 0.3 + 41.7).x;
+      float veinFade = smoothstep(0.0, 0.6, veinTrail * 1.3 - 0.8 * (1.0 - veinPatch));
+      float veinLine = smoothstep(1.0 - 0.3 * sqrt(veinTrail) - 0.02 - fwidth(veinRidge), 1.0 - 0.3 * sqrt(veinTrail) + fwidth(veinRidge), veinRidge);
+      waterFoam = max(waterFoam, veinLine * veinFade * waterFoamVeins.x);
     }
     float grazing = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
     color = mix(color, vec3(0.0137, 0.147, 0.195), grazing * 0.85);
