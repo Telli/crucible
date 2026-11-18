@@ -111,7 +111,7 @@ export function shaderFeatureRepresentatives(parts) {
   return representatives.length > 0 ? representatives : parts.slice(0, 1);
 }
 
-function shaderFeaturesOfParts(parts) {
+export function shaderFeaturesOfParts(parts) {
   const features = new Set();
   for (const part of parts) {
     const { material } = part;
@@ -135,7 +135,11 @@ function shaderFeaturesOfParts(parts) {
     if ((material.alphaMode ?? 'opaque') !== 'opaque') features.add('alphaMode');
     if (material.subsurface?.weight > 0) features.add('subsurface');
     if (material.wear) features.add('surfaceWear');
-    if (material.snippet) features.add(material.snippet.feature);
+    if (material.snippet) {
+      features.add(material.snippet.feature);
+      // A water hook reads the water values the world material code declares, so that code is compiled in.
+      if (/\bvoid\s+waterHook\s*\(/.test(material.snippet.fragment)) features.add('water');
+    }
     if (materialLayerValue(material, 'clearcoat') > 0) features.add('clearcoat');
     if (materialLayerValue(material, 'sheenColor').some(channel => channel !== 0)) features.add('sheen');
     if (TAG_SHADER_FEATURES.has(material.tag)) features.add(material.tag);
