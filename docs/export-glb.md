@@ -47,7 +47,8 @@ UV coordinates remain editable even though this exporter rejects textures.
 
 ## Materials and emission
 
-`material.color` and `material.emissiveColor` contain three linear RGB components within `[0,1]`.
+`material.color` contains three linear RGB components within `[0,1]`.
+`material.emissiveColor` takes three finite components of 0 or more. A channel above 1 is divided out and its factor goes into the emissive strength, so `emissiveColor [2, 1, 0.5]` with `emission 2` writes factor `[1, 0.5, 0.25]` and strength 4.
 `metallic` and `roughness` must each lie within `[0,1]`.
 `emission` defaults to zero and must be finite, nonnegative, and representable as Float32.
 An omitted `emissiveColor` uses `material.color`.
@@ -108,6 +109,8 @@ Differences: the shader blends the three projections across an edge and the expo
 
 A skinned part (`part.skin` with `joints`, `inverseBindMatrices` and `jointWorldMatrices`) needs joint nodes.
 Pass `options.nodes`, the `nodes` of the parsed asset, to keep the asset's hierarchy and mesh nodes.
+
+A part whose world transform has shear (axes not at right angles, such as a rotated child under a parent with non-uniform scale and its own rotation) fails with the part's name; glTF nodes cannot hold shear. `options.nodePaths` (part name to a label such as `parent > child`) adds the parent chain to that error, and `scene_export_glb` fills it in.
 Without it the exporter derives one node per joint from the current joint world matrices.
 Weights are normalised to sum to one, the skin's `bindMatrix` is folded into the inverse bind matrices, and a skinned mesh sits at the origin.
 
