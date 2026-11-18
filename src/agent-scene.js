@@ -1,5 +1,5 @@
 import { mat4, mat3 } from 'gl-matrix';
-import { box, circle, cone, cylinder, grid, icoSphere, sphere, torus } from './geometry.js';
+import { box, checkTorusShape, circle, cone, cylinder, grid, icoSphere, sphere, torus } from './geometry.js';
 import { createSceneGraph } from './scene-graph.js';
 import { currentFormatName } from './legacy-names.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
@@ -61,7 +61,7 @@ const CAMERA_DEFAULTS = Object.freeze({ eye: [4, 3, 5], target: [0, 0, 0], up: [
 const RENDER_FLAG_FIELDS = ['visible', 'castShadow', 'receiveShadow', 'holdout', 'shadowCatcher', 'shadowOnly'];
 const PART_FLAG_FIELDS = RENDER_FLAG_FIELDS.slice(1);
 const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
-const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'aov', 'wear', 'retro', 'emissionMask', ...MATERIAL_LAYER_FIELDS];
+const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
 const LOOK_OPERATION_FIELDS = Object.freeze({
@@ -78,6 +78,17 @@ const REMOVAL_FIELDS = Object.freeze({
   'remove-geometry': 'geometries',
   'remove-material': 'materials',
 });
+// Rejects a batch that removes a geometry or material and leaves nodes pointing at it, naming them and the fix.
+function assertRemovedResourcesUnused(candidate, removals) {
+  for (const { type, id } of removals) {
+    const kind = type.slice(7);
+    const users = candidate.nodes.filter(node => node[kind] === id).map(node => node.id);
+    if (users.length > 0 && !candidate[REMOVAL_FIELDS[type]].some(record => record.id === id)) {
+      const more = users.length > 8 ? ` and ${users.length - 8} more` : '';
+      throw invalidField('id', id, `${kind} ${id} is used by nodes ${users.slice(0, 8).join(', ')}${more}; set-node them to another ${kind} or remove-node them first`);
+    }
+  }
+}
 
 
 function knownKeys(value, allowed, label) {
@@ -264,6 +275,11 @@ function copyMaterialLayers(value, result) {
   for (const field of MATERIAL_LAYER_FIELDS) {
     if (value[field] === undefined) continue;
     result[field] = Array.isArray(value[field]) ? vector(value[field], 3, field) : value[field];
+  }
+  if (value.toonColors !== undefined) {
+    result.toonColors = Array.isArray(value.toonColors)
+      ? Object.freeze(value.toonColors.map((color, index) => Object.freeze(vector(color, 3, `toonColors[${index}]`))))
+      : value.toonColors;
   }
   validateMaterialLayers(result);
   if (value.emissionMask !== undefined) {
@@ -535,6 +551,7 @@ const GEOMETRY_FIELDS = {
   text: ['text', 'size', 'depth', 'font', 'align', 'curveSegments'],
   mesh: ['base', 'edits', 'stack', 'smoothAngle', 'shapeKeys'],
   terrain: ['size', 'resolution', 'seed', 'amplitude', 'holes'],
+  cloud: ['seed', 'puffs', 'width', 'height', 'flatBase', 'resolution', 'levels', 'upBias', 'unionSoftness'],
   fragment: ['source', 'seed', 'cells', 'index', 'impact', 'impactRadius'],
   dented: ['source', 'impacts', 'stiffness', 'maxDepth', 'radius'],
 };
@@ -569,6 +586,7 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
   for (const field of GEOMETRY_FIELDS[value.type]) {
     // Terrain checks its own numbers (a whole resolution from 2 to 256), so its message names the real range; null is not absent there, so it still fails below.
     if (value.type === 'terrain' && ['size', 'resolution', 'amplitude'].includes(field) && value[field] !== null) continue;
+    if (value.type === 'cloud' && value[field] !== null) continue;
     if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact', 'impacts'].includes(field)) {
       finite(value[field], field);
     }
@@ -595,14 +613,19 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
       return 2 * sides * 2 + 2 * (sides + 1);
     }
     case 'torus':
+      checkTorusShape(value.tubeRadius, value.arc);
       return (detail('segments', 96, 3, 2048) + 1) * (detail('sides', 24, 3, 128) + 1) + 2 * ((value.sides ?? 24) + 2);
-    case 'lathe':
-      return (detail('segments', 64, 3, 2048) + 1) * points(value.profile, 2, 2, 'profile');
+    case 'lathe': {
+      const profileCount = points(value.profile, 2, 2, 'profile');
+      agentSceneModule('modeling').checkLatheProfile(value.profile);
+      return (detail('segments', 64, 3, 2048) + 1) * profileCount;
+    }
     case 'tube':
       points(value.path, 3, value.closed ? 3 : 2, 'path');
       if (value.closed !== undefined && typeof value.closed !== 'boolean') {
         throw invalidField('closed', value.closed, 'true or false', TypeError);
       }
+      agentSceneModule('modeling').checkTubeInputs(value.path, value.radius ?? 0.1, value.closed ?? false);
       return (detail('segments', 64, 3, 2048) + 1) * (detail('radialSegments', 12, 3, 128) + 1);
     case 'curve': {
       if (['shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow'].some(field => value[field] !== undefined)) {
@@ -627,6 +650,8 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     }
     case 'terrain':
       return agentSceneModule('terrain').terrainVertexEstimate(value);
+    case 'cloud':
+      return agentSceneModule('modeling').cloudVertexEstimate(value);
     case 'extrude': {
       const holes = value.holes ?? [];
       if (!Array.isArray(holes) || holes.length > 128) {
@@ -636,6 +661,7 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
       if (count > 4096) {
         throw invalidField('contour', `${count} points`, 'a contour and holes with at most 4096 points in total; simplify them');
       }
+      agentSceneModule('modeling').checkExtrudeRings(value.contour, holes);
       const beveled = (value.bevel ?? 0) > 0 || (value.bevelThickness ?? value.bevel ?? 0) > 0;
       return 6 * (count + holes.length * 2 - 2) + 6 * count * (detail('steps', 1, 1, 256) + (beveled ? detail('bevelSegments', 3, 1, 32) * 2 : 0));
     }
@@ -822,6 +848,8 @@ function generateGeometry(value, maxVertices, scope) {
       return agentSceneModule('text').text(value.text, { ...value, maxVertices });
     case 'terrain':
       return agentSceneModule('terrain').generateTerrainGeometry(value, maxVertices);
+    case 'cloud':
+      return agentSceneModule('modeling').cloudGeometry(value, maxVertices);
     case 'fragment': {
       if (!scope) throw invalidField('type', 'fragment', 'a geometry inside a recipe, where its source geometry is found by ID');
       const source = scope.definitions.get(value.source);
@@ -2165,6 +2193,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const candidate = (onlyFieldEdits && fieldEditCandidate(state.recipe, operations)) || authoredRecipe(state.recipe);
       const removedNodes = new Set();
       const removedMaterials = new Set();
+      const removals = [];
       for (const operation of operations) {
         const section = Object.hasOwn(NULLABLE_SECTION_OPERATIONS, operation.type) ? NULLABLE_SECTION_OPERATIONS[operation.type] : null;
         if (section) {
@@ -2276,6 +2305,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           if (index < 0) {
             throw invalidField('id', operation.id, `the ID of an existing ${removal} entry; scene_inspect lists them`);
           }
+          removals.push(operation);
           candidate[removal].splice(index, 1);
           if (operation.type === 'remove-material') {
             removedMaterials.add(operation.id);
@@ -2310,6 +2340,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           }
         }
       }
+      assertRemovedResourcesUnused(candidate, removals);
       // Plain field edits put only values the operation copy already checked into the candidate, so the recipe is not copied and checked a second time.
       try {
         return commit(stage(candidate, null, removedNodes, removedMaterials, onlyFieldEdits, onlyFieldEdits ? poseEditNodeIds(operations) : null), true);

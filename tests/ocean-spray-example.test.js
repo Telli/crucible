@@ -7,12 +7,12 @@ import { createAgentScene } from '../src/agent-scene.js';
 // The "Spray from the sea" example of docs/physics.md is a whole recipe that sends as written and sprays (#2152), and an emitter on a sea
 // that an oceanTime track animates takes its droplets from the crests of the moment they are born, not from the sea frozen at its authored time.
 
-const DROPLET_VERTICES = 42;
+const DROPLET_VERTICES = 24;
 
 async function docsSprayExample() {
   const text = (await readFile(new URL('../docs/physics.md', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
   const section = text.slice(text.indexOf('### Spray from the sea'));
-  return JSON.parse(/```json\n([\s\S]*?)```/.exec(section)[1]);
+  return JSON.parse(/```jsonc?\n([\s\S]*?)```/.exec(section)[1].replace(/^\s*\/\/.*$/gm, ''));
 }
 
 function dropletCentres(scene, time) {
