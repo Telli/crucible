@@ -372,7 +372,7 @@ function curveAndTextGeometries(id) {
       .describe('Sweep along points, a shape or splines; see scene_capabilities curveText.'),
     z.strictObject({ ...id, type: z.literal('sdf'), root: z.record(z.string(), z.unknown()), resolution: looseField }).describe('Signed-distance shapes with smooth union; see scene_capabilities curveText.'),
     z.strictObject({ ...id, type: z.literal('text'), text: z.string().max(256), size: looseField, depth: looseField, font: looseField, align: looseField, curveSegments: looseField }).describe('3D text; see scene_capabilities curveText.'),
-    z.strictObject({ ...id, type: z.literal('cloud'), seed: looseField, puffs: looseField, width: looseField, height: looseField, flatBase: looseField, resolution: looseField }).describe('Seeded cumulus of round puffs; see scene_capabilities cloud.'),
+    z.strictObject({ ...id, type: z.literal('cloud'), seed: looseField, puffs: looseField, width: looseField, height: looseField, flatBase: looseField, resolution: looseField, levels: z.array(z.unknown()).max(4).optional(), upBias: looseField, unionSoftness: looseField }).describe('Seeded cumulus of round puffs; see scene_capabilities cloud.'),
     z.strictObject({ ...id, type: z.literal('terrain'), size: looseField, resolution: looseField, seed: looseField, amplitude: looseField, holes: z.array(z.unknown()).max(16).optional() }).describe('Hills with round holes; see scene_capabilities terrain.'),
   ];
 }
@@ -584,7 +584,7 @@ const expression = z.lazy(() => z.union([
   z.literal('time'),
   z.strictObject({ node: identifier, property: z.enum(['translation', 'rotation', 'scale']), component: axisName, space: z.enum(['local', 'world']).optional() }),
   z.record(z.string().max(24), z.union([z.array(expression).min(1).max(8), expression])),
-])).describe('Number, "time", {"node","property","component","space"} read, or an operator like {"mul":[2,"time"]}, {"neg":x} too. Operators as in field expressions (scene_capabilities), no vectors, attributes or noise. At most 64 parts, 8 deep.');
+])).describe('Number, "time", {"node","property","component","space"} read, or an operator like {"mul":[2,"time"]}, {"neg":x} too. Operators as in field expressions (scene_capabilities), no vectors, attributes or noise. At most 64 parts, 8 deep.').meta({ id: 'Expression' });
 const influence = z.union([unit, expression]).optional().describe('0 to 1 blend of the constraint, or an expression.');
 const constraint = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('copy_location'), node: identifier, target: identifier, axes: axisNames.optional(), invert: axisNames.optional(), offset: z.boolean().optional(), space: constraintSpace, influence }),
