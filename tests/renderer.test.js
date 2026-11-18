@@ -618,9 +618,10 @@ test('blend batches draw their opaque texels with depth writes before the blende
   renderer.context = context;
   renderer.uniforms = { shadowMap: 'shadowMap' };
   renderer.canvas = { width: 4, height: 4 };
-  const baked = { alphaMode: 'blend', alphaCutoff: 0, opacity: 1, instanceCount: 1, instanceData: new Float32Array(42).fill(1) };
-  const glass = { alphaMode: 'blend', alphaCutoff: 0, opacity: 1, instanceCount: 1, instanceData: new Float32Array(42).fill(0.3) };
-  const glow = { alphaMode: 'add', alphaCutoff: 0, opacity: 1, instanceCount: 1, instanceData: new Float32Array(42).fill(0.8) };
+  const parts = [{ material: { tag: 'surface' } }];
+  const baked = { parts, alphaMode: 'blend', alphaCutoff: 0, opacity: 1, instanceCount: 1, instanceData: new Float32Array(42).fill(1) };
+  const glass = { parts, alphaMode: 'blend', alphaCutoff: 0, opacity: 1, instanceCount: 1, instanceData: new Float32Array(42).fill(0.3) };
+  const glow = { parts, alphaMode: 'add', alphaCutoff: 0, opacity: 1, instanceCount: 1, instanceData: new Float32Array(42).fill(0.8) };
   renderer.batches = [glow, baked, glass];
   renderer.uploadSortedInstances = () => {};
   renderer.drawAlphaBatch = (batch) => {
