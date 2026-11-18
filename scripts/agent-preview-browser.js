@@ -29,6 +29,7 @@ import { createAgentAssetScene } from '../src/agent-asset.js';
 import { parseGltf } from '../src/gltf.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { exportGlb } from '../src/export.js';
+import { omittedFromGlb } from '../src/glb-export-omissions.js';
 import { matrixFrame } from '../src/export-skeleton.js';
 import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
@@ -1461,7 +1462,8 @@ window.__agentPreview = {
       throw new RangeError(`The GLB is ${binary.byteLength} bytes, above the ${maximumBytes} byte limit. Lower maxTextureSize or simplify the scene.`);
     }
     return { sessionId, revision: record.scene.revision, bytes: binary.byteLength,
-      parts: parts.length, clips: options.clips?.length ?? 0, data: bytesToBase64(new Uint8Array(binary)) };
+      parts: parts.length, clips: options.clips?.length ?? 0,
+      omitted: omittedFromGlb(record.scene.exportRecipe(), options.clips?.length ? (options.nodes ?? []).map(node => node.id) : []), data: bytesToBase64(new Uint8Array(binary)) };
   },
   dispose({ sessionId }) {
     releaseRecord(lookupSession(sessionId));

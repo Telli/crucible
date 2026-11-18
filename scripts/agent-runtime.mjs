@@ -61,6 +61,7 @@ import { mergeFrameDiagnostics, pathTracerFindingsLimit } from '../src/frame-che
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { createSharedGpuCard } from './agent-gpu-queue.mjs';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
+import { GLB_EXPORT_NOTES } from '../src/glb-export-omissions.js';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
@@ -1215,6 +1216,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           encoder: 'H.264', encoders: VIDEO_ENCODERS, audio: Boolean(audioRoot), timeline: true, previewSuspendedDuringJob: true,
           glbExport: { maximumBytes: MAXIMUM_GLB_BYTES, maximumKept: MAXIMUM_KEPT_GLBS, maximumTextureSize: 4096 },
           ...(await jobRecords()) },
+        export: GLB_EXPORT_NOTES,
         addons: addonCapabilities({ addons: addonSet.addons.filter(addon => !refusedAddons.some(refused => refused.name === addon.name)), skipped: addonSet.skipped, registered: registeredByAddon, refused: refusedAddons }),
         unsupported: ['remote asset providers', 'arbitrary code execution', 'imported morph track authoring'],
       };
