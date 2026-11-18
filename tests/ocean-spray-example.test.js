@@ -33,7 +33,7 @@ function seaRecipe({ windSpeed = 14, choppiness = 2, time = 0, track = true } = 
   const recipe = {
     format: 'crucible.scene', schemaVersion: 1,
     geometries: [
-      { id: 'sea', type: 'mesh', base: { type: 'box', bevel: 0 }, edits: [{ op: 'subdivide', levels: 4 }], stack: [{ op: 'ocean', coverage: 1, windSpeed, choppiness, size: 30, seed: 5, resolution: 5, time, spray: true }] },
+      { id: 'sea', type: 'mesh', base: { type: 'box', bevel: 0 }, edits: [{ op: 'subdivide', levels: 4 }], stack: [{ op: 'ocean', coverage: 1, foamMemory: 2, windSpeed, choppiness, size: 30, seed: 5, resolution: 5, time, spray: true }] },
       { id: 'drop', type: 'icoSphere', subdivisions: 1 },
     ],
     materials: [{ id: 'water' }],

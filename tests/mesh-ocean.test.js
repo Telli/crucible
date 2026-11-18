@@ -185,3 +185,13 @@ test('the ocean edit takes coverage from -1 to 1 and refuses the rest with the e
     assert.throws(() => applyMeshEdits(grid, [ocean(bad)]), TypeError, JSON.stringify(bad));
   }
 });
+
+test('foam memory is off by default, so a sea costs one wave evaluation per wave and vertex like before', () => {
+  // 289 x 289 vertices x 288 waves is about 24 million evaluations: inside the 50 million limit with one evaluation per vertex,
+  // and 9 times that (216 million) with foam memory.
+  const grid = flatGrid(288, 100);
+  assert.throws(() => applyMeshEdits(grid, [ocean({ foamMemory: 2 })]), /wave evaluations, over the limit/);
+  const defaulted = applyMeshEdits(grid, [ocean()]).mesh;
+  const off = applyMeshEdits(grid, [ocean({ foamMemory: 0 })]).mesh;
+  assert.deepEqual(Array.from(vertexGroupWeights(defaulted, 'foam')), Array.from(vertexGroupWeights(off, 'foam')));
+});

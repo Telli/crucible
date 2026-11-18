@@ -7,7 +7,7 @@ import { createAgentScene } from '../src/agent-scene.js';
 import { extractRender } from '../src/mesh-render.js';
 import { createMeshSource } from '../src/particle-emitter-mesh.js';
 
-const SEA = { op: 'ocean', coverage: 1, seed: 3, windSpeed: 12, size: 2, resolution: 4, choppiness: 2, time: 1.5 };
+const SEA = { op: 'ocean', coverage: 1, foamMemory: 2, seed: 3, windSpeed: 12, size: 2, resolution: 4, choppiness: 2, time: 1.5 };
 
 function flatGrid(cells, extent) {
   const columns = cells + 1;

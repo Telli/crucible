@@ -6,7 +6,7 @@ import { registerModifierNormalizer, registerModifierRunner } from './mesh-modif
 export { oceanWaves, oceanSurfaceAt };
 
 export const MAX_OCEAN_RESOLUTION = 16;
-export const DEFAULT_FOAM_MEMORY = 2;
+export const DEFAULT_FOAM_MEMORY = 0;
 export const MAX_OCEAN_WORK = 50_000_000;
 const UP_AXES = Object.freeze({ x: 0, y: 1, z: 2 });
 const MAX_SEED = 0x7fffffff;

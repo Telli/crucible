@@ -437,6 +437,8 @@ The boat code is part of the buoyancy chunk, so a scene without floating bodies 
 
 ### Spray from the sea
 
+`coverage` (-1 to 1) is the foam strength knob, and `foamMemory` is 0 (off) by default: it is opt-in and costs 8 extra wave evaluations per vertex.
+
 An `ocean` edit with `spray: true` writes the vertex group `spray` and the vector `spray` (the velocity of the surface, m/s). A particle system takes its droplets from the crests that are rising and sends them off with that velocity:
 
 ```jsonc
@@ -444,7 +446,7 @@ An `ocean` edit with `spray: true` writes the vertex group `spray` and the vecto
   "materials": [{ "id": "water", "color": [0.1, 0.3, 0.5] }, { "id": "foam", "color": [0.9, 0.95, 1] }],
   "geometries": [
     { "id": "sea", "type": "mesh", "base": { "type": "box", "bevel": 0 },
-      "edits": [{ "op": "subdivide", "levels": 4 }, { "op": "ocean", "windSpeed": 12, "coverage": 1, "choppiness": 2, "size": 2, "resolution": 4, "time": 1.5, "seed": 3, "spray": true }] },
+      "edits": [{ "op": "subdivide", "levels": 4 }, { "op": "ocean", "windSpeed": 12, "coverage": 1, "foamMemory": 2, "choppiness": 2, "size": 2, "resolution": 4, "time": 1.5, "seed": 3, "spray": true }] },
     { "id": "speck", "type": "box", "bevel": 0 }],
   "nodes": [
     { "id": "surface", "geometry": "sea", "material": "water" },
