@@ -29,12 +29,12 @@ test('contactFoam refuses values out of range, unknown fields and water that can
     [{ contactFoam: { color: [1, 1] } }, /contactFoam\.color must be three numbers/],
     [{ contactFoam: { thickness: 1 } }, /no field thickness/],
     [{ contactFoam: 'on' }, /must be an object/],
-    [{ contactFoam: {}, opacity: 1 }, /opacity below 1/],
     [{ contactFoam: {}, alphaMode: 'opaque', opacity: 1 }, /alphaMode "blend"/],
   ];
   for (const [fields, message] of bad) {
     assert.throws(() => createAgentScene(waterRecipe(fields)), message, JSON.stringify(fields));
   }
+  assert.equal(createAgentScene(waterRecipe({ contactFoam: {}, opacity: 1 })).parts[0].material.contactFoam.width, 6);
   const plain = waterRecipe({});
   plain.materials[0] = { id: 'water', contactFoam: {} };
   assert.throws(() => createAgentScene(plain), /need the water tag/);

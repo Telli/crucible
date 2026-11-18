@@ -76,9 +76,9 @@ export const CONTACT_FOAM_DEFAULTS = Object.freeze({ width: 6, hardness: 1, nois
 /**
  * The contact foam of a water material: a line where the water meets another surface, from the gap between the water and what lies
  * behind it. `width` is the line's width in screen pixels (1 to 64, 6 default), `hardness` 0 (soft edge) to 1 (a one pixel edge),
- * `noise` 0 to 1 (how much the edge breaks up, 0.3 default) and `color` three numbers from 0 to 1. Only water blended at an opacity below 1 reads what lies behind it.
+ * `noise` 0 to 1 (how much the edge breaks up, 0.3 default) and `color` three numbers from 0 to 1. Only water blended with alphaMode "blend" reads what lies behind it, at any opacity.
  */
-export function resolveContactFoam({ contactFoam }, { alphaMode, opacity }) {
+export function resolveContactFoam({ contactFoam }, { alphaMode }) {
   if (contactFoam === undefined) {
     return {};
   }
@@ -89,8 +89,8 @@ export function resolveContactFoam({ contactFoam }, { alphaMode, opacity }) {
   if (unknown.length > 0) {
     throw new TypeError(`contactFoam has no field ${unknown.join(', ')}; pass width, hardness, noise or color.`);
   }
-  if (alphaMode !== 'blend' || !(opacity < 1)) {
-    throw new RangeError('contactFoam needs blended water that reads what lies behind it; pass alphaMode "blend" and an opacity below 1, such as 0.98.');
+  if (alphaMode !== 'blend') {
+    throw new RangeError('contactFoam needs blended water that reads what lies behind it; pass alphaMode "blend".');
   }
   const resolved = { ...CONTACT_FOAM_DEFAULTS, ...contactFoam };
   for (const [field, [minimum, maximum]] of Object.entries(CONTACT_FOAM_RANGES)) {
