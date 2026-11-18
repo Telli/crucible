@@ -128,7 +128,9 @@ export function createParticleLaunches(settings) {
   for (let index = 0; index < count; index++) {
     const random = createGenerator(seed, index);
     random();
-    const emission = emitter.shape === 'mesh' ? emitter.source.sample(random) : { point: pointInEmitter(emitter, [random(), random(), random()]), normal: null };
+    const birthTime = (settings.delay ?? 0) + (rate ? index / rate : 0);
+    // A source that follows a moving sea reads the time the particle is born at; a fixed mesh ignores it.
+    const emission = emitter.shape === 'mesh' ? emitter.source.sample(random, birthTime) : { point: pointInEmitter(emitter, [random(), random(), random()]), normal: null };
     const launch = directionInCone(axis, spreadRadians, random(), random());
     const launchSpeed = between(speed, random());
     for (let component = 0; component < 3; component++) {
@@ -137,7 +139,7 @@ export function createParticleLaunches(settings) {
     }
     life[index] = between(lifetime, random());
     particleSize[index] = between(size, random());
-    birth[index] = (settings.delay ?? 0) + (rate ? index / rate : 0);
+    birth[index] = birthTime;
     // Drawn last, so adding spin never changes the launch of a particle that existed before.
     const spinDirection = directionInCone([0, 1, 0], Math.PI, random(), random());
     spinAxis.set(spinDirection, index * 3);

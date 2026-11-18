@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CrucibleRenderer } from '../src/renderer.js';
+import { WebGL2GlazeBackend } from '../src/glaze-backend-webgl2.js';
 import { RenderTargetLedger } from '../src/render-target-ledger.js';
 import { useCompactColor } from '../src/compact-color.js';
 import { CascadedShadows } from '../src/cascaded-shadows.js';
@@ -46,7 +47,7 @@ function shadowRenderer(batches) {
   const { context, sizes } = recordingContext();
   const renderer = Object.create(CrucibleRenderer.prototype);
   Object.assign(renderer, {
-    context, batches, renderTargets: new RenderTargetLedger(), world: null, activeLightDirection: [1, 2, 3], shadowBounds: {},
+    context, backend: new WebGL2GlazeBackend(context), batches, renderTargets: new RenderTargetLedger(), world: null, activeLightDirection: [1, 2, 3], shadowBounds: {},
     lightProjection: new Float32Array(16), windState: { time: 0, strength: 0 }, drawShadowCasters() {},
   });
   return { renderer, sizes };
@@ -75,7 +76,7 @@ function frameTargetRenderer(depth) {
   const { context } = recordingContext();
   const renderer = Object.create(CrucibleRenderer.prototype);
   Object.assign(renderer, {
-    context, depth, hdr: true, multisampleSamples: 4, renderTargets: new RenderTargetLedger(), releaseFrameTargets() {},
+    context, backend: new WebGL2GlazeBackend(context), depth, hdr: true, multisampleSamples: 4, renderTargets: new RenderTargetLedger(), releaseFrameTargets() {},
   });
   return renderer;
 }

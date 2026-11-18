@@ -62,6 +62,7 @@ import { normalizeReview, reviewDeadlineMessage, REVIEW_LIMITS } from './agent-r
 import { mergeFrameDiagnostics, pathTracerFindingsLimit } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { createSharedGpuCard } from './agent-gpu-queue.mjs';
+import { isBrowserLoss, describeBrowserLoss } from './agent-browser-loss.mjs';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
@@ -843,6 +844,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     let nativeTemporalShotIndex;
     let pageEncodes = false;
     let suspended = false;
+    // The frame being rendered, so a browser that dies mid-job is reported with where it died (#2018).
+    let frameIndex = -1;
+    let browserLossFailure;
     const generationAtStart = runtimeGeneration;
     const started = performance.now();
     // One job runs at a time, so the estimate made at submission belongs to the job that starts next.
@@ -949,6 +953,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       }
       for (let frame = 0; frame < settings.frameCount; frame++) {
         signal.throwIfAborted();
+        frameIndex = frame;
         const elapsed = settings.kind === 'video' ? frame / settings.fps
           : settings.kind === 'stills' ? (settings.stillCount ? frame / settings.fps : settings.duration * frame / (settings.frameCount - 1)) : 0;
         // A timeline job reads one clock for the shot, the motion and the renderer, so a seek matches the frame in a video.
@@ -1166,6 +1171,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       if (settings.renderer?.backend === 'gpu') gpuTracerWarm = true;
       await rememberRenderJob({ settings, estimate, report: metrics.report });
       return { artifacts, metrics };
+    } catch (error) {
+      if (signal.aborted || !isBrowserLoss(error)) throw error;
+      browserLossFailure = describeBrowserLoss({ error, frameIndex, frameCount: settings.frameCount, width: settings.width, height: settings.height, passes: settings.passes, memoryMiB: memory });
+      throw browserLossFailure;
     } finally {
       signal.removeEventListener('abort', abort);
       nativeSequence?.close();
@@ -1175,8 +1184,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       finally {
         try {
           if (jobPage && !jobPage.isClosed()) {
-            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId); }
-            finally { await jobPage.close(); }
+            // A crashed page cannot dispose its scene; the close below frees it, and the failure that matters is the job's own.
+            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!browserLossFailure) throw error; }); }
+            finally { await jobPage.close().catch(error => { if (!browserLossFailure) throw error; }); }
           }
         }
         finally {
@@ -1188,7 +1198,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               phase = 'ready';
             } catch (error) {
               phase = 'failed';
-              throw new Error(`Preview recovery failed after render job: ${error.message}`);
+              throw browserLossFailure ?? new Error(`Preview recovery failed after render job: ${error.message}`);
             }
           } else if (!closing && phase !== 'failed') phase = 'ready';
         }

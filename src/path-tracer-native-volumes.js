@@ -2,10 +2,16 @@
 // step that appends the packed grids to a FORMAT-v2 input. Cook reads the box, the grid and the Principled Volume terms; a Crucible grid
 // volume is the same box (centre and size, no rotation), so the terms carry over one for one.
 
+import { floatToHalf, gridTemperature } from './volume-grid.js';
+
 /** The most bytes a FORMAT-v2 texel pool holds (Cook's TEXTURE_POOL_MAX_BYTES): the textures and the grids share it. */
 export const NATIVE_TEXEL_POOL_MAX_BYTES = 1 << 30;
 
 const COOK_GRID_CHANNELS = ['density', 'temperature', 'flame'];
+
+function halfFloatsOf(values) {
+  return values ? Uint16Array.from(values, floatToHalf) : new Uint16Array(0);
+}
 
 function requireNativeGridVolume(volume, index) {
   const label = `environment.localVolumes[${index}]`;
@@ -27,6 +33,12 @@ export function cookGridVolume(volume) {
   const cookChannels = {};
   for (const name of COOK_GRID_CHANNELS) {
     if (channels[name]) cookChannels[name] = channels[name];
+  }
+  // Cook takes the blackbody of the temperature channel, so a flame remap (#1735) travels as that channel: the flame grid as Blender makes the temperature grid.
+  if (volume.flameTemperature) {
+    const remapped = gridTemperature(volume.gridData, volume.flameTemperature);
+    if (remapped) cookChannels.temperature = halfFloatsOf(remapped);
+    else delete cookChannels.temperature;
   }
   return {
     resolution: Array.from(resolution),
