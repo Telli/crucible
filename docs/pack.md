@@ -2,7 +2,7 @@
 
 `crucible pack` compiles a recipe (`format: "crucible.scene"`) in Node into a compact data file, so a web page loads the renderer and the data but not the recipe compiler. The page uses a `<crucible-scene>` element: it shows a poster picture first, then swaps in live 3D when the scene is ready.
 
-This is slice 1 of #2178. It packs a still scene. Scroll, hover and click triggers, and baked lightmaps, come in later slices.
+This is slice 1 of #2178. It packs a still scene. Scroll, hover and click triggers come in later slices.
 
 ## Pack a scene
 
@@ -36,6 +36,12 @@ Packing the same recipe twice writes the same `scene.pack` bytes.
 
 `crucible-scene.js` imports no `agent-scene` module. `tests/scene-pack.test.js` checks the import graph.
 
+## Baked light
+
+A recipe `bake` section runs when you pack, in Node. The lightmaps it writes (one texture per part, one byte per channel) travel in `scene.pack`, and the page draws them: it traces no ray and loads no bake code.
+
+A pack carries at most 262,144 lightmap texels (1 MB of raw bytes), a quarter of what a recipe build may trace, because the page downloads every texel. Past that, pack stops and names `bake.texelsPerUnit`: lower it, set `bake.preset` to `"draft"`, or bake fewer and smaller parts.
+
 ## What a pack refuses
 
 Pack names the recipe field and what to change. For now it refuses `motion`, `timeline`, `physics`, `cloth`, `particles`, `game`, `postPasses`, `armatures`, `environment.sky`, `environment.hdri`, cascaded shadows, area lights, line art, material snippets and procedural material patterns. Scenes light with `environment.setup`. The automatic floor is not drawn: put a floor in the recipe.
@@ -51,3 +57,14 @@ Measured on `public/recipes/view-transform.json` (a lamp, six parts), Chrome, gz
 | Total | 232,182 B | 228,641 B |
 
 The JavaScript halves. The data does not shrink for this scene, because the baked reflection probes of its two metal parts are 196 KB before gzip. A scene without baked probes pays much less data.
+
+A baked room (`tests/fixtures/pack-baked-room.recipe.json` with `bake.preset` set to `"standard"`: six walls, a block, a ball and one lamp; 15,568 lightmap texels), 800 by 600 in GPU Chrome, gzip -9 of each file the page downloaded. This recipe build is bundled with esbuild and every agent-scene module, so its JavaScript is not comparable with the lamp table above:
+
+| | Recipe build | Packed bundle |
+| --- | --- | --- |
+| JavaScript | 644,298 B | 110,728 B |
+| Data | the recipe JSON, 552 B | `scene.pack`, 76,502 B |
+| Total | 644,850 B | 187,230 B |
+| Bake on the page | about 3.8 s of ray tracing in Node | none |
+
+The two stills are pixel identical (RMSE 0, no pixel differs).
