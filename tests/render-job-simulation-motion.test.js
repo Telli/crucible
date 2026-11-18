@@ -37,3 +37,10 @@ nodeTest('an image job and a recipe with nothing simulated get no implied motion
   assert.equal(normalizeJobSettings({ kind: 'image', width: 320, height: 180 }, [], particleRecipe).motion, undefined);
   assert.equal(normalizeJobSettings(stillsJob, [], { format: 'crucible.scene' }).motion, undefined);
 });
+
+nodeTest('the motion-not-set hint says what to pass', async () => {
+  const { MOTION_NOT_SET_HINT, recipePlaysSimulation } = await import('../src/motion-hint.js');
+  assert.match(MOTION_NOT_SET_HINT.fix, /motionTime/);
+  assert.equal(recipePlaysSimulation(particleRecipe), true);
+  assert.equal(recipePlaysSimulation({ format: 'crucible.scene' }), false);
+});
