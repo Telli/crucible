@@ -137,7 +137,7 @@ export function packWebGpuGrid(volume) {
   const floats = volumeGridFloats(gridData);
   const flame = floats.flame ?? floats.density;
   const temperature = volume.emissionRamp ? floats.temperature : null;
-  const baked = withBlackbody ? bakedGridEmission(gridData, volume.temperatureScale) : null;
+  const baked = withBlackbody ? bakedGridEmission(gridData, volume.temperatureScale, volume.flameTemperature) : null;
   const velocity = withVelocity ? gridUnitVelocity(gridData, volume.size) : null;
   const voxelCount = width * height * depth;
   for (let voxel = 0; voxel < voxelCount; voxel++) {

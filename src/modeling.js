@@ -356,6 +356,17 @@ function nurbsBasisFrom(input, count, closed, label) {
   return { order, knots: knots && [...knots], knotMode };
 }
 
+/** Check a curve's closed flag. A single curve (label points) names the field closed, a spline in a list names splines[i].closed. */
+export function checkClosedFlag(closed, label = 'points') {
+  const field = label === 'points' ? 'closed' : `${label}.closed`;
+  if (typeof closed !== 'boolean') throw invalidField(field, closed, 'true or false, such as false', TypeError);
+}
+
+/** Check a curve's tube radius. Errors name the field, so a scene recipe adds geometries[i]. */
+export function checkCurveRadius(radius) {
+  if (!(radius > 0)) throw invalidField('radius', radius, 'a number above 0, such as 0.05');
+}
+
 // One spline: points or a primitive shape, a type (bezier, poly, nurbs), closed, NURBS weights and a trim.
 function splineFrom(input, label) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new TypeError(`${label} must be an object with points or shape.`);
@@ -368,7 +379,7 @@ function splineFrom(input, label) {
     if (input.closed !== undefined || input.kind !== undefined) throw new TypeError(`${label}.closed and ${label}.kind come from shape. Remove them.`);
     ({ points, closed, type: kind } = shapeToSpline(input.shape));
   }
-  if (typeof closed !== 'boolean') throw new RangeError('radius must be positive and closed must be boolean.');
+  checkClosedFlag(closed, label);
   if (!SPLINE_TYPES.includes(kind)) throw new RangeError(`${label}.kind must be one of ${SPLINE_TYPES.join(', ')}.`);
   if (!Array.isArray(points) || points.length < (closed ? 3 : 2) || points.length > MAX_CURVE_POINTS) {
     throw new RangeError(`${label === 'points' ? 'points' : `${label}.points`} needs ${closed ? 3 : 2} to ${MAX_CURVE_POINTS} entries.`);
@@ -438,7 +449,7 @@ function planCurveSet(splines, {
   radius = 0.05, taper, profile, resolution = 12, radialSegments = 8,
 }, labelFirst, growing = false) {
   radius = finite(radius, 'radius');
-  if (radius <= 0) throw new RangeError('radius must be positive and closed must be boolean.');
+  checkCurveRadius(radius);
   integer(resolution, 1, 64, 'resolution');
   integer(radialSegments, 3, 128, 'radialSegments');
   if (!Array.isArray(splines) || splines.length < 1 || splines.length > MAX_SPLINES) throw new RangeError(`splines needs 1 to ${MAX_SPLINES} entries.`);

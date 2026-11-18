@@ -6,7 +6,7 @@ import { applyWaterReflection, attachWaterReflection } from './water-reflection.
 import { createCameraSampler } from './camera-track.js';
 import { inWholeWorldOrder, readPartRanks } from './showcase-download.js';
 import { withinDrawnLightLimits } from './drawn-light-lists.js';
-import { partsForRendererOptions } from './dense-lods.js';
+import { partsForRendererOptions, withSceneFileRendererDefaults } from './dense-lods.js';
 
 // Headless twin of the showcase page for scripts/render-media.mjs (--scene file). The export script serves the scene.json
 // at /__file/config.json with every asset path already pointing at a file it can read, and an optional camera track at
@@ -55,7 +55,7 @@ async function start() {
   const gltfOptions = description.gltfOptions ?? {};
   const asset = await loadGltf(model, { baseUrl: new URL('.', new URL(description.glb, location.href)).href, sharedTextures, ...gltfOptions });
   asset.parts = await loadStagedParts(description, asset, model, sharedTextures);
-  const rendererOptions = description.renderer ?? {};
+  const rendererOptions = withSceneFileRendererDefaults(description.renderer);
   const shadowCascades = rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined;
   const reflection = description.waterReflection ? applyWaterReflection(asset.parts) : { parts: asset.parts, surface: null };
   const viewport = document.querySelector('#file-viewport');
