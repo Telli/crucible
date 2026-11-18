@@ -201,7 +201,7 @@ export const MESH_MODIFIER_NOTES = Object.freeze({
   bounding_box: 'becomes its axis-aligned box.',
   convex_hull: 'becomes its convex hull, up to 8192 vertices.',
   build: 'shows faces one by one as frame runs from start 0 over length 60 frames (frame 0; give the current frame, e.g. from your film clock): order index (default), random (seed 0) or axis (axis y, lowest centroid first); reverse true unbuilds. Unused vertices drop; while none shows, one zero-area triangle stays.',
-  ocean: 'seeded sea: lifts axis (y) by waves of windSpeed 10 m/s (0-60) toward direction 0 deg, size 100 m (repeats), seed 0, time 0 s, resolution 8 (1-16); choppiness 1 (0-4) pulls points to crests. Writes group foam; spray true also writes group spray (foam where the surface rises) and the vector spray (surface velocity m/s) for particles emitter group spray + velocityFrom spray. wake {points up to 64 [x, z, strength, width], height 0.06} adds white foam and a small choppy displacement along a boat trail (physics float.boat.wake fills it).',
+  ocean: 'seeded sea: lifts axis (y) by waves of windSpeed 10 m/s (0-60) toward direction 0 deg, size 100 m (repeats), seed 0, time 0 s, resolution 8 (1-16); choppiness 1 (0-4) pulls points to crests. Writes group foam; spray true also writes group spray (foam where the surface rises) and the vector spray (surface velocity m/s) for particles emitter group spray + velocityFrom spray. Spray depends on time, size, resolution, windSpeed and choppiness: a sea with no spray at its time makes the emitter refuse ("no weight in vertex group spray"); a sea with an oceanTime geometry track is followed (droplets leave the crests of their birth time). wake {points up to 64 [x, z, strength, width], height 0.06} adds white foam and a small choppy displacement along a boat trail (physics float.boat.wake fills it).',
 });
 
 // Vertex colors and groups. Details stay here so the tool schemas stay small.
@@ -265,11 +265,11 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   operations: Object.freeze([
     'set-node', 'set-material', 'set-camera', 'add-node', 'remove-node',
     'add-geometry', 'remove-geometry', 'add-material', 'remove-material',
-    'set-environment', 'set-effects', 'set-shadow', 'set-motion', 'set-armatures', 'set-physics', 'set-cloth', 'set-timeline', 'set-particles', 'set-bake', 'set-post-passes', 'set-game', 'edit-mesh', 'set-mesh-stack', 'bake-motion', 'fracture-node', 'add-explosion', 'settle',
+    'set-environment', 'set-effects', 'set-shadow', 'set-motion', 'set-armatures', 'set-physics', 'set-cloth', 'set-timeline', 'set-particles', 'set-bake', 'set-post-passes', 'set-game', 'bake-motion', 'fracture-node', 'add-explosion', 'settle',
   ]),
   materialTags: Object.freeze(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']),
   // A flat water sheet; the largest sets the level. A bed d metres down keeps exp(-absorption * d) per channel (RGB per metre).
-  water: Object.freeze({ presets: WATER_PRESETS_SUMMARY, default: 'lake', note: 'absorption 0..20, turbidity 0..1 softens shadows below; opacity under 1 shows the bed. caustics {scale m 0.05-50, speed 0-10, intensity 0-10, depthFade 0-10} adds a moving sun net on surfaces below (off unless given, raster only).' }),
+  water: Object.freeze({ presets: WATER_PRESETS_SUMMARY, default: 'lake', note: 'absorption 0..20, turbidity 0..1 softens shadows below; opacity under 1 shows the bed. caustics {scale m 0.05-50, speed 0-10, intensity 0-10, depthFade 0-10} adds a moving sun net on surfaces below (off unless given, raster only). waterRamp {colors [3-5 display colours, deep to bright: #rrggbb shows as that hex, rgb numbers as their sRGB encoding], drivers {height, facing, sun: weights 0-1; default height 1}, heightRange [low, high] world y (-1, 1), steps hard|soft (hard), crestTint {color, strength 0-1}} paints flat tones that own the colour (no sky reflection; foam and glint stay), off by default.' }),
   materialLayers: Object.freeze(Object.fromEntries(MATERIAL_LAYER_FIELDS.map(field => [field, Object.freeze({
     range: MATERIAL_LAYER_SCALAR_RANGES[field] ?? MATERIAL_LAYER_COLOR_RANGES[field] ?? 'above 0',
     note: MATERIAL_LAYER_NOTES[field],

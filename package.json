@@ -64,6 +64,7 @@
   "module": "./build/67.module.js",
   "bin": {
     "crucible-mcp": "./bin/crucible-mcp.mjs",
+    "crucible": "./bin/crucible.mjs",
     "crucible-addon-check": "./bin/crucible-addon-check.mjs",
     "67js-mcp": "./bin/67js-mcp.mjs",
     "67js-addon-check": "./bin/67js-addon-check.mjs"
@@ -102,6 +103,7 @@
     "./addons/grass": "./build/grass.js",
     "./addons/clutter": "./build/clutter.js",
     "./addons/light-bake": "./build/light-bake.js",
+    "./addons/crucible-scene": "./build/crucible-scene.js",
     "./addons/light-bake-gpu": "./build/light-bake-gpu.js",
     "./addons/ground-bounce": "./build/ground-bounce.js",
     "./addons/floor-sky-visibility": "./build/floor-sky-visibility.js",

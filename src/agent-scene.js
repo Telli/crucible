@@ -61,7 +61,7 @@ const CAMERA_DEFAULTS = Object.freeze({ eye: [4, 3, 5], target: [0, 0, 0], up: [
 const RENDER_FLAG_FIELDS = ['visible', 'castShadow', 'receiveShadow', 'holdout', 'shadowCatcher', 'shadowOnly'];
 const PART_FLAG_FIELDS = RENDER_FLAG_FIELDS.slice(1);
 const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
-const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'caustics', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
+const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'caustics', 'waterRamp', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
 // Fields of an optional shader module join the list here, so the long list above stays a line each material feature does not rewrite.
@@ -362,6 +362,7 @@ function materialFrom(value) {
   if (value.retro !== undefined && value.retro !== null) result.retro = agentSceneModule('retroShader').normalizeMaterialRetro(value.retro);
   if (agentSceneModuleLoaded('worldMaterials')) {
     agentSceneModule('worldMaterials').copyWaterFields(value, result, vector);
+    agentSceneModule('worldMaterials').copyWaterRamp(value, result, vector);
   }
   const emissiveColor = result.emissiveColor ?? result.color;
   for (const component of emissiveColor) {
@@ -1363,6 +1364,13 @@ function stagePose(stagedState, time) {
   return { graph, materialUpdates, camera, time, clothGeometries, assetClips, hiddenNodes, movedLook, morphs: sampled?.morphs ?? null };
 }
 
+/** A mesh stack built with every ocean node's `time` set to `oceanTime`: the sea the renderer draws at that moment of an oceanTime track. */
+function oceanTimeGeometry(recipe, maxGeometryVertices, geometryId, oceanTime, wakeField) {
+  const definition = recipe.geometries.find(candidate => candidate.id === geometryId);
+  const stack = definition.stack.map(node => (node.op === 'ocean' ? { ...node, ...wakeField, time: oceanTime } : node));
+  return Object.freeze(generateGeometry({ ...definition, stack }, maxGeometryVertices, cutterScopeOf(recipe.geometries)));
+}
+
 /**
  * Geometries of mesh stacks whose ocean time a geometry track drives, keyed by node ID. Each one is built from the cached edits with
  * every ocean node's `time` set to the sampled value, so it equals the still of a recipe that writes that time into the node. The last
@@ -1380,10 +1388,7 @@ function oceanTimeGeometries(stagedState, sampled, time) {
     const wakeField = stagedState.physicsSampler?.wakeField?.(geometryId, time);
     const key = wakeField ? `${patch.oceanTime}|${time}` : patch.oceanTime;
     if (frame?.key !== key) {
-      const definition = stagedState.recipe.geometries.find(candidate => candidate.id === geometryId);
-      const stack = definition.stack.map(node => (node.op === 'ocean' ? { ...node, ...wakeField, time: patch.oceanTime } : node));
-      const scope = cutterScopeOf(stagedState.recipe.geometries);
-      frame = { key, geometry: Object.freeze(generateGeometry({ ...definition, stack }, stagedState.maxGeometryVertices, scope)) };
+      frame = { key, geometry: oceanTimeGeometry(stagedState.recipe, stagedState.maxGeometryVertices, geometryId, patch.oceanTime, wakeField) };
       frames.set(geometryId, frame);
     }
     for (const node of stagedState.recipe.nodes) {
@@ -1855,7 +1860,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     stagedState.motionSampler = recipe.motion ? agentSceneModule('motion').compileAgentMotion(recipe.motion, recipe) : null;
     stagedState.physicsSampler = stagePhysics(recipe, geometryRecords);
     stagedState.clothSampler = stageCloth(recipe, geometryRecords, stagedState.motionSampler);
-    stagedState.particleSampler = stageParticles(recipe, geometryRecords);
+    stagedState.particleSampler = stageParticles(recipe, geometryRecords, stagedState);
     const animated = Boolean(stagedState.motionSampler || stagedState.physicsSampler || stagedState.clothSampler || stagedState.particleSampler || assetRuntime.animators.length);
     stagedState.poseGraph = animated ? compile(recipe, geometries, localBounds, limits) : null;
     stagedState.initialPose = stagePose(stagedState, animated ? 0 : null);
@@ -2037,15 +2042,22 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   }
 
   // Particle launches are cheap to recompute, but an unchanged section on unchanged nodes still reuses them.
-  function stageParticles(recipe, geometryRecords) {
+  function stageParticles(recipe, geometryRecords, stagedState) {
     if (!recipe.particles) {
       return null;
     }
-    const involvedNodes = recipe.nodes.filter(node => recipe.particles.systems.some(system => system.node === node.id));
-    const key = JSON.stringify([recipe.particles, involvedNodes, involvedNodes.map(node => geometryRecords.get(node.geometry).signature)]);
+    const emitterMeshes = new Set(recipe.particles.systems.map(system => system.emitter?.mesh));
+    const involvedNodes = recipe.nodes.filter(node => emitterMeshes.has(node.id) || recipe.particles.systems.some(system => system.node === node.id));
+    const oceanTracks = (recipe.motion?.tracks ?? []).filter(track => track.kind === 'geometry' && track.property === 'oceanTime');
+    const key = JSON.stringify([recipe.particles, involvedNodes, involvedNodes.map(node => geometryRecords.get(node.geometry).signature), oceanTracks]);
     if (particleBake?.key !== key) {
       const geometries = new Map([...geometryRecords].map(([id, record]) => [id, record.geometry]));
-      particleBake = { key, sampler: agentSceneModule('particles').bakeAgentParticles(recipe.particles, recipe, geometries) };
+      // An emitter on a sea with an oceanTime track samples the sea at the ocean time of each particle's birth (#2152).
+      const sea = {
+        oceanTimeAt: (geometryId, time) => stagedState.motionSampler?.sample(time)?.geometries?.get(geometryId)?.oceanTime ?? null,
+        geometryAt: (geometryId, oceanTime) => oceanTimeGeometry(recipe, stagedState.maxGeometryVertices, geometryId, oceanTime),
+      };
+      particleBake = { key, sampler: agentSceneModule('particles').bakeAgentParticles(recipe.particles, recipe, geometries, sea) };
     }
     return particleBake.sampler;
   }
