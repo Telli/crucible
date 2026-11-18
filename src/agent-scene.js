@@ -78,6 +78,17 @@ const REMOVAL_FIELDS = Object.freeze({
   'remove-geometry': 'geometries',
   'remove-material': 'materials',
 });
+// Rejects a batch that removes a geometry or material and leaves nodes pointing at it, naming them and the fix.
+function assertRemovedResourcesUnused(candidate, removals) {
+  for (const { type, id } of removals) {
+    const kind = type.slice(7);
+    const users = candidate.nodes.filter(node => node[kind] === id).map(node => node.id);
+    if (users.length > 0 && !candidate[REMOVAL_FIELDS[type]].some(record => record.id === id)) {
+      const more = users.length > 8 ? ` and ${users.length - 8} more` : '';
+      throw invalidField('id', id, `${kind} ${id} is used by nodes ${users.slice(0, 8).join(', ')}${more}; set-node them to another ${kind} or remove-node them first`);
+    }
+  }
+}
 
 
 function knownKeys(value, allowed, label) {
@@ -2165,6 +2176,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const candidate = (onlyFieldEdits && fieldEditCandidate(state.recipe, operations)) || authoredRecipe(state.recipe);
       const removedNodes = new Set();
       const removedMaterials = new Set();
+      const removals = [];
       for (const operation of operations) {
         const section = Object.hasOwn(NULLABLE_SECTION_OPERATIONS, operation.type) ? NULLABLE_SECTION_OPERATIONS[operation.type] : null;
         if (section) {
@@ -2276,6 +2288,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           if (index < 0) {
             throw invalidField('id', operation.id, `the ID of an existing ${removal} entry; scene_inspect lists them`);
           }
+          removals.push(operation);
           candidate[removal].splice(index, 1);
           if (operation.type === 'remove-material') {
             removedMaterials.add(operation.id);
@@ -2310,6 +2323,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           }
         }
       }
+      assertRemovedResourcesUnused(candidate, removals);
       // Plain field edits put only values the operation copy already checked into the candidate, so the recipe is not copied and checked a second time.
       try {
         return commit(stage(candidate, null, removedNodes, removedMaterials, onlyFieldEdits, onlyFieldEdits ? poseEditNodeIds(operations) : null), true);
