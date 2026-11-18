@@ -3,14 +3,15 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import { viteChildEnvironment, viteOutputMentionsAddress } from './vite-output.mjs';
 
-const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5179', '--strictPort'], { windowsHide: true, stdio: 'pipe' });
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5179', '--strictPort'], { windowsHide: true, stdio: 'pipe', env: viteChildEnvironment() });
 let browser;
 try {
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Scene smoke server did not start.')), 15000);
     server.stdout.on('data', (data) => {
-      if (data.toString().includes('127.0.0.1:5179')) { clearTimeout(timeout); resolve(); }
+      if (viteOutputMentionsAddress(data, '127.0.0.1:5179')) { clearTimeout(timeout); resolve(); }
     });
     server.on('error', reject);
     server.on('exit', (code) => { clearTimeout(timeout); reject(new Error(`Scene server exited ${code}.`)); });
