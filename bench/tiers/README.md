@@ -25,6 +25,10 @@ Firefly clamp (#936): the committed matrix ran Cook native with `fireflyClamp` 1
 
 The table below this section, and the equal-error section after it, are the earlier single-scene result, measured on a shared card. Where they disagree with the matrix, the matrix is right; their equal-error figures extrapolated as 1/N without the check above.
 
+### The tier page
+
+`/tiers.html` shows one scene (lit-interior) tier by tier, Crucible beside Blender. Its figures come from the matrix and from nothing else: `node bench/tiers/make-tier-page-data.mjs` writes [`results/tier-page-lit-interior.json`](results/tier-page-lit-interior.json) (median and range of the usable runs, card memory, FLIP against Cycles at 4,096 samples, and the conditions of the matrix). `tests/tier-page-data.test.js` fails when the committed file differs from what the script writes. `realtime-high` is shown as planned. Rerun the script after a new matrix and commit the file.
+
 ## Result (lit-interior, shared card, 2026-11-11)
 
 One scene, as the first step. The other five scenes of `bench/reference/scenes.js` export and render, but were not run (see "Not done"). The card was shared the whole time (see "Conditions").
