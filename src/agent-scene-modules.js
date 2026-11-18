@@ -55,6 +55,8 @@ const MODULE_LOADERS = {
 
 const loadedModules = {};
 const pendingLoads = {};
+// Set by loadAllAgentSceneModules: the host runs any recipe and wants every default stage on (the MCP preview).
+let hostLoadedEveryModule = false;
 let manifoldLoader = null;
 let physicsLoader = null;
 
@@ -165,6 +167,7 @@ export async function loadAgentSceneModules(value) {
 
 /** Load every on-demand module, for hosts that run any recipe an agent writes. */
 export async function loadAllAgentSceneModules() {
+  hostLoadedEveryModule = true;
   await Promise.all(Object.keys(MODULE_LOADERS).map(loadModule));
 }
 
@@ -188,6 +191,15 @@ export function allAgentSceneModulesLoaded() {
 
 export function agentSceneModuleLoaded(name) {
   return Boolean(loadedModules[name]);
+}
+
+/**
+ * Whether a default stage that needs this module runs for one scene. A module another scene loaded earlier in the same
+ * process does not count: the stage runs when the host loaded every module, or when this scene's own recipe or edits
+ * asked for it (`requestedNames`, from agentSceneModulesNeeded). So a scene builds the same bytes whatever was built before it.
+ */
+export function agentSceneModuleActive(name, requestedNames) {
+  return Boolean(loadedModules[name]) && (hostLoadedEveryModule || requestedNames.has(name));
 }
 
 /** Add a font table that recipes can name in a text geometry. Loads the text code first. */

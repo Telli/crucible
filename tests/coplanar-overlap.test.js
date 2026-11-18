@@ -4,13 +4,14 @@ import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
 import { COPLANAR_TOLERANCE, clearFlushParts, findCoplanarOverlaps, coplanarOverlapDiagnostics, flushLeftoverDiagnostics, installCoplanarDiagnostics, resolveFlushParts } from '../src/coplanar-overlap.js';
 import { depthLayerOf, flushOrderOf } from '../src/depth-layer.js';
-import { loadAgentSceneModules } from '../src/agent-scene-modules.js';
+import { loadAllAgentSceneModules } from '../src/agent-scene-modules.js';
 import { frameDiagnostics } from '../src/frame-diagnostics.js';
 import { groupParts } from '../src/renderer.js';
 import { resolveEffects } from '../src/effects.js';
 import { sphere } from '../src/geometry.js';
 
-await loadAgentSceneModules({ environment: { resolveCoplanar: 'offset' } });
+// A host that runs any recipe loads every module (the MCP preview does), which turns the default flush ranking on for plain recipes.
+await loadAllAgentSceneModules();
 
 function node(id, translation, scale, extra = {}) {
   return { id, geometry: 'box', material: 'paint', translation, scale, ...extra };

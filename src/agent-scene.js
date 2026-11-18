@@ -7,7 +7,7 @@ import { applyProjection, validateCameraShift, CAMERA_LENS_FIELDS } from './came
 import { checkLocalVolumePartNames } from './local-volume-resolve.js';
 import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, SKY_OVERRIDABLE_FIELDS, VOLUME_FOG_FIELDS } from './agent-look.js';
 import { postStepSupport } from './shader-registry.js';
-import { agentSceneModule, agentSceneModuleLoaded } from './agent-scene-modules.js';
+import { agentSceneModule, agentSceneModuleActive, agentSceneModuleLoaded, agentSceneModulesNeeded as modulesNeededBy } from './agent-scene-modules.js';
 import { CURVE_TEXT_LIMITS, AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, MAX_MATERIAL_PATTERNS, RECIPE_ALPHA_MODES } from './agent-scene-capabilities.js';
 import { normalizeMaterialWear, geometryWithSurfaceMasks } from './material-wear.js';
 import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from './material-layers.js';
@@ -1601,6 +1601,8 @@ function removeNode(candidate, operation) {
 export function createAgentScene(input, inputLimits = {}, options = {}) {
   const limits = resolveLimits(inputLimits);
   const assetOutputCache = new Map();
+  // The on-demand modules this scene's recipe and edits named. Default stages (flush ranking, floor sky) run only for these.
+  const requestedModules = new Set(modulesNeededBy(input));
   let state = null;
   let revision = 0;
   let topologyRevision = 0;
@@ -1945,7 +1947,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   // A closed room a sun lights gets the sky each floor texel sees; the lazy module decides, keeps its result and honours environment.floorSkyTrace.
   function stageFloorSky(recipe, parts) {
-    return agentSceneModuleLoaded('floorSky') ? agentSceneModule('floorSky').stageFloorSky(recipe.environment, parts) : parts;
+    return agentSceneModuleActive('floorSky', requestedModules) ? agentSceneModule('floorSky').stageFloorSky(recipe.environment, parts) : parts;
   }
 
   // A scene that asks for no bake and looks like a closed room gets one diagnostic naming the bake. The ray test costs a
@@ -1975,7 +1977,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // runs again only when the parts are new objects.
   let flushCache = null;
   function stageCoplanarOffsets(recipe, parts) {
-    if (!agentSceneModuleLoaded('coplanar')) {
+    if (!agentSceneModuleActive('coplanar', requestedModules)) {
       return parts;
     }
     const coplanar = agentSceneModule('coplanar');
@@ -1999,7 +2001,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // that check is bounded, runs on inspect only and is kept until the scene changes.
   let coplanarReportCache = null;
   function coplanarProblems() {
-    if (!agentSceneModuleLoaded('coplanar')) {
+    if (!agentSceneModuleActive('coplanar', requestedModules)) {
       return [];
     }
     if (state.recipe.environment.resolveCoplanar !== false) {
@@ -2203,6 +2205,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         throw invalidField('operations', Array.isArray(inputOperations) ? `${inputOperations.length} operations` : inputOperations, `a list of 1 to ${limits.maxOperations} operations, such as [{ "type": "set-camera", "fov": 50 }]`);
       }
       const operations = copiedJson(inputOperations, limits.maxRecipeBytes);
+      for (const name of modulesNeededBy(operations)) requestedModules.add(name);
       const onlyFieldEdits = operations.every(operation => FIELD_EDIT_OPERATIONS.has(operation.type));
       const candidate = (onlyFieldEdits && fieldEditCandidate(state.recipe, operations)) || authoredRecipe(state.recipe);
       const removedNodes = new Set();
