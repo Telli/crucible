@@ -68,6 +68,8 @@ const EXAMPLES = {
     block => create(baseRecipe({ geometries: [sea], nodes: [seaNode, boxNode('crate', { translation: [0, 1, 0] }), boxNode('boat', { translation: [4, 1, 0] })], ...block })),
     block => create(baseRecipe({ geometries: [sea], nodes: [seaNode, boxNode('hull', { translation: [0, 1, 0] })],
       physics: { duration: 4, ocean: { geometry: 'sea' }, bodies: [block] } })),
+    // The whole recipe of Spray from the sea (#2152).
+    block => create(block),
     block => apply(baseRecipe({ nodes: [floor, boxNode('ball', { translation: [0, 1, 4] }), boxNode('wall', { translation: [0, 1, 0], scale: [3, 2, 0.3] })] }), block),
     block => create(ragdollRecipe(block.physics)),
     block => create(mergedRecipe(block)),

@@ -437,14 +437,19 @@ The boat code is part of the buoyancy chunk, so a scene without floating bodies 
 
 An `ocean` edit with `spray: true` writes the vertex group `spray` and the vector `spray` (the velocity of the surface, m/s). A particle system takes its droplets from the crests that are rising and sends them off with that velocity:
 
-```jsonc
-{ "geometries": [{ "id": "sea", "type": "mesh", "base": { "type": "box", "bevel": 0 },
-    "edits": [{ "op": "subdivide", "levels": 5 }, { "op": "ocean", "windSpeed": 12, "choppiness": 2, "spray": true }] }],
-  "particles": { "systems": [{ "node": "droplet", "count": 400, "speed": [0, 1], "lifetime": [0.6, 1.4],
-    "emitter": { "shape": "mesh", "mesh": "surface", "from": "vertices", "group": "spray", "groupThreshold": 0.3, "scale": "shrink", "velocityFrom": "spray", "velocityScale": 2 } }] } }
+```json
+{ "format": "crucible.scene", "schemaVersion": 1,
+  "geometries": [
+    { "id": "sea", "type": "mesh", "base": { "type": "box", "bevel": 0 },
+      "edits": [{ "op": "subdivide", "levels": 4 }, { "op": "ocean", "windSpeed": 12, "choppiness": 2, "resolution": 16, "time": 3, "spray": true }] },
+    { "id": "drop", "type": "icoSphere", "subdivisions": 1 }],
+  "materials": [{ "id": "water", "color": [0.02, 0.14, 0.24] }, { "id": "foam", "color": [0.95, 0.97, 1] }],
+  "nodes": [{ "id": "surface", "geometry": "sea", "material": "water" }, { "id": "droplet", "geometry": "drop", "material": "foam" }],
+  "particles": { "systems": [{ "node": "droplet", "count": 400, "speed": [0, 1], "lifetime": [0.6, 1.4], "size": [0.01, 0.05], "scale": "shrink",
+    "emitter": { "shape": "mesh", "mesh": "surface", "from": "vertices", "group": "spray", "groupThreshold": 0.3, "velocityFrom": "spray", "velocityScale": 2 } }] } }
 ```
 
-`velocityFrom` (the name of a vector on the emitter mesh; `from` "surface" or "vertices") adds that velocity, times `velocityScale` (1, -1000 to 1000) and in world space, to every particle. A name the mesh lacks is an error that lists the vectors it has. `groupThreshold` (0 to 1, default 0, needs `group`) keeps the emitter off weakly painted water: only points where the group weighs at least that much emit, so spray comes from the crests and not from the whole foamy triangle around them. The foam must fold for there to be spray, so a sea with `choppiness` 0 sprays nowhere. The emitter reads the sea at the edit's `time`: droplets do not follow an `oceanTime` track, and there is no bow-spray emitter on a `boat` yet. The same seed gives the same droplets.
+`velocityFrom` (the name of a vector on the emitter mesh; `from` "surface" or "vertices") adds that velocity, times `velocityScale` (1, -1000 to 1000) and in world space, to every particle. A name the mesh lacks is an error that lists the vectors it has. `groupThreshold` (0 to 1, default 0, needs `group`) keeps the emitter off weakly painted water: only points where the group weighs at least that much emit, so spray comes from the crests and not from the whole foamy triangle around them. The foam must fold for there to be spray, so a sea with `choppiness` 0 sprays nowhere. Which points spray depends on the edit's `time`, `size`, `resolution`, `windSpeed` and `choppiness`: a sea can have no spray at one `time` and plenty at another, and then the scene is refused with "no weight in vertex group spray" on the emitter mesh. Raise `windSpeed` or `choppiness`, lower `groupThreshold`, or change `time` (the example uses `resolution` 16 and `time` 3). A sea animated by a `motion` track `{ "kind": "geometry", "id": "sea", "property": "oceanTime" }` is followed: each droplet leaves the crests of the sea at the ocean time of its birth (sampled every 1/24 s of ocean time), and a birth at a moment with no spray takes the nearest moment that has some; only when the sea has none anywhere near is the scene refused, with an error that names `ocean.time` and the track. There is no bow-spray emitter on a `boat` yet. The same seed gives the same droplets.
 
 ## Fracture and breakable glue
 

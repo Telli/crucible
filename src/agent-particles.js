@@ -493,24 +493,62 @@ function velocityVectorOf(emitter, geometry, matrix, emitterPath) {
   return world;
 }
 
-function meshSourceOf(system, nodes, geometries, systemIndex) {
+// A sea whose oceanTime a motion track drives is sampled at the ocean time of each particle's birth, rounded to this step (seconds of ocean time).
+const OCEAN_TIME_STEP = 1 / 24;
+// How many steps either side of a birth to look when the sea has no spray at that moment.
+const OCEAN_TIME_SEARCH_STEPS = 96;
+
+function meshSourceFrom(emitter, geometry, sourceNode, emitterPath) {
+  const world = surfaceInWorld(geometry, nodeMatrix(sourceNode));
+  const weights = emitter.group ? vertexGroupOf(emitter, geometry, emitterPath) : null;
+  const sharpAngle = emitter.sharpAngle ?? null;
+  const vectors = emitter.velocityFrom ? velocityVectorOf(emitter, geometry, nodeMatrix(sourceNode), emitterPath) : null;
+  const source = createMeshSource(world.positions, world.normals, geometry.indices, emitter.from, weights, sharpAngle, vectors, emitter.groupThreshold ?? 0);
+  if (source && source.triangleCount > PARTICLE_LIMITS.maxEmitterTriangles) {
+    throw invalidField(`${emitterPath}.mesh`, `${source.triangleCount} triangles on node ${emitter.mesh}`, `a mesh with at most ${PARTICLE_LIMITS.maxEmitterTriangles} triangles, such as a simpler proxy mesh`);
+  }
+  return source;
+}
+
+function emptySourceError(emitter, emitterPath, detail) {
+  const groupNote = emitter.group ? ` and some weight in vertex group "${emitter.group}"` : '';
+  return invalidField(`${emitterPath}.mesh`, emitter.mesh, `a node whose mesh has triangles with some area${groupNote}, because emitter.from is "${emitter.from}"${detail}`);
+}
+
+// The source of a sea that an oceanTime track moves: each particle takes its point from the sea as it is when the particle is born.
+function followingSeaSource(emitter, sourceNode, sea, emitterPath) {
+  const frames = new Map();
+  const sourceAt = step => {
+    if (!frames.has(step)) {
+      const geometry = sea.geometryAt(sourceNode.geometry, step * OCEAN_TIME_STEP);
+      frames.set(step, meshSourceFrom(emitter, geometry, sourceNode, emitterPath));
+    }
+    return frames.get(step);
+  };
+  const nearestSource = step => {
+    for (let distance = 0; distance <= OCEAN_TIME_SEARCH_STEPS; distance++) {
+      const source = sourceAt(step + distance) ?? sourceAt(step - distance);
+      if (source) return source;
+    }
+    throw emptySourceError(emitter, emitterPath, `; the sea of node ${emitter.mesh} has no weight in that group at any ocean time its oceanTime track gives near the births; raise the ocean windSpeed or choppiness, lower groupThreshold, or change ocean.time and the oceanTime track`);
+  };
+  return Object.freeze({
+    mode: emitter.from,
+    triangleCount: 0,
+    sample: (random, birth) => nearestSource(Math.round(sea.oceanTimeAt(sourceNode.geometry, birth) / OCEAN_TIME_STEP)).sample(random),
+  });
+}
+
+function meshSourceOf(system, nodes, geometries, systemIndex, sea) {
   const emitterPath = `particles.systems[${systemIndex}].emitter`;
   const emitter = system.emitter;
   if (emitter.shape !== 'mesh') return emitter;
   const sourceNode = nodes.get(emitter.mesh);
-  const geometry = geometries.get(sourceNode.geometry);
-  const world = surfaceInWorld(geometry, nodeMatrix(sourceNode));
-  const weights = emitter.group ? vertexGroupOf(emitter, geometry, emitterPath) : null;
-  const sharpAngle = emitter.sharpAngle ?? null;
-  const sourceMatrix = nodeMatrix(sourceNode);
-  const vectors = emitter.velocityFrom ? velocityVectorOf(emitter, geometry, sourceMatrix, emitterPath) : null;
-  const source = createMeshSource(world.positions, world.normals, geometry.indices, emitter.from, weights, sharpAngle, vectors, emitter.groupThreshold ?? 0);
+  const followsSea = sea?.oceanTimeAt(sourceNode.geometry, 0) != null;
+  if (followsSea) return { ...emitter, source: followingSeaSource(emitter, sourceNode, sea, emitterPath) };
+  const source = meshSourceFrom(emitter, geometries.get(sourceNode.geometry), sourceNode, emitterPath);
   if (!source) {
-    const groupNote = emitter.group ? ` and some weight in vertex group "${emitter.group}"` : '';
-    throw invalidField(`${emitterPath}.mesh`, emitter.mesh, `a node whose mesh has triangles with some area${groupNote}, because emitter.from is "${emitter.from}"`);
-  }
-  if (source.triangleCount > PARTICLE_LIMITS.maxEmitterTriangles) {
-    throw invalidField(`${emitterPath}.mesh`, `${source.triangleCount} triangles on node ${emitter.mesh}`, `a mesh with at most ${PARTICLE_LIMITS.maxEmitterTriangles} triangles, such as a simpler proxy mesh`);
+    throw emptySourceError(emitter, emitterPath, emitter.group ? '; an ocean edit with spray: true has spray only on crests that rise, and that depends on its time, size, resolution and windSpeed: change them, lower groupThreshold, or animate the sea with an oceanTime track' : '');
   }
   return { ...emitter, source };
 }
@@ -598,7 +636,8 @@ function nodeTransformProblems(particles, recipe) {
   return problems;
 }
 
-export function bakeAgentParticles(particles, recipe, geometries) {
+/** `sea` is `{ oceanTimeAt(geometryId, time), geometryAt(geometryId, oceanTime) }`: an emitter on a geometry that an oceanTime track drives follows that sea. */
+export function bakeAgentParticles(particles, recipe, geometries, sea) {
   const nodes = new Map(recipe.nodes.map(node => [node.id, node]));
   const forces = { gravity: particles.gravity ?? DEFAULT_GRAVITY, wind: particles.wind ?? [0, 0, 0], fields: particles.fields ?? [] };
   let totalVertices = 0;
@@ -611,9 +650,9 @@ export function bakeAgentParticles(particles, recipe, geometries) {
       const surfaceNode = nodes.get(system.surface);
       return prepareHair(system, node, surfaceNode, geometries.get(surfaceNode.geometry), forces);
     }
-    if (system.type === 'sparks') return prepareSparks(system, node, forces, meshSourceOf(system, nodes, geometries, systemIndex));
+    if (system.type === 'sparks') return prepareSparks(system, node, forces, meshSourceOf(system, nodes, geometries, systemIndex, sea));
     const templates = templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry));
-    return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex));
+    return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex, sea));
   });
   return Object.freeze({
     /** Warnings for a recipe that loads but does not do what its author likely meant. */
