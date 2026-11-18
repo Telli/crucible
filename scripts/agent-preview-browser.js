@@ -31,6 +31,7 @@ import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { exportGlb } from '../src/export.js';
 import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
+import { sampleMotionAtZeroForGround } from './motion-ground-sample.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
@@ -358,7 +359,7 @@ function automaticGroundPlacement(scene) {
 
 function sampleMotionTime(scene, time) {
   if (motionGrounds.get(scene)?.revision !== scene.revision) {
-    scene.sampleMotion(0);
+    sampleMotionAtZeroForGround(scene, time);
     motionGrounds.set(scene, { revision: scene.revision, placement: agentGroundPlacement(scene.parts, scene.environment) });
   }
   scene.sampleMotion(time);

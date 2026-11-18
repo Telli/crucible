@@ -44,7 +44,7 @@ const MATERIAL_LAYER_NOTES = Object.freeze({
   iridescence: 'Thin-film colour shift on reflections.',
   iridescenceIor: 'Film index of refraction.',
   iridescenceThickness: 'Film nanometres; colours cycle as it grows.',
-  toon: 'Light steps (toon); 0 off.',
+  toon: 'Light steps (toon); 0 off. Add toonColors, one linear [r,g,b] (0-4) per step from darkest to lightest and as many as toon, to give each step its own colour; the side facing away from the light shows ambient.',
 });
 
 export const MATERIAL_PATTERN_TYPES =Object.freeze(['noise', 'wood', 'planks', 'bricks', 'tiles', 'marble', 'stone', 'concrete', 'metal', 'rust', 'fabric']);
@@ -198,7 +198,7 @@ export const MESH_MODIFIER_NOTES = Object.freeze({
   bounding_box: 'becomes its axis-aligned box.',
   convex_hull: 'becomes its convex hull, up to 8192 vertices.',
   build: 'shows faces one by one as frame runs from start 0 over length 60 frames (frame 0; give the current frame, e.g. from your film clock): order index (default), random (seed 0) or axis (axis y, lowest centroid first); reverse true unbuilds. Unused vertices drop; while none shows, one zero-area triangle stays.',
-  ocean: 'seeded sea: lifts axis (y) by waves of windSpeed 10 m/s (0-60) toward direction 0 deg, size 100 m (repeats), seed 0, time 0 s, resolution 8 (1-16); choppiness 1 (0-4) pulls points to crests; coverage 0 (-1 to 1) keeps only the top peaks when negative and adds foam when positive. Writes group foam; spray true also writes group spray (foam where the surface rises) and the vector spray (surface velocity m/s) for particles emitter group spray + velocityFrom spray. A water material draws foam as lace, or as a painted shape with foamEdge hard (foamWidth 0.25-4). wake {points up to 64 [x, z, strength, width], height 0.06} adds white foam and a small choppy displacement along a boat trail (physics float.boat.wake fills it).',
+  ocean: 'seeded sea: lifts axis (y) by waves of windSpeed 10 m/s (0-60) toward direction 0 deg, size 100 m (repeats), seed 0, time 0 s, resolution 8 (1-16); choppiness 1 (0-4) pulls points to crests; coverage 0 (-1 to 1) keeps only the top peaks when negative and adds foam when positive. Writes group foam; spray true also writes group spray (foam where the surface rises) and the vector spray (surface velocity m/s) for particles emitter group spray + velocityFrom spray. A water material draws foam as lace, or as a painted shape with foamEdge hard (foamWidth 0.25-4); foamVeins {amount 0-1, scale 0.25-4, stretch 1-8} adds streaks trailing down from the crests. wake {points up to 64 [x, z, strength, width], height 0.06} adds white foam and a small choppy displacement along a boat trail (physics float.boat.wake fills it).',
 });
 
 // Vertex colors and groups. Details stay here so the tool schemas stay small.
