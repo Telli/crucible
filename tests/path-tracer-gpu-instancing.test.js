@@ -57,7 +57,7 @@ test('a scene that shares a mesh packs the mesh once, with one record per copy',
 test('the triangle limit of a GPU scene counts a shared mesh once', async () => {
   const nineCopies = copies(9);
   const flattened = buildTraceSceneForDevice(nineCopies, {}, FLATTENING_MODULE);
-  await assert.rejects(flattened, { name: 'RangeError', message: /GPU path trace takes at most/ });
+  await assert.rejects(flattened, { name: 'RangeError', message: new RegExp(`got ${9 * SPHERE_TRIANGLES}`) });
   const scene = await buildTraceSceneForDevice(nineCopies, {}, INSTANCING_MODULE);
   assert.equal(isInstancedScene(scene), true);
   assert.equal(scene.instances.length, 9);
@@ -65,13 +65,14 @@ test('the triangle limit of a GPU scene counts a shared mesh once', async () => 
 });
 
 test('a mesh that is not shared still holds its own triangles against the limit', async () => {
-  const different = [{ ...copies(1)[0] }, { ...copies(2)[1], geometry: box(0.1, 4) }];
+  const otherMesh = box(0.1, 4);
+  const different = [{ ...copies(1)[0] }, { ...copies(2)[1], geometry: otherMesh }];
   const tightModule = { supportsInstancing: true, gpuTriangleLimit: () => SPHERE_TRIANGLES };
-  await assert.rejects(buildTraceSceneForDevice(different, {}, tightModule), { name: 'RangeError', message: /GPU path trace takes at most/ });
+  await assert.rejects(buildTraceSceneForDevice(different, {}, tightModule), { name: 'RangeError', message: new RegExp(`got ${SPHERE_TRIANGLES + otherMesh.indices.length / 3}`) });
 });
 
-// The digest of the node, triangle and material tables of the scene below, taken on origin/main before instancing existed.
-const UNSHARED_SCENE_DIGEST = '11c7ed55b398eb8a1d2ba836d3fd1b277035aa61912bf8bae6318d0c68c0eed5';
+// The digest of the node, triangle (ten and nine texels a triangle) and material tables of the scene below, taken on origin/main before instancing existed.
+const UNSHARED_SCENE_DIGEST = '42fdf6ac1ab280002a7be789762e56ec0bff28d0407b4064dd91891bcaf1baf1';
 
 test('a scene without shared geometry flattens and packs the same bytes with or without the instancing module', async () => {
   const parts = [
@@ -84,7 +85,7 @@ test('a scene without shared geometry flattens and packs the same bytes with or 
   assert.equal(isInstancedScene(opted), false);
   const packOf = scene => {
     const atlas = packAtlas(scene.materials);
-    return [packNodes(scene.bvh), packTriangles(scene, { secondUvSet: true }), packMaterials(scene.materials, atlas, scene.shadowOnlyParts)];
+    return [packNodes(scene.bvh), packTriangles(scene, { secondUvSet: true }), packTriangles(scene), packMaterials(scene.materials, atlas, scene.shadowOnlyParts)];
   };
   assert.equal(digest(...packOf(opted)), digest(...packOf(plain)));
   assert.equal(digest(...packOf(plain)), UNSHARED_SCENE_DIGEST, 'the tables are the bytes origin/main packed');
@@ -141,6 +142,10 @@ async function traceBothWays() {
   const instanced = build(parts, environment, { gpuTriangleLimit: limit, instancing: true });
   const flatImage = await gpuModule.traceOnGpu(flat, view, options, () => {});
   const instancedImage = await gpuModule.traceOnGpu(instanced, view, options, () => {});
+  // Every other kernel variant reads the instance tables through the same helpers; each must still compile.
+  gpuModule.getKernel(true, false, { instanced: true });
+  gpuModule.getKernel(false, true, { instanced: true });
+  gpuModule.getKernel(false, false, { instanced: true, lightSelection: 'tree', samplingPattern: 'blue-noise-first' });
   let squared = 0;
   let sum = 0;
   for (let index = 0; index < flatImage.color.length; index++) {
