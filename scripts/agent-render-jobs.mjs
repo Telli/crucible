@@ -390,7 +390,7 @@ function artifactByteLimit(settings, limits) {
 
 function allowedFile(name) {
   const passNames = RENDER_PASS_NAMES.join('|');
-  const artifact = new RegExp(`^(?:render\\.(?:png|mp4|exr)|(?:icon-\\d{1,3}|atlas)\\.png|icons\\.json|(?:render|frame-\\d{1,3})(?:-(?:${passNames}|matte-[0-7]))?\\.(?:png|exr))(?:\\.partial)?$`);
+  const artifact = new RegExp(`^(?:render\\.(?:png|mp4|exr)|(?:icon-\\d{1,3}|breakdown-\\d{1,3}|atlas)\\.png|icons\\.json|(?:render|frame-\\d{1,3})(?:-(?:${passNames}|matte-[0-7]))?\\.(?:png|exr))(?:\\.partial)?$`);
   return INTERNAL_FILES.has(name) || artifact.test(name);
 }
 
