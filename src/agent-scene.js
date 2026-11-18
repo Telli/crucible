@@ -13,6 +13,7 @@ import { normalizeMaterialWear, geometryWithSurfaceMasks } from './material-wear
 import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from './material-layers.js';
 import { recipeDiagnostics, closedRoomDiagnostic } from './agent-diagnostics.js';
 import { closedRoomShare, CLOSED_ROOM_SHARE } from './closed-room.js';
+import { roomEdgeLeakDiagnostic } from './room-edge-leak.js';
 import { depthLayerOf, MAXIMUM_DEPTH_LAYER } from './depth-layer.js';
 import { normalizeRayVisibility } from './ray-visibility.js';
 import { armatureNodes, bakeRigExport, bindSkins, createSkinStages, normalizeArmatures, publishSkinPoses, restWorldMatrix, rigReport, stageSkinPoses, transformedBounds, withoutArmatureNodes } from './rig.js';
@@ -1959,15 +1960,14 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   let closedRoomCache = null;
   function closedRoomProblems() {
-    if (state.recipe.bake) {
-      return [];
-    }
     if (closedRoomCache?.revision !== revision) {
       const worldMatrices = new Map(state.parts.map(part => [part, state.graph.getNode(part.name).worldMatrix]));
       closedRoomCache = { revision, share: closedRoomShare(state.parts, worldMatrices) };
     }
     const { share } = closedRoomCache;
-    return share !== null && share >= CLOSED_ROOM_SHARE ? [closedRoomDiagnostic(share, isLitByLampsOnly(state.recipe.environment))] : [];
+    if (share === null || share < CLOSED_ROOM_SHARE) return [];
+    const edgeLeak = roomEdgeLeakDiagnostic(state.recipe);
+    return [...(state.recipe.bake ? [] : [closedRoomDiagnostic(share, isLitByLampsOnly(state.recipe.environment))]), ...(edgeLeak ? [edgeLeak] : [])];
   }
 
   // Near-coplanar triangles are ranked at draw time (issue #751) unless environment.resolveCoplanar is false, once the
