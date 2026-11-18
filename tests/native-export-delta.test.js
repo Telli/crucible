@@ -203,8 +203,43 @@ function particleRecipe() {
     geometries: [{ id: 'floor', type: 'box', bevel: 0 }, { id: 'ball', type: 'sphere', segments: 16 }, { id: 'speck', type: 'box', bevel: 0 }],
     materials: [{ id: 'stone', color: [0.6, 0.55, 0.5] }, { id: 'ember', color: [1, 0.6, 0.2] }], nodes,
     particles: { systems: [{ node: 'dust', seed: 1, count: 200, lifetime: 3, speed: 1, size: 0.03 }] },
-    environment: { setup: 'sunset' }, camera: { eye: [0, 3, 6], target: [0, 0.5, -1], fov: 50 } };
+    // Dust is born at the origin, on the floor's top face. With the flush ranking on (the default) each pose cuts the faces hidden
+    // under that face, so the triangle table changes length every frame and the delta must send it whole (#2171). The clip
+    // measures the delta, not the ranking, so the ranking is off here.
+    environment: { setup: 'sunset', resolveCoplanar: false }, camera: { eye: [0, 3, 6], target: [0, 0.5, -1], fov: 50 } };
 }
+
+// The tables of the particle clip's frames, packed the way the page exports them for the native tracer, without the tracer.
+async function exportClipTables(recipe, frameTimes) {
+  const [{ createAgentScene, loadAllAgentSceneModules }, { exportNativeSceneTables, splitExportForChunks }, { createCamera }, { buildTraceScene, resolveTexture },
+    pack, { buildNativeInput }, { buildJobNativeInput, buildFlattenedJobNativeInput }, { pathTraceEnvironment }] = await Promise.all([
+    import('../src/agent-scene.js'), import('../scripts/native-bake-page.js'), import('../src/path-tracer.js'), import('../src/path-tracer-scene.js'),
+    import('../src/path-tracer-gpu-pack.js'), import('@codepawlhq/cook/pack-input'), import('@codepawlhq/cook/job-input'), import('../src/path-trace-terms.js'),
+  ]);
+  const gridVolumeInput = await import('@codepawlhq/cook/grid-volume-input').catch(() => ({}));
+  await loadAllAgentSceneModules();
+  const scene = createAgentScene(recipe, {}, {});
+  const options = { width: 64, height: 64, bounces: 2, seed: 1, fireflyClamp: 20, noiseThreshold: 0, samples: 2 };
+  return frameTimes.map(time => {
+    scene.sampleMotion(time);
+    const packed = exportNativeSceneTables({ parts: scene.parts, environment: pathTraceEnvironment(scene.environment), camera: createCamera(scene.camera, 64, 64), options,
+      kernel: 'cycles', instancing: true, transport: 'chunks',
+      modules: { buildTraceScene, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack, gridVolumeInput } });
+    return splitExportForChunks(packed).tables;
+  });
+}
+
+test('the frames of the particle clip keep every table the same length, so the delta sends less than half of them',
+  { skip: !cookInstalled && 'Cook is not installed' }, async () => {
+    const frames = await exportClipTables(particleRecipe(), [0, 1 / 6, 2 / 6, 3 / 6]);
+    for (let frame = 1; frame < frames.length; frame++) {
+      const lengths = tables => Object.fromEntries(Object.entries(tables).map(([name, bytes]) => [name, bytes.byteLength]));
+      assert.deepEqual(lengths(frames[frame]), lengths(frames[frame - 1]), `frame ${frame} has tables of another length than the frame before, so the delta sends them whole`);
+      const sent = deltaByteLength(planExportDelta(frames[frame - 1], frames[frame]));
+      const total = Object.values(frames[frame]).reduce((sum, bytes) => sum + bytes.byteLength, 0);
+      assert.ok(sent < total / 2, `frame ${frame} sent ${sent} of ${total} bytes`);
+    }
+  });
 
 async function renderClip(workDirectory, label, deltaSwitch) {
   const transport = new StdioClientTransport({

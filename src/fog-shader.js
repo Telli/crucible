@@ -232,8 +232,8 @@ function bindLocalVolumes(renderer, post, frame, environment) {
 // temperature, baked on the CPU (bakedGridEmission) so the march reads it with one linear tap and the interpolation happens after the blackbody, as Cycles does
 // (#1752). Both carry GRID_BORDER_VOXELS empty voxels on every face. A frame with no grid volume gets 1 x 1 x 1 textures, so the samplers are always valid.
 function localGridTexture(renderer, grid) {
+  const { density, temperature, flame } = grid?.channels ?? {};
   return uploadGridTexture(renderer, 'localGridTextureCache', grid, null, (texels, voxel, texel) => {
-    const { density, temperature, flame } = grid.channels;
     texels[texel] = density[voxel];
     texels[texel + 1] = temperature ? temperature[voxel] : 0;
     texels[texel + 2] = (flame ?? density)[voxel];
@@ -285,7 +285,11 @@ function uploadGridTexture(renderer, cacheName, grid, scale, writeVoxel) {
     for (const wrap of [context.TEXTURE_WRAP_S, context.TEXTURE_WRAP_T, context.TEXTURE_WRAP_R]) context.texParameteri(context.TEXTURE_3D, wrap, context.CLAMP_TO_EDGE);
   }
   const padded = resolution.map(count => count + 2 * GRID_BORDER_VOXELS);
-  const texels = new Uint16Array(padded[0] * padded[1] * padded[2] * 4);
+  // The padded buffer is kept with the texture: its border is never written, and a frame with the same resolution overwrites every interior voxel, so a
+  // sequence allocates it once instead of once per frame (#1045).
+  const texelCount = padded[0] * padded[1] * padded[2] * 4;
+  const texels = reuse && cached.texels ? cached.texels : new Uint16Array(texelCount);
+  if (!filled) texels.fill(0);
   if (filled) {
     for (let z = 0; z < resolution[2]; z++) {
       for (let y = 0; y < resolution[1]; y++) {
@@ -303,7 +307,7 @@ function uploadGridTexture(renderer, cacheName, grid, scale, writeVoxel) {
   } else {
     context.texImage3D(context.TEXTURE_3D, 0, context.RGBA16F, padded[0], padded[1], padded[2], 0, context.RGBA, context.HALF_FLOAT, texels);
   }
-  renderer[cacheName] = { grid, scale, texture, resolution, filled };
+  renderer[cacheName] = { grid, scale, texture, resolution, filled, texels };
   return texture;
 }
 
@@ -806,7 +810,7 @@ function packLights(renderer) {
 
 registerShaderFeatureCode('volumeFog', {
   // The JavaScript half, which the renderer calls for a frame that draws a volume fog.
-  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights, compositeLocalVolumes, releaseLocalVolumeComposite },
+  support: { packLights, localGridTexture, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights, compositeLocalVolumes, releaseLocalVolumeComposite },
   keyDeclarations: KEY_LIGHT_DECLARATIONS,
   keyFunctions: KEY_LIGHT_FUNCTIONS,
   localDeclarations: LOCAL_VOLUME_DECLARATIONS,
