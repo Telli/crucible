@@ -47,6 +47,8 @@ struct Params {
   volumeMinimumDensity: vec4<f32>,
   volumeMaximumAnisotropy: vec4<f32>,
   volumeAlbedoDistance: vec4<f32>,
+  // The flat colour a camera ray sees where it escapes the scene (#2016); w is 1 when environment.world is false, else 0.
+  cameraBackground: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -1097,7 +1099,13 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
   addDirect(depth, normal, distance, weightMode);
 }
 
-fn addEscape(depth: i32, previousPdf: f32, afterMirror: bool, rayOrigin: vec3<f32>) {
+// A ray that has only gone straight on or through glass is a camera ray: with world false it sees the flat background the
+// rasterizer clears to, and the map keeps lighting the scene through every other escape (#2016).
+fn addEscape(depth: i32, previousPdf: f32, afterMirror: bool, rayOrigin: vec3<f32>, isCameraRay: bool) {
+  if (isCameraRay && params.cameraBackground.w > 0.0) {
+    addRadiance(depth, throughput * params.cameraBackground.xyz);
+    return;
+  }
   if (params.emittersFlagsSample.z == 0) { return; }
   let sky = environmentRadiance(direction);
   var weight = 1.0;
@@ -1220,6 +1228,7 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
   var previousPdf = 0.0;
   pathMinimumPdf = 1e30;
   var afterMirror = true;
+  var isCameraRay = cameraRays;
   var normal = vec3<f32>(0.0, 1.0, 0.0);
   let bounces = params.sizeBouncesLights.z;
   let surfaceOffset = params.environmentRotationAndRays.z;
@@ -1229,7 +1238,7 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
     ${hasLocalVolumes ? `crossLocalVolumes(depth, position, select(select(params.environmentRotationAndRays.w, hitDistance, found), distance(position, hitPoint), inFog));` : ''}
     if (!inFog && !found) {
       if (depth == 0) { firstLegEscaped = 1.0; }
-      addEscape(depth, previousPdf, afterMirror, position);
+      addEscape(depth, previousPdf, afterMirror, position, isCameraRay);
       break;
     }
     var isGlass = false;
@@ -1267,6 +1276,7 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
       direction = frame[0] * phaseSine * cos(azimuth) + frame[1] * phaseSine * sin(azimuth) + frame[2] * phaseCosine;
       previousPdf = henyeyGreensteinPhase(params.volumeMaximumAnisotropy.w, phaseCosine);
       afterMirror = false;
+      isCameraRay = false;
       position = hitPoint;
       if (!survivesRoulette(depth)) { break; }
       continue;
@@ -1278,9 +1288,10 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
       let secondUnit = nextRandom();
       if (!sampleGlass(normal, -direction, entering, hitIor, alpha, selectionUnit, firstUnit, secondUnit)) { break; }
       direction = sampledDirection;
-      if (dot(direction, normal) < 0.0) { throughput *= hitColor; }
+      if (dot(direction, normal) < 0.0) { throughput *= hitColor; } else { isCameraRay = false; }
       afterMirror = true;
     } else {
+      isCameraRay = false;
       var lobeUnit = nextRandom();
       ${hasSubsurface ? `if (subsurfaceWeight > 0.0) {
         if (lobeUnit < surfaceSubsurfaceChance) {
@@ -1336,6 +1347,8 @@ const FLAG_ALIVE: u32 = 1u;
 const FLAG_AFTER_MIRROR: u32 = 2u;
 const FLAG_HIT: u32 = 4u;
 const FLAG_SHADED: u32 = 8u;
+// Set while the path has only gone straight on or through glass from the camera (#2016).
+const FLAG_CAMERA: u32 = 16u;
 
 fn loadVector(index: u32) -> vec4<f32> {
   return bitcast<vec4<f32>>(pathState[index]);
@@ -1420,7 +1433,7 @@ fn generatePaths(@builtin(global_invocation_id) id: vec3<u32>) {
   storeVector(base + 3u, vec4<f32>(0.0));
   storeVector(base + 4u, vec4<f32>(1.0, 1.0, 1.0, 0.0));
   storeVector(base + 5u, vec4<f32>(0.0, 0.0, 1.0, 0.0));
-  pathState[base + 8u] = vec4<u32>(rngState, FLAG_ALIVE | FLAG_AFTER_MIRROR, 0u, 0u);
+  pathState[base + 8u] = vec4<u32>(rngState, FLAG_ALIVE | FLAG_AFTER_MIRROR | FLAG_CAMERA, 0u, 0u);
 }
 
 @compute @workgroup_size(${WAVEFRONT_WORKGROUP_SIZE})
@@ -1475,7 +1488,7 @@ fn extendPaths(@builtin(global_invocation_id) id: vec3<u32>) {
   throughput = loadVector(base + 2u).xyz;
   radiance = radianceData.xyz;
   selectionProbability = directionSelection.w;
-  addEscape(currentDepth(), originPrevious.w, (flags & FLAG_AFTER_MIRROR) != 0u, originPrevious.xyz);
+  addEscape(currentDepth(), originPrevious.w, (flags & FLAG_AFTER_MIRROR) != 0u, originPrevious.xyz, (flags & FLAG_CAMERA) != 0u);
   storeVector(base + 3u, vec4<f32>(radiance, radianceData.w));
   pathMeta.y = flags & ~(FLAG_ALIVE | FLAG_HIT);
   pathState[base + 8u] = pathMeta;
@@ -1568,6 +1581,7 @@ fn shadePaths(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   var alive = depth < params.sizeBouncesLights.z;
   var afterMirror = (pathMeta.y & FLAG_AFTER_MIRROR) != 0u;
+  var isCameraRay = (pathMeta.y & FLAG_CAMERA) != 0u;
   var previousPdf = originPrevious.w;
   if (alive && isGlass) {
     let alpha = roughnessToAlpha(hitRoughness);
@@ -1576,12 +1590,13 @@ fn shadePaths(@builtin(global_invocation_id) id: vec3<u32>) {
     let secondUnit = nextRandom();
     if (sampleGlass(normal, -direction, entering, hitIor, alpha, selectionUnit, firstUnit, secondUnit)) {
       direction = sampledDirection;
-      if (dot(direction, normal) < 0.0) { throughput *= hitColor; }
+      if (dot(direction, normal) < 0.0) { throughput *= hitColor; } else { isCameraRay = false; }
       afterMirror = true;
     } else {
       alive = false;
     }
   } else if (alive) {
+    isCameraRay = false;
     let lobeUnit = nextRandom();
     let firstUnit = nextRandom();
     let secondUnit = nextRandom();
@@ -1615,7 +1630,7 @@ fn shadePaths(@builtin(global_invocation_id) id: vec3<u32>) {
   storeVector(base + 2u, vec4<f32>(throughput, pathMinimumPdf));
   storeVector(base + 3u, vec4<f32>(radiance, radianceData.w));
   pathMeta.x = rngState;
-  pathMeta.y = select(0u, FLAG_ALIVE, alive) | select(0u, FLAG_AFTER_MIRROR, afterMirror) | FLAG_SHADED;
+  pathMeta.y = select(0u, FLAG_ALIVE, alive) | select(0u, FLAG_AFTER_MIRROR, afterMirror) | select(0u, FLAG_CAMERA, isCameraRay) | FLAG_SHADED;
   pathState[base + 8u] = pathMeta;
 }
 

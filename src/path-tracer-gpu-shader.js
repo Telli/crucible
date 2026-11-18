@@ -204,6 +204,7 @@ uniform vec3 uSunColor;
 uniform float uSunCosineMax;
 uniform bool uHasEnvironment;
 uniform vec4 uEnvironmentShape;
+uniform vec4 uCameraBackground;
 uniform vec2 uEnvironmentRotation;
 uniform bool uHasVolume;
 uniform vec3 uVolumeMinimum;
@@ -1173,7 +1174,11 @@ ${lightTree ? `  } else if (LIGHT_TREE) {
   if (shareAfterwards) selectionProbability = 1.0 / float(uEmitterCount);
 }
 
-void addEscape(int depth, float previousPdf, bool afterMirror) {
+void addEscape(int depth, float previousPdf, bool afterMirror, bool isCameraRay) {
+  if (isCameraRay && uCameraBackground.w > 0.0) {
+    addRadiance(depth, throughput * uCameraBackground.rgb);
+    return;
+  }
   if (!uHasEnvironment) return;
   vec3 sky = environmentRadiance(direction);
   float weight = 1.0;
@@ -1215,13 +1220,14 @@ void tracePath(vec3 origin, vec3 startDirection, uint pixel, uint sampleIndex, b
   vec3 position = origin;
   float previousPdf = 0.0;
   bool afterMirror = true;
+  bool isCameraRay = cameraRays;
   vec3 normal = vec3(0.0, 1.0, 0.0);
   for (int depth = 0; depth <= uBounces; depth++) {
     bool found = intersectScene(position, direction, cameraRays && depth == 0);
     bool inFog = uHasVolume && scatterInFog(position, found ? hitDistance : uFarDistance);
     if (!inFog && !found) {
       if (depth == 0) firstLegEscaped = 1.0;
-      addEscape(depth, previousPdf, afterMirror);
+      addEscape(depth, previousPdf, afterMirror, isCameraRay);
       break;
     }
     bool isGlass = false;
@@ -1258,6 +1264,7 @@ ${radianceCache ? CACHE_TERMINAL : ''}
       direction = frame[0] * sine * cos(azimuth) + frame[1] * sine * sin(azimuth) + frame[2] * cosine;
       previousPdf = henyeyGreensteinPhase(uVolumeShape.y, cosine);
       afterMirror = false;
+      isCameraRay = false;
       position = hitPoint;
       if (!survivesRoulette(depth)) break;
       continue;
@@ -1271,8 +1278,10 @@ ${radianceCache ? CACHE_TERMINAL : ''}
       if (!sampleGlass(normal, -direction, entering, hitIor, alpha, selectionUnit, firstUnit, secondUnit, glassDirection)) break;
       direction = glassDirection;
       if (dot(direction, normal) < 0.0) throughput *= hitColor;
+      else isCameraRay = false;
       afterMirror = true;
     } else {
+      isCameraRay = false;
       float lobeUnit = nextRandom();
 ${hasSubsurface ? SUBSURFACE_LOBE : ''}
       float firstUnit = nextRandom();

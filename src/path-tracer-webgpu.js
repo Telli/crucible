@@ -1,7 +1,7 @@
 import { buildMegakernelSource, PATH_STATE_VECTORS, WAVEFRONT_SOURCE, WAVEFRONT_WORKGROUP_SIZE, WORKGROUP_SIZE } from './path-tracer-webgpu-kernel.js';
 import { resolveLightSelection } from './path-tracer-light-tree.js';
 import { gpuTriangleCapacity, packAtlas, packEnvironment, packLightTree, packLights, packMaterials, packNodes, packSubsurface, packTriangles, sceneUsesSubsurface } from './path-tracer-gpu-pack.js';
-import { MAX_GPU_TRACE_TRIANGLES, MAX_TRACE_TRIANGLES } from './path-tracer-scene.js';
+import { cameraBackgroundWords, MAX_GPU_TRACE_TRIANGLES, MAX_TRACE_TRIANGLES } from './path-tracer-scene.js';
 import { assertWebGpuLocalVolumes, packWebGpuLocalVolumes, webGpuVolumeFeatures } from './path-tracer-webgpu-local-volumes.js';
 
 // The WebGPU backend of the path tracer (issue #625): the same scene tables, camera, options and random numbers as the
@@ -23,7 +23,7 @@ export const DEFAULT_WEBGPU_KERNEL = 'megakernel';
 /** Whether the wavefront bins the hits by material before shading them (decided by the measurement in docs/webgpu-decision.md). */
 export const DEFAULT_SORT_BY_MATERIAL = false;
 
-const PARAMETER_BYTES = 17 * 16;
+const PARAMETER_BYTES = 18 * 16;
 // Dynamic uniform offsets must be a multiple of minUniformBufferOffsetAlignment, which is 256 on every adapter; a slot holds the parameter block.
 const PARAMETER_SLOT_BYTES = 512;
 const STORAGE_BUFFER_COUNT = 10;
@@ -202,6 +202,7 @@ function createParameterTemplate(scene, camera, options, uploaded, emitterCount)
   floats.set([...(volume?.minimum ?? [0, 0, 0]), volume?.density ?? 0], 56);
   floats.set([...(volume?.maximum ?? [0, 0, 0]), volume?.anisotropy ?? 0], 60);
   floats.set([...(volume?.albedo ?? [1, 1, 1]), volume?.maxDistance ?? 0], 64);
+  floats.set(cameraBackgroundWords(scene.cameraBackground), 68);
   return { unsigned, integers };
 }
 

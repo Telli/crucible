@@ -587,6 +587,12 @@ export function resolveCameraBackground(environment) {
   return [red, green, blue];
 }
 
+/** The camera background as the four numbers a GPU tracer uploads: its colour, then 1 when it replaces the map for camera rays, else 0. */
+export function cameraBackgroundWords(cameraBackground) {
+  if (!cameraBackground) return [0, 0, 0, 0];
+  return [cameraBackground[0], cameraBackground[1], cameraBackground[2], 1];
+}
+
 /** `environment.cameraIntensity` is the sky strength a camera ray sees (through glass too), in the units of the map intensity. */
 function requireCameraIntensity(map, cameraIntensity) {
   if (cameraIntensity === undefined) return;
