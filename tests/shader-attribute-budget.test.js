@@ -4,7 +4,7 @@ import '../src/skinning.js';
 import '../src/morph.js';
 import '../src/crowd-skinning.js';
 import { createVertexShader, SHADER_FEATURES } from '../src/shaders.js';
-import { GUARANTEED_VERTEX_ATTRIBUTE_SLOTS, assertVertexAttributeBudget, countVertexAttributeSlots } from '../src/shader-attribute-budget.js';
+import { GUARANTEED_VERTEX_ATTRIBUTE_SLOTS, assertVertexAttributeBudget, countVertexAttributeSlots } from './support/shader-attribute-budget.js';
 
 const DEFORMATION_VARIANTS = [[], ['skin'], ['morph'], ['crowd'], ['skin', 'morph', 'crowd']];
 

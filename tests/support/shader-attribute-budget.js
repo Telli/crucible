@@ -1,5 +1,7 @@
 // Safari (ANGLE on Metal) counts gl_InstanceID and gl_VertexID against MAX_VERTEX_ATTRIBS, which is 16 on Apple GPUs,
 // while Chrome's backends do not. A vertex shader that fits Chrome can therefore fail to link on Safari (#2042).
+// tests/shader-attribute-budget.test.js builds every main vertex shader variant and fails when one goes over, so the
+// check costs no bytes in the shipped bundle.
 export const GUARANTEED_VERTEX_ATTRIBUTE_SLOTS = 16;
 
 const SLOTS_BY_TYPE = Object.freeze({ mat4: 4, mat3: 3, mat2: 2 });

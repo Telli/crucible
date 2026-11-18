@@ -1,4 +1,3 @@
-import { assertVertexAttributeBudget } from './shader-attribute-budget.js';
 import { blendOutputGlsl } from './blend-output.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
 import { registeredFeatureCode, requireFeatureCode, registerShaderFeatureCode, registerSplatSupport, requireSplatSupport, layerTextureSupport, viewTransformShader, SPLAT_UNITS } from './shader-registry.js';
@@ -1081,9 +1080,7 @@ function vertexDefinitions(enabled) {
 
 /** The vertex shader for a set of features, listed as for createFragmentShader. */
 export function createVertexShader(features = SHADER_FEATURES) {
-  const source = vertexShaderSource(vertexDefinitions(new Set(features)), features);
-  assertVertexAttributeBudget(source, `vertex shader for features [${[...features].join(", ")}]`);
-  return source;
+  return vertexShaderSource(vertexDefinitions(new Set(features)), features);
 }
 
 // Without skin and morph, which need their modules; the liquid pass draws rigid parts only.
