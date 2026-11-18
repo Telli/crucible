@@ -72,7 +72,17 @@ export function recipeDiagnostics(recipe) {
       `Geometry ${geometry.id} is used by no node, so nothing draws it.`,
       'Add a node that uses it with scene_apply add-node, or remove it with remove-geometry.'));
   }
+  problems.push(...portalProblems(recipe.environment?.areaLights ?? []));
   return problems;
+}
+
+/** A portal emits nothing in the raster view and the WebGL tracer, so a render there shows no window light. */
+function portalProblems(areaLights) {
+  return areaLights.flatMap((light, index) => (light.portal === true
+    ? [diagnostic('portal-ignored-by-raster', 'info', `environment.areaLights[${index}]`,
+      'This portal emits nothing in the raster view and the WebGL tracer.',
+      'Render with Cook, the CPU tracer or the WebGPU tracer, or remove portal for an emitting panel.')]
+    : []));
 }
 
 /**
