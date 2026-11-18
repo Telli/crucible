@@ -152,6 +152,7 @@ on:
       - 'src/geometry-simplify.js'
       - 'src/geometry.js'
       - 'src/gl-program.js'
+      - 'src/glitter-shader.js'
       - 'src/grid-medium.js'
       - 'src/ground-bounce.js'
       - 'src/hair.js'

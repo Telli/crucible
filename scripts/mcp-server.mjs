@@ -178,6 +178,7 @@ const materialFields = {
   snippet: z.record(z.string(), z.unknown()).nullable().optional().describe('GLSL fragment hook; scene_capabilities materialSnippet.'),
   wear: z.record(z.string(), z.unknown()).nullable().optional().describe('Metal showing through paint and dirt, from vertex groups; scene_capabilities materialWear.'),
   retro: z.record(z.string(), z.unknown()).nullable().optional().describe('PS1 look, raster only: vertexSnap [w, h] and affineUV; scene_capabilities materialRetro.'),
+  waterGlint: z.record(z.string(), z.unknown()).nullable().optional().describe('Water tag only, raster only: stylized highlights, edge { threshold } and sparkle { density, size, shape dot or star }; scene_capabilities materialWaterGlint.'),
   pattern: listed('pattern', materialPattern, 'Procedural texture; box mapping needs no UVs. type is a preset or graph (give graph); also mapping, colors, size, count, bump, seed, axis, resolution; see scene_capabilities pattern.', coreOf(materialPattern.shape, ['type'])).optional(),
   map: z.strictObject({ sequence: z.strictObject({
     frames: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(2).max(TEXTURE_SEQUENCE_LIMITS.maxFrames),

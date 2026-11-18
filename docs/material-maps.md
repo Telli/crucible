@@ -152,6 +152,31 @@ glTF import maps `alphaMode` MASK and BLEND, `alphaCutoff`, `doubleSided` and `b
 - The code is the lazy `retro-shader` addon (`@codepawlhq/crucible/addons/retro-shader`; a recipe loads it on its own). A renderer that draws a retro part without it throws an error that names the import. A material without `retro` compiles to the same shader as before.
 - The snap grid and the affine switch are batch state like `doubleSided`: parts with different `retro` objects never share a draw call. `updateParts` rejects a `retro` change after the part is created with an error that says to set it when the part is made, which needs a new renderer.
 
+## Water glints
+
+`material.waterGlint` adds stylized highlights to a `water` material (sparkles come on top of the physical sun glint, the edge redraws it). Both parts are off until the field names them, so water without the field draws exactly as before.
+
+```json
+{ "tag": "water", "waterGlint": { "edge": { "threshold": 0.4 }, "sparkle": { "shape": "star", "size": 0.4 } } }
+```
+
+| Part | Field | Accepts (default) | Does |
+|---|---|---|---|
+| `edge` | `threshold` | 0.05 to 0.95 (0.4) | Replaces the soft glint with the lobe cut at this share of its peak, so the highlight is a flat shape with a clean border that follows the waves. Higher is smaller. |
+| `edge` | `intensity` | 0 to 4 (1) | Brightness of that shape. |
+| `sparkle` | `density` | 0 to 1 (0.35) | Share of cells that carry a sparkle. |
+| `sparkle` | `size` | 0.02 to 2 m (0.12) | Width of a cell on the water, so how big a sparkle is. |
+| `sparkle` | `threshold` | 0.9 to 0.9999 (0.985) | A sparkle lights when its mirror direction has at least this cosine to the sun. Higher is fewer and tighter. |
+| `sparkle` | `shape` | `dot` or `star` (`star`) | Four-point star, or a round dot. |
+| `sparkle` | `twinkle` | 0 to 8 per second (1) | How fast each facet turns; 0 keeps them still, though waves and camera still move them. |
+| `sparkle` | `intensity` | 0 to 4 (1) | Brightness. |
+
+- Sparkles show on the sun path only: toward the sun they glitter, and none appear on the side away from it, in foam or in shadow.
+- Cells are on the water plane, so far sparkles are flattened by perspective and a cell under two pixels fades out.
+- Painted light streaks are not built.
+- Raster only. The path tracer ignores it. The material needs the `water` tag; any other tag throws with what to pass.
+- The code is the lazy `glitter-shader` addon (`@codepawlhq/crucible/addons/glitter-shader`; a recipe loads it on its own). Parts with different `waterGlint` objects never share a draw call, and `updateParts` rejects a change after the part is created.
+
 ## Moss layer
 
 A standard-tag material can grow moss: `moss` (0 to 1, default 0) sets how much of the up-facing surface it covers, and `mossColor` (linear RGB, default `[0.05, 0.085, 0.02]`) its colour.

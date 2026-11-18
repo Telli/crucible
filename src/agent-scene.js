@@ -64,6 +64,8 @@ const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geo
 const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
+// Fields of an optional shader module join the list here, so the long list above stays a line each material feature does not rewrite.
+MATERIAL_FIELDS.push('waterGlint');
 const LOOK_OPERATION_FIELDS = Object.freeze({
   'set-environment': 'environment',
   'set-effects': 'effects',
@@ -353,6 +355,10 @@ function materialFrom(value) {
   }
   copyMaterialLayers(value, result);
   if (value.wear) result.wear = normalizeMaterialWear(value.wear);
+  if (value.waterGlint !== undefined && value.waterGlint !== null) {
+    if (result.tag !== 'water') throw invalidField('waterGlint', value.waterGlint, 'a water material: set tag "water" on the material, or remove waterGlint');
+    result.waterGlint = agentSceneModule('glitterShader').normalizeWaterGlint(value.waterGlint);
+  }
   if (value.retro !== undefined && value.retro !== null) result.retro = agentSceneModule('retroShader').normalizeMaterialRetro(value.retro);
   if (agentSceneModuleLoaded('worldMaterials')) {
     agentSceneModule('worldMaterials').copyWaterFields(value, result, vector);

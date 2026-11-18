@@ -73,7 +73,7 @@ function postUniformLocations(context, program) {
 
 const MAP_SHADER_FEATURES = ['baseMap', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
 // Part or material fields that name their shader feature and switch it on when set.
-const PRESENT_SHADER_FEATURES = ['skin', 'crowd', 'morph', 'lightMap', 'waterReflection', 'retro'];
+const PRESENT_SHADER_FEATURES = ['skin', 'crowd', 'morph', 'lightMap', 'waterReflection', 'retro', 'waterGlint'];
 // Material fields that name their shader feature and switch it on above zero.
 const POSITIVE_SHADER_FEATURES = ['moss', 'anisotropy', 'iridescence', 'toon', 'boxMapScale', 'emissionFresnel'];
 // Tags whose look the main fragment shader draws with code that other tags never reach.
@@ -266,7 +266,7 @@ function materialAlphaState(material) {
   const alphaMode = material.alphaMode ?? 'opaque';
   const alphaCutoff = alphaMode === 'mask' ? material.alphaCutoff ?? 0.5 : 0;
   const opacity = alphaMode === 'mask' ? (material.opacity ?? 1) + (material.opacityBias ?? 0) : 1;
-  return [alphaMode, alphaCutoff, opacity, material.doubleSided === true, material.retro];
+  return [alphaMode, alphaCutoff, opacity, material.doubleSided === true, material.retro, material.waterGlint];
 }
 
 // A decal or depth layer draws with a scoped polygon offset so it wins against the surface it lies on (z-fighting).
@@ -1418,10 +1418,10 @@ export class CrucibleRenderer {
     const morph = parts[0].morph ?? null;
     const morphTexture = morph ? this.createMorphTexture(geometry, morph) : null;
     const morphWeights = morph ? new Float32Array(morph.weights) : null;
-    const [alphaMode, alphaCutoff, opacity, doubleSided, retro] = materialAlphaState(parts[0].material);
+    const [alphaMode, alphaCutoff, opacity, doubleSided, retro, waterGlint] = materialAlphaState(parts[0].material);
     const layerState = materialLayerState(parts[0].material);
     const culling = this.createCullingState(parts);
-    const batch = { ...culling, alphaMode, alphaCutoff, opacity, doubleSided, retro, mirrored: isMirroredMatrix(parts[0].matrix), layerState, wear: parts[0].material.wear ?? null, parts: [...parts], vertexArray, instanceBuffer, instanceData, textures, mapState, splat, lightMapTexture, texture: textures[0], map, skin, skinTexture, influenceTexture, crowd, crowdTexture, morph, morphTexture, morphWeights, indexCount: flushOrder?.indices.length ?? geometry.indices.length, instanceCount: parts.length, floor: parts[0].material.tag === 'floor', castShadow: castsShadow(parts[0]), tintedShadow: castsTintedShadow(parts[0]), tintBlind: Boolean(splat) || Object.keys(parts[0].material.layerMaps ?? {}).length >= 3, receivesShadow: receivesShadow(parts[0]), compositeMode: compositeModeOf(parts[0]), depthLayer: depthLayerOf(parts[0]), flushOrder, flushIndexBuffer, pass: partPass(parts[0]) };
+    const batch = { ...culling, alphaMode, alphaCutoff, opacity, doubleSided, retro, waterGlint, mirrored: isMirroredMatrix(parts[0].matrix), layerState, wear: parts[0].material.wear ?? null, parts: [...parts], vertexArray, instanceBuffer, instanceData, textures, mapState, splat, lightMapTexture, texture: textures[0], map, skin, skinTexture, influenceTexture, crowd, crowdTexture, morph, morphTexture, morphWeights, indexCount: flushOrder?.indices.length ?? geometry.indices.length, instanceCount: parts.length, floor: parts[0].material.tag === 'floor', castShadow: castsShadow(parts[0]), tintedShadow: castsTintedShadow(parts[0]), tintBlind: Boolean(splat) || Object.keys(parts[0].material.layerMaps ?? {}).length >= 3, receivesShadow: receivesShadow(parts[0]), compositeMode: compositeModeOf(parts[0]), depthLayer: depthLayerOf(parts[0]), flushOrder, flushIndexBuffer, pass: partPass(parts[0]) };
     if (parts[0].lods) culling.levelGeometries.forEach((geometryOfLevel, level) => this.levelDraw(batch, level));
     culling.shadowLevels?.levelGeometries.forEach((geometryOfLevel, level) => this.levelDraw(batch, level, batch.shadowLevels));
     parts.forEach((part, index) => this.partLocations.set(part, { batch, index, geometry: part.geometry, map, mapState, layerState, skin, jointMatrices: skin?.jointMatrices, skinIndices: geometry.skinIndices, skinWeights: geometry.skinWeights, morph, morphWeights: morph?.weights, morphTargets: geometry.morphTargets, normalMatrix: mat3.create(), committedMatrix: batch.instanceData.subarray(index * INSTANCE_STRIDE, index * INSTANCE_STRIDE + 16) }));
@@ -1459,7 +1459,7 @@ export class CrucibleRenderer {
       const alphaState = materialAlphaState(first.material);
       const sameState = location?.geometry === first.geometry && batch?.castShadow === castsShadow(first) && batch.receivesShadow === receivesShadow(first) && batch.compositeMode === compositeModeOf(first) && (batch.depthLayer ?? 0) === depthLayerOf(first) && (batch.flushOrder ?? null) === flushOrderOf(first) &&
         batch.floor === (first.material.tag === 'floor') && batchPass(batch) === partPass(first) &&
-        [batch.alphaMode, batch.alphaCutoff, batch.opacity, batch.doubleSided, batch.retro].every((value, index) => value === alphaState[index]) &&
+        [batch.alphaMode, batch.alphaCutoff, batch.opacity, batch.doubleSided, batch.retro, batch.waterGlint].every((value, index) => value === alphaState[index]) &&
         batch.mapState.every((value, index) => value === mapState[index]) &&
         batch.layerState.every((value, index) => value === materialLayerState(first.material)[index]);
       if (sameParts && sameState) {
@@ -1629,7 +1629,7 @@ export class CrucibleRenderer {
       const materialUnchanged = location.materialSnapshot?.matches(part.material) === true;
       if (!materialUnchanged) {
         const alphaState = materialAlphaState(part.material);
-        const batchAlphaState = [location.batch.alphaMode, location.batch.alphaCutoff, location.batch.opacity, location.batch.doubleSided, location.batch.retro];
+        const batchAlphaState = [location.batch.alphaMode, location.batch.alphaCutoff, location.batch.opacity, location.batch.doubleSided, location.batch.retro, location.batch.waterGlint];
         if (alphaState.some((value, index) => value !== batchAlphaState[index])) throw new Error(`Alpha mode, cutoff, double-sided, retro and mask opacity changes require a new renderer: set them when the part is made (blend and add opacity may change): ${part.name}`);
       }
       if (part.geometry !== location.geometry) throw new Error(`Geometry changes require a new renderer: ${part.name}`);
