@@ -1,1311 +1,60 @@
-import { mat4, quat, vec3 } from 'gl-matrix';
 import { applyProjection } from './camera.js';
 import { createAgentScene, loadAgentSceneModules } from './agent-scene.js';
 import { agentEnvironmentMap, fitAgentShadow, resolveAgentShadow } from './agent-look.js';
+import { agentSceneModulesNeeded } from './agent-scene-modules.js';
 import { LIGHTING_SETUP_NAMES } from './agent-scene-capabilities.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
 import { CrucibleRenderer } from './renderer.js';
-import { createSceneQuery } from './scene-query.js';
+import { exportGlb } from './export.js';
+import { encodePack } from './scene-pack-format.js';
+import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
+import { STUDIO_CSS } from './studio-styles.js';
+import {
+  STUDIO_LENS_PRESETS,
+  STUDIO_MATERIAL_PRESETS,
+  STUDIO_PRIMITIVES,
+  STUDIO_TABS,
+  STUDIO_TEMPLATES,
+  STUDIO_TOOLS,
+  STUDIO_VIEW_PRESETS,
+  buildTemplateRecipe,
+} from './studio-templates.js';
+import {
+  createStudioController,
+  directionToSunAngles,
+  hasAnimatedData,
+  linearRgbToHex,
+  quaternionToEulerDegrees,
+  roundValue,
+} from './studio-controller.js';
 
-export const STUDIO_TOOLS = Object.freeze(['translate', 'rotate', 'scale', 'snap']);
-export const STUDIO_TABS = Object.freeze(['node', 'look', 'camera']);
+export {
+  STUDIO_LENS_PRESETS,
+  STUDIO_MATERIAL_PRESETS,
+  STUDIO_PRIMITIVES,
+  STUDIO_TABS,
+  STUDIO_TEMPLATES,
+  STUDIO_TOOLS,
+  STUDIO_VIEW_PRESETS,
+  buildTemplateRecipe,
+  createStudioController,
+};
 
 const AXIS_NAMES = Object.freeze(['x', 'y', 'z']);
-const GIZMO_AXES = Object.freeze(['x', 'y', 'z', 'uniform', 'surface']);
-const SHOT_NAME_PATTERN = /^[A-Za-z0-9_-]{1,24}$/;
-const GIZMO_SCREEN_PIXELS = 72;
-const ROTATION_DEGREES_PER_PIXEL = 0.75;
-const ROTATION_SNAP_DEGREES = 15;
-const SCALE_PIXELS_PER_UNIT = 90;
-const MINIMUM_SCALE = 0.05;
-const MAXIMUM_SCALE = 100;
-const MINIMUM_DISTANCE = 0.25;
-const MAXIMUM_DISTANCE = 400;
-const MAXIMUM_ELEVATION = 1.53;
-const ROUND_PRECISION = 10000;
+const AXIS_COLORS = Object.freeze({ x: '#f26b5b', y: '#7be082', z: '#5ea8ff' });
 const DEGREE_PRECISION = 100;
-
-function roundValue(value, precision = ROUND_PRECISION) {
-  return Math.round(value * precision) / precision;
-}
-
-function roundVector(values, precision = ROUND_PRECISION) {
-  return Array.from(values, component => roundValue(component, precision));
-}
-
-function assertPositiveFinite(value, label) {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    throw new RangeError(`${label} must be a positive finite number, got ${JSON.stringify(value)}.`);
-  }
-  return value;
-}
-
-function assertFiniteVector(values, length, label) {
-  if (!Array.isArray(values) || values.length !== length || values.some(component => typeof component !== 'number' || !Number.isFinite(component))) {
-    throw new TypeError(`${label} must be an array of ${length} finite numbers.`);
-  }
-  return Array.from(values);
-}
-
-function validateSceneHandle(scene) {
-  if (!scene || typeof scene !== 'object') {
-    throw new TypeError('Studio requires a scene object from createAgentScene.');
-  }
-  for (const method of ['apply', 'exportRecipe', 'inspect']) {
-    if (typeof scene[method] !== 'function') {
-      throw new TypeError(`Studio scene must provide ${method}().`);
-    }
-  }
-  if (!Array.isArray(scene.parts) || !scene.camera) {
-    throw new TypeError('Studio scene must provide parts and camera.');
-  }
-  return scene;
-}
-
-function normalizeQuaternion(rotation) {
-  const result = quat.fromValues(rotation[0], rotation[1], rotation[2], rotation[3]);
-  if (quat.length(result) < 1e-8) {
-    return [0, 0, 0, 1];
-  }
-  quat.normalize(result, result);
-  return roundVector(result);
-}
-
-function quaternionToEulerDegrees(quaternion) {
-  const [valueX, valueY, valueZ, valueW] = normalizeQuaternion(quaternion);
-  const sinRoll = 2 * (valueW * valueX + valueY * valueZ);
-  const cosRoll = 1 - 2 * (valueX * valueX + valueY * valueY);
-  const roll = Math.atan2(sinRoll, cosRoll);
-  const sinPitch = Math.max(-1, Math.min(1, 2 * (valueW * valueY - valueZ * valueX)));
-  const pitch = Math.asin(sinPitch);
-  const sinYaw = 2 * (valueW * valueZ + valueX * valueY);
-  const cosYaw = 1 - 2 * (valueY * valueY + valueZ * valueZ);
-  const yaw = Math.atan2(sinYaw, cosYaw);
-  const radiansToDegrees = 180 / Math.PI;
-  return [
-    roundValue(roll * radiansToDegrees, DEGREE_PRECISION),
-    roundValue(pitch * radiansToDegrees, DEGREE_PRECISION),
-    roundValue(yaw * radiansToDegrees, DEGREE_PRECISION),
-  ];
-}
-
-function eulerDegreesToQuaternion(angles) {
-  const result = quat.create();
-  quat.fromEuler(result, angles[0], angles[1], angles[2]);
-  quat.normalize(result, result);
-  return roundVector(result);
-}
-
-function srgbChannelToLinear(channel) {
-  return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-}
-
-function linearChannelToSrgb(channel) {
-  const clamped = Math.max(0, Math.min(1, channel));
-  return clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * (clamped ** (1 / 2.4)) - 0.055;
-}
-
-function linearRgbToHex(rgb) {
-  const values = Array.isArray(rgb) ? rgb : [0.8, 0.8, 0.8];
-  const hex = values.slice(0, 3).map(channel => {
-    const byte = Math.max(0, Math.min(255, Math.round(linearChannelToSrgb(channel) * 255)));
-    return byte.toString(16).padStart(2, '0');
-  });
-  return `#${hex.join('')}`;
-}
-
-function hexToLinearRgb(hexText) {
-  const match = /^#?([0-9a-f]{6})$/i.exec(String(hexText).trim());
-  if (!match) {
-    throw new TypeError(`Color must be a #rrggbb hex string, got ${JSON.stringify(hexText)}.`);
-  }
-  const value = parseInt(match[1], 16);
-  return [
-    roundValue(srgbChannelToLinear(((value >> 16) & 255) / 255)),
-    roundValue(srgbChannelToLinear(((value >> 8) & 255) / 255)),
-    roundValue(srgbChannelToLinear((value & 255) / 255)),
-  ];
-}
-
-function directionToSunAngles(direction) {
-  const values = Array.isArray(direction) && direction.length === 3 ? direction : [-3, 6, 4];
-  const length = Math.hypot(values[0], values[1], values[2]) || 1;
-  const horizontal = Math.hypot(values[0], values[2]);
-  const elevationDegrees = roundValue(Math.asin(Math.max(-1, Math.min(1, values[1] / length))) * 180 / Math.PI, DEGREE_PRECISION);
-  const azimuthDegrees = roundValue(Math.atan2(values[0], values[2]) * 180 / Math.PI, DEGREE_PRECISION);
-  return {
-    azimuthDegrees,
-    elevationDegrees: horizontal < 1e-6 && values[1] > 0 ? 90 : elevationDegrees,
-  };
-}
-
-function sunAnglesToDirection(azimuthDegrees, elevationDegrees) {
-  const azimuth = (azimuthDegrees * Math.PI) / 180;
-  const elevation = (elevationDegrees * Math.PI) / 180;
-  const cosineElevation = Math.cos(elevation);
-  return [
-    roundValue(cosineElevation * Math.sin(azimuth) * 6),
-    roundValue(Math.sin(elevation) * 6),
-    roundValue(cosineElevation * Math.cos(azimuth) * 6),
-  ];
-}
-
-function cameraMatrices(camera, aspect, worldMode) {
-  const view = mat4.lookAt(mat4.create(), camera.eye, camera.target, camera.up ?? [0, 1, 0]);
-  const projection = mat4.create();
-  applyProjection(projection, { projection: camera.projection ?? 'perspective', fov: camera.fov, focalLength: camera.focalLength, sensorWidth: camera.sensorWidth, orthoScale: camera.orthoScale, shift: camera.shift, near: camera.near ?? 0.1, far: camera.far ?? (worldMode ? 600 : 100) }, aspect, { world: worldMode });
-  const viewProjection = mat4.multiply(mat4.create(), projection, view);
-  return { view, projection, viewProjection };
-}
-
-function projectPointWithMatrix(viewProjection, point, width, height) {
-  const worldX = point[0];
-  const worldY = point[1];
-  const worldZ = point[2];
-  const clipX = viewProjection[0] * worldX + viewProjection[4] * worldY + viewProjection[8] * worldZ + viewProjection[12];
-  const clipY = viewProjection[1] * worldX + viewProjection[5] * worldY + viewProjection[9] * worldZ + viewProjection[13];
-  const clipZ = viewProjection[2] * worldX + viewProjection[6] * worldY + viewProjection[10] * worldZ + viewProjection[14];
-  const clipW = viewProjection[3] * worldX + viewProjection[7] * worldY + viewProjection[11] * worldZ + viewProjection[15];
-  if (clipW <= 1e-6) {
-    return { x: 0, y: 0, depth: 1, visible: false };
-  }
-  const normalizedX = clipX / clipW;
-  const normalizedY = clipY / clipW;
-  const normalizedZ = clipZ / clipW;
-  return {
-    x: (normalizedX * 0.5 + 0.5) * width,
-    y: (0.5 - normalizedY * 0.5) * height,
-    depth: normalizedZ,
-    visible: normalizedZ >= -1 && normalizedZ <= 1,
-  };
-}
-
-function buildNodeWorldMatrices(nodes) {
-  const byId = new Map(nodes.map(node => [node.id, node]));
-  const worldMatrices = new Map();
-  function resolveWorldMatrix(nodeId, stack) {
-    if (worldMatrices.has(nodeId)) {
-      return worldMatrices.get(nodeId);
-    }
-    const node = byId.get(nodeId);
-    if (!node || stack.has(nodeId)) {
-      return mat4.create();
-    }
-    stack.add(nodeId);
-    const localMatrix = mat4.fromRotationTranslationScale(
-      mat4.create(),
-      node.rotation ?? [0, 0, 0, 1],
-      node.translation ?? [0, 0, 0],
-      node.scale ?? [1, 1, 1],
-    );
-    const worldMatrix = node.parent
-      ? mat4.multiply(mat4.create(), resolveWorldMatrix(node.parent, stack), localMatrix)
-      : localMatrix;
-    stack.delete(nodeId);
-    worldMatrices.set(nodeId, worldMatrix);
-    return worldMatrix;
-  }
-  for (const node of nodes) {
-    resolveWorldMatrix(node.id, new Set());
-  }
-  return worldMatrices;
-}
-
-function descendantIdsOf(nodes, rootId) {
-  const descendants = new Set([rootId]);
-  let added = true;
-  while (added) {
-    added = false;
-    for (const node of nodes) {
-      if (node.parent && descendants.has(node.parent) && !descendants.has(node.id)) {
-        descendants.add(node.id);
-        added = true;
-      }
-    }
-  }
-  return descendants;
-}
-
-function partClearanceAlongNormal(parts, excludedIds, worldNormal, nodes, worldMatrices) {
-  let minimumProjection = Infinity;
-  let maximumProjection = -Infinity;
-  const point = vec3.create();
-  for (const part of parts) {
-    if (!excludedIds.has(part.name) || !part.geometry?.positions) {
-      continue;
-    }
-    const positions = part.geometry.positions;
-    const matrix = part.matrix ?? worldMatrices.get(part.name);
-    if (!matrix) {
-      continue;
-    }
-    for (let offset = 0; offset < positions.length; offset += 3) {
-      vec3.set(point, positions[offset], positions[offset + 1], positions[offset + 2]);
-      vec3.transformMat4(point, point, matrix);
-      const projection = vec3.dot(point, worldNormal);
-      if (projection < minimumProjection) minimumProjection = projection;
-      if (projection > maximumProjection) maximumProjection = projection;
-    }
-  }
-  if (!Number.isFinite(minimumProjection)) {
-    return 0.5;
-  }
-  const pivotMatrix = worldMatrices.get(nodes[0]?.id) ?? parts.find(part => excludedIds.has(part.name))?.matrix;
-  if (!pivotMatrix) {
-    return Math.max(0, (maximumProjection - minimumProjection) * 0.5);
-  }
-  const pivotProjection = pivotMatrix[12] * worldNormal[0] + pivotMatrix[13] * worldNormal[1] + pivotMatrix[14] * worldNormal[2];
-  return Math.max(0, pivotProjection - minimumProjection);
-}
-
-function cameraBookmarkPayload(camera) {
-  const payload = {
-    eye: roundVector(camera.eye),
-    target: roundVector(camera.target),
-    up: roundVector(camera.up ?? [0, 1, 0]),
-  };
-  if (camera.focalLength === undefined && camera.fov !== undefined) {
-    payload.fov = roundValue(camera.fov, DEGREE_PRECISION);
-  }
-  if (camera.near !== undefined) {
-    payload.near = roundValue(camera.near);
-  }
-  if (camera.far !== undefined) {
-    payload.far = roundValue(camera.far);
-  }
-  return payload;
-}
-
-function buildTimelineShot(name, camera, recipe) {
-  const hasMotion = Boolean(recipe.motion || recipe.physics || recipe.cloth);
-  const nonLoopingDuration = recipe.motion && !recipe.motion.loop ? recipe.motion.duration : 2;
-  const duration = Math.max(0.1, Math.min(2, nonLoopingDuration));
-  const shot = { name, duration, camera: cameraBookmarkPayload(camera) };
-  if (hasMotion) {
-    shot.motionStart = 0;
-  }
-  return shot;
-}
-
-function hasAnimatedData(recipe) {
-  return Boolean(
-    recipe.motion ||
-    recipe.physics ||
-    recipe.cloth ||
-    recipe.particles ||
-    recipe.environment?.localVolumes?.some(volume => volume?.frames),
-  );
-}
-
-function resolveRecipeNodeId(partId, recipe) {
-  const direct = recipe.nodes.find(node => node.id === partId);
-  if (direct) {
-    return direct.id;
-  }
-  const prefixed = recipe.nodes.find(node => partId.startsWith(`${node.id}:`) || partId.startsWith(`${node.id}.`));
-  return prefixed ? prefixed.id : null;
-}
-
-/**
- * Pure controller bridging interactive viewport actions and inspector edits to an AgentScene recipe.
- */
-export function createStudioController({
-  scene: initialScene,
-  viewportWidth = 960,
-  viewportHeight = 540,
-  maxHistory = 32,
-  onChange,
-} = {}) {
-  let currentScene = validateSceneHandle(initialScene);
-  let width = assertPositiveFinite(viewportWidth, 'viewportWidth');
-  let height = assertPositiveFinite(viewportHeight, 'viewportHeight');
-  if (!Number.isInteger(maxHistory) || maxHistory < 1 || maxHistory > 128) {
-    throw new RangeError(`maxHistory must be an integer from 1 to 128, got ${JSON.stringify(maxHistory)}.`);
-  }
-  if (onChange !== undefined && typeof onChange !== 'function') {
-    throw new TypeError('onChange must be a function when provided.');
-  }
-
-  let selectedNodeId = currentScene.exportRecipe().nodes.find(node => node.geometry !== undefined)?.id
-    ?? currentScene.exportRecipe().nodes[0]?.id
-    ?? null;
-  let activeTool = 'translate';
-  let activeTab = 'node';
-  let motionTime = currentScene.motionTime ?? 0;
-  let queryCache = null;
-  let dragState = null;
-  const undoStack = [];
-  const redoStack = [];
-
-  function notify(detail = {}) {
-    if (onChange) {
-      onChange({
-        revision: currentScene.revision,
-        selectedNodeId,
-        tool: activeTool,
-        activeTab,
-        motionTime,
-        ...detail,
-      });
-    }
-  }
-
-  function invalidateQuery() {
-    if (queryCache) {
-      queryCache.query.dispose();
-      queryCache = null;
-    }
-  }
-
-  function ensureQuery() {
-    if (queryCache && queryCache.topologyRevision === currentScene.topologyRevision) {
-      return queryCache.query;
-    }
-    invalidateQuery();
-    const query = createSceneQuery(currentScene.parts);
-    queryCache = { topologyRevision: currentScene.topologyRevision, query };
-    return query;
-  }
-
-  function pushUndoSnapshot(snapshot) {
-    undoStack.push(snapshot);
-    while (undoStack.length > maxHistory) {
-      undoStack.shift();
-    }
-    redoStack.length = 0;
-  }
-
-  function applySceneOperations(operations, { recordUndo = true } = {}) {
-    const before = recordUndo ? currentScene.exportRecipe() : null;
-    currentScene.apply(operations, { expectedRevision: currentScene.revision });
-    if (before) {
-      pushUndoSnapshot(before);
-    }
-  }
-
-  function swapRecipe(recipeInput) {
-    invalidateQuery();
-    currentScene = createAgentScene(recipeInput);
-    const recipe = currentScene.exportRecipe();
-    if (selectedNodeId && !recipe.nodes.some(node => node.id === selectedNodeId)) {
-      selectedNodeId = recipe.nodes[0]?.id ?? null;
-    }
-    if (motionTime > 0 && hasAnimatedData(recipe)) {
-      const limit = recipe.motion?.duration ?? motionTime;
-      motionTime = Math.max(0, Math.min(limit, motionTime));
-      currentScene.sampleMotion(motionTime);
-    } else {
-      motionTime = 0;
-    }
-  }
-
-  function selectedPivotWorld() {
-    if (!selectedNodeId) {
-      return null;
-    }
-    const matchingPart = currentScene.parts.find(part => part.name === selectedNodeId);
-    if (matchingPart?.matrix) {
-      return [matchingPart.matrix[12], matchingPart.matrix[13], matchingPart.matrix[14]];
-    }
-    const recipe = currentScene.exportRecipe();
-    const matrix = buildNodeWorldMatrices(recipe.nodes).get(selectedNodeId);
-    if (!matrix) {
-      return null;
-    }
-    return [matrix[12], matrix[13], matrix[14]];
-  }
-
-  function projectWorldPoint(worldPoint) {
-    const coordinates = assertFiniteVector(worldPoint, 3, 'worldPoint');
-    const { viewProjection } = cameraMatrices(currentScene.camera, width / height, Boolean(currentScene.environment?.world));
-    return projectPointWithMatrix(viewProjection, coordinates, width, height);
-  }
-
-  function screenRay(pixelX, pixelY) {
-    if (!Number.isFinite(pixelX) || !Number.isFinite(pixelY)) {
-      throw new TypeError('screenRay requires finite pixelX and pixelY numbers.');
-    }
-    const { viewProjection } = cameraMatrices(currentScene.camera, width / height, Boolean(currentScene.environment?.world));
-    const inverse = mat4.invert(mat4.create(), viewProjection);
-    if (!inverse) {
-      throw new Error('Cannot unproject ray from a singular camera matrix.');
-    }
-    const normalizedX = (pixelX / width) * 2 - 1;
-    const normalizedY = 1 - (pixelY / height) * 2;
-    const nearPoint = vec3.transformMat4(vec3.create(), [normalizedX, normalizedY, -1], inverse);
-    const farPoint = vec3.transformMat4(vec3.create(), [normalizedX, normalizedY, 1], inverse);
-    const direction = vec3.subtract(vec3.create(), farPoint, nearPoint);
-    vec3.normalize(direction, direction);
-    return {
-      origin: [nearPoint[0], nearPoint[1], nearPoint[2]],
-      direction: [direction[0], direction[1], direction[2]],
-    };
-  }
-
-  function selectNode(nodeId) {
-    if (nodeId !== null && typeof nodeId !== 'string') {
-      throw new TypeError('selectNode expects a node ID string or null.');
-    }
-    if (nodeId !== null) {
-      const exists = currentScene.exportRecipe().nodes.some(node => node.id === nodeId);
-      if (!exists) {
-        throw new RangeError(`Unknown node "${nodeId}". Select an existing node ID from scene.exportRecipe().nodes.`);
-      }
-    }
-    selectedNodeId = nodeId;
-    notify({ kind: 'selection' });
-    return selectedNodeId;
-  }
-
-  function setTool(tool) {
-    if (!STUDIO_TOOLS.includes(tool)) {
-      throw new RangeError(`Unknown Studio tool "${String(tool)}". Use one of ${STUDIO_TOOLS.join(', ')}.`);
-    }
-    activeTool = tool;
-    notify({ kind: 'tool' });
-    return activeTool;
-  }
-
-  function setActiveTab(tab) {
-    if (!STUDIO_TABS.includes(tab)) {
-      throw new RangeError(`Unknown Studio tab "${String(tab)}". Use one of ${STUDIO_TABS.join(', ')}.`);
-    }
-    activeTab = tab;
-    notify({ kind: 'tab' });
-    return activeTab;
-  }
-
-  function pickAt(pixelX, pixelY) {
-    const ray = screenRay(pixelX, pixelY);
-    const hit = ensureQuery().raycast(ray);
-    if (!hit) {
-      selectedNodeId = null;
-      notify({ kind: 'pick', hit: null });
-      return null;
-    }
-    const recipe = currentScene.exportRecipe();
-    const resolvedId = resolveRecipeNodeId(hit.id, recipe);
-    selectedNodeId = resolvedId;
-    const result = {
-      id: resolvedId ?? hit.id,
-      partId: hit.id,
-      point: Array.from(hit.point),
-      normal: Array.from(hit.normal),
-      distance: hit.distance,
-    };
-    notify({ kind: 'pick', hit: result });
-    return result;
-  }
-
-  function gizmoHandles() {
-    const pivot = selectedPivotWorld();
-    if (!pivot) {
-      return null;
-    }
-    const camera = currentScene.camera;
-    const distance = Math.max(0.5, vec3.distance(camera.eye, pivot));
-    const fovRadians = ((camera.fov ?? 45) * Math.PI) / 180;
-    const worldPerPixel = (2 * distance * Math.tan(fovRadians * 0.5)) / height;
-    const handleLength = Math.max(0.25, worldPerPixel * GIZMO_SCREEN_PIXELS);
-    const origin = projectWorldPoint(pivot);
-    return {
-      pivot,
-      handleLength,
-      origin,
-      axes: {
-        x: projectWorldPoint([pivot[0] + handleLength, pivot[1], pivot[2]]),
-        y: projectWorldPoint([pivot[0], pivot[1] + handleLength, pivot[2]]),
-        z: projectWorldPoint([pivot[0], pivot[1], pivot[2] + handleLength]),
-      },
-    };
-  }
-
-  function computeSnapTranslation(nodeId, pixelX, pixelY) {
-    const recipe = currentScene.exportRecipe();
-    const targetNode = recipe.nodes.find(node => node.id === nodeId);
-    if (!targetNode) {
-      return null;
-    }
-    const excluded = descendantIdsOf(recipe.nodes, nodeId);
-    const supportParts = currentScene.parts.filter(part => !excluded.has(part.name));
-    if (supportParts.length === 0) {
-      return null;
-    }
-    const ray = screenRay(pixelX, pixelY);
-    const snapQuery = createSceneQuery(supportParts);
-    let hit = null;
-    try {
-      hit = snapQuery.raycast(ray);
-    } finally {
-      snapQuery.dispose();
-    }
-    if (!hit) {
-      return null;
-    }
-    const worldMatrices = buildNodeWorldMatrices(recipe.nodes);
-    const clearance = partClearanceAlongNormal(currentScene.parts, excluded, hit.normal, [targetNode], worldMatrices);
-    const worldTarget = [
-      hit.point[0] + hit.normal[0] * clearance,
-      hit.point[1] + hit.normal[1] * clearance,
-      hit.point[2] + hit.normal[2] * clearance,
-    ];
-    if (!targetNode.parent) {
-      return roundVector(worldTarget);
-    }
-    const parentWorld = worldMatrices.get(targetNode.parent);
-    const inverseParent = parentWorld ? mat4.invert(mat4.create(), parentWorld) : null;
-    if (!inverseParent) {
-      return roundVector(worldTarget);
-    }
-    const localTarget = vec3.transformMat4(vec3.create(), worldTarget, inverseParent);
-    return roundVector(localTarget);
-  }
-
-  function snapSelectedToAt(pixelX, pixelY, { recordUndo = true } = {}) {
-    if (!selectedNodeId) {
-      throw new RangeError('Select a node before snapping it to a surface.');
-    }
-    const translation = computeSnapTranslation(selectedNodeId, pixelX, pixelY);
-    if (!translation) {
-      return null;
-    }
-    applySceneOperations([{ type: 'set-node', id: selectedNodeId, translation }], { recordUndo });
-    notify({ kind: 'transform', nodeId: selectedNodeId });
-    return translation;
-  }
-
-  function beginGizmoDrag(axis, pixelX, pixelY) {
-    if (!selectedNodeId) {
-      throw new RangeError('Select a node before starting a gizmo drag.');
-    }
-    if (!GIZMO_AXES.includes(axis)) {
-      throw new RangeError(`Unsupported gizmo axis "${String(axis)}". Use ${GIZMO_AXES.join(', ')}.`);
-    }
-    if (!Number.isFinite(pixelX) || !Number.isFinite(pixelY)) {
-      throw new TypeError('beginGizmoDrag requires finite pixel coordinates.');
-    }
-    const recipe = currentScene.exportRecipe();
-    const node = recipe.nodes.find(candidate => candidate.id === selectedNodeId);
-    const handles = gizmoHandles();
-    const worldMatrices = buildNodeWorldMatrices(recipe.nodes);
-    const parentWorld = node.parent ? worldMatrices.get(node.parent) : null;
-    let axisScreen = [1, 0];
-    if (axis !== 'uniform' && axis !== 'surface' && handles) {
-      const axisPoint = handles.axes[axis];
-      const deltaX = axisPoint.x - handles.origin.x;
-      const deltaY = axisPoint.y - handles.origin.y;
-      const length = Math.hypot(deltaX, deltaY);
-      if (length > 1) {
-        axisScreen = [deltaX / length, deltaY / length];
-      }
-    }
-    const camera = currentScene.camera;
-    const distance = handles ? Math.max(0.5, vec3.distance(camera.eye, handles.pivot)) : 5;
-    const fovRadians = ((camera.fov ?? 45) * Math.PI) / 180;
-    const worldPerPixel = (2 * distance * Math.tan(fovRadians * 0.5)) / height;
-    dragState = {
-      nodeId: selectedNodeId,
-      tool: axis === 'surface' ? 'snap' : activeTool,
-      axis,
-      startX: pixelX,
-      startY: pixelY,
-      baseRecipe: recipe,
-      baseTranslation: Array.from(node.translation ?? [0, 0, 0]),
-      baseRotation: normalizeQuaternion(node.rotation ?? [0, 0, 0, 1]),
-      baseScale: Array.from(node.scale ?? [1, 1, 1]),
-      parentInverse: parentWorld ? mat4.invert(mat4.create(), parentWorld) : null,
-      axisScreen,
-      worldPerPixel,
-      changed: false,
-    };
-    return { nodeId: dragState.nodeId, tool: dragState.tool, axis: dragState.axis };
-  }
-
-  function updateGizmoDrag(pixelX, pixelY, { shiftKey = false } = {}) {
-    if (!dragState) {
-      return null;
-    }
-    if (!Number.isFinite(pixelX) || !Number.isFinite(pixelY)) {
-      throw new TypeError('updateGizmoDrag requires finite pixel coordinates.');
-    }
-    const deltaX = pixelX - dragState.startX;
-    const deltaY = pixelY - dragState.startY;
-    const axisIndex = AXIS_NAMES.indexOf(dragState.axis);
-    if (dragState.tool === 'snap' || dragState.axis === 'surface') {
-      const translation = computeSnapTranslation(dragState.nodeId, pixelX, pixelY);
-      if (!translation) {
-        return null;
-      }
-      applySceneOperations([{ type: 'set-node', id: dragState.nodeId, translation }], { recordUndo: false });
-      dragState.changed = true;
-      notify({ kind: 'transform', nodeId: dragState.nodeId, live: true });
-      return { translation };
-    }
-    if (dragState.tool === 'translate' && axisIndex >= 0) {
-      const projectedPixels = deltaX * dragState.axisScreen[0] + deltaY * dragState.axisScreen[1];
-      const worldDelta = [0, 0, 0];
-      worldDelta[axisIndex] = projectedPixels * dragState.worldPerPixel;
-      let localDelta = worldDelta;
-      if (dragState.parentInverse) {
-        const rotated = vec3.fromValues(worldDelta[0], worldDelta[1], worldDelta[2]);
-        const linearInverse = mat4.clone(dragState.parentInverse);
-        linearInverse[12] = 0;
-        linearInverse[13] = 0;
-        linearInverse[14] = 0;
-        vec3.transformMat4(rotated, rotated, linearInverse);
-        localDelta = [rotated[0], rotated[1], rotated[2]];
-      }
-      const translation = roundVector([
-        dragState.baseTranslation[0] + localDelta[0],
-        dragState.baseTranslation[1] + localDelta[1],
-        dragState.baseTranslation[2] + localDelta[2],
-      ]);
-      applySceneOperations([{ type: 'set-node', id: dragState.nodeId, translation }], { recordUndo: false });
-      dragState.changed = true;
-      notify({ kind: 'transform', nodeId: dragState.nodeId, live: true });
-      return { translation };
-    }
-    if (dragState.tool === 'rotate') {
-      const rawDegrees = (deltaX - deltaY) * ROTATION_DEGREES_PER_PIXEL;
-      const degrees = shiftKey ? Math.round(rawDegrees / ROTATION_SNAP_DEGREES) * ROTATION_SNAP_DEGREES : rawDegrees;
-      const radians = (degrees * Math.PI) / 180;
-      const axisVector = axisIndex === 0 ? [1, 0, 0] : axisIndex === 1 ? [0, 1, 0] : [0, 0, 1];
-      const deltaQuaternion = quat.setAxisAngle(quat.create(), axisVector, radians);
-      const nextQuaternion = quat.multiply(quat.create(), deltaQuaternion, dragState.baseRotation);
-      const rotation = normalizeQuaternion(nextQuaternion);
-      applySceneOperations([{ type: 'set-node', id: dragState.nodeId, rotation }], { recordUndo: false });
-      dragState.changed = true;
-      notify({ kind: 'transform', nodeId: dragState.nodeId, live: true });
-      return { rotation };
-    }
-    if (dragState.tool === 'scale') {
-      const signedPixels = dragState.axis === 'uniform' ? deltaX - deltaY : deltaX * dragState.axisScreen[0] + deltaY * dragState.axisScreen[1];
-      const factor = Math.max(MINIMUM_SCALE, Math.min(MAXIMUM_SCALE, 1 + signedPixels / SCALE_PIXELS_PER_UNIT));
-      const scale = roundVector(dragState.baseScale.map((component, index) => (
-        dragState.axis === 'uniform' || index === axisIndex
-          ? Math.max(MINIMUM_SCALE, Math.min(MAXIMUM_SCALE, component * factor))
-          : component
-      )));
-      applySceneOperations([{ type: 'set-node', id: dragState.nodeId, scale }], { recordUndo: false });
-      dragState.changed = true;
-      notify({ kind: 'transform', nodeId: dragState.nodeId, live: true });
-      return { scale };
-    }
-    return null;
-  }
-
-  function endGizmoDrag() {
-    if (!dragState) {
-      return false;
-    }
-    const { baseRecipe, changed } = dragState;
-    dragState = null;
-    if (changed) {
-      pushUndoSnapshot(baseRecipe);
-      notify({ kind: 'transformCommit' });
-    }
-    return changed;
-  }
-
-  function updateNodeTransform(nodeId, patch) {
-    if (!patch || typeof patch !== 'object') {
-      throw new TypeError('updateNodeTransform expects a patch object.');
-    }
-    const operation = { type: 'set-node', id: nodeId };
-    if (patch.translation !== undefined) {
-      operation.translation = roundVector(assertFiniteVector(patch.translation, 3, 'translation'));
-    }
-    if (patch.rotationDegrees !== undefined) {
-      operation.rotation = eulerDegreesToQuaternion(assertFiniteVector(patch.rotationDegrees, 3, 'rotationDegrees'));
-    } else if (patch.rotation !== undefined) {
-      operation.rotation = normalizeQuaternion(assertFiniteVector(patch.rotation, 4, 'rotation'));
-    }
-    if (patch.scale !== undefined) {
-      const scale = assertFiniteVector(patch.scale, 3, 'scale');
-      if (scale.some(component => component <= 0)) {
-        throw new RangeError('Node scale components must stay positive.');
-      }
-      operation.scale = roundVector(scale);
-    }
-    if (patch.visible !== undefined) {
-      if (typeof patch.visible !== 'boolean') {
-        throw new TypeError('Node visible must be true or false.');
-      }
-      operation.visible = patch.visible;
-    }
-    applySceneOperations([operation]);
-    notify({ kind: 'transform', nodeId });
-    return operation;
-  }
-
-  function updateMaterial(materialId, patch) {
-    if (!patch || typeof patch !== 'object') {
-      throw new TypeError('updateMaterial expects a patch object.');
-    }
-    const operation = { type: 'set-material', id: materialId };
-    if (patch.hexColor !== undefined) {
-      operation.color = hexToLinearRgb(patch.hexColor);
-    } else if (patch.color !== undefined) {
-      operation.color = roundVector(assertFiniteVector(patch.color, 3, 'color'));
-    }
-    for (const scalarField of ['roughness', 'metallic', 'emission', 'opacity']) {
-      if (patch[scalarField] !== undefined) {
-        if (typeof patch[scalarField] !== 'number' || !Number.isFinite(patch[scalarField])) {
-          throw new TypeError(`Material ${scalarField} must be a finite number.`);
-        }
-        operation[scalarField] = roundValue(patch[scalarField]);
-      }
-    }
-    applySceneOperations([operation]);
-    notify({ kind: 'material', materialId });
-    return operation;
-  }
-
-  function updateLook({ environment, effects } = {}) {
-    const operations = [];
-    if (environment !== undefined) {
-      operations.push({ type: 'set-environment', environment });
-    }
-    if (effects !== undefined) {
-      operations.push({ type: 'set-effects', effects });
-    }
-    if (operations.length === 0) {
-      return;
-    }
-    applySceneOperations(operations);
-    notify({ kind: 'look' });
-  }
-
-  function setSunAngles({ azimuthDegrees, elevationDegrees, keyIntensity } = {}) {
-    const currentEnvironment = currentScene.exportRecipe().environment ?? {};
-    const currentAngles = directionToSunAngles(currentEnvironment.lightDirection);
-    const nextAzimuth = azimuthDegrees ?? currentAngles.azimuthDegrees;
-    const nextElevation = elevationDegrees ?? currentAngles.elevationDegrees;
-    const patch = { lightDirection: sunAnglesToDirection(nextAzimuth, nextElevation) };
-    if (keyIntensity !== undefined) {
-      if (typeof keyIntensity !== 'number' || !Number.isFinite(keyIntensity) || keyIntensity < 0) {
-        throw new RangeError('keyIntensity must be a non-negative finite number.');
-      }
-      patch.keyIntensity = roundValue(keyIntensity);
-    }
-    updateLook({ environment: patch });
-    return patch;
-  }
-
-  function orbitCamera({ deltaAzimuth = 0, deltaElevation = 0, zoomScale = 1, panX = 0, panY = 0, recordUndo = false } = {}) {
-    const camera = currentScene.camera;
-    const offset = vec3.subtract(vec3.create(), camera.eye, camera.target);
-    const radius = Math.max(MINIMUM_DISTANCE, Math.min(MAXIMUM_DISTANCE, vec3.length(offset) * zoomScale));
-    const currentHorizontal = Math.hypot(offset[0], offset[2]);
-    let azimuth = Math.atan2(offset[0], offset[2]) + deltaAzimuth;
-    let elevation = Math.atan2(offset[1], currentHorizontal) + deltaElevation;
-    elevation = Math.max(-MAXIMUM_ELEVATION, Math.min(MAXIMUM_ELEVATION, elevation));
-    const upVector = camera.up ?? [0, 1, 0];
-    const forward = vec3.normalize(vec3.create(), [-offset[0], -offset[1], -offset[2]]);
-    const right = vec3.normalize(vec3.create(), vec3.cross(vec3.create(), forward, upVector));
-    const cameraUp = vec3.normalize(vec3.create(), vec3.cross(vec3.create(), right, forward));
-    const panOffset = [
-      (right[0] * panX + cameraUp[0] * panY) * radius,
-      (right[1] * panX + cameraUp[1] * panY) * radius,
-      (right[2] * panX + cameraUp[2] * panY) * radius,
-    ];
-    const nextTarget = [
-      camera.target[0] + panOffset[0],
-      camera.target[1] + panOffset[1],
-      camera.target[2] + panOffset[2],
-    ];
-    const horizontal = Math.cos(elevation) * radius;
-    const nextEye = [
-      nextTarget[0] + Math.sin(azimuth) * horizontal,
-      nextTarget[1] + Math.sin(elevation) * radius,
-      nextTarget[2] + Math.cos(azimuth) * horizontal,
-    ];
-    const operation = { type: 'set-camera', eye: roundVector(nextEye), target: roundVector(nextTarget) };
-    applySceneOperations([operation], { recordUndo });
-    notify({ kind: 'camera' });
-    return currentScene.camera;
-  }
-
-  function updateCamera(patch) {
-    if (!patch || typeof patch !== 'object') {
-      throw new TypeError('updateCamera expects a camera patch object.');
-    }
-    applySceneOperations([{ type: 'set-camera', ...patch }]);
-    notify({ kind: 'camera' });
-    return currentScene.camera;
-  }
-
-  function frameSelection() {
-    const pivot = selectedPivotWorld();
-    const camera = currentScene.camera;
-    const target = pivot ?? camera.target;
-    const offset = vec3.subtract(vec3.create(), camera.eye, camera.target);
-    const direction = vec3.normalize(vec3.create(), offset);
-    if (vec3.length(direction) < 1e-6) {
-      vec3.set(direction, 0.5, 0.4, 0.8);
-      vec3.normalize(direction, direction);
-    }
-    const distance = Math.max(2.4, Math.min(20, vec3.length(offset) * 0.7));
-    const eye = [
-      target[0] + direction[0] * distance,
-      target[1] + direction[1] * distance,
-      target[2] + direction[2] * distance,
-    ];
-    return updateCamera({ eye: roundVector(eye), target: roundVector(target) });
-  }
-
-  function listBookmarks() {
-    return structuredClone(currentScene.exportRecipe().timeline?.shots ?? []);
-  }
-
-  function saveBookmark(name) {
-    if (typeof name !== 'string' || !SHOT_NAME_PATTERN.test(name)) {
-      throw new RangeError('Bookmark name must be 1 to 24 letters, digits, - or _.');
-    }
-    const recipe = currentScene.exportRecipe();
-    const existingShots = recipe.timeline?.shots ?? [];
-    const shot = buildTimelineShot(name, currentScene.camera, recipe);
-    const nextShots = existingShots.some(candidate => candidate.name === name)
-      ? existingShots.map(candidate => (candidate.name === name ? shot : candidate))
-      : [...existingShots, shot];
-    applySceneOperations([{ type: 'set-timeline', timeline: { shots: nextShots } }]);
-    notify({ kind: 'bookmark', name });
-    return structuredClone(shot);
-  }
-
-  function applyBookmark(name) {
-    const recipe = currentScene.exportRecipe();
-    const shot = recipe.timeline?.shots?.find(candidate => candidate.name === name);
-    if (!shot) {
-      throw new RangeError(`Unknown camera bookmark "${String(name)}".`);
-    }
-    return updateCamera(structuredClone(shot.camera ?? {}));
-  }
-
-  function removeBookmark(name) {
-    const recipe = currentScene.exportRecipe();
-    const existingShots = recipe.timeline?.shots ?? [];
-    if (!existingShots.some(candidate => candidate.name === name)) {
-      throw new RangeError(`Unknown camera bookmark "${String(name)}".`);
-    }
-    const remaining = existingShots.filter(candidate => candidate.name !== name);
-    applySceneOperations([{ type: 'set-timeline', timeline: remaining.length > 0 ? { shots: remaining } : null }]);
-    notify({ kind: 'bookmark', removed: name });
-    return remaining;
-  }
-
-  function setMotionTime(seconds) {
-    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0 || seconds > 3600) {
-      throw new RangeError(`Motion time must be between 0 and 3600 seconds, got ${JSON.stringify(seconds)}.`);
-    }
-    const recipe = currentScene.exportRecipe();
-    if (!hasAnimatedData(recipe)) {
-      if (seconds === 0) {
-        motionTime = 0;
-        notify({ kind: 'motion' });
-        return motionTime;
-      }
-    }
-    motionTime = currentScene.sampleMotion(seconds);
-    notify({ kind: 'motion' });
-    return motionTime;
-  }
-
-  function undo() {
-    if (undoStack.length === 0) {
-      return false;
-    }
-    const previousRecipe = undoStack.pop();
-    redoStack.push(currentScene.exportRecipe());
-    swapRecipe(previousRecipe);
-    notify({ kind: 'undo' });
-    return true;
-  }
-
-  function redo() {
-    if (redoStack.length === 0) {
-      return false;
-    }
-    const nextRecipe = redoStack.pop();
-    undoStack.push(currentScene.exportRecipe());
-    swapRecipe(nextRecipe);
-    notify({ kind: 'redo' });
-    return true;
-  }
-
-  function loadRecipe(recipeInput, { recordUndo = true } = {}) {
-    const before = recordUndo ? currentScene.exportRecipe() : null;
-    swapRecipe(recipeInput);
-    if (before) {
-      pushUndoSnapshot(before);
-    }
-    notify({ kind: 'load' });
-    return currentScene.revision;
-  }
-
-  return Object.freeze({
-    get scene() { return currentScene; },
-    get selectedNodeId() { return selectedNodeId; },
-    get tool() { return activeTool; },
-    get activeTab() { return activeTab; },
-    get motionTime() { return motionTime; },
-    get viewportWidth() { return width; },
-    get viewportHeight() { return height; },
-    get canUndo() { return undoStack.length > 0; },
-    get canRedo() { return redoStack.length > 0; },
-    setViewportSize(nextWidth, nextHeight) {
-      width = assertPositiveFinite(nextWidth, 'viewportWidth');
-      height = assertPositiveFinite(nextHeight, 'viewportHeight');
-      notify({ kind: 'resize' });
-    },
-    selectNode,
-    setTool,
-    setActiveTab,
-    projectWorldPoint,
-    screenRay,
-    pickAt,
-    gizmoHandles,
-    beginGizmoDrag,
-    updateGizmoDrag,
-    endGizmoDrag,
-    snapSelectedToAt,
-    updateNodeTransform,
-    updateMaterial,
-    updateLook,
-    setSunAngles,
-    orbitCamera,
-    updateCamera,
-    frameSelection,
-    listBookmarks,
-    saveBookmark,
-    applyBookmark,
-    removeBookmark,
-    setMotionTime,
-    undo,
-    redo,
-    loadRecipe,
-    exportRecipe() {
-      return currentScene.exportRecipe();
-    },
-    dispose() {
-      invalidateQuery();
-    },
-  });
-}
-
+const ROUND_PRECISION = 10000;
 const STUDIO_STYLE_ID = 'crucible-studio-styles';
-const STUDIO_CSS = `
-.crucible-studio {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  min-height: 520px;
-  overflow: hidden;
-  background: #1b1f23;
-  color: #edf0ef;
-  font-family: 'DM Sans', system-ui, sans-serif;
-  font-size: 13px;
-}
-.crucible-studio * { box-sizing: border-box; }
-.crucible-studio-viewport {
-  position: absolute;
-  inset: 0;
-}
-.crucible-studio-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-  touch-action: none;
-  cursor: grab;
-}
-.crucible-studio-canvas:active { cursor: grabbing; }
-.crucible-studio-gizmo {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-.crucible-studio-gizmo [data-gizmo-axis] {
-  pointer-events: all;
-  cursor: pointer;
-}
-.crucible-studio-surface {
-  background: #20262be0;
-  backdrop-filter: blur(14px);
-  border: 1px solid #ffffff14;
-  border-radius: 12px;
-}
-.crucible-studio-toolbar {
-  position: absolute;
-  top: 18px;
-  left: 20px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 6px;
-  z-index: 4;
-}
-.crucible-studio-group {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.crucible-studio-separator {
-  inline-size: 1px;
-  block-size: 20px;
-  margin-inline: 4px;
-  border-inline-start: 1px solid #ffffff24;
-  background: transparent;
-}
-.crucible-studio button,
-.crucible-studio select,
-.crucible-studio input {
-  font: inherit;
-  color: inherit;
-}
-.crucible-studio button {
-  min-inline-size: 34px;
-  min-block-size: 34px;
-  padding: 6px 11px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: #ffffff0a;
-  cursor: pointer;
-}
-.crucible-studio button[aria-pressed="true"] {
-  background: #b7eddf22;
-  border-color: #b7eddf66;
-  color: #b7eddf;
-}
-.crucible-studio button[aria-disabled="true"] {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-.crucible-studio :focus-visible {
-  outline: 2px solid #b7eddf;
-  outline-offset: 2px;
-}
-@media (hover: hover) {
-  .crucible-studio button:not([aria-disabled="true"]):hover {
-    background: #ffffff18;
-  }
-}
-@media (prefers-reduced-motion: no-preference) {
-  .crucible-studio button {
-    transition: background 140ms ease, border-color 140ms ease;
-  }
-}
-@media (pointer: coarse) {
-  .crucible-studio button {
-    min-inline-size: 42px;
-    min-block-size: 42px;
-  }
-}
-.crucible-studio-inspector {
-  position: absolute;
-  top: 18px;
-  right: 20px;
-  width: 288px;
-  max-height: calc(100% - 104px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  z-index: 4;
-}
-.crucible-studio-tablist {
-  display: flex;
-  gap: 4px;
-  padding: 8px 10px 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.crucible-studio-tablist button {
-  position: relative;
-  flex: 1 0 auto;
-  background: transparent;
-  border-radius: 8px 8px 0 0;
-  color: #a6b1b6;
-}
-.crucible-studio-tablist button[aria-selected="true"] {
-  color: #edf0ef;
-}
-.crucible-studio-tablist button[aria-selected="true"]::after {
-  content: "";
-  position: absolute;
-  inset: auto 8px 0;
-  border-block-end: 2px solid #b7eddf;
-}
-.crucible-studio-panels {
-  overflow-y: auto;
-}
-.crucible-studio-panel-body {
-  display: grid;
-  gap: 14px;
-  padding: 14px;
-}
-.crucible-studio-field {
-  display: grid;
-  gap: 6px;
-}
-.crucible-studio-field-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  color: #b7c2c7;
-}
-.crucible-studio-field output {
-  font-variant-numeric: tabular-nums;
-  color: #edf0ef;
-}
-.crucible-studio-vector {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-.crucible-studio-vector label {
-  display: grid;
-  gap: 3px;
-  font-size: 11px;
-  color: #96a4ac;
-}
-.crucible-studio input[type="number"],
-.crucible-studio input[type="text"],
-.crucible-studio select,
-.crucible-studio textarea {
-  width: 100%;
-  padding: 7px 8px;
-  border: 1px solid #ffffff1c;
-  border-radius: 7px;
-  background: #14181c;
-  color: #edf0ef;
-  font-variant-numeric: tabular-nums;
-}
-.crucible-studio input[type="range"] {
-  width: 100%;
-  accent-color: #b7eddf;
-  cursor: pointer;
-}
-.crucible-studio input[type="color"] {
-  width: 100%;
-  height: 32px;
-  padding: 2px;
-  border: 1px solid #ffffff1c;
-  border-radius: 7px;
-  background: #14181c;
-  cursor: pointer;
-}
-.crucible-studio-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.crucible-studio-bookmark-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.crucible-studio-bookmark-row button:first-child {
-  flex: 1;
-  text-align: left;
-}
-.crucible-studio-bottom {
-  position: absolute;
-  left: 20px;
-  right: 20px;
-  bottom: 16px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  z-index: 4;
-}
-.crucible-studio-scrub {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1 1 220px;
-}
-.crucible-studio-scrub output {
-  white-space: nowrap;
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
-.crucible-studio-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 12px;
-  color: #a4b0b6;
-  font-variant-numeric: tabular-nums;
-}
-.crucible-studio-status {
-  position: absolute;
-  left: 20px;
-  bottom: 76px;
-  margin: 0;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: #14181ce8;
-  font-size: 12px;
-  color: #b7eddf;
-  pointer-events: none;
-  z-index: 5;
-}
-.crucible-studio-status:empty { display: none; }
-.crucible-studio dialog {
-  width: min(560px, calc(100vw - 32px));
-  padding: 18px;
-  border: 1px solid #ffffff20;
-  border-radius: 14px;
-  background: #20262b;
-  color: #edf0ef;
-}
-.crucible-studio dialog::backdrop { background: #0d1014b8; }
-.crucible-studio-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 12px;
-}
-@media (max-width: 760px) {
-  .crucible-studio-inspector {
-    top: auto;
-    left: 12px;
-    right: 12px;
-    bottom: 78px;
-    width: auto;
-    max-height: 36vh;
-  }
-  .crucible-studio-toolbar {
-    top: 12px;
-    left: 12px;
-    right: 12px;
-  }
-  .crucible-studio-bottom {
-    left: 12px;
-    right: 12px;
-    bottom: 12px;
-  }
-}
-@media (forced-colors: active) {
-  .crucible-studio button[aria-pressed="true"] {
-    outline: 2px solid Highlight;
-  }
-}
-`;
+const VIEWPORT_HINT_TEXT = 'Click pick · Drag orbit · Shift+Drag pan · Wheel zoom · G Move · R Rotate · S Scale · Q Select · F Frame';
 
 function injectStudioStyles(documentReference) {
-  if (documentReference.getElementById(STUDIO_STYLE_ID)) {
-    return;
+  let style = documentReference.getElementById(STUDIO_STYLE_ID);
+  if (!style) {
+    style = documentReference.createElement('style');
+    style.id = STUDIO_STYLE_ID;
+    documentReference.head.append(style);
   }
-  const style = documentReference.createElement('style');
-  style.id = STUDIO_STYLE_ID;
   style.textContent = STUDIO_CSS;
-  documentReference.head.append(style);
 }
 
 function createElement(documentReference, tagName, properties = {}, ...children) {
@@ -1375,25 +124,92 @@ function wireRovingFocusFallback(container, items, { vertical = false, followFoc
   });
 }
 
-function createVectorRow(documentReference, title, onInput) {
+function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02, minimumComponent = -Infinity, lockToggle = null } = {}) {
+  let latestValues = [0, 0, 0];
+  let locked = false;
   const inputs = AXIS_NAMES.map(axis => createElement(documentReference, 'input', {
     type: 'number',
     step: '0.05',
     attributes: { 'aria-label': `${title} ${axis.toUpperCase()}` },
   }));
+
+  function emitEditedAxis(axisIndex, rawNumeric) {
+    const clamped = Math.max(minimumComponent, rawNumeric);
+    if (locked && latestValues[axisIndex] > 0) {
+      const ratio = clamped / latestValues[axisIndex];
+      const scaled = latestValues.map(component => Math.max(minimumComponent, component * ratio));
+      onInput(scaled, axisIndex);
+      return;
+    }
+    const parsed = inputs.map((field, index) => (index === axisIndex ? clamped : Number(field.value)));
+    if (parsed.every(Number.isFinite)) {
+      onInput(parsed, axisIndex);
+    }
+  }
+
   inputs.forEach((input, axisIndex) => {
     input.addEventListener('change', () => {
-      const parsed = inputs.map(field => Number(field.value));
-      if (parsed.every(Number.isFinite)) {
-        onInput(parsed, axisIndex);
+      const numeric = Number(input.value);
+      if (Number.isFinite(numeric)) {
+        emitEditedAxis(axisIndex, numeric);
       }
     });
   });
+
+  const axisLabels = AXIS_NAMES.map((axis, axisIndex) => {
+    const badge = createElement(documentReference, 'span', {
+      className: 'crucible-studio-axis-scrub',
+      textContent: axis.toUpperCase(),
+      title: 'Drag horizontally to scrub value',
+    });
+    badge.style.color = AXIS_COLORS[axis];
+    let scrubState = null;
+    badge.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      scrubState = { startX: event.clientX, startValue: Number(inputs[axisIndex].value) || 0 };
+      badge.setPointerCapture?.(event.pointerId);
+    });
+    badge.addEventListener('pointermove', event => {
+      if (!scrubState) return;
+      const stepFactor = event.shiftKey ? sensitivity * 0.2 : sensitivity;
+      const nextValue = roundValue(scrubState.startValue + (event.clientX - scrubState.startX) * stepFactor, 100);
+      emitEditedAxis(axisIndex, nextValue);
+    });
+    const finishScrub = () => {
+      scrubState = null;
+    };
+    badge.addEventListener('pointerup', finishScrub);
+    badge.addEventListener('pointercancel', finishScrub);
+    return badge;
+  });
+
+  const head = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-field-head' },
+    createElement(documentReference, 'span', { textContent: title }),
+  );
+  if (lockToggle) {
+    const lockButton = createElement(documentReference, 'button', {
+      type: 'button',
+      textContent: 'Lock',
+      attributes: { 'aria-pressed': 'false', 'aria-label': `${title} uniform lock` },
+    });
+    lockButton.style.minBlockSize = '22px';
+    lockButton.style.padding = '1px 7px';
+    lockButton.style.fontSize = '11px';
+    lockButton.addEventListener('click', () => {
+      locked = !locked;
+      lockButton.setAttribute('aria-pressed', locked ? 'true' : 'false');
+    });
+    head.append(lockButton);
+  }
+
   const container = createElement(
     documentReference,
     'div',
     { className: 'crucible-studio-field' },
-    createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: title }),
+    head,
     createElement(
       documentReference,
       'div',
@@ -1402,7 +218,7 @@ function createVectorRow(documentReference, title, onInput) {
         documentReference,
         'label',
         {},
-        createElement(documentReference, 'span', { textContent: AXIS_NAMES[axisIndex].toUpperCase() }),
+        axisLabels[axisIndex],
         input,
       )),
     ),
@@ -1411,6 +227,7 @@ function createVectorRow(documentReference, title, onInput) {
     container,
     inputs,
     setValues(values, precision = ROUND_PRECISION) {
+      latestValues = Array.from(values, component => Number(component) || 0);
       inputs.forEach((input, index) => {
         input.value = String(roundValue(values[index] ?? 0, precision));
       });
@@ -1419,7 +236,8 @@ function createVectorRow(documentReference, title, onInput) {
 }
 
 function createSliderField(documentReference, labelText, { min, max, step, value = 0 }, onChange) {
-  const output = createElement(documentReference, 'output', { textContent: String(value) });
+  const decimals = step < 0.01 ? 3 : step < 0.1 ? 2 : step < 1 ? 1 : 0;
+  const output = createElement(documentReference, 'output', { textContent: Number(value).toFixed(decimals) });
   const input = createElement(documentReference, 'input', {
     type: 'range',
     min: String(min),
@@ -1430,7 +248,7 @@ function createSliderField(documentReference, labelText, { min, max, step, value
   });
   input.addEventListener('input', () => {
     const numeric = Number(input.value);
-    output.textContent = numeric.toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0);
+    output.textContent = numeric.toFixed(decimals);
     onChange(numeric);
   });
   const container = createElement(
@@ -1446,24 +264,507 @@ function createSliderField(documentReference, labelText, { min, max, step, value
     output,
     setValue(nextValue) {
       input.value = String(nextValue);
-      output.textContent = Number(nextValue).toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0);
+      output.textContent = Number(nextValue).toFixed(decimals);
     },
   };
 }
 
+function createSunPad(documentReference, onSunChange) {
+  const padSvg = createSvgElement(documentReference, 'svg', {
+    class: 'crucible-studio-sunpad',
+    viewBox: '0 0 120 120',
+    'aria-label': 'Sun direction pad. Drag to move key light azimuth and elevation.',
+    role: 'application',
+  });
+  const outerRing = createSvgElement(documentReference, 'circle', {
+    cx: '60',
+    cy: '60',
+    r: '52',
+    fill: 'none',
+    stroke: '#ffffff1e',
+    'stroke-width': '1',
+  });
+  const midRing = createSvgElement(documentReference, 'circle', {
+    cx: '60',
+    cy: '60',
+    r: '28',
+    fill: 'none',
+    stroke: '#ffffff14',
+    'stroke-dasharray': '3 3',
+    'stroke-width': '1',
+  });
+  const sunRay = createSvgElement(documentReference, 'line', {
+    x1: '60',
+    y1: '60',
+    x2: '40',
+    y2: '34',
+    stroke: '#ffd580aa',
+    'stroke-width': '2',
+  });
+  const sunKnob = createSvgElement(documentReference, 'circle', {
+    cx: '40',
+    cy: '34',
+    r: '7',
+    fill: '#ffd580',
+    stroke: '#161a1f',
+    'stroke-width': '2',
+  });
+  padSvg.append(outerRing, midRing, sunRay, sunKnob);
+
+  let dragging = false;
+  function updateFromPointer(event) {
+    const bounds = padSvg.getBoundingClientRect();
+    const normalizedX = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+    const normalizedY = ((event.clientY - bounds.top) / bounds.height) * 2 - 1;
+    const radial = Math.min(1, Math.hypot(normalizedX, normalizedY));
+    const azimuthDegrees = Math.round((Math.atan2(normalizedX, -normalizedY) * 180) / Math.PI);
+    const elevationDegrees = Math.round(Math.max(4, Math.min(88, (1 - radial * 0.88) * 88)));
+    onSunChange({ azimuthDegrees, elevationDegrees });
+  }
+  padSvg.addEventListener('pointerdown', event => {
+    dragging = true;
+    padSvg.setPointerCapture?.(event.pointerId);
+    updateFromPointer(event);
+  });
+  padSvg.addEventListener('pointermove', event => {
+    if (dragging) updateFromPointer(event);
+  });
+  const endDrag = () => {
+    dragging = false;
+  };
+  padSvg.addEventListener('pointerup', endDrag);
+  padSvg.addEventListener('pointercancel', endDrag);
+
+  return {
+    element: padSvg,
+    setAngles(azimuthDegrees, elevationDegrees) {
+      const radial = Math.max(0.05, Math.min(1, (88 - elevationDegrees) / (88 * 0.88))) * 50;
+      const radians = (azimuthDegrees * Math.PI) / 180;
+      const knobX = 60 + Math.sin(radians) * radial;
+      const knobY = 60 - Math.cos(radians) * radial;
+      sunRay.setAttribute('x2', knobX.toFixed(1));
+      sunRay.setAttribute('y2', knobY.toFixed(1));
+      sunKnob.setAttribute('cx', knobX.toFixed(1));
+      sunKnob.setAttribute('cy', knobY.toFixed(1));
+    },
+  };
+}
+
+function buildBrandMarkSvg(documentReference) {
+  const mark = createSvgElement(documentReference, 'svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+  mark.append(
+    createSvgElement(documentReference, 'polygon', {
+      points: '12,2 21,7 21,17 12,22 3,17 3,7',
+      fill: '#b7eddf22',
+      stroke: '#b7eddf',
+      'stroke-width': '1.8',
+    }),
+    createSvgElement(documentReference, 'polygon', {
+      points: '12,6.5 17,9.5 17,15 12,18 7,15 7,9.5',
+      fill: '#b7eddf',
+    }),
+  );
+  return mark;
+}
+
+function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
+  gizmoSvg.replaceChildren();
+  const handles = controller.gizmoHandles();
+  if (!handles || !handles.origin.visible) {
+    return;
+  }
+  const width = controller.viewportWidth;
+  const height = controller.viewportHeight;
+  gizmoSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  const origin = handles.origin;
+  const tool = controller.tool;
+
+  if (tool === 'select') {
+    gizmoSvg.append(createSvgElement(documentReference, 'circle', {
+      cx: origin.x.toFixed(1),
+      cy: origin.y.toFixed(1),
+      r: '8',
+      fill: '#b7eddf26',
+      stroke: '#b7eddf',
+      'stroke-width': '2',
+      'data-gizmo-axis': 'screen',
+    }));
+    return;
+  }
+
+  if (tool === 'rotate') {
+    for (const axis of AXIS_NAMES) {
+      const ring = handles.rings[axis];
+      const pointString = ring.filter(point => point.visible).map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ');
+      if (!pointString) continue;
+      gizmoSvg.append(createSvgElement(documentReference, 'polyline', {
+        points: pointString,
+        fill: 'none',
+        stroke: AXIS_COLORS[axis],
+        'stroke-width': '3',
+        'stroke-opacity': '0.92',
+        'data-gizmo-axis': axis,
+      }));
+    }
+    gizmoSvg.append(createSvgElement(documentReference, 'circle', {
+      cx: origin.x.toFixed(1),
+      cy: origin.y.toFixed(1),
+      r: '5',
+      fill: '#edf0ef',
+      stroke: '#13171b',
+      'stroke-width': '1.8',
+    }));
+    return;
+  }
+
+  if (tool === 'translate') {
+    const planeColors = { xy: '#5ea8ff', xz: '#7be082', yz: '#f26b5b' };
+    for (const planeAxis of ['xy', 'xz', 'yz']) {
+      const corners = handles.planes[planeAxis];
+      if (!corners || corners.some(point => !point.visible)) continue;
+      gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
+        points: corners.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '),
+        fill: planeColors[planeAxis],
+        'fill-opacity': '0.24',
+        stroke: planeColors[planeAxis],
+        'stroke-width': '1.2',
+        'data-gizmo-axis': planeAxis,
+      }));
+    }
+  }
+
+  for (const axis of AXIS_NAMES) {
+    const tip = handles.axes[axis];
+    if (!tip.visible) continue;
+    gizmoSvg.append(createSvgElement(documentReference, 'line', {
+      x1: origin.x.toFixed(1),
+      y1: origin.y.toFixed(1),
+      x2: tip.x.toFixed(1),
+      y2: tip.y.toFixed(1),
+      stroke: AXIS_COLORS[axis],
+      'stroke-width': '3',
+      'stroke-linecap': 'round',
+      'data-gizmo-axis': axis,
+    }));
+    if (tool === 'scale') {
+      gizmoSvg.append(createSvgElement(documentReference, 'rect', {
+        x: (tip.x - 6).toFixed(1),
+        y: (tip.y - 6).toFixed(1),
+        width: '12',
+        height: '12',
+        rx: '2',
+        fill: AXIS_COLORS[axis],
+        stroke: '#13171b',
+        'stroke-width': '1.5',
+        'data-gizmo-axis': axis,
+      }));
+    } else {
+      gizmoSvg.append(createSvgElement(documentReference, 'circle', {
+        cx: tip.x.toFixed(1),
+        cy: tip.y.toFixed(1),
+        r: '7',
+        fill: AXIS_COLORS[axis],
+        stroke: '#13171b',
+        'stroke-width': '1.5',
+        'data-gizmo-axis': axis,
+      }));
+    }
+  }
+
+  gizmoSvg.append(createSvgElement(documentReference, 'circle', {
+    cx: origin.x.toFixed(1),
+    cy: origin.y.toFixed(1),
+    r: '6.5',
+    fill: tool === 'snap' ? '#7be082' : '#edf0ef',
+    stroke: '#13171b',
+    'stroke-width': '2',
+    'data-gizmo-axis': tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen',
+  }));
+}
+
+function buildPackReadyRecipe(recipe) {
+  const cloned = structuredClone(recipe);
+  const stripped = [];
+  for (const field of ['motion', 'timeline', 'physics', 'cloth', 'particles', 'game', 'postPasses', 'armatures']) {
+    if (cloned[field] !== undefined) {
+      delete cloned[field];
+      stripped.push(field);
+    }
+  }
+  if (cloned.environment) {
+    for (const envField of ['sky', 'hdri', 'spotLights', 'areaLights', 'shadowCascades', 'sunAngularRadius', 'lines']) {
+      if (cloned.environment[envField] !== undefined) {
+        delete cloned.environment[envField];
+        stripped.push(`environment.${envField}`);
+      }
+    }
+  }
+  return { stillRecipe: cloned, stripped };
+}
+
+function depthSortedNodes(nodes) {
+  const byId = new Map(nodes.map(node => [node.id, node]));
+  const ordered = [];
+  const visited = new Set();
+  function walk(parentId, depth) {
+    for (const node of nodes) {
+      if (node.assetPart || visited.has(node.id)) continue;
+      if ((node.parent ?? null) !== parentId) continue;
+      visited.add(node.id);
+      ordered.push({ node, depth });
+      walk(node.id, depth + 1);
+    }
+  }
+  walk(null, 0);
+  for (const node of nodes) {
+    if (!node.assetPart && !visited.has(node.id)) {
+      ordered.push({ node, depth: 0 });
+    }
+  }
+  return ordered;
+}
+
 /**
- * Mounts an interactive browser Studio with viewport picking, SVG transform gizmos, look controls and bookmarks.
+ * Mounts Crucible Studio: 3-zone 3D editor with outliner, SVG 3D gizmos, 4-tab inspector, timeline and desktop IPC hooks.
  */
-export function createStudio(container, { scene: suppliedScene, recipe: suppliedRecipe, canvas: suppliedCanvas, renderer: suppliedRenderer, rendererOptions = {} } = {}) {
+export function createStudio(container, {
+  scene: suppliedScene,
+  recipe: suppliedRecipe,
+  template = 'showcase',
+  canvas: suppliedCanvas,
+  renderer: suppliedRenderer,
+  rendererOptions = {},
+  desktop = null,
+  fileName: initialFileName = 'untitled.scene.json',
+  watchedPath: initialWatchedPath = null,
+  onDirtyChange,
+} = {}) {
   if (!container || typeof container.append !== 'function') {
     throw new TypeError('createStudio requires a DOM container element.');
   }
   const documentReference = container.ownerDocument;
   injectStudioStyles(documentReference);
 
-  const initialScene = suppliedScene ?? createAgentScene(suppliedRecipe);
+  const initialRecipe = suppliedRecipe ?? (suppliedScene ? null : buildTemplateRecipe(template));
+  const initialScene = suppliedScene ?? createAgentScene(initialRecipe);
   let handleChange = () => {};
   const controller = createStudioController({ scene: initialScene, onChange: detail => handleChange(detail) });
+
+  let activeFilePath = initialWatchedPath;
+  let activeFileName = initialFileName;
+  let isDirty = false;
+  let autoReloadWatch = true;
+  let renderer = suppliedRenderer ?? null;
+  let renderedScene = initialScene;
+  let renderedTopology = initialScene.topologyRevision;
+  let renderedShadowKey = null;
+  let resizeObserver = null;
+  let intersectionObserver = null;
+  let frameHandle = 0;
+  let playing = false;
+  let lastFrameTime = 0;
+  let isVisible = true;
+  let insideDraw = false;
+  let pointerState = null;
+  let statusTimer = 0;
+  let liveDeltaLabel = '';
+
+  const root = createElement(documentReference, 'div', {
+    className: 'crucible-studio',
+    dataset: {
+      desktop: desktop ? 'true' : 'false',
+      outlinerCollapsed: 'false',
+      inspectorCollapsed: 'false',
+    },
+  });
+
+  // Top Workspace Header Bar
+  const filePill = createElement(documentReference, 'span', { className: 'crucible-studio-filepill', textContent: activeFileName });
+  const watchPill = createElement(documentReference, 'span', { className: 'crucible-studio-watch-pill', textContent: 'AI Live', hidden: !activeFilePath });
+  const newMenuButton = createElement(documentReference, 'button', { type: 'button', textContent: 'New ▾', attributes: { popovertarget: 'crucible-studio-pop-new' } });
+  const openButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Open' });
+  const saveButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save' });
+  const saveAsButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save As' });
+  const addMenuButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-primary-btn', textContent: '+ Add ▾', attributes: { popovertarget: 'crucible-studio-pop-add' } });
+  const aiSyncMenuButton = createElement(documentReference, 'button', { type: 'button', textContent: 'AI Sync ▾', attributes: { popovertarget: 'crucible-studio-pop-sync' } });
+  const exportMenuButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Export ▾', attributes: { popovertarget: 'crucible-studio-pop-export' } });
+  const shortcutsButton = createElement(documentReference, 'button', { type: 'button', textContent: '?', attributes: { 'aria-label': 'Keyboard shortcuts' } });
+
+  const newPopover = createElement(documentReference, 'div', {
+    id: 'crucible-studio-pop-new',
+    className: 'crucible-studio-popover',
+    attributes: { popover: 'auto' },
+  });
+  for (const [templateKey, spec] of Object.entries(STUDIO_TEMPLATES)) {
+    const templateButton = createElement(documentReference, 'button', { type: 'button', textContent: spec.label, title: spec.description });
+    templateButton.addEventListener('click', async () => {
+      newPopover.hidePopover?.();
+      const recipe = buildTemplateRecipe(templateKey);
+      await loadAgentSceneModules(recipe);
+      controller.loadRecipe(recipe);
+      activeFilePath = null;
+      activeFileName = `${templateKey}.scene.json`;
+      isDirty = false;
+      syncFileBanner();
+      announce(`New ${spec.label}`);
+    });
+    newPopover.append(templateButton);
+  }
+
+  const addPopover = createElement(documentReference, 'div', {
+    id: 'crucible-studio-pop-add',
+    className: 'crucible-studio-popover',
+    attributes: { popover: 'auto' },
+  });
+  const primitiveGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid' });
+  for (const primitiveType of STUDIO_PRIMITIVES) {
+    const label = primitiveType === 'icoSphere' ? 'Icosphere' : primitiveType[0].toUpperCase() + primitiveType.slice(1);
+    const addPrimitiveButton = createElement(documentReference, 'button', { type: 'button', textContent: `+ ${label}` });
+    addPrimitiveButton.addEventListener('click', async () => {
+      addPopover.hidePopover?.();
+      try {
+        if (primitiveType === 'terrain') {
+          await loadAgentSceneModules({ geometries: [{ type: 'terrain' }] });
+        }
+        const created = controller.addPrimitive(primitiveType);
+        announce(`Added ${created.label}`);
+      } catch (error) {
+        announce(error.message);
+      }
+    });
+    primitiveGrid.append(addPrimitiveButton);
+  }
+  const addPointLightButton = createElement(documentReference, 'button', { type: 'button', textContent: '+ Point light' });
+  const addSpotLightButton = createElement(documentReference, 'button', { type: 'button', textContent: '+ Spot light' });
+  addPointLightButton.addEventListener('click', () => {
+    addPopover.hidePopover?.();
+    try {
+      const count = controller.addSceneLight('point');
+      announce(`Point lights: ${count}`);
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+  addSpotLightButton.addEventListener('click', () => {
+    addPopover.hidePopover?.();
+    try {
+      const count = controller.addSceneLight('spot');
+      announce(`Spot lights: ${count}`);
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+  addPopover.append(primitiveGrid, addPointLightButton, addSpotLightButton);
+
+  const syncStatusNote = createElement(documentReference, 'p', {
+    className: 'crucible-studio-popover-note',
+    textContent: activeFilePath ? `Watching: ${activeFilePath}` : 'Save or open a .json file to sync two-way with AI agents on disk.',
+  });
+  const autoReloadButton = createElement(documentReference, 'button', {
+    type: 'button',
+    textContent: 'Auto-reload AI file edits',
+    attributes: { 'aria-pressed': 'true' },
+  });
+  autoReloadButton.addEventListener('click', () => {
+    autoReloadWatch = !autoReloadWatch;
+    autoReloadButton.setAttribute('aria-pressed', autoReloadWatch ? 'true' : 'false');
+    announce(autoReloadWatch ? 'Auto-reload enabled' : 'Auto-reload paused');
+  });
+  const copyPromptButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Copy AI agent handoff' });
+  copyPromptButton.addEventListener('click', async () => {
+    aiSyncPopover.hidePopover?.();
+    const target = activeFilePath ?? activeFileName;
+    const promptText = `Edit Crucible scene "${target}" (format crucible.scene v1, currently at revision ${controller.scene.revision}, selected node: ${controller.selectedNodeId ?? 'none'}). Save JSON updates directly back to this path.`;
+    try {
+      await navigator.clipboard.writeText(promptText);
+      announce('Copied AI prompt to clipboard');
+    } catch {
+      openImportDialog(promptText);
+    }
+  });
+  const aiSyncPopover = createElement(documentReference, 'div', {
+    id: 'crucible-studio-pop-sync',
+    className: 'crucible-studio-popover',
+    attributes: { popover: 'auto' },
+  }, syncStatusNote, autoReloadButton, copyPromptButton);
+
+  const exportPngButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save PNG still' });
+  const exportGlbButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Export GLB mesh' });
+  const exportPackButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Pack Web (<crucible-scene>)' });
+  const editJsonButton = createElement(documentReference, 'button', { type: 'button', textContent: 'View / Paste Recipe JSON' });
+  const exportPopover = createElement(documentReference, 'div', {
+    id: 'crucible-studio-pop-export',
+    className: 'crucible-studio-popover',
+    attributes: { popover: 'auto' },
+  }, exportPngButton, exportGlbButton, exportPackButton, editJsonButton);
+
+  const menubarElement = createElement(
+    documentReference,
+    'header',
+    { className: 'crucible-studio-menubar', attributes: { 'aria-label': 'Studio workspace bar' } },
+    createElement(documentReference, 'span', { className: 'crucible-studio-brand' }, buildBrandMarkSvg(documentReference), createElement(documentReference, 'span', { textContent: 'Crucible Studio' })),
+    filePill,
+    watchPill,
+    createElement(documentReference, 'div', { className: 'crucible-studio-menu-cluster' }, newMenuButton, openButton, saveButton, saveAsButton, addMenuButton),
+    createElement(documentReference, 'span', { className: 'crucible-studio-spacer' }),
+    createElement(documentReference, 'div', { className: 'crucible-studio-menu-cluster' }, aiSyncMenuButton, exportMenuButton, shortcutsButton),
+    newPopover,
+    addPopover,
+    aiSyncPopover,
+    exportPopover,
+  );
+
+  function bindPopoverAnchor(triggerButton, popoverElement) {
+    popoverElement.addEventListener('beforetoggle', event => {
+      if (event.newState !== 'open') return;
+      const rectangle = triggerButton.getBoundingClientRect();
+      const viewportWidth = documentReference.defaultView?.innerWidth ?? 1280;
+      const clampedLeft = Math.max(8, Math.min(rectangle.left, Math.max(8, viewportWidth - 256)));
+      popoverElement.style.left = `${Math.round(clampedLeft)}px`;
+      popoverElement.style.top = `${Math.round(rectangle.bottom + 6)}px`;
+    });
+  }
+  bindPopoverAnchor(newMenuButton, newPopover);
+  bindPopoverAnchor(addMenuButton, addPopover);
+  bindPopoverAnchor(aiSyncMenuButton, aiSyncPopover);
+  bindPopoverAnchor(exportMenuButton, exportPopover);
+
+  // Left Outliner + Material Palette Dock
+  const outlinerSearch = createElement(documentReference, 'input', { type: 'search', placeholder: 'Filter nodes…', attributes: { 'aria-label': 'Filter scene nodes' } });
+  const outlinerTree = createElement(documentReference, 'div', { className: 'crucible-studio-tree', attributes: { role: 'tree', 'aria-label': 'Scene hierarchy' } });
+  const swatchContainer = createElement(documentReference, 'div', { className: 'crucible-studio-swatches' });
+  const newMaterialQuickButton = createElement(documentReference, 'button', { type: 'button', textContent: '+ Mat' });
+  newMaterialQuickButton.style.minBlockSize = '24px';
+  newMaterialQuickButton.style.padding = '2px 8px';
+  newMaterialQuickButton.style.fontSize = '11px';
+  newMaterialQuickButton.addEventListener('click', () => {
+    const created = controller.createMaterial({ assignToNodeId: controller.selectedNodeId });
+    selectInspectorTab('material');
+    announce(`Created ${created.id}`);
+  });
+  const collapseOutlinerButton = createElement(documentReference, 'button', { type: 'button', textContent: '⟨', attributes: { 'aria-label': 'Collapse outliner' } });
+  collapseOutlinerButton.style.minBlockSize = '24px';
+  collapseOutlinerButton.style.padding = '2px 7px';
+  collapseOutlinerButton.addEventListener('click', () => setOutlinerCollapsed(true));
+
+  const outlinerDock = createElement(
+    documentReference,
+    'aside',
+    { className: 'crucible-studio-dock crucible-studio-outliner', attributes: { 'aria-label': 'Scene outliner' } },
+    createElement(documentReference, 'div', { className: 'crucible-studio-dock-head' }, createElement(documentReference, 'span', { textContent: 'Outliner' }), collapseOutlinerButton),
+    createElement(documentReference, 'div', { className: 'crucible-studio-search' }, outlinerSearch),
+    outlinerTree,
+    createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-palette-section' },
+      createElement(documentReference, 'div', { className: 'crucible-studio-field-head' }, createElement(documentReference, 'span', { textContent: 'Scene materials' }), newMaterialQuickButton),
+      swatchContainer,
+    ),
+  );
+  outlinerSearch.addEventListener('input', () => syncUi());
+
+  // Center Viewport
   const viewportElement = createElement(documentReference, 'div', { className: 'crucible-studio-viewport' });
   const canvas = suppliedCanvas ?? createElement(documentReference, 'canvas', {
     className: 'crucible-studio-canvas',
@@ -1475,33 +776,698 @@ export function createStudio(container, { scene: suppliedScene, recipe: supplied
   }
   const gizmoSvg = createSvgElement(documentReference, 'svg', { class: 'crucible-studio-gizmo', 'aria-hidden': 'true' });
   const statusRegion = createElement(documentReference, 'p', { className: 'crucible-studio-status', attributes: { role: 'status' } });
-  let statusTimer = 0;
+  const hintBar = createElement(documentReference, 'div', { className: 'crucible-studio-hintbar', textContent: VIEWPORT_HINT_TEXT });
+  const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: 'Drop .scene.json to load in Crucible Studio' });
 
   function announce(message) {
     statusRegion.textContent = message;
     clearTimeout(statusTimer);
     statusTimer = setTimeout(() => {
       statusRegion.textContent = '';
-    }, 3200);
+    }, 3400);
   }
 
-  const root = createElement(documentReference, 'div', { className: 'crucible-studio' });
-  viewportElement.append(canvas, gizmoSvg);
-  root.append(viewportElement, statusRegion);
+  // Viewport Top-Left Toolbar (Modern Web Guidance: toolbar pattern)
+  const toolLabels = { select: 'Select', translate: 'Move', rotate: 'Rotate', scale: 'Scale', snap: 'Snap' };
+  const toolButtons = STUDIO_TOOLS.map(tool => createElement(documentReference, 'button', {
+    type: 'button',
+    textContent: toolLabels[tool],
+    dataset: { tool },
+    attributes: { 'aria-pressed': tool === controller.tool ? 'true' : 'false' },
+  }));
+  toolButtons.forEach(button => {
+    button.addEventListener('click', () => controller.setTool(button.dataset.tool));
+  });
+
+  const undoButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Undo', attributes: { 'aria-disabled': 'true' } });
+  const redoButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Redo', attributes: { 'aria-disabled': 'true' } });
+  const duplicateButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Dup', title: 'Duplicate selected node (Ctrl+D)' });
+  const deleteButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Del', title: 'Delete selected node (Del)' });
+  const frameButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Frame' });
+  const toggleDocksButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Panels', attributes: { 'aria-pressed': 'true' } });
+
+  undoButton.addEventListener('click', () => {
+    if (undoButton.getAttribute('aria-disabled') === 'true') return;
+    if (controller.undo()) announce('Undid edit');
+  });
+  redoButton.addEventListener('click', () => {
+    if (redoButton.getAttribute('aria-disabled') === 'true') return;
+    if (controller.redo()) announce('Redid edit');
+  });
+  duplicateButton.addEventListener('click', () => {
+    if (duplicateButton.getAttribute('aria-disabled') === 'true') return;
+    try {
+      const cloned = controller.duplicateSelected();
+      announce(`Duplicated to ${cloned.label}`);
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+  deleteButton.addEventListener('click', () => {
+    if (deleteButton.getAttribute('aria-disabled') === 'true') return;
+    try {
+      controller.deleteSelected();
+      announce('Deleted node');
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+  frameButton.addEventListener('click', () => {
+    controller.frameSelection();
+    announce('Framed selection');
+  });
+  toggleDocksButton.addEventListener('click', () => {
+    const collapsed = root.dataset.outlinerCollapsed === 'true' && root.dataset.inspectorCollapsed === 'true';
+    setOutlinerCollapsed(!collapsed);
+    setInspectorCollapsed(!collapsed);
+  });
+
+  const toolbarElement = createElement(
+    documentReference,
+    'div',
+    {
+      className: 'crucible-studio-toolbar crucible-studio-surface',
+      attributes: { role: 'toolbar', focusgroup: 'toolbar wrap', 'aria-label': 'Viewport transform tools', 'aria-controls': canvas.id },
+    },
+    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Transform mode' } }, ...toolButtons),
+    createElement(documentReference, 'span', { className: 'crucible-studio-separator', attributes: { role: 'separator', 'aria-orientation': 'vertical' } }),
+    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Edit actions' } }, undoButton, redoButton, duplicateButton, deleteButton, frameButton, toggleDocksButton),
+  );
+  wireRovingFocusFallback(toolbarElement, [...toolButtons, undoButton, redoButton, duplicateButton, deleteButton, frameButton, toggleDocksButton]);
+
+  // Viewport Top-Right 3D View Widget
+  const viewPresetButtons = ['front', 'right', 'top', 'isometric'].map(preset => {
+    const shortLabels = { front: 'Front', right: 'Right', top: 'Top', isometric: 'Iso' };
+    const button = createElement(documentReference, 'button', { type: 'button', textContent: shortLabels[preset] });
+    button.addEventListener('click', () => {
+      controller.setCameraViewPreset(preset);
+      announce(`${shortLabels[preset]} view`);
+    });
+    return button;
+  });
+  const projectionPillButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Perspective', attributes: { 'aria-pressed': 'false' } });
+  projectionPillButton.addEventListener('click', () => {
+    const camera = controller.toggleCameraProjection();
+    announce(camera.projection === 'orthographic' ? 'Orthographic view' : 'Perspective view');
+  });
+  const viewCubeElement = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-viewcube crucible-studio-surface', attributes: { role: 'group', 'aria-label': 'Camera view presets' } },
+    createElement(documentReference, 'div', { className: 'crucible-studio-viewcube-row' }, ...viewPresetButtons),
+    projectionPillButton,
+  );
+
+  viewportElement.append(canvas, gizmoSvg, toolbarElement, viewCubeElement, hintBar, statusRegion, dropOverlay);
+
+  // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
+  const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
+  const tabButtons = STUDIO_TABS.map(tab => createElement(documentReference, 'button', {
+    type: 'button',
+    id: `crucible-studio-tab-${tab}`,
+    textContent: tabLabels[tab],
+    dataset: { tab },
+    attributes: {
+      'aria-selected': tab === controller.activeTab ? 'true' : 'false',
+      ...(tab === controller.activeTab ? { focusgroupstart: '' } : {}),
+    },
+  }));
+  const tabListElement = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-tablist', attributes: { focusgroup: 'tablist nomemory', 'aria-label': 'Inspector tabs' } },
+    ...tabButtons,
+  );
+  if (!('focusGroup' in HTMLElement.prototype)) {
+    tabListElement.setAttribute('role', 'tablist');
+    tabButtons.forEach(button => button.setAttribute('role', 'tab'));
+  }
+
+  // Tab 1: Object Panel
+  const nodeLabelInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Node label', attributes: { 'aria-label': 'Node label' } });
+  const nodeParentSelect = createElement(documentReference, 'select', { attributes: { 'aria-label': 'Parent node' } });
+  const visibleToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Visible', attributes: { 'aria-pressed': 'true' } });
+  const castShadowToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Cast shadow', attributes: { 'aria-pressed': 'true' } });
+  const receiveShadowToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Receive shadow', attributes: { 'aria-pressed': 'true' } });
+
+  nodeLabelInput.addEventListener('change', () => {
+    if (controller.selectedNodeId) controller.updateNodeTransform(controller.selectedNodeId, { label: nodeLabelInput.value });
+  });
+  nodeParentSelect.addEventListener('change', () => {
+    if (!controller.selectedNodeId) return;
+    try {
+      controller.updateNodeTransform(controller.selectedNodeId, { parent: nodeParentSelect.value || null });
+    } catch (error) {
+      announce(error.message);
+      syncUi();
+    }
+  });
+  visibleToggle.addEventListener('click', () => {
+    if (!controller.selectedNodeId) return;
+    const node = controller.exportRecipe().nodes.find(candidate => candidate.id === controller.selectedNodeId);
+    controller.updateNodeTransform(controller.selectedNodeId, { visible: !(node?.visible ?? true) });
+  });
+  castShadowToggle.addEventListener('click', () => {
+    if (!controller.selectedNodeId) return;
+    const node = controller.exportRecipe().nodes.find(candidate => candidate.id === controller.selectedNodeId);
+    controller.updateNodeTransform(controller.selectedNodeId, { castShadow: !(node?.castShadow ?? true) });
+  });
+  receiveShadowToggle.addEventListener('click', () => {
+    if (!controller.selectedNodeId) return;
+    const node = controller.exportRecipe().nodes.find(candidate => candidate.id === controller.selectedNodeId);
+    controller.updateNodeTransform(controller.selectedNodeId, { receiveShadow: !(node?.receiveShadow ?? true) });
+  });
+
+  const positionRow = createVectorRow(documentReference, 'Position', values => {
+    if (controller.selectedNodeId) controller.updateNodeTransform(controller.selectedNodeId, { translation: values });
+  }, { sensitivity: 0.015 });
+  const rotationRow = createVectorRow(documentReference, 'Rotation (deg)', values => {
+    if (controller.selectedNodeId) controller.updateNodeTransform(controller.selectedNodeId, { rotationDegrees: values });
+  }, { sensitivity: 0.5 });
+  const scaleRow = createVectorRow(documentReference, 'Scale', values => {
+    if (controller.selectedNodeId && values.every(component => component > 0.001)) {
+      controller.updateNodeTransform(controller.selectedNodeId, { scale: values });
+    }
+  }, { sensitivity: 0.01, minimumComponent: 0.02, lockToggle: true });
+
+  const nodePanelBody = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-panel-body' },
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'div', { className: 'crucible-studio-field-head' }, createElement(documentReference, 'span', { textContent: 'Name' }), visibleToggle), nodeLabelInput),
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Parent' }), nodeParentSelect),
+    positionRow.container,
+    rotationRow.container,
+    scaleRow.container,
+    createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, castShadowToggle, receiveShadowToggle),
+  );
+
+  // Tab 2: Material Panel
+  const materialSelect = createElement(documentReference, 'select', { attributes: { 'aria-label': 'Assigned material' } });
+  materialSelect.addEventListener('change', () => {
+    if (controller.selectedNodeId && materialSelect.value) {
+      try {
+        controller.assignNodeMaterial(controller.selectedNodeId, materialSelect.value);
+      } catch (error) {
+        announce(error.message);
+      }
+    }
+  });
+  const materialPresetChips = Object.entries(STUDIO_MATERIAL_PRESETS).map(([presetKey, preset]) => {
+    const button = createElement(documentReference, 'button', { type: 'button', textContent: preset.label, dataset: { preset: presetKey } });
+    button.addEventListener('click', () => {
+      const targetNode = controller.exportRecipe().nodes.find(candidate => candidate.id === controller.selectedNodeId);
+      const materialId = targetNode?.material ?? materialSelect.value;
+      if (materialId) {
+        controller.applyMaterialPreset(materialId, presetKey);
+        announce(`Applied ${preset.label} preset`);
+      }
+    });
+    return button;
+  });
+  const activeMaterialId = () => {
+    const selected = controller.exportRecipe().nodes.find(candidate => candidate.id === controller.selectedNodeId);
+    return selected?.material ?? materialSelect.value;
+  };
+  const colorInput = createElement(documentReference, 'input', { type: 'color', value: '#cccccc', attributes: { 'aria-label': 'Base color' } });
+  const emissiveColorInput = createElement(documentReference, 'input', { type: 'color', value: '#000000', attributes: { 'aria-label': 'Emissive color' } });
+  colorInput.addEventListener('input', () => {
+    const materialId = activeMaterialId();
+    if (materialId) controller.updateMaterial(materialId, { hexColor: colorInput.value });
+  });
+  emissiveColorInput.addEventListener('input', () => {
+    const materialId = activeMaterialId();
+    if (materialId) controller.updateMaterial(materialId, { emissiveHex: emissiveColorInput.value });
+  });
+  const roughnessField = createSliderField(documentReference, 'Roughness', { min: 0.02, max: 1, step: 0.02, value: 0.5 }, value => {
+    const materialId = activeMaterialId();
+    if (materialId) controller.updateMaterial(materialId, { roughness: value });
+  });
+  const metallicField = createSliderField(documentReference, 'Metallic', { min: 0, max: 1, step: 0.02, value: 0 }, value => {
+    const materialId = activeMaterialId();
+    if (materialId) controller.updateMaterial(materialId, { metallic: value });
+  });
+  const clearcoatField = createSliderField(documentReference, 'Clearcoat', { min: 0, max: 1, step: 0.02, value: 0 }, value => {
+    const materialId = activeMaterialId();
+    if (materialId) controller.updateMaterial(materialId, { clearcoat: value, clearcoatRoughness: 0.08 });
+  });
+  const opacityField = createSliderField(documentReference, 'Opacity', { min: 0.05, max: 1, step: 0.02, value: 1 }, value => {
+    const materialId = activeMaterialId();
+    if (materialId) controller.updateMaterial(materialId, { opacity: value });
+  });
+  const emissionField = createSliderField(documentReference, 'Emission', { min: 0, max: 12, step: 0.1, value: 0 }, value => {
+    const materialId = activeMaterialId();
+    if (materialId) controller.updateMaterial(materialId, { emission: value });
+  });
+  const materialPanelBody = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-panel-body' },
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Active material' }), materialSelect),
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Presets' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...materialPresetChips)),
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Base color' }), colorInput),
+    roughnessField.container,
+    metallicField.container,
+    clearcoatField.container,
+    opacityField.container,
+    emissionField.container,
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Emissive tint' }), emissiveColorInput),
+  );
+
+  // Tab 3: Look Panel
+  const setupButtons = LIGHTING_SETUP_NAMES.map(setup => {
+    const button = createElement(documentReference, 'button', { type: 'button', textContent: setup, dataset: { setup }, attributes: { 'aria-pressed': 'false' } });
+    button.addEventListener('click', () => controller.updateLook({ environment: { setup } }));
+    return button;
+  });
+  const sunPad = createSunPad(documentReference, angles => controller.setSunAngles(angles));
+  const azimuthField = createSliderField(documentReference, 'Sun azimuth', { min: -180, max: 180, step: 1, value: -35 }, value => controller.setSunAngles({ azimuthDegrees: value }));
+  const elevationField = createSliderField(documentReference, 'Sun elevation', { min: 2, max: 88, step: 1, value: 50 }, value => controller.setSunAngles({ elevationDegrees: value }));
+  const keyIntensityField = createSliderField(documentReference, 'Key intensity', { min: 0, max: 8, step: 0.1, value: 1.7 }, value => controller.updateLook({ environment: { keyIntensity: value } }));
+  const exposureField = createSliderField(documentReference, 'Exposure', { min: 0.2, max: 3, step: 0.05, value: 1 }, value => controller.updateLook({ effects: { exposure: value } }));
+  const contrastField = createSliderField(documentReference, 'Contrast', { min: 0.4, max: 1.8, step: 0.02, value: 1 }, value => controller.updateLook({ effects: { contrast: value } }));
+  const saturationField = createSliderField(documentReference, 'Saturation', { min: 0, max: 2, step: 0.02, value: 1 }, value => controller.updateLook({ effects: { saturation: value } }));
+  const viewTransformSelect = createElement(
+    documentReference,
+    'select',
+    { attributes: { 'aria-label': 'View transform' } },
+    ...VIEW_TRANSFORM_NAMES.map(name => createElement(documentReference, 'option', { value: name, textContent: name })),
+  );
+  viewTransformSelect.addEventListener('change', async () => {
+    const viewTransform = viewTransformSelect.value;
+    await loadAgentSceneModules({ environment: { viewTransform } });
+    controller.updateLook({ environment: { viewTransform } });
+  });
+  const bloomField = createSliderField(documentReference, 'Bloom', { min: 0, max: 1, step: 0.02, value: 0.1 }, value => controller.updateLook({ effects: { bloom: { strength: value } } }));
+  const fogField = createSliderField(documentReference, 'Fog density', { min: 0, max: 0.1, step: 0.002, value: 0 }, value => controller.updateLook({ environment: { fogDensity: value } }));
+
+  const lookPanelBody = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-panel-body' },
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lighting setup' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...setupButtons)),
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Sun dome' }), sunPad.element),
+    azimuthField.container,
+    elevationField.container,
+    keyIntensityField.container,
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'View transform' }), viewTransformSelect),
+    exposureField.container,
+    contrastField.container,
+    saturationField.container,
+    bloomField.container,
+    fogField.container,
+  );
+
+  // Tab 4: Camera Panel
+  const inspectorProjectionButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Orthographic mode', attributes: { 'aria-pressed': 'false' } });
+  inspectorProjectionButton.addEventListener('click', () => controller.toggleCameraProjection());
+  const lensChips = STUDIO_LENS_PRESETS.map(millimetres => {
+    const button = createElement(documentReference, 'button', { type: 'button', textContent: `${millimetres}mm`, dataset: { focal: String(millimetres) }, attributes: { 'aria-pressed': 'false' } });
+    button.addEventListener('click', () => controller.setCameraLensMillimetres(millimetres));
+    return button;
+  });
+  const fovField = createSliderField(documentReference, 'Field of view', { min: 15, max: 110, step: 1, value: 45 }, value => controller.updateCamera({ fov: value }));
+  const orthoScaleField = createSliderField(documentReference, 'Ortho scale (m)', { min: 1, max: 40, step: 0.5, value: 6 }, value => controller.updateCamera({ projection: 'orthographic', orthoScale: value }));
+  const bookmarkNameInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Bookmark name', attributes: { 'aria-label': 'Bookmark name', maxlength: '24' } });
+  const saveBookmarkButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save view' });
+  const bookmarkListElement = createElement(documentReference, 'div', { className: 'crucible-studio-field' });
+  saveBookmarkButton.addEventListener('click', async () => {
+    const name = bookmarkNameInput.value.trim().replace(/\s+/g, '-') || `shot-${controller.listBookmarks().length + 1}`;
+    try {
+      await loadAgentSceneModules({ timeline: { shots: [] } });
+      controller.saveBookmark(name);
+      bookmarkNameInput.value = '';
+      announce(`Saved view ${name}`);
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+  const cameraPanelBody = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-panel-body' },
+    inspectorProjectionButton,
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lens focal length' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...lensChips)),
+    fovField.container,
+    orthoScaleField.container,
+    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Camera bookmarks' }), createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, bookmarkNameInput, saveBookmarkButton), bookmarkListElement),
+  );
+
+  const panelsByTab = {
+    node: createElement(documentReference, 'div', { id: 'crucible-studio-panel-node', tabIndex: 0, attributes: { role: 'tabpanel', 'aria-labelledby': 'crucible-studio-tab-node' } }, nodePanelBody),
+    material: createElement(documentReference, 'div', { id: 'crucible-studio-panel-material', attributes: { role: 'tabpanel', 'aria-labelledby': 'crucible-studio-tab-material', hidden: 'until-found' } }, materialPanelBody),
+    look: createElement(documentReference, 'div', { id: 'crucible-studio-panel-look', attributes: { role: 'tabpanel', 'aria-labelledby': 'crucible-studio-tab-look', hidden: 'until-found' } }, lookPanelBody),
+    camera: createElement(documentReference, 'div', { id: 'crucible-studio-panel-camera', attributes: { role: 'tabpanel', 'aria-labelledby': 'crucible-studio-tab-camera', hidden: 'until-found' } }, cameraPanelBody),
+  };
+
+  function selectInspectorTab(nextTab) {
+    controller.setActiveTab(nextTab);
+    for (const button of tabButtons) {
+      const selected = button.dataset.tab === nextTab;
+      button.setAttribute('aria-selected', selected ? 'true' : 'false');
+      button.toggleAttribute('focusgroupstart', selected);
+    }
+    for (const [tab, panel] of Object.entries(panelsByTab)) {
+      if (tab === nextTab) {
+        panel.removeAttribute('hidden');
+        panel.tabIndex = 0;
+      } else {
+        panel.setAttribute('hidden', 'until-found');
+        panel.removeAttribute('tabindex');
+      }
+    }
+  }
+  tabButtons.forEach(button => {
+    button.addEventListener('click', () => selectInspectorTab(button.dataset.tab));
+  });
+  for (const [tab, panel] of Object.entries(panelsByTab)) {
+    panel.addEventListener('beforematch', () => selectInspectorTab(tab));
+  }
+  wireRovingFocusFallback(tabListElement, tabButtons, {
+    followFocus: true,
+    onSelect: button => selectInspectorTab(button.dataset.tab),
+  });
+
+  const inspectorElement = createElement(
+    documentReference,
+    'aside',
+    { className: 'crucible-studio-dock crucible-studio-inspector', attributes: { 'aria-label': 'Scene inspector' } },
+    tabListElement,
+    createElement(documentReference, 'div', { className: 'crucible-studio-panels' }, panelsByTab.node, panelsByTab.material, panelsByTab.look, panelsByTab.camera),
+  );
+
+  const workspaceElement = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-workspace' },
+    outlinerDock,
+    viewportElement,
+    inspectorElement,
+  );
+
+  // Bottom Timeline & Telemetry Bar
+  const playButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Play', attributes: { 'aria-pressed': 'false' } });
+  const keyframeButton = createElement(documentReference, 'button', { type: 'button', textContent: '+ Key', title: 'Insert translation/rotation/scale keyframe at playhead (K)' });
+  const timeOutput = createElement(documentReference, 'output', { textContent: '0.00 s' });
+  const scrubInput = createElement(documentReference, 'input', { type: 'range', min: '0', max: '4', step: '0.02', value: '0', attributes: { 'aria-label': 'Timeline scrub' } });
+  const quickBookmarksRow = createElement(documentReference, 'div', { className: 'crucible-studio-chips' });
+  const statsLabel = createElement(documentReference, 'span', {});
+  const gpuStateBadge = createElement(documentReference, 'span', { className: 'crucible-studio-gpu-badge', textContent: 'Idle 0% GPU' });
+  const fileInput = createElement(documentReference, 'input', { type: 'file', accept: '.json,application/json', hidden: true });
+
+  playButton.addEventListener('click', () => {
+    if (!hasAnimatedData(controller.exportRecipe())) {
+      announce('Press + Key or load motion tracks to animate');
+      return;
+    }
+    playing = !playing;
+    lastFrameTime = 0;
+    playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
+    playButton.textContent = playing ? 'Pause' : 'Play';
+    gpuStateBadge.textContent = playing ? 'Playing GPU' : 'Idle 0% GPU';
+    if (playing) requestFrame();
+  });
+  keyframeButton.addEventListener('click', async () => {
+    try {
+      await loadAgentSceneModules({ motion: { duration: 1, tracks: [] } });
+      controller.insertNodeKeyframe();
+      announce(`Keyframed at ${controller.motionTime.toFixed(2)} s`);
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+  scrubInput.addEventListener('input', () => {
+    const seconds = Number(scrubInput.value);
+    if (hasAnimatedData(controller.exportRecipe())) {
+      controller.setMotionTime(seconds);
+    }
+  });
+
+  const bottomElement = createElement(
+    documentReference,
+    'footer',
+    { className: 'crucible-studio-bottombar', attributes: { 'aria-label': 'Timeline and engine status' } },
+    createElement(documentReference, 'div', { className: 'crucible-studio-scrub' }, playButton, keyframeButton, scrubInput, timeOutput),
+    quickBookmarksRow,
+    createElement(documentReference, 'div', { className: 'crucible-studio-meta' }, statsLabel, gpuStateBadge),
+  );
+
+  // Native Dialogs (Modern Web Guidance: native <dialog>, aria-labelledby, form method="dialog", returnValue reset)
+  const dialogHeading = createElement(documentReference, 'h2', { id: 'crucible-studio-json-title', textContent: 'Recipe JSON' });
+  const dialogTextarea = createElement(documentReference, 'textarea', { rows: 14, autofocus: true, attributes: { 'aria-label': 'Scene recipe JSON' } });
+  const dialogFileButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Load file…' });
+  const dialogCloseButton = createElement(documentReference, 'button', { type: 'submit', value: 'close', textContent: 'Close' });
+  const dialogApplyButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-primary-btn', textContent: 'Apply JSON' });
+  const recipeDialog = createElement(
+    documentReference,
+    'dialog',
+    { attributes: { 'aria-labelledby': 'crucible-studio-json-title', closedby: 'any' } },
+    dialogHeading,
+    dialogTextarea,
+    createElement(documentReference, 'form', { method: 'dialog', className: 'crucible-studio-dialog-actions' }, dialogFileButton, dialogCloseButton, dialogApplyButton),
+  );
+  recipeDialog.addEventListener('close', () => {
+    recipeDialog.returnValue = '';
+  });
+
+  function openImportDialog(initialText = '') {
+    dialogTextarea.value = initialText || JSON.stringify(controller.exportRecipe(), null, 2);
+    recipeDialog.showModal();
+  }
+
+  dialogFileButton.addEventListener('click', () => {
+    recipeDialog.close('file');
+    fileInput.click();
+  });
+  dialogApplyButton.addEventListener('click', async () => {
+    try {
+      const parsed = JSON.parse(dialogTextarea.value);
+      await loadAgentSceneModules(parsed);
+      controller.loadRecipe(parsed);
+      recipeDialog.close('apply');
+      announce('Recipe applied');
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+
+  const shortcutsHeading = createElement(documentReference, 'h2', { id: 'crucible-studio-shortcuts-title', textContent: 'Studio keyboard shortcuts' });
+  const shortcutEntries = [
+    ['Q', 'Select tool'],
+    ['G / R / S / T', 'Move / Rotate / Scale / Snap'],
+    ['F', 'Frame selected node'],
+    ['5 / Numpad 5', 'Perspective or Orthographic'],
+    ['Shift + Gizmo drag', 'Snap angle (15°) or step (0.25 m)'],
+    ['Drag X / Y / Z label', 'Scrub vector number smoothly'],
+    ['Ctrl+D / Delete', 'Duplicate or delete selected'],
+    ['Ctrl+Z / Shift+Z', 'Undo / Redo edit'],
+    ['Space / K', 'Play animation / Insert keyframe'],
+    ['Ctrl+O / Ctrl+S', 'Open or Save recipe JSON'],
+  ];
+  const shortcutsGrid = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-shortcuts' },
+    ...shortcutEntries.map(([keys, label]) => createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-shortcut-item' },
+      createElement(documentReference, 'span', { textContent: label }),
+      createElement(documentReference, 'kbd', { textContent: keys }),
+    )),
+  );
+  const shortcutsCloseButton = createElement(documentReference, 'button', { type: 'submit', value: 'close', autofocus: true, textContent: 'Done' });
+  const shortcutsDialog = createElement(
+    documentReference,
+    'dialog',
+    { attributes: { 'aria-labelledby': 'crucible-studio-shortcuts-title', closedby: 'any' } },
+    shortcutsHeading,
+    shortcutsGrid,
+    createElement(documentReference, 'form', { method: 'dialog', className: 'crucible-studio-dialog-actions' }, shortcutsCloseButton),
+  );
+  shortcutsDialog.addEventListener('close', () => {
+    shortcutsDialog.returnValue = '';
+  });
+  shortcutsButton.addEventListener('click', () => shortcutsDialog.showModal());
+
+  root.append(menubarElement, workspaceElement, bottomElement, fileInput, recipeDialog, shortcutsDialog);
   container.append(root);
 
-  let renderer = suppliedRenderer ?? null;
-  let renderedTopology = initialScene.topologyRevision;
-  let renderedShadowKey = null;
-  let resizeObserver = null;
-  let intersectionObserver = null;
-  let frameHandle = 0;
-  let playing = false;
-  let lastFrameTime = 0;
-  let isVisible = true;
-  let insideDraw = false;
-  let pointerState = null;
+  function syncFileBanner() {
+    filePill.textContent = `${activeFileName}${isDirty ? ' ●' : ''}`;
+    filePill.title = activeFilePath ?? activeFileName;
+    watchPill.hidden = !activeFilePath;
+    syncStatusNote.textContent = activeFilePath
+      ? `Watching ${activeFilePath} (${autoReloadWatch ? 'auto-reload on' : 'paused'}).`
+      : 'Save or open a .json file to sync two-way with AI agents on disk.';
+    if (onDirtyChange) {
+      onDirtyChange({ filePath: activeFilePath, fileName: activeFileName, dirty: isDirty });
+    }
+  }
 
+  function triggerBlobDownload(bytes, filename, mimeType) {
+    const blob = new Blob([bytes], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = createElement(documentReference, 'a', { href: url, download: filename });
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function capturePngDataUrl() {
+    renderPass();
+    return canvas.toDataURL('image/png');
+  }
+
+  function exportGlbBytes() {
+    return exportGlb(controller.scene.parts);
+  }
+
+  async function buildWebPackPayload() {
+    const { stillRecipe, stripped } = buildPackReadyRecipe(controller.exportRecipe());
+    await loadAgentSceneModules(stillRecipe);
+    const stillScene = createAgentScene(stillRecipe);
+    const environment = stillScene.environment;
+    const shaderModules = agentSceneModulesNeeded(stillRecipe).filter(name => Object.hasOwn(PACK_SHADER_MODULES, name));
+    for (const moduleName of agentSceneModulesNeeded(stillRecipe)) {
+      if (Object.hasOwn(PACK_UNSUPPORTED_MODULES, moduleName)) {
+        stripped.push(PACK_UNSUPPORTED_MODULES[moduleName]);
+      }
+    }
+    const packBytes = encodePack({
+      shaderModules,
+      camera: stillScene.camera,
+      environment,
+      effects: stillScene.effects,
+      shadowBounds: resolveAgentShadow(fitAgentShadow(stillScene.shadow, stillScene.parts), environment.lightDirection),
+      parts: stillScene.parts.map(part => ({
+        name: part.name,
+        geometry: part.geometry,
+        material: part.material,
+        matrix: part.matrix,
+      })),
+    });
+    const posterDataUrl = capturePngDataUrl();
+    const title = activeFileName.replace(/\.(scene\.)?json$/i, '') || 'Crucible scene';
+    return { packBytes, posterDataUrl, title, stripped };
+  }
+
+  async function loadExternalTextFile(text, { filePath = null, fileName = 'scene.json', recordUndo = true } = {}) {
+    const parsed = JSON.parse(text);
+    await loadAgentSceneModules(parsed);
+    controller.loadRecipe(parsed, { recordUndo });
+    activeFilePath = filePath;
+    activeFileName = fileName;
+    isDirty = false;
+    syncFileBanner();
+  }
+
+  async function performOpenFile() {
+    if (desktop?.openFile) {
+      const picked = await desktop.openFile();
+      if (!picked || picked.canceled) return;
+      try {
+        await loadExternalTextFile(picked.text, { filePath: picked.filePath, fileName: picked.fileName });
+        announce(`Opened ${picked.fileName}`);
+      } catch (error) {
+        announce(error.message);
+      }
+      return;
+    }
+    fileInput.click();
+  }
+
+  async function performSaveFile({ forceAs = false } = {}) {
+    const recipeText = `${JSON.stringify(controller.exportRecipe(), null, 2)}\n`;
+    if (desktop?.saveFile && desktop?.saveFileAs) {
+      const response = forceAs || !activeFilePath
+        ? await desktop.saveFileAs({ text: recipeText, suggestedName: activeFileName })
+        : await desktop.saveFile({ filePath: activeFilePath, text: recipeText });
+      if (!response || response.canceled) return;
+      activeFilePath = response.filePath;
+      activeFileName = response.fileName;
+      isDirty = false;
+      syncFileBanner();
+      announce(`Saved ${activeFileName}`);
+      return;
+    }
+    triggerBlobDownload(recipeText, activeFileName, 'application/json');
+    isDirty = false;
+    syncFileBanner();
+    announce(`Downloaded ${activeFileName}`);
+  }
+
+  openButton.addEventListener('click', () => performOpenFile());
+  saveButton.addEventListener('click', () => performSaveFile({ forceAs: false }));
+  saveAsButton.addEventListener('click', () => performSaveFile({ forceAs: true }));
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = '';
+    if (!file) return;
+    try {
+      await loadExternalTextFile(await file.text(), { filePath: null, fileName: file.name });
+      announce(`Loaded ${file.name}`);
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+
+  exportPngButton.addEventListener('click', async () => {
+    exportPopover.hidePopover?.();
+    const dataUrl = capturePngDataUrl();
+    const baseName = activeFileName.replace(/\.(scene\.)?json$/i, '') || 'crucible-render';
+    if (desktop?.savePng) {
+      const response = await desktop.savePng({ dataUrl, suggestedName: `${baseName}.png` });
+      if (!response?.canceled) announce(`Saved ${response.fileName}`);
+      return;
+    }
+    const bytes = Uint8Array.from(atob(dataUrl.split(',')[1]), character => character.charCodeAt(0));
+    triggerBlobDownload(bytes, `${baseName}.png`, 'image/png');
+    announce('Saved PNG still');
+  });
+
+  exportGlbButton.addEventListener('click', async () => {
+    exportPopover.hidePopover?.();
+    try {
+      const glbBytes = exportGlbBytes();
+      const baseName = activeFileName.replace(/\.(scene\.)?json$/i, '') || 'crucible-scene';
+      if (desktop?.saveGlb) {
+        const response = await desktop.saveGlb({ bytes: glbBytes, suggestedName: `${baseName}.glb` });
+        if (!response?.canceled) announce(`Exported ${response.fileName}`);
+        return;
+      }
+      triggerBlobDownload(glbBytes, `${baseName}.glb`, 'model/gltf-binary');
+      announce('Exported GLB mesh');
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+
+  exportPackButton.addEventListener('click', async () => {
+    exportPopover.hidePopover?.();
+    try {
+      const payload = await buildWebPackPayload();
+      if (desktop?.packWebBundle) {
+        const response = await desktop.packWebBundle(payload);
+        if (!response?.canceled) {
+          const note = payload.stripped.length ? ` (static snapshot, omitted ${payload.stripped[0]})` : '';
+          announce(`Packed web bundle to ${response.outDir}${note}`);
+        }
+        return;
+      }
+      triggerBlobDownload(payload.packBytes, `${payload.title}.pack`, 'application/octet-stream');
+      announce('Downloaded scene.pack');
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+
+  editJsonButton.addEventListener('click', () => {
+    exportPopover.hidePopover?.();
+    openImportDialog();
+  });
+
+  // Renderer Lifecycle
   function ensureRenderer() {
     if (renderer) {
       return renderer;
@@ -1515,6 +1481,7 @@ export function createStudio(container, { scene: suppliedScene, recipe: supplied
       pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
       ...rendererOptions,
     });
+    renderedScene = controller.scene;
     renderedTopology = controller.scene.topologyRevision;
     return renderer;
   }
@@ -1531,14 +1498,28 @@ export function createStudio(container, { scene: suppliedScene, recipe: supplied
     }
   }
 
-  function drawSceneFrame() {
-    const activeRenderer = ensureRenderer();
-    if (renderedTopology !== controller.scene.topologyRevision) {
+  function syncRendererParts(activeRenderer) {
+    if (renderedScene !== controller.scene || renderedTopology !== controller.scene.topologyRevision) {
       activeRenderer.replaceParts(controller.scene.parts);
+      renderedScene = controller.scene;
       renderedTopology = controller.scene.topologyRevision;
-    } else {
-      activeRenderer.updateParts(controller.scene.parts);
+      return activeRenderer;
     }
+    try {
+      activeRenderer.updateParts(controller.scene.parts);
+      return activeRenderer;
+    } catch (error) {
+      if (!suppliedRenderer && typeof renderer?.dispose === 'function') {
+        renderer.dispose();
+        renderer = null;
+        return ensureRenderer();
+      }
+      throw error;
+    }
+  }
+
+  function drawSceneFrame() {
+    const activeRenderer = syncRendererParts(ensureRenderer());
     const environment = controller.scene.environment;
     const effects = controller.scene.effects;
     const shadow = fitAgentShadow(controller.scene.shadow, controller.scene.parts);
@@ -1559,61 +1540,12 @@ export function createStudio(container, { scene: suppliedScene, recipe: supplied
     });
   }
 
-  function renderGizmoOverlay() {
-    gizmoSvg.replaceChildren();
-    const handles = controller.gizmoHandles();
-    if (!handles || !handles.origin.visible) {
-      return;
-    }
-    const width = controller.viewportWidth;
-    const height = controller.viewportHeight;
-    gizmoSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-    const origin = handles.origin;
-    const colors = { x: '#f26b5b', y: '#7be082', z: '#5ea8ff' };
-    for (const axis of AXIS_NAMES) {
-      const tip = handles.axes[axis];
-      if (!tip.visible) {
-        continue;
-      }
-      const line = createSvgElement(documentReference, 'line', {
-        x1: origin.x.toFixed(1),
-        y1: origin.y.toFixed(1),
-        x2: tip.x.toFixed(1),
-        y2: tip.y.toFixed(1),
-        stroke: colors[axis],
-        'stroke-width': '3',
-        'stroke-linecap': 'round',
-        'data-gizmo-axis': axis,
-      });
-      const handle = createSvgElement(documentReference, 'circle', {
-        cx: tip.x.toFixed(1),
-        cy: tip.y.toFixed(1),
-        r: '7',
-        fill: colors[axis],
-        stroke: '#14181c',
-        'stroke-width': '1.5',
-        'data-gizmo-axis': axis,
-      });
-      gizmoSvg.append(line, handle);
-    }
-    const centerHandle = createSvgElement(documentReference, 'circle', {
-      cx: origin.x.toFixed(1),
-      cy: origin.y.toFixed(1),
-      r: '6',
-      fill: '#edf0ef',
-      stroke: '#14181c',
-      'stroke-width': '2',
-      'data-gizmo-axis': controller.tool === 'scale' ? 'uniform' : 'surface',
-    });
-    gizmoSvg.append(centerHandle);
-  }
-
   function renderPass() {
     insideDraw = true;
     try {
       syncViewportDimensions();
       drawSceneFrame();
-      renderGizmoOverlay();
+      renderGizmoMarkup(documentReference, gizmoSvg, controller);
     } finally {
       insideDraw = false;
     }
@@ -1643,385 +1575,167 @@ export function createStudio(container, { scene: suppliedScene, recipe: supplied
       } else {
         lastFrameTime = timestamp;
       }
+      gpuStateBadge.textContent = playing ? 'Playing GPU' : 'Rendering GPU';
       renderPass();
       if (playing && !frameHandle) {
         requestFrame();
+      } else if (!playing) {
+        gpuStateBadge.textContent = 'Idle 0% GPU';
       }
     });
   }
 
-  // Toolbar construction (Modern Web Guidance: toolbar pattern)
-  const toolLabels = { translate: 'Move', rotate: 'Rotate', scale: 'Scale', snap: 'Snap' };
-  const toolButtons = STUDIO_TOOLS.map(tool => createElement(documentReference, 'button', {
-    type: 'button',
-    textContent: toolLabels[tool],
-    dataset: { tool },
-    attributes: { 'aria-pressed': tool === controller.tool ? 'true' : 'false' },
-  }));
-  toolButtons.forEach(button => {
-    button.addEventListener('click', () => {
-      controller.setTool(button.dataset.tool);
+  // UI Synchronization
+  let lastTreeKey = '';
+  let lastSwatchesKey = '';
+  let lastBookmarksKey = '';
+  let lastParentOptionsKey = '';
+
+  function renderOutliner(recipe) {
+    const queryText = outlinerSearch.value.trim().toLowerCase();
+    const materialsById = new Map(recipe.materials.map(material => [material.id, material]));
+    const ordered = depthSortedNodes(recipe.nodes).filter(({ node }) => {
+      if (!queryText) return true;
+      return (node.label ?? node.id).toLowerCase().includes(queryText) || node.id.toLowerCase().includes(queryText);
     });
-  });
-
-  const undoButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Undo', attributes: { 'aria-disabled': 'true' } });
-  const redoButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Redo', attributes: { 'aria-disabled': 'true' } });
-  const frameButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Frame' });
-  const copyButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Copy JSON' });
-  const importButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Import JSON' });
-
-  undoButton.addEventListener('click', () => {
-    if (undoButton.getAttribute('aria-disabled') === 'true') return;
-    if (controller.undo()) announce('Undid edit');
-  });
-  redoButton.addEventListener('click', () => {
-    if (redoButton.getAttribute('aria-disabled') === 'true') return;
-    if (controller.redo()) announce('Redid edit');
-  });
-  frameButton.addEventListener('click', () => {
-    controller.frameSelection();
-    announce('Framed view');
-  });
-  copyButton.addEventListener('click', async () => {
-    const jsonText = JSON.stringify(controller.exportRecipe(), null, 2);
-    try {
-      await navigator.clipboard.writeText(jsonText);
-      announce('Recipe copied');
-    } catch {
-      openImportDialog(jsonText);
-      announce('Clipboard blocked; recipe shown');
-    }
-  });
-
-  const toolbarElement = createElement(
-    documentReference,
-    'div',
-    {
-      className: 'crucible-studio-toolbar crucible-studio-surface',
-      attributes: { role: 'toolbar', focusgroup: 'toolbar wrap', 'aria-label': 'Viewport tools', 'aria-controls': canvas.id },
-    },
-    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Transform mode' } }, ...toolButtons),
-    createElement(documentReference, 'span', { className: 'crucible-studio-separator', attributes: { role: 'separator', 'aria-orientation': 'vertical' } }),
-    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Scene actions' } }, undoButton, redoButton, frameButton, copyButton, importButton),
-  );
-  wireRovingFocusFallback(toolbarElement, [...toolButtons, undoButton, redoButton, frameButton, copyButton, importButton]);
-  root.append(toolbarElement);
-
-  // Inspector Tabs (Modern Web Guidance: tabs pattern)
-  const tabLabels = { node: 'Object', look: 'Look', camera: 'Camera' };
-  const tabButtons = STUDIO_TABS.map(tab => createElement(documentReference, 'button', {
-    type: 'button',
-    id: `crucible-studio-tab-${tab}`,
-    textContent: tabLabels[tab],
-    dataset: { tab },
-    attributes: {
-      'aria-selected': tab === controller.activeTab ? 'true' : 'false',
-      ...(tab === controller.activeTab ? { focusgroupstart: '' } : {}),
-    },
-  }));
-  const tabListElement = createElement(
-    documentReference,
-    'div',
-    { className: 'crucible-studio-tablist', attributes: { focusgroup: 'tablist nomemory', 'aria-label': 'Inspector sections' } },
-    ...tabButtons,
-  );
-  if (!('focusGroup' in HTMLElement.prototype)) {
-    tabListElement.setAttribute('role', 'tablist');
-    tabButtons.forEach(button => button.setAttribute('role', 'tab'));
-  }
-
-  // Object Panel
-  const nodeSelect = createElement(documentReference, 'select', { attributes: { 'aria-label': 'Selected node' } });
-  const visibleToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Visible', attributes: { 'aria-pressed': 'true' } });
-  nodeSelect.addEventListener('change', () => controller.selectNode(nodeSelect.value || null));
-  visibleToggle.addEventListener('click', () => {
-    if (!controller.selectedNodeId) return;
-    const node = controller.exportRecipe().nodes.find(candidate => candidate.id === controller.selectedNodeId);
-    controller.updateNodeTransform(controller.selectedNodeId, { visible: !(node?.visible ?? true) });
-  });
-
-  const positionRow = createVectorRow(documentReference, 'Position', values => {
-    if (controller.selectedNodeId) controller.updateNodeTransform(controller.selectedNodeId, { translation: values });
-  });
-  const rotationRow = createVectorRow(documentReference, 'Rotation', values => {
-    if (controller.selectedNodeId) controller.updateNodeTransform(controller.selectedNodeId, { rotationDegrees: values });
-  });
-  const scaleRow = createVectorRow(documentReference, 'Scale', values => {
-    if (controller.selectedNodeId && values.every(component => component > 0)) {
-      controller.updateNodeTransform(controller.selectedNodeId, { scale: values });
-    }
-  });
-
-  const colorInput = createElement(documentReference, 'input', { type: 'color', value: '#cccccc', attributes: { 'aria-label': 'Base color' } });
-  colorInput.addEventListener('input', () => {
-    const node = controller.exportRecipe().nodes.find(candidate => candidate.id === controller.selectedNodeId);
-    if (node?.material) controller.updateMaterial(node.material, { hexColor: colorInput.value });
-  });
-  const roughnessField = createSliderField(documentReference, 'Roughness', { min: 0.02, max: 1, step: 0.02, value: 0.5 }, value => {
-    const node = controller.exportRecipe().nodes.find(candidate => candidate.id === controller.selectedNodeId);
-    if (node?.material) controller.updateMaterial(node.material, { roughness: value });
-  });
-  const metallicField = createSliderField(documentReference, 'Metallic', { min: 0, max: 1, step: 0.02, value: 0 }, value => {
-    const node = controller.exportRecipe().nodes.find(candidate => candidate.id === controller.selectedNodeId);
-    if (node?.material) controller.updateMaterial(node.material, { metallic: value });
-  });
-  const emissionField = createSliderField(documentReference, 'Emission', { min: 0, max: 12, step: 0.1, value: 0 }, value => {
-    const node = controller.exportRecipe().nodes.find(candidate => candidate.id === controller.selectedNodeId);
-    if (node?.material) controller.updateMaterial(node.material, { emission: value });
-  });
-
-  const nodePanelBody = createElement(
-    documentReference,
-    'div',
-    { className: 'crucible-studio-panel-body' },
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'div', { className: 'crucible-studio-field-head' }, createElement(documentReference, 'span', { textContent: 'Node' }), visibleToggle), nodeSelect),
-    positionRow.container,
-    rotationRow.container,
-    scaleRow.container,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Material color' }), colorInput),
-    roughnessField.container,
-    metallicField.container,
-    emissionField.container,
-  );
-
-  // Look Panel
-  const setupButtons = LIGHTING_SETUP_NAMES.map(setup => {
-    const button = createElement(documentReference, 'button', {
-      type: 'button',
-      textContent: setup,
-      dataset: { setup },
-      attributes: { 'aria-pressed': 'false' },
-    });
-    button.addEventListener('click', () => controller.updateLook({ environment: { setup } }));
-    return button;
-  });
-  const azimuthField = createSliderField(documentReference, 'Sun azimuth', { min: -180, max: 180, step: 1, value: -35 }, value => controller.setSunAngles({ azimuthDegrees: value }));
-  const elevationField = createSliderField(documentReference, 'Sun elevation', { min: 2, max: 88, step: 1, value: 50 }, value => controller.setSunAngles({ elevationDegrees: value }));
-  const exposureField = createSliderField(documentReference, 'Exposure', { min: 0.2, max: 3, step: 0.05, value: 1 }, value => controller.updateLook({ effects: { exposure: value } }));
-  const viewTransformSelect = createElement(
-    documentReference,
-    'select',
-    { attributes: { 'aria-label': 'View transform' } },
-    ...VIEW_TRANSFORM_NAMES.map(name => createElement(documentReference, 'option', { value: name, textContent: name })),
-  );
-  viewTransformSelect.addEventListener('change', async () => {
-    const viewTransform = viewTransformSelect.value;
-    await loadAgentSceneModules({ environment: { viewTransform } });
-    controller.updateLook({ environment: { viewTransform } });
-  });
-  const bloomField = createSliderField(documentReference, 'Bloom', { min: 0, max: 1, step: 0.02, value: 0.1 }, value => controller.updateLook({ effects: { bloom: { strength: value } } }));
-  const fogField = createSliderField(documentReference, 'Fog density', { min: 0, max: 0.1, step: 0.002, value: 0 }, value => controller.updateLook({ environment: { fogDensity: value } }));
-
-  const lookPanelBody = createElement(
-    documentReference,
-    'div',
-    { className: 'crucible-studio-panel-body' },
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lighting setup' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...setupButtons)),
-    azimuthField.container,
-    elevationField.container,
-    exposureField.container,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'View transform' }), viewTransformSelect),
-    bloomField.container,
-    fogField.container,
-  );
-
-  // Camera Panel
-  const fovField = createSliderField(documentReference, 'Field of view', { min: 15, max: 110, step: 1, value: 45 }, value => controller.updateCamera({ fov: value }));
-  const bookmarkNameInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Bookmark name', attributes: { 'aria-label': 'Bookmark name', maxlength: '24' } });
-  const saveBookmarkButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save view' });
-  const bookmarkListElement = createElement(documentReference, 'div', { className: 'crucible-studio-field' });
-  saveBookmarkButton.addEventListener('click', async () => {
-    const name = bookmarkNameInput.value.trim().replace(/\s+/g, '-') || `shot-${controller.listBookmarks().length + 1}`;
-    try {
-      await loadAgentSceneModules({ timeline: { shots: [] } });
-      controller.saveBookmark(name);
-      bookmarkNameInput.value = '';
-      announce(`Saved bookmark ${name}`);
-    } catch (error) {
-      announce(error.message);
-    }
-  });
-  const cameraPanelBody = createElement(
-    documentReference,
-    'div',
-    { className: 'crucible-studio-panel-body' },
-    fovField.container,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Bookmarks' }), createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, bookmarkNameInput, saveBookmarkButton), bookmarkListElement),
-  );
-
-  const panelsByTab = {
-    node: createElement(documentReference, 'div', { id: 'crucible-studio-panel-node', tabIndex: 0, attributes: { role: 'tabpanel', 'aria-labelledby': 'crucible-studio-tab-node' } }, nodePanelBody),
-    look: createElement(documentReference, 'div', { id: 'crucible-studio-panel-look', attributes: { role: 'tabpanel', 'aria-labelledby': 'crucible-studio-tab-look', hidden: 'until-found' } }, lookPanelBody),
-    camera: createElement(documentReference, 'div', { id: 'crucible-studio-panel-camera', attributes: { role: 'tabpanel', 'aria-labelledby': 'crucible-studio-tab-camera', hidden: 'until-found' } }, cameraPanelBody),
-  };
-
-  function selectInspectorTab(nextTab) {
-    controller.setActiveTab(nextTab);
-    for (const button of tabButtons) {
-      const selected = button.dataset.tab === nextTab;
-      button.setAttribute('aria-selected', selected ? 'true' : 'false');
-      button.toggleAttribute('focusgroupstart', selected);
-    }
-    for (const [tab, panel] of Object.entries(panelsByTab)) {
-      if (tab === nextTab) {
-        panel.removeAttribute('hidden');
-        panel.tabIndex = 0;
-      } else {
-        panel.setAttribute('hidden', 'until-found');
-        panel.removeAttribute('tabindex');
-      }
-    }
-  }
-
-  tabButtons.forEach(button => {
-    button.addEventListener('click', () => selectInspectorTab(button.dataset.tab));
-  });
-  for (const [tab, panel] of Object.entries(panelsByTab)) {
-    panel.addEventListener('beforematch', () => selectInspectorTab(tab));
-  }
-  wireRovingFocusFallback(tabListElement, tabButtons, {
-    followFocus: true,
-    onSelect: button => selectInspectorTab(button.dataset.tab),
-  });
-
-  const inspectorElement = createElement(
-    documentReference,
-    'aside',
-    { className: 'crucible-studio-inspector crucible-studio-surface', attributes: { 'aria-label': 'Scene inspector' } },
-    tabListElement,
-    createElement(documentReference, 'div', { className: 'crucible-studio-panels' }, panelsByTab.node, panelsByTab.look, panelsByTab.camera),
-  );
-  root.append(inspectorElement);
-
-  // Bottom bar: Timeline scrub + Download / Import recipe
-  const playButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Play', attributes: { 'aria-pressed': 'false' } });
-  const timeOutput = createElement(documentReference, 'output', { textContent: '0.00 s' });
-  const scrubInput = createElement(documentReference, 'input', { type: 'range', min: '0', max: '4', step: '0.02', value: '0', attributes: { 'aria-label': 'Timeline time' } });
-  const statsLabel = createElement(documentReference, 'span', {});
-  const downloadButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Download JSON' });
-  const fileInput = createElement(documentReference, 'input', { type: 'file', accept: '.json,application/json', hidden: true });
-
-  playButton.addEventListener('click', () => {
-    if (!hasAnimatedData(controller.exportRecipe())) {
-      announce('Scene has no motion tracks');
+    const treeKey = `${controller.selectedNodeId ?? ''}|${queryText}|${ordered.map(({ node, depth }) => `${depth}:${node.id}:${node.label ?? ''}:${node.visible ?? true}:${node.material ?? ''}`).join('|')}`;
+    if (treeKey === lastTreeKey) {
       return;
     }
-    playing = !playing;
-    lastFrameTime = 0;
-    playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
-    playButton.textContent = playing ? 'Pause' : 'Play';
-    if (playing) requestFrame();
-  });
-  scrubInput.addEventListener('input', () => {
-    const seconds = Number(scrubInput.value);
-    if (hasAnimatedData(controller.exportRecipe())) {
-      controller.setMotionTime(seconds);
-    }
-  });
-  downloadButton.addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(controller.exportRecipe(), null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = createElement(documentReference, 'a', { href: url, download: 'crucible-scene.json' });
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    announce('Downloaded recipe');
-  });
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files?.[0];
-    fileInput.value = '';
-    if (!file) return;
-    try {
-      const parsed = JSON.parse(await file.text());
-      await loadAgentSceneModules(parsed);
-      controller.loadRecipe(parsed);
-      announce(`Loaded ${file.name}`);
-    } catch (error) {
-      announce(error.message);
-    }
-  });
-
-  // Recipe JSON dialog for paste/view
-  const dialogTextarea = createElement(documentReference, 'textarea', { rows: 14, attributes: { 'aria-label': 'Scene recipe JSON' } });
-  const dialogApplyButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Apply JSON' });
-  const dialogFileButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Choose file' });
-  const dialogCloseButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Close' });
-  const recipeDialog = createElement(
-    documentReference,
-    'dialog',
-    { attributes: { 'aria-label': 'Recipe JSON' } },
-    dialogTextarea,
-    createElement(documentReference, 'div', { className: 'crucible-studio-dialog-actions' }, dialogFileButton, dialogCloseButton, dialogApplyButton),
-  );
-  function openImportDialog(initialText = '') {
-    dialogTextarea.value = initialText || JSON.stringify(controller.exportRecipe(), null, 2);
-    recipeDialog.showModal();
+    lastTreeKey = treeKey;
+    outlinerTree.replaceChildren(...ordered.map(({ node, depth }) => {
+      const material = node.material ? materialsById.get(node.material) : null;
+      const swatchHex = material ? linearRgbToHex(material.color) : '#64727a';
+      const selected = node.id === controller.selectedNodeId;
+      const badge = createElement(documentReference, 'span', { className: 'crucible-studio-tree-badge' });
+      badge.style.background = swatchHex;
+      const selectButton = createElement(
+        documentReference,
+        'button',
+        { type: 'button', className: 'crucible-studio-tree-select' },
+        badge,
+        createElement(documentReference, 'span', { className: 'crucible-studio-tree-label', textContent: node.label ?? node.id }),
+      );
+      selectButton.style.paddingLeft = `${4 + depth * 12}px`;
+      selectButton.addEventListener('click', () => controller.selectNode(node.id));
+      selectButton.addEventListener('dblclick', () => {
+        controller.selectNode(node.id);
+        selectInspectorTab('node');
+        nodeLabelInput.focus();
+        nodeLabelInput.select();
+      });
+      const eyeButton = createElement(documentReference, 'button', {
+        type: 'button',
+        className: 'crucible-studio-tree-eye',
+        textContent: node.visible === false ? 'Off' : 'On',
+        attributes: { 'aria-pressed': node.visible === false ? 'false' : 'true', 'aria-label': `Toggle ${node.label ?? node.id} visibility` },
+      });
+      eyeButton.addEventListener('click', () => controller.updateNodeTransform(node.id, { visible: !(node.visible ?? true) }));
+      return createElement(
+        documentReference,
+        'div',
+        { className: 'crucible-studio-tree-row', dataset: { selected: selected ? 'true' : 'false' }, attributes: { role: 'treeitem', 'aria-selected': selected ? 'true' : 'false' } },
+        selectButton,
+        eyeButton,
+      );
+    }));
   }
-  importButton.addEventListener('click', () => openImportDialog());
-  dialogFileButton.addEventListener('click', () => {
-    recipeDialog.close();
-    fileInput.click();
-  });
-  dialogCloseButton.addEventListener('click', () => recipeDialog.close());
-  dialogApplyButton.addEventListener('click', async () => {
-    try {
-      const parsed = JSON.parse(dialogTextarea.value);
-      await loadAgentSceneModules(parsed);
-      controller.loadRecipe(parsed);
-      recipeDialog.close();
-      announce('Recipe loaded');
-    } catch (error) {
-      announce(error.message);
+
+  function renderPaletteSwatches(recipe, boundMaterialId) {
+    const swatchesKey = `${boundMaterialId ?? ''}|${recipe.materials.map(material => `${material.id}:${linearRgbToHex(material.color)}`).join('|')}`;
+    if (swatchesKey === lastSwatchesKey) {
+      return;
     }
-  });
-  root.append(fileInput, recipeDialog);
-
-  const bottomElement = createElement(
-    documentReference,
-    'div',
-    { className: 'crucible-studio-bottom crucible-studio-surface' },
-    createElement(documentReference, 'div', { className: 'crucible-studio-scrub' }, playButton, scrubInput, timeOutput),
-    createElement(documentReference, 'div', { className: 'crucible-studio-meta' }, statsLabel, downloadButton),
-  );
-  root.append(bottomElement);
-
-  let lastNodesKey = '';
-  let lastBookmarksKey = '';
+    lastSwatchesKey = swatchesKey;
+    swatchContainer.replaceChildren(...recipe.materials.map(material => {
+      const hex = linearRgbToHex(material.color);
+      const swatch = createElement(documentReference, 'button', {
+        type: 'button',
+        className: 'crucible-studio-swatch-btn',
+        title: `${material.id} (click to assign & inspect)`,
+        attributes: { 'aria-pressed': material.id === boundMaterialId ? 'true' : 'false', 'aria-label': `Material ${material.id}` },
+      });
+      swatch.style.background = hex;
+      swatch.addEventListener('click', () => {
+        if (controller.selectedNodeId) {
+          try {
+            controller.assignNodeMaterial(controller.selectedNodeId, material.id);
+          } catch {
+            // group node has no geometry; still open material tab
+          }
+        }
+        selectInspectorTab('material');
+      });
+      return swatch;
+    }));
+  }
 
   function syncUi() {
     const recipe = controller.exportRecipe();
-    toolButtons.forEach(button => {
-      button.setAttribute('aria-pressed', button.dataset.tool === controller.tool ? 'true' : 'false');
-    });
+    toolButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.tool === controller.tool ? 'true' : 'false'));
     undoButton.setAttribute('aria-disabled', controller.canUndo ? 'false' : 'true');
     redoButton.setAttribute('aria-disabled', controller.canRedo ? 'false' : 'true');
+    const selectedNode = recipe.nodes.find(node => node.id === controller.selectedNodeId) ?? null;
+    const hasNode = Boolean(selectedNode);
+    duplicateButton.setAttribute('aria-disabled', hasNode ? 'false' : 'true');
+    deleteButton.setAttribute('aria-disabled', hasNode ? 'false' : 'true');
 
-    const nodesKey = recipe.nodes.map(node => `${node.id}:${node.label ?? ''}`).join('|');
-    if (nodesKey !== lastNodesKey) {
-      lastNodesKey = nodesKey;
-      nodeSelect.replaceChildren(
-        createElement(documentReference, 'option', { value: '', textContent: 'None' }),
-        ...recipe.nodes.map(node => createElement(documentReference, 'option', { value: node.id, textContent: node.label ?? node.id })),
+    renderOutliner(recipe);
+
+    const parentOptionsKey = `${controller.selectedNodeId ?? ''}|${recipe.nodes.map(node => `${node.id}:${node.label ?? ''}`).join('|')}`;
+    if (parentOptionsKey !== lastParentOptionsKey) {
+      lastParentOptionsKey = parentOptionsKey;
+      nodeParentSelect.replaceChildren(
+        createElement(documentReference, 'option', { value: '', textContent: 'Scene root' }),
+        ...recipe.nodes
+          .filter(node => node.id !== controller.selectedNodeId && !node.assetPart)
+          .map(node => createElement(documentReference, 'option', { value: node.id, textContent: node.label ?? node.id })),
+      );
+      materialSelect.replaceChildren(
+        ...recipe.materials.map(material => createElement(documentReference, 'option', { value: material.id, textContent: material.id })),
       );
     }
-    nodeSelect.value = controller.selectedNodeId ?? '';
-    const selectedNode = recipe.nodes.find(node => node.id === controller.selectedNodeId);
-    const hasNode = Boolean(selectedNode);
-    visibleToggle.setAttribute('aria-pressed', selectedNode?.visible === false ? 'false' : 'true');
+
+    nodeLabelInput.disabled = !hasNode;
+    nodeParentSelect.disabled = !hasNode;
     visibleToggle.setAttribute('aria-disabled', hasNode ? 'false' : 'true');
+    castShadowToggle.setAttribute('aria-disabled', hasNode ? 'false' : 'true');
+    receiveShadowToggle.setAttribute('aria-disabled', hasNode ? 'false' : 'true');
+    if (selectedNode) {
+      nodeLabelInput.value = selectedNode.label ?? selectedNode.id;
+      nodeParentSelect.value = selectedNode.parent ?? '';
+      visibleToggle.setAttribute('aria-pressed', selectedNode.visible === false ? 'false' : 'true');
+      castShadowToggle.setAttribute('aria-pressed', selectedNode.castShadow === false ? 'false' : 'true');
+      receiveShadowToggle.setAttribute('aria-pressed', selectedNode.receiveShadow === false ? 'false' : 'true');
+    } else {
+      nodeLabelInput.value = '';
+      nodeParentSelect.value = '';
+    }
     positionRow.setValues(selectedNode?.translation ?? [0, 0, 0]);
     rotationRow.setValues(quaternionToEulerDegrees(selectedNode?.rotation ?? [0, 0, 0, 1]), DEGREE_PRECISION);
     scaleRow.setValues(selectedNode?.scale ?? [1, 1, 1]);
 
     const boundMaterial = selectedNode?.material ? recipe.materials.find(material => material.id === selectedNode.material) : null;
-    colorInput.disabled = !boundMaterial;
-    roughnessField.input.disabled = !boundMaterial;
-    metallicField.input.disabled = !boundMaterial;
-    emissionField.input.disabled = !boundMaterial;
-    if (boundMaterial) {
-      colorInput.value = linearRgbToHex(boundMaterial.color);
-      roughnessField.setValue(boundMaterial.roughness ?? 0.5);
-      metallicField.setValue(boundMaterial.metallic ?? 0);
-      emissionField.setValue(boundMaterial.emission ?? 0);
+    renderPaletteSwatches(recipe, boundMaterial?.id ?? null);
+    const activeMaterial = boundMaterial ?? recipe.materials[0] ?? null;
+    const hasMaterial = Boolean(activeMaterial);
+    materialSelect.disabled = !hasMaterial;
+    colorInput.disabled = !hasMaterial;
+    emissiveColorInput.disabled = !hasMaterial;
+    roughnessField.input.disabled = !hasMaterial;
+    metallicField.input.disabled = !hasMaterial;
+    clearcoatField.input.disabled = !hasMaterial;
+    opacityField.input.disabled = !hasMaterial;
+    emissionField.input.disabled = !hasMaterial;
+    if (activeMaterial) {
+      materialSelect.value = activeMaterial.id;
+      colorInput.value = linearRgbToHex(activeMaterial.color);
+      emissiveColorInput.value = linearRgbToHex(activeMaterial.emissiveColor ?? activeMaterial.color);
+      roughnessField.setValue(activeMaterial.roughness ?? 0.5);
+      metallicField.setValue(activeMaterial.metallic ?? 0);
+      clearcoatField.setValue(activeMaterial.clearcoat ?? 0);
+      opacityField.setValue(activeMaterial.opacity ?? 1);
+      emissionField.setValue(activeMaterial.emission ?? 0);
     }
 
     const environment = recipe.environment ?? {};
@@ -2029,15 +1743,26 @@ export function createStudio(container, { scene: suppliedScene, recipe: supplied
     const activeSetup = environment.setup ?? 'daylight';
     setupButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.setup === activeSetup ? 'true' : 'false'));
     const sunAngles = directionToSunAngles(environment.lightDirection);
+    sunPad.setAngles(sunAngles.azimuthDegrees, sunAngles.elevationDegrees);
     azimuthField.setValue(sunAngles.azimuthDegrees);
     elevationField.setValue(sunAngles.elevationDegrees);
-    exposureField.setValue(effects.exposure ?? 1);
+    keyIntensityField.setValue(environment.keyIntensity ?? 1.5);
     viewTransformSelect.value = environment.viewTransform ?? 'aces';
+    exposureField.setValue(effects.exposure ?? 1);
+    contrastField.setValue(effects.contrast ?? 1);
+    saturationField.setValue(effects.saturation ?? 1);
     bloomField.setValue(effects.bloom?.strength ?? 0);
     fogField.setValue(environment.fogDensity ?? 0);
 
     const camera = controller.scene.camera;
+    const isOrthographic = camera.projection === 'orthographic';
+    projectionPillButton.textContent = isOrthographic ? 'Orthographic' : 'Perspective';
+    projectionPillButton.setAttribute('aria-pressed', isOrthographic ? 'true' : 'false');
+    inspectorProjectionButton.setAttribute('aria-pressed', isOrthographic ? 'true' : 'false');
     fovField.setValue(Math.round(camera.fov ?? 45));
+    orthoScaleField.setValue(roundValue(camera.orthoScale ?? 6, 10));
+    lensChips.forEach(chip => chip.setAttribute('aria-pressed', !isOrthographic && Number(chip.dataset.focal) === Math.round(camera.focalLength ?? 0) ? 'true' : 'false'));
+
     const bookmarks = controller.listBookmarks();
     const bookmarksKey = bookmarks.map(shot => shot.name).join('|');
     if (bookmarksKey !== lastBookmarksKey) {
@@ -2049,6 +1774,14 @@ export function createStudio(container, { scene: suppliedScene, recipe: supplied
         removeButton.addEventListener('click', () => controller.removeBookmark(shot.name));
         return createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, applyButton, removeButton);
       }));
+      quickBookmarksRow.replaceChildren(...bookmarks.slice(0, 5).map(shot => {
+        const pill = createElement(documentReference, 'button', { type: 'button', textContent: shot.name });
+        pill.style.minBlockSize = '26px';
+        pill.style.padding = '2px 8px';
+        pill.style.fontSize = '11.5px';
+        pill.addEventListener('click', () => controller.applyBookmark(shot.name));
+        return pill;
+      }));
     }
 
     const duration = recipe.motion?.duration ?? 4;
@@ -2059,11 +1792,13 @@ export function createStudio(container, { scene: suppliedScene, recipe: supplied
     playButton.setAttribute('aria-disabled', animated ? 'false' : 'true');
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
     playButton.textContent = playing ? 'Pause' : 'Play';
-    timeOutput.textContent = `${controller.motionTime.toFixed(2)} s`;
-    statsLabel.textContent = `Rev ${controller.scene.revision} · ${controller.scene.parts.length} parts`;
+    timeOutput.textContent = `${controller.motionTime.toFixed(2)} s / ${duration.toFixed(1)} s`;
+    statsLabel.textContent = `${controller.scene.parts.length} parts · Rev ${controller.scene.revision}`;
+    hintBar.textContent = liveDeltaLabel || VIEWPORT_HINT_TEXT;
+    syncFileBanner();
   }
 
-  // Viewport interaction: gizmo drag, pick, orbit, pan, zoom
+  // Viewport Interaction: Gizmo Drag, Pick, Orbit, Pan, Zoom, File Drop
   function localCoordinates(event) {
     const bounds = viewportElement.getBoundingClientRect();
     return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
@@ -2142,54 +1877,104 @@ export function createStudio(container, { scene: suppliedScene, recipe: supplied
     controller.orbitCamera({ zoomScale: 1 + Math.max(-0.35, Math.min(0.35, event.deltaY * 0.0012)) });
   }, { passive: false });
 
-  // Keyboard shortcuts while canvas has focus
-  canvas.addEventListener('keydown', event => {
-    if (event.key === 'f' || event.key === 'F') {
-      controller.frameSelection();
-    } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+  viewportElement.addEventListener('dragover', event => {
+    event.preventDefault();
+    viewportElement.dataset.dropActive = 'true';
+  });
+  viewportElement.addEventListener('dragleave', () => {
+    delete viewportElement.dataset.dropActive;
+  });
+  viewportElement.addEventListener('drop', async event => {
+    event.preventDefault();
+    delete viewportElement.dataset.dropActive;
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    try {
+      await loadExternalTextFile(await file.text(), { filePath: file.path || null, fileName: file.name });
+      announce(`Loaded ${file.name}`);
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+
+  function isEditableTarget(target) {
+    const tag = target?.tagName?.toLowerCase?.();
+    return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(target?.isContentEditable);
+  }
+
+  const onWindowKeyDown = async event => {
+    if (!root.isConnected || isEditableTarget(event.target)) {
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      performSaveFile({ forceAs: event.shiftKey });
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o') {
+      event.preventDefault();
+      performOpenFile();
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd') {
+      event.preventDefault();
+      if (controller.selectedNodeId) {
+        const cloned = controller.duplicateSelected();
+        announce(`Duplicated to ${cloned.label}`);
+      }
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
       event.preventDefault();
       if (event.shiftKey) controller.redo();
       else controller.undo();
-    } else if (event.key === 'g') {
-      controller.setTool('translate');
-    } else if (event.key === 'r') {
-      controller.setTool('rotate');
-    } else if (event.key === 's') {
-      controller.setTool('scale');
+      return;
     }
-  });
+    const lowerKey = event.key.toLowerCase();
+    if (lowerKey === 'q') controller.setTool('select');
+    else if (lowerKey === 'g') controller.setTool('translate');
+    else if (lowerKey === 'r') controller.setTool('rotate');
+    else if (lowerKey === 's') controller.setTool('scale');
+    else if (lowerKey === 't') controller.setTool('snap');
+    else if (lowerKey === 'f') controller.frameSelection();
+    else if (event.key === '5') controller.toggleCameraProjection();
+    else if (event.key === '?') shortcutsDialog.showModal();
+    else if (lowerKey === 'k') keyframeButton.click();
+    else if (event.key === ' ') {
+      event.preventDefault();
+      playButton.click();
+    } else if ((event.key === 'Delete' || event.key === 'Backspace') && controller.selectedNodeId) {
+      event.preventDefault();
+      controller.deleteSelected();
+      announce('Deleted node');
+    }
+  };
+  documentReference.addEventListener('keydown', onWindowKeyDown);
 
   const onVisibilityChange = () => {
     if (!documentReference.hidden && isVisible) requestFrame();
   };
   documentReference.addEventListener('visibilitychange', onVisibilityChange);
 
-  const wrappedController = {
-    get controller() { return controller; },
-    get scene() { return controller.scene; },
-    get renderer() { return renderer; },
-    exportRecipe: () => controller.exportRecipe(),
-    loadRecipe: (recipeInput, options) => controller.loadRecipe(recipeInput, options),
-    selectNode: nodeId => controller.selectNode(nodeId),
-    setTool: tool => controller.setTool(tool),
-    setActiveTab: tab => selectInspectorTab(tab),
-    pickAt: (pixelX, pixelY) => controller.pickAt(pixelX, pixelY),
-    renderNow() {
-      renderPass();
-    },
-    dispose() {
-      clearTimeout(statusTimer);
-      if (frameHandle) cancelAnimationFrame(frameHandle);
-      documentReference.removeEventListener('visibilitychange', onVisibilityChange);
-      resizeObserver?.disconnect();
-      intersectionObserver?.disconnect();
-      controller.dispose();
-      renderer?.dispose();
-      root.remove();
-    },
-  };
+  function setOutlinerCollapsed(collapsed) {
+    root.dataset.outlinerCollapsed = collapsed ? 'true' : 'false';
+    toggleDocksButton.setAttribute('aria-pressed', root.dataset.outlinerCollapsed === 'false' || root.dataset.inspectorCollapsed === 'false' ? 'true' : 'false');
+    requestFrame();
+  }
+
+  function setInspectorCollapsed(collapsed) {
+    root.dataset.inspectorCollapsed = collapsed ? 'true' : 'false';
+    toggleDocksButton.setAttribute('aria-pressed', root.dataset.outlinerCollapsed === 'false' || root.dataset.inspectorCollapsed === 'false' ? 'true' : 'false');
+    requestFrame();
+  }
 
   handleChange = detail => {
+    if (detail.deltaLabel !== undefined) {
+      liveDeltaLabel = detail.deltaLabel;
+    }
+    if (['topology', 'transform', 'transformCommit', 'material', 'look', 'undo', 'redo'].includes(detail.kind)) {
+      isDirty = true;
+    }
     syncUi();
     if (detail.kind === 'tab' || insideDraw) return;
     requestFrame();
@@ -2207,8 +1992,49 @@ export function createStudio(container, { scene: suppliedScene, recipe: supplied
     intersectionObserver.observe(viewportElement);
   }
 
-  // Initial draw
+  // Initial Draw
   syncUi();
   renderPass();
-  return wrappedController;
+
+  return {
+    get controller() { return controller; },
+    get scene() { return controller.scene; },
+    get renderer() { return renderer; },
+    get dirty() { return isDirty; },
+    exportRecipe: () => controller.exportRecipe(),
+    loadRecipe: (recipeInput, options) => controller.loadRecipe(recipeInput, options),
+    loadExternalTextFile,
+    selectNode: nodeId => controller.selectNode(nodeId),
+    setTool: tool => controller.setTool(tool),
+    setActiveTab: tab => selectInspectorTab(tab),
+    pickAt: (pixelX, pixelY) => controller.pickAt(pixelX, pixelY),
+    setOutlinerCollapsed,
+    setInspectorCollapsed,
+    capturePngDataUrl,
+    exportGlbBytes,
+    buildWebPackPayload,
+    shouldAutoReloadExternal() {
+      return autoReloadWatch;
+    },
+    setFileContext({ filePath, fileName, dirty }) {
+      if (filePath !== undefined) activeFilePath = filePath;
+      if (fileName !== undefined) activeFileName = fileName;
+      if (dirty !== undefined) isDirty = Boolean(dirty);
+      syncFileBanner();
+    },
+    renderNow() {
+      renderPass();
+    },
+    dispose() {
+      clearTimeout(statusTimer);
+      if (frameHandle) cancelAnimationFrame(frameHandle);
+      documentReference.removeEventListener('keydown', onWindowKeyDown);
+      documentReference.removeEventListener('visibilitychange', onVisibilityChange);
+      resizeObserver?.disconnect();
+      intersectionObserver?.disconnect();
+      controller.dispose();
+      renderer?.dispose();
+      root.remove();
+    },
+  };
 }

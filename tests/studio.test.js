@@ -66,8 +66,8 @@ test('createStudioController validates inputs and enforces tool, tab and node bo
   assert.throws(() => createStudioController({ scene, maxHistory: 0 }), /maxHistory/);
 
   const controller = createStudioController({ scene, viewportWidth: 800, viewportHeight: 600 });
-  assert.deepEqual(STUDIO_TOOLS, ['translate', 'rotate', 'scale', 'snap']);
-  assert.deepEqual(STUDIO_TABS, ['node', 'look', 'camera']);
+  assert.deepEqual(STUDIO_TOOLS, ['select', 'translate', 'rotate', 'scale', 'snap']);
+  assert.deepEqual(STUDIO_TABS, ['node', 'material', 'look', 'camera']);
   assert.throws(() => controller.selectNode('missing-node'), /Unknown node/);
   assert.throws(() => controller.setTool('sculpt'), /Unknown Studio tool/);
   assert.throws(() => controller.setActiveTab('physics'), /Unknown Studio tab/);
@@ -218,5 +218,78 @@ test('undo, redo and external loadRecipe handle more edits than agent REVISION_H
   assert.equal(controller.exportRecipe().nodes.find(node => node.id === 'hero').translation[0], -3);
   controller.undo();
   assert.equal(controller.exportRecipe().nodes.find(node => node.id === 'hero').translation[0], 1);
+  controller.dispose();
+});
+
+test('pro studio operations add objects, drag planar gizmos, edit materials, lenses and keyframes', () => {
+  const scene = createAgentScene(makeStudioRecipe());
+  const controller = createStudioController({ scene, viewportWidth: 960, viewportHeight: 600 });
+  controller.selectNode('hero');
+
+  // Planar gizmo drag (XZ) and rotation rings check
+  const handles = controller.gizmoHandles();
+  assert.ok(handles.planes.xy.length === 4);
+  assert.ok(handles.rings.x.length > 8);
+  controller.setTool('translate');
+  controller.beginGizmoDrag('xz', 480, 300);
+  controller.updateGizmoDrag(540, 318);
+  assert.equal(controller.endGizmoDrag(), true);
+  const moved = controller.exportRecipe().nodes.find(node => node.id === 'hero');
+  assert.ok(Math.abs(moved.translation[0]) > 0.05);
+
+  // Add primitive + duplicate + reparent + metadata + delete
+  const addedTorus = controller.addPrimitive('torus');
+  assert.equal(controller.selectedNodeId, addedTorus.id);
+  const pointCount = controller.addSceneLight('point');
+  assert.equal(pointCount, 1);
+
+  const duplicate = controller.duplicateSelected();
+  assert.equal(controller.selectedNodeId, duplicate.id);
+  controller.updateNodeTransform(duplicate.id, {
+    label: 'Trim Ring',
+    parent: addedTorus.id,
+    castShadow: false,
+    receiveShadow: true,
+  });
+  const duplicateAfter = controller.exportRecipe().nodes.find(node => node.id === duplicate.id);
+  assert.equal(duplicateAfter.label, 'Trim Ring');
+  assert.equal(duplicateAfter.parent, addedTorus.id);
+  assert.equal(duplicateAfter.castShadow, false);
+  assert.equal(duplicateAfter.receiveShadow, true);
+
+  controller.selectNode(addedTorus.id);
+  controller.deleteSelected();
+  const afterDelete = controller.exportRecipe().nodes;
+  assert.equal(afterDelete.some(node => node.id === addedTorus.id), false);
+  assert.equal(afterDelete.some(node => node.id === duplicate.id), false);
+
+  // Materials: create, assign, apply preset
+  controller.selectNode('hero');
+  const goldMaterial = controller.createMaterial({ roughness: 0.25, metallic: 0.9, assignToNodeId: 'hero' });
+  controller.applyMaterialPreset(goldMaterial.id, 'gold');
+  const assignedNode = controller.exportRecipe().nodes.find(node => node.id === 'hero');
+  assert.equal(assignedNode.material, goldMaterial.id);
+  const updatedMaterial = controller.exportRecipe().materials.find(item => item.id === goldMaterial.id);
+  assert.ok(updatedMaterial.metallic >= 0.95);
+  controller.assignNodeMaterial('orb', goldMaterial.id);
+  assert.equal(controller.exportRecipe().nodes.find(node => node.id === 'orb').material, goldMaterial.id);
+
+  // Camera view presets, ortho toggle, lens focal length & keyframe insertion
+  controller.setCameraViewPreset('front');
+  assert.ok(controller.scene.camera.eye[2] > controller.scene.camera.target[2]);
+  controller.toggleCameraProjection();
+  assert.equal(controller.scene.camera.projection, 'orthographic');
+  controller.setCameraLensMillimetres(85);
+  assert.equal(controller.scene.camera.projection, 'perspective');
+  assert.equal(controller.scene.camera.focalLength, 85);
+
+  const nextMotion = controller.insertNodeKeyframe('hero');
+  assert.ok(nextMotion.tracks.length >= 3);
+  controller.setMotionTime(1.5);
+  controller.updateNodeTransform('hero', { translation: [1.5, 1.2, 0] });
+  controller.insertNodeKeyframe('hero');
+  controller.setMotionTime(0.75);
+  assert.equal(controller.motionTime, 0.75);
+
   controller.dispose();
 });
