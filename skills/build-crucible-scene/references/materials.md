@@ -30,8 +30,9 @@ Starting values, then judge with `scene_look`:
 | Rubber, cloth | dark | 0 | 0.9 |
 | Lamp, screen | the hue | 0 | any, with `emission` 2 to 8 |
 
-Metal is 0 or 1 in practice; use a value between only for a worn edge. A `metallic` above 0 no longer fails `scene_apply` with
-"Light bake takes at most 200000 triangles" (#2202 is fixed): no bake runs unless the recipe asks for one.
+Metal is 0 or 1 in practice; use a value between only for a worn edge. A smooth metal part adds automatic reflection probes, and a scene over
+200000 triangles used to fail `scene_apply` with "Light bake takes at most 200000 triangles" although no bake was asked for. Since #2202 the
+probes are skipped past that limit and the sky reflection stays, so `metallic` above 0 is safe; the skip reason names `environment.objectReflections`.
 
 ## Patterns
 
@@ -142,7 +143,7 @@ fade each along the beam. Point and spot lights also scatter in `volumeFog` (up 
 
 - `set-material` takes colour, `metallic`, `roughness`, `emission`, `emissiveColor`, `opacity`, `alphaMode`, `doubleSided`, `pattern`, `map`, `subsurface`, `snippet`, water fields and the layer fields. It rejects `tag` (the error lists the fields it takes). To change a tag, `add-material` a new one and `set-node` onto it.
 - A textured import (GLB placement): the `asset.materials` override multiplies its `color` into the texture, it does not replace the texture. To recolour, tint with `color` (a dark texture stays dark), or flatten with `asset.flatten.color`, which paints every material of the placement one colour and drops the textures; a named override still wins.
-- Faces that lie flush flicker: `decal: true` on the top node or `depthLayer` 1 to 4 (see `light.md`). Do not add them for near-flush faces; the renderer ranks those itself.
+- Flush faces are ranked automatically, so a flicker needs no fix. To choose which of two flush nodes wins (a sticker on a surface), set `decal: true` on the top one, or `depthLayer` 1 to 4 to stack several (see `light.md`).
 
 ## Judge a surface
 

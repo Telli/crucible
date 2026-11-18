@@ -30,6 +30,7 @@ one burst. `start` (alias `delay`) is the time of the first birth. `stop` is an 
 `start` and at most 3600, so `{ "start": 1.6, "stop": 0.4 }` fails with "expected a time in seconds after the start (1.6), such as 3.6". Nothing is born at or after `stop`;
 particles already born finish their life.
 
+`emitter.shape` is `point` (default), `box`, `sphere`, `disc` or `mesh`; `emitter.position` is in world metres. `direction` (default up) and `spread` (cone angle in degrees, 0 to 180, default 30) aim the launch.
 A box emitter takes `halfExtents`, not `radius`. Crucible no longer writes a `radius` into a box emitter, and a stored `radius: 0.5` on a box is dropped, so later batches apply (#2203). `sphere` and `disc` take `radius`.
 
 `set-particles` may name a node added in an earlier batch (#2204); the node and the system can be in one batch or two. A system replaces its node's own geometry with the
@@ -43,7 +44,8 @@ A system can validate and draw nothing. Check these before changing values:
 2. The card. A `plane` faces +Z and keeps its facing (there is no camera-facing billboard), so seen from the side it is edge-on. Set `doubleSided: true` on the material and `orient: "random"` on the system, or use a `box` or low-poly sphere.
 3. `scale: "grow"` starts every particle at size 0 and reaches full size at death; `"shrink"` does the reverse. A short life with `grow` is mostly tiny.
 4. `alpha` and `color` become vertex colours and `alpha` multiplies the colour, so a particle fades toward black and never becomes see-through. On an `alphaMode: "add"` material black adds nothing, so the fade works; on an opaque or `blend` one the particle turns black against the background.
-5. Size. `size` is the scale of the node's geometry in metres: a unit `plane` with `size` 0.002 is 2 mm.
+5. `floor`. It stops a particle that is born above that height and reaches it; the particle then stays where it landed until it dies (with `bounce` above 0 it bounces instead). A particle born below `floor` ignores it. Combined with `scale: "shrink"` or an `alpha` fade, particles that landed vanish where they lie.
+6. Size. `size` is the scale of the node's geometry in metres: a unit `plane` with `size` 0.002 is 2 mm.
 
 ## Spray, dust and sparks
 
@@ -82,7 +84,7 @@ any other tag is refused with a message that says so. `floor` stops them on the 
 
 ```json
 { "expectedRevision": 1, "operations": [
-  { "type": "add-geometry", "geometry": { "id": "spark", "type": "box" } },
+  { "type": "add-geometry", "geometry": { "id": "spark", "type": "box", "bevel": 0 } },
   { "type": "add-material", "material": { "id": "spark", "tag": "unlit", "color": [1, 1, 1] } },
   { "type": "add-node", "node": { "id": "sparks", "geometry": "spark", "material": "spark" } },
   { "type": "set-particles", "particles": { "systems": [
@@ -139,7 +141,7 @@ Point and spot lights scatter in it (at most 8, points first, no shadows, no lig
 ] }
 ```
 
-- Open bug #2205: `scene_look` can fail with "WebGL render failed with error 1282" for a volume fog that combines `noiseAmount`, `drift`, `heightFalloff` and `color` on a physical sky, and the culprit field is not isolated. Add the fog fields one at a time with `scene_look` between, and keep the last set that renders.
+- Open bug #2205: `scene_look` can fail with "WebGL render failed with error 1282" for a volume fog that combines `noiseAmount`, `drift`, `heightFalloff` and `color` on a physical sky, and the culprit field is not isolated. Add the fog fields one at a time with `scene_look` between, and keep the last set that renders. The fog block above (a spot light, `density`, `noiseAmount`, no `heightFalloff`, `drift` or `color`, default sky) rendered on a GPU backend without that error.
 - A visible beam is a cone part, not a fog effect: give it an `alphaMode: "add"` material with a low `opacity`, stack two or three shells of growing radius, and fade each along its length with a `snippet` (see `materials.md`, "Shader hooks"). One shell shows a hard silhouette from the side.
 
 ## Not built yet
