@@ -154,7 +154,7 @@ glTF import maps `alphaMode` MASK and BLEND, `alphaCutoff`, `doubleSided` and `b
 
 ## Water glints
 
-`material.waterGlint` adds stylized highlights to a `water` material, on top of the physical sun glint. Both parts are off until the field names them, so water without the field draws exactly as before.
+`material.waterGlint` adds stylized highlights to a `water` material (sparkles come on top of the physical sun glint, the edge redraws it). Both parts are off until the field names them, so water without the field draws exactly as before.
 
 ```json
 { "tag": "water", "waterGlint": { "edge": { "threshold": 0.4 }, "sparkle": { "shape": "star", "size": 0.4 } } }
@@ -162,7 +162,7 @@ glTF import maps `alphaMode` MASK and BLEND, `alphaCutoff`, `doubleSided` and `b
 
 | Part | Field | Accepts (default) | Does |
 |---|---|---|---|
-| `edge` | `threshold` | 0.05 to 0.95 (0.4) | Cuts the glint lobe at this share of its peak, so the highlight is a flat shape with a clean border that follows the waves. Higher is smaller. |
+| `edge` | `threshold` | 0.05 to 0.95 (0.4) | Replaces the soft glint with the lobe cut at this share of its peak, so the highlight is a flat shape with a clean border that follows the waves. Higher is smaller. |
 | `edge` | `intensity` | 0 to 4 (1) | Brightness of that shape. |
 | `sparkle` | `density` | 0 to 1 (0.35) | Share of cells that carry a sparkle. |
 | `sparkle` | `size` | 0.02 to 2 m (0.12) | Width of a cell on the water, so how big a sparkle is. |

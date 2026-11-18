@@ -2,7 +2,7 @@ import { invalidField } from './field-error.js';
 import { layerTextureSupport, registerShaderFeatureCode } from './shader-registry.js';
 
 // Stylized highlights of a water material: `waterGlint: { edge, sparkle }`. Both are off unless the field names them.
-//   edge:    a hard-edged copy of the sun glint. The glint lobe is cut at `threshold` (0 to 1 of its peak), so the highlight is a flat
+//   edge:    the sun glint redrawn with a hard edge: the soft lobe is taken out and the glint lobe is cut at `threshold` (0 to 1 of its peak), so the highlight is a flat
 //            shape with a clean border that follows the waves, as Blinn-Phong specular followed by a step.
 //   sparkle: glitter on the sun path. The water is cut into cells `size` metres wide. Each cell holds a tiny facet that tilts with the
 //            wave under it and turns over time; it lights up when its mirror direction falls within `threshold` (cosine) of the
@@ -83,6 +83,9 @@ const FINAL = `  if (TAG_WATER && (waterGlintEdge.x > 0.0 || waterGlintSparkle.w
     if (waterGlintEdge.x > 0.0) {
       float lobe = waterGlintLobe(normal, viewDirection, glintSun, waterLostVariance);
       float edgeWidth = 1.5 * fwidth(lobe) + 0.01;
+      // The physical glint drawn by the water code is taken out first, so the flat shape replaces the soft lobe instead of hiding in it.
+      float glintFresnel = 0.02 + 0.98 * pow(1.0 - max(dot(normalize(glintSun + viewDirection), viewDirection), 0.0), 5.0);
+      radiance = max(radiance - vec3(1.0, 0.9, 0.7) * lobe * (0.5 + 40.0 * glintFresnel) * 6.0 * keyResponse * (1.0 - waterFoam), vec3(0.0));
       radiance += glintTint * smoothstep(waterGlintEdge.x - edgeWidth, waterGlintEdge.x + edgeWidth, lobe) * waterGlintEdge.y * 4.0;
     }
     if (waterGlintSparkle.w > 0.0) {
