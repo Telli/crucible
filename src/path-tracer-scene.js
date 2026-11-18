@@ -5,6 +5,7 @@ import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limi
 import { boxProjectedGeometry, columnLengths } from './export-box-uv.js';
 import { resolveTraceVolume, resolveTraceDistanceHaze, prepareMeshVolume } from './path-tracer-volume.js';
 import { waterTraceMaterial } from './path-tracer-water.js';
+import { thinWaterMedia, withWaterMedia } from './path-tracer-water-medium.js';
 import { resolveLocalVolumes } from './local-volumes.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { resolveTraceSubsurface } from './path-tracer-subsurface.js';
@@ -628,7 +629,8 @@ export function attachTracer(scene) {
 
 /** Local volumes are traced by the CPU path tracer and, for boxes and spheres, the WebGPU final tracer. Every other tracer entry point calls this so none drops them silently. */
 export function refuseLocalVolumes(scene, tracerName) {
-  if (!scene.localVolumes) return;
+  // The depth tint under thin water (#2294) is not an author's volume: a tracer that cannot draw it draws the water clear, as before.
+  if (!scene.localVolumes?.some(volume => volume.waterMedium !== true)) return;
   throw new RangeError(`environment.localVolumes is traced by the CPU path tracer only; ${tracerName} cannot draw them. Use backend "cpu" (backend "webgpu" draws box, sphere, mesh and grid volumes) or remove the volumes.`);
 }
 
@@ -905,7 +907,7 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
     lights: resolveLights(environment, limits.lights, parts),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
     volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, bounds),
-    localVolumes,
+    localVolumes: withWaterMedia(localVolumes, thinWaterMedia(parts, bounds)),
     surfaceOffset: extent * 1e-5,
     farDistance: extent * 1e4,
   };
@@ -989,7 +991,7 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
     lights: resolveLights(environment, limits.lights, parts),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
     volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, bounds),
-    localVolumes,
+    localVolumes: withWaterMedia(localVolumes, thinWaterMedia(parts, bounds)),
     surfaceOffset: extent * 1e-5,
     farDistance: extent * 1e4,
   });
