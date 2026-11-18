@@ -41,6 +41,7 @@ const MODULE_LOADERS = {
   lineArt: () => import('./line-art.js'),
   viewTransform: () => import('./view-transform-shader.js'),
   coplanar: () => import('./coplanar-overlap.js'),
+  unsupportedPart: () => import('./unsupported-part.js'),
   physicalSky: () => import('./physical-sky.js'),
   floorSky: () => import('./floor-sky-visibility.js'),
   userPass: () => import('./user-pass.js'),
@@ -103,6 +104,8 @@ const MODULE_MARKERS = {
   // and so does a recipe that names resolveCoplanar or places an asset, since glTF models nest facades a few millimetres apart.
   // A recipe of plain primitives in a host without it stays free of the 85 KB of flush code, so it needs no on-demand module.
   coplanar: ['"resolveCoplanar"', '"asset":{'],
+  // The support check needs no recipe text: the MCP preview and loadAllAgentSceneModules load it, and a plain host stays free of it.
+  unsupportedPart: [],
   // A closed room a sun lights gets the floor sky trace by default. The recipe text can not say whether a room is closed, so a recipe that names its sun loads it and the module skips an open scene.
   floorSky: ['"keyColor"', '"keyIntensity"'],
   physicalSky: ['"type":"physical"', '"type":"gradient"'],
