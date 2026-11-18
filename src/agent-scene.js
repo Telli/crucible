@@ -61,7 +61,7 @@ const CAMERA_DEFAULTS = Object.freeze({ eye: [4, 3, 5], target: [0, 0, 0], up: [
 const RENDER_FLAG_FIELDS = ['visible', 'castShadow', 'receiveShadow', 'holdout', 'shadowCatcher', 'shadowOnly'];
 const PART_FLAG_FIELDS = RENDER_FLAG_FIELDS.slice(1);
 const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
-const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'aov', 'wear', 'retro', 'emissionMask', ...MATERIAL_LAYER_FIELDS];
+const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
 const LOOK_OPERATION_FIELDS = Object.freeze({
@@ -264,6 +264,11 @@ function copyMaterialLayers(value, result) {
   for (const field of MATERIAL_LAYER_FIELDS) {
     if (value[field] === undefined) continue;
     result[field] = Array.isArray(value[field]) ? vector(value[field], 3, field) : value[field];
+  }
+  if (value.toonColors !== undefined) {
+    result.toonColors = Array.isArray(value.toonColors)
+      ? Object.freeze(value.toonColors.map((color, index) => Object.freeze(vector(color, 3, `toonColors[${index}]`))))
+      : value.toonColors;
   }
   validateMaterialLayers(result);
   if (value.emissionMask !== undefined) {
@@ -1461,9 +1466,9 @@ function publishPose(stagedState, pose) {
   stagedState.renderCamera = pose.camera;
   stagedState.movedLook = pose.movedLook;
   stagedState.motionTime = pose.time;
-  const nextParts = partsWithCloth(stagedState.restParts, pose.clothGeometries, stagedState.parts);
-  const partsChanged = nextParts !== stagedState.parts;
-  stagedState.parts = nextParts;
+  const sampledParts = partsWithCloth(stagedState.restParts, pose.clothGeometries, stagedState.parts);
+  const partsChanged = sampledParts !== stagedState.parts;
+  stagedState.parts = partsChanged && stagedState.rankFlushParts ? stagedState.rankFlushParts(sampledParts) : sampledParts;
   return partsChanged;
 }
 
@@ -1798,6 +1803,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       // Part identity decides what the next stage reuses, so it compares the parts as built, before any bake.
       sourceRestParts,
       parts: restParts, restParts,
+      // Parts a pose replaces (cloth, particles, ocean) are new objects with no flush rank, so the pose ranks them again.
+      rankFlushParts: parts => stageCoplanarOffsets(recipe, parts),
       bakeSkipped: skippedBake,
       bakeReport: lightBakeResult ? agentSceneModule('bake').withLocalVolumeReport({ ...lightBakeResult.report, reused: lightBakeResult.reused }, recipe.environment.localVolumes) : null,
       reflectionReport: reflected ? reflected.report : null,
@@ -2338,7 +2345,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         return result;
       });
       const resident = geometryStats(ownedGeometryRecords());
-      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...coplanarProblems()];
+      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...coplanarProblems(), ...(state.particleSampler?.diagnostics() ?? [])];
       return {
         revision, topologyRevision,
         ...(state.recipe.motion?.ik?.length ? { motionIk: agentSceneModule('motion').compileAgentMotion(state.recipe.motion, state.recipe).sweepIk() } : {}),

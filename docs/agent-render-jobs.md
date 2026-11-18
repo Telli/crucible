@@ -9,7 +9,7 @@ Release `0.6.0` includes five MCP tools for asynchronous image and video renderi
 3. Create a scene and inspect its current revision.
 4. Submit `scene_render_submit` with the session ID, current revision and render settings.
 5. Poll `scene_render_status` until the job reaches a terminal state. The job tools take `jobId` alone; a `sessionId` is refused with that hint. A path traced job on the default cpu backend whose scene is estimated above twice 400000 triangles (the estimate can run 1.5 times high on non-indexed geometry) is refused at submit with the count, instead of failing after it started; a scene between the cap and that margin is checked exactly when the trace starts.
-6. Read `scene_render_result` after completion to obtain output paths, and SHA-256 hashes with `response_format: "detailed"`.
+6. Read `scene_render_result` after completion to obtain output paths, and SHA-256 hashes with `response_format: "detailed"`. The answer attaches every PNG of the job (up to 1 MiB each) as an image, whatever `response_format` is, and adds a resource link to each file; a harness that keeps the transcript pays for those pictures on every later turn, so pass `images: false` to get the paths, sizes and metrics only. Video is never attached.
 7. Release unwanted outputs with `scene_render_release`.
 
 For MP4 jobs, FFmpeg must be on PATH or configured with `--ffmpeg` and an absolute executable path.
@@ -31,7 +31,7 @@ The store records UUIDs that `scene_capabilities` lists after a restart.
 
 The runtime captures the source recipe and verified asset bytes before returning a job ID.
 The job uses a separate browser page and temporarily leases the single renderer.
-Preview rendering and edits pause during a job. Inspection and recipe export remain available.
+While a job runs, these tools fail until it finishes or is cancelled: `scene_create`, `scene_create_asset`, `scene_apply`, `mesh_edit`, `mesh_stack`, `scene_look`, `scene_review`, `scene_checkpoint`, `scene_restore`, `scene_release_checkpoint`, `scene_export_glb`, `scene_export_web`, `scene_dispose` and `scene_render_submit`. Inspection (`scene_inspect`, `mesh_inspect`, `scene_walkmap`), `scene_export_recipe` and the `scene_render_*` status, cancel, result and release tools stay available. The error names the running job, how many frames it has done and the two tools to call: `scene_render_status` with its `jobId`, or `scene_render_cancel`.
 The source revision, pose and checkpoints survive completion or cancellation.
 Cancellation becomes terminal after the owned encoder and job page stop and the preview recovers.
 
@@ -159,6 +159,30 @@ Videos hold the lit image only.
 A seek to any frame gives the same pixels: a job samples each frame from its time and keeps no state between frames.
 `npm run smoke:render-passes` proves it through MCP: it renders eight stills with every pass, then renders frame 3 again as an image in a different order of seeks and compares the bytes of the lit image and all five passes.
 
+### ID mattes {since 0.22.0}
+
+`settings.mattes` on an `image` or `stills` job writes one gray PNG per entry next to the lit image: `render-matte-<n>.png` (`frame-N-matte-<n>.png` for stills), where `<n>` is the entry's position. A pixel is white where the named part is drawn and black elsewhere.
+
+```json
+{ "kind": "image", "width": 1280, "height": 720, "mattes": [{ "object": "hero" }, { "material": "stone" }] }
+```
+
+Each entry names exactly one `object` (a part name from `metrics.objectNames`) or one `material` (a name from `metrics.cryptomatte.materials`), up to 8 entries and 120 characters a name. An object matte is read from the exact 24-bit object ID, so a part that other parts overlap still gets its own clean edge. A material matte is read from the `cryptomatte` pass, whose hash has 255 values: two materials can share one, and then `metrics.mattes[n].sharedWith` lists the other names and the matte holds both. A name the scene does not have fails the job with the list of names it does have.
+`metrics.mattes` holds `{ object, partIds, coveragePixels }` or `{ material, sharedWith?, coveragePixels }` for each entry, from the last frame. Mattes are 8-bit PNG: they need `format` png, no `multilayer` and no `renderer`, and they cost about one extra pass each in the job estimate.
+
+### Combining pass pixels
+
+`src/pass-compositing.js` holds the pixel steps that put passes together. They work on plain RGBA8 buffers (top row first, up to 3840x2160) with integer math, so the same input gives the same bytes on every machine, and each throws an error that says which buffer to pass instead.
+
+| Function | Result |
+| --- | --- |
+| `zCombine({ width, height, colorA, depthA, colorB, depthB })` | Per pixel, the colour and depth of the nearer input; a tie keeps A. Returns `{ color, depth, nearest }`. `depthMetresFromPass` reads a depth pass into the metres these take, and a background pixel reads `Infinity`, so it never wins. |
+| `alphaOver({ width, height, foreground, background })` | The foreground over the background, straight alpha in and out, each channel rounded to the nearest byte. |
+| `objectIdMatte`, `cryptomatteMatte` | The 0 or 255 masks behind `settings.mattes`, from an object ID pass or from the red (object) or green (material) channel of a Cryptomatte pass. |
+| `applyMatteAsAlpha({ width, height, color, mask })` | A colour buffer with the mask as its alpha: the cut-out of a part, ready for `alphaOver`. |
+
+These are library functions for scripts and addons; no MCP tool combines passes yet, and `scene_render_submit` reads no image from disk.
+
 ## Output options: transparent, 16-bit PNG, EXR, region and 60 fps
 
 ### A transparent frame sequence {since 0.21.0}
@@ -208,7 +232,7 @@ Framing fits the silhouette, not the bounding sphere. The job draws the item onc
 
 ### The sketch style
 
-Sketch is a [user pass](user-passes.md) on the shaded frame, so it has the same scene, camera and framing as the other styles. It inks the outline from the silhouette, the depth steps and the creases, hatches the shadow with pencil lines in three directions chosen by how dark the light is, and fills the model with paper. Hatch spacing is laid out in whole pixels (3 px at 64, growing with the icon) so the lines do not beat against the pixel grid. A test renders a model at 64 px and checks that the sketch stays a line pattern: the outline is inked along at least 95 percent of the silhouette, and in the hatched band at least 80 percent of the pixels are clearly paper or ink, not grey, with a contrast of at least 0.7 of the ink to paper range. [Icon sheets](learn/icon-sheets.md) (the docs guide page) shows the three styles and a breakdown.
+Sketch is a [user pass](user-passes.md) on the shaded frame, so it has the same scene, camera and framing as the other styles. It inks the outline from the silhouette, the depth steps and the creases, hatches the shadow with pencil lines in three directions chosen by how dark the light is, and fills the model with paper. Hatch spacing is laid out in whole pixels (3 px at 64, growing with the icon) so the lines do not beat against the pixel grid. A test renders a model at 64 px and checks that the sketch stays a line pattern: the outline is inked along at least 95 percent of the silhouette, and in the hatched band at least 80 percent of the pixels are clearly paper or ink, not grey, with a contrast of at least 0.7 of the ink to paper range. [Icon sheets](https://github.com/codepawl/crucible/blob/main/docs/learn/icon-sheets.md) (the docs guide page) shows the three styles and a breakdown.
 
 Output, all in the job's folder: `icon-0.png` to `icon-<n-1>.png` (one per frame, items first and then angles), `breakdown-<item>.png` (one strip per item, with `breakdown`), `atlas.png` (a near square grid, row by row, transparent where unused) and `icons.json`:
 

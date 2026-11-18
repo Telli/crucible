@@ -231,8 +231,8 @@ test('the same sketch job with a breakdown writes byte-identical files', async (
 
 test('the job store lists the breakdown strips among the artifacts it expects, and a longer deadline for icons', () => {
   const settings = normalizeJobSettings({ kind: 'icons', items: ['a.glb', 'b.glb'], size: 64, style: 'sketch', breakdown: true, angles: 4 }, [], {});
-  assert.deepEqual(artifactNames('icons', [], 'png', false, settings.frameCount, settings).slice(8, 10), ['breakdown-0.png', 'breakdown-1.png']);
-  assert.equal(artifactNames('icons', [], 'png', false, settings.frameCount, settings).length, 8 + 2 + 2);
+  assert.deepEqual(artifactNames('icons', [], 'png', false, settings.frameCount, [], settings).slice(8, 10), ['breakdown-0.png', 'breakdown-1.png']);
+  assert.equal(artifactNames('icons', [], 'png', false, settings.frameCount, [], settings).length, 8 + 2 + 2);
   const { frameCount, ...stored } = settings;
   assert.deepEqual(normalizeJobSettings(stored, [], {}), settings);
   assert.ok(jobDeadlineMs(settings) > 60000 + 8 * 4000 * 2, 'two passes of eight frames and two strips fit the deadline');

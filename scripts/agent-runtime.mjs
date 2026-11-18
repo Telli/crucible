@@ -46,6 +46,7 @@ import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, 
 import { objectIdMetrics } from './agent-object-id-metrics.mjs';
 import { renderIconsInPage } from './agent-icon-page.mjs';
 import { ICON_CAPABILITIES } from '../src/icon-sheet.js';
+import { renderJobMattes } from './job-mattes.mjs';
 import { encodeRenderOutput, encodeMultilayerExr } from './render-output-encoders.mjs';
 import { createFrameEncoder } from './frame-encoder.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
@@ -112,6 +113,12 @@ const VENDOR_FILES = Object.freeze({
 });
 
 /** Checks the launch paths that need no job folder; the CLI runs it before serving so a bad value exits with its message. */
+// What a tool that needs the preview renderer says while a render job holds it: which job, how far it is, and the next call.
+function leaseHeldMessage(record) {
+  const progress = record.state === 'running' ? ` (frame ${record.progress.frames} of ${record.settings.frameCount})` : '';
+  return `The renderer is leased to render job ${record.jobId}, which is ${record.state}${progress}. Poll scene_render_status with {"jobId":"${record.jobId}"} until it is completed, or stop it with scene_render_cancel, then call this tool again.`;
+}
+
 export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg', audio }) {
   if (browser !== undefined && (typeof browser !== 'string' || !existsSync(browser))) {
     throw new Error('The configured browser executable does not exist.');
@@ -340,19 +347,22 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return { path, filename, mimeType: 'model/gltf-binary', bytes: bytes.length,
       sha256: createHash('sha256').update(bytes).digest('hex'), keptExports: savedGlbPaths.length };
   }
-  /** True while the renderer is still leased: a render job exists that has not reached a terminal state. */
-  async function rendererStillLeased() {
-    if (phase !== 'rendering') return false;
+  /** The render job that still holds the renderer: one that has not reached a terminal state. Undefined when the renderer is free. */
+  async function leasingJob() {
+    if (phase !== 'rendering') return undefined;
     const terminal = ['completed', 'cancelled', 'failed', 'interrupted'];
-    if ((await jobs()).list().some(record => !terminal.includes(record.state))) return true;
+    const running = (await jobs()).list().find(record => !terminal.includes(record.state));
+    if (running) return running;
     // A queued job can be cancelled before its runner acquires the renderer.
     phase = 'ready';
-    return false;
+    return undefined;
+  }
+  async function rendererStillLeased() {
+    return (await leasingJob()) !== undefined;
   }
   async function requirePreviewRenderer() {
-    if (await rendererStillLeased()) {
-      throw new Error('The renderer is leased to a render job. Wait for completion or cancel the job.');
-    }
+    const holder = await leasingJob();
+    if (holder) throw new Error(leaseHeldMessage(holder));
   }
   function catalog() {
     if (!assetRoot && !packsRoot) throw new Error('Configure --assets or --packs with an absolute directory before importing GLB assets.');
@@ -889,7 +899,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       await jobPage.setViewportSize({ width, height });
       session = await jobPage.context().newCDPSession(jobPage);
       const region = settings.region;
-      if (settings.format && settings.format !== 'png') await jobPage.evaluate(prepareInput => window.__agentPreview.prepareFloatOutput(prepareInput), { sessionId: jobId });
+      if ((settings.format && settings.format !== 'png') || settings.mattes) await jobPage.evaluate(prepareInput => window.__agentPreview.prepareFloatOutput(prepareInput), { sessionId: jobId });
       if (settings.passes?.includes('wireframe')) await jobPage.evaluate(prepareInput => window.__agentPreview.prepareWireframe(prepareInput), { sessionId: jobId });
       // A memory budget can shrink the frame below the size the region was chosen for.
       if (region && (region.x + region.width > width || region.y + region.height > height)) {
@@ -1130,6 +1140,15 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             if (pass === 'objectId') {
               Object.assign(metrics, objectIdMetrics(passInfo));
             }
+          }
+          if (settings.mattes) {
+            const mattes = await renderJobMattes({ mattes: settings.mattes, renderPass: async pass => {
+              const info = await jobPage.evaluate(input => window.__agentPreview.frame(input),
+                { ...frameInput, floatOutput: false, pass, passDepthRange: RENDER_PASS_DEPTH_RANGE, passFloat: true });
+              return { info, ...(await readFloatPass(pass)) };
+            } });
+            for (const [index, matte] of mattes.entries()) await writeArtifact(`${stem}-matte-${index}.png`, matte.bytes);
+            metrics.mattes = mattes.map(matte => matte.metric);
           }
         }
           }

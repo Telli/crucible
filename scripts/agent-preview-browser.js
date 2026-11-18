@@ -21,6 +21,7 @@ import { applyProjection } from '../src/camera.js';
 import { mat4 } from 'gl-matrix';
 import { listAddedControllerKinds, listAddedCameraRigKinds, listControllerKinds, listCameraRigKinds, unregisterControllerKind, unregisterCameraRigKind } from '../src/player.js';
 import { fitAgentShadow, resolveAgentShadow, agentEnvironmentMap } from '../src/agent-look.js';
+import { pathTraceEnvironment } from '../src/path-trace-terms.js';
 import { agentSceneModule, agentSceneModuleLoaded } from '../src/agent-scene-modules.js';
 import { agentGroundPlacement, createAgentGround, placeAgentGround, FLOOR_COLOR } from '../src/agent-ground.js';
 import { groundBounceEnvironment } from '../src/ground-bounce.js';
@@ -30,6 +31,7 @@ import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { exportGlb } from '../src/export.js';
 import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
+import { sampleMotionAtZeroForGround } from './motion-ground-sample.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
@@ -211,6 +213,7 @@ function viewProblems(record, camera, exposure, { placement = false } = {}) {
   if (record.scene.bakeStaleness) problems.push(...record.scene.bakeStaleness());
   problems.push(...textureProblems({ parts: record.scene.parts }));
   if (record.scene.flushLeftovers) problems.push(...record.scene.flushLeftovers());
+  problems.push(...(record.scene.inspect({}).diagnostics ?? []).filter(problem => problem.kind === 'particle-node-transform-ignored'));
   if (exposure !== undefined) problems.push(...exposureProblems({ shares: sampleFrameShares(), exposure, environment: record.scene.environment }));
   return problems;
 }
@@ -356,7 +359,7 @@ function automaticGroundPlacement(scene) {
 
 function sampleMotionTime(scene, time) {
   if (motionGrounds.get(scene)?.revision !== scene.revision) {
-    scene.sampleMotion(0);
+    sampleMotionAtZeroForGround(scene, time);
     motionGrounds.set(scene, { revision: scene.revision, placement: agentGroundPlacement(scene.parts, scene.environment) });
   }
   scene.sampleMotion(time);
@@ -1084,7 +1087,7 @@ window.__agentPreview = {
     const result = await renderPathTracedImage({
       parts: record.scene.parts,
       // The scene's motion blur shutter also blurs a grid volume that carries velocity (#1759), in the trace as in the rasterizer.
-      environment: { ...environment, map: agentEnvironmentMap(environment), ...(record.scene.effects.motionBlur.shutter > 0 ? { volumeShutter: record.scene.effects.motionBlur.shutter } : {}) },
+      environment: { ...pathTraceEnvironment(environment), ...(record.scene.effects.motionBlur.shutter > 0 ? { volumeShutter: record.scene.effects.motionBlur.shutter } : {}) },
       camera: record.scene.camera,
     }, { ...options, exposure: record.scene.effects.exposure });
     tracedExposure = record.scene.effects.exposure;
@@ -1116,7 +1119,7 @@ window.__agentPreview = {
       import('../src/path-tracer.js'), import('../src/path-tracer-scene.js'), import('../src/path-tracer-gpu-pack.js'),
       import('@codepawlhq/cook/pack-input'), import('@codepawlhq/cook/job-input'), import('@codepawlhq/cook/grid-volume-input'),
     ]);
-    const environment = { ...record.scene.environment, map: agentEnvironmentMap(record.scene.environment) };
+    const environment = pathTraceEnvironment(record.scene.environment);
     // The "cycles" kernel gets FORMAT-v2 tables with whole materials, and copies of one geometry stay instances; the legacy kernel reads flattened v1 triangles.
     const camera = createCamera(record.scene.camera, options.width, options.height);
     heldNativeExportTables = null;
