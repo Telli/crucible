@@ -7,7 +7,7 @@ This is slice 1 of #2178. It packs a still scene. Scroll, hover and click trigge
 ## Pack a scene
 
 ```sh
-npx crucible pack scene.json --out dist/scene --poster shot.webp
+npx crucible pack scene.json --out dist/scene
 ```
 
 It writes into `dist/scene`:
@@ -16,10 +16,22 @@ It writes into `dist/scene`:
 | --- | --- |
 | `scene.pack` | the compiled parts (geometry as typed arrays), camera, lighting, effects and the shader modules the scene needs |
 | `crucible-scene.js` and its chunks | the runtime: the `<crucible-scene>` element and the renderer |
-| `poster.webp` | the picture you passed with `--poster` (WebP, PNG or JPEG) |
+| `poster.webp` | the poster: rendered from the recipe's camera, or the picture you passed with `--poster` (WebP, PNG or JPEG) |
 | `index.html` | a page that uses all of the above |
 
-`--poster` copies a picture you rendered. Pack does not render one itself yet. Without it the element shows a dark box until the 3D is ready. `--runtime <file>` names a built `crucible-scene.js` when the package has no `build/` folder, such as in a source checkout.
+## The poster
+
+Pack renders the poster itself: it opens the bundle it just wrote in headless Chrome, lets the live element draw the recipe's camera view and saves the canvas as `poster.webp`. The poster is the picture the live 3D settles on, and the element shows it at once, before the renderer has loaded.
+
+| Flag | What it does |
+| --- | --- |
+| `--poster-size <w>x<h>` | the poster size in pixels, default `1280x720`, each side from 64 to 2560 |
+| `--poster <picture>` | use a WebP, PNG or JPEG you rendered instead of rendering one |
+| `--no-poster` | write no poster; the element shows a dark box until the 3D is ready |
+
+Rendering needs Chrome (set `CHROME_PATH` to its executable when it is not installed in the usual place). Without Chrome, pack stops and says to pass `--poster` or `--no-poster`.
+
+`--runtime <file>` names a built `crucible-scene.js` when the package has no `build/` folder, such as in a source checkout.
 
 Packing the same recipe twice writes the same `scene.pack` bytes.
 
