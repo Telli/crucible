@@ -261,7 +261,7 @@ const environment = z.strictObject({
   keyColor: boundedVector(0, 1000).optional(),
   keyIntensity: bounded(0, 100).optional(),
   fillIntensity: bounded(0, 100).optional(),
-  ambientIntensity: bounded(0, 100).optional(),
+  ambientIntensity: bounded(0, 100).optional().describe('Scales the sky ambient and, with an hdri or setup environment map, that map\'s diffuse light and reflections too. 0 blacks the map out; for an HDRI-only scene keep it above 0 and set key and fill to 0.'),
   daylight: bounded(0, 100).optional(),
   keyAffects: affects.describe('Node IDs lit; default all.'),
   shadowCascades: z.number().int().min(0).max(4).optional().describe('Sun shadow slices; 0 one map.'),
@@ -329,7 +329,7 @@ const effects = z.strictObject({
   temperature: bounded(-1, 1).optional(),
   vignette: unit.optional(),
   grain: bounded(0, 0.1).optional(),
-  ambientOcclusion: unit.optional().describe('Screen-space contact darkening, 0 off to 1 full. Default 0.7 when unset; 0 skips the pass.'),
+  ambientOcclusion: unit.optional().describe('Screen-space contact darkening, 0 off to 1 full. Default 0 (off) when unset; above 0 turns the pass on.'),
   ambientOcclusionRadius: bounded(0.01, 100).optional().describe('World-space reach of the occlusion; default 0.5.'),
   bloom: z.strictObject({
     strength: bounded(0, 2).optional(),
