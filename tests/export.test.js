@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createModel } from '../src/model.js';
+import { loadSampleParts, withoutTextures } from './helpers/sample-model.js';
 import { exportGlb } from '../src/export.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { box } from '../src/geometry.js';
@@ -9,7 +9,7 @@ import { mat4 } from 'gl-matrix';
 import { Vector3 } from 'three';
 
 test('exported GLB loads with an independent glTF loader and preserves every part', async () => {
-  const parts = createModel();
+  const parts = withoutTextures(await loadSampleParts());
   const binary = exportGlb(parts);
   const header = new DataView(binary);
   assert.equal(header.getUint32(0, true), 0x46546c67);
@@ -22,7 +22,7 @@ test('exported GLB loads with an independent glTF loader and preserves every par
 });
 
 test('GLB export writes alpha mode, cutoff, opacity and double-sided so the loader reads them back', async () => {
-  const part = createModel()[0];
+  const part = withoutTextures(await loadSampleParts())[0];
   const material = { ...part.material, alphaMode: 'mask', alphaCutoff: 0.3, opacity: 0.6, doubleSided: true };
   const gltf = await new GLTFLoader().parseAsync(exportGlb([{ ...part, material }]), '');
   let loaded;
@@ -32,24 +32,24 @@ test('GLB export writes alpha mode, cutoff, opacity and double-sided so the load
   assert.ok(Math.abs(loaded.opacity - 0.6) < 1e-6);
 });
 
-test('GLB export names the fix when textures have no UVs or exceed the size limit', () => {
-  const part = createModel()[0];
+test('GLB export names the fix when textures have no UVs or exceed the size limit', async () => {
+  const part = withoutTextures(await loadSampleParts())[0];
   const image = { width: 4, height: 4, data: new Uint8ClampedArray(64).fill(255) };
-  const textured = { ...part, material: { ...part.material, map: { image } } };
+  const textured = { ...part, geometry: { ...part.geometry, uvs: undefined }, material: { ...part.material, map: { image } } };
   assert.throws(() => exportGlb([textured]), /uv_unwrap/);
   const withUvs = { ...textured, geometry: { ...part.geometry, uvs: new Float32Array(part.geometry.positions.length / 3 * 2) } };
   assert.throws(() => exportGlb([withUvs], { maxTextureSize: 2 }), /maxTextureSize 2/);
   assert.ok(exportGlb([withUvs]).byteLength > 0);
 });
 
-test('GLB export rejects a skin without joints and skin attributes without a skin', () => {
-  const part = createModel()[0];
+test('GLB export rejects a skin without joints and skin attributes without a skin', async () => {
+  const part = withoutTextures(await loadSampleParts())[0];
   assert.throws(() => exportGlb([{ ...part, geometry: { ...part.geometry, skinIndices: new Uint16Array(4) } }]), /[Ss]kin/);
   assert.throws(() => exportGlb([{ ...part, skin: { jointMatrices: new Float32Array(16) } }]), /[Ss]kin/);
 });
 
-test('GLB export rejects malformed morph pairs rather than discarding expressions', () => {
-  const part = createModel()[0];
+test('GLB export rejects malformed morph pairs rather than discarding expressions', async () => {
+  const part = withoutTextures(await loadSampleParts())[0];
   assert.throws(() => exportGlb([{ ...part, morph: { weights: new Float32Array(1) } }]), /target array/);
   assert.throws(() => exportGlb([{ ...part, geometry: { ...part.geometry, morphTargets: [] } }]), /require a morph pose/);
 });
@@ -297,7 +297,7 @@ test('GLB Float32 rotated nonuniform, reflected and tiny TRS transforms roundtri
 });
 
 test('GLB export writes an additive material as BLEND because glTF has no additive mode', async () => {
-  const part = createModel()[0];
+  const part = withoutTextures(await loadSampleParts())[0];
   const material = { ...part.material, alphaMode: 'add', opacity: 0.5 };
   const gltf = await new GLTFLoader().parseAsync(exportGlb([{ ...part, material }]), '');
   let loaded;

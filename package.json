@@ -190,7 +190,6 @@
     "render": "node scripts/render-media.mjs",
     "docs:media": "node scripts/render-doc-media.mjs",
     "score": "node scripts/score.mjs",
-    "export:model": "node scripts/export-model.mjs",
     "smoke:package": "node scripts/smoke-package.mjs",
     "mcp": "node bin/crucible-mcp.mjs",
     "smoke:mcp": "node scripts/smoke-mcp.mjs",

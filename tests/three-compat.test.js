@@ -166,7 +166,7 @@ test('unsupported three.js names throw an error that names the Crucible replacem
   const cases = [
     ['MeshBasicMaterial', /MeshStandardMaterial.*emission/],
     ['ShaderMaterial', /no custom shaders/],
-    ['ConeGeometry', /createModel/],
+    ['ConeGeometry', /lathe/],
     ['WebGLRenderTarget', /toBlob/],
     ['Fog', /fogDensity/],
     ['EffectComposer', /resolveEffects/],
@@ -178,7 +178,7 @@ test('unsupported three.js names throw an error that names the Crucible replacem
     assert.throws(() => THREE[name], error => error.message.includes(`THREE.${name}`) && replacement.test(error.message) && error.message.includes('if-you-know-three-js.md'), name);
   }
   assert.throws(() => new THREE.MeshStandardMaterial({ aoMap: {} }), /occlusionMap/);
-  assert.throws(() => new THREE.CylinderGeometry(0, 1, 2), /createModel/);
+  assert.throws(() => new THREE.CylinderGeometry(0, 1, 2), /lathe/);
   assert.throws(() => new THREE.MeshStandardMaterial({ side: THREE.BackSide }).toMaterial(), /doubleSided/);
   assert.throws(() => new THREE.Color('red'), /hex/);
   assert.throws(() => new THREE.Mesh({}, new THREE.MeshStandardMaterial()), /box\(\)/);
@@ -186,7 +186,7 @@ test('unsupported three.js names throw an error that names the Crucible replacem
 });
 
 test('every Crucible call named by an error exists', () => {
-  const known = new Set([...Object.keys(core), ...Object.getOwnPropertyNames(core.CrucibleRenderer.prototype), 'loadGltf', 'createModel', 'box', 'sphere', 'cylinder', 'torus', 'canvas.toBlob', 'Texture']);
+  const known = new Set([...Object.keys(core), ...Object.getOwnPropertyNames(core.CrucibleRenderer.prototype), 'loadGltf', 'createModel', 'lathe', 'box', 'sphere', 'cylinder', 'torus', 'canvas.toBlob', 'Texture']);
   assert.ok(unsupportedNames.length >= 20);
   for (const name of unsupportedNames) {
     let message = '';

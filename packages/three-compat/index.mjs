@@ -19,8 +19,8 @@ const UNSUPPORTED = {
   MeshNormalMaterial: 'Use MeshStandardMaterial (Crucible: material { color, metallic, roughness }).',
   ShaderMaterial: 'Crucible has no custom shaders. Use the material fields of materials-and-color (Crucible: part.material).',
   RawShaderMaterial: 'Crucible has no custom shaders. Use the material fields of materials-and-color (Crucible: part.material).',
-  ConeGeometry: 'Model a cone with createModel() from crucible/addons/model, or use CylinderGeometry with equal radii.',
-  CapsuleGeometry: 'Model it with createModel() from crucible/addons/model, or combine CylinderGeometry and SphereGeometry.',
+  ConeGeometry: 'Model a cone with lathe() from crucible/addons/modeling, or use CylinderGeometry with equal radii.',
+  CapsuleGeometry: 'Model it with lathe() from crucible/addons/modeling, or combine CylinderGeometry and SphereGeometry.',
   CircleGeometry: 'Use CylinderGeometry with a small height (Crucible: cylinder()).',
   IcosahedronGeometry: 'Use SphereGeometry (Crucible: sphere()).',
   BufferGeometry: 'A part takes a geometry object { positions, normals, indices } (Crucible: geometry in a part). Build one with box(), sphere(), cylinder(), torus() or createModel().',
@@ -352,7 +352,7 @@ export function createThreeCompat(core) {
   class CylinderGeometry {
     constructor(radiusTop = 1, radiusBottom = 1, height = 1, radialSegments = 32) {
       if (radiusTop !== radiusBottom) {
-        throw unsupported('CylinderGeometry with different radii', 'Use equal radii, or model a cone with createModel() from crucible/addons/model.');
+        throw unsupported('CylinderGeometry with different radii', 'Use equal radii, or model a cone with lathe() from crucible/addons/modeling.');
       }
       this[geometrySymbol] = {
         build: () => shared(`cylinder:${radialSegments}`, () => core.cylinder(radialSegments)),

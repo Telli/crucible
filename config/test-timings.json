@@ -415,7 +415,6 @@
   "tests/version.test.js": 1,
   "tests/view-transform.test.js": 58,
   "tests/volumetric.test.js": 9,
-  "tests/wall-e-preview-scene.test.js": 693,
   "tests/water-ocean-look.test.js": 75,
   "tests/water-reflection.test.js": 463,
   "tests/water-shadows-render.test.js": 2,

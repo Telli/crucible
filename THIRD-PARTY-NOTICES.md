@@ -78,9 +78,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-## WALL-E character
+## Vintage Microscope (sample model, not in the npm package)
 
-The Crucible license covers the authored source code. WALL-E character rights belong to Disney/Pixar. No ownership of that character is claimed.
+`public/sample-model.glb` is the Poly Haven model "Vintage Microscope" (https://polyhaven.com/a/vintage_microscope) by Luis José Fernández Rodríguez, under CC0-1.0. It was downscaled to 512 px JPEG textures and quantized; the eight parts keep their original node names.
 
 ## Built files
 

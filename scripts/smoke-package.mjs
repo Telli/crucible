@@ -63,7 +63,7 @@ const example = `import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { VERSION, CrucibleRenderer, box, assemblyOffset, cameraView, fitPerspectiveDistance, createAnimationClip, sampleAnimationClip, EFFECT_PRESETS, createMorphPose, MAX_MORPH_TARGETS, exportGlb } from 'crucible';
-import { createModel } from 'crucible/addons/model';
+import { assembleSampleModel, loadSampleModel } from 'crucible/addons/model';
 import * as nature from 'crucible/addons/nature';
 import { createMotionScene } from 'crucible/addons/motion';
 import { createCanvas2D } from 'crucible/addons/canvas2d';
@@ -219,8 +219,11 @@ if (${!published}) {
   assert.equal(importedSession.exportRecipe().format, 'crucible.asset');
   parsedAgentAsset.dispose();
 }
-const parts = createModel();
-assert.equal(parts.length, 574);
+const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+const parts = assembleSampleModel(['vintage_microscope_base', 'vintage_microscope_eye_piece'].map(name => ({ name, matrix: identity })));
+assert.deepEqual(parts.map(part => part.name), ['Base', 'Eyepiece tube']);
+assert.throws(() => assembleSampleModel([{ name: 'unknown', matrix: identity }]), /no assembly entry/);
+await assert.rejects(() => loadSampleModel(), /URL, File or Blob/);
 assert.ok(parts.every(part => assemblyOffset(part, 1).some(value => value !== 0)));
 assert.ok(Object.keys(nature).length > 0);
 await assert.rejects(() => import('crucible/addons/film'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });

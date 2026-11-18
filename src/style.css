@@ -36,12 +36,6 @@ h1 { font-weight: 450; font-size: clamp(32px, 3.4vw, 55px); line-height: 1.1; le
 .layer-actions button { padding: 8px 10px; font-size: 11px; flex: 1; }
 fieldset { padding: 0; margin: 0 0 28px; border: 0; }
 legend { color: #c5cecf; padding: 0; margin-bottom: 13px; }
-.finishes { display: flex; gap: 14px; margin-bottom: 12px; }
-.swatch { width: 27px; height: 27px; padding: 0; background: var(--swatch); border-radius: 50%; box-shadow: inset 0 0 0 1px #ffffff35; }
-.swatch:hover { background: var(--swatch); transform: scale(1.08); }
-.swatch.selected { outline: 1px solid #d6e6e0; outline-offset: 4px; }
-.swatch[aria-pressed=true] { background: var(--swatch); }
-#finish-name { color: #93a4ac; }
 .exposure-label { display: flex; justify-content: space-between; }
 output { color: #98aaa9; font-variant-numeric: tabular-nums; }
 input[type=range] { width: 100%; margin: 14px 0 25px; accent-color: #b7eddf; cursor: pointer; }
@@ -86,7 +80,6 @@ h2 { font-weight: 500; font-size: 20px; margin: 0 0 15px; }
   .assembly-control { grid-column: span 2; margin: 0 0 10px; }
   fieldset { margin: 0; grid-row: span 2; }
   legend { margin-bottom: 12px; }
-  .finishes { margin-bottom: 10px; }
   .exposure-label { align-self: end; }
   input[type=range] { margin: 0; }
   .view-actions { grid-column: span 2; display: flex; gap: 12px; }

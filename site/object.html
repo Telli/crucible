@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#25292d" />
-    <meta name="description" content="Explore WALL·E inside and out. An explodable procedural 3D study rendered with Crucible." />
+    <meta name="description" content="Take a vintage brass microscope apart, part by part. A CC0 model from Poly Haven, rendered with Crucible." />
     <title>Crucible · Object studio</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" /><link rel="icon" href="/favicon.ico?v=2" sizes="48x48" /><link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
@@ -19,9 +19,9 @@
         </div>
       </header>
       <section class="object-info" aria-labelledby="object-title">
-        <h1 id="object-title">WALL·E, <br />inside out.</h1>
-        <p id="model-description">Pull apart the shell. Explore the machinery. <br />Slide back to bring him together.</p>
-        <div class="object-caption"><span class="status-dot" aria-hidden="true">●</span> <span id="model-name">WALL·E study</span><span class="caption-separator">/</span><span>Procedural geometry</span></div>
+        <h1 id="object-title">Microscope, <br />inside out.</h1>
+        <p id="model-description">Pull apart the stand. Explore the optics. <br />Slide back to put it together.</p>
+        <div class="object-caption"><span class="status-dot" aria-hidden="true">●</span> <span id="model-name">Microscope study</span><span class="caption-separator">/</span><span>Poly Haven, CC0</span></div>
       </section>
       <canvas id="viewport" tabindex="0" aria-label="3D model. Drag or use arrow keys to orbit. Scroll or use plus and minus to zoom."></canvas>
       <aside class="controls" aria-label="Model appearance">
@@ -29,20 +29,11 @@
           <label for="assembly">Explode model <output id="assembly-value">0%</output></label>
           <input id="assembly" type="range" min="0" max="100" step="1" value="0" aria-valuetext="Assembled" />
           <div class="assembly-endpoints"><span>Assembled</span><span>Exploded</span></div>
-          <div class="layer-actions" role="group" aria-label="Model layers"><button data-layer="all" aria-pressed="true">All</button><button data-layer="exterior" aria-pressed="false">Shell</button><button data-layer="interior" aria-pressed="false">Inside</button></div>
+          <div class="layer-actions" role="group" aria-label="Model layers"><button data-layer="all" aria-pressed="true">All</button><button data-layer="exterior" aria-pressed="false">Stand</button><button data-layer="interior" aria-pressed="false">Optics</button></div>
         </div>
-        <fieldset>
-          <legend>Finish</legend>
-          <div class="finishes">
-            <button class="swatch selected" data-finish="yellow" aria-label="Yellow finish" aria-pressed="true" style="--swatch:#d8a33c"></button>
-            <button class="swatch" data-finish="ceramic" aria-label="Ceramic finish" aria-pressed="false" style="--swatch:#d7e0de"></button>
-            <button class="swatch" data-finish="graphite" aria-label="Graphite finish" aria-pressed="false" style="--swatch:#59666e"></button>
-          </div>
-          <span id="finish-name">Factory yellow</span>
-        </fieldset>
         <label class="exposure-label" for="exposure">Exposure <output id="exposure-value">1.0</output></label>
         <input id="exposure" type="range" min="0.5" max="1.8" step="0.1" value="1" />
-        <div class="demo-presets" role="group" aria-label="Model composition"><button data-view="hero" aria-pressed="true">Hero</button><button data-view="face" aria-pressed="false">Face</button><button data-view="machine" aria-pressed="false">Machinery</button></div><label class="quality-label" for="look">Lighting<select id="look"><option value="studio">Soft studio</option><option value="warm">Warm key</option><option value="cool">Cool metal</option></select></label><div class="demo-presets"><button id="assembly-tour">Play assembly</button><button id="save-model">Save PNG</button></div><div class="view-actions">
+        <div class="demo-presets" role="group" aria-label="Model composition"><button data-view="hero" aria-pressed="true">Hero</button><button data-view="eyepiece" aria-pressed="false">Eyepiece</button><button data-view="parts" aria-pressed="false">Parts</button></div><label class="quality-label" for="look">Lighting<select id="look"><option value="studio">Soft studio</option><option value="warm">Warm key</option><option value="cool">Cool metal</option></select></label><div class="demo-presets"><button id="assembly-tour">Play assembly</button><button id="save-model">Save PNG</button></div><div class="view-actions">
           <button id="rotate" aria-pressed="false">↻ Auto orbit</button>
           <button id="inspect" aria-pressed="false">Surface normals</button>
         </div>

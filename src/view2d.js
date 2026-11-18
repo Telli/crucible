@@ -2,7 +2,7 @@ import './view2d.css';
 import './brand.js';
 import { vec3 } from 'gl-matrix';
 import { CrucibleRenderer } from './renderer.js';
-import { createModel } from './model.js';
+import { loadSampleModel } from './model.js';
 import { createCanvas2D } from './canvas2d.js';
 import { cameraView, fitOrthographicHeight } from './camera.js';
 
@@ -11,8 +11,23 @@ const parameters = new URLSearchParams(location.search);
 const exporting = parameters.get('export') === '1';
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const poster = createCanvas2D();
-const model = createModel();
-const modelBounds = { minimum: [-1.241, 0.0515, -0.761], maximum: [1.241, 2.876, 0.934] };
+const model = await loadSampleModel(new URL('sample-model.glb', document.baseURI));
+function boundsOf(parts) {
+  const minimum = [Infinity, Infinity, Infinity];
+  const maximum = [-Infinity, -Infinity, -Infinity];
+  for (const { matrix, geometry } of parts) {
+    const { positions } = geometry;
+    for (let offset = 0; offset < positions.length; offset += 3) {
+      for (let axis = 0; axis < 3; axis++) {
+        const world = matrix[axis] * positions[offset] + matrix[axis + 4] * positions[offset + 1] + matrix[axis + 8] * positions[offset + 2] + matrix[axis + 12];
+        minimum[axis] = Math.min(minimum[axis], world);
+        maximum[axis] = Math.max(maximum[axis], world);
+      }
+    }
+  }
+  return { minimum, maximum };
+}
+const modelBounds = boundsOf(model);
 const initialView = ['front', 'top', 'right', 'perspective'].includes(parameters.get('view')) ? parameters.get('view') : 'front';
 const state = { scene: parameters.get('scene') === 'model' ? 'model' : 'poster', view: initialView, time: 0, playing: false, zoom: 1, pan: [0, 0], exporting };
 let renderer;
@@ -38,7 +53,7 @@ function notify(message, failure = false) {
 
 function camera() {
   const aspect = Math.max(1, canvas.clientWidth) / Math.max(1, canvas.clientHeight);
-  const target = state.scene === 'poster' ? [0, 0, 0] : [0, 1.46, 0];
+  const target = state.scene === 'poster' ? [0, 0, 0] : [0, 1.8, 0];
   const view = cameraView(state.scene === 'poster' ? 'front' : state.view, { target, distance: 7.8 });
   const bounds = state.scene === 'poster' ? poster.bounds : modelBounds;
   const fitted = fitOrthographicHeight(bounds, view, aspect, state.scene === 'poster' ? 1.14 : 1.2);
@@ -54,7 +69,7 @@ function camera() {
     const direction = vec3.normalize(vec3.create(), vec3.subtract(vec3.create(), view.eye, view.target));
     view.eye = Array.from(vec3.scaleAndAdd(vec3.create(), view.target, direction, distance));
   }
-  return { ...view, armorColor: [0.73, 0.43, 0.065], armorSurface: [0.62, 0.43], exposure: 1, time: state.time, assemblyAmount: 0 };
+  return { ...view, exposure: 1, time: state.time, assemblyAmount: 0 };
 }
 
 function renderAt(time) {
@@ -101,12 +116,12 @@ function initialize() {
   document.querySelector('#scene').value = state.scene;
   document.querySelector('#view-controls').hidden = state.scene === 'poster';
   document.querySelectorAll('[data-view]').forEach(control => control.setAttribute('aria-pressed', String(control.dataset.view === state.view)));
-  document.querySelector('#scene-title').textContent = state.scene === 'poster' ? 'Orbital field' : 'WALL·E study';
+  document.querySelector('#scene-title').textContent = state.scene === 'poster' ? 'Orbital field' : 'Microscope study';
   document.querySelector('#view-title').textContent = state.scene === 'poster' ? 'Flat vector geometry · orthographic' : `${state.view[0].toUpperCase()}${state.view.slice(1)} · ${state.view === 'perspective' ? 'perspective' : 'orthographic'}`;
   document.querySelector('#metrics').textContent = `${parts.length} parts · ${renderer.batches.length} draws`;
   document.querySelector('#time').disabled = state.scene === 'model';
   document.querySelector('#play').disabled = state.scene === 'model';
-  canvas.setAttribute('aria-label', `${state.scene === 'poster' ? 'Vector poster' : 'WALL-E camera view'}. Drag to pan, scroll to zoom. Arrow keys pan, plus and minus zoom.`);
+  canvas.setAttribute('aria-label', `${state.scene === 'poster' ? 'Vector poster' : 'Microscope camera view'}. Drag to pan, scroll to zoom. Arrow keys pan, plus and minus zoom.`);
   invalidate();
 }
 

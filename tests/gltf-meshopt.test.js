@@ -234,7 +234,7 @@ test('the INDICES mode returns the same index sequence', async () => {
 
 test('the public showcase and sample GLBs load without a decoder option', async () => {
   globalThis.createImageBitmap ??= async () => ({ width: 4, height: 4, close() {} });
-  const bytes = await readFile(new URL('../public/wall-e.glb', import.meta.url));
+  const bytes = await readFile(new URL('../public/sample-model.glb', import.meta.url));
   const asset = await parseGltf(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), { maxVertices: 500000 });
   assert.ok(asset.parts.length > 0);
 });
