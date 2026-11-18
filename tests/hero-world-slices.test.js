@@ -157,3 +157,29 @@ test('a world built in slices on a sliced sky draws the same pixels as the one-p
     assert.equal(result.differing, 0, 'the sliced build draws the same bytes');
   });
 });
+
+test('replaceParts reads the layer state of a material once per call, not once per value of every group (#779)', async (testContext) => {
+  const { withDevServerPage } = await import('./helpers/dev-server-browser.js');
+  await withDevServerPage(testContext, async (page) => {
+    const result = await page.evaluate(async () => {
+      const { box } = await import('/src/geometry.js');
+      const { CrucibleRenderer } = await import('/src/renderer.js');
+      const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+      let clearcoatReads = 0;
+      const material = { tag: 'surface', color: [0.5, 0.5, 0.5], metallic: 0, roughness: 0.5, emission: 0 };
+      Object.defineProperty(material, 'clearcoat', { get() { clearcoatReads++; return 0; }, enumerable: true });
+      const parts = [1, 2, 3, 4, 5, 6].map(size => ({ name: `box-${size}`, geometry: box(0, size), matrix: identity, material }));
+      const canvas = document.createElement('canvas');
+      canvas.width = 32;
+      canvas.height = 32;
+      document.body.append(canvas);
+      const renderer = new CrucibleRenderer(canvas, parts.slice(0, 1), { samples: 1, pixelRatio: 1 });
+      renderer.replaceParts(parts);
+      clearcoatReads = 0;
+      renderer.replaceParts(parts);
+      return { clearcoatReads, groupCount: renderer.batches.length };
+    });
+    assert.equal(result.groupCount, 7, "six boxes and the floor");
+    assert.ok(result.clearcoatReads <= 12, `six groups of one material should read the layer state a few times, read it ${result.clearcoatReads} times`);
+  });
+});
