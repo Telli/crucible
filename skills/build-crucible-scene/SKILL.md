@@ -40,6 +40,8 @@ Variants: `scene_apply` with a `branch` name, compare in one `scene_review` (a `
 |---|---|
 | Sky, HDRI, `.cube` look, tone mapping, fog, exposure, bloom, AO, outlines | `${CLAUDE_SKILL_DIR}/references/look.md` |
 | Sun, point, spot and area lights, caps, baked bounce light, flush faces | `${CLAUDE_SKILL_DIR}/references/light.md` |
+| Colour, patterns, glass, clearcoat, water tags, shader hooks, judging a surface | `${CLAUDE_SKILL_DIR}/references/materials.md` |
+| Spray, dust, sparks, sea foam, particle caps, fog and beams | `${CLAUDE_SKILL_DIR}/references/particles-and-vfx.md` |
 | Lens, focal length, depth of field, shift, orthographic | `${CLAUDE_SKILL_DIR}/references/camera.md` |
 | Motion tracks (camera, nodes, lights, sun, sky, effects), shots, timeline | `${CLAUDE_SKILL_DIR}/references/film-and-animation.md` |
 | A call failed, a diagnostic appeared, the picture is wrong | `${CLAUDE_SKILL_DIR}/references/errors-and-recovery.md` |
