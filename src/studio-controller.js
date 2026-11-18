@@ -19,6 +19,10 @@ const GIZMO_AXES = Object.freeze(['x', 'y', 'z', 'xy', 'xz', 'yz', 'screen', 'un
 const SHOT_NAME_PATTERN = /^[A-Za-z0-9_-]{1,24}$/;
 const GIZMO_SCREEN_PIXELS = 74;
 const ROTATION_RING_SEGMENTS = 32;
+const WORLD_BASIS = Object.freeze({ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] });
+const AXIS_PARALLEL_LIMIT = 0.002;
+const RING_EDGE_ON_LIMIT = 0.12;
+const MINIMUM_SCALE_GRAB_PIXELS = 8;
 const ROTATION_DEGREES_PER_PIXEL = 0.75;
 const ROTATION_SNAP_DEGREES = 15;
 const TRANSLATION_SNAP_STEP = 0.25;
@@ -357,10 +361,41 @@ function rayPlaneIntersection(rayOrigin, rayDirection, planePoint, planeNormal) 
   ];
 }
 
-function planeNormalForAxis(axis, camera) {
-  if (axis === 'xy') return [0, 0, 1];
-  if (axis === 'xz') return [0, 1, 0];
-  if (axis === 'yz') return [1, 0, 0];
+// The three unit axes of a node in world space, read from its world matrix, so the gizmo follows the object.
+function worldBasisOf(matrix) {
+  const axisAt = (offset, fallback) => {
+    const axis = vec3.fromValues(matrix[offset], matrix[offset + 1], matrix[offset + 2]);
+    if (vec3.length(axis) < 1e-8) {
+      return fallback;
+    }
+    vec3.normalize(axis, axis);
+    return [axis[0], axis[1], axis[2]];
+  };
+  return { x: axisAt(0, [1, 0, 0]), y: axisAt(4, [0, 1, 0]), z: axisAt(8, [0, 0, 1]) };
+}
+
+// Distance along an axis line of the point nearest to a pointer ray. Null when the ray runs along the axis.
+function rayAxisParameter(ray, linePoint, lineDirection) {
+  const between = vec3.subtract(vec3.create(), ray.origin, linePoint);
+  const directionDot = vec3.dot(ray.direction, lineDirection);
+  const denominator = 1 - directionDot * directionDot;
+  if (denominator < AXIS_PARALLEL_LIMIT) {
+    return null;
+  }
+  const alongLine = vec3.dot(between, lineDirection);
+  const alongRay = vec3.dot(between, ray.direction);
+  return (alongLine - directionDot * alongRay) / denominator;
+}
+
+function signedAngleAround(axis, fromVector, toVector) {
+  const crossed = vec3.cross(vec3.create(), fromVector, toVector);
+  return Math.atan2(vec3.dot(crossed, axis), vec3.dot(fromVector, toVector));
+}
+
+function planeNormalForAxis(axis, camera, basis = WORLD_BASIS) {
+  if (axis === 'xy') return basis.z;
+  if (axis === 'xz') return basis.y;
+  if (axis === 'yz') return basis.x;
   const look = vec3.subtract(vec3.create(), camera.eye, camera.target);
   if (vec3.length(look) < 1e-6) {
     return [0, 0, 1];
@@ -526,16 +561,20 @@ export function createStudioController({
     }
   }
 
-  function selectedPivotWorld() {
+  function selectedWorldMatrix() {
     if (!selectedNodeId) {
       return null;
     }
     const matchingPart = currentScene.parts.find(part => part.name === selectedNodeId);
     if (matchingPart?.matrix) {
-      return [matchingPart.matrix[12], matchingPart.matrix[13], matchingPart.matrix[14]];
+      return matchingPart.matrix;
     }
     const recipe = currentScene.exportRecipe();
-    const matrix = buildNodeWorldMatrices(recipe.nodes).get(selectedNodeId);
+    return buildNodeWorldMatrices(recipe.nodes).get(selectedNodeId) ?? null;
+  }
+
+  function selectedPivotWorld() {
+    const matrix = selectedWorldMatrix();
     if (!matrix) {
       return null;
     }
@@ -642,24 +681,30 @@ export function createStudioController({
     const handleLength = Math.max(0.25, worldLengthPerPixel(pivot) * GIZMO_SCREEN_PIXELS);
     const origin = projectWorldPoint(pivot);
     const planeExtent = handleLength * 0.4;
-    const planeCorner = (deltaX, deltaY, deltaZ) => projectWorldPoint([pivot[0] + deltaX, pivot[1] + deltaY, pivot[2] + deltaZ]);
+    const basis = worldBasisOf(selectedWorldMatrix());
+    const planeCorner = (alongX, alongY, alongZ) => projectWorldPoint([
+      pivot[0] + basis.x[0] * alongX + basis.y[0] * alongY + basis.z[0] * alongZ,
+      pivot[1] + basis.x[1] * alongX + basis.y[1] * alongY + basis.z[1] * alongZ,
+      pivot[2] + basis.x[2] * alongX + basis.y[2] * alongY + basis.z[2] * alongZ,
+    ]);
     const ringPoints = axis => {
       const points = [];
       for (let step = 0; step <= ROTATION_RING_SEGMENTS; step += 1) {
         const angle = (step / ROTATION_RING_SEGMENTS) * Math.PI * 2;
         const cosine = Math.cos(angle) * handleLength * 0.92;
         const sine = Math.sin(angle) * handleLength * 0.92;
-        const worldOffset = axis === 'x'
+        const localOffset = axis === 'x'
           ? [0, cosine, sine]
           : axis === 'y'
             ? [cosine, 0, sine]
             : [cosine, sine, 0];
-        points.push(projectWorldPoint([pivot[0] + worldOffset[0], pivot[1] + worldOffset[1], pivot[2] + worldOffset[2]]));
+        points.push(planeCorner(localOffset[0], localOffset[1], localOffset[2]));
       }
       return points;
     };
     return {
       pivot,
+      basis,
       handleLength,
       origin,
       axes: {
@@ -761,12 +806,21 @@ export function createStudioController({
     }
     const basePivot = handles?.pivot ?? Array.from(node.translation ?? [0, 0, 0]);
     const isPlanar = PLANE_AXES.includes(axis) || axis === 'screen';
-    const planeNormal = isPlanar ? planeNormalForAxis(axis, currentScene.camera) : null;
+    const basis = handles?.basis ?? WORLD_BASIS;
+    const planeNormal = isPlanar ? planeNormalForAxis(axis, currentScene.camera, basis) : null;
+    const startRay = screenRay(pixelX, pixelY);
     let planeStartPoint = basePivot;
     if (planeNormal) {
-      const ray = screenRay(pixelX, pixelY);
-      planeStartPoint = rayPlaneIntersection(ray.origin, ray.direction, basePivot, planeNormal) ?? basePivot;
+      planeStartPoint = rayPlaneIntersection(startRay.origin, startRay.direction, basePivot, planeNormal) ?? basePivot;
     }
+    const axisWorld = AXIS_NAMES.includes(axis) ? basis[axis] : null;
+    const axisStartParameter = axisWorld ? rayAxisParameter(startRay, basePivot, axisWorld) : null;
+    let ringStartVector = null;
+    if (axisWorld && Math.abs(vec3.dot(startRay.direction, axisWorld)) > RING_EDGE_ON_LIMIT) {
+      const ringHit = rayPlaneIntersection(startRay.origin, startRay.direction, basePivot, axisWorld);
+      ringStartVector = ringHit ? vec3.subtract(vec3.create(), ringHit, basePivot) : null;
+    }
+    const originScreen = handles?.origin ?? null;
     const worldPerPixel = worldLengthPerPixel(basePivot);
     const toolMode = axis === 'surface' ? 'snap' : activeTool === 'select' ? 'translate' : activeTool;
     dragState = {
@@ -782,6 +836,10 @@ export function createStudioController({
       baseScale: Array.from(node.scale ?? [1, 1, 1]),
       parentInverse: parentWorld ? mat4.invert(mat4.create(), parentWorld) : null,
       axisScreen,
+      axisWorld,
+      axisStartParameter,
+      ringStartVector,
+      originScreen,
       planeNormal,
       planeStartPoint,
       worldPerPixel,
@@ -858,9 +916,14 @@ export function createStudioController({
       return { translation };
     }
     if (dragState.tool === 'translate' && axisIndex >= 0) {
-      const projectedPixels = deltaX * dragState.axisScreen[0] + deltaY * dragState.axisScreen[1];
-      const worldDelta = [0, 0, 0];
-      worldDelta[axisIndex] = projectedPixels * dragState.worldPerPixel;
+      const axisParameter = dragState.axisStartParameter === null
+        ? null
+        : rayAxisParameter(screenRay(pixelX, pixelY), dragState.basePivot, dragState.axisWorld);
+      const maxTravel = Math.max(12, vec3.distance(currentScene.camera.eye, dragState.basePivot) * 4);
+      const pixelTravel = (deltaX * dragState.axisScreen[0] + deltaY * dragState.axisScreen[1]) * dragState.worldPerPixel;
+      const exactTravel = axisParameter === null ? pixelTravel : axisParameter - dragState.axisStartParameter;
+      const travel = Math.max(-maxTravel, Math.min(maxTravel, exactTravel));
+      const worldDelta = [dragState.axisWorld[0] * travel, dragState.axisWorld[1] * travel, dragState.axisWorld[2] * travel];
       const localDelta = toNodeLocalDelta(worldDelta, dragState.parentInverse);
       const rawTranslation = [
         dragState.baseTranslation[0] + localDelta[0],
@@ -870,18 +933,26 @@ export function createStudioController({
       const translation = roundVector(shiftKey ? snapVector(rawTranslation) : rawTranslation);
       applySceneOperations([{ type: 'set-node', id: dragState.nodeId, translation }], { recordUndo: false });
       dragState.changed = true;
-      const signed = translation[axisIndex] - dragState.baseTranslation[axisIndex];
-      dragState.deltaLabel = `${dragState.axis.toUpperCase()} ${signed >= 0 ? '+' : ''}${signed.toFixed(2)} m`;
+      dragState.deltaLabel = `${dragState.axis.toUpperCase()} ${travel >= 0 ? '+' : ''}${travel.toFixed(2)} m`;
       notify({ kind: 'transform', nodeId: dragState.nodeId, live: true, deltaLabel: dragState.deltaLabel });
       return { translation };
     }
     if (dragState.tool === 'rotate') {
-      const rawDegrees = (deltaX - deltaY) * ROTATION_DEGREES_PER_PIXEL;
+      let rawDegrees = (deltaX - deltaY) * ROTATION_DEGREES_PER_PIXEL;
+      if (dragState.ringStartVector) {
+        const ray = screenRay(pixelX, pixelY);
+        const ringHit = rayPlaneIntersection(ray.origin, ray.direction, dragState.basePivot, dragState.axisWorld);
+        if (ringHit) {
+          const ringVector = vec3.subtract(vec3.create(), ringHit, dragState.basePivot);
+          rawDegrees = (signedAngleAround(dragState.axisWorld, dragState.ringStartVector, ringVector) * 180) / Math.PI;
+        }
+      }
       const degrees = shiftKey ? Math.round(rawDegrees / ROTATION_SNAP_DEGREES) * ROTATION_SNAP_DEGREES : rawDegrees;
       const radians = (degrees * Math.PI) / 180;
       const axisVector = axisIndex === 0 ? [1, 0, 0] : axisIndex === 1 ? [0, 1, 0] : [0, 0, 1];
+      // The turn is about the object's own axis, so it is applied after the node's rotation.
       const deltaQuaternion = quat.setAxisAngle(quat.create(), axisVector, radians);
-      const nextQuaternion = quat.multiply(quat.create(), deltaQuaternion, dragState.baseRotation);
+      const nextQuaternion = quat.multiply(quat.create(), dragState.baseRotation, deltaQuaternion);
       const rotation = normalizeQuaternion(nextQuaternion);
       applySceneOperations([{ type: 'set-node', id: dragState.nodeId, rotation }], { recordUndo: false });
       dragState.changed = true;
@@ -893,7 +964,19 @@ export function createStudioController({
       const signedPixels = PLANE_AXES.includes(dragState.axis) || dragState.axis === 'uniform' || dragState.axis === 'screen'
         ? deltaX - deltaY
         : deltaX * dragState.axisScreen[0] + deltaY * dragState.axisScreen[1];
-      const factor = Math.max(MINIMUM_SCALE, Math.min(MAXIMUM_SCALE, 1 + signedPixels / SCALE_PIXELS_PER_UNIT));
+      let rawFactor = 1 + signedPixels / SCALE_PIXELS_PER_UNIT;
+      if (axisIndex >= 0 && dragState.axisStartParameter !== null && Math.abs(dragState.axisStartParameter) > 1e-3) {
+        const axisParameter = rayAxisParameter(screenRay(pixelX, pixelY), dragState.basePivot, dragState.axisWorld);
+        if (axisParameter !== null) {
+          rawFactor = axisParameter / dragState.axisStartParameter;
+        }
+      } else if (axisIndex < 0 && dragState.originScreen) {
+        const grabDistance = Math.hypot(dragState.startX - dragState.originScreen.x, dragState.startY - dragState.originScreen.y);
+        if (grabDistance >= MINIMUM_SCALE_GRAB_PIXELS) {
+          rawFactor = Math.hypot(pixelX - dragState.originScreen.x, pixelY - dragState.originScreen.y) / grabDistance;
+        }
+      }
+      const factor = Math.max(MINIMUM_SCALE, Math.min(MAXIMUM_SCALE, rawFactor));
       const affectsAxis = index => {
         if (dragState.axis === 'uniform' || dragState.axis === 'screen') return true;
         if (index === axisIndex) return true;

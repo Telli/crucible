@@ -117,35 +117,80 @@ test('gizmo handles and drags update translate, rotate with snap, scale and surf
   const controller = createStudioController({ scene, viewportWidth: 800, viewportHeight: 600 });
   controller.selectNode('hero');
 
-  const handles = controller.gizmoHandles();
+  const heroNode = () => controller.exportRecipe().nodes.find(node => node.id === 'hero');
+  const pointAlong = (handles, axis, distance) => controller.projectWorldPoint([
+    handles.pivot[0] + handles.basis[axis][0] * distance,
+    handles.pivot[1] + handles.basis[axis][1] * distance,
+    handles.pivot[2] + handles.basis[axis][2] * distance,
+  ]);
+
+  let handles = controller.gizmoHandles();
   assert.ok(handles);
   assert.equal(handles.origin.visible, true);
+  assert.deepEqual(handles.basis, { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] });
 
-  // Translate along X
+  // Translate along X: the object ends exactly where the pointer went along the axis.
   controller.setTool('translate');
-  controller.beginGizmoDrag('x', handles.axes.x.x, handles.axes.x.y);
-  controller.updateGizmoDrag(handles.axes.x.x + 72, handles.axes.x.y);
+  let grab = pointAlong(handles, 'x', handles.handleLength);
+  let release = pointAlong(handles, 'x', handles.handleLength + 0.8);
+  controller.beginGizmoDrag('x', grab.x, grab.y);
+  controller.updateGizmoDrag(release.x, release.y);
   assert.equal(controller.endGizmoDrag(), true);
-  const translated = controller.exportRecipe().nodes.find(node => node.id === 'hero');
-  assert.ok(translated.translation[0] > 0.25);
+  assert.ok(Math.abs(heroNode().translation[0] - 0.8) < 0.01, `expected x near 0.8, got ${heroNode().translation[0]}`);
+  assert.ok(Math.abs(heroNode().translation[1] - 0.5) < 1e-6);
+  assert.ok(Math.abs(heroNode().translation[2]) < 1e-6);
 
-  // Rotate around Y with 15-degree snap
+  // Rotate around Y: the turn equals the angle the pointer swept on the ring, snapped to 15 degrees.
   controller.setTool('rotate');
-  controller.beginGizmoDrag('y', 300, 300);
-  controller.updateGizmoDrag(340, 300, { shiftKey: true });
+  handles = controller.gizmoHandles();
+  const ringPoint = degrees => controller.projectWorldPoint([
+    handles.pivot[0] + Math.cos((degrees * Math.PI) / 180),
+    handles.pivot[1],
+    handles.pivot[2] - Math.sin((degrees * Math.PI) / 180),
+  ]);
+  grab = ringPoint(0);
+  release = ringPoint(33);
+  controller.beginGizmoDrag('y', grab.x, grab.y);
+  controller.updateGizmoDrag(release.x, release.y, { shiftKey: true });
   controller.endGizmoDrag();
-  const rotated = controller.exportRecipe().nodes.find(node => node.id === 'hero');
-  const normLength = Math.hypot(...rotated.rotation);
-  assert.ok(Math.abs(normLength - 1) < 1e-3);
-  assert.ok(Math.abs(rotated.rotation[1]) > 0.15);
+  const rotated = heroNode();
+  assert.ok(Math.abs(Math.hypot(...rotated.rotation) - 1) < 1e-3);
+  assert.ok(Math.abs(rotated.rotation[1] - Math.sin((15 * Math.PI) / 180)) < 1e-3, `expected a 30 degree turn, got ${rotated.rotation}`);
 
-  // Uniform scale
-  controller.setTool('scale');
-  controller.beginGizmoDrag('uniform', 300, 300);
-  controller.updateGizmoDrag(390, 300);
+  // The handles now follow the turned object, and a drag along its X moves it along that turned axis.
+  controller.setTool('translate');
+  handles = controller.gizmoHandles();
+  const turnedX = [Math.cos(Math.PI / 6), 0, -Math.sin(Math.PI / 6)];
+  handles.basis.x.forEach((value, index) => assert.ok(Math.abs(value - turnedX[index]) < 1e-3));
+  const beforeLocalMove = heroNode().translation;
+  grab = pointAlong(handles, 'x', handles.handleLength);
+  release = pointAlong(handles, 'x', handles.handleLength + 0.5);
+  controller.beginGizmoDrag('x', grab.x, grab.y);
+  controller.updateGizmoDrag(release.x, release.y);
   controller.endGizmoDrag();
-  const scaled = controller.exportRecipe().nodes.find(node => node.id === 'hero');
-  assert.ok(scaled.scale[0] > 1.5 && scaled.scale[1] > 1.5 && scaled.scale[2] > 1.5);
+  const afterLocalMove = heroNode().translation;
+  turnedX.forEach((value, index) => {
+    assert.ok(Math.abs(afterLocalMove[index] - beforeLocalMove[index] - value * 0.5) < 0.01);
+  });
+
+  // Axis scale: pulling the handle to twice its distance doubles that axis only.
+  controller.setTool('scale');
+  handles = controller.gizmoHandles();
+  grab = pointAlong(handles, 'y', handles.handleLength);
+  release = pointAlong(handles, 'y', handles.handleLength * 2);
+  controller.beginGizmoDrag('y', grab.x, grab.y);
+  controller.updateGizmoDrag(release.x, release.y);
+  controller.endGizmoDrag();
+  assert.ok(Math.abs(heroNode().scale[1] - 2) < 0.01, `expected y scale near 2, got ${heroNode().scale}`);
+  assert.ok(Math.abs(heroNode().scale[0] - 1) < 1e-6);
+
+  // Uniform scale: the factor is how far the pointer went from the pivot compared with where it grabbed.
+  handles = controller.gizmoHandles();
+  controller.beginGizmoDrag('uniform', handles.origin.x + 40, handles.origin.y);
+  controller.updateGizmoDrag(handles.origin.x + 80, handles.origin.y);
+  controller.endGizmoDrag();
+  const scaled = heroNode();
+  assert.ok(Math.abs(scaled.scale[0] - 2) < 0.01 && Math.abs(scaled.scale[1] - 4) < 0.02 && Math.abs(scaled.scale[2] - 2) < 0.01);
 
   // Move hero high up then surface-snap onto the floor top (y = 0 + half-height of scaled box)
   controller.updateNodeTransform('hero', { translation: [0, 5, 0], rotationDegrees: [0, 0, 0], scale: [1, 2, 1] });
