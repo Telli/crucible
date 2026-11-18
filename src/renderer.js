@@ -4,7 +4,8 @@ import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
 import { postFragment, createPostFragment, GRID_MOTION_STEP, NOISE_OCTAVES_STEP, localVolumeKindSteps, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
-import { fullscreenVertex, startProgram, finishProgram, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
+import { createGlazeBackend } from './glaze-backend.js';
+import { fullscreenVertex, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
 import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError } from './budget.js';
 import { applyProjection } from './camera.js';
@@ -619,12 +620,6 @@ export function textureDescriptorInfo(map, maximumSize = Infinity) {
   return { width, height, wrapS, wrapT, minFilter, magFilter, mipmaps, bytes: estimateTextureBytes(width, height, { mipmaps }) };
 }
 
-function sampleCount(context, format, requested) {
-  const colorCounts = Array.from(context.getInternalformatParameter(context.RENDERBUFFER, format, context.SAMPLES));
-  const depthCounts = Array.from(context.getInternalformatParameter(context.RENDERBUFFER, context.DEPTH_COMPONENT24, context.SAMPLES));
-  return Math.max(0, ...colorCounts.filter(count => count <= requested && depthCounts.includes(count)));
-}
-
 // Light-mapped geometry uploads its two UV sets as one four-wide attribute (zeros where channel 0 is absent).
 function uvBufferBytes(geometry) {
   if (!geometry.lightUvs) return geometry.uvs?.byteLength ?? 0;
@@ -738,8 +733,8 @@ export class CrucibleRenderer {
     updateLightingState(this.lighting, environment, { world });
     const volume = resolveVolumeFog(environment.volumeFog);
     if (volume.density > 0 && (!depth || benchmark || transparent || !hdr)) throw new Error('Volume fog requires depth:true, hdr:true, an opaque canvas and normal rendering');
-    this.context = canvas.getContext('webgl2', { antialias: true, alpha: Boolean(transparent), premultipliedAlpha: true, powerPreference: 'high-performance' });
-    if (!this.context) throw new Error('WebGL2 is unavailable. Enable hardware acceleration or use a supported browser.');
+    this.backend = createGlazeBackend(canvas, { transparent });
+    this.context = this.backend.context;
     this.transparent = Boolean(transparent);
     this.pixelRatio = pixelRatio;
     this.benchmark = benchmark;
@@ -889,12 +884,12 @@ export class CrucibleRenderer {
     if (reversedDepthWanted) prepareCameraRelativeProgram(this);
     const pending = {
       main: this.startMainProgram(),
-      depth: startProgram(this.context, createDepthVertexShader(this.shaderFeatures), createDepthFragmentShader(this.shaderFeatures)),
+      depth: this.backend.startProgram(createDepthVertexShader(this.shaderFeatures), createDepthFragmentShader(this.shaderFeatures)),
     };
     if (!benchmark) {
-      pending.post = startProgram(this.context, fullscreenVertex, this.withViewTransform(postFragment, 'post'));
-      pending.sky = startProgram(this.context, fullscreenVertex, skyFragment);
-      pending.bloom = startProgram(this.context, fullscreenVertex, bloomFragment);
+      pending.post = this.backend.startProgram(fullscreenVertex, this.withViewTransform(postFragment, 'post'));
+      pending.sky = this.backend.startProgram(fullscreenVertex, skyFragment);
+      pending.bloom = this.backend.startProgram(fullscreenVertex, bloomFragment);
       if (environment.map) this.startEnvironmentPrograms();
     }
     // The driver links the programs on its own threads while the textures and buffers upload; only then is the link result read.
@@ -912,15 +907,15 @@ export class CrucibleRenderer {
     this.pendingConstruction = null;
     const benchmark = this.benchmark;
     this.finishMainProgram(pending.main);
-    this.depthProgram = finishProgram(this.context, pending.depth);
+    this.depthProgram = this.backend.finishProgram(pending.depth);
     this.depthSkinUniforms = Object.fromEntries(SKIN_UNIFORMS.map(name => [name, this.context.getUniformLocation(this.depthProgram, name)]));
     this.depthMorphUniforms = Object.fromEntries(MORPH_UNIFORMS.map(name => [name, this.context.getUniformLocation(this.depthProgram, name)]));
     if (!benchmark) {
-      this.postProgram = finishProgram(this.context, pending.post);
-      this.skyProgram = finishProgram(this.context, pending.sky);
+      this.postProgram = this.backend.finishProgram(pending.post);
+      this.skyProgram = this.backend.finishProgram(pending.sky);
       this.postUniforms = postUniformLocations(this.context, this.postProgram);
       this.postVariants = new Map();
-      this.bloomProgram = finishProgram(this.context, pending.bloom);
+      this.bloomProgram = this.backend.finishProgram(pending.bloom);
       this.bloomUniforms = Object.fromEntries(['sourceTexture', 'texelDirection', 'threshold', 'extract'].map(name => [name, this.context.getUniformLocation(this.bloomProgram, name)]));
       this.skyUniforms = Object.fromEntries(['skyTop', 'skyBottom', 'sunDirection', 'inverseViewProjection', 'eye', 'time', 'daylight', 'hdrEnabled'].map((name) => [name, this.context.getUniformLocation(this.skyProgram, name)]));
     }
@@ -1040,10 +1035,10 @@ export class CrucibleRenderer {
     if (this.benchmark) return;
     const context = this.context;
     this.rebuildMainProgram();
-    for (const variant of this.postVariants.values()) context.deleteProgram(variant.pending ? finishProgram(context, variant.pending) : variant.program);
+    for (const variant of this.postVariants.values()) context.deleteProgram(variant.pending ? this.backend.finishProgram(variant.pending) : variant.program);
     this.postVariants.clear();
     context.deleteProgram(this.postProgram);
-    this.postProgram = finishProgram(context, startProgram(context, fullscreenVertex, this.withViewTransform(postFragment, 'post')));
+    this.postProgram = this.backend.finishProgram(this.backend.startProgram(fullscreenVertex, this.withViewTransform(postFragment, 'post')));
     this.postUniforms = postUniformLocations(context, this.postProgram);
     // The liquid pass builds its program on its next draw, with the new curve (liquid-renderer.js).
     if (this.liquidProgram) context.deleteProgram(this.liquidProgram);
@@ -1062,7 +1057,7 @@ export class CrucibleRenderer {
   startMainProgram() {
     const benchmark = this.benchmark;
     const fragmentSource = benchmark ? benchmarkFragmentShader : this.withViewTransform(createFragmentShader(this.shaderFeatures), 'main');
-    return startProgram(this.context, benchmark ? benchmarkVertexShader : createVertexShader(this.shaderFeatures), fragmentSource);
+    return this.backend.startProgram(benchmark ? benchmarkVertexShader : createVertexShader(this.shaderFeatures), fragmentSource);
   }
 
   buildMainProgram() {
@@ -1070,7 +1065,7 @@ export class CrucibleRenderer {
   }
 
   finishMainProgram(pendingProgram) {
-    this.program = finishProgram(this.context, pendingProgram);
+    this.program = this.backend.finishProgram(pendingProgram);
     this.uniforms = Object.fromEntries(['materialDielectric', 'materialEmissionFresnel', 'materialCoat', 'materialSheen', 'materialAnisotropy', 'materialIridescence', 'lightLinkMask', 'boxMapScale', 'boxMapAxis', 'lightMap', 'lightMapScale', 'hasLightMap', 'viewProjection', 'flushBias', 'clipPerMetre', 'lightProjection', 'eye', 'armorColor', 'armorSurface', 'exposure', 'inspection', 'shadowMap', 'shadowBiasPerSlope', ...MAP_UNIFORMS, ...MAP_FLAGS, ...SKIN_UNIFORMS, ...MORPH_UNIFORMS, 'normalScale', 'occlusionStrength', 'materialMoss', 'wearEnabled', 'wearMetal', 'wearDirt', 'wearShape', 'wearDirtShape', ...SPLAT_UNIFORMS, 'hdrEnabled', 'time', 'wind', 'worldMode', 'daylight', 'fogColor', 'lightDirection', 'fogDensity', 'waterRipple', 'rippleTime', 'explosionProgress', 'explosionCenter', 'assemblyAmount', 'renderPassMode', 'renderPassDepthRange', 'renderPassObjectBase', 'baseColor', 'surface', 'instanceEmission', 'instanceOpacity', 'boxNormalMatrix', 'shadowBlind', 'compositeMode', 'tintShadowMap', 'tintBlind', ...ALPHA_UNIFORMS].map((name) => [name, this.context.getUniformLocation(this.program, name)]));
     for (const name of LIGHT_UNIFORMS) {
       this.uniforms[name] = this.context.getUniformLocation(this.program, name);
@@ -1096,7 +1091,7 @@ export class CrucibleRenderer {
     if (this.benchmark) return 0;
     const requestedSamples = this.denseSamples == null ? this.baseSamples : samplesForDensity(parts, this.canvas, this.pixelRatio, this.baseSamples, this.denseSamples);
     const shaded = this.shading === 'light' ? Math.min(requestedSamples, LIGHT_SHADING_MAXIMUM_SAMPLES) : requestedSamples;
-    return sampleCount(this.context, this.hdr ? this.context.RGBA16F : this.context.RGBA8, Math.min(shaded, this.context.getParameter(this.context.MAX_SAMPLES)));
+    return this.backend.supportedSampleCount(this.hdr ? this.context.RGBA16F : this.context.RGBA8, shaded);
   }
 
   get samples() {
@@ -1104,10 +1099,9 @@ export class CrucibleRenderer {
   }
 
   uploadBuffer(target, data, usage = this.context.STATIC_DRAW) {
-    const buffer = this.context.createBuffer();
+    const buffer = this.backend.createBuffer();
     this.buffers.push(buffer);
-    this.context.bindBuffer(target, buffer);
-    this.context.bufferData(target, data, usage);
+    this.backend.uploadBuffer(target, buffer, data, usage);
     this.geometryBytes += data.byteLength;
     return buffer;
   }
@@ -1370,17 +1364,16 @@ export class CrucibleRenderer {
       context.bindVertexArray(draw.vertexArray);
       // Only level 0 holds the ranked index order; the simpler levels draw far away, as one range.
       if (flushRanges && level === 0) this.drawFlushRanges(batch, flushRanges, count);
-      else context.drawElementsInstanced(context.TRIANGLES, draw.indexCount, context.UNSIGNED_INT, 0, count);
+      else this.backend.drawIndexedInstanced(draw.indexCount, count);
     }
   }
 
   /** Draws a batch rank by rank from its ranked index order (flush-resolve.js), each rank a little closer in depth. */
   drawFlushRanges(batch, ranges, instanceCount) {
-    const context = this.context;
     const base = (batch.depthLayer ?? 0) * RANKS_PER_LAYER;
     for (const range of ranges) {
       this.applyDepthRank(base + range.rank);
-      context.drawElementsInstanced(context.TRIANGLES, range.count, context.UNSIGNED_INT, range.start * 4, instanceCount);
+      this.backend.drawIndexedInstanced(range.count, instanceCount, range.start);
     }
     this.applyDepthRank(base);
   }
@@ -2029,12 +2022,12 @@ export class CrucibleRenderer {
 
   releaseFrameTargets() {
     const context = this.context;
-    if (this.multisampleFramebuffer) context.deleteFramebuffer(this.multisampleFramebuffer);
-    if (this.resolveFramebuffer) context.deleteFramebuffer(this.resolveFramebuffer);
-    if (this.multisampleColor) context.deleteRenderbuffer(this.multisampleColor);
-    if (this.multisampleDepth) context.deleteRenderbuffer(this.multisampleDepth);
-    if (this.frameTexture) context.deleteTexture(this.frameTexture);
-    if (this.depthTexture) context.deleteTexture(this.depthTexture);
+    if (this.multisampleFramebuffer) this.backend.deleteFramebuffer(this.multisampleFramebuffer);
+    if (this.resolveFramebuffer) this.backend.deleteFramebuffer(this.resolveFramebuffer);
+    if (this.multisampleColor) this.backend.deleteRenderbuffer(this.multisampleColor);
+    if (this.multisampleDepth) this.backend.deleteRenderbuffer(this.multisampleDepth);
+    if (this.frameTexture) this.backend.deleteTexture(this.frameTexture);
+    if (this.depthTexture) this.backend.deleteTexture(this.depthTexture);
     for (const target of this.bloomTargets ?? []) {
       context.deleteTexture(target.texture);
       context.deleteFramebuffer(target.framebuffer);
@@ -2113,56 +2106,31 @@ export class CrucibleRenderer {
   }
 
   allocateFrameTargets(width, height) {
-    const context = this.context;
     this.releaseFrameTargets();
-    this.multisampleFramebuffer = context.createFramebuffer();
-    context.bindFramebuffer(context.FRAMEBUFFER, this.multisampleFramebuffer);
-    this.multisampleColor = context.createRenderbuffer();
-    context.bindRenderbuffer(context.RENDERBUFFER, this.multisampleColor);
-    context.renderbufferStorageMultisample(context.RENDERBUFFER, this.multisampleSamples, this.hdr ? context.RGBA16F : context.RGBA8, width, height);
-    context.framebufferRenderbuffer(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.RENDERBUFFER, this.multisampleColor);
-    this.multisampleDepth = context.createRenderbuffer();
-    context.bindRenderbuffer(context.RENDERBUFFER, this.multisampleDepth);
     // 24 bits at least (issue #751): 16 bits is one step per 1.5 cm at 10 m. Reversed depth respecifies this store as 32-bit float.
     const depthFormat = 'DEPTH_COMPONENT24';
-    context.renderbufferStorageMultisample(context.RENDERBUFFER, this.multisampleSamples, context[depthFormat], width, height);
-    context.framebufferRenderbuffer(context.FRAMEBUFFER, context.DEPTH_ATTACHMENT, context.RENDERBUFFER, this.multisampleDepth);
-    if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('Multisample framebuffer allocation failed. Choose a lower quality preset.');
+    const multisample = this.backend.createMultisampleTarget({ width, height, samples: this.multisampleSamples, hdr: this.hdr });
+    this.multisampleFramebuffer = multisample.framebuffer;
+    this.multisampleColor = multisample.colorBuffer;
+    this.multisampleDepth = multisample.depthBuffer;
     this.renderTargets.record('multisampleColor', { width, height, format: this.hdr ? 'RGBA16F' : 'RGBA8', samples: this.multisampleSamples });
     this.renderTargets.record('multisampleDepth', { width, height, format: depthFormat, samples: this.multisampleSamples });
     this.renderTargets.record('frameColor', { width, height, format: this.hdr ? 'RGBA16F' : 'RGBA8' });
-    this.frameTexture = context.createTexture();
-    context.bindTexture(context.TEXTURE_2D, this.frameTexture);
-    context.texImage2D(context.TEXTURE_2D, 0, this.hdr ? context.RGBA16F : context.RGBA8, width, height, 0, context.RGBA, this.hdr ? context.HALF_FLOAT : context.UNSIGNED_BYTE, null);
-    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
-    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, context.LINEAR);
-    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, context.CLAMP_TO_EDGE);
-    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_T, context.CLAMP_TO_EDGE);
-    this.resolveFramebuffer = context.createFramebuffer();
-    context.bindFramebuffer(context.FRAMEBUFFER, this.resolveFramebuffer);
-    context.framebufferTexture2D(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, this.frameTexture, 0);
-    if (this.depth) {
-      this.depthTexture = context.createTexture();
-      context.bindTexture(context.TEXTURE_2D, this.depthTexture);
-      context.texImage2D(context.TEXTURE_2D, 0, context.DEPTH_COMPONENT24, width, height, 0, context.DEPTH_COMPONENT, context.UNSIGNED_INT, null);
-      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.NEAREST);
-      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, context.NEAREST);
-      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, context.CLAMP_TO_EDGE);
-      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_T, context.CLAMP_TO_EDGE);
-      context.framebufferTexture2D(context.FRAMEBUFFER, context.DEPTH_ATTACHMENT, context.TEXTURE_2D, this.depthTexture, 0);
-      this.renderTargets.record('sceneDepth', { width, height, format: 'DEPTH_COMPONENT24' });
-    }
-    if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('Resolve framebuffer allocation failed. Choose a lower quality preset.');
+    const resolve = this.backend.createResolveTarget({ width, height, hdr: this.hdr, depth: this.depth });
+    this.resolveFramebuffer = resolve.framebuffer;
+    this.frameTexture = resolve.colorTexture;
+    this.depthTexture = resolve.depthTexture;
+    if (this.depth) this.renderTargets.record('sceneDepth', { width, height, format: depthFormat });
     this.bloomWidth = Math.max(1, Math.ceil(width / 2));
     this.bloomHeight = Math.max(1, Math.ceil(height / 2));
-    context.bindFramebuffer(context.FRAMEBUFFER, null);
+    this.backend.bindCanvasTarget();
   }
 
   // The prefilter and BRDF programs build while the other programs do, instead of after them.
   startEnvironmentPrograms() {
     this.pendingEnvironmentPrograms = new Map();
     for (const fragmentSource of [requireEnvironmentSupport().prefilterFragment, requireEnvironmentSupport().brdfFragment]) {
-      this.pendingEnvironmentPrograms.set(fragmentSource, startProgram(this.context, fullscreenVertex, fragmentSource));
+      this.pendingEnvironmentPrograms.set(fragmentSource, this.backend.startProgram(fullscreenVertex, fragmentSource));
     }
   }
 
@@ -2170,7 +2138,7 @@ export class CrucibleRenderer {
     const pendingProgram = this.pendingEnvironmentPrograms?.get(fragmentSource);
     if (!pendingProgram) return compileProgram(context, vertexSource, fragmentSource);
     this.pendingEnvironmentPrograms.delete(fragmentSource);
-    return finishProgram(context, pendingProgram);
+    return this.backend.finishProgram(pendingProgram);
   }
 
   initializeEnvironment(map) {
@@ -2337,14 +2305,14 @@ export class CrucibleRenderer {
     const key = steps.join(',');
     let variant = this.postVariants.get(key);
     if (!variant) {
-      variant = { pending: startProgram(this.context, fullscreenVertex, this.withViewTransform(createPostFragment(steps), 'post')) };
+      variant = { pending: this.backend.startProgram(fullscreenVertex, this.withViewTransform(createPostFragment(steps), 'post')) };
       this.postVariants.set(key, variant);
     }
     if (variant.pending) {
       const parallelCompile = this.context.getExtension('KHR_parallel_shader_compile');
       const building = !this.exactFrames && parallelCompile && !POST_STEPS_WITH_OPTIONAL_CODE.some(step => steps.includes(step)) && !this.context.getProgramParameter(variant.pending.program, parallelCompile.COMPLETION_STATUS_KHR);
       if (building) return { program: this.postProgram, uniforms: this.postUniforms };
-      variant.program = finishProgram(this.context, variant.pending);
+      variant.program = this.backend.finishProgram(variant.pending);
       variant.uniforms = postUniformLocations(this.context, variant.program);
       variant.pending = null;
     }
@@ -2363,9 +2331,7 @@ export class CrucibleRenderer {
 
   resolveFrame(frame, effects, environment, volume) {
     const context = this.context;
-    context.bindFramebuffer(context.READ_FRAMEBUFFER, this.multisampleFramebuffer);
-    context.bindFramebuffer(context.DRAW_FRAMEBUFFER, this.resolveFramebuffer);
-    context.blitFramebuffer(0, 0, this.canvas.width, this.canvas.height, 0, 0, this.canvas.width, this.canvas.height, context.COLOR_BUFFER_BIT | (this.depth ? context.DEPTH_BUFFER_BIT : 0), context.NEAREST);
+    this.backend.resolveMultisample({ source: this.multisampleFramebuffer, destination: this.resolveFramebuffer, width: this.canvas.width, height: this.canvas.height, depth: this.depth });
     this.restoreSingleLevelFiltering();
     let sourceTexture = this.frameTexture;
     for (const stage of this.postStages) sourceTexture = stage.apply(this, frame, effects, sourceTexture) ?? sourceTexture;
@@ -2713,7 +2679,7 @@ export class CrucibleRenderer {
     }
     if (textured && !this.benchmark && this.shaderFeatures?.has('instanced') === false)this.setSingleInstanceUniforms(batch.instanceData);
     // A reflecting matrix reverses screen winding: clockwise triangles are the front faces of a mirrored batch.
-    if (batch.mirrored) this.context.frontFace(this.context.CW);
+    if (batch.mirrored) this.backend.setFrontFaceClockwise(true);
     // The shadow pass (not textured) draws the whole index buffer; its order does not matter there.
     const flushRanges = textured && !this.benchmark ? batch.flushOrder?.ranges ?? null : null;
     if (selection && !selection.isEverything) {
@@ -2721,9 +2687,9 @@ export class CrucibleRenderer {
     } else {
       this.context.bindVertexArray(batch.vertexArray);
       if (flushRanges) this.drawFlushRanges(batch, flushRanges, batch.instanceCount);
-      else this.context.drawElementsInstanced(this.context.TRIANGLES, batch.indexCount, this.context.UNSIGNED_INT, 0, batch.instanceCount);
+      else this.backend.drawIndexedInstanced(batch.indexCount, batch.instanceCount);
     }
-    if (batch.mirrored) this.context.frontFace(this.context.CCW);
+    if (batch.mirrored) this.backend.setFrontFaceClockwise(false);
   }
 
   // A render pass draws raw material data instead of the lit image; the addon validates frame.pass and returns the shader mode.
@@ -2966,7 +2932,7 @@ export class CrucibleRenderer {
     this.context.deleteProgram(this.depthProgram);
     if (this.postProgram) this.context.deleteProgram(this.postProgram);
     // A program still linking must finish first: deleting it mid-link leaves a GL error that the next renderer on this context sees.
-    for (const variant of this.postVariants?.values() ?? []) this.context.deleteProgram(variant.pending ? finishProgram(this.context, variant.pending) : variant.program);
+    for (const variant of this.postVariants?.values() ?? []) this.context.deleteProgram(variant.pending ? this.backend.finishProgram(variant.pending) : variant.program);
     if (this.skyProgram) this.context.deleteProgram(this.skyProgram);
     if (this.bloomProgram) this.context.deleteProgram(this.bloomProgram);
     if (this.occlusionProgram) this.context.deleteProgram(this.occlusionProgram);
