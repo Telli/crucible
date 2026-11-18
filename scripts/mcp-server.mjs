@@ -806,6 +806,7 @@ const recipe = z.strictObject({
   particles: z.record(z.string(), z.unknown()).nullable().optional().describe('Particle emitters and hair, seeked by motionTime. Fields: scene_capabilities particles.'),
   bake: z.record(z.string(), z.unknown()).nullable().optional().describe('Bounced light baked at build time. Fields: scene_capabilities bake.'),
   postPasses: z.array(z.record(z.string(), z.unknown())).nullable().optional().describe('Full-screen GLSL passes, [{name, fragment, uniforms, scale}]. Rules: scene_capabilities postPasses.'),
+  postPassesAntialias: z.enum(['fxaa', 'off']).optional(),
   game: gameReference.nullable().optional(),
 }).describe('Bounded scene recipe; the backend validates it.');
 const assetRecipe = z.strictObject({

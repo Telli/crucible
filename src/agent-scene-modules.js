@@ -106,7 +106,7 @@ const MODULE_MARKERS = {
   // A closed room a sun lights gets the floor sky trace by default. The recipe text can not say whether a room is closed, so a recipe that names its sun loads it and the module skips an open scene.
   floorSky: ['"keyColor"', '"keyIntensity"'],
   physicalSky: ['"type":"physical"', '"type":"gradient"'],
-  userPass: ['"postPasses"'],
+  userPass: ['"postPasses"', '"postPassesAntialias"'],
   game: ['"game":{', '"set-game"'],
   materialSnippet: ['"snippet":{'],
   volumeGrid: ['"shape":"grid"'],

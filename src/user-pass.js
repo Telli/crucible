@@ -45,6 +45,29 @@ export function normalizeUserPasses(input) {
   });
 }
 
+/** What the recipe field postPassesAntialias accepts. "fxaa" (the default when passes exist) smooths the edges the passes drew; "off" keeps their pixels exactly. */
+export const USER_PASS_ANTIALIAS_MODES = Object.freeze(['fxaa', 'off']);
+
+/** Checks the recipe field postPassesAntialias; undefined means the default, "fxaa". */
+export function normalizePostPassesAntialias(input) {
+  if (input === undefined || input === null) return 'fxaa';
+  if (!USER_PASS_ANTIALIAS_MODES.includes(input)) {
+    throw new RangeError(`postPassesAntialias must be one of ${USER_PASS_ANTIALIAS_MODES.map(mode => `"${mode}"`).join(', ')}, got ${JSON.stringify(input)}. Fix: "fxaa" smooths the lines the passes draw, "off" keeps their pixels exact (dither, pixel art).`);
+  }
+  return input;
+}
+
+/**
+ * The draw order of one frame: every pass in order, then one edge antialias step after the last pass. The step only runs when
+ * the mode is "fxaa" and the last pass renders at full size, since a pass at a smaller scale is enlarged into hard pixels on purpose.
+ */
+export function planUserPassSteps(passes, antialias = 'fxaa') {
+  const steps = passes.map(pass => ({ kind: 'pass', name: pass.name, scale: pass.scale }));
+  const last = passes[passes.length - 1];
+  if (last && last.scale === 1 && normalizePostPassesAntialias(antialias) === 'fxaa') steps.push({ kind: 'antialias' });
+  return steps;
+}
+
 /** What scene_capabilities reports under postPasses; it lives here so the scene entry does not carry the text. */
 export const USER_PASS_CAPABILITIES = Object.freeze({
   fields: 'name, fragment (defines vec4 userPass(vec2 uv)), uniforms, scale 0.05-1 (1), objects (1-16 part names)',
@@ -52,6 +75,7 @@ export const USER_PASS_CAPABILITIES = Object.freeze({
   uniforms: 'a number is float, [x,y(,z(,w))] is vec2-4, {type:"int",value} is int; name ^[a-z][A-Za-z0-9]{0,31}$',
   rules: 'no # lines, while, do, uniform/layout declarations, gl_ names but gl_FragCoord, or u67_ names; for loops only as for (int i = 0; i < N; i++) { } with literal bounds, 64 iterations at most, loop work under 4096',
   limits: Object.freeze({ maxPasses: SNIPPET_LIMITS.maxPasses, maxBytes: SNIPPET_LIMITS.maxBytes, maxUniforms: SNIPPET_LIMITS.maxUniforms, maxLoopIterations: SNIPPET_LIMITS.maxLoopIterations, maxLoopWork: SNIPPET_LIMITS.maxLoopWork }),
+  antialias: 'recipe postPassesAntialias "fxaa" (default) | "off": one edge smoothing pass after the last pass when it has scale 1; "off" for dither and pixel art',
   notes: 'Passes run in order on the finished frame; scale under 1 renders smaller and enlarges with nearest filtering. A compile error returns the log with snippet line numbers (renderError); the scene stays. Stills and render jobs apply them; the path tracer does not. docs/user-passes.md',
 });
 
@@ -109,6 +133,91 @@ vec3 worldNormalAt(vec2 uv) {
   return size > 1e-12 ? normal / size : vec3(0.0, 1.0, 0.0);
 }
 `;
+// Edge antialias after the last pass, after FXAA 3.11: it finds the edge direction from the luma of the 3x3 neighbourhood, walks
+// along the edge to its ends (16 texels each way) and blends toward the steeper side by the pixel's place along the edge, or by
+// the neighbourhood contrast for one-pixel features. The input is read texel by texel.
+const antialiasFragment = `#version 300 es
+precision highp float;
+in vec2 textureCoordinate;
+uniform sampler2D sourceTexture;
+out vec4 outputColor;
+float lumaOf(vec3 color) { return dot(color, vec3(0.299, 0.587, 0.114)); }
+vec4 fetchAt(ivec2 base, ivec2 offset, ivec2 size) { return texelFetch(sourceTexture, clamp(base + offset, ivec2(0), size - 1), 0); }
+void main() {
+  ivec2 size = textureSize(sourceTexture, 0);
+  ivec2 base = ivec2(textureCoordinate * vec2(size));
+  vec4 centerSample = fetchAt(base, ivec2(0), size);
+  vec4 north = fetchAt(base, ivec2(0, 1), size);
+  vec4 south = fetchAt(base, ivec2(0, -1), size);
+  vec4 east = fetchAt(base, ivec2(1, 0), size);
+  vec4 west = fetchAt(base, ivec2(-1, 0), size);
+  vec4 northEast = fetchAt(base, ivec2(1, 1), size);
+  vec4 northWest = fetchAt(base, ivec2(-1, 1), size);
+  vec4 southEast = fetchAt(base, ivec2(1, -1), size);
+  vec4 southWest = fetchAt(base, ivec2(-1, -1), size);
+  float lumaCenter = lumaOf(centerSample.rgb);
+  float lumaNorth = lumaOf(north.rgb);
+  float lumaSouth = lumaOf(south.rgb);
+  float lumaEast = lumaOf(east.rgb);
+  float lumaWest = lumaOf(west.rgb);
+  float lumaHighest = max(lumaCenter, max(max(lumaNorth, lumaSouth), max(lumaEast, lumaWest)));
+  float lumaLowest = min(lumaCenter, min(min(lumaNorth, lumaSouth), min(lumaEast, lumaWest)));
+  float range = lumaHighest - lumaLowest;
+  if (range < max(0.0312, lumaHighest * 0.125)) {
+    outputColor = centerSample;
+    return;
+  }
+  float lumaNorthEast = lumaOf(northEast.rgb);
+  float lumaNorthWest = lumaOf(northWest.rgb);
+  float lumaSouthEast = lumaOf(southEast.rgb);
+  float lumaSouthWest = lumaOf(southWest.rgb);
+  float variationAcrossColumns = abs(lumaNorthWest + lumaNorthEast - 2.0 * lumaNorth) + 2.0 * abs(lumaWest + lumaEast - 2.0 * lumaCenter) + abs(lumaSouthWest + lumaSouthEast - 2.0 * lumaSouth);
+  float variationAcrossRows = abs(lumaNorthWest + lumaSouthWest - 2.0 * lumaWest) + 2.0 * abs(lumaNorth + lumaSouth - 2.0 * lumaCenter) + abs(lumaNorthEast + lumaSouthEast - 2.0 * lumaEast);
+  bool horizontalEdge = variationAcrossRows >= variationAcrossColumns;
+  float lumaFirst = horizontalEdge ? lumaSouth : lumaWest;
+  float lumaSecond = horizontalEdge ? lumaNorth : lumaEast;
+  bool firstIsSteeper = abs(lumaFirst - lumaCenter) >= abs(lumaSecond - lumaCenter);
+  ivec2 acrossStep = horizontalEdge ? (firstIsSteeper ? ivec2(0, -1) : ivec2(0, 1)) : (firstIsSteeper ? ivec2(-1, 0) : ivec2(1, 0));
+  ivec2 alongStep = horizontalEdge ? ivec2(1, 0) : ivec2(0, 1);
+  vec4 across = fetchAt(base, acrossStep, size);
+  float gradient = abs((firstIsSteeper ? lumaFirst : lumaSecond) - lumaCenter);
+  float localAverage = 0.5 * (lumaOf(across.rgb) + lumaCenter);
+  bool centerBelowAverage = lumaCenter < localAverage;
+  // Walk both ways along the edge until the pair of pixels stops straddling it; the pixel's place along the edge sets the blend.
+  float distancePositive = 0.0;
+  float distanceNegative = 0.0;
+  bool endPositive = false;
+  bool endNegative = false;
+  bool belowPositive = false;
+  bool belowNegative = false;
+  for (int step = 1; step <= 16; step++) {
+    if (!endPositive) {
+      ivec2 at = base + alongStep * step;
+      float pairAverage = 0.5 * (lumaOf(fetchAt(at, ivec2(0), size).rgb) + lumaOf(fetchAt(at, acrossStep, size).rgb));
+      endPositive = abs(pairAverage - localAverage) >= gradient * 0.25;
+      belowPositive = pairAverage < localAverage;
+      distancePositive = float(step);
+    }
+    if (!endNegative) {
+      ivec2 at = base - alongStep * step;
+      float pairAverage = 0.5 * (lumaOf(fetchAt(at, ivec2(0), size).rgb) + lumaOf(fetchAt(at, acrossStep, size).rgb));
+      endNegative = abs(pairAverage - localAverage) >= gradient * 0.25;
+      belowNegative = pairAverage < localAverage;
+      distanceNegative = float(step);
+    }
+  }
+  bool positiveIsNearer = distancePositive < distanceNegative;
+  float nearestDistance = min(distancePositive, distanceNegative);
+  bool nearestEndMatches = (positiveIsNearer ? belowPositive : belowNegative) != centerBelowAverage;
+  float edgeLength = distancePositive + distanceNegative;
+  float edgeOffset = nearestEndMatches ? 0.5 - nearestDistance / edgeLength : 0.0;
+  vec4 average = (2.0 * (north + south + east + west) + northEast + northWest + southEast + southWest + 4.0 * centerSample) / 16.0;
+  float subpixel = clamp(abs(lumaOf(average.rgb) - lumaCenter) / range, 0.0, 1.0);
+  subpixel = smoothstep(0.0, 1.0, subpixel);
+  subpixel = subpixel * subpixel * 0.75;
+  outputColor = mix(centerSample, across, max(edgeOffset, subpixel));
+}`;
+
 const FRAGMENT_FOOTER = '\nvoid main() { u67_output = userPass(textureCoordinate); }\n';
 
 /** The full fragment source of a normalized pass, and how many lines come before the snippet. */
@@ -170,7 +279,7 @@ function compilationError(pass, error, built) {
  */
 export function installUserPasses(renderer) {
   if (renderer.userPasses) return renderer;
-  const state = { passes: [], key: '[]', entries: [], capture: null, copy: null };
+  const state = { passes: [], key: '[]', antialias: 'fxaa', entries: [], capture: null, copy: null, smooth: null };
   const builtByPass = new WeakMap();
 
   function releaseEntryTarget(context, entry) {
@@ -197,6 +306,8 @@ export function installUserPasses(renderer) {
     state.entries = [];
     if (state.copy) context.deleteProgram(state.copy.program);
     state.copy = null;
+    if (state.smooth) context.deleteProgram(state.smooth.program);
+    state.smooth = null;
   }
 
   // One compiled program per pass, rebuilt only when its fragment or its uniform declarations change.
@@ -282,18 +393,18 @@ export function installUserPasses(renderer) {
     if (identifiers.length > 0) unbindMask(context);
   }
 
-  function copyToCanvas(texture, width, height) {
+  function drawTextureToCanvas(slot, fragment, texture, width, height) {
     const context = renderer.context;
-    if (!state.copy) {
-      const program = compileProgram(context, fullscreenVertex, copyFragment);
-      state.copy = { program, texture: context.getUniformLocation(program, 'sourceTexture') };
+    if (!state[slot]) {
+      const program = compileProgram(context, fullscreenVertex, fragment);
+      state[slot] = { program, texture: context.getUniformLocation(program, 'sourceTexture') };
     }
     context.bindFramebuffer(context.FRAMEBUFFER, null);
     context.viewport(0, 0, width, height);
-    context.useProgram(state.copy.program);
+    context.useProgram(state[slot].program);
     context.activeTexture(context.TEXTURE0);
     context.bindTexture(context.TEXTURE_2D, texture);
-    context.uniform1i(state.copy.texture, 0);
+    context.uniform1i(state[slot].texture, 0);
     context.drawArrays(context.TRIANGLES, 0, 3);
   }
 
@@ -305,10 +416,12 @@ export function installUserPasses(renderer) {
     context.disable(context.CULL_FACE);
     context.disable(context.BLEND);
     context.bindVertexArray(null);
+    const steps = planUserPassSteps(entries.map(entry => entry.pass), state.antialias);
+    const antialiasLast = steps[steps.length - 1].kind === 'antialias';
     let input = captureFinishedFrame(width, height);
     let drewToCanvas = false;
     entries.forEach((entry, index) => {
-      const directToCanvas = index === entries.length - 1 && entry.pass.scale === 1;
+      const directToCanvas = index === entries.length - 1 && entry.pass.scale === 1 && !antialiasLast;
       const passWidth = directToCanvas ? width : Math.max(1, Math.round(width * entry.pass.scale));
       const passHeight = directToCanvas ? height : Math.max(1, Math.round(height * entry.pass.scale));
       const target = directToCanvas ? null : targetFor(entry, passWidth, passHeight);
@@ -317,7 +430,8 @@ export function installUserPasses(renderer) {
       input = target?.texture;
       drewToCanvas = directToCanvas;
     });
-    if (!drewToCanvas) copyToCanvas(input, width, height);
+    if (antialiasLast) drawTextureToCanvas('smooth', antialiasFragment, input, width, height);
+    else if (!drewToCanvas) drawTextureToCanvas('copy', copyFragment, input, width, height);
   }
 
   const resolveFrame = renderer.resolveFrame;
@@ -333,6 +447,10 @@ export function installUserPasses(renderer) {
       if (key === state.key) return;
       state.passes = normalizeUserPasses(passes);
       state.key = key;
+    },
+    /** "fxaa" (default) or "off": whether one edge smoothing step follows the last pass. */
+    setAntialias(mode) {
+      state.antialias = normalizePostPassesAntialias(mode);
     },
     get passes() {
       return structuredClone(state.passes);

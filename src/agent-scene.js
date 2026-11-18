@@ -1073,7 +1073,7 @@ const NORMALIZED_NODES = new WeakSet();
 
 function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
   let recipe = alreadyCopied ? input : copiedJson(input, limits.maxRecipeBytes);
-  knownKeys(recipe, ['format', 'schemaVersion', 'geometries', 'materials', 'nodes', 'armatures', 'camera', 'environment', 'effects', 'shadow', 'motion', 'physics', 'cloth', 'timeline', 'particles', 'bake', 'postPasses', 'game'], 'recipe');
+  knownKeys(recipe, ['format', 'schemaVersion', 'geometries', 'materials', 'nodes', 'armatures', 'camera', 'environment', 'effects', 'shadow', 'motion', 'physics', 'cloth', 'timeline', 'particles', 'bake', 'postPasses', 'postPassesAntialias', 'game'], 'recipe');
   recipe.format = currentFormatName(recipe.format);
   if (recipe.format !== 'crucible.scene' || recipe.schemaVersion !== 1) {
     throw invalidField(recipe.format !== 'crucible.scene' ? 'format' : 'schemaVersion', recipe.format !== 'crucible.scene' ? recipe.format : recipe.schemaVersion, recipe.format !== 'crucible.scene' ? '"crucible.scene"' : '1');
@@ -1156,6 +1156,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
     recipe.bake = recipe.bake === null ? null : agentSceneModule('bake').normalizeAgentBake(recipe.bake);
   }
   if (Object.hasOwn(recipe, 'postPasses')) recipe.postPasses = agentSceneModule('userPass').normalizeUserPasses(recipe.postPasses ?? []);
+  if (Object.hasOwn(recipe, 'postPassesAntialias')) recipe.postPassesAntialias = agentSceneModule('userPass').normalizePostPassesAntialias(recipe.postPassesAntialias);
   if (Object.hasOwn(recipe, 'game')) {
     if (recipe.game === null) delete recipe.game;
     else recipe.game = agentSceneModule('game').normalizeGameSetup(recipe.game, recipe.nodes);
@@ -2170,6 +2171,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     },
     get postPasses() {
       return structuredClone(state.recipe.postPasses ?? []);
+    },
+    get postPassesAntialias() {
+      return state.recipe.postPassesAntialias ?? 'fxaa';
     },
     get effects() {
       const effects = structuredClone(state.recipe.effects);

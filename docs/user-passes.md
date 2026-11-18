@@ -6,7 +6,7 @@ The same field works from three places: the `crucible/addons/user-pass` addon, t
 
 ## Where a pass runs
 
-Passes run in order on the finished frame: after depth of field, motion blur, line art, bloom, grading and the view transform, as the last step before the canvas. The first pass reads the frame as it would have been shown. Each next pass reads the one before. Colours are display-referred (0 to 1), so quantising and dithering work on the values people see. The path tracer does not apply passes. Render passes (`pass: 'depth'` and the others) and the water mirror are unaffected.
+Passes run in order on the finished frame: after depth of field, motion blur, line art, bloom, grading and the view transform, as the last step before the canvas. The first pass reads the frame as it would have been shown. Each next pass reads the one before. Colours are display-referred (0 to 1), so quantising and dithering work on the values people see. After the last pass, one edge antialias step smooths the lines and edges the passes drew (see "Antialiasing the result" below). The path tracer does not apply passes. Render passes (`pass: 'depth'` and the others) and the water mirror are unaffected.
 
 ## A pass
 
@@ -34,6 +34,17 @@ You do not declare uniforms or the version line; the engine writes them. A snipp
 | `worldNormalAt(uv)` | function | The surface normal, found from neighbouring depth samples. It is exact on flat faces and wrong at silhouettes and in the sky. |
 | `objectSlotAt(uv)` | function | The position in the pass's `objects` list of the part under `uv`, or -1 for the background, any other part, and a pass with no `objects`. A name that matches several parts gives all of them its one position. Edges are hard: an object ID cannot be antialiased. A name that is not a part in the frame fails the render and lists part names to use. |
 | `gl_FragCoord` | `vec4` | The pixel position inside this pass. |
+
+## Antialiasing the result
+
+A pass reads the depth, the world position and the object IDs at one sample per pixel, so a line or a threshold it draws from them is stair-stepped, and the stock MSAA and FXAA ran before the passes. When a scene has passes, Crucible runs one FXAA-style edge pass after the last one. It costs one more full-screen draw and only exists when passes do. It reads the colour only, so it smooths what the passes drew and also softens any 1 px detail they made on purpose.
+
+| `postPassesAntialias` | Meaning |
+| --- | --- |
+| `"fxaa"` (default) | One edge antialias step after the last pass. It is skipped when the last pass has a `scale` under 1, because that enlargement into hard pixels is the look. |
+| `"off"` | The last pass is the final picture. Use it for dither, pixel art and any pass whose single pixels must stay exact. |
+
+In JavaScript, `renderer.userPasses.setAntialias("off")`. In a recipe, `{ "postPassesAntialias": "off" }` next to `postPasses`; `scene_create` takes it. Any other value is refused with the allowed values.
 
 ## Limits and rules
 

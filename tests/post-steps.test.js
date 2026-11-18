@@ -148,7 +148,7 @@ test('a stage binds the part numbers of a masked step and refuses an unknown par
   const bound = calls.find(call => call[0] === 'uniform1iv');
   assert.deepEqual([...bound[2]].slice(0, 3), [2, 4, 0]);
   assert.throws(() => stage.apply(renderer, frame({ objects: ['ghost'] }), effects, 'source'), /"ghost" is not a part in the frame\. Fix: use a part name such as "floor"/);
-  const afterDraw = calls.slice(calls.findLastIndex(call => call[0] === 'drawArrays') + 1);
+  const afterDraw = calls.slice(calls.findIndex(call => call[0] === 'drawArrays') + 1);
   const unbind = afterDraw.findIndex(call => call[0] === 'bindTexture' && call[2] === null);
   assert.ok(unbind > 0 && afterDraw[unbind - 1][0] === 'activeTexture', 'the object ID texture is unbound from its unit after the draw');
   renderer.passSupport = null;
@@ -212,7 +212,7 @@ test('a user pass binds the object ID pass for its parts and unbinds it after th
   const uploaded = calls.find(call => call[0] === 'uniform1iv');
   assert.deepEqual(Array.from(uploaded[2]).slice(0, 2), [2, 0], 'the hero part has object ID 2, and the rest of the list is padded');
   assert.ok(calls.some(call => call[0] === 'bindTexture' && call[2] === 'ids'));
-  const afterDraw = calls.slice(calls.findLastIndex(call => call[0] === 'drawArrays') + 1);
+  const afterDraw = calls.slice(calls.findIndex(call => call[0] === 'drawArrays') + 1);
   assert.ok(afterDraw.some(call => call[0] === 'bindTexture' && call[2] === null), 'the object ID texture is unbound after the draw');
   renderer.userPasses.set([{ name: 'tint', fragment: PASS_FRAGMENT, objects: ['missing'] }]);
   assert.throws(() => renderer.resolveFrame({ time: 0 }), /Mask object "missing" is not a part in the frame/);

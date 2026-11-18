@@ -443,6 +443,7 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   syncMeshBlend(record);
   const postPasses = record.scene.postPasses ?? [];
   record.renderer.userPasses?.set(postPasses);
+  record.renderer.userPasses?.setAntialias(record.scene.postPassesAntialias);
   applyRecipeWindHeading(record.renderer, environment);
   const { objectMotion, ...renderOptions } = frameOptions;
   const frame = { ...camera, environment: litEnvironment(record.scene.parts, environment, Boolean(record.renderer.groundPart)), effects, exposure: effects.exposure, time, lines: environment.lines, ...windFrame(environment), ...renderOptions, effects: effectsWithFStop(renderOptions.effects ?? effects, camera) };
