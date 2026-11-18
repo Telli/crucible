@@ -28,9 +28,11 @@ import { groundBounceEnvironment } from '../src/ground-bounce.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
 import { parseGltf } from '../src/gltf.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { clipDisplayName, resolveClipIndex } from '../src/clip-name.js';
 import { exportGlb } from '../src/export.js';
 import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
+import { sampleMotionAtZeroForGround } from './motion-ground-sample.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
@@ -212,6 +214,7 @@ function viewProblems(record, camera, exposure, { placement = false } = {}) {
   if (record.scene.bakeStaleness) problems.push(...record.scene.bakeStaleness());
   problems.push(...textureProblems({ parts: record.scene.parts }));
   if (record.scene.flushLeftovers) problems.push(...record.scene.flushLeftovers());
+  problems.push(...(record.scene.inspect({}).diagnostics ?? []).filter(problem => problem.kind === 'particle-node-transform-ignored'));
   if (exposure !== undefined) problems.push(...exposureProblems({ shares: sampleFrameShares(), exposure, environment: record.scene.environment }));
   return problems;
 }
@@ -357,7 +360,7 @@ function automaticGroundPlacement(scene) {
 
 function sampleMotionTime(scene, time) {
   if (motionGrounds.get(scene)?.revision !== scene.revision) {
-    scene.sampleMotion(0);
+    sampleMotionAtZeroForGround(scene, time);
     motionGrounds.set(scene, { revision: scene.revision, placement: agentGroundPlacement(scene.parts, scene.environment) });
   }
   scene.sampleMotion(time);
@@ -799,17 +802,17 @@ function withoutRoundoffShear(part) {
 }
 
 // A source clip animates the source skeleton, so the scene must not carry a pose of its own that the clip would fight.
-function clipExport(record, clipIndex) {
+function clipExport(record, clipReference) {
   const { asset, scene } = record;
   if (!asset) throw new Error('clip needs an imported asset scene. Recipe scenes export their current pose.');
+  const clipIndex = resolveClipIndex(asset.animations, clipReference);
   const animation = asset.animations[clipIndex];
-  if (!animation) throw new RangeError(`clip ${clipIndex} does not exist. The asset has ${asset.animations.length} clips.`);
   const recipe = scene.exportRecipe();
   if (recipe.animation || recipe.nodeOverrides.length || recipe.motion) {
     throw new Error('Exporting a clip needs the unposed asset: remove animation, node overrides and motion first, or export without clip for the current pose.');
   }
   const sourceClip = clipFromGltfAnimation(animation);
-  const name = String(animation.name || `clip ${clipIndex}`);
+  const name = clipDisplayName(animation, clipIndex);
   const clip = { ...sourceClip, name, tracks: [...sourceClip.tracks, ...weightTracksFromGltfAnimation(animation)] };
   // Edited parts export their edited geometry on the source part's own matrix, skin and morph.
   const parts = asset.parts.map((part, index) => scene.parts[index].geometry === part.geometry ? part : { ...part, geometry: scene.parts[index].geometry });
