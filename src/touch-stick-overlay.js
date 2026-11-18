@@ -118,9 +118,9 @@ export function createTouchStickOverlay({ parent, source, fadeMilliseconds = TOU
   function elementsFor(name, radius) {
     if (drawn.has(name)) return drawn.get(name);
     const ring = documentOwner.createElement('div');
-    ring.style.cssText = circleStyle(radius * 2, 'border:3px solid rgba(255,255,255,.85);background:rgba(255,255,255,.18);box-shadow:0 0 0 1px rgba(0,0,0,.45),inset 0 0 0 1px rgba(0,0,0,.25)');
+    ring.style.cssText = circleStyle(radius * 2, 'border:4px solid #fff;background:rgba(15,18,28,.3);box-shadow:0 0 0 2px rgba(0,0,0,.65),inset 0 0 0 2px rgba(0,0,0,.5),0 0 16px rgba(0,0,0,.4)');
     const knob = documentOwner.createElement('div');
-    knob.style.cssText = circleStyle(radius * 2 * KNOB_DIAMETER_OVER_RING_DIAMETER, 'background:rgba(255,255,255,.92);box-shadow:0 0 0 1px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.45)');
+    knob.style.cssText = circleStyle(radius * 2 * KNOB_DIAMETER_OVER_RING_DIAMETER, 'background:#fff;box-shadow:0 0 0 2px rgba(0,0,0,.65),0 3px 8px rgba(0,0,0,.5)');
     container.appendChild(ring);
     container.appendChild(knob);
     const elements = { ring, knob };

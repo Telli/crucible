@@ -287,6 +287,13 @@ async function expectStickUnderFinger(page, landed, dragged) {
   assert.equal(drawn.ringWidth, 120);
   const stillPath = process.env.GAME_SMOKE_TOUCH_STILL;
   if (stillPath) await page.screenshot({ path: stillPath });
+  // GAME_SMOKE_TOUCH_STILL_DARK keeps a second still with the scene dimmed, to see the stick over a dark picture.
+  const darkStillPath = process.env.GAME_SMOKE_TOUCH_STILL_DARK;
+  if (darkStillPath) {
+    await page.evaluate(() => { document.getElementById('game').style.filter = 'brightness(0.3)'; });
+    await page.screenshot({ path: darkStillPath });
+    await page.evaluate(() => { document.getElementById('game').style.filter = ''; });
+  }
 }
 
 // Real touch events through the DevTools protocol: finger 1 presses in the left half and drags up past the stick radius (60 px),
