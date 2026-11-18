@@ -22,6 +22,7 @@ import { chooseDenoiser, finishWithOidn } from './agent-path-trace-denoise.mjs';
 import { createNativeSequence } from './agent-native-sequence.mjs';
 import { chooseNativeTemporal, createTemporalAccumulator, temporalFrameSeed } from './agent-native-temporal.mjs';
 import { readNativeCapacity } from './native-capacity.mjs';
+import { describeBackendFallback, explainFailureAfterFallback } from '../src/agent-backend-fallback.js';
 import { chooseNativeInstancing, chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, fetchNativeExport, isNativeTimeLimitError, traceFrameNative, traceTexelsNative } from './agent-native-trace.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from './mcp-addons.mjs';
 import { createAgentAssetCatalog } from './agent-asset-catalog.mjs';
@@ -979,6 +980,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const traceOptions = { width, height, ...tracerOptions, backend: trace.backend === 'native' ? 'gpu' : trace.backend, denoise: choice.denoise, threads: PATH_TRACER_THREADS };
           let traced;
           let backendNote = trace.note;
+          let fallbackReason = trace.reason;
           if (trace.backend === 'native') {
             let exportedScene = false;
             nativeMemoryAllowance.grantForFrame({ width, height, memoryMiB: memory });
@@ -1009,20 +1011,29 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               nativeTemporal?.restart('a frame rendered on another backend');
               // Only a tracer or adapter failure makes the tracer unusable; a scene that failed to export says so for this job alone.
               if (exportedScene) nativeTracerLocator.markUnusable(error.message);
-              backendNote = exportedScene ? (await nativeTracerLocator.find()).reason : `renderer.backend "native" could not export the scene (${error.message}).`;
+              fallbackReason = exportedScene ? (await nativeTracerLocator.find()).reason : `renderer.backend "native" could not export the scene (${error.message}).`;
+              backendNote = fallbackReason;
               traceOptions.backend = backend === 'cpu' ? 'cpu' : 'gpu';
               choice = await chooseDenoiser(settings.renderer.denoise);
               traceOptions.denoise = choice.denoise;
               backendNote += ' The ' + traceOptions.backend + ' backend ran instead.';
             }
           }
+          const fallback = settings.renderer.backend === 'native' && traceOptions.backend !== 'native'
+            ? describeBackendFallback({ requestedBackend: 'native', usedBackend: traceOptions.backend, fallbackReason })
+            : undefined;
           if (!traced) {
-            traced = await jobPage.evaluate(input => window.__agentPreview.pathTrace(input), { ...frameInput, options: traceOptions });
+            try {
+              traced = await jobPage.evaluate(input => window.__agentPreview.pathTrace(input), { ...frameInput, options: traceOptions });
+            } catch (error) {
+              throw explainFailureAfterFallback(error, fallback);
+            }
             if (traced.features) {
               traced = await finishWithOidn({ traced, denoiser: choice.denoiser, drawLinear: input => jobPage.evaluate(drawInput => window.__agentPreview.finishPathTrace(drawInput), input) });
             }
           }
           if (backendNote) traced.report.backendNote = backendNote;
+          if (fallback) traced.report.backendFallback = fallback;
           const denoiserNote = [choice.note, traced.report.denoiserNote].filter(Boolean).join(' ');
           if (denoiserNote) traced.report.denoiserNote = denoiserNote;
           metrics.renderSeconds += (performance.now() - renderStarted) / 1000;
