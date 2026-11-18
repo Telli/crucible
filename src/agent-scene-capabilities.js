@@ -175,6 +175,12 @@ export function memoryRangeError(memory, maximumMiB) {
   return new RangeError(`memory must be an integer from 32 to ${maximumMiB} MiB on this machine (half of its RAM, at most ${MEMORY_CEILING_MIB}), got ${memory}.`);
 }
 export const AUDIO_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(wav|mp3|ogg|flac)$/;
+
+/** The error for an audio file name AUDIO_FILE_PATTERN refuses: names the value received, the rule and the fix. */
+export function audioFileNameError(file) {
+  const received = typeof file === 'string' ? JSON.stringify(file) : `a ${file === null ? 'null' : typeof file} value`;
+  return new TypeError(`Audio file ${received} is not allowed: use a plain file name of letters, digits, ".", "_" or "-" (starting with a letter or digit, up to 64 characters) with a lower-case extension .wav, .mp3, .ogg or .flac. Rename the file in the audio folder and pass that name as settings.audio.file.`);
+}
 // Metres that depth pass values 0 to 65535 span, measured from the camera.
 export const RENDER_PASS_DEPTH_RANGE = 100;
 

@@ -3,7 +3,7 @@ import { mkdir, open, readFile, writeFile, rename, link, unlink, rmdir, readdir,
 import { randomUUID, createHash } from 'node:crypto';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 
-import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, VIDEO_ENCODERS, AUDIO_FILE_PATTERN, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, MAXIMUM_STILLS_FRAMES, MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE } from '../src/agent-scene-capabilities.js';
+import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, VIDEO_ENCODERS, AUDIO_FILE_PATTERN, audioFileNameError, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, MAXIMUM_STILLS_FRAMES, MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE } from '../src/agent-scene-capabilities.js';
 import { parseQuality } from './agent-render-quality.mjs';
 import { estimateFrameBytes } from '../src/budget.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
@@ -111,6 +111,7 @@ export function normalizeJobSettings(input, clips, recipe) {
 function settingsFrom(input, clips = [], recipe) {
   objectKeys(input, ['kind', 'width', 'height', 'fps', 'duration', 'animation', 'motion', 'rendererTime', 'passes', 'renderer', 'timeline', 'audio', 'encoder', 'transparent', 'format', 'multilayer', 'region', 'quality', 'stillCount', 'mattes'], 'settings');
   if (!['image', 'stills', 'video'].includes(input.kind)) throw new TypeError('kind must be image, stills or video.');
+  rejectImageClockFields(input);
   const largeFrame = input.kind === 'image';
   const maximumSide = largeFrame ? MAXIMUM_JOB_SIDE : MAXIMUM_SEQUENCE_JOB_SIDE;
   const maximumPixels = largeFrame ? MAXIMUM_JOB_PIXELS : MAXIMUM_SEQUENCE_JOB_PIXELS;
@@ -168,7 +169,7 @@ function settingsFrom(input, clips = [], recipe) {
       throw new TypeError('Motion loop must be boolean.');
     }
     const start = boundedNumber(input.motion.start === undefined ? 0 : input.motion.start, 0, 3600, 'motion start');
-    boundedNumber(start + lastSampleTime, 0, 3600, 'motion end');
+    motionEndWithinClock(start, lastSampleTime);
     if (recipe.motion && !recipe.motion.loop && start + lastSampleTime > motionDuration) {
       throw new RangeError('Motion range exceeds the authored duration.');
     }
@@ -191,8 +192,36 @@ function settingsFrom(input, clips = [], recipe) {
   } else {
     result.rendererTime = { start: 0, rate: 1 };
   }
-  boundedNumber(result.rendererTime.start + lastSampleTime * result.rendererTime.rate, 0, 3600, 'renderer time end');
+  rendererTimeEndWithinClock(result.rendererTime, lastSampleTime);
   return result;
+}
+
+/** The motion clock stops at 3600 s; name the fields the caller sent and the end they produce. */
+function motionEndWithinClock(start, lastSampleTime) {
+  const end = start + lastSampleTime;
+  if (end <= 3600) return;
+  throw new RangeError(`motion.start ${start} plus the last sample at ${lastSampleTime} s is ${end} s; the motion clock stops at 3600 s. Lower motion.start or duration.`);
+}
+
+/** The renderer clock runs from 0 to 3600 s; name rendererTime.start, rate and the end they produce. */
+function rendererTimeEndWithinClock({ start, rate }, lastSampleTime) {
+  const end = start + lastSampleTime * rate;
+  if (end < 0) {
+    const neededStart = Math.ceil(-lastSampleTime * rate * 1000) / 1000;
+    throw new RangeError(`rendererTime.start ${start} with rate ${rate} reaches ${end} s; the renderer clock cannot go below 0. Raise rendererTime.start to at least ${neededStart} or use a positive rate.`);
+  }
+  if (end > 3600) {
+    throw new RangeError(`rendererTime.start ${start} with rate ${rate} reaches ${end} s; the renderer clock stops at 3600 s. Lower rendererTime.start, rate or duration.`);
+  }
+}
+
+/** An image is one frame at motion.start, so duration and fps would be echoed and never used. */
+function rejectImageClockFields(input) {
+  if (input.kind !== 'image') return;
+  const given = ['duration', 'fps'].filter(name => input[name] !== undefined);
+  if (given.length === 0) return;
+  const received = given.map(name => `${name} ${JSON.stringify(input[name])}`).join(' and ');
+  throw new TypeError(`${given.join(' and ')} ${given.length > 1 ? 'need' : 'needs'} kind stills or video; an image is one frame at motion.start (received kind image with ${received}). Drop ${given.join(' and ')}, or use kind stills or video.`);
 }
 
 function stillsFrameCountFrom(input) {
@@ -287,7 +316,7 @@ function audioFrom(audio, kind) {
   objectKeys(audio, ['file', 'offset', 'track'], 'audio');
   if (audio.track !== undefined && !['aac', 'pcm'].includes(audio.track)) throw new TypeError('audio.track must be aac or pcm.');
   if (typeof audio.file !== 'string' || !AUDIO_FILE_PATTERN.test(audio.file)) {
-    throw new TypeError('audio.file must be a file name in the configured audio folder ending in .wav, .mp3, .ogg or .flac.');
+    throw audioFileNameError(audio.file);
   }
   return { file: audio.file, offset: boundedNumber(audio.offset ?? 0, 0, 3600, 'audio offset'), track: audio.track ?? 'aac' };
 }
@@ -849,7 +878,10 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
         const asset = await hashFile(join(directory, 'asset.glb'), MAXIMUM_ASSET_BYTES);
         if (asset.sha256 !== snapshot.recipe.assetId) throw new Error('Persisted asset does not match its recipe digest.');
       }
-      const { frameCount, ...inputSettings } = record.settings;
+      const { frameCount, ...storedSettings } = record.settings;
+      // A stored image job echoes the fps and duration it defaulted to; a submission may not send them.
+      const { fps: echoedFps, duration: echoedDuration, ...imageSettings } = storedSettings;
+      const inputSettings = storedSettings.kind === 'image' ? imageSettings : storedSettings;
       const settings = settingsFrom(inputSettings, snapshot.clips ?? [], snapshot.recipe);
       if (frameCount !== settings.frameCount) throw new Error('Invalid persisted frame count.');
       record.settings = settings;

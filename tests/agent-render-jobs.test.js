@@ -58,7 +58,7 @@ test('motion job ranges use immutable recipe duration, loops and actual sample t
   await assert.rejects(controller.submit(input), /Motion range/);
   input.snapshot.recipe.motion.loop = true;
   input.settings.motion.start = 3600;
-  await assert.rejects(controller.submit(input), /motion end/);
+  await assert.rejects(controller.submit(input), /motion.start 3600 plus the last sample at 1 s is 3601 s; the motion clock stops at 3600 s. Lower motion.start or duration./);
   input.settings.motion.start = null;
   await assert.rejects(controller.submit(input), /motion start/);
   input.snapshot.recipe = { format: 'crucible.asset', motion: { duration: 1 } };
@@ -693,7 +693,7 @@ test('a path tracer job runs on the cpu unless it asks for the gpu, and film job
     await writeFile(join(directory, 'render.png.partial'), Buffer.alloc(32, 1));
     return { artifacts: [{ temporary: 'render.png.partial', filename: 'render.png', mimeType: 'image/png' }], metrics: {} };
   } });
-  const submitWith = (renderer, kind = 'image') => controller.submit({ sourceRevision: 1, snapshot, settings: { kind, width: 64, height: 64, duration: 1, fps: 2, renderer: { type: 'pathTracer', ...renderer } } });
+  const submitWith = (renderer, kind = 'image') => controller.submit({ sourceRevision: 1, snapshot, settings: { kind, width: 64, height: 64, ...(kind === 'image' ? {} : { duration: 1, fps: 2 }), renderer: { type: 'pathTracer', ...renderer } } });
   const defaulted = await submitWith({});
   await terminal(controller, defaulted.jobId);
   assert.equal(controller.status(defaulted.jobId).settings.renderer.backend, 'cpu');

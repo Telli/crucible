@@ -35,6 +35,7 @@ Preview rendering and edits pause during a job. Inspection and recipe export rem
 The source revision, pose and checkpoints survive completion or cancellation.
 Cancellation becomes terminal after the owned encoder and job page stop and the preview recovers.
 
+An `image` job is one frame at `motion.start`, so it refuses `duration` and `fps` (they would change nothing); `stills` and `video` jobs read both. `stillCount` needs `stills` and `encoder` and `audio` need `video`.
 Video uses H.264 (CPU by default, see `settings.encoder`), even dimensions and one streamed frame at a time.
 With `settings.encoder` `nvenc`, MCP video frames are encoded in the page by the browser's hardware H.264 encoder in the same task as the draw, and only the encoded chunks travel to Node over one binary WebSocket on the preview server port, where `ffmpeg -c copy` muxes them with the audio (issue #301). Without NVENC, or when the browser cannot encode the size, frames are JPEG screenshots encoded by ffmpeg.
 PNG stills and render passes still use a DevTools screenshot, byte for byte as before.
@@ -82,7 +83,7 @@ A frame depends only on its timeline time and keeps no state, so a seek to any t
 Videos are capped at 60 s and 900 frames, so a 60 s video needs 15 fps or less. `scene_capabilities` jobs reports the caps as `maximumFps` (60) and `maximumFrames` (900), the same constants the job validator uses.
 
 **Audio.** Start the server with `--audio <absolute folder>` and pass `settings.audio: { file, offset }` on a video job.
-`file` is a plain name in that folder ending in `.wav`, `.mp3`, `.ogg` or `.flac` (no path, drive or protocol syntax); the file must be a regular file of up to 32 MiB without links.
+`file` is a plain name in that folder of letters, digits, `.`, `_` or `-` (up to 64 characters, starting with a letter or digit) ending in a lower-case `.wav`, `.mp3`, `.ogg` or `.flac`, so `Score.WAV` and `my score.wav` are refused (no path, drive or protocol syntax); the file must be a regular file of up to 32 MiB without links.
 `offset` starts the sound that many seconds into the file. The sound is resampled to 48 kHz and encoded as AAC.
 A job whose file is shorter than the video after its offset fails before rendering. After encoding, the job decodes both streams of the MP4 and reports `metrics.sync`
 (`videoSeconds`, `audioSeconds`, `differenceSeconds`); a difference over 50 ms fails the job.
