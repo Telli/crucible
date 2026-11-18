@@ -1765,10 +1765,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const usesVisibility = recipeUsesVisibility(recipe);
     const nextParts = recipe.nodes.filter(node => node.geometry !== undefined).map(node => {
       const binding = skinBindings.get(node.id);
-      const material = materialHandles.get(node.material).output;
+      const recipeMaterial = materialHandles.get(node.material);
       const sourceGeometry = binding?.geometry ?? geometries.get(node.geometry);
-      const foamGeometry = sourceGeometry.vertexGroups?.foam ? agentSceneModule('mesh').waterFoamGeometry(sourceGeometry, material) : sourceGeometry;
-      const geometry = material.wear ? geometryWithSurfaceMasks(foamGeometry, material.wear, node.id) : foamGeometry;
+      const foamGeometry = sourceGeometry.vertexGroups?.foam ? agentSceneModule('mesh').waterFoamGeometry(sourceGeometry, recipeMaterial.output) : sourceGeometry;
+      const geometry = recipeMaterial.output.wear ? geometryWithSurfaceMasks(foamGeometry, recipeMaterial.output.wear, node.id) : foamGeometry;
+      // A graph with a vertexGroup node bakes with this mesh's weights, so its textures belong to the mesh.
+      const material = recipeMaterial.output.pattern?.graph ? agentSceneModule('patterns').materialViewForGeometry(recipeMaterial.output, geometry, node.id, recipeMaterial.holder.images) : recipeMaterial.output;
       const assetExtras = assetRuntime.partExtras.get(node.id);
       // Shape keys of a recipe mesh are morph targets with their own weights per part; an imported asset brings its own pose.
       const shapeKeyMorph = geometry.morphTargetValues && !assetExtras?.morph ? { weights: Float32Array.from(geometry.morphTargetValues) } : undefined;

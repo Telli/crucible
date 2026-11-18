@@ -55,7 +55,7 @@ export const MATERIAL_GRAPH_OUTPUTS = Object.freeze(['color', 'roughness', 'meta
 export const MATERIAL_GRAPH_OPERATORS = Object.freeze([
   'uv', 'coord', 'mapping', 'vec', 'ramp', 'image', 'noise', 'whiteNoise', 'brick', 'voronoi', 'wave', 'checker', 'gradient',
   'add', 'sub', 'mul', 'div', 'min', 'max', 'pow', 'abs', 'floor', 'fract', 'sqrt', 'invert', 'clamp', 'smoothstep', 'mix',
-  'layer', 'hue', 'curve', 'fresnel',
+  'layer', 'hue', 'curve', 'fresnel', 'vertexGroup',
 ]);
 export const MATERIAL_GRAPH_LIMITS = Object.freeze({ maxNodes: MAX_FIELD_NODES, maxDepth: MAX_FIELD_DEPTH, maxStops: 8, maxWork: 30_000_000 });
 // Curve and text geometry. A text geometry is bounded by vertices per curve segment: the bundled font stays under
@@ -85,9 +85,10 @@ export const MATERIAL_GRAPH_NODES = Object.freeze({
     note: 'Each takes "at", a vector such as {"uv":"both"}. Scales are whole numbers 1-64.',
   }),
   uv: '{"uv":"u"|"v"|"both"} coordinates.',
-  coordinates: '{"coord":"generated"|"object"|"world"} vector of where the texel sits: generated is the unit tile, object and world are metres across the tile (u * size); the third axis is 0 because a baked texture is projected. {"mapping":{"vector":node,"scale":n|[x,y,z],"offset":[x,y,z],"rotate":radians}} scales, turns around Z and moves a vector (default: generated). Feed either to "at". Meshes without UVs use box mapping; vertex_color already multiplies the baked colour. In graphs: fresnel, only as an emission factor. Not in graphs: vertexGroup, AO, bevel, curvature (per-pixel data a bake lacks).',
+  coordinates: '{"coord":"generated"|"object"|"world"} vector of where the texel sits: generated is the unit tile, object and world are metres across the tile (u * size); the third axis is 0 because a baked texture is projected. {"mapping":{"vector":node,"scale":n|[x,y,z],"offset":[x,y,z],"rotate":radians}} scales, turns around Z and moves a vector (default: generated). Feed either to "at". Meshes without UVs use box mapping; vertex_color already multiplies the baked colour. In graphs: fresnel, only as an emission factor. Not in graphs: AO, bevel, curvature (per-pixel data a bake lacks).',
   ramp: '{"ramp":{"value":node,"stops":[[0,[r,g,b]],[1,[r,g,b]]]}} 2-8 stops rising from 0 to 1.',
   fresnel: '{"fresnel":{"ior":1.5}} ior 1.01-3. View dependent, so only as a factor of emission, alone or {"mul":[node,{"fresnel":{...}}]}: emission rises toward grazing angles, rendered per pixel by the rasterizer and the CPU path tracer.',
+  vertexGroup: '{"vertexGroup":{"name":"edge"}} a number 0-1: the weight of that vertex group of the mesh, drawn into UV space and read at the texel, so it mixes with noise, ramps and layers. Needs pattern mapping "uv" and a mesh with UVs and the group (make it with a vertex_group mesh edit); every backend reads the baked texture. A material used on two meshes bakes once per mesh.',
   mixing: '{"layer":{"base","top","mask","edge","softness"}}; {"hue":{"color","shift","saturation","value"}}; {"curve":{"value","points":[[x,y]]}}.',
   maths: 'add sub mul div min max pow take [a,b]; abs floor fract sqrt invert take one node; clamp smoothstep mix take [a,b,c]; {"vec":[r,g,b]}.',
   mapping: 'box (default) projects along object axes, no UVs; uv follows geometry UVs. size and axis only apply to box.',
