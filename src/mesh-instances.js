@@ -116,6 +116,8 @@ function gridPoints(source) {
   const total = counts[0] * counts[1] * counts[2];
   if (total > MAX_INSTANCE_CANDIDATES) throw instanceError(`a grid of ${total} points is over the limit of ${MAX_INSTANCE_CANDIDATES}.`);
   const spacing = coordinates(source.spacing, 'grid spacing');
+  const coincidentAxis = ['x', 'y', 'z'].find((axis, index) => counts[index] > 1 && spacing[index] === 0);
+  if (coincidentAxis) throw instanceError(`grid spacing is 0 on ${coincidentAxis} but its count is above 1, so the points coincide. Give that spacing a nonzero value or set its count to 1.`);
   const positions = new Float64Array(total * 3);
   let index = 0;
   for (let z = 0; z < counts[2]; z++) {

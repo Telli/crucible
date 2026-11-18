@@ -207,3 +207,8 @@ test('a where that drops every candidate point names the node, the count and the
   assert.throws(() => expand({ scatter: { ...scatter, count: 1 }, where: 0 }), /dropped all 1 candidate point. /);
   assert.equal(children(expand({ scatter, where: 1 })).length, 5);
 });
+
+test('a grid whose spacing is 0 on an axis with several points names the axis (#2094)', () => {
+  assert.throws(() => expand({ grid: { counts: [3, 1, 1], spacing: [0, 0, 0] } }), /spacing is 0 on x.*coincide/);
+  assert.equal(children(expand({ grid: { counts: [1, 1, 1], spacing: [0, 0, 0] } })).length, 1);
+});

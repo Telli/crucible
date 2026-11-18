@@ -266,7 +266,7 @@ the geometry and material, so the renderer draws them as one instanced batch. Af
                  "yaw": true, "scale": [0.7, 1.3] } }
 ```
 
-Give exactly one point source. `grid` is `{ counts: [nx, ny, nz], spacing: [dx, dy, dz] }`, centred on the group.
+Give exactly one point source. `grid` is `{ counts: [nx, ny, nz], spacing: [dx, dy, dz] }`, centred on the group; a spacing of 0 on an axis with more than one point is an error, because the points would coincide.
 `scatter` is `{ count, min, max }`, seeded random points in a box. `surface` is `{ geometry, count }`, seeded points
 on the triangles of a recipe geometry in proportion to their area; they are in that geometry's own space, so parent
 the group to the node that carries it. `seed` (default 0) fixes the placement. `where` is a number
