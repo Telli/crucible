@@ -212,6 +212,7 @@ function viewProblems(record, camera, exposure, { placement = false } = {}) {
   if (record.scene.bakeStaleness) problems.push(...record.scene.bakeStaleness());
   problems.push(...textureProblems({ parts: record.scene.parts }));
   if (record.scene.flushLeftovers) problems.push(...record.scene.flushLeftovers());
+  problems.push(...(record.scene.inspect({}).diagnostics ?? []).filter(problem => problem.kind === 'particle-node-transform-ignored'));
   if (exposure !== undefined) problems.push(...exposureProblems({ shares: sampleFrameShares(), exposure, environment: record.scene.environment }));
   return problems;
 }
