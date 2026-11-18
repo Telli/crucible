@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
 import { walkerRecipe } from '../bench/agent-modeling/walker.mjs';
+import { MOTION_TRACK_KINDS } from '../src/agent-motion.js';
 import { createAgentScene, loadPhysicsEngine, AGENT_SCENE_CAPABILITIES } from '../src/agent-scene.js';
 
 await loadPhysicsEngine();
@@ -51,7 +52,7 @@ async function withRoundTripClient(use) {
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   try {
-    return await use(client);
+    return await use(client, () => scene);
   } finally {
     await client.close();
     await server.close();
@@ -188,11 +189,43 @@ test('scene_create names the valid kinds and properties for a motion track with 
     const keyframes = [{ time: 0, value: [0, 0, 0] }];
     const createdWith = track => call(client, 'scene_create', { recipe: oneBoxRecipe({ motion: { duration: 1, tracks: [track] } }) });
     const missingKind = await createdWith({ id: 'a', property: 'translation', keyframes });
-    assert.match(missingKind.text, /needs kind \(node, material, camera, geometry, light, sun, environment, effects\)/);
+    assert.match(missingKind.text, /needs kind \(node, material, camera, morph, geometry, light, sun, environment, effects\)/);
     const wrongKind = await createdWith({ kind: 'sky', id: 'a', property: 'translation', keyframes });
     assert.match(wrongKind.text, /Unknown motion track kind: "sky"\. Kinds: node, material/);
     const wrongProperty = await createdWith({ kind: 'node', id: 'a', property: 'bogus', keyframes });
     assert.match(wrongProperty.text, /Unknown node track property: "bogus"\. node properties: translation, rotation, scale\./);
+  });
+});
+
+function morphTrackRecipe() {
+  return {
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'face', type: 'mesh', base: { type: 'box', bevel: 0, subdivisions: 2 }, shapeKeys: [{ name: 'lift', offsets: [{ select: { tag: 'top' }, offset: [0, 0.5, 0] }] }] }],
+    materials: [{ id: 'skin' }],
+    nodes: [{ id: 'head', geometry: 'face', material: 'skin' }],
+    camera: { eye: [3, 2, 4], target: [0, 0.5, 0], fov: 45 },
+    motion: { duration: 2, tracks: [{ kind: 'morph', id: 'lift', property: 'weight', keyframes: [{ time: 0, value: 0 }, { time: 1, value: 1 }] }] },
+  };
+}
+
+test('scene_create accepts a morph motion track and the shape key weight animates', async () => {
+  await withRoundTripClient(async (client, currentScene) => {
+    const created = await call(client, 'scene_create', { recipe: morphTrackRecipe() });
+    assert.notEqual(created.isError, true, created.text);
+    const weightAt = time => {
+      currentScene().sampleMotion(time);
+      return Array.from(currentScene().parts.find(part => part.morph).morph.weights)[0];
+    };
+    assert.equal(weightAt(0), 0);
+    assert.equal(weightAt(1), 1);
+  });
+});
+
+test('scene_create takes every motion track kind the backend lists', async () => {
+  assert.deepEqual([...MOTION_TRACK_KINDS], ['node', 'material', 'camera', 'morph', 'geometry', 'light', 'sun', 'environment', 'effects']);
+  await withRoundTripClient(async client => {
+    const wrongKind = await call(client, 'scene_create', { recipe: oneBoxRecipe({ motion: { duration: 1, tracks: [{ kind: 'sky', id: 'a', property: 'x', keyframes: [{ time: 0, value: 0 }] }] } }) });
+    assert.match(wrongKind.text, new RegExp(`Kinds: ${MOTION_TRACK_KINDS.join(', ')}\.`));
   });
 });
 
