@@ -205,6 +205,40 @@ Passes in these formats are drawn into half-float targets, so albedo, normal and
 The path tracer writes an 8-bit PNG of the whole frame: `transparent`, `format` and `region` are refused with `renderer`. H.264 has no alpha, so `transparent` and `format` are refused for video. 16-bit and EXR output need `EXT_color_buffer_float`; without it the job fails with a message that says to use `png`.
 A `png16` or `exr` frame is up to four times the 8-bit frame limit (48 MiB). A region with the browser H.264 encoder (`encoder: "nvenc"`) uses screenshot frames instead.
 
+## Icons {since 0.22.0}
+
+`kind: "icons"` renders a set of GLBs as matching transparent square icons in one job, for inventories, asset browsers and docs. It is a job kind of `scene_render_submit`, so status, result and release work as for any job. The scene you submit it with is not drawn (any open scene will do, for instance an empty one).
+
+```json
+{ "kind": "icons", "items": ["sword.glb", "chest.glb", "coin.glb"], "size": 256, "style": "toon", "scale": "relative" }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `items` | 1 to 256 catalog GLB names (as `scene_asset_catalog` lists them, inside `--assets` or `--packs`) or 64 character asset ids. Names are pinned to their asset id at submit. No paths outside the catalog and no URLs. |
+| `size` | 64, 128, 256 (default) or 512 pixels per icon side. The atlas side is at most 4096 px, so 512 takes up to 64 items. |
+| `style` | `clean` (default, the shaded render) or `toon` (outlines and three light bands, from [line art](line-art.md)). `sketch` is refused until it ships. |
+| `viewpoint` | `"three-quarter"` (default: azimuth 35, elevation 25 degrees) or `{ azimuth, elevation }` in degrees, from the front of the model (+Z in glTF). |
+| `scale` | `fit` (default): every item fills its icon. `relative`: one view height for the set, so the largest item fills its icon and a sword stays smaller than a chest. |
+| `padding` | The empty border as a fraction of the icon side, 0.02 to 0.4 (default 0.08), the same for every item. |
+
+The camera is orthographic, so an item's size does not depend on its distance, and the light is a fixed three-point rig that turns with the view, so every icon is lit from the same side. There is no ground and no sky: the background is transparent.
+
+Framing fits the silhouette, not the bounding sphere. The job draws the item once from a bounding sphere, measures the alpha box of what was drawn and moves the camera until that box is centred and spans the icon minus its padding (up to four draws per item). A thin or flat item such as a sword or a coin therefore fills its icon instead of drawing small. An item that draws nothing, or cannot be framed in four draws, fails the job and names the item.
+
+Output, all in the job's folder: `icon-0.png` to `icon-<n-1>.png` (one per item, in order), `atlas.png` (a near square grid, row by row, transparent where unused) and `icons.json`:
+
+```json
+{ "version": 1, "size": 256, "style": "toon", "scale": "relative", "padding": 0.08, "viewpoint": { "azimuth": 35, "elevation": 25 },
+  "atlas": { "file": "atlas.png", "width": 512, "height": 512, "columns": 2, "rows": 2 },
+  "icons": [{ "name": "sword", "file": "icon-0.png", "source": "sword.glb", "asset": "<id>", "angle": 35,
+    "rect": { "x": 0, "y": 0, "width": 256, "height": 256 }, "bounds": { "x": 70, "y": 21, "width": 116, "height": 214 }, "viewHeight": 2.1 }] }
+```
+
+`rect` is the icon's cell in the atlas, `bounds` the box of its pixels inside the icon, and `viewHeight` the metres the icon's height spans. The JSON is plain, so Godot, Unity, Phaser and web code read it without a converter. The same items and settings give byte-identical files on the `cpu` backend.
+
+Not in this release: `style: "sketch"`, turnaround sheets (`angles`), the `breakdown` strip, HDRI lighting, `background` and `outline` (issue #2031; each is refused by name), and scene node ids as items. `scene_capabilities` topic `jobs` lists the limits under `icons`. `node scripts/smoke-icons.mjs --assets <folder> --out <folder> --style toon` renders a folder of GLBs and checks every icon's frame.
+
 ## Path tracer
 
 An `image`, `stills` or `video` job can ask for the offline [path tracer](https://github.com/codepawl/crucible/blob/main/docs/path-tracer.md) with `settings.renderer`:
