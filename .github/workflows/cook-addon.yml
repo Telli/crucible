@@ -347,6 +347,7 @@ on:
       - 'src/volume-grid.js'
       - 'src/volume-step-integral.js'
       - 'src/volumetric.js'
+      - 'src/water-caustics.js'
       - 'src/water-mirror-glsl.js'
       - 'src/world-material-shader.js'
       - 'tests/cook-dof-parity.test.js'
