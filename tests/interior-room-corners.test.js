@@ -11,18 +11,18 @@ const SKY_RADIANCE = 1;
 const SUN_STRENGTH = 3;
 const OPTIONS = { width: 160, height: 90, samples: 8, bounces: 3, denoise: false, threads: 1 };
 
-function sealedRoomRecipe(geometries) {
+function sealedRoomRecipe(geometries, adjustNode) {
   return {
     format: 'crucible.scene', schemaVersion: 1,
     geometries,
     materials: ROOM_MATERIALS,
-    nodes: roomNodes({ sealed: true, withoutLawn: true }),
+    nodes: roomNodes({ sealed: true, withoutLawn: true }).map(node => adjustNode ? adjustNode(node) : node),
     camera: ROOM_CAMERA,
   };
 }
 
-async function brightestSealedPixel(geometries) {
-  const { parts } = createAgentScene(sealedRoomRecipe(geometries));
+async function brightestSealedPixel(geometries, adjustNode) {
+  const { parts } = createAgentScene(sealedRoomRecipe(geometries, adjustNode));
   const environment = {
     keyColor: [SUN_STRENGTH, SUN_STRENGTH, SUN_STRENGTH],
     lightDirection: [0.3, 0.55, -0.8],
@@ -37,7 +37,13 @@ test('a sealed room built from boxes traces black: no sky light comes in through
   assert.equal(await brightestSealedPixel(ROOM_GEOMETRIES), 0);
 });
 
-test('the same room with the default rounded boxes does leak, so the check above can fail', async () => {
-  const leaked = await brightestSealedPixel([{ id: 'block', type: 'box' }]);
+test('the same room with the default rounded boxes traces black too: the engine draws walls that meet with sharp edges (#2298)', async () => {
+  assert.equal(await brightestSealedPixel([{ id: 'block', type: 'box' }]), 0);
+});
+
+test('rounded walls that the engine does not join still leak, so the checks above can fail', async () => {
+  // A tilt of 0.001 radians takes a wall out of the plain-box test but leaves every groove open.
+  const tilt = node => ({ ...node, rotation: [0, 0, Math.sin(0.0005), Math.cos(0.0005)] });
+  const leaked = await brightestSealedPixel([{ id: 'block', type: 'box' }], tilt);
   assert.ok(leaked > 0.1, `a sealed room of rounded boxes should leak sky light at its corners, brightest pixel ${leaked}`);
 });

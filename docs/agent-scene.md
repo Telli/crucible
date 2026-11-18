@@ -83,7 +83,7 @@ The generators also enforce their existing numeric and modeling constraints.
 
 | Type | Fields | Defaults |
 | --- | --- | --- |
-| `box` | `bevel`, `subdivisions` | `0.08`, `6` (walls, floors and ceilings that touch take `bevel: 0`: the rounded edges of two touching boxes leave a groove at the corner that lets sky light into a closed room, #2000) |
+| `box` | `bevel`, `subdivisions` | `0.08`, `6` (a closed room of touching boxes is drawn with sharp edges: see the paragraph after this table) |
 | `cylinder` | `segments`, `bevel`, `bevelSegments` | `80`, `0.025`, `6` |
 | `sphere` | `segments`, `rings` | `64`, `40` |
 | `torus` | `tubeRadius`, `segments`, `sides`, `arc`, `start` | `0.08`, `96`, `24`, `2π`, `0` |
@@ -95,6 +95,8 @@ The generators also enforce their existing numeric and modeling constraints.
 | `terrain` | `size`, `resolution`, `seed`, `amplitude`, `holes` | `40` m, `64` cells, `1`, `1` m, none |
 
 `seed` is a whole number from 0 to 2147483647 (anything else is refused, not rounded or wrapped). `terrain` is one seeded ground mesh from `-size / 2` to `size / 2` on X and Z with hills about y = 0 and up to 16 round `holes` (`{ center: [x, z], radius }`) that leave no surface; it loads on demand. Details are in `scene_capabilities` under `terrain`.
+
+Boxes that meet in a room: the rounded edge of a default box leaves a groove where two boxes touch, and sun, sky and lamps shine through it. When at least four pairs of plain boxes (translation and scale only, no parent) touch and the joined boxes have a thin slab on each of the six sides, the engine draws those boxes with sharp edges, whatever their `bevel`. Props that only stand on a floor, rooms without a ceiling, rotated or parented boxes, and scenes with more than 1500 rounded boxes keep their rounded edges. The recipe is not changed, so `bevel` still reads as written.
 
 `curve` and `text` are described in full by `scene_capabilities` under `curveText.details`; see [modeling.md](modeling.md).
 

@@ -1,4 +1,5 @@
 import { mat4, mat3 } from 'gl-matrix';
+import { roomJoinedBoxNodeIds } from './room-box-joins.js';
 import { box, checkTorusShape, circle, cone, cylinder, grid, icoSphere, sphere, torus } from './geometry.js';
 import { createSceneGraph } from './scene-graph.js';
 import { currentFormatName } from './legacy-names.js';
@@ -821,6 +822,13 @@ function cutterScopeOf(geometries) {
 export function generateCutterGeometry(cutter, maxVertices) {
   cutterEstimate(cutter);
   return generateGeometry(cutter, maxVertices);
+}
+
+// The box a room's walls are drawn with where they meet (#2298): its edges are sharp, so joined walls leave no groove for light to enter.
+let sharpJoinBox = null;
+function sharpJoinBoxGeometry() {
+  sharpJoinBox ??= Object.freeze(box(0));
+  return sharpJoinBox;
 }
 
 function generateGeometry(value, maxVertices, scope) {
@@ -1805,10 +1813,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const activeParts = new Map(state?.sourceRestParts.map(part => [part.name, part]) ?? []);
     const preferredParts = new Map(preferred?.sourceRestParts.map(part => [part.name, part]) ?? []);
     const usesVisibility = recipeUsesVisibility(recipe);
+    const roomJoinedNodeIds = roomJoinedBoxNodeIds(recipe);
     const nextParts = recipe.nodes.filter(node => node.geometry !== undefined).map(node => {
       const binding = skinBindings.get(node.id);
       const recipeMaterial = materialHandles.get(node.material);
-      const sourceGeometry = binding?.geometry ?? geometries.get(node.geometry);
+      const sourceGeometry = binding?.geometry ?? (roomJoinedNodeIds.has(node.id) ? sharpJoinBoxGeometry() : geometries.get(node.geometry));
       const foamGeometry = sourceGeometry.vertexGroups?.foam ? agentSceneModule('mesh').waterFoamGeometry(sourceGeometry, recipeMaterial.output) : sourceGeometry;
       const geometry = recipeMaterial.output.wear ? geometryWithSurfaceMasks(foamGeometry, recipeMaterial.output.wear, node.id) : foamGeometry;
       // A graph with a vertexGroup node bakes with this mesh's weights, so its textures belong to the mesh.
