@@ -1,4 +1,5 @@
 import { createEnvironmentMap } from './environment.js';
+import { radianceForDisplayColor } from './view-transform-inverse.js';
 
 // environment.sky { type: 'gradient' }: a sky whose colours are picked, not computed. Stops run from the horizon (at 0) to the
 // zenith (at 1) by elevation angle, and an optional glow band hugs the horizon. The same colours feed the background, the
@@ -18,7 +19,7 @@ const GLOW_LIMITS = Object.freeze({
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 const COLOR_EXAMPLE = 'a hex colour such as "#0e5d73"';
 const MAP_WIDTH = 1024;
-const MAP_HEIGHT = 512;
+const MAP_HEIGHT = 513;
 
 function checkedColor(value, field, fail) {
   if (typeof value !== 'string' || !HEX_COLOR.test(value)) {
@@ -82,56 +83,110 @@ function srgbChannelToLinear(channel) {
   return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
 }
 
+function linearChannelToSrgb(channel) {
+  const clamped = Math.min(1, Math.max(0, channel));
+  return clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * clamped ** (1 / 2.4) - 0.055;
+}
+
 export function linearColorFromHex(hex) {
   return [1, 3, 5].map(offset => srgbChannelToLinear(parseInt(hex.slice(offset, offset + 2), 16) / 255));
 }
 
-/** The recipe fields a gradient implies: the legacy sky colours that fog and the probe trace read. */
-export function gradientSkyFields(sky) {
-  const horizon = linearColorFromHex(sky.stops[0].color);
-  const zenith = linearColorFromHex(sky.stops[sky.stops.length - 1].color);
+// OKLab (Ottosson): blending in it keeps lightness and hue steady between two stops, where a blend of linear radiance
+// goes grey and dark in the middle and a blend of encoded values bands where the hue turns.
+function oklabFromLinear([red, green, blue]) {
+  const long = Math.cbrt(0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue);
+  const medium = Math.cbrt(0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue);
+  const short = Math.cbrt(0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue);
+  return [
+    0.2104542553 * long + 0.793617785 * medium - 0.0040720468 * short,
+    1.9779984951 * long - 2.428592205 * medium + 0.4505937099 * short,
+    0.0259040371 * long + 0.7827717662 * medium - 0.808675766 * short,
+  ];
+}
+
+function linearFromOklab([lightness, greenRed, blueYellow]) {
+  const long = (lightness + 0.3963377774 * greenRed + 0.2158037573 * blueYellow) ** 3;
+  const medium = (lightness - 0.1055613458 * greenRed - 0.0638541728 * blueYellow) ** 3;
+  const short = (lightness - 0.0894841775 * greenRed - 1.291485548 * blueYellow) ** 3;
+  return [
+    4.0767416621 * long - 3.3077115913 * medium + 0.2309699292 * short,
+    -1.2684380046 * long + 2.6097574011 * medium - 0.3413193965 * short,
+    -0.0041960863 * long - 0.7034186147 * medium + 1.707614701 * short,
+  ];
+}
+
+function mixOklab(from, to, share) {
+  return from.map((component, index) => component + (to[index] - component) * share);
+}
+
+const oklabFromHex = hex => oklabFromLinear(linearColorFromHex(hex));
+const encodedFromOklab = lab => linearFromOklab(lab).map(linearChannelToSrgb);
+
+/**
+ * The radiance that shows as the hex you asked for: the view transform and the display power turn it back into the hex,
+ * so a stop reads as its colour in the frame instead of being lifted by the transform (a flat #0e5d73 under aces used to
+ * show as #0c6988). The inverse assumes exposure 1 and no look or post effect on the frame, and divides by the
+ * environment strength, which the background and the light both multiply back in. Under aces every hex is reachable.
+ * Under agx and neutral a colour the transform cannot produce lands on the nearest one it can.
+ */
+export function radianceFromHex(hex, viewTransform) {
+  const encoded = [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  return radianceForDisplayColor(encoded, viewTransform).radiance;
+}
+
+/** The recipe fields a gradient implies: the legacy sky colours that fog and the probe trace read, as radiance. */
+export function gradientSkyFields(sky, viewTransform) {
+  const horizon = radianceFromHex(sky.stops[0].color, viewTransform);
+  const zenith = radianceFromHex(sky.stops[sky.stops.length - 1].color, viewTransform);
   return { skyTop: zenith, skyBottom: horizon, fogColor: horizon };
 }
 
 /** A gradient sky leaves the sun alone and only supplies the sky colours. */
 export function applyGradientSky(input, environment, fail) {
   const sky = resolveGradientSky(input, fail);
-  Object.assign(environment, gradientSkyFields(sky), { sky });
+  Object.assign(environment, gradientSkyFields(sky, environment.viewTransform), { sky });
 }
 
-function stopColorsInLinear(sky) {
-  return sky.stops.map(stop => ({ at: stop.at, color: linearColorFromHex(stop.color) }));
+function stopLabs(sky) {
+  return sky.stops.map(stop => ({ at: stop.at, lab: oklabFromHex(stop.color) }));
 }
 
-function colorAtHeight(stops, height) {
+function labAtHeight(stops, height) {
   if (height <= stops[0].at) {
-    return stops[0].color;
+    return stops[0].lab;
   }
   for (let index = 1; index < stops.length; index++) {
     if (height <= stops[index].at) {
-      const share = (height - stops[index - 1].at) / (stops[index].at - stops[index - 1].at);
-      return stops[index - 1].color.map((component, channel) => component + (stops[index].color[channel] - component) * share);
+      return mixOklab(stops[index - 1].lab, stops[index].lab, (height - stops[index - 1].at) / (stops[index].at - stops[index - 1].at));
     }
   }
-  return stops[stops.length - 1].color;
+  return stops[stops.length - 1].lab;
 }
 
-function buildMapData(sky) {
-  const stops = stopColorsInLinear(sky);
+// The glow colour blends in over the gradient by its share, so the band keeps its hue as it brightens and never washes
+// to white; `intensity` then scales the radiance of the band (1 shows the colour as given).
+function radianceAtElevation(stops, glow, glowLab, elevation, viewTransform, strengthScale) {
+  const base = labAtHeight(stops, Math.max(0, elevation) / 90);
+  const glowShare = glow ? Math.exp(-((elevation / glow.width) ** 2)) : 0;
+  const displayed = encodedFromOklab(glow ? mixOklab(base, glowLab, glowShare) : base);
+  const brightness = glow ? 1 + (glow.intensity - 1) * glowShare : 1;
+  return radianceForDisplayColor(displayed, viewTransform).radiance.map(channel => channel * brightness * strengthScale);
+}
+
+function buildMapData(sky, viewTransform, environmentIntensity) {
+  const stops = stopLabs(sky);
   const glow = sky.horizonGlow;
-  const glowColor = glow ? linearColorFromHex(glow.color) : null;
+  const glowLab = glow ? oklabFromHex(glow.color) : null;
+  const strengthScale = environmentIntensity > 0 ? 1 / environmentIntensity : 1;
   const data = new Float32Array(MAP_WIDTH * MAP_HEIGHT * 3);
   for (let row = 0; row < MAP_HEIGHT; row++) {
-    // Each row is one elevation: the gradient and the glow depend on the angle above the horizon only.
+    // Each row is one elevation: the gradient and the glow depend on the angle above the horizon only. The odd row count
+    // puts the middle row exactly on the horizon, so the glow peak is the glow colour itself.
     const elevation = 90 - ((row + 0.5) / MAP_HEIGHT) * 180;
-    const base = colorAtHeight(stops, Math.max(0, elevation) / 90);
-    const glowShare = glow ? Math.exp(-((elevation / glow.width) ** 2)) : 0;
+    const radiance = radianceAtElevation(stops, glow, glowLab, elevation, viewTransform, strengthScale);
     for (let column = 0; column < MAP_WIDTH; column++) {
-      const offset = (row * MAP_WIDTH + column) * 3;
-      for (let channel = 0; channel < 3; channel++) {
-        // The band blends toward the glow colour instead of adding it, so it keeps its hue as it brightens and never washes to white.
-        data[offset + channel] = glowColor ? base[channel] + (glowColor[channel] * glow.intensity - base[channel]) * glowShare : base[channel];
-      }
+      data.set(radiance, (row * MAP_WIDTH + column) * 3);
     }
   }
   return data;
@@ -140,14 +195,14 @@ function buildMapData(sky) {
 const mapsByKey = new Map();
 const MAXIMUM_CACHED_MAPS = 8;
 
-/** The environment map of a gradient sky; the same object returns while sky, strength, rotation and background hold. */
-export function createGradientSkyMap({ sky, environmentIntensity: intensity, environmentRotation: rotation, world: showBackground }) {
-  const key = JSON.stringify([sky, intensity, rotation, showBackground]);
+/** The environment map of a gradient sky; the same object returns while sky, strength, rotation, background and view transform hold. */
+export function createGradientSkyMap({ sky, environmentIntensity: intensity, environmentRotation: rotation, world: showBackground, viewTransform = 'aces' }) {
+  const key = JSON.stringify([sky, intensity, rotation, showBackground, viewTransform]);
   if (!mapsByKey.has(key)) {
     if (mapsByKey.size >= MAXIMUM_CACHED_MAPS) {
       mapsByKey.clear();
     }
-    mapsByKey.set(key, createEnvironmentMap({ width: MAP_WIDTH, height: MAP_HEIGHT, data: buildMapData(sky), intensity, rotation, showBackground }));
+    mapsByKey.set(key, createEnvironmentMap({ width: MAP_WIDTH, height: MAP_HEIGHT, data: buildMapData(sky, viewTransform, intensity), intensity, rotation, showBackground }));
   }
   return mapsByKey.get(key);
 }

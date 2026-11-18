@@ -344,6 +344,7 @@ on:
       - 'src/view-transform-names.js'
       - 'src/view-transform-shader.js'
       - 'src/view-transform.js'
+      - 'src/view-transform-inverse.js'
       - 'src/volume-grid-sequence.js'
       - 'src/volume-grid.js'
       - 'src/volume-step-integral.js'
