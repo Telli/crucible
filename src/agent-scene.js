@@ -551,7 +551,7 @@ const GEOMETRY_FIELDS = {
   text: ['text', 'size', 'depth', 'font', 'align', 'curveSegments'],
   mesh: ['base', 'edits', 'stack', 'smoothAngle', 'shapeKeys'],
   terrain: ['size', 'resolution', 'seed', 'amplitude', 'holes'],
-  cloud: ['seed', 'puffs', 'width', 'height', 'flatBase', 'resolution'],
+  cloud: ['seed', 'puffs', 'width', 'height', 'flatBase', 'resolution', 'levels', 'upBias', 'unionSoftness'],
   fragment: ['source', 'seed', 'cells', 'index', 'impact', 'impactRadius'],
   dented: ['source', 'impacts', 'stiffness', 'maxDepth', 'radius'],
 };
