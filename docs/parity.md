@@ -14,7 +14,7 @@ Modifier coverage (rows under `Modeling > Modifiers`, from `npm run parity`): 12
 | `missing` | The feature is in scope, and Crucible does not have it. |
 | `out of scope` | The goal does not include the feature. The note gives the reason. |
 
-Agents are the user of Crucible, so a row judges the purpose of a Blender feature and not its interface. A row covers the pages below it unless a finer row exists.
+Designers and AI agents share the same scene recipe, so a row judges the purpose of a Blender feature and not Blender's desktop layout. A row covers the pages below it unless a finer row exists.
 
 `done` does not mean equal to Blender. A test shows that the feature works, and it does not show that the result matches. `npm run parity` counts a row as compared only when its evidence is in `tests/fixtures/blender/` or `bench/reference/`.
 
@@ -32,16 +32,16 @@ To move to a new Blender release, run `node scripts/parity-manual-snapshot.mjs`.
 
 | Manual path | Status | What exists, or why not | Evidence | Issues |
 | --- | --- | --- | --- | --- |
-| User Interface | out of scope | Interface for a person with a mouse. Agents use MCP tools. | | |
+| User Interface | partial | Viewers provide camera, look and playback controls. A shared web Studio with gizmos and an inspector is planned. Blender's multi-editor desktop layout stays out of scope. | | #2177 |
 | Editors > Graph Editor > F-Curves | partial | Per track extrapolation `constant` or `linear` (slope of the end segment, not for rotation) and up to 8 modifiers: `cycles` (repeat, offset, mirror, counts), `stepped`, `noise`, `generator`, `limits` and `envelope`, seeded and the same at every sample time. Noise is smooth value noise, not Blender's, so values differ; no blend modes, no frame range or influence per modifier, no Bezier-handle slope, and glTF export keeps only the keyframes. The editor itself is out of scope. | [animation-modifiers](../tests/animation-modifiers.test.js) | #690 |
-| Editors | out of scope | Interface for a person with a mouse. Agents use MCP tools, and people review images. | | |
+| Editors | partial | A streamlined web Studio for viewport editing, lighting, materials and timeline scrubbing shares the agent recipe. Blender's separate desktop editors stay out of scope. | | #2177 |
 | Scenes & Objects > Scenes | partial | One recipe holds one scene with its camera and environment. There are no scene units or linked scenes. | | |
 | Scenes & Objects > Objects > Object Types | partial | Mesh nodes and empty nodes exist, and `curve` and `text` geometry make curve-like and text objects as meshes. Lights are environment settings. Metaballs and NURBS surfaces are out of scope. | [curve-text](../tests/curve-text.test.js), [Blender comparison](../tests/blender-curve-text.test.js) | #45 |
 | Scenes & Objects > Objects > Object Origin | partial | Code has pivots in the scene graph. Recipes have no pivot field. | | |
-| Scenes & Objects > Objects > Selecting | out of scope | Selection by mouse. Tools address nodes by ID. | | |
+| Scenes & Objects > Objects > Selecting | missing | Tools address nodes by ID today. Viewport click picking on the shared scene recipe is planned. | | #2177 |
 | Scenes & Objects > Objects > Editing | partial | Agents add, change and remove nodes in atomic batches. There is no duplicate, join or separate. | | |
 | Scenes & Objects > Objects > Object Properties | partial | Transform, parent, label, geometry and material. | | |
-| Scenes & Objects > Objects > Tools | out of scope | Viewport tools for a mouse. | | |
+| Scenes & Objects > Objects > Tools | missing | Move, rotate, scale and surface-snap gizmos in the web Studio are planned. | | #2177 |
 | Scenes & Objects > Collections | partial | Parent nodes group objects. There are no collections or collection instances. | | |
 | Modeling > Meshes > Structure | done | Half-edge `EditMesh` and compact `MeshData`, with face tags and a topology validator. | [mesh-core](../tests/mesh-core.test.js) | |
 | Modeling > Meshes > Primitives | partial | Box, cylinder, sphere and torus. There is no plane, grid, cone, ico sphere or monkey primitive. | | |
@@ -214,7 +214,7 @@ To move to a new Blender release, run `node scripts/parity-manual-snapshot.mjs`.
 | Rendering > Render Output > Output Properties | partial | PNG and MP4, frame rate, duration (to 60 s) and size, and a CPU or NVENC encoder. There is no stereo or metadata. | [agent-render-jobs](../tests/agent-render-jobs.test.js) | #60 |
 | Rendering > Render Output > Audio Rendering | partial | A video job mixes one local WAV, MP3, OGG or FLAC file with an offset and reports measured sync. No several tracks, mixing, gain or generated sound. | [film-timeline](../tests/film-timeline.test.js), `npm run smoke:film-timeline` | #60 |
 | Rendering > Render Output > Rendering Animations | done | Snapshot render jobs with progress, cancel and verified output. | [agent-render-jobs](../tests/agent-render-jobs.test.js) | |
-| Rendering > Render Output > Animation Player | out of scope | Interface for a person. | | |
+| Rendering > Render Output > Animation Player | partial | The film and motion players scrub and play timelines in the browser. Studio timeline controls on the shared recipe are planned. | | #2177 |
 | Compositing | partial | A fixed chain of bloom, grading and FXAA. There is no graph. | [effects](../tests/effects.test.js) | #54 |
 | Motion Tracking & Masking | out of scope | Decided in `docs/goal.md`. | | |
 | Video Editing | out of scope | Decided in `docs/goal.md`. DaVinci Resolve or FFmpeg can cut rendered output. | | |
@@ -259,3 +259,5 @@ The goal also needs this work, and no page in the Blender manual covers it.
 | Rigid body shapes and joints | missing | Blender has cylinder, cone and compound shapes and piston, generic, generic spring and motor joints. Physics has box, ball, capsule, convex and trimesh shapes with fixed, revolute, prismatic and spherical joints. | #61 |
 | Light probes | partial | Blender has sphere, plane and volume probes. `bake.probes` gives specular sphere probes only; there are no plane or irradiance volume probes. | #52 |
 | Mesh interchange formats | out of scope | Blender 5.2 imports and exports OBJ, PLY, STL, USD, Alembic and FBX, and reads SVG and BVH. GLB is the exchange format (`docs/goal.md`). | |
+| Shared web Studio | missing | Viewport picking, transform gizmos, camera bookmarks, lighting and material controls on the shared scene recipe, with zero bytes in core. | #2177 |
+| Lean web pack and idle embed | missing | Compile recipes into compact runtime bundles without authoring code, sleep at zero GPU load when idle or offscreen, and use compact HDR targets when alpha is unused. | #2178, #2179 |
