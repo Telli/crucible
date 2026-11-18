@@ -44,9 +44,10 @@ function notify(message, failure = false) {
   if (!failure) noticeTimer = setTimeout(() => { notice.hidden = true; }, 4000);
 }
 
-// The microscope's black stand and foot crush into the floor under the default studio light, so this studio lifts the ambient and fill terms.
+// The ambient is lifted so the dark parts read under the default studio light. The fill is cut to 0.3 because it is teal: it tinted every shaded
+// metal face green-blue (measured as blue minus red, #2218), and the enamel and the dark metals are tinted to carry what is left.
 const MICROSCOPE_AMBIENT = 1.3;
-const MICROSCOPE_FILL = 1.1;
+const MICROSCOPE_FILL = 0.3;
 // The default studio floor is as dark as the backdrop, so the black stand sinks into it. This sample stands on a floor that is about twice as light
 // (the floor shader scales its tone by the floor colour), which the stand and its shadow read against.
 const MICROSCOPE_FLOOR_COLOR = [0.08, 0.1, 0.12];

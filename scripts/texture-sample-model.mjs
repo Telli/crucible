@@ -17,9 +17,9 @@ const UNSIGNED_INT = 5125;
 const BOX_TILES_PER_UNIT = 30;
 // Beige-white enamel. The studio's fill light is teal (0.8, 2.0, 1.8 in the shared shader), so the base colour is warmer than
 // the colour it should show: this peach renders as about sRGB 236, 224, 210 on a lit face and loses the teal on the shaded ones.
-const ENAMEL_COLOR = [0.72, 0.43, 0.32, 1];
+const ENAMEL_COLOR = [0.62, 0.335, 0.235, 1];
 // A thin lacquer over the enamel, so it has a soft highlight and does not read as flat white.
-const ENAMEL_CLEARCOAT = { clearcoatFactor: 0.5, clearcoatRoughnessFactor: 0.3 };
+const ENAMEL_CLEARCOAT = { clearcoatFactor: 0.2, clearcoatRoughnessFactor: 0.4 };
 const OBJECTIVE_CENTER_Z = 0.044;
 const OBJECTIVE_TIP_HEIGHT = 0.012;
 const FINE_KNOB = { centerY: 0.0715, centerZ: -0.038 };
@@ -114,6 +114,44 @@ function shortestArrangement(us, period) {
   return best.lifted;
 }
 
+/** The separate solids of a mesh, each with its own vertices, found through the triangles that share a vertex or a position. */
+function splitBodies(mesh) {
+  const vertexCount = mesh.positions.length / 3;
+  const parent = Array.from({ length: vertexCount }, (_, index) => index);
+  const root = index => (parent[index] === index ? index : (parent[index] = root(parent[index])));
+  const firstAtPosition = new Map();
+  for (let index = 0; index < vertexCount; index++) {
+    const key = mesh.positions.slice(index * 3, index * 3 + 3).map(value => value.toFixed(5)).join(',');
+    if (firstAtPosition.has(key)) parent[root(index)] = root(firstAtPosition.get(key));
+    else firstAtPosition.set(key, index);
+  }
+  for (let corner = 0; corner < mesh.indices.length; corner += 3) {
+    parent[root(mesh.indices[corner + 1])] = root(mesh.indices[corner]);
+    parent[root(mesh.indices[corner + 2])] = root(mesh.indices[corner]);
+  }
+  const bodies = new Map();
+  const newIndexOf = new Map();
+  const bodyOf = index => {
+    if (!bodies.has(root(index))) bodies.set(root(index), { positions: [], normals: [], indices: [], uvs: null });
+    return bodies.get(root(index));
+  };
+  for (let index = 0; index < vertexCount; index++) {
+    const body = bodyOf(index);
+    newIndexOf.set(index, body.positions.length / 3);
+    body.positions.push(...mesh.positions.slice(index * 3, index * 3 + 3));
+    body.normals.push(...mesh.normals.slice(index * 3, index * 3 + 3));
+  }
+  for (let corner = 0; corner < mesh.indices.length; corner++) {
+    bodyOf(mesh.indices[corner]).indices.push(newIndexOf.get(mesh.indices[corner]));
+  }
+  return [...bodies.values()];
+}
+
+function centroidOf(positions) {
+  const count = positions.length / 3;
+  return [0, 1, 2].map(axis => positions.reduce((sum, value, index) => sum + (index % 3 === axis ? value : 0), 0) / count);
+}
+
 function wrapToHalfTurn(turns) {
   return turns - Math.round(turns);
 }
@@ -129,12 +167,13 @@ function applyFocusKnobUvs(mesh) {
 }
 
 const OBJECTIVE_SECTORS = [
-  { row: 0, outwardTurns: 0.5 },
-  { row: 1, outwardTurns: -0.25 },
-  { row: 2, outwardTurns: 0.16 },
-  { row: 3, outwardTurns: 0.076 },
+  { row: 0, partName: 'objective_4x', outwardTurns: 0.5 },
+  { row: 1, partName: 'objective_10x', outwardTurns: -0.25 },
+  { row: 2, partName: 'objective_40x', outwardTurns: 0.16 },
+  { row: 3, partName: 'objective_100x', outwardTurns: 0.076 },
 ];
 
+/** Which of the four barrels a body is: behind the nosepiece centre, left of it, right of it or in front, by its centre. */
 function objectiveSector(position) {
   const sidewaysOffset = position[0];
   const forwardOffset = position[2] - OBJECTIVE_CENTER_Z;
@@ -156,14 +195,9 @@ function objectiveAxis(mesh, members) {
   return { tip: averageAcross(mesh, tip), top: averageAcross(mesh, top), lowest, highest };
 }
 
-function applyObjectiveUvs(mesh) {
-  const count = mesh.positions.length / 3;
-  const sectors = Array.from({ length: count }, (_, index) => objectiveSector(vertexAt(mesh, index).position));
-  const axes = OBJECTIVE_SECTORS.map(sector => objectiveAxis(mesh, sectors.map((candidate, index) => (candidate === sector ? index : -1)).filter(index => index >= 0)));
-  let vertex = 0;
+function applyObjectiveUvs(mesh, sector) {
+  const axis = objectiveAxis(mesh, Array.from({ length: mesh.positions.length / 3 }, (_, index) => index));
   assignUvs(mesh, position => {
-    const sector = sectors[vertex++];
-    const axis = axes[OBJECTIVE_SECTORS.indexOf(sector)];
     const along = Math.min(1, Math.max(0, (axis.highest - position[1]) / (axis.highest - axis.lowest)));
     const centerX = axis.top[0] + (axis.tip[0] - axis.top[0]) * along;
     const centerZ = axis.top[1] + (axis.tip[1] - axis.top[1]) * along;
@@ -181,23 +215,46 @@ function applyStageUvs(mesh) {
   });
 }
 
+// The studio's fill light is teal and its surroundings are blue, and a dielectric reflects them untinted, so a black plastic part reads
+// green-blue on its shaded side. A dark metal reflects them through its own colour: this one is warm, so the reflection lands as grey.
+const DARK_METAL = [0.05, 0.04, 0.041, 1];
+const BORE_METAL = [0.043, 0.027, 0.028, 1];
 const GRAIN = { image: 'grain', roughness: 1, metallic: 0 };
-const ENAMEL = { ...GRAIN, color: ENAMEL_COLOR, clearcoat: ENAMEL_CLEARCOAT, uv: boxProjection };
+const ENAMEL = { ...GRAIN, roughness: 0.64, color: ENAMEL_COLOR, clearcoat: ENAMEL_CLEARCOAT, uv: boxProjection };
 const PART_SURFACES = {
   base_stand: ENAMEL,
   head: ENAMEL,
   prism_housing: ENAMEL,
-  illuminator: { image: 'brushed', roughness: 1, metallic: 0.9, color: [0.05, 0.05, 0.055, 1], uv: boxProjection },
-  rack_post: { image: 'brushed', roughness: 1, metallic: 1, color: [0.80, 0.72, 0.66, 1], uv: boxProjection },
-  stage_clips: { image: 'brushed', roughness: 1, metallic: 1, color: [0.80, 0.72, 0.66, 1], uv: boxProjection },
-  condenser: { image: 'brushed', roughness: 1, metallic: 0.9, color: [0.05, 0.05, 0.055, 1], uv: boxProjection },
-  nosepiece: { image: 'brushed', roughness: 1, metallic: 0.9, color: [0.05, 0.05, 0.055, 1], uv: boxProjection },
-  eyepiece_mounts: { ...GRAIN, color: [0.034, 0.022, 0.018, 1], uv: boxProjection },
-  eyepiece_tubes: { ...GRAIN, color: [0.034, 0.022, 0.018, 1], uv: boxProjection },
-  focus_knobs: { color: [0.03, 0.03, 0.033, 1], roughness: 0.6, metallic: 0, normalImage: 'knurl', uv: applyFocusKnobUvs },
-  objectives: { color: [1, 1, 1, 1], roughness: 0.4, metallic: 0.5, colorImage: 'objectives', uv: applyObjectiveUvs },
-  stage: { color: [1, 1, 1, 1], roughness: 0.5, metallic: 0, colorImage: 'stage', uv: applyStageUvs },
+  illuminator: { image: 'brushed', roughness: 1, metallic: 0.9, color: DARK_METAL, uv: boxProjection },
+  rack_post: { image: 'brushed', roughness: 1, metallic: 1, color: [0.80, 0.55, 0.50, 1], uv: boxProjection },
+  stage_clips: { image: 'brushed', roughness: 1, metallic: 1, color: [0.80, 0.55, 0.50, 1], uv: boxProjection },
+  condenser: { image: 'brushed', roughness: 1, metallic: 0.9, color: DARK_METAL, uv: boxProjection },
+  nosepiece: { image: 'brushed', roughness: 1, metallic: 0.9, color: DARK_METAL, uv: boxProjection },
+  eyepiece_mounts: { ...GRAIN, metallic: 1, color: BORE_METAL, uv: boxProjection },
+  eyepiece_tubes: { ...GRAIN, metallic: 1, color: BORE_METAL, uv: boxProjection },
+  focus_knobs: { color: DARK_METAL, roughness: 0.85, metallic: 1, normalImage: 'knurl', uv: applyFocusKnobUvs },
+  stage: { color: [1, 1, 1, 1], roughness: 0.85, metallic: 1, colorImage: 'stage', uv: applyStageUvs },
 };
+
+const OBJECTIVE_SURFACE = { color: [1, 1, 1, 1], roughness: 0.4, metallic: 0.5, colorImage: 'objectives' };
+
+/** The mesh pieces to write, one per part: the four objective barrels leave their shared mesh so each can move on its own. */
+function sourcePieces(source, binary) {
+  const pieces = [];
+  for (const node of source.nodes) {
+    const originalMaterial = source.materials[source.meshes[node.mesh].primitives[0].material];
+    const mesh = readMesh(source, binary, node.name);
+    if (node.name !== 'objectives') {
+      pieces.push({ name: node.name, meshName: source.meshes[node.mesh].name, mesh, originalMaterial, surface: PART_SURFACES[node.name] });
+      continue;
+    }
+    for (const body of splitBodies(mesh)) {
+      const sector = objectiveSector(centroidOf(body.positions));
+      pieces.push({ name: sector.partName, meshName: sector.partName, mesh: body, originalMaterial, surface: { ...OBJECTIVE_SURFACE, uv: bodyMesh => applyObjectiveUvs(bodyMesh, sector) } });
+    }
+  }
+  return pieces.sort((first, second) => first.name.localeCompare(second.name));
+}
 
 function addAccessor(state, array, type, componentType, target, extra = {}) {
   const bytes = Buffer.from(array.buffer, array.byteOffset, array.byteLength);
@@ -239,23 +296,22 @@ function surfaceMaterial(original, surface, textureIndices) {
 
 export async function textureSampleModel(inputBytes) {
   const { document: source, binary } = readGlb(inputBytes, 'The untextured sample GLB');
-  const state = { chunks: [], document: { asset: { version: '2.0', generator: 'Crucible texture-sample-model' }, extensionsUsed: ['KHR_materials_clearcoat'], scene: 0, scenes: source.scenes, nodes: source.nodes, meshes: [], materials: [], accessors: [], bufferViews: [], buffers: [{ byteLength: 0 }], samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 }], images: [], textures: [] } };
+  const state = { chunks: [], document: { asset: { version: '2.0', generator: 'Crucible texture-sample-model' }, extensionsUsed: ['KHR_materials_clearcoat'], scene: 0, scenes: [], nodes: [], meshes: [], materials: [], accessors: [], bufferViews: [], buffers: [{ byteLength: 0 }], samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 }], images: [], textures: [] } };
   const pngs = { grain: await grainTexture(), brushed: await brushedTexture(), knurl: await knurlNormalTexture(), stage: await stageTexture(), objectives: await objectiveTexture() };
   const textureIndices = Object.fromEntries(Object.entries(pngs).map(([name, png]) => [name, addImage(state, name, png)]));
-  for (const node of source.nodes) {
-    const originalMesh = source.meshes[node.mesh];
-    const originalMaterial = source.materials[originalMesh.primitives[0].material];
-    const mesh = readMesh(source, binary, node.name);
-    const surface = PART_SURFACES[node.name];
+  const nodes = [];
+  for (const { name, meshName, mesh, originalMaterial, surface } of sourcePieces(source, binary)) {
     if (surface) {
       if (surface.uv === boxProjection) assignUvs(mesh, boxProjection);
       else surface.uv(mesh);
     }
     const { attributes, indices } = writeMeshAccessors(state, mesh, Boolean(surface));
     state.document.materials.push(surface ? surfaceMaterial(originalMaterial, surface, textureIndices) : originalMaterial);
-    state.document.meshes.push({ name: originalMesh.name, primitives: [{ attributes, indices, material: state.document.materials.length - 1 }] });
-    node.mesh = state.document.meshes.length - 1;
+    state.document.meshes.push({ name: meshName, primitives: [{ attributes, indices, material: state.document.materials.length - 1 }] });
+    nodes.push({ name, mesh: state.document.meshes.length - 1 });
   }
+  state.document.nodes = nodes;
+  state.document.scenes = [{ name: 'Scene', nodes: nodes.map((_, index) => index) }];
   const output = Buffer.concat(state.chunks);
   state.document.buffers[0].byteLength = output.length;
   return writeGlb(state.document, output);

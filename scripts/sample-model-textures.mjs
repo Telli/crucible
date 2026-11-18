@@ -23,7 +23,7 @@ export function grainTexture() {
   const pixels = Buffer.alloc(size * size * 3);
   for (let pixel = 0; pixel < size * size; pixel++) {
     pixels[pixel * 3] = 255;
-    pixels[pixel * 3 + 1] = Math.round(150 + (random() - 0.5) * 44);
+    pixels[pixel * 3 + 1] = Math.round(240 + (random() - 0.5) * 30);
     pixels[pixel * 3 + 2] = 255;
   }
   return encodePng(pixels, size, size, 3);
@@ -87,35 +87,45 @@ export function stageTexture() {
       numbers.push(`<text x="${size - 56}" y="${size - offset + 5}" text-anchor="end">${millimetre}</text>`);
     }
   }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><rect width="${size}" height="${size}" fill="#101010"/>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><rect width="${size}" height="${size}" fill="#1b1514"/>`
     + `<g stroke="#d8d8d2" stroke-width="2" fill="none"><path d="${ticks.join('')}"/></g>`
     + `<g fill="#d8d8d2" font-family="Arial, Helvetica, sans-serif" font-size="17">${numbers.join('')}</g></svg>`;
   return sharp(Buffer.from(svg)).png({ palette: true, colors: 16 }).toBuffer();
 }
 
+/**
+ * The four objectives, with the colour code of the magnification (red, yellow, blue, white) and how far the label must be
+ * stretched sideways: a barrel is wrapped around by the same 1024 texels whatever its length, so a short barrel needs less.
+ */
 export const OBJECTIVES = Object.freeze([
-  { magnification: '4x', aperture: 'NA 0.10', ring: '#c8261f' },
-  { magnification: '10x', aperture: 'NA 0.25', ring: '#e8c21a' },
-  { magnification: '40x', aperture: 'NA 0.65', ring: '#2f7fd0' },
-  { magnification: '100x', aperture: 'NA 1.25', ring: '#f0f0ea' },
+  { magnification: '4x', aperture: 'NA 0.10', ring: '#d12b22', stretch: 1.4 },
+  { magnification: '10x', aperture: 'NA 0.25', ring: '#f0c418', stretch: 1.9 },
+  { magnification: '40x', aperture: 'NA 0.65', ring: '#2f7fd0', stretch: 1.9 },
+  { magnification: '100x', aperture: 'NA 1.25', ring: '#f2f2ec', stretch: 2.6, oil: true },
 ]);
 
-// A barrel wraps 512 texels around about a quarter of the length that its 128 rows cover, so text drawn this much wider than it is tall looks square on the model.
-const LABEL_STRETCH = 2.4;
+const OBJECTIVE_STRIP = Object.freeze({ width: 1024, height: 256 });
 
-/** One 512 by 128 strip per objective, stacked: a silver barrel, the magnification colour ring and the engraved label centred on u = 0.5. */
+/** One strip, top to tip: thread, silver collar, the colour band, a graphite body with the label in white print, a silver nose. */
+function objectiveStrip(objective, index) {
+  const { width, height } = OBJECTIVE_STRIP;
+  const centre = width / 2;
+  const black = (y, thickness) => `<rect y="${y}" width="${width}" height="${thickness}" fill="#0b0b0c"/>`;
+  const oilRing = objective.oil ? `<rect y="222" width="${width}" height="20" fill="#0b0b0c"/>` : '';
+  const print = `<g transform="translate(${centre} 0) scale(${objective.stretch} 1)" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="bold" fill="#f4f4ef">`
+    + `<text y="132" font-size="64">${objective.magnification}</text>`
+    + `<text y="168" font-size="30">${objective.aperture}</text>`
+    + `<text y="198" font-size="26" font-weight="normal">160/0.17</text>`
+    + (objective.oil ? '<text y="238" font-size="19">OIL</text>' : '') + '</g>';
+  return `<g transform="translate(0 ${index * height})"><rect width="${width}" height="${height}" fill="#2a2b2f"/>`
+    + `<rect width="${width}" height="12" fill="#18181a"/><rect y="12" width="${width}" height="18" fill="#c3b9ab"/>`
+    + black(30, 6) + `<rect y="36" width="${width}" height="32" fill="${objective.ring}"/>` + black(68, 6)
+    + black(204, 4) + `<rect y="208" width="${width}" height="48" fill="#c3b9ab"/>` + oilRing + print + '</g>';
+}
+
+/** One 1024 by 256 strip per objective, stacked into one picture. */
 export function objectiveTexture() {
-  const width = 512;
-  const rowHeight = 128;
-  const rows = OBJECTIVES.map((objective, index) => {
-    const top = index * rowHeight;
-    return `<g transform="translate(0 ${top})"><rect width="${width}" height="${rowHeight}" fill="#c4c7cb"/>`
-      + `<rect y="8" width="${width}" height="${rowHeight - 16}" fill="#a9adb2"/>`
-      + `<rect y="100" width="${width}" height="4" fill="#0c0c0c"/><rect y="104" width="${width}" height="16" fill="${objective.ring}"/><rect y="120" width="${width}" height="4" fill="#0c0c0c"/>`
-      + `<rect x="${width / 2 - 85}" y="32" width="170" height="52" rx="5" fill="#111"/>`
-      + `<g transform="translate(${width / 2} 0) scale(${LABEL_STRETCH} 1)" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="bold" fill="#f2f2ee">`
-      + `<text y="58" font-size="24">${objective.magnification}</text><text y="75" font-size="12">${objective.aperture}</text></g></g>`;
-  }).join('');
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${rowHeight * OBJECTIVES.length}">${rows}</svg>`;
+  const { width, height } = OBJECTIVE_STRIP;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height * OBJECTIVES.length}">${OBJECTIVES.map(objectiveStrip).join('')}</svg>`;
   return sharp(Buffer.from(svg)).png({ palette: true, colors: 32 }).toBuffer();
 }

@@ -6,18 +6,23 @@ const SAMPLE_SCALE = 8;
 
 // Offsets are world-space translations in model units after SAMPLE_SCALE (the microscope stands 3.7 tall and rests on y = 0).
 // The exploded view keeps the base on the floor and lifts each part just clear of its mount, with a gap of about 0.2: the optical path
-// stacks above the base (stage, head, prism housing, eyepiece mounts, tubes and lenses), the illuminator, focus knobs and rack post stand
-// 1.9 to the left, the condenser and its lens stand in front, and the objectives, nosepiece and stage clips stand 1.55 to the right.
+// stacks above the base (stage, head, prism housing, eyepiece mounts, tubes and lenses), the focus knobs and rack post stand 1.4 to 1.9 to the
+// left, the illuminator beside them and 0.9 in front so the knobs stay clear of it, the condenser and its lens stand in front, the nosepiece and
+// stage clips stand to the right, and the four objectives hang in a row of 0.5 under the nosepiece.
 const SAMPLE_PARTS = Object.freeze({
   base_stand: { label: 'Base and arm', layer: 'exterior', section: 'Stand', offset: [0, 0, 0] },
   rack_post: { label: 'Rack post', layer: 'exterior', section: 'Stand', offset: [-1.9, 1.66, 0] },
-  illuminator: { label: 'Illuminator', layer: 'interior', section: 'Illumination', offset: [-1.9, 0, 0] },
+  illuminator: { label: 'Illuminator', layer: 'interior', section: 'Illumination', offset: [-1.9, 0, 0.9] },
   condenser: { label: 'Condenser', layer: 'interior', section: 'Illumination', offset: [0, 0.35, 1.7] },
   condenser_lens: { label: 'Condenser lens', layer: 'interior', section: 'Illumination', offset: [0, 0.95, 1.7] },
   focus_knobs: { label: 'Focus knobs', layer: 'exterior', section: 'Focus', offset: [-1.4, 0.1, 0] },
   stage: { label: 'Stage', layer: 'exterior', section: 'Stage', offset: [0, 1.4, 0] },
   stage_clips: { label: 'Stage clips', layer: 'exterior', section: 'Stage', offset: [1.55, 1.4, 0] },
-  objectives: { label: 'Objectives', layer: 'interior', section: 'Optics', offset: [1.55, -0.87, 0] },
+  // The four barrels hang in a row under the nosepiece, tops level and 0.5 apart, so each one and its colour band shows.
+  objective_4x: { label: 'Objective 4x', layer: 'interior', section: 'Optics', offset: [1.3, -0.67, 0.18] },
+  objective_10x: { label: 'Objective 10x', layer: 'interior', section: 'Optics', offset: [2.0, -0.72, -0.02] },
+  objective_40x: { label: 'Objective 40x', layer: 'interior', section: 'Optics', offset: [2.1, -0.72, -0.02] },
+  objective_100x: { label: 'Objective 100x', layer: 'interior', section: 'Optics', offset: [2.8, -0.77, -0.22] },
   nosepiece: { label: 'Nosepiece', layer: 'interior', section: 'Optics', offset: [1.55, -0.49, 0] },
   head: { label: 'Head', layer: 'exterior', section: 'Head', offset: [0, 0.67, 0] },
   prism_housing: { label: 'Prism housing', layer: 'exterior', section: 'Head', offset: [0, 1.23, 0] },
