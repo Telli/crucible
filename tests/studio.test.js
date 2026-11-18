@@ -184,10 +184,24 @@ test('gizmo handles and drags update translate, rotate with snap, scale and surf
   assert.ok(Math.abs(heroNode().scale[1] - 2) < 0.01, `expected y scale near 2, got ${heroNode().scale}`);
   assert.ok(Math.abs(heroNode().scale[0] - 1) < 1e-6);
 
-  // Uniform scale: the factor is how far the pointer went from the pivot compared with where it grabbed.
+  // Shift snaps the travel to quarter-metre steps along the object's own axis.
+  controller.setTool('translate');
   handles = controller.gizmoHandles();
-  controller.beginGizmoDrag('uniform', handles.origin.x + 40, handles.origin.y);
-  controller.updateGizmoDrag(handles.origin.x + 80, handles.origin.y);
+  const beforeSnapMove = heroNode().translation;
+  grab = pointAlong(handles, 'x', handles.handleLength);
+  release = pointAlong(handles, 'x', handles.handleLength + 0.6);
+  controller.beginGizmoDrag('x', grab.x, grab.y);
+  controller.updateGizmoDrag(release.x, release.y, { shiftKey: true });
+  controller.endGizmoDrag();
+  turnedX.forEach((value, index) => {
+    assert.ok(Math.abs(heroNode().translation[index] - beforeSnapMove[index] - value * 0.5) < 1e-3);
+  });
+
+  // Uniform scale from the centre handle: one handle length of drag doubles the size.
+  controller.setTool('scale');
+  handles = controller.gizmoHandles();
+  controller.beginGizmoDrag('uniform', handles.origin.x, handles.origin.y);
+  controller.updateGizmoDrag(handles.origin.x + 74, handles.origin.y);
   controller.endGizmoDrag();
   const scaled = heroNode();
   assert.ok(Math.abs(scaled.scale[0] - 2) < 0.01 && Math.abs(scaled.scale[1] - 4) < 0.02 && Math.abs(scaled.scale[2] - 2) < 0.01);

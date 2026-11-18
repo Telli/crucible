@@ -22,11 +22,9 @@ const ROTATION_RING_SEGMENTS = 32;
 const WORLD_BASIS = Object.freeze({ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] });
 const AXIS_PARALLEL_LIMIT = 0.002;
 const RING_EDGE_ON_LIMIT = 0.12;
-const MINIMUM_SCALE_GRAB_PIXELS = 8;
 const ROTATION_DEGREES_PER_PIXEL = 0.75;
 const ROTATION_SNAP_DEGREES = 15;
 const TRANSLATION_SNAP_STEP = 0.25;
-const SCALE_PIXELS_PER_UNIT = 90;
 const MINIMUM_SCALE = 0.05;
 const MAXIMUM_SCALE = 100;
 const MINIMUM_DISTANCE = 0.25;
@@ -820,7 +818,6 @@ export function createStudioController({
       const ringHit = rayPlaneIntersection(startRay.origin, startRay.direction, basePivot, axisWorld);
       ringStartVector = ringHit ? vec3.subtract(vec3.create(), ringHit, basePivot) : null;
     }
-    const originScreen = handles?.origin ?? null;
     const worldPerPixel = worldLengthPerPixel(basePivot);
     const toolMode = axis === 'surface' ? 'snap' : activeTool === 'select' ? 'translate' : activeTool;
     dragState = {
@@ -839,7 +836,6 @@ export function createStudioController({
       axisWorld,
       axisStartParameter,
       ringStartVector,
-      originScreen,
       planeNormal,
       planeStartPoint,
       worldPerPixel,
@@ -922,7 +918,8 @@ export function createStudioController({
       const maxTravel = Math.max(12, vec3.distance(currentScene.camera.eye, dragState.basePivot) * 4);
       const pixelTravel = (deltaX * dragState.axisScreen[0] + deltaY * dragState.axisScreen[1]) * dragState.worldPerPixel;
       const exactTravel = axisParameter === null ? pixelTravel : axisParameter - dragState.axisStartParameter;
-      const travel = Math.max(-maxTravel, Math.min(maxTravel, exactTravel));
+      const steppedTravel = shiftKey ? Math.round(exactTravel / TRANSLATION_SNAP_STEP) * TRANSLATION_SNAP_STEP : exactTravel;
+      const travel = Math.max(-maxTravel, Math.min(maxTravel, steppedTravel));
       const worldDelta = [dragState.axisWorld[0] * travel, dragState.axisWorld[1] * travel, dragState.axisWorld[2] * travel];
       const localDelta = toNodeLocalDelta(worldDelta, dragState.parentInverse);
       const rawTranslation = [
@@ -930,7 +927,7 @@ export function createStudioController({
         dragState.baseTranslation[1] + localDelta[1],
         dragState.baseTranslation[2] + localDelta[2],
       ];
-      const translation = roundVector(shiftKey ? snapVector(rawTranslation) : rawTranslation);
+      const translation = roundVector(rawTranslation);
       applySceneOperations([{ type: 'set-node', id: dragState.nodeId, translation }], { recordUndo: false });
       dragState.changed = true;
       dragState.deltaLabel = `${dragState.axis.toUpperCase()} ${travel >= 0 ? '+' : ''}${travel.toFixed(2)} m`;
@@ -964,16 +961,12 @@ export function createStudioController({
       const signedPixels = PLANE_AXES.includes(dragState.axis) || dragState.axis === 'uniform' || dragState.axis === 'screen'
         ? deltaX - deltaY
         : deltaX * dragState.axisScreen[0] + deltaY * dragState.axisScreen[1];
-      let rawFactor = 1 + signedPixels / SCALE_PIXELS_PER_UNIT;
+      // Away from an axis handle, one handle length of drag doubles the size.
+      let rawFactor = 1 + signedPixels / GIZMO_SCREEN_PIXELS;
       if (axisIndex >= 0 && dragState.axisStartParameter !== null && Math.abs(dragState.axisStartParameter) > 1e-3) {
         const axisParameter = rayAxisParameter(screenRay(pixelX, pixelY), dragState.basePivot, dragState.axisWorld);
         if (axisParameter !== null) {
           rawFactor = axisParameter / dragState.axisStartParameter;
-        }
-      } else if (axisIndex < 0 && dragState.originScreen) {
-        const grabDistance = Math.hypot(dragState.startX - dragState.originScreen.x, dragState.startY - dragState.originScreen.y);
-        if (grabDistance >= MINIMUM_SCALE_GRAB_PIXELS) {
-          rawFactor = Math.hypot(pixelX - dragState.originScreen.x, pixelY - dragState.originScreen.y) / grabDistance;
         }
       }
       const factor = Math.max(MINIMUM_SCALE, Math.min(MAXIMUM_SCALE, rawFactor));
