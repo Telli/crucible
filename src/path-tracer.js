@@ -13,6 +13,7 @@ import {
 } from './path-tracer-shading.js';
 import { buildLightTree, chooseLightFromTree, LIGHT_TREE_FIRST_HIT_LIGHTS, resolveLightSelection } from './path-tracer-light-tree.js';
 import { createRandomWalk, WALK_OUTCOME } from './path-tracer-subsurface.js';
+import { describeUntracedWater } from './path-tracer-water.js';
 import { henyeyGreensteinPhase, sampleHenyeyGreensteinCosine, volumeInterval, createLocalVolumeCrossing, createLocalVolumeSurfaceShadow, meanEnvironmentRadiance } from './path-tracer-volume.js';
 
 // Offline still renderer: unidirectional path tracing on the CPU with next-event estimation for every light, the
@@ -1046,6 +1047,7 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   const fog = environment?.volumeFog;
   if (fog?.density > 0 && (fog.noiseAmount ?? 0.5) > 0) notes.add('volumeFog is traced as a uniform medium: noiseAmount, noiseScale and drift are ignored.');
   if (fog?.density > 0 && fog.ambient) notes.add('volumeFog.ambient is not added: the fog is lit by the traced lights and sky.');
+  if (environment?.world === true && environment.fogDensity > 0 && !fog) notes.add('fogDensity is traced as a uniform medium with extinction fogDensity per metre and fogColor as its scatter colour, lit by the traced lights and sky; the sky and ground haze shading of the rasterizer is not.');
   const hasSoftFalloff = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? [])].some(light => light.softFalloff === true);
   if (hasSoftFalloff && !kernelMaterials) notes.add('softFalloff is ignored: only the native cycles kernel draws a light as an oriented disk, the other tracers draw a sphere.');
   const hasPortal = (environment?.areaLights ?? []).some(light => light.portal === true);
@@ -1058,8 +1060,9 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   if (environment?.cameraIntensity !== undefined && !kernelMaterials) notes.add('cameraIntensity is ignored: only the native cycles kernel draws the sky a camera ray sees at its own strength, the other tracers use the map intensity.');
   for (const part of parts) {
     const material = part.material ?? {};
+    for (const note of describeUntracedWater(part)) notes.add(note);
     for (const field of IGNORED_MAP_FIELDS) if (material[field]) notes.add(`${field} is ignored.`);
-    if (material.tag && material.tag !== 'surface') notes.add(`${material.tag} materials are traced as plain surfaces.`);
+    if (material.tag && material.tag !== 'surface' && material.tag !== 'water') notes.add(`${material.tag} materials are traced as plain surfaces.`);
     if (material.alphaMode === 'blend' && hasGraphOpacity(material)) notes.add('A graph opacity output is traced as a cutout at 0.5.');
     else if (material.alphaMode === 'blend' && !kernelMaterials) notes.add('Blended transparency is traced as opaque.');
     if (!kernelMaterials && (material.layerMaps?.clearcoatTexture || material.transmissionMap)) notes.add('Graph clearcoat and transmission masks are read by the CPU tracer; the GPU tracers use the factors.');

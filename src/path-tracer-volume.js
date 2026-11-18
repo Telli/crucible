@@ -27,6 +27,35 @@ export function resolveTraceVolume(volumeFog) {
   };
 }
 
+// The rasterizer's distance haze (`environment.fogDensity`, `environment.fogColor`, only with `world: true`) mixes a pixel toward
+// the fog colour by 1 - exp(-distance * fogDensity): the transmittance of a uniform medium whose extinction is fogDensity per
+// metre. The trace gets that medium, so a surface at distance d keeps exp(-fogDensity * d) of its light, and the medium scatters
+// the fog colour (isotropic, no noise) lit by the traced lights and sky. The box takes in any camera, and the medium ends at
+// 3.5 times the scene's largest coordinate, which is farther than any surface a camera inside the scene can see.
+const HAZE_BOX_LIMIT = 1e5;
+const HAZE_REACH_PER_EXTENT = 3.5;
+const HAZE_MAXIMUM_REACH = 1e4;
+const HAZE_MINIMUM_REACH = 0.01;
+const HAZE_DEFAULT_COLOR = [0.35, 0.43, 0.43];
+
+/**
+ * The medium for the rasterizer's distance haze, or null when the environment has none. `volumeFog` wins: a scene that sets
+ * both keeps only its volumeFog. `extent` is the largest absolute coordinate of the scene.
+ */
+export function resolveTraceDistanceHaze(environment, extent) {
+  if (environment?.volumeFog || environment?.world !== true || !(environment.fogDensity > 0)) return null;
+  const reach = Math.min(HAZE_MAXIMUM_REACH, Math.max(HAZE_MINIMUM_REACH, extent * HAZE_REACH_PER_EXTENT));
+  return resolveTraceVolume({
+    density: environment.fogDensity,
+    color: environment.fogColor ?? HAZE_DEFAULT_COLOR,
+    minimum: [-HAZE_BOX_LIMIT, -HAZE_BOX_LIMIT, -HAZE_BOX_LIMIT],
+    maximum: [HAZE_BOX_LIMIT, HAZE_BOX_LIMIT, HAZE_BOX_LIMIT],
+    maxDistance: reach,
+    anisotropy: 0,
+    noiseAmount: 0,
+  });
+}
+
 /**
  * Where the ray is inside the box, as distances along it: writes `[entry, exit]` into `out`
  * clipped to `[0, limit]` and returns true, or returns false when the ray misses the box in that range.

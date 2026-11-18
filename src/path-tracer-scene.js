@@ -3,7 +3,8 @@ import { createTracer } from './ray-query.js';
 import { SUN_BIT, POINT_FIRST_BIT, SPOT_FIRST_BIT, AREA_FIRST_BIT } from './light-link-bits.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
 import { boxProjectedGeometry, columnLengths } from './export-box-uv.js';
-import { resolveTraceVolume, prepareMeshVolume } from './path-tracer-volume.js';
+import { resolveTraceVolume, resolveTraceDistanceHaze, prepareMeshVolume } from './path-tracer-volume.js';
+import { waterTraceMaterial } from './path-tracer-water.js';
 import { resolveLocalVolumes } from './local-volumes.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { resolveTraceSubsurface } from './path-tracer-subsurface.js';
@@ -196,6 +197,11 @@ const ALL_LIGHTS = -1;
 function graphOpacityCutoff(material) {
   const graph = material.pattern?.type === 'graph' ? material.pattern.graph : null;
   return material.alphaMode === 'blend' && graph && Object.hasOwn(graph, 'opacity') ? 0.5 : 0;
+}
+
+// The part's own material as the trace reads it: a water material becomes the dielectric it stands for, any other is unchanged.
+function tracedMaterialOf(part) {
+  return waterTraceMaterial(part.material ?? {});
 }
 
 function resolveMaterial(material) {
@@ -876,8 +882,9 @@ function boundingBoxOf(positions) {
  */
 function buildInstancedTraceScene(parts, geometries, environment, localVolumes, limits) {
   requireInstancedCaps(parts, measureInstancedParts(parts, geometries), limits);
-  const traceMaterials = parts.map(part => resolveMaterial(part.material ?? {}));
-  const materials = parts.map((part, index) => ({ ...(part.material ?? {}), ...traceMaterials[index] }));
+  const tracedPartMaterials = parts.map(tracedMaterialOf);
+  const traceMaterials = tracedPartMaterials.map(resolveMaterial);
+  const materials = tracedPartMaterials.map((material, index) => ({ ...material, ...traceMaterials[index] }));
   const geometryViews = new Map();
   const instances = parts.map((part, index) => instanceFor(part, geometries[index], index, materials[index], geometryViews));
   const extent = instancedExtent(instances);
@@ -889,7 +896,7 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
     ...(parts.some(part => part.shadowOnly === true) ? { shadowOnlyParts: Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) } : {}),
     lights: resolveLights(environment, limits.lights, parts),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
-    volume: resolveTraceVolume(environment.volumeFog),
+    volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, extent),
     localVolumes,
     surfaceOffset: extent * 1e-5,
     farDistance: extent * 1e4,
@@ -961,18 +968,19 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
   const bvh = buildTriangleBvh(geometry.positions, geometry.indices);
   let extent = 1e-3;
   for (let index = 0; index < geometry.positions.length; index++) extent = Math.max(extent, Math.abs(geometry.positions[index]));
+  const tracedPartMaterials = parts.map(tracedMaterialOf);
   return attachTracer({
     ...geometry,
     bvh,
-    materials: parts.map(part => resolveMaterial(part.material ?? {})),
+    materials: tracedPartMaterials.map(resolveMaterial),
     // The parts' own materials: the fields resolveMaterial leaves out, which the native "cycles" kernel shades.
-    partMaterials: parts.map(part => part.material ?? {}),
+    partMaterials: tracedPartMaterials,
     shadowOnlyParts: parts.some(part => part.shadowOnly === true) ? Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) : null,
     // Per part FORMAT-v2 visibility bits for the native "cycles" kernel; the "legacy" kernel and the other tracers do not read them.
     partRayVisibility: flattenedRayVisibility(parts),
     lights: resolveLights(environment, limits.lights, parts),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
-    volume: resolveTraceVolume(environment.volumeFog),
+    volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, extent),
     localVolumes,
     surfaceOffset: extent * 1e-5,
     farDistance: extent * 1e4,
