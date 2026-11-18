@@ -258,6 +258,32 @@ export function prepareSurface(surface, material, metallic, roughness, baseColor
 }
 
 /**
+ * Writes the albedo guide of a first hit into `out`, the one definition both tracers share (#1941). It is the sum of the
+ * lobe weights, as Cook's `closure_eval_albedo` sums them: the diffuse colour, plus the specular and coat weights times
+ * their Fresnel term at the view angle, with a glass lobe adding its reflected share and the base colour times the rest.
+ * A part with transmission t blends the two as (1 - t) of the surface lobes and t of glass, which is the expected value
+ * of the stochastic glass choice, so the guide carries no noise from it. Everything is clamped to 0 to 1.
+ * `surface` must come from prepareSurface() for this hit unless `transmission` is 1.
+ */
+export function writeFirstHitAlbedo(out, surface, material, baseColor, transmission, viewCosine) {
+  const ratio = (material.ior - 1) / (material.ior + 1);
+  const glassFresnel = schlick(ratio * ratio, Math.max(viewCosine, 1e-4));
+  for (let channel = 0; channel < 3; channel++) {
+    const glass = glassFresnel + baseColor[channel] * (1 - glassFresnel);
+    let opaque = 0;
+    if (transmission < 1) {
+      opaque = surface.diffuseColor[channel] + surface.specularWeight * schlick(surface.specularNormalReflectance[channel], surface.viewCosine) + surface.coatWeight;
+    }
+    out[channel] = Math.min(1, Math.max(0, opaque * (1 - transmission) + glass * transmission));
+  }
+}
+
+/** Writes the sky radiance a camera ray sees, clamped to 0 to 1, as the albedo guide of a ray that finds nothing. */
+export function writeEscapedAlbedo(out, skyRadiance) {
+  for (let channel = 0; channel < 3; channel++) out[channel] = Math.min(1, Math.max(0, skyRadiance[channel]));
+}
+
+/**
  * Moves `weight` of the diffuse lobe to the subsurface walk: the surface keeps the rest of the diffuse light, all of the
  * specular and the coat, and `subsurfaceChance` is the chance of taking the walk, drawn before sampleSurface().
  */

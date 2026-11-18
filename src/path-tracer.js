@@ -9,7 +9,7 @@ import { acesChannel, displayColor } from './view-transform.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
 import {
   buildFrame, createSurface, environmentPdf, environmentRadiance, evaluateSurface, luminance, mirrorWeight, prepareSurface,
-  roughnessToAlpha, sampleEnvironment, sampleGlass, sampleSurface, setWhiteDiffuse, splitSubsurface,
+  roughnessToAlpha, sampleEnvironment, sampleGlass, sampleSurface, setWhiteDiffuse, splitSubsurface, writeEscapedAlbedo, writeFirstHitAlbedo,
 } from './path-tracer-shading.js';
 import { buildLightTree, chooseLightFromTree, LIGHT_TREE_FIRST_HIT_LIGHTS, resolveLightSelection } from './path-tracer-light-tree.js';
 import { createRandomWalk, WALK_OUTCOME } from './path-tracer-subsurface.js';
@@ -811,12 +811,14 @@ function createPathTracer(scene, options) {
       weight = previousPdf * previousPdf / (previousPdf * previousPdf + environmentSide * environmentSide);
     }
     addRadiance(depth, throughput[0] * sky[0] * weight, throughput[1] * sky[1] * weight, throughput[2] * sky[2] * weight);
+    // A ray that finds nothing has the sky it sees as its albedo, clamped to 0 to 1: one definition for every tracer (#1941).
+    if (!featuresRecorded) writeEscapedAlbedo(features.albedo, sky);
   }
 
-  function recordFeatures(normal, isGlass) {
-    features.albedo[0] = isGlass ? 1 : hit.color[0];
-    features.albedo[1] = isGlass ? 1 : hit.color[1];
-    features.albedo[2] = isGlass ? 1 : hit.color[2];
+  function recordFeatures(normal, viewX, viewY, viewZ) {
+    const { transmission } = hit;
+    if (transmission < 1) prepareSurface(surface, hit.material, hit.metallic, hit.roughness, hit.color, normal, viewX, viewY, viewZ, hit.clearcoat);
+    writeFirstHitAlbedo(features.albedo, surface, hit.material, hit.color, transmission, normal[0] * viewX + normal[1] * viewY + normal[2] * viewZ);
     features.normal[0] = normal[0];
     features.normal[1] = normal[1];
     features.normal[2] = normal[2];
@@ -920,7 +922,7 @@ function createPathTracer(scene, options) {
     throughput[0] = 1;
     throughput[1] = 1;
     throughput[2] = 1;
-    features.albedo.fill(1);
+    features.albedo.fill(0);
     featuresRecorded = false;
     // A ray that finds nothing has the sky as its feature: one fixed normal and depth, so the filter treats sky as one surface.
     features.normal[0] = 0;
@@ -963,17 +965,17 @@ function createPathTracer(scene, options) {
       normal[1] = hit.normal[1] * facing;
       normal[2] = hit.normal[2] * facing;
       const isGlass = hit.transmission > 0 && random.next() < hit.transmission;
+      const viewX = -direction[0];
+      const viewY = -direction[1];
+      const viewZ = -direction[2];
       if (!featuresRecorded) {
-        recordFeatures(normal, isGlass);
+        recordFeatures(normal, viewX, viewY, viewZ);
         featuresRecorded = true;
       }
       const emissionScale = hit.material.emissionFresnel > 0
         ? fresnelSchlick(-(direction[0] * normal[0] + direction[1] * normal[1] + direction[2] * normal[2]), hit.material.emissionFresnel)
         : 1;
       addRadiance(depth, throughput[0] * hit.emission[0] * emissionScale, throughput[1] * hit.emission[1] * emissionScale, throughput[2] * hit.emission[2] * emissionScale);
-      const viewX = -direction[0];
-      const viewY = -direction[1];
-      const viewZ = -direction[2];
       if (isGlass) {
         const alpha = roughnessToAlpha(hit.roughness);
         if (!sampleGlass(normal, viewX, viewY, viewZ, entering, material.ior, alpha, random.next(), random.next(), random.next(), direction)) break;
