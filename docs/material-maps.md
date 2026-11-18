@@ -176,6 +176,7 @@ A material on a standard tag (`surface` in recipes, `gltf` and `armor` in code) 
 | `transmission` | 0 to 1 | The share of light that passes through. The material draws after the opaque scene and refracts it. |
 | `thickness` | 0 to 1000 metres | How far light travels inside. 0 is a thin sheet that does not bend the view. |
 | `ior` | 1 to 2.5 | Index of refraction. It bends transmitted light and sets the reflectance at normal incidence, 4 percent at 1.5. |
+| `dispersion` | 0 to 10 | Colour fringes through glass, 20 over the Abbe number (diamond 0.36), as in `KHR_materials_dispersion`. The path tracer renders it; the rasterizer ignores it. |
 | `attenuationColor`, `attenuationDistance` | colour 0 to 1, distance above 0 | The colour light keeps after that many metres inside. Leave the distance out for no absorption. |
 | `sheenColor`, `sheenRoughness` | colour 0 to 1, 0 to 1 | A soft glow at grazing angles for cloth. Black is off. |
 | `specular`, `specularColor` | 0 to 4, colour 0 to 1000 | Strength and tint of the non-metal reflection. |
