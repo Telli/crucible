@@ -605,10 +605,9 @@ vec3 waterRampRadianceFor(vec3 asked) {
   return guess / max(exposure, 0.0001);
 }
 `,
-  // A ramp stands clear of the distance haze, which would shift the colour it was asked to show.
-  worldFogScale: `  if (waterRampOwns > 0.5) fog = 0.0;
-`,
-  worldFinal: `  if (waterDepth > 0.0 && waterBody.w > 0.5 && alphaMode < 0.5) alpha = 0.5 + 0.498 * clamp(waterDepth / 8.0, 0.0, 1.0);
+  worldFinal: `  // A ramp stands clear of the distance haze, which would shift the colour it was asked to show: a local density of 0 shadows the uniform.
+  float fogDensity = waterRampOwns > 0.5 ? 0.0 : fogDensity;
+  if (waterDepth > 0.0 && waterBody.w > 0.5 && alphaMode < 0.5) alpha = 0.5 + 0.498 * clamp(waterDepth / 8.0, 0.0, 1.0);
   if (TAG_FIRE) {
     float turbulence = sin(worldPosition.x * 3.0 + time * 4.0) * sin(worldPosition.y * 4.2 - time * 3.0) * sin(worldPosition.z * 3.7);
     float heat = pow(clamp(0.55 + turbulence * 0.5 - explosionProgress * 0.12, 0.0, 1.0), 3.0);

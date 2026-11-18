@@ -106,5 +106,5 @@ test('the water shader maps the ramp back through the view transform and keeps t
   assert.match(shader, /vec3 waterRampRadianceFor\(vec3 asked\)/);
   assert.match(shader, /toneMap\(guess \+ 0\.002\)/);
   assert.match(shader, /waterRampRadiance = waterRampRadianceFor\(/);
-  assert.match(shader, /if \(waterRampOwns > 0\.5\) fog = 0\.0;/);
+  assert.match(shader, /float fogDensity = waterRampOwns > 0\.5 \? 0\.0 : fogDensity;/);
 });
