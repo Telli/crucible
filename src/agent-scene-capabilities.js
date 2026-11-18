@@ -55,7 +55,7 @@ export const MATERIAL_GRAPH_OUTPUTS = Object.freeze(['color', 'roughness', 'meta
 export const MATERIAL_GRAPH_OPERATORS = Object.freeze([
   'uv', 'coord', 'mapping', 'vec', 'ramp', 'image', 'noise', 'whiteNoise', 'brick', 'voronoi', 'wave', 'checker', 'gradient',
   'add', 'sub', 'mul', 'div', 'min', 'max', 'pow', 'abs', 'floor', 'fract', 'sqrt', 'invert', 'clamp', 'smoothstep', 'mix',
-  'layer', 'hue', 'curve', 'fresnel',
+  'layer', 'hue', 'curve', 'fresnel', 'vertexGroup',
 ]);
 export const MATERIAL_GRAPH_LIMITS = Object.freeze({ maxNodes: MAX_FIELD_NODES, maxDepth: MAX_FIELD_DEPTH, maxStops: 8, maxWork: 30_000_000 });
 // Curve and text geometry. A text geometry is bounded by vertices per curve segment: the bundled font stays under
@@ -85,9 +85,10 @@ export const MATERIAL_GRAPH_NODES = Object.freeze({
     note: 'Each takes "at", a vector such as {"uv":"both"}. Scales are whole numbers 1-64.',
   }),
   uv: '{"uv":"u"|"v"|"both"} coordinates.',
-  coordinates: '{"coord":"generated"|"object"|"world"} vector of where the texel sits: generated is the unit tile, object and world are metres across the tile (u * size); the third axis is 0 because a baked texture is projected. {"mapping":{"vector":node,"scale":n|[x,y,z],"offset":[x,y,z],"rotate":radians}} scales, turns around Z and moves a vector (default: generated). Feed either to "at". Meshes without UVs use box mapping; vertex_color already multiplies the baked colour. In graphs: fresnel, only as an emission factor. Not in graphs: vertexGroup, AO, bevel, curvature (per-pixel data a bake lacks).',
+  coordinates: '{"coord":"generated"|"object"|"world"} vector of where the texel sits: generated is the unit tile, object and world are metres across the tile (u * size); the third axis is 0 because a baked texture is projected. {"mapping":{"vector":node,"scale":n|[x,y,z],"offset":[x,y,z],"rotate":radians}} scales, turns around Z and moves a vector (default: generated). Feed either to "at". Meshes without UVs use box mapping; vertex_color already multiplies the baked colour. In graphs: fresnel, only as an emission factor. Not in graphs: AO, bevel, curvature (per-pixel data a bake lacks).',
   ramp: '{"ramp":{"value":node,"stops":[[0,[r,g,b]],[1,[r,g,b]]]}} 2-8 stops rising from 0 to 1.',
   fresnel: '{"fresnel":{"ior":1.5}} ior 1.01-3. View dependent, so only as a factor of emission, alone or {"mul":[node,{"fresnel":{...}}]}: emission rises toward grazing angles, rendered per pixel by the rasterizer and the CPU path tracer.',
+  vertexGroup: '{"vertexGroup":{"name":"edge"}} a number 0-1: the weight of that vertex group of the mesh, drawn into UV space and read at the texel, so it mixes with noise, ramps and layers. Needs pattern mapping "uv" and a mesh with UVs and the group (make it with a vertex_group mesh edit); every backend reads the baked texture. A material used on two meshes bakes once per mesh.',
   mixing: '{"layer":{"base","top","mask","edge","softness"}}; {"hue":{"color","shift","saturation","value"}}; {"curve":{"value","points":[[x,y]]}}.',
   maths: 'add sub mul div min max pow take [a,b]; abs floor fract sqrt invert take one node; clamp smoothstep mix take [a,b,c]; {"vec":[r,g,b]}.',
   mapping: 'box (default) projects along object axes, no UVs; uv follows geometry UVs. size and axis only apply to box.',
@@ -192,13 +193,15 @@ export const MESH_MODIFIER_NOTES = Object.freeze({
   lattice: 'divisions [2,2,2] (2-8) control points over the mesh bounds; moves up to 64 of {point:[i,j,k], offset:[x,y,z]}; trilinear blend.',
   curve: 'bends the mesh along path, 2 to 64 points [x,y,z] through a Catmull-Rom spline. The coordinate along axis (x) is the distance from the path start, the other two become offsets in a twist-free frame; past the ends the mesh continues straight. Model the mesh along the axis starting at 0.',
   hook: 'vertices within radius 1 of center [0,0,0] move by translation [0,0,0] times strength 0-1 (1); falloff smooth, linear or constant.',
+  smooth_laplacian: 'smoothing that keeps a closed mesh from shrinking: factor above 0 up to 1 (0.5), iterations 1-64 (1), preserveVolume true (false is plain shrinking Laplacian), pinBoundary true keeps the rim of an open mesh, group names a vertex group that scales each vertex step.',
+  warp: 'moves the vertices within radius 1 of point from toward point to, weighted by curve smooth (default), linear or constant, so the vertex at from lands on to and vertices beyond the radius stay; twist in degrees (0) also turns them about the from-to axis.',
   wave: 'a gaussian ripple of height 0.5 along z (normal true: along the vertex normal) travelling from start [0,0] over axes xy (default), x or y; width 1.5, narrowness 0-50 (1.5), speed 0.25 per frame, time 0 (a frame), timeOffset 0, cyclic true repeats it. Matches Blender Wave.',
   weighted_normal: 'corner normals weighted by face area ^ (weight/50), weight 1-100 (50), smoothed across edges under angle 30 that are not sharp. Put it last in the stack.',
   smooth_by_angle: 'edges bending over angle 30 (0-180) become sharp, others smooth, over smoothAngle; ignoreSharp true also clears hand-made sharp edges.',
   bounding_box: 'becomes its axis-aligned box.',
   convex_hull: 'becomes its convex hull, up to 8192 vertices.',
   build: 'shows faces one by one as frame runs from start 0 over length 60 frames (frame 0; give the current frame, e.g. from your film clock): order index (default), random (seed 0) or axis (axis y, lowest centroid first); reverse true unbuilds. Unused vertices drop; while none shows, one zero-area triangle stays.',
-  ocean: 'seeded sea: lifts axis (y) by waves of windSpeed 10 m/s (0-60) toward direction 0 deg, size 100 m (repeats), seed 0, time 0 s, resolution 8 (1-16); choppiness 1 (0-4) pulls points to crests. Writes group foam; spray true also writes group spray (foam where the surface rises) and the vector spray (surface velocity m/s) for particles emitter group spray + velocityFrom spray. wake {points up to 64 [x, z, strength, width], height 0.06} adds white foam and a small choppy displacement along a boat trail (physics float.boat.wake fills it).',
+  ocean: 'seeded sea: lifts axis (y) by waves of windSpeed 10 m/s (0-60) toward direction 0 deg, size 100 m (repeats), seed 0, time 0 s, resolution 8 (1-16); choppiness 1 (0-4) pulls points to crests. Writes group foam; spray true also writes group spray (foam where the surface rises) and the vector spray (surface velocity m/s) for particles emitter group spray + velocityFrom spray. Spray depends on time, size, resolution, windSpeed and choppiness: a sea with no spray at its time makes the emitter refuse ("no weight in vertex group spray"); a sea with an oceanTime geometry track is followed (droplets leave the crests of their birth time). wake {points up to 64 [x, z, strength, width], height 0.06} adds white foam and a small choppy displacement along a boat trail (physics float.boat.wake fills it).',
 });
 
 // Vertex colors and groups. Details stay here so the tool schemas stay small.
@@ -262,7 +265,7 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   operations: Object.freeze([
     'set-node', 'set-material', 'set-camera', 'add-node', 'remove-node',
     'add-geometry', 'remove-geometry', 'add-material', 'remove-material',
-    'set-environment', 'set-effects', 'set-shadow', 'set-motion', 'set-armatures', 'set-physics', 'set-cloth', 'set-timeline', 'set-particles', 'set-bake', 'set-post-passes', 'set-game', 'edit-mesh', 'set-mesh-stack', 'bake-motion', 'fracture-node', 'add-explosion', 'settle',
+    'set-environment', 'set-effects', 'set-shadow', 'set-motion', 'set-armatures', 'set-physics', 'set-cloth', 'set-timeline', 'set-particles', 'set-bake', 'set-post-passes', 'set-game', 'bake-motion', 'fracture-node', 'add-explosion', 'settle',
   ]),
   materialTags: Object.freeze(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']),
   // A flat water sheet; the largest sets the level. A bed d metres down keeps exp(-absorption * d) per channel (RGB per metre).
@@ -273,6 +276,7 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   })]))),
   materialSubsurface: 'material.subsurface { weight, radius, scale, color } as Blender Principled BSDF Subsurface; surface tag, rasterizer only. Ranges in scene_create.',
   materialRetro: 'material.retro { vertexSnap [width, height] (whole numbers 16 to 4096), affineUV true }: the PS1 look. vertexSnap rounds each vertex to a width by height screen grid so vertices jitter as the camera moves; affineUV interpolates texture coordinates without perspective correction so textures swim on large triangles. Set either or both. Raster renders only; the path tracer ignores it. Shadows ignore it. A material without retro renders exactly as before.',
+  materialWaterGlint: 'material.waterGlint { edge { threshold 0.05 to 0.95 (0.4), intensity 0 to 4 (1) }, sparkle { density 0 to 1 (0.35), size 0.02 to 2 m (0.12), threshold 0.9 to 0.9999 (0.985), shape dot | star (star), twinkle 0 to 8 per second (1), intensity 0 to 4 (1) } } on a water material, both parts off unless named: stylized highlights. edge replaces the soft sun glint with its lobe cut at threshold into a flat hard-edged shape that follows the waves; raise threshold for a smaller shape. sparkle cuts the water into size-metre cells and lights the share given by density whose tilted facet mirrors the sun within threshold (a cosine, higher is fewer and tighter), so sparkles twinkle with the camera, the waves and time and never show on the side away from the sun. Sparkles fade in far water where a cell is under two pixels. Raster renders only; the path tracer ignores it. Painted light streaks are not built yet.',
   materialWear: 'material.wear { mask, threshold 0.5, softness 0.25, metal { color, metallic 1, roughness 0.3 }, dirt { mask, threshold, softness, color, roughness 0.9 } }: the material own color, metallic and roughness are the paint; per pixel it turns to the metal layer where the vertex group mask is high, then to dirt (no metal, rougher) where the dirt group is high. Masks are vertex groups of the node mesh (vertex_group measure edge, curvature or occlusion), so a mesh with no UVs works. Rasterizer only; not with baked sky visibility.',
   alphaModes: RECIPE_ALPHA_MODES,
   materialPatterns: MATERIAL_PATTERN_TYPES, maxMaterialPatterns: MAX_MATERIAL_PATTERNS,
@@ -302,7 +306,7 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   gltfImport: 'Optional extensions and line primitives load with a warning; unlit and punctual lights are read.',
   authoredLook: true, maxPointLights: MAX_POINT_LIGHTS,
   catalogLooks: Object.freeze({ hdri: 'environment.hdri', hdris: BUNDLED_ENVIRONMENT_NAMES, cubeLooks: BUNDLED_CUBE_LOOK_NAMES, look: 'environment.look', catalogId: '64-hex ID of a .hdr or .cube in scene_asset_catalog', note: 'environmentIntensity and environmentRotation apply; keyIntensity 0 if the HDRI has a sun' }),
-  physicalSky: 'environment.sky {type:physical, preset: golden-hour|sunset|blue-hour, sunElevation, sunRotation, turbidity, groundAlbedo, aerialPerspective} drives key, sky, fog; a low sun warms them',
+  physicalSky: 'environment.sky {type:physical, preset: golden-hour|sunset|blue-hour, sunElevation, sunRotation, turbidity, groundAlbedo, aerialPerspective} drives key, sky, fog; a low sun warms them; type:gradient {stops:[{at,color}], horizonGlow:{color,width,intensity}} only picks colours',
   lightingSetups: LIGHTING_SETUP_NAMES,defaultLightingSetup: DEFAULT_LIGHTING_SETUP,
   ambientOcclusion: Object.freeze({ default: DEFAULT_AMBIENT_OCCLUSION, defaultRadius: 0.5, off: 0 }),
   // Local lights: spot and rectangular area lights. Shadows share one 2048 x 3072 depth atlas of 24 tiles; a shadowed

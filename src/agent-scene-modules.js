@@ -30,6 +30,7 @@ const MODULE_LOADERS = {
   fogShader: () => import('./fog-shader.js'),
   volumeEmissionMask: () => import('./volume-emission-mask.js'),
   retroShader: () => import('./retro-shader.js'),
+  glitterShader: () => import('./glitter-shader.js'),
   worldMaterials: () => import('./world-material-shader.js'),
   terrain: () => import('./agent-terrain.js'),
   navigation: () => import('./agent-navigation.js'),
@@ -84,6 +85,7 @@ const MODULE_MARKERS = {
   liquidShader: ['"transmission"', '"liquid"', '"foam"'],
   subsurfaceShader: ['"subsurface"'],
   retroShader: ['"retro"'],
+  glitterShader: ['"waterGlint"'],
   // Any mention loads it, because an edit can set the density through a path or the environment of an operation.
   fogShader: ['volumeFog', 'localVolumes', '"add-explosion"'],
   // A volume that casts a shadow draws the emission of the parts it covers apart from the dimmed light (#1360); loaded up front, the first frame already has it.
@@ -106,7 +108,7 @@ const MODULE_MARKERS = {
   coplanar: ['"resolveCoplanar"', '"asset":{'],
   // A closed room a sun lights gets the floor sky trace by default. The recipe text can not say whether a room is closed, so a recipe that names its sun loads it and the module skips an open scene.
   floorSky: ['"keyColor"', '"keyIntensity"'],
-  physicalSky: ['"type":"physical"'],
+  physicalSky: ['"type":"physical"', '"type":"gradient"'],
   userPass: ['"postPasses"'],
   game: ['"game":{', '"set-game"'],
   materialSnippet: ['"snippet":{'],
