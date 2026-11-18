@@ -1279,8 +1279,8 @@ export class CrucibleRenderer {
   pointInstanceAttributes() {
     const stride = INSTANCE_STRIDE;
     for (let column = 0; column < 4; column++) this.attribute(2 + column, 4, stride * 4, column * 16);
-    for (let column = 0; column < 3; column++) this.attribute(6 + column, 3, stride * 4, 64 + column * 12);
-    this.attribute(9, 3, stride * 4, 100);
+    // The normal matrix (9 floats) and colour (3) are read as three vec4s (floats 16 to 27) so slot 9 stays empty (#2042).
+    for (let slot = 0; slot < 3; slot++) this.attribute(6 + slot, 4, stride * 4, 64 + slot * 16);
     this.attribute(10, 4, stride * 4, 112);
     this.attribute(11, 3, stride * 4, 128);
     this.attribute(12, 3, stride * 4, 140);
