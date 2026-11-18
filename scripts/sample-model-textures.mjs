@@ -94,11 +94,14 @@ export function stageTexture() {
 }
 
 export const OBJECTIVES = Object.freeze([
-  { label: '4x 0.10', ring: '#c8261f' },
-  { label: '10x 0.25', ring: '#e8c21a' },
-  { label: '40x 0.65', ring: '#2f7fd0' },
-  { label: '100x 1.25 oil', ring: '#f0f0ea' },
+  { magnification: '4x', aperture: 'NA 0.10', ring: '#c8261f' },
+  { magnification: '10x', aperture: 'NA 0.25', ring: '#e8c21a' },
+  { magnification: '40x', aperture: 'NA 0.65', ring: '#2f7fd0' },
+  { magnification: '100x', aperture: 'NA 1.25', ring: '#f0f0ea' },
 ]);
+
+// A barrel wraps 512 texels around about a quarter of the length that its 128 rows cover, so text drawn this much wider than it is tall looks square on the model.
+const LABEL_STRETCH = 2.4;
 
 /** One 512 by 128 strip per objective, stacked: a silver barrel, the magnification colour ring and the engraved label centred on u = 0.5. */
 export function objectiveTexture() {
@@ -108,9 +111,10 @@ export function objectiveTexture() {
     const top = index * rowHeight;
     return `<g transform="translate(0 ${top})"><rect width="${width}" height="${rowHeight}" fill="#c4c7cb"/>`
       + `<rect y="8" width="${width}" height="${rowHeight - 16}" fill="#a9adb2"/>`
-      + `<rect y="34" width="${width}" height="9" fill="#0c0c0c"/><rect y="43" width="${width}" height="16" fill="${objective.ring}"/><rect y="59" width="${width}" height="5" fill="#0c0c0c"/>`
-      + `<rect x="${width / 2 - 120}" y="72" width="240" height="34" rx="4" fill="#111"/>`
-      + `<text x="${width / 2}" y="96" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="23" fill="#f2f2ee">${objective.label}</text></g>`;
+      + `<rect y="100" width="${width}" height="4" fill="#0c0c0c"/><rect y="104" width="${width}" height="16" fill="${objective.ring}"/><rect y="120" width="${width}" height="4" fill="#0c0c0c"/>`
+      + `<rect x="${width / 2 - 85}" y="32" width="170" height="52" rx="5" fill="#111"/>`
+      + `<g transform="translate(${width / 2} 0) scale(${LABEL_STRETCH} 1)" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-weight="bold" fill="#f2f2ee">`
+      + `<text y="58" font-size="24">${objective.magnification}</text><text y="75" font-size="12">${objective.aperture}</text></g></g>`;
   }).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${rowHeight * OBJECTIVES.length}">${rows}</svg>`;
   return sharp(Buffer.from(svg)).png({ palette: true, colors: 32 }).toBuffer();

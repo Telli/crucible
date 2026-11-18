@@ -15,8 +15,11 @@ const FLOAT = 5126;
 const UNSIGNED_SHORT = 5123;
 const UNSIGNED_INT = 5125;
 const BOX_TILES_PER_UNIT = 30;
-// Beige-white enamel, in linear light (about sRGB 232, 220, 195).
-const ENAMEL_COLOR = [0.80, 0.72, 0.56, 1];
+// Beige-white enamel. The studio's fill light is teal (0.8, 2.0, 1.8 in the shared shader), so the base colour is warmer than
+// the colour it should show: this peach renders as about sRGB 236, 224, 210 on a lit face and loses the teal on the shaded ones.
+const ENAMEL_COLOR = [0.72, 0.43, 0.32, 1];
+// A thin lacquer over the enamel, so it has a soft highlight and does not read as flat white.
+const ENAMEL_CLEARCOAT = { clearcoatFactor: 0.5, clearcoatRoughnessFactor: 0.3 };
 const OBJECTIVE_CENTER_Z = 0.044;
 const OBJECTIVE_TIP_HEIGHT = 0.012;
 const FINE_KNOB = { centerY: 0.0715, centerZ: -0.038 };
@@ -128,8 +131,8 @@ function applyFocusKnobUvs(mesh) {
 const OBJECTIVE_SECTORS = [
   { row: 0, outwardTurns: 0.5 },
   { row: 1, outwardTurns: -0.25 },
-  { row: 2, outwardTurns: 0.25 },
-  { row: 3, outwardTurns: 0 },
+  { row: 2, outwardTurns: 0.16 },
+  { row: 3, outwardTurns: 0.076 },
 ];
 
 function objectiveSector(position) {
@@ -139,25 +142,33 @@ function objectiveSector(position) {
   return sidewaysOffset > 0 ? OBJECTIVE_SECTORS[2] : OBJECTIVE_SECTORS[1];
 }
 
+function averageAcross(mesh, indices) {
+  return [0, 1].map(axis => indices.reduce((sum, index) => sum + mesh.positions[index * 3 + axis * 2], 0) / indices.length);
+}
+
+/** Each objective's axis, as its centre at the tip and at the top: a barrel that leans would twist the label if turns were measured around one fixed point. */
+function objectiveAxis(mesh, members) {
+  const heights = members.map(index => mesh.positions[index * 3 + 1]);
+  const lowest = Math.min(...heights);
+  const highest = Math.max(...heights);
+  const tip = members.filter(index => mesh.positions[index * 3 + 1] < lowest + OBJECTIVE_TIP_HEIGHT);
+  const top = members.filter(index => mesh.positions[index * 3 + 1] > highest - OBJECTIVE_TIP_HEIGHT);
+  return { tip: averageAcross(mesh, tip), top: averageAcross(mesh, top), lowest, highest };
+}
+
 function applyObjectiveUvs(mesh) {
   const count = mesh.positions.length / 3;
   const sectors = Array.from({ length: count }, (_, index) => objectiveSector(vertexAt(mesh, index).position));
-  const centers = OBJECTIVE_SECTORS.map(sector => {
-    const members = sectors.map((candidate, index) => (candidate === sector ? index : -1)).filter(index => index >= 0);
-    const lowest = Math.min(...members.map(index => mesh.positions[index * 3 + 1]));
-    const tip = members.filter(index => mesh.positions[index * 3 + 1] < lowest + OBJECTIVE_TIP_HEIGHT);
-    const center = [0, 1].map(axis => tip.reduce((sum, index) => sum + mesh.positions[index * 3 + axis * 2], 0) / tip.length);
-    const heights = members.map(index => mesh.positions[index * 3 + 1]);
-    return { x: center[0], z: center[1], lowest, highest: Math.max(...heights) };
-  });
+  const axes = OBJECTIVE_SECTORS.map(sector => objectiveAxis(mesh, sectors.map((candidate, index) => (candidate === sector ? index : -1)).filter(index => index >= 0)));
   let vertex = 0;
   assignUvs(mesh, position => {
     const sector = sectors[vertex++];
-    const center = centers[OBJECTIVE_SECTORS.indexOf(sector)];
-    const turns = Math.atan2(position[0] - center.x, position[2] - center.z) / (Math.PI * 2);
-    const u = 0.5 + wrapToHalfTurn(turns - sector.outwardTurns);
-    const along = (center.highest - position[1]) / (center.highest - center.lowest);
-    return [u, (sector.row + 0.02 + 0.96 * Math.min(1, Math.max(0, along))) / OBJECTIVE_SECTORS.length];
+    const axis = axes[OBJECTIVE_SECTORS.indexOf(sector)];
+    const along = Math.min(1, Math.max(0, (axis.highest - position[1]) / (axis.highest - axis.lowest)));
+    const centerX = axis.top[0] + (axis.tip[0] - axis.top[0]) * along;
+    const centerZ = axis.top[1] + (axis.tip[1] - axis.top[1]) * along;
+    const turns = Math.atan2(position[0] - centerX, position[2] - centerZ) / (Math.PI * 2);
+    return [0.5 + wrapToHalfTurn(turns - sector.outwardTurns), (sector.row + 0.02 + 0.96 * along) / OBJECTIVE_SECTORS.length];
   });
   splitAtSeam(mesh, 1);
 }
@@ -171,19 +182,20 @@ function applyStageUvs(mesh) {
 }
 
 const GRAIN = { image: 'grain', roughness: 1, metallic: 0 };
+const ENAMEL = { ...GRAIN, color: ENAMEL_COLOR, clearcoat: ENAMEL_CLEARCOAT, uv: boxProjection };
 const PART_SURFACES = {
-  base_stand: { ...GRAIN, color: ENAMEL_COLOR, uv: boxProjection },
-  head: { ...GRAIN, color: ENAMEL_COLOR, uv: boxProjection },
-  prism_housing: { ...GRAIN, color: ENAMEL_COLOR, uv: boxProjection },
+  base_stand: ENAMEL,
+  head: ENAMEL,
+  prism_housing: ENAMEL,
   illuminator: { image: 'brushed', roughness: 1, metallic: 0.9, color: [0.05, 0.05, 0.055, 1], uv: boxProjection },
-  rack_post: { image: 'brushed', roughness: 1, metallic: 1, color: [0.78, 0.78, 0.76, 1], uv: boxProjection },
-  stage_clips: { image: 'brushed', roughness: 1, metallic: 1, color: [0.78, 0.78, 0.76, 1], uv: boxProjection },
+  rack_post: { image: 'brushed', roughness: 1, metallic: 1, color: [0.80, 0.72, 0.66, 1], uv: boxProjection },
+  stage_clips: { image: 'brushed', roughness: 1, metallic: 1, color: [0.80, 0.72, 0.66, 1], uv: boxProjection },
   condenser: { image: 'brushed', roughness: 1, metallic: 0.9, color: [0.05, 0.05, 0.055, 1], uv: boxProjection },
   nosepiece: { image: 'brushed', roughness: 1, metallic: 0.9, color: [0.05, 0.05, 0.055, 1], uv: boxProjection },
-  eyepiece_mounts: { ...GRAIN, color: [0.025, 0.025, 0.028, 1], uv: boxProjection },
-  eyepiece_tubes: { ...GRAIN, color: [0.025, 0.025, 0.028, 1], uv: boxProjection },
+  eyepiece_mounts: { ...GRAIN, color: [0.034, 0.022, 0.018, 1], uv: boxProjection },
+  eyepiece_tubes: { ...GRAIN, color: [0.034, 0.022, 0.018, 1], uv: boxProjection },
   focus_knobs: { color: [0.03, 0.03, 0.033, 1], roughness: 0.6, metallic: 0, normalImage: 'knurl', uv: applyFocusKnobUvs },
-  objectives: { color: [1, 1, 1, 1], roughness: 0.32, metallic: 0.9, colorImage: 'objectives', uv: applyObjectiveUvs },
+  objectives: { color: [1, 1, 1, 1], roughness: 0.4, metallic: 0.5, colorImage: 'objectives', uv: applyObjectiveUvs },
   stage: { color: [1, 1, 1, 1], roughness: 0.5, metallic: 0, colorImage: 'stage', uv: applyStageUvs },
 };
 
@@ -220,13 +232,14 @@ function surfaceMaterial(original, surface, textureIndices) {
   if (surface.colorImage) pbr.baseColorTexture = { index: textureIndices[surface.colorImage] };
   if (surface.image) pbr.metallicRoughnessTexture = { index: textureIndices[surface.image] };
   const material = { name: original.name, doubleSided: true, pbrMetallicRoughness: pbr };
+  if (surface.clearcoat) material.extensions = { KHR_materials_clearcoat: surface.clearcoat };
   if (surface.normalImage) material.normalTexture = { index: textureIndices[surface.normalImage], scale: 1 };
   return material;
 }
 
 export async function textureSampleModel(inputBytes) {
   const { document: source, binary } = readGlb(inputBytes, 'The untextured sample GLB');
-  const state = { chunks: [], document: { asset: { version: '2.0', generator: 'Crucible texture-sample-model' }, scene: 0, scenes: source.scenes, nodes: source.nodes, meshes: [], materials: [], accessors: [], bufferViews: [], buffers: [{ byteLength: 0 }], samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 }], images: [], textures: [] } };
+  const state = { chunks: [], document: { asset: { version: '2.0', generator: 'Crucible texture-sample-model' }, extensionsUsed: ['KHR_materials_clearcoat'], scene: 0, scenes: source.scenes, nodes: source.nodes, meshes: [], materials: [], accessors: [], bufferViews: [], buffers: [{ byteLength: 0 }], samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 }], images: [], textures: [] } };
   const pngs = { grain: await grainTexture(), brushed: await brushedTexture(), knurl: await knurlNormalTexture(), stage: await stageTexture(), objectives: await objectiveTexture() };
   const textureIndices = Object.fromEntries(Object.entries(pngs).map(([name, png]) => [name, addImage(state, name, png)]));
   for (const node of source.nodes) {

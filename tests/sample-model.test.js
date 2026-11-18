@@ -58,7 +58,7 @@ test('the sample model snapshot stays stable', () => {
       hash.update(new Uint8Array(field.buffer, field.byteOffset, field.byteLength));
     }
   }
-  assert.equal(hash.digest('hex'), '775ddd77085ed466eba186e6d1907c4812a92c5c373c5980d04e0363c51da186');
+  assert.equal(hash.digest('hex'), '3638b1b0aabf8636aa94c45d9ecbff3526e9025f3daa90006537ebfef100f3aa');
 });
 
 test('an unknown part or an empty list is refused with the fix', () => {
@@ -91,10 +91,13 @@ test('the enamel body, metal parts, rubber knobs, stage scale and objective labe
     assert.ok(material.metallicRoughnessMap, `${name} has a roughness grain`);
     assert.ok(material.color[0] > 0.7 && material.color[0] > material.color[2] + 0.15, `${name} is warm beige-white: ${material.color}`);
     assert.ok(material.metallic === 0, `${name} is paint, not metal`);
+    assert.ok(material.clearcoat > 0 && material.clearcoat <= 0.8, `${name} has a thin lacquer over the enamel: ${material.clearcoat}`);
   }
-  for (const name of ['Objectives', 'Nosepiece', 'Stage clips', 'Rack post']) {
+  for (const name of ['Nosepiece', 'Stage clips', 'Rack post']) {
     assert.ok(partNamed(name).material.metallic >= 0.9, `${name} is metal`);
   }
+  // The objectives are half metal so the white label ink shows instead of reflecting the dark floor.
+  assert.ok(partNamed('Objectives').material.metallic >= 0.4 && partNamed('Objectives').material.metallic <= 0.6, 'the objectives keep a printed label over a satin barrel');
   assert.ok(partNamed('Focus knobs').material.normalMap, 'the focus knobs carry a knurl normal map');
   assert.ok(partNamed('Objectives').material.map, 'the objectives carry the label atlas');
   assert.ok(partNamed('Stage').material.map, 'the stage carries the scale');
@@ -147,4 +150,15 @@ test('the exploded view keeps the parts as a set: every part stays within 2.8 of
       assert.ok(!overlapping, `${boxes[first].name} and ${boxes[second].name} overlap when exploded`);
     }
   }
+});
+
+test('the exploded focus knobs stay in one group right beside the arm, along their own axis', () => {
+  const knobs = worldBounds([partNamed('Focus knobs')], 1);
+  const arm = worldBounds([partNamed('Base and arm')], 1);
+  const gap = arm.minimum[0] - knobs.maximum[0];
+  assert.ok(gap > 0 && gap < 0.3, `the knobs sit ${gap.toFixed(2)} left of the arm`);
+  const assembledKnobs = worldBounds([partNamed('Focus knobs')], 0);
+  const lift = (knobs.minimum[1] + knobs.maximum[1]) / 2 - (assembledKnobs.minimum[1] + assembledKnobs.maximum[1]) / 2;
+  assert.ok(Math.abs(lift) < 0.3, `the knobs rise only ${lift.toFixed(2)}`);
+  assert.ok(knobs.minimum[2] > arm.minimum[2] && knobs.maximum[2] < arm.maximum[2], 'the knobs stay within the arm depth');
 });

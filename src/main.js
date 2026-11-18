@@ -14,7 +14,9 @@ const isExport = renderParameters.get('export') === '1';
 const adaptiveResolution = isExport ? null : createAdaptiveResolution({ exporting: false });
 let selectedPixelRatio = isExport ? 1 : 1.5;
 const parts = await loadSampleModel(new URL('sample-model.glb', document.baseURI));
-const state = { azimuth: 0.48, elevation: 0.18, distance: 10.5, exposure: 1.3, inspection: false, rotating: false, assembly: Math.max(0, Math.min(1, Number(new URLSearchParams(location.search).get('explosion')) || 0)), layer: 'all' };
+// Close enough that the four objectives and their labels read at the default zoom.
+const DEFAULT_DISTANCE = 9.2;
+const state = { azimuth: 0.48, elevation: 0.18, distance: DEFAULT_DISTANCE, exposure: 1.3, inspection: false, rotating: false, assembly: Math.max(0, Math.min(1, Number(new URLSearchParams(location.search).get('explosion')) || 0)), layer: 'all' };
 state.look = 'studio';
 state.targetHeight = 1.8;
 state.touring = false;
@@ -66,7 +68,7 @@ function camera() {
   const mobile = canvas.clientWidth <= 700;
   if (renderer) renderer.projection[8] = mobile || state.exporting ? 0 : -CENTER_SHIFT_PIXELS / canvas.clientWidth;
   const assembledDistance = state.distance * (mobile ? 1.05 : 1);
-  const explodedDistance = distanceToFill(EXPLODED_SIZE, { verticalFov: VERTICAL_FIELD_OF_VIEW, aspect: canvas.clientWidth / canvas.clientHeight, fill: EXPLODED_FILL }) * (state.distance / 10.5);
+  const explodedDistance = distanceToFill(EXPLODED_SIZE, { verticalFov: VERTICAL_FIELD_OF_VIEW, aspect: canvas.clientWidth / canvas.clientHeight, fill: EXPLODED_FILL }) * (state.distance / DEFAULT_DISTANCE);
   const distance = assembledDistance + (explodedDistance - assembledDistance) * state.assembly;
   const assembledHeight = mobile ? 1.8 : state.targetHeight;
   const target = [0, assembledHeight + (EXPLODED_CENTER_HEIGHT - assembledHeight) * state.assembly, 0];
@@ -157,14 +159,14 @@ document.querySelector('#assembly-tour').addEventListener('click', () => {
   if (state.touring) { stopTour(); return; }
   if (reducedMotion.matches) { state.assembly = state.assembly > 0.5 ? 0 : 1; syncAssembly(); invalidate(); return; }
   // A complete-model composition keeps all moving components in the frame.
-  Object.assign(state, { distance: 10.5, targetHeight: 1.8, touring: true });
+  Object.assign(state, { distance: DEFAULT_DISTANCE, targetHeight: 1.8, touring: true });
   tourOrigin = performance.now();
   document.querySelector('#assembly-tour').textContent = 'Pause assembly';
   invalidate();
 });
 document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
   stopTour();
-  const views = { hero: [0.48, 0.18, 10.5, 1.8, 0], eyepiece: [0.12, 0.12, 4.2, 3.0, 0], parts: [0.7, 0.34, 6.8, 1.8, 0.65] };
+  const views = { hero: [0.48, 0.18, DEFAULT_DISTANCE, 1.8, 0], eyepiece: [0.12, 0.12, 4.2, 3.0, 0], parts: [0.7, 0.34, 6.8, 1.8, 0.65] };
   const [azimuth, elevation, distance, targetHeight, assembly] = views[button.dataset.view];
   Object.assign(state, { azimuth, elevation, distance, targetHeight, assembly, assemblyTarget:assembly });
   document.querySelectorAll('[data-view]').forEach(control => control.setAttribute('aria-pressed', String(control === button)));
@@ -230,7 +232,7 @@ canvas.addEventListener('keydown', (event) => {
 });
 document.querySelector('#reset').addEventListener('click', () => {
   stopTour();
-  Object.assign(state, { azimuth: 0.48, elevation: 0.18, distance: 10.5, targetHeight: 1.8 });
+  Object.assign(state, { azimuth: 0.48, elevation: 0.18, distance: DEFAULT_DISTANCE, targetHeight: 1.8 });
   invalidate();
 });
 document.querySelector('#exposure').addEventListener('input', (event) => {

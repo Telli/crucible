@@ -55,7 +55,7 @@ test('assemblyBounds measures the posed parts and refuses what it cannot measure
   const exploded = assemblyBounds(parts, 1);
   assert.ok(assembled.maximum[1] > 3.4 && assembled.maximum[1] < 3.8, `assembled height ${assembled.maximum[1]}`);
   assert.ok(exploded.maximum[1] > 6 && exploded.maximum[1] < 7, `exploded height ${exploded.maximum[1]}`);
-  assert.ok(exploded.maximum[0] - exploded.minimum[0] > 4.5, 'the fanned parts widen the exploded pose');
+  assert.ok(exploded.maximum[0] - exploded.minimum[0] > 4.2, 'the fanned parts widen the exploded pose');
   assert.throws(() => assemblyBounds([]), /non-empty array/);
   assert.throws(() => assemblyBounds([{ name: 'bare' }]), /Part "bare" needs geometry\.positions and a matrix/);
 });

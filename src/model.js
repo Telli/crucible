@@ -14,7 +14,7 @@ const SAMPLE_PARTS = Object.freeze({
   illuminator: { label: 'Illuminator', layer: 'interior', section: 'Illumination', offset: [-1.9, 0, 0] },
   condenser: { label: 'Condenser', layer: 'interior', section: 'Illumination', offset: [0, 0.35, 1.7] },
   condenser_lens: { label: 'Condenser lens', layer: 'interior', section: 'Illumination', offset: [0, 0.95, 1.7] },
-  focus_knobs: { label: 'Focus knobs', layer: 'exterior', section: 'Focus', offset: [-1.9, 0.68, 0] },
+  focus_knobs: { label: 'Focus knobs', layer: 'exterior', section: 'Focus', offset: [-1.4, 0.1, 0] },
   stage: { label: 'Stage', layer: 'exterior', section: 'Stage', offset: [0, 1.4, 0] },
   stage_clips: { label: 'Stage clips', layer: 'exterior', section: 'Stage', offset: [1.55, 1.4, 0] },
   objectives: { label: 'Objectives', layer: 'interior', section: 'Optics', offset: [1.55, -0.87, 0] },
