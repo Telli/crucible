@@ -869,9 +869,15 @@ function jobKeysHint(toolName, acceptedKeys) {
     : undefined);
 }
 const renderSettings = z.strictObject({
-  kind: z.enum(['image', 'stills', 'video']),
-  width: z.number().int().min(64).max(MAXIMUM_JOB_SIDE),
-  height: z.number().int().min(64).max(MAXIMUM_JOB_SIDE),
+  kind: z.enum(['image', 'stills', 'video', 'icons']),
+  width: z.number().int().min(64).max(MAXIMUM_JOB_SIDE).optional(),
+  height: z.number().int().min(64).max(MAXIMUM_JOB_SIDE).optional(),
+  items: z.array(z.string().max(260)).min(1).max(256).optional().describe('icons: catalog GLB names or asset ids; a PNG each plus atlas.png, icons.json. See scene_capabilities jobs.icons.'),
+  size: z.union([z.literal(64), z.literal(128), z.literal(256), z.literal(512)]).optional().describe('icons: pixels per icon side (default 256).'),
+  style: z.enum(['clean', 'toon', 'sketch']).optional().describe('icons: clean (default) or toon.'),
+  viewpoint: z.union([z.literal('three-quarter'), z.strictObject({ azimuth: z.number().optional(), elevation: z.number().optional() })]).optional().describe('icons: three-quarter or azimuth/elevation degrees.'),
+  scale: z.enum(['fit', 'relative']).optional().describe('icons: fit fills every icon; relative keeps one scale for the set.'),
+  padding: z.number().optional().describe('icons: border fraction, 0.02 to 0.4.'),
   fps: z.number().int().min(1).max(MAXIMUM_JOB_FPS).optional(),
   duration: z.number().min(0.1).max(60).optional(),
   animation: z.strictObject({ clip: z.number().int().min(0), start: z.number().min(0).max(3600).optional() }).optional(),
