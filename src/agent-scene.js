@@ -2063,8 +2063,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   }
 
   function commit(stagedState, incrementRevision) {
-    publishPose(stagedState, stagedState.initialPose);
-    if (stagedState.topologyChanged) {
+    // A pose that swaps in new parts (particles, cloth) is a topology change too: a renderer holding the old parts would
+    // otherwise try to update parts it never saw, which failed with "Unknown part identity" (#2204).
+    const posedPartsChanged = publishPose(stagedState, stagedState.initialPose);
+    if (stagedState.topologyChanged || posedPartsChanged) {
       topologyRevision++;
     }
     if (incrementRevision && state) {
