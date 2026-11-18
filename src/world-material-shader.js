@@ -306,6 +306,9 @@ float waterContactFoam(vec3 surfacePosition, float noiseValue) {
   if (stored >= 0.999) return 0.0;
   float sceneDepth = max(stored - 0.5, 0.0) / 0.498 * 8.0;
   float gap = abs(surfacePosition.y - waterBody.x + sceneDepth);
+  // A pixel far away spans metres, so a width in pixels alone would foam open water up to the horizon, where the scene behind is deep
+  // water, the far plane or the sky. Foam only where the scene is within half a metre of the water surface.
+  if (gap > 0.5) return 0.0;
   vec4 above = viewProjection * vec4(surfacePosition + vec3(0.0, 1.0, 0.0), 1.0);
   vec4 here = viewProjection * vec4(surfacePosition, 1.0);
   float pixelsPerMetre = max(abs(above.y / above.w - here.y / here.w) * 0.5 * size.y, 0.001);
