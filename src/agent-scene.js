@@ -64,6 +64,8 @@ const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geo
 const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
+// Fields of an optional shader module join the list here, so the long list above stays a line each material feature does not rewrite.
+MATERIAL_FIELDS.push('waterGlint');
 const LOOK_OPERATION_FIELDS = Object.freeze({
   'set-environment': 'environment',
   'set-effects': 'effects',
@@ -353,6 +355,10 @@ function materialFrom(value) {
   }
   copyMaterialLayers(value, result);
   if (value.wear) result.wear = normalizeMaterialWear(value.wear);
+  if (value.waterGlint !== undefined && value.waterGlint !== null) {
+    if (result.tag !== 'water') throw invalidField('waterGlint', value.waterGlint, 'a water material: set tag "water" on the material, or remove waterGlint');
+    result.waterGlint = agentSceneModule('glitterShader').normalizeWaterGlint(value.waterGlint);
+  }
   if (value.retro !== undefined && value.retro !== null) result.retro = agentSceneModule('retroShader').normalizeMaterialRetro(value.retro);
   if (agentSceneModuleLoaded('worldMaterials')) {
     agentSceneModule('worldMaterials').copyWaterFields(value, result, vector);
@@ -635,6 +641,9 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
       if (!Array.isArray(knots) || knots.length < 2 || knots.length > CURVE_TEXT_LIMITS.maxCurvePoints) {
         throw invalidField('points', Array.isArray(knots) ? `${knots.length} points` : knots, `a list of 2 to ${CURVE_TEXT_LIMITS.maxCurvePoints} points, such as [[0, 0, 0], [0, 1, 0]]`);
       }
+      const curveChecks = agentSceneModule('modeling');
+      curveChecks.checkCurveRadius(value.radius ?? 0.05);
+      curveChecks.checkClosedFlag(value.closed ?? false);
       const sides = value.profile === undefined ? detail('radialSegments', 8, 3, 128) : points(value.profile, 2, 3, 'profile');
       const rings = (value.closed ? knots.length : knots.length - 1) * detail('resolution', 12, 1, 64) + 1;
       return rings * sides * 2 + 2 * (sides + 1);
@@ -2211,7 +2220,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
             merged[nestedField] = { ...candidate[lookField][nestedField], ...patch[nestedField] };
           }
           // A preset starts the sky again from its own sun, so fields kept from the earlier sky never hide it.
-          if (patch.sky) merged.sky = { ...!patch.sky.preset && candidate[lookField].sky, type: 'physical', ...patch.sky };
+          if (patch.sky) {
+            const kept = candidate[lookField].sky;
+            const type = patch.sky.type ?? kept?.type ?? 'physical';
+            merged.sky = { ...!patch.sky.preset && kept?.type === type && kept, type, ...patch.sky };
+          }
           candidate[lookField] = merged;
           continue;
         }
