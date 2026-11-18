@@ -58,8 +58,9 @@ key light. `"hdri": null` clears it. `ambientIntensity` also scales the HDRI's d
 ## Color look and tone mapping
 
 `environment.look` is one of `warm`, `cool`, `contrast`, `faded`, a shipped cube (`teal-orange`, `noir`) or the
-64-character ID of a `.cube` file from `scene_asset_catalog`. `environment.viewTransform` is `aces` (default), `agx` or
-`neutral`.
+64-character ID of a `.cube` file from `scene_asset_catalog`. `environment.viewTransform` is `aces` (default), `agx`,
+`neutral` or `standard` (Blender Standard: sRGB, no tone curve, values above 1 clip; pick it to match a Cycles
+reference rendered with Standard).
 
 Tool `scene_apply`:
 
