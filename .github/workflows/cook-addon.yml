@@ -93,6 +93,7 @@ on:
       - 'src/animation-modifiers.js'
       - 'src/animation-root-motion.js'
       - 'src/animation.js'
+      - 'src/area-light-portal.js'
       - 'src/blend-output.js'
       - 'src/camera-effects.js'
       - 'src/camera-path.js'
