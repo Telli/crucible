@@ -366,7 +366,9 @@ function validateDocument(document, limits, allowedExtensions) {
       for (const target of primitive.targets ?? []) {
         if (!target || typeof target !== 'object' || Array.isArray(target) || !Object.keys(target).length) throw new Error('Morph targets require POSITION or NORMAL channels.');
         for (const [semantic, accessorIndex] of Object.entries(target)) {
-          if (!['POSITION', 'NORMAL'].includes(semantic)) throw new Error(`Unsupported morph target semantic: ${semantic}.`);
+          // TANGENT deltas are derived data the renderer never reads; they are ignored with a warning (see ignoredMorphTangentWarnings).
+          if (semantic === 'TANGENT') continue;
+          if (!['POSITION', 'NORMAL'].includes(semantic)) throw new Error(`Unsupported morph target semantic: ${semantic}. Crucible reads morph POSITION and NORMAL (TANGENT is ignored). Re-export the GLB without ${semantic} morph deltas.`);
           const accessor = document.accessors?.[accessorIndex];
           // A morph NORMAL without a base NORMAL is dropped at conversion with a warning, so it needs no base attribute here.
           if (primitive.attributes?.[semantic] === undefined && semantic !== 'NORMAL') throw new Error('Morph target channels require corresponding base attributes.');
@@ -867,6 +869,13 @@ function computeVertexNormals(positions, indices) {
   return normals;
 }
 
+/** One warning when any morph target carries TANGENT deltas, which the loader ignores. */
+function ignoredMorphTangentWarnings(document) {
+  const hasTangentDeltas = (document.meshes ?? []).some(mesh => (mesh.primitives ?? [])
+    .some(primitive => (primitive.targets ?? []).some(target => target?.TANGENT !== undefined)));
+  return hasTangentDeltas ? ['Ignored morph target TANGENT deltas; the POSITION and NORMAL morphs and the weight animation load as authored.'] : [];
+}
+
 /** A primitive whose decoded data cannot be drawn; the loader skips it with a warning instead of refusing the file. */
 class UnusablePrimitiveError extends Error {}
 
@@ -1263,7 +1272,7 @@ export async function parseGltf(data, options = {}) {
   }
   const { ignoredExtensions, overruns } = validated;
   await loadLayerShadersFor(document);
-  const warnings = [...fallbackWarnings, ...ignoredExtensions.map(extension => `${extension} is accepted but not rendered.`), ...skippedPrimitiveWarnings(document), ...unusablePrimitiveWarnings, ...clampedIorWarnings(document)];
+  const warnings = [...fallbackWarnings, ...ignoredExtensions.map(extension => `${extension} is accepted but not rendered.`), ...skippedPrimitiveWarnings(document), ...unusablePrimitiveWarnings, ...clampedIorWarnings(document), ...ignoredMorphTangentWarnings(document)];
   const dataBytes = typeof data === 'string' ? new TextEncoder().encode(data).byteLength : data.byteLength;
   const { resourceBytes, textureScaling } = await prepareResources(document, data, dataBytes, options, limits, overruns);
   if (textureScaling.scaledTextures.length) {

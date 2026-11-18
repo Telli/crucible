@@ -155,7 +155,7 @@ The current source supports four-influence [GPU skinning](https://crucible.codep
 
 Negative skin weights, which three.js and Blender also accept, are clamped to 0 and each vertex is renormalised. A vertex left with no positive weight binds fully to joint 0. `warnings` names the primitive and counts the clamped weights. NaN and Infinity weights still fail.
 The current source also supports relative POSITION/NORMAL morph targets and weight animations. See [morph import](https://crucible.codepawl.com/gltf-morph.md).
-A morph primitive without an authored base NORMAL loads with normals generated from its triangles; its morph NORMAL deltas are dropped, with a warning. TANGENT targets remain unsupported.
+A morph primitive without an authored base NORMAL loads with normals generated from its triangles; its morph NORMAL deltas are dropped, with a warning. TANGENT morph deltas are ignored with a warning (`unsupported-asset-feature` in `scene_create_asset`); any other morph semantic is refused, and the error says to re-export the GLB without it.
 
 The caller owns the CrucibleRenderer instance.
 `asset.dispose()` releases importer textures, image bitmaps, parser resources, and temporary object URLs.
