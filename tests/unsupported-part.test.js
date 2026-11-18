@@ -64,3 +64,25 @@ test('an animated part and a particle emitter that hang off the edge do not warn
   assert.deepEqual(unsupportedWarnings([rock, emitter], particles), []);
   assert.equal(unsupportedWarnings([rock, { ...emitter, id: 'crate' }]).length, 1);
 });
+
+function turnedAboutY(degrees) {
+  const half = degrees * Math.PI / 360;
+  return { rotation: [0, Math.sin(half), 0, Math.cos(half)] };
+}
+
+test('a part resting flush on a larger slab does not warn at any turn angle about the vertical axis', () => {
+  const slab = { id: 'rock', geometry: 'box', material: 'stone', scale: [20, 2, 20] };
+  for (const degrees of [0, 1, 5, 15, 30, 45, 60, 89]) {
+    const turned = { id: 'building', geometry: 'box', material: 'stone', translation: [0, 2, 0], scale: [2, 2, 2], ...turnedAboutY(degrees) };
+    assert.deepEqual(unsupportedWarnings([slab, turned]), [], `${degrees} degrees`);
+  }
+});
+
+test('a part turned about the vertical axis with half its footprint past the slab edge still warns', () => {
+  for (const degrees of [1, 30, 45]) {
+    const warnings = unsupportedWarnings([rock, building(2, turnedAboutY(degrees))]);
+    assert.equal(warnings.length, 1, `${degrees} degrees`);
+    assert.equal(warnings[0].target, 'building');
+    assert.ok(Math.abs(warnings[0].unsupportedShare - 0.5) <= 0.15, `${degrees} degrees: ${warnings[0].unsupportedShare}`);
+  }
+});
