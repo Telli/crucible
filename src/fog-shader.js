@@ -60,6 +60,7 @@ function bindDetail(context, post, volume) {
   context.uniform1f(locate('volumeMultiAnisotropy'), detail.multiAnisotropy);
   context.uniform1f(locate('volumeKeyTransmittance'), detail.keyTransmittance);
   context.uniform1f(locate('volumeSurfaceTransmittance'), detail.surfaceTransmittance);
+  context.uniform1f(locate('volumeBeamRadius'), detail.beamRadius);
 }
 
 // The fog's field texture and light buffers; a program without those steps has no such uniforms, and a null location is ignored.
@@ -232,8 +233,8 @@ function bindLocalVolumes(renderer, post, frame, environment) {
 // temperature, baked on the CPU (bakedGridEmission) so the march reads it with one linear tap and the interpolation happens after the blackbody, as Cycles does
 // (#1752). Both carry GRID_BORDER_VOXELS empty voxels on every face. A frame with no grid volume gets 1 x 1 x 1 textures, so the samplers are always valid.
 function localGridTexture(renderer, grid) {
+  const { density, temperature, flame } = grid?.channels ?? {};
   return uploadGridTexture(renderer, 'localGridTextureCache', grid, null, (texels, voxel, texel) => {
-    const { density, temperature, flame } = grid.channels;
     texels[texel] = density[voxel];
     texels[texel + 1] = temperature ? temperature[voxel] : 0;
     texels[texel + 2] = (flame ?? density)[voxel];
@@ -243,8 +244,9 @@ function localGridTexture(renderer, grid) {
 function localGridEmissionTexture(renderer, volume) {
   const grid = volume?.gridData ?? null;
   // A grid without a temperature channel bakes to zeros: its texture is the zero fill, with no pass over the voxels.
-  const baked = grid?.channels.temperature ? bakedGridEmission(grid, volume.temperatureScale) : null;
-  return uploadGridTexture(renderer, 'localGridEmissionCache', grid, volume?.temperatureScale ?? 0, baked && ((texels, voxel, texel) => {
+  const baked = grid?.channels.temperature ? bakedGridEmission(grid, volume.temperatureScale, volume.flameTemperature) : null;
+  const cacheKey = `${volume?.temperatureScale ?? 0}|${volume?.flameTemperature?.ignition}|${volume?.flameTemperature?.maximum}`;
+  return uploadGridTexture(renderer, 'localGridEmissionCache', grid, cacheKey, baked && ((texels, voxel, texel) => {
     texels[texel] = floatToHalf(Math.min(baked.red[voxel], HALF_FLOAT_MAXIMUM));
     texels[texel + 1] = floatToHalf(Math.min(baked.green[voxel], HALF_FLOAT_MAXIMUM));
     texels[texel + 2] = floatToHalf(Math.min(baked.blue[voxel], HALF_FLOAT_MAXIMUM));
@@ -284,7 +286,11 @@ function uploadGridTexture(renderer, cacheName, grid, scale, writeVoxel) {
     for (const wrap of [context.TEXTURE_WRAP_S, context.TEXTURE_WRAP_T, context.TEXTURE_WRAP_R]) context.texParameteri(context.TEXTURE_3D, wrap, context.CLAMP_TO_EDGE);
   }
   const padded = resolution.map(count => count + 2 * GRID_BORDER_VOXELS);
-  const texels = new Uint16Array(padded[0] * padded[1] * padded[2] * 4);
+  // The padded buffer is kept with the texture: its border is never written, and a frame with the same resolution overwrites every interior voxel, so a
+  // sequence allocates it once instead of once per frame (#1045).
+  const texelCount = padded[0] * padded[1] * padded[2] * 4;
+  const texels = reuse && cached.texels ? cached.texels : new Uint16Array(texelCount);
+  if (!filled) texels.fill(0);
   if (filled) {
     for (let z = 0; z < resolution[2]; z++) {
       for (let y = 0; y < resolution[1]; y++) {
@@ -302,7 +308,7 @@ function uploadGridTexture(renderer, cacheName, grid, scale, writeVoxel) {
   } else {
     context.texImage3D(context.TEXTURE_3D, 0, context.RGBA16F, padded[0], padded[1], padded[2], 0, context.RGBA, context.HALF_FLOAT, texels);
   }
-  renderer[cacheName] = { grid, scale, texture, resolution, filled };
+  renderer[cacheName] = { grid, scale, texture, resolution, filled, texels };
   return texture;
 }
 
@@ -805,7 +811,7 @@ function packLights(renderer) {
 
 registerShaderFeatureCode('volumeFog', {
   // The JavaScript half, which the renderer calls for a frame that draws a volume fog.
-  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights, compositeLocalVolumes, releaseLocalVolumeComposite },
+  support: { packLights, localGridTexture, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights, compositeLocalVolumes, releaseLocalVolumeComposite },
   keyDeclarations: KEY_LIGHT_DECLARATIONS,
   keyFunctions: KEY_LIGHT_FUNCTIONS,
   localDeclarations: LOCAL_VOLUME_DECLARATIONS,
@@ -842,6 +848,7 @@ uniform float volumeMultiExtinction;
 uniform float volumeMultiAnisotropy;
 uniform float volumeKeyTransmittance;
 uniform float volumeSurfaceTransmittance;
+uniform float volumeBeamRadius;
 uniform int volumeLightCount;
 uniform vec4 volumeLightPositions[8];
 uniform vec4 volumeLightColors[8];
@@ -946,7 +953,15 @@ float sunOpticalDepth(vec3 position, vec3 towardSun) {
 }
 // The sun's in-scatter at a point. The octave sum approximates multiple scattering (Wrenninge et al. 2015, "Oz: the great and
 // volumetric"): octave n scatters multiScatter^n as much, sees half^n of the extinction and has half^n of the anisotropy.
-float keyInScatter(float cosine, float opticalDepth) {
+// With beamRadius above 0 the octaves beyond the first count only as far as the sun reaches around the point: multiple scattering
+// of a narrow shaft leaves it sideways, so its glow stays narrow, and a wide beam keeps all of it. beamShare is the lit share of four taps that far
+// off the point across the sun's direction.
+float beamShare(vec3 position, vec3 towardSun) {
+  vec3 across = normalize(cross(towardSun, abs(towardSun.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0)));
+  vec3 upward = cross(towardSun, across);
+  return 0.25 * (keyVisibility(position + across * volumeBeamRadius) + keyVisibility(position - across * volumeBeamRadius) + keyVisibility(position + upward * volumeBeamRadius) + keyVisibility(position - upward * volumeBeamRadius));
+}
+float keyInScatter(float cosine, float opticalDepth, float octaveShare) {
   float total = 0.0;
   float weight = 1.0;
   float extinction = 1.0;
@@ -954,7 +969,7 @@ float keyInScatter(float cosine, float opticalDepth) {
   for (int octave = 0; octave < 4; octave++) {
     if (octave >= volumeScatterOctaves) break;
     total += weight * henyeyGreenstein(cosine, anisotropy) * exp(-opticalDepth * volumeKeyTransmittance * extinction);
-    weight *= volumeMultiScatter;
+    weight *= volumeMultiScatter * octaveShare;
     extinction *= volumeMultiExtinction;
     anisotropy *= volumeMultiAnisotropy;
   }
@@ -1006,7 +1021,9 @@ vec3 volumeFog(vec3 background) {
     if (volumeGridFog > 0.5) ambientShare = min(1.0, 30.0 * skyCell.r);
     float opticalDepth = 0.0;
     if (sunTransmittance && visibility > 0.001) opticalDepth = sunOpticalDepth(position, towardSun);
-    float phase = keyInScatter(cosine, opticalDepth);
+    float octaveShare = 1.0;
+    if (volumeBeamRadius > 0.0 && volumeScatterOctaves > 1 && visibility > 0.001) octaveShare = beamShare(position, towardSun);
+    float phase = keyInScatter(cosine, opticalDepth, octaveShare);
     vec3 scattering = volumeColor * (volumeAmbient * ambientShare + 0.6 * skyCell.gba + volumeLightColor * (phase * visibility * volumeKeyScattering));
     if (POST_LIGHTS) scattering += volumeColor * fogLightScattering(position, direction);
     accumulated += transmittance * opacity * scattering;

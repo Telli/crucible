@@ -121,7 +121,7 @@ function hitNearestLamp(ray) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, disposeGate, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, disposeGate, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
   const events = [];
   const sourceCalls = [];
   const sandboxTimers = new Set();
@@ -155,7 +155,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
       if (method === hangMethod && !this.privateTarget) return new Promise(() => {});
       if (method === 'create' && this.privateTarget && failPrivateCreate) {
         failPrivateCreate = false;
-        throw new Error('Injected private create failure');
+        throw new Error(typeof failPrivateCreateMessage === 'string' ? failPrivateCreateMessage : 'Injected private create failure');
       }
       if (method === 'dispose' && disposeGate) await disposeGate;
       if (method === 'resume' && failResume) throw new Error('Injected resume failure');
@@ -422,6 +422,26 @@ runTest('scene_render_status of a finished job still answers while a newer job h
   } finally { await runtime.close(); }
 });
 
+runTest('a tool blocked by a render job names the job, how far it is and the tools to call next (#2050)', async () => {
+  const runningJobId = randomUUID();
+  const records = [{ jobId: runningJobId, state: 'running', progress: { frames: 3, maximumPendingFrames: 1 }, settings: { frameCount: 24 } }];
+  const controller = { list: () => records, status: jobId => records.find(record => record.jobId === jobId), close: async () => {}, submit: async () => ({ jobId: runningJobId }) };
+  const { runtime, sessionId } = await reviewRuntimeHarness({
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async () => controller } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    for (const blocked of [() => runtime.look({ sessionId }), () => runtime.dispose({ sessionId }), () => runtime.exportGlb({ sessionId })]) {
+      await assert.rejects(blocked(), error => {
+        assert.ok(error.message.includes(runningJobId), error.message);
+        assert.match(error.message, /running \(frame 3 of 24\)/);
+        assert.match(error.message, /scene_render_status.*scene_render_cancel/);
+        return true;
+      });
+    }
+  } finally { await runtime.close(); }
+});
+
 async function runOversizeJob({ requested, jobRender, memory }) {
   let runJob;
   const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
@@ -553,6 +573,41 @@ runTest('a failed resume after a render job fails the runtime, and the next scen
     const fresh = await runtime.create({ recipe: FRESH_RECIPE });
     assert.equal((await runtime.capabilities()).phase, 'ready');
     assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a browser lost under a stills job fails the job with its size and limit, and the runtime recovers (#2018)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const submitted = { kind: 'stills', width: 1920, height: 1080, stillCount: 12, fps: 24, passes: ['depth'] };
+  const settings = { ...submitted, frameCount: 12 };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ failPrivateCreate: true, failPrivateCreateMessage: 'Target page, context or browser has been closed', failResume: true,
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test'), memory: 1024 },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: submitted });
+    const failure = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} }, settings,
+      signal: new AbortController().signal, progress: async () => {} }).then(() => assert.fail('the job must fail'), error => error);
+    assert.match(failure.message, /preview browser crashed before the first frame at 1920x1080 with depth pass/);
+    assert.match(failure.message, /Lower the size or the frame count, or raise --memory \(now \d+ MiB\)/);
+    assert.doesNotMatch(failure.message, /Preview recovery failed/);
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a stills job that fails for another reason keeps its own message (#2018)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const submitted = { kind: 'stills', width: 64, height: 64, stillCount: 2, fps: 24 };
+  const settings = { ...submitted, frameCount: 2 };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ failPrivateCreate: true, failPrivateCreateMessage: 'Injected scene problem',
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: submitted });
+    await assert.rejects(runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} }, settings,
+      signal: new AbortController().signal, progress: async () => {} }), /^Error: Injected scene problem$/);
   } finally { await runtime.close(); }
 });
 
