@@ -427,6 +427,8 @@ export function createStudioController({
   let dragState = null;
   const undoStack = [];
   const redoStack = [];
+  let undoGroupOpen = false;
+  let undoGroupRecorded = false;
 
   function notify(detail = {}) {
     if (onChange) {
@@ -458,20 +460,54 @@ export function createStudioController({
     return query;
   }
 
-  function pushUndoSnapshot(snapshot) {
-    undoStack.push(snapshot);
+  // A step that did not touch the camera keeps the viewport where the person left it when it is undone:
+  // orbiting is navigation, not an edit, so it must not be rolled back with the edit before it.
+  function pushUndoSnapshot(recipe, { restoresCamera = false } = {}) {
+    if (undoGroupOpen) {
+      if (undoGroupRecorded) {
+        const groupEntry = undoStack[undoStack.length - 1];
+        groupEntry.restoresCamera = groupEntry.restoresCamera || restoresCamera;
+        return;
+      }
+      undoGroupRecorded = true;
+    }
+    undoStack.push({ recipe, restoresCamera });
     while (undoStack.length > maxHistory) {
       undoStack.shift();
     }
     redoStack.length = 0;
   }
 
+  function beginUndoGroup() {
+    if (!undoGroupOpen) {
+      undoGroupOpen = true;
+      undoGroupRecorded = false;
+    }
+  }
+
+  function endUndoGroup() {
+    undoGroupOpen = false;
+    undoGroupRecorded = false;
+  }
+
   function applySceneOperations(operations, { recordUndo = true } = {}) {
     const before = recordUndo ? currentScene.exportRecipe() : null;
     currentScene.apply(operations, { expectedRevision: currentScene.revision });
     if (before) {
-      pushUndoSnapshot(before);
+      const restoresCamera = operations.some(operation => operation.type === 'set-camera');
+      pushUndoSnapshot(before, { restoresCamera });
     }
+  }
+
+  function stepHistory(sourceStack, targetStack) {
+    endUndoGroup();
+    const entry = sourceStack.pop();
+    const currentRecipe = currentScene.exportRecipe();
+    targetStack.push({ recipe: currentRecipe, restoresCamera: entry.restoresCamera });
+    const nextRecipe = entry.restoresCamera || currentRecipe.camera === undefined
+      ? entry.recipe
+      : { ...entry.recipe, camera: currentRecipe.camera };
+    swapRecipe(nextRecipe);
   }
 
   function swapRecipe(recipeInput) {
@@ -1372,9 +1408,7 @@ export function createStudioController({
     if (undoStack.length === 0) {
       return false;
     }
-    const previousRecipe = undoStack.pop();
-    redoStack.push(currentScene.exportRecipe());
-    swapRecipe(previousRecipe);
+    stepHistory(undoStack, redoStack);
     notify({ kind: 'undo' });
     return true;
   }
@@ -1383,18 +1417,17 @@ export function createStudioController({
     if (redoStack.length === 0) {
       return false;
     }
-    const nextRecipe = redoStack.pop();
-    undoStack.push(currentScene.exportRecipe());
-    swapRecipe(nextRecipe);
+    stepHistory(redoStack, undoStack);
     notify({ kind: 'redo' });
     return true;
   }
 
   function loadRecipe(recipeInput, { recordUndo = true } = {}) {
     const before = recordUndo ? currentScene.exportRecipe() : null;
+    endUndoGroup();
     swapRecipe(recipeInput);
     if (before) {
-      pushUndoSnapshot(before);
+      pushUndoSnapshot(before, { restoresCamera: true });
     }
     notify({ kind: 'load' });
     return currentScene.revision;
@@ -1449,6 +1482,8 @@ export function createStudioController({
     removeBookmark,
     setMotionTime,
     insertNodeKeyframe,
+    beginUndoGroup,
+    endUndoGroup,
     undo,
     redo,
     loadRecipe,

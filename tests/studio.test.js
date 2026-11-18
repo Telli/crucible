@@ -293,3 +293,41 @@ test('pro studio operations add objects, drag planar gizmos, edit materials, len
 
   controller.dispose();
 });
+
+test('Studio undo groups one slider drag into one step and keeps the camera where it was left', () => {
+  const controller = createStudioController({ scene: createAgentScene(makeStudioRecipe()) });
+  const materialId = controller.exportRecipe().materials[0].id;
+  const roughnessBefore = controller.exportRecipe().materials[0].roughness;
+
+  controller.beginUndoGroup();
+  for (let step = 1; step <= 40; step += 1) {
+    controller.updateMaterial(materialId, { roughness: 0.1 + step * 0.01 });
+  }
+  controller.endUndoGroup();
+  controller.updateMaterial(materialId, { roughness: 0.9 });
+
+  controller.orbitCamera({ deltaAzimuth: 0.6 });
+  const orbitedEye = [...controller.scene.camera.eye];
+  assert.equal(controller.undo(), true);
+  assert.ok(Math.abs(controller.exportRecipe().materials[0].roughness - 0.5) < 1e-6);
+  assert.deepEqual([...controller.scene.camera.eye], orbitedEye);
+  assert.equal(controller.undo(), true);
+  assert.equal(controller.exportRecipe().materials[0].roughness, roughnessBefore);
+  assert.equal(controller.canUndo, false);
+  assert.deepEqual([...controller.scene.camera.eye], orbitedEye);
+
+  assert.equal(controller.redo(), true);
+  assert.ok(Math.abs(controller.exportRecipe().materials[0].roughness - 0.5) < 1e-6);
+  assert.deepEqual([...controller.scene.camera.eye], orbitedEye);
+  controller.dispose();
+});
+
+test('Studio undo restores the camera when the undone step was a camera edit', () => {
+  const controller = createStudioController({ scene: createAgentScene(makeStudioRecipe()) });
+  const eyeBefore = [...controller.scene.camera.eye];
+  controller.setCameraViewPreset('top');
+  assert.notDeepEqual([...controller.scene.camera.eye], eyeBefore);
+  assert.equal(controller.undo(), true);
+  assert.deepEqual([...controller.scene.camera.eye], eyeBefore);
+  controller.dispose();
+});

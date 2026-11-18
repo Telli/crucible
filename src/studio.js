@@ -269,7 +269,7 @@ function createSliderField(documentReference, labelText, { min, max, step, value
   };
 }
 
-function createSunPad(documentReference, onSunChange) {
+function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd } = {}) {
   const padSvg = createSvgElement(documentReference, 'svg', {
     class: 'crucible-studio-sunpad',
     viewBox: '0 0 120 120',
@@ -323,6 +323,7 @@ function createSunPad(documentReference, onSunChange) {
   }
   padSvg.addEventListener('pointerdown', event => {
     dragging = true;
+    onDragStart?.();
     padSvg.setPointerCapture?.(event.pointerId);
     updateFromPointer(event);
   });
@@ -330,6 +331,7 @@ function createSunPad(documentReference, onSunChange) {
     if (dragging) updateFromPointer(event);
   });
   const endDrag = () => {
+    if (dragging) onDragEnd?.();
     dragging = false;
   };
   padSvg.addEventListener('pointerup', endDrag);
@@ -576,6 +578,14 @@ export function createStudio(container, {
       outlinerCollapsed: 'false',
       inspectorCollapsed: 'false',
     },
+  });
+  // A slider or colour drag fires many input events; they are one undo step, closed by the change event.
+  const isContinuousInput = target => target?.tagName === 'INPUT' && (target.type === 'range' || target.type === 'color');
+  root.addEventListener('input', event => {
+    if (isContinuousInput(event.target)) controller.beginUndoGroup();
+  }, true);
+  root.addEventListener('change', event => {
+    if (isContinuousInput(event.target)) controller.endUndoGroup();
   });
 
   // Top Workspace Header Bar
@@ -1040,7 +1050,10 @@ export function createStudio(container, {
     button.addEventListener('click', () => controller.updateLook({ environment: { setup } }));
     return button;
   });
-  const sunPad = createSunPad(documentReference, angles => controller.setSunAngles(angles));
+  const sunPad = createSunPad(documentReference, angles => controller.setSunAngles(angles), {
+    onDragStart: () => controller.beginUndoGroup(),
+    onDragEnd: () => controller.endUndoGroup(),
+  });
   const azimuthField = createSliderField(documentReference, 'Sun azimuth', { min: -180, max: 180, step: 1, value: -35 }, value => controller.setSunAngles({ azimuthDegrees: value }));
   const elevationField = createSliderField(documentReference, 'Sun elevation', { min: 2, max: 88, step: 1, value: 50 }, value => controller.setSunAngles({ elevationDegrees: value }));
   const keyIntensityField = createSliderField(documentReference, 'Key intensity', { min: 0, max: 8, step: 0.1, value: 1.7 }, value => controller.updateLook({ environment: { keyIntensity: value } }));
