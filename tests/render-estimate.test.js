@@ -8,7 +8,7 @@ import { conciseJobResult } from '../scripts/mcp-response-format.mjs';
 import { planRenderSize } from '../src/budget.js';
 import { MAXIMUM_MEMORY_MIB } from '../src/agent-scene-capabilities.js';
 import {
-  CORRECTION_BOUND, HISTORY_LIMIT, correctionFromHistory, estimateRenderJob, historyWithJob, jobKind, parseHistory, renderReport, sceneSizeFrom,
+  CORRECTION_BOUND, HISTORY_LIMIT, addKernelCompile, correctionFromHistory, estimateRenderJob, historyWithJob, jobKind, parseHistory, renderReport, sceneSizeFrom,
 } from '../scripts/agent-render-estimate.mjs';
 
 const recipe = { format: 'crucible.scene', materials: [{ id: 'wood', map: 'planks' }, { id: 'steel', normalMap: 'dents' }, { id: 'plain' }] };
@@ -207,4 +207,28 @@ test('the reduced-frame fallback never asks for a --memory value over the ceilin
   assert.match(fallback, /Reduce the textures, the geometry, the frame size/);
   const [reachable] = renderReport({ settings: settingsFor({}), metrics: { ...metrics, requiredMemoryMiB: MAXIMUM_MEMORY_MIB, memoryBudgetMiB: 192 } }).fallbacks;
   assert.match(reachable, new RegExp(`Restart it with --memory ${MAXIMUM_MEMORY_MIB} or more`));
+});
+
+test('a film whose first frame compiled kernels says so after its last frame, apart from trace time (#1949)', () => {
+  const frames = [{ compileSeconds: 7.04 }, { compileSeconds: 0 }, {}, { compileSeconds: 0.002 }];
+  const kernelCompile = frames.reduce(addKernelCompile, undefined);
+  assert.equal(kernelCompile.frames, 2);
+  const settings = settingsFor({ renderer: { type: 'pathTracer', backend: 'native', samples: 16 } });
+  const metrics = { elapsedSeconds: 9, pathTracer: frames.at(-1), kernelCompile };
+  const estimate = { modelSeconds: 2, modelPeakMemoryMiB: 200, seconds: 2, peakMemoryMiB: 200, basis: 'scene size' };
+  const report = renderReport({ estimate, settings, metrics });
+  assert.equal(report.kernelCompile.seconds, 7);
+  assert.match(report.kernelCompile.note, /^First render of this scene variant: 7\.0 s of the job compiled kernels/);
+  assert.match(report.kernelCompile.note, /counted in secondsRatio/);
+  const concise = conciseJobResult({ jobId: 'x', sourceRevision: 1, artifacts: [], metrics: { report } });
+  assert.equal(concise.metrics.report.kernelCompile, report.kernelCompile.note);
+  // The estimate history learns the render without the one-time compile.
+  assert.equal(historyWithJob([], { settings, backend: 'gpu', estimate, report })[0].measuredSeconds, 2);
+});
+
+test('a job whose compile stayed under a second, or that compiled nothing, carries no compile note', () => {
+  const settings = settingsFor({});
+  assert.equal(addKernelCompile(undefined, { compileSeconds: 0 }), undefined);
+  assert.equal(renderReport({ settings, metrics: { elapsedSeconds: 1, kernelCompile: { seconds: 0.4, frames: 1 } } }).kernelCompile, undefined);
+  assert.equal('kernelCompile' in renderReport({ settings, metrics: { elapsedSeconds: 1 } }), false);
 });

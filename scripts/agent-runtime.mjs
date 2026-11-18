@@ -43,7 +43,7 @@ import { resolveJobRoot } from './agent-job-root.mjs';
 import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
-import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
+import { RENDER_ESTIMATE_NOTE, addKernelCompile, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
 import { objectIdMetrics } from './agent-object-id-metrics.mjs';
 import { renderIconsInPage } from './agent-icon-page.mjs';
 import { ICON_CAPABILITIES } from '../src/icon-sheet.js';
@@ -1089,6 +1089,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           metrics.width = width;
           metrics.height = height;
           metrics.pathTracer = traced.report;
+          const kernelCompile = addKernelCompile(metrics.kernelCompile, traced.report);
+          if (kernelCompile) metrics.kernelCompile = kernelCompile;
           if (frame === 0) {
             const looked = await jobPage.evaluate(input => window.__agentPreview.findings(input), frameInput);
             mergeFrameDiagnostics(metrics, [pathTracerFindingsLimit(), pathTracerSkippedPassesWarning(snapshot.recipe.postPasses), ...looked.diagnostics].filter(Boolean));
