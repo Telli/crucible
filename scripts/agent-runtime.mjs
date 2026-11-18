@@ -22,7 +22,7 @@ import { chooseDenoiser, finishWithOidn } from './agent-path-trace-denoise.mjs';
 import { createNativeSequence } from './agent-native-sequence.mjs';
 import { chooseNativeTemporal, createTemporalAccumulator, temporalFrameSeed } from './agent-native-temporal.mjs';
 import { readNativeCapacity } from './native-capacity.mjs';
-import { describeBackendFallback, explainFailureAfterFallback } from '../src/agent-backend-fallback.js';
+import { backendFallbackForFrame, explainFailureAfterFallback } from '../src/agent-backend-fallback.js';
 import { chooseNativeInstancing, chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, fetchNativeExport, isNativeTimeLimitError, traceFrameNative, traceTexelsNative } from './agent-native-trace.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from './mcp-addons.mjs';
 import { createAgentAssetCatalog, fingerprintAssetDirectory } from './agent-asset-catalog.mjs';
@@ -1068,9 +1068,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               backendNote += ' The ' + traceOptions.backend + ' backend ran instead.';
             }
           }
-          const fallback = settings.renderer.backend === 'native' && traceOptions.backend !== 'native'
-            ? describeBackendFallback({ requestedBackend: 'native', usedBackend: traceOptions.backend, fallbackReason })
-            : undefined;
+          const fallback = backendFallbackForFrame({ requestedBackend: settings.renderer.backend, tracedNatively: Boolean(traced), usedBackend: traceOptions.backend, fallbackReason });
           if (!traced) {
             try {
               traced = await jobPage.evaluate(input => window.__agentPreview.pathTrace(input), { ...frameInput, options: traceOptions });
