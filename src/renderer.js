@@ -17,7 +17,7 @@ import { createLightingState, updateLightingState } from './lighting.js';
 import { RenderTargetLedger } from './render-target-ledger.js';
 import { SHADOW_ATLAS_WIDTH, SHADOW_TILE_SIZE, SHADOW_TILES_PER_ROW, tileViewport, writeShadowTile } from './local-shadows.js';
 import { resolveVolumeFog, validateFogField } from './volumetric.js';
-import { requireEnvironmentSupport } from './environment-shading.js';
+import { requireEnvironmentSupport, DEFAULT_SUN_ANGULAR_RADIUS } from './environment-shading.js';
 import { materialLayerState, materialLayerValue } from './material-layers.js';
 import { MaterialSnapshot } from './material-snapshot.js';
 import { wearUniformValues } from './material-wear.js';
@@ -2257,7 +2257,7 @@ export class CrucibleRenderer {
     const context = this.context;
     if (!this.environmentBackgroundProgram) {
       this.environmentBackgroundProgram = compileProgram(context, fullscreenVertex, this.withViewTransform(requireEnvironmentSupport().backgroundFragment, 'background'));
-      const names = ['inverseViewProjection', 'eye', 'backgroundLevel', 'exposure', 'hdrEnabled', 'environmentSpecular', 'environmentRotation', 'environmentIntensity', 'environmentLevelMax'];
+      const names = ['inverseViewProjection', 'eye', 'backgroundLevel', 'exposure', 'hdrEnabled', 'environmentSpecular', 'environmentRotation', 'environmentIntensity', 'environmentLevelMax', 'sunMapDirection', 'sunDiscRadiance', 'sunDiscRadius'];
       this.environmentBackgroundUniforms = Object.fromEntries(names.map(name => [name, context.getUniformLocation(this.environmentBackgroundProgram, name)]));
     }
     const uniforms = this.environmentBackgroundUniforms;
@@ -2275,6 +2275,10 @@ export class CrucibleRenderer {
     context.uniform2f(uniforms.environmentRotation, Math.cos(map.rotation), Math.sin(map.rotation));
     context.uniform1f(uniforms.environmentIntensity, map.intensity);
     context.uniform1f(uniforms.environmentLevelMax, levelMax);
+    const sunDisc = map.sunDisc;
+    context.uniform3fv(uniforms.sunMapDirection, sunDisc?.direction ?? [0, -1, 0]);
+    context.uniform3fv(uniforms.sunDiscRadiance, sunDisc?.radiance ?? [0, 0, 0]);
+    context.uniform1f(uniforms.sunDiscRadius, frame.environment?.sunAngularRadius ?? this.environment?.sunAngularRadius ?? DEFAULT_SUN_ANGULAR_RADIUS);
     context.drawArrays(context.TRIANGLES, 0, 3);
     return true;
   }
