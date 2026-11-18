@@ -90,7 +90,7 @@ function replaceColourShaders(replaceVertex) {
   };
 }
 
-window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, denseLods = false, denseLodsMinimumTriangles = undefined, experiment = null }) {
+window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, denseLods = false, denseLodsMinimumTriangles = undefined, experiment = null, sequence = null }) {
   const canvas = document.querySelector('#viewport');
   const experiments = new Set(String(experiment ?? '').split(','));
   if (experiments.has('no-invariant')) {
@@ -215,6 +215,8 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
     for (let offset = 0; offset < pixels.length; offset += 0x8000) binary += String.fromCharCode(...pixels.subarray(offset, offset + 0x8000));
     capturedFrame = btoa(binary);
   }
+  let sequenceTriangles = null;
+  if (sequence) sequenceTriangles = await captureSequence({ renderer, context, canvas, frame, eye: description.eye, target: description.target, ...sequence });
   if (experiment === "probe") return probeAlongView(asset.parts, description.eye, description.target);
   const geometries = new Set(asset.parts.map(part => part.geometry));
   const geometryStats = {
@@ -243,6 +245,7 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
     }])) : undefined,
     pairedOnOverOffMedian: alternate ? Number(median(alternating.on.slice(0, alternating.off.length).map((value, index) => value / alternating.off[index])).toFixed(3)) : undefined,
     capturedFrame,
+    sequenceTriangles,
     centerPixel: Array.from(ONE_PIXEL),
     glError: context.getError(),
   };
@@ -284,4 +287,31 @@ function probeAlongView(parts, eye, target) {
   });
   hits.sort((first, second) => first.near - second.near);
   return { hits: hits.slice(0, 12) };
+}
+
+// A dolly along the view direction, from `backMetres` behind the camera to `forwardMetres` in front of it. Each frame
+// is read back whole and handed to window.deliverFrame(index, base64) (run.mjs writes it); returns the triangles drawn per frame.
+async function captureSequence({ renderer, context, canvas, frame, eye, target, frames = 60, backMetres = 6, forwardMetres = 5 }) {
+  const length = Math.hypot(...[0, 1, 2].map(axis => target[axis] - eye[axis]));
+  const unit = [0, 1, 2].map(axis => (target[axis] - eye[axis]) / length);
+  const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+  const originalDrawInstanced = context.drawElementsInstanced.bind(context);
+  const triangleCounts = [];
+  for (let index = 0; index < frames; index++) {
+    const metres = -backMetres + (backMetres + forwardMetres) * index / (frames - 1);
+    const moved = { ...frame, eye: eye.map((value, axis) => value + unit[axis] * metres), target: target.map((value, axis) => value + unit[axis] * metres) };
+    let triangles = 0;
+    context.drawElementsInstanced = (mode, count, type, offset, instances) => {
+      triangles += (count / 3) * instances;
+      return originalDrawInstanced(mode, count, type, offset, instances);
+    };
+    renderer.render(moved);
+    context.drawElementsInstanced = originalDrawInstanced;
+    triangleCounts.push(triangles);
+    context.readPixels(0, 0, canvas.width, canvas.height, context.RGBA, context.UNSIGNED_BYTE, pixels);
+    let binary = '';
+    for (let offset = 0; offset < pixels.length; offset += 0x8000) binary += String.fromCharCode(...pixels.subarray(offset, offset + 0x8000));
+    await window.deliverFrame(index, btoa(binary));
+  }
+  return triangleCounts;
 }

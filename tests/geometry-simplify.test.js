@@ -226,12 +226,15 @@ test('simplifyGeometry still takes an index equal to the last vertex (#1900)', (
 });
 
 test('addLodsToDenseParts gives levels to mid-size meshes by default, so a scene of many of them is not left at full detail (#2144)', () => {
-  const midSize = sphere(40, 30);
+  const midSize = sphere(60, 40);
+  const small = sphere(50, 30);
   const tiny = sphere(8, 8);
   assert.ok(midSize.indices.length / 3 >= DEFAULT_MINIMUM_TRIANGLES, 'the sphere is a mid-size mesh');
   assert.ok(midSize.indices.length / 3 < 20000, 'it is under the old 20000 floor');
-  const parts = [surfacePart('mid', midSize), surfacePart('tiny', tiny)];
+  assert.ok(small.indices.length / 3 < DEFAULT_MINIMUM_TRIANGLES, 'a smaller mesh sits under the floor');
+  const parts = [surfacePart('mid', midSize), surfacePart('small', small), surfacePart('tiny', tiny)];
   const result = addLodsToDenseParts(parts, { pixels: 100 });
   assert.ok(result[0].lods.length > 1, 'a mesh over the default floor gets levels');
-  assert.equal(result[1].lods, undefined, 'a mesh under the default floor does not');
+  assert.equal(result[1].lods, undefined, 'a mesh under the default floor does not (4000 triangles, not 1500: the lower floor shimmered more and drew no faster, #2157)');
+  assert.equal(result[2].lods, undefined, 'a tiny mesh does not');
 });

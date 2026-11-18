@@ -1,7 +1,7 @@
 // Times each Glaze pass on the GPU for scene files: node bench/glaze-passes/run.mjs <out.json> <scene-directory>[,<scene-directory>...] [whole]
 // Add '"capture":true' to the overrides to write one full frame per scene to <out.json>.<scene>.rgba (compare two with diff-frames.mjs).
 // A scene directory holds scene.json, scene.glb and sky.hdr as written for the Blender demo scenes (see src/file-scene.js).
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
@@ -26,6 +26,10 @@ try {
     const description = JSON.parse(await readFile(`${directory}/scene.json`, 'utf8'));
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
     page.on('pageerror', error => console.error('page error:', error.message));
+    if (overrides.sequence) {
+      await mkdir(overrides.sequence.directory, { recursive: true });
+      await page.exposeFunction('deliverFrame', (index, base64) => writeFile(`${overrides.sequence.directory}/frame-${String(index).padStart(3, '0')}.rgba`, Buffer.from(base64, 'base64')));
+    }
     await page.route('**/__scene/**', async (route, request) => {
       const name = new URL(request.url()).pathname.split('/').pop();
       await route.fulfill({ path: `${directory}/${name}` });
