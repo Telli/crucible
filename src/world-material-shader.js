@@ -37,7 +37,7 @@ export function resolveWaterMaterial({ waterPreset, absorption, turbidity } = {}
 
 /** Copies a recipe material's water fields: a water material always carries the resolved absorption, turbidity and preset. */
 export function copyWaterFields(value, result, toVector) {
-  const given = ['waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth'].filter(field => value[field] !== undefined);
+  const given = ['waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'contactFoam'].filter(field => value[field] !== undefined);
   if (result.tag !== 'water') {
     if (given.length > 0) {
       throw new RangeError(`${given.join(', ')} need the water tag.`);
@@ -45,7 +45,7 @@ export function copyWaterFields(value, result, toVector) {
     return;
   }
   const absorption = value.absorption === undefined ? undefined : toVector(value.absorption, 3, 'absorption');
-  Object.assign(result, resolveWaterMaterial({ ...value, absorption }), resolveWaterFoamStyle(value));
+  Object.assign(result, resolveWaterMaterial({ ...value, absorption }), resolveWaterFoamStyle(value), resolveContactFoam(value, result));
 }
 
 export const WATER_FOAM_EDGES = Object.freeze(['soft', 'hard']);
@@ -68,6 +68,42 @@ export function resolveWaterFoamStyle({ foamEdge, foamWidth }) {
     style.foamWidth = foamWidth;
   }
   return style;
+}
+
+export const CONTACT_FOAM_RANGES = Object.freeze({ width: [1, 64], hardness: [0, 1], noise: [0, 1] });
+export const CONTACT_FOAM_DEFAULTS = Object.freeze({ width: 6, hardness: 1, noise: 0.3, color: Object.freeze([0.92, 0.95, 0.97]) });
+
+/**
+ * The contact foam of a water material: a line where the water meets another surface, from the gap between the water and what lies
+ * behind it. `width` is the line's width in screen pixels (1 to 64, 6 default), `hardness` 0 (soft edge) to 1 (a one pixel edge),
+ * `noise` 0 to 1 (how much the edge breaks up, 0.3 default) and `color` three numbers from 0 to 1. Only water blended at an opacity below 1 reads what lies behind it.
+ */
+export function resolveContactFoam({ contactFoam }, { alphaMode, opacity }) {
+  if (contactFoam === undefined) {
+    return {};
+  }
+  if (contactFoam === null || typeof contactFoam !== 'object' || Array.isArray(contactFoam)) {
+    throw new TypeError('contactFoam must be an object such as { "width": 6, "hardness": 1, "noise": 0.3 }.');
+  }
+  const unknown = Object.keys(contactFoam).filter(key => !(key in CONTACT_FOAM_DEFAULTS));
+  if (unknown.length > 0) {
+    throw new TypeError(`contactFoam has no field ${unknown.join(', ')}; pass width, hardness, noise or color.`);
+  }
+  if (alphaMode !== 'blend' || !(opacity < 1)) {
+    throw new RangeError('contactFoam needs blended water that reads what lies behind it; pass alphaMode "blend" and an opacity below 1, such as 0.98.');
+  }
+  const resolved = { ...CONTACT_FOAM_DEFAULTS, ...contactFoam };
+  for (const [field, [minimum, maximum]] of Object.entries(CONTACT_FOAM_RANGES)) {
+    const value = resolved[field];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+      throw new RangeError(`contactFoam.${field} must be a number from ${minimum} to ${maximum}, such as ${CONTACT_FOAM_DEFAULTS[field]}.`);
+    }
+  }
+  const { color } = resolved;
+  if (!Array.isArray(color) || color.length !== 3 || color.some(component => typeof component !== 'number' || !(component >= 0 && component <= 1))) {
+    throw new RangeError('contactFoam.color must be three numbers from 0 to 1, such as [0.92, 0.95, 0.97].');
+  }
+  return { contactFoam: Object.freeze({ ...resolved, color: Object.freeze([...color]) }) };
 }
 
 function partBounds(part) {
@@ -177,11 +213,15 @@ function bindWaterFoamStyle(renderer, batch) {
   }
   let location = foamStyleLocations.get(renderer);
   if (location?.program !== renderer.program) {
-    location = { program: renderer.program, style: renderer.context.getUniformLocation(renderer.program, 'waterFoamStyle') };
+    const { context } = renderer;
+    location = { program: renderer.program, style: context.getUniformLocation(renderer.program, 'waterFoamStyle'), contact: context.getUniformLocation(renderer.program, 'waterContact'), contactColor: context.getUniformLocation(renderer.program, 'waterContactColor') };
     foamStyleLocations.set(renderer, location);
   }
   const material = batch.parts[0].material;
   renderer.context.uniform2f(location.style, material.foamEdge === 'hard' ? 1 : 0, material.foamWidth ?? 1);
+  const contact = material.contactFoam;
+  renderer.context.uniform4f(location.contact, contact?.width ?? 0, contact?.hardness ?? 0, contact?.noise ?? 0, contact ? 1 : 0);
+  renderer.context.uniform3f(location.contactColor, ...(contact?.color ?? CONTACT_FOAM_DEFAULTS.color));
 }
 
 const previousBind = layerTextureSupport.bind;
@@ -208,6 +248,8 @@ export const worldMaterialSlots = {
   // its own macro and keeps its filter.
   declarations: `uniform vec4 waterBody;
 uniform vec2 waterFoamStyle;
+uniform vec4 waterContact;
+uniform vec3 waterContactColor;
 uniform vec3 waterAbsorption;
 uniform sampler2D waterScene;
 uniform mat4 viewProjection;
@@ -252,6 +294,25 @@ vec3 refractedBackground(vec3 fallback, vec3 surfacePosition, vec3 normal, vec3 
   }
   // Average only the taps that saw something below the water: a tap past the bed edge must not pull the blur toward the water colour.
   return seen > 0.5 ? seenColor / seen : fallback;
+}
+// Contact foam: a line where the water meets what lies behind it. The opaque pass left the depth below the water level of each
+// surface it drew in the alpha channel, so the gap between this water point and the scene point seen through the same pixel is
+// known; foam is where that gap, measured in screen pixels, is under the width, so the line keeps one width at any distance.
+// waterContact is (width in pixels, hardness, noise, 1 when on); noiseValue is 0 to 1 and breaks the edge up.
+float waterContactFoam(vec3 surfacePosition, float noiseValue) {
+  if (waterContact.w < 0.5 || waterBody.w < 0.5) return 0.0;
+  vec2 size = vec2(textureSize(waterScene, 0));
+  float stored = textureLod(waterScene, gl_FragCoord.xy / size, 0.0).a;
+  if (stored >= 0.999) return 0.0;
+  float sceneDepth = max(stored - 0.5, 0.0) / 0.498 * 8.0;
+  float gap = abs(surfacePosition.y - waterBody.x + sceneDepth);
+  vec4 above = viewProjection * vec4(surfacePosition + vec3(0.0, 1.0, 0.0), 1.0);
+  vec4 here = viewProjection * vec4(surfacePosition, 1.0);
+  float pixelsPerMetre = max(abs(above.y / above.w - here.y / here.w) * 0.5 * size.y, 0.001);
+  float gapPixels = gap * pixelsPerMetre;
+  float edge = waterContact.x * (1.0 + (noiseValue - 0.5) * 2.0 * waterContact.z);
+  float softness = mix(0.6 * waterContact.x, 0.0, waterContact.y) + 1.0;
+  return 1.0 - smoothstep(edge - softness, edge + softness, gapPixels);
 }
 #ifndef shadowVisibility
 float softShadowVisibility(vec3 normal, float radiusTexels) {
@@ -399,6 +460,7 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
 
 `,
   worldSurface: `  float waterFoam = 0.0;
+  float waterContactShare = 0.0;
   float waterLostVariance = 0.0;
   if (TAG_WATER) {
     // Small ripples tilt the surface's own normal, so a sea mesh keeps its waves; a flat sheet (normal up) gets the same ripples as before.
@@ -431,9 +493,11 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     float foamBody = smoothstep(0.5 - foamBand, 0.5 + foamBand, foamDensity) * smoothstep(0.03, 0.25, foamMask);
     float foamVeins = pow(1.0 - abs(2.0 * midLace - 1.0), 3.0) * smoothstep(0.45, 0.9, foamMask) * (1.0 - foamBody) * 0.32 * (1.0 - foamHard);
     waterFoam = mix(max(foamBody * mix(0.5, 1.0, smoothstep(0.3, 0.95, foamMask)) * (0.78 + 0.22 * smoothstep(0.25, 0.75, fineLace * 0.6 + midLace * 0.4)), foamVeins), foamBody, foamHard);
+    waterContactShare = waterContactFoam(worldPosition, terrainNoise(worldPosition.xz * 1.7 + 11.3).x);
+    waterFoam = max(waterFoam, waterContactShare);
     float grazing = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
     color = mix(color, vec3(0.0137, 0.147, 0.195), grazing * 0.85);
-    color = mix(color, vec3(0.92, 0.95, 0.97) * (0.68 + 0.32 * (fineLace * 0.5 + midLace * 0.5)), waterFoam);
+    color = mix(color, mix(vec3(0.92, 0.95, 0.97) * (0.68 + 0.32 * (fineLace * 0.5 + midLace * 0.5)), waterContactColor, waterContactShare), waterFoam);
     roughness = mix(0.16, 0.8, waterFoam);
   }
   if (CANOPY_TAG) {
@@ -505,7 +569,7 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     float glintShape = pow(max(dot(normal, halfVector), 0.0), glintSharpness);
     float glintFresnel = 0.02 + 0.98 * pow(1.0 - max(dot(halfVector, viewDirection), 0.0), 5.0);
     radiance += vec3(1.0, 0.9, 0.7) * glintShape * (0.5 + 40.0 * glintFresnel) * 6.0 * keyResponse * (1.0 - waterFoam);
-    radiance += vec3(0.85, 0.9, 0.95) * waterFoam * (max(dot(normal, normalize(lightDirection)), 0.0) * keyResponse + 0.35 * daylight * ambientIntensity);
+    radiance += mix(vec3(0.85, 0.9, 0.95), waterContactColor, waterContactShare) * waterFoam * (max(dot(normal, normalize(lightDirection)), 0.0) * keyResponse + 0.35 * daylight * ambientIntensity);
     if (waterBody.w > 0.5 && alphaMode > 1.5) {
       // Blended water draws its own background: the opaque scene refracted and blurred, not the one behind it unbent.
       radiance = radiance * alpha + refractedBackground(radiance, worldPosition, normal, viewDirection) * (1.0 - alpha);
