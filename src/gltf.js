@@ -1,7 +1,7 @@
 import { mat4 } from 'gl-matrix';
 import { applyClip } from './gltf-animation.js';
 import { GLTF_LAYER_EXTENSIONS, clampedIorWarnings, layerTextureReferences, materialLayersFromGltf } from './gltf-layers.js';
-import { attributeFloatsInSlices } from './gltf-accessors.js';
+import { attributeFloatsInSlices, unreadEmptyMeshoptViews } from './gltf-accessors.js';
 import { createSlicer, forEachChunk } from './cooperative.js';
 import { describeCompressedImage } from './compressed-texture.js';
 import { readImageDimensions } from './image-header.js';
@@ -512,6 +512,11 @@ function validateDocument(document, limits, allowedExtensions) {
 function requireNonNegativeSafeInteger(value, fieldPath) {
   if (Number.isSafeInteger(value) && value >= 0) return value;
   throw new Error(`Invalid glTF ${fieldPath} ${JSON.stringify(value)}: expected a non-negative safe integer.`);
+}
+
+/** One warning per meshopt view with count 0 that no accessor reads; the loader skips it instead of refusing the file. */
+function emptyMeshoptViewWarnings(document) {
+  return [...unreadEmptyMeshoptViews(document)].map(index => `Skipped bufferViews[${index}]: its EXT_meshopt_compression count is 0 and no accessor reads it.`);
 }
 
 /** Total decoded size of the meshopt views, after checking each size field so a negative length cannot cancel a large one. */
@@ -1270,7 +1275,7 @@ export async function parseGltf(data, options = {}) {
   }
   const { ignoredExtensions, overruns } = validated;
   await loadLayerShadersFor(document);
-  const warnings = [...fallbackWarnings, ...ignoredExtensions.map(extension => `${extension} is accepted but not rendered.`), ...skippedPrimitiveWarnings(document), ...unusablePrimitiveWarnings, ...clampedIorWarnings(document), ...ignoredMorphTangentWarnings(document)];
+  const warnings = [...fallbackWarnings, ...ignoredExtensions.map(extension => `${extension} is accepted but not rendered.`), ...skippedPrimitiveWarnings(document), ...unusablePrimitiveWarnings, ...emptyMeshoptViewWarnings(document), ...clampedIorWarnings(document), ...ignoredMorphTangentWarnings(document)];
   const dataBytes = typeof data === 'string' ? new TextEncoder().encode(data).byteLength : data.byteLength;
   const { resourceBytes, textureScaling } = await prepareResources(document, data, dataBytes, options, limits, overruns);
   if (textureScaling.scaledTextures.length) {
