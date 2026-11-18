@@ -600,9 +600,10 @@ function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = fal
 }
 
 // Camera fields from a timeline shot on top of the sampled camera, checked with the scene's own camera rules.
+// A fov override replaces the lens of a focalLength camera (applyCameraFields drops focalLength and sensorWidth), as scene_apply does.
 function withCameraOverrides(camera, overrides) {
   const merged = createAgentScene({ format: 'crucible.scene', schemaVersion: 1,
-    geometries: [], materials: [], nodes: [], camera: { ...camera, ...overrides } }).camera;
+    geometries: [], materials: [], nodes: [], camera: applyCameraFields({ ...camera }, overrides) }).camera;
   validatePreviewCamera(merged);
   return merged;
 }
@@ -977,9 +978,7 @@ window.__agentPreview = {
       if (shot.animation !== undefined) throw new RangeError('Imported animation requires an asset scene.');
       record.scene.sampleMotion(shot.motionTime);
     }
-    const camera = createAgentScene({ format: 'crucible.scene', schemaVersion: 1,
-      geometries: [], materials: [], nodes: [], camera: { ...record.scene.camera, ...shot.camera } }).camera;
-    validatePreviewCamera(camera);
+    const camera = withCameraOverrides(record.scene.camera, shot.camera ?? {});
     draw(record, shot.rendererTime, camera);
     const render = renderInfo(record.renderer, viewProblems(record, camera, record.scene.effects.exposure));
     if (render.width < 64 || render.height < 64) throw new Error('Render budget reduced review below its minimum output size.');

@@ -154,6 +154,7 @@ function patternError(message) {
 function checkedColors(value, type) {
   const fieldHint = 'colors must be two linear RGB colours from 0 to 1 (three for bricks: the third is the mortar)';
   const expected = PATTERN_DEFAULTS[type].colors.length;
+  if (Array.isArray(value) && value.length === 3 && expected === 2) throw patternError(`colors must be two linear RGB colours from 0 to 1: ${type} takes no third, only bricks does (the mortar)`);
   if (!Array.isArray(value) || (value.length !== 2 && value.length !== expected)) throw patternError(fieldHint);
   for (const entry of value) {
     if (!Array.isArray(entry) || entry.length !== 3 || entry.some(component => !Number.isFinite(component) || component < 0 || component > 1)) throw patternError(fieldHint);

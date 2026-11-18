@@ -4,6 +4,7 @@
 import * as z from 'zod/v4';
 import { compactType, outlineSchema, unionBranches } from './schema-outline.mjs';
 import { AGENT_TOOL_EXAMPLES } from './tool-examples.mjs';
+import { MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
 
 const RUNTIME_SECTIONS = ['sceneLimits', 'preview', 'review', 'assets', 'packs', 'jobs', 'addons', 'unsupported'];
 const SUMMARY_LENGTH = 110;
@@ -80,11 +81,21 @@ function unionIndex(topic, branches, definitions = {}) {
   };
 }
 
+// The mesh_edit and mesh_stack ops that take whole-mesh modifier fields (wave, ocean, ...) have no branch of their own: meshModifiers.<op> serves them.
+const MODIFIER_TOPICS = new Set(['meshEdit', 'meshStack']);
+
+function modifierPointer(topic) {
+  return { modifierOps: Object.keys(MODIFIER_OPERATIONS), modifierUse: `${topic} also takes every op in modifierOps (such as wave and ocean); topic meshModifiers.<op> gives its fields` };
+}
+
 function outlineAnswer(topic, branchName, schema) {
   const jsonSchema = inputJsonSchema(schema);
   const branches = unionBranches(jsonSchema);
   const withDefinitions = part => ({ ...part, ...(jsonSchema.$defs ? { $defs: jsonSchema.$defs } : {}) });
-  if (!branchName) return branches ? unionIndex(topic, branches, jsonSchema.$defs) : outlineSchema(jsonSchema);
+  if (!branchName) {
+    if (!branches) return outlineSchema(jsonSchema);
+    return { ...unionIndex(topic, branches, jsonSchema.$defs), ...(MODIFIER_TOPICS.has(topic) ? modifierPointer(topic) : {}) };
+  }
   if (branches?.has(branchName)) return outlineSchema(withDefinitions(branches.get(branchName)));
   // A short name such as inset or extrude stands for every branch that starts with it: inset_region and inset_individual.
   const prefixed = branches ? [...branches].filter(([name]) => name.startsWith(`${branchName}_`)) : [];
@@ -96,6 +107,9 @@ function outlineAnswer(topic, branchName, schema) {
   const known = branches ? [...branches.keys()] : Object.keys(ownProperties);
   const sharedField = branches && [...branches.values()].some(branch => Object.hasOwn(branch.properties ?? {}, branchName));
   const fieldNote = sharedField ? ` ${branchName} is a field of those branches, not a branch: open one branch to see it.` : '';
+  if (MODIFIER_TOPICS.has(topic) && Object.hasOwn(MODIFIER_OPERATIONS, branchName)) {
+    throw new TopicEntryError(`${branchName} is a modifier op that ${topic} accepts, so it has no branch here: read topic meshModifiers.${branchName} for its fields.`);
+  }
   throw new TopicEntryError(`Topic ${topic} has no ${branches ? 'branch' : 'field'} ${branchName}. ${branches ? 'Branches' : 'Fields'}: ${known.join(', ') || 'none'}.${fieldNote}`);
 }
 

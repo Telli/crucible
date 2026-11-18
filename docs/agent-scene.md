@@ -133,7 +133,7 @@ Image textures and the other procedural material tags are outside this version.
 | Field | Meaning |
 | --- | --- |
 | `type` | `noise`, `wood`, `planks`, `bricks`, `tiles`, `marble`, `stone`, `concrete`, `metal`, `rust` or `fabric`, or `graph` (with `graph`) |
-| `colors` | Two linear RGB colours to mix, darker first. `bricks` also takes a third, for the mortar. Each type has defaults |
+| `colors` | Two linear RGB colours to mix, darker first. Only `bricks` accepts a third, for the mortar; any other type rejects three. Each type has defaults |
 | `size` | Metres per repeat of the texture, from 0.01 to 100 |
 | `count` | Features per repeat, from 1 to 64: planks, bricks or tiles across, wood rings, or noise cells |
 | `bump` | Relief strength, from 0 (flat) to 4 |

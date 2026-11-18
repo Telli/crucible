@@ -112,7 +112,7 @@ const materialPattern = z.strictObject({
   type: z.enum([...MATERIAL_PATTERN_TYPES, 'graph']).describe('Surface look: a preset, or graph for your own node graph (give graph). Directional presets (wood, planks, metal) run along axis.'),
   graph: materialGraph.optional().describe('Only with type graph.'),
   mapping: z.enum(MATERIAL_MAPPINGS).optional().describe('box (default) or uv, which needs UVs; see scene_capabilities.'),
-  colors: z.array(color).min(2).max(3).optional().describe('Linear RGB colours to mix, darker first. Bricks take a third for the mortar. Each type has good defaults.'),
+  colors: z.array(color).min(2).max(3).optional().describe('Two linear RGB colours to mix, darker first. Only bricks accepts a third, the mortar; any other type rejects three. Each type has good defaults.'),
   size: z.number().min(0.01).max(100).optional().describe('Metres per repeat of the texture, so it keeps its real size on any object and node scale.'),
   count: z.number().int().min(1).max(64).optional().describe('Features per repeat: planks, bricks across, tiles across, wood rings or noise cells.'),
   bump: z.number().min(0).max(4).optional().describe('Relief strength. 0 is flat.'),
