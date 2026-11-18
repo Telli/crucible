@@ -98,7 +98,7 @@ const MODULE_MARKERS = {
   vegetation: ['"vegetation":{', '"wind":{'],
   crowd: ['"crowd":{'],
   lineArt: ['"lines":{', '"toon":'],
-  viewTransform: ['"viewTransform":"agx"', '"viewTransform":"neutral"', '"look":"'],
+  viewTransform: ['"viewTransform":"agx"', '"viewTransform":"neutral"', '"viewTransform":"standard"', '"look":"'],
   // Flush faces are ranked whenever this is loaded (issue #751): the MCP preview registers it, loadAllAgentSceneModules loads it,
   // and so does a recipe that names resolveCoplanar or places an asset, since glTF models nest facades a few millimetres apart.
   // A recipe of plain primitives in a host without it stays free of the 85 KB of flush code, so it needs no on-demand module.
