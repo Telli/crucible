@@ -130,7 +130,7 @@ export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg',
 
 export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', browser: browserPath, memory = 192, assets: assetRoot, packs: packsRoot,
   jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, gpuQueue, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
-  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem() } = {}) {
+  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem(), askUserFixture } = {}) {
   if (!['gpu', 'cpu'].includes(backend)) {
     throw new RangeError('backend must be gpu or cpu.');
   }
@@ -211,7 +211,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   const savedGlbPaths = [];
   const savedWebBuildPaths = [];
   // One frame for marking, with the camera it was drawn with. Shared by the local annotate page and the exported review page.
-  async function captureAnnotateFrame(sessionId, width, height) {
+  async function captureAnnotateFrame(sessionId, width, height, motionTime) {
     if (![width, height].every(value => Number.isInteger(value) && value >= 64 && value <= 1024)) {
       throw new RangeError('Preview dimensions must be integers from 64 to 1024.');
     }
@@ -219,14 +219,20 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       await requirePreviewRenderer();
       requireSession(sessionId);
       await page.setViewportSize({ width, height });
-      return invoke('annotateFrame', { sessionId });
+      return invoke('annotateFrame', { sessionId, ...(motionTime === undefined ? {} : { motionTime }) });
     });
+  }
+  // The view the marks were made on. A film scene also names the time it was drawn at (`motionTime`), so a note like "too bright
+  // here" says at which moment; a scene without motion leaves the field out.
+  function annotateViewOf(frame) {
+    const motionTime = frame.metadata.motionTime;
+    return { width: frame.width, height: frame.height, camera: frame.camera, ...(typeof motionTime === 'number' ? { motionTime } : {}) };
   }
   // Resolves pixel marks to parts, points and normals against the camera of the picture they were made on. The answer is the same
   // shape whether the marks came from the local page or from a saved review file.
   async function sentMarksContent(base, camera, marks, duringText) {
     const { sessionId, view } = base;
-    const picked = await enqueue(() => invoke('pickMarks', { sessionId, camera, marks, width: view.width, height: view.height }));
+    const picked = await enqueue(() => invoke('pickMarks', { sessionId, camera, marks, width: view.width, height: view.height, ...(view.motionTime === undefined ? {} : { motionTime: view.motionTime }) }));
     const sceneChanged = picked.revision !== base.revision;
     return { ...base, outcome: 'sent', marks: picked.marks,
       ...(sceneChanged ? { warning: `The scene changed from revision ${base.revision} to ${picked.revision} ${duringText}; part IDs and points describe revision ${picked.revision}, the picture shows ${base.revision}.` } : {}) };
@@ -250,7 +256,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     }
     savedWebBuildPaths.push(outputDirectory);
     while (savedWebBuildPaths.length > MAXIMUM_KEPT_WEB_BUILDS) await rm(savedWebBuildPaths.shift(), { recursive: true, force: true });
-    const view = { width: frame.width, height: frame.height, camera: frame.camera };
+    const view = annotateViewOf(frame);
     rememberReview(reviewId, { sessionId, revision: frame.metadata.revision, view });
     return { sessionId, revision: frame.metadata.revision, review: true, ...summary, entry: join(outputDirectory, 'index.html'),
       host: 'Serve the folder with any static file server, or send it as is. The reviewer saves a file; pass its text to scene_ask_user as reviewFile.' };
@@ -718,7 +724,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   }
 
   async function resolveSentMarks({ sessionId, frame, marks, image }) {
-    const base = { sessionId, revision: frame.metadata.revision, view: { width: frame.width, height: frame.height, camera: frame.camera } };
+    const base = { sessionId, revision: frame.metadata.revision, view: annotateViewOf(frame) };
     return { image, content: await sentMarksContent(base, frame.camera, marks, 'while the person marked') };
   }
 
@@ -800,6 +806,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     let frameReceiver;
     // A stills or video job of native frames renders them all through one session; it is closed when the job ends.
     let nativeSequence;
+    // The tables of the last native export of this job, so a frame reads only the byte ranges that changed since (#1861).
+    const nativeExportBaseline = {};
     // A native video job blends each frame into the ones before it, so the noise the denoiser leaves does not shimmer.
     let nativeTemporal;
     let nativeTemporalShotIndex;
@@ -937,7 +945,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             const blendsOverTime = usesSession && settings.kind === 'video' && chooseNativeKernel() === 'cycles' && chooseNativeTemporal();
             const frameSeed = blendsOverTime ? temporalFrameSeed(tracerOptions.seed, frame) : tracerOptions.seed;
             try {
-              const exported = await fetchNativeExport(jobPage, { ...frameInput, options: { width, height, bounces: tracerOptions.bounces, seed: frameSeed, fireflyClamp: 20, noiseThreshold: tracerOptions.noiseThreshold, samples: tracerOptions.samples, instancing: chooseNativeInstancing(), kernel: chooseNativeKernel() } }, { capacity: readNativeCapacity(trace.tracer).capacity, session });
+              const exported = await fetchNativeExport(jobPage, { ...frameInput, options: { width, height, bounces: tracerOptions.bounces, seed: frameSeed, fireflyClamp: 20, noiseThreshold: tracerOptions.noiseThreshold, samples: tracerOptions.samples, instancing: chooseNativeInstancing(), kernel: chooseNativeKernel() } }, { capacity: readNativeCapacity(trace.tracer).capacity, session, baseline: usesSession ? nativeExportBaseline : undefined });
               exportedScene = true;
               if (usesSession) nativeSequence ??= createNativeSequence({ tracer: trace.tracer });
               if (blendsOverTime) {
@@ -1344,8 +1352,13 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       const height = input.height ?? 512;
       const maxMarks = input.maxMarks ?? ANNOTATE_LIMITS.maxMarks;
       const timeoutSeconds = input.timeoutSeconds ?? ANNOTATE_LIMITS.defaultTimeoutSeconds;
-      const frame = await captureAnnotateFrame(input.sessionId, width, height);
+      const frame = await captureAnnotateFrame(input.sessionId, width, height, input.motionTime);
       if (closing) throw new Error('The agent runtime is closing.');
+      if (askUserFixture) {
+        // Test-only (#1956): the fixture stands in for the person, and its marks go through the same pick as a browser answer.
+        const marks = validateMarks(askUserFixture.marks, { width: frame.width, height: frame.height, maxMarks });
+        return resolveSentMarks({ sessionId: input.sessionId, frame, marks, image: frame.data });
+      }
       if (input.inline) {
         // The nonce goes to the view in the result's _meta only, never in the content the model reads: the model cannot call the
         // app-only submit tool with a person's marks because it never sees the nonce.
@@ -1353,7 +1366,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         inlineAsks.set(nonce, { sessionId: input.sessionId, frame, maxMarks, expiresAt: Date.now() + timeoutSeconds * 1000 });
         while (inlineAsks.size > MAXIMUM_INLINE_ASKS) inlineAsks.delete(inlineAsks.keys().next().value);
         return { image: frame.data, viewMeta: { nonce }, content: { sessionId: input.sessionId, outcome: 'pending', revision: frame.metadata.revision,
-          view: { width: frame.width, height: frame.height, camera: frame.camera }, maxMarks, maxNoteLength: ANNOTATE_LIMITS.maxNoteLength, prompt: input.prompt ?? '',
+          view: annotateViewOf(frame), maxMarks, maxNoteLength: ANNOTATE_LIMITS.maxNoteLength, prompt: input.prompt ?? '',
           message: 'The view is open in the chat for the person. Their marks arrive as a message from them: stop here and do not call scene_ask_user again.' } };
       }
       const askController = new AbortController();
@@ -1369,7 +1382,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         pendingAskControllers.delete(askController);
       }
       if (session.outcome === 'aborted') throw new Error('The agent runtime closed while the person was marking the scene.');
-      const base = { sessionId: input.sessionId, revision: frame.metadata.revision, view: { width: frame.width, height: frame.height, camera: frame.camera } };
+      const base = { sessionId: input.sessionId, revision: frame.metadata.revision, view: annotateViewOf(frame) };
       if (session.outcome !== 'sent') {
         return { content: { ...base, outcome: session.outcome, marks: [], message: session.outcome === 'timeout'
           ? `The person did not press Send within ${timeoutSeconds} seconds. Ask in text, or call scene_ask_user again with a longer timeoutSeconds.`

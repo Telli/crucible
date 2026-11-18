@@ -29,6 +29,7 @@ import { bakeCacheDirectory, createExplosionBakeCache } from '../src/explosion-b
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from '../src/light-limits.js';
 import { currentFormatName, warnLegacyOnce } from '../src/legacy-names.js';
 import { annotateViewHtml, clientSupportsMcpApps, ANNOTATE_VIEW_URI, MCP_APPS_MIME_TYPE } from './annotate-app-view.mjs';
+import { loadAskUserFixture, describeAskUserFixture } from './ask-user-fixture.mjs';
 import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
 
 function acceptLegacyFormat(value) {
@@ -260,7 +261,7 @@ const environment = z.strictObject({
   keyColor: boundedVector(0, 1000).optional(),
   keyIntensity: bounded(0, 100).optional(),
   fillIntensity: bounded(0, 100).optional(),
-  ambientIntensity: bounded(0, 100).optional(),
+  ambientIntensity: bounded(0, 100).optional().describe('Scales the sky ambient and, with an hdri or setup environment map, that map\'s diffuse light and reflections too. 0 blacks the map out; for an HDRI-only scene keep it above 0 and set key and fill to 0.'),
   daylight: bounded(0, 100).optional(),
   keyAffects: affects.describe('Node IDs lit; default all.'),
   shadowCascades: z.number().int().min(0).max(4).optional().describe('Sun shadow slices; 0 one map.'),
@@ -328,7 +329,7 @@ const effects = z.strictObject({
   temperature: bounded(-1, 1).optional(),
   vignette: unit.optional(),
   grain: bounded(0, 0.1).optional(),
-  ambientOcclusion: unit.optional().describe('Screen-space contact darkening, 0 off to 1 full. Default 0.7 when unset; 0 skips the pass.'),
+  ambientOcclusion: unit.optional().describe('Screen-space contact darkening, 0 off to 1 full. Default 0 (off) when unset; above 0 turns the pass on.'),
   ambientOcclusionRadius: bounded(0.01, 100).optional().describe('World-space reach of the occlusion; default 0.5.'),
   bloom: z.strictObject({
     strength: bounded(0, 2).optional(),
@@ -589,6 +590,9 @@ const driver = z.strictObject({
   target: z.union([
     z.strictObject({ kind: z.literal('node'), id: identifier, property: z.enum(['translation', 'rotation', 'scale']), component: axisName }),
     z.strictObject({ kind: z.literal('material'), id: identifier, property: z.enum(['color', 'emissiveColor', 'emission', 'metallic', 'roughness']), component: axisName.optional() }),
+    z.strictObject({ kind: z.literal('light'), id: identifier.describe('point:N, spot:N or area:N'), property: z.enum(['intensity', 'color']), component: axisName.optional() }),
+    z.strictObject({ kind: z.literal('morph'), id: identifier, property: z.literal('weight') }),
+    z.strictObject({ kind: z.literal('camera'), property: z.enum(['eye', 'target', 'fov', 'roll']), component: axisName.optional() }),
   ]),
   expression,
 });
@@ -659,7 +663,7 @@ const motion = z.strictObject({
     motionTrack('camera', 'roll', finite, finite),
     motionTrack('geometry', 'oceanTime', finite.min(-1e6).max(1e6), finite),
     lookTrack,
-  ], { error: motionTrackUnionMessage })).max(128),
+  ], { error: motionTrackUnionMessage })).max(128).optional().describe('Keyframe tracks; leave out for a motion made only of drivers, ik or constraints.'),
 }).describe('One absolute-time procedural clip. Local node transforms propagate through parents. Cubic tangents are derivatives per second. Backend checks references, duplicate tracks, 2048 total keys and every sampled pose.');
 const physicsBody = z.strictObject({
   node: identifier.describe('Root node with a geometry; the collider is fitted to it and the body drives its pose.'),
@@ -1036,7 +1040,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     const metadata = findings ? lookMetadata : metadataWithoutFindings;
     return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(metadata) }], structuredContent: metadata };
   });
-  const askUserTool = register('scene_ask_user', 'Open the view in the browser so the person pins points with notes; waits for Send. Use for a change hard to say in words. Returns marks with partId, point, normal, note, and the marked PNG. reviewFile: the text a review page saved, read instead of opening the browser.', z.strictObject({ ...sessionFields, reviewFile: z.string().max(16384).optional().describe('Text of the file a scene_export_web review page saved.'), prompt: z.string().max(200).optional().describe('Line shown above the picture.'), maxMarks: z.number().int().min(1).max(16).default(16), timeoutSeconds: z.number().int().min(10).max(900).default(300) }), askUser, async argumentsValue => {
+  const askUserTool = register('scene_ask_user', 'Open the view in the browser so the person pins points with notes; waits for Send. Use for a change hard to say in words. Returns marks with partId, point, normal, note, and the marked PNG. materialSharedWith: own material first. reviewFile: the text a review page saved, read instead of opening the browser.', z.strictObject({ ...sessionFields, reviewFile: z.string().max(16384).optional().describe('Text of the file a scene_export_web review page saved.'), prompt: z.string().max(200).optional().describe('Line shown above the picture.'), motionTime: z.number().min(0).max(3600).optional(), maxMarks: z.number().int().min(1).max(16).default(16), timeoutSeconds: z.number().int().min(10).max(900).default(300) }), askUser, async argumentsValue => {
     const { content, image, viewMeta } = await runtime.askUser(clientShowsApps ? { ...argumentsValue, inline: true } : argumentsValue);
     return { content: [...(image ? [{ type: 'image', data: image, mimeType: 'image/png' }] : []), { type: 'text', text: JSON.stringify(content) }], ...(viewMeta ? { _meta: { 'crucible/annotate': viewMeta } } : {}) };
   });
@@ -1151,7 +1155,10 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   if (bakeCache) setExplosionBakeStore(createExplosionBakeCache(bakeCache));
   // Not awaited: the check fills in while the client connects and never delays or fails the start.
   const updateCheck = startUpdateCheck({ currentVersion: version });
-  const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl }), { version, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
+  // Test-only: answers for scene_ask_user from a file, set by whoever starts the server (#1956). Read once, here.
+  const askUserFixture = loadAskUserFixture();
+  if (askUserFixture) console.error(describeAskUserFixture(askUserFixture));
+  const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl, askUserFixture }), { version, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
     transport: new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 2 * 1024 * 1024 }),
     onerror: error => console.error(`Crucible MCP error: ${error.message}`),
   });

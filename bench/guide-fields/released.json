@@ -164,6 +164,7 @@
   "scene_apply operations[].visible",
   "scene_apply sessionId",
   "scene_ask_user maxMarks",
+  "scene_ask_user motionTime",
   "scene_ask_user prompt",
   "scene_ask_user reviewFile",
   "scene_ask_user sessionId",
