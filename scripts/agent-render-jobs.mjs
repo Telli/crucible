@@ -7,6 +7,7 @@ import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_
 import { parseQuality } from './agent-render-quality.mjs';
 import { estimateFrameBytes } from '../src/budget.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { recipePlaysSimulation } from '../src/motion-hint.js';
 import { normalizeFilmTimeline, filmTimelineDuration, videoFrameCount } from '../src/film-timeline.js';
 import { OIDN_DEFAULT_SAMPLES, PATH_TRACER_DENOISERS, PATH_TRACER_JOB_LIMITS } from '../src/path-tracer-capabilities.js';
 import { AGENT_ASSET_LIMITS, describeAssetBytes } from '../src/agent-asset-limits.js';
@@ -104,12 +105,12 @@ function playsPhysics(recipe) {
 }
 
 /**
- * Whether a job with no `motion` setting should still play the recipe's particles, physics or cloth from second 0.
+ * Whether a job with no `motion` setting should still play the recipe's motion tracks, particles, physics or cloth from second 0.
  * Without a motion clock every frame is frame 0, so such a stills or video job would come out frozen with no warning.
  */
 function playsSimulationFromStart(input, recipe, timelineStart) {
   return input.kind !== 'image' && timelineStart === undefined && input.animation === undefined
-    && recipe?.format === 'crucible.scene' && playsPhysics(recipe);
+    && recipe?.format === 'crucible.scene' && recipePlaysSimulation(recipe);
 }
 
 /** The settings of a job as the store keeps them: every default filled in, every limit checked. */

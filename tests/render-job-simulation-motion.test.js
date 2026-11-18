@@ -44,3 +44,27 @@ nodeTest('the motion-not-set hint says what to pass', async () => {
   assert.equal(recipePlaysSimulation(particleRecipe), true);
   assert.equal(recipePlaysSimulation({ format: 'crucible.scene' }), false);
 });
+
+const tracksRecipe = {
+  format: 'crucible.scene',
+  camera: { eye: [0, 1, 5], target: [0, 0, 0] },
+  motion: { duration: 2, tracks: [{ kind: 'camera', property: 'eye', keyframes: [{ time: 0, value: [0, 1, 5] }, { time: 2, value: [5, 1, 0] }] }] },
+};
+
+nodeTest('a recipe whose only motion is tracks plays the motion clock from 0 without a motion setting', () => {
+  assert.deepEqual(normalizeJobSettings(videoJob, [], tracksRecipe).motion, { start: 0 });
+  assert.deepEqual(normalizeJobSettings(stillsJob, [], tracksRecipe).motion, { start: 0 });
+});
+
+nodeTest('a tracks job longer than the authored motion keeps the held pose instead of failing', () => {
+  const longVideo = { ...videoJob, duration: 5 };
+  assert.equal(normalizeJobSettings(longVideo, [], tracksRecipe).motion, undefined);
+  assert.throws(() => normalizeJobSettings({ ...longVideo, motion: { start: 0 } }, [], tracksRecipe), /authored duration/);
+});
+
+nodeTest('the motion-not-set hint covers motion tracks, and an empty track list does not count', async () => {
+  const { MOTION_NOT_SET_HINT, recipePlaysSimulation } = await import('../src/motion-hint.js');
+  assert.match(MOTION_NOT_SET_HINT.message, /motion tracks/);
+  assert.equal(recipePlaysSimulation(tracksRecipe), true);
+  assert.equal(recipePlaysSimulation({ format: 'crucible.scene', motion: { duration: 2, tracks: [] } }), false);
+});
