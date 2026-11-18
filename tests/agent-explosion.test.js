@@ -205,10 +205,10 @@ test('the MCP server finds the grids an add-explosion operation will name, so th
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
 });
 
-// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom).
+// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom, and for #2304's puff-shaped translucent dust).
 const FIRST_RELEASE_HASHES = new Map([
-  ['{}', 'df70567bd19d0d575a77bf3d6b8209768f859d0ac689986baa46c15075f1b7f0'],
-  ['{"start":0.5,"fuel":"oily","seed":7}', '9c8225756d33fd331a836f0018a4c78200f1d9a55a41d91355c833eebf8f535e'],
+  ['{}', 'cd4c758da5ffc760823c2b3e42ece076b93f331b4329735094772ab268342bdc'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', '8f385ccba72462d1ad5315566b7548b0bd15fd31c722297ae1b60634c41a24bc'],
 ]);
 
 test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {
@@ -324,4 +324,24 @@ test('the blast dust and rubble sampled at a later time are ranked against a box
   assert.ok(blastParts.some(part => part.name === 'blast-dust'), 'the sampled dust part exists');
   const pairs = findCoplanarOverlaps(scene.parts).overlaps.map(overlap => [overlap.first?.name ?? overlap.larger?.name, overlap.second?.name ?? overlap.smaller?.name]);
   assert.deepEqual(pairs, []);
+});
+
+test('the blast dust is a translucent round puff that never fades to black, so it cannot end as an opaque cube (#2304)', () => {
+  const { recipe } = applyBlast(blast({ seed: 7 }));
+  const dustNode = recipe.nodes.find(node => node.id === 'blast-dust');
+  const dustGeometry = recipe.geometries.find(geometry => geometry.id === dustNode.geometry);
+  const dustMaterial = recipe.materials.find(material => material.id === dustNode.material);
+  const dustSystem = recipe.particles.systems.find(system => system.node === 'blast-dust');
+  assert.equal(dustGeometry.type, 'sphere', 'dust is drawn as round puffs, not boxes');
+  assert.ok(dustMaterial.opacity > 0 && dustMaterial.opacity < 1, `dust opacity ${dustMaterial.opacity} lets the floor show through`);
+  assert.equal(dustMaterial.alphaMode, 'blend');
+  assert.equal(dustSystem.alpha, undefined, 'the renderer has no per-vertex alpha, so a dust alpha fade would darken each puff to black');
+});
+
+test('the rubble and sparks keep their box pieces while the dust gets its own geometry (#2304)', () => {
+  const { recipe } = applyBlast(blast({ seed: 7, sparks: 'specks' }));
+  const geometryOf = nodeId => recipe.geometries.find(geometry => geometry.id === recipe.nodes.find(node => node.id === nodeId).geometry).type;
+  assert.equal(geometryOf('blast-rubble'), 'box');
+  assert.equal(geometryOf('blast-sparks'), 'box');
+  assert.equal(geometryOf('blast-dust'), 'sphere');
 });
