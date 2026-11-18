@@ -18,6 +18,10 @@ const GLOWING_CENTER_X = -1.2;
 const LIT_CENTER_X = 0.4;
 const SLAB_WIDTH = 0.8;
 const EMISSION = 1.5;
+// A black floor leaves the bloom the only light in the band beside the glowing slab, so the key light's shadow cannot hide in the floor's own colour.
+const BLACK = [0, 0, 0];
+// A key light too weak to scatter in the smoke: the surface shadow still reads it, but the medium adds almost no light of its own, so the tone curve sees the same base in every frame.
+const DIM_SUN = { ...SUN, keyColor: [0.01, 0.01, 0.01] };
 
 async function startServer(port) {
   const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -38,8 +42,8 @@ async function startServer(port) {
 }
 
 // Renders each volume list in order on one renderer, so a frame that follows another shows what the first left behind.
-async function rasterFrames(page, volumeLists, preload = true) {
-  const task = async ({ size, lists, camera, light, emission, glowingX, litX, width, preload }) => {
+async function rasterFrames(page, volumeLists, { preload = true, effects = undefined, glowingEmission = EMISSION, groundColor = [0.8, 0.8, 0.8], light = SUN } = {}) {
+  const task = async ({ size, lists, camera, light, emission, glowingX, litX, width, preload, effects, groundColor }) => {
     const { box } = await import('/src/geometry.js');
     const { CrucibleRenderer } = await import('/src/renderer.js');
     const { createFloatOutput, readFloatPixels } = await import('/src/float-output.js');
@@ -54,13 +58,15 @@ async function rasterFrames(page, volumeLists, preload = true) {
     document.body.append(canvas);
     const slab = (name, centerX, material) => ({ name, geometry: box(0, 1), matrix: new Float32Array([width, 0, 0, 0, 0, 0.2, 0, 0, 0, 0, 2, 0, centerX, 0.0, 0, 1]), material });
     const lit = { color: [0.8, 0.8, 0.8], metallic: 0, roughness: 1, emission: 0 };
-    const ground = { name: 'ground', geometry: box(0, 1), matrix: new Float32Array([40, 0, 0, 0, 0, 0.2, 0, 0, 0, 0, 40, 0, 0, -0.1, 0, 1]), material: lit };
+    const ground = { name: 'ground', geometry: box(0, 1), matrix: new Float32Array([40, 0, 0, 0, 0, 0.2, 0, 0, 0, 0, 40, 0, 0, -0.1, 0, 1]), material: { ...lit, color: groundColor } };
     const parts = [ground, slab('glowing', glowingX, { ...lit, emission }), slab('lit', litX, lit)];
     const renderer = new CrucibleRenderer(canvas, parts, { hdr: true, depth: true, samples: 1, pixelRatio: 1, ground: false });
     const output = createFloatOutput(renderer.context, size, size);
     const frames = [];
     for (const localVolumes of lists) {
-      renderer.render({ ...camera, time: 0, environment: { ...light, localVolumes }, outputFramebuffer: output.framebuffer });
+      const frame = { ...camera, time: 0, effects, environment: { ...light, localVolumes }, outputFramebuffer: output.framebuffer };
+      await renderer.prepareFrame(frame);
+      renderer.render(frame);
       frames.push(Array.from(readFloatPixels(renderer.context, output.framebuffer, size, size)));
       if (!preload) await new Promise(resolve => setTimeout(resolve, 400));
     }
@@ -69,7 +75,7 @@ async function rasterFrames(page, volumeLists, preload = true) {
     renderer.dispose?.();
     return { frames, glError };
   };
-  return page.evaluate(task, { size: SIZE, lists: volumeLists, camera: CAMERA, light: SUN, emission: EMISSION, glowingX: GLOWING_CENTER_X, litX: LIT_CENTER_X, width: SLAB_WIDTH, preload });
+  return page.evaluate(task, { size: SIZE, lists: volumeLists, camera: CAMERA, light, emission: glowingEmission, glowingX: GLOWING_CENTER_X, litX: LIT_CENTER_X, width: SLAB_WIDTH, preload, effects, groundColor });
 }
 
 // Mean green over the middle of a slab (rows run bottom up in the float frames, four floats a pixel).
@@ -150,10 +156,79 @@ test('a shadowing volume dims the light a lit slab receives and leaves a glowing
     // Without the preload the chunk loads during the first frame: that frame dims the glow as before, the next one has the mask and matches the preloaded picture.
     const freshPage = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
     await freshPage.goto(`http://127.0.0.1:${port}/`);
-    const lazy = await rasterFrames(freshPage, [[SMOKE], [SMOKE]], false);
+    const lazy = await rasterFrames(freshPage, [[SMOKE], [SMOKE]], { preload: false });
     assert.equal(lazy.glError, 0);
     assert.ok(slabMean(lazy.frames[0], GLOWING_CENTER_X) / numbers.glowingOpen < 0.85, 'the first frame, before the chunk has loaded, dims the glow as it did before the mask');
     assert.deepEqual(lazy.frames[1], shadowed, 'once the chunk has loaded the frame matches the preloaded one');
+  } finally {
+    await browser?.close();
+    server.kill();
+  }
+});
+
+// The frames hold display values: the ACES curve of post.js and a 2.2 gamma. This undoes both, so a bloom that adds light before the curve adds the same linear amount on any base.
+function linearLight(display) {
+  const aces = Math.pow(display, 2.2);
+  const quadratic = 2.51 - 2.43 * aces;
+  const linear = 0.03 - 0.59 * aces;
+  const constant = -0.14 * aces;
+  return (-linear + Math.sqrt(linear * linear - 4 * quadratic * constant)) / (2 * quadratic);
+}
+
+// Mean of the three channels over a band just left of the glowing slab, where only its bloom reaches (the lit slab lies on the other side).
+function haloMean(frame) {
+  const pixelsPerUnit = SIZE / (2 * 12 * Math.tan(Math.PI * 25 / 180));
+  const firstColumn = Math.round(SIZE / 2 + (GLOWING_CENTER_X - SLAB_WIDTH / 2 - 0.45) * pixelsPerUnit);
+  const lastColumn = Math.round(SIZE / 2 + (GLOWING_CENTER_X - SLAB_WIDTH / 2 - 0.1) * pixelsPerUnit);
+  let total = 0;
+  let count = 0;
+  for (let row = SIZE / 2 - 16; row < SIZE / 2 + 16; row++) {
+    for (let column = firstColumn; column <= lastColumn; column++) {
+      for (let channel = 0; channel < 3; channel++) total += linearLight(Math.min(frame[(row * SIZE + column) * 4 + channel], 0.999));
+      count += 3;
+    }
+  }
+  return total / count;
+}
+
+test('the bloom of a glowing slab survives a shadowing volume over it (#1360)', async context => {
+  let chromium;
+  try {
+    ({ chromium } = await import('playwright'));
+  } catch {
+    skipOrThrow(context, 'playwright is not installed');
+    return;
+  }
+  const port = await freePort();
+  const server = await startServer(port);
+  let browser;
+  try {
+    try {
+      browser = await launchChrome(chromium);
+    } catch (error) {
+      skipOrThrow(context, `Chrome did not start: ${error.message.split('\n')[0]}`);
+      return;
+    }
+    const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
+    await page.goto(`http://127.0.0.1:${port}/`);
+    const open = { ...SMOKE, castShadow: false };
+    const bloom = { bloom: { strength: 0.8, threshold: 1, radius: 3 } };
+    const glowing = 8;
+    const withBloom = await rasterFrames(page, [[SMOKE], [open], []], { effects: bloom, glowingEmission: glowing, groundColor: BLACK, light: DIM_SUN });
+    const withoutBloom = await rasterFrames(page, [[SMOKE], [open], []], { glowingEmission: glowing, groundColor: BLACK, light: DIM_SUN });
+    assert.equal(withBloom.glError, 0);
+    const haloShadowed = haloMean(withBloom.frames[0]) - haloMean(withoutBloom.frames[0]);
+    const haloOpen = haloMean(withBloom.frames[1]) - haloMean(withoutBloom.frames[1]);
+        const haloClear = haloMean(withBloom.frames[2]);
+    context.diagnostic(JSON.stringify({ haloClear, haloOpen, haloShadowed }));
+    if (process.env.SURFACE_SHADOW_ARTIFACTS) {
+      mkdirSync(process.env.SURFACE_SHADOW_ARTIFACTS, { recursive: true });
+      writeStill(join(process.env.SURFACE_SHADOW_ARTIFACTS, 'surface-shadow-bloom.png'), [withBloom.frames[2], withBloom.frames[1], withBloom.frames[0]]);
+      writeFileSync(join(process.env.SURFACE_SHADOW_ARTIFACTS, 'surface-shadow-bloom.json'), JSON.stringify({ haloClear, haloOpen, haloShadowed }, null, 2));
+    }
+    // The medium dims the halo by its transmittance and blurs the frame behind it, but the bloom is not part of that frame: neither the blur nor the surface shadow may take it.
+    assert.ok(haloOpen > 0.3 * haloClear, `a medium over the glowing slab dims the halo by its transmittance, not by its blur: ${haloOpen} of ${haloClear}`);
+    assert.ok(Math.abs(haloShadowed - haloOpen) < 0.05 * haloOpen, `the shadowing volume keeps the halo the open one leaves: ${haloShadowed} against ${haloOpen}`);
   } finally {
     await browser?.close();
     server.kill();

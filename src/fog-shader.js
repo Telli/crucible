@@ -721,6 +721,8 @@ vec3 localVolumes(vec3 background) {
       exits[index] = exitDistance;
     }
   }
+  // The bloom was added to the frame before this step. It is the light of a glowing part spreading over its neighbours, so the volume's blur and the surface shadow leave it alone and only the volume's transmittance dims it (#1360).
+  vec3 bloomLight = POST_BLOOM ? texture(bloomTexture, textureCoordinate).rgb * bloomStrength : vec3(0.0);
   vec3 transmittance = vec3(1.0);
   vec3 radiance = vec3(0.0);
   float blurDepth = 0.0;
@@ -811,12 +813,12 @@ ${withGrid ? `    if (localVolumeGrid[nearest].x > 0.5) {
     if (segmentEnd < exitDistance) entries[nearest] = segmentEnd;
     if (partner >= 0) entries[partner] = segmentEnd < exits[partner] ? segmentEnd : 1e30;
 ` : ''}  }
-  if (blurDepth > 0.0) background = localVolumeBlurred(background, blurDepth, blurEntry, origin, direction);
+  if (blurDepth > 0.0) background = localVolumeBlurred(background - bloomLight, blurDepth, blurEntry, origin, direction) + bloomLight;
   if (depth < 1.0 && surfacePoint.w > 0.0 && max(volumeLightColor.r, max(volumeLightColor.g, volumeLightColor.b)) > 0.0) {
     vec3 surfaceWorld = surfacePoint.xyz / surfacePoint.w;
     vec3 shade = mix(vec3(1.0), localVolumeSurfaceShadow(surfaceWorld, normalize(volumeLightDirection)), keyVisibility(surfaceWorld));
-    vec3 glow = localEmissionMaskReady > 0.5 ? texelFetch(localEmissionMask, ivec2(gl_FragCoord.xy), 0).rgb : vec3(0.0);
-    background = localEmissionMaskReady > 0.5 ? glow + max(background - glow, vec3(0.0)) * shade : background * shade;
+    vec3 glow = bloomLight + (localEmissionMaskReady > 0.5 ? texelFetch(localEmissionMask, ivec2(gl_FragCoord.xy), 0).rgb : vec3(0.0));
+    background = glow + max(background - glow, vec3(0.0)) * shade;
   }
   return background * transmittance + radiance;
 }
