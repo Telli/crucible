@@ -298,6 +298,7 @@ const environment = z.strictObject({
     intensity: bounded(0, 1e5).optional().describe('Candela head on.'),
     castShadow: z.boolean().optional(),
     ies: iesProfile,
+    portal: z.boolean().optional().describe('Window: emits nothing, Cook samples the sky through it; raster ignores it.'),
     affects,
   })).max(MAX_AREA_LIGHTS).optional().describe('Replaces the list; [] clears.'),
   skyTop: color.optional(),
