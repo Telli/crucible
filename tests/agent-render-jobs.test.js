@@ -992,3 +992,71 @@ test('a GPU queue that fails the wait fails the job with the queue message', asy
   assert.match(failed.reason, /GPU queue command did not grant/);
   await controller.close();
 });
+
+test('a sequence that passes its combined output budget late keeps its leading complete frames readable via result (#2199)', async context => {
+  const root = await temporary(context);
+  const sequenceLimits = { ...limits, maxOutputBytes: 1000, maxFrameBytes: 400 };
+  const controller = await createAgentRenderJobs({
+    root,
+    limits: sequenceLimits,
+    async run({ directory }) {
+      const artifacts = [];
+      for (let frame = 0; frame < 4; frame += 1) {
+        const filename = `frame-${frame}.png`;
+        await writeFile(join(directory, `${filename}.partial`), Buffer.alloc(300, frame + 1));
+        artifacts.push({ temporary: `${filename}.partial`, filename, mimeType: 'image/png' });
+      }
+      return { artifacts, metrics: { maximumPendingFrames: 1 } };
+    },
+  });
+  const { jobId } = await controller.submit({
+    sourceRevision: 1,
+    snapshot: { recipe: { format: 'crucible.scene' } },
+    settings: { kind: 'stills', width: 64, height: 64, fps: 10, stillCount: 4 },
+  });
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /combined output byte budget/);
+  assert.match(failed.reason, /kept 3 of 4 artifacts/);
+  assert.deepEqual(failed.artifacts.map(item => item.filename), ['frame-0.png', 'frame-1.png', 'frame-2.png']);
+  const folderFiles = await readdir(join(root, jobId));
+  assert.equal(folderFiles.includes('frame-3.png.partial'), false);
+  assert.equal(folderFiles.includes('frame-3.png'), false);
+
+  const partialResult = controller.result(jobId);
+  assert.equal(partialResult.state, 'failed');
+  assert.equal(partialResult.artifacts.length, 3);
+  await controller.close();
+
+  const recovered = await createAgentRenderJobs({ root, limits: sequenceLimits, run: writeImage });
+  assert.equal(recovered.status(jobId).state, 'failed');
+  assert.equal(recovered.result(jobId).artifacts.length, 3);
+  await recovered.release(jobId);
+  await recovered.close();
+});
+
+test('late output overflow keeps or drops all artifacts of a frame together when passes are enabled (#2199)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({
+    root,
+    limits: { ...limits, maxOutputBytes: 900, maxFrameBytes: 400 },
+    async run({ directory }) {
+      const artifacts = [];
+      for (const name of ['frame-0.png', 'frame-0-depth.png', 'frame-1.png', 'frame-1-depth.png']) {
+        await writeFile(join(directory, `${name}.partial`), Buffer.alloc(260, 7));
+        artifacts.push({ temporary: `${name}.partial`, filename: name, mimeType: 'image/png' });
+      }
+      return { artifacts, metrics: {} };
+    },
+  });
+  const { jobId } = await controller.submit({
+    sourceRevision: 2,
+    snapshot: { recipe: { format: 'crucible.scene' } },
+    settings: { kind: 'stills', width: 64, height: 64, fps: 10, stillCount: 2, passes: ['depth'] },
+  });
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.deepEqual(failed.artifacts.map(item => item.filename), ['frame-0.png', 'frame-0-depth.png']);
+  await controller.release(jobId);
+  await controller.close();
+});

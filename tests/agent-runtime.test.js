@@ -514,6 +514,16 @@ runTest('submitJob refuses a scene of plain nodes whose exact count is over the 
   assert.equal(accepted.attempt, undefined);
 });
 
+runTest('submitJob refuses stills estimated over the combined output byte budget before rendering (#2199)', async () => {
+  const rejected = await submitWithInspection(NON_INDEXED_INSPECTION(100), {
+    kind: 'stills', width: 1280, height: 720, fps: 24, stillCount: 288, quality: 'realtime-high',
+  });
+  assert.match(rejected.attempt?.message ?? '', /combined output byte budget/);
+  assert.match(rejected.attempt?.message ?? '', /224 frames/);
+  assert.equal(rejected.submitted.length, 0);
+  assert.equal(rejected.phase, 'ready');
+});
+
 runTest('a slow suspend at job start does not fail the runtime (#1256)', async () => {
   let runJob;
   const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };

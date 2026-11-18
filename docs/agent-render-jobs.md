@@ -187,7 +187,7 @@ These are library functions for scripts and addons; no MCP tool combines passes 
 
 ### A transparent frame sequence {since 0.21.0}
 
-A `stills` job with `stillCount: N` (2 to 300) writes N numbered PNGs, `frame-0.png` to `frame-<N-1>.png`, instead of 8 spread over `duration`. Frame i samples the motion clock at `i / fps` seconds from `motion.start` (or the timeline start), the same instants a video of that `fps` would show. `duration` is then `(stillCount - 1) / fps` and is left out. With `transparent: true` each frame is an RGBA PNG, so the sequence composites over other footage. A longer clip is rendered in parts: submit the next job with `motion.start` advanced by `stillCount / fps`. The combined output stays under 128 MiB per job, and a job over it fails with that limit. A square frame fits up to 1440x1440 for stills and video and 2880x2880 for an image job (`scene_capabilities` jobs: `maximumSquareSequenceSide`, `maximumSquareSide`).
+A `stills` job with `stillCount: N` (2 to 300) writes N numbered PNGs, `frame-0.png` to `frame-<N-1>.png`, instead of 8 spread over `duration`. Frame i samples the motion clock at `i / fps` seconds from `motion.start` (or the timeline start), the same instants a video of that `fps` would show. `duration` is then `(stillCount - 1) / fps` and is left out. With `transparent: true` each frame is an RGBA PNG, so the sequence composites over other footage. A longer clip is rendered in parts: submit the next job with `motion.start` advanced by `stillCount / fps`. The combined output stays under 128 MiB per job (`scene_capabilities` jobs: `maximumOutputBytes`). Each submit result estimates `outputMiB` and refuses oversized sequences with the frame count that fits. If a rendered sequence still overflows at finalization, the controller keeps its leading complete frames for `scene_render_result`. A square frame fits up to 1440x1440 for stills and video and 2880x2880 for an image job (`scene_capabilities` jobs: `maximumSquareSequenceSide`, `maximumSquareSide`).
 
 Four optional settings, each off by default. A job without them writes the same bytes as before.
 
@@ -312,7 +312,7 @@ await jobs.close();
 | `status(jobId)` | Detached current record |
 | `list()` | Detached retained records, including recovered jobs |
 | `cancel(jobId)` | Immediate record with `cancelling`, or an existing terminal state |
-| `result(jobId)` | Completed artifact metadata and metrics without arbitrary paths |
+| `result(jobId)` | Completed artifact metadata and metrics (plus kept leading frames on a partial budget failure) without arbitrary paths |
 | `release(jobId)` | Promise of release confirmation for a settled terminal job |
 | `close()` | Promise that aborts work, waits for settlement, and releases store ownership |
 
