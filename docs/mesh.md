@@ -211,7 +211,7 @@ These three (and `bevel`, below) work as edits and as stack nodes:
 
 ### Modifier stack
 
-A recipe mesh may carry `stack`, a list of `mirror`, `array`, `solidify`, `bevel`, `subdivide`, `uv_unwrap`, `set_position`, `displace`, `decimate`, `remesh`, `weld`, `triangulate`, `edge_split`, `smooth`, `simple_deform`, `cast`, `screw`, `wireframe`, `skin`, `lattice`, `curve`, `hook`, `wave`, `build`, `weighted_normal` and `smooth_by_angle` nodes (up to 16) evaluated after the
+A recipe mesh may carry `stack`, a list of `mirror`, `array`, `solidify`, `bevel`, `subdivide`, `uv_unwrap`, `set_position`, `displace`, `decimate`, `remesh`, `weld`, `triangulate`, `edge_split`, `smooth`, `simple_deform`, `cast`, `screw`, `wireframe`, `skin`, `lattice`, `curve`, `hook`, `wave`, `smooth_laplacian`, `warp`, `build`, `weighted_normal` and `smooth_by_angle` nodes (up to 16) evaluated after the
 edits without changing them, as Blender's modifier stack. Every prefix (the edit result, then each node) is cached
 by its recipe text in a least-recently-used cache bounded at 64 entries and 64 MiB, so changing a late node reuses
 the earlier work. Results list one entry per node with `cached: true` when reused. `meshCacheStats()` reports hits
@@ -225,7 +225,7 @@ as Blender's Apply modifier, which leaves the result unchanged.
 A recipe `mesh` geometry may carry `shapeKeys` (up to 16), named offsets from the finished mesh that become glTF morph targets.
 A key is `{ "name": "blink", "offsets": [{ "select": { "tag": "lid" }, "offset": [0, -0.1, 0] }] }`, a list of moves like the
 `translate` edit, or `{ "name": "squash", "edits": [...] }`, mesh edits that only move vertices (`set_position`, `displace`,
-`sculpt`, `simple_deform`, `lattice`, `hook`, `wave`) run on the mesh after the stack. A key that adds or removes vertices is
+`sculpt`, `simple_deform`, `lattice`, `hook`, `wave`, `smooth_laplacian`, `warp`) run on the mesh after the stack. A key that adds or removes vertices is
 refused with the vertex counts. `value` (0 to 1) is the weight without motion.
 
 Animate a key with the existing morph track: `{ "kind": "morph", "id": "blink", "property": "weight", "keyframes": [...] }`. Weights
@@ -234,7 +234,7 @@ Normals stay those of the base mesh. Test: `tests/mesh-shape-keys.test.js`.
 
 ### Whole-mesh modifiers
 
-`weld`, `triangulate`, `edge_split`, `smooth`, `simple_deform`, `cast`, `screw`, `wireframe`, `skin`, `lattice`, `curve`, `hook`, `wave`, `bounding_box`, `convex_hull`, `ocean`, `build`, `weighted_normal` and `smooth_by_angle` take no selection and no name, and work as edits or stack nodes. Their fields and defaults are plain data in `MESH_MODIFIER_NOTES` (`src/agent-scene-capabilities.js`), which `scene_capabilities` returns as `meshModifiers`; the code is in `src/mesh-modifiers.js` and `src/mesh-restructure.js`.
+`weld`, `triangulate`, `edge_split`, `smooth`, `simple_deform`, `cast`, `screw`, `wireframe`, `skin`, `lattice`, `curve`, `hook`, `wave`, `smooth_laplacian`, `warp`, `bounding_box`, `convex_hull`, `ocean`, `build`, `weighted_normal` and `smooth_by_angle` take no selection and no name, and work as edits or stack nodes. Their fields and defaults are plain data in `MESH_MODIFIER_NOTES` (`src/agent-scene-capabilities.js`), which `scene_capabilities` returns as `meshModifiers`; the code is in `src/mesh-modifiers.js` and `src/mesh-restructure.js`.
 
 | op | fields | does |
 | --- | --- | --- |
@@ -250,6 +250,8 @@ Normals stay those of the base mesh. Test: `tests/mesh-shape-keys.test.js`.
 | `lattice` | `divisions` ([2,2,2], 2 to 8), `moves` (up to 64 of `{ point, offset }`) | A grid of control points over the mesh bounds; each move shifts one point and vertices follow the trilinear blend. |
 | `curve` | `path` (2 to 64 points), `axis` (x) | Bends the mesh along a Catmull-Rom path; the coordinate along the axis is the distance from the path start. |
 | `hook` | `center`, `radius` (1), `translation`, `strength` (1), `falloff` (smooth) | Pulls the vertices within the radius by the translation, weighted by the falloff. |
+| `smooth_laplacian` | `factor` (0.5, above 0 to 1), `iterations` (1, 1 to 64), `preserveVolume` (true), `pinBoundary` (true), `group` | Smoothing that does not melt a closed mesh: each iteration is a shrinking step and an inflating step (Taubin), so a sphere keeps its volume. `preserveVolume: false` is plain shrinking Laplacian smoothing. The rim of an open mesh stays put unless `pinBoundary` is false; a vertex `group` scales each vertex's step. Not Blender's Smooth Laplacian, which solves a different system. |
+| `warp` | `from`, `to`, `radius` (1), `curve` (smooth, linear or constant), `twist` (0 degrees) | Carries the vertices within the radius of `from` toward `to`, weighted by the curve: the vertex at `from` lands on `to` and vertices beyond the radius do not move. A twist turns them about the axis from `from` to `to`, by the weight times the angle. |
 | `wave` | `height` (0.5), `width` (1.5), `narrowness` (1.5), `speed` (0.25), `time` (0), `timeOffset`, `start`, `cyclic` (true), `axes` (xy), `normal` | A travelling gaussian ripple along z, equal to Blender Wave at the same frame. |
 | `weighted_normal` | `angle` (30), `weight` (50, 1 to 100) | Stores one shading normal per corner: faces around a vertex share it unless the edge is sharp or bends more than the angle, each face counting by its area to the power weight / 50. Put it last in the stack. |
 | `smooth_by_angle` | `angle` (30), `ignoreSharp` (false) | Marks edges bending more than the angle sharp and the others smooth, over the geometry `smoothAngle`; sharp edges made by hand, and the 12 of a box, stay sharp unless `ignoreSharp` is set. |
