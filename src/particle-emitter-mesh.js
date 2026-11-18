@@ -49,7 +49,15 @@ function vectorAt(vectors, vertex, axis) {
   return vectors[vertex * 3 + axis];
 }
 
-function surfaceSampler(triangles, vectors) {
+const MAX_THRESHOLD_TRIES = 24;
+
+// The weights with everything under `threshold` set to 0, so a triangle or vertex that is only faintly in the group emits nothing.
+function thresholded(weights, threshold) {
+  if (!weights || !(threshold > 0)) return weights;
+  return Float32Array.from(weights, weight => (weight >= threshold ? weight : 0));
+}
+
+function surfaceSampler(triangles, vectors, weights, threshold) {
   const cumulative = [];
   let total = 0;
   for (const triangle of triangles) {
@@ -67,14 +75,22 @@ function surfaceSampler(triangles, vectors) {
       else high = middle;
     }
     const triangle = triangles[low];
-    const root = Math.sqrt(random());
-    const along = random();
+    let root = Math.sqrt(random());
+    let along = random();
+    // A point in a triangle with one painted corner is only painted near that corner: draw again until the interpolated weight reaches the threshold.
+    for (let attempt = 0; weights && threshold > 0 && attempt < MAX_THRESHOLD_TRIES; attempt++) {
+      const interpolated = weights[triangle.vertices[0]] * (1 - root) + weights[triangle.vertices[1]] * root * (1 - along) + weights[triangle.vertices[2]] * root * along;
+      if (interpolated >= threshold) break;
+      root = Math.sqrt(random());
+      along = random();
+    }
     const weightB = root * (1 - along);
     const weightC = root * along;
     const weightA = 1 - root;
     const point = [0, 1, 2].map(axis => triangle.a[axis] * weightA + triangle.b[axis] * weightB + triangle.c[axis] * weightC);
     const velocity = vectors ? [0, 1, 2].map(axis => vectorAt(vectors, triangle.vertices[0], axis) * weightA + vectorAt(vectors, triangle.vertices[1], axis) * weightB + vectorAt(vectors, triangle.vertices[2], axis) * weightC) : undefined;
-    return { point, normal: triangle.normal, velocity };
+    const weight = weights ? weights[triangle.vertices[0]] * weightA + weights[triangle.vertices[1]] * weightB + weights[triangle.vertices[2]] * weightC : undefined;
+    return { point, normal: triangle.normal, velocity, weight };
   };
 }
 
@@ -224,17 +240,20 @@ function edgeSampler(positions, indices, weights, sharpAngle) {
  * for a volume. `weights` is an optional vertex group (one weight per vertex) for the surface, vertices and edges modes.
  * `sharpAngle` (degrees, edges mode only) keeps the edges that are open or bend more than that. `vectors` is an optional
  * per-vertex velocity (three floats per vertex, such as the ocean's spray) for the surface and vertices modes: each
- * sample then also returns `velocity`, interpolated across the triangle. Returns null when the
+ * sample then also returns `velocity`, interpolated across the triangle, and a surface sample returns the `weight` of the group at its point. `threshold` (0 to 1, default 0) drops the weights under it,
+ * and on a surface every point must reach it too, so only the strongly painted part of the group emits. Returns null when the
  * mesh cannot supply the mode (no area, no triangles, no edge left, or a group that weighs nothing).
  */
-export function createMeshSource(positions, normals, indices, mode, weights = null, sharpAngle = null, vectors = null) {
+export function createMeshSource(positions, normals, indices, mode, weights = null, sharpAngle = null, vectors = null, threshold = 0) {
+  const rawWeights = weights;
+  weights = thresholded(weights, threshold);
   const triangles = trianglesOf(positions, indices, weights);
   if (!triangles.length) return null;
   let sampler = null;
   if (mode === 'vertices') sampler = vertexSampler(positions, normals, weights, vectors);
   else if (mode === 'edges') sampler = edgeSampler(positions, indices, weights, sharpAngle);
   else if (mode === 'volume') sampler = volumeSampler(triangles, positions);
-  else sampler = surfaceSampler(triangles, mode === 'surface' ? vectors : null);
+  else sampler = surfaceSampler(triangles, mode === 'surface' ? vectors : null, rawWeights, threshold);
   if (!sampler) return null;
   return Object.freeze({
     mode,

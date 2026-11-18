@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createMeshData, applyMeshEdits } from '../src/mesh.js';
 import { vertexGroupWeights, VECTOR_PREFIX } from '../src/mesh-data.js';
 import { createAgentScene } from '../src/agent-scene.js';
+import { extractRender } from '../src/mesh-render.js';
 import { createMeshSource } from '../src/particle-emitter-mesh.js';
 
 const SEA = { op: 'ocean', seed: 3, windSpeed: 12, size: 2, resolution: 4, choppiness: 2, time: 1.5 };
@@ -144,4 +145,32 @@ test('a surface sample interpolates the vertex vectors across its triangle', () 
     const { point, velocity } = source.sample(random);
     assert.ok(Math.abs(velocity[0] - 3 * point[0]) < 1e-9 && Math.abs(velocity[2] - 3 * point[2]) < 1e-9, 'the vector grows with the point toward its corner');
   }
+});
+
+// Spawn points of a surface emitter over a rough sea, split by the spray weight at the point.
+function sprayWeightsOfSpawns(threshold) {
+  const grid = flatGrid(24, 4);
+  const sea = applyMeshEdits(grid, [{ ...SEA, spray: true }]).mesh;
+  const { geometry } = extractRender(sea);
+  const source = createMeshSource(geometry.positions, geometry.normals, geometry.indices, 'surface', geometry.vertexGroups.spray, null, geometry.vertexVectors.spray, threshold);
+  let state = 777;
+  const random = () => (state = (state * 1664525 + 1013904223) % 4294967296) / 4294967296;
+  return Array.from({ length: 1500 }, () => source.sample(random).weight);
+}
+
+test('a group threshold keeps spawn points off the weakly sprayed water', () => {
+  const faint = weights => weights.filter(weight => weight < 0.3).length;
+  const without = sprayWeightsOfSpawns(0);
+  const withThreshold = sprayWeightsOfSpawns(0.3);
+  assert.ok(faint(without) > 150, `${faint(without)} of 1500 spawn points sit under spray weight 0.3 without a threshold`);
+  assert.equal(faint(withThreshold), 0, 'no spawn point under the threshold');
+  assert.ok(withThreshold.every(weight => weight >= 0.3));
+});
+
+test('groupThreshold needs a group and stays between 0 and 1', () => {
+  const failure = (emitter, pattern) => assert.throws(() => createAgentScene(seaRecipe(emitter)), pattern);
+  const ungrouped = seaRecipe({ groupThreshold: 0.3 });
+  delete ungrouped.particles.systems[0].emitter.group;
+  assert.throws(() => createAgentScene(ungrouped), /emitter.groupThreshold[^]*group/);
+  failure({ groupThreshold: 2 }, /emitter\.groupThreshold/);
 });

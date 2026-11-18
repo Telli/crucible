@@ -441,10 +441,10 @@ An `ocean` edit with `spray: true` writes the vertex group `spray` and the vecto
 { "geometries": [{ "id": "sea", "type": "mesh", "base": { "type": "box", "bevel": 0 },
     "edits": [{ "op": "subdivide", "levels": 5 }, { "op": "ocean", "windSpeed": 12, "choppiness": 2, "spray": true }] }],
   "particles": { "systems": [{ "node": "droplet", "count": 400, "speed": [0, 1], "lifetime": [0.6, 1.4],
-    "emitter": { "shape": "mesh", "mesh": "surface", "from": "vertices", "group": "spray", "velocityFrom": "spray", "velocityScale": 2 } }] } }
+    "emitter": { "shape": "mesh", "mesh": "surface", "from": "vertices", "group": "spray", "groupThreshold": 0.3, "scale": "shrink", "velocityFrom": "spray", "velocityScale": 2 } }] } }
 ```
 
-`velocityFrom` (the name of a vector on the emitter mesh; `from` "surface" or "vertices") adds that velocity, times `velocityScale` (1, -1000 to 1000) and in world space, to every particle. A name the mesh lacks is an error that lists the vectors it has. The foam must fold for there to be spray, so a sea with `choppiness` 0 sprays nowhere. The emitter reads the sea at the edit's `time`: droplets do not follow an `oceanTime` track, and there is no bow-spray emitter on a `boat` yet. The same seed gives the same droplets.
+`velocityFrom` (the name of a vector on the emitter mesh; `from` "surface" or "vertices") adds that velocity, times `velocityScale` (1, -1000 to 1000) and in world space, to every particle. A name the mesh lacks is an error that lists the vectors it has. `groupThreshold` (0 to 1, default 0, needs `group`) keeps the emitter off weakly painted water: only points where the group weighs at least that much emit, so spray comes from the crests and not from the whole foamy triangle around them. The foam must fold for there to be spray, so a sea with `choppiness` 0 sprays nowhere. The emitter reads the sea at the edit's `time`: droplets do not follow an `oceanTime` track, and there is no bow-spray emitter on a `boat` yet. The same seed gives the same droplets.
 
 ## Fracture and breakable glue
 

@@ -17,7 +17,7 @@ const SPARK_PRESETS = Object.freeze({
   explosion: Object.freeze({ count: 800, speed: [6, 24], spread: 180, lifetime: [0.5, 2], size: [0.006, 0.014], drag: 0.9, emitter: Object.freeze({ shape: 'sphere', radius: 0.2 }) }),
 });
 const HAIR_FIELDS = ['type', 'node', 'surface', 'seed', 'count', 'length', 'segments', 'width', 'droop', 'lean', 'sway', 'swayRate'];
-const EMITTER_FIELDS = ['shape', 'position', 'halfExtents', 'radius', 'mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale'];
+const EMITTER_FIELDS = ['shape', 'position', 'halfExtents', 'radius', 'mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold'];
 const EMITTER_SHAPES = ['point', 'box', 'sphere', 'disc', 'mesh'];
 const ORIENT_MODES = ['none', 'random', 'normal'];
 const SCALE_MODES = ['constant', 'shrink', 'grow'];
@@ -69,6 +69,12 @@ function normalizeMeshEmitter(input, emitter, context, path) {
   if (input.normalSpeed !== undefined) {
     emitter.normalSpeed = finiteNumber(input.normalSpeed, `${path}.normalSpeed`, -1000, 1000);
   }
+  if (input.groupThreshold !== undefined) {
+    if (!emitter.group) {
+      throw invalidField(`${path}.groupThreshold`, input.groupThreshold, `left out unless ${path}.group names a vertex group, such as "spray"`);
+    }
+    emitter.groupThreshold = finiteNumber(input.groupThreshold, `${path}.groupThreshold`, 0, 1);
+  }
   normalizeVelocitySource(input, emitter, from, path);
 }
 
@@ -108,7 +114,7 @@ function normalizeEmitter(input, context, path) {
   if (shape === 'mesh') {
     normalizeMeshEmitter(input, emitter, context, path);
   } else {
-    for (const field of ['mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale']) {
+    for (const field of ['mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold']) {
       if (input[field] !== undefined) throw invalidField(`${path}.${field}`, input[field], `left out unless ${path}.shape is "mesh"`);
     }
   }
@@ -498,7 +504,7 @@ function meshSourceOf(system, nodes, geometries, systemIndex) {
   const sharpAngle = emitter.sharpAngle ?? null;
   const sourceMatrix = nodeMatrix(sourceNode);
   const vectors = emitter.velocityFrom ? velocityVectorOf(emitter, geometry, sourceMatrix, emitterPath) : null;
-  const source = createMeshSource(world.positions, world.normals, geometry.indices, emitter.from, weights, sharpAngle, vectors);
+  const source = createMeshSource(world.positions, world.normals, geometry.indices, emitter.from, weights, sharpAngle, vectors, emitter.groupThreshold ?? 0);
   if (!source) {
     const groupNote = emitter.group ? ` and some weight in vertex group "${emitter.group}"` : '';
     throw invalidField(`${emitterPath}.mesh`, emitter.mesh, `a node whose mesh has triangles with some area${groupNote}, because emitter.from is "${emitter.from}"`);
