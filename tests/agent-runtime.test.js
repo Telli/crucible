@@ -121,7 +121,7 @@ function hitNearestLamp(ray) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, disposeGate, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, disposeGate, disposeLostBridge = false, hangBrowserClose = false, closeTimeoutMs, failFirstGoto = false, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
   const events = [];
   const sourceCalls = [];
   const sandboxTimers = new Set();
@@ -141,7 +141,12 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     route() {}
     setDefaultTimeout() {}
     setViewportSize(size) { this.viewport = size; viewports.push(size); }
-    goto() {}
+    goto() {
+      if (!this.privateTarget && failFirstGoto) {
+        failFirstGoto = false;
+        throw new Error('page.goto: Timeout 15000ms exceeded.');
+      }
+    }
     waitForFunction() {}
     isClosed() { return this.closed; }
     context() { return { newCDPSession: async () => ({
@@ -157,6 +162,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
         failPrivateCreate = false;
         throw new Error(typeof failPrivateCreateMessage === 'string' ? failPrivateCreateMessage : 'Injected private create failure');
       }
+      if (method === 'dispose' && this.privateTarget && disposeLostBridge) throw new TypeError("page.evaluate: TypeError: Cannot read properties of undefined (reading 'dispose')");
       if (method === 'dispose' && disposeGate) await disposeGate;
       if (method === 'resume' && failResume) throw new Error('Injected resume failure');
       if (method === 'create' && this.privateTarget && blockPrivateCreate) return new Promise((resolve, reject) => { this.rejectShot = reject; });
@@ -205,7 +211,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
       resolveAcquisitionStarted();
       return stallPrivatePage ? acquiredPage : (privatePage = new FakePage(true));
     },
-    close: async () => { await privatePage?.close(); await sourcePage.close(); events.push('browser:close'); },
+    close: async () => { if (hangBrowserClose) { hangBrowserClose = false; return new Promise(() => {}); } await privatePage?.close(); await sourcePage.close(); events.push('browser:close'); },
   };
   const originalSource = await readFile(new URL('../scripts/agent-runtime.mjs', import.meta.url), 'utf8');
   let source = originalSource
@@ -214,6 +220,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     .replace('export function createAgentRuntime', 'function createAgentRuntime')
     .replaceAll('import.meta.url', JSON.stringify(import.meta.url))
     .replace("import('playwright-core')", 'Promise.resolve({ chromium: globalThis.chromium })');
+  if (closeTimeoutMs) source = source.replace('const BROWSER_CLOSE_TIMEOUT_MS = 5000;', `const BROWSER_CLOSE_TIMEOUT_MS = ${closeTimeoutMs};`);
   if (deadlineMs) source = source.replace('const EVALUATION_TIMEOUT_MS = 30000;', `const EVALUATION_TIMEOUT_MS = ${deadlineMs};`);
   const context = createContext({ ...(await importedBindings(originalSource)),
     packageMetadata: { version: 'test' }, existsSync: () => true, readFile: async () => '',
@@ -556,6 +563,65 @@ runTest('a scene page that times out fails the runtime with the recovery hint, a
     const fresh = await runtime.create({ recipe: FRESH_RECIPE });
     assert.equal((await runtime.capabilities()).phase, 'ready');
     assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a timed-out preview call names the operation that ran long (#2200)', async () => {
+  const { runtime, sessionId } = await reviewRuntimeHarness({ hangMethod: 'apply', deadlineMs: 40 });
+  try {
+    await assert.rejects(runtime.apply({ sessionId, operations: [{ type: 'add-material', material: { id: 'stone', pattern: 'stone' } }, { type: 'add-material', material: { id: 'tiles', pattern: 'tiles' } }] }),
+      /operation "apply" \(2 operations: add-material\) exceeded 0\.04 seconds/);
+  } finally { await runtime.close(); }
+});
+
+runTest('the next scene_create after a timeout succeeds first try even when the old browser never finishes closing (#2200)', async () => {
+  const { runtime, sessionId } = await reviewRuntimeHarness({ hangMethod: 'inspect', deadlineMs: 40, hangBrowserClose: true, closeTimeoutMs: 30 });
+  try {
+    await assert.rejects(runtime.inspect({ sessionId }), /operation "inspect" exceeded.*scene_create/s);
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a browser start whose page load times out is retried once on a fresh browser (#2200)', async () => {
+  const harness = await reviewRuntimeHarness({ failFirstGoto: true });
+  try {
+    assert.equal(typeof harness.sessionId, 'string');
+  } finally { await harness.runtime.close(); }
+});
+
+runTest('a job whose page navigates under it fails with the page loss and the budget, then the next scene works (#2198)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const submitted = { kind: 'video', width: 1280, height: 720, fps: 24, duration: 12 };
+  const settings = { ...submitted, frameCount: 288 };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ failPrivateCreate: true, disposeLostBridge: true,
+    failPrivateCreateMessage: 'page.evaluate: Execution context was destroyed, most likely because of a navigation',
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test'), memory: 192 },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: submitted });
+    const failure = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} }, settings,
+      signal: new AbortController().signal, progress: async () => {} }).then(() => assert.fail('the job must fail'), error => error);
+    assert.match(failure.message, /preview page navigated or reloaded before the first frame at 1280x720/);
+    assert.match(failure.message, /raise --memory \(now 192 MiB\)/);
+    assert.doesNotMatch(failure.message, /reading 'dispose'/);
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a job that fails for its own reason is not masked by a lost page bridge on dispose (#2198)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ failPrivateCreate: true, disposeLostBridge: true, failPrivateCreateMessage: 'Injected scene problem',
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const failure = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }).then(() => assert.fail('the job must fail'), error => error);
+    assert.match(failure.message, /Injected scene problem/);
   } finally { await runtime.close(); }
 });
 
