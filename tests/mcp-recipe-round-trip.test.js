@@ -6,6 +6,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
 import { walkerRecipe } from '../bench/agent-modeling/walker.mjs';
 import { MOTION_TRACK_KINDS } from '../src/agent-motion.js';
+import { MOTION_TRACK_KIND_NAMES } from '../src/motion-track-kinds.js';
 import { createAgentScene, loadPhysicsEngine, AGENT_SCENE_CAPABILITIES } from '../src/agent-scene.js';
 
 await loadPhysicsEngine();
@@ -222,6 +223,7 @@ test('scene_create accepts a morph motion track and the shape key weight animate
 });
 
 test('scene_create takes every motion track kind the backend lists', async () => {
+  assert.deepEqual([...MOTION_TRACK_KIND_NAMES], [...MOTION_TRACK_KINDS], 'the MCP leaf list matches the motion backend');
   assert.deepEqual([...MOTION_TRACK_KINDS], ['node', 'material', 'camera', 'morph', 'geometry', 'light', 'sun', 'environment', 'effects']);
   await withRoundTripClient(async client => {
     const wrongKind = await call(client, 'scene_create', { recipe: oneBoxRecipe({ motion: { duration: 1, tracks: [{ kind: 'sky', id: 'a', property: 'x', keyframes: [{ time: 0, value: 0 }] }] } }) });

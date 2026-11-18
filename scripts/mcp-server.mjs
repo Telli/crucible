@@ -1,5 +1,5 @@
 import { answerCapabilities, MAX_TOPICS_PER_CALL } from './capabilities-topics.mjs';
-import { MOTION_TRACK_KINDS } from '../src/agent-motion.js';
+import { MOTION_TRACK_KIND_NAMES } from '../src/motion-track-kinds.js';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { readEnvironmentVariable } from '../src/environment-variable.js';
@@ -629,7 +629,7 @@ const motionTrackProperties = {
   geometry: ['oceanTime'],
 };
 // The backend's list, so scene_create and set-motion accept the same kinds.
-const motionTrackKinds = MOTION_TRACK_KINDS;
+const motionTrackKinds = MOTION_TRACK_KIND_NAMES;
 const motionTrackFields = ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'];
 // A union reports only "Invalid input"; name the field and the allowed ones the way set-motion does.
 function motionTrackUnionMessage(issue) {
