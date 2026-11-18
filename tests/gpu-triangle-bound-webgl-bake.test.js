@@ -34,12 +34,11 @@ globalThis.OffscreenCanvas = class {
 
 const { bakeLightmapsAsync } = await import('../src/light-bake-gpu.js');
 
-const cube = box(0, 1);
-
+// Each cube has a geometry of its own: copies that share one are held once by the WebGL2 tracer (#2239), so they would not reach the bound.
 function cubeParts(count) {
   return Array.from({ length: count }, (_, index) => ({
     name: `cube-${index}`,
-    geometry: cube,
+    geometry: box(0, 1),
     matrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, index * 2, 0, 0, 1]),
     material: { tag: 'surface', color: [0.7, 0.7, 0.7], metallic: 0, roughness: 0.8, emission: 0 },
   }));

@@ -855,6 +855,8 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
     instances,
     materials,
     traceMaterials,
+    // The GPU tracers read this per part flag from the material table; the native kernel reads the instance visibility instead.
+    ...(parts.some(part => part.shadowOnly === true) ? { shadowOnlyParts: Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) } : {}),
     lights: resolveLights(environment, limits.lights, parts),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
     volume: resolveTraceVolume(environment.volumeFog),
@@ -862,6 +864,19 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
     surfaceOffset: extent * 1e-5,
     farDistance: extent * 1e4,
   };
+}
+
+/** True for a trace scene that keeps copies of one mesh as instances instead of flattened triangles. */
+export function isInstancedScene(scene) {
+  return Array.isArray(scene.instances);
+}
+
+/** The triangles a scene holds once per distinct mesh: what the GPU tables carry, and what the triangle limit counts. */
+export function uniqueTriangleCount(scene) {
+  if (!isInstancedScene(scene)) return scene.indices.length / 3;
+  let total = 0;
+  for (const geometry of new Set(scene.instances.map(instance => instance.geometry))) total += geometry.indices.length / 3;
+  return total;
 }
 
 /**
@@ -877,7 +892,9 @@ export async function buildTraceSceneForDevice(allParts, environment, gpuModule)
   } catch {
     deviceLimit = undefined;
   }
-  return buildTraceScene(allParts, environment, deviceLimit === undefined ? {} : { gpuTriangleLimit: deviceLimit });
+  const options = deviceLimit === undefined ? {} : { gpuTriangleLimit: deviceLimit };
+  if (gpuModule.supportsInstancing === true) options.instancing = true;
+  return buildTraceScene(allParts, environment, options);
 }
 
 /**
