@@ -6,6 +6,7 @@ import { CAMERA_LENS_FIELDS } from './camera.js';
 import { createSkeletonPose } from './skeleton-pose.js';
 import { createNodeConstraintEvaluator, normalizeConstraints, normalizeDrivers } from './node-constraints.js';
 import { normalizeProperties, propertyKinds } from './motion-properties.js';
+import { IK_SOLVER_TYPE_NAMES } from './motion-ik-solver-types.js';
 import { normalizeClipLayers } from './agent-clip-layers.js';
 import { normalizeKeyframeEasing } from './easing.js';
 import { normalizeFootLock } from './foot-lock.js';
@@ -412,7 +413,7 @@ function normalizeIkSolver(input, position, nodes, visibleNodes, duration) {
     }
     return solver;
   }
-  throw invalidField(`${label}.type`, input?.type, 'one of two-bone, aim, chain or spline');
+  throw invalidField(`${label}.type`, input?.type, `one of ${IK_SOLVER_TYPE_NAMES.slice(0, -1).join(', ')} or ${IK_SOLVER_TYPE_NAMES.at(-1)}`);
 }
 
 function solverNodes(solver) {

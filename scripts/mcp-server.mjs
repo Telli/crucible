@@ -1,5 +1,9 @@
 import { answerCapabilities, MAX_TOPICS_PER_CALL } from './capabilities-topics.mjs';
 import { MOTION_TRACK_KIND_NAMES } from '../src/motion-track-kinds.js';
+import { CONSTRAINT_TYPE_NAMES } from '../src/motion-constraint-types.js';
+import { DRIVER_VARIABLE_KIND_NAMES } from '../src/motion-driver-variable-kinds.js';
+import { IK_SOLVER_TYPE_NAMES } from '../src/motion-ik-solver-types.js';
+import { MOTION_PROPERTY_KIND_NAMES } from '../src/motion-property-kinds.js';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { readEnvironmentVariable } from '../src/environment-variable.js';
@@ -570,14 +574,30 @@ const axisNames = z.array(axisName).min(1).max(3);
 const signedAxis = z.enum(['+x', '-x', '+y', '-y', '+z', '-z']);
 const constraintSpace = z.enum(['world', 'local']).optional();
 const limitRange = z.tuple([z.number().min(-1e6).max(1e6), z.number().min(-1e6).max(1e6)]).optional();
+// One entry per kind of DRIVER_VARIABLE_KIND_NAMES, so a kind the backend gains fails here until it has a shape.
+const driverVariableShapes = {
+  custom: z.strictObject({ node: identifier, name: z.string().max(64), component: axisName.optional() }),
+  distance: z.strictObject({ from: identifier, to: identifier }),
+  rotationDifference: z.strictObject({ from: identifier, to: identifier }),
+};
+function driverVariableSchemas() {
+  return DRIVER_VARIABLE_KIND_NAMES.map(kind => {
+    if (!driverVariableShapes[kind]) throw new Error('Driver variable kind without a schema: ' + kind);
+    return z.strictObject({ [kind]: driverVariableShapes[kind] });
+  });
+}
 // A bounded expression: data only, never code. See docs/agent-motion.md for the operators.
 const expression = z.lazy(() => z.union([
   z.number().min(-1e6).max(1e6),
   z.literal('time'),
   z.strictObject({ node: identifier, property: z.enum(['translation', 'rotation', 'scale']), component: axisName, space: z.enum(['local', 'world']).optional() }),
+  ...driverVariableSchemas(),
   z.record(z.string().max(24), z.union([z.array(expression).min(1).max(8), expression])),
 ])).describe('Number, "time", {"node","property","component","space"} read, or an operator like {"mul":[2,"time"]}, {"neg":x} too. Operators as in field expressions (scene_capabilities), no vectors, attributes or noise. At most 64 parts, 8 deep.');
 const influence = z.union([unit, expression]).optional().describe('0 to 1 blend of the constraint, or an expression.');
+// Types without a schema of their own here; the backend checks their fields.
+const describedConstraintTypes = ['copy_location', 'copy_rotation', 'copy_scale', 'limit_location', 'limit_rotation', 'track_to', 'child_of'];
+const otherConstraintTypes = CONSTRAINT_TYPE_NAMES.filter(type => !describedConstraintTypes.includes(type));
 const constraint = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('copy_location'), node: identifier, target: identifier, axes: axisNames.optional(), invert: axisNames.optional(), offset: z.boolean().optional(), space: constraintSpace, influence }),
   z.strictObject({ type: z.literal('copy_rotation'), node: identifier, target: identifier, axes: axisNames.optional(), invert: axisNames.optional(), mix: z.enum(['replace', 'add']).optional(), space: constraintSpace, influence }),
@@ -586,8 +606,18 @@ const constraint = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('limit_rotation'), node: identifier, x: degreeRange.optional(), y: degreeRange.optional(), z: degreeRange.optional(), space: constraintSpace, influence }),
   z.strictObject({ type: z.literal('track_to'), node: identifier, target: identifier, trackAxis: signedAxis.optional(), upAxis: axisName.optional(), worldUp: vector3.optional(), influence }),
   z.strictObject({ type: z.literal('child_of'), node: identifier, target: identifier, inverse: z.enum(['rest', 'none']).optional(), influence }),
-  z.strictObject({ type: z.enum(['floor', 'copy_transforms', 'limit_distance', 'limit_scale', 'stretch_to', 'locked_track', 'transformation', 'action']), node: identifier, target: identifier.optional(), axis: signedAxis.optional(), offset: z.number().min(-1e6).max(1e6).optional(), influence, args: z.record(z.string(), z.unknown()).optional() }),
+  z.looseObject({ type: z.enum(otherConstraintTypes), node: identifier, influence }).describe('The other constraint types take their fields flat beside type and node: scene_capabilities motionConstraints lists the fields of each type, and the backend names a wrong one.'),
 ]);
+const propertyValue = z.union([finite, vector3]);
+const motionProperty = z.strictObject({
+  node: identifier,
+  name: z.string().min(1).max(64),
+  kind: z.enum(MOTION_PROPERTY_KIND_NAMES).optional().describe('number (default), vector or color.'),
+  value: propertyValue.optional().describe('Constant value; leave out when keys are given.'),
+  min: finite.optional(),
+  max: finite.optional(),
+  keys: z.array(z.strictObject({ time: z.number().min(0).max(30), value: propertyValue })).min(1).max(16).optional().describe('Linear keys with rising times.'),
+});
 const driver = z.strictObject({
   target: z.union([
     z.strictObject({ kind: z.literal('node'), id: identifier, property: z.enum(['translation', 'rotation', 'scale']), component: axisName }),
@@ -598,6 +628,7 @@ const driver = z.strictObject({
   ]),
   expression,
 });
+const otherIkSolverTypes = IK_SOLVER_TYPE_NAMES.filter(type => type !== 'two-bone' && type !== 'aim');
 const ikSolver = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('two-bone'),
@@ -619,6 +650,7 @@ const ikSolver = z.discriminatedUnion('type', [
     maxAngle: z.number().min(0.001).max(180).optional().describe('Limits the whole turn, in degrees.'),
     weight: ikWeight,
   }).describe('Point a node, such as a head, lamp or camera, at a target.'),
+  z.looseObject({ type: z.enum(otherIkSolverTypes), weight: ikWeight }).describe('A chain of any length (type chain: chain or root and end, target, pole, stretch, iterations, limits) or a chain along a curve (type spline: chain or root and end, curve, stretch). Fields are flat beside type: scene_capabilities motionIk lists them.'),
 ]);
 // Properties of the tracks the schema accepts; light, sun, environment and effects take any property name here and the backend checks it.
 const motionTrackProperties = {
@@ -651,6 +683,7 @@ const motion = z.strictObject({
   springs: z.record(z.string(), z.unknown()).optional().describe('Spring bones for hair, tails and soft parts, VRM model: { chains: [{ bones, stiffness, dragForce, gravityPower, gravityDir, hitRadius, colliders }], colliders: [{ id, bone, type, offset, radius }] }. scene_capabilities springBones has the ranges.'),
   constraints: z.array(constraint).max(32).optional().describe('Blender-style node constraints, run in order after the tracks, drivers and IK, each on the pose the one before left: copy_location, copy_rotation, copy_scale, limit_location, limit_rotation, track_to, child_of, floor. Euler angles are XYZ in degrees; space defaults to world. Same result at any time, so seeking equals playing.'),
   drivers: z.array(driver).max(32).optional().describe('Drive one node component or material property from a bounded expression over time and other nodes\' values. A driven property cannot also have a track.'),
+  properties: z.array(motionProperty).max(32).optional().describe('Custom properties on nodes: named values, constant or keyed, that driver expressions and constraint influence read with {"custom":{"node","name"}}. A property holds one number, vector or colour inside its min and max.'),
   loop: z.boolean().optional(),
   tracks: z.array(z.union([
     motionTrack('node', 'translation', vector3, vector3),

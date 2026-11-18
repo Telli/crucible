@@ -316,9 +316,9 @@ own transform under its parent.
 | `shrinkwrap` | `target`, `mode` (`nearest`, `project`, `surface`), `projectAxis` (default `-y`), `distance` (default `0`) | Snap the node onto the target's bounding surface or along `projectAxis` at `distance` |
 | `armature` | `targets` (1 to 8 of `{ target, weight }`) | Blend `child_of` transforms from multiple target nodes by their weights |
 
-Over MCP, the seven newest types (`copy_transforms` to `action`) take `node`, `type` and `args`, an object holding every other
-field above (`target`, `influence` and the type's own); the validator names the allowed fields when one is wrong. Direct fields
-also work from code, but not both for the same key.
+Over MCP, `scene_create` and `scene_apply` take the fourteen newest types (`copy_transforms` to `armature`) with their fields flat beside
+`node` and `type`, or inside `args`, an object holding every other field above (`target`, `influence` and the type's own); the
+validator names the allowed fields when one is wrong. Giving the same key both ways is an error.
 
 Not covered yet: `use_*` switches on `child_of`, `damped_track`, bone sub-targets and `head_tail`.
 
