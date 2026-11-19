@@ -413,11 +413,12 @@ function buildTexture(THREE, descriptor, label, state) {
   return state.textures.get(descriptor);
 }
 
-function buildMaterial(THREE, source, label, state) {
+function buildMaterial(THREE, source, label, state, hasVertexColors) {
   const usesLayers = LAYER_FIELDS.some(([, field]) => source[field] !== undefined);
   const MaterialClass = usesLayers && typeof THREE.MeshPhysicalMaterial === 'function' ? THREE.MeshPhysicalMaterial : THREE.MeshStandardMaterial;
   if (usesLayers && MaterialClass === THREE.MeshStandardMaterial) state.warnings.push(`${label}: the THREE namespace has no MeshPhysicalMaterial, so clearcoat, transmission and ior are dropped.`);
   const material = new MaterialClass();
+  material.vertexColors = hasVertexColors;
   material.color.setRGB(...source.color);
   material.metalness = source.metallic ?? 0;
   material.roughness = source.roughness ?? 1;
@@ -454,7 +455,8 @@ function buildMaterial(THREE, source, label, state) {
 /**
  * Builds a Group of Mesh objects from Crucible parts and returns `{ object, warnings }`. THREE is the namespace of three.js
  * (`import * as THREE from 'three'`). Parts that share a geometry object share a BufferGeometry, and parts that share a
- * material object share a material. Each mesh takes its part matrix as is (`matrixAutoUpdate` is off), so the world
+ * material object share a material, except that a part with `geometry.colors` gets a variant with `vertexColors` on, so three.js reads
+ * the colours, and a part without them keeps the plain one. Each mesh takes its part matrix as is (`matrixAutoUpdate` is off), so the world
  * matrix matches the part exactly; copy `mesh.matrix` into position, quaternion and scale to animate it.
  * Options: `maxParts`, `maxVertices`, `name` of the group.
  */
@@ -475,8 +477,11 @@ export function toThreeObject(parts, THREE, options = {}) {
     const label = checkPart(part, index, limits);
     if (part.skin || part.morph) state.warnings.push(`${label}: skin and morph targets are not exported to three.js objects.`);
     if (!geometries.has(part.geometry)) geometries.set(part.geometry, buildGeometry(THREE, part.geometry));
-    if (!materials.has(part.material)) materials.set(part.material, buildMaterial(THREE, part.material, label, state));
-    const mesh = new THREE.Mesh(geometries.get(part.geometry), materials.get(part.material));
+    const hasVertexColors = Boolean(part.geometry.colors);
+    const variants = materials.get(part.material) ?? new Map();
+    materials.set(part.material, variants);
+    if (!variants.has(hasVertexColors)) variants.set(hasVertexColors, buildMaterial(THREE, part.material, label, state, hasVertexColors));
+    const mesh = new THREE.Mesh(geometries.get(part.geometry), variants.get(hasVertexColors));
     mesh.name = part.name ?? `part-${index}`;
     mesh.matrixAutoUpdate = false;
     mesh.matrix.fromArray(Array.from(part.matrix));

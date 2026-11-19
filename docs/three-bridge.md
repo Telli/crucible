@@ -56,7 +56,7 @@ const { object, warnings } = toThreeObject(parts, THREE, { name: 'scene' });
 threeScene.add(object);
 ```
 
-`object` is a `Group` of `Mesh` objects with `MeshStandardMaterial` (`MeshPhysicalMaterial` when a part uses transmission, clearcoat or ior). Parts that share a geometry or material share one `BufferGeometry` or material. Each mesh keeps its part matrix exactly, with `matrixAutoUpdate` off, so the world matrix equals the part's. To animate a mesh with `position` and `rotation`, decompose the matrix first: `mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale); mesh.matrixAutoUpdate = true;`. Skin and morph targets are not exported and are listed in `warnings`.
+`object` is a `Group` of `Mesh` objects with `MeshStandardMaterial` (`MeshPhysicalMaterial` when a part uses transmission, clearcoat or ior). Parts that share a geometry or material share one `BufferGeometry` or material. A part with `geometry.colors` gets a material with `vertexColors` on, so a material shared with a plain part exists once for each kind. Each mesh keeps its part matrix exactly, with `matrixAutoUpdate` off, so the world matrix equals the part's. To animate a mesh with `position` and `rotation`, decompose the matrix first: `mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale); mesh.matrixAutoUpdate = true;`. Skin and morph targets are not exported and are listed in `warnings`.
 
 ## Export a GLB
 
