@@ -251,6 +251,8 @@ export const STUDIO_CSS = `
   background: var(--studio-panel);
   color: var(--studio-text);
   box-shadow: var(--studio-shadow);
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
 }
 .crucible-studio-popover:popover-open {
   display: grid;
