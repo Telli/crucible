@@ -10,16 +10,23 @@ function validateFrameKeys(frames, framesPerSecond) {
   }
   if (frames.length === 0) throw new RangeError('Camera frames must hold at least one [eye, target] pair.');
   const isFiniteTriple = vector => Array.isArray(vector) && vector.length === 3 && vector.every(Number.isFinite);
-  frames.forEach((frame, index) => {
+  for (let index = 0; index < frames.length; index++) {
+    const frame = frames[index];
     if (!Array.isArray(frame) || !isFiniteTriple(frame[0]) || !isFiniteTriple(frame[1])) {
       throw new RangeError(`Camera frames[${index}] must be [eye, target], each three finite numbers.`);
     }
     if (Math.hypot(frame[1][0] - frame[0][0], frame[1][1] - frame[0][1], frame[1][2] - frame[0][2]) <= 1e-8) {
       throw new RangeError(`Camera frames[${index}] eye and target are the same point, so there is no view direction; move the target away from the eye.`);
     }
-  });
+  }
   if (!Number.isFinite(frames.length / framesPerSecond)) {
     throw new RangeError(`Camera fps ${framesPerSecond} is too small for ${frames.length} frames to have a finite duration; pass a larger fps.`);
+  }
+}
+
+function requireFiniteSeconds(seconds) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) {
+    throw new RangeError(`Camera sample time must be a finite number of seconds, got ${seconds}.`);
   }
 }
 
@@ -35,7 +42,7 @@ export function createCameraSampler(keys) {
     return {
       duration: frames.length / framesPerSecond,
       sample(seconds) {
-        if (!Number.isFinite(seconds)) throw new RangeError(`Camera sample time must be a finite number of seconds, got ${seconds}.`);
+        requireFiniteSeconds(seconds);
         const position = Math.max(0, Math.min(frames.length - 1, seconds * framesPerSecond));
         const before = Math.floor(position);
         const after = Math.min(frames.length - 1, before + 1);
@@ -51,6 +58,7 @@ export function createCameraSampler(keys) {
   return {
     duration: keys.duration,
     sample(seconds) {
+      requireFiniteSeconds(seconds);
       const pose = path.sample(Math.min(seconds, keys.duration));
       return { eye: Array.from(pose.eye), target: Array.from(pose.target), up: Array.from(pose.up), fov: pose.fov };
     },
