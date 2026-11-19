@@ -5,7 +5,10 @@
  * renderer:
  *   cook-file  a Blender demo scene, converted to a GLB and path traced with Cook (needs Blender and the Cook native addon)
  *   media      scripts/render-media.mjs on a page of the site or a showcase scene.json (Chrome, GPU)
+ *   media-glb  scripts/render-media.mjs on a downloaded CC0 glTF model in a scene file the script writes (Chrome, GPU)
  *   recipe     a scene recipe from scripts/readme-previews/, rendered through the MCP render job tools
+ * A still that is not path traced, and every clip, is rendered STILL_SUPERSAMPLE times wider and taller than it is published and then
+ * shrunk with a Lanczos filter, which measured sharper than rendering at the published size (docs/readme-previews.md has the numbers).
  * Still sizes and clip frame counts (renderFps x renderSeconds, played at playFps) match the files published in public/previews. A clip keeps its WebP under maxBytes.
  */
 export const PREVIEWS = [
@@ -20,13 +23,13 @@ export const PREVIEWS = [
     recipe: 'cook-dof', samples: 24 },
   { name: 'showcase-airport', kind: 'still', renderer: 'media', width: 1280, height: 720, quality: 82,
     mediaArguments: ['--scene', 'file', '--config', 'public/showcase/airport/scene.json'] },
-  { name: 'showcase-port', kind: 'still', renderer: 'media', width: 632, height: 355, quality: 82,
+  { name: 'showcase-port', kind: 'still', renderer: 'media', width: 1280, height: 720, quality: 82,
     mediaArguments: ['--scene', 'file', '--config', 'public/showcase/port/scene.json'] },
   { name: 'cook-monk', kind: 'still', renderer: 'cook-file', width: 1600, height: 1200, quality: 86,
     source: 'monk', samples: 512, bounces: 8,
     eye: [20, 0.9, -9.5], target: [20, 0.9, -19.5], fov: 55.7945 },
-  { name: 'wall-e', kind: 'still', renderer: 'media', width: 1920, height: 1080, quality: 82,
-    mediaArguments: ['--scene', 'object', '--preset', 'high', '--assembly', '0'] },
+  { name: 'robot', kind: 'still', renderer: 'media-glb', width: 1280, height: 720, quality: 82,
+    source: 'robot', eye: [3.2, 3.2, 10.5], target: [0, 2.3, 0], fov: 35 },
 ];
 
 /** The Blender demo files the cook-file previews start from (all CC0 or CC-BY, credited in README.md). */
@@ -35,7 +38,13 @@ export const DEMO_SOURCES = {
   monk: { url: 'https://download.blender.org/demo/cycles/lone-monk_cycles_and_exposure-node_demo.blend', zipped: false },
 };
 
+/** CC0 glTF models the media-glb previews show. RobotExpressive is by Tomas Laulhe (Quaternius), CC0 1.0, as packed for three.js by Don McCurdy. */
+export const MODEL_SOURCES = {
+  robot: { url: 'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/RobotExpressive/RobotExpressive.glb', file: 'RobotExpressive.glb' },
+};
+
 export const PREVIEW_STILL_WIDTH = 640;
+export const STILL_SUPERSAMPLE = 2;
 export const PREVIEW_COOK_SAMPLES = 16;
 
 export const USAGE = `Rebuild the pictures at the top of README.md.
@@ -94,6 +103,13 @@ export function renderSize(preview, previewMode) {
   if (!previewMode || preview.kind === 'clip' || preview.width <= PREVIEW_STILL_WIDTH) return { width: preview.width, height: preview.height };
   const width = PREVIEW_STILL_WIDTH;
   return { width, height: 2 * Math.round(preview.height * width / preview.width / 2) };
+}
+
+/** The size a picture is drawn at before it is shrunk to its published size: STILL_SUPERSAMPLE times larger for a still that is not path traced and for every clip, in a full-quality run. */
+export function drawSize(preview, previewMode) {
+  const size = renderSize(preview, previewMode);
+  const supersampled = !previewMode && preview.renderer !== 'cook-file';
+  return supersampled ? { width: size.width * STILL_SUPERSAMPLE, height: size.height * STILL_SUPERSAMPLE } : size;
 }
 
 /** The names of public/previews pictures that README.md shows, in the order they appear. */

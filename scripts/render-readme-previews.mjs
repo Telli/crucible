@@ -14,13 +14,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 import sharp from 'sharp';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
-import { DEMO_SOURCES, PREVIEW_COOK_SAMPLES, USAGE, needsCook, parseArguments, renderSize, selectPreviews } from './readme-previews-plan.mjs';
+import { DEMO_SOURCES, MODEL_SOURCES, PREVIEW_COOK_SAMPLES, USAGE, drawSize, needsCook, parseArguments, renderSize, selectPreviews } from './readme-previews-plan.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const publishedFolder = join(root, 'public', 'previews');
 const SKY_FILE = join(root, 'public', 'showcase', 'airport', 'sky.hdr');
 const PREVIEW_WEBP_QUALITY = 40;
-const CLIP_QUALITY_LADDER = [85, 75, 65, 55, 45, 35];
+const CLIP_QUALITY_LADDER = [95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35];
 
 function ffmpegPath() {
   const local = join(homedir(), '.local', 'bin', 'ffmpeg.exe');
@@ -135,11 +135,30 @@ async function renderRecipeClip(preview, size, options, outputMp4) {
 
 // ---------- Site pages and showcase scenes (render-media) ----------
 
-function renderMedia(preview, size, outputPath) {
+/** Downloads a CC0 model once and writes the scene file that shows it; returns the path of that scene file. */
+async function prepareModelScene(preview, options) {
+  const source = MODEL_SOURCES[preview.source];
+  const modelFolder = join(resolve(options.cache ?? join(homedir(), '.cache', 'crucible-readme-previews')), preview.source);
+  await mkdir(modelFolder, { recursive: true });
+  if (!existsSync(join(modelFolder, source.file))) await downloadTo(source.url, join(modelFolder, source.file));
+  await copyFile(SKY_FILE, join(modelFolder, 'sky.hdr'));
+  const sceneFile = join(modelFolder, `${preview.name}.scene.json`);
+  await writeFile(sceneFile, JSON.stringify({
+    id: preview.source, glb: source.file, hdri: 'sky.hdr',
+    hdriOptions: { intensity: 1, showBackground: true, backgroundBlur: 0.4 },
+    gltfOptions: { maxTexturePixels: 33554432 },
+    exposure: 1, eye: preview.eye, target: preview.target,
+    renderer: { ground: false, world: true, hdr: true, samples: 8, pixelRatio: 1, memoryBudgetMiB: 1024 },
+    frame: { fov: preview.fov, near: 0.05, far: 500, exposure: 1, effects: { saturation: 1.05, contrast: 1.05, vignette: 0.15 } },
+  }, null, 2));
+  return sceneFile;
+}
+
+function renderMedia(preview, size, outputPath, mediaArguments = preview.mediaArguments) {
   const kindArguments = preview.kind === 'clip'
     ? ['--kind', 'video', '--start', '0', '--duration', String(preview.renderSeconds), '--fps', String(preview.renderFps)]
     : ['--kind', 'image'];
-  runNode(['scripts/render-media.mjs', ...kindArguments, ...preview.mediaArguments, '--width', String(size.width), '--height', String(size.height), '--output', outputPath], `render-media of ${preview.name}`);
+  runNode(['scripts/render-media.mjs', ...kindArguments, ...mediaArguments, '--width', String(size.width), '--height', String(size.height), '--output', outputPath], `render-media of ${preview.name}`);
 }
 
 // ---------- Encoding ----------
@@ -217,16 +236,20 @@ async function writePair(preview, newWebp, pairsFolder, size, workFolder) {
 async function renderPreview(preview, options, workFolder) {
   const previewMode = Boolean(options.preview);
   const size = renderSize(preview, previewMode);
+  const drawnSize = drawSize(preview, previewMode);
   const destination = join(options.preview ? resolve(options.preview) : publishedFolder, `${preview.name}.webp`);
   const intermediate = join(workFolder, `${preview.name}.${preview.kind === 'clip' ? 'mp4' : 'png'}`);
   if (preview.renderer === 'cook-file') await renderCookStill(preview, size, options, workFolder, intermediate);
-  else if (preview.renderer === 'recipe') await renderRecipeClip(preview, size, options, intermediate);
-  else renderMedia(preview, size, intermediate);
+  else if (preview.renderer === 'recipe') await renderRecipeClip(preview, drawnSize, options, intermediate);
+  else if (preview.renderer === 'media-glb') renderMedia(preview, drawnSize, intermediate, ['--scene', 'file', '--config', await prepareModelScene(preview, options)]);
+  else renderMedia(preview, drawnSize, intermediate);
   if (preview.kind === 'clip') await writeClip(intermediate, destination, preview, size, previewMode);
   else await writeStill(intermediate, destination, preview, size, previewMode ? PREVIEW_WEBP_QUALITY : preview.quality);
   const { size: bytes } = await stat(destination);
-  console.log(`${preview.name}: ${size.width}x${size.height}, ${bytes} bytes (published ${(await stat(join(publishedFolder, `${preview.name}.webp`))).size}) -> ${destination}`);
-  if (options.pairs) await writePair(preview, destination, resolve(options.pairs), size, workFolder);
+  const publishedFile = join(publishedFolder, `${preview.name}.webp`);
+  const publishedNote = existsSync(publishedFile) ? `published ${(await stat(publishedFile)).size}` : 'not published yet';
+  console.log(`${preview.name}: ${size.width}x${size.height}, ${bytes} bytes (${publishedNote}) -> ${destination}`);
+  if (options.pairs && existsSync(publishedFile)) await writePair(preview, destination, resolve(options.pairs), size, workFolder);
 }
 
 async function main() {
