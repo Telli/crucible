@@ -304,6 +304,7 @@ on:
       - 'src/path-tracer-subsurface.js'
       - 'src/path-tracer-volume.js'
       - 'src/path-tracer-water.js'
+      - 'src/path-tracer-water-medium.js'
       - 'src/path-tracer-webgpu-instancing.js'
       - 'src/path-tracer-webgpu-kernel.js'
       - 'src/path-tracer-webgpu-local-volumes.js'

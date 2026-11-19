@@ -37,6 +37,16 @@ export function waterTraceMaterial(material) {
   };
 }
 
+/**
+ * The extinction per metre of each colour channel that a traced water material absorbs with: -ln(attenuationColor) / attenuationDistance,
+ * which is absorption + turbidity for the default attenuation. The thin water medium (#2294) dims by the same numbers.
+ */
+export function waterExtinction(traceMaterial) {
+  const color = traceMaterial.attenuationColor ?? [1, 1, 1];
+  const distance = traceMaterial.attenuationDistance ?? WATER_TRACE_ATTENUATION_DISTANCE;
+  return Array.from(color, channel => -Math.log(Math.max(channel, 1e-6)) / distance);
+}
+
 /** What a water part asks for that a trace does not draw, as report notes: the ripples, foam, glint and ramp of the rasterizer. */
 export function describeUntracedWater(part) {
   const material = part.material ?? {};
