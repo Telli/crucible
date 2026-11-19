@@ -24,6 +24,11 @@ const AXIS_PARALLEL_LIMIT = 0.002;
 const OUTLINE_VERTEX_BUDGET = 4000;
 const RING_EDGE_ON_LIMIT = 0.12;
 const RING_RADIUS_FACTOR = 0.92;
+const SPAWN_CLEARANCE = 0.75;
+const SPAWN_STEP = 1.25;
+const SPAWN_ATTEMPTS = 16;
+// These lie on the ground under everything else, so they start at the centre whatever stands there.
+const GROUND_PRIMITIVES = new Set(['plane', 'terrain']);
 const ROTATION_DEGREES_PER_PIXEL = 0.75;
 const ROTATION_SNAP_DEGREES = 15;
 const TRANSLATION_SNAP_STEP = 0.25;
@@ -447,6 +452,21 @@ function upsertNodeKeyframeTrack(tracks, nodeId, property, time, value) {
     existing.keyframes.sort((first, second) => first.time - second.time);
   }
   return nextTracks;
+}
+
+// A new object lands beside what is already there, not inside it: the first free spot along X from where it would start.
+function freeSpawnTranslation(translation, nodes) {
+  const isTaken = offset => nodes.some(node => !node.parent && Math.hypot(
+    (node.translation?.[0] ?? 0) - translation[0] - offset,
+    (node.translation?.[2] ?? 0) - translation[2],
+  ) < SPAWN_CLEARANCE);
+  for (let attempt = 0; attempt < SPAWN_ATTEMPTS; attempt += 1) {
+    const offset = attempt * SPAWN_STEP;
+    if (!isTaken(offset)) {
+      return [translation[0] + offset, translation[1], translation[2]];
+    }
+  }
+  return translation;
 }
 
 function snapVector(values, step = TRANSLATION_SNAP_STEP) {
@@ -928,11 +948,31 @@ export function createStudioController({
       worldPerPixel,
       changed: false,
       deltaLabel: '',
+      baseOutline: nodeOutline(selectedNodeId),
       wrappedDegrees: 0,
       turnedDegrees: 0,
       sweepDegrees: 0,
     };
     return { nodeId: dragState.nodeId, tool: dragState.tool, axis: dragState.axis };
+  }
+
+  /**
+   * What a drag has changed so far, in screen points: the `outline` the object had when the drag began and, for a move,
+   * the pivot then (`from`) and now (`to`). Null until the drag has changed something.
+   */
+  function dragTrace() {
+    if (!dragState || !dragState.changed) {
+      return null;
+    }
+    const moves = dragState.tool === 'translate' || dragState.tool === 'snap';
+    const pivot = moves ? selectedPivotWorld() : null;
+    return {
+      tool: dragState.tool,
+      axis: dragState.axis,
+      outline: dragState.baseOutline,
+      from: pivot ? projectWorldPoint(Array.from(dragState.basePivot)) : null,
+      to: pivot ? projectWorldPoint(Array.from(pivot)) : null,
+    };
   }
 
   /**
@@ -1205,7 +1245,7 @@ export function createStudioController({
       label: options.label ?? `${spec.labelPrefix} ${labelNumber}`,
       geometry: geometryId,
       material: materialId,
-      translation: options.translation ?? spec.translation,
+      translation: options.translation ?? (GROUND_PRIMITIVES.has(primitiveType) ? spec.translation : freeSpawnTranslation(spec.translation, recipe.nodes)),
       rotation: options.rotation ?? spec.rotation,
       scale: options.scale ?? spec.scale,
     };
@@ -1652,6 +1692,7 @@ export function createStudioController({
     pickAt,
     gizmoHandles,
     rotationSweep,
+    dragTrace,
     selectionOutline,
     nodeOutline,
     nodeBounds,

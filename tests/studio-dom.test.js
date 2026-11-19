@@ -1755,3 +1755,66 @@ test('turning a ring shows where the turn began, how far it has gone and hides t
   assert.equal(sweepPart('wedge'), undefined);
   assert.deepEqual(rings(), ['x', 'y', 'z']);
 });
+
+test('a drag leaves a ghost where the object was, and a move draws the line it has travelled', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  ui.tool('translate').click();
+  ui.studio.renderNow();
+  const handles = ui.controller.gizmoHandles();
+  const along = distance => ui.controller.projectWorldPoint(handles.pivot.map((value, index) => value + handles.basis.x[index] * distance));
+  const tracePart = part => ui.gizmo.descendants().find(element => element.getAttribute('data-drag-trace') === part);
+  const outlineBefore = ui.controller.selectionOutline();
+  assert.equal(ui.controller.dragTrace(), null);
+
+  dispatch(ui.gizmoPart('x'), 'pointerdown', ui.clientPoint(along(handles.handleLength)));
+  ui.studio.renderNow();
+  assert.equal(ui.controller.dragTrace(), null, 'nothing to trace until the object has moved');
+  assert.equal(tracePart('ghost'), undefined);
+
+  dispatch(ui.canvas, 'pointermove', ui.clientPoint(along(handles.handleLength + 0.8)));
+  ui.studio.renderNow();
+  const trace = ui.controller.dragTrace();
+  assert.equal(trace.tool, 'translate');
+  assert.deepEqual(trace.outline, outlineBefore);
+  assert.ok(Math.abs(trace.from.x - handles.origin.x) < 0.01 && Math.abs(trace.from.y - handles.origin.y) < 0.01);
+  const pivotNow = ui.controller.gizmoHandles().origin;
+  assert.ok(Math.abs(trace.to.x - pivotNow.x) < 0.01 && Math.abs(trace.to.y - pivotNow.y) < 0.01);
+  assert.ok(Math.hypot(trace.to.x - trace.from.x, trace.to.y - trace.from.y) > 5);
+  assert.equal(tracePart('ghost').getAttribute('points').split(' ').length, outlineBefore.length);
+  assert.equal(tracePart('ghost').getAttribute('fill'), 'none');
+  for (const part of ['ghost', 'travel', 'start']) {
+    assert.equal(tracePart(part).getAttribute('pointer-events'), 'none');
+  }
+  assert.equal(Number(tracePart('travel').getAttribute('x2')).toFixed(1), trace.to.x.toFixed(1));
+
+  dispatch(ui.canvas, 'pointerup', ui.clientPoint(along(handles.handleLength + 0.8)));
+  ui.studio.renderNow();
+  assert.equal(ui.controller.dragTrace(), null);
+  assert.equal(tracePart('ghost'), undefined);
+  assert.equal(tracePart('travel'), undefined);
+
+  ui.tool('scale').click();
+  ui.studio.renderNow();
+  const origin = ui.controller.gizmoHandles().origin;
+  dispatch(ui.gizmoPart('uniform'), 'pointerdown', ui.clientPoint(origin));
+  dispatch(ui.canvas, 'pointermove', ui.clientPoint({ x: origin.x + 40, y: origin.y }));
+  ui.studio.renderNow();
+  assert.ok(tracePart('ghost'), 'a scale drag keeps the old outline');
+  assert.equal(tracePart('travel'), undefined, 'only a move has a line of travel');
+  dispatch(ui.canvas, 'pointerup', ui.clientPoint(origin));
+});
+
+test('a new object lands beside the ones already there, and ground pieces stay at the centre', testContext => {
+  const dom = installStudioDom();
+  testContext.after(() => dom.uninstall());
+  const studio = createStudio(dom.container, { renderer: createFakeRenderer() });
+  testContext.after(() => studio.dispose());
+  const first = studio.controller.addPrimitive('box');
+  assert.deepEqual(first.translation, [2.5, 0.5, 0], 'the cube holds the centre and the cone the next spot');
+  const second = studio.controller.addPrimitive('sphere');
+  assert.deepEqual(second.translation, [3.75, 0.5, 0]);
+  assert.ok(Math.abs(studio.controller.nodeBounds(second.id).min[1]) < 1e-3, 'it rests on the ground');
+  assert.deepEqual(studio.controller.addPrimitive('plane').translation, [0, 0.02, 0]);
+  assert.deepEqual(studio.controller.addPrimitive('box', { translation: [0, 0.5, 0] }).translation, [0, 0.5, 0], 'a given place is kept');
+});

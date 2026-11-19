@@ -413,6 +413,45 @@ function arrowHeadPoints(origin, tip) {
   return corners.map(corner => `${corner[0].toFixed(1)},${corner[1].toFixed(1)}`).join(' ');
 }
 
+// What a drag has changed so far: a dashed outline where the object was and, for a move, a dashed line from there to
+// where it is now. Nothing here takes the pointer.
+function appendDragTrace(documentReference, gizmoSvg, trace) {
+  if (!trace) {
+    return;
+  }
+  const quiet = { stroke: 'var(--studio-text)', 'stroke-opacity': '0.5', 'stroke-width': '1.4', 'stroke-dasharray': '5 4', 'pointer-events': 'none' };
+  if (trace.outline) {
+    gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
+      points: trace.outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
+      fill: 'none',
+      'stroke-linejoin': 'round',
+      'data-drag-trace': 'ghost',
+      ...quiet,
+    }));
+  }
+  if (trace.from?.visible && trace.to?.visible) {
+    gizmoSvg.append(
+      createSvgElement(documentReference, 'line', {
+        x1: trace.from.x.toFixed(1),
+        y1: trace.from.y.toFixed(1),
+        x2: trace.to.x.toFixed(1),
+        y2: trace.to.y.toFixed(1),
+        'data-drag-trace': 'travel',
+        ...quiet,
+      }),
+      createSvgElement(documentReference, 'circle', {
+        cx: trace.from.x.toFixed(1),
+        cy: trace.from.y.toFixed(1),
+        r: '3.5',
+        fill: 'var(--studio-text)',
+        'fill-opacity': '0.6',
+        'pointer-events': 'none',
+        'data-drag-trace': 'start',
+      }),
+    );
+  }
+}
+
 // The turn in progress: a faint wedge over the angle already turned, a dashed spoke where the drag began and a solid
 // spoke where the object is now. Nothing here takes the pointer, so the drag carries on through it.
 function appendRotationSweep(documentReference, gizmoSvg, sweep) {
@@ -461,6 +500,7 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
       points: outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
     }));
   }
+  appendDragTrace(documentReference, gizmoSvg, controller.dragTrace());
   const handles = controller.gizmoHandles();
   if (!handles || !handles.origin.visible) {
     return;
