@@ -149,6 +149,7 @@ export function createCameraPath({ duration, loop = false, eye, target = [0, 0, 
     const fieldOfView = overrides?.fov ?? tracks[2].output[0];
     validateLens(fieldOfView, near, far);
     const angle = overrides?.roll ?? tracks[3].output[0];
+    if (typeof angle !== 'number' || !Number.isFinite(angle)) throw new RangeError(`Camera roll must be a finite number of radians, got ${angle}.`);
     const directionLength = Math.hypot(stagedTarget[0] - stagedEye[0], stagedTarget[1] - stagedEye[1], stagedTarget[2] - stagedEye[2]);
     for (let axis = 0; axis < 3; axis++) direction[axis] = (stagedTarget[axis] - stagedEye[axis]) / directionLength;
     const cosine = Math.cos(angle);
