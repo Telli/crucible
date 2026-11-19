@@ -371,6 +371,20 @@ const storage = (device, label, bytes, extraUsage = 0) => device.createBuffer({ 
 const uniform = (device, label, bytes) => device.createBuffer({ label, size: bytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const bind = (device, pipeline, buffers) => device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: buffers.map((buffer, binding) => ({ binding, resource: { buffer } })) });
 
+// Collects the buffers a pass makes, so a failed setup can destroy them instead of keeping their memory until the page closes.
+function createBufferCleanup() {
+  const buffers = [];
+  return {
+    keep(buffer) {
+      buffers.push(buffer);
+      return buffer;
+    },
+    release() {
+      for (const buffer of buffers) buffer.destroy();
+    },
+  };
+}
+
 /**
  * The cache table (CACHE_SLOT_COUNT vec4: mean radiance and the number of records behind it) and the pass that folds the
  * records of a frame in. `table` is bound by the tracer kernel; `encode(pass, records, recordCount)` adds the dispatches.
@@ -378,32 +392,38 @@ const bind = (device, pipeline, buffers) => device.createBindGroup({ layout: pip
 export async function createWebGpuRadianceCache(device) {
   const module = await compileModule(device, 'radiance cache', CACHE_SOURCE);
   const [scatterPipeline, resolvePipeline] = await Promise.all([createPipeline(device, module, 'scatterRecords'), createPipeline(device, module, 'resolveCells')]);
-  const table = storage(device, 'radiance cache', CACHE_SLOT_COUNT * 16, GPUBufferUsage.COPY_DST);
-  const sums = storage(device, 'radiance cache sums', CACHE_SLOT_COUNT * 16);
-  const recordCountBuffer = uniform(device, 'record count', CACHE_PARAMETER_BYTES);
-  let scatterGroup = null;
-  let resolveGroup = null;
-  return {
-    table,
-    clear(encoder) {
-      encoder.clearBuffer(table);
-    },
-    encode(pass, records, recordCount) {
-      device.queue.writeBuffer(recordCountBuffer, 0, new Uint32Array([recordCount, 0, 0, 0]));
-      scatterGroup ??= device.createBindGroup({ layout: scatterPipeline.getBindGroupLayout(0), entries: [[0, records], [1, sums], [3, recordCountBuffer]].map(([binding, buffer]) => ({ binding, resource: { buffer } })) });
-      resolveGroup ??= device.createBindGroup({ layout: resolvePipeline.getBindGroupLayout(0), entries: [sums, table].map((buffer, index) => ({ binding: index + 1, resource: { buffer } })) });
-      pass.setPipeline(scatterPipeline);
-      pass.setBindGroup(0, scatterGroup);
-      const recordGroups = Math.ceil(recordCount / CACHE_WORKGROUP_SIZE);
-      pass.dispatchWorkgroups(Math.min(recordGroups, 4096), Math.ceil(recordGroups / 4096));
-      pass.setPipeline(resolvePipeline);
-      pass.setBindGroup(0, resolveGroup);
-      pass.dispatchWorkgroups(4096, CACHE_SLOT_COUNT / CACHE_WORKGROUP_SIZE / 4096);
-    },
-    dispose() {
-      for (const buffer of [table, sums, recordCountBuffer]) buffer.destroy();
-    },
-  };
+  const cleanup = createBufferCleanup();
+  try {
+    const table = cleanup.keep(storage(device, 'radiance cache', CACHE_SLOT_COUNT * 16, GPUBufferUsage.COPY_DST));
+    const sums = cleanup.keep(storage(device, 'radiance cache sums', CACHE_SLOT_COUNT * 16));
+    const recordCountBuffer = cleanup.keep(uniform(device, 'record count', CACHE_PARAMETER_BYTES));
+    let scatterGroup = null;
+    let resolveGroup = null;
+    return {
+      table,
+      clear(encoder) {
+        encoder.clearBuffer(table);
+      },
+      encode(pass, records, recordCount) {
+        device.queue.writeBuffer(recordCountBuffer, 0, new Uint32Array([recordCount, 0, 0, 0]));
+        scatterGroup ??= device.createBindGroup({ layout: scatterPipeline.getBindGroupLayout(0), entries: [[0, records], [1, sums], [3, recordCountBuffer]].map(([binding, buffer]) => ({ binding, resource: { buffer } })) });
+        resolveGroup ??= device.createBindGroup({ layout: resolvePipeline.getBindGroupLayout(0), entries: [sums, table].map((buffer, index) => ({ binding: index + 1, resource: { buffer } })) });
+        pass.setPipeline(scatterPipeline);
+        pass.setBindGroup(0, scatterGroup);
+        const recordGroups = Math.ceil(recordCount / CACHE_WORKGROUP_SIZE);
+        pass.dispatchWorkgroups(Math.min(recordGroups, 4096), Math.ceil(recordGroups / 4096));
+        pass.setPipeline(resolvePipeline);
+        pass.setBindGroup(0, resolveGroup);
+        pass.dispatchWorkgroups(4096, CACHE_SLOT_COUNT / CACHE_WORKGROUP_SIZE / 4096);
+      },
+      dispose() {
+        for (const buffer of [table, sums, recordCountBuffer]) buffer.destroy();
+      },
+    };
+  } catch (error) {
+    cleanup.release();
+    throw error;
+  }
 }
 
 /** Rows of a texture copy start at multiples of 256 bytes. */
@@ -436,45 +456,51 @@ export async function createWebGpuDenoiser(device, { traceWidth, traceHeight, ou
   const [accumulatePipeline, atrousPipeline, presentPipeline] = await Promise.all([
     createPipeline(device, accumulateModule, 'accumulate'), createPipeline(device, atrousModule, 'atrous'), createPipeline(device, presentModule, 'present'),
   ]);
-  const plane = traceWidth * traceHeight * 16;
-  const rowWords = outputRowWords(outputWidth);
-  const sizes = [traceWidth, traceHeight, outputWidth, outputHeight];
-  const histories = [0, 1].map(index => storage(device, `history ${index}`, plane * 3));
-  const filters = [0, 1].map(index => storage(device, `filter ${index}`, plane));
-  const outputBuffer = storage(device, 'output pixels', rowWords * 4 * outputHeight, GPUBufferUsage.COPY_SRC);
-  const accumulateParameters = uniform(device, 'accumulate parameters', DENOISE_PARAMETER_BYTES);
-  const atrousParameters = Array.from({ length: filterIterations }, () => uniform(device, 'a-trous parameters', DENOISE_PARAMETER_BYTES));
-  const presentParameters = uniform(device, 'present parameters', DENOISE_PARAMETER_BYTES);
-  const finalFilter = filters[filterIterations % 2];
-  const groupsFor = (width, height) => [Math.ceil(width / 8), Math.ceil(height / 8)];
-  const sets = [0, 1].map(set => ({
-    accumulate: bind(device, accumulatePipeline, [accumulateParameters, tracedBuffers[set], tracedBuffers[1 - set], histories[1 - set], histories[set], filters[0], motionBuffer]),
-    atrous: atrousParameters.map((parameters, iteration) => bind(device, atrousPipeline, [parameters, tracedBuffers[set], filters[iteration % 2], filters[1 - iteration % 2]])),
-    present: bind(device, presentPipeline, [presentParameters, tracedBuffers[set], finalFilter, histories[set], outputBuffer]),
-  }));
+  const cleanup = createBufferCleanup();
+  try {
+    const plane = traceWidth * traceHeight * 16;
+    const rowWords = outputRowWords(outputWidth);
+    const sizes = [traceWidth, traceHeight, outputWidth, outputHeight];
+    const histories = [0, 1].map(index => cleanup.keep(storage(device, `history ${index}`, plane * 3)));
+    const filters = [0, 1].map(index => cleanup.keep(storage(device, `filter ${index}`, plane)));
+    const outputBuffer = cleanup.keep(storage(device, 'output pixels', rowWords * 4 * outputHeight, GPUBufferUsage.COPY_SRC));
+    const accumulateParameters = cleanup.keep(uniform(device, 'accumulate parameters', DENOISE_PARAMETER_BYTES));
+    const atrousParameters = Array.from({ length: filterIterations }, () => cleanup.keep(uniform(device, 'a-trous parameters', DENOISE_PARAMETER_BYTES)));
+    const presentParameters = cleanup.keep(uniform(device, 'present parameters', DENOISE_PARAMETER_BYTES));
+    const finalFilter = filters[filterIterations % 2];
+    const groupsFor = (width, height) => [Math.ceil(width / 8), Math.ceil(height / 8)];
+    const sets = [0, 1].map(set => ({
+      accumulate: bind(device, accumulatePipeline, [accumulateParameters, tracedBuffers[set], tracedBuffers[1 - set], histories[1 - set], histories[set], filters[0], motionBuffer]),
+      atrous: atrousParameters.map((parameters, iteration) => bind(device, atrousPipeline, [parameters, tracedBuffers[set], filters[iteration % 2], filters[1 - iteration % 2]])),
+      present: bind(device, presentPipeline, [presentParameters, tracedBuffers[set], finalFilter, histories[set], outputBuffer]),
+    }));
 
-  return {
-    outputBuffer,
-    rowWords,
-    encode(pass, set, inputs) {
-      const settings = { ...inputs, historyLimit };
-      writeDenoiseParameters(device, accumulateParameters, settings, sizes, 1, rowWords, swapped);
-      atrousParameters.forEach((buffer, iteration) => writeDenoiseParameters(device, buffer, settings, sizes, 1 << iteration, rowWords, swapped));
-      writeDenoiseParameters(device, presentParameters, settings, sizes, 1, rowWords, swapped);
-      pass.setPipeline(accumulatePipeline);
-      pass.setBindGroup(0, sets[set].accumulate);
-      pass.dispatchWorkgroups(...groupsFor(traceWidth, traceHeight));
-      pass.setPipeline(atrousPipeline);
-      for (const group of sets[set].atrous) {
-        pass.setBindGroup(0, group);
+    return {
+      outputBuffer,
+      rowWords,
+      encode(pass, set, inputs) {
+        const settings = { ...inputs, historyLimit };
+        writeDenoiseParameters(device, accumulateParameters, settings, sizes, 1, rowWords, swapped);
+        atrousParameters.forEach((buffer, iteration) => writeDenoiseParameters(device, buffer, settings, sizes, 1 << iteration, rowWords, swapped));
+        writeDenoiseParameters(device, presentParameters, settings, sizes, 1, rowWords, swapped);
+        pass.setPipeline(accumulatePipeline);
+        pass.setBindGroup(0, sets[set].accumulate);
         pass.dispatchWorkgroups(...groupsFor(traceWidth, traceHeight));
-      }
-      pass.setPipeline(presentPipeline);
-      pass.setBindGroup(0, sets[set].present);
-      pass.dispatchWorkgroups(...groupsFor(outputWidth, outputHeight));
-    },
-    dispose() {
-      for (const buffer of [...histories, ...filters, outputBuffer, accumulateParameters, presentParameters, ...atrousParameters]) buffer.destroy();
-    },
-  };
+        pass.setPipeline(atrousPipeline);
+        for (const group of sets[set].atrous) {
+          pass.setBindGroup(0, group);
+          pass.dispatchWorkgroups(...groupsFor(traceWidth, traceHeight));
+        }
+        pass.setPipeline(presentPipeline);
+        pass.setBindGroup(0, sets[set].present);
+        pass.dispatchWorkgroups(...groupsFor(outputWidth, outputHeight));
+      },
+      dispose() {
+        cleanup.release();
+      },
+    };
+  } catch (error) {
+    cleanup.release();
+    throw error;
+  }
 }
