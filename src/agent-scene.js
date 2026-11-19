@@ -2156,13 +2156,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const drawnParts = new Map(state.restParts.map(part => [part.name, part]));
       for (const sourcePart of state.sourceRestParts) {
         const part = drawnParts.get(sourcePart.name);
-        const local = state.localBounds.get(sourcePart.geometry);
-        if (!part || !local || part.visibility?.visible === false) continue;
-        const positions = [];
-        for (let corner = 0; corner < 8; corner++) {
-          positions.push(corner & 1 ? local.max[0] : local.min[0], corner & 2 ? local.max[1] : local.min[1], corner & 4 ? local.max[2] : local.min[2]);
-        }
-        bounds.push({ name: part.name, ...boundsFor({ positions }, part.matrix) });
+        if (!part || part.visibility?.visible === false) continue;
+        // Measured from the geometry itself: a water part with foam or a wear mask draws a copy the cached local bounds do not list.
+        bounds.push({ name: part.name, ...boundsFor(sourcePart.geometry, part.matrix) });
       }
       return bounds;
     },

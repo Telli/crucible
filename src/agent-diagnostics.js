@@ -10,6 +10,8 @@ const PLAIN_SURFACE_TAGS = new Set(['surface', 'gltf']);
 const LAYER_FIELDS = ['clearcoat', 'sheenColor', 'specular', 'specularColor', 'anisotropy', 'iridescence'];
 // The pass that draws transmission is a separate shader without these layers.
 const FIELDS_IGNORED_BY_TRANSMISSION = ['anisotropy', 'iridescence'];
+// The water tag draws in the standard shader (shaders.js baseReflectance), so its specular layer sets the surface reflectance.
+const SPECULAR_FIELDS_READ_ON_WATER = ['specular', 'specularColor'];
 const TRANSMISSION_DETAIL_FIELDS = ['thickness', 'attenuationColor', 'attenuationDistance'];
 
 export function diagnostic(kind, severity, target, message, fix) {
@@ -27,7 +29,7 @@ function materialProblems(material) {
   const tag = material.tag ?? 'surface';
   const transmitting = hasValue(material, 'transmission');
   if (tag !== 'surface' && tag !== 'liquid') {
-    for (const field of LAYER_FIELDS.filter(layer => hasValue(material, layer))) {
+    for (const field of LAYER_FIELDS.filter(layer => hasValue(material, layer) && !(tag === 'water' && SPECULAR_FIELDS_READ_ON_WATER.includes(layer)))) {
       problems.push(diagnostic('ignored-material-field', 'warning', material.id,
         `${field} is ignored on a material with tag ${tag}.`,
         `Remove ${field}, or set the material tag to surface with scene_apply set-material.`));
