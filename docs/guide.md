@@ -79,7 +79,7 @@ Core exports are available from `crucible`:
 | EFFECT_PRESETS, resolveEffects | Named looks and validated effect settings |
 | createAnimationClip, sampleAnimationClip, createAnimationPlayer | Validate tracks, sample time and bind part animation |
 
-`planRenderSize` accepts width, height, pixelRatio, samples, memoryBudgetMiB, geometryBytes, textureBytes, hdr, bloom, shadowResolution and maximumSize. It returns actual dimensions, estimatedBytes and reduced status. `estimateFrameBytes(width, height, samples, shadowResolution, { hdr, bloom })` estimates target storage. Neither function measures total VRAM.
+`planRenderSize` accepts width, height, pixelRatio, samples, memoryBudgetMiB, geometryBytes, textureBytes, hdr, bloom, shadowResolution and maximumSize. It returns actual dimensions, estimatedBytes and reduced status. `estimateFrameBytes(width, height, samples, shadowResolution, { hdr, bloom })` estimates target storage. `estimateTextureBytes(width, height)` takes whole sizes from 1 to 65536. Neither function measures total VRAM.
 
 `crucible/addons/model`: createModel. `crucible/addons/nature`: createNatureWorld. `crucible/addons/motion`: createMotionScene.
 

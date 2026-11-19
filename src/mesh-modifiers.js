@@ -2,7 +2,7 @@ import { withPositions } from './mesh-field-edits.js';
 import { mergeByDistance } from './mesh-ops.js';
 import { triangulateFaces, splitSharpEdges } from './mesh-restructure.js';
 import { MODIFIER_OPERATIONS } from './mesh-operations.js';
-import { editField, editInteger, editAxis } from './mesh-edit-field.js';
+import { editField, editInteger, editAxis, editDefault } from './mesh-edit-field.js';
 import { normalizeGeneratorEdit, GENERATOR_RUNNERS } from './mesh-generator-modifiers.js';
 import { normalizeNormalEdit, NORMAL_RUNNERS } from './mesh-normal-modifiers.js';
 import { isDeformModifier, normalizeDeformEdit, runDeformEdit } from './mesh-deform-modifiers.js';
@@ -28,7 +28,7 @@ function normalizeSimpleDeform(edit, normalized, index, finiteNumber) {
     throw editField(index, 'mode', edit.mode, `one of ${SIMPLE_DEFORM_MODES.join(', ')}`);
   }
   normalized.mode = edit.mode;
-  normalized.axis = edit.axis ?? 'z';
+  normalized.axis = editDefault(edit.axis, 'z');
   editAxis(normalized.axis, index);
   if (edit.mode === 'twist' || edit.mode === 'bend') {
     rejectField(edit, index, 'factor', 'angle in degrees, such as "angle": 45');

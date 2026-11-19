@@ -18,11 +18,12 @@ import { createLightingState, updateLightingState } from './lighting.js';
 import { RenderTargetLedger } from './render-target-ledger.js';
 import { SHADOW_ATLAS_WIDTH, SHADOW_TILE_SIZE, SHADOW_TILES_PER_ROW, tileViewport, writeShadowTile } from './local-shadows.js';
 import { resolveVolumeFog, validateFogField } from './volumetric.js';
-import { requireEnvironmentSupport } from './environment-shading.js';
+import { requireEnvironmentSupport, DEFAULT_SUN_ANGULAR_RADIUS } from './environment-shading.js';
 import { materialLayerState, materialLayerValue } from './material-layers.js';
 import { MaterialSnapshot } from './material-snapshot.js';
 import { wearUniformValues } from './material-wear.js';
 import { fittedFogDensity } from './fog-fit.js';
+import { canUseCompactColor, respecifyColorTargets } from './compact-color.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
 import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope } from './shadow-light.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
@@ -596,8 +597,17 @@ export function configureTexture(renderer, info) {
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, info.magFilter);
   if (info.mipmaps) {
     context.generateMipmap(context.TEXTURE_2D);
-    renderer.applyAnisotropy(context.TEXTURE_2D);
+    if (filtersSmoothly(info)) renderer.applyAnisotropy(context.TEXTURE_2D);
   }
+}
+
+// Anisotropic filtering replaces both filters with its own smooth one, so it would turn a NEAREST sampler (pixel art, block
+// textures) into a blur. Only a texture that already filters linearly in both directions gets it.
+function filtersSmoothly({ minFilter, magFilter }) {
+  const LINEAR = 9729;
+  const LINEAR_MIPMAP_NEAREST = 9985;
+  const LINEAR_MIPMAP_LINEAR = 9987;
+  return magFilter === LINEAR && (minFilter === LINEAR_MIPMAP_NEAREST || minFilter === LINEAR_MIPMAP_LINEAR);
 }
 
 export function textureDescriptorInfo(map, maximumSize = Infinity) {
@@ -705,7 +715,7 @@ export function samplesForDensity(parts, canvas, pixelRatio, samples, denseSampl
 }
 
 export class CrucibleRenderer {
-  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', exactFrames = false, deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
+  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, compactColor = true, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', exactFrames = false, deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
     this.background = background ? resolveBackground(background) : null;
     this.canvas = canvas;
     this.sceneParts = parts;
@@ -763,6 +773,7 @@ export class CrucibleRenderer {
     this.lookSource = null;
     this.selectViewTransform(viewTransform, look);
     this.hdr = Boolean(hdr && !benchmark && this.context.getExtension('EXT_color_buffer_float'));
+    this.compactColor = compactColor !== false;
     if (volume.density > 0 && !this.hdr) throw new Error('Volume fog requires EXT_color_buffer_float for HDR rendering');
     this.baseSamples = samples;
     this.denseSamples = denseSamples;
@@ -1443,6 +1454,12 @@ export class CrucibleRenderer {
       if (!this.geometryBuffers.has(geometry)) validateReplacementGeometry(geometry);
     }
     const retained = new Set();
+    // Groups share a few materials, and the layer state is 28 validated values, so each material answers once per call.
+    const layerStates = new Map();
+    const layerStateOf = material => {
+      if (!layerStates.has(material)) layerStates.set(material, materialLayerState(material));
+      return layerStates.get(material);
+    };
     const replacements = groups.map(group => {
       const first = group[0];
       const location = this.partLocations.get(first);
@@ -1454,7 +1471,7 @@ export class CrucibleRenderer {
         batch.floor === (first.material.tag === 'floor') && batchPass(batch) === partPass(first) &&
         [batch.alphaMode, batch.alphaCutoff, batch.opacity, batch.doubleSided, batch.retro, batch.waterGlint].every((value, index) => value === alphaState[index]) &&
         batch.mapState.every((value, index) => value === mapState[index]) &&
-        batch.layerState.every((value, index) => value === materialLayerState(first.material)[index]);
+        batch.layerState.every((value, index) => value === layerStateOf(first.material)[index]);
       if (sameParts && sameState) {
         retained.add(batch);
         return { group, batch };
@@ -2124,6 +2141,20 @@ export class CrucibleRenderer {
     this.bloomWidth = Math.max(1, Math.ceil(width / 2));
     this.bloomHeight = Math.max(1, Math.ceil(height / 2));
     this.backend.bindCanvasTarget();
+    this.chooseColorFormat(width, height);
+  }
+
+  // An opaque canvas never reads the frame's alpha, so the frame and multisample colour take 4 bytes a pixel instead of 8 (#2179).
+  // A device that refuses the compact framebuffers gets the RGBA16F targets back.
+  chooseColorFormat(width, height) {
+    this.colorFormat = this.hdr ? 'RGBA16F' : 'RGBA8';
+    if (!canUseCompactColor(this)) return;
+    try {
+      respecifyColorTargets(this, width, height);
+    } catch {
+      this.compactColor = false;
+      this.allocateFrameTargets(width, height);
+    }
   }
 
   // The prefilter and BRDF programs build while the other programs do, instead of after them.
@@ -2229,7 +2260,7 @@ export class CrucibleRenderer {
     const context = this.context;
     if (!this.environmentBackgroundProgram) {
       this.environmentBackgroundProgram = compileProgram(context, fullscreenVertex, this.withViewTransform(requireEnvironmentSupport().backgroundFragment, 'background'));
-      const names = ['inverseViewProjection', 'eye', 'backgroundLevel', 'exposure', 'hdrEnabled', 'environmentSpecular', 'environmentRotation', 'environmentIntensity', 'environmentLevelMax'];
+      const names = ['inverseViewProjection', 'eye', 'backgroundLevel', 'exposure', 'hdrEnabled', 'environmentSpecular', 'environmentRotation', 'environmentIntensity', 'environmentLevelMax', 'sunMapDirection', 'sunDiscRadiance', 'sunDiscRadius'];
       this.environmentBackgroundUniforms = Object.fromEntries(names.map(name => [name, context.getUniformLocation(this.environmentBackgroundProgram, name)]));
     }
     const uniforms = this.environmentBackgroundUniforms;
@@ -2247,6 +2278,10 @@ export class CrucibleRenderer {
     context.uniform2f(uniforms.environmentRotation, Math.cos(map.rotation), Math.sin(map.rotation));
     context.uniform1f(uniforms.environmentIntensity, map.intensity);
     context.uniform1f(uniforms.environmentLevelMax, levelMax);
+    const sunDisc = map.sunDisc;
+    context.uniform3fv(uniforms.sunMapDirection, sunDisc?.direction ?? [0, -1, 0]);
+    context.uniform3fv(uniforms.sunDiscRadiance, sunDisc?.radiance ?? [0, 0, 0]);
+    context.uniform1f(uniforms.sunDiscRadius, frame.environment?.sunAngularRadius ?? this.environment?.sunAngularRadius ?? DEFAULT_SUN_ANGULAR_RADIUS);
     context.drawArrays(context.TRIANGLES, 0, 3);
     return true;
   }

@@ -275,6 +275,9 @@ function volumeFogFrom(input = {}) {
   return copiedJson(resolved);
 }
 
+/** The fields a physical sky fills from its sun and haze that a recipe may still set itself: its own value wins over the sky's. */
+export const SKY_OVERRIDABLE_FIELDS = Object.freeze(['keyColor', 'fogColor', 'fogDensity']);
+
 function environmentFrom(input = {}) {
   knownKeys(input, ENVIRONMENT_FIELDS, 'environment');
   const world = fallback(input.world, false);
@@ -386,7 +389,10 @@ function environmentFrom(input = {}) {
     environment.liquid = copiedJson(resolveLiquidOptics(copiedJson(input.liquid)));
   }
   if (input.sky !== undefined && input.sky !== null) {
+    // The sky derives these from its sun; a value written beside the sky is a choice and stays.
+    const explicit = Object.fromEntries(SKY_OVERRIDABLE_FIELDS.filter(field => input[field] !== undefined && input[field] !== null).map(field => [field, environment[field]]));
     agentSceneModule('physicalSky').applyPhysicalSky(input.sky, environment, invalidField);
+    Object.assign(environment, explicit);
   }
   lightShapeSupport.normalize?.(input, environment);
   updateLightingState(createLightingState(), environment, { world });

@@ -94,7 +94,7 @@ A PNG the export writes itself is stored without compression so the export stays
 
 Geometry with textures needs `uvs`.
 Without them the export fails and names `uv_unwrap` (a mesh stack node) or `geometry.uvs`.
-An image larger than `maxTextureSize` (default 2048, up to 16384) fails with that option's name.
+An image larger than `maxTextureSize` (default 2048, up to 16384) fails with that option's name, before its pixels are read.
 
 ### Pattern materials
 
@@ -184,6 +184,7 @@ Material tracks, IK and the camera are not exported; bake IK into rotation track
 It stores opaque metallic roughness materials without renderer tags, procedural weathering, custom shaders, lighting, cameras, or postprocessing.
 It does not promise identical rendered pixels across tools.
 Materials tagged `unlit` still export through this documented metallic roughness snapshot contract.
+The writer refuses accessor data that would make an invalid file: NaN or Infinity where bounds are computed (positions, normals, colours, morph targets) and a length that is not a multiple of the component count. An empty accessor is written without `min` and `max`.
 
 The [Blender glTF workflow](https://docs.blender.org/manual/en/5.3/addons/scene_gltf2.html) supports vertex colors, UV coordinates, shape keys, and emissive strength.
 These editable fields remain available to compatible tools after import.

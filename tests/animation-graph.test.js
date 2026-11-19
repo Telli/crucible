@@ -335,3 +335,29 @@ test('a non-looping state over a looping clip holds the last frame instead of sn
     assert.ok(Math.abs(Math.abs(held[2]) - Math.sin(Math.PI / 4)) < 1e-6, `after ${seconds}s the arm must stay at 90 degrees, got ${held}`);
   }
 });
+
+test('a huge speedParameter value keeps phase and clip times finite', () => {
+  const graph = createAnimationGraph({
+    clips: CLIPS,
+    parameters: { pace: { type: 'number', initial: 1 } },
+    layers: [{ name: 'base', states: [{ name: 'walk', clip: 'walk', speed: 100, speedParameter: 'pace' }] }],
+  });
+  graph.set('pace', 1e308).advance(1).advance(1);
+  const state = graph.layerState('base');
+  assert.ok(Number.isFinite(state.phase));
+  assert.ok(state.clips.every(entry => Number.isFinite(entry.time)));
+});
+
+test('a 2D blend space keeps weights summing to 1 when positions overflow the gradient maths', () => {
+  const graph = createAnimationGraph({
+    clips: CLIPS,
+    parameters: { strafe: { type: 'number' }, forward: { type: 'number' } },
+    layers: [{ name: 'base', states: [{ name: 'move', blend: { parameters: ['strafe', 'forward'], motions: [
+      { clip: 'walk', position: [1e200, 0] },
+      { clip: 'run', position: [-1e200, 0] },
+    ] } }] }],
+  });
+  graph.advance(0.1);
+  const total = graph.layerState('base').clips.reduce((sum, entry) => sum + entry.weight, 0);
+  assert.ok(Math.abs(total - 1) < 1e-9, `weights sum to ${total}`);
+});

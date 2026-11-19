@@ -2,7 +2,7 @@ import { seededRandom } from './mesh-fields.js';
 import { faceCentroids } from './mesh-normals.js';
 import { registerModifierNormalizer, registerModifierRunner } from './mesh-modifiers.js';
 import { MeshBuilder } from './mesh-stack.js';
-import { editBoolean, editField } from './mesh-edit-field.js';
+import { editBoolean, editField, editDefault } from './mesh-edit-field.js';
 
 // Build modifier, as Blender's Build: the faces of the mesh appear one by one over a run of frames. `frame` is the frame to
 // show, `start` and `length` give the run, and `order` says which face comes next: by index, by a seeded shuffle or along
@@ -63,7 +63,7 @@ export function buildMesh(mesh, edit) {
 }
 
 function normalizeBuild(edit, normalized, index, { finiteNumber, integerInRange }) {
-  normalized.order = edit.order ?? 'index';
+  normalized.order = editDefault(edit.order, 'index');
   if (!BUILD_ORDERS.includes(normalized.order)) {
     throw editField(index, 'order', edit.order, `one of ${BUILD_ORDERS.join(', ')}, such as "random" with a seed`);
   }
@@ -77,7 +77,7 @@ function normalizeBuild(edit, normalized, index, { finiteNumber, integerInRange 
     throw editField(index, 'seed', edit.seed, 'left out, because only order "random" uses a seed');
   }
   if (normalized.order === 'axis') {
-    normalized.axis = edit.axis ?? 'y';
+    normalized.axis = editDefault(edit.axis, 'y');
     if (!Object.hasOwn(AXIS_INDEX, normalized.axis)) throw editField(index, 'axis', edit.axis, 'one of "x", "y", "z"');
   } else if (edit.axis !== undefined) {
     throw editField(index, 'axis', edit.axis, 'left out, because only order "axis" uses an axis');
