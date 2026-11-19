@@ -1,7 +1,7 @@
 import './site.css';
 import './brand.js';
 import './marketplace.css';
-import { ADDON_AREAS, ADDON_CATALOG, PACKAGE_NAME } from './addon-catalog.js';
+import { ADDON_AREAS, ADDON_CATALOG, addonImportLine } from './addon-catalog.js';
 import { addonPackages, firstPartyPackages, npmManifestPath } from './marketplace-npm.js';
 
 const NPM_SEARCH_URL = 'https://registry.npmjs.org/-/v1/search?text=keywords:crucible-addon&size=50';
@@ -241,13 +241,6 @@ async function loadFirstPartyPackages(container) {
 
 const REPOSITORY_URL = 'https://github.com/codepawl/crucible/blob/main';
 
-function camelCase(name) {
-  return name.replace(/-(w)/g, (_match, letter) => letter.toUpperCase());
-}
-
-function importLine(addon) {
-  return `import * as ${camelCase(addon.name)} from '${PACKAGE_NAME}/addons/${addon.name}';`;
-}
 
 function builtinRow(addon) {
   const row = element('article', 'builtin-row');
@@ -256,7 +249,7 @@ function builtinRow(addon) {
   const heading = element('h4', 'builtin-name');
   heading.append(link(addon.name, docUrl));
   const command = element('div', 'command-row');
-  const line = importLine(addon);
+  const line = addonImportLine(addon.name);
   command.append(element('code', '', line), copyButton(line));
   row.append(heading, element('p', 'market-description', addon.summary), command);
   return row;

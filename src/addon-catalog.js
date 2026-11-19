@@ -104,3 +104,12 @@ export const ADDON_CATALOG = [
   { name: 'clutter', area: 'world', summary: 'Pebbles, twigs and leaves scattered in streamable tiles.', doc: true },
   { name: 'gaussian-splats', area: 'world', summary: 'Gaussian splat scenes and objects.', doc: true },
 ];
+
+function camelCase(name) {
+  return name.replace(/-(\w)/g, (_match, letter) => letter.toUpperCase());
+}
+
+// The line a reader pastes to use an addon: `mesh-query` becomes `import * as meshQuery from ...`.
+export function addonImportLine(name) {
+  return `import * as ${camelCase(name)} from '${PACKAGE_NAME}/addons/${name}';`;
+}

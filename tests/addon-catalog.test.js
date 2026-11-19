@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { ADDON_AREAS, ADDON_CATALOG } from '../src/addon-catalog.js';
+import { ADDON_AREAS, ADDON_CATALOG, addonImportLine } from '../src/addon-catalog.js';
 
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const exportedAddons = Object.keys(packageJson.exports)
@@ -34,5 +34,13 @@ test('a row marked doc: true has its docs page, and a docs page is never left un
   for (const addon of ADDON_CATALOG) {
     const hasPage = existsSync(new URL(`../docs/${addon.name}.md`, import.meta.url));
     assert.equal(Boolean(addon.doc), hasPage, `${addon.name}: doc is ${Boolean(addon.doc)} but docs/${addon.name}.md ${hasPage ? 'exists' : 'does not exist'}`);
+  }
+});
+
+test('every import line binds the addon to a valid identifier', () => {
+  assert.equal(addonImportLine('mesh-query'), "import * as meshQuery from '@codepawlhq/crucible/addons/mesh-query';");
+  for (const addon of ADDON_CATALOG) {
+    const binding = addonImportLine(addon.name).split(' ')[3];
+    assert.match(binding, /^[A-Za-z_$][\w$]*$/, `${addon.name} gives the import binding ${binding}`);
   }
 });
