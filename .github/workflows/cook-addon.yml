@@ -46,6 +46,7 @@ on:
       - 'scripts/agent-native-sequence.mjs'
       - 'scripts/agent-native-temporal.mjs'
       - 'scripts/agent-native-trace.mjs'
+      - 'scripts/agent-render-estimate.mjs'
       - 'scripts/asset-server.mjs'
       - 'scripts/cdp-blob-read.mjs'
       - 'scripts/file-scene.mjs'
