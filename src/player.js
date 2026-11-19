@@ -340,7 +340,8 @@ function createCameraRig(kind, options) {
   const owner = `create${kind[0].toUpperCase()}${kind.slice(1)}Camera`;
   const defaults = RIG_KINDS[kind];
   const subject = options.subject;
-  if (subject === null || typeof subject !== 'object' || !Array.isArray(subject.position)) {
+  // A subject position that is not three finite numbers would leave focus NaN from the first frame, so it is refused here.
+  if (subject === null || typeof subject !== 'object' || !Array.isArray(subject.position) || subject.position.length !== 3 || !subject.position.every(Number.isFinite)) {
     throw new TypeError(`${owner} needs options.subject: a controller's state (controller.state) or any { position: [x, y, z], yaw }, got ${describe(subject)}.`);
   }
   if (options.clipEye !== undefined && typeof options.clipEye !== 'function') {
@@ -376,6 +377,10 @@ function createCameraRig(kind, options) {
   function advance(stepSeconds) {
     // A zero, negative or NaN step would leave the look angles or the focus NaN for good, as the controllers already refuse.
     if (!(stepSeconds > 0)) return;
+    const goal = focusGoal();
+    // A subject that reports a NaN position or yaw for one step (a controller replaced mid-frame, a custom physics subject) is
+    // skipped, so one bad reading does not leave focus and yaw NaN for good.
+    if (!goal.every(Number.isFinite) || (yawFollowSeconds > 0 && !Number.isFinite(rig.subject.yaw ?? rig.yaw))) return;
     if (wantsLook) {
       rig.yaw = wrapAngle(rig.yaw + input.getAxis(lookNames.x) * lookSpeed * stepSeconds);
     }
@@ -391,7 +396,7 @@ function createCameraRig(kind, options) {
     }
     rig.previousFocus = rig.focus;
     const amount = followSeconds === 0 ? 1 : 1 - Math.exp(-stepSeconds / followSeconds);
-    rig.focus = blend(rig.focus, focusGoal(), amount);
+    rig.focus = blend(rig.focus, goal, amount);
   }
 
   // A side scroller leads the subject along its horizontal velocity so the view shows where it is heading.

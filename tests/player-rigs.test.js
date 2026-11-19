@@ -295,6 +295,28 @@ test('custom controller and rig kinds register, build and swap at runtime', () =
   game.runtime.step(STEP_MILLISECONDS);
 });
 
+test('a camera rig refuses a subject position that is not three finite numbers (#2613)', () => {
+  for (const position of [[0, NaN, 0], [0, 1], [0, 0, Infinity], [0, 0, 0, 0]]) {
+    assert.throws(() => createChaseCamera({ subject: { position } }), /createChaseCamera needs options\.subject/, String(position));
+  }
+});
+
+test('a camera rig recovers after one bad subject step (#2613)', () => {
+  const subject = { position: [0, 0, 0], yaw: 0 };
+  const rig = createChaseCamera({ subject, followSeconds: 0 });
+  const runtime = createRuntime(fakeRenderer, { mode: 'fixed', fixedStepSeconds: 1 / 60, systems: [rig], scheduler });
+  runtime.step(STEP_MILLISECONDS);
+  subject.position = [0, NaN, 0];
+  subject.yaw = NaN;
+  runtime.step(STEP_MILLISECONDS);
+  subject.position = [3, 0, 0];
+  subject.yaw = 1;
+  runtime.step(STEP_MILLISECONDS);
+  const { eye, target } = rig.pose({ alpha: 1 });
+  assert.ok([...eye, ...target, rig.yaw].every(Number.isFinite), `rig state is not finite: ${eye} ${target} ${rig.yaw}`);
+  assert.deepEqual(target, [3, 1.2, 0]);
+});
+
 test('errors name the option and what to pass', () => {
   const input = createScriptedInput();
   assert.throws(() => createVehicleController({ input, maximumSpeed: -1 }), /createVehicleController maximumSpeed must be a number from 0 to 100, got -1/);
