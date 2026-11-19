@@ -573,6 +573,11 @@ function lineEnds(value) {
   return ends;
 }
 
+// A sharp box under a mesh keeps its subdivisions as a grid on each face, welded by the mesh, so edits have vertices to move (#2201).
+function meshBaseSplitsBox(base) {
+  return base.type === 'box' && base.bevel === 0 && base.subdivisions !== undefined && base.subdivisions !== null;
+}
+
 function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
   if (!Object.hasOwn(GEOMETRY_FIELDS, value.type)) {
     throw invalidField('type', value.type, `one of ${Object.keys(GEOMETRY_FIELDS).join(', ')}`, TypeError);
@@ -684,7 +689,7 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
       if (!base || typeof base !== 'object' || Array.isArray(base) || base.type === 'mesh' || Object.hasOwn(base, 'id')) {
         throw invalidField('base', base, 'a primitive or profile record without an id, such as { "type": "box" } (box, cylinder, sphere, torus, lathe, extrude, tube, grid or plane)', TypeError);
       }
-      let estimate = geometryEstimate({ id: 'base', ...base });
+      let estimate = meshBaseSplitsBox(base) ? 6 * (integer(base.subdivisions, 1, 128, 'subdivisions') + 1) ** 2 : geometryEstimate({ id: 'base', ...base });
       const cutterScope = meshCutterScope(value, scope);
       let referencedWork = 0;
       for (const edit of agentSceneModule('mesh').normalizeMeshEdits(value.edits ?? [])) {
@@ -874,7 +879,7 @@ function generateGeometry(value, maxVertices, scope) {
     case 'mesh': {
       const cutterScope = meshCutterScope(value, scope);
       const dependencies = scope ? checkedCutterDependencies(value, scope.definitions) : '';
-      return agentSceneModule('mesh').generateMeshGeometry(() => generateGeometry(value.base, maxVertices), value.edits ?? [], {
+      return agentSceneModule('mesh').generateMeshGeometry(() => meshBaseSplitsBox(value.base) ? box(0, value.base.subdivisions, true) : generateGeometry(value.base, maxVertices), value.edits ?? [], {
         maxVertices, smoothAngle: value.smoothAngle,
         stack: value.stack ?? [], shapeKeys: value.shapeKeys ?? [],
         // The edits only name a cutter geometry, so that geometry's own record joins the key: editing it changes the key.
