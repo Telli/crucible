@@ -110,6 +110,7 @@ body.site.showcase > main { grid-template-columns: minmax(0, 1fr); }
 .showcase-community { display: grid; gap: 20px; }
 .community-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: start; }
 .community-grid[hidden] { display: none; }
+.community-empty figure { opacity: .92; }
 .community-grid figure { margin: 0; display: grid; gap: 12px; }
 .community-grid img { display: block; width: 100%; height: auto; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line, transparent); }
 .community-grid figcaption { display: grid; gap: 4px; color: var(--muted); font-size: 14px; }
