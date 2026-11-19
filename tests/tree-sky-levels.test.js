@@ -133,3 +133,11 @@ test('createCrownSkyField names the fix for an empty or ragged positions array',
   assert.throws(() => createCrownSkyField(new Float32Array(0)), /at least one vertex position/);
   assert.throws(() => createCrownSkyField(new Float32Array(4)), /multiple of 3/);
 });
+
+test('a missing or non-finite crown vertex is refused before it can taint the field', () => {
+  for (const bad of [null, new Float32Array([0, 0, 0, 1, Number.NaN, 2]), new Float32Array([0, 0, 0, 1, Infinity, 2])]) {
+    assert.throws(() => createCrownSkyField(bad), { name: 'RangeError', message: /vertex position|finite vertex positions/ });
+  }
+  const field = createCrownSkyField(new Float32Array([0, 0, 0, 1, 0, 0]));
+  assert.throws(() => field.visibilityOf(new Float32Array([0, 0, Number.NaN])), { name: 'RangeError', message: /finite vertex positions/ });
+});

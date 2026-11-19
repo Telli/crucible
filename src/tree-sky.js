@@ -23,6 +23,15 @@ function buildUpDirections() {
   return directions;
 }
 
+function requireFinitePositions(positions, label) {
+  if (!positions || positions.length === 0 || positions.length % 3 !== 0) {
+    throw new RangeError(`${label} needs at least one vertex position (a multiple of 3 finite floats).`);
+  }
+  for (let offset = 0; offset < positions.length; offset++) {
+    if (!Number.isFinite(positions[offset])) throw new RangeError(`${label} needs finite vertex positions; fix the NaN or Infinity before building the crown.`);
+  }
+}
+
 function boundsOfPositions(positions) {
   const minimum = [Infinity, Infinity, Infinity];
   const maximum = [-Infinity, -Infinity, -Infinity];
@@ -42,9 +51,7 @@ function boundsOfPositions(positions) {
  * put them in cells that looked solid and left the far crown near black.
  */
 export function createCrownSkyField(positions) {
-  if (positions.length === 0 || positions.length % 3 !== 0) {
-    throw new RangeError('Pass at least one vertex position (a multiple of 3 floats).');
-  }
+  requireFinitePositions(positions, 'createCrownSkyField');
   const { minimum, maximum } = boundsOfPositions(positions);
   const longest = Math.max(maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2], 1e-6);
   const cell = longest / GRID_CELLS_ALONG_LONGEST_SIDE;
@@ -78,6 +85,7 @@ export function createCrownSkyField(positions) {
   }
 
   function visibilityOf(targetPositions) {
+    requireFinitePositions(targetPositions, 'visibilityOf');
     const vertexCount = targetPositions.length / 3;
     const visibility = new Float32Array(vertexCount);
     for (let vertex = 0; vertex < vertexCount; vertex++) {
