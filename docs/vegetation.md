@@ -23,7 +23,7 @@ const renderer = new CrucibleRenderer(canvas, [terrain, ...view.parts], options)
 
 ## Trees
 
-`createTree(species | { species, height, leaves }, seed)` grows one tree. Species: `broadleaf`, `birch`, `conifer`, `palm`, `bush`.
+`createTree(species | { species, height, leaves }, seed)` grows one tree. Species: `broadleaf`, `birch`, `conifer`, `palm`, `bush`. `height` runs from 0.01 to 1000 m; a seed of any function here must be a finite number.
 The same species and seed always give the same tree.
 
 The skeleton is a parametric recursive branching model: each generation has a length, wander, tropism (up or droop), taper and child spread.
