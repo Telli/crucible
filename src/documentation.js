@@ -5,6 +5,7 @@ import { highlightCode } from './code-highlight.js';
 import { createLiveExample, autoRunVisibleExamples } from './docs-live.js';
 import { createApiReference } from './docs-api.js';
 import { topicAliases, topicSlug, guideTopics, learnTopics, orderTopics } from './documentation-topics.js';
+import { figureMatch } from './documentation-figure.js';
 
 const learnSources = import.meta.glob('../docs/learn/*.md', { query: '?raw', import: 'default', eager: true });
 
@@ -224,7 +225,8 @@ function renderFence(block, section) {
 }
 
 function figure(paragraph) {
-  const match = paragraph.match(/^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)$/);
+  const match = figureMatch(paragraph);
+  if (!match) return null;
   const [, alt, source, caption] = match;
   const element = document.createElement('figure');
   element.className = 'doc-figure';
@@ -287,7 +289,7 @@ function renderParagraph(paragraph, section) {
     scroll.className = 'table-scroll';
     scroll.append(table);
     section.append(scroll);
-  } else if (/^!\[[^\]]*\]\([^)]+\)$/.test(paragraph)) {
+  } else if (figureMatch(paragraph)) {
     section.append(figure(paragraph));
   } else if (paragraph.startsWith('>')) {
     section.append(callout(paragraph));
