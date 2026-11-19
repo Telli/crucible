@@ -1697,6 +1697,22 @@ test('move handles end in arrows, scale handles in squares and an axis that face
   assert.deepEqual(shapes().sort(), ['circle', 'polygon', 'polygon'], 'the Z axis points at the viewer');
 });
 
+test('the View menu rows that switch something say whether it is on', testContext => {
+  const ui = mountStudio(testContext);
+  const toggleRow = label => ui.root.descendants().find(element => element.getAttribute('role') === 'menuitemcheckbox' && element.textContent === label);
+  const grid = toggleRow('Grid');
+  assert.ok(grid);
+  assert.equal(grid.getAttribute('aria-checked'), 'true');
+  grid.click();
+  assert.equal(grid.getAttribute('aria-checked'), 'false');
+  assert.equal(ui.studio.preferences.gridVisible, false);
+  const properties = toggleRow('Properties');
+  assert.equal(properties.getAttribute('aria-checked'), 'true');
+  properties.click();
+  assert.equal(properties.getAttribute('aria-checked'), 'false');
+  assert.equal(ui.root.dataset.inspectorCollapsed, 'true');
+});
+
 test('the handle under the pointer is marked, stays marked through its drag and clears after', testContext => {
   const ui = mountStudio(testContext);
   ui.selectRow('hero');

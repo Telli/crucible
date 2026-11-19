@@ -147,7 +147,7 @@ export const STUDIO_CSS = `
 .crucible-studio-gizmo[data-hover-axis="screen"] [data-gizmo-axis="screen"],
 .crucible-studio-gizmo[data-hover-axis="uniform"] [data-gizmo-axis="uniform"],
 .crucible-studio-gizmo[data-hover-axis="surface"] [data-gizmo-axis="surface"] {
-  filter: brightness(1.18) saturate(1.3);
+  filter: brightness(1.1) saturate(1.35);
 }
 .crucible-studio-gizmo[data-hover-axis="x"] [data-gizmo-axis="x"]:is(line, polyline),
 .crucible-studio-gizmo[data-hover-axis="y"] [data-gizmo-axis="y"]:is(line, polyline),
@@ -170,7 +170,8 @@ export const STUDIO_CSS = `
 .crucible-studio-gizmo[data-hover-axis="uniform"] [data-gizmo-axis="uniform"]:is(polygon, rect, circle),
 .crucible-studio-gizmo[data-hover-axis="surface"] [data-gizmo-axis="surface"]:is(polygon, rect, circle) {
   stroke: var(--studio-text);
-  stroke-width: 2px;
+  stroke-width: 1.5px;
+  paint-order: stroke;
 }
 .crucible-studio-gizmo[data-hover-axis="xy"] [data-gizmo-axis="xy"],
 .crucible-studio-gizmo[data-hover-axis="xz"] [data-gizmo-axis="xz"],
@@ -398,6 +399,18 @@ export const STUDIO_CSS = `
   font-family: var(--studio-font-mono);
   font-size: 11px;
   color: var(--studio-muted);
+}
+.crucible-studio-popover button[role="menuitemcheckbox"]::before {
+  content: "";
+  flex: none;
+  inline-size: 7px;
+  block-size: 7px;
+  margin-inline-end: 8px;
+  border-radius: 50%;
+  background: transparent;
+}
+.crucible-studio-popover button[role="menuitemcheckbox"][aria-checked="true"]::before {
+  background: var(--studio-text);
 }
 .crucible-studio-menus {
   display: flex;

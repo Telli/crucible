@@ -457,7 +457,7 @@ function appendDragTrace(documentReference, gizmoSvg, trace) {
   // Each dashed line lies on a wider line in the background colour, so it reads over a pale object and over the dark
   // ground alike, in either theme.
   const quiet = { stroke: 'var(--studio-text)', 'stroke-width': '1.8', 'stroke-dasharray': '6 4', 'pointer-events': 'none' };
-  const halo = { stroke: 'var(--studio-bg)', 'stroke-opacity': '0.7', 'stroke-width': '4.2', 'stroke-linecap': 'round', 'pointer-events': 'none' };
+  const halo = { stroke: 'var(--studio-bg)', 'stroke-opacity': '0.92', 'stroke-width': '5.4', 'stroke-linecap': 'round', 'pointer-events': 'none' };
   if (trace.outline) {
     const outline = {
       points: trace.outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
@@ -815,6 +815,17 @@ export function createStudio(container, {
     item.addEventListener('click', onChoose);
     return item;
   };
+  const menuToggles = [];
+  const syncMenuToggles = () => menuToggles.forEach(({ item, isOn }) => item.setAttribute('aria-checked', isOn() ? 'true' : 'false'));
+  const createMenuToggle = (label, shortcut, onChoose, isOn) => {
+    const item = createMenuItem(label, shortcut, () => {
+      onChoose();
+      syncMenuToggles();
+    });
+    item.setAttribute('role', 'menuitemcheckbox');
+    menuToggles.push({ item, isOn });
+    return item;
+  };
   const createMenuPopover = (popoverId, ...items) => createElement(documentReference, 'div', {
     id: popoverId,
     className: 'crucible-studio-popover',
@@ -845,10 +856,13 @@ export function createStudio(container, {
     createMenuItem('Top view', '7', () => showView('top')),
     createMenuItem('Perspective / Orthographic', '5', () => controller.toggleCameraProjection()),
     createMenuItem('Frame the selection', 'F', () => controller.frameSelection()),
-    createMenuItem('Grid', '', () => gridButton.click()),
-    createMenuItem('Scene and Properties', '', () => toggleDocksButton.click()),
-    createMenuItem('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true')),
+    createMenuToggle('Grid', '', () => gridButton.click(), () => gridVisible),
+    createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true'),
+    createMenuToggle('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true'),
   );
+  // A row that switches something shows whether it is on each time its menu opens.
+  viewPopover.addEventListener('toggle', syncMenuToggles);
+  syncMenuToggles();
   const helpPopover = createMenuPopover(
     'crucible-studio-pop-help',
     createMenuItem('Keyboard shortcuts', '?', () => shortcutsDialog.showModal()),
