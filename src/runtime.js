@@ -343,14 +343,23 @@ export function createRuntime(target, options = {}) {
       };
     },
 
-    // Stops the loop and disposes every system in reverse order. The runtime cannot start again.
+    // Stops the loop and disposes every system in reverse order. Every dispose hook runs so one failure cannot keep the others
+    // from releasing their resources; the first failure is thrown after the list is cleared. The runtime cannot start again.
     dispose() {
       if (disposed) return;
       stopLoop();
       governor.dispose();
       disposed = true;
-      for (const system of [...systems].reverse()) disposeSystem(system);
+      let failure = null;
+      for (const system of [...systems].reverse()) {
+        try {
+          disposeSystem(system);
+        } catch (error) {
+          failure ??= { error };
+        }
+      }
       systems.length = 0;
+      if (failure) throw failure.error;
     },
   };
 
