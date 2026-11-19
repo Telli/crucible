@@ -163,8 +163,7 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-readout {
   position: absolute;
-  /* Beside the tool rail, so a short window never puts the rail over it. */
-  inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
+  inset-inline-start: var(--studio-edge);
   inset-block-end: var(--studio-edge);
   display: flex;
   flex-direction: column;
@@ -563,6 +562,27 @@ export const STUDIO_CSS = `
 .crucible-studio .crucible-studio-tablist button[hidden] {
   display: none;
 }
+/* Centred on the window, between the file name and the export side. Below the compact width there is no room for
+   that, so the tabs join the row and only the open one keeps its name. */
+.crucible-studio-workspaces {
+  position: absolute;
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+}
+.crucible-studio[data-compact="true"] .crucible-studio-workspaces {
+  position: static;
+  transform: none;
+}
+.crucible-studio[data-compact="true"] .crucible-studio-workspaces button[aria-selected="false"] .crucible-studio-workspace-label {
+  display: none;
+}
+.crucible-studio[data-compact="true"] .crucible-studio-workspaces button[aria-selected="false"] {
+  padding-inline: 8px;
+}
+.crucible-studio-workspaces .crucible-studio-icon {
+  inline-size: 15px;
+  block-size: 15px;
+}
 .crucible-studio-workspaces button {
   position: relative;
   padding-inline: 12px;
@@ -784,6 +804,10 @@ export const STUDIO_CSS = `
 .crucible-studio[data-workspace="animate"] .crucible-studio-readout,
 .crucible-studio[data-workspace="animate"]:not([data-compact="true"]) .crucible-studio-view-widget {
   inset-block-end: calc(var(--studio-edge) + var(--studio-bar-clear));
+}
+/* Raised above the timeline, the readout would meet the tool rail in a short window, so there it stands beside it. */
+.crucible-studio[data-workspace="animate"] .crucible-studio-readout {
+  inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
 }
 .crucible-studio[data-workspace="animate"]:not([data-compact="true"]) .crucible-studio-dock {
   max-block-size: calc(100% - var(--studio-top) - 100px - var(--studio-bar-clear));

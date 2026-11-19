@@ -51,9 +51,9 @@ const COMPACT_WIDTH = 820;
 // The work runs left to right: build the scene, give it its look, then set it in motion. Each workspace shows only the
 // panels its step needs.
 const STUDIO_WORKSPACES = Object.freeze([
-  Object.freeze({ id: 'build', label: 'Build', tabs: Object.freeze(['node']) }),
-  Object.freeze({ id: 'look', label: 'Look', tabs: Object.freeze(['material', 'look']) }),
-  Object.freeze({ id: 'animate', label: 'Animate', tabs: Object.freeze(['camera']) }),
+  Object.freeze({ id: 'build', label: 'Build', icon: 'node', tabs: Object.freeze(['node']) }),
+  Object.freeze({ id: 'look', label: 'Look', icon: 'material', tabs: Object.freeze(['material', 'look']) }),
+  Object.freeze({ id: 'animate', label: 'Animate', icon: 'play', tabs: Object.freeze(['camera']) }),
 ]);
 const TREE_ICON_BY_GEOMETRY = Object.freeze({
   box: 'node',
@@ -894,12 +894,13 @@ export function createStudio(container, {
     });
   }
 
-  const workspaceButtons = STUDIO_WORKSPACES.map(workspace => createElement(documentReference, 'button', {
-    type: 'button',
-    textContent: workspace.label,
-    dataset: { workspace: workspace.id },
-    attributes: { role: 'tab', 'aria-selected': 'false' },
-  }));
+  const workspaceButtons = STUDIO_WORKSPACES.map(workspace => createElement(
+    documentReference,
+    'button',
+    { type: 'button', dataset: { workspace: workspace.id }, attributes: { role: 'tab', 'aria-selected': 'false', 'aria-label': workspace.label } },
+    createIcon(documentReference, workspace.icon),
+    createElement(documentReference, 'span', { className: 'crucible-studio-workspace-label', textContent: workspace.label }),
+  ));
   const workspaceList = createElement(
     documentReference,
     'div',

@@ -1829,7 +1829,9 @@ test('workspaces run Build, Look, Animate and each shows only the panels its ste
   const shownTabs = () => STUDIO_TABS.filter(tab => !ui.tab(tab).hasAttribute('hidden'));
   const tabList = ui.root.querySelector('.crucible-studio-tablist');
   const workspaceList = ui.root.querySelector('.crucible-studio-workspaces');
-  assert.deepEqual(workspaceList.querySelectorAll('button').map(button => button.textContent), ['Build', 'Look', 'Animate']);
+  assert.deepEqual(workspaceList.querySelectorAll('.crucible-studio-workspace-label').map(label => label.textContent), ['Build', 'Look', 'Animate']);
+  assert.deepEqual(workspaceList.querySelectorAll('button').map(button => button.querySelector('svg') !== null), [true, true, true], 'each workspace tab leads with an icon');
+  assert.deepEqual(workspaceList.querySelectorAll('button').map(button => button.getAttribute('aria-label')), ['Build', 'Look', 'Animate']);
   assert.equal(workspaceList.getAttribute('role'), 'tablist');
   assert.equal(workspaceList.parentNode.className, 'crucible-studio-menubar', 'the tabs share the menu bar, not a row of their own');
 
