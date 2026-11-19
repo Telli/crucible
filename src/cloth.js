@@ -474,6 +474,14 @@ function checkUnit(value, field, maximum) {
   return value;
 }
 
+// Self collision needs a radius above 0, so two vertices at one point have to be welded first.
+function assertNoZeroLengthEdge(constraints) {
+  for (let edge = 0; edge < constraints.stretchCount; edge++) {
+    if (constraints.restLengths[edge] > 0) continue;
+    throw new RangeError(`Cloth selfCollision: vertices ${constraints.firsts[edge]} and ${constraints.seconds[edge]} share one point; weld them.`);
+  }
+}
+
 // Soft body and self collision terms, as two hooks the step calls: once per substep and once per iteration.
 function prepareExtras(options, positions, triangles, particleCount, constraints) {
   const softBody = options.softBody ?? null;
@@ -500,6 +508,7 @@ function prepareExtras(options, positions, triangles, particleCount, constraints
     if (particleCount > SELF_COLLISION_LIMITS.maxParticles) {
       throw new RangeError(`Cloth selfCollision handles ${SELF_COLLISION_LIMITS.maxParticles} particles at most; this sheet has ${particleCount}. Use a coarser grid or drop selfCollision.`);
     }
+    assertNoZeroLengthEdge(constraints);
     const longest = maxSelfCollisionRadius(constraints);
     const radius = selfCollision === true ? defaultSelfCollisionRadius(longest, options.thickness) : selfCollision.radius;
     if (!(radius > 0 && radius <= longest)) {

@@ -171,7 +171,7 @@ export function normalizeMeshEdits(edits) {
   if (edits.length > MAX_MESH_EDITS) throw new RangeError(`A mesh holds at most ${MAX_MESH_EDITS} edits. Apply fewer or start from a new base.`);
   return edits.map((edit, index) => {
     if (!edit || typeof edit !== 'object' || Array.isArray(edit)) throw invalidField(`edits[${index}]`, edit, 'an object such as { "op": "subdivide", "levels": 1 }', TypeError);
-    const definition = MESH_EDIT_OPERATIONS[edit.op];
+    const definition = Object.hasOwn(MESH_EDIT_OPERATIONS, edit.op) ? MESH_EDIT_OPERATIONS[edit.op] : undefined;
     if (!definition) throw editField(index, 'op', edit.op, `one of ${Object.keys(MESH_EDIT_OPERATIONS).join(', ')}`);
     for (const key of Object.keys(edit)) {
       if (key !== 'op' && !definition.fields.includes(key)) throw editField(index, key, edit[key], `one of the fields ${edit.op} takes: ${definition.fields.join(', ')}; remove "${key}"`);

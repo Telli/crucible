@@ -841,7 +841,8 @@ const nodeOperations = (nodeFieldShape, nodeSchema) => [
 const otherOperations = [
   materialListed(z.strictObject({ type: z.literal('set-material'), id: identifier, ...materialFields }, { error: flatFieldsHint('set-material', 'material') }), 'Change a material.', { type: z.literal('set-material'), id: identifier }),
   z.strictObject({ type: z.literal('set-camera'), ...cameraFields }),
-  z.strictObject({ type: z.literal('set-motion'), motion: recipeMotionReference.nullable() }),
+  z.strictObject({ type: z.literal('set-motion'), motion: recipeMotionReference.nullable().optional(), removeTracks: z.array(z.record(z.string(), z.string())).min(1).max(64).optional().describe('Instead of motion: selectors { kind, id, property } of tracks to drop.') })
+    .refine(operationBody => (operationBody.motion !== undefined) !== (operationBody.removeTracks !== undefined), { message: 'set-motion takes one of motion or removeTracks.' }),
   z.strictObject({ type: z.literal('bake-motion'), nodes: z.array(identifier).min(1).max(32), start: nonnegative.optional(), end: nonnegative.optional(), step: positive.optional(), tolerance: z.record(z.string(), z.number()).optional() }),
   z.strictObject({
     type: z.literal('fracture-node'), node: identifier, cells: z.number().int().min(2).max(64), strength: positive,

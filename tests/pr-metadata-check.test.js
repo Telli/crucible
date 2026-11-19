@@ -412,3 +412,20 @@ test('a draft left past the close time is reminded before it closes once it is m
   const earlyDraft = decideActions({ ...base, draft: true, previousState: state, now: start + 10 * HOUR_MS });
   assert.equal(earlyDraft.statusState.firstFailedAt, '2026-11-01T00:00:00.000Z');
 });
+
+test('a look change whose only picture sits inside an HTML comment still asks for a picture', () => {
+  const hidden = `${withoutEvidence}<!-- ![after](https://github.com/user-attachments/assets/after.png) -->\n`;
+  const lookFiles = [file('src/shaders.js'), file('changes/12.md')];
+  assert.deepEqual(fixIds({ pr: pullRequest({ body: hidden }), files: lookFiles }), ['look-without-image']);
+  const visible = `${withoutEvidence}![after](https://github.com/user-attachments/assets/after.png)\n`;
+  assert.deepEqual(fixIds({ pr: pullRequest({ body: visible }), files: lookFiles }), []);
+});
+
+test('GitHub also links a closing keyword followed by a colon', () => {
+  for (const line of ['Closes: #12', 'Fixes: #12', 'Part of: #12', 'CLOSES: #12']) {
+    const body = goodBody.replace('Closes #12', line);
+    assert.deepEqual(fixIds({ pr: pullRequest({ body }), files: shippedFiles }), [], line);
+  }
+  const noNumber = goodBody.replace('Closes #12', 'Closes: nothing');
+  assert.deepEqual(fixIds({ pr: pullRequest({ body: noNumber }), files: shippedFiles }), ['missing-issue-link']);
+});
