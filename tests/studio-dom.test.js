@@ -6,7 +6,7 @@ import { STUDIO_CSS } from '../src/studio-styles.js';
 import { createStudio, createStudioController, STUDIO_PRIMITIVES, STUDIO_TABS, STUDIO_TEMPLATES, STUDIO_TOOLS } from '../src/studio.js';
 import { LIGHTING_SETUP_NAMES } from '../src/agent-scene-capabilities.js';
 import { directionToSunAngles } from '../src/studio-controller.js';
-import { buildGridRecipe } from '../src/studio-viewport-aids.js';
+import { buildGridParts } from '../src/studio-viewport-aids.js';
 import { VIEW_TRANSFORM_NAMES } from '../src/view-transform-names.js';
 import {
   byDataset,
@@ -43,7 +43,7 @@ function makeRecipe() {
 const VIEWPORT_BOX = { left: 40, top: 30, width: 800, height: 600, right: 840, bottom: 630 };
 
 /** Mounts Studio on the fake DOM with a fake renderer and returns the handles tests use. */
-const GRID_LINE_COUNT = buildGridRecipe().nodes.length;
+const GRID_LINE_COUNT = buildGridParts().length;
 
 function mountStudio(testContext, { recipe = makeRecipe(), containerWidth = 0, domOptions, sharedDom = null, ...options } = {}) {
   const dom = sharedDom ?? installStudioDom(domOptions);

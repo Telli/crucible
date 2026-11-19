@@ -8,18 +8,28 @@ const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const GRID_FLOOR_HEIGHT = 0.019;
 const GRID_MINIMUM_LIFT = 0.0022;
 const GRID_LIFT_PIXELS = 0.25;
-// Three sets of lines, each ten times coarser than the one before, with up to 30 lines either side of the middle.
-const GRID_LEVELS = 3;
-const GRID_REACH = 30;
-const GRID_LINE_PIXELS = 1.2;
-const GRID_COARSE_PIXELS = 1.6;
-const GRID_AXIS_PIXELS = 2.4;
+// The grid is three sheets of square cells, each ten times coarser than the one before. Each sheet is a textured quad: the
+// lines are in a texture, so the graphics card thins and fades them with distance instead of leaving sparkling dots
+// near the horizon, which is what lines drawn as geometry did.
+const GRID_SHEETS = 3;
+// Cells either side of the middle of a sheet. The quad carries the cell count in its own texture coordinates.
+const GRID_SHEET_REACH = 512;
+// A line is one texel of its texture, so a texture of S texels draws lines 1/S of a cell wide. A sheet has one quad per
+// size and shows the one whose line is closest to a pixel wide at the camera target.
+const GRID_TEXTURE_SIZES = Object.freeze([32, 64, 128, 256, 512, 1024]);
+const GRID_WIDEST_LINE_PIXELS = 1.5;
+// How strong a line of the finest sheet is at most, and how strong every tenth line is.
+const GRID_FINE_OPACITY = 0.24;
+const GRID_COARSE_OPACITY = 0.42;
+const GRID_LINE_COLOR = Object.freeze([0.62, 0.62, 0.68]);
+const GRID_AXIS_PIXELS = 1.5;
+const GRID_AXIS_TEXTURE_SIZE = 256;
+const GRID_AXIS_OPACITY = 0.8;
+const GRID_AXIS_COLORS = Object.freeze({ x: [0.93, 0.38, 0.32], z: [0.28, 0.6, 1] });
 // About this many fine steps fit the height of the view before the grid moves to the next step.
 const GRID_STEPS_IN_VIEW = 4;
-// A set of lines stops where its lines would come closer than this on screen: past that they only make noise.
-const GRID_CLOSEST_PIXELS = 5;
 const GRID_PARKED_HEIGHT = -1e5;
-const DEFAULT_GRID_VIEW = Object.freeze({ visibleHeight: 5, viewportHeight: 720, target: [0, 0.5, 0], eye: [4.2, 2.9, 4.9] });
+const DEFAULT_GRID_VIEW = Object.freeze({ visibleHeight: 5, viewportHeight: 720, target: [0, 0.5, 0] });
 const VIEWPORT_NEAR_SHARE = 100;
 const VIEWPORT_FAR_REACH = 80;
 const VIEWPORT_FLOOR_REACH = 40000;
@@ -45,65 +55,120 @@ export function cameraVisibleHeight(camera) {
 }
 
 /**
- * Where every grid line goes for a view: `{ step, lines }`, each line `{ id, translation, scale }`. The step is 1 m
- * up close and grows tenfold as the camera pulls back (10 m, 100 m), the way Blender's floor does. Three sets of lines
- * are drawn at once, at 1, 10 and 100 steps; each set reaches as far from the camera as its lines stay apart on
- * screen, so the floor is covered far out without the far lines crowding into noise. Lines are about a pixel wide
- * where they pass the camera; the finest set thins out as the next step takes over, so the change has no jump. The
- * grid follows the camera target in whole steps.
+ * Where the grid goes for a view: `{ step, sheets, lines }`. The step is 1 m up close and grows tenfold as the camera
+ * pulls back (10 m, 100 m), the way Blender's floor does. `sheets` places every textured quad, each
+ * `{ id, translation, scale, opacity }`: per sheet one quad is shown and the others are put away. As the next step
+ * comes closer the finest sheet fades out and the middle one drops to the strength the finest started at, so a step
+ * change moves no line and changes no brightness. `lines` places the two axis lines, which are textured strips as
+ * well. The grid follows the camera target in whole cells.
  */
-export function gridLayout({ visibleHeight, viewportHeight, target, eye } = DEFAULT_GRID_VIEW) {
+export function gridLayout({ visibleHeight, viewportHeight, target } = DEFAULT_GRID_VIEW) {
   const level = Math.log10(Math.max(1e-3, visibleHeight) / GRID_STEPS_IN_VIEW);
   const step = 10 ** Math.floor(level);
   const blend = level - Math.floor(level);
   const pixel = visibleHeight / Math.max(1, viewportHeight);
   const lift = Math.max(GRID_MINIMUM_LIFT, pixel * GRID_LIFT_PIXELS);
   const height = GRID_FLOOR_HEIGHT + lift;
-  const thickness = lift * 0.9;
-  const viewDistance = Math.max(1e-3, Math.hypot(eye[0] - target[0], eye[1] - target[1], eye[2] - target[2]));
-  const eyeHeight = Math.max(Math.abs(eye[1] - GRID_FLOOR_HEIGHT), viewDistance * 0.05);
-  const focalPixels = viewDistance / pixel;
-  const lines = [];
-  const place = (id, alongX, center, offset, length, width, raise) => {
-    lines.push({
-      id: `${GRID_PART_PREFIX}${id}`,
-      translation: alongX ? [center[0], height + raise, offset] : [offset, height + raise, center[1]],
-      scale: alongX ? [length, thickness, width] : [width, thickness, length],
-    });
-  };
-  const park = id => {
-    lines.push({ id: `${GRID_PART_PREFIX}${id}`, translation: [0, GRID_PARKED_HEIGHT, 0], scale: [1e-3, 1e-3, 1e-3] });
-  };
-  const levelPixels = [GRID_LINE_PIXELS * (1 - blend), GRID_LINE_PIXELS + (GRID_COARSE_PIXELS - GRID_LINE_PIXELS) * (1 - blend), GRID_COARSE_PIXELS];
-  let farthest = 0;
-  let outerCenter = [0, 0];
-  for (let levelIndex = 0; levelIndex < GRID_LEVELS; levelIndex += 1) {
-    const spacing = step * 10 ** levelIndex;
-    const snap = spacing * 10;
-    const center = [Math.round(target[0] / snap) * snap, Math.round(target[2] / snap) * snap];
-    const readable = Math.sqrt((spacing * eyeHeight * focalPixels) / GRID_CLOSEST_PIXELS);
-    const count = Math.max(2, Math.min(GRID_REACH, Math.floor(readable / spacing)));
-    const reach = count * spacing;
-    farthest = reach;
-    outerCenter = center;
-    for (let index = -GRID_REACH; index <= GRID_REACH; index += 1) {
-      for (const alongX of [true, false]) {
-        const id = `level${levelIndex}-${alongX ? 'x' : 'z'}${index}`;
-        if (Math.abs(index) > count) {
-          park(id);
-          continue;
-        }
-        const offset = (alongX ? center[1] : center[0]) + index * spacing;
-        // A line that passes far from the camera is widened to stay about a pixel wide where it comes closest.
-        const passing = Math.hypot(eyeHeight, offset - (alongX ? eye[2] : eye[0]));
-        const width = pixel * levelPixels[levelIndex] * Math.max(1, passing / viewDistance);
-        place(id, alongX, center, offset, reach * 2, width, thickness * 0.2 * levelIndex);
+  // What a line of each sheet should add up to, and from it what each sheet draws: a coarser line lies on top of the
+  // finer ones that share its place.
+  // The finest lines hold most of their strength through the step and drop away at the end of it.
+  const fineOpacity = GRID_FINE_OPACITY * (1 - blend ** 3);
+  const middleTotal = GRID_COARSE_OPACITY - (GRID_COARSE_OPACITY - GRID_FINE_OPACITY) * blend ** 3;
+  const opacities = [fineOpacity, 1 - (1 - middleTotal) / (1 - fineOpacity), 1 - (1 - GRID_COARSE_OPACITY) / (1 - middleTotal)];
+  const sheets = [];
+  for (let sheetIndex = 0; sheetIndex < GRID_SHEETS; sheetIndex += 1) {
+    const spacing = step * 10 ** sheetIndex;
+    const cellPixels = spacing / pixel;
+    const shownSize = GRID_TEXTURE_SIZES.find(size => cellPixels / size <= GRID_WIDEST_LINE_PIXELS) ?? GRID_TEXTURE_SIZES.at(-1);
+    for (const size of GRID_TEXTURE_SIZES) {
+      const id = `${GRID_PART_PREFIX}sheet${sheetIndex}-${size}`;
+      if (size !== shownSize) {
+        sheets.push({ id, translation: [0, GRID_PARKED_HEIGHT, 0], scale: [1e-3, 1, 1e-3], opacity: 0 });
+        continue;
+      }
+      sheets.push({
+        id,
+        translation: [Math.round(target[0] / spacing) * spacing, height, Math.round(target[2] / spacing) * spacing],
+        scale: [spacing, 1, spacing],
+        opacity: opacities[sheetIndex],
+      });
+    }
+  }
+  const axisLength = GRID_SHEET_REACH * 2 * step * 10 ** (GRID_SHEETS - 1);
+  // An axis strip is one texture cell wide and its line one texel of it, so the strip is this much wider than the line.
+  const axisWidth = pixel * GRID_AXIS_PIXELS * GRID_AXIS_TEXTURE_SIZE;
+  const lines = [
+    { id: `${GRID_PART_PREFIX}axis-x`, translation: [Math.round(target[0] / step) * step, height + lift * 0.5, 0], scale: [axisLength, 1, axisWidth] },
+    { id: `${GRID_PART_PREFIX}axis-z`, translation: [0, height + lift * 0.5, Math.round(target[2] / step) * step], scale: [axisWidth, 1, axisLength] },
+  ];
+  return { step, sheets, lines };
+}
+
+// The picture of one cell: white everywhere, opaque along two edges and clear inside, so the tiled cells draw a grid.
+// With `rowsOnly` only the first row is opaque, which draws the one line of an axis strip.
+function gridCellImage(size, rowsOnly = false) {
+  const data = new Uint8ClampedArray(size * size * 4).fill(255);
+  for (let row = 0; row < size; row += 1) {
+    for (let column = 0; column < size; column += 1) {
+      if (row !== 0 && (rowsOnly || column !== 0)) {
+        data[(row * size + column) * 4 + 3] = 0;
       }
     }
   }
-  place('axis-x', true, outerCenter, 0, farthest * 2, pixel * GRID_AXIS_PIXELS, thickness * 0.6);
-  place('axis-z', false, outerCenter, 0, farthest * 2, pixel * GRID_AXIS_PIXELS, thickness * 0.6);
-  return { step, lines };
+  return typeof ImageData === 'function' ? new ImageData(data, size, size) : { width: size, height: size, data };
+}
+
+/**
+ * The grid as renderer parts: for each sheet one quad per line texture, then the X axis strip in red and the Z axis
+ * strip in blue. They are built here and not from a recipe, because a recipe cannot carry a generated texture.
+ * `imageOf(size, rowsOnly)` supplies the picture of one cell.
+ */
+export function buildGridParts(imageOf = gridCellImage) {
+  const reach = GRID_SHEET_REACH;
+  const geometry = {
+    positions: new Float32Array([-reach, 0, -reach, -reach, 0, reach, reach, 0, reach, reach, 0, -reach]),
+    normals: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]),
+    uvs: new Float32Array([-reach, -reach, -reach, reach, reach, reach, reach, -reach]),
+    indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+  };
+  const images = new Map(GRID_TEXTURE_SIZES.map(size => [size, imageOf(size, false)]));
+  const sheetMaterial = (color, opacity, image) => ({ color: [...color], metallic: 0, roughness: 1, emission: 0, tag: 'unlit', alphaMode: 'blend', opacity, doubleSided: true, map: { image, colorSpace: 'linear' } });
+  const parkedMatrix = () => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, GRID_PARKED_HEIGHT, 0, 1]);
+  const parts = [];
+  for (let sheetIndex = 0; sheetIndex < GRID_SHEETS; sheetIndex += 1) {
+    for (const size of GRID_TEXTURE_SIZES) {
+      parts.push({
+        name: `${GRID_PART_PREFIX}sheet${sheetIndex}-${size}`,
+        geometry,
+        matrix: parkedMatrix(),
+        material: sheetMaterial(GRID_LINE_COLOR, 0, images.get(size)),
+        castShadow: false,
+        receiveShadow: false,
+        depthLayer: 1,
+      });
+    }
+  }
+  // An axis strip lies half a cell either side of its axis, with the line of the texture in the middle of it.
+  const axisImage = imageOf(GRID_AXIS_TEXTURE_SIZE, true);
+  // The second texture coordinate runs across the strip: along z for the X axis and along x for the Z axis.
+  const strip = alongX => ({
+    positions: new Float32Array([-0.5, 0, -0.5, -0.5, 0, 0.5, 0.5, 0, 0.5, 0.5, 0, -0.5]),
+    normals: geometry.normals,
+    uvs: alongX ? new Float32Array([0, -0.5, 0, 0.5, 1, 0.5, 1, -0.5]) : new Float32Array([0, -0.5, 1, -0.5, 1, 0.5, 0, 0.5]),
+    indices: geometry.indices,
+  });
+  for (const axis of ['x', 'z']) {
+    parts.push({
+      name: `${GRID_PART_PREFIX}axis-${axis}`,
+      geometry: strip(axis === 'x'),
+      matrix: parkedMatrix(),
+      material: sheetMaterial(GRID_AXIS_COLORS[axis], GRID_AXIS_OPACITY, axisImage),
+      castShadow: false,
+      receiveShadow: false,
+      depthLayer: 2,
+    });
+  }
+  return parts;
 }
 
 /**
@@ -134,12 +199,16 @@ export function viewportFloorPart(floorHeight) {
   };
 }
 
-/** Moves the grid parts to a layout. Each part keeps its geometry and material; only its matrix is rewritten in place. */
+/** Moves the grid parts to a layout. Each part keeps its geometry and material; its matrix is rewritten in place, and a sheet also takes its opacity. */
 export function placeGridParts(partsByName, layout) {
-  for (const line of layout.lines) {
-    const matrix = partsByName.get(line.id)?.matrix;
+  for (const line of [...layout.sheets, ...layout.lines]) {
+    const part = partsByName.get(line.id);
+    const matrix = part?.matrix;
     if (!matrix) {
       continue;
+    }
+    if (line.opacity !== undefined) {
+      part.material.opacity = line.opacity;
     }
     matrix.fill(0);
     matrix[0] = line.scale[0];
@@ -161,32 +230,6 @@ export function describeGridStep(step) {
     return `${Math.round(step)} m`;
   }
   return step >= 0.01 ? `${Math.round(step * 100)} cm` : `${Math.round(step * 1000)} mm`;
-}
-
-/** The recipe of the ground grid as the starting view sees it, with the X axis in red and the Z axis in blue. */
-export function buildGridRecipe() {
-  const material = id => (id.endsWith('axis-x') ? 'studio-grid-x' : id.endsWith('axis-z') ? 'studio-grid-z' : 'studio-grid-minor');
-  const nodes = gridLayout().lines.map(line => ({
-    id: line.id,
-    geometry: 'studio-grid-line',
-    material: material(line.id),
-    translation: line.translation,
-    scale: line.scale,
-    castShadow: false,
-    receiveShadow: false,
-  }));
-  const glow = (id, color, emission) => ({ id, tag: 'surface', color: [0, 0, 0], roughness: 1, metallic: 0, emission, emissiveColor: color });
-  return {
-    format: 'crucible.scene',
-    schemaVersion: 1,
-    geometries: [{ id: 'studio-grid-line', type: 'box', bevel: 0 }],
-    materials: [
-      glow('studio-grid-minor', [0.6, 0.6, 0.66], 0.28),
-      glow('studio-grid-x', [0.93, 0.38, 0.32], 0.9),
-      glow('studio-grid-z', [0.28, 0.6, 1], 0.9),
-    ],
-    nodes,
-  };
 }
 
 function normalize(vector) {

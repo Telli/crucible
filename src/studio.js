@@ -19,7 +19,9 @@ import {
   saveStudioPreferences,
 } from './studio-preferences.js';
 import { studioIconPath } from './studio-icons.js';
-import { AXIS_COLORS, buildGridRecipe, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
+import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
+// The grid is textured, and replaceParts takes a textured part only with this module loaded.
+import './replace-textured-parts.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
 import {
   STUDIO_LENS_PRESETS,
@@ -1913,7 +1915,7 @@ export function createStudio(container, {
   function syncViewportAids() {
     const camera = controller.scene.camera;
     viewWidget.update(camera);
-    const gridStep = gridLayout({ visibleHeight: cameraVisibleHeight(camera), viewportHeight: controller.viewportHeight, target: camera.target, eye: camera.eye }).step;
+    const gridStep = gridLayout({ visibleHeight: cameraVisibleHeight(camera), viewportHeight: controller.viewportHeight, target: camera.target }).step;
     readoutCamera.textContent = gridVisible ? `${describeCamera(camera)} · Grid ${describeGridStep(gridStep)}` : describeCamera(camera);
     if (selectionReadoutStale) {
       selectionReadoutStale = false;
@@ -2116,7 +2118,7 @@ export function createStudio(container, {
     if (!gridVisible || capturingStill) {
       return controller.scene.parts;
     }
-    gridParts ??= createAgentScene(buildGridRecipe()).parts;
+    gridParts ??= buildGridParts();
     gridPartsByName ??= new Map(gridParts.map(part => [part.name, part]));
     const camera = controller.scene.camera;
     placeGridParts(gridPartsByName, gridLayout({ visibleHeight: cameraVisibleHeight(camera), viewportHeight: controller.viewportHeight, target: camera.target, eye: camera.eye }));

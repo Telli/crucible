@@ -22,7 +22,7 @@ The scene fills the window and the controls float on top of it.
 | Bottom left | The camera (perspective and lens, or orthographic), the grid step, and the size of the selected object in metres. |
 | Bottom right | The view widget: the X, Y and Z axes as the camera sees them. Click an end to look from the right, left, top, front or back. |
 
-The ground carries a grid that covers the floor far out, with the X axis in red and the Z axis in blue. Up close it has one line per metre; as you zoom out the step grows tenfold (10 m, 100 m) and as you zoom in it shrinks (10 cm), and the readout at the bottom left names the step. Coarser lines reach further than fine ones, so the far floor is not crowded with lines. The grid is a working aid: it is not part of the recipe and stays out of PNG, GLB and pack exports. `studio.setGridVisible(false)` hides it from code.
+The ground carries a grid that covers the floor far out, with the X axis in red and the Z axis in blue. Up close it has one line per metre; as you zoom out the step grows tenfold (10 m, 100 m) and as you zoom in it shrinks (10 cm), and the readout at the bottom left names the step. Every tenth line is stronger, and the lines thin and fade with distance instead of crowding the far floor. The grid is a working aid: it is not part of the recipe and stays out of PNG, GLB and pack exports. `studio.setGridVisible(false)` hides it from code.
 
 The floor of the viewport reaches the horizon however far you zoom out (up to 400 m from the target), and the viewport keeps drawing the scene beyond the `far` of the scene camera. A PNG export still uses the scene camera as it is saved.
 
