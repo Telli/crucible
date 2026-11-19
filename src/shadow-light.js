@@ -61,10 +61,8 @@ const FILTER_REACH_TEXELS = 3.5;
  * for any depth range. `light` is the result of `resolveShadowLight`.
  */
 export function shadowBiasPerSlope(light, mapSize) {
-  requireFiniteInRange('shadowBiasPerSlope', 'mapSize', mapSize, 1, MAXIMUM_COORDINATE);
-  requireFiniteInRange('shadowBiasPerSlope', 'light.extent', light.extent, Number.MIN_VALUE, MAXIMUM_COORDINATE);
-  requireFiniteInRange('shadowBiasPerSlope', 'light.near', light.near, -MAXIMUM_COORDINATE, MAXIMUM_COORDINATE);
-  requireFiniteInRange('shadowBiasPerSlope', 'light.far', light.far, light.near + Number.EPSILON * Math.max(1, Math.abs(light.near)), MAXIMUM_COORDINATE);
+  requireFiniteInRange('shadowBiasPerSlope', 'mapSize and light.extent', [mapSize, light.extent], Number.MIN_VALUE, MAXIMUM_COORDINATE);
+  requireFiniteInRange('shadowBiasPerSlope', 'light.far - light.near', light.far - light.near, Number.MIN_VALUE, MAXIMUM_COORDINATE);
   const texelWorldSize = (light.extent * 2) / mapSize;
   return (texelWorldSize * FILTER_REACH_TEXELS) / (light.far - light.near);
 }
