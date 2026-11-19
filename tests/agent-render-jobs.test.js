@@ -1,6 +1,6 @@
 import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, link, unlink, open } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, link, unlink, open, rename as renameFile } from 'node:fs/promises';
 import { watch, writeFileSync } from 'node:fs';
 import { tmpdir, constants, setPriority } from 'node:os';
 import { join } from 'node:path';
@@ -991,4 +991,55 @@ test('a GPU queue that fails the wait fails the job with the queue message', asy
   assert.equal(failed.state, 'failed');
   assert.match(failed.reason, /GPU queue command did not grant/);
   await controller.close();
+});
+
+function blockedRename(failuresBeforeSuccess, code) {
+  const counter = { failures: 0 };
+  const rename = async (from, to) => {
+    if (to.endsWith('status.json') && counter.failures < failuresBeforeSuccess) {
+      counter.failures += 1;
+      throw Object.assign(new Error(`${code}: operation not permitted, rename`), { code });
+    }
+    return renameFile(from, to);
+  };
+  return { counter, rename };
+}
+
+test('a job survives a status.json rename that another reader blocks a few times', async context => {
+  const root = await temporary(context);
+  const { counter, rename } = blockedRename(3, 'EPERM');
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { fileOperations: { rename } } });
+  const submitted = await controller.submit(request());
+  const finished = await terminal(controller, submitted.jobId);
+  assert.equal(finished.state, 'completed');
+  assert.equal(counter.failures, 3);
+  const onDisk = JSON.parse(await readFile(join(root, submitted.jobId, 'status.json'), 'utf8'));
+  assert.equal(onDisk.state, 'completed');
+});
+
+test('a status.json rename that stays blocked keeps the last good status and does not fail the job', async context => {
+  const root = await temporary(context);
+  const { rename } = blockedRename(Infinity, 'EBUSY');
+  const warnings = [];
+  const onWarning = warning => warnings.push(warning.code);
+  process.on('warning', onWarning);
+  context.after(() => process.off('warning', onWarning));
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { fileOperations: { rename } } });
+  const submitted = await controller.submit(request());
+  const finished = await terminal(controller, submitted.jobId);
+  assert.equal(finished.state, 'completed');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(warnings.includes('CRUCIBLE_STATUS_BLOCKED'));
+  const onDisk = JSON.parse(await readFile(join(root, submitted.jobId, 'status.json'), 'utf8'));
+  assert.equal(onDisk.jobId, submitted.jobId);
+  assert.ok(!(await readdir(join(root, submitted.jobId))).includes('status.json.pending'));
+});
+
+test('a status.json rename that fails for another reason still fails the write', async context => {
+  const root = await temporary(context);
+  const { rename } = blockedRename(Infinity, 'ENOSPC');
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { fileOperations: { rename } } });
+  const submitted = await controller.submit(request());
+  const finished = await terminal(controller, submitted.jobId);
+  assert.equal(finished.state, 'failed');
 });

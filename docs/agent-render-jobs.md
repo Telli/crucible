@@ -379,6 +379,8 @@ The controller rejects links, file aliases, unknown filenames, foreign directori
 It verifies completed artifact hashes when reopening a store.
 It removes files individually during release, without recursive deletion.
 
+A program that polls `status.json` can hold it open, and on Windows that blocks the rename that replaces it. The controller retries that rename for under a second on `EPERM`, `EBUSY` and `EACCES`. If the file stays held, the last good `status.json` stays on disk, a `CRUCIBLE_STATUS_BLOCKED` process warning is emitted and the job carries on. `scene_render_status` answers from memory, so prefer it to reading the file.
+
 The lock protects cooperating controller processes.
 The filesystem must remain private to the owner while jobs run.
 It does not isolate an arbitrary callback or hostile concurrent filesystem writer.
