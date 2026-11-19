@@ -86,15 +86,38 @@ export function primitiveGeometrySpec(primitiveType) {
 }
 
 export const STUDIO_TEMPLATES = Object.freeze({
+  blockout: Object.freeze({ label: 'Blockout', description: 'Three grey primitives on the grid, ready to shape' }),
   showcase: Object.freeze({ label: 'Gyro showcase', description: 'Turntable rig with key motion and 3 camera bookmarks' }),
   pedestal: Object.freeze({ label: 'Product studio', description: 'Soft ceramic hero sculpture on studio pedestal' }),
   courtyard: Object.freeze({ label: 'Block courtyard', description: 'Architectural daylight composition ready to block out' }),
   empty: Object.freeze({ label: 'Clean stage', description: 'Single ground plane and calibrated key light' }),
 });
 
-export function buildTemplateRecipe(templateName = 'showcase') {
+export function buildTemplateRecipe(templateName = 'blockout') {
   if (!Object.hasOwn(STUDIO_TEMPLATES, templateName)) {
     throw new RangeError(`Unknown Studio template "${String(templateName)}". Use one of ${Object.keys(STUDIO_TEMPLATES).join(', ')}.`);
+  }
+  if (templateName === 'blockout') {
+    return {
+      format: 'crucible.scene',
+      schemaVersion: 1,
+      geometries: [
+        { id: 'block', type: 'box', bevel: 0.03 },
+        { id: 'ball', type: 'sphere', segments: 48, rings: 24 },
+        { id: 'spike', type: 'cone', radiusTop: 0, radiusBottom: 0.5, segments: 48 },
+      ],
+      materials: [
+        { id: 'clay', tag: 'surface', color: [0.62, 0.62, 0.64], roughness: 0.7, metallic: 0 },
+      ],
+      nodes: [
+        { id: 'cube', label: 'Cube', geometry: 'block', material: 'clay', translation: [0, 0.5, 0] },
+        { id: 'sphere', label: 'Sphere', geometry: 'ball', material: 'clay', translation: [-1.6, 0.5, 0.4] },
+        { id: 'cone', label: 'Cone', geometry: 'spike', material: 'clay', translation: [1.5, 0.5, -0.6] },
+      ],
+      camera: { eye: [4.2, 2.9, 4.9], target: [0, 0.5, 0], up: [0, 1, 0], fov: 42, near: 0.1, far: 120 },
+      environment: { setup: 'studio', lightDirection: [-3.2, 5.2, 3.8], keyIntensity: 1.65, viewTransform: 'agx' },
+      effects: { exposure: 0.96 },
+    };
   }
   if (templateName === 'pedestal') {
     return {

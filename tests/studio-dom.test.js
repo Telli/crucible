@@ -1666,3 +1666,35 @@ test('the readout names the camera and gives the size of the selection in metres
   ui.studio.renderNow();
   assert.match(readout.textContent, /^Orthographic/u);
 });
+
+test('move handles end in arrows, scale handles in squares and an axis that faces the viewer falls back to a dot', testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.selectNode('hero');
+  const shapes = () => ui.gizmo.descendants().filter(element => ['x', 'y', 'z'].includes(element.getAttribute('data-gizmo-axis')) && element.tagName.toLowerCase() !== 'line').map(element => element.tagName.toLowerCase());
+  ui.tool('translate').click();
+  ui.studio.renderNow();
+  assert.deepEqual(shapes(), ['polygon', 'polygon', 'polygon']);
+  const arrow = ui.gizmoPart('x');
+  const handles = ui.controller.gizmoHandles();
+  const head = ui.gizmo.descendants().find(element => element.getAttribute('data-gizmo-shape') === 'arrow' && element.getAttribute('data-gizmo-axis') === 'x');
+  const [point] = head.getAttribute('points').split(' ').map(pair => pair.split(',').map(Number));
+  const tipDistance = Math.hypot(handles.axes.x.x - handles.origin.x, handles.axes.x.y - handles.origin.y);
+  assert.ok(Math.hypot(point[0] - handles.origin.x, point[1] - handles.origin.y) > tipDistance, 'the arrow points away from the origin');
+  assert.ok(arrow);
+  ui.tool('scale').click();
+  ui.studio.renderNow();
+  assert.deepEqual(shapes(), ['rect', 'rect', 'rect']);
+  ui.tool('translate').click();
+  ui.controller.setCameraViewPreset('front');
+  ui.studio.renderNow();
+  assert.deepEqual(shapes().sort(), ['circle', 'polygon', 'polygon'], 'the Z axis points at the viewer');
+});
+
+test('Studio opens on the blockout scene when it gets no recipe', testContext => {
+  const dom = installStudioDom();
+  testContext.after(() => dom.uninstall());
+  const studio = createStudio(dom.container, { renderer: createFakeRenderer() });
+  testContext.after(() => studio.dispose());
+  assert.deepEqual(studio.exportRecipe().nodes.map(node => node.id), ['cube', 'sphere', 'cone']);
+  assert.equal(Object.keys(STUDIO_TEMPLATES)[0], 'blockout');
+});

@@ -439,8 +439,8 @@ test('every Studio template builds a scene the agent recipe accepts, and unknown
     const controller = createStudioController({ scene, viewportWidth: 800, viewportHeight: 600 });
     assert.deepEqual(controller.exportRecipe().nodes.map(node => node.id), recipe.nodes.map(node => node.id));
   }
-  assert.deepEqual(buildTemplateRecipe(), buildTemplateRecipe('showcase'));
-  assert.throws(() => buildTemplateRecipe('castle'), /Unknown Studio template "castle"\. Use one of showcase, pedestal, courtyard, empty\./);
+  assert.deepEqual(buildTemplateRecipe(), buildTemplateRecipe('blockout'));
+  assert.throws(() => buildTemplateRecipe('castle'), /Unknown Studio template "castle"\. Use one of blockout, showcase, pedestal, courtyard, empty\./);
 });
 
 test('every Studio primitive has a starting shape that sits on the ground and builds', () => {

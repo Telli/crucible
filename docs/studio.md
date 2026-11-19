@@ -27,7 +27,7 @@ The selected object gets an outline. Below 820 px wide the two cards start close
 
 ## Move, rotate and scale
 
-The handles follow the object, not the camera: the three axes are the object's own X, Y and Z, so a turned object moves along the way it faces.
+Each tool has its own handle shape, so the shape says what a drag will do: arrows move, rings turn, squares scale. The handles follow the object, not the camera: the three axes are the object's own X, Y and Z, so a turned object moves along the way it faces.
 
 - **Move** drags the object exactly as far as the pointer travels along the axis. Hold Shift to move in steps of 0.25 m.
 - **Rotate** turns the object by the angle the pointer sweeps on the ring. Hold Shift to turn in steps of 15 degrees.

@@ -388,6 +388,31 @@ function buildBrandMarkSvg(documentReference) {
   return mark;
 }
 
+const ARROW_HEAD_LENGTH = 15;
+const ARROW_HEAD_HALF_WIDTH = 7;
+const ARROW_MINIMUM_AXIS_LENGTH = 10;
+
+// The arrow head of a move handle: it points away from the origin, which says "drag me this way". Null when the axis
+// points at the viewer and is too short on screen to have a direction.
+function arrowHeadPoints(origin, tip) {
+  const deltaX = tip.x - origin.x;
+  const deltaY = tip.y - origin.y;
+  const length = Math.hypot(deltaX, deltaY);
+  if (length < ARROW_MINIMUM_AXIS_LENGTH) {
+    return null;
+  }
+  const alongX = deltaX / length;
+  const alongY = deltaY / length;
+  const baseX = tip.x - alongX * (ARROW_HEAD_LENGTH * 0.4);
+  const baseY = tip.y - alongY * (ARROW_HEAD_LENGTH * 0.4);
+  const corners = [
+    [tip.x + alongX * (ARROW_HEAD_LENGTH * 0.6), tip.y + alongY * (ARROW_HEAD_LENGTH * 0.6)],
+    [baseX - alongY * ARROW_HEAD_HALF_WIDTH, baseY + alongX * ARROW_HEAD_HALF_WIDTH],
+    [baseX + alongY * ARROW_HEAD_HALF_WIDTH, baseY - alongX * ARROW_HEAD_HALF_WIDTH],
+  ];
+  return corners.map(corner => `${corner[0].toFixed(1)},${corner[1].toFixed(1)}`).join(' ');
+}
+
 function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
   gizmoSvg.replaceChildren();
   const width = controller.viewportWidth;
@@ -487,15 +512,11 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
         'data-gizmo-axis': axis,
       }));
     } else {
-      gizmoSvg.append(createSvgElement(documentReference, 'circle', {
-        cx: tip.x.toFixed(1),
-        cy: tip.y.toFixed(1),
-        r: '7',
-        fill: AXIS_COLORS[axis],
-        stroke: 'var(--studio-bg)',
-        'stroke-width': '1.5',
-        'data-gizmo-axis': axis,
-      }));
+      const arrowPoints = tool === 'translate' ? arrowHeadPoints(origin, tip) : null;
+      const handleAttributes = { fill: AXIS_COLORS[axis], stroke: 'var(--studio-bg)', 'stroke-width': '1.5', 'stroke-linejoin': 'round', 'data-gizmo-axis': axis };
+      gizmoSvg.append(arrowPoints
+        ? createSvgElement(documentReference, 'polygon', { points: arrowPoints, 'data-gizmo-shape': 'arrow', ...handleAttributes })
+        : createSvgElement(documentReference, 'circle', { cx: tip.x.toFixed(1), cy: tip.y.toFixed(1), r: '7', ...handleAttributes }));
     }
   }
 
@@ -558,7 +579,7 @@ function depthSortedNodes(nodes) {
 export function createStudio(container, {
   scene: suppliedScene,
   recipe: suppliedRecipe,
-  template = 'showcase',
+  template = 'blockout',
   canvas: suppliedCanvas,
   renderer: suppliedRenderer,
   rendererOptions = {},
