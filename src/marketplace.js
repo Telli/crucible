@@ -147,11 +147,19 @@ function npmLink(name) {
   return npm;
 }
 
+// One title row: the name (which may wrap) and the version on the left, the npm link on the right.
+function npmCardTitle(entry) {
+  const title = element('h3', 'market-card-title');
+  const name = element('span', 'market-card-name');
+  name.append(link(entry.name, npmUrl(entry.name)), element('span', 'market-version', entry.version));
+  title.append(name, npmLink(entry.name));
+  return title;
+}
+
 function addonCard(addon) {
   const card = element('article', 'market-card addon-card');
   card.dataset.addon = addon.name;
-  const title = element('h3');
-  title.append(link(addon.name, npmUrl(addon.name)), element('span', 'market-version', addon.version), npmLink(addon.name));
+  const title = npmCardTitle(addon);
   const body = element('div', 'addon-body');
   body.append(title);
   if (addon.description) body.append(element('p', 'market-description', addon.description));
@@ -209,8 +217,7 @@ async function loadAddons(container) {
 
 function packageCard(entry) {
   const card = element('article', 'market-card addon-card');
-  const title = element('h3');
-  title.append(link(entry.name, npmUrl(entry.name)), element('span', 'market-version', entry.version), npmLink(entry.name));
+  const title = npmCardTitle(entry);
   const body = element('div', 'addon-body');
   body.append(title);
   if (entry.description) body.append(element('p', 'market-description', entry.description));
