@@ -63,6 +63,8 @@ const scene = createAgentScene(recipe);
 `loadAllAgentSceneModules()` loads everything, for a host that runs any recipe an agent writes (the MCP preview does).
 Call `loadAgentSceneModules(operations)` before `apply` when the operations add such features.
 
+The default stages that need a lazy module (flush-face ranking, the floor sky trace) run for a scene when the host called `loadAllAgentSceneModules()` or the scene's own recipe or operations name them. A module that another scene loaded earlier in the process does not turn them on, so one recipe builds the same parts in any order.
+
 ## Recipe contract
 
 The recipe must contain `format`, `schemaVersion`, `geometries`, `materials`, and `nodes`.
