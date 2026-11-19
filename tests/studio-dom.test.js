@@ -4,6 +4,7 @@ import test from 'node:test';
 import { createStudio, createStudioController, STUDIO_PRIMITIVES, STUDIO_TABS, STUDIO_TEMPLATES, STUDIO_TOOLS } from '../src/studio.js';
 import { LIGHTING_SETUP_NAMES } from '../src/agent-scene-capabilities.js';
 import { directionToSunAngles } from '../src/studio-controller.js';
+import { buildGridRecipe } from '../src/studio-viewport-aids.js';
 import { VIEW_TRANSFORM_NAMES } from '../src/view-transform-names.js';
 import {
   byDataset,
@@ -40,6 +41,8 @@ function makeRecipe() {
 const VIEWPORT_BOX = { left: 40, top: 30, width: 800, height: 600, right: 840, bottom: 630 };
 
 /** Mounts Studio on the fake DOM with a fake renderer and returns the handles tests use. */
+const GRID_LINE_COUNT = buildGridRecipe().nodes.length;
+
 function mountStudio(testContext, { recipe = makeRecipe(), containerWidth = 0, domOptions, sharedDom = null, ...options } = {}) {
   const dom = sharedDom ?? installStudioDom(domOptions);
   const container = sharedDom ? dom.document.createElement('div') : dom.container;
@@ -1484,7 +1487,7 @@ test('the viewport follows its element size, and the renderer is kept in step wi
   ui.controller.addPrimitive('box');
   ui.studio.renderNow();
   assert.ok(ui.renderer.calls.slice(callsBefore).includes('replaceParts'));
-  assert.equal(ui.renderer.partCount, ui.controller.scene.parts.length);
+  assert.equal(ui.renderer.partCount, ui.controller.scene.parts.length + GRID_LINE_COUNT);
   assert.ok(ui.renderer.shadowBounds);
   assert.equal(ui.renderer.shadowsDirty, true);
   assert.equal(ui.renderer.world, ui.controller.scene.environment.world);
@@ -1589,4 +1592,77 @@ test('showAgentEdit points at named objects, skips unknown ones and rejects bad 
   assert.throws(() => ui.studio.showAgentEdit({ nodeIds: 'orb' }), /nodeIds must be an array of node id strings/);
   assert.throws(() => ui.controller.nodeOutline(''), /nodeOutline requires a node id string/);
   assert.throws(() => mountStudio(testContext, { sharedDom: ui.dom, agentName: '' }), /agent name must be a string/);
+});
+
+test('the ground grid is drawn with the scene, leaves with its button and stays out of a captured still', testContext => {
+  const ui = mountStudio(testContext);
+  const sceneParts = ui.controller.scene.parts.length;
+  const gridButton = ui.label('Show or hide the grid');
+  const readout = ui.viewport.querySelector('.crucible-studio-readout');
+  assert.equal(ui.studio.gridVisible, true);
+  assert.equal(gridButton.getAttribute('aria-pressed'), 'true');
+  assert.equal(ui.renderer.partCount, sceneParts + GRID_LINE_COUNT);
+  assert.match(readout.textContent, /Grid 1 m/);
+
+  ui.studio.capturePngDataUrl();
+  assert.equal(ui.renderer.partCount, sceneParts, 'a still shows the scene alone');
+  ui.studio.renderNow();
+  assert.equal(ui.renderer.partCount, sceneParts + GRID_LINE_COUNT);
+
+  gridButton.click();
+  ui.studio.renderNow();
+  assert.equal(ui.studio.gridVisible, false);
+  assert.equal(gridButton.getAttribute('aria-pressed'), 'false');
+  assert.equal(ui.renderer.partCount, sceneParts);
+  assert.doesNotMatch(readout.textContent, /Grid/);
+  ui.studio.setGridVisible(true);
+  ui.studio.renderNow();
+  assert.equal(ui.renderer.partCount, sceneParts + GRID_LINE_COUNT);
+});
+
+test('the view widget follows the camera and its ends snap to the main views', testContext => {
+  const ui = mountStudio(testContext);
+  const widget = ui.viewport.querySelector('.crucible-studio-view-widget');
+  const end = name => widget.descendants().find(element => element.getAttribute('data-axis-end') === name);
+  const letters = widget.descendants().filter(element => element.getAttribute('class') === 'crucible-studio-view-letter').map(element => element.textContent);
+  assert.deepEqual(letters.sort(), ['X', 'Y', 'Z']);
+  assert.equal(end('-y').getAttribute('data-view'), null, 'there is no view from below');
+  const xBefore = end('+x').getAttribute('cx');
+  ui.controller.orbitCamera({ deltaAzimuth: 0.7 });
+  ui.studio.renderNow();
+  assert.notEqual(end('+x').getAttribute('cx'), xBefore);
+
+  end('+y').click();
+  ui.studio.renderNow();
+  const camera = ui.controller.scene.camera;
+  assert.ok(camera.eye[1] - camera.target[1] > 1, 'the camera looks down from above');
+  assert.ok(Math.abs(camera.eye[0] - camera.target[0]) < 0.1);
+  end('+x').click();
+  ui.studio.renderNow();
+  assert.ok(ui.controller.scene.camera.eye[0] - ui.controller.scene.camera.target[0] > 1, 'the camera looks from the right');
+});
+
+test('the readout names the camera and gives the size of the selection in metres', testContext => {
+  const ui = mountStudio(testContext);
+  const selection = ui.viewport.querySelector('.crucible-studio-readout-selection');
+  const readout = ui.viewport.querySelector('.crucible-studio-readout');
+  assert.match(readout.textContent, /^Perspective · \d+ ?(mm|°)/u);
+  ui.controller.selectNode('hero');
+  ui.studio.renderNow();
+  assert.match(selection.textContent, /^hero · \d+\.\d\d × \d+\.\d\d × \d+\.\d\d m$/u);
+  const bounds = ui.controller.nodeBounds('hero');
+  assert.deepEqual(bounds.size.map(value => Number(value.toFixed(4))), bounds.max.map((value, axis) => Number((value - bounds.min[axis]).toFixed(4))));
+  const sizeText = selection.textContent;
+  ui.controller.updateNodeTransform('hero', { scale: [2, 2, 2] });
+  ui.studio.renderNow();
+  assert.ok(ui.controller.nodeBounds('hero').size[0] > bounds.size[0] * 1.9, 'the size follows the scale');
+  assert.notEqual(selection.textContent, sizeText);
+  ui.controller.selectNode(null);
+  ui.studio.renderNow();
+  assert.equal(selection.textContent, '');
+  assert.equal(ui.controller.nodeBounds('missing'), null);
+  assert.throws(() => ui.controller.nodeBounds(''), /nodeBounds requires a node id string/);
+  ui.controller.toggleCameraProjection();
+  ui.studio.renderNow();
+  assert.match(readout.textContent, /^Orthographic/u);
 });

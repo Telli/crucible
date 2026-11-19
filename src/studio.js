@@ -10,6 +10,7 @@ import { encodePack } from './scene-pack-format.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
 import { studioIconPath } from './studio-icons.js';
+import { AXIS_COLORS, buildGridRecipe, createViewWidget, describeBounds, describeCamera } from './studio-viewport-aids.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
 import {
   STUDIO_LENS_PRESETS,
@@ -43,7 +44,6 @@ export {
 };
 
 const AXIS_NAMES = Object.freeze(['x', 'y', 'z']);
-const AXIS_COLORS = Object.freeze({ x: '#ee7a6c', y: '#5fc48a', z: '#5ea8ff' });
 const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
 const STUDIO_STYLE_ID = 'crucible-studio-styles';
@@ -588,6 +588,10 @@ export function createStudio(container, {
   let renderer = suppliedRenderer ?? null;
   let renderedScene = initialScene;
   let renderedTopology = initialScene.topologyRevision;
+  let gridVisible = true;
+  let gridParts = null;
+  let capturingStill = false;
+  let selectionReadoutStale = true;
   let renderedShadowKey = null;
   let resizeObserver = null;
   let intersectionObserver = null;
@@ -871,6 +875,11 @@ export function createStudio(container, {
   const deleteButton = createIconButton(documentReference, 'remove', 'Delete (Del)');
   const frameButton = createIconButton(documentReference, 'frame', 'Frame in view (F)');
   const toggleDocksButton = createIconButton(documentReference, 'panels', 'Show or hide the panels', { attributes: { 'aria-pressed': 'true' } });
+  const gridButton = createIconButton(documentReference, 'grid', 'Show or hide the grid', { attributes: { 'aria-pressed': 'true' } });
+  gridButton.addEventListener('click', () => {
+    setGridVisible(!gridVisible);
+    announce(gridVisible ? 'Grid shown' : 'Grid hidden');
+  });
 
   undoButton.addEventListener('click', () => {
     if (undoButton.getAttribute('aria-disabled') === 'true') return;
@@ -917,9 +926,9 @@ export function createStudio(container, {
     },
     createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Transform tool' } }, ...toolButtons),
     createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'History' } }, undoButton, redoButton),
-    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Scene' } }, addMenuButton, toggleDocksButton),
+    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Scene' } }, addMenuButton, gridButton, toggleDocksButton),
   );
-  wireRovingFocusFallback(toolbarElement, [...toolButtons, undoButton, redoButton, addMenuButton, toggleDocksButton], { vertical: true });
+  wireRovingFocusFallback(toolbarElement, [...toolButtons, undoButton, redoButton, addMenuButton, gridButton, toggleDocksButton], { vertical: true });
 
   // Viewport Top-Right 3D View Widget
   const viewPresetButtons = ['front', 'right', 'top', 'isometric'].map(preset => {
@@ -944,8 +953,17 @@ export function createStudio(container, {
     projectionPillButton,
   );
 
+  const viewWidget = createViewWidget(documentReference, {
+    onPickView: view => {
+      controller.setCameraViewPreset(view);
+      announce(`${view[0].toUpperCase()}${view.slice(1)} view`);
+    },
+  });
+  const readoutCamera = createElement(documentReference, 'span');
+  const readoutSelection = createElement(documentReference, 'span', { className: 'crucible-studio-readout-selection' });
+  const readout = createElement(documentReference, 'div', { className: 'crucible-studio-readout', attributes: { 'aria-hidden': 'true' } }, readoutCamera, readoutSelection);
   const agentPresence = createAgentPresence(documentReference, { controller, requestDraw: () => requestFrame() });
-  viewportElement.append(canvas, gizmoSvg, agentPresence.element, hintBar, statusRegion, dropOverlay);
+  viewportElement.append(canvas, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay);
 
   // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
   const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
@@ -1368,8 +1386,41 @@ export function createStudio(container, {
   }
 
   function capturePngDataUrl() {
-    renderPass();
-    return canvas.toDataURL('image/png');
+    capturingStill = true;
+    try {
+      renderPass();
+      return canvas.toDataURL('image/png');
+    } finally {
+      capturingStill = false;
+      requestFrame();
+    }
+  }
+
+  function setGridVisible(visible) {
+    gridVisible = Boolean(visible);
+    gridButton.setAttribute('aria-pressed', gridVisible ? 'true' : 'false');
+    requestFrame();
+  }
+
+  // Measured only after a change: the bounds walk every vertex of the selection.
+  function describeSelection() {
+    const selectedId = controller.selectedNodeId;
+    const bounds = selectedId ? controller.nodeBounds(selectedId) : null;
+    if (!bounds) {
+      return '';
+    }
+    const selectedNode = controller.exportRecipe().nodes.find(node => node.id === selectedId);
+    return `${selectedNode?.label ?? selectedId} · ${describeBounds(bounds)}`;
+  }
+
+  function syncViewportAids() {
+    const camera = controller.scene.camera;
+    viewWidget.update(camera);
+    readoutCamera.textContent = gridVisible ? `${describeCamera(camera)} · Grid 1 m` : describeCamera(camera);
+    if (selectionReadoutStale) {
+      selectionReadoutStale = false;
+      readoutSelection.textContent = describeSelection();
+    }
   }
 
   function exportGlbBytes() {
@@ -1561,15 +1612,25 @@ export function createStudio(container, {
     }
   }
 
+  // The grid is drawn with the scene so objects hide it, but it is never part of the scene: not picked, saved or exported.
+  function partsToDraw() {
+    if (!gridVisible || capturingStill) {
+      return controller.scene.parts;
+    }
+    gridParts ??= createAgentScene(buildGridRecipe()).parts;
+    return [...controller.scene.parts, ...gridParts];
+  }
+
   function syncRendererParts(activeRenderer) {
-    if (renderedScene !== controller.scene || renderedTopology !== controller.scene.topologyRevision) {
-      activeRenderer.replaceParts(controller.scene.parts);
+    const topology = `${controller.scene.topologyRevision}|${gridVisible && !capturingStill}`;
+    if (renderedScene !== controller.scene || renderedTopology !== topology) {
+      activeRenderer.replaceParts(partsToDraw());
       renderedScene = controller.scene;
-      renderedTopology = controller.scene.topologyRevision;
+      renderedTopology = topology;
       return activeRenderer;
     }
     try {
-      activeRenderer.updateParts(controller.scene.parts);
+      activeRenderer.updateParts(partsToDraw());
       return activeRenderer;
     } catch (error) {
       if (!suppliedRenderer && typeof renderer?.dispose === 'function') {
@@ -1628,6 +1689,7 @@ export function createStudio(container, {
       drawSceneFrame();
       renderGizmoMarkup(documentReference, gizmoSvg, controller);
       drawAgentOutline();
+      syncViewportAids();
     } finally {
       insideDraw = false;
     }
@@ -2041,6 +2103,7 @@ export function createStudio(container, {
   }
 
   handleChange = detail => {
+    selectionReadoutStale = true;
     if (detail.deltaLabel !== undefined) {
       liveDeltaLabel = detail.deltaLabel;
     }
@@ -2092,6 +2155,8 @@ export function createStudio(container, {
     loadRecipe: (recipeInput, options) => controller.loadRecipe(recipeInput, options),
     loadExternalTextFile,
     showAgentEdit,
+    setGridVisible,
+    get gridVisible() { return gridVisible; },
     selectNode: nodeId => controller.selectNode(nodeId),
     setTool: tool => controller.setTool(tool),
     setActiveTab: tab => selectInspectorTab(tab),

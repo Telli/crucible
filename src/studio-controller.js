@@ -750,6 +750,35 @@ export function createStudioController({
     return selectedNodeId ? nodeOutline(selectedNodeId) : null;
   }
 
+  // World-space box around a node and its children: { min, max, size }, or null when it draws nothing.
+  function nodeBounds(nodeId) {
+    if (typeof nodeId !== 'string' || nodeId === '') {
+      throw new TypeError('nodeBounds requires a node id string.');
+    }
+    const memberIds = descendantIdsOf(currentScene.exportRecipe().nodes, nodeId);
+    const minimum = [Infinity, Infinity, Infinity];
+    const maximum = [-Infinity, -Infinity, -Infinity];
+    const point = vec3.create();
+    for (const part of currentScene.parts) {
+      if (!memberIds.has(part.name) || !part.matrix || !part.geometry?.positions) {
+        continue;
+      }
+      const positions = part.geometry.positions;
+      for (let offset = 0; offset < positions.length; offset += 3) {
+        vec3.set(point, positions[offset], positions[offset + 1], positions[offset + 2]);
+        vec3.transformMat4(point, point, part.matrix);
+        for (let axis = 0; axis < 3; axis += 1) {
+          minimum[axis] = Math.min(minimum[axis], point[axis]);
+          maximum[axis] = Math.max(maximum[axis], point[axis]);
+        }
+      }
+    }
+    if (minimum[0] === Infinity) {
+      return null;
+    }
+    return { min: minimum, max: maximum, size: maximum.map((value, axis) => value - minimum[axis]) };
+  }
+
   // The same outline for any node, so the viewport can point at an object that is not the selection.
   function nodeOutline(nodeId) {
     if (typeof nodeId !== 'string' || nodeId === '') {
@@ -1590,6 +1619,7 @@ export function createStudioController({
     gizmoHandles,
     selectionOutline,
     nodeOutline,
+    nodeBounds,
     beginGizmoDrag,
     updateGizmoDrag,
     endGizmoDrag,

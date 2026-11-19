@@ -14,10 +14,14 @@ The scene fills the window and the controls float on top of it.
 | --- | --- |
 | Top left | The file name opens the file menu: open, save, the recipe JSON and the starting scenes. A green dot means Studio reloads the file when an agent edits it. |
 | Top right | Work with an agent, keyboard shortcuts, and **Export** (PNG image, GLB model, web pack). |
-| Left rail | Select, move, rotate, scale, snap to a surface, undo, redo, add an object or a light, show or hide the panels. |
+| Left rail | Select, move, rotate, scale, snap to a surface, undo, redo, add an object or a light, show or hide the grid, show or hide the panels. |
 | Scene card | Every object in the scene, an eye to hide each one, and the scene materials as swatches. |
 | Inspector | Four tabs: object, material, look (lighting, sun, exposure, fog) and camera (views, lens, shots). |
 | Bottom | Play, add a keyframe, scrub the time, jump to a saved shot. |
+| Bottom left | The camera (perspective and lens, or orthographic), the grid step, and the size of the selected object in metres. |
+| Bottom right | The view widget: the X, Y and Z axes as the camera sees them. Click an end to look from the right, left, top, front or back. |
+
+The ground carries a grid with one line per metre over 20 m, the X axis in red and the Z axis in blue. The grid is a working aid: it is not part of the recipe and stays out of PNG, GLB and pack exports. `studio.setGridVisible(false)` hides it from code.
 
 The selected object gets an outline. Below 820 px wide the two cards start closed so the scene keeps the screen; the panels button on the rail opens them.
 

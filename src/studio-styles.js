@@ -143,6 +143,44 @@ export const STUDIO_CSS = `
   stroke-linejoin: round;
   pointer-events: none;
 }
+.crucible-studio-view-widget {
+  position: absolute;
+  inset-inline-end: var(--studio-edge);
+  inset-block-end: var(--studio-edge);
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--studio-panel) 70%, transparent);
+  user-select: none;
+}
+.crucible-studio-view-widget [data-view] { cursor: pointer; }
+.crucible-studio-view-letter {
+  fill: #17161a;
+  font: 700 9.5px var(--studio-font);
+  pointer-events: none;
+}
+.crucible-studio-readout {
+  position: absolute;
+  inset-inline-start: var(--studio-edge);
+  inset-block-end: var(--studio-edge);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  color: var(--studio-muted);
+  font: 500 11.5px/1.45 var(--studio-font-mono);
+  font-variant-numeric: tabular-nums;
+  padding: 5px 9px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--studio-panel) 72%, transparent);
+  pointer-events: none;
+  user-select: none;
+}
+.crucible-studio-readout-selection { color: var(--studio-text); }
+.crucible-studio-readout-selection:empty { display: none; }
+.crucible-studio[data-compact="true"] .crucible-studio-readout { display: none; }
+.crucible-studio[data-compact="true"] .crucible-studio-view-widget {
+  inset-block: var(--studio-top) auto;
+}
 .crucible-studio-agent-outline {
   fill: none;
   stroke-width: 2;
