@@ -142,7 +142,16 @@ function validateOptions(options) {
   if (options.nodes !== undefined && !Array.isArray(options.nodes)) throw new TypeError('GLB export nodes must be an array.');
 }
 
+// JOINTS_0 points into skin.joints; weight 0 padding slots may hold any index.
+function validateJointIndices({ name, geometry: { skinIndices, skinWeights }, skin }) {
+  const count = skin?.joints?.length;
+  skinIndices?.forEach((joint, slot) => {
+    if (count && skinWeights[slot] > 0 && !(joint < count)) throw new RangeError(`GLB part ${name} vertex ${slot >> 2} has joint index ${joint}, but its skin has ${count} joints.`);
+  });
+}
+
 function validateSkinnedPart(part) {
+  validateJointIndices(part);
   validateSkinGeometry(part.geometry, part.skin);
 }
 
