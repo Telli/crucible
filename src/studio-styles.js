@@ -21,6 +21,7 @@ export const STUDIO_CSS = `
   --studio-edge: 12px;
   --studio-top: 68px;
   --studio-rail: 44px;
+  --studio-bar-clear: 54px;
   --studio-shadow: 0 10px 28px rgb(0 0 0 / 0.26);
   background: var(--studio-bg);
   color: var(--studio-text);
@@ -102,7 +103,8 @@ export const STUDIO_CSS = `
 .crucible-studio-island {
   display: flex;
   align-items: center;
-  gap: 4px;
+  /* The gap equals the inset the eye sees: 5px of padding plus the 1px border. */
+  gap: 6px;
   padding: 5px;
   border: 1px solid var(--studio-border);
   border-radius: 13px;
@@ -161,7 +163,8 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-readout {
   position: absolute;
-  inset-inline-start: var(--studio-edge);
+  /* Beside the tool rail, so a short window never puts the rail over it. */
+  inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
   inset-block-end: var(--studio-edge);
   display: flex;
   flex-direction: column;
@@ -358,14 +361,14 @@ export const STUDIO_CSS = `
   inset-block-start: var(--studio-top);
   inset-inline-start: var(--studio-edge);
   flex-direction: column;
-  gap: 12px;
+  gap: 18px;
   z-index: 5;
 }
 .crucible-studio-group {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
 }
 
 .crucible-studio-dock {
@@ -390,7 +393,8 @@ export const STUDIO_CSS = `
 .crucible-studio-inspector {
   inset-inline-end: var(--studio-edge);
   inline-size: 284px;
-  max-block-size: calc(100% - var(--studio-top) - 84px);
+  /* Stops above the view widget in the corner below it. */
+  max-block-size: calc(100% - var(--studio-top) - 100px);
 }
 .crucible-studio[data-outliner-collapsed="true"] .crucible-studio-outliner,
 .crucible-studio[data-inspector-collapsed="true"] .crucible-studio-inspector {
@@ -430,6 +434,17 @@ export const STUDIO_CSS = `
 .crucible-studio-tree-row[data-selected="true"] {
   background: color-mix(in srgb, var(--studio-text) 11%, transparent);
 }
+@media (hover: hover) {
+  .crucible-studio-tree-row:not([data-selected="true"]):hover {
+    background: color-mix(in srgb, var(--studio-text) 6%, transparent);
+  }
+  .crucible-studio .crucible-studio-tree .crucible-studio-tree-row button:hover {
+    background: transparent;
+  }
+  .crucible-studio .crucible-studio-tree .crucible-studio-tree-row button.crucible-studio-tree-eye:hover {
+    color: var(--studio-text);
+  }
+}
 .crucible-studio button.crucible-studio-tree-select {
   flex: 1 1 auto;
   min-width: 0;
@@ -440,11 +455,11 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-tree-select[data-hidden="true"] { color: var(--studio-muted); }
 .crucible-studio-tree-badge {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  border-radius: 3px;
-  flex-shrink: 0;
+  inline-size: 15px;
+  block-size: 15px;
+  stroke: var(--studio-text);
+  stroke-width: 1.6;
+  fill-opacity: 0.45;
 }
 .crucible-studio-tree-label {
   overflow: hidden;
@@ -543,6 +558,31 @@ export const STUDIO_CSS = `
   display: flex;
   gap: 2px;
   padding: 5px;
+}
+.crucible-studio-tablist[hidden],
+.crucible-studio .crucible-studio-tablist button[hidden] {
+  display: none;
+}
+.crucible-studio-workspaces button {
+  position: relative;
+  padding-inline: 12px;
+  font-family: var(--studio-font-heading);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--studio-muted);
+}
+.crucible-studio-workspaces button[aria-selected="true"] {
+  color: var(--studio-text);
+}
+.crucible-studio-workspaces button[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(50% - 2px);
+  inset-block-end: 1px;
+  inline-size: 4px;
+  block-size: 4px;
+  border-radius: 999px;
+  background: var(--studio-accent);
 }
 .crucible-studio-tablist button {
   position: relative;
@@ -737,6 +777,16 @@ export const STUDIO_CSS = `
   inline-size: min(620px, calc(100% - var(--studio-edge) * 2));
   gap: 8px;
   z-index: 5;
+}
+.crucible-studio:not([data-workspace="animate"]) .crucible-studio-bottombar {
+  display: none;
+}
+.crucible-studio[data-workspace="animate"] .crucible-studio-readout,
+.crucible-studio[data-workspace="animate"]:not([data-compact="true"]) .crucible-studio-view-widget {
+  inset-block-end: calc(var(--studio-edge) + var(--studio-bar-clear));
+}
+.crucible-studio[data-workspace="animate"]:not([data-compact="true"]) .crucible-studio-dock {
+  max-block-size: calc(100% - var(--studio-top) - 100px - var(--studio-bar-clear));
 }
 .crucible-studio-scrub {
   display: flex;

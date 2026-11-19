@@ -13,11 +13,12 @@ The scene fills the window and the controls float on top of it.
 | Where | What it does |
 | --- | --- |
 | Top left | The file name opens the file menu: open, save, the recipe JSON and the starting scenes. A green dot means Studio reloads the file when an agent edits it. |
+| Top, beside the file name | The workspaces, in the order the work runs: **Build** (objects and their place), **Look** (materials, lighting, sun, exposure, fog) and **Animate** (camera, lens, shots and the timeline). Each one shows only the panels its step needs. Opening a panel from anywhere, or adding a keyframe, brings its workspace forward. A workspace is a way of looking at the scene: it is not saved in the recipe and undo does not touch it. |
 | Top right | Work with an agent, keyboard shortcuts, and **Export** (PNG image, GLB model, web pack). |
 | Left rail | Select, move, rotate, scale, snap to a surface, undo, redo, add an object or a light, show or hide the grid, show or hide the panels. |
-| Scene card | Every object in the scene, an eye to hide each one, and the scene materials as swatches. |
-| Inspector | Four tabs: object, material, look (lighting, sun, exposure, fog) and camera (views, lens, shots). |
-| Bottom | Play, add a keyframe, scrub the time, jump to a saved shot. |
+| Scene card | Every object in the scene, drawn as the shape of its geometry (cube, sphere, cylinder, cone, torus, plane, or a stack for a group) in the colour of its material, an eye to hide each one, and the scene materials as swatches. |
+| Inspector | The panels of the open workspace: the object in Build, material and look in Look, the camera (views, lens, shots) in Animate. |
+| Bottom, in Animate | Play, add a keyframe, scrub the time, jump to a saved shot. The readout and the view widget move up to make room for it. |
 | Bottom left | The camera (perspective and lens, or orthographic), the grid step, and the size of the selected object in metres. |
 | Bottom right | The view widget: the X, Y and Z axes as the camera sees them. Click an end to look from the right, left, top, front or back. |
 

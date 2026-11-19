@@ -48,6 +48,31 @@ const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
 const STUDIO_STYLE_ID = 'crucible-studio-styles';
 const COMPACT_WIDTH = 820;
+// The work runs left to right: build the scene, give it its look, then set it in motion. Each workspace shows only the
+// panels its step needs.
+const STUDIO_WORKSPACES = Object.freeze([
+  Object.freeze({ id: 'build', label: 'Build', tabs: Object.freeze(['node']) }),
+  Object.freeze({ id: 'look', label: 'Look', tabs: Object.freeze(['material', 'look']) }),
+  Object.freeze({ id: 'animate', label: 'Animate', tabs: Object.freeze(['camera']) }),
+]);
+const TREE_ICON_BY_GEOMETRY = Object.freeze({
+  box: 'node',
+  sphere: 'sphere',
+  icoSphere: 'sphere',
+  cylinder: 'cylinder',
+  cone: 'cone',
+  torus: 'torus',
+  plane: 'plane',
+  terrain: 'plane',
+});
+
+// The icon a scene row shows: the shape of the object's geometry, a stack for a group, a cube for any other mesh.
+function treeIconName(node, geometriesById) {
+  if (!node.geometry) {
+    return 'group';
+  }
+  return TREE_ICON_BY_GEOMETRY[geometriesById.get(node.geometry)?.type] ?? 'node';
+}
 
 function injectStudioStyles(documentReference) {
   let style = documentReference.getElementById(STUDIO_STYLE_ID);
@@ -123,7 +148,8 @@ function wireRovingFocusFallback(container, items, { vertical = false, followFoc
     });
   });
   container.addEventListener('keydown', event => {
-    const currentIndex = items.indexOf(container.ownerDocument.activeElement);
+    const liveItems = items.filter(item => !item.hasAttribute('hidden'));
+    const currentIndex = liveItems.indexOf(container.ownerDocument.activeElement);
     if (currentIndex < 0) {
       return;
     }
@@ -131,15 +157,15 @@ function wireRovingFocusFallback(container, items, { vertical = false, followFoc
     const nextKey = vertical ? 'ArrowDown' : rightToLeft ? 'ArrowLeft' : 'ArrowRight';
     const previousKey = vertical ? 'ArrowUp' : rightToLeft ? 'ArrowRight' : 'ArrowLeft';
     let targetIndex = null;
-    if (event.key === nextKey) targetIndex = (currentIndex + 1) % items.length;
-    else if (event.key === previousKey) targetIndex = (currentIndex - 1 + items.length) % items.length;
+    if (event.key === nextKey) targetIndex = (currentIndex + 1) % liveItems.length;
+    else if (event.key === previousKey) targetIndex = (currentIndex - 1 + liveItems.length) % liveItems.length;
     else if (event.key === 'Home') targetIndex = 0;
-    else if (event.key === 'End') targetIndex = items.length - 1;
+    else if (event.key === 'End') targetIndex = liveItems.length - 1;
     if (targetIndex === null) {
       return;
     }
     event.preventDefault();
-    const targetItem = items[targetIndex];
+    const targetItem = liveItems[targetIndex];
     targetItem.focus();
     if (followFocus && onSelect) {
       onSelect(targetItem);
@@ -419,7 +445,7 @@ function appendDragTrace(documentReference, gizmoSvg, trace) {
   if (!trace) {
     return;
   }
-  const quiet = { stroke: 'var(--studio-text)', 'stroke-opacity': '0.5', 'stroke-width': '1.4', 'stroke-dasharray': '5 4', 'pointer-events': 'none' };
+  const quiet = { stroke: 'var(--studio-text)', 'stroke-opacity': '0.72', 'stroke-width': '1.6', 'stroke-dasharray': '5 4', 'pointer-events': 'none' };
   if (trace.outline) {
     gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
       points: trace.outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
@@ -868,6 +894,26 @@ export function createStudio(container, {
     });
   }
 
+  const workspaceButtons = STUDIO_WORKSPACES.map(workspace => createElement(documentReference, 'button', {
+    type: 'button',
+    textContent: workspace.label,
+    dataset: { workspace: workspace.id },
+    attributes: { role: 'tab', 'aria-selected': 'false' },
+  }));
+  const workspaceList = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-island crucible-studio-workspaces', attributes: { role: 'tablist', 'aria-label': 'Workspace' } },
+    ...workspaceButtons,
+  );
+  workspaceButtons.forEach(button => {
+    button.addEventListener('click', () => selectWorkspace(button.dataset.workspace));
+  });
+  wireRovingFocusFallback(workspaceList, workspaceButtons, {
+    followFocus: true,
+    onSelect: button => selectWorkspace(button.dataset.workspace),
+  });
+
   const menubarElement = createElement(
     documentReference,
     'header',
@@ -887,6 +933,7 @@ export function createStudio(container, {
       filePill,
       watchPill,
     ),
+    workspaceList,
     createElement(documentReference, 'span', { className: 'crucible-studio-spacer' }),
     createElement(documentReference, 'div', { className: 'crucible-studio-island' }, aiSyncMenuButton, shortcutsButton, exportMenuButton),
     newPopover,
@@ -1303,7 +1350,31 @@ export function createStudio(container, {
     camera: createElement(documentReference, 'div', { id: 'crucible-studio-panel-camera', attributes: { role: 'tabpanel', 'aria-labelledby': 'crucible-studio-tab-camera', hidden: 'until-found' } }, cameraPanelBody),
   };
 
+  // Opening a panel brings its workspace forward, so nothing changes off screen.
   function selectInspectorTab(nextTab) {
+    const owner = STUDIO_WORKSPACES.find(workspace => workspace.tabs.includes(nextTab)) ?? STUDIO_WORKSPACES[0];
+    selectWorkspace(owner.id, nextTab);
+  }
+
+  // The workspace is a way of looking at the scene, not part of it: it stays out of the recipe and out of undo.
+  function selectWorkspace(nextWorkspace, preferredTab) {
+    const workspace = STUDIO_WORKSPACES.find(candidate => candidate.id === nextWorkspace);
+    if (!workspace) {
+      throw new RangeError(`Unknown Studio workspace "${String(nextWorkspace)}". Use one of ${STUDIO_WORKSPACES.map(candidate => candidate.id).join(', ')}.`);
+    }
+    root.dataset.workspace = workspace.id;
+    for (const button of workspaceButtons) {
+      button.setAttribute('aria-selected', button.dataset.workspace === workspace.id ? 'true' : 'false');
+    }
+    for (const button of tabButtons) {
+      button.toggleAttribute('hidden', !workspace.tabs.includes(button.dataset.tab));
+    }
+    tabListElement.toggleAttribute('hidden', workspace.tabs.length < 2);
+    const keptTab = workspace.tabs.includes(controller.activeTab) ? controller.activeTab : workspace.tabs[0];
+    showInspectorTab(preferredTab ?? keptTab);
+  }
+
+  function showInspectorTab(nextTab) {
     controller.setActiveTab(nextTab);
     for (const button of tabButtons) {
       const selected = button.dataset.tab === nextTab;
@@ -1352,6 +1423,7 @@ export function createStudio(container, {
       announce('Add a keyframe first (K)');
       return;
     }
+    selectWorkspace('animate');
     playing = !playing;
     lastFrameTime = 0;
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
@@ -1359,6 +1431,7 @@ export function createStudio(container, {
     if (playing) requestFrame();
   });
   keyframeButton.addEventListener('click', async () => {
+    selectWorkspace('animate');
     try {
       await loadAgentSceneModules({ motion: { duration: 1, tracks: [] } });
       controller.insertNodeKeyframe();
@@ -1460,6 +1533,7 @@ export function createStudio(container, {
   });
   shortcutsButton.addEventListener('click', () => shortcutsDialog.showModal());
 
+  selectInspectorTab(controller.activeTab);
   root.append(viewportElement, menubarElement, toolbarElement, outlinerDock, inspectorElement, bottomElement, fileInput, recipeDialog, shortcutsDialog);
   container.append(root);
 
@@ -1838,21 +1912,26 @@ export function createStudio(container, {
   function renderOutliner(recipe) {
     const queryText = outlinerSearch.value.trim().toLowerCase();
     const materialsById = new Map(recipe.materials.map(material => [material.id, material]));
+    const geometriesById = new Map(recipe.geometries.map(geometry => [geometry.id, geometry]));
     const ordered = depthSortedNodes(recipe.nodes).filter(({ node }) => {
       if (!queryText) return true;
       return (node.label ?? node.id).toLowerCase().includes(queryText) || node.id.toLowerCase().includes(queryText);
     });
-    const treeKey = `${controller.selectedNodeId ?? ''}|${queryText}|${ordered.map(({ node, depth }) => `${depth}:${node.id}:${node.label ?? ''}:${node.visible ?? true}:${node.material ?? ''}`).join('|')}`;
+    const treeKey = `${controller.selectedNodeId ?? ''}|${queryText}|${ordered.map(({ node, depth }) => `${depth}:${node.id}:${node.label ?? ''}:${node.visible ?? true}:${node.material ?? ''}:${treeIconName(node, geometriesById)}`).join('|')}`;
     if (treeKey === lastTreeKey) {
       return;
     }
     lastTreeKey = treeKey;
     outlinerTree.replaceChildren(...ordered.map(({ node, depth }) => {
       const material = node.material ? materialsById.get(node.material) : null;
-      const swatchHex = material ? linearRgbToHex(material.color) : 'var(--studio-muted)';
       const selected = node.id === controller.selectedNodeId;
-      const badge = createElement(documentReference, 'span', { className: 'crucible-studio-tree-badge' });
-      badge.style.background = swatchHex;
+      const iconName = treeIconName(node, geometriesById);
+      const badge = createIcon(documentReference, iconName);
+      badge.setAttribute('class', 'crucible-studio-icon crucible-studio-tree-badge');
+      badge.setAttribute('data-shape', iconName);
+      if (material) {
+        badge.style.fill = linearRgbToHex(material.color);
+      }
       const selectButton = createElement(
         documentReference,
         'button',

@@ -200,19 +200,23 @@ test('arrow keys move focus along the toolbar and the tab list when the browser 
   const ignored = dispatch(ui.dom.document.activeElement, 'keydown', { key: 'a' });
   assert.equal(ignored.defaultPrevented, false);
 
-  ui.tab('node').focus();
-  dispatch(ui.tab('node'), 'keydown', { key: 'ArrowRight' });
-  assert.equal(ui.dom.document.activeElement, ui.tab('material'));
-  assert.equal(ui.controller.activeTab, 'material');
+  // Arrow keys walk only the tabs of the open workspace: Look holds Material and Look.
+  ui.tab('material').click();
+  ui.tab('material').focus();
+  dispatch(ui.tab('material'), 'keydown', { key: 'ArrowRight' });
+  assert.ok(ui.dom.document.activeElement === ui.tab('look'));
+  assert.equal(ui.controller.activeTab, 'look');
+  dispatch(ui.tab('look'), 'keydown', { key: 'ArrowRight' });
+  assert.equal(ui.controller.activeTab, 'material', 'the walk wraps inside the workspace and skips the hidden tabs');
   dispatch(ui.tab('material'), 'keydown', { key: 'ArrowLeft' });
-  assert.equal(ui.controller.activeTab, 'node');
+  assert.equal(ui.controller.activeTab, 'look');
 
   ui.dom.document.activeElement = null;
   const stray = dispatch(tabList, 'keydown', { key: 'ArrowRight' });
   assert.equal(stray.defaultPrevented, false);
   const outsideFocus = ui.dom.document.createEvent('focusin', { target: ui.root });
   tabList.dispatchEvent(outsideFocus);
-  assert.equal(ui.tab('node').tabIndex, 0);
+  assert.equal(ui.tab('look').tabIndex, 0);
 });
 
 test('the outliner selects, hides, filters and renames nodes', testContext => {
@@ -1817,4 +1821,61 @@ test('a new object lands beside the ones already there, and ground pieces stay a
   assert.ok(Math.abs(studio.controller.nodeBounds(second.id).min[1]) < 1e-3, 'it rests on the ground');
   assert.deepEqual(studio.controller.addPrimitive('plane').translation, [0, 0.02, 0]);
   assert.deepEqual(studio.controller.addPrimitive('box', { translation: [0, 0.5, 0] }).translation, [0, 0.5, 0], 'a given place is kept');
+});
+
+test('workspaces run Build, Look, Animate and each shows only the panels its step needs', testContext => {
+  const ui = mountStudio(testContext);
+  const workspaceTab = id => byDataset(ui.root, 'workspace', id);
+  const shownTabs = () => STUDIO_TABS.filter(tab => !ui.tab(tab).hasAttribute('hidden'));
+  const tabList = ui.root.querySelector('.crucible-studio-tablist');
+  const workspaceList = ui.root.querySelector('.crucible-studio-workspaces');
+  assert.deepEqual(workspaceList.querySelectorAll('button').map(button => button.textContent), ['Build', 'Look', 'Animate']);
+  assert.equal(workspaceList.getAttribute('role'), 'tablist');
+  assert.equal(workspaceList.parentNode.className, 'crucible-studio-menubar', 'the tabs share the menu bar, not a row of their own');
+
+  assert.equal(ui.root.dataset.workspace, 'build');
+  assert.equal(workspaceTab('build').getAttribute('aria-selected'), 'true');
+  assert.deepEqual(shownTabs(), ['node']);
+  assert.ok(tabList.hasAttribute('hidden'), 'one panel needs no tab row');
+
+  const recipeBefore = JSON.stringify(ui.studio.exportRecipe());
+  workspaceTab('look').click();
+  assert.equal(ui.root.dataset.workspace, 'look');
+  assert.equal(workspaceTab('build').getAttribute('aria-selected'), 'false');
+  assert.equal(workspaceTab('build').hasAttribute('aria-pressed'), false);
+  assert.deepEqual(shownTabs(), ['material', 'look']);
+  assert.equal(tabList.hasAttribute('hidden'), false);
+  assert.equal(ui.controller.activeTab, 'material');
+  ui.tab('look').click();
+  assert.equal(ui.root.dataset.workspace, 'look');
+  assert.equal(ui.controller.activeTab, 'look');
+
+  workspaceTab('animate').click();
+  assert.deepEqual(shownTabs(), ['camera']);
+  assert.equal(ui.controller.activeTab, 'camera');
+  workspaceTab('look').click();
+  assert.equal(ui.controller.activeTab, 'material');
+  assert.equal(JSON.stringify(ui.studio.exportRecipe()), recipeBefore, 'a workspace is not part of the scene');
+  assert.equal(ui.controller.canUndo, false);
+
+  ui.studio.setActiveTab('node');
+  assert.equal(ui.root.dataset.workspace, 'build', 'opening a panel brings its workspace forward');
+  dispatch(ui.dom.document, 'keydown', { key: 'k' });
+  assert.equal(ui.root.dataset.workspace, 'animate', 'a keyframe opens the timeline');
+});
+
+test('each scene row draws the shape of its object in the colour of its material', testContext => {
+  const recipe = makeRecipe();
+  recipe.nodes.push({ id: 'set', label: 'Set' });
+  const ui = mountStudio(testContext, { recipe });
+  const shapes = Object.fromEntries(ui.rows().map(row => [
+    row.querySelector('.crucible-studio-tree-label').textContent,
+    row.querySelector('.crucible-studio-tree-badge'),
+  ]));
+  assert.equal(shapes.hero.getAttribute('data-shape'), 'node');
+  assert.equal(shapes.orb.getAttribute('data-shape'), 'sphere');
+  assert.equal(shapes.Set.getAttribute('data-shape'), 'group');
+  assert.match(shapes.hero.style.fill, /^#[0-9a-f]{6}$/);
+  assert.equal(shapes.Set.style.fill, undefined, 'a group has no material to show');
+  assert.equal(shapes.orb.tagName.toLowerCase(), 'svg');
 });
