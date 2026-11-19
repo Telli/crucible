@@ -169,7 +169,7 @@ export function normalizeAssetPlacement(value) {
 export function gamePosedNodeIds(game) {
   const ids = new Set();
   if (game?.player?.animation && game.player.node) ids.add(game.player.node);
-  for (const npc of game?.npcs ?? []) if (npc?.animation && npc.node) ids.add(npc.node);
+  for (const npc of Array.isArray(game?.npcs) ? game.npcs : []) if (npc?.animation && npc.node) ids.add(npc.node);
   return ids;
 }
 
@@ -203,7 +203,8 @@ export function recipeAssetNeeds(value) {
   collectPlacements(value, placements);
   const needs = new Map();
   const posedNodes = gamePosedNodeIds(value?.game);
-  const posedPlacements = (value?.nodes ?? []).filter(node => node.asset && posedNodes.has(node.id)).map(node => node.asset);
+  const nodes = Array.isArray(value?.nodes) ? value.nodes : [];
+  const posedPlacements = nodes.filter(node => node && typeof node === 'object' && node.asset && posedNodes.has(node.id)).map(node => node.asset);
   for (const placement of placements) {
     const id = placement.id.toLowerCase();
     const need = needs.get(id) ?? { id, copies: 1 };

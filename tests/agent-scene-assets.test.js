@@ -74,6 +74,12 @@ test('material overrides name the source material and stay shared between placem
   await assert.rejects(async () => createAgentScene(recipe([{ id: 'bad', asset: { id: ASSET_ID, materials: [{ name: 'Nope', color: [1, 0, 0] }] } }]), {}, { assets: await loadedAssets() }), /^RangeError: nodes\[1\]\.asset\.materials\[0\]\.name: got "Nope"; expected one of "Skin"/);
 });
 
+test('recipeAssetNeeds skips a malformed node list, null node and non-list npcs (#2623)', () => {
+  assert.deepEqual(recipeAssetNeeds({ nodes: {} }), []);
+  assert.deepEqual(recipeAssetNeeds({ nodes: [null] }), []);
+  assert.deepEqual(recipeAssetNeeds({ game: { npcs: {} } }), []);
+});
+
 test('a placed clip plays on its own time offset and a seek gives the same frame', async () => {
   const nodes = [
     { id: 'walker', translation: [3, 0, 0], asset: { id: ASSET_ID, clip: { index: 0, start: 0.5 } } },
