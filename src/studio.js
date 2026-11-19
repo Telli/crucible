@@ -9,6 +9,14 @@ import { exportGlb } from './export.js';
 import { encodePack } from './scene-pack-format.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
+import {
+  STUDIO_GIZMO_PIXELS,
+  STUDIO_PREFERENCE_CHOICES,
+  STUDIO_PREFERENCE_DEFAULTS,
+  loadStudioPreferences,
+  normalizeStudioPreferences,
+  saveStudioPreferences,
+} from './studio-preferences.js';
 import { studioIconPath } from './studio-icons.js';
 import { AXIS_COLORS, buildGridRecipe, createViewWidget, describeBounds, describeCamera } from './studio-viewport-aids.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
@@ -681,6 +689,28 @@ function depthSortedNodes(nodes) {
   return ordered;
 }
 
+const VIEW_PRESET_BY_KEY = Object.freeze({ 1: 'front', 3: 'right', 7: 'top' });
+
+// One row of the Settings dialog each: the preference, what the row is called and, for a choice, how a value reads.
+const STUDIO_SETTING_ROWS = Object.freeze([
+  ['moveSnapStep', 'Move snap step', value => `${value} m`],
+  ['rotateSnapDegrees', 'Rotate snap angle', value => `${value}°`],
+  ['gizmoSize', 'Handle size', value => value[0].toUpperCase() + value.slice(1)],
+  ['startWorkspace', 'Open in', value => value[0].toUpperCase() + value.slice(1)],
+  ['gridVisible', 'Grid'],
+  ['readoutVisible', 'Camera and size readout'],
+  ['viewWidgetVisible', 'Axis widget'],
+  ['agentCursorVisible', 'Agent cursor'],
+]);
+
+function browserPreferenceStorage() {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Mounts Crucible Studio: 3-zone 3D editor with outliner, SVG 3D gizmos, 4-tab inspector, timeline and desktop IPC hooks.
  */
@@ -696,8 +726,11 @@ export function createStudio(container, {
   homeHref = null,
   watchedPath: initialWatchedPath = null,
   agentName: initialAgentName = DEFAULT_AGENT_NAME,
+  preferences: suppliedPreferences = null,
+  preferenceStorage = browserPreferenceStorage(),
   onDirtyChange,
 } = {}) {
+  let preferences = normalizeStudioPreferences({ ...loadStudioPreferences(preferenceStorage), ...suppliedPreferences });
   if (!container || typeof container.append !== 'function') {
     throw new TypeError('createStudio requires a DOM container element.');
   }
@@ -717,7 +750,7 @@ export function createStudio(container, {
   let renderer = suppliedRenderer ?? null;
   let renderedScene = initialScene;
   let renderedTopology = initialScene.topologyRevision;
-  let gridVisible = true;
+  let gridVisible = preferences.gridVisible;
   let gridParts = null;
   let capturingStill = false;
   let selectionReadoutStale = true;
@@ -770,7 +803,8 @@ export function createStudio(container, {
     createIcon(documentReference, 'export'),
     createElement(documentReference, 'span', { textContent: 'Export' }),
   );
-  const shortcutsButton = createIconButton(documentReference, 'help', 'Keyboard shortcuts');
+  const shortcutsButton = createIconButton(documentReference, 'help', 'Keyboard shortcuts (?)');
+  const settingsButton = createIconButton(documentReference, 'settings', 'Settings (Ctrl+,)');
 
   const newPopover = createElement(documentReference, 'div', {
     id: 'crucible-studio-pop-new',
@@ -936,7 +970,7 @@ export function createStudio(container, {
     ),
     workspaceList,
     createElement(documentReference, 'span', { className: 'crucible-studio-spacer' }),
-    createElement(documentReference, 'div', { className: 'crucible-studio-island' }, aiSyncMenuButton, shortcutsButton, exportMenuButton),
+    createElement(documentReference, 'div', { className: 'crucible-studio-island' }, aiSyncMenuButton, settingsButton, shortcutsButton, exportMenuButton),
     newPopover,
     addPopover,
     aiSyncPopover,
@@ -980,7 +1014,13 @@ export function createStudio(container, {
     documentReference,
     'aside',
     { className: 'crucible-studio-dock crucible-studio-outliner', attributes: { 'aria-label': 'Scene outliner' } },
-    createElement(documentReference, 'div', { className: 'crucible-studio-dock-head' }, createElement(documentReference, 'span', { textContent: 'Scene' }), outlinerSearch),
+    createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-dock-head' },
+      createElement(documentReference, 'span', { className: 'crucible-studio-dock-title' }, createIcon(documentReference, 'scene'), createElement(documentReference, 'span', { textContent: 'Scene' })),
+      createElement(documentReference, 'label', { className: 'crucible-studio-filter' }, createIcon(documentReference, 'search'), outlinerSearch),
+    ),
     outlinerTree,
     createElement(documentReference, 'div', { className: 'crucible-studio-palette-section' }, swatchContainer),
   );
@@ -1028,7 +1068,7 @@ export function createStudio(container, {
   const toggleDocksButton = createIconButton(documentReference, 'panels', 'Show or hide the panels', { attributes: { 'aria-pressed': 'true' } });
   const gridButton = createIconButton(documentReference, 'grid', 'Show or hide the grid', { attributes: { 'aria-pressed': 'true' } });
   gridButton.addEventListener('click', () => {
-    setGridVisible(!gridVisible);
+    setPreference('gridVisible', !gridVisible);
     announce(gridVisible ? 'Grid shown' : 'Grid hidden');
   });
 
@@ -1497,16 +1537,24 @@ export function createStudio(container, {
 
   const shortcutsHeading = createElement(documentReference, 'h2', { id: 'crucible-studio-shortcuts-title', textContent: 'Studio keyboard shortcuts' });
   const shortcutEntries = [
-    ['Q', 'Select tool'],
+    ['Q', 'Select'],
     ['G / R / S / T', 'Move / Rotate / Scale / Snap'],
-    ['F', 'Frame selected node'],
-    ['5 / Numpad 5', 'Perspective or Orthographic'],
-    ['Shift + Gizmo drag', 'Snap angle (15°) or step (0.25 m)'],
-    ['Drag X / Y / Z label', 'Scrub vector number smoothly'],
-    ['Ctrl+D / Delete', 'Duplicate or delete selected'],
-    ['Ctrl+Z / Shift+Z', 'Undo / Redo edit'],
-    ['Space / K', 'Play animation / Insert keyframe'],
-    ['Ctrl+O / Ctrl+S', 'Open or Save recipe JSON'],
+    ['Shift + drag', 'Snap to the step and angle in Settings'],
+    ['Shift+A', 'Add an object or a light'],
+    ['Shift+D / Ctrl+D', 'Duplicate'],
+    ['X / Delete', 'Delete'],
+    ['Esc', 'Deselect'],
+    ['F / .', 'Frame the selection'],
+    ['1 / 3 / 7', 'Front / Right / Top view'],
+    ['5', 'Perspective or orthographic'],
+    ['N', 'Show or hide Properties'],
+    ['I / K', 'Insert a keyframe'],
+    ['Space', 'Play'],
+    ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / Redo'],
+    ['Ctrl+O / Ctrl+S', 'Open / Save'],
+    ['Ctrl+,', 'Settings'],
+    ['Drag X / Y / Z', 'Scrub a number'],
+    ['?', 'This list'],
   ];
   const shortcutsGrid = createElement(
     documentReference,
@@ -1534,8 +1582,87 @@ export function createStudio(container, {
   });
   shortcutsButton.addEventListener('click', () => shortcutsDialog.showModal());
 
+  const settingControls = new Map();
+  const settingRows = STUDIO_SETTING_ROWS.map(([name, label, describeChoice]) => {
+    const choices = STUDIO_PREFERENCE_CHOICES[name];
+    const control = choices
+      ? createElement(documentReference, 'select', {}, ...choices.map(choice => createElement(documentReference, 'option', { value: String(choice), textContent: describeChoice(choice) })))
+      : createElement(documentReference, 'input', { type: 'checkbox' });
+    control.dataset.setting = name;
+    control.addEventListener('change', () => {
+      setPreference(name, choices ? choices.find(choice => String(choice) === control.value) : control.checked);
+    });
+    settingControls.set(name, control);
+    return createElement(documentReference, 'label', { className: 'crucible-studio-setting' }, createElement(documentReference, 'span', { textContent: label }), control);
+  });
+  const settingsResetButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Reset' });
+  settingsResetButton.addEventListener('click', () => {
+    preferences = normalizeStudioPreferences(null);
+    storePreferences();
+    applyPreferences();
+    announce('Settings reset');
+  });
+  const settingsDialog = createElement(
+    documentReference,
+    'dialog',
+    { className: 'crucible-studio-settings-dialog', attributes: { 'aria-labelledby': 'crucible-studio-settings-title', closedby: 'any' } },
+    createElement(documentReference, 'h2', { id: 'crucible-studio-settings-title', textContent: 'Settings' }),
+    createElement(documentReference, 'div', { className: 'crucible-studio-settings' }, ...settingRows),
+    createElement(
+      documentReference,
+      'form',
+      { method: 'dialog', className: 'crucible-studio-dialog-actions' },
+      settingsResetButton,
+      createElement(documentReference, 'button', { type: 'submit', value: 'close', autofocus: true, textContent: 'Done' }),
+    ),
+  );
+  settingsDialog.addEventListener('close', () => {
+    settingsDialog.returnValue = '';
+  });
+  settingsButton.addEventListener('click', () => settingsDialog.showModal());
+
+  function storePreferences() {
+    if (preferenceStorage) {
+      saveStudioPreferences(preferenceStorage, preferences);
+    }
+  }
+
+  // Puts the preferences into effect and shows them in the Settings dialog.
+  function applyPreferences() {
+    controller.setInteractionSettings({
+      moveSnapStep: preferences.moveSnapStep,
+      rotateSnapDegrees: preferences.rotateSnapDegrees,
+      gizmoPixels: STUDIO_GIZMO_PIXELS[preferences.gizmoSize],
+    });
+    root.dataset.readout = preferences.readoutVisible ? 'on' : 'off';
+    root.dataset.viewWidget = preferences.viewWidgetVisible ? 'on' : 'off';
+    if (!preferences.agentCursorVisible) {
+      agentPresence.hide();
+    }
+    setGridVisible(preferences.gridVisible);
+    for (const [name, control] of settingControls) {
+      if (STUDIO_PREFERENCE_CHOICES[name]) control.value = String(preferences[name]);
+      else control.checked = preferences[name];
+    }
+  }
+
+  function setPreference(name, value) {
+    if (!(name in STUDIO_PREFERENCE_DEFAULTS)) {
+      throw new RangeError(`Unknown Studio preference "${String(name)}". Use one of ${Object.keys(STUDIO_PREFERENCE_DEFAULTS).join(', ')}.`);
+    }
+    preferences = normalizeStudioPreferences({ ...preferences, [name]: value });
+    storePreferences();
+    applyPreferences();
+    return preferences[name];
+  }
+
   selectInspectorTab(controller.activeTab);
-  root.append(viewportElement, menubarElement, toolbarElement, outlinerDock, inspectorElement, bottomElement, fileInput, recipeDialog, shortcutsDialog);
+  if (preferences.startWorkspace !== 'build') {
+    selectWorkspace(preferences.startWorkspace);
+  }
+  applyPreferences();
+  const sideColumn = createElement(documentReference, 'div', { className: 'crucible-studio-side' }, outlinerDock, inspectorElement);
+  root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, recipeDialog, shortcutsDialog, settingsDialog);
   container.append(root);
 
   function syncWatchNote() {
@@ -1575,9 +1702,12 @@ export function createStudio(container, {
   }
 
   function setGridVisible(visible) {
+    const changed = gridVisible !== Boolean(visible);
     gridVisible = Boolean(visible);
     gridButton.setAttribute('aria-pressed', gridVisible ? 'true' : 'false');
-    requestFrame();
+    if (changed) {
+      requestFrame();
+    }
   }
 
   // Measured only after a change: the bounds walk every vertex of the selection.
@@ -1856,7 +1986,9 @@ export function createStudio(container, {
   // Points the named agent cursor at each object an edit touched and says what changed.
   function showAgentEdit({ name = defaultAgentName, nodeIds = [], removedNodeIds = [], otherChange = false } = {}) {
     const label = assertAgentName(name);
-    agentPresence.show({ name: label, nodeIds });
+    if (preferences.agentCursorVisible) {
+      agentPresence.show({ name: label, nodeIds });
+    }
     announce(describeAgentEdit(label, { nodeIds, removedNodeIds, otherChange }));
   }
 
@@ -2219,6 +2351,13 @@ export function createStudio(container, {
     return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(target?.isContentEditable);
   }
 
+  function duplicateSelection() {
+    if (controller.selectedNodeId) {
+      const cloned = controller.duplicateSelected();
+      announce(`Duplicated to ${cloned.label}`);
+    }
+  }
+
   const onWindowKeyDown = async event => {
     if (!root.isConnected || isEditableTarget(event.target)) {
       return;
@@ -2235,10 +2374,7 @@ export function createStudio(container, {
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd') {
       event.preventDefault();
-      if (controller.selectedNodeId) {
-        const cloned = controller.duplicateSelected();
-        announce(`Duplicated to ${cloned.label}`);
-      }
+      duplicateSelection();
       return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
@@ -2247,8 +2383,29 @@ export function createStudio(container, {
       else controller.undo();
       return;
     }
+    if (event.metaKey || event.ctrlKey) {
+      if (event.key === ',') {
+        event.preventDefault();
+        settingsDialog.showModal();
+      }
+      return;
+    }
+    if (event.altKey || recipeDialog.open || shortcutsDialog.open || settingsDialog.open) {
+      return;
+    }
     const lowerKey = event.key.toLowerCase();
-    if (lowerKey === 'q') controller.setTool('select');
+    const viewPreset = VIEW_PRESET_BY_KEY[event.key];
+    if (event.shiftKey && lowerKey === 'd') duplicateSelection();
+    else if (event.shiftKey && lowerKey === 'a') addMenuButton.click();
+    else if (viewPreset) {
+      controller.setCameraViewPreset(viewPreset);
+      announce(`${viewPreset[0].toUpperCase()}${viewPreset.slice(1)} view`);
+    } else if (event.key === '.') controller.frameSelection();
+    else if (lowerKey === 'n') setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true');
+    else if (lowerKey === 'i') keyframeButton.click();
+    else if (event.key === 'Escape') {
+      if (controller.selectedNodeId) controller.selectNode(null);
+    } else if (lowerKey === 'q') controller.setTool('select');
     else if (lowerKey === 'g') controller.setTool('translate');
     else if (lowerKey === 'r') controller.setTool('rotate');
     else if (lowerKey === 's') controller.setTool('scale');
@@ -2260,7 +2417,7 @@ export function createStudio(container, {
     else if (event.key === ' ') {
       event.preventDefault();
       playButton.click();
-    } else if ((event.key === 'Delete' || event.key === 'Backspace') && controller.selectedNodeId) {
+    } else if ((event.key === 'Delete' || event.key === 'Backspace' || lowerKey === 'x') && controller.selectedNodeId) {
       event.preventDefault();
       controller.deleteSelected();
       announce('Deleted node');
@@ -2340,6 +2497,8 @@ export function createStudio(container, {
     showAgentEdit,
     setGridVisible,
     get gridVisible() { return gridVisible; },
+    setPreference,
+    get preferences() { return { ...preferences }; },
     selectNode: nodeId => controller.selectNode(nodeId),
     setTool: tool => controller.setTool(tool),
     setActiveTab: tab => selectInspectorTab(tab),

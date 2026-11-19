@@ -384,16 +384,36 @@ export const STUDIO_CSS = `
   overflow: hidden;
   z-index: 4;
 }
+/* Scene above, Properties below, in one column across from the tools. It stops above the view widget in the corner. */
+.crucible-studio-side {
+  position: absolute;
+  inset-block: var(--studio-top) 100px;
+  inset-inline-end: var(--studio-edge);
+  inline-size: 284px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 4;
+}
+.crucible-studio-side > .crucible-studio-dock {
+  position: static;
+  flex: 0 1 auto;
+  pointer-events: auto;
+}
+.crucible-studio-side > .crucible-studio-outliner {
+  flex-shrink: 0;
+  max-block-size: 38%;
+}
 .crucible-studio-outliner {
   inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
-  inline-size: 228px;
-  max-block-size: min(440px, calc(100% - var(--studio-top) - 84px));
 }
 .crucible-studio-inspector {
   inset-inline-end: var(--studio-edge);
-  inline-size: 284px;
-  /* Stops above the view widget in the corner below it. */
-  max-block-size: calc(100% - var(--studio-top) - 100px);
+}
+.crucible-studio[data-readout="off"] .crucible-studio-readout,
+.crucible-studio[data-view-widget="off"] .crucible-studio-view-widget {
+  display: none;
 }
 .crucible-studio[data-outliner-collapsed="true"] .crucible-studio-outliner,
 .crucible-studio[data-inspector-collapsed="true"] .crucible-studio-inspector {
@@ -407,6 +427,34 @@ export const STUDIO_CSS = `
   font-family: var(--studio-font-heading);
   font-weight: 600;
   font-size: 13px;
+}
+.crucible-studio-dock-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.crucible-studio-dock-title .crucible-studio-icon {
+  inline-size: 15px;
+  block-size: 15px;
+}
+.crucible-studio-filter {
+  position: relative;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  display: flex;
+  align-items: center;
+}
+.crucible-studio-filter .crucible-studio-icon {
+  position: absolute;
+  inset-inline-start: 8px;
+  inline-size: 13px;
+  block-size: 13px;
+  color: var(--studio-muted);
+  pointer-events: none;
+}
+.crucible-studio-dock-head .crucible-studio-filter input {
+  inline-size: 100%;
+  padding-inline-start: 27px;
 }
 .crucible-studio-dock-head input {
   flex: 1 1 auto;
@@ -809,8 +857,8 @@ export const STUDIO_CSS = `
 .crucible-studio[data-workspace="animate"] .crucible-studio-readout {
   inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
 }
-.crucible-studio[data-workspace="animate"]:not([data-compact="true"]) .crucible-studio-dock {
-  max-block-size: calc(100% - var(--studio-top) - 100px - var(--studio-bar-clear));
+.crucible-studio[data-workspace="animate"]:not([data-compact="true"]) .crucible-studio-side {
+  inset-block-end: calc(100px + var(--studio-bar-clear));
 }
 .crucible-studio-scrub {
   display: flex;
@@ -848,6 +896,8 @@ export const STUDIO_CSS = `
   font-size: 11.5px;
 }
 
+.crucible-studio[data-compact="true"] .crucible-studio-side { display: contents; }
+.crucible-studio[data-compact="true"] .crucible-studio-side > .crucible-studio-dock { position: absolute; }
 .crucible-studio[data-compact="true"] .crucible-studio-outliner {
   inline-size: min(228px, calc(100% - var(--studio-edge) * 3 - var(--studio-rail)));
   max-block-size: min(300px, calc(100% - var(--studio-top) - 84px));
@@ -896,6 +946,30 @@ export const STUDIO_CSS = `
 }
 .crucible-studio dialog button {
   background: color-mix(in srgb, var(--studio-text) 7%, transparent);
+}
+.crucible-studio dialog.crucible-studio-settings-dialog {
+  width: min(380px, calc(100vw - 32px));
+}
+.crucible-studio-settings {
+  display: grid;
+  gap: 2px;
+  font-size: 12.5px;
+}
+.crucible-studio-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-block-size: 34px;
+}
+.crucible-studio-setting select {
+  inline-size: 132px;
+}
+.crucible-studio-setting input[type="checkbox"] {
+  inline-size: 16px;
+  block-size: 16px;
+  margin: 0;
+  accent-color: var(--studio-text);
 }
 .crucible-studio-shortcuts {
   display: grid;

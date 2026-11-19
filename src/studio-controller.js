@@ -484,6 +484,9 @@ export function createStudioController({
   onChange,
 } = {}) {
   let currentScene = validateSceneHandle(initialScene);
+  let moveSnapStep = TRANSLATION_SNAP_STEP;
+  let rotateSnapDegrees = ROTATION_SNAP_DEGREES;
+  let gizmoPixels = GIZMO_SCREEN_PIXELS;
   let width = assertPositiveFinite(viewportWidth, 'viewportWidth');
   let height = assertPositiveFinite(viewportHeight, 'viewportHeight');
   if (!Number.isInteger(maxHistory) || maxHistory < 1 || maxHistory > 128) {
@@ -674,6 +677,31 @@ export function createStudioController({
     return selectedNodeId;
   }
 
+  /**
+   * How the handles behave for this person: the step a Shift drag snaps a move to (scene units), the angle it snaps a
+   * turn to (degrees) and how long the handles are drawn (screen pixels). A field left out keeps its value.
+   */
+  function setInteractionSettings(settings = {}) {
+    const next = {
+      moveSnapStep: settings.moveSnapStep ?? moveSnapStep,
+      rotateSnapDegrees: settings.rotateSnapDegrees ?? rotateSnapDegrees,
+      gizmoPixels: settings.gizmoPixels ?? gizmoPixels,
+    };
+    for (const [name, value] of Object.entries(next)) {
+      if (!Number.isFinite(value) || value <= 0) {
+        throw new RangeError(`${name} must be a positive number, got ${JSON.stringify(value)}.`);
+      }
+    }
+    const changed = next.moveSnapStep !== moveSnapStep || next.rotateSnapDegrees !== rotateSnapDegrees || next.gizmoPixels !== gizmoPixels;
+    moveSnapStep = next.moveSnapStep;
+    rotateSnapDegrees = next.rotateSnapDegrees;
+    gizmoPixels = next.gizmoPixels;
+    if (changed) {
+      notify({ kind: 'tool' });
+    }
+    return next;
+  }
+
   function setTool(tool) {
     if (!STUDIO_TOOLS.includes(tool)) {
       throw new RangeError(`Unknown Studio tool "${String(tool)}". Use one of ${STUDIO_TOOLS.join(', ')}.`);
@@ -719,7 +747,7 @@ export function createStudioController({
     if (!pivot) {
       return null;
     }
-    const handleLength = Math.max(0.25, worldLengthPerPixel(pivot) * GIZMO_SCREEN_PIXELS);
+    const handleLength = Math.max(0.25, worldLengthPerPixel(pivot) * gizmoPixels);
     const origin = projectWorldPoint(pivot);
     const planeExtent = handleLength * 0.4;
     const basis = worldBasisOf(selectedWorldMatrix());
@@ -984,7 +1012,7 @@ export function createStudioController({
       return null;
     }
     const pivot = dragState.basePivot;
-    const radius = Math.max(0.25, worldLengthPerPixel(pivot) * GIZMO_SCREEN_PIXELS) * RING_RADIUS_FACTOR;
+    const radius = Math.max(0.25, worldLengthPerPixel(pivot) * gizmoPixels) * RING_RADIUS_FACTOR;
     const startDirection = vec3.normalize(vec3.create(), dragState.ringStartVector);
     const shownDegrees = Math.max(-360, Math.min(360, dragState.sweepDegrees));
     const stepCount = Math.max(1, Math.ceil((Math.abs(shownDegrees) / 360) * ROTATION_RING_SEGMENTS));
@@ -1058,7 +1086,7 @@ export function createStudioController({
         dragState.baseTranslation[1] + localDelta[1],
         dragState.baseTranslation[2] + localDelta[2],
       ];
-      const translation = roundVector(shiftKey ? snapVector(rawTranslation) : rawTranslation);
+      const translation = roundVector(shiftKey ? snapVector(rawTranslation, moveSnapStep) : rawTranslation);
       applySceneOperations([{ type: 'set-node', id: dragState.nodeId, translation }], { recordUndo: false });
       dragState.changed = true;
       dragState.deltaLabel = `${dragState.axis.toUpperCase()} ${deltaLength.toFixed(2)} m`;
@@ -1072,7 +1100,7 @@ export function createStudioController({
       const maxTravel = Math.max(12, vec3.distance(currentScene.camera.eye, dragState.basePivot) * 4);
       const pixelTravel = (deltaX * dragState.axisScreen[0] + deltaY * dragState.axisScreen[1]) * dragState.worldPerPixel;
       const exactTravel = axisParameter === null ? pixelTravel : axisParameter - dragState.axisStartParameter;
-      const steppedTravel = shiftKey ? Math.round(exactTravel / TRANSLATION_SNAP_STEP) * TRANSLATION_SNAP_STEP : exactTravel;
+      const steppedTravel = shiftKey ? Math.round(exactTravel / moveSnapStep) * moveSnapStep : exactTravel;
       const travel = Math.max(-maxTravel, Math.min(maxTravel, steppedTravel));
       const worldDelta = [dragState.axisWorld[0] * travel, dragState.axisWorld[1] * travel, dragState.axisWorld[2] * travel];
       const localDelta = toNodeLocalDelta(worldDelta, dragState.parentInverse);
@@ -1103,7 +1131,7 @@ export function createStudioController({
           rawDegrees = dragState.turnedDegrees;
         }
       }
-      const degrees = shiftKey ? Math.round(rawDegrees / ROTATION_SNAP_DEGREES) * ROTATION_SNAP_DEGREES : rawDegrees;
+      const degrees = shiftKey ? Math.round(rawDegrees / rotateSnapDegrees) * rotateSnapDegrees : rawDegrees;
       dragState.sweepDegrees = degrees;
       const radians = (degrees * Math.PI) / 180;
       const axisVector = axisIndex === 0 ? [1, 0, 0] : axisIndex === 1 ? [0, 1, 0] : [0, 0, 1];
@@ -1122,7 +1150,7 @@ export function createStudioController({
         ? deltaX - deltaY
         : deltaX * dragState.axisScreen[0] + deltaY * dragState.axisScreen[1];
       // Away from an axis handle, one handle length of drag doubles the size.
-      let rawFactor = 1 + signedPixels / GIZMO_SCREEN_PIXELS;
+      let rawFactor = 1 + signedPixels / gizmoPixels;
       if (axisIndex >= 0 && dragState.axisStartParameter !== null && Math.abs(dragState.axisStartParameter) > 1e-3) {
         const axisParameter = rayAxisParameter(screenRay(pixelX, pixelY), dragState.basePivot, dragState.axisWorld);
         if (axisParameter !== null) {
@@ -1693,6 +1721,8 @@ export function createStudioController({
     gizmoHandles,
     rotationSweep,
     dragTrace,
+    setInteractionSettings,
+    get interactionSettings() { return { moveSnapStep, rotateSnapDegrees, gizmoPixels }; },
     selectionOutline,
     nodeOutline,
     nodeBounds,

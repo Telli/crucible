@@ -1006,9 +1006,11 @@ test('keyboard shortcuts edit, undo, redo, duplicate and delete from anywhere in
   assert.equal(ui.controller.scene.camera.projection, 'orthographic');
   press('5');
   assert.equal(ui.controller.scene.camera.projection, 'perspective');
-  press('x');
+  press('z');
   press('?');
   assert.equal(ui.root.querySelectorAll('dialog')[1].open, true);
+  assert.equal(press(' ').defaultPrevented, false, 'keys wait while a dialog is open');
+  ui.root.querySelectorAll('dialog')[1].close();
   assert.equal(press(' ').defaultPrevented, true);
   assert.equal(ui.status(), 'Add a keyframe first (K)');
 });
@@ -1082,7 +1084,7 @@ test('the Recipe JSON dialog shows the recipe, applies edits and reports bad JSO
   assert.equal(recipeDialog.open, false);
   assert.equal(fileInput.clicks, clicksBefore + 1);
 
-  ui.label('Keyboard shortcuts').click();
+  ui.label('Keyboard shortcuts (?)').click();
   assert.equal(shortcutsDialog.open, true);
   assert.ok(shortcutsDialog.querySelectorAll('.crucible-studio-shortcut-item').length >= 8);
   shortcutsDialog.close('close');
@@ -1880,4 +1882,130 @@ test('each scene row draws the shape of its object in the colour of its material
   assert.match(shapes.hero.style.fill, /^#[0-9a-f]{6}$/);
   assert.equal(shapes.Set.style.fill, undefined, 'a group has no material to show');
   assert.equal(shapes.orb.tagName.toLowerCase(), 'svg');
+});
+
+test('Blender keys add, duplicate, delete, deselect, turn the view and fold Properties', testContext => {
+  const ui = mountStudio(testContext);
+  const press = (key, properties = {}) => dispatch(ui.dom.document, 'keydown', { key, ...properties });
+  ui.selectRow('hero');
+  const countBefore = ui.studio.exportRecipe().nodes.length;
+  press('D', { shiftKey: true });
+  assert.equal(ui.studio.exportRecipe().nodes.length, countBefore + 1, 'Shift+D duplicates');
+  press('x');
+  assert.equal(ui.studio.exportRecipe().nodes.length, countBefore, 'X deletes the selection');
+
+  ui.selectRow('hero');
+  press('Escape');
+  assert.equal(ui.controller.selectedNodeId, null, 'Esc deselects');
+  press('x');
+  assert.equal(ui.studio.exportRecipe().nodes.length, countBefore, 'X does nothing with no selection');
+
+  const offset = () => ui.controller.scene.camera.eye.map((value, index) => value - ui.controller.scene.camera.target[index]);
+  press('7');
+  assert.ok(offset()[1] > Math.abs(offset()[0]) * 20 && offset()[1] > Math.abs(offset()[2]) * 20, 'top view looks straight down');
+  assert.equal(ui.status(), 'Top view');
+  press('1');
+  assert.ok(offset()[2] > 0 && Math.abs(offset()[0]) < 1e-3 && Math.abs(offset()[1]) < 1e-3, 'front view looks along Z');
+  press('3');
+  assert.ok(offset()[0] > 0 && Math.abs(offset()[2]) < 1e-3, 'right view looks along X');
+
+  press('n');
+  assert.equal(ui.root.dataset.inspectorCollapsed, 'true');
+  press('n');
+  assert.equal(ui.root.dataset.inspectorCollapsed, 'false');
+
+  let addClicks = 0;
+  ui.label('Add an object or a light').addEventListener('click', () => { addClicks += 1; });
+  press('A', { shiftKey: true });
+  assert.equal(addClicks, 1, 'Shift+A opens the Add menu');
+
+  const toolBefore = ui.controller.tool;
+  press('g', { ctrlKey: true });
+  assert.equal(ui.controller.tool, toolBefore, 'a browser shortcut is not taken for a tool key');
+  press(',', { ctrlKey: true });
+  assert.equal(ui.root.querySelector('.crucible-studio-settings-dialog').open, true, 'Ctrl+, opens Settings');
+});
+
+test('Settings change the snap, the handles and what the viewport shows, and are kept for the next visit', testContext => {
+  const saved = new Map();
+  const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const ui = mountStudio(testContext, { preferenceStorage });
+  const control = name => ui.root.querySelector('.crucible-studio-settings-dialog').descendants().find(element => element.dataset?.setting === name);
+  const choose = (name, value) => {
+    control(name).value = String(value);
+    dispatch(control(name), 'change');
+  };
+  const toggle = (name, checked) => {
+    control(name).checked = checked;
+    dispatch(control(name), 'change');
+  };
+  assert.deepEqual(ui.controller.interactionSettings, { moveSnapStep: 0.25, rotateSnapDegrees: 15, gizmoPixels: 74 });
+  assert.equal(control('moveSnapStep').value, '0.25');
+  assert.equal(control('gridVisible').checked, true);
+
+  ui.label('Settings (Ctrl+,)').click();
+  assert.equal(ui.root.querySelector('.crucible-studio-settings-dialog').open, true);
+  choose('moveSnapStep', 1);
+  choose('rotateSnapDegrees', 45);
+  choose('gizmoSize', 'large');
+  assert.deepEqual(ui.controller.interactionSettings, { moveSnapStep: 1, rotateSnapDegrees: 45, gizmoPixels: 92 });
+  toggle('gridVisible', false);
+  assert.equal(ui.studio.gridVisible, false);
+  assert.equal(ui.label('Show or hide the grid').getAttribute('aria-pressed'), 'false');
+  toggle('readoutVisible', false);
+  toggle('viewWidgetVisible', false);
+  assert.equal(ui.root.dataset.readout, 'off');
+  assert.equal(ui.root.dataset.viewWidget, 'off');
+  choose('startWorkspace', 'animate');
+  assert.equal(ui.root.dataset.workspace, 'build', 'the workspace in use is left alone');
+  assert.deepEqual(JSON.parse(saved.get('crucible-studio-preferences')), {
+    moveSnapStep: 1,
+    rotateSnapDegrees: 45,
+    gizmoSize: 'large',
+    startWorkspace: 'animate',
+    gridVisible: false,
+    readoutVisible: false,
+    viewWidgetVisible: false,
+    agentCursorVisible: true,
+  });
+
+  ui.label('Show or hide the grid').click();
+  assert.equal(control('gridVisible').checked, true, 'the grid button and the setting are one switch');
+
+  const next = mountStudio(testContext, { preferenceStorage, sharedDom: ui.dom });
+  assert.equal(next.root.dataset.workspace, 'animate', 'the next visit opens in the chosen workspace');
+  assert.equal(next.controller.interactionSettings.moveSnapStep, 1);
+  assert.equal(next.root.dataset.readout, 'off');
+
+  next.button('Reset').click();
+  assert.deepEqual(next.controller.interactionSettings, { moveSnapStep: 0.25, rotateSnapDegrees: 15, gizmoPixels: 74 });
+  assert.equal(next.root.dataset.readout, 'on');
+  assert.equal(JSON.parse(saved.get('crucible-studio-preferences')).startWorkspace, 'build');
+  assert.throws(() => next.studio.setPreference('theme', 'pink'), /Unknown Studio preference/);
+});
+
+test('a Shift drag snaps a move to the step chosen in Settings', testContext => {
+  const ui = mountStudio(testContext, { preferences: { moveSnapStep: 1 } });
+  ui.selectRow('hero');
+  ui.tool('translate').click();
+  ui.studio.renderNow();
+  const handles = ui.controller.gizmoHandles();
+  const along = distance => ui.controller.projectWorldPoint(handles.pivot.map((value, index) => value + handles.basis.x[index] * distance));
+  const startX = ui.node('hero').translation[0];
+  dispatch(ui.gizmoPart('x'), 'pointerdown', ui.clientPoint(along(handles.handleLength)));
+  dispatch(ui.canvas, 'pointermove', { ...ui.clientPoint(along(handles.handleLength + 1.3)), shiftKey: true });
+  dispatch(ui.canvas, 'pointerup', ui.clientPoint(along(handles.handleLength + 1.3)));
+  const travelled = ui.node('hero').translation[0] - startX;
+  assert.ok(Math.abs(travelled - Math.round(travelled)) < 1e-6 && Math.abs(travelled) >= 1, `moved ${travelled} m in whole metres`);
+});
+
+test('Scene and Properties share one column and the Scene head carries its icons', testContext => {
+  const ui = mountStudio(testContext);
+  const side = ui.root.querySelector('.crucible-studio-side');
+  const docks = side.children.map(child => child.getAttribute('aria-label'));
+  assert.deepEqual(docks, ['Scene outliner', 'Scene inspector']);
+  const head = side.querySelector('.crucible-studio-dock-head');
+  assert.ok(head.querySelector('.crucible-studio-dock-title').querySelector('svg'));
+  assert.ok(head.querySelector('.crucible-studio-filter').querySelector('svg'));
+  assert.ok(head.querySelector('.crucible-studio-filter').querySelector('input'));
 });
