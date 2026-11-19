@@ -887,7 +887,6 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   async function runJob({ jobId, sessionId, directory, snapshot, settings, signal, progress, startRenderClock = () => {} }) {
     let jobPage;
-    let jobSceneCreated = false;
     let jobFailed = false;
     let session;
     let encoder;
@@ -949,7 +948,6 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         ...(snapshot.assetBytes ? { data: snapshot.assetBytes.toString('base64'), ...(await motionSources([snapshot.recipe.motion])) } : await placedAssetData(snapshot.recipe)) };
       const created = await jobPage.evaluate(({ method, input }) => window.__agentPreview[method](input),
         { method: snapshot.assetBytes ? 'createAsset' : 'create', input });
-      jobSceneCreated = true;
       // The plan made at creation sees the requested size; later plans see the viewport already cut to the budget.
       metrics.requiredMemoryMiB = created.render.requiredMemoryMiB;
       const width = settings.kind === 'video' ? Math.floor(created.render.width / 2) * 2 : created.render.width;
@@ -1253,9 +1251,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       finally {
         try {
           if (jobPage && !jobPage.isClosed()) {
-            // A page whose create failed holds no scene to dispose and answers "No scene is active"; a crashed or navigated page has no bridge ("reading 'dispose'").
+            // After a failed job the dispose may fail too: a page whose create failed answers "No scene is active", a crashed or navigated page has no bridge ("reading 'dispose'").
             // The close below frees the page, and the failure that matters is the job's own, never this cleanup's (#2198).
-            try { if (settings.kind !== 'icons' && jobSceneCreated) await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!jobFailed && !browserLossFailure && !isBrowserLoss(error)) throw error; }); }
+            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!jobFailed && !browserLossFailure && !isBrowserLoss(error)) throw error; }); }
             finally { await jobPage.close().catch(error => { if (!browserLossFailure && !isBrowserLoss(error)) throw error; }); }
           }
         }
