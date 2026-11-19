@@ -345,7 +345,7 @@ export function requireTracerBackendAvailable(renderer, runtimeBackend) {
   if (renderer?.backend === 'gpu' && runtimeBackend === 'cpu') throw new Error('renderer.backend "gpu" needs a runtime on the GPU backend, and this one runs on SwiftShader.');
 }
 
-/** The ID mattes of a job:each names one object (part) or one material, and writes one gray PNG per frame. */
+/** The ID mattes of a job: each names one object (part) or one material, and writes one gray PNG per frame. */
 function mattesFrom(input) {
   const { mattes, kind, renderer, format, multilayer } = input;
   if (kind === 'video') throw new RangeError('mattes need kind image or stills; a video holds the lit image only.');
