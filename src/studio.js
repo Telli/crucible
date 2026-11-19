@@ -1539,7 +1539,7 @@ export function createStudio(container, {
   const shortcutEntries = [
     ['Q', 'Select'],
     ['G / R / S / T', 'Move / Rotate / Scale / Snap'],
-    ['Shift + drag', 'Snap to the step and angle in Settings'],
+    ['Shift + drag', 'Snap to a step or an angle'],
     ['Shift+A', 'Add an object or a light'],
     ['Shift+D / Ctrl+D', 'Duplicate'],
     ['X / Delete', 'Delete'],
@@ -1572,7 +1572,7 @@ export function createStudio(container, {
   const shortcutsDialog = createElement(
     documentReference,
     'dialog',
-    { attributes: { 'aria-labelledby': 'crucible-studio-shortcuts-title', closedby: 'any' } },
+    { className: 'crucible-studio-shortcuts-dialog', attributes: { 'aria-labelledby': 'crucible-studio-shortcuts-title', closedby: 'any' } },
     shortcutsHeading,
     shortcutsGrid,
     createElement(documentReference, 'form', { method: 'dialog', className: 'crucible-studio-dialog-actions' }, shortcutsCloseButton),

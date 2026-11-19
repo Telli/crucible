@@ -403,7 +403,7 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-side > .crucible-studio-outliner {
   flex-shrink: 0;
-  max-block-size: 38%;
+  max-block-size: 42%;
 }
 .crucible-studio-outliner {
   inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
@@ -452,7 +452,7 @@ export const STUDIO_CSS = `
   color: var(--studio-muted);
   pointer-events: none;
 }
-.crucible-studio-dock-head .crucible-studio-filter input {
+.crucible-studio .crucible-studio-dock-head .crucible-studio-filter input {
   inline-size: 100%;
   padding-inline-start: 27px;
 }
@@ -582,7 +582,8 @@ export const STUDIO_CSS = `
 .crucible-studio-status {
   position: absolute;
   inset-inline-start: 50%;
-  inset-block-start: 18px;
+  /* Under the top bar: the workspace tabs hold its centre. */
+  inset-block-start: var(--studio-top);
   transform: translateX(-50%);
   max-inline-size: calc(100% - 420px);
   margin: 0;
@@ -991,6 +992,10 @@ export const STUDIO_CSS = `
   font-family: var(--studio-font-mono);
   font-size: 11px;
   color: var(--studio-text);
+  white-space: nowrap;
+}
+.crucible-studio dialog.crucible-studio-shortcuts-dialog {
+  width: min(680px, calc(100vw - 32px));
 }
 @media (forced-colors: active) {
   .crucible-studio button[aria-pressed="true"] {
