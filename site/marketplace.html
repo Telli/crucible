@@ -22,7 +22,7 @@
       <section id="packs" aria-labelledby="packs-title">
         <div class="section-heading">
           <h2 id="packs-title">Packs</h2>
-          <a href="https://github.com/codepawl/crucible/blob/main/docs/packs.md">Make a pack</a>
+          <div class="section-heading-links"><a href="https://github.com/codepawl/crucible/blob/main/docs/packs.md">Make a pack</a><a href="/showcase.html#community">Submit your work</a></div>
         </div>
         <div id="pack-list" class="market-list" aria-live="polite"></div>
         <div class="market-install">
@@ -52,6 +52,14 @@
           <svg class="market-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-15-2 18"/></svg>
           <span>An addon runs with the full rights of your page or Node process. Install only addons you trust and read what they do first. The MCP server loads only the addons you name when you start it, with <code>--addons</code> and <code>--allow-addon</code>, never one a tool call asks for.</span>
         </p>
+        <div class="market-builtin">
+          <div class="market-builtin-head">
+            <h3 id="builtin-title">Built into Crucible</h3>
+            <input id="builtin-filter" class="market-filter" type="search" placeholder="Filter addons" aria-label="Filter built-in addons" autocomplete="off" />
+          </div>
+          <div id="builtin-list" class="builtin-list" aria-labelledby="builtin-title"></div>
+        </div>
+        <h3 class="market-subheading">From npm</h3>
         <div id="addon-list" class="market-list" aria-live="polite"></div>
       </section>
       <section id="packages" aria-labelledby="packages-title">
