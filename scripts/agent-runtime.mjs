@@ -1401,7 +1401,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await pinNamedAssets(input.operations);
         if (input.branch !== undefined) {
           const { branch, ...rest } = input;
-          return invoke('branchApply', { ...rest, name: validateBranchName(branch) });
+          await assertSceneAssetsFitAfterEdit(input.sessionId, input.operations);
+          return invoke('branchApply', { ...rest, name: validateBranchName(branch), ...(await placedAssetData(input.operations)) });
         }
         const bakeAfter = bakeAfterOperations(input.operations);
         const hadBake = bakedSessionIds.has(input.sessionId);

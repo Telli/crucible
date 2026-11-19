@@ -1123,6 +1123,14 @@ runTest('scene_apply add-node places a catalog GLB by file name (#1843)', async 
   assert.deepEqual(applyCall.input.operations[0].node.asset, { id: sheepId });
 });
 
+runTest('scene_apply with a branch sends the bytes of the catalog GLB it places (#2267)', async context => {
+  const { runtime, sessionId, sourceCalls, sheepId } = await namedAssetHarness(context);
+  await runtime.apply({ sessionId, branch: 'flock', operations: [{ type: 'add-node', node: { id: 'sheep1-body', asset: { name: 'sheep_body.glb' } } }] });
+  const branchCall = sourceCalls.filter(call => call.method === 'branchApply').at(-1);
+  assert.deepEqual(branchCall.input.operations[0].node.asset, { id: sheepId });
+  assert.deepEqual(Object.keys(branchCall.input.assetData), [sheepId]);
+});
+
 runTest('an unknown asset name is refused with near names and the catalog tool to run (#1843)', async context => {
   const { runtime } = await namedAssetHarness(context);
   await assert.rejects(runtime.create({ recipe: recipePlacing({ name: 'sheep_body' }) }), /No catalog GLB is named "sheep_body".*"sheep_body\.glb"/);

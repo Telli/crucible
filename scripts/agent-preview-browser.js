@@ -694,6 +694,19 @@ async function loadPlacedAssets(pool, value, assetData) {
   }
 }
 
+// A scene created without placed assets gets its pool the first time an edit places one; later edits reuse what is decoded.
+async function loadPlacedAssetsIntoSession(record, value, assetData) {
+  if (!record.placedAssets) {
+    if (typeof record.scene.provideAssets !== 'function') {
+      throw new Error('This session holds an imported asset, which cannot place other assets. Create a scene with scene_create, then add the asset node with scene_apply.');
+    }
+    record.placedAssets = new Map();
+    record.scene.provideAssets(record.placedAssets);
+  }
+  await loadAllAgentSceneModules();
+  await loadPlacedAssets(record.placedAssets, value, assetData);
+}
+
 function afterMeshBooleans(value, run) {
   if (!allAgentSceneModulesLoaded()) return loadAllAgentSceneModules().then(() => afterMeshBooleans(value, run));
   const loads = [];
@@ -1286,15 +1299,7 @@ window.__agentPreview = {
   },
   async applyWithAssets(input) {
     const record = requireSession(input.sessionId);
-    if (!record.placedAssets) {
-      if (typeof record.scene.provideAssets !== 'function') {
-        throw new Error('This session holds an imported asset, which cannot place other assets. Create a scene with scene_create, then add the asset node with scene_apply.');
-      }
-      record.placedAssets = new Map();
-      record.scene.provideAssets(record.placedAssets);
-    }
-    await loadAllAgentSceneModules();
-    await loadPlacedAssets(record.placedAssets, input.assetNeeds ?? input.operations, input.assetData);
+    await loadPlacedAssetsIntoSession(record, input.assetNeeds ?? input.operations, input.assetData);
     return afterMeshBooleans(input.operations, () => this.applyLoaded(input));
   },
   applyLoaded({ sessionId, operations, expectedRevision }) {
@@ -1420,13 +1425,15 @@ window.__agentPreview = {
     return { sessionId, checkpointId, released: true };
   },
   /** Apply operations to a scratch copy and store the result as a branch. The source scene and its revision stay as they are. */
-  branchApply({ sessionId, name, operations, expectedRevision }) {
+  async branchApply({ sessionId, name, operations, expectedRevision, assetData }) {
+    const record = requireSession(sessionId);
+    if (record.asset) throw new TypeError('Branches support procedural recipe scenes.');
+    // The scratch copy places the same catalog assets as the scene, so it shares the scene's decoded pool.
+    if (recipeAssetNeeds(operations).length) await loadPlacedAssetsIntoSession(record, operations, assetData);
     return afterMeshBooleans(operations, () => {
-      const record = requireSession(sessionId);
-      if (record.asset) throw new TypeError('Branches support procedural recipe scenes.');
       if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('branch', expectedRevision, record.scene.revision));
       const baseRecipe = record.scene.exportRecipe();
-      const scratch = createAgentScene(baseRecipe);
+      const scratch = createAgentScene(baseRecipe, {}, { assets: record.placedAssets, sequenceFrames: record.sequenceFrames });
       validatePreviewCamera(candidateCamera(record, operations));
       scratch.apply(operations, { expectedRevision: scratch.revision });
       const { shared } = record.branches.fork(name, { recipe: scratch.exportRecipe(), baseRecipe, operations, baseRevision: expectedRevision });
