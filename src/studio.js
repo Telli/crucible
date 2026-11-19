@@ -1608,6 +1608,7 @@ export function createStudio(container, {
     if (outline) {
       gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
         class: 'crucible-studio-agent-outline',
+        stroke: agentPresence.color,
         points: outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
       }));
     }

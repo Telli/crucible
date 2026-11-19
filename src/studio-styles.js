@@ -145,8 +145,7 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-agent-outline {
   fill: none;
-  stroke: var(--studio-accent);
-  stroke-width: 1.5;
+  stroke-width: 2;
   stroke-dasharray: 5 4;
   stroke-linejoin: round;
   pointer-events: none;
@@ -162,20 +161,19 @@ export const STUDIO_CSS = `
 .crucible-studio-agent-cursor[hidden] { display: none; }
 .crucible-studio-agent-cursor svg {
   flex: none;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   fill: currentColor;
   stroke: var(--studio-bg);
-  stroke-width: 1.4;
+  stroke-width: 1.2;
   stroke-linejoin: round;
 }
 .crucible-studio-agent-name {
-  margin: 18px 0 0 -6px;
-  padding: 2px 8px;
-  border-radius: 4px 9px 9px 9px;
-  background: var(--studio-accent);
+  margin: 22px 0 0 -8px;
+  padding: 4px 11px;
+  border-radius: 5px 11px 11px 11px;
   color: #17161a;
-  font: 600 11.5px/1.5 var(--studio-font);
+  font: 700 12.5px/1.5 var(--studio-font);
   white-space: nowrap;
 }
 @media (prefers-reduced-motion: no-preference) {

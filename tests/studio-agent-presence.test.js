@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assertAgentName, describeAgentEdit, diffRecipeNodes } from '../src/studio-agent-presence.js';
+import { AGENT_COLORS, agentColor, assertAgentName, describeAgentEdit, diffRecipeNodes } from '../src/studio-agent-presence.js';
 
 function makeRecipe() {
   return {
@@ -55,4 +55,13 @@ test('assertAgentName trims a name and rejects an empty, long or non-string one'
   for (const bad of ['', '   ', 'x'.repeat(41), 7, null]) {
     assert.throws(() => assertAgentName(bad), /agent name must be a string of 1 to 40 characters/);
   }
+});
+
+test('agentColor keeps one palette colour per name and spreads names over the palette', () => {
+  assert.equal(agentColor('Claude'), agentColor(' Claude '));
+  const names = ['Claude', 'Builder', 'Agent', 'Lighting', 'Layout', 'Rigger', 'Painter', 'Modeler'];
+  const used = new Set(names.map(agentColor));
+  for (const color of used) assert.ok(AGENT_COLORS.includes(color));
+  assert.ok(used.size >= 3, `eight names share only ${used.size} colours`);
+  assert.throws(() => agentColor(''), /agent name must be a string/);
 });

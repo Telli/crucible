@@ -8,6 +8,17 @@ const STOP_MILLISECONDS = 1100;
 const LINGER_MILLISECONDS = 1600;
 
 export const DEFAULT_AGENT_NAME = 'Agent';
+// Brand kit accent and status colours, plus the blue of the Z axis. Each is light enough for ink text.
+export const AGENT_COLORS = Object.freeze(['#fc9132', '#5fc48a', '#5ea8ff', '#ee7a6c', '#f0b34a']);
+
+/** The colour an agent keeps for as long as it keeps its name. */
+export function agentColor(name) {
+  let hash = 0;
+  for (const character of assertAgentName(name)) {
+    hash = (hash * 158 + character.codePointAt(0)) % 9973;
+  }
+  return AGENT_COLORS[hash % AGENT_COLORS.length];
+}
 
 export function assertAgentName(name) {
   if (typeof name !== 'string' || name.trim() === '' || name.length > MAXIMUM_NAME_LENGTH) {
@@ -73,7 +84,7 @@ function createPointerIcon(documentReference) {
   icon.setAttribute('viewBox', '0 0 16 16');
   icon.setAttribute('aria-hidden', 'true');
   const arrow = documentReference.createElementNS(SVG_NAMESPACE, 'path');
-  arrow.setAttribute('d', 'M2 1.5 13.5 7 8.4 8.6 6.6 13.8Z');
+  arrow.setAttribute('d', 'M2 2 14.6 5.4 9.4 9.4 5.4 14.6Z');
   icon.append(arrow);
   return icon;
 }
@@ -93,6 +104,7 @@ export function createAgentPresence(documentReference, { controller, requestDraw
 
   let stops = [];
   let stopIndex = 0;
+  let color = AGENT_COLORS[0];
   let timer = null;
 
   function activeNodeId() {
@@ -138,6 +150,9 @@ export function createAgentPresence(documentReference, { controller, requestDraw
     get activeNodeId() {
       return activeNodeId();
     },
+    get color() {
+      return color;
+    },
     /** Called on every Studio frame: keeps the pointer on its object while the camera moves and returns the outline to draw. */
     place,
     /** Walks the pointer over `nodeIds` in order, under `name`. A new call replaces a walk in progress. */
@@ -148,6 +163,9 @@ export function createAgentPresence(documentReference, { controller, requestDraw
       }
       finish();
       nameTag.textContent = label;
+      color = agentColor(label);
+      pointer.style.color = color;
+      nameTag.style.background = color;
       stops = nodeIds.filter(nodeId => controller.nodeOutline(nodeId) !== null).slice(0, MAXIMUM_STOPS);
       if (stops.length > 0) {
         goToStop(0);

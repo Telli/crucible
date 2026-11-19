@@ -1556,6 +1556,12 @@ test('the agent cursor stays away for a file the person opens and takes a name p
   await ui.studio.loadExternalTextFile(JSON.stringify(makeRecipe()), { filePath: 'C:/other.scene.json', agent: { name: 'Builder' } });
   assert.equal(cursor.hidden, false);
   assert.equal(cursor.querySelector('.crucible-studio-agent-name').textContent, 'Builder');
+  const builderColor = cursor.style.color;
+  assert.equal(cursor.querySelector('.crucible-studio-agent-name').style.background, builderColor);
+  ui.studio.renderNow();
+  assert.equal(ui.gizmo.descendants().find(element => element.getAttribute('class') === 'crucible-studio-agent-outline').getAttribute('stroke'), builderColor);
+  ui.studio.showAgentEdit({ name: 'Claude', nodeIds: ['orb'] });
+  assert.notEqual(cursor.style.color, builderColor, 'another agent gets another colour');
   await ui.studio.loadExternalTextFile(JSON.stringify(edited), { filePath: 'C:/other.scene.json', agent: false });
   assert.equal(cursor.hidden, true);
   const relit = makeRecipe();
