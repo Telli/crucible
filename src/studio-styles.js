@@ -178,6 +178,10 @@ export const STUDIO_CSS = `
 .crucible-studio-gizmo[data-hover-axis="yz"] [data-gizmo-axis="yz"] {
   fill-opacity: 0.6;
 }
+.crucible-studio-gizmo {
+  --studio-trace: #f1f0ec;
+  --studio-trace-edge: #17161a;
+}
 .crucible-studio-selection-outline {
   fill: none;
   stroke: var(--studio-accent);
@@ -400,7 +404,7 @@ export const STUDIO_CSS = `
   font-size: 11px;
   color: var(--studio-muted);
 }
-.crucible-studio-popover button[role="menuitemcheckbox"]::before {
+#crucible-studio-pop-view button::before {
   content: "";
   flex: none;
   inline-size: 7px;

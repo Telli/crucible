@@ -454,10 +454,10 @@ function appendDragTrace(documentReference, gizmoSvg, trace) {
   if (!trace) {
     return;
   }
-  // Each dashed line lies on a wider line in the background colour, so it reads over a pale object and over the dark
-  // ground alike, in either theme.
-  const quiet = { stroke: 'var(--studio-text)', 'stroke-width': '1.8', 'stroke-dasharray': '6 4', 'pointer-events': 'none' };
-  const halo = { stroke: 'var(--studio-bg)', 'stroke-opacity': '0.92', 'stroke-width': '5.4', 'stroke-linecap': 'round', 'pointer-events': 'none' };
+  // Each pale dashed line lies on a wider dark line, so it reads over a pale object and over the dark ground alike.
+  // The colours are fixed, not the theme's: the scene behind them does not change with the theme.
+  const quiet = { stroke: 'var(--studio-trace)', 'stroke-width': '1.8', 'stroke-dasharray': '6 4', 'pointer-events': 'none' };
+  const halo = { stroke: 'var(--studio-trace-edge)', 'stroke-width': '4.6', 'stroke-linecap': 'round', 'pointer-events': 'none' };
   if (trace.outline) {
     const outline = {
       points: trace.outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
@@ -483,8 +483,8 @@ function appendDragTrace(documentReference, gizmoSvg, trace) {
         cx: trace.from.x.toFixed(1),
         cy: trace.from.y.toFixed(1),
         r: '4',
-        fill: 'var(--studio-text)',
-        stroke: 'var(--studio-bg)',
+        fill: 'var(--studio-trace)',
+        stroke: 'var(--studio-trace-edge)',
         'stroke-width': '1.5',
         'pointer-events': 'none',
         'data-drag-trace': 'start',

@@ -1838,12 +1838,12 @@ test('a drag leaves a ghost where the object was, and a move draws the line it h
   assert.equal(Number(tracePart('travel').getAttribute('x2')).toFixed(1), trace.to.x.toFixed(1));
   const haloPart = part => ui.gizmo.descendants().find(element => element.getAttribute('data-drag-halo') === part);
   for (const part of ['ghost', 'travel']) {
-    assert.equal(haloPart(part).getAttribute('stroke'), 'var(--studio-bg)', 'a background line lies under the dashed one');
-    assert.equal(tracePart(part).getAttribute('stroke'), 'var(--studio-text)');
+    assert.equal(haloPart(part).getAttribute('stroke'), 'var(--studio-trace-edge)', 'a dark line lies under the pale dashed one');
+    assert.equal(tracePart(part).getAttribute('stroke'), 'var(--studio-trace)');
     assert.ok(Number(haloPart(part).getAttribute('stroke-width')) > Number(tracePart(part).getAttribute('stroke-width')));
     assert.ok(ui.gizmo.descendants().indexOf(haloPart(part)) < ui.gizmo.descendants().indexOf(tracePart(part)), 'the halo is drawn first');
   }
-  assert.equal(tracePart('start').getAttribute('stroke'), 'var(--studio-bg)');
+  assert.equal(tracePart('start').getAttribute('stroke'), 'var(--studio-trace-edge)');
 
   dispatch(ui.canvas, 'pointerup', ui.clientPoint(along(handles.handleLength + 0.8)));
   ui.studio.renderNow();
