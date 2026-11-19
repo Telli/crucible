@@ -285,12 +285,19 @@ function descendantIdsOf(nodes, rootId) {
   return descendants;
 }
 
+// A placed catalog scan draws as parts named `<node id>/<index>`, one per mesh of the file; they belong to that node.
+const SCAN_PART_SUFFIX = /\/\d+$/;
+
+function ownsPart(nodeIds, part) {
+  return nodeIds.has(part.name) || nodeIds.has(part.name.replace(SCAN_PART_SUFFIX, ''));
+}
+
 function partClearanceAlongNormal(parts, excludedIds, worldNormal, nodes, worldMatrices) {
   let minimumProjection = Infinity;
   let maximumProjection = -Infinity;
   const point = vec3.create();
   for (const part of parts) {
-    if (!excludedIds.has(part.name) || !part.geometry?.positions) {
+    if (!ownsPart(excludedIds, part) || !part.geometry?.positions) {
       continue;
     }
     const positions = part.geometry.positions;
@@ -309,7 +316,7 @@ function partClearanceAlongNormal(parts, excludedIds, worldNormal, nodes, worldM
   if (!Number.isFinite(minimumProjection)) {
     return 0.5;
   }
-  const pivotMatrix = worldMatrices.get(nodes[0]?.id) ?? parts.find(part => excludedIds.has(part.name))?.matrix;
+  const pivotMatrix = worldMatrices.get(nodes[0]?.id) ?? parts.find(part => ownsPart(excludedIds, part))?.matrix;
   if (!pivotMatrix) {
     return Math.max(0, (maximumProjection - minimumProjection) * 0.5);
   }
@@ -367,7 +374,7 @@ function resolveRecipeNodeId(partId, recipe) {
   if (direct) {
     return direct.id;
   }
-  const prefixed = recipe.nodes.find(node => partId.startsWith(`${node.id}:`) || partId.startsWith(`${node.id}.`));
+  const prefixed = recipe.nodes.find(node => partId.startsWith(`${node.id}:`) || partId.startsWith(`${node.id}.`) || partId.startsWith(`${node.id}/`));
   return prefixed ? prefixed.id : null;
 }
 
@@ -487,6 +494,7 @@ function snapVector(values, step = TRANSLATION_SNAP_STEP) {
  */
 export function createStudioController({
   scene: initialScene,
+  assets = null,
   viewportWidth = 960,
   viewportHeight = 540,
   maxHistory = 32,
@@ -600,7 +608,8 @@ export function createStudioController({
 
   function swapRecipe(recipeInput) {
     invalidateQuery();
-    currentScene = createAgentScene(recipeInput);
+    // `assets` is the host's pool of decoded catalog assets. It outlives each scene, so undo and redo rebuild from it.
+    currentScene = createAgentScene(recipeInput, {}, assets ? { assets } : {});
     const recipe = currentScene.exportRecipe();
     if (selectedNodeId && !recipe.nodes.some(node => node.id === selectedNodeId)) {
       selectedNodeId = recipe.nodes[0]?.id ?? null;
@@ -834,7 +843,7 @@ export function createStudioController({
     const maximum = [-Infinity, -Infinity, -Infinity];
     const point = vec3.create();
     for (const part of currentScene.parts) {
-      if (!memberIds.has(part.name) || !part.matrix || !part.geometry?.positions) {
+      if (!ownsPart(memberIds, part) || !part.matrix || !part.geometry?.positions) {
         continue;
       }
       const positions = part.geometry.positions;
@@ -859,7 +868,7 @@ export function createStudioController({
       throw new TypeError('nodeOutline requires a node id string.');
     }
     const memberIds = descendantIdsOf(currentScene.exportRecipe().nodes, nodeId);
-    const memberParts = currentScene.parts.filter(part => memberIds.has(part.name) && part.matrix && part.geometry?.positions);
+    const memberParts = currentScene.parts.filter(part => ownsPart(memberIds, part) && part.matrix && part.geometry?.positions);
     const totalVertices = memberParts.reduce((count, part) => count + part.geometry.positions.length / 3, 0);
     if (totalVertices === 0) {
       return null;
@@ -901,12 +910,39 @@ export function createStudioController({
     return silhouetteCache.triangles;
   }
 
+  // A dense mesh, such as a scan, is too many triangles to outline one by one on every camera move. It gets the outline
+  // of its hull on screen instead: looser than its shape, but it shows what is selected.
+  function hullSilhouette() {
+    const corners = nodeOutline(selectedNodeId);
+    if (!corners || corners.length < 3) {
+      return null;
+    }
+    const triangles = [];
+    for (let corner = 1; corner < corners.length - 1; corner += 1) {
+      const first = corners[0];
+      let second = corners[corner];
+      let third = corners[corner + 1];
+      const signedArea = (second[0] - first[0]) * (third[1] - first[1]) - (third[0] - first[0]) * (second[1] - first[1]);
+      if (signedArea === 0) {
+        continue;
+      }
+      if (signedArea < 0) {
+        [second, third] = [third, second];
+      }
+      triangles.push(first[0], first[1], second[0], second[1], third[0], third[1]);
+    }
+    return triangles.length ? triangles : null;
+  }
+
   function computeSelectionSilhouette() {
     const memberIds = descendantIdsOf(currentScene.exportRecipe().nodes, selectedNodeId);
-    const memberParts = currentScene.parts.filter(part => memberIds.has(part.name) && part.matrix && part.geometry?.positions && part.geometry.indices?.length);
+    const memberParts = currentScene.parts.filter(part => ownsPart(memberIds, part) && part.matrix && part.geometry?.positions && part.geometry.indices?.length);
     const triangleCount = memberParts.reduce((count, part) => count + part.geometry.indices.length / 3, 0);
-    if (triangleCount === 0 || triangleCount > SILHOUETTE_TRIANGLE_BUDGET) {
+    if (triangleCount === 0) {
       return null;
+    }
+    if (triangleCount > SILHOUETTE_TRIANGLE_BUDGET) {
+      return hullSilhouette();
     }
     const point = vec3.create();
     const triangles = [];
@@ -948,7 +984,7 @@ export function createStudioController({
       return null;
     }
     const excluded = descendantIdsOf(recipe.nodes, nodeId);
-    const supportParts = currentScene.parts.filter(part => !excluded.has(part.name));
+    const supportParts = currentScene.parts.filter(part => !ownsPart(excluded, part));
     if (supportParts.length === 0) {
       return null;
     }

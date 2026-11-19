@@ -10,6 +10,7 @@ import { exportGlb } from './export.js';
 import { encodePack } from './scene-pack-format.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
+import { createStudioCatalog } from './studio-catalog.js';
 import {
   STUDIO_GIZMO_PIXELS,
   STUDIO_PREFERENCE_CHOICES,
@@ -785,8 +786,10 @@ export function createStudio(container, {
   agentName: initialAgentName = DEFAULT_AGENT_NAME,
   preferences: suppliedPreferences = null,
   preferenceStorage = browserPreferenceStorage(),
+  catalog: catalogHooks = {},
   onDirtyChange,
 } = {}) {
+  const catalog = createStudioCatalog(catalogHooks);
   let preferences = normalizeStudioPreferences({ ...loadStudioPreferences(preferenceStorage), ...suppliedPreferences });
   if (!container || typeof container.append !== 'function') {
     throw new TypeError('createStudio requires a DOM container element.');
@@ -795,16 +798,25 @@ export function createStudio(container, {
   const defaultAgentName = assertAgentName(initialAgentName);
   injectStudioStyles(documentReference);
 
-  const initialRecipe = suppliedRecipe ?? (suppliedScene ? null : buildTemplateRecipe(template));
+  // A recipe with catalog scans or an HDRI needs its files fetched first. Studio opens on the template meanwhile and
+  // swaps the recipe in when `ready` settles, so createStudio itself stays synchronous.
+  const pendingRecipe = suppliedRecipe && !suppliedScene && catalog.needsLoading(suppliedRecipe) ? suppliedRecipe : null;
+  const initialRecipe = pendingRecipe ? buildTemplateRecipe(template) : suppliedRecipe ?? (suppliedScene ? null : buildTemplateRecipe(template));
   const initialScene = suppliedScene ?? createAgentScene(initialRecipe);
   let handleChange = () => {};
-  const controller = createStudioController({ scene: initialScene, onChange: detail => handleChange(detail) });
+  const controller = createStudioController({ scene: initialScene, assets: catalog.pool, onChange: detail => handleChange(detail) });
+
+  async function prepareRecipe(recipe) {
+    await loadAgentSceneModules(recipe);
+    await catalog.prepare(recipe);
+  }
 
   let activeFilePath = initialWatchedPath;
   let activeFileName = initialFileName;
   let isDirty = false;
   let autoReloadWatch = true;
   let renderer = suppliedRenderer ?? null;
+  let rendererHasDepth = false;
   let renderedScene = initialScene;
   let renderedTopology = initialScene.topologyRevision;
   let gridVisible = preferences.gridVisible;
@@ -937,7 +949,7 @@ export function createStudio(container, {
     templateButton.addEventListener('click', async () => {
       newPopover.hidePopover?.();
       const recipe = buildTemplateRecipe(templateKey);
-      await loadAgentSceneModules(recipe);
+      await prepareRecipe(recipe);
       controller.loadRecipe(recipe);
       activeFilePath = null;
       activeFileName = `${templateKey}.scene.json`;
@@ -1729,7 +1741,7 @@ export function createStudio(container, {
   dialogApplyButton.addEventListener('click', async () => {
     try {
       const parsed = JSON.parse(dialogTextarea.value);
-      await loadAgentSceneModules(parsed);
+      await prepareRecipe(parsed);
       controller.loadRecipe(parsed);
       recipeDialog.close('apply');
       announce('Recipe applied');
@@ -1939,8 +1951,8 @@ export function createStudio(container, {
 
   async function buildWebPackPayload() {
     const { stillRecipe, stripped } = buildPackReadyRecipe(controller.exportRecipe());
-    await loadAgentSceneModules(stillRecipe);
-    const stillScene = createAgentScene(stillRecipe);
+    await prepareRecipe(stillRecipe);
+    const stillScene = createAgentScene(stillRecipe, {}, { assets: catalog.pool });
     const environment = stillScene.environment;
     const shaderModules = agentSceneModulesNeeded(stillRecipe).filter(name => Object.hasOwn(PACK_SHADER_MODULES, name));
     for (const moduleName of agentSceneModulesNeeded(stillRecipe)) {
@@ -1972,7 +1984,7 @@ export function createStudio(container, {
     const madeByAgent = agent ?? (filePath !== null && filePath === activeFilePath);
     const agentLabel = assertAgentName(madeByAgent?.name ?? defaultAgentName);
     const recipeBefore = madeByAgent ? controller.exportRecipe() : null;
-    await loadAgentSceneModules(parsed);
+    await prepareRecipe(parsed);
     controller.loadRecipe(parsed, { recordUndo });
     if (madeByAgent) {
       showAgentEdit({ name: agentLabel, ...diffRecipeNodes(recipeBefore, controller.exportRecipe()) });
@@ -2092,13 +2104,26 @@ export function createStudio(container, {
   });
 
   // Renderer Lifecycle
+  // Volume fog reads scene depth, which the viewport otherwise does without. A scene that turns fog on gets a renderer
+  // with a depth target, built once; it stays for the scenes after it.
+  function sceneNeedsDepth() {
+    const environment = controller.scene.environment;
+    return Boolean(environment.volumeFog?.density > 0 || environment.localVolumes?.length);
+  }
+
   function ensureRenderer() {
+    if (renderer && !suppliedRenderer && !rendererHasDepth && sceneNeedsDepth()) {
+      renderer.dispose();
+      renderer = null;
+    }
     if (renderer) {
       return renderer;
     }
     const environment = controller.scene.environment;
+    rendererHasDepth = sceneNeedsDepth();
     renderer = new CrucibleRenderer(canvas, controller.scene.parts, {
       hdr: true,
+      depth: rendererHasDepth,
       world: environment.world,
       environment: { ...environment, map: agentEnvironmentMap(environment) },
       shadowBounds: resolveAgentShadow(fitAgentShadow(controller.scene.shadow, controller.scene.parts), environment.lightDirection),
@@ -2756,13 +2781,33 @@ export function createStudio(container, {
   syncUi();
   renderPass();
 
+  const ready = pendingRecipe
+    ? prepareRecipe(pendingRecipe).then(() => {
+      controller.loadRecipe(pendingRecipe, { recordUndo: false });
+      isDirty = false;
+      syncFileBanner();
+    }).catch(error => {
+      announce(error.message);
+      throw error;
+    })
+    : Promise.resolve();
+  // A host that does not await `ready` still sees the reason in the status line.
+  ready.catch(() => {});
+
   return {
     get controller() { return controller; },
     get scene() { return controller.scene; },
     get renderer() { return renderer; },
     get dirty() { return isDirty; },
+    /** Settles when the recipe createStudio was given is on screen; it waits only for a recipe that names catalog files. */
+    ready,
     exportRecipe: () => controller.exportRecipe(),
+    /** Synchronous: the recipe's catalog files must be loaded already. `openRecipe` loads them first. */
     loadRecipe: (recipeInput, options) => controller.loadRecipe(recipeInput, options),
+    async openRecipe(recipeInput, options) {
+      await prepareRecipe(recipeInput);
+      return controller.loadRecipe(recipeInput, options);
+    },
     loadExternalTextFile,
     showAgentEdit,
     setGridVisible,
@@ -2801,6 +2846,7 @@ export function createStudio(container, {
       intersectionObserver?.disconnect();
       controller.dispose();
       renderer?.dispose();
+      catalog.dispose();
       root.remove();
     },
   };
