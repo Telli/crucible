@@ -194,3 +194,22 @@ test('modifiers run as stack nodes, reuse the cache and report their counts', ()
   assert.ok(outcome.results[0].triangulated > 0);
   assert.ok(outcome.results[0].after.faces > drum().faceCount);
 });
+
+test('a null optional field is refused instead of silently taking its default', () => {
+  const nullFields = [
+    ['screw', 'axis'], ['wireframe', 'evenOffset'], ['wireframe', 'replace'], ['simple_deform', 'axis', { mode: 'twist' }],
+    ['lattice', 'divisions'], ['lattice', 'moves'], ['curve', 'axis', { path: [[0, 0, 0], [0, 0, 2]] }], ['hook', 'center'],
+    ['hook', 'translation'], ['hook', 'falloff'], ['wave', 'start'], ['wave', 'cyclic'], ['wave', 'normal'], ['wave', 'axes'],
+    ['smooth_laplacian', 'preserveVolume'], ['smooth_laplacian', 'pinBoundary'], ['warp', 'curve', { from: [0, 0, 0], to: [1, 0, 0] }],
+    ['build', 'order'], ['build', 'axis', { order: 'axis' }],
+  ];
+  for (const [op, field, rest = {}] of nullFields) {
+    assert.throws(() => run(cube(), { op, ...rest, [field]: null }), error => error.message.startsWith(`edits[0].${field}: got null`), `${op}.${field}`);
+  }
+});
+
+test('a modifier field that is left out still takes its default', () => {
+  assert.equal(run(cube(), { op: 'wireframe' }).mesh.faceCount, 48);
+  assert.equal(run(cube(), { op: 'wave' }).mesh.vertexCount, 8);
+  assert.equal(run(cube(), { op: 'build', order: 'axis', frame: 60 }).mesh.vertexCount, 8);
+});
