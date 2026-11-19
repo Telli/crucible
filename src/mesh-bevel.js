@@ -170,6 +170,7 @@ function profileDepthReach(profile) {
  */
 export function bevelEdges(mesh, edgeRule, { width, segments = 1, profile: requestedProfile = 0.5, clampOverlap = true, name = 'bevel' } = {}) {
   requireFiniteInRange('bevelEdges', 'width', width, 0, MAX_BEVEL_WIDTH);
+  if (width === 0) throw new RangeError('bevelEdges: width was 0; pass a number above 0, because a zero width only leaves degenerate faces.');
   requireFiniteInRange('bevelEdges', 'segments', segments, 1, MAX_BEVEL_SEGMENTS, true);
   requireFiniteInRange('bevelEdges', 'profile', requestedProfile, 0, 1);
   const profile = Math.min(requestedProfile, MAXIMUM_PROFILE);

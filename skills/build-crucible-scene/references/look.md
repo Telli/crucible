@@ -101,7 +101,8 @@ act only above 1 octave. Each octave costs three extra density taps per step, so
 `keyTransmittance` and `surfaceTransmittance` are also opt in. `scene_capabilities` with `topic: "environment"` lists
 every `volumeFog` field and its range.
 
-Point lights do not scatter in volume fog; the sun does. A sunlit closed room with fog uses `bake.gridFog`
+The sun scatters in volume fog, and so do point and spot lights: at most 8, points first, with no shadows in the fog
+(`docs/volumetric.md`, "Point and spot lights in the fog"). A sunlit closed room with fog uses `bake.gridFog`
 (see `light.md`). Animate density with an `environment` track `volumeFogDensity` (see `film-and-animation.md`).
 
 ## Exposure, bloom, contrast, occlusion

@@ -260,7 +260,13 @@ export function webAudioBackend(options = {}) {
       buses.clear();
     },
     unlock,
+    // A second call for a name keeps the same gain node, so voices already on the bus stay on the bus that setBusVolume moves.
     createBus(name, volume) {
+      const existing = buses.get(name);
+      if (existing) {
+        setParameter(existing.gain, volume, requireContext().currentTime);
+        return;
+      }
       const gain = requireContext().createGain();
       gain.gain.value = volume;
       gain.connect(master);

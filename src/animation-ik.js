@@ -67,6 +67,7 @@ export function createFootPlacement(options = {}) {
   let correction = 0;
 
   function target(time, foot) {
+    if (!foot.every(Number.isFinite)) return [...foot]; // must not leave the eased correction NaN for good
     const returned = groundOffset([foot[0], foot[1], foot[2]]);
     const offset = lastOffset(returned, Number.isFinite(returned));
     const clamped = Math.max(-maxAdjust, Math.min(maxAdjust, offset));
