@@ -935,8 +935,11 @@ function createPathTracer(scene, options) {
     let positionZ = originZ;
     let previousPdf = 0;
     let afterMirror = true;
+    // The material of the transmissive part the path is inside, when it absorbs; null outside and inside parts that do not absorb.
+    let absorbingMaterial = null;
     for (let depth = 0; depth <= options.bounces; depth++) {
       const found = intersect(scene, positionX, positionY, positionZ, direction[0], direction[1], direction[2], hit, depth === 0);
+      if (absorbingMaterial && found) absorbOverDistance(absorbingMaterial, hit.distance, throughput);
       const scattersInFog = scene.volume && scatterInFog(positionX, positionY, positionZ, found ? hit.distance : scene.farDistance);
       if (crossLocalVolumes) {
         const segmentLength = scattersInFog ? Math.hypot(hit.point[0] - positionX, hit.point[1] - positionY, hit.point[2] - positionZ) : (found ? hit.distance : scene.farDistance);
@@ -982,6 +985,7 @@ function createPathTracer(scene, options) {
           throughput[0] *= hit.color[0];
           throughput[1] *= hit.color[1];
           throughput[2] *= hit.color[2];
+          absorbingMaterial = entering && Number.isFinite(material.attenuationDistance) ? material : null;
         }
         afterMirror = true;
       } else {
@@ -1021,6 +1025,12 @@ function createPathTracer(scene, options) {
   }
 
   return { trace, radiance, features };
+}
+
+/** Beer-Lambert: the colour `attenuationColor` is what `attenuationDistance` metres of the part let through, so a path of `distance` metres keeps colour^(distance / attenuationDistance). */
+function absorbOverDistance(material, distance, throughput) {
+  const metres = distance / material.attenuationDistance;
+  for (let channel = 0; channel < 3; channel++) throughput[channel] *= material.attenuationColor[channel] ** metres;
 }
 
 // ---- Image ----

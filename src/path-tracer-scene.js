@@ -215,6 +215,8 @@ function resolveMaterial(material) {
     transmission: material.transmission ?? 0,
     subsurface: resolveTraceSubsurface(material.subsurface),
     ior: material.ior ?? 1.5,
+    attenuationColor: material.attenuationColor ?? [1, 1, 1],
+    attenuationDistance: material.attenuationDistance ?? Infinity,
     texture: resolveTexture(material.map),
     normalTexture: resolveTexture(material.normalMap),
     normalScale: material.normalScale ?? [1, 1],
