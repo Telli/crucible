@@ -6,6 +6,7 @@ import { applyWaterReflection, attachWaterReflection } from './water-reflection.
 import { createCameraSampler } from './camera-track.js';
 import { inWholeWorldOrder, readPartRanks } from './showcase-download.js';
 import { withinDrawnLightLimits } from './drawn-light-lists.js';
+import { createFileSceneClipPlayer } from './file-scene-clip.js';
 import { partsForRendererOptions, withSceneFileRendererDefaults } from './dense-lods.js';
 
 // Headless twin of the showcase page for scripts/render-media.mjs (--scene file). The export script serves the scene.json
@@ -54,12 +55,14 @@ async function start() {
   const sharedTextures = createSharedTextures();
   const gltfOptions = description.gltfOptions ?? {};
   const asset = await loadGltf(model, { baseUrl: new URL('.', new URL(description.glb, location.href)).href, sharedTextures, ...gltfOptions });
+  const assetOwnParts = asset.parts;
   asset.parts = await loadStagedParts(description, asset, model, sharedTextures);
   const rendererOptions = withSceneFileRendererDefaults(description.renderer);
   const shadowCascades = rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined;
   const reflection = description.waterReflection ? applyWaterReflection(asset.parts) : { parts: asset.parts, surface: null };
   const viewport = document.querySelector('#file-viewport');
-  const renderer = new CrucibleRenderer(viewport, partsForRendererOptions(reflection.parts, viewport, rendererOptions), {
+  const rendererParts = partsForRendererOptions(reflection.parts, viewport, rendererOptions);
+  const renderer = new CrucibleRenderer(viewport, rendererParts, {
     ground: false, hdr: true, samples: 4, memoryBudgetMiB: 384,
     ...rendererOptions,
     shadowCascades,
@@ -67,7 +70,10 @@ async function start() {
   });
   attachWaterReflection(renderer, reflection.surface, { updateEvery: 1 });
   const frame = { exposure: description.exposure ?? 1, ...(description.frame ?? {}) };
+  // A GLB with an animation clip plays its first clip on a loop, as the showcase page does; one without a clip is drawn as before.
+  const clipPlayer = createFileSceneClipPlayer({ asset, posedParts: assetOwnParts, sceneParts: asset.parts, rendererParts });
   const renderAt = seconds => {
+    clipPlayer?.poseAt(renderer, seconds);
     const pose = camera ? camera.sample(seconds) : { eye: description.eye, target: description.target };
     renderer.render({ ...frame, ...pose });
   };
