@@ -110,6 +110,8 @@ A file over `maxBytes` (256 MiB by default) fails before decoding with an error 
 
 `scripts/render-media.mjs --scene file` and `scripts/render-file-native.mjs` serve a GLB above 32 MiB from a local HTTP server that streams it from disk. Handing a file that size to the page through a Playwright route copies it through the browser protocol as one message and closed the whole browser tab (a 225 MB file did, with nothing else loading).
 
+A scene file whose GLB has an animation clip plays the first clip on a loop in `scripts/render-media.mjs --scene file`, the way the showcase page does: the pose at a frame time is the clip at that time modulo the clip length. Staged files (`glbRest`) are not posed, and `scripts/render-file-native.mjs` still traces the bind pose. A GLB without a clip renders as before.
+
 ## Loading a large scene without a long freeze
 
 Building a renderer on a big asset blocks the page while the driver links the shader program, uploads textures and packs batches.
