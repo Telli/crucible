@@ -50,6 +50,7 @@ A descriptor contains `image`, `uvChannel`, `colorSpace`, `flipY`, `wrapS`, `wra
 
 Sampler fields use WebGL enum values. Wrapping supports repeat, clamp-to-edge, and mirrored repeat.
 Magnification supports nearest and linear. Minification also supports all four mipmap filters.
+A texture whose magnification or minification is nearest stays hard-edged: anisotropic filtering, which would blur it, is applied only to textures that filter linearly in both directions.
 
 Descriptor identity determines GPU texture reuse. Repeated parts can share descriptors without duplicating GPU textures or texture-budget charges.
 Different descriptors allocate separately even when they reference the same decoded image.
