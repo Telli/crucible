@@ -58,7 +58,7 @@ test('the sample model snapshot stays stable', () => {
       hash.update(new Uint8Array(field.buffer, field.byteOffset, field.byteLength));
     }
   }
-  assert.equal(hash.digest('hex'), '6fcfbdbaf15dabdf144fc9d5e8f2cd1b432ef0f5c5d5e7b995eae0065d41a6d3');
+  assert.equal(hash.digest('hex'), 'cd216ddb9529ba0be42f0586f53a1dd99b7193209d9a9f83fb7abf11075a9442');
 });
 
 test('an unknown part or an empty list is refused with the fix', () => {

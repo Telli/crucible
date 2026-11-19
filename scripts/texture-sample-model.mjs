@@ -16,8 +16,8 @@ const UNSIGNED_SHORT = 5123;
 const UNSIGNED_INT = 5125;
 const BOX_TILES_PER_UNIT = 30;
 // Beige-white enamel. The studio's fill light is teal (0.8, 2.0, 1.8 in the shared shader), so the base colour is warmer than
-// the colour it should show: this peach renders as about sRGB 236, 224, 210 on a lit face and loses the teal on the shaded ones.
-const ENAMEL_COLOR = [0.62, 0.335, 0.235, 1];
+// the colour it should show: this tint renders as about sRGB 233, 223, 207 on a lit face and loses the teal on the shaded ones.
+const ENAMEL_COLOR = [0.85, 0.60, 0.42, 1];
 // A thin lacquer over the enamel, so it has a soft highlight and does not read as flat white.
 const ENAMEL_CLEARCOAT = { clearcoatFactor: 0.2, clearcoatRoughnessFactor: 0.4 };
 const OBJECTIVE_CENTER_Z = 0.044;
