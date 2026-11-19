@@ -14,6 +14,9 @@ import { textureDescriptorInfo } from './renderer.js';
 import { SKIN_POSE_BYTES_PER_JOINT, createSkinPose, matrixDeterminant, updateSkinPose, validateSkinGeometry, validateSkinPose } from './skinning.js';
 import { MAX_STORED_MORPH_TARGETS, createMorphPose, validateMorphGeometry, validateMorphPose, validateMorphTransform } from './morph.js';
 
+/** The `clip` of a pose animation that plays every clip of the asset together. */
+export const ALL_CLIPS = 'all';
+
 // The defaults fit one large exported scene (a 240 MB GLB of 8 million vertices with 8K textures) and still bound a hostile file.
 const DEFAULT_LIMITS = Object.freeze({
   maxBytes: 256 * 1024 * 1024,
@@ -1536,6 +1539,10 @@ export async function parseGltf(data, options = {}) {
       if (animation === null) {
         return;
       }
+      if (animation.clip === ALL_CLIPS) {
+        for (const clip of gltf.animations) applyClip(clip, animation.time);
+        return;
+      }
       applyClip(gltf.animations[animation.clip], animation.time);
     }
 
@@ -1608,8 +1615,10 @@ export async function parseGltf(data, options = {}) {
       const animation = input.animation ?? null;
       if (animation !== null) {
         knownPoseFields(animation, ['clip', 'time'], 'pose animation');
-        const clip = gltf.animations[animation.clip];
-        if (!Number.isInteger(animation.clip) || !clip || !Number.isFinite(animation.time) || animation.time < 0 || animation.time > clip.duration) {
+        // 'all' plays every clip at once; its length is the longest clip, and a shorter clip holds its last frame.
+        const playsAll = animation.clip === ALL_CLIPS && gltf.animations.length > 0;
+        const clip = playsAll ? { duration: Math.max(...gltf.animations.map(candidate => candidate.duration)) } : gltf.animations[animation.clip];
+        if (!playsAll && !Number.isInteger(animation.clip) || !clip || !Number.isFinite(animation.time) || animation.time < 0 || animation.time > clip.duration) {
           throw new RangeError('Pose animation needs an existing clip and time within its duration.');
         }
       }
