@@ -130,3 +130,11 @@ test('packing needs uv and the edits validate their fields', () => {
   assert.deepEqual(normalizeMeshEdits([{ op: 'uv_project', mode: 'sphere' }])[0], { op: 'uv_project', mode: 'sphere', axis: 'y', pack: true, margin: 0.01, rotate: true });
   assert.equal(normalizeMeshStack([{ op: 'uv_project', mode: 'cube' }, { op: 'uv_pack' }]).length, 2);
 });
+
+test('projectUv and packUvIslands refuse a non-boolean pack or rotate, naming the field', () => {
+  assert.throws(() => projectUv(crate(), { mode: 'cube', pack: 'false' }), /pack must be true or false/);
+  assert.throws(() => projectUv(crate(), { mode: 'cube', rotate: 'no' }), /rotate must be true or false/);
+  const projected = projectUv(crate(), { mode: 'cube', pack: false }).mesh;
+  assert.throws(() => packUvIslands(projected, { rotate: 1 }), /rotate must be true or false/);
+  assert.ok(projectUv(crate(), { mode: 'cube', pack: false, rotate: false }).islands > 0);
+});

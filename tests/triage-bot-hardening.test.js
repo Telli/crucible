@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { MAX_ITEMS_PER_AUTHOR_PER_DAY, MAX_RUNS_PER_DAY, decideTriage, hasStickyComment } from '../scripts/triage-should-run.mjs';
+import { MAX_ITEMS_PER_AUTHOR_PER_DAY, MAX_RUNS_PER_DAY, decideTriage, hasStickyComment, parseCountOrBlock } from '../scripts/triage-should-run.mjs';
 import { LABEL_ALLOWLIST } from '../scripts/triage-apply-labels.mjs';
 import { APPROVAL_PHRASES, COMMENT_MARKER, buildCommentBody, claimsApproval, containsSecretValue, sanitizeComment } from '../scripts/triage-post-comment.mjs';
 import { isDryRun, loadTriageItem, parseDispatchNumber } from '../scripts/triage-load-item.mjs';
@@ -213,4 +213,14 @@ test('every path the settings deny to Read is also denied to Grep and Glob on th
       assert.ok(disallowedLine.includes(`${tool}(${path})`), `--disallowedTools is missing ${tool}(${path}); copy the settings deny list into it.`);
     }
   }
+});
+
+test('a count that is missing or not a whole number blocks the run instead of skipping the limit', () => {
+  assert.equal(parseCountOrBlock('7\n'), 7);
+  assert.equal(parseCountOrBlock('0\n'), 0);
+  for (const unusable of ['null\n', '', '   ', 'NaN', '-1', '2.5', undefined]) {
+    assert.equal(parseCountOrBlock(unusable), Number.POSITIVE_INFINITY, String(unusable));
+  }
+  const blocked = decide({}, { authorItemsToday: parseCountOrBlock('null'), runsToday: 0 });
+  assert.equal(blocked.run, false);
 });

@@ -92,7 +92,8 @@ function mixNamedValue(hasher, key, value) {
 /** Feeds a value into the hasher; returns false for anything that is not plain, cloneable data. */
 function mixValue(hasher, value) {
   if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
-    const text = String(value);
+    // String(-0) is "0": spell the sign out so 0 and -0 do not share a key.
+    const text = Object.is(value, -0) ? '-0' : String(value);
     mixText(hasher, `${typeof value}:${text.length}:${text};`);
     return true;
   }
@@ -108,7 +109,13 @@ function mixValue(hasher, value) {
   }
   if (Array.isArray(value)) {
     mixText(hasher, `[${value.length}:`);
-    return value.every(item => mixValue(hasher, item));
+    // By index, because `every` skips the holes of a sparse array and [, 1] would match [1, ,].
+    for (let index = 0; index < value.length; index++) {
+      if (!mixValue(hasher, value[index])) {
+        return false;
+      }
+    }
+    return true;
   }
   if (typeof value === 'object' && isPlainObject(value)) {
     const keys = Object.keys(value);
@@ -198,6 +205,11 @@ function validateKernelTimeout(milliseconds) {
 /** One job on one worker: resolves with the worker's answer, or rejects when the worker fails or stays silent too long. */
 function requestKernel(worker, job, signal, timeoutMilliseconds) {
   return new Promise((resolve, reject) => {
+    // A signal that fired while a page kernel ran never calls a listener added now.
+    if (signal?.aborted) {
+      reject(abortError(signal));
+      return;
+    }
     const timer = setTimeout(() => {
       cleanUp();
       const error = new Error(`Kernel worker gave no answer for ${job.name} within ${timeoutMilliseconds} ms.`);

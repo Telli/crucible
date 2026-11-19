@@ -62,6 +62,7 @@ sweeps a cross-section along a chain of cubic Bezier spans, the way a Blender cu
 - `profile` is 3 to 256 `[x, y]` points of a closed cross-section in units of `radius`, either winding. Without it the
   section is a circle of `radialSegments` sides (3 to 128). Corners sharper than 40 degrees stay flat shaded.
 - Open curves get flat caps with their own vertices, so the surface is closed and works with booleans.
+- A `radius` of 0 or less, or a `closed` flag that is not true or false, throws an error that names that one field (`radius`, `closed` or `splines[1].closed`), the value received and an example; in a scene recipe the field starts with `geometries[i]`.
 
 Volume, area and bounds match Blender 5.2 for an open and a closed Bezier curve with a round bevel to 2e-5
 (`tests/blender-curve-text.test.js`). A Blender bevel resolution of `n` is `radialSegments: 4 + 2n`.

@@ -50,8 +50,8 @@ function assertUsableGeometry(positions, indices, bounds) {
   }
   const vertexCount = Math.floor(positions.length / 3);
   for (let offset = 0; offset < indices.length; offset++) {
-    if (!(indices[offset] >= 0 && indices[offset] < vertexCount)) {
-      throw new RangeError(`navmesh index ${offset} is ${indices[offset]}; use 0 to ${vertexCount - 1}.`);
+    if (!(Number.isInteger(indices[offset]) && indices[offset] >= 0 && indices[offset] < vertexCount)) {
+      throw new RangeError(`navmesh index ${offset} is ${indices[offset]}; use a whole number from 0 to ${vertexCount - 1}.`);
     }
   }
 }
@@ -394,7 +394,8 @@ function blockFootprint(obstacle, bounds, size, columns, rows, blocked) {
 // Marks a cell walkable only when no blocked cell lies within the agent radius.
 function growBlockedAreas(blocked, columns, rows, radiusInCells, radiusInCellUnits) {
   const walkable = new Uint8Array(blocked.length).fill(1);
-  const reach = Math.max(radiusInCells, 1);
+  // A reach past the grid touches nothing more, so a huge radius over a small cell size stays bounded by the grid.
+  const reach = Math.min(Math.max(radiusInCells, 1), Math.max(columns, rows));
   const limit = Math.max(radiusInCellUnits, 0.75);
   for (let row = 0; row < rows; row++) {
     for (let column = 0; column < columns; column++) {

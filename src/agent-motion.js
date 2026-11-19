@@ -528,7 +528,10 @@ export function normalizeAgentMotion(input, recipe) {
   const inputTracks = input.tracks ?? [];
   denseArray(inputTracks, 128, 'Motion tracks');
   if (!inputTracks.length && !input.layers?.length && !input.ik?.length && !input.springs && !input.constraints?.length && !input.drivers?.length && !drive) {
-    throw invalidField('motion', input, 'at least one track or driver (or an IK solver, constraint, layer, spring or drive), such as { "duration": 1, "tracks": [...] } or { "duration": 1, "drivers": [...] }; use null to clear it');
+    const placedClipHint = (recipe.nodes ?? []).some(node => node.asset?.clip)
+      ? '. A placed asset.clip needs no motion: leave motion out, and a render job plays the clip with settings.motion { "start": 0 } or settings.animation'
+      : '';
+    throw invalidField('motion', input, `at least one track or driver (or an IK solver, constraint, layer, spring or drive), such as { "duration": 1, "tracks": [...] } or { "duration": 1, "drivers": [...] }; use null to clear it${placedClipHint}`);
   }
   const nodes = new Set((recipe.nodes ?? []).map(node => node.id));
   // A material track may also name the id of an asset.materials override, which gives a placed asset's material a handle.
