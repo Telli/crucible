@@ -66,6 +66,10 @@ function validateMatrices(values, count, label) {
   }
 }
 
+// CPU bytes one imported skinned primitive keeps per joint: seven 4 x 4 float matrices. They are the live and the pending
+// pose (a palette and its workspace copy each), the inverse bind matrix, and the live and the pending joint world matrix.
+export const SKIN_POSE_BYTES_PER_JOINT = 7 * 16 * 4;
+
 /** Create a retained mesh-local joint palette. Shared pose identity shares a GPU palette. */
 export function createSkinPose(jointCount) {
   if (!Number.isSafeInteger(jointCount) || jointCount < 1 || jointCount > 65536) throw new Error('Joint count must be within one and 65536.');

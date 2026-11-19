@@ -5,6 +5,7 @@ import { Matrix4, Vector3 } from 'three';
 import { skinnedStripAsset } from './fixtures/skinned-strip.js';
 import { mat4 } from 'gl-matrix';
 import { exportGlb } from '../src/export.js';
+import { AGENT_ASSET_LIMITS, agentAssetDecodeOptions } from '../src/agent-asset-limits.js';
 import { GLTF_CAPABILITIES, loadGltf, parseGltf } from '../src/gltf.js';
 
 function triangleAsset(edit = () => {}) {
@@ -580,10 +581,49 @@ test('skin preflight guards joints, influence shapes, raw zero weights, indices 
   ];
   for (const [edit, expected] of cases) await assert.rejects(parseGltf(skinnedStripAsset(edit)), expected);
   await assert.rejects(parseGltf(skinnedStripAsset(), { maxJoints: 1 }), /maxJoints/);
-  await assert.rejects(parseGltf(skinnedStripAsset(document => {
-    document.nodes.push({ name: 'Second strip', mesh: 0, skin: 0 });
-    document.nodes[0].children.push(4);
-  }), { maxJoints: 2 }), /skin pose joints/);
+});
+
+/** One skin of `jointCount` joints (a chain under Root) worn by `meshNodeCount` mesh nodes of `primitiveCount` primitives each. */
+function sharedSkinAsset({ jointCount, meshNodeCount, primitiveCount = 1 }) {
+  return skinnedStripAsset((document, append) => {
+    for (let joint = 2; joint < jointCount; joint++) {
+      document.nodes.push({ name: `Extra joint ${joint}` });
+      document.nodes[2].children.push(document.nodes.length - 1);
+      document.skins[0].joints.push(document.nodes.length - 1);
+    }
+    const identities = new Float32Array(jointCount * 16);
+    for (let joint = 0; joint < jointCount; joint++) identities.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], joint * 16);
+    document.skins[0].inverseBindMatrices = append(identities, 'MAT4');
+    const primitive = document.meshes[0].primitives[0];
+    for (let copy = 1; copy < primitiveCount; copy++) document.meshes[0].primitives.push({ ...primitive, attributes: { ...primitive.attributes } });
+    for (let copy = 1; copy < meshNodeCount; copy++) {
+      document.nodes.push({ name: `Worn mesh ${copy}`, mesh: 0, skin: 0 });
+      document.nodes[0].children.push(document.nodes.length - 1);
+    }
+  });
+}
+
+test('one skin shared by many primitives counts its joints once against maxJoints (#2259)', async () => {
+  const { maxJoints } = AGENT_ASSET_LIMITS;
+  const jointCount = 153;
+  assert.ok(jointCount * 12 > maxJoints, 'the fixture must exceed maxJoints when joints are counted per primitive');
+  for (const shape of [{ meshNodeCount: 12 }, { meshNodeCount: 1, primitiveCount: 12 }]) {
+    const asset = await parseGltf(sharedSkinAsset({ jointCount, ...shape }), agentAssetDecodeOptions());
+    assert.equal(asset.parts.length, 12);
+    assert.equal(asset.parts[0].skin.jointMatrices.length / 16, jointCount);
+    asset.dispose();
+  }
+  await assert.rejects(parseGltf(sharedSkinAsset({ jointCount: 5, meshNodeCount: 1 }), { maxJoints: 4 }), /skin joints.*maxJoints/);
+});
+
+test('skinned primitives keep their pose copies inside maxDecodedBytes, and the error names the cause (#2259)', async () => {
+  const limit = { maxDecodedBytes: 400_000 };
+  const one = await parseGltf(sharedSkinAsset({ jointCount: 153, meshNodeCount: 1 }), limit);
+  one.dispose();
+  await assert.rejects(
+    parseGltf(sharedSkinAsset({ jointCount: 153, meshNodeCount: 12 }), limit),
+    /decoded accessor and skin pose bytes.*maxDecodedBytes/,
+  );
 });
 
 test('negative skin weights are clamped to zero and renormalised, with one warning that counts them', async () => {
