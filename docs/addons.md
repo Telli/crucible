@@ -27,6 +27,8 @@ An addon package:
 
 The manifest lives in `package.json` rather than a separate `crucible-addon.json` because the npm registry returns the whole `package.json` of each version, so a listing can read the range and points without unpacking the tarball, and there is no second file to forget to publish.
 
+The Marketplace addon list comes from the npm keyword search. An entry without a publishable package name is skipped, so one bad listing does not hide the rest.
+
 ## Extension points
 
 These are the ways code can extend Crucible today, and the only names the `extensionPoints` list accepts:
