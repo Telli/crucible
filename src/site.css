@@ -309,7 +309,8 @@ body.site > main > section { scroll-margin-top: 96px; }
 /* A phone: the wordmark, the colour switch and GitHub on the first row, the page links on a row of their own. */
 @media (max-width: 600px) {
   .site .navigation { gap: 6px 8px; padding: 12px 0 8px; }
-  .site .navigation nav { order: 5; flex-basis: 100%; margin-left: 0; gap: 18px; padding-left: 2px; }
+  .site .navigation nav { order: 5; flex-basis: 100%; flex-wrap: wrap; justify-content: space-between; margin-left: 0; gap: 4px 0; padding-left: 2px; }
+  .site .navigation nav a { font-size: 14px; }
   .site .color-toggle { margin-left: auto; }
   .site .site-nav-cta { width: 36px; padding: 0; }
   .site .site-nav-cta-label { display: none; }
