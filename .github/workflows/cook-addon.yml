@@ -265,6 +265,7 @@ on:
       - 'src/motion-expression.js'
       - 'src/motion-properties.js'
       - 'src/motion-track-removal.js'
+      - 'src/motion-track-selector.js'
       - 'src/motion-validation.js'
       - 'src/navmesh.js'
       - 'src/near-plane-fit.js'

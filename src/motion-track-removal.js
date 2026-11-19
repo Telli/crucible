@@ -1,10 +1,9 @@
 // The removeTracks field of a set-motion operation: drop the motion tracks that match selectors, keep everything else.
 // A leaf module, so scripts/mcp-server.mjs and the scene backends can share it without pulling in the motion compiler.
 import { invalidField } from './field-error.js';
+import { SELECTOR_FIELDS, selectorMatches, motionAfterRemoval } from './motion-track-selector.js';
 
 export const MAXIMUM_TRACK_SELECTORS = 64;
-const SELECTOR_FIELDS = ['kind', 'id', 'property'];
-const NO_MOTION_KEYS = new Set(['duration', 'loop', 'tracks']);
 
 function describeTrack(track) {
   return [track.kind, track.id, track.property].filter(part => part !== undefined).join('.');
@@ -30,10 +29,6 @@ function assertSelectors(selectors, path) {
   });
 }
 
-function selectorMatches(selector, track) {
-  return SELECTOR_FIELDS.every(field => selector[field] === undefined || selector[field] === track[field]);
-}
-
 /** The motion a set-motion operation with removeTracks leaves: the tracks its selectors match are gone; null when no motion content is left. */
 export function removeMotionTracks(operation, motion, path = 'operation') {
   const keys = Object.keys(operation);
@@ -52,8 +47,5 @@ export function motionWithoutTracks(motion, selectors, path = 'operation.removeT
   if (unmatched.length > 0) {
     throw invalidField(path, unmatched.map(describeSelector).join(', '), `selectors that each match a track the scene has; its tracks are: ${listed}`);
   }
-  const kept = tracks.filter(track => !selectors.some(selector => selectorMatches(selector, track)));
-  const remaining = { ...motion, tracks: kept };
-  const hasOtherMotion = Object.keys(remaining).some(key => !NO_MOTION_KEYS.has(key) && remaining[key] !== undefined);
-  return kept.length === 0 && !hasOtherMotion ? null : remaining;
+  return motionAfterRemoval(motion, selectors).motion;
 }

@@ -2,6 +2,8 @@
 // and a compact diff of the node, material and geometry IDs the batch added, removed and changed. Pure recipe data in,
 // plain JSON out, so a library user gets the same answer as an MCP client.
 
+import { motionAfterRemoval } from './motion-track-selector.js';
+
 export const APPLY_REPORT_LIMITS = Object.freeze({ maxEntries: 20, maxDiffIds: 8, maxText: 48 });
 
 const COLLECTIONS = Object.freeze({ node: 'nodes', material: 'materials', geometry: 'geometries' });
@@ -66,7 +68,7 @@ function targetOf(operation) {
 }
 
 // Applies one operation to the working copy and says what it changed. Fields it cannot judge count as changed.
-function describeOperation(working, operation, maxText, after) {
+function describeOperation(working, operation, maxText) {
   const { type } = operation;
   const add = /^add-(node|material|geometry)$/.exec(type);
   if (add) {
@@ -101,12 +103,10 @@ function describeOperation(working, operation, maxText, after) {
     return { changed: shortList(differing, maxText) };
   }
   if (type === 'set-motion' && Object.hasOwn(operation, 'removeTracks')) {
-    // The selectors are resolved by the scene when it applies the batch; the report reads the result from the recipe after it.
-    const before = working.motion?.tracks?.length ?? 0;
-    const remaining = after.motion;
-    if (remaining) working.motion = structuredClone(remaining);
+    const { motion, removed } = motionAfterRemoval(working.motion, operation.removeTracks);
+    if (motion) working.motion = motion;
     else delete working.motion;
-    return { changed: `removed ${before - (remaining?.tracks?.length ?? 0)} motion tracks` };
+    return { changed: `removed ${removed} motion tracks` };
   }
   if (Object.hasOwn(OWN_SECTIONS, type)) {
     const name = OWN_SECTIONS[type];
@@ -161,7 +161,7 @@ export function describeApplication(before, after, operations, limits = APPLY_RE
   const working = structuredClone(before);
   for (const collection of Object.values(COLLECTIONS)) working[collection] ??= [];
   const entries = operations.map((operation, index) => {
-    const outcome = describeOperation(working, operation, limits.maxText, after);
+    const outcome = describeOperation(working, operation, limits.maxText);
     const target = targetOf(operation);
     return { i: index, op: operation.type, ...(target === undefined ? {} : { target }), ...outcome };
   });
