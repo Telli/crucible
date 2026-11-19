@@ -95,6 +95,14 @@ registerShaderFeatureCode('emissionFresnel', Object.freeze({
 `,
 }));
 
+// A soft edge (#2304): alpha fades by how face-on the surface is, so a sphere has no silhouette and reads as a round soft blob.
+// materialSoftEdge is the exponent of the facing cosine; 0 leaves alpha alone.
+registerShaderFeatureCode('softEdge', Object.freeze({
+  declarations: 'uniform float materialSoftEdge;\n',
+  emissionHook: `  alpha *= pow(clamp(abs(dot(normal, viewDirection)), 0.0, 1.0), materialSoftEdge);
+`,
+}));
+
 // An emission mask (material-layers.js): a smoothstep ramp along one axis of the part's own space in metres, the boxPosition
 // varying that the vertex shader fills for this feature. Axis -1 means this part has no mask.
 registerShaderFeatureCode('emissionMask', Object.freeze({
