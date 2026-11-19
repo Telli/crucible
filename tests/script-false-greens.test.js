@@ -58,3 +58,11 @@ test('a group heading in one fragment does not regroup the bullets of the next f
   assert.equal(entries.find(entry => entry.issue === 1).group, 'Breaking changes');
   assert.equal(entries.length, 2);
 });
+
+test('test-each-file fails and names the fragment when no test file matches', () => {
+  const script = fileURLToPath(new URL('../scripts/test-each-file.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [script, 'no-such-test-file-fragment'], { encoding: 'utf8', windowsHide: true });
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /No test file in tests\/ matches "no-such-test-file-fragment"/);
+  assert.doesNotMatch(result.stdout, /0 of 0/);
+});
