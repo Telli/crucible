@@ -5,10 +5,11 @@
  * `openSessionIds` lists the open scenes from least to most recently used; `evictedSessionIds` lists scenes the server
  * closed to stay under its scene cap.
  */
-export function sessionProblem(requestedSessionId, activeSessionId, { openSessionIds = [], evictedSessionIds = [] } = {}) {
+export function sessionProblem(requestedSessionId, activeSessionId, { openSessionIds = [], evictedSessionIds = [], evictionReasons = {} } = {}) {
   if (evictedSessionIds.includes(requestedSessionId)) {
     const open = openSessionIds.length ? ` Open scenes: ${openSessionIds.join(', ')}.` : '';
-    return `sessionId ${requestedSessionId} was evicted: the server keeps a limited number of open scenes and closes the least recently used one when a new scene is created.${open} Pass the sessionId of an open scene, or call scene_create again (scene_export_recipe saves a scene before it is evicted).`;
+    const reason = evictionReasons[requestedSessionId] ?? 'the server keeps a limited number of open scenes and closes the least recently used one when a new scene is created';
+    return `sessionId ${requestedSessionId} was evicted: ${reason}.${open} Pass the sessionId of an open scene, or call scene_create again (scene_export_recipe saves a scene before it is evicted).`;
   }
   if (!activeSessionId) {
     return 'No scene is active: it was never created, was disposed, or scene_create failed. Call scene_create or scene_create_asset first, then pass the sessionId it returns.';
@@ -21,6 +22,42 @@ export function sessionProblem(requestedSessionId, activeSessionId, { openSessio
 
 /** How many scenes one server keeps open, and the resident geometry bytes they may hold together. */
 export const SCENE_STORE_LIMITS = Object.freeze({ maxOpenScenes: 4, maxOpenSceneBytes: 96 * 1024 * 1024 });
+
+function mebibytes(bytes) {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+/**
+ * Which open scenes a new scene closes, and why. `openScenes` lists `{ sessionId, bytes }` from least to most recently used and
+ * `incomingBytes` is the new scene's resident geometry. Scenes close oldest first until both caps hold, so a scene is only closed
+ * for a cap that is really exceeded: the scene count, or the resident geometry the open scenes hold together with the new one.
+ * The reason names that cap and the numbers, because "up to 4 scenes" is easy to read as a promise a few large scenes cannot keep.
+ */
+export function planSceneEviction(openScenes, incomingBytes, limits = SCENE_STORE_LIMITS) {
+  let remainingCount = openScenes.length;
+  let remainingBytes = incomingBytes + openScenes.reduce((total, scene) => total + scene.bytes, 0);
+  const startingBytes = remainingBytes;
+  const sessionIds = [];
+  let closedForCount = false;
+  let closedForBytes = false;
+  for (const scene of openScenes) {
+    const overCount = remainingCount + 1 > limits.maxOpenScenes;
+    const overBytes = remainingBytes > limits.maxOpenSceneBytes;
+    if (!overCount && !overBytes) break;
+    closedForCount ||= overCount;
+    closedForBytes ||= overBytes;
+    remainingCount -= 1;
+    remainingBytes -= scene.bytes;
+    sessionIds.push(scene.sessionId);
+  }
+  if (!sessionIds.length) return { sessionIds, reason: null };
+  const reasons = [];
+  if (closedForCount) reasons.push(`the server keeps at most ${limits.maxOpenScenes} open scenes`);
+  if (closedForBytes) {
+    reasons.push(`the open scenes and the new one held ${mebibytes(startingBytes)} of resident geometry, over the ${mebibytes(limits.maxOpenSceneBytes)} cap (the new scene alone is ${mebibytes(incomingBytes)})`);
+  }
+  return { sessionIds, reason: `closed the least recently used scene${sessionIds.length > 1 ? 's' : ''} because ${reasons.join(' and ')}` };
+}
 
 /** A request made against an old revision: names both revisions, so the caller retries with the current one instead of guessing. */
 export function staleRevisionMessage(subject, expectedRevision, currentRevision) {

@@ -76,6 +76,9 @@ function localBounds(geometry, label, partName) {
 function orientedBounds(part, label) {
   const { minimum, maximum } = localBounds(part.geometry, label, part.name);
   const matrix = part.matrix ?? [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  if (matrix.length !== 16 || !Array.from(matrix).every(Number.isFinite)) {
+    throw new RangeError(`${label}.part "${part.name}" needs a matrix of 16 finite numbers, got ${matrix.length} values; pass the part's world matrix`);
+  }
   const localCenter = minimum.map((low, axis) => (low + maximum[axis]) / 2);
   const center = [0, 1, 2].map(row => matrix[row] * localCenter[0] + matrix[4 + row] * localCenter[1] + matrix[8 + row] * localCenter[2] + matrix[12 + row]);
   const size = [];
@@ -95,9 +98,16 @@ function orientedBounds(part, label) {
 
 const edgeProblemsByPositions = new WeakMap();
 
+function requireValidIndices(indices, vertexCount, subject) {
+  if (indices.length % 3 !== 0) throw new RangeError(`${subject} has ${indices.length} indices; a triangle list needs a multiple of 3`);
+  const outOfRange = indices.findIndex(index => !(index >= 0 && index < vertexCount));
+  if (outOfRange >= 0) throw new RangeError(`${subject} index ${outOfRange} is ${indices[outOfRange]}, but the part has ${vertexCount} vertices; pass indices from 0 to ${vertexCount - 1}`);
+}
+
 /** Throws unless the part's mesh is closed and its faces wind the same way, which the rasterizer's front and back faces rely on. */
 export function assertClosedMesh(part, label) {
   const { positions, indices } = part.geometry;
+  requireValidIndices(indices, positions.length / 3, `${label}.part "${part.name}"`);
   let cached = edgeProblemsByPositions.get(positions);
   if (cached?.indices !== indices) {
     const { minimum, maximum } = localBounds(part.geometry, label, part.name);

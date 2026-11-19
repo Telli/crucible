@@ -14,6 +14,13 @@ import { cacheCellSizes, noteIgnoredClipStart, resolveRealtimeOptions, viewsMatc
 // static). It shares the WebGL2 context of `traceOnGpu`, so one render at a time owns it. The pieces:
 //   path-tracer-radiance-cache.js, path-tracer-temporal-denoise.js, path-tracer-reprojection.js.
 
+// Builds and checks a scene before any GL object is made or released, so a refused scene leaves the tracer as it was.
+function prepareTraceScene(parts, environment) {
+  const traceScene = buildTraceScene(parts, environment, { gpuTriangleLimit: gpuTriangleLimit() });
+  refuseLocalVolumes(traceScene, 'the WebGL realtime path tracer');
+  return traceScene;
+}
+
 /**
  * `scene` is `{ parts, environment, camera }` as `renderPathTracedImage` takes them. `options`: `width` and `height` of the
  * output, `bounces` (2), `resolutionDivisor` (2: the tracing size is half the output), `seed`, `lightSelection`
@@ -40,6 +47,7 @@ export async function createRealtimeTracer(scene, rawOptions = {}) {
   gl.canvas.width = outputWidth;
   gl.canvas.height = outputHeight;
 
+  const firstTraceScene = prepareTraceScene(scene.parts, scene.environment ?? {});
   const radianceTextures = [createFloatTexture(gl, traceWidth, traceHeight), createFloatTexture(gl, traceWidth, traceHeight)];
   const normalTextures = [createFloatTexture(gl, traceWidth, traceHeight), createFloatTexture(gl, traceWidth, traceHeight)];
   const albedoTexture = createFloatTexture(gl, traceWidth, traceHeight);
@@ -63,10 +71,9 @@ export async function createRealtimeTracer(scene, rawOptions = {}) {
   let resetHistory = true;
   let disposed = false;
 
-  const loadScene = (parts, environment) => {
+  const loadScene = nextTraceScene => {
     releaseResources(gl);
-    traceScene = buildTraceScene(parts, environment, { gpuTriangleLimit: gpuTriangleLimit() });
-    refuseLocalVolumes(traceScene, 'the WebGL realtime path tracer');
+    traceScene = nextTraceScene;
     const kernel = getKernel(sceneUsesSubsurface(traceScene.materials), false, options);
     program = kernel.program;
     compileSeconds = kernel.compileSeconds;
@@ -83,7 +90,21 @@ export async function createRealtimeTracer(scene, rawOptions = {}) {
     resetHistory = true;
   };
 
-  loadScene(scene.parts, scene.environment ?? {});
+  const dispose = () => {
+    disposed = true;
+    cache.dispose();
+    denoiser.dispose();
+    for (const texture of [...radianceTextures, ...normalTextures, albedoTexture, recordTexture]) gl.deleteTexture(texture);
+    for (const framebuffer of traceFramebuffers) gl.deleteFramebuffer(framebuffer);
+    releaseResources(gl);
+  };
+
+  try {
+    loadScene(firstTraceScene);
+  } catch (error) {
+    dispose();
+    throw error;
+  }
 
   const traceOneSample = () => {
     gl.useProgram(program);
@@ -113,7 +134,7 @@ export async function createRealtimeTracer(scene, rawOptions = {}) {
 
     /** A new scene: the radiance cache and the denoiser's history start over. */
     update({ parts, environment }) {
-      if (parts) loadScene(parts, environment ?? {});
+      if (parts) loadScene(prepareTraceScene(parts, environment ?? {}));
     },
 
     /** Forgets the denoiser's history (the cache stays: it only depends on the scene). */
@@ -158,13 +179,6 @@ export async function createRealtimeTracer(scene, rawOptions = {}) {
       return { width: outputWidth, height: outputHeight, rgba };
     },
 
-    dispose() {
-      disposed = true;
-      cache.dispose();
-      denoiser.dispose();
-      for (const texture of [...radianceTextures, ...normalTextures, albedoTexture, recordTexture]) gl.deleteTexture(texture);
-      for (const framebuffer of traceFramebuffers) gl.deleteFramebuffer(framebuffer);
-      releaseResources(gl);
-    },
+    dispose,
   };
 }

@@ -7,9 +7,11 @@ import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_
 import { parseQuality } from './agent-render-quality.mjs';
 import { estimateFrameBytes } from '../src/budget.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { recipeMoves } from '../src/motion-hint.js';
 import { normalizeFilmTimeline, filmTimelineDuration, videoFrameCount } from '../src/film-timeline.js';
 import { OIDN_DEFAULT_SAMPLES, PATH_TRACER_DENOISERS, PATH_TRACER_JOB_LIMITS } from '../src/path-tracer-capabilities.js';
 import { AGENT_ASSET_LIMITS, describeAssetBytes } from '../src/agent-asset-limits.js';
+import { iconArtifactNames, normalizeIconSettings } from '../src/icon-sheet.js';
 
 const UUID =/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const STATES = ['queued', 'running', 'finalizing', 'completed', 'cancelling', 'cancelled', 'failed', 'interrupted'];
@@ -99,8 +101,30 @@ function bakedPhysicsDuration(recipe) {
   return durations.length ? Math.max(...durations) : undefined;
 }
 
+/** A scene that places clips plays them on scene time, so a film of one runs as long as its longest clip, counted from the start. */
+function placedClipDefaultDuration(input, clips, recipe, bakeSeconds) {
+  const asked = input.motion ?? input.animation;
+  if (!placesSceneClips(recipe, clips) || recipe.motion || bakeSeconds || input.kind === 'image' || !asked) return undefined;
+  const longest = Math.max(...clips.map(clip => clip.duration));
+  return Math.min(MAXIMUM_VIDEO_SECONDS, Math.max(0.1, longest - (Number(asked.start) || 0)));
+}
+
+/** In a scene recipe the snapshot clips are the placed asset clips, one per placement, each as long as it needs to play once. */
+function placesSceneClips(recipe, clips) {
+  return recipe?.format === 'crucible.scene' && clips.length > 0;
+}
+
 function playsPhysics(recipe) {
   return Boolean(recipe?.physics || recipe?.cloth || recipe?.particles);
+}
+
+/**
+ * Whether a job with no `motion` setting should still play the recipe's motion tracks, particles, physics or cloth from second 0.
+ * Without a motion clock every frame is frame 0, so such a stills or video job would come out frozen with no warning.
+ */
+function playsSimulationFromStart(input, recipe, timelineStart) {
+  return input.kind !== 'image' && timelineStart === undefined && input.animation === undefined
+    && recipe?.format === 'crucible.scene' && recipeMoves(recipe);
 }
 
 /** The settings of a job as the store keeps them: every default filled in, every limit checked. */
@@ -109,8 +133,9 @@ export function normalizeJobSettings(input, clips, recipe) {
 }
 
 function settingsFrom(input, clips = [], recipe) {
-  objectKeys(input, ['kind', 'width', 'height', 'fps', 'duration', 'animation', 'motion', 'rendererTime', 'passes', 'renderer', 'timeline', 'audio', 'encoder', 'transparent', 'format', 'multilayer', 'region', 'quality', 'stillCount'], 'settings');
-  if (!['image', 'stills', 'video'].includes(input.kind)) throw new TypeError('kind must be image, stills or video.');
+  if (input?.kind === 'icons') return normalizeIconSettings(input);
+  objectKeys(input, ['kind', 'width', 'height', 'fps', 'duration', 'animation', 'motion', 'rendererTime', 'passes', 'renderer', 'timeline', 'audio', 'encoder', 'transparent', 'format', 'multilayer', 'region', 'quality', 'stillCount', 'mattes'], 'settings');
+  if (!['image', 'stills', 'video'].includes(input.kind)) throw new TypeError('kind must be image, stills, video or icons.');
   const largeFrame = input.kind === 'image';
   const maximumSide = largeFrame ? MAXIMUM_JOB_SIDE : MAXIMUM_SEQUENCE_JOB_SIDE;
   const maximumPixels = largeFrame ? MAXIMUM_JOB_PIXELS : MAXIMUM_SEQUENCE_JOB_PIXELS;
@@ -126,7 +151,8 @@ function settingsFrom(input, clips = [], recipe) {
   // A physics-only film runs as long as its bake, counted from the motion start.
   const bakeSeconds = recipe?.format === 'crucible.scene' && !recipe.motion ? bakedPhysicsDuration(recipe) : undefined;
   const bakeDefault = bakeSeconds && input.kind !== 'image' && input.motion ? Math.max(0.1, bakeSeconds - (Number(input.motion.start) || 0)) : undefined;
-  const defaultDuration = timelineStart === undefined || input.kind === 'image' ? bakeDefault ?? 1 : filmTimelineDuration(recipe.timeline) - timelineStart;
+  const clipDefault = placedClipDefaultDuration(input, clips, recipe, bakeSeconds);
+  const defaultDuration = timelineStart === undefined || input.kind === 'image' ? bakeDefault ?? clipDefault ?? 1 : filmTimelineDuration(recipe.timeline) - timelineStart;
   const framesAsked = stillsFrameCountFrom(input);
   // A stills job that sets frames samples the motion clock every 1 / fps seconds, like a video; its duration is the span of those samples.
   const duration = framesAsked === undefined
@@ -138,6 +164,7 @@ function settingsFrom(input, clips = [], recipe) {
   if (framesAsked !== undefined) result.stillCount = framesAsked;
   if (input.passes !== undefined) result.passes = passesFrom(input.passes, input.kind);
   if (input.renderer !== undefined) result.renderer = rendererFrom(input.renderer, input.passes);
+  if (input.mattes !== undefined) result.mattes = mattesFrom(input);
   Object.assign(result, outputOptionsFrom(input, result));
   if (input.quality !== undefined) result.quality = qualityFrom(input.quality, result.renderer);
   const lastSampleTime = input.kind === 'image' ? 0 : input.kind === 'stills' ? duration : (frameCount - 1) / fps;
@@ -152,8 +179,10 @@ function settingsFrom(input, clips = [], recipe) {
     result.encoder = input.encoder;
   }
   if (input.audio !== undefined) result.audio = audioFrom(input.audio, input.kind);
-  if (input.motion !== undefined) {
-    objectKeys(input.motion, ['start'], 'motion');
+  const impliedMotion = input.motion === undefined && playsSimulationFromStart(input, recipe, timelineStart);
+  if (input.motion !== undefined || impliedMotion) {
+    const motionInput = input.motion ?? { start: 0 };
+    objectKeys(motionInput, ['start'], 'motion');
     // Clips of placed assets play on scene time, so a scene that places one needs no authored motion.
     const placesClips = recipe?.format === 'crucible.scene' && recipeAssetNeeds(recipe).some(need => need.copies > 1);
     // A map sequence and a grid volume sequence read the same clock.
@@ -166,23 +195,30 @@ function settingsFrom(input, clips = [], recipe) {
     if (recipe.motion?.loop !== undefined && typeof recipe.motion.loop !== 'boolean') {
       throw new TypeError('Motion loop must be boolean.');
     }
-    const start = boundedNumber(input.motion.start === undefined ? 0 : input.motion.start, 0, 3600, 'motion start');
+    const start = boundedNumber(motionInput.start === undefined ? 0 : motionInput.start, 0, 3600, 'motion start');
     boundedNumber(start + lastSampleTime, 0, 3600, 'motion end');
-    if (recipe.motion && !recipe.motion.loop && start + lastSampleTime > motionDuration) {
-      throw new RangeError('Motion range exceeds the authored duration.');
-    }
-    if (!recipe.motion && bakeSeconds && start + lastSampleTime > bakeSeconds) {
+    const exceedsAuthoredMotion = recipe.motion && !recipe.motion.loop && start + lastSampleTime > motionDuration;
+    const exceedsBake = !recipe.motion && bakeSeconds && start + lastSampleTime > bakeSeconds;
+    if (exceedsAuthoredMotion && !impliedMotion) throw new RangeError('Motion range exceeds the authored duration.');
+    if (exceedsBake && !impliedMotion) {
       throw new RangeError(`Motion range exceeds the physics bake duration of ${bakeSeconds} s; shorten the job or lengthen physics.duration.`);
     }
-    result.motion = { start };
+    // An implied start of 0 is only kept while the job fits the motion; a longer job keeps the old held pose rather than failing.
+    if (!(impliedMotion && (exceedsAuthoredMotion || exceedsBake))) result.motion = { start };
   }
   if (input.animation !== undefined) {
     objectKeys(input.animation, ['clip', 'start'], 'animation');
     if (clips.length === 0) throw new RangeError('animation needs an animation clip, and this scene has none. Drop animation from the settings, or add a clip to the scene first.');
     const clip = boundedNumber(input.animation.clip, 0, clips.length - 1, 'clip', true);
     const start = boundedNumber(input.animation.start ?? 0, 0, clips[clip].duration, 'animation start');
-    if (input.kind !== 'image' && start + duration > clips[clip].duration) throw new RangeError('Animation range exceeds the selected clip duration.');
-    result.animation = { clip, start };
+    if (placesSceneClips(recipe, clips)) {
+      // Placed clips play on scene time, the clock of motion, and loop or hold on their own settings: animation.start is the motion start.
+      if (input.motion !== undefined) throw new TypeError('Send either motion or animation for a scene that places clips: both set the scene time the clips play on. Keep motion.start.');
+      result.motion = { start };
+    } else {
+      if (input.kind !== 'image' && start + duration > clips[clip].duration) throw new RangeError('Animation range exceeds the selected clip duration.');
+      result.animation = { clip, start };
+    }
   }
   if (input.rendererTime !== undefined) {
     objectKeys(input.rendererTime, ['start', 'rate'], 'rendererTime');
@@ -203,7 +239,7 @@ function stillsFrameCountFrom(input) {
 function stillsSequenceDuration(input, frames, fps) {
   const span = (frames - 1) / fps;
   if (input.duration !== undefined && Math.abs(input.duration - span) > 1e-9) {
-    throw new RangeError(`duration is (stillCount - 1) / fps = ${span} s when stillCount is set; leave duration out.`);
+    throw new RangeError(`Leave duration out when stillCount is set: it is (stillCount - 1) / fps = ${Number(span.toFixed(4))} s here, and you sent ${input.duration}.`);
   }
   return span;
 }
@@ -301,17 +337,41 @@ function passesFrom(passes, kind) {
   return [...passes];
 }
 
-/** Every artifact filename of a job, lit image first and then each requested pass, frame by frame. */
-export function artifactNames(kind, passes = [], format = 'png', multilayer = false, stillCount = 8) {
+const MAXIMUM_MATTES = 8;
+const MAXIMUM_MATTE_NAME_LENGTH = 120;
+
+/** The ID mattes of a job: each names one object (part) or one material, and writes one gray PNG per frame. */
+function mattesFrom(input) {
+  const { mattes, kind, renderer, format, multilayer } = input;
+  if (kind === 'video') throw new RangeError('mattes need kind image or stills; a video holds the lit image only.');
+  if (renderer !== undefined) throw new RangeError('mattes cannot combine with renderer: the path tracer has no object ID or Cryptomatte pass. Leave renderer out.');
+  if (format !== undefined && format !== 'png') throw new RangeError('mattes are 8-bit PNG files: leave format out or use png.');
+  if (multilayer) throw new RangeError('mattes cannot combine with multilayer. Leave multilayer out.');
+  if (!Array.isArray(mattes) || mattes.length < 1 || mattes.length > MAXIMUM_MATTES) throw new TypeError(`mattes must list 1 to ${MAXIMUM_MATTES} entries, each { object: "<part name>" } or { material: "<material name>" }.`);
+  return mattes.map((matte, index) => {
+    objectKeys(matte, ['object', 'material'], `mattes[${index}]`);
+    const kindsGiven = ['object', 'material'].filter(key => matte[key] !== undefined);
+    if (kindsGiven.length !== 1) throw new TypeError(`mattes[${index}] needs exactly one of object or material. Pass { object: "<part name>" } or { material: "<material name>" }.`);
+    const name = matte[kindsGiven[0]];
+    if (typeof name !== 'string' || name.length < 1 || name.length > MAXIMUM_MATTE_NAME_LENGTH) throw new TypeError(`mattes[${index}].${kindsGiven[0]} must be a name of 1 to ${MAXIMUM_MATTE_NAME_LENGTH} characters. scene_render_result metrics.objectNames and metrics.cryptomatte list the names of a render.`);
+    return { [kindsGiven[0]]: name };
+  });
+}
+
+/** Every artifact filename of a job, lit image first and then each requested pass and matte, frame by frame. */
+export function artifactNames(kind, passes = [], format = 'png', multilayer = false, stillCount = 8, mattes = []) {
   if (kind === 'video') return ['render.mp4'];
+  // An icons job has one frame per item, so its frame count is its item count.
+  if (kind === 'icons') return iconArtifactNames(stillCount);
   const extension = format === 'exr' ? 'exr' : 'png';
   const stems = kind === 'image' ? ['render'] : Array.from({ length: stillCount }, (_, index) => `frame-${index}`);
   if (multilayer) return stems.map(stem => `${stem}.${extension}`);
-  return stems.flatMap(stem => [`${stem}.${extension}`, ...passes.map(pass => `${stem}-${pass}.${extension}`)]);
+  return stems.flatMap(stem => [`${stem}.${extension}`, ...passes.map(pass => `${stem}-${pass}.${extension}`), ...mattes.map((_, index) => `${stem}-matte-${index}.png`)]);
 }
 
-function artifactMimeType(settings) {
+function artifactMimeType(settings, filename = '') {
   if (settings.kind === 'video') return 'video/mp4';
+  if (settings.kind === 'icons' && filename.endsWith('.json')) return 'application/json';
   return settings.format === 'exr' ? 'image/x-exr' : 'image/png';
 }
 
@@ -341,18 +401,22 @@ export function frameByteLimitFor(width, height, baseBytes) {
 }
 
 function artifactByteLimit(settings, limits) {
-  if (settings.kind === 'video') return limits.maxOutputBytes;
+  // The atlas of a full icon set is the largest file; the combined output limit still caps the whole job.
+  if (settings.kind === 'video' || settings.kind === 'icons') return limits.maxOutputBytes;
   const frameBytes = frameByteLimitFor(settings.width, settings.height, limits.maxFrameBytes);
   return settings.format === undefined ? frameBytes : frameBytes * HIGH_PRECISION_FRAME_FACTOR;
 }
 
 function allowedFile(name) {
   const passNames = RENDER_PASS_NAMES.join('|');
-  const artifact = new RegExp(`^(?:render\\.(?:png|mp4|exr)|(?:render|frame-\\d{1,3})(?:-(?:${passNames}))?\\.(?:png|exr))(?:\\.partial)?$`);
+  const artifact = new RegExp(`^(?:render\\.(?:png|mp4|exr)|(?:icon-\\d{1,3}|atlas)\\.png|icons\\.json|(?:render|frame-\\d{1,3})(?:-(?:${passNames}|matte-[0-7]))?\\.(?:png|exr))(?:\\.partial)?$`);
   return INTERNAL_FILES.has(name) || artifact.test(name);
 }
 
 const FILE_IN_USE_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
+// 7 attempts with 10 ms doubling waits is 630 ms in the worst case.
+const STATUS_RENAME_ATTEMPTS = 7;
+const STATUS_RENAME_BACKOFF_MS = 10;
 
 async function regularFile(path) {
   const details = await lstat(path);
@@ -417,7 +481,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
   // or the disk fills. Where hard links are not supported it falls back to creating the target with `wx` and writing into it.
   // The file operations used here can be replaced through `lockTakeoverHooks.fileOperations`, so tests can make one of them fail.
   const removeJobFile = lockTakeoverHooks.removeJobFile ?? unlink;
-  const publishOperations = { writeFile, link, open, unlink, ...lockTakeoverHooks.fileOperations };
+  const publishOperations = { writeFile, link, open, unlink, rename, ...lockTakeoverHooks.fileOperations };
 
   // Removing the temporary name can fail for a moment (a virus scanner holding the file on Windows), so it is retried with a
   // short backoff. The target must never be left with two names: that makes it fail the single-link check of the store.
@@ -739,6 +803,41 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
     return bytes;
   }
 
+  async function releaseFinishedJob(jobId, job) {
+    await job.persistence.catch(() => {});
+    // A retry after a failed release finds a half-deleted folder: finish it here instead of failing on the missing owner file.
+    try {
+      if (!await discardRemnant(jobId)) await removeJobDirectory(await directoryFor(jobId));
+    } catch (error) {
+      if (!FILE_IN_USE_CODES.has(error.code)) throw error;
+      throw new Error(`Job ${jobId} is only partly released: a file in ${join(root, jobId)} is open in another program. Close it and call release again.`, { cause: error });
+    }
+    jobs.delete(jobId);
+  }
+
+  /** Completed jobs whose result was read, oldest first: the only jobs the store may release on its own. */
+  function fetchedJobsOldestFirst() {
+    return [...jobs.entries()].filter(([, job]) => job.fetched && job.record.state === 'completed' && active !== job);
+  }
+
+  /**
+   * Frees `neededBytes` for a new job. When the store is too full, it releases jobs whose output was already read through
+   * result(), oldest first, and stops as soon as the job fits. A job whose output was never read stays.
+   */
+  async function makeRoomInStore(neededBytes) {
+    let existingBytes = await storeBytes();
+    const releasable = fetchedJobsOldestFirst();
+    while (existingBytes + neededBytes > limits.maxStoreBytes && releasable.length) {
+      const [jobId, job] = releasable.shift();
+      await releaseFinishedJob(jobId, job);
+      existingBytes = await storeBytes();
+    }
+    if (existingBytes + neededBytes <= limits.maxStoreBytes) return;
+    const freeMiB = Math.max(0, Math.floor((limits.maxStoreBytes - existingBytes) / 1024 ** 2));
+    const neededMiB = Math.ceil(neededBytes / 1024 ** 2);
+    throw new RangeError(`Job store lacks space for the snapshot and output reservation: it needs ${neededMiB} MiB free and has ${freeMiB} MiB. Call scene_render_release on finished jobs you no longer need (jobs whose result you already read are released automatically, oldest first).`);
+  }
+
   async function storeBytes() {
     let bytes = 0;
     for (const name of await readdir(root)) {
@@ -780,6 +879,27 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
     return jobs.get(jobId);
   }
 
+  // A program that polls status.json (an agent's shell on Windows) can hold it open for a moment, and the rename onto it then fails
+  // with EPERM, EBUSY or EACCES. Retry for under a second. If it stays blocked, the last good status.json stays on disk, the job
+  // keeps running from its in-memory record, and a warning says so: a status write must never fail a render.
+  async function replaceStatusFile(job, pending, target) {
+    for (let attempt = 0; attempt < STATUS_RENAME_ATTEMPTS; attempt += 1) {
+      try {
+        await publishOperations.rename(pending, target);
+        return;
+      } catch (error) {
+        if (!FILE_IN_USE_CODES.has(error.code)) throw error;
+        if (attempt === STATUS_RENAME_ATTEMPTS - 1) {
+          job.statusWarning = `Could not update status.json (${error.code}); another program holds it open. The previous status stays on disk until it is released.`;
+          process.emitWarning(job.statusWarning, { code: 'CRUCIBLE_STATUS_BLOCKED' });
+          await publishOperations.unlink(pending).catch(() => {});
+          return;
+        }
+        await new Promise(resolveWait => setTimeout(resolveWait, STATUS_RENAME_BACKOFF_MS * 2 ** attempt));
+      }
+    }
+  }
+
   function persist(job, record = job.record) {
     const text = JSON.stringify(record);
     // A write that failed already told its own caller; it must not make every later write reject with the same old error.
@@ -787,7 +907,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       const directory = await directoryFor(job.record.jobId);
       const pending = join(directory, 'status.json.pending');
       await writeFile(pending, text, { mode: 0o600 });
-      await rename(pending, join(directory, 'status.json'));
+      await replaceStatusFile(job, pending, join(directory, 'status.json'));
     });
     return job.persistence;
   }
@@ -836,7 +956,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       boundedNumber(record.progress.maximumPendingFrames, 0, 1, 'persisted pending frames', true);
       if (record.metrics !== undefined) record.metrics = jsonCopy(record.metrics, 65536);
       if (record.reason !== undefined && (typeof record.reason !== 'string' || record.reason.length > 2048)) throw new Error('Invalid persisted job reason.');
-      const namesAllowed = artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer, settings.frameCount);
+      const namesAllowed = artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer, settings.frameCount, settings.mattes);
       if (!Array.isArray(record.artifacts) || record.artifacts.length > namesAllowed.length) throw new Error('Invalid persisted artifacts.');
       const seen = new Set();
       for (const artifact of record.artifacts) {
@@ -844,7 +964,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
         if (!namesAllowed.includes(artifact.filename) || seen.has(artifact.filename)) throw new Error('Invalid persisted artifact name.');
         seen.add(artifact.filename);
         const actual = await hashFile(join(directory, artifact.filename), artifactByteLimit(settings, limits));
-        if (artifact.mimeType !== artifactMimeType(settings) || artifact.bytes !== actual.bytes || artifact.sha256 !== actual.sha256) throw new Error('Persisted artifact integrity failed.');
+        if (artifact.mimeType !== artifactMimeType(settings, artifact.filename) || artifact.bytes !== actual.bytes || artifact.sha256 !== actual.sha256) throw new Error('Persisted artifact integrity failed.');
       }
       if (record.state === 'completed' && record.artifacts.length !== namesAllowed.length) throw new Error('Completed job is missing its artifacts.');
       const job = { record, persistence: Promise.resolve(), settled: Promise.resolve() };
@@ -919,7 +1039,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       record.state = 'finalizing';
       await persist(job);
       objectKeys(completed, ['artifacts', 'metrics'], 'runner result');
-      const expected = artifactNames(record.settings.kind, record.settings.passes, record.settings.format, record.settings.multilayer, record.settings.frameCount);
+      const expected = artifactNames(record.settings.kind, record.settings.passes, record.settings.format, record.settings.multilayer, record.settings.frameCount, record.settings.mattes);
       if (!Array.isArray(completed.artifacts) || completed.artifacts.length !== expected.length) throw new Error('Runner did not return the required fixed artifacts.');
       const directory = await directoryFor(record.jobId);
       const metrics = jsonCopy(completed.metrics ?? {}, 65536);
@@ -928,7 +1048,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       let outputBytes = 0;
       for (const output of completed.artifacts) {
         objectKeys(output, ['temporary', 'filename', 'mimeType'], 'runner artifact');
-        if (!expected.includes(output.filename) || seen.has(output.filename) || output.temporary !== `${output.filename}.partial` || output.mimeType !== artifactMimeType(record.settings)) throw new Error('Runner artifact must use the fixed filename and MIME type.');
+        if (!expected.includes(output.filename) || seen.has(output.filename) || output.temporary !== `${output.filename}.partial` || output.mimeType !== artifactMimeType(record.settings, output.filename)) throw new Error('Runner artifact must use the fixed filename and MIME type.');
         seen.add(output.filename);
         const artifact = { filename: output.filename, mimeType: output.mimeType, ...await hashFile(join(directory, output.temporary), artifactByteLimit(record.settings, limits)) };
         outputBytes += artifact.bytes;
@@ -994,8 +1114,8 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       const operation = (async () => {
         if (jobs.size >= limits.maxRecords) throw new RangeError('Job record budget exhausted. Release a finished job.');
         const snapshotText = JSON.stringify(snapshotMetadata);
-        const existingBytes = await storeBytes();
-        if (existingBytes + Buffer.byteLength(snapshotText) + (snapshot.assetBytes?.length ?? 0) + limits.maxOutputBytes + 131072 > limits.maxStoreBytes) throw new RangeError('Job store lacks space for the snapshot and output reservation.');
+        const neededBytes = Buffer.byteLength(snapshotText) + (snapshot.assetBytes?.length ?? 0) + limits.maxOutputBytes + 131072;
+        await makeRoomInStore(neededBytes);
         const jobId = randomUUID();
         const directory = join(root, jobId);
         const staging = join(root, `.pending-${storeId}-${jobId}`);
@@ -1031,23 +1151,17 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       return structuredClone(job.record);
     },
     result(jobId) {
-      const record = getJob(jobId).record;
+      const job = getJob(jobId);
+      const record = job.record;
       if (record.state !== 'completed') throw new Error(`Render job is ${record.state}. No completed result is available.`);
+      job.fetched = true;
       return structuredClone({ jobId, sourceRevision: record.sourceRevision, artifacts: record.artifacts, metrics: record.metrics });
     },
     async release(jobId) {
       if (closed) throw new Error('Render job controller is closed.');
       const job = getJob(jobId);
       if (active === job || !TERMINAL.has(job.record.state)) throw new Error('Cancel and settle the active job before release.');
-      await job.persistence.catch(() => {});
-      // A retry after a failed release finds a half-deleted folder: finish it here instead of failing on the missing owner file.
-      try {
-        if (!await discardRemnant(jobId)) await removeJobDirectory(await directoryFor(jobId));
-      } catch (error) {
-        if (!FILE_IN_USE_CODES.has(error.code)) throw error;
-        throw new Error(`Job ${jobId} is only partly released: a file in ${join(root, jobId)} is open in another program. Close it and call release again.`, { cause: error });
-      }
-      jobs.delete(jobId);
+      await releaseFinishedJob(jobId, job);
       return { jobId, released: true };
     },
     async close() {

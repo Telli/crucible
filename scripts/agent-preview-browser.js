@@ -1,7 +1,13 @@
 import { exportNativeSceneTables, nativeTexelTracerIfAvailable, splitExportForChunks } from './native-bake-page.js';
+import { DELTA_MAXIMUM_BASELINE_BYTES, deltaPieces, planExportDelta } from './native-export-delta.js';
 
 // The byte tables of the last chunked native export, held until the job runner has read them (releaseNativeExport).
 let heldNativeExportTables = null;
+// The ranges of those tables the job runner still lacks (a delta against its baseline), or null when it reads them whole.
+let heldNativeExportRanges = null;
+// The tables of the last export a job asked to keep, so the next frame can send only what changed since (#1861).
+let nativeExportBaseline = null;
+let nativeExportCount = 0;
 import { buildWithKernels, kernelWorkersAvailable, kernelStats, resetKernelStats } from '../src/kernel-offload.js';
 import { createAgentScene, applyCameraFields, loadAllAgentSceneModules, allAgentSceneModulesLoaded, needsMeshBooleans, loadMeshBooleans, meshBooleansLoaded, setManifoldModuleLoader, needsPhysics, needsBuoyancy, loadPhysicsEngine, physicsEngineLoaded, setPhysicsModuleLoader } from '../src/agent-scene.js';
 import { CrucibleRenderer } from '../src/renderer.js';
@@ -15,15 +21,19 @@ import { applyProjection } from '../src/camera.js';
 import { mat4 } from 'gl-matrix';
 import { listAddedControllerKinds, listAddedCameraRigKinds, listControllerKinds, listCameraRigKinds, unregisterControllerKind, unregisterCameraRigKind } from '../src/player.js';
 import { fitAgentShadow, resolveAgentShadow, agentEnvironmentMap } from '../src/agent-look.js';
+import { pathTraceEnvironment } from '../src/path-trace-terms.js';
 import { agentSceneModule, agentSceneModuleLoaded } from '../src/agent-scene-modules.js';
 import { agentGroundPlacement, createAgentGround, placeAgentGround, FLOOR_COLOR } from '../src/agent-ground.js';
 import { groundBounceEnvironment } from '../src/ground-bounce.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
 import { parseGltf } from '../src/gltf.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { clipDisplayName, resolveClipIndex } from '../src/clip-name.js';
 import { exportGlb } from '../src/export.js';
+import { matrixFrame } from '../src/export-skeleton.js';
 import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
+import { sampleMotionAtZeroForGround } from './motion-ground-sample.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
@@ -36,7 +46,7 @@ import { parseRadianceHdr } from '../src/hdri.js';
 import { parseCube } from '../src/view-transform.js';
 import { weightTracksFromGltfAnimation } from '../src/export-skeleton.js';
 import { clipFromGltfAnimation } from '../src/skeleton-pose.js';
-import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
+import { sessionProblem, planSceneEviction } from '../src/agent-errors.js';
 import { AGENT_SCENE_DEFAULT_LIMITS, MEMORY_CEILING_MIB } from '../src/agent-scene-capabilities.js';
 import { describeApplication } from '../src/agent-apply-report.js';
 import { framingProblems, placementProblems, textureProblems, exposureProblems, lumaShares } from '../src/frame-checks.js';
@@ -44,6 +54,7 @@ import { BRANCH_LIMITS, createBranchStore, printableLabel } from '../src/agent-b
 import { agentAssetDecodeOptions, withCatalogLimitAdvice } from '../src/agent-asset-limits.js';
 import { describeMarks, validateMarks } from '../src/agent-annotate.js';
 import { sceneQueryFor, partMaterialsFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache } from './agent-walkmap.js';
+import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 
 // Open scenes by sessionId, least recently used first. One canvas serves them all, so at most one record owns a renderer;
 // a call on another scene hands the canvas over (the scene data stays, the renderer is rebuilt).
@@ -52,11 +63,13 @@ const records = new Map();
 let leasedRecord = null;
 const EVICTED_SESSIONS_KEPT = 32;
 const evictedSessions = [];
+// Why each remembered evicted scene was closed, so a later call with its ID can say it.
+const evictionReasons = {};
 let canvas = document.querySelector('canvas');
 
 function sessionError(sessionId) {
   const openSessionIds = [...records.keys()];
-  return new Error(sessionProblem(sessionId, openSessionIds.at(-1), { openSessionIds, evictedSessionIds: evictedSessions }));
+  return new Error(sessionProblem(sessionId, openSessionIds.at(-1), { openSessionIds, evictedSessionIds: evictedSessions, evictionReasons }));
 }
 
 function lookupSession(sessionId) {
@@ -115,26 +128,19 @@ function residentBytesOf(record) {
   return record.scene.inspect().residentGeometryBytes ?? 0;
 }
 
-// Close the least recently used scenes until `incoming` more scenes of `incomingBytes` fit, and name them to the caller.
+// Close the least recently used scenes until the new scene fits both caps, and name them and the cap to the caller.
 function evictForNewScene(incomingBytes) {
-  const evicted = [];
-  let bytes = incomingBytes;
-  const sizes = new Map();
-  for (const record of records.values()) {
-    const size = residentBytesOf(record);
-    sizes.set(record, size);
-    bytes += size;
+  const openScenes = [...records.values()].map(record => ({ sessionId: record.sessionId, bytes: residentBytesOf(record) }));
+  const { sessionIds, reason } = planSceneEviction(openScenes, incomingBytes);
+  for (const sessionId of sessionIds) {
+    releaseRecord(records.get(sessionId));
+    evictedSessions.push(sessionId);
+    evictionReasons[sessionId] = reason;
   }
-  for (const record of [...records.values()]) {
-    const overCount = records.size + 1 > SCENE_STORE_LIMITS.maxOpenScenes;
-    if (!overCount && bytes <= SCENE_STORE_LIMITS.maxOpenSceneBytes) break;
-    bytes -= sizes.get(record);
-    releaseRecord(record);
-    evicted.push(record.sessionId);
-    evictedSessions.push(record.sessionId);
+  for (const forgottenId of evictedSessions.splice(0, Math.max(0, evictedSessions.length - EVICTED_SESSIONS_KEPT))) {
+    delete evictionReasons[forgottenId];
   }
-  evictedSessions.splice(0, Math.max(0, evictedSessions.length - EVICTED_SESSIONS_KEPT));
-  return evicted;
+  return { evicted: sessionIds, reason };
 }
 
 function bytesFromBase64(data) {
@@ -205,6 +211,7 @@ function viewProblems(record, camera, exposure, { placement = false } = {}) {
   if (record.scene.bakeStaleness) problems.push(...record.scene.bakeStaleness());
   problems.push(...textureProblems({ parts: record.scene.parts }));
   if (record.scene.flushLeftovers) problems.push(...record.scene.flushLeftovers());
+  problems.push(...(record.scene.inspect({}).diagnostics ?? []).filter(problem => problem.kind === 'particle-node-transform-ignored'));
   if (exposure !== undefined) problems.push(...exposureProblems({ shares: sampleFrameShares(), exposure, environment: record.scene.environment }));
   return problems;
 }
@@ -350,7 +357,7 @@ function automaticGroundPlacement(scene) {
 
 function sampleMotionTime(scene, time) {
   if (motionGrounds.get(scene)?.revision !== scene.revision) {
-    scene.sampleMotion(0);
+    sampleMotionAtZeroForGround(scene, time);
     motionGrounds.set(scene, { revision: scene.revision, placement: agentGroundPlacement(scene.parts, scene.environment) });
   }
   scene.sampleMotion(time);
@@ -634,9 +641,9 @@ function createPreview(scene, { sessionId, memoryBudgetMiB, backend, transparent
     if (backend === 'gpu' && /swiftshader|llvmpipe|software/i.test(result.render.graphics)) {
       throw new Error('Hardware GPU rendering was requested, but the browser selected a software renderer.');
     }
-    const evicted = evictForNewScene(result.inspection.residentGeometryBytes ?? 0);
+    const { evicted, reason } = evictForNewScene(result.inspection.residentGeometryBytes ?? 0);
     records.set(sessionId, record);
-    return evicted.length ? { ...result, evictedSessions: evicted } : result;
+    return evicted.length ? { ...result, evictedSessions: evicted, evictionReason: reason } : result;
   } catch (error) {
     renderer?.dispose();
     // A throwing constructor may already own GPU objects without returning an instance.
@@ -769,7 +776,20 @@ function seekForExport(record, motionTime) {
 // The scene's parts already carry the current pose, including IK and node overrides, so skinned parts export it as is.
 function posedExport(record) {
   const rig = record.scene.rigExport?.() ?? { nodes: [], clips: [] };
-  return { parts: record.scene.parts.map(withoutRoundoffShear), options: rig.nodes.length ? rig : {} };
+  const options = rig.nodes.length ? rig : {};
+  return { parts: record.scene.parts.map(withoutRoundoffShear), options: { ...options, nodePaths: nodePathsOf(record.scene.exportRecipe().nodes) } };
+}
+
+/** "parent > child" for each node that has a parent, so an export error says where the node sits. */
+function nodePathsOf(nodes = []) {
+  const parentOf = new Map(nodes.map(node => [node.id, node.parent]));
+  const paths = {};
+  for (const node of nodes) {
+    const chain = [node.id];
+    for (let parent = node.parent; parent && chain.length <= nodes.length; parent = parentOf.get(parent)) chain.unshift(parent);
+    if (chain.length > 1) paths[node.id] = chain.join(' > ');
+  }
+  return paths;
 }
 
 // Chains of bone transforms leave world matrices with Float32 roundoff that the exporter reads as shear. Real shear
@@ -785,24 +805,22 @@ function withoutRoundoffShear(part) {
   });
   const dots = [[0, 1], [0, 2], [1, 2]].map(([first, second]) => Math.abs(columns[first].reduce((sum, value, axis) => sum + value * columns[second][axis], 0)));
   if (Math.max(...dots) > ROUNDOFF_SHEAR_LIMIT) return part;
-  const scale = mat4.getScaling([0, 0, 0], part.matrix);
-  const rotation = mat4.getRotation([0, 0, 0, 1], part.matrix);
-  const translation = mat4.getTranslation([0, 0, 0], part.matrix);
+  const { translation, rotation, scale } = matrixFrame(part.matrix);
   return { ...part, matrix: mat4.fromRotationTranslationScale(mat4.create(), rotation, translation, scale) };
 }
 
 // A source clip animates the source skeleton, so the scene must not carry a pose of its own that the clip would fight.
-function clipExport(record, clipIndex) {
+function clipExport(record, clipReference) {
   const { asset, scene } = record;
   if (!asset) throw new Error('clip needs an imported asset scene. Recipe scenes export their current pose.');
+  const clipIndex = resolveClipIndex(asset.animations, clipReference);
   const animation = asset.animations[clipIndex];
-  if (!animation) throw new RangeError(`clip ${clipIndex} does not exist. The asset has ${asset.animations.length} clips.`);
   const recipe = scene.exportRecipe();
   if (recipe.animation || recipe.nodeOverrides.length || recipe.motion) {
     throw new Error('Exporting a clip needs the unposed asset: remove animation, node overrides and motion first, or export without clip for the current pose.');
   }
   const sourceClip = clipFromGltfAnimation(animation);
-  const name = String(animation.name || `clip ${clipIndex}`);
+  const name = clipDisplayName(animation, clipIndex);
   const clip = { ...sourceClip, name, tracks: [...sourceClip.tracks, ...weightTracksFromGltfAnimation(animation)] };
   // Edited parts export their edited geometry on the source part's own matrix, skin and morph.
   const parts = asset.parts.map((part, index) => scene.parts[index].geometry === part.geometry ? part : { ...part, geometry: scene.parts[index].geometry });
@@ -982,7 +1000,7 @@ window.__agentPreview = {
     const record = requireSession(sessionId);
     if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('render snapshot', expectedRevision, record.scene.revision));
     return { sourceRevision: record.scene.revision, recipe: record.scene.exportRecipe(),
-      clips: record.asset?.animations.map(clip => ({ duration: clip.duration })) ?? [] };
+      clips: record.asset ? record.asset.animations.map(clip => ({ duration: clip.duration })) : record.scene.placedClipEnds().map(duration => ({ duration })) };
   },
   suspend({ sessionId }) {
     const record = lookupSession(sessionId);
@@ -1078,7 +1096,7 @@ window.__agentPreview = {
     const result = await renderPathTracedImage({
       parts: record.scene.parts,
       // The scene's motion blur shutter also blurs a grid volume that carries velocity (#1759), in the trace as in the rasterizer.
-      environment: { ...environment, map: agentEnvironmentMap(environment), ...(record.scene.effects.motionBlur.shutter > 0 ? { volumeShutter: record.scene.effects.motionBlur.shutter } : {}) },
+      environment: { ...pathTraceEnvironment(environment), ...(record.scene.effects.motionBlur.shutter > 0 ? { volumeShutter: record.scene.effects.motionBlur.shutter } : {}) },
       camera: record.scene.camera,
     }, { ...options, exposure: record.scene.effects.exposure });
     tracedExposure = record.scene.effects.exposure;
@@ -1097,7 +1115,7 @@ window.__agentPreview = {
   // The scene at one instant packed into the tables the native ray query tracer reads (renderer.backend "native"). The job
   // runner traces them outside the page; each table comes back as base64 bytes. With `chunked` the answer holds a `chunks`
   // manifest instead of the tables, which stay here for nativeExportBlob, so no one message bounds the scene.
-  async exportNativeScene({ sessionId, animation, motionTime, options, chunked = false, maximumTriangles }) {
+  async exportNativeScene({ sessionId, animation, motionTime, options, chunked = false, maximumTriangles, deltaBase, keepBaseline = false }) {
     const record = requireSession(sessionId);
     if (record.asset && (animation !== undefined || motionTime !== undefined)) {
       record.scene.sampleFrame({ ...(animation === undefined ? {} : { animation }),
@@ -1110,10 +1128,13 @@ window.__agentPreview = {
       import('../src/path-tracer.js'), import('../src/path-tracer-scene.js'), import('../src/path-tracer-gpu-pack.js'),
       import('@codepawlhq/cook/pack-input'), import('@codepawlhq/cook/job-input'), import('@codepawlhq/cook/grid-volume-input'),
     ]);
-    const environment = { ...record.scene.environment, map: agentEnvironmentMap(record.scene.environment) };
+    const environment = pathTraceEnvironment(record.scene.environment);
     // The "cycles" kernel gets FORMAT-v2 tables with whole materials, and copies of one geometry stay instances; the legacy kernel reads flattened v1 triangles.
     const camera = createCamera(record.scene.camera, options.width, options.height);
     heldNativeExportTables = null;
+    heldNativeExportRanges = null;
+    const baseline = nativeExportBaseline;
+    nativeExportBaseline = null;
     const packed = exportNativeSceneTables({ parts: record.scene.parts, environment, camera, options: packOptions, kernel, instancing: instancing === true,
       transport: chunked ? 'chunks' : 'message', maximumTriangles,
       modules: { buildTraceScene, resolveTexture, buildNativeInput, buildJobNativeInput, buildFlattenedJobNativeInput, pack, gridVolumeInput } });
@@ -1122,6 +1143,17 @@ window.__agentPreview = {
       const split = splitExportForChunks(packed);
       heldNativeExportTables = split.tables;
       exported = split.manifest;
+      // With the baseline the job runner holds, send the ranges that changed since it. Any other baseline (a reloaded page, a
+      // job that asked for none) sends every table whole, so a frame never depends on a copy that is not there.
+      if (deltaBase !== undefined && baseline && baseline.id === deltaBase) {
+        heldNativeExportRanges = planExportDelta(baseline.tables, split.tables);
+        exported = { ...exported, chunks: { ...exported.chunks, delta: { base: deltaBase, ranges: heldNativeExportRanges } } };
+      }
+      const keptBytes = Object.values(split.tables).reduce((total, bytes) => total + bytes.byteLength, 0);
+      if (keepBaseline && keptBytes <= DELTA_MAXIMUM_BASELINE_BYTES) {
+        nativeExportBaseline = { id: `export-${++nativeExportCount}`, tables: split.tables };
+        exported = { ...exported, exportId: nativeExportBaseline.id };
+      }
     }
     return { ...exported, ignored: describeIgnoredFeatures(record.scene.parts, environment, 'cpu', { kernelMaterials: exported.wholeMaterials, clipStart: camera.clipStart }) };
   },
@@ -1131,11 +1163,12 @@ window.__agentPreview = {
     if (!heldNativeExportTables) {
       throw new Error('nativeExportBlob: no chunked native export is held. Call exportNativeScene with chunked: true first.');
     }
-    return new Blob(Object.values(heldNativeExportTables));
+    return new Blob(heldNativeExportRanges ? deltaPieces(heldNativeExportTables, heldNativeExportRanges) : Object.values(heldNativeExportTables));
   },
   // Lets go of the held export once the job runner has every table.
   releaseNativeExport() {
     heldNativeExportTables = null;
+    heldNativeExportRanges = null;
   },
   // The PNG of linear pixels (three floats each, base64) that a denoiser outside the page returned, or of the wavelet
   // filter over the kept features when none came back.
@@ -1307,7 +1340,9 @@ window.__agentPreview = {
       }
       sampleMotionTime(record.scene, motionTime);
     }
-    draw(record);
+    // The post pass clock is the pose's motion time, as in a render job frame, so a pass anchored to a moving part stays on it.
+    const poseTime = record.scene.motionTime ?? undefined;
+    draw(record, 0, record.scene.camera, poseTime === undefined ? {} : { passTime: poseTime });
     const render = renderInfo(record.renderer, viewProblems(record, record.scene.camera, record.scene.effects.exposure, { placement: true }));
     record.lastRender = render;
     const labels = withLabels ? collectLabels(record, record.scene.camera, canvas.width, canvas.height) : undefined;
@@ -1315,7 +1350,8 @@ window.__agentPreview = {
       data: labeledPng(labels),
       mimeType: 'image/png',
       metadata: { sessionId, revision: record.scene.revision, topologyRevision: record.scene.topologyRevision,
-        motionTime: record.scene.motionTime ?? null, ...render, ...(labels ? { labels } : {}) },
+        motionTime: record.scene.motionTime ?? null, ...render, ...(labels ? { labels } : {}),
+        ...(motionTime === undefined && recipeMoves(record.scene.exportRecipe()) ? { hints: [MOTION_NOT_SET_HINT] } : {}) },
     };
   },
   // The findings of a view without drawing it, for a job whose frames the page does not draw (the path tracer). Exposure is

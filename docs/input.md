@@ -40,7 +40,7 @@ Events change the live state at any time, but game code reads a snapshot taken b
 
 ## Actions, axes and rebinding
 
-`bindAction(name, controls)` and `bindAxis(name, { bindings, deadZone })` add or replace a mapping at any time, which is rebinding. A binding is a control name or `{ control, scale }`. `unbindAction` and `unbindAxis` remove one. `bindAxis` also takes `smoothing` from 0 (default, none) up to but not including 1: each sample the axis moves `1 - smoothing` of the way to its target, so `0.5` halves the gap per fixed step. It is per sample, so it stays deterministic for a replay. Rebinding resets it.
+`bindAction(name, controls)` and `bindAxis(name, { bindings, deadZone })` add or replace a mapping at any time, which is rebinding. A binding is a control name or `{ control, scale }`. `unbindAction` and `unbindAxis` remove one, and reading the removed name throws at once. An axis definition with a field other than `bindings`, `deadZone` and `smoothing` is an error. `bindAxis` also takes `smoothing` from 0 (default, none) up to but not including 1: each sample the axis moves `1 - smoothing` of the way to its target, so `0.5` halves the gap per fixed step. It is per sample, so it stays deterministic for a replay. Rebinding resets it.
 
 Reading a name that was never bound throws an error that shows the `bindAction` call to add.
 

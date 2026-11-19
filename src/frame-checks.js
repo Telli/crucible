@@ -339,6 +339,23 @@ export function pathTracerFindingsLimit() {
   };
 }
 
+/**
+ * The warning a path traced job carries when its scene has `postPasses`. The tracer writes the lit frame only and has no
+ * first-hit depth, normal or object ID buffer for a pass to read, so the job returns the frame without the passes.
+ * Returns undefined when the scene has none, so a job without `postPasses` is unchanged.
+ */
+export function pathTracerSkippedPassesWarning(postPasses) {
+  if (!postPasses?.length) return undefined;
+  const names = postPasses.map(pass => pass.name).join(', ');
+  return {
+    kind: 'post-passes-skipped',
+    severity: 'warning',
+    target: 'renderer',
+    message: `This job is path traced, and the path tracer does not run postPasses: ${postPasses.length === 1 ? 'the pass' : 'the passes'} ${names} did not touch the image. The PNG is the plain traced frame.`,
+    fix: 'Render the look with a raster job (leave renderer out), or trace for the lit frame and accept it without the passes (docs/user-passes.md, "Where a pass runs").',
+  };
+}
+
 /** Adds a frame's diagnostics to `metrics.diagnostics`, keeping one entry per kind, target and message across a job's frames, up to 16 entries. */
 export function mergeFrameDiagnostics(metrics, frameDiagnostics) {
   if (!frameDiagnostics?.length) return;

@@ -219,3 +219,24 @@ test('a recipe sdf geometry becomes a part and respects the vertex budget', () =
   assert.throws(() => recipe({ root: CHARACTER, resolution: 128 }, { maxVertices: 1000 }), /vertices|maxVertices/);
   assert.throws(() => recipe({ root: { shape: 'cone' } }), /sdf\.root\.shape/);
 });
+
+test('sdf refuses sizes, positions, scale, offsets and blends beyond Float32 range instead of returning NaN', () => {
+  const sphere = { shape: 'sphere' };
+  const roots = {
+    radius: { shape: 'sphere', radius: 1e200 },
+    position: { shape: 'sphere', position: [1e300, 0, 0] },
+    scale: { shape: 'sphere', scale: 1e300 },
+    offset: { op: 'offset', distance: 1e300, child: sphere },
+    smooth: { op: 'union', smooth: 1e300, children: [sphere, { shape: 'sphere', position: [1, 0, 0] }] },
+  };
+  for (const [name, root] of Object.entries(roots)) {
+    assert.throws(() => sdfGeometry({ resolution: 16, root }), /sdf\.root bounds is .*within 1e38/, name);
+  }
+});
+
+test('sdf names a sparse vector or child instead of reporting an empty surface', () => {
+  assert.throws(() => sdfGeometry({ resolution: 16, root: { shape: 'box', size: [1, , 1] } }), /sdf\.root\.size is/);
+  assert.throws(() => sdfGeometry({ resolution: 16, root: { shape: 'sphere', position: [0, , 0] } }), /sdf\.root\.position is/);
+  const children = [{ shape: 'sphere' }, , { shape: 'sphere' }];
+  assert.throws(() => sdfGeometry({ resolution: 16, root: { op: 'union', children } }), /sdf\.root\.children\[1\] is/);
+});

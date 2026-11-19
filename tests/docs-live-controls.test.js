@@ -122,3 +122,10 @@ test('the shared slider style covers hover and focus-visible in both browser eng
   }
   assert.equal(frameControlStyle.split('{').length, frameControlStyle.split('}').length, 'braces must balance');
 });
+
+test('a slider with step any or an exponent step still shows its fraction', () => {
+  for (const [step, stored, shown] of [['any', '0.3712', '0.371'], ['1e-2', '0.37', '0.37'], ['0.25', '0.75', '0.75'], ['1', '3', '3']]) {
+    const { created } = runControlScript({ sliderProperties: { min: '0', max: '1', step, stored } });
+    assert.equal(created[0].textContent, shown, `step ${step}`);
+  }
+});
