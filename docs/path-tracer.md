@@ -73,7 +73,7 @@ A glass part with a material `dispersion` above 0 splits white light into colour
 
 ## A lamp mesh around its own point light (issue #2299)
 
-A glowing part whose bounds hold a point light, such as a bulb mesh around its lamp, does not shadow that light: in the WebGL2 tracer (`backend: "gpu"`, also the WebGL2 light bake) shadow rays of the light pass through it, and the part still lights the room by its own emission. A part that does not glow (a shade) blocks the light as any wall does. The CPU, WebGPU and native tracers do not have this rule yet.
+A glowing part whose bounds hold a point light, such as a bulb mesh around its lamp, does not shadow that light: in the CPU, WebGL2 (`backend: "gpu"`, also the WebGL2 light bake) and WebGPU tracers shadow rays of the light pass through it, and the part still lights the room by its own emission. A part that does not glow (a shade) blocks the light as any wall does. The native tracer does not have this rule yet.
 
 ## What it does not draw
 

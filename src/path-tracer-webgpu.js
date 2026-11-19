@@ -147,7 +147,7 @@ export function uploadScene(device, scene, requestedLightSelection = 'uniform') 
     environmentTables[environmentTables.length - 1] = portals.length;
   }
   // The subsurface table (two vectors per material) follows the material table in the same buffer.
-  const materialData = packMaterials(scene.materials, atlas, scene.shadowOnlyParts).data;
+  const materialData = packMaterials(scene.materials, atlas, scene.shadowOnlyParts, scene.lampLightMasks).data;
   const subsurfaceOffset = materialData.length / 4;
   const subsurfaceData = sceneUsesSubsurface(scene.materials) ? packSubsurface(scene.materials).data : new Float32Array(0);
   const materialsWithSubsurface = new Float32Array(materialData.length + subsurfaceData.length);

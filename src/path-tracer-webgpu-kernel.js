@@ -387,7 +387,8 @@ fn alphaAtNearestHit() -> f32 {
   return sampleAtlas(mapRectangle, materials[material + 4].y, uv).a;
 }
 
-fn occluded(origin: vec3<f32>, direction: vec3<f32>, limit: f32) -> bool {
+// lightBit is the point light whose shadow ray this is (-1 for the sun and other rays): the glowing bulb around that light does not block it.
+fn occluded(origin: vec3<f32>, direction: vec3<f32>, limit: f32, lightBit: i32) -> bool {
   var start = origin;
   var remaining = limit;
   let surfaceOffset = params.environmentRotationAndRays.z;
@@ -397,9 +398,9 @@ fn occluded(origin: vec3<f32>, direction: vec3<f32>, limit: f32) -> bool {
     traceRay(start, direction, remaining, anyHit);
     if (nearestSlot < 0) { return false; }
     let material = i32(triangles[nearestSlot * TRIANGLE_TEXELS].w) * MATERIAL_TEXELS;
+    let ownLamp = lightBit >= 0 && ((i32(materials[material + 5].w) >> u32(lightBit)) & 1) == 1;
     let cutoff = materials[material + 3].z;
-    if (cutoff == 0.0) { return true; }
-    if (alphaAtNearestHit() >= cutoff) { return true; }
+    if (!ownLamp && (cutoff == 0.0 || alphaAtNearestHit() >= cutoff)) { return true; }
     if (anyHit) {
       anyHit = false;
       continue;
@@ -853,6 +854,7 @@ fn directWeight(mode: i32, candidatePdf: f32) -> f32 {
 var<private> shadowOrigin: vec3<f32>;
 var<private> shadowDirection: vec3<f32>;
 var<private> shadowLimit: f32;
+var<private> shadowLightBit: i32 = -1;
 var<private> shadowAmount: vec3<f32>;
 var<private> shadowDepth: i32;
 var<private> shadowPending: bool = false;
@@ -886,7 +888,7 @@ ${hasLocalVolumes ? buildLocalVolumeFunctions({ hasGrid: hasGridVolume, hasNoise
 fn flushShadowRay() {
   if (!shadowPending) { return; }
   shadowPending = false;
-  if (!occluded(shadowOrigin, shadowDirection, shadowLimit)) { addRadiance(shadowDepth, shadowAmount); }
+  if (!occluded(shadowOrigin, shadowDirection, shadowLimit, shadowLightBit)) { addRadiance(shadowDepth, shadowAmount); }
 }
 
 fn reaches(bit: i32) -> bool {
@@ -1028,6 +1030,7 @@ fn lightsFromEveryEmitter(depth: i32, emitterCount: i32) -> bool {
 fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
   var distance = 0.0;
   var weightMode = 0;
+  shadowLightBit = -1;
   let hasSun = params.emittersFlagsSample.y != 0;
   let lightCount = params.sizeBouncesLights.w;
   if (hasSun && emitter == 0) {
@@ -1063,6 +1066,7 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
         distance = aimAt(positionType.xyz + jitter);
         if (distance < 1e-6) { return; }
         var mask = 1.0;
+        if (lightType == 0) { shadowLightBit = i32(colorBit.w); }
         if (lightType == 1) {
           let inside = -dot(directionRadius.xyz, lightDirection) - acrossCone.w;
           if (inside <= 0.0) { return; }
@@ -1372,7 +1376,7 @@ fn storeShadowRecord(path: u32, slot: u32) {
   let base = shadowRecordBase(path, slot);
   if (shadowPending) {
     storeVector(base, vec4<f32>(shadowOrigin, shadowLimit));
-    storeVector(base + 1u, vec4<f32>(shadowDirection, 0.0));
+    storeVector(base + 1u, vec4<f32>(shadowDirection, f32(shadowLightBit)));
     storeVector(base + 2u, vec4<f32>(shadowAmount, 1.0));
   } else {
     storeVector(base + 2u, vec4<f32>(0.0));
@@ -1640,7 +1644,8 @@ fn shadowPaths(@builtin(global_invocation_id) id: vec3<u32>) {
     if (amount.w == 0.0) { continue; }
     let origin = loadVector(recordBase);
     let rayDirection = loadVector(recordBase + 1u).xyz;
-    if (!occluded(origin.xyz, rayDirection, origin.w)) { addRadiance(depth, amount.xyz); }
+    let recordLightBit = i32(loadVector(recordBase + 1u).w);
+    if (!occluded(origin.xyz, rayDirection, origin.w, recordLightBit)) { addRadiance(depth, amount.xyz); }
   }
   storeVector(base + 3u, vec4<f32>(radiance, radianceData.w));
 }

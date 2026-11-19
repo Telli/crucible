@@ -473,7 +473,12 @@ function intersect(scene, originX, originY, originZ, directionX, directionY, dir
   return false;
 }
 
-function occluded(scene, originX, originY, originZ, directionX, directionY, directionZ, limit, hit) {
+/** True when the part is the glowing lamp mesh of the point light `lightBit` (src/lamp-mesh.js), which its own shadow rays pass through. */
+function isOwnLampMesh(scene, materialIndex, lightBit) {
+  return lightBit >= 0 && ((scene.lampLightMasks?.[materialIndex] ?? 0) >> lightBit & 1) === 1;
+}
+
+function occluded(scene, originX, originY, originZ, directionX, directionY, directionZ, limit, hit, lightBit = -1) {
   let startX = originX;
   let startY = originY;
   let startZ = originZ;
@@ -484,10 +489,14 @@ function occluded(scene, originX, originY, originZ, directionX, directionY, dire
   for (let attempt = 0; attempt < ALPHA_STEP_LIMIT; attempt++) {
     const found = scene.tracer.trace(startX, startY, startZ, directionX, directionY, directionZ, remaining, anyHit);
     if (found.nearestTriangle < 0) return false;
+    const materialIndex = scene.triangleMaterial[found.nearestTriangle];
+    const ownLamp = isOwnLampMesh(scene, materialIndex, lightBit);
     // Only a cutout material needs its texture read to know whether the ray passes through: skip the interpolation for the rest.
-    if (scene.materials[scene.triangleMaterial[found.nearestTriangle]].alphaCutoff === 0) return true;
-    const alpha = fillHit(scene, found.nearestTriangle, startX, startY, startZ, directionX, directionY, directionZ, found.nearestDistance, hit);
-    if (alpha >= hit.material.alphaCutoff) return true;
+    if (!ownLamp) {
+      if (scene.materials[materialIndex].alphaCutoff === 0) return true;
+      const alpha = fillHit(scene, found.nearestTriangle, startX, startY, startZ, directionX, directionY, directionZ, found.nearestDistance, hit);
+      if (alpha >= hit.material.alphaCutoff) return true;
+    }
     if (anyHit) {
       anyHit = false;
       continue;
@@ -570,7 +579,7 @@ function createPathTracer(scene, options) {
     const cosine = lightDirection[0] * direction[0] + lightDirection[1] * direction[1] + lightDirection[2] * direction[2];
     const phase = henyeyGreensteinPhase(volume.anisotropy, cosine);
     const [originX, originY, originZ] = hit.point;
-    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit)) return;
+    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, sampleLightBit)) return;
     phaseCandidate.pdf = phase;
     const scale = phase * fogTransmittance(originX, originY, originZ, distance) * weight(phaseCandidate);
     addRadiance(
@@ -595,7 +604,7 @@ function createPathTracer(scene, options) {
     const originX = hit.point[0] + normal[0] * scene.surfaceOffset;
     const originY = hit.point[1] + normal[1] * scene.surfaceOffset;
     const originZ = hit.point[2] + normal[2] * scene.surfaceOffset;
-    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit)) return;
+    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, sampleLightBit)) return;
     const scale = cosine * weight(surface) * fogTransmittance(originX, originY, originZ, distance);
     if (lightIsSun && writeSunShadow) writeSunShadow(originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], sunShadow);
     else sunShadow.fill(1);
@@ -610,6 +619,8 @@ function createPathTracer(scene, options) {
   // Past the first hit one light is drawn at random instead of all of them, so a scene with many lights costs one shadow
   // ray per bounce. `selectionProbability` is the chance that this light was the one drawn; dividing by it keeps the sum unbiased.
   let selectionProbability = 1;
+  // The point light whose shadow ray is being traced, or -1: that light's own lamp mesh does not block it.
+  let sampleLightBit = -1;
   const fullWeight = () => 1 / selectionProbability;
 
   // A light skips a part whose mask has its bit clear, at every bounce, so it is no bounce source there either.
@@ -659,7 +670,9 @@ function createPathTracer(scene, options) {
     if (distance < 1e-6) return;
     const strength = light.intensity * pointLightFalloff(distanceSquared, light);
     for (let channel = 0; channel < 3; channel++) lightRadiance[channel] = light.color[channel] * strength;
+    sampleLightBit = light.bit;
     addDirect(depth, normal, distance - scene.surfaceOffset, fullWeight);
+    sampleLightBit = -1;
   }
 
   function sampleSpotLight(depth, normal, light) {
