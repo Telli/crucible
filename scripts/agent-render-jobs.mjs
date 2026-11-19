@@ -100,6 +100,19 @@ function bakedPhysicsDuration(recipe) {
   return durations.length ? Math.max(...durations) : undefined;
 }
 
+/** A scene that places clips plays them on scene time, so a film of one runs as long as its longest clip, counted from the start. */
+function placedClipDefaultDuration(input, clips, recipe, bakeSeconds) {
+  const asked = input.motion ?? input.animation;
+  if (!placesSceneClips(recipe, clips) || recipe.motion || bakeSeconds || input.kind === 'image' || !asked) return undefined;
+  const longest = Math.max(...clips.map(clip => clip.duration));
+  return Math.min(MAXIMUM_VIDEO_SECONDS, Math.max(0.1, longest - (Number(asked.start) || 0)));
+}
+
+/** In a scene recipe the snapshot clips are the placed asset clips, one per placement, each as long as it needs to play once. */
+function placesSceneClips(recipe, clips) {
+  return recipe?.format === 'crucible.scene' && clips.length > 0;
+}
+
 function playsPhysics(recipe) {
   return Boolean(recipe?.physics || recipe?.cloth || recipe?.particles);
 }
@@ -128,7 +141,8 @@ function settingsFrom(input, clips = [], recipe) {
   // A physics-only film runs as long as its bake, counted from the motion start.
   const bakeSeconds = recipe?.format === 'crucible.scene' && !recipe.motion ? bakedPhysicsDuration(recipe) : undefined;
   const bakeDefault = bakeSeconds && input.kind !== 'image' && input.motion ? Math.max(0.1, bakeSeconds - (Number(input.motion.start) || 0)) : undefined;
-  const defaultDuration = timelineStart === undefined || input.kind === 'image' ? bakeDefault ?? 1 : filmTimelineDuration(recipe.timeline) - timelineStart;
+  const clipDefault = placedClipDefaultDuration(input, clips, recipe, bakeSeconds);
+  const defaultDuration = timelineStart === undefined || input.kind === 'image' ? bakeDefault ?? clipDefault ?? 1 : filmTimelineDuration(recipe.timeline) - timelineStart;
   const framesAsked = stillsFrameCountFrom(input);
   // A stills job that sets frames samples the motion clock every 1 / fps seconds, like a video; its duration is the span of those samples.
   const duration = framesAsked === undefined
@@ -184,8 +198,14 @@ function settingsFrom(input, clips = [], recipe) {
     if (clips.length === 0) throw new RangeError('animation needs an animation clip, and this scene has none. Drop animation from the settings, or add a clip to the scene first.');
     const clip = boundedNumber(input.animation.clip, 0, clips.length - 1, 'clip', true);
     const start = boundedNumber(input.animation.start ?? 0, 0, clips[clip].duration, 'animation start');
-    if (input.kind !== 'image' && start + duration > clips[clip].duration) throw new RangeError('Animation range exceeds the selected clip duration.');
-    result.animation = { clip, start };
+    if (placesSceneClips(recipe, clips)) {
+      // Placed clips play on scene time, the clock of motion, and loop or hold on their own settings: animation.start is the motion start.
+      if (input.motion !== undefined) throw new TypeError('Send either motion or animation for a scene that places clips: both set the scene time the clips play on. Keep motion.start.');
+      result.motion = { start };
+    } else {
+      if (input.kind !== 'image' && start + duration > clips[clip].duration) throw new RangeError('Animation range exceeds the selected clip duration.');
+      result.animation = { clip, start };
+    }
   }
   if (input.rendererTime !== undefined) {
     objectKeys(input.rendererTime, ['start', 'rate'], 'rendererTime');
@@ -381,6 +401,9 @@ function allowedFile(name) {
 }
 
 const FILE_IN_USE_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
+// 7 attempts with 10 ms doubling waits is 630 ms in the worst case.
+const STATUS_RENAME_ATTEMPTS = 7;
+const STATUS_RENAME_BACKOFF_MS = 10;
 
 async function regularFile(path) {
   const details = await lstat(path);
@@ -445,7 +468,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
   // or the disk fills. Where hard links are not supported it falls back to creating the target with `wx` and writing into it.
   // The file operations used here can be replaced through `lockTakeoverHooks.fileOperations`, so tests can make one of them fail.
   const removeJobFile = lockTakeoverHooks.removeJobFile ?? unlink;
-  const publishOperations = { writeFile, link, open, unlink, ...lockTakeoverHooks.fileOperations };
+  const publishOperations = { writeFile, link, open, unlink, rename, ...lockTakeoverHooks.fileOperations };
 
   // Removing the temporary name can fail for a moment (a virus scanner holding the file on Windows), so it is retried with a
   // short backoff. The target must never be left with two names: that makes it fail the single-link check of the store.
@@ -767,6 +790,41 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
     return bytes;
   }
 
+  async function releaseFinishedJob(jobId, job) {
+    await job.persistence.catch(() => {});
+    // A retry after a failed release finds a half-deleted folder: finish it here instead of failing on the missing owner file.
+    try {
+      if (!await discardRemnant(jobId)) await removeJobDirectory(await directoryFor(jobId));
+    } catch (error) {
+      if (!FILE_IN_USE_CODES.has(error.code)) throw error;
+      throw new Error(`Job ${jobId} is only partly released: a file in ${join(root, jobId)} is open in another program. Close it and call release again.`, { cause: error });
+    }
+    jobs.delete(jobId);
+  }
+
+  /** Completed jobs whose result was read, oldest first: the only jobs the store may release on its own. */
+  function fetchedJobsOldestFirst() {
+    return [...jobs.entries()].filter(([, job]) => job.fetched && job.record.state === 'completed' && active !== job);
+  }
+
+  /**
+   * Frees `neededBytes` for a new job. When the store is too full, it releases jobs whose output was already read through
+   * result(), oldest first, and stops as soon as the job fits. A job whose output was never read stays.
+   */
+  async function makeRoomInStore(neededBytes) {
+    let existingBytes = await storeBytes();
+    const releasable = fetchedJobsOldestFirst();
+    while (existingBytes + neededBytes > limits.maxStoreBytes && releasable.length) {
+      const [jobId, job] = releasable.shift();
+      await releaseFinishedJob(jobId, job);
+      existingBytes = await storeBytes();
+    }
+    if (existingBytes + neededBytes <= limits.maxStoreBytes) return;
+    const freeMiB = Math.max(0, Math.floor((limits.maxStoreBytes - existingBytes) / 1024 ** 2));
+    const neededMiB = Math.ceil(neededBytes / 1024 ** 2);
+    throw new RangeError(`Job store lacks space for the snapshot and output reservation: it needs ${neededMiB} MiB free and has ${freeMiB} MiB. Call scene_render_release on finished jobs you no longer need (jobs whose result you already read are released automatically, oldest first).`);
+  }
+
   async function storeBytes() {
     let bytes = 0;
     for (const name of await readdir(root)) {
@@ -808,6 +866,27 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
     return jobs.get(jobId);
   }
 
+  // A program that polls status.json (an agent's shell on Windows) can hold it open for a moment, and the rename onto it then fails
+  // with EPERM, EBUSY or EACCES. Retry for under a second. If it stays blocked, the last good status.json stays on disk, the job
+  // keeps running from its in-memory record, and a warning says so: a status write must never fail a render.
+  async function replaceStatusFile(job, pending, target) {
+    for (let attempt = 0; attempt < STATUS_RENAME_ATTEMPTS; attempt += 1) {
+      try {
+        await publishOperations.rename(pending, target);
+        return;
+      } catch (error) {
+        if (!FILE_IN_USE_CODES.has(error.code)) throw error;
+        if (attempt === STATUS_RENAME_ATTEMPTS - 1) {
+          job.statusWarning = `Could not update status.json (${error.code}); another program holds it open. The previous status stays on disk until it is released.`;
+          process.emitWarning(job.statusWarning, { code: 'CRUCIBLE_STATUS_BLOCKED' });
+          await publishOperations.unlink(pending).catch(() => {});
+          return;
+        }
+        await new Promise(resolveWait => setTimeout(resolveWait, STATUS_RENAME_BACKOFF_MS * 2 ** attempt));
+      }
+    }
+  }
+
   function persist(job, record = job.record) {
     const text = JSON.stringify(record);
     // A write that failed already told its own caller; it must not make every later write reject with the same old error.
@@ -815,7 +894,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       const directory = await directoryFor(job.record.jobId);
       const pending = join(directory, 'status.json.pending');
       await writeFile(pending, text, { mode: 0o600 });
-      await rename(pending, join(directory, 'status.json'));
+      await replaceStatusFile(job, pending, join(directory, 'status.json'));
     });
     return job.persistence;
   }
@@ -1022,8 +1101,8 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       const operation = (async () => {
         if (jobs.size >= limits.maxRecords) throw new RangeError('Job record budget exhausted. Release a finished job.');
         const snapshotText = JSON.stringify(snapshotMetadata);
-        const existingBytes = await storeBytes();
-        if (existingBytes + Buffer.byteLength(snapshotText) + (snapshot.assetBytes?.length ?? 0) + limits.maxOutputBytes + 131072 > limits.maxStoreBytes) throw new RangeError('Job store lacks space for the snapshot and output reservation.');
+        const neededBytes = Buffer.byteLength(snapshotText) + (snapshot.assetBytes?.length ?? 0) + limits.maxOutputBytes + 131072;
+        await makeRoomInStore(neededBytes);
         const jobId = randomUUID();
         const directory = join(root, jobId);
         const staging = join(root, `.pending-${storeId}-${jobId}`);
@@ -1059,23 +1138,17 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       return structuredClone(job.record);
     },
     result(jobId) {
-      const record = getJob(jobId).record;
+      const job = getJob(jobId);
+      const record = job.record;
       if (record.state !== 'completed') throw new Error(`Render job is ${record.state}. No completed result is available.`);
+      job.fetched = true;
       return structuredClone({ jobId, sourceRevision: record.sourceRevision, artifacts: record.artifacts, metrics: record.metrics });
     },
     async release(jobId) {
       if (closed) throw new Error('Render job controller is closed.');
       const job = getJob(jobId);
       if (active === job || !TERMINAL.has(job.record.state)) throw new Error('Cancel and settle the active job before release.');
-      await job.persistence.catch(() => {});
-      // A retry after a failed release finds a half-deleted folder: finish it here instead of failing on the missing owner file.
-      try {
-        if (!await discardRemnant(jobId)) await removeJobDirectory(await directoryFor(jobId));
-      } catch (error) {
-        if (!FILE_IN_USE_CODES.has(error.code)) throw error;
-        throw new Error(`Job ${jobId} is only partly released: a file in ${join(root, jobId)} is open in another program. Close it and call release again.`, { cause: error });
-      }
-      jobs.delete(jobId);
+      await releaseFinishedJob(jobId, job);
       return { jobId, released: true };
     },
     async close() {

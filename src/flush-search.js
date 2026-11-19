@@ -25,6 +25,10 @@ const NATIVE_CELL_LIMIT = 64;
 const GRID_LEVEL_SCALE = 16;
 const GRID_LEVELS = 2;
 const CELL_SAMPLES = 4096;
+// A JS Map holds at most 2^24 entries and throws a bare RangeError past it. The grid stops listing triangles at this many
+// native cells and is built again with cells twice as wide, up to MAXIMUM_GRID_COARSENINGS times.
+const MAXIMUM_GRID_ENTRIES = 16_000_000;
+const MAXIMUM_GRID_COARSENINGS = 8;
 // Tags whose vertex shader moves vertices (renderer.js DEFORMING_TAGS): their triangles are not where the geometry says.
 const DEFORMING_TAGS = new Set(['foliage', 'grass', 'water', 'fire', 'smoke']);
 
@@ -243,6 +247,7 @@ function normalCellsOf(table, id, cells) {
 }
 
 const cellRange = new Int32Array(6);
+const estimateNormalCells = [];
 
 // The grid cells a triangle's box touches at one level, grown by half the reach so two boxes within the reach share a cell.
 // Returns how many cells that is.
@@ -258,13 +263,35 @@ function cellRangeOf(table, id, cellSize, reach) {
   return cells;
 }
 
+// The finest grid level where the triangle spans at most NATIVE_CELL_LIMIT cells.
+function nativeLevelOf(table, id, cellSize, reach) {
+  let level = 0;
+  while (level < GRID_LEVELS && cellRangeOf(table, id, cellSize * GRID_LEVEL_SCALE ** level, reach) > NATIVE_CELL_LIMIT) level++;
+  return level;
+}
+
+// How many native cell entries buildCells would make, projected from CELL_SAMPLES evenly spaced triangles.
+function estimateNativeEntries(table, cellSize, reach) {
+  const stride = Math.max(1, Math.floor(table.count / CELL_SAMPLES));
+  let sampledEntries = 0;
+  let sampled = 0;
+  for (let id = 0; id < table.count; id += stride) {
+    const level = nativeLevelOf(table, id, cellSize, reach);
+    const normalCellCount = normalCellsOf(table, id, estimateNormalCells).length;
+    sampledEntries += level === GRID_LEVELS ? normalCellCount : normalCellCount * cellRangeOf(table, id, cellSize * GRID_LEVEL_SCALE ** level, reach);
+    sampled++;
+  }
+  return (sampledEntries / sampled) * table.count;
+}
+
 function cellKey(normalCell, level, cellX, cellY, cellZ) {
   const mixed = Math.imul(cellX, 73856093) ^ Math.imul(cellY, 19349663) ^ Math.imul(cellZ, 83492791) ^ Math.imul(normalCell * GRID_LEVELS + level, 0x9e3779b1);
   return mixed >>> 0;
 }
 
 // Lists every triangle in the cells of its own level (`natives`), then as a guest in the coarser cells that hold a native.
-// The last level is one cell per normal cell, for triangles too large for any grid.
+// The last level is one cell per normal cell, for triangles too large for any grid. Returns null when the natives would pass
+// MAXIMUM_GRID_ENTRIES, so the caller can try wider cells.
 function buildCells(table, cellSize, reach) {
   const levels = Array.from({ length: GRID_LEVELS + 1 }, () => new Map());
   const nativeLevel = new Uint8Array(table.count);
@@ -285,16 +312,18 @@ function buildCells(table, cellSize, reach) {
       }
     }
   };
+  let nativeEntries = 0;
   for (let id = 0; id < table.count; id++) {
-    let level = 0;
-    while (level < GRID_LEVELS && cellRangeOf(table, id, cellSize * GRID_LEVEL_SCALE ** level, reach) > NATIVE_CELL_LIMIT) level++;
+    const level = nativeLevelOf(table, id, cellSize, reach);
     nativeLevel[id] = level;
     const cells = levels[level];
     visitCells(id, level, key => {
+      nativeEntries++;
       const cell = cells.get(key);
       if (cell) cell.natives.push(id);
       else cells.set(key, { natives: [id], guests: [] });
     });
+    if (nativeEntries > MAXIMUM_GRID_ENTRIES) return null;
   }
   for (let id = 0; id < table.count; id++) {
     for (let level = nativeLevel[id] + 1; level <= GRID_LEVELS; level++) {
@@ -304,6 +333,18 @@ function buildCells(table, cellSize, reach) {
     }
   }
   return levels.flatMap(cells => [...cells.values()]);
+}
+
+// Wider cells list each triangle in fewer of them and leave the pairs found the same. A grid is made wider only when a sample
+// of the triangles projects past MAXIMUM_GRID_ENTRIES, or when building it passes that, so every scene that fit keeps its grid.
+function buildCoarsenedCells(table, reach) {
+  let cellSize = gridCellSize(table, reach);
+  for (let coarsening = 0; coarsening <= MAXIMUM_GRID_COARSENINGS; coarsening++, cellSize *= 2) {
+    if (estimateNativeEntries(table, cellSize, reach) > MAXIMUM_GRID_ENTRIES) continue;
+    const cells = buildCells(table, cellSize, reach);
+    if (cells) return cells;
+  }
+  throw new RangeError(`The coplanar search has ${table.count} triangles in a scene too large to index. Pass environment.resolveCoplanar: false to skip the search, or split the scene into smaller ones.`);
 }
 
 const clipFirst = new Float64Array(32);
@@ -513,7 +554,7 @@ export function findFlushPairs(parts, { triangleBudget = DEFAULT_TRIANGLE_BUDGET
   // No pair of parts spans more than the scene, so this is the widest gap any pair is tested with.
   const reach = nearTolerance(boundsDiagonal(sceneBounds));
   const testPair = createPairTest(table, entries, reach, pairBudget, testedPairLimit, result);
-  for (const cell of buildCells(table, gridCellSize(table, reach), reach)) testCell(cell, table, reach, testPair);
+  for (const cell of buildCoarsenedCells(table, reach)) testCell(cell, table, reach, testPair);
   result.pairs.sort((first, second) => first.first - second.first || first.second - second.second);
   return result;
 }

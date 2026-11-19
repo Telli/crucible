@@ -9,7 +9,7 @@ Release `0.6.0` includes five MCP tools for asynchronous image and video renderi
 3. Create a scene and inspect its current revision.
 4. Submit `scene_render_submit` with the session ID, current revision and render settings.
 5. Poll `scene_render_status` until the job reaches a terminal state. The job tools take `jobId` alone; a `sessionId` is refused with that hint. A path traced job on the default cpu backend whose scene is estimated above twice 400000 triangles (the estimate can run 1.5 times high on non-indexed geometry) is refused at submit with the count, instead of failing after it started; a scene between the cap and that margin is checked exactly when the trace starts.
-6. Read `scene_render_result` after completion to obtain output paths, and SHA-256 hashes with `response_format: "detailed"`. The answer attaches every PNG of the job (up to 1 MiB each) as an image, whatever `response_format` is, and adds a resource link to each file; a harness that keeps the transcript pays for those pictures on every later turn, so pass `images: false` to get the paths, sizes and metrics only. Video is never attached.
+6. Read `scene_render_result` after completion to obtain output paths, and SHA-256 hashes with `response_format: "detailed"`. The answer attaches the PNGs of a job of up to 8 files (up to 1 MiB each) as images, whatever `response_format` is, and adds a resource link to each file; a job of more than 8 files attaches none, because a harness that keeps the transcript pays for every picture on each later turn. Pass `images: false` to get the paths, sizes and metrics only, or `images` as a list of up to 8 artifact indexes (counted from 0) to attach just those frames of a large job. Video is never attached.
 7. Release unwanted outputs with `scene_render_release`.
 
 For MP4 jobs, FFmpeg must be on PATH or configured with `--ffmpeg` and an absolute executable path.
@@ -321,6 +321,7 @@ The defaults are 24 fps and one second.
 Images sample `animation.start` without requiring the default duration to fit the clip.
 Stills and videos require the entire requested animation range to fit the selected clip.
 A scene with no clips rejects `settings.animation` with an error that says so; drop `animation` or add a clip first.
+A scene recipe that places clips (`asset.clip`) counts as having them, one per placement in placement order, each as long as it needs to play once (its `start` plus its length at its `speed`). They play on scene time, the clock of `motion`, so no motion track is needed: `settings.animation { clip, start }` is the same as `settings.motion { start }`, and sending both is an error. A video or stills job with one of them and no `duration` runs as long as the longest placed clip, counted from `start`. A clip loops or holds on its own `asset.clip.loop`, so the render may run longer than one pass.
 Renderer time defaults to `{ start: 0, rate: 1 }` and remains separate from animation sampling.
 
 `progress(update)` accepts monotonic `frames` and a `maximumPendingFrames` value of zero or one.
@@ -379,6 +380,8 @@ The controller rejects links, file aliases, unknown filenames, foreign directori
 It verifies completed artifact hashes when reopening a store.
 It removes files individually during release, without recursive deletion.
 
+A program that polls `status.json` can hold it open, and on Windows that blocks the rename that replaces it. The controller retries that rename for under a second on `EPERM`, `EBUSY` and `EACCES`. If the file stays held, the last good `status.json` stays on disk, a `CRUCIBLE_STATUS_BLOCKED` process warning is emitted and the job carries on. `scene_render_status` answers from memory, so prefer it to reading the file.
+
 The lock protects cooperating controller processes.
 The filesystem must remain private to the owner while jobs run.
 It does not isolate an arbitrary callback or hostile concurrent filesystem writer.
@@ -423,6 +426,7 @@ Admission reserves the maximum output budget plus snapshot and metadata space.
 The optional `limits` object can reduce controller budgets for bounded tests.
 It cannot increase production limits.
 Partial files count toward the store budget and remain until explicit release.
+Each submit needs room for its snapshot and a full output reservation (128 MiB by default). When the store is too full, the controller first releases completed jobs whose `scene_render_result` was already read, oldest first, and stops as soon as the new job fits; the files of a released job are gone, so copy outputs you keep before you submit the next job. A job whose result was never read is never released this way. If the job still does not fit, the error says how many MiB it needs and how many are free and names `scene_render_release`. A job read before a server restart counts as unread again.
 
 ## CPU checks
 
