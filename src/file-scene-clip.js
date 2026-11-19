@@ -29,3 +29,17 @@ export function createFileSceneClipPlayer({ asset, posedParts, sceneParts, rende
     },
   };
 }
+
+// The frame function of a scene-file page: it poses the clip (when the GLB has one) and then renders at the camera's pose for the
+// time. `camera` is a camera sampler or null; without one the scene file's own eye and target are used. The returned function
+// carries its clip player as `clipPlayer` (null without a clip), so the native path tracer can pose the same clip.
+export function createFileSceneRenderAt({ asset, posedParts, sceneParts, rendererParts, renderer, camera, description, frame }) {
+  const clipPlayer = createFileSceneClipPlayer({ asset, posedParts, sceneParts, rendererParts });
+  const renderAt = seconds => {
+    clipPlayer?.poseAt(renderer, seconds);
+    const pose = camera ? camera.sample(seconds) : { eye: description.eye, target: description.target };
+    renderer.render({ ...frame, ...pose });
+  };
+  renderAt.clipPlayer = clipPlayer;
+  return renderAt;
+}
