@@ -2114,6 +2114,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     get motionTime() {
       return state.motionTime;
     },
+    /** Seconds each placed asset clip needs to play once, in placement order: the clips a render job can play on scene time. */
+    placedClipEnds() {
+      return state.assetRuntime.animators.length ? agentSceneModule('assets').placedClipEnds(state.assetRuntime) : [];
+    },
     sequenceTextures() {
       return state.sequences;
     },
@@ -2156,13 +2160,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const drawnParts = new Map(state.restParts.map(part => [part.name, part]));
       for (const sourcePart of state.sourceRestParts) {
         const part = drawnParts.get(sourcePart.name);
-        const local = state.localBounds.get(sourcePart.geometry);
-        if (!part || !local || part.visibility?.visible === false) continue;
-        const positions = [];
-        for (let corner = 0; corner < 8; corner++) {
-          positions.push(corner & 1 ? local.max[0] : local.min[0], corner & 2 ? local.max[1] : local.min[1], corner & 4 ? local.max[2] : local.min[2]);
-        }
-        bounds.push({ name: part.name, ...boundsFor({ positions }, part.matrix) });
+        if (!part || part.visibility?.visible === false) continue;
+        // Measured from the geometry itself: a water part with foam or a wear mask draws a copy the cached local bounds do not list.
+        bounds.push({ name: part.name, ...boundsFor(sourcePart.geometry, part.matrix) });
       }
       return bounds;
     },
@@ -2407,7 +2407,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         return result;
       });
       const resident = geometryStats(ownedGeometryRecords());
-      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...coplanarProblems(), ...(agentSceneModuleLoaded('unsupportedPart') ? agentSceneModule('unsupportedPart').unsupportedPartProblems(state.parts, state.recipe, revision) : []), ...(state.particleSampler?.diagnostics() ?? [])];
+      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...coplanarProblems(), ...(agentSceneModuleLoaded('unsupportedPart') ? agentSceneModule('unsupportedPart').unsupportedPartProblems(state.parts, state.recipe, revision) : []), ...(state.particleSampler?.diagnostics() ?? []), ...(state.assetRuntime.animators.length ? agentSceneModule('assets').placedClipDiagnostics(state.assetRuntime) : [])];
       return {
         revision, topologyRevision,
         ...(state.recipe.motion?.ik?.length ? { motionIk: agentSceneModule('motion').compileAgentMotion(state.recipe.motion, state.recipe).sweepIk() } : {}),

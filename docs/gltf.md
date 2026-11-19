@@ -37,13 +37,13 @@ The optional `signal` aborts those fetches.
 | Option | Default | Limit |
 | --- | ---: | --- |
 | `maxBytes` | 268,435,456 | Total encoded input and fetched external resources. |
-| `maxDecodedBytes` | 1,073,741,824 | Decoded accessor bytes, estimated from the accessor counts before anything is decoded. Left unset while `maxBytes` is set, it is four times `maxBytes`. |
+| `maxDecodedBytes` | 1,073,741,824 | Decoded accessor bytes and skinned-primitive pose copies (448 bytes per joint, one copy per skinned primitive), estimated from the counts before anything is decoded. Left unset while `maxBytes` is set, it is four times `maxBytes`. |
 | `maxVertices` | 8,000,000 | Declared and decoded geometry vertices. Indices have a separate ceiling of twelve times this value. |
 | `maxParts` | 65,536 | Declared nodes and decoded mesh parts. |
 | `maxResources` | 256 | Unique resource URIs. |
 | `maxTexturePixels` | 16,777,216 | Combined texture image pixels, checked from the file headers before decoding. Over the budget, the largest images are halved together until they fit, with base color and emission maps kept at twice the size of the normal, roughness and occlusion maps, and `asset.scaledTextures` lists each one as `{ name, from, to }` (also summarised in `asset.warnings`). |
 | `maxTextureImagePixels` | 67,108,864 | Hard ceiling for one image, checked before decoding. Larger images are rejected, never scaled. |
-| `maxJoints` | 4,096 | Combined declared joints and joint palettes for instantiated meshes. |
+| `maxJoints` | 4,096 | Joints declared by all skins; a skin worn by many primitives counts once. Pose copies count against `maxDecodedBytes`. |
 | `maxInstances` | 65,536 | Instances of one `EXT_mesh_gpu_instancing` node. |
 
 Every numeric limit must be a positive safe integer.
@@ -110,7 +110,7 @@ A file over `maxBytes` (256 MiB by default) fails before decoding with an error 
 
 `scripts/render-media.mjs --scene file` and `scripts/render-file-native.mjs` serve a GLB above 32 MiB from a local HTTP server that streams it from disk. Handing a file that size to the page through a Playwright route copies it through the browser protocol as one message and closed the whole browser tab (a 225 MB file did, with nothing else loading).
 
-A scene file whose GLB has an animation clip plays the first clip on a loop in `scripts/render-media.mjs --scene file`, the way the showcase page does: the pose at a frame time is the clip at that time modulo the clip length. Staged files (`glbRest`) are not posed, and `scripts/render-file-native.mjs` still traces the bind pose. A GLB without a clip renders as before.
+A scene file whose GLB has an animation clip plays the first clip on a loop in `scripts/render-media.mjs --scene file`, the way the showcase page does: the pose at a frame time is the clip at that time modulo the clip length. Staged files (`glbRest`) are not posed. `scripts/render-file-native.mjs` poses the same clip before it packs the scene, at `--time <seconds>` (default 0); render a video as one run per frame time. A GLB without a clip renders as before.
 
 ## Loading a large scene without a long freeze
 
