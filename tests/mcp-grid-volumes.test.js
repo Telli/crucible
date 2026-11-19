@@ -10,7 +10,7 @@ import { createAgentRuntime } from '../scripts/agent-runtime.mjs';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
 import { encodeVolumeGrid } from '../src/volume-grid.js';
 import { EXPLOSION_EMPTY_VELOCITY_GRID, explosionGridByteLength, setExplosionBakeStore } from '../src/explosion-grids.js';
-import { GRID_DIRECTORY_VARIABLE, readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
+import { GRID_DIRECTORY_VARIABLE, readVolumeGridFiles, volumeGridFileBytes, volumeGridUses } from '../src/mcp-volume-grids.js';
 import { decodePngPixels, meanBrightness } from './support/png-pixels.mjs';
 
 // Grid volumes through the MCP render path (#1161): the server reads the .67vg files a recipe names and hands their bytes to the preview page, which has
@@ -132,6 +132,11 @@ test('a grid name that is not a file in the grid folder is refused with what to 
     assert.equal(refused.isError, true, grid);
     assert.match(refused.content.find(item => item.type === 'text').text, message);
   }
+});
+
+test('a non-list frames value is named in the grid error (#2624)', () => {
+  assert.throws(() => readVolumeGridFiles(gridRecipe({ frames: 5 }), '.'), /names the grid 5/);
+  assert.deepEqual(volumeGridUses(gridRecipe({ frames: null, grid: 'left.67vg' }))[0].names, ['left.67vg']);
 });
 
 test('grid bytes are bounded by name: one sequence may not pass its byte budget', async context => {

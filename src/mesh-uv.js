@@ -623,6 +623,7 @@ function splitIntoAxisCharts(mesh, islands, seam, table, faceNormal) {
  */
 export function unwrapUv(mesh, { seams = { angle: 60 }, margin = 0.01, maxDistortion = 0.25 } = {}) {
   requireUvMargin('unwrapUv', margin);
+  requireFiniteInRange('unwrapUv', 'maxDistortion', maxDistortion, 0, 100);
   const table = edgeCornerTable(mesh);
   const { nextCorner } = cornerCycles(mesh);
   const facesOfCorners = cornerFaces(mesh);

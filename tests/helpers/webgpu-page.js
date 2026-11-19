@@ -39,6 +39,21 @@ async function launchWebGpuChrome(chromium, { bundled = false } = {}) {
   return chromium.launch({ headless: true, args: [...WEBGPU_ARGUMENTS, ...BUNDLED_WINDOWS_ARGUMENTS] });
 }
 
+// The tests import /src modules into a blank page of the dev server's origin. The home page would start the live hero, whose
+// world load keeps a software adapter (SwiftShader on CI) busy for minutes beside the tracer under test (#2684).
+export const BLANK_PAGE_PATH = '/__webgpu-test-page.html';
+const BLANK_PAGE_HEADERS = {
+  'content-type': 'text/html; charset=utf-8',
+  'cross-origin-opener-policy': 'same-origin',
+  'cross-origin-embedder-policy': 'require-corp',
+};
+
+async function openBlankPage(page, port) {
+  const address = `http://127.0.0.1:${port}${BLANK_PAGE_PATH}`;
+  await page.route(address, route => route.fulfill({ status: 200, headers: BLANK_PAGE_HEADERS, body: '<!doctype html><title>WebGPU test</title>' }));
+  await page.goto(address);
+}
+
 /** Runs `body(page)` on the dev server's page in headless Chrome with a WebGPU adapter, and cleans up. `{ bundled: true }` uses the bundled Chromium, not the Chrome install. */
 export async function withWebGpuPage(testContext, body, options = {}) {
   let chromium;
@@ -59,7 +74,7 @@ export async function withWebGpuPage(testContext, body, options = {}) {
       return;
     }
     const page = await browser.newPage({ viewport: { width: 128, height: 128 } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     if (!await page.evaluate(async () => Boolean(navigator.gpu && await navigator.gpu.requestAdapter()))) {
       skipOrThrow(testContext, 'Chrome has no WebGPU adapter');
       return;

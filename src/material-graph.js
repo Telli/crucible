@@ -713,6 +713,7 @@ export function compileMaterialGraph(graph, { size = 1, images, groups } = {}) {
 
 /** Throw when a graph is too costly to bake at this size. Called while normalizing, so a bad scene fails at once. */
 export function checkMaterialGraphWork(compiled, resolution) {
+  integerInRange(resolution, 1, 16384, 'resolution');
   const work = compiled.cost * resolution * resolution;
   if (work > MATERIAL_GRAPH_LIMITS.maxWork) {
     throw new RangeError(`Material graph: ${compiled.cost} work units per pixel at ${resolution} by ${resolution} is over the limit of ${MATERIAL_GRAPH_LIMITS.maxWork}. Use fewer nodes or a smaller resolution.`);

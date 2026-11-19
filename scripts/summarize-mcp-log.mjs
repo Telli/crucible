@@ -2,6 +2,10 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
+function isCallRecord(value) {
+  return typeof value?.tool === 'string' && Number.isFinite(value.durationMs);
+}
+
 export function readCalls(logPaths) {
   const calls = [];
   for (const logPath of logPaths) {
@@ -9,10 +13,16 @@ export function readCalls(logPaths) {
       if (line.trim() === '') {
         continue;
       }
+      let call;
       try {
-        calls.push(JSON.parse(line));
+        call = JSON.parse(line);
       } catch {
-        console.error(`Skipped a line in ${logPath} that is not JSON.`);
+        call = undefined;
+      }
+      if (isCallRecord(call)) {
+        calls.push(call);
+      } else {
+        console.error(`Skipped a line in ${logPath} that is not a call record.`);
       }
     }
   }

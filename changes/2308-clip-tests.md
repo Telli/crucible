@@ -1,0 +1,1 @@
+- Tests pin that `render-media --scene file` poses the glTF clip, including in scenes with water reflection (#2308)

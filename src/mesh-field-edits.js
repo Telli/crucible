@@ -1,6 +1,6 @@
 import { createMeshData, vertexGroupWeights } from './mesh-data.js';
 import { evaluateField, meshFieldContext } from './mesh-fields.js';
-import { vertexNormals } from './mesh-normals.js';
+import { displacementOffsets } from './mesh-displace-directions.js';
 import { selectFaces } from './mesh-select.js';
 
 // Edits driven by field expressions (see mesh-fields.js). Every expression is evaluated on the input positions
@@ -60,22 +60,28 @@ export function setPosition(mesh, { select, position, offset }, loadSurface) {
 export function displaceMesh(mesh, { select, field, strength = 1, midlevel = 0.5, direction = 'normal', group }, loadSurface) {
   const context = meshFieldContext(mesh, 'point', loadSurface);
   const { values } = evaluateField(field, context, { kind: 'scalar' });
-  const normals = direction === 'normal' ? vertexNormals(mesh) : null;
   const axis = AXIS_DIRECTIONS.get(direction);
   const flags = selectedVertices(mesh, select);
   // A vertex group scales the move per vertex, as the vertex group of Blender's Displace modifier.
   const groupWeights = group === undefined ? null : vertexGroupWeights(mesh, group);
-  const positions = new Float32Array(mesh.positions);
+  const distances = new Float64Array(mesh.vertexCount);
+  const moving = new Uint8Array(mesh.vertexCount);
   let movedVertices = 0;
   for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
     if (!flags[vertex]) continue;
     const weight = groupWeights ? groupWeights[vertex] : 1;
     if (weight === 0) continue;
     movedVertices++;
-    const distance = (values[vertex] - midlevel) * strength * weight;
+    moving[vertex] = 1;
+    distances[vertex] = (values[vertex] - midlevel) * strength * weight;
+  }
+  // Along the normal, sharp edges are mitered so the surface does not fold over there (#2224).
+  const offsets = direction === 'normal' ? displacementOffsets(mesh, distances) : null;
+  const positions = new Float32Array(mesh.positions);
+  for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
+    if (!moving[vertex]) continue;
     for (let component = 0; component < 3; component++) {
-      const along = normals ? normals[vertex * 3 + component] : axis[component];
-      positions[vertex * 3 + component] += distance * along;
+      positions[vertex * 3 + component] += offsets ? offsets[vertex * 3 + component] : distances[vertex] * axis[component];
     }
   }
   return { mesh: withPositions(mesh, positions), movedVertices };

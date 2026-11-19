@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
 import { buildPackIndex, createZip } from '../scripts/build-pack-index.mjs';
 
@@ -37,7 +39,30 @@ test('an invalid pack stops the build with its own error', async (context) => {
   const options = packsFolderWithExample(context);
   writeFileSync(join(options.packsDirectory, 'example-starter/run.js'), 'console.log(1)');
   await assert.rejects(buildPackIndex(options), /Refusing to publish 1 invalid pack[\s\S]*example-starter[\s\S]*run\.js/);
-  assert.ok(!readdirSync(options.outputDirectory).includes('index.json'));
+  assert.ok(!existsSync(join(options.outputDirectory, 'index.json')));
+});
+
+test('a failed build leaves the previous output folder untouched', async (context) => {
+  const options = packsFolderWithExample(context);
+  mkdirSync(options.outputDirectory);
+  writeFileSync(join(options.outputDirectory, 'index.json'), 'previous index');
+  writeFileSync(join(options.packsDirectory, 'example-starter/run.js'), 'console.log(1)');
+  await assert.rejects(buildPackIndex(options), /Refusing to publish/);
+  assert.deepEqual(readdirSync(options.outputDirectory), ['index.json']);
+  assert.equal(readFileSync(join(options.outputDirectory, 'index.json'), 'utf8'), 'previous index');
+  assert.deepEqual(readdirSync(join(options.outputDirectory, '..')).sort(), ['out', 'packs']);
+});
+
+const BUILD_SCRIPT = fileURLToPath(new URL('../scripts/build-pack-index.mjs', import.meta.url));
+
+test('an unknown or repeated flag stops the build with a usage line instead of being ignored', (context) => {
+  for (const extraArguments of [['--pack', 'elsewhere'], ['--out', 'again'], ['stray']]) {
+    const options = packsFolderWithExample(context);
+    const result = spawnSync(process.execPath, [BUILD_SCRIPT, '--packs', options.packsDirectory, '--out', options.outputDirectory, ...extraArguments], { encoding: 'utf8' });
+    assert.equal(result.status, 1, extraArguments.join(' '));
+    assert.match(result.stderr, /Usage: node scripts\/build-pack-index\.mjs/);
+    assert.ok(!existsSync(options.outputDirectory), extraArguments.join(' '));
+  }
 });
 
 test('two builds give identical bytes', async (context) => {

@@ -13,6 +13,7 @@ import { lightShapeSupport } from './shader-registry.js';
 import { flushOrderOf } from './depth-layer.js';
 import { liftRankedTriangles } from './flush-lift.js';
 import { RAY_VISIBILITY_BITS } from './ray-visibility.js';
+import { lampLightMasks } from './lamp-mesh.js';
 
 // The scene a path trace reads: every part flattened into one world-space triangle soup with per-vertex normals, UVs
 // and colours, one resolved material per part, the lights in plain arrays, and the environment map as a sampling table.
@@ -486,6 +487,21 @@ function softFalloffOf(light, label) {
   return light.softFalloff ? { softFalloff: true } : {};
 }
 
+// The most bounces a light's own limit may name: Cook keeps it in 8 bits as the limit plus one.
+const MAXIMUM_LIGHT_BOUNCES = 254;
+
+/**
+ * A light's own bounce limit, as the `max_bounces` of a Cycles light: the light adds direct light only at path vertices 0 to the limit,
+ * on top of the scene's bounces. Left out, the light runs to the scene limit. Only the native cycles kernel reads it.
+ */
+function maxBouncesOf(value, label) {
+  if (value === undefined) return {};
+  if (!Number.isInteger(value) || value < 0 || value > MAXIMUM_LIGHT_BOUNCES) {
+    throw new RangeError(`${label} is a whole number of bounces from 0 to ${MAXIMUM_LIGHT_BOUNCES}, got ${JSON.stringify(value)}. Leave it out for no limit beyond the scene's bounces.`);
+  }
+  return { maxBounces: value };
+}
+
 // Missing colour and intensity default as in the rasterizer (lighting.js); a value that is given must be usable.
 function lightEmission(light, label) {
   const color = light.color ?? [1, 1, 1];
@@ -513,7 +529,7 @@ function resolveAreaLight(light, index) {
   }
   const across = rawAcrossLength < MINIMUM_ACROSS_LENGTH ? [1, 0, 0] : normalized(rawAcross);
   const along = [normal[1] * across[2] - normal[2] * across[1], normal[2] * across[0] - normal[0] * across[2], normal[0] * across[1] - normal[1] * across[0]];
-  return { bit: AREA_FIRST_BIT + index, position: light.position, ...lightEmission(light, label), width: light.width, height: light.height, normal, across, along, profile: traceProfile(light) };
+  return { bit: AREA_FIRST_BIT + index, position: light.position, ...lightEmission(light, label), width: light.width, height: light.height, normal, across, along, profile: traceProfile(light), ...maxBouncesOf(light.maxBounces, `${label}.maxBounces`) };
 }
 
 /**
@@ -554,6 +570,11 @@ function refuseLinkingBeyondMaskBits(environment, parts) {
   throw new RangeError(`Light linking (a light with \`affects\`, or a part with \`material.lightMask\`, here "${linkedPart.name}") needs at most ${maximum} ${field}, got ${environment[field].length}: each linked light keeps one mask bit. Remove the links, or keep ${field} to ${maximum}.`);
 }
 
+/** Per part, the point light bits whose own lamp mesh the part is (see src/lamp-mesh.js); null when the scene has none. */
+function ownLampMasks(parts, lights) {
+  return lampLightMasks(parts, lights.points, part => resolveMaterial(part.material ?? {}).emission.some(channel => channel > 0));
+}
+
 function resolveLights(environment, limit = resolveLightLimit(), parts = []) {
   const areaLights = environment.areaLights ?? [];
   const sunColor = Array.from(environment.keyColor ?? [0, 0, 0], channel => channel * (environment.keyIntensity ?? 1));
@@ -567,10 +588,14 @@ function resolveLights(environment, limit = resolveLightLimit(), parts = []) {
     refuseLinkingBeyondMaskBits(environment, parts);
   }
   return {
-    sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: sunColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS } : null,
-    points: (environment.pointLights ?? []).map((light, index) => ({ bit: POINT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.pointLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`) })),
+    sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: sunColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS, ...maxBouncesOf(environment.sunMaxBounces, 'environment.sunMaxBounces') } : null,
+    points: (environment.pointLights ?? []).map((light, index) => ({
+      bit: POINT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.pointLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`),
+      ...maxBouncesOf(light.maxBounces, `environment.pointLights[${index}].maxBounces`),
+    })),
     spots: (environment.spotLights ?? []).map((light, index) => ({
       bit: SPOT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.spotLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.spotLights[${index}]`),
+      ...maxBouncesOf(light.maxBounces, `environment.spotLights[${index}].maxBounces`),
       direction: normalized(light.direction),
       cosineHalfAngle: Math.cos(light.angle),
       profile: traceProfile(light),
@@ -898,13 +923,15 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
   const instances = parts.map((part, index) => instanceFor(part, geometries[index], index, materials[index], geometryViews));
   const bounds = instancedBounds(instances);
   const extent = extentOf(bounds);
+  const lights = resolveLights(environment, limits.lights, parts);
   return {
     instances,
     materials,
     traceMaterials,
     // The GPU tracers read this per part flag from the material table; the native kernel reads the instance visibility instead.
     ...(parts.some(part => part.shadowOnly === true) ? { shadowOnlyParts: Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) } : {}),
-    lights: resolveLights(environment, limits.lights, parts),
+    lights,
+    lampLightMasks: ownLampMasks(parts, lights),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
     volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, bounds),
     localVolumes: withWaterMedia(localVolumes, thinWaterMedia(parts, bounds)),
@@ -979,6 +1006,7 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
   const bounds = boundingBoxOf(geometry.positions);
   const extent = extentOf(bounds);
   const tracedPartMaterials = parts.map(tracedMaterialOf);
+  const lights = resolveLights(environment, limits.lights, parts);
   return attachTracer({
     ...geometry,
     bvh,
@@ -988,7 +1016,8 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
     shadowOnlyParts: parts.some(part => part.shadowOnly === true) ? Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) : null,
     // Per part FORMAT-v2 visibility bits for the native "cycles" kernel; the "legacy" kernel and the other tracers do not read them.
     partRayVisibility: flattenedRayVisibility(parts),
-    lights: resolveLights(environment, limits.lights, parts),
+    lights,
+    lampLightMasks: ownLampMasks(parts, lights),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
     volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, bounds),
     localVolumes: withWaterMedia(localVolumes, thinWaterMedia(parts, bounds)),

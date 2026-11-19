@@ -141,9 +141,11 @@ function assetCharacterClips(animation, ownId, assets, path) {
   for (const [name, definition] of Object.entries(animation.clips)) {
     const sourceId = definition.from.asset ?? ownId;
     const source = decodedAsset(assets, sourceId, `${path}.clips.${name}.from.asset`);
+    const clipCount = source.animations?.length ?? 0;
+    if (clipCount === 0) fail(`${path}.clips.${name}.from`, `names asset ${sourceId.slice(0, 12)}, which has no animation clips. Pass an asset that has clips.`);
     const gltfAnimation = source.animations[definition.from.clip];
     if (!gltfAnimation) {
-      fail(`${path}.clips.${name}.from.clip`, `is ${definition.from.clip}, but asset ${sourceId.slice(0, 12)} has ${source.animations.length} clips. Use an index from 0 to ${source.animations.length - 1}.`);
+      fail(`${path}.clips.${name}.from.clip`, `is ${definition.from.clip}, but asset ${sourceId.slice(0, 12)} has ${clipCount} clips. Use an index from 0 to ${clipCount - 1}.`);
     }
     if (sourceId === ownId) {
       clips[name] = clipFromGltfAnimation(gltfAnimation, { loop: definition.loop });

@@ -304,3 +304,12 @@ test('scene_capabilities says fresnel exists only as an emission factor and list
   assert.match(coordinates, /Not in graphs: AO, bevel, curvature/);
   assert.doesNotMatch(coordinates, /Not in graphs yet: AO, bevel, curvature, fresnel/);
 });
+
+test('a graph refuses a bake resolution that is missing, fractional or below 1 (#2388)', async () => {
+  const { bakeMaterialGraph, normalizeMaterialGraph } = await import('../src/material-graph.js');
+  for (const resolution of [undefined, Number.NaN, 0, -4, 1.5]) {
+    assert.throws(() => normalizeMaterialGraph({ roughness: 0.5 }, resolution), /resolution must be a whole number from 1 to 16384/);
+    assert.throws(() => bakeMaterialGraph({ roughness: 0.5 }, { resolution, bump: 1 }), /resolution must be a whole number from 1 to 16384/);
+  }
+  assert.equal(bakeMaterialGraph({ roughness: 0.5 }, { resolution: 2, bump: 1 }).metallicRoughnessMap.image.data.length, 16);
+});
