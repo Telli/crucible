@@ -29,6 +29,7 @@ You do not declare uniforms or the version line; the engine writes them. A snipp
 | `sceneColor` | `sampler2D` | The frame, or the previous pass. |
 | `sceneDepth` | `sampler2D` | Depth of the scene, at full size. It needs `depth: true` on the renderer (the MCP preview has it); without it every sample reads 1. |
 | `resolution` | `vec2` | Size of this pass in pixels. |
+| `cameraEye` | `vec3` | The camera position in world space for this frame, so a pass that draws in world space (light shafts, spray) follows a camera track without a hand-written uniform. |
 | `time` | `float` | Frame time in seconds. A frame drawn at a motion time (a render job with `motion`, a `scene_look` or `scene_review` motion time) reads that motion time, so a still at `motion.start: 6.5` gets 6.5, the same value the video frame at 6.5 s gets. Without a motion time it is the renderer time, which is 0 in a still. |
 | `depthAt(uv)`, `worldPointAt(uv)` | functions | Raw depth, and the world position of the pixel. |
 | `worldNormalAt(uv)` | function | The surface normal, found from neighbouring depth samples. It is exact on flat faces and wrong at silhouettes and in the sky. |
