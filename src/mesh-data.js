@@ -133,6 +133,8 @@ export function createMeshData({ positions, faceOffsets, cornerVertices, edgeVer
     throw new TypeError('positions must be a nonempty Float32Array of XYZ triples.');
   }
   const vertexCount = positions.length / 3;
+  const unknownDomains = Object.keys(attributes).filter(domain => !DOMAINS.includes(domain));
+  if (unknownDomains.length) throw new TypeError(`Unknown attribute domain ${unknownDomains.join(', ')}. Pass ${DOMAINS.join(', ')}.`);
   if (vertexCount > MAX_MESH_VERTICES) throw new RangeError(`Meshes support at most ${MAX_MESH_VERTICES} vertices.`);
   if (!allFinite(positions)) throw new RangeError('positions must be finite.');
   validateFaces(vertexCount, faceOffsets, cornerVertices);
