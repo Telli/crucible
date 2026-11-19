@@ -1,10 +1,10 @@
-# Web Studio
+# Studio
 
-Crucible Web Studio lets designers and AI agents work on the same `crucible.scene` recipe in the browser. It adds zero bytes to the core library entry (`crucible`).
+Crucible Studio lets designers and AI agents work on the same `crucible.scene` recipe. It is an addon (`crucible/addons/studio`) that an app embeds; it is not a page of the public site. It adds zero bytes to the core library entry (`crucible`).
 
-## Open the Studio page
+## Open Studio
 
-Open `/studio.html` in the site or dev server. Drop a `scene.json` on the window, or click the file name at the top left and choose **Open**.
+An app mounts it with `createStudio(container, options)` (see below). To try it from a checkout, run `npm run dev` and open `/bench/studio/index.html`. Drop a `scene.json` on the window, or click the file name at the top left and choose **Open**.
 
 ## The screen
 

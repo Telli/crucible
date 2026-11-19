@@ -1,7 +1,7 @@
-import './brand-fonts.css';
-import './site-tokens.css';
-import { loadAllAgentSceneModules } from './agent-scene.js';
-import { createStudio } from './studio.js';
+import '../../src/brand-fonts.css';
+import '../../src/site-tokens.css';
+import { loadAllAgentSceneModules } from '../../src/agent-scene.js';
+import { createStudio } from '../../src/studio.js';
 
 function defaultStudioRecipe() {
   return {
@@ -93,7 +93,7 @@ async function mountStudioPage() {
     return;
   }
   await loadAllAgentSceneModules();
-  const studio = createStudio(root, { recipe: defaultStudioRecipe(), homeHref: './' });
+  const studio = createStudio(root, { recipe: defaultStudioRecipe() });
   studio.selectNode('gyro-ring');
   window.__studioPage = studio;
 }
