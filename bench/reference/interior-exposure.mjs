@@ -36,6 +36,8 @@ const tightShadow = argumentsGiven.includes('--tight-shadow');
 // --raster-only skips the path tracer, for sweeps of the raster alone; --shadow-extent <metres> fits the sun's shadow view to that half width around the room.
 const rasterOnly = argumentsGiven.includes('--raster-only');
 const shadowExtent = numberAfter('--shadow-extent', 0);
+// --no-floor-sky turns the closed-room sky trace off (environment.floorSkyTrace: false).
+const noFloorSky = argumentsGiven.includes('--no-floor-sky');
 const WIDTH = numberAfter('--width', 960);
 const HEIGHT = numberAfter('--height', 540);
 // --denoise runs the OIDN denoiser on the path traced frame (the default leaves it off so the mean is the raw estimate).
@@ -48,7 +50,7 @@ const recipe = {
   nodes: roomNodes({ sealed, withoutLawn }),
   camera: ROOM_CAMERA,
   environment: {
-    lightDirection: [0.3, 0.55, -0.8], keyIntensity, environmentIntensity, sunBounce,
+    lightDirection: [0.3, 0.55, -0.8], keyIntensity, environmentIntensity, sunBounce, ...(noFloorSky ? { floorSkyTrace: false } : {}),
     sky: { type: 'physical', sunElevation: 33, sunRotation: 20 },
     viewTransform: 'agx',
   },

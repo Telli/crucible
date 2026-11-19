@@ -103,6 +103,27 @@ function checkSparseShape(accessor) {
 }
 
 /**
+ * Indices of meshopt views that hold no elements (count 0) and that nothing reads: every accessor on them is empty. Other tools write
+ * such views for a mesh that simplified to nothing. A view that a non-empty accessor, a sparse accessor or an image reads is not listed,
+ * so it still fails with the count error instead of producing a short array.
+ */
+export function unreadEmptyMeshoptViews(document) {
+  const empty = new Set();
+  (document.bufferViews ?? []).forEach((view, index) => {
+    if (view?.extensions?.EXT_meshopt_compression?.count === 0) empty.add(index);
+  });
+  if (!empty.size) return empty;
+  for (const accessor of document.accessors ?? []) {
+    if (accessor.count === 0 && !accessor.sparse) continue;
+    empty.delete(accessor.bufferView);
+    empty.delete(accessor.sparse?.indices?.bufferView);
+    empty.delete(accessor.sparse?.values?.bufferView);
+  }
+  for (const image of document.images ?? []) empty.delete(image.bufferView);
+  return empty;
+}
+
+/**
  * Reads accessors as tightly packed typed arrays, with sparse substitution and meshopt buffer views.
  * `bufferBytes(index)` returns the bytes of a glTF buffer. `meshoptDecoder` replaces the built-in decoder of compressed views.
  */
@@ -124,7 +145,8 @@ export function createAccessorReader(document, bufferBytes, meshoptDecoder) {
     const views = document.bufferViews ?? [];
     if (!views.some(view => view.extensions?.EXT_meshopt_compression)) return;
     const { decodeMeshoptViews } = await import('./gltf-meshopt.js');
-    for (const [index, bytes] of await decodeMeshoptViews(views, bufferBytes, meshoptDecoder)) viewCache.set(index, bytes);
+    const skippedViews = unreadEmptyMeshoptViews(document);
+    for (const [index, bytes] of await decodeMeshoptViews(views, bufferBytes, meshoptDecoder, skippedViews)) viewCache.set(index, bytes);
   }
 
   function viewBytes(index) {
