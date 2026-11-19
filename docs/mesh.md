@@ -413,6 +413,7 @@ is crossed more than twice (a concave face); split it first. `bridge_edge_loops`
 the shortest total distance, then turns them by `twistOffset` vertices. A knife stretch that starts or ends inside a face
 makes no cut, and a face that runs along `direction` is not split (its edge points are still inserted). The sizes of
 `subdivide_edges` are checked before it allocates.
+Points these edits insert on an edge (`subdivide_edges`, `bisect_plane`, `knife_project`, `bridge_edge_loops` rows) take the blend of vertex groups and other point attributes of the edge's two ends, and the inner points of a `subdivide_edges` grid blend all four corners. The inner points of `grid_fill` and the bend points of a knife stroke inside a face start at 0.
 
 Open boundaries reported by lint (`boundary-edge`) are fixed with `fill_holes`. Names follow `bmesh.ops`
 (`holes_fill`, `dissolve_*`, `bisect_plane`, `bridge_loops`, `grid_fill`, `subdivide_edges`) where the meaning matches, and
