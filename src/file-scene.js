@@ -73,7 +73,7 @@ async function start() {
   // A GLB with an animation clip plays its first clip on a loop, as the showcase page does; one without a clip is drawn as before.
   const renderAt = createFileSceneRenderAt({ asset, posedParts: assetOwnParts, sceneParts: asset.parts, rendererParts, renderer, camera, description, frame });
   // `parts` and `environment` let scripts/render-file-native.mjs pack the same scene for the native path tracer.
-  window.__scene = { renderer, duration: camera?.duration, renderAt, pause() {}, parts: reflection.parts, environment: { ...(rendererOptions.environment ?? {}), map } };
+  window.__scene = { renderer, duration: camera?.duration, renderAt, poseClipAt: seconds => renderAt.clipPlayer?.applyAt(seconds), pause() {}, parts: reflection.parts, environment: { ...(rendererOptions.environment ?? {}), map } };
 }
 
 start().catch(error => {
