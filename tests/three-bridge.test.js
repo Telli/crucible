@@ -275,6 +275,29 @@ test('toThreeObject refuses attribute arrays that do not match the vertex count 
   assert.throws(() => toThreeObject([trianglePart({ indices: new Uint32Array([0, 1, 3]) })], THREE), /indices entry 3.*0 to 2/);
 });
 
+test('toThreeObject turns vertexColors on only for parts that carry colours, even when they share a material', () => {
+  const sharedMaterial = { color: [1, 1, 1], metallic: 0, roughness: 1 };
+  const colored = trianglePart({ colors: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]) });
+  const plain = trianglePart({});
+  colored.material = sharedMaterial;
+  plain.material = sharedMaterial;
+  const { object } = toThreeObject([colored, plain, { ...colored }], THREE);
+  const [coloredMesh, plainMesh, secondColoredMesh] = object.children;
+  assert.equal(coloredMesh.material.vertexColors, true);
+  assert.equal(plainMesh.material.vertexColors, false);
+  assert.equal(secondColoredMesh.material, coloredMesh.material, 'parts with colours share one material');
+  assert.ok(coloredMesh.geometry.attributes.color);
+});
+
+test('a vertex coloured box survives fromThreeObject then toThreeObject with vertexColors on', () => {
+  const source = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ vertexColors: true }));
+  source.geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(24 * 3).fill(0.5), 3));
+  const root = new THREE.Group();
+  root.add(source);
+  const { object } = toThreeObject(fromThreeObject(root).parts, THREE);
+  assert.equal(object.children[0].material.vertexColors, true);
+});
+
 test('an InstancedMesh count above its matrix array is clamped with a warning, not NaN', () => {
   const instanced = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial(), 3);
   instanced.count = 5;
