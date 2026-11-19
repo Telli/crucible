@@ -2046,6 +2046,8 @@ export class CrucibleRenderer {
 
   releaseFrameTargets() {
     const context = this.context;
+    // The fog step may have left one of the textures deleted below on a mipmapped filter; binding it later is INVALID_OPERATION (1282, #2205).
+    this.mipmappedTexture = null;
     if (this.multisampleFramebuffer) this.backend.deleteFramebuffer(this.multisampleFramebuffer);
     if (this.resolveFramebuffer) this.backend.deleteFramebuffer(this.resolveFramebuffer);
     if (this.multisampleColor) this.backend.deleteRenderbuffer(this.multisampleColor);
