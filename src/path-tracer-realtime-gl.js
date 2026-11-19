@@ -51,6 +51,7 @@ export function createFloatTexture(gl, width, height) {
 
 /** A framebuffer from `{ slot, texture }` entries; slots without an entry are not drawn to. */
 export function createFramebuffer(gl, attachments) {
+  if (attachments.length === 0) throw new Error('A real-time path tracer framebuffer needs at least one { slot, texture } attachment.');
   const framebuffer = gl.createFramebuffer();
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
   const slotCount = Math.max(...attachments.map(entry => entry.slot)) + 1;
@@ -60,7 +61,10 @@ export function createFramebuffer(gl, attachments) {
     drawBuffers[slot] = gl.COLOR_ATTACHMENT0 + slot;
   }
   gl.drawBuffers(drawBuffers);
-  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('The real-time path tracer cannot render to float targets here.');
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+    gl.deleteFramebuffer(framebuffer);
+    throw new Error('The real-time path tracer cannot render to float targets here.');
+  }
   return framebuffer;
 }
 
