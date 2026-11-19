@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { parseGltf } from '../src/gltf.js';
-import { createFileSceneClipPlayer } from '../src/file-scene-clip.js';
+import { createFileSceneClipPlayer, createFileSceneRenderAt } from '../src/file-scene-clip.js';
+import { box } from '../src/geometry.js';
+import { applyWaterReflection } from '../src/water-reflection.js';
 
 async function loadRobot() {
   const bytes = await readFile(new URL('fixtures/RobotExpressive.glb', import.meta.url));
@@ -78,4 +80,54 @@ test('renderer parts that do not match the scene parts one for one are refused b
     () => createFileSceneClipPlayer({ asset, posedParts: asset.parts, sceneParts: asset.parts, rendererParts: asset.parts.slice(1) }),
     /must match the scene parts/,
   );
+});
+
+// A renderer that holds the parts it was built from and refuses any other identity, as CrucibleRenderer.updateParts does.
+function strictRenderer(builtParts) {
+  const known = new Set(builtParts);
+  const frames = [];
+  return {
+    frames,
+    updateParts(parts) {
+      for (const part of parts) {
+        if (!known.has(part)) throw new Error(`Unknown part identity: ${part.name}`);
+      }
+    },
+    render(options) {
+      frames.push({ options, pose: poseOf(builtParts) });
+    },
+  };
+}
+
+const DESCRIPTION = { eye: [0, 1, 5], target: [0, 1, 0] };
+
+test('the scene-file frame function poses the clip before it renders: the pose handed to the renderer changes with time', async () => {
+  const asset = await loadRobot();
+  const rendererParts = rendererCopiesOf(asset.parts);
+  const renderer = strictRenderer(rendererParts);
+  const renderAt = createFileSceneRenderAt({
+    asset, posedParts: asset.parts, sceneParts: asset.parts, rendererParts, renderer, camera: null, description: DESCRIPTION, frame: { exposure: 1 },
+  });
+  renderAt(0);
+  renderAt(asset.animations[0].duration / 2);
+  assert.equal(renderer.frames.length, 2);
+  assert.notDeepEqual(renderer.frames[1].pose, renderer.frames[0].pose);
+  assert.deepEqual(renderer.frames[0].options, { exposure: 1, eye: DESCRIPTION.eye, target: DESCRIPTION.target });
+});
+
+test('a scene with waterReflection on and a clip poses without "Unknown part identity"', async () => {
+  const asset = await loadRobot();
+  const lakeMatrix = new Float32Array([4000, 0, 0, 0, 0, 1, 0, 0, 0, 0, 4000, 0, 0, -50, 0, 1]);
+  const lake = { name: 'lake', geometry: box(0, 1), matrix: lakeMatrix, material: { tag: 'surface', color: [0.02, 0.05, 0.08], metallic: 0, roughness: 0.04, emission: 0 } };
+  const posedParts = [lake, ...asset.parts];
+  const reflection = applyWaterReflection(posedParts);
+  assert.ok(reflection.surface, 'the lake must qualify as water, or this test does not cover the reflection');
+  assert.notEqual(reflection.parts[0], lake, 'the reflected lake is a copy the renderer knows instead of the original');
+  const rendererParts = reflection.parts;
+  const renderer = strictRenderer(rendererParts);
+  const renderAt = createFileSceneRenderAt({
+    asset, posedParts, sceneParts: posedParts, rendererParts, renderer, camera: null, description: DESCRIPTION, frame: {},
+  });
+  assert.doesNotThrow(() => renderAt(0.3));
+  assert.equal(renderer.frames.length, 1);
 });
