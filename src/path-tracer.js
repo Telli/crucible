@@ -497,8 +497,9 @@ function crossGlassFace(hit, material, directionX, directionY, directionZ, segme
   const facing = hit.normal[0] * directionX + hit.normal[1] * directionY + hit.normal[2] * directionZ;
   const entering = facing < 0;
   if (!entering && insideMaterial) absorbOverDistance(insideMaterial, segmentLength, transmittance);
-  const relativeIndex = entering ? 1 / material.ior : material.ior;
-  const passes = (1 - dielectricFresnel(Math.abs(facing), relativeIndex)) * hit.transmission;
+  // The straight ray stands for the one the light would bend into: its angle is the one on the air side of both faces, so no
+  // direction meets the glass past the critical angle, and Fresnel is the same entering and leaving.
+  const passes = (1 - dielectricFresnel(Math.abs(facing), 1 / material.ior)) * hit.transmission;
   for (let channel = 0; channel < 3; channel++) transmittance[channel] *= passes * hit.color[channel];
   return entering && Number.isFinite(material.attenuationDistance) ? material : null;
 }
@@ -506,13 +507,14 @@ function crossGlassFace(hit, material, directionX, directionY, directionZ, segme
 /**
  * True when the ray is blocked before `limit`. Otherwise `transmittance` holds the share of light per channel that gets
  * through the glass and water on the way (1 when there is none). An opaque part blocks fully; a transmissive part is stepped
- * through with `crossGlassFace`, within ALPHA_STEP_LIMIT surfaces. `insideMaterial` is the absorbing part the ray starts inside.
+ * through with `crossGlassFace`, within ALPHA_STEP_LIMIT surfaces, unless `glassBlocks` says it stops the ray. `insideMaterial` is
+ * the absorbing part the ray starts inside.
  */
-function occluded(scene, originX, originY, originZ, directionX, directionY, directionZ, limit, hit, transmittance, insideMaterial = null) {
+function occluded(scene, originX, originY, originZ, directionX, directionY, directionZ, limit, hit, transmittance, insideMaterial = null, glassBlocks = false) {
   transmittance[0] = 1;
   transmittance[1] = 1;
   transmittance[2] = 1;
-  const transmissiveFlags = transmissiveMaterialFlags(scene);
+  const transmissiveFlags = glassBlocks ? null : transmissiveMaterialFlags(scene);
   let startX = originX;
   let startY = originY;
   let startZ = originZ;
@@ -525,7 +527,7 @@ function occluded(scene, originX, originY, originZ, directionX, directionY, dire
     const found = scene.tracer.trace(startX, startY, startZ, directionX, directionY, directionZ, remaining, anyHit);
     if (found.nearestTriangle < 0) return false;
     const materialIndex = scene.triangleMaterial[found.nearestTriangle];
-    const transmissive = transmissiveFlags[materialIndex] === 1;
+    const transmissive = !glassBlocks && transmissiveFlags[materialIndex] === 1;
     // Only a cutout material needs its texture read to know whether the ray passes through: skip the interpolation for the rest.
     if (!transmissive && scene.materials[materialIndex].alphaCutoff === 0) return true;
     const alpha = fillHit(scene, found.nearestTriangle, startX, startY, startZ, directionX, directionY, directionZ, found.nearestDistance, hit);
@@ -621,7 +623,7 @@ function createPathTracer(scene, options) {
     const cosine = lightDirection[0] * direction[0] + lightDirection[1] * direction[1] + lightDirection[2] * direction[2];
     const phase = henyeyGreensteinPhase(volume.anisotropy, cosine);
     const [originX, originY, originZ] = hit.point;
-    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, shadowTransmittance, absorbingMaterial)) return;
+    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, shadowTransmittance, absorbingMaterial, lightIsEnvironment)) return;
     phaseCandidate.pdf = phase;
     const scale = phase * fogTransmittance(originX, originY, originZ, distance) * weight(phaseCandidate);
     addRadiance(
@@ -646,7 +648,7 @@ function createPathTracer(scene, options) {
     const originX = hit.point[0] + normal[0] * scene.surfaceOffset;
     const originY = hit.point[1] + normal[1] * scene.surfaceOffset;
     const originZ = hit.point[2] + normal[2] * scene.surfaceOffset;
-    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, shadowTransmittance, absorbingMaterial)) return;
+    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, shadowTransmittance, absorbingMaterial, lightIsEnvironment)) return;
     const scale = cosine * weight(surface) * fogTransmittance(originX, originY, originZ, distance);
     if (lightIsSun && writeSunShadow) writeSunShadow(originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], sunShadow);
     else sunShadow.fill(1);
@@ -756,7 +758,11 @@ function createPathTracer(scene, options) {
       : sampleEnvironment(environment, random.next(), random.next(), random.next(), random.next(), lightDirection);
     if (!(environmentSampledPdf > 0)) return;
     environmentRadiance(environment, lightDirection[0], lightDirection[1], lightDirection[2], lightRadiance);
+    // A path that bends through glass and reaches the sky is already counted in full (addEscape after a mirror or glass bounce), so
+    // the sky's shadow ray stops at glass: letting it through as well would count that light twice.
+    lightIsEnvironment = true;
     addDirect(depth, normal, scene.farDistance, environmentWeight);
+    lightIsEnvironment = false;
   }
 
   const emitterCount = (lights.sun ? 1 : 0) + lights.points.length + lights.spots.length + lights.areas.length + (environment ? 1 : 0);
@@ -929,6 +935,7 @@ function createPathTracer(scene, options) {
   const writeSunShadow = scene.localVolumes ? createLocalVolumeSurfaceShadow(scene.localVolumes) : null;
   const sunShadow = new Float64Array(3);
   let lightIsSun = false;
+  let lightIsEnvironment = false;
   const localEmitted = new Float64Array(3);
 
   const walkSubsurface = createRandomWalk(scene, random, intersect);

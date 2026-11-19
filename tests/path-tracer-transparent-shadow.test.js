@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { createEnvironmentMap } from '../src/environment.js';
 import { box } from '../src/geometry.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 
@@ -70,4 +71,17 @@ test('half transmission lets half of the clear-glass share through', async () =>
 test('an opaque slab in the same place still gives a full shadow', async () => {
   const shaded = await floorRadiance([floor(), slab({ transmission: 0 })]);
   assert.deepEqual(shaded, [0, 0, 0]);
+});
+
+test('the sky is not counted twice through a clear slab: a shadow ray to the sky stops at glass, the bounce through it carries the light', async () => {
+  const skyOnly = { keyColor: [0, 0, 0], map: createEnvironmentMap({ width: 8, height: 4, data: new Float32Array(8 * 4 * 3).fill(1) }) };
+  const render = async parts => {
+    const { linear } = await renderPathTracedImage({ parts, environment: skyOnly, camera: CAMERA }, { ...OPTIONS, samples: 64, bounces: 3 });
+    const centre = (8 * OPTIONS.width + 8) * 3;
+    return linear[centre];
+  };
+  const bare = await render([floor()]);
+  const underGlass = await render([floor(), slab({ transmission: 1, ior: 1 })]);
+  assert.ok(Math.abs(bare - 0.5) < 0.05, `a floor of albedo 0.5 under a uniform sky of 1 is lit to 0.5, got ${bare}`);
+  assert.ok(Math.abs(underGlass / bare - 1) < 0.04, `an index-1 slab changes nothing, so the floor keeps ${underGlass / bare} of its light`);
 });

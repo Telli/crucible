@@ -64,6 +64,13 @@ A part with a material `subsurface` weight above 0 sends that share of its diffu
 ## Absorption in glass and water (issue #2300)
 
 On the CPU tracer a transmissive part with a finite `attenuationDistance` absorbs the light that travels inside it: after a path of `d` metres the light is multiplied by `attenuationColor` raised to `d / attenuationDistance` in each channel, so a 1 m slab with colour 0.5 and distance 1 lets 0.5 through. A part with no `attenuationDistance` traces byte for byte as before. A path absorbs by the transmissive part it entered last.
+### Shadow rays through glass and water (issue #2318)
+
+On the CPU tracer the shadow ray of the sun, a point, spot or area light no longer stops at a transmissive part (a `transmission` above 0 or a transmission map). It steps through every such surface it crosses, up to 64, and the light it carries is multiplied at each face by the share the dielectric does not reflect (Fresnel with the part's `ior`), by the part's `transmission` and by its colour, as a camera path through the part is. Leaving a part that absorbs, it is also multiplied by the Beer-Lambert term of the length travelled inside, and a point that sits under water starts the ray inside it. The factor is per channel, so tinted water tints its own shadow. An opaque part, and a ray whose light falls below 0.01 percent, still give a full shadow, and a scene with no transmissive part traces the same bytes as before.
+
+The sky is the exception: its shadow ray still stops at glass. A bounce that bends through the glass and reaches the sky already counts that light in full (a path after a glass or mirror bounce takes no multiple-importance weight), so letting the sky's shadow ray through as well would count it twice. The sun, which no bounce can hit, has only its shadow ray.
+
+A shadow ray is straight: it does not refract, so light that the glass would bend onto the floor (caustics) is not counted, the shadow is the shape of the part along the light, not the bright focus a lens throws, and the length inside is the straight one. Fresnel uses the angle of that straight ray against the face on both faces, so no direction meets the glass past the critical angle. Roughness does not change the factor. On the cook-deep scene the CPU lower half is still about 15 percent brighter than Cook; the cause is not found (see the pull request), and this is not a copy of Cook's kernel.
 
 ## Dispersion (issue #1714)
 
