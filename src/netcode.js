@@ -890,6 +890,11 @@ function createPeerSide(settings, stats) {
     for (const [id, entity] of entities) {
       if (!isLocal(entity) && !present.has(entity.owner)) entities.delete(id);
     }
+    // The sender table keeps a record per peer ever heard: a peer that left frees its slot, so a room with reloads or random
+    // ids does not fill all 32 slots and reject every newcomer.
+    for (const peerId of senders.keys()) {
+      if (!present.has(peerId)) senders.delete(peerId);
+    }
   }
 
   function sendOwnedEntities() {
