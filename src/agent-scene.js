@@ -2411,7 +2411,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         return result;
       });
       const resident = geometryStats(ownedGeometryRecords());
-      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...coplanarProblems(), ...(agentSceneModuleLoaded('unsupportedPart') ? agentSceneModule('unsupportedPart').unsupportedPartProblems(state.parts, state.recipe, revision) : []), ...(state.particleSampler?.diagnostics() ?? [])];
+      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...coplanarProblems(), ...(agentSceneModuleLoaded('unsupportedPart') ? agentSceneModule('unsupportedPart').unsupportedPartProblems(state.parts, state.recipe, revision) : []), ...(state.particleSampler?.diagnostics() ?? []), ...(state.assetRuntime.animators.length ? agentSceneModule('assets').placedClipDiagnostics(state.assetRuntime) : [])];
       return {
         revision, topologyRevision,
         ...(state.recipe.motion?.ik?.length ? { motionIk: agentSceneModule('motion').compileAgentMotion(state.recipe.motion, state.recipe).sweepIk() } : {}),
