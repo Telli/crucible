@@ -29,6 +29,7 @@ export function worldTriangles(parts, worldMatrices) {
   let write = 0;
   for (const part of parts) {
     const matrix = worldMatrices.get(part) ?? worldMatrices.get(part.name);
+    if (matrix === undefined) throw new Error(`No world matrix for part "${part.name}"; pass partMatrixLookup(parts) as worldMatrices.`);
     const { positions, indices } = part.geometry;
     const partMinimum = [Infinity, Infinity, Infinity];
     const partMaximum = [-Infinity, -Infinity, -Infinity];
