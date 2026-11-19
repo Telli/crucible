@@ -121,7 +121,7 @@ function hitNearestLamp(ray) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, disposeGate, disposeLostBridge = false, hangBrowserClose = false, closeTimeoutMs, failFirstGoto = false, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, disposeGate, disposeLostBridge = false, disposeWithoutScene = false, hangBrowserClose = false, closeTimeoutMs, failFirstGoto = false, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
   const events = [];
   const sourceCalls = [];
   const sandboxTimers = new Set();
@@ -164,6 +164,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
         throw new Error(typeof failPrivateCreateMessage === 'string' ? failPrivateCreateMessage : 'Injected private create failure');
       }
       if (method === 'dispose' && this.privateTarget && disposeLostBridge) throw new TypeError("page.evaluate: TypeError: Cannot read properties of undefined (reading 'dispose')");
+      if (method === 'dispose' && this.privateTarget && disposeWithoutScene) throw new Error('page.evaluate: Error: No scene is active: it was never created, was disposed, or scene_create failed. Call scene_create or scene_create_asset first, then pass the sessionId it returns.');
       if (method === 'dispose' && disposeGate) await disposeGate;
       if (method === 'resume' && failResume) throw new Error('Injected resume failure');
       if (method === 'create' && this.privateTarget && blockPrivateCreate) return new Promise((resolve, reject) => { this.rejectShot = reject; });
@@ -624,6 +625,22 @@ runTest('a job that fails for its own reason is not masked by a lost page bridge
     const failure = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
       settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }).then(() => assert.fail('the job must fail'), error => error);
     assert.match(failure.message, /Injected scene problem/);
+  } finally { await runtime.close(); }
+});
+
+runTest('a job whose scene was never created reports the create failure, not "No scene is active" from the cleanup (#2198)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const harness = await reviewRuntimeHarness({ failPrivateCreate: true, disposeWithoutScene: true, failPrivateCreateMessage: 'Injected particles problem',
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  const { runtime, sessionId } = harness;
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const failure = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }).then(() => assert.fail('the job must fail'), error => error);
+    assert.match(failure.message, /Injected particles problem/);
+    assert.doesNotMatch(failure.message, /No scene is active/);
   } finally { await runtime.close(); }
 });
 
