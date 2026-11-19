@@ -11,6 +11,7 @@ Coding agents are welcome to open pull requests. There is no disclosure box: the
 1. Install Node.js 20.19 or later (the `Test` workflow uses 24) and Google Chrome.
 2. Clone the repository and run `npm ci`.
 3. Run `npm run dev`. Vite prints the local URL of the showcase.
+4. For the Cook tests and native renders, run `npm run cook:fetch` to get the prebuilt addon of the pinned Cook (or `npm run cook:build` with Rust). `npm run cook:check` says whether the installed Cook is the one `package-lock.json` pins. When it is not, the Cook tests skip and `tests/cook-install.test.js` fails with what to run. Set `COOK_ALLOW_UNPINNED=1` only when you link a Cook checkout on purpose.
 
 The library source is in `src/` and the Node tools and smoke scripts are in `scripts/`.
 The tests are in `tests/` and the guides are in `docs/`.
