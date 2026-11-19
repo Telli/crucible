@@ -11,7 +11,7 @@ import { readPunctualLights } from './gltf-lights.js';
 import { validateDocumentReferences } from './gltf-references.js';
 import { Matrix4 } from './gltf-nodes.js';
 import { textureDescriptorInfo } from './renderer.js';
-import { createSkinPose, matrixDeterminant, updateSkinPose, validateSkinGeometry, validateSkinPose } from './skinning.js';
+import { SKIN_POSE_BYTES_PER_JOINT, createSkinPose, matrixDeterminant, updateSkinPose, validateSkinGeometry, validateSkinPose } from './skinning.js';
 import { MAX_STORED_MORPH_TARGETS, createMorphPose, validateMorphGeometry, validateMorphPose, validateMorphTransform } from './morph.js';
 
 // The defaults fit one large exported scene (a 240 MB GLB of 8 million vertices with 8K textures) and still bound a hostile file.
@@ -429,7 +429,7 @@ function validateDocument(document, limits, allowedExtensions) {
     }
   }
   overLimit(overruns, 'skin joints', jointCount, 'maxJoints', limits.maxJoints);
-  let poseJointCount = 0;
+  let poseBytes = 0;
   let declaredParts = 0;
   for (const node of document.nodes ?? []) {
     const mesh = document.meshes?.[node.mesh];
@@ -442,12 +442,11 @@ function validateDocument(document, limits, allowedExtensions) {
       for (const primitive of document.meshes[node.mesh].primitives ?? []) {
         if (isLinePrimitive(primitive)) continue;
         if (primitive.attributes?.JOINTS_0 === undefined || primitive.attributes?.WEIGHTS_0 === undefined) throw new Error('Skinned meshes require JOINTS_0 and WEIGHTS_0.');
-        poseJointCount += document.skins[node.skin].joints.length;
+        poseBytes += document.skins[node.skin].joints.length * SKIN_POSE_BYTES_PER_JOINT;
       }
     }
   }
   overLimit(overruns, 'parts', declaredParts, 'maxParts', limits.maxParts);
-  overLimit(overruns, 'skin pose joints', poseJointCount, 'maxJoints', limits.maxJoints);
   validateHierarchy(document.nodes ?? []);
   validateAnimationChannels(document);
   for (const material of document.materials ?? []) {
@@ -494,7 +493,8 @@ function validateDocument(document, limits, allowedExtensions) {
   const meshoptViewBytes = sumMeshoptViewBytes(document);
   overLimit(overruns, 'decoded meshopt view bytes', meshoptViewBytes, 'maxDecodedBytes', limits.maxDecodedBytes);
   // Meshopt views and accessors share one decoded budget, so a file cannot hold both at the full allowance.
-  let decodedBytes = morphBytes + meshoptViewBytes;
+  // Each skinned primitive keeps its own pose copy, so the pose memory shares this budget. maxJoints counts a skin once above.
+  let decodedBytes = morphBytes + meshoptViewBytes + poseBytes;
   const components = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };
   for (const accessor of document.accessors ?? []) {
     if (!Number.isSafeInteger(accessor.count) || accessor.count < 0) throw new Error('Invalid glTF accessor count.');
@@ -504,7 +504,7 @@ function validateDocument(document, limits, allowedExtensions) {
     if (!components[accessor.type]) throw new Error('Unsupported glTF accessor shape.');
     decodedBytes += accessor.count * components[accessor.type] * 4;
   }
-  const decodedLabel = meshoptViewBytes > 0 ? 'decoded accessor and meshopt view bytes' : 'decoded accessor bytes';
+  const decodedLabel = meshoptViewBytes > 0 ? 'decoded accessor and meshopt view bytes' : poseBytes > 0 ? 'decoded accessor and skin pose bytes' : 'decoded accessor bytes';
   overLimit(overruns, decodedLabel, decodedBytes, 'maxDecodedBytes', limits.maxDecodedBytes);
   return { vertices, ignoredExtensions, overruns };
 }
