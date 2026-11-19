@@ -218,7 +218,7 @@ Docs-only, CI-only and test-only pull requests skip everything except the local 
 
 - The comment updates itself when you fix an item. One reminder follows when 24 hours are left.
 - A maintainer gives a first answer within about 7 days. That reply time is separate from the bot clock, which counts only items on your side. If an item is still open 72 hours after the first comment (the end of that UTC day, weekends included), the bot closes the pull request. It invites you to reopen it once the item is fixed, and reopening starts the time again.
-- Pull requests from the owner, members, collaborators and bots never close by themselves. Drafts and pull requests labelled `needs-owner-decision` do not close either.
+- Pull requests from the owner, members, collaborators and bots never close by themselves. Drafts and pull requests labelled `needs-owner-decision` do not close either; the clock of a draft restarts once it passes the reminder time, so marking it ready later still gets the reminder first.
 - Labels and the milestone never count against you. The bot adds `needs-triage` when they are missing and `status:needs-author` while something of yours is missing.
 
 For maintainers: the workflow is `.github/workflows/pr-metadata.yml`, and the rules are the pure modules `scripts/pr-metadata-check.mjs` (what is missing) and `scripts/pr-metadata-flow.mjs` (the clock and the wording). The workflow runs on `pull_request_target`, so it never checks out or runs the code of the pull request. It reads the description and the file list through the API only. Do not change that. It is not a required check.
