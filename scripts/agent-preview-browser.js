@@ -54,6 +54,7 @@ import { BRANCH_LIMITS, createBranchStore, printableLabel } from '../src/agent-b
 import { agentAssetDecodeOptions, withCatalogLimitAdvice } from '../src/agent-asset-limits.js';
 import { describeMarks, validateMarks } from '../src/agent-annotate.js';
 import { sceneQueryFor, partMaterialsFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache } from './agent-walkmap.js';
+import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 
 // Open scenes by sessionId, least recently used first. One canvas serves them all, so at most one record owns a renderer;
 // a call on another scene hands the canvas over (the scene data stays, the renderer is rebuilt).
@@ -1339,7 +1340,9 @@ window.__agentPreview = {
       }
       sampleMotionTime(record.scene, motionTime);
     }
-    draw(record);
+    // The post pass clock is the pose's motion time, as in a render job frame, so a pass anchored to a moving part stays on it.
+    const poseTime = record.scene.motionTime ?? undefined;
+    draw(record, 0, record.scene.camera, poseTime === undefined ? {} : { passTime: poseTime });
     const render = renderInfo(record.renderer, viewProblems(record, record.scene.camera, record.scene.effects.exposure, { placement: true }));
     record.lastRender = render;
     const labels = withLabels ? collectLabels(record, record.scene.camera, canvas.width, canvas.height) : undefined;
@@ -1347,7 +1350,8 @@ window.__agentPreview = {
       data: labeledPng(labels),
       mimeType: 'image/png',
       metadata: { sessionId, revision: record.scene.revision, topologyRevision: record.scene.topologyRevision,
-        motionTime: record.scene.motionTime ?? null, ...render, ...(labels ? { labels } : {}) },
+        motionTime: record.scene.motionTime ?? null, ...render, ...(labels ? { labels } : {}),
+        ...(motionTime === undefined && recipeMoves(record.scene.exportRecipe()) ? { hints: [MOTION_NOT_SET_HINT] } : {}) },
     };
   },
   // The findings of a view without drawing it, for a job whose frames the page does not draw (the path tracer). Exposure is

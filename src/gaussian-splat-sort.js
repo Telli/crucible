@@ -4,6 +4,8 @@
 // out of the order. Splats closer than one step of depth (the span divided by 65536) may draw in either order.
 
 const DEPTH_STEPS = 65536;
+// Relative to the length of the depth axis, which carries any uniform scale of the splat matrix: a fixed tolerance
+// would never re-sort a scene scaled down to 1e-6.
 const UNCHANGED_TOLERANCE = 1e-6;
 
 function viewDepthRange(modelView, { minimum, maximum }) {
@@ -35,7 +37,8 @@ export function createSplatSorter(positions, count, bounds) {
 
   function sort(modelView) {
     const axis = [modelView[2], modelView[6], modelView[10], modelView[14]];
-    const unchanged = axis.every((value, index) => Math.abs(value - lastAxis[index]) <= UNCHANGED_TOLERANCE);
+    const tolerance = UNCHANGED_TOLERANCE * Math.hypot(axis[0], axis[1], axis[2]);
+    const unchanged = axis.every((value, index) => Math.abs(value - lastAxis[index]) <= tolerance);
     if (unchanged) return { order, visibleCount, changed: false };
     lastAxis.set(axis);
     const { nearest, farthest } = viewDepthRange(modelView, bounds);

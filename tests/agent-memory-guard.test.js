@@ -236,3 +236,10 @@ test('the runtime hands its --memory to the sampler, the guard and the native al
   assert.equal((source.match(/memoryGuardLimits\(memory\)\.browserHeapBytes/g) || []).length, 2);
   assert.match(source, /memory > maximumMemory/);
 });
+
+test('a native allowance refuses a memory budget that is not a finite number of zero or more MiB', () => {
+  for (const memoryMiB of [Number.NaN, Number.POSITIVE_INFINITY, -1, -9999]) {
+    assert.throws(() => nativeNodeAllowanceBytes({ width: 64, height: 64, memoryMiB }), /zero or more MiB/, `memoryMiB ${memoryMiB}`);
+  }
+  assert.equal(nativeNodeAllowanceBytes({ width: 64, height: 64, memoryMiB: 0 }), 640 * MEBIBYTE + 64 * 64 * 1024);
+});
