@@ -1021,10 +1021,7 @@ function checkLightLinkNames(recipe) {
   if (!environmentLinksLights(recipe.environment)) {
     return;
   }
-  const unknown = agentSceneModule('lightLinking').unknownLightLinkNames(recipe.environment, recipe.nodes);
-  if (unknown.length > 0) {
-    throw invalidField('environment.keyAffects', unknown.slice(0, 4), 'node IDs that exist in nodes in every affects list; scene_inspect lists them');
-  }
+  agentSceneModule('lightLinking').requireKnownLightLinkNames(recipe.environment, recipe.nodes);
 }
 
 // A typo in lines.nodes would turn nothing off without a sign. A node that exists but is hidden stays valid.
