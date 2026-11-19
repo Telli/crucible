@@ -3,7 +3,10 @@
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const GRID_HALF_EXTENT = 10;
-const GRID_HEIGHT = 0.025;
+// The renderer draws its own floor at 0.019 m, so the grid has to sit above that to show. It stays within 3 mm of it,
+// or the lines would cut a visible notch into the base of anything that rests on the ground.
+const GRID_HEIGHT = 0.0212;
+const GRID_THICKNESS = 0.002;
 const GRID_LINE_WIDTH = 0.012;
 const GRID_AXIS_WIDTH = 0.024;
 const WIDGET_SIZE = 76;
@@ -22,7 +25,7 @@ function gridLineNode(id, material, alongX, offset, width) {
     geometry: 'studio-grid-line',
     material,
     translation: alongX ? [0, GRID_HEIGHT, offset] : [offset, GRID_HEIGHT, 0],
-    scale: alongX ? [length, 0.002, width] : [width, 0.002, length],
+    scale: alongX ? [length, GRID_THICKNESS, width] : [width, GRID_THICKNESS, length],
     castShadow: false,
     receiveShadow: false,
   };

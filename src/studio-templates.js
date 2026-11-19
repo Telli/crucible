@@ -111,7 +111,7 @@ export function buildTemplateRecipe(templateName = 'blockout') {
       ],
       nodes: [
         { id: 'cube', label: 'Cube', geometry: 'block', material: 'clay', translation: [0, 0.5, 0] },
-        { id: 'sphere', label: 'Sphere', geometry: 'ball', material: 'clay', translation: [-1.6, 0.5, 0.4] },
+        { id: 'sphere', label: 'Sphere', geometry: 'ball', material: 'clay', translation: [-1.6, 0.5, 0.4], scale: [0.5, 0.5, 0.5] },
         { id: 'cone', label: 'Cone', geometry: 'spike', material: 'clay', translation: [1.5, 0.5, -0.6] },
       ],
       camera: { eye: [4.2, 2.9, 4.9], target: [0, 0.5, 0], up: [0, 1, 0], fov: 42, near: 0.1, far: 120 },

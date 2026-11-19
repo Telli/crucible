@@ -1697,4 +1697,61 @@ test('Studio opens on the blockout scene when it gets no recipe', testContext =>
   testContext.after(() => studio.dispose());
   assert.deepEqual(studio.exportRecipe().nodes.map(node => node.id), ['cube', 'sphere', 'cone']);
   assert.equal(Object.keys(STUDIO_TEMPLATES)[0], 'blockout');
+  for (const nodeId of ['cube', 'sphere', 'cone']) {
+    const bounds = studio.controller.nodeBounds(nodeId);
+    assert.ok(Math.abs(bounds.min[1]) < 1e-3, `${nodeId} rests on the ground`);
+    assert.ok(bounds.size.every(length => Math.abs(length - 1) < 1e-3), `${nodeId} is one metre across`);
+  }
+});
+
+test('turning a ring shows where the turn began, how far it has gone and hides the other rings', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  ui.tool('rotate').click();
+  ui.studio.renderNow();
+  const handles = ui.controller.gizmoHandles();
+  const ringPoint = degrees => ui.controller.projectWorldPoint([
+    handles.pivot[0] + Math.cos((degrees * Math.PI) / 180),
+    handles.pivot[1],
+    handles.pivot[2] - Math.sin((degrees * Math.PI) / 180),
+  ]);
+  const sweepPart = part => ui.gizmo.descendants().find(element => element.getAttribute('data-rotation-sweep') === part);
+  const rings = () => ui.gizmo.descendants().filter(element => element.tagName.toLowerCase() === 'polyline').map(element => element.getAttribute('data-gizmo-axis'));
+  assert.equal(ui.controller.rotationSweep(), null);
+  assert.equal(sweepPart('wedge'), undefined);
+  assert.deepEqual(rings(), ['x', 'y', 'z']);
+
+  dispatch(ui.gizmoPart('y'), 'pointerdown', ui.clientPoint(ringPoint(0)));
+  dispatch(ui.canvas, 'pointermove', ui.clientPoint(ringPoint(40)));
+  ui.studio.renderNow();
+  let sweep = ui.controller.rotationSweep();
+  assert.equal(sweep.axis, 'y');
+  assert.ok(Math.abs(sweep.degrees - 40) < 0.5);
+  const reach = point => Math.hypot(point.x - sweep.centre.x, point.y - sweep.centre.y);
+  assert.ok(sweep.arc.every(point => reach(point) > 10), 'the arc runs along the ring, away from the centre');
+  const start = ringPoint(0);
+  const now = ringPoint(40);
+  const bearing = (from, to) => Math.atan2(to.y - from.y, to.x - from.x);
+  assert.ok(Math.abs(bearing(sweep.centre, sweep.arc[0]) - bearing(sweep.centre, start)) < 0.02, 'the first spoke points at the grab');
+  assert.ok(Math.abs(bearing(sweep.centre, sweep.arc.at(-1)) - bearing(sweep.centre, now)) < 0.02, 'the last spoke follows the pointer');
+  assert.deepEqual(rings(), ['y']);
+  assert.equal(sweepPart('wedge').getAttribute('pointer-events'), 'none');
+  assert.ok(Number(sweepPart('wedge').getAttribute('fill-opacity')) < 0.25, 'the wedge stays faint');
+  assert.equal(sweepPart('wedge').getAttribute('points').split(' ').length, sweep.arc.length + 1);
+  assert.ok(sweepPart('start').getAttribute('stroke-dasharray'));
+  assert.equal(sweepPart('now').getAttribute('stroke-dasharray'), null);
+
+  for (const degrees of [100, 170, 230]) {
+    dispatch(ui.canvas, 'pointermove', ui.clientPoint(ringPoint(degrees)));
+  }
+  sweep = ui.controller.rotationSweep();
+  assert.ok(Math.abs(sweep.degrees - 230) < 0.5, 'a turn past half a circle keeps counting');
+  dispatch(ui.canvas, 'pointermove', { ...ui.clientPoint(ringPoint(228)), shiftKey: true });
+  assert.equal(ui.controller.rotationSweep().degrees, 225);
+
+  dispatch(ui.canvas, 'pointerup', ui.clientPoint(ringPoint(228)));
+  ui.studio.renderNow();
+  assert.equal(ui.controller.rotationSweep(), null);
+  assert.equal(sweepPart('wedge'), undefined);
+  assert.deepEqual(rings(), ['x', 'y', 'z']);
 });

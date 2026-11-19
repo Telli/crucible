@@ -30,7 +30,7 @@ The selected object gets an outline. Below 820 px wide the two cards start close
 Each tool has its own handle shape, so the shape says what a drag will do: arrows move, rings turn, squares scale. The handles follow the object, not the camera: the three axes are the object's own X, Y and Z, so a turned object moves along the way it faces.
 
 - **Move** drags the object exactly as far as the pointer travels along the axis. Hold Shift to move in steps of 0.25 m.
-- **Rotate** turns the object by the angle the pointer sweeps on the ring. Hold Shift to turn in steps of 15 degrees.
+- **Rotate** turns the object by the angle the pointer sweeps on the ring. Hold Shift to turn in steps of 15 degrees. While you drag, the other two rings leave, a dashed spoke stays where the drag began, a solid spoke follows the object, and a faint wedge between them fills the angle turned so far. A turn can go past half a circle and keeps counting.
 - **Scale** on an axis handle scales by how far you pull it: twice the distance doubles that axis. The centre handle scales all three.
 
 One drag is one undo step, and undo leaves the viewport camera where you put it.

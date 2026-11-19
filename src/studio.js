@@ -413,6 +413,42 @@ function arrowHeadPoints(origin, tip) {
   return corners.map(corner => `${corner[0].toFixed(1)},${corner[1].toFixed(1)}`).join(' ');
 }
 
+// The turn in progress: a faint wedge over the angle already turned, a dashed spoke where the drag began and a solid
+// spoke where the object is now. Nothing here takes the pointer, so the drag carries on through it.
+function appendRotationSweep(documentReference, gizmoSvg, sweep) {
+  const color = AXIS_COLORS[sweep.axis];
+  const centre = sweep.centre;
+  const arc = sweep.arc.filter(point => point.visible);
+  if (arc.length < 2) {
+    return;
+  }
+  const pair = point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+  const spoke = (point, part, extra) => createSvgElement(documentReference, 'line', {
+    x1: centre.x.toFixed(1),
+    y1: centre.y.toFixed(1),
+    x2: point.x.toFixed(1),
+    y2: point.y.toFixed(1),
+    stroke: color,
+    'stroke-width': '1.8',
+    'stroke-linecap': 'round',
+    'pointer-events': 'none',
+    'data-rotation-sweep': part,
+    ...extra,
+  });
+  gizmoSvg.append(
+    createSvgElement(documentReference, 'polygon', {
+      points: [centre, ...arc].map(pair).join(' '),
+      fill: color,
+      'fill-opacity': '0.22',
+      stroke: 'none',
+      'pointer-events': 'none',
+      'data-rotation-sweep': 'wedge',
+    }),
+    spoke(arc[0], 'start', { 'stroke-dasharray': '4 4', 'stroke-opacity': '0.7' }),
+    spoke(arc.at(-1), 'now', {}),
+  );
+}
+
 function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
   gizmoSvg.replaceChildren();
   const width = controller.viewportWidth;
@@ -446,7 +482,13 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
   }
 
   if (tool === 'rotate') {
+    const sweep = controller.rotationSweep();
+    if (sweep && sweep.centre.visible) {
+      appendRotationSweep(documentReference, gizmoSvg, sweep);
+    }
     for (const axis of AXIS_NAMES) {
+      // While one ring is being turned the other two leave, so the turn is the only thing to read.
+      if (sweep && sweep.axis !== axis) continue;
       const ring = handles.rings[axis];
       const pointString = ring.filter(point => point.visible).map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ');
       if (!pointString) continue;

@@ -23,6 +23,7 @@ const WORLD_BASIS = Object.freeze({ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] });
 const AXIS_PARALLEL_LIMIT = 0.002;
 const OUTLINE_VERTEX_BUDGET = 4000;
 const RING_EDGE_ON_LIMIT = 0.12;
+const RING_RADIUS_FACTOR = 0.92;
 const ROTATION_DEGREES_PER_PIXEL = 0.75;
 const ROTATION_SNAP_DEGREES = 15;
 const TRANSLATION_SNAP_STEP = 0.25;
@@ -711,8 +712,8 @@ export function createStudioController({
       const points = [];
       for (let step = 0; step <= ROTATION_RING_SEGMENTS; step += 1) {
         const angle = (step / ROTATION_RING_SEGMENTS) * Math.PI * 2;
-        const cosine = Math.cos(angle) * handleLength * 0.92;
-        const sine = Math.sin(angle) * handleLength * 0.92;
+        const cosine = Math.cos(angle) * handleLength * RING_RADIUS_FACTOR;
+        const sine = Math.sin(angle) * handleLength * RING_RADIUS_FACTOR;
         const localOffset = axis === 'x'
           ? [0, cosine, sine]
           : axis === 'y'
@@ -927,8 +928,35 @@ export function createStudioController({
       worldPerPixel,
       changed: false,
       deltaLabel: '',
+      wrappedDegrees: 0,
+      turnedDegrees: 0,
+      sweepDegrees: 0,
     };
     return { nodeId: dragState.nodeId, tool: dragState.tool, axis: dragState.axis };
+  }
+
+  /**
+   * The turn in progress while a rotation ring is dragged, in screen points: the `centre`, and an `arc` that runs along
+   * the ring from where the drag began to where the object has turned. Null when no ring is being dragged.
+   */
+  function rotationSweep() {
+    if (!dragState || dragState.tool !== 'rotate' || !dragState.ringStartVector) {
+      return null;
+    }
+    const pivot = dragState.basePivot;
+    const radius = Math.max(0.25, worldLengthPerPixel(pivot) * GIZMO_SCREEN_PIXELS) * RING_RADIUS_FACTOR;
+    const startDirection = vec3.normalize(vec3.create(), dragState.ringStartVector);
+    const shownDegrees = Math.max(-360, Math.min(360, dragState.sweepDegrees));
+    const stepCount = Math.max(1, Math.ceil((Math.abs(shownDegrees) / 360) * ROTATION_RING_SEGMENTS));
+    const turn = quat.create();
+    const direction = vec3.create();
+    const arc = [];
+    for (let step = 0; step <= stepCount; step += 1) {
+      quat.setAxisAngle(turn, dragState.axisWorld, (((shownDegrees * step) / stepCount) * Math.PI) / 180);
+      vec3.transformQuat(direction, startDirection, turn);
+      arc.push(projectWorldPoint(Array.from(vec3.scaleAndAdd(vec3.create(), pivot, direction, radius))));
+    }
+    return { axis: dragState.axis, degrees: dragState.sweepDegrees, centre: projectWorldPoint(Array.from(pivot)), arc };
   }
 
   function toNodeLocalDelta(worldDelta, parentInverse) {
@@ -1027,10 +1055,16 @@ export function createStudioController({
         const ringHit = rayPlaneIntersection(ray.origin, ray.direction, dragState.basePivot, dragState.axisWorld);
         if (ringHit) {
           const ringVector = vec3.subtract(vec3.create(), ringHit, dragState.basePivot);
-          rawDegrees = (signedAngleAround(dragState.axisWorld, dragState.ringStartVector, ringVector) * 180) / Math.PI;
+          const wrappedDegrees = (signedAngleAround(dragState.axisWorld, dragState.ringStartVector, ringVector) * 180) / Math.PI;
+          // The angle between two directions stops at half a turn, so the steps are added up to follow a longer turn.
+          const step = wrappedDegrees - dragState.wrappedDegrees;
+          dragState.wrappedDegrees = wrappedDegrees;
+          dragState.turnedDegrees += step > 180 ? step - 360 : step < -180 ? step + 360 : step;
+          rawDegrees = dragState.turnedDegrees;
         }
       }
       const degrees = shiftKey ? Math.round(rawDegrees / ROTATION_SNAP_DEGREES) * ROTATION_SNAP_DEGREES : rawDegrees;
+      dragState.sweepDegrees = degrees;
       const radians = (degrees * Math.PI) / 180;
       const axisVector = axisIndex === 0 ? [1, 0, 0] : axisIndex === 1 ? [0, 1, 0] : [0, 0, 1];
       // The turn is about the object's own axis, so it is applied after the node's rotation.
@@ -1617,6 +1651,7 @@ export function createStudioController({
     screenRay,
     pickAt,
     gizmoHandles,
+    rotationSweep,
     selectionOutline,
     nodeOutline,
     nodeBounds,
