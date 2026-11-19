@@ -21,7 +21,7 @@ renderer.updateParts(characterAsset.parts);
 ## Rigs
 
 A rig is `{ joints, rootMatrix?, mapping? }`. Each joint is `{ name, parent, translation, rotation, scale }` with the local rest pose,
-`parent` as an index (`-1` for a root) and quaternions in XYZW order.
+`parent` as an index (`-1` for a root) and quaternions in XYZW order. A rest translation must be finite and a rest rotation finite and not zero, and a `mapping` may name only canonical bones and give each joint to one bone, otherwise the call throws a `RangeError`.
 `createRigFromSkin(skin)` builds one from an imported skin: the bind pose becomes the rest pose.
 `rootMatrix` is the world matrix of whatever sits above the root joints, such as a scaled Armature node. Pass it when the clip's root
 tracks are authored relative to that node. Uniform scale is assumed throughout.
@@ -81,7 +81,7 @@ world matrices and calls `updateSkinPose`. The renderer still needs `updateParts
 
 ## Crowds
 
-`createCrowd({ count, clip, seed, layout, spacing, columns, size, rateJitter, randomYaw })` is deterministic for a seed.  `columns` must be a positive integer and `size` a positive finite number, otherwise it throws a `RangeError`. `layout` is
+`createCrowd({ count, clip, seed, layout, spacing, columns, size, rateJitter, randomYaw })` is deterministic for a seed, a whole number from -2147483648 to 4294967295.  `columns` must be a positive integer and `size` a positive finite number, otherwise it throws a `RangeError`. `layout` is
 `'grid'` (centred, `columns` wide) or `'scatter'` (rejection sampling with at least `0.75 * spacing` between instances where room allows).
 Each instance has `position`, `yawRadians`, a `timeOffset` in the clip duration, a `playbackRate` within `1 ± rateJitter` and a
 column-major `matrix`. `clipTime(index, seconds)` gives the instance's clip time and `sample(seconds)` returns every instance's tracks
