@@ -447,6 +447,13 @@ test('the add menu opens beside its button and adds every primitive and both lig
   assert.equal(ui.status(), 'Area lights: 1');
   assert.equal(ui.studio.exportRecipe().environment.areaLights.length, 1);
   assert.deepEqual(ui.studio.exportRecipe().environment.areaLights[0].direction, [0, -1, 0], 'a new area light shines down');
+  for (let added = 1; added < 7; added += 1) {
+    byText(addPopover, 'Area light').click();
+  }
+  assert.equal(ui.status(), 'Area lights: 7');
+  byText(addPopover, 'Area light').click();
+  assert.match(ui.status(), /limit of 7 area lights/, 'one more than the limit says why it was not added');
+  assert.equal(ui.studio.exportRecipe().environment.areaLights.length, 7);
   for (const type of ['circle', 'lathe', 'extrude', 'text']) {
     assert.ok(ui.studio.exportRecipe().geometries.some(geometry => geometry.type === type), type);
   }

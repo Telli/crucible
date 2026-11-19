@@ -170,7 +170,8 @@ export const STUDIO_CSS = `
 .crucible-studio-gizmo[data-hover-axis="uniform"] [data-gizmo-axis="uniform"]:is(polygon, rect, circle),
 .crucible-studio-gizmo[data-hover-axis="surface"] [data-gizmo-axis="surface"]:is(polygon, rect, circle) {
   stroke: var(--studio-trace);
-  stroke-width: 3px;
+  stroke-width: 4.5px;
+  paint-order: stroke;
 }
 .crucible-studio-gizmo[data-hover-axis="xy"] [data-gizmo-axis="xy"],
 .crucible-studio-gizmo[data-hover-axis="xz"] [data-gizmo-axis="xz"],
@@ -322,10 +323,13 @@ export const STUDIO_CSS = `
   height: 26px;
   flex-shrink: 0;
 }
-/* The mark's own colours. On a dark panel the body is one step lighter, as the brand kit asks; mixing in a little of
-   the text colour does that in the dark theme and leaves the body as it is in the light one. */
-.crucible-studio-mark-body { fill: color-mix(in srgb, var(--studio-text) 20%, #393842); }
-.crucible-studio-mark-shadow { fill: color-mix(in srgb, var(--studio-text) 20%, #2a282d); }
+/* The mark's own colours, from the brand kit. On a dark panel the kit makes the body one step lighter. */
+.crucible-studio-mark-body { fill: #393842; }
+.crucible-studio-mark-shadow { fill: #2a282d; }
+@media (prefers-color-scheme: dark) {
+  .crucible-studio-mark-body { fill: #4f4e5a; }
+  .crucible-studio-mark-shadow { fill: #3b3a44; }
+}
 .crucible-studio-mark-molten-deep { fill: #df5829; }
 .crucible-studio-mark-molten { fill: #fc9132; }
 .crucible-studio-mark-face-shadow { fill: #c8c7ce; }

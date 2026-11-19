@@ -89,7 +89,7 @@ export function primitiveGeometrySpec(primitiveType) {
         geometry: { type: 'circle', segments: 64 },
         translation: [0, 0.02, 0],
         rotation: [-0.7071, 0, 0, 0.7071],
-        scale: [1, 1, 1],
+        scale: [0.5, 0.5, 1],
       };
     case 'ring':
       return {
@@ -97,7 +97,7 @@ export function primitiveGeometrySpec(primitiveType) {
         geometry: { type: 'circle', segments: 64, innerRadius: 0.6 },
         translation: [0, 0.02, 0],
         rotation: [-0.7071, 0, 0, 0.7071],
-        scale: [1, 1, 1],
+        scale: [0.5, 0.5, 1],
       };
     case 'arch':
       return {
@@ -105,7 +105,7 @@ export function primitiveGeometrySpec(primitiveType) {
         geometry: { type: 'torus', tubeRadius: 0.16, segments: 48, sides: 20, arc: Math.PI },
         translation: [0, 0, 0],
         rotation: [0, 0, 0, 1],
-        scale: [1, 1, 1],
+        scale: [0.5, 0.5, 0.5],
       };
     case 'vase':
       return {
