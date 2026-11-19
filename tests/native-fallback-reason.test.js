@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chooseTraceBackend, createNativeTracerLocator } from '../scripts/agent-native-trace.mjs';
-import { describeBackendFallback, explainFailureAfterFallback } from '../src/agent-backend-fallback.js';
+import { backendFallbackForFrame, describeBackendFallback, explainFailureAfterFallback } from '../src/agent-backend-fallback.js';
 
 const TRIANGLE_LIMIT_MESSAGE = 'This GPU path trace takes at most 2000000 triangles in total, got 2500000.';
 
@@ -33,4 +33,22 @@ test('a native request without the addon records why it fell back and repeats it
 test('a job that ran on the backend it asked for keeps its error unchanged', () => {
   const error = new RangeError(TRIANGLE_LIMIT_MESSAGE);
   assert.equal(explainFailureAfterFallback(error, undefined).message, TRIANGLE_LIMIT_MESSAGE);
+});
+
+test('a frame the native tracer drew reports no fallback, though it traced with the gpu kernel option', () => {
+  const fallback = backendFallbackForFrame({ requestedBackend: 'native', tracedNatively: true, usedBackend: 'gpu', fallbackReason: undefined });
+  assert.equal(fallback, undefined);
+});
+
+test('a native frame that fell back always names a reason string', () => {
+  const withReason = backendFallbackForFrame({ requestedBackend: 'native', tracedNatively: false, usedBackend: 'cpu', fallbackReason: 'the adapter was lost.' });
+  assert.deepEqual(withReason, { requestedBackend: 'native', usedBackend: 'cpu', fallbackReason: 'the adapter was lost.' });
+  const withoutReason = backendFallbackForFrame({ requestedBackend: 'native', tracedNatively: false, usedBackend: 'gpu', fallbackReason: undefined });
+  assert.equal(typeof withoutReason.fallbackReason, 'string');
+  assert.ok(withoutReason.fallbackReason.length > 0);
+  assert.doesNotThrow(() => JSON.stringify(withoutReason));
+});
+
+test('a job that did not ask for native never reports a fallback', () => {
+  assert.equal(backendFallbackForFrame({ requestedBackend: 'gpu', tracedNatively: false, usedBackend: 'gpu', fallbackReason: undefined }), undefined);
 });

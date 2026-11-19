@@ -9,6 +9,8 @@ import { invalidField } from './field-error.js';
 
 export const MAXIMUM_AIR_SOURCES = 4;
 const MAXIMUM_SCENE_TIME = 3600;
+// The scene clock may run far past an authored `startTime`; a placed source is resolved again when it draws.
+const MAXIMUM_CLOCK_TIME = 1e7;
 const MAXIMUM_COORDINATE = 100000;
 // The largest picture shift at full strength, as a fraction of the image height.
 const RING_MAXIMUM_SHIFT = 0.15;
@@ -36,7 +38,7 @@ function resolvePlacement(group, name) {
   return {
     centre: triple(group.centre, [0, 0, 0], -MAXIMUM_COORDINATE, MAXIMUM_COORDINATE, `${name}.centre`),
     ...(group.node === undefined ? {} : { node: group.node }),
-    time: numberInRange(group.time, 0, 0, MAXIMUM_SCENE_TIME, `${name}.time`),
+    time: numberInRange(group.time, 0, 0, MAXIMUM_CLOCK_TIME, `${name}.time`),
   };
 }
 
@@ -112,9 +114,10 @@ export function resolveFlash(input) {
 /** Gives each source the scene clock time, and the world position of the node it follows. */
 export function placeAirSteps(effects, sceneTime, parts) {
   for (const source of [...effects.distortion ?? [], ...effects.flash ?? []]) {
-    if (sceneTime !== null && sceneTime !== undefined) source.time = sceneTime;
+    if (Number.isFinite(sceneTime) && sceneTime >= 0 && sceneTime <= MAXIMUM_CLOCK_TIME) source.time = sceneTime;
     const part = source.node === undefined ? null : parts.find(candidate => candidate.name === source.node);
-    if (part) source.centre = [part.matrix[12], part.matrix[13], part.matrix[14]];
+    const position = part ? [part.matrix[12], part.matrix[13], part.matrix[14]] : null;
+    if (position?.every(component => Number.isFinite(component) && Math.abs(component) <= MAXIMUM_COORDINATE)) source.centre = position;
   }
   return effects;
 }

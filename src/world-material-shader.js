@@ -1,5 +1,6 @@
 import { resolveWaterMaterial } from './water-presets.js';
 import { layerTextureSupport, registerShaderFeatureCode } from './shader-registry.js';
+import { causticsDeclarations, resolveWaterCaustics, waterCausticsUniform } from './water-caustics.js';
 
 // Water bodies. A material with the water tag can carry `absorption` (RGB per metre: how fast each colour fades going down) and
 // `turbidity` (0 clear to 1 murky: how much light the water scatters into shadows). The largest flat water part of a scene sets
@@ -12,7 +13,7 @@ const WATER_MAXIMUM_THICKNESS_RATIO = 0.02;
 
 /** Copies a recipe material's water fields: a water material always carries the resolved absorption, turbidity and preset. */
 export function copyWaterFields(value, result, toVector) {
-  const given = ['waterPreset', 'absorption', 'turbidity'].filter(field => value[field] !== undefined);
+  const given = ['waterPreset', 'absorption', 'turbidity', 'caustics'].filter(field => value[field] !== undefined);
   if (result.tag !== 'water') {
     if (given.length > 0) {
       throw new RangeError(`${given.join(', ')} need the water tag.`);
@@ -21,6 +22,10 @@ export function copyWaterFields(value, result, toVector) {
   }
   const absorption = value.absorption === undefined ? undefined : toVector(value.absorption, 3, 'absorption');
   Object.assign(result, resolveWaterMaterial({ ...value, absorption }));
+  const caustics = resolveWaterCaustics(value.caustics);
+  if (caustics) {
+    result.caustics = caustics;
+  }
 }
 
 export const WATER_RAMP_COLOR_COUNT = Object.freeze([3, 5]);
@@ -158,7 +163,7 @@ export function findWaterBody(parts) {
     return null;
   }
   const { absorption, turbidity } = resolveWaterMaterial(best.material);
-  return { level: best.level, absorption, turbidity, refractive: best.refractive };
+  return { level: best.level, absorption, turbidity, refractive: best.refractive, caustics: best.material.caustics ?? null };
 }
 
 const waterLocations = new WeakMap();
@@ -187,7 +192,7 @@ function bindWaterBody(renderer) {
   const context = renderer.context;
   let locations = waterLocations.get(renderer);
   if (locations?.program !== renderer.program) {
-    locations = { program: renderer.program, body: context.getUniformLocation(renderer.program, 'waterBody'), absorption: context.getUniformLocation(renderer.program, 'waterAbsorption'), scene: context.getUniformLocation(renderer.program, 'waterScene'), resolved: false };
+    locations = { program: renderer.program, body: context.getUniformLocation(renderer.program, 'waterBody'), absorption: context.getUniformLocation(renderer.program, 'waterAbsorption'), scene: context.getUniformLocation(renderer.program, 'waterScene'), caustics: context.getUniformLocation(renderer.program, 'waterCaustics'), resolved: false };
     waterLocations.set(renderer, locations);
   }
   const waterParts = renderer.batches.flatMap(batch => (batch.parts[0].material.tag === 'water' ? batch.parts : []));
@@ -197,6 +202,7 @@ function bindWaterBody(renderer) {
   // Refraction needs the frame texture, so it is off for a transparent canvas, whose alpha is the picture's own.
   const refracts = active && body.refractive && !renderer.transparent && !renderer.benchmark && Boolean(renderer.frameTexture);
   context.uniform4f(locations.body, active ? body.level : 0, active ? body.turbidity : 0, active ? 1 : 0, refracts ? 1 : 0);
+  context.uniform4f(locations.caustics, ...waterCausticsUniform(active ? body.caustics : null));
   context.uniform3f(locations.absorption, ...(active ? body.absorption : [0, 0, 0]));
   if (!context.isEnabled(context.BLEND)) {
     locations.resolved = false;
@@ -228,6 +234,7 @@ export const worldMaterialSlots = {
   // Shadow of a surface under murky water: the classic shadow map read over a wider disc. A cascaded map is read through
   // its own macro and keeps its filter.
   declarations: `uniform vec4 waterBody;
+${causticsDeclarations}
 uniform vec4 waterRampHead;
 uniform vec3 waterRampWeights;
 uniform vec2 waterRampHeightRange;
@@ -340,6 +347,7 @@ float underwaterVisibility(float visibility, vec3 normal, float depth) {
     float sunSine = sqrt(max(1.0 - pow(normalize(lightDirection).y, 2.0), 0.0)) / 1.33;
     waterSunTransmittance = exp(-(waterAbsorption + 0.9 * waterBody.y * (1.0 - waterBody.y)) * waterDepth / sqrt(1.0 - sunSine * sunSine));
     waterScatterShare = waterBody.y * (1.0 - exp(-0.4 * waterBody.y * waterDepth));
+    if (waterCaustics.z > 0.0) waterSunTransmittance *= causticGain(worldPosition, waterDepth);
   }
   vec3 keyColor = keyColor * waterSunTransmittance;
 `,
