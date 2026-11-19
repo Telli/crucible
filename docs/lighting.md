@@ -218,7 +218,7 @@ When `shadowBounds` sets neither `target` nor `extent`, a `world: true` renderer
 
 ## Cascaded sun shadows
 
-The directional light uses one 2048 x 2048 map over the box that `shadowBounds` gives. In a scene as long as a street that box is 100 m or more across, so a texel is 6 to 8 cm and a lamp post near the camera is two texels wide. Cascades cut the camera's view into up to four slices by depth and fit one map to each, so the slice near the camera has texels of about 1 cm.
+The directional light uses one 2048 x 2048 map over the box that `shadowBounds` gives, or a 4096 x 4096 map (64 MiB) when that box is more than 1000 m either side (`extent` above 1000, for example a mountain valley), so a texel there stays near a metre instead of 2.25 m and the edge of a shadow on a slope has no visible steps. In a scene as long as a street that box is 100 m or more across, so a texel is 6 to 8 cm and a lamp post near the camera is two texels wide. Cascades cut the camera's view into up to four slices by depth and fit one map to each, so the slice near the camera has texels of about 1 cm.
 
 ```js
 import { CrucibleRenderer } from '@codepawlhq/crucible';
