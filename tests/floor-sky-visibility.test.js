@@ -164,9 +164,11 @@ function brightestRoomSide(result, partName, normalAxis, normalSign, minimumDept
 test('walls that run into the back wall do not glow near its corners: their buried end vertices read as occluded (#2166)', () => {
   const result = applyFloorSkyVisibility(windowRoomParts(), { onlyClosedRooms: true, surfaces: 'all' });
   assert.equal(result.report.reason, null);
-  // The far half of the room sees the sky only through a 2.8 x 1.5 m window at least 5 m away, so these inner faces stay dark.
-  assert.ok(brightestRoomSide(result, 'wall-left', 0, 1) < 0.1, 'left wall inner face');
-  assert.ok(brightestRoomSide(result, 'wall-right', 0, -1) < 0.1, 'right wall inner face');
-  assert.ok(brightestRoomSide(result, 'ceiling', 1, -1) < 0.1, 'ceiling underside');
-  assert.ok(brightestRoomSide(result, 'wall-back', 2, -1) < 0.1, 'back wall inner face');
+  // The far half of the room sees the sky only through a 2.8 x 1.5 m window at least 5 m away, so these inner faces stay dark:
+  // no brighter than the interior fill every point of the room gets (#1334) plus 0.1.
+  const darkest = result.report.interiorFill + 0.1;
+  assert.ok(brightestRoomSide(result, 'wall-left', 0, 1) < darkest, 'left wall inner face');
+  assert.ok(brightestRoomSide(result, 'wall-right', 0, -1) < darkest, 'right wall inner face');
+  assert.ok(brightestRoomSide(result, 'ceiling', 1, -1) < darkest, 'ceiling underside');
+  assert.ok(brightestRoomSide(result, 'wall-back', 2, -1) < darkest, 'back wall inner face');
 });

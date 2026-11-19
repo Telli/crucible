@@ -3,7 +3,7 @@ import { cameraFieldOfView, resolveThinLens } from './camera.js';
 import { fresnelSchlick } from './material-layers.js';
 import { pointLightFalloff } from './ray-query.js';
 import { profileGain } from './light-profile.js';
-import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS } from './path-tracer-scene.js';
+import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS, uniqueTriangleCount } from './path-tracer-scene.js';
 import { denoiseRadiance, estimateRelativeNoise } from './path-tracer-denoise.js';
 import { acesChannel, displayColor } from './view-transform.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
@@ -1048,6 +1048,9 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   if (fog?.density > 0 && fog.ambient) notes.add('volumeFog.ambient is not added: the fog is lit by the traced lights and sky.');
   const hasSoftFalloff = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? [])].some(light => light.softFalloff === true);
   if (hasSoftFalloff && !kernelMaterials) notes.add('softFalloff is ignored: only the native cycles kernel draws a light as an oriented disk, the other tracers draw a sphere.');
+  const lightsWithOwnLimit = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? []), ...(environment?.areaLights ?? [])];
+  const hasBounceLimit = environment?.sunMaxBounces !== undefined || lightsWithOwnLimit.some(light => light.maxBounces !== undefined);
+  if (hasBounceLimit && !kernelMaterials) notes.add('A light maxBounces (sunMaxBounces for the sun) is ignored: only the native cycles kernel stops a light after its own bounces, the other tracers run every light to the scene bounces.');
   const hasPortal = (environment?.areaLights ?? []).some(light => light.portal === true);
   if (hasPortal && !kernelMaterials && backend === 'gpu') notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel, the CPU tracer and the WebGPU tracer sample the environment through them, the other tracers draw no light from a portal.');
   const hasGridVolume = (environment?.localVolumes ?? []).some(volume => volume?.shape === 'grid');
@@ -1286,7 +1289,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
       denoiser: options.denoiser, threads,
       backend: options.backend, ...(gpuName ? { gpu: gpuName, gpuCompileSeconds, gpuKernelCompiles } : {}),
       averageSamples, noiseThreshold: options.noiseThreshold, ...(estimatedNoise === null ? {} : { estimatedNoise }),
-      triangles: scene.indices.length / 3, tracedSeconds, seconds: (performance.now() - started) / 1000,
+      triangles: uniqueTriangleCount(scene), tracedSeconds, seconds: (performance.now() - started) / 1000,
       ignored: describeIgnoredFeatures(parts, environment, options.backend, { clipStart: view.clipStart }),
     },
   };

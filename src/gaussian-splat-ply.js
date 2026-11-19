@@ -41,6 +41,9 @@ function readHeaderText(bytes) {
   const searchLimit = Math.min(bytes.length, MAXIMUM_HEADER_BYTES);
   const text = new TextDecoder('latin1').decode(bytes.subarray(0, searchLimit));
   const endMatch = HEADER_END_PATTERN.exec(text);
+  if (text.startsWith('ply') && !endMatch && bytes.length > MAXIMUM_HEADER_BYTES) {
+    throw new Error(`Gaussian splat PLY header is longer than ${MAXIMUM_HEADER_BYTES} bytes (64 KiB) or has no "end_header" line. Remove comment lines or re-export the file.`);
+  }
   if (!text.startsWith('ply') || !endMatch) {
     throw new Error('Not a PLY file: the header must start with "ply" and end with "end_header"');
   }
@@ -226,7 +229,9 @@ function createSplatReader({ view, vertexCount, layout, stride, upAxis }) {
     let valid = true;
     for (let field = 0; field < fields.length; field++) {
       const value = fields[field].read(view, row + fields[field].offset);
-      values[field] = field >= 7 && field <= 9 ? Math.fround(Math.exp(value)) : value;
+      // Positions are stored as float32, so a value past that range counts as non-finite here, as an overflowing scale does.
+      const isPosition = field < 3;
+      values[field] = field >= 7 && field <= 9 ? Math.fround(Math.exp(value)) : isPosition ? Math.fround(value) : value;
       if (!Number.isFinite(values[field])) {
         badFieldNames.add(FIELD_NAMES[field]);
         valid = false;

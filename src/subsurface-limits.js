@@ -23,7 +23,7 @@ function checkTriple(label, value) {
 export function validateSubsurface(block, tag = 'surface') {
   if (block === null || typeof block !== 'object' || Array.isArray(block)) throw new TypeError('subsurface must be an object: { weight, radius, scale, color }.');
   for (const key of Object.keys(block)) {
-    if (!(key in SUBSURFACE_RANGES)) throw new RangeError(`Unknown subsurface field ${key}. Use weight, radius, scale or color.`);
+    if (!Object.hasOwn(SUBSURFACE_RANGES, key)) throw new RangeError(`Unknown subsurface field ${key}. Use weight, radius, scale or color.`);
   }
   for (const field of ['weight', 'scale']) {
     const value = block[field];

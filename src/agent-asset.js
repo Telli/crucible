@@ -985,6 +985,8 @@ export function createAgentAssetScene(asset, inputRecipe, { sources } = {}) {
               candidate.root[field] = operation[field];
             }
           }
+        } else if (operation.type === 'set-motion' && Object.hasOwn(operation, 'removeTracks')) {
+          candidate.motion = agentSceneModule('motionTrackRemoval').removeMotionTracks(operation, candidate.motion, path);
         } else if (operation.type === 'set-motion') {
           knownKeys(operation, ['type', 'motion'], path);
           if (!Object.hasOwn(operation, 'motion')) {

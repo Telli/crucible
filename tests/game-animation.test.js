@@ -297,3 +297,15 @@ test('clearing the game removes the animation with it', () => {
   scene.apply([{ type: 'set-game', game: null }], { expectedRevision: scene.revision });
   assert.equal(scene.exportRecipe().game, undefined);
 });
+
+test('an asset character whose file has no clips says so instead of offering an index from 0 to -1', async () => {
+  const { createGameAnimation } = await import('../src/game-animation.js');
+  const { assetCopyKey } = await import('../src/agent-scene-assets.js');
+  const assetId = 'ab'.repeat(32);
+  const animation = { clips: { walk: { from: { clip: 0 } } }, layers: [{ name: 'base', states: [{ name: 'walk', clip: 'walk' }] }] };
+  const nodes = [{ id: 'hero', asset: { id: assetId } }];
+  for (const asset of [{ animations: [], nodes: [] }, { nodes: [] }]) {
+    const assets = new Map([[assetCopyKey(assetId, 0), asset]]);
+    assert.throws(() => createGameAnimation(animation, nodes, 'hero', { assets }), error => error instanceof RangeError && /has no animation clips/.test(error.message));
+  }
+});

@@ -406,3 +406,15 @@ test('the liquid shader reads the mirror picture the lit shader reads, and clips
   assert.match(liquidFragmentShader, /if \(waterClip\.y > 0\.5 && worldPosition\.y < waterClip\.x/);
   assert.ok(createFragmentShader(['studioLighting', 'waterReflection']).includes('vec3 waterMirrorColor(vec3 position, float roughness)'));
 });
+
+test('attachWaterReflection refuses a mirror scale or update interval that would size or stall the target wrongly', () => {
+  const renderer = { render() {}, dispose() {} };
+  const surface = findWaterSurface(lakeScene());
+  for (const scale of [NaN, 0, 1000, Infinity]) {
+    assert.throws(() => attachWaterReflection(renderer, surface, { scale }), /scale was .*pass a number from 0.05 to 1/);
+  }
+  for (const updateEvery of [NaN, Infinity, -1]) {
+    assert.throws(() => attachWaterReflection(renderer, surface, { updateEvery }), /updateEvery was .*pass a number from 0 to 1000/);
+  }
+  attachWaterReflection(renderer, surface, { scale: 0.5, updateEvery: 2 })();
+});

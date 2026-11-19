@@ -40,6 +40,9 @@ export function resolveIesProfile(value, label = 'ies') {
   if (!Array.isArray(angles) || !Array.isArray(candela) || angles.length !== candela.length || angles.length < 2 || angles.length > PROFILE_MAXIMUM_POINTS) {
     throw new RangeError(`${label} angles and candela must be arrays of the same length, from 2 to ${PROFILE_MAXIMUM_POINTS}.`);
   }
+  for (let index = 0; index < angles.length; index++) {
+    if (!(index in angles) || !(index in candela)) throw new RangeError(`${label} angles and candela have no value at index ${index}.`);
+  }
   angles.forEach((angle, index) => {
     if (typeof angle !== 'number' || !Number.isFinite(angle) || angle < 0 || angle > 180 || (index > 0 && angle <= angles[index - 1])) {
       throw new RangeError(`${label} angles must be degrees from 0 to 180, strictly rising.`);
@@ -49,6 +52,8 @@ export function resolveIesProfile(value, label = 'ies') {
     if (typeof entry !== 'number' || !Number.isFinite(entry) || entry < 0 || entry > 1e7) throw new RangeError(`${label} candela must be numbers from 0 to 10000000.`);
   });
   if (!candela.some(entry => entry > 0)) throw new RangeError(`${label} candela needs a value above zero.`);
+  const emits = candela.some((entry, index) => entry > 0 && angles[index] <= 90) || candelaAt({ angles, candela }, 90) > 0;
+  if (!emits) throw new RangeError(`${label} candela is zero from 0 to 90 degrees, where a lamp is sampled; add a value above zero up to 90 degrees.`);
   return { angles: [...angles], candela: [...candela] };
 }
 

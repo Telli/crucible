@@ -4,8 +4,10 @@ import { freePort } from './free-port.js';
 
 const CHROME_ARGUMENTS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'];
 
-async function startServer(port) {
+async function startServer(port, serverLog) {
   const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  server.stdout.on('data', (data) => serverLog.push(data.toString()));
+  server.stderr.on('data', (data) => serverLog.push(data.toString()));
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('The dev server did not start.')), 30000);
     server.stdout.on('data', (data) => {
@@ -37,6 +39,19 @@ export function skipOrThrow(testContext, message) {
   testContext.skip(message);
 }
 
+// What the browser saw go wrong (a failed or rejected request, a console error), so a failure that only shows as "Failed to fetch" names the request behind it.
+function watchPageProblems(page) {
+  const problems = [];
+  page.on('requestfailed', (request) => problems.push(`request failed: ${request.url()} ${request.failure()?.errorText}`));
+  page.on('response', (response) => {
+    if (response.status() >= 400) problems.push(`response ${response.status()}: ${response.url()}`);
+  });
+  page.on('console', (message) => {
+    if (message.type() === 'error') problems.push(`console error: ${message.text()}`);
+  });
+  return problems;
+}
+
 /**
  * Runs `body(page)` on the dev server's page in headless Chrome and cleans up.
  * Where Chrome or playwright is missing the test skips on a developer machine and fails on CI, where Chrome is required.
@@ -50,7 +65,8 @@ export async function withDevServerPage(testContext, body) {
     return;
   }
   const port = await freePort();
-  const server = await startServer(port);
+  const serverLog = [];
+  const server = await startServer(port, serverLog);
   let browser;
   try {
     try {
@@ -60,8 +76,14 @@ export async function withDevServerPage(testContext, body) {
       return;
     }
     const page = await browser.newPage({ viewport: { width: 128, height: 128 } });
+    const pageProblems = watchPageProblems(page);
     await page.goto(`http://127.0.0.1:${port}/`);
-    await body(page);
+    try {
+      await body(page);
+    } catch (error) {
+      error.message += `\nDev server output:\n${serverLog.join('').trim()}\nPage problems:\n${pageProblems.join('\n')}`;
+      throw error;
+    }
   } finally {
     await browser?.close();
     server.kill();

@@ -30,6 +30,8 @@ const ASSET_ID = /^[a-f0-9]{64}$/;
 const PLACEMENT_FIELDS = ['id', 'materials', 'flatten', 'clip', 'drive', 'crowd'];
 const FLATTEN_FIELDS = ['color', 'unlit'];
 const CLIP_FIELDS = ['index', 'start', 'speed', 'loop'];
+// `clip.index: 'all'` plays every clip of the asset on one timeline (the same word the pose animation takes in gltf.js).
+const ALL_CLIPS = 'all';
 const COLOR_FIELDS = ['color', 'emissiveColor'];
 const UNIT_FIELDS = ['metallic', 'roughness', 'opacity'];
 const OVERRIDE_FIELDS = ['name', 'id', 'tag', ...COLOR_FIELDS, ...UNIT_FIELDS, 'emission', 'emissionMask'];
@@ -141,7 +143,9 @@ export function normalizeAssetPlacement(value) {
   if (value.clip !== undefined) {
     knownKeys(value.clip, CLIP_FIELDS, 'asset.clip');
     const { index, start = 0, speed = 1, loop = true } = value.clip;
-    if (!Number.isInteger(index) || index < 0) throw invalidField('asset.clip.index', index, 'a whole number of 0 or more, such as 0');
+    if (index !== ALL_CLIPS && (!Number.isInteger(index) || index < 0)) {
+      throw invalidField('asset.clip.index', index, `a whole number of 0 or more, such as 0, or "${ALL_CLIPS}" to play every clip of the asset together`);
+    }
     if (!Number.isFinite(start) || start < 0 || start > 3600) throw invalidField('asset.clip.start', start, 'seconds from 0 to 3600, such as 0');
     if (!Number.isFinite(speed) || speed <= 0 || speed > 16) throw invalidField('asset.clip.speed', speed, 'a number above 0 and at most 16, such as 1');
     if (typeof loop !== 'boolean') throw invalidField('asset.clip.loop', loop, 'true or false', TypeError);
@@ -165,7 +169,7 @@ export function normalizeAssetPlacement(value) {
 export function gamePosedNodeIds(game) {
   const ids = new Set();
   if (game?.player?.animation && game.player.node) ids.add(game.player.node);
-  for (const npc of game?.npcs ?? []) if (npc?.animation && npc.node) ids.add(npc.node);
+  for (const npc of Array.isArray(game?.npcs) ? game.npcs : []) if (npc?.animation && npc.node) ids.add(npc.node);
   return ids;
 }
 
@@ -179,7 +183,9 @@ export function visitPlacements(value, visit, depth = 0) {
   const placement = value.asset;
   if (placement && typeof placement === 'object') visit(placement);
   for (const [key, child] of Object.entries(value)) {
-    if (key !== 'asset') visitPlacements(child, visit, depth + 1);
+    if (key === 'asset') continue;
+    if ((key === 'nodes' || key === 'npcs') && !Array.isArray(child)) continue;
+    visitPlacements(child, visit, depth + 1);
   }
 }
 
@@ -199,7 +205,8 @@ export function recipeAssetNeeds(value) {
   collectPlacements(value, placements);
   const needs = new Map();
   const posedNodes = gamePosedNodeIds(value?.game);
-  const posedPlacements = (value?.nodes ?? []).filter(node => node.asset && posedNodes.has(node.id)).map(node => node.asset);
+  const nodes = Array.isArray(value?.nodes) ? value.nodes : [];
+  const posedPlacements = nodes.filter(node => node && typeof node === 'object' && node.asset && posedNodes.has(node.id)).map(node => node.asset);
   for (const placement of placements) {
     const id = placement.id.toLowerCase();
     const need = needs.get(id) ?? { id, copies: 1 };
@@ -303,8 +310,9 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
     if (!asset) {
       throw new Error(`Asset ${assetId.slice(0, 12)} copy ${copy} is not loaded. The host loads it before createAgentScene or apply.`);
     }
-    if (clip && !asset.animations[clip.index]) {
-      throw invalidField(`nodes[${recipe.nodes.indexOf(node)}].asset.clip.index`, clip.index, `a clip index from 0 to ${asset.animations.length - 1}, since asset ${assetId.slice(0, 12)} has ${asset.animations.length} clips; scene_inspect lists them under assets`);
+    if (clip && !playedClips(asset, clip).length) {
+      const range = asset.animations.length ? `a clip index from 0 to ${asset.animations.length - 1}, or "${ALL_CLIPS}"` : 'no clip index, since the asset has no clips; drop the clip field';
+      throw invalidField(`nodes[${recipe.nodes.indexOf(node)}].asset.clip.index`, clip.index, `${range}, since asset ${assetId.slice(0, 12)} has ${asset.animations.length} clips; scene_inspect lists them under assets`);
     }
     if (crowd) {
       const expanded = crowdCode().expandCrowd(recipe, node, asset, copy, outputCache, runtime, limits);
@@ -401,6 +409,56 @@ export function clipTimeAt(clip, duration, time) {
 }
 
 /**
+ * Scene seconds at which each placed clip finishes one pass, in placement order: its start plus its length at its speed.
+ * A render job reads these as the lengths of the scene's clips, so a scene that places a clip has a timeline of its own.
+ */
+export function placedClipEnds(runtime) {
+  return runtime.placements
+    .filter(record => record.clip)
+    .map(record => record.clip.start + clipDuration(record.asset, record.clip) / record.clip.speed);
+}
+
+/** The clips a placement plays: the one at its index, or every clip of the asset for `index: 'all'`. */
+function playedClips(asset, clip) {
+  if (clip.index === ALL_CLIPS) return asset.animations;
+  return asset.animations[clip.index] ? [asset.animations[clip.index]] : [];
+}
+
+/** Seconds one pass of a placement's clip takes at speed 1: the longest clip when it plays them all. */
+function clipDuration(asset, clip) {
+  return Math.max(0, ...playedClips(asset, clip).map(candidate => candidate.duration));
+}
+
+/**
+ * Diagnostics for a placement that plays one clip of an asset whose other clips move other nodes: the file probably holds
+ * one animation per object (Blender exports one action at a time by default), and the rest never play.
+ */
+export function placedClipDiagnostics(runtime) {
+  const problems = [];
+  for (const record of runtime.placements) {
+    if (!record.clip || record.clip.index === ALL_CLIPS || record.asset.animations.length < 2) continue;
+    const played = animatedNodeNames(record.asset.animations[record.clip.index]);
+    const skipped = new Set();
+    record.asset.animations.forEach((candidate, index) => {
+      if (index === record.clip.index) return;
+      const names = animatedNodeNames(candidate);
+      if (names.size && [...names].every(name => !played.has(name))) skipped.add(index);
+    });
+    if (!skipped.size) continue;
+    problems.push({
+      kind: 'clip-leaves-other-animations', severity: 'warning', target: record.node,
+      message: `Only clip ${record.clip.index} plays, and clip${skipped.size > 1 ? 's' : ''} ${[...skipped].join(', ')} of this asset move${skipped.size > 1 ? '' : 's'} other nodes, so those nodes stay still.`,
+      fix: `Set clip.index to "${ALL_CLIPS}" to play every clip together. If the file came from Blender, export it with export_animation_mode='ACTIVE_ACTIONS' so each object keeps its own animation.`,
+    });
+  }
+  return problems;
+}
+
+function animatedNodeNames(animation) {
+  return new Set(animation.tracks.map(track => track.name.slice(0, track.name.lastIndexOf('.'))));
+}
+
+/**
  * Pose every animated placement at a scene time. Returns the world matrix of each part node and a commit/discard pair;
  * the pose is staged first so a failure leaves every asset where it was.
  */
@@ -421,7 +479,7 @@ export function stageAssetClips(runtime, graph, time) {
         record.drivePose = driven.pose;
         transaction = record.asset.stagePose({ nodeOverrides: driven.nodeOverrides });
       } else {
-        const duration = record.asset.animations[record.clip.index].duration;
+        const duration = clipDuration(record.asset, record.clip);
         transaction = record.asset.stagePose({ animation: { clip: record.clip.index, time: clipTimeAt(record.clip, duration, time) }, nodeOverrides: [] });
       }
       transactions.push(transaction);

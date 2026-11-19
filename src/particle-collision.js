@@ -2,6 +2,9 @@
 // A path (not a point) is tested, so a fast particle cannot tunnel through a thin mesh.
 
 const PARALLEL_EPSILON = 1e-12;
+// A path through the edge two triangles share lands on the boundary of both, and rounding can put it just outside each, so
+// the barycentric bounds are widened by this much (relative to the triangle) and the earliest hit still wins.
+const EDGE_TOLERANCE = 1e-9;
 
 /**
  * Packs the triangles of several meshes. `meshes` are { positions (world space), indices }. Each mesh keeps its own
@@ -70,12 +73,12 @@ export function findFirstCollision(surface, from, to, contact) {
       const originY = from[1] - surface.triangles[base + 1];
       const originZ = from[2] - surface.triangles[base + 2];
       const along = (originX * pvecX + originY * pvecY + originZ * pvecZ) / determinant;
-      if (along < 0 || along > 1) continue;
+      if (along < -EDGE_TOLERANCE || along > 1 + EDGE_TOLERANCE) continue;
       const qvecX = originY * edgeOneZ - originZ * edgeOneY;
       const qvecY = originZ * edgeOneX - originX * edgeOneZ;
       const qvecZ = originX * edgeOneY - originY * edgeOneX;
       const across = (directionX * qvecX + directionY * qvecY + directionZ * qvecZ) / determinant;
-      if (across < 0 || along + across > 1) continue;
+      if (across < -EDGE_TOLERANCE || along + across > 1 + EDGE_TOLERANCE) continue;
       const fraction = (edgeTwoX * qvecX + edgeTwoY * qvecY + edgeTwoZ * qvecZ) / determinant;
       if (fraction < 0 || fraction > 1 || fraction >= contact.fraction) continue;
       const normalX = edgeOneY * edgeTwoZ - edgeOneZ * edgeTwoY;
