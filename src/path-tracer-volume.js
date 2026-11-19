@@ -95,7 +95,7 @@ export function prepareMeshVolume(volume, label) {
   const openEdges = countOpenEdges(positions, geometry.indices, diagonal * 1e-6);
   if (openEdges > 0) throw new RangeError(`${label}.part "${volume.part.name}" is not a closed mesh (${openEdges} open edges), so it has no inside; close it or use fit "bounds"`);
   const bvh = buildTriangleBvh(positions, geometry.indices);
-  return { ...volume, mesh: { tracer: createTracer({ positions, indices: geometry.indices, bvh }), stepOffset: diagonal * 1e-6 } };
+  return { ...volume, mesh: { tracer: createTracer({ positions, indices: geometry.indices, bvh }), stepOffset: diagonal * 1e-6, positions, indices: geometry.indices, bvh } };
 }
 
 /**

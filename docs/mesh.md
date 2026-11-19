@@ -138,6 +138,7 @@ Edits (names follow Blender's `bmesh.ops` where they match):
 | `delete` | `select` (required) | |
 | `flip_normals` | `select` | |
 | `translate` | `select`, `offset` [x, y, z], optional `falloff` `{ radius, curve, connected }` | |
+| `transform_selection` | `select`, optional `pivot` [x, y, z] (default: mean of the selected vertices), `rotation` `{ axis, angle }` (angle in radians), `scale` (above 0, up to 1000; one number or [x, y, z]), the same `falloff` as `translate` | Needs `rotation` or `scale`. Scales, then rotates about the pivot. With `falloff`, a vertex follows by its curve weight: it turns by weight times the angle and scales by 1 + weight times (scale - 1). |
 | `merge_by_distance` | `distance` (default 1e-4) | |
 | `tag` | `select`, `name` (required) | `<name>` |
 | `boolean` | `operation` (`union`, `difference`, `intersect`), `cutter`, optional `translation`, `rotation` (XYZW), `scale`, `name` | `<name>.cut` |
@@ -211,7 +212,7 @@ These three (and `bevel`, below) work as edits and as stack nodes:
 
 ### Modifier stack
 
-A recipe mesh may carry `stack`, a list of `mirror`, `array`, `solidify`, `bevel`, `subdivide`, `uv_unwrap`, `set_position`, `displace`, `decimate`, `remesh`, `weld`, `triangulate`, `edge_split`, `smooth`, `simple_deform`, `cast`, `screw`, `wireframe`, `skin`, `lattice`, `curve`, `hook`, `wave`, `build`, `weighted_normal` and `smooth_by_angle` nodes (up to 16) evaluated after the
+A recipe mesh may carry `stack`, a list of `mirror`, `array`, `solidify`, `bevel`, `subdivide`, `uv_unwrap`, `set_position`, `displace`, `decimate`, `remesh`, `weld`, `triangulate`, `edge_split`, `smooth`, `simple_deform`, `cast`, `screw`, `wireframe`, `skin`, `lattice`, `curve`, `hook`, `wave`, `smooth_laplacian`, `warp`, `build`, `weighted_normal` and `smooth_by_angle` nodes (up to 16) evaluated after the
 edits without changing them, as Blender's modifier stack. Every prefix (the edit result, then each node) is cached
 by its recipe text in a least-recently-used cache bounded at 64 entries and 64 MiB, so changing a late node reuses
 the earlier work. Results list one entry per node with `cached: true` when reused. `meshCacheStats()` reports hits
@@ -225,7 +226,7 @@ as Blender's Apply modifier, which leaves the result unchanged.
 A recipe `mesh` geometry may carry `shapeKeys` (up to 16), named offsets from the finished mesh that become glTF morph targets.
 A key is `{ "name": "blink", "offsets": [{ "select": { "tag": "lid" }, "offset": [0, -0.1, 0] }] }`, a list of moves like the
 `translate` edit, or `{ "name": "squash", "edits": [...] }`, mesh edits that only move vertices (`set_position`, `displace`,
-`sculpt`, `simple_deform`, `lattice`, `hook`, `wave`) run on the mesh after the stack. A key that adds or removes vertices is
+`sculpt`, `simple_deform`, `lattice`, `hook`, `wave`, `smooth_laplacian`, `warp`) run on the mesh after the stack. A key that adds or removes vertices is
 refused with the vertex counts. `value` (0 to 1) is the weight without motion.
 
 Animate a key with the existing morph track: `{ "kind": "morph", "id": "blink", "property": "weight", "keyframes": [...] }`. Weights
@@ -234,7 +235,7 @@ Normals stay those of the base mesh. Test: `tests/mesh-shape-keys.test.js`.
 
 ### Whole-mesh modifiers
 
-`weld`, `triangulate`, `edge_split`, `smooth`, `simple_deform`, `cast`, `screw`, `wireframe`, `skin`, `lattice`, `curve`, `hook`, `wave`, `bounding_box`, `convex_hull`, `ocean`, `build`, `weighted_normal` and `smooth_by_angle` take no selection and no name, and work as edits or stack nodes. Their fields and defaults are plain data in `MESH_MODIFIER_NOTES` (`src/agent-scene-capabilities.js`), which `scene_capabilities` returns as `meshModifiers`; the code is in `src/mesh-modifiers.js` and `src/mesh-restructure.js`.
+`weld`, `triangulate`, `edge_split`, `smooth`, `simple_deform`, `cast`, `screw`, `wireframe`, `skin`, `lattice`, `curve`, `hook`, `wave`, `smooth_laplacian`, `warp`, `bounding_box`, `convex_hull`, `ocean`, `build`, `weighted_normal` and `smooth_by_angle` take no selection and no name, and work as edits or stack nodes. Their fields and defaults are plain data in `MESH_MODIFIER_NOTES` (`src/agent-scene-capabilities.js`), which `scene_capabilities` returns as `meshModifiers`; the code is in `src/mesh-modifiers.js` and `src/mesh-restructure.js`.
 
 | op | fields | does |
 | --- | --- | --- |
@@ -250,6 +251,8 @@ Normals stay those of the base mesh. Test: `tests/mesh-shape-keys.test.js`.
 | `lattice` | `divisions` ([2,2,2], 2 to 8), `moves` (up to 64 of `{ point, offset }`) | A grid of control points over the mesh bounds; each move shifts one point and vertices follow the trilinear blend. |
 | `curve` | `path` (2 to 64 points), `axis` (x) | Bends the mesh along a Catmull-Rom path; the coordinate along the axis is the distance from the path start. |
 | `hook` | `center`, `radius` (1), `translation`, `strength` (1), `falloff` (smooth) | Pulls the vertices within the radius by the translation, weighted by the falloff. |
+| `smooth_laplacian` | `factor` (0.5, above 0 to 1), `iterations` (1, 1 to 64), `preserveVolume` (true), `pinBoundary` (true), `group` | Smoothing that does not melt a closed mesh: each iteration is a shrinking step and an inflating step (Taubin), so a sphere keeps its volume. `preserveVolume: false` is plain shrinking Laplacian smoothing. The rim of an open mesh stays put unless `pinBoundary` is false; a vertex `group` scales each vertex's step. Not Blender's Smooth Laplacian, which solves a different system. |
+| `warp` | `from`, `to`, `radius` (1), `curve` (smooth, linear or constant), `twist` (0 degrees) | Carries the vertices within the radius of `from` toward `to`, weighted by the curve: the vertex at `from` lands on `to` and vertices beyond the radius do not move. A twist turns them about the axis from `from` to `to`, by the weight times the angle. |
 | `wave` | `height` (0.5), `width` (1.5), `narrowness` (1.5), `speed` (0.25), `time` (0), `timeOffset`, `start`, `cyclic` (true), `axes` (xy), `normal` | A travelling gaussian ripple along z, equal to Blender Wave at the same frame. |
 | `weighted_normal` | `angle` (30), `weight` (50, 1 to 100) | Stores one shading normal per corner: faces around a vertex share it unless the edge is sharp or bends more than the angle, each face counting by its area to the power weight / 50. Put it last in the stack. |
 | `smooth_by_angle` | `angle` (30), `ignoreSharp` (false) | Marks edges bending more than the angle sharp and the others smooth, over the geometry `smoothAngle`; sharp edges made by hand, and the 12 of a box, stay sharp unless `ignoreSharp` is set. |
@@ -305,6 +308,11 @@ Uses:
 - `displace` (`select`, `field`, `strength`, `midlevel`, `direction`) is Blender's Displace modifier with a field as
   the texture: each vertex moves by `(field - midlevel) * strength` along `normal` (default), `x`, `y` or `z`.
   `displace` also takes `group`, the name of a vertex group: each move is scaled by the vertex's weight.
+  Along `normal`, a vertex on a sharp edge (faces that bend apart by more than 60 degrees) moves to the meeting point of the
+  offset planes of its sides, so the faces stay unfolded. The move fades to zero toward such an edge over a band, measured
+  along the surface, twice as wide as the largest requested move, so a face eases into its rim instead of stepping up from it
+  and the look does not change with the segment count; the rim's own inward move stays within half its shortest edge.
+  Smooth surfaces are unchanged.
 - Both are also stack nodes, so a late change reuses the cached earlier nodes.
 - `vertex_group` (`name`, `select`, and one of `weight`, `field`, `gradient` or `measure`) writes the weights, 0 to 1, of a named group for the
   vertices of the selected faces; the others keep theirs (0 in a new group). `gradient` is `{ "axis": "y", "range": [0, 1], "weights": [0, 1] }`,
@@ -405,6 +413,7 @@ is crossed more than twice (a concave face); split it first. `bridge_edge_loops`
 the shortest total distance, then turns them by `twistOffset` vertices. A knife stretch that starts or ends inside a face
 makes no cut, and a face that runs along `direction` is not split (its edge points are still inserted). The sizes of
 `subdivide_edges` are checked before it allocates.
+Points these edits insert on an edge (`subdivide_edges`, `bisect_plane`, `knife_project`, `bridge_edge_loops` rows) take the blend of vertex groups and other point attributes of the edge's two ends, and the inner points of a `subdivide_edges` grid blend all four corners. The inner points of `grid_fill` and the bend points of a knife stroke inside a face start at 0.
 
 Open boundaries reported by lint (`boundary-edge`) are fixed with `fill_holes`. Names follow `bmesh.ops`
 (`holes_fill`, `dissolve_*`, `bisect_plane`, `bridge_loops`, `grid_fill`, `subdivide_edges`) where the meaning matches, and
@@ -481,6 +490,8 @@ the input's units) and `relativeError` (over the bounds diagonal); the asset for
 Skinned and morphed parts are refused. `surfaceDeviation(a, b)` gives the vertex Hausdorff distance both ways. Hand the levels to a
 part as `lods` and `CrucibleRenderer` picks one per instance by its size on screen: see `docs/culling-lod.md`.
 
+Called from code, `remeshMesh` needs `voxelSize` or `resolution` as a finite number above 0, `unwrapUv` takes `maxDistortion` from 0 to 100 and `generateGeometryLods` takes `smoothAngle` from 0 to 180 degrees; each error names the field.
+
 Why our own collapse and not meshoptimizer 1.3.0 (npm, MIT, 2026-09-25): on the same sphere, torus and open bowl at
 ratios 0.5, 0.2 and 0.05 our Hausdorff error was 0.25 to 0.85 of its error (0.0088 against 0.0153 at 0.5 and 0.0647 against 0.0773
 at 0.05 on the sphere, 0.0403 against 0.1603 at 0.05 on the open bowl with its borders locked), and the volume stayed closer
@@ -510,7 +521,7 @@ faces, so a tag confines them. Neither adds or removes faces, and the topology s
   is an error (`onMiss` "error") or stays put (`keep`). The queries use the BVH of `src/mesh-query.js`, at most 20
   million triangle tests per edit.
 
-A mesh base is a primitive or profile record, or a `grid` or `plane` sheet (`segments` 1 to 64). A decal is a grid base shrunk onto a curved target and then solidified:
+A mesh base is a primitive or profile record, or a `grid` or `plane` sheet (`segments` 1 to 64). A `box` base with `bevel` 0 and `subdivisions` (1 to 128) splits each face into an n by n grid, welded across the edges (6 n^2 + 2 vertices), so `set_position`, `displace` and `smoothAngle` have vertices to work on; without `subdivisions` it stays 8 vertices. A decal is a grid base shrunk onto a curved target and then solidified:
 
 ```json
 { "id": "badge", "type": "mesh", "base": { "type": "grid", "segments": 16 }, "edits": [
@@ -567,6 +578,7 @@ A recipe geometry of type `mesh` starts from a primitive or profile and replays 
 Edges bending more than `smoothAngle` degrees (default 30, or 180 for a mesh with an `ocean` edit or stack node, so a choppy sea keeps its smooth normals) render hard. `mesh_edit` appends edits to such a
 geometry (or replaces its log with `replace: true`) as one atomic revision, so checkpoints and `expectedRevision`
 work as for `scene_apply`. It returns the render status and the mesh report below, including one result per edit.
+`mesh_edit` takes every op in the edit table; its op list comes from the same list as `scene_capabilities meshEdits`. `scene_apply` has no `edit-mesh` or `set-mesh-stack` type in MCP: those are the `mesh_edit` and `mesh_stack` tools.
 
 `mesh_inspect` runs the same conversion and lint on the geometries of a procedural recipe scene and returns one
 compact record per geometry:

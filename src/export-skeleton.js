@@ -19,18 +19,26 @@ function transformFields(translation, rotation, scale) {
   return fields;
 }
 
-/** Split an affine matrix into glTF translation, rotation and scale fields. */
-export function decomposeMatrix(matrix) {
+/**
+ * Translation, rotation and scale of an affine matrix. gl-matrix's getRotation divides the wrong entries by the scale,
+ * so under a non-uniform scale it returns a wrong rotation: the rotation is taken from the unit-length columns instead.
+ * A mirrored matrix (negative determinant) keeps its reflection as a negative x scale, so the rotation stays proper.
+ */
+export function matrixFrame(matrix) {
   const translation = mat4.getTranslation(vec3.create(), matrix);
   const scale = mat4.getScaling(vec3.create(), matrix);
-  // A mirrored matrix (negative determinant) keeps its reflection as a negative x scale, so the rotation stays proper.
-  const mirrored = mat4.determinant(matrix) < 0;
-  const properMatrix = Float32Array.from(matrix);
-  if (mirrored) {
-    scale[0] = -scale[0];
-    for (let index = 0; index < 3; index++) properMatrix[index] = -properMatrix[index];
-  }
-  const rotation = mat4.getRotation(quat.create(), properMatrix);
+  if (mat4.determinant(matrix) < 0) scale[0] = -scale[0];
+  const unitColumns = [0, 4, 8].flatMap((offset, column) => {
+    const axisScale = scale[column] || 1;
+    return [matrix[offset] / axisScale, matrix[offset + 1] / axisScale, matrix[offset + 2] / axisScale];
+  });
+  const rotation = quat.normalize(quat.create(), quat.fromMat3(quat.create(), unitColumns));
+  return { translation, rotation, scale };
+}
+
+/** Split an affine matrix into glTF translation, rotation and scale fields. */
+export function decomposeMatrix(matrix) {
+  const { translation, rotation, scale } = matrixFrame(matrix);
   return transformFields(translation, rotation, scale);
 }
 
@@ -50,12 +58,22 @@ function worldMatrixOf(index, nodes, cache) {
 /** Hierarchy records from `options.nodes` (the `nodes` of a parsed asset, or the same fields): name, id, parent id. */
 function nodesFromRecords(records) {
   const indexById = new Map(records.map((record, index) => [record.id ?? record.name, index]));
-  return records.map(record => {
+  const nodes = records.map(record => {
     if (typeof record.name !== 'string' || !record.name) throw new TypeError('GLB nodes need a name.');
     const parent = record.parent === null || record.parent === undefined ? -1 : indexById.get(record.parent);
     if (parent === undefined) throw new RangeError(`GLB node ${record.name} names a parent that is not in the node list.`);
     return { name: record.name, parent, translation: record.translation, rotation: record.rotation, scale: record.scale, meshIds: record.meshIds ?? [] };
   });
+  requireNoParentLoop(nodes);
+  return nodes;
+}
+
+function requireNoParentLoop(nodes) {
+  for (const node of nodes) {
+    let ancestor = node.parent;
+    for (let step = 0; ancestor >= 0 && step < nodes.length; step++) ancestor = nodes[ancestor].parent;
+    if (ancestor >= 0) throw new RangeError(`GLB node ${node.name} has a parent loop.`);
+  }
 }
 
 function jointWorld(skin, joint) {
@@ -186,6 +204,13 @@ function validateKeyframes(track) {
   const timesValid = keyframes?.length > 0 && keyframes.every(({ time }) => time > previousTime && Number.isFinite(previousTime = time));
   const valuesValid = keyframes?.every(({ value }) => Array.from(value).every(Number.isFinite));
   if (!timesValid || !valuesValid) throw new RangeError(`GLB ${track.property} track on ${track.target} needs keyframes with finite values and strictly increasing finite times.`);
+  const fixedWidth = COMPONENTS_BY_PATH[track.property];
+  const width = fixedWidth ?? keyframes[0].value.length;
+  const sized = (list, size) => list?.length === size && Array.from(list).every(Number.isFinite);
+  const cubic = track.interpolation === 'CUBICSPLINE';
+  if (!keyframes.every(({ value, inTangent, outTangent }) => (!fixedWidth || value.length === width) && (!cubic || (sized(inTangent, width) && sized(outTangent, width))))) {
+    throw new RangeError(`GLB ${track.property} track on ${track.target} needs ${width} values${cubic ? ' and tangents' : ''} in every keyframe.`);
+  }
 }
 
 function writeTrack(writer, animation, sourceTrack, nodeIndex) {
