@@ -205,10 +205,10 @@ test('the MCP server finds the grids an add-explosion operation will name, so th
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
 });
 
-// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom, and #2289's grid noise).
+// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom, #2289's grid noise and its cooler, redder flame).
 const FIRST_RELEASE_HASHES = new Map([
-  ['{}', '3409fc0fcd5cc9c748558ad48e8584b2530ecf8426ad4983d210540916b82ff3'],
-  ['{"start":0.5,"fuel":"oily","seed":7}', '689902e3f01f00239fda8d9f1414f17ebb27ae5d736b5f9c981f0c0ce332b95e'],
+  ['{}', 'dea7d2744116361acd58b3027457d5982d71e9f664482b7493932c739a9e6831'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', 'aa71839f0572d6b2033a18b44e9305a076e985492bc68e5468e779f934b5af8b'],
 ]);
 
 test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {
@@ -306,10 +306,10 @@ test('bad sparks and motionBlur values name the field and a valid value', () => 
   for (const [operation, pattern] of cases) assert.throws(() => applyBlast(operation), pattern, JSON.stringify(operation));
 });
 
-test('the fireball emits by the Blender flame remap, 1500 K to 3000 K, at every size and fuel (#1735)', () => {
+test('the fireball emits by a cooled flame remap, 1300 K to 1900 K, at every size and fuel (#1735, #2289)', () => {
   for (const extra of [{ size: 2.5 }, { size: 10 }, { fuel: 'oily' }]) {
     const volume = applyBlast(blast(extra)).recipe.environment.localVolumes[0];
-    assert.deepEqual(volume.flameTemperature, { ignition: 1.5, maximum: 3 });
+    assert.deepEqual(volume.flameTemperature, { ignition: 1.3, maximum: 1.9 });
     assert.equal(volume.temperatureScale, 1000);
   }
 });

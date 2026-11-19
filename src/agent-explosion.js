@@ -184,11 +184,11 @@ function addAirSteps(candidate, plan) {
 // smoother filter and the jitter were already there and changed the picture by an RMSE of 0.001 to 0.004; the cells themselves are the limit, and a 64 cubed bake would
 // cost 8 times the files and a cold bake of minutes). So the volume carries fractal noise that scales with the box: NOISE_CELLS_PER_BOX noise cells across it, 2.5 per grid cell, three octaves,
 // modulating the density and flame around their mean, so the far look and the optical depth stay and only the small clumps are new.
-// flameTemperature is Blender's fire remap (#1735): every voxel with flame emits at 1500 K up to 3000 K by its flame value, whatever its smoke density, which
+// flameTemperature is the fire remap of Blender (#1735, 1500 K to 3000 K there), cooled to 1300 K to 1900 K and a redder flame colour (#2289, the owner asked for a softer fire a little more orange, like Cycles: close-up flame hue 22 to 13.5 degrees against 12.2 in Cycles, p99 luminance 0.65 to 0.56 against 0.59): every voxel with flame emits by its flame value, whatever its smoke density, which
 // is the orange rim Cycles draws along the smoke edge (the temperature channel alone cools to nothing there).
 const BLAST_VOLUME = Object.freeze({
-  flameTemperature: Object.freeze({ ignition: 1.5, maximum: 3 }),
-  noiseAmount: 0.9, noiseOctaves: 3, density: 3, emission: [1, 0.45, 0.12], emissionStrength: 9.5, blackbodyIntensity: 0.3, absorption: [1, 1, 1], steps: 32,
+  flameTemperature: Object.freeze({ ignition: 1.3, maximum: 1.9 }),
+  noiseAmount: 0.9, noiseOctaves: 3, density: 3, emission: [1, 0.3, 0.08], emissionStrength: 9.5, blackbodyIntensity: 0.3, absorption: [1, 1, 1], steps: 32,
 });
 const NOISE_CELLS_PER_BOX = 80;
 const OILY_DENSITY_GAIN = 1.5;
