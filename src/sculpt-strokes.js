@@ -22,14 +22,8 @@ export function prepareStrokes(strokes) {
     if (!['inflate', 'displace', 'smooth'].includes(stroke?.type)) {
       throw new TypeError('Sculpt stroke type must be inflate, displace or smooth.');
     }
-    for (const key of Object.keys(stroke)) {
-      if (!STROKE_FIELDS.includes(key)) {
-        throw new TypeError(`Sculpt stroke has an unsupported field "${key.slice(0, 48)}". Use type, center, radius, strength and, for displace, direction.`);
-      }
-    }
-    if (stroke.type !== 'displace' && stroke.direction !== undefined) {
-      throw new TypeError(`Only a displace stroke takes direction; remove it from this ${stroke.type} stroke.`);
-    }
+    const unsupported = Object.keys(stroke).find(key => !STROKE_FIELDS.includes(key) || (key === 'direction' && stroke.type !== 'displace'));
+    if (unsupported) throw new TypeError(`Sculpt ${stroke.type} stroke does not take "${unsupported.slice(0, 32)}"; remove it.`);
     const center = vector(stroke.center, 'center');
     const radius = finite(stroke.radius, 'radius');
     const strength = finite(stroke.strength, 'strength');

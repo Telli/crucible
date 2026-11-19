@@ -81,7 +81,7 @@ function requireExtents(preset, bounds) {
   const flat = SCALING_AXES[preset].filter(axis => !(extents[axis] > flatBelow));
   if (flat.length) {
     const missing = flat.map(axis => AXIS_NAMES[axis]).join(' and ');
-    throw new RangeError(`A ${preset} armature needs a fit box with ${missing} above zero, or every bone lands on one point. Fit a taller mesh or pass bones.`);
+    throw new RangeError(`A ${preset} fit box has no ${missing}; every bone would land on one point. Fit a taller mesh or pass bones.`);
   }
 }
 

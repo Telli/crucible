@@ -150,7 +150,7 @@ test('a preset fitted to a flat mesh is refused instead of putting every bone on
     armatures: [armature],
     nodes: [{ id: 'mesh', geometry: 'sheet', material: 'paint', rotation: [-0.7071067811865476, 0, 0, 0.7071067811865476] }],
   });
-  assert.throws(() => createAgentScene(flatMesh({ id: 'rig', preset: 'humanoid', fit: { node: 'mesh' } })), /humanoid armature needs a fit box with height above zero/);
+  assert.throws(() => createAgentScene(flatMesh({ id: 'rig', preset: 'humanoid', fit: { node: 'mesh' } })), /humanoid fit box has no height/);
   assert.throws(() => presetBones('quadruped', { min: [0, 0, 0], max: [1, 1, 0] }), /width and height|depth/);
   assert.equal(presetBones('humanoid', { min: [0, 0, 0], max: [0, 2, 0] }).length > 0, true, 'a humanoid only scales with height');
 });
