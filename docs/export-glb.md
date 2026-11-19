@@ -94,7 +94,7 @@ A PNG the export writes itself is stored without compression so the export stays
 
 Geometry with textures needs `uvs`.
 Without them the export fails and names `uv_unwrap` (a mesh stack node) or `geometry.uvs`.
-An image larger than `maxTextureSize` (default 2048, up to 16384) fails with that option's name.
+An image larger than `maxTextureSize` (default 2048, up to 16384) fails with that option's name, before its pixels are read.
 
 ### Pattern materials
 
