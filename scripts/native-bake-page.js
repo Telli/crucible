@@ -2,6 +2,7 @@
 // tracer runs in the host process; the host exposes it on the page as `__crucibleNativeBake` (see the agent runtime), and
 // everything here packs a scene into the tables it reads and unpacks its answer.
 import { appendNativeGridVolumes, nativeGridVolumes, withoutLocalVolumes } from '../src/path-tracer-native-volumes.js';
+import { withoutWaterMedia } from '../src/path-tracer-water-medium.js';
 
 function bytesToBase64(bytes) {
   if (typeof bytes.toBase64 === 'function') return bytes.toBase64();
@@ -124,7 +125,7 @@ function tablesForTransport(input, transport) {
 /**
  * Takes the byte tables out of an export made with `transport: 'chunks'`. `manifest` is the export with `chunks` in place of
  * `tables`: the byte length of every table and the chunk size, small enough for one message. `tables` are the bytes the
- * holder serves with `readExportChunk` until the reader has them all.
+ * holder serves as one Blob until the reader has them all.
  */
 export function splitExportForChunks(exported) {
   const { tables, ...rest } = exported;
@@ -136,18 +137,6 @@ export function splitExportForChunks(exported) {
     byteLengths[name] = bytes.byteLength;
   }
   return { manifest: { ...rest, chunks: { tables: byteLengths, chunkBytes: NATIVE_EXPORT_CHUNK_BYTES } }, tables };
-}
-
-/** One chunk of a byte table as base64: the NATIVE_EXPORT_CHUNK_BYTES from `offset`, or what is left of the table. */
-export function readExportChunk(tables, name, offset) {
-  const bytes = tables?.[name];
-  if (!(bytes instanceof Uint8Array)) {
-    throw new RangeError(`readExportChunk: there is no table "${name}" in the held export (tables: ${Object.keys(tables ?? {}).join(', ') || 'none'}).`);
-  }
-  if (!Number.isInteger(offset) || offset < 0 || offset >= bytes.byteLength || offset % NATIVE_EXPORT_CHUNK_BYTES !== 0) {
-    throw new RangeError(`readExportChunk: offset ${offset} of table "${name}" must be a multiple of ${NATIVE_EXPORT_CHUNK_BYTES} below its ${bytes.byteLength} bytes.`);
-  }
-  return bytesToBase64(bytes.subarray(offset, Math.min(bytes.byteLength, offset + NATIVE_EXPORT_CHUNK_BYTES)));
 }
 
 /**
@@ -174,7 +163,13 @@ export function exportNativeSceneTables({ parts, environment, camera, options, k
     throw new RangeError(`exportNativeSceneTables: maximumTriangles must be an integer from 1 to ${NATIVE_CHUNKED_MAXIMUM_TRIANGLES}, got ${JSON.stringify(chunkedMaximumTriangles)}. Pass chunkedTriangleBound(capacity.maxUniqueTriangles).`);
   }
   const nativeLimits = wholeMaterials ? { maximumTriangles, maximumInstances: NATIVE_JOB_MAXIMUM_INSTANCES, maximumLights: NATIVE_JOB_MAXIMUM_LIGHTS, maximumParts: NATIVE_JOB_MAXIMUM_PARTS } : {};
-  let traceScene = buildTraceScene(parts, environment, { instancing: wholeMaterials && instancing === true, ...nativeLimits });
+  let traceScene = buildTraceScene(parts, environment, { instancing: wholeMaterials && instancing === true, instanceNormalMappedParts: wholeMaterials, ...nativeLimits });
+  // The depth tint under thin water (#2294) is a grid only the "cycles" kernel draws; the legacy kernel draws the water clear.
+  if (!wholeMaterials && traceScene.localVolumes) {
+    const { localVolumes, ...withoutVolumes } = traceScene;
+    traceScene = withoutWaterMedia(localVolumes) ? traceScene : withoutVolumes;
+  }
+  const authoredVolumeCount = (traceScene.localVolumes ?? []).filter(volume => volume.waterMedium !== true).length;
   // Cook draws grid local volumes. Its packers refuse `localVolumes`, so the grids go in after them; any other volume kind is refused here.
   const gridVolumes = nativeGridVolumes(traceScene.localVolumes);
   const withGrids = input => (gridVolumes ? appendNativeGridVolumes(input, gridVolumes, gridVolumeInput) : input);
@@ -204,7 +199,7 @@ export function exportNativeSceneTables({ parts, environment, camera, options, k
       materialsReason = error.message;
     }
   }
-  if (gridVolumes) {
+  if (authoredVolumeCount > 0) {
     throw new RangeError(`A grid local volume needs the "cycles" kernel with whole materials, and this scene could not be packed for it${materialsReason === undefined ? ' (the kernel is not "cycles")' : `: ${materialsReason}`}. Use backend "cpu" or remove the volume.`);
   }
   if (traceScene.partRayVisibility && !wholeMaterials) {

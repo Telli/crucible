@@ -49,6 +49,8 @@ export function nearestDepthOfBounds(bounds, view) {
 
 /** The near plane for a frame whose camera left near at its default: the default, or further out when the scene is far from the eye. */
 export function fittedNearPlane(bounds, view, far) {
+  // A far plane that is missing, NaN or no farther than the default near plane is the camera's error to report, not one to hide behind a fitted near.
+  if (!(far > DEFAULT_NEAR)) return DEFAULT_NEAR;
   const nearestDepth = nearestDepthOfBounds(bounds, view);
   if (!(nearestDepth > DEFAULT_NEAR / NEAREST_DEPTH_SHARE)) return DEFAULT_NEAR;
   return Math.min(nearestDepth * NEAREST_DEPTH_SHARE, far * FAR_SHARE_LIMIT);

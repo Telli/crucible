@@ -1,8 +1,11 @@
 // Lets a test use Cook (@codepawlhq/cook) when it is installed and skip when it is not, so `npm test` passes either way.
-// COOK_DISABLE=1 behaves like an absent package, which is how the absent mode is tested.
+// COOK_DISABLE=1 behaves like an absent package, which is how the absent mode is tested. A Cook that is not the one
+// package-lock.json pins skips too, with a reason that says what to run (#2274); tests/cook-install.test.js fails on it.
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import test, { describe } from 'node:test';
+
+import { checkCookInstall } from '../../scripts/cook-install-check.mjs';
 
 const COOK_PACKAGE = '@codepawlhq/cook';
 
@@ -16,10 +19,13 @@ function findCookDirectory() {
   }
 }
 
-const cookDirectory = findCookDirectory();
+const resolvedCookDirectory = findCookDirectory();
+const installCheck = resolvedCookDirectory === null ? null : checkCookInstall();
+const cookMismatched = installCheck?.status === 'mismatch';
+const cookDirectory = cookMismatched ? null : resolvedCookDirectory;
 
 export const cookInstalled = cookDirectory !== null;
-export const cookSkipReason = cookInstalled ? false : 'Cook (@codepawlhq/cook) is not installed';
+export const cookSkipReason = cookInstalled ? false : (cookMismatched ? installCheck.message : 'Cook (@codepawlhq/cook) is not installed');
 
 function exportSubpath(subpath) {
   if (subpath === '' || subpath === '.') return COOK_PACKAGE;

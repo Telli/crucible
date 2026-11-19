@@ -11,6 +11,7 @@ Coding agents are welcome to open pull requests. There is no disclosure box: the
 1. Install Node.js 20.19 or later (the `Test` workflow uses 24) and Google Chrome.
 2. Clone the repository and run `npm ci`.
 3. Run `npm run dev`. Vite prints the local URL of the showcase.
+4. For the Cook tests and native renders, run `npm run cook:fetch` to get the prebuilt addon of the pinned Cook (or `npm run cook:build` with Rust). `npm run cook:check` says whether the installed Cook is the one `package-lock.json` pins. When it is not, the Cook tests skip and `tests/cook-install.test.js` fails with what to run. Set `COOK_ALLOW_UNPINNED=1` only when you link a Cook checkout on purpose.
 
 The library source is in `src/` and the Node tools and smoke scripts are in `scripts/`.
 The tests are in `tests/` and the guides are in `docs/`.
@@ -80,7 +81,7 @@ Between one test file and the full pass there are four commands made for coding 
 
 - `npm run test:affected -- <files...>` runs every test file that mentions one of the files, or a module that re-exports it; with no files it uses the files your branch changed.
 - `npm run test:fast` runs a deterministic 10 percent of the test files, seeded by the branch name (`-- --seed <text> --percent <n>` changes it). It does not replace `npm test`.
-- `npm run test:mutation-check -- tests/<name>.test.js` reverts your changes under `src/`, `bin/` and `packages/`, runs the tests, prints the ones that fail and restores the tree. It exits 1 when none fail, because then the test does not pin your change. Stage unstaged edits outside those folders first and `git add -N` new files under them.
+- `npm run test:mutation-check -- tests/<name>.test.js` reverts your changes under `src/`, `bin/`, `packages/` and `scripts/`, runs the tests, prints the ones that fail and restores the tree. It exits 1 when none fail, because then the test does not pin your change. Stage unstaged edits outside those folders first and `git add -N` new files under them.
 - `npm test -- --test-reporter=./scripts/test-compact-reporter.mjs` gives the full pass the same short output.
 
 The checks it runs, if you want one alone:
@@ -142,7 +143,9 @@ node bench/agent-modeling/bench.mjs --suggest origin/main     # prints the comma
 node bench/agent-modeling/bench.mjs --kinds light --topics relations --models haiku --runs 3 --label <branch> --backend cpu
 ```
 
-Name the task ids you ran in the pull request (`--dry-run` lists them). Skipped baseline tasks are listed by `compare-bench.mjs` and never count as failures. The full bench runs for a change every task reads (the tool schemas and server instructions in `scripts/mcp-server.mjs`, or a skill), and once before each release cut.
+Name the task ids you ran in the pull request (`--dry-run` lists them). Skipped baseline tasks are listed by `compare-bench.mjs` and never count as failures. The full bench runs for a change every task reads (the tool schemas and server instructions in `scripts/mcp-server.mjs`, or `skills/build-crucible-scene/SKILL.md`), and once before each release cut.
+
+**A skill change is benched in skill mode `references`.** By default the bench agent sees no skill, so an edit to a skill file could not change a result. Under `skills/build-crucible-scene/`, run with `--skill-mode references`: the agent's system prompt then holds `SKILL.md` plus the reference files its task kind points to (`KIND_REFERENCES` in `bench/agent-modeling/suite.mjs`: light tasks get `light.md`, look tasks `look.md`, and so on), and `--suggest` adds the flag and picks the kinds that load the reference you changed. The stored `bench-baseline.json` has no skill, so compare base and head instead: run the same command on `origin/main` (label `base`) and on your branch, then `compare-bench.mjs bench-base.json bench-<branch>.json`. `compare-bench.mjs` refuses two files made in different skill modes.
 
 ### Look changes
 
@@ -163,6 +166,8 @@ The maintainer sets labels and the milestone, so you do not need to. Every issue
 - `bug`, `enhancement` or `documentation` say what kind of work it is. `regression` marks a bug that the last published version did not have.
 
 The milestones are `0 Measure`, `1 Lighter`, `2 Modeling`, `3 Look`, `4 Motion and simulation`, `5 Agent surface` and `6 Games`. [docs/goal.md](docs/goal.md) explains each one. A pull request that misses a label or the milestone gets `needs-triage` until the maintainer sets them.
+
+A bot (`.github/workflows/sync-pr-metadata.yml`) assigns the maintainer on every new pull request and issue, and copies the milestone and the `priority:*` and `goal:*` labels of the issue a pull request names. It only adds, so name the issue in the description and leave these fields to it.
 
 ## Triage
 
@@ -214,7 +219,7 @@ Docs-only, CI-only and test-only pull requests skip everything except the local 
 
 - The comment updates itself when you fix an item. One reminder follows when 24 hours are left.
 - A maintainer gives a first answer within about 7 days. That reply time is separate from the bot clock, which counts only items on your side. If an item is still open 72 hours after the first comment (the end of that UTC day, weekends included), the bot closes the pull request. It invites you to reopen it once the item is fixed, and reopening starts the time again.
-- Pull requests from the owner, members, collaborators and bots never close by themselves. Drafts and pull requests labelled `needs-owner-decision` do not close either.
+- Pull requests from the owner, members, collaborators and bots never close by themselves. Drafts and pull requests labelled `needs-owner-decision` do not close either; the clock of a draft restarts once it passes the reminder time, so marking it ready later still gets the reminder first.
 - Labels and the milestone never count against you. The bot adds `needs-triage` when they are missing and `status:needs-author` while something of yours is missing.
 
 For maintainers: the workflow is `.github/workflows/pr-metadata.yml`, and the rules are the pure modules `scripts/pr-metadata-check.mjs` (what is missing) and `scripts/pr-metadata-flow.mjs` (the clock and the wording). The workflow runs on `pull_request_target`, so it never checks out or runs the code of the pull request. It reads the description and the file list through the API only. Do not change that. It is not a required check.

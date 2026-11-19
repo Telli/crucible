@@ -22,6 +22,9 @@ export function geometryOnlyGlb(bytes) {
     throw new Error('Query-only assets must be GLB files with a JSON chunk first.');
   }
   const jsonLength = view.getUint32(12, true);
+  if (20 + jsonLength > bytes.byteLength) {
+    throw new Error(`The GLB JSON chunk is ${jsonLength} bytes, longer than the file. Pass the complete GLB.`);
+  }
   const document = JSON.parse(Buffer.from(bytes.subarray(20, 20 + jsonLength)).toString('utf8'));
   delete document.images;
   delete document.textures;

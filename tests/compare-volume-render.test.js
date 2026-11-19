@@ -42,3 +42,29 @@ test('identical pictures score zero, and a change inside the volume shows in the
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test('a candidate in linear float output (.f32, rows bottom to top) is compared as it is, values above 1 included (#1749)', () => {
+  const folder = mkdtempSync(join(tmpdir(), 'compare-volume-linear-'));
+  try {
+    const width = 8;
+    const height = 4;
+    const referenceLinear = ((200 / 255 + 0.055) / 1.055) ** 2.4;
+    // The reference lights its top picture row, which is the last row of a float frame.
+    writeFileSync(join(folder, 'reference.png'), picture(width, height, (column, row) => (row === 0 ? 200 : 0)));
+    const topRowFrame = brightness => {
+      const floats = new Float32Array(width * height * 4);
+      for (let column = 0; column < width; column++) floats.set([brightness, brightness, brightness, 1], ((height - 1) * width + column) * 4);
+      return Buffer.from(floats.buffer);
+    };
+    writeFileSync(join(folder, 'same.f32'), topRowFrame(referenceLinear));
+    writeFileSync(join(folder, 'bright.f32'), topRowFrame(3));
+    writeFileSync(join(folder, 'short.f32'), Buffer.alloc(16));
+    assert.ok(compare(join(folder, 'reference.png'), join(folder, 'same.f32')).rmse < 1e-6, 'the float frame is flipped to picture order');
+    const bright = compare(join(folder, 'reference.png'), join(folder, 'bright.f32'));
+    assert.ok(bright.meanAbsoluteLuminanceDifference.inside > 2, 'a value of 3 against a reference of 0.58 differs by about 2.4 inside the lit row');
+    assert.equal(bright.meanAbsoluteLuminanceDifference.outside, 0);
+    assert.match(compare(join(folder, 'reference.png'), join(folder, 'short.f32')).error, /float32 RGBA frame is 512/);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

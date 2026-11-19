@@ -1,7 +1,7 @@
 import { mat4, vec3 } from 'gl-matrix';
 import { invalidField } from './field-error.js';
 
-export { crashImpulse, dentDepth, dentGeometry, detachedPartIds, findDriveImpact } from './vehicle-damage.js';
+export { crashImpulse, dentDepth, dentGeometry, detachedPartFlight, detachedPartIds, findDriveImpact, hingedDoorSwing } from './vehicle-damage.js';
 
 // Local vehicle frame: x is left, y is up, z is forward, origin on the ground under the wheel centroid.
 const FORWARD_AXES = Object.freeze({
@@ -15,6 +15,8 @@ const DEFAULT_MAX_STEER_ANGLE = 35 * Math.PI / 180;
 const MAX_BODY_ANGLE = 0.35;
 const SIMULATION_STEP_SECONDS = 1 / 240;
 const SETTLE_SECONDS = 2;
+// The body-motion integrator keeps one step per 1/240 s of the drive, so a drive of hours would allocate gigabytes.
+const MAX_DRIVE_SECONDS = 3600;
 const PATH_SPACING_METRES = 0.1;
 const MAX_PATH_SAMPLES = 20000;
 const MINIMUM_SPEED_LIMIT = 0.5;
@@ -42,6 +44,10 @@ function createMatrix() {
 
 function assertFinitePositive(value, path, example = '1') {
   if (!Number.isFinite(value) || value <= 0) throw invalidField(path, value, `a finite number above 0, such as ${example}`);
+}
+
+function assertFiniteNumber(value, path, example) {
+  if (!Number.isFinite(value)) throw invalidField(path, value, `a finite number, such as ${example}`);
 }
 
 function clamp(value, minimum, maximum) {
@@ -815,6 +821,10 @@ export function driveAlongLegs(rig, legDescriptions, options = {}, pathFieldOf =
   const settings = resolveDriveOptions(rig, options);
   const legs = buildLegs(legDescriptions, settings, pathFieldOf);
   const duration = legs.at(-1).endTime;
+  if (!(duration <= MAX_DRIVE_SECONDS)) {
+    const causes = settings.speed === undefined ? 'cruiseSpeed, acceleration, a leg pause or startTime' : 'speed, a leg pause or startTime';
+    throw invalidField('duration', `${duration} seconds`, `a drive of at most ${MAX_DRIVE_SECONDS} seconds; raise ${causes} or shorten the path`);
+  }
   const length = legs.reduce((total, leg) => total + leg.table.length, 0);
   const legAt = time => legs.findLast(leg => leg.startTime <= time) ?? legs[0];
   const timeline = {
@@ -911,6 +921,11 @@ function resolveDriveOptions(rig, options) {
   assertFinitePositive(maxSteerAngle, 'maxSteerAngle', '0.6');
   assertFinitePositive(bounceFrequency, 'bounceFrequency', '1.6');
   assertFinitePositive(dampingRatio, 'dampingRatio', '0.45');
+  assertFiniteNumber(rollGain, 'rollGain', '0.012');
+  assertFiniteNumber(pitchGain, 'pitchGain', '0.012');
+  if (!Number.isFinite(suspensionTravel) || suspensionTravel < 0) {
+    throw invalidField('suspensionTravel', suspensionTravel, 'a distance in metres of 0 or more, such as 0.2');
+  }
   if (!Number.isFinite(startSpeed) || startSpeed < 0 || !Number.isFinite(endSpeed) || endSpeed < 0) {
     const badSpeedField = !Number.isFinite(startSpeed) || startSpeed < 0 ? 'startSpeed' : 'endSpeed';
     throw invalidField(badSpeedField, badSpeedField === 'startSpeed' ? startSpeed : endSpeed, 'a speed of 0 or more, such as 0');

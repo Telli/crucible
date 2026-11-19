@@ -5,6 +5,9 @@
 //
 //   node scripts/compare-volume-render.mjs reference.png candidate.png [--mask mask.png] [--threshold 0.05]
 //
+// The candidate may also be linear float output (#1749): a file ending in .f32 holds raw little-endian float32 RGBA, rows bottom to top, as
+// readFloatPixels returns them for a frame drawn with linearOutput. Its values are scene radiance and are compared as they are, above 1 included.
+//
 // The mask is the volume's pixels: those a mask image marks white (luminance above 0.5), or without one the pixels where the reference's linear
 // luminance is above --threshold (default 0.05), which fits a glowing volume over a dark ground; give a mask image for smoke over a bright floor.
 // Pixels are 8 bit sRGB PNGs, decoded to linear light first; "relative" divides the RMSE by the reference's own RMS, so 0.1 is 10 percent of its energy.
@@ -20,6 +23,22 @@ function srgbToLinear(byte) {
 
 function luminanceOf(red, green, blue) {
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function readLinearFloatFile(path, width, height) {
+  const bytes = readFileSync(path);
+  const expectedBytes = width * height * 4 * 4;
+  if (bytes.length !== expectedBytes) throw new Error(`${path} holds ${bytes.length} bytes, but a ${width}x${height} float32 RGBA frame is ${expectedBytes}. Write it with the same size as the reference.`);
+  const floats = new Float32Array(bytes.buffer, bytes.byteOffset, width * height * 4);
+  const rgb = new Float64Array(width * height * 3);
+  for (let row = 0; row < height; row++) {
+    for (let column = 0; column < width; column++) {
+      const source = ((height - 1 - row) * width + column) * 4;
+      const target = (row * width + column) * 3;
+      for (let channel = 0; channel < 3; channel++) rgb[target + channel] = floats[source + channel];
+    }
+  }
+  return { width, height, rgb };
 }
 
 function readLinear(path) {
@@ -45,7 +64,7 @@ function parseArguments(argv) {
 
 function compare(referencePath, candidatePath, options) {
   const reference = readLinear(referencePath);
-  const candidate = readLinear(candidatePath);
+  const candidate = candidatePath.endsWith('.f32') ? readLinearFloatFile(candidatePath, reference.width, reference.height) : readLinear(candidatePath);
   if (reference.width !== candidate.width || reference.height !== candidate.height) {
     return { error: `the images differ in size: reference ${reference.width}x${reference.height}, candidate ${candidate.width}x${candidate.height}` };
   }

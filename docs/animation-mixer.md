@@ -20,7 +20,7 @@ mixer.apply(1);
 
 | Method | Behavior |
 | --- | --- |
-| `play({ at, offset = 0, timeScale = 1, weight = 1 })` | Starts or restarts playback at `at`, with the given local offset and speed. |
+| `play({ at, offset = 0, timeScale = 1, weight = 1 })` | Starts or restarts playback at `at`, with the given local offset and speed. `timeScale` stays within 1e6 and `offset` within 1e9 either way. |
 | `stop(at)` | Stops contributing from `at` onward. Earlier times retain their recorded playback. |
 | `fadeTo(weight, { at, duration })` | Interpolates from the effective weight at `at` to the target weight. |
 | `getState(time)` | Returns `phase`, `playing`, `weight` and the unwrapped `localTime`. |

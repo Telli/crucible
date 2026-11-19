@@ -96,7 +96,7 @@ of one or two tasks as noise.
 
 Bench what changed, not everything again and again. `bench.mjs` takes `--tasks <ids>`, `--kinds <list>` (modeling, revision, scene, look, light, camera, animation, film) and `--topics <list>`. A topic is a `scene_capabilities` topic name that `suite.mjs` tags on a task only where the task clearly exercises it (relations, terrain, meshUv, explosion, particles, localVolumes, filmTimeline, motionIk, placedAssets, meshEdits). The three flags add up: a task runs when it is named, has a listed kind or carries a listed topic; with none of them every task runs. An unknown task, kind or topic is an error that lists the valid ones. `--dry-run` prints the selected tasks and stops.
 
-`--suggest <base ref>` reads the branch's diff against that ref and prints the command (`subsets.mjs` holds the map from paths to kinds and topics). A change to `scripts/mcp-server.mjs` (tool schemas and server instructions) or to `skills/` maps to the full bench, since every task reads them. `compare-bench.mjs` compares a subset run on its tasks only: the baseline is cut down to the same tasks, the baseline tasks that did not run are listed as skipped and never count as failures, and a task with no baseline is marked new.
+`--suggest <base ref>` reads the branch's diff against that ref and prints the command (`subsets.mjs` holds the map from paths to kinds and topics). A change to `scripts/mcp-server.mjs` (tool schemas and server instructions) or to `skills/build-crucible-scene/SKILL.md` maps to the full bench, since every task reads them. A change to a file under `skills/build-crucible-scene/references/` maps to the kinds whose prompts carry it (`KIND_REFERENCES` in `suite.mjs`), and any change in that skill adds `--skill-mode references`. Skill modes (`skill-prompt.mjs`): `none` (default; the stored baseline), `legacy` (`SKILL.md` and `mesh-modeling.md`, what `--skill` did) and `references` (`SKILL.md` plus the reference files of the task's kind and topics; about 26 KB per task on average, against about 57 KB for every reference). The mode is recorded in each bench file and `compare-bench.mjs` refuses to compare two modes, so bench base and head in the same mode. `compare-bench.mjs` compares a subset run on its tasks only: the baseline is cut down to the same tasks, the baseline tasks that did not run are listed as skipped and never count as failures, and a task with no baseline is marked new.
 
 In a pull request, write the task ids you ran (the `--dry-run` line) next to the table. Run the full bench before each release cut.
 
@@ -138,6 +138,21 @@ It prints the totals side by side per model and the tasks whose pass count chang
 drops by more than `--tolerance` (0.05) or when infra runs pass `--infra-bound` (0.1) of a model's runs, because its pass@1
 then rests on too few runs. The infra count prints next to pass@1. Use the same models, `--runs` and backend on both sides. A task that moves by one
 run out of three is noise; read the totals and the tasks that moved by two runs or more.
+
+### scene_ask_user task (test-only fixture, #1956)
+
+`scene_ask_user` opens a browser page and waits for a person, so a bench run could never finish it. A task tagged `topics: ['askUser']`
+therefore starts the server with `CRUCIBLE_ASK_USER_FIXTURE=<absolute path>`, the task's `askUserFixture` file in this folder
+(`ask-user-pin.json` for `ask-user-pin`). The variable is **test-only**: only whoever starts the server sets it, it is read once at start,
+it is in no tool schema or flag list, and the server logs `scene_ask_user answers come from the fixture <file>` when it is set. The file is an
+absolute `.json` path under 64 KB: `{"marks":[{"pixel":[x,y],"note":"..."}]}` with 1 to 16 marks, pixels inside the 768x512 frame, notes of
+at most 280 characters (an optional `motionTime` is checked and ignored). The marks go through the same pick as a browser answer, so the agent
+gets the part, point and normal under the pixel. `ask-user-pin` pins the statue of the stage scene with the note "make this red"; its checks
+pass when the statue's material is red and the plinth is not recoloured. A test pins the fixture pixel to the statue at the stage camera.
+A mark may carry `"lasso":[[x,y],...]` (3 to 64 points inside the frame) instead of `pixel`; the answer then lists the parts under the outline.
+`ask-user-lasso` (`ask-user-lasso.json`) outlines the statue and the plinth with the note "make these blue"; its checks pass when both are blue
+and the floor, which shares the plinth's stone material, is not.
+`ask-user-pin-shared` (`ask-user-pin-shared.json`) pins the plinth with the note "make this red"; its checks pass when the plinth is red and the floor, which shares its stone material, is not (#1972).
 
 ### Several runs and several models
 
@@ -529,3 +544,5 @@ The official Blender MCP server (Blender Lab, v1.0.3, add-on and server) driving
 - Wall time is not a fair figure. Measured in the transcripts: `crate` hit Claude Code's 300 s no-response abort on its render call while the files were still written; the other four runs with an error and about 600 s show the same wall time. Inferred: the render is a CPU Cycles render of an x86 Blender under emulation, which a native Blender would finish much faster; `fence`, whose render stayed under the limit, took 38 s. Treat the 517 s mean as environment cost, not as Blender MCP latency.
 - Every run but `fence` spent one call on a failed first attempt (a Python traceback or the timeout) and then repaired it. The tool takes raw `bpy` code, so the agent writes the mesh code, the Z-up to Y-up conversion and the export itself, as in the three.js run; unlike three.js it needs no browser for the picture.
 - Limits: 1 run per cell, one model, tasks built around Crucible. The server's own screenshot and render tools were never used; the agents rendered from their own code. The container has outbound network access (the model's code could reach the internet); only the scratch folder is shared with the host.
+
+`--prompt-note <text>` (bench.mjs and run.mjs, `prompt-note.mjs`) appends one line of up to 300 characters to every task prompt and records it as `promptNote` in the run and bench files, so two runs on the same tasks compare prompt wording, for example the plain prompt against `--prompt-note "use 67js, you may write it like three.js"` (#986). The note only adds words: the run keeps the MCP arm and its tools, and gives the agent no shell.

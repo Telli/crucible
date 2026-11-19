@@ -66,6 +66,7 @@ function conciseRenderReport(report) {
   const concise = { seconds: report.measured?.seconds };
   if (report.secondsRatio !== undefined) concise.secondsRatio = report.secondsRatio;
   if (report.fallbacks?.length) concise.fallbacks = report.fallbacks;
+  if (report.kernelCompile) concise.kernelCompile = report.kernelCompile.note;
   if (report.noise?.relative != null) concise.noise = report.noise;
   return concise;
 }
@@ -99,4 +100,16 @@ export function withoutNotes(outline) {
     return kept;
   }
   return outline;
+}
+
+function withoutNotesOfAnswer(answer) {
+  return answer.fields === undefined ? answer : { ...answer, fields: withoutNotes(answer.fields) };
+}
+
+/** A scene_capabilities answer for concise format; a topic list drops the notes of each topic it holds. */
+export function conciseCapabilities(answer) {
+  if (answer.answers === undefined) return withoutNotesOfAnswer(answer);
+  const answers = {};
+  for (const [topic, topicAnswer] of Object.entries(answer.answers)) answers[topic] = withoutNotesOfAnswer(topicAnswer);
+  return { ...answer, answers };
 }

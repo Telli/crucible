@@ -3,16 +3,17 @@ import { cameraFieldOfView, resolveThinLens } from './camera.js';
 import { fresnelSchlick } from './material-layers.js';
 import { pointLightFalloff } from './ray-query.js';
 import { profileGain } from './light-profile.js';
-import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS } from './path-tracer-scene.js';
+import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS, uniqueTriangleCount } from './path-tracer-scene.js';
 import { denoiseRadiance, estimateRelativeNoise } from './path-tracer-denoise.js';
 import { acesChannel, displayColor } from './view-transform.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
 import {
   buildFrame, createSurface, environmentPdf, environmentRadiance, evaluateSurface, luminance, mirrorWeight, prepareSurface,
-  roughnessToAlpha, sampleEnvironment, sampleGlass, sampleSurface, setWhiteDiffuse, splitSubsurface,
+  roughnessToAlpha, sampleEnvironment, sampleGlass, sampleSurface, setWhiteDiffuse, splitSubsurface, writeEscapedAlbedo, writeFirstHitAlbedo,
 } from './path-tracer-shading.js';
 import { buildLightTree, chooseLightFromTree, LIGHT_TREE_FIRST_HIT_LIGHTS, resolveLightSelection } from './path-tracer-light-tree.js';
 import { createRandomWalk, WALK_OUTCOME } from './path-tracer-subsurface.js';
+import { describeUntracedWater } from './path-tracer-water.js';
 import { henyeyGreensteinPhase, sampleHenyeyGreensteinCosine, volumeInterval, createLocalVolumeCrossing, createLocalVolumeSurfaceShadow, meanEnvironmentRadiance } from './path-tracer-volume.js';
 
 // Offline still renderer: unidirectional path tracing on the CPU with next-event estimation for every light, the
@@ -172,7 +173,7 @@ export function createCamera(camera, width, height) {
   const clipStart = camera.clipStart ?? 0;
   if (typeof clipStart !== 'number' || !Number.isFinite(clipStart) || clipStart < 0 || clipStart > 1e5) throw new RangeError(`Path tracer camera clipStart must be a distance from 0 to 100000 scene units along the view axis, got ${JSON.stringify(camera.clipStart)}. Leave it out to start rays at the eye.`);
   if (typeof camera.far === 'number' && clipStart >= camera.far) throw new RangeError(`Path tracer camera clipStart ${clipStart} is at or past the far plane ${camera.far}, so nothing would be drawn. Pass a clipStart below far, or raise far.`);
-  const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height, ...(clipStart > 0 ? { clipStart } : {}) };
+  const view = { eye, forward, right, above, halfHeight, halfWidth: halfHeight * width / height, ...(clipStart > 0 ? { clipStart, near: clipStart } : {}) };
   // A camera with an fStop adds its thin lens (apertureRadius, focalDistance, apertureBlades, apertureRotation). Only the
   // native "cycles" kernel draws it; every other tracer ignores the extra fields, and a pinhole view is unchanged.
   const thinLens = resolveThinLens(camera, { aspect: width / height, eye, target });
@@ -811,12 +812,13 @@ function createPathTracer(scene, options) {
       weight = previousPdf * previousPdf / (previousPdf * previousPdf + environmentSide * environmentSide);
     }
     addRadiance(depth, throughput[0] * sky[0] * weight, throughput[1] * sky[1] * weight, throughput[2] * sky[2] * weight);
+    if (!featuresRecorded) writeEscapedAlbedo(features.albedo);
   }
 
-  function recordFeatures(normal, isGlass) {
-    features.albedo[0] = isGlass ? 1 : hit.color[0];
-    features.albedo[1] = isGlass ? 1 : hit.color[1];
-    features.albedo[2] = isGlass ? 1 : hit.color[2];
+  function recordFeatures(normal, viewX, viewY, viewZ) {
+    const { transmission } = hit;
+    if (transmission < 1) prepareSurface(surface, hit.material, hit.metallic, hit.roughness, hit.color, normal, viewX, viewY, viewZ, hit.clearcoat);
+    writeFirstHitAlbedo(features.albedo, surface, hit.material, hit.color, transmission, normal[0] * viewX + normal[1] * viewY + normal[2] * viewZ);
     features.normal[0] = normal[0];
     features.normal[1] = normal[1];
     features.normal[2] = normal[2];
@@ -920,7 +922,7 @@ function createPathTracer(scene, options) {
     throughput[0] = 1;
     throughput[1] = 1;
     throughput[2] = 1;
-    features.albedo.fill(1);
+    features.albedo.fill(0);
     featuresRecorded = false;
     // A ray that finds nothing has the sky as its feature: one fixed normal and depth, so the filter treats sky as one surface.
     features.normal[0] = 0;
@@ -963,17 +965,17 @@ function createPathTracer(scene, options) {
       normal[1] = hit.normal[1] * facing;
       normal[2] = hit.normal[2] * facing;
       const isGlass = hit.transmission > 0 && random.next() < hit.transmission;
+      const viewX = -direction[0];
+      const viewY = -direction[1];
+      const viewZ = -direction[2];
       if (!featuresRecorded) {
-        recordFeatures(normal, isGlass);
+        recordFeatures(normal, viewX, viewY, viewZ);
         featuresRecorded = true;
       }
       const emissionScale = hit.material.emissionFresnel > 0
         ? fresnelSchlick(-(direction[0] * normal[0] + direction[1] * normal[1] + direction[2] * normal[2]), hit.material.emissionFresnel)
         : 1;
       addRadiance(depth, throughput[0] * hit.emission[0] * emissionScale, throughput[1] * hit.emission[1] * emissionScale, throughput[2] * hit.emission[2] * emissionScale);
-      const viewX = -direction[0];
-      const viewY = -direction[1];
-      const viewZ = -direction[2];
       if (isGlass) {
         const alpha = roughnessToAlpha(hit.roughness);
         if (!sampleGlass(normal, viewX, viewY, viewZ, entering, material.ior, alpha, random.next(), random.next(), random.next(), direction)) break;
@@ -1042,22 +1044,30 @@ export function toneMapToRgba8(linear, width, height, { viewTransform = 'aces', 
 /** Names what this scene asks for that the path tracer does not draw, so a result never claims more than it traced. */
 export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { kernelMaterials = false, clipStart = 0 } = {}) {
   const notes = new Set();
-  if (clipStart > 0 && (backend === 'gpu' || kernelMaterials)) notes.add('camera.clipStart is ignored: only the CPU and WebGPU tracers start camera rays at it, so geometry between the eye and the clip start is drawn.');
+  if (clipStart > 0 && backend === 'gpu') notes.add('camera.clipStart is ignored: only the CPU, WebGPU and native cycles tracers start camera rays at it, so geometry between the eye and the clip start is drawn.');
   const fog = environment?.volumeFog;
   if (fog?.density > 0 && (fog.noiseAmount ?? 0.5) > 0) notes.add('volumeFog is traced as a uniform medium: noiseAmount, noiseScale and drift are ignored.');
   if (fog?.density > 0 && fog.ambient) notes.add('volumeFog.ambient is not added: the fog is lit by the traced lights and sky.');
+  if (environment?.world === true && environment.fogDensity > 0 && !(fog?.density > 0)) notes.add('fogDensity is traced as a uniform medium with extinction fogDensity per metre and fogColor as its scatter colour, lit by the traced lights and sky; the sky and ground haze shading of the rasterizer is not.');
   const hasSoftFalloff = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? [])].some(light => light.softFalloff === true);
   if (hasSoftFalloff && !kernelMaterials) notes.add('softFalloff is ignored: only the native cycles kernel draws a light as an oriented disk, the other tracers draw a sphere.');
+  const lightsWithOwnLimit = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? []), ...(environment?.areaLights ?? [])];
+  const hasBounceLimit = environment?.sunMaxBounces !== undefined || lightsWithOwnLimit.some(light => light.maxBounces !== undefined);
+  if (hasBounceLimit && !kernelMaterials) notes.add('A light maxBounces (sunMaxBounces for the sun) is ignored: only the native cycles kernel stops a light after its own bounces, the other tracers run every light to the scene bounces.');
   const hasPortal = (environment?.areaLights ?? []).some(light => light.portal === true);
   if (hasPortal && !kernelMaterials && backend === 'gpu') notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel, the CPU tracer and the WebGPU tracer sample the environment through them, the other tracers draw no light from a portal.');
   const hasGridVolume = (environment?.localVolumes ?? []).some(volume => volume?.shape === 'grid');
   if (hasGridVolume && kernelMaterials && environment.volumeShutter > 0) notes.add('environment.volumeShutter is ignored for a grid volume: Cook draws the grid as it is at the frame time, with no motion blur from its velocity channel. Use backend "cpu" or "webgpu" for a blurred blast.');
   if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
+  if (environment?.fillIntensity > 0) notes.add('fillIntensity is ignored: the two fixed fill lights are rasterizer only. Add a point or area light, or raise environmentIntensity, to light the shadow side of a trace.');
+  if (environment?.world === true) notes.add('world: true is ignored: the outdoor haze shading is rasterizer only, and a trace draws the environment map behind the picture and lights with it whatever world says.');
   if (environment?.cameraIntensity !== undefined && !kernelMaterials) notes.add('cameraIntensity is ignored: only the native cycles kernel draws the sky a camera ray sees at its own strength, the other tracers use the map intensity.');
   for (const part of parts) {
     const material = part.material ?? {};
+    for (const note of describeUntracedWater(part)) notes.add(note);
+    if (material.tag === 'water' && backend === 'gpu') notes.add('The depth tint under a thin water sheet is not drawn: the CPU, WebGPU and native cycles tracers add an absorbing medium under it, the WebGL tracer draws the water clear.');
     for (const field of IGNORED_MAP_FIELDS) if (material[field]) notes.add(`${field} is ignored.`);
-    if (material.tag && material.tag !== 'surface') notes.add(`${material.tag} materials are traced as plain surfaces.`);
+    if (material.tag && material.tag !== 'surface' && material.tag !== 'water') notes.add(`${material.tag} materials are traced as plain surfaces.`);
     if (material.alphaMode === 'blend' && hasGraphOpacity(material)) notes.add('A graph opacity output is traced as a cutout at 0.5.');
     else if (material.alphaMode === 'blend' && !kernelMaterials) notes.add('Blended transparency is traced as opaque.');
     if (!kernelMaterials && (material.layerMaps?.clearcoatTexture || material.transmissionMap)) notes.add('Graph clearcoat and transmission masks are read by the CPU tracer; the GPU tracers use the factors.');
@@ -1284,7 +1294,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
       denoiser: options.denoiser, threads,
       backend: options.backend, ...(gpuName ? { gpu: gpuName, gpuCompileSeconds, gpuKernelCompiles } : {}),
       averageSamples, noiseThreshold: options.noiseThreshold, ...(estimatedNoise === null ? {} : { estimatedNoise }),
-      triangles: scene.indices.length / 3, tracedSeconds, seconds: (performance.now() - started) / 1000,
+      triangles: uniqueTriangleCount(scene), tracedSeconds, seconds: (performance.now() - started) / 1000,
       ignored: describeIgnoredFeatures(parts, environment, options.backend, { clipStart: view.clipStart }),
     },
   };

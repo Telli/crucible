@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sitePages } from './scripts/vite-site-pages.mjs';
+import { generatedFiles } from './scripts/vite-generated-files.mjs';
 
 const headers = {
   'Cross-Origin-Opener-Policy': 'same-origin',
@@ -31,7 +32,7 @@ function serveLocalFolders() {
 }
 
 export default defineConfig({
-  plugins: [serveLocalFolders(), sitePages()],
+  plugins: [serveLocalFolders(), sitePages(), generatedFiles()],
   server: { headers, watch: { ignored: ['**/.claude/**'] } },
   // Scan only the project's own pages. Agent worktrees under .claude hold hundreds of copies of them and made the first page load take 13 s.
   // The browser denoiser page imports `denoiser`, which is installed by hand (bench/reference/denoise-browser.mjs). Scanning it
@@ -54,9 +55,14 @@ export default defineConfig({
         view2d: 'site/view2d.html',
         assets: 'site/assets.html',
         guide: 'site/getting-started.html',
+        recipes: 'site/recipes.html',
+        recipeHdriLighting: 'site/recipe-hdri-lighting.html',
+        recipeViewTransform: 'site/recipe-view-transform.html',
+        recipeDollyZoom: 'site/recipe-dolly-zoom.html',
         docs: 'site/docs.html',
         changelog: 'site/changelog.html',
         showcase: 'site/showcase.html',
+        tiers: 'site/tiers.html',
         marketplace: 'site/marketplace.html',
       },
     },

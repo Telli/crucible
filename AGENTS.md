@@ -50,13 +50,14 @@ Between one file and the full pass, while you iterate (each prints at most about
 
 - `npm run test:affected -- src/foo.js`: every test file that mentions the file, or a module that re-exports it. With no files it uses what your branch changed.
 - `npm run test:fast`: a deterministic 10 percent of the test files, seeded by the branch name (`-- --seed <text> --percent <n>`).
-- `npm run test:mutation-check -- tests/foo.test.js`: reverts your `src/`, `bin/` and `packages/` changes, runs the tests, lists the ones that fail and restores the tree. It exits 1 when every test still passes, which means the test does not pin your fix. Stage unstaged edits outside those folders first, and `git add -N` new files under them.
+- `npm run test:mutation-check -- tests/foo.test.js`: reverts your `src/`, `bin/`, `packages/` and `scripts/` changes, runs the tests, lists the ones that fail and restores the tree. It exits 1 when every test still passes, which means the test does not pin your fix. Stage unstaged edits outside those folders first, and `git add -N` new files under them.
 - `npm test -- --test-reporter=./scripts/test-compact-reporter.mjs` gives the full pass the same short output.
 
 ## Rules that fail a pull request
 
 - Add `changes/<issue>.md` with one bullet when you change `src/`, `bin/`, `packages/` or `skills/` ([changes/README.md](changes/README.md) has the naming rule).
 - Name the branch `<issue>-<slug>` and the pull request `<imperative sentence> (#<issue>)`. Put `Closes #N` or `Part of #N` in the description and paste the commands you ran with their results.
+- A bot fills the assignee, the milestone and the linked issue's `priority:*` and `goal:*` labels on pull requests and issues, so do not hand-edit them; still name the issue in the description.
 - Put the evidence in the pull request under **Evidence**: before and after pictures or clips for what can be seen, numbers from old to new for what can be measured, or one line that there is nothing to show. Push pictures to a branch named `evidence-pr-<number>` and link the raw URLs ([CONTRIBUTING.md](CONTRIBUTING.md#show-the-evidence)).
 - A change to an MCP tool schema or a skill needs the Haiku bench table in the pull request ([CONTRIBUTING.md](CONTRIBUTING.md#tool-schema-and-skill-changes)).
 - Look changes (shaders, lighting, materials, default render, post steps) carry `hold:look-approval`. Never remove it and never merge: only the maintainer merges.

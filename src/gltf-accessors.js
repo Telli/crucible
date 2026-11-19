@@ -41,8 +41,29 @@ export async function attributeFloatsInSlices(attribute, checkpoint) {
   return values;
 }
 
+const MATRIX_COLUMNS = { MAT2: 2, MAT3: 3, MAT4: 4 };
+
+/** Matrix columns as [tight bytes, stored bytes]: the glTF spec pads each MAT2 or MAT3 column to a multiple of 4 bytes. */
+function columnBytesOf(accessor) {
+  const tight = MATRIX_COLUMNS[accessor.type] * COMPONENT_TYPES[accessor.componentType].BYTES_PER_ELEMENT;
+  return [tight, Math.ceil(tight / 4) * 4];
+}
+
 function elementBytesOf(accessor) {
+  const columns = MATRIX_COLUMNS[accessor.type];
+  if (columns) return columns * columnBytesOf(accessor)[1];
   return COMPONENT_TYPES[accessor.componentType].BYTES_PER_ELEMENT * COMPONENT_COUNTS[accessor.type];
+}
+
+function removeColumnPadding(packed, accessor) {
+  const columns = MATRIX_COLUMNS[accessor.type];
+  const [tightBytes, storedBytes] = columnBytesOf(accessor);
+  if (!columns || tightBytes === storedBytes) return packed;
+  const tight = new Uint8Array(accessor.count * columns * tightBytes);
+  for (let column = 0; column < accessor.count * columns; column++) {
+    tight.set(packed.subarray(column * storedBytes, column * storedBytes + tightBytes), column * tightBytes);
+  }
+  return tight;
 }
 
 /** The distance between elements of a buffer view: its byteStride, which must hold one element and be a multiple of 4. */
@@ -103,6 +124,27 @@ function checkSparseShape(accessor) {
 }
 
 /**
+ * Indices of meshopt views that hold no elements (count 0) and that nothing reads: every accessor on them is empty. Other tools write
+ * such views for a mesh that simplified to nothing. A view that a non-empty accessor, a sparse accessor or an image reads is not listed,
+ * so it still fails with the count error instead of producing a short array.
+ */
+export function unreadEmptyMeshoptViews(document) {
+  const empty = new Set();
+  (document.bufferViews ?? []).forEach((view, index) => {
+    if (view?.extensions?.EXT_meshopt_compression?.count === 0) empty.add(index);
+  });
+  if (!empty.size) return empty;
+  for (const accessor of document.accessors ?? []) {
+    if (accessor.count === 0 && !accessor.sparse) continue;
+    empty.delete(accessor.bufferView);
+    empty.delete(accessor.sparse?.indices?.bufferView);
+    empty.delete(accessor.sparse?.values?.bufferView);
+  }
+  for (const image of document.images ?? []) empty.delete(image.bufferView);
+  return empty;
+}
+
+/**
  * Reads accessors as tightly packed typed arrays, with sparse substitution and meshopt buffer views.
  * `bufferBytes(index)` returns the bytes of a glTF buffer. `meshoptDecoder` replaces the built-in decoder of compressed views.
  */
@@ -124,7 +166,8 @@ export function createAccessorReader(document, bufferBytes, meshoptDecoder) {
     const views = document.bufferViews ?? [];
     if (!views.some(view => view.extensions?.EXT_meshopt_compression)) return;
     const { decodeMeshoptViews } = await import('./gltf-meshopt.js');
-    for (const [index, bytes] of await decodeMeshoptViews(views, bufferBytes, meshoptDecoder)) viewCache.set(index, bytes);
+    const skippedViews = unreadEmptyMeshoptViews(document);
+    for (const [index, bytes] of await decodeMeshoptViews(views, bufferBytes, meshoptDecoder, skippedViews)) viewCache.set(index, bytes);
   }
 
   function viewBytes(index) {
@@ -145,7 +188,7 @@ export function createAccessorReader(document, bufferBytes, meshoptDecoder) {
   }
 
   function finishAccessor({ accessor, ArrayType, itemSize }, packed) {
-    const array = new ArrayType(packed.buffer);
+    const array = new ArrayType(removeColumnPadding(packed, accessor).buffer);
     if (accessor.sparse) applySparse(accessor, array, itemSize);
     return { array, itemSize, count: accessor.count, normalized: accessor.normalized === true, componentType: accessor.componentType };
   }
@@ -169,7 +212,7 @@ export function createAccessorReader(document, bufferBytes, meshoptDecoder) {
     return finishAccessor(plan, packed);
   }
 
-  function applySparse(accessor, array, itemSize) {
+  function applySparse(accessor, array, itemSize, elementCount = accessor.count) {
     checkSparseShape(accessor);
     const { count, indices, values } = accessor.sparse;
     const IndexType = SPARSE_INDEX_COMPONENT_TYPES.includes(indices.componentType) ? COMPONENT_TYPES[indices.componentType] : null;
@@ -180,10 +223,24 @@ export function createAccessorReader(document, bufferBytes, meshoptDecoder) {
     const valueBytes = copyElements(viewBytes(values.bufferView), values.byteOffset ?? 0, itemBytes, count, itemBytes);
     const sparseValues = new array.constructor(valueBytes.buffer);
     for (let item = 0; item < count; item++) {
-      if (sparseIndices[item] >= accessor.count) throw new Error('Sparse accessor index is out of range.');
+      if (sparseIndices[item] >= elementCount) throw new Error('Sparse accessor index is out of range.');
       array.set(sparseValues.subarray(item * itemSize, (item + 1) * itemSize), sparseIndices[item] * itemSize);
     }
   }
 
-  return { prepare, readAccessor, readAccessorInSlices, viewBytes };
+  /**
+   * Applies the sparse block of an accessor to data that did not come from its buffer view, such as a Draco-decoded attribute.
+   * KHR_draco_mesh_compression only replaces the accessor's bufferView and byteOffset, so sparse still substitutes on top.
+   */
+  function applySparseToDecoded(index, attribute) {
+    const accessor = document.accessors?.[index];
+    if (!accessor?.sparse) return;
+    const ArrayType = COMPONENT_TYPES[accessor.componentType];
+    if (attribute.array.constructor !== ArrayType) {
+      throw new Error(`Accessor ${index} has a sparse block but its Draco data decoded as ${attribute.array.constructor.name}, not ${ArrayType?.name}. Fix: make the accessor componentType match the compressed attribute.`);
+    }
+    applySparse(accessor, attribute.array, attribute.itemSize, attribute.count);
+  }
+
+  return { prepare, readAccessor, readAccessorInSlices, viewBytes, applySparseToDecoded };
 }

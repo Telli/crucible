@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { setVolumeGridLoader, VOLUME_GRID_MAX_BYTES } from './volume-grid.js';
 import { VOLUME_GRID_SEQUENCE_MAX_BYTES, VOLUME_GRID_SEQUENCE_MAX_FRAMES } from './volume-grid-sequence.js';
 import { AGENT_ASSET_LIMITS } from './agent-asset-limits.js';
-import { explosionGridBytes, explosionGridNamesFor } from './explosion-grids.js';
+import { explosionGridByteLength, explosionGridBytes, explosionGridNamesFor } from './explosion-grids.js';
 
 // Lets a recipe name a grid volume's file (`grid: "blast.67vg"`) in the MCP server: the name is looked up in one folder, never as a path, so a
 // recipe cannot read anywhere else. The folder is the server's working directory unless this variable names another.
@@ -65,7 +65,8 @@ export function volumeGridUses(value) {
     if (Array.isArray(node.localVolumes)) {
       node.localVolumes.forEach((volume, index) => {
         if (!volume || typeof volume !== 'object' || volume.shape !== 'grid') return;
-        uses.push({ names: Array.isArray(volume.frames) ? volume.frames : [volume.grid], label: `environment.localVolumes[${index}]` });
+        const frames = volume.frames ?? volume.grid;
+        uses.push({ names: Array.isArray(frames) ? frames : [frames], label: `environment.localVolumes[${index}]` });
       });
     }
     Object.values(node).forEach(child => visit(child, depth + 1));
@@ -92,7 +93,9 @@ export function volumeGridFileBytes(value, directory) {
       try {
         size = statSync(resolve(gridRoot(directory), name)).size;
       } catch {
-        // Missing: readVolumeGridFiles names the file in its own error.
+        // No file: a grid that add-explosion bakes counts at its known size without baking it (#1903); any other missing name is
+        // named by readVolumeGridFiles in its own error.
+        size = explosionGridByteLength(name) ?? 0;
       }
       sizes.set(name, size);
       total += size;

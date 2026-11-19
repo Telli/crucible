@@ -34,7 +34,7 @@ A scene recipe can carry a `game` section. It names the node the player controls
 
 ## Fields
 
-A field newer than the last npm release carries a tag such as `{since 0.21.0}`; an older server refuses it with `is not a field`. Untagged fields work in the last release.
+A field newer than the last npm release carries a tag such as `{since 0.22.0}`; an older server refuses it with `is not a field`. Untagged fields work in the last release.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -65,7 +65,7 @@ A player or NPC under a parent that rotates or scales is refused by `set-game` a
 
 `scene_export_web` writes one folder: `index.html`, `game.json` (the recipe) and `engine/` (the built Crucible modules, found by following the imports from `build/game.js`). It runs from any static host with no server code, and the folder is bounded: the engine stays under 12 MiB, the recipe under 1 MiB, and the newest four builds are kept. Placed catalog assets (and the assets whose clips a character retargets) are copied to `assets/<id>.glb`, up to 64 MiB together; grown vegetation is refused with the fix. The page shows the variables and the verdict in a corner label and exposes the running game as `window.__game` (`rules.state`, `controller.state`, `scene`, `runtime`).
 
-`index.html?replay=name.json` plays a recording (`recordInput`, see [input](input.md#custom-and-scripted-input)) from the same folder instead of the keyboard. `scripts/smoke-game-web.mjs` builds a creature that collects 3 coins (each hidden by a rule) on a stone-pattern floor and reaches a goal through the MCP tools, exports it, and wins it from a replay in headless Chrome, with a head-bob animation graph that the page must play. `node scripts/smoke-game-web.mjs bin/crucible-mcp.mjs puzzle` plays the [physics puzzle](#physics). `node scripts/smoke-game-web.mjs bin/crucible-mcp.mjs drive` does the same for a car that passes 3 gates and reaches a finish line under a `chase` camera.  The `character` sample walks a placed, retargeted humanoid (idle and walk clips of another file) to a goal, and checks that the page loads `assets/<id>.glb` and the character's limbs move. A game with a pattern or map material makes the export ship `engine/replace-textured-parts.js` and `startGame` load it; without it the first scene update and every hide or show fail with a replaceParts error, so the creature sample keeps a textured floor to catch that.
+`index.html?replay=name.json` plays a recording (`recordInput`, see [input](input.md#custom-and-scripted-input)) from the same folder instead of the keyboard. `scripts/smoke-game-web.mjs` builds a creature that collects 3 coins (each hidden by a rule) on a stone-pattern floor and reaches a goal through the MCP tools, exports it, and wins it from a replay in headless Chrome, with a head-bob animation graph that the page must play. `node scripts/smoke-game-web.mjs bin/crucible-mcp.mjs puzzle` plays the [physics puzzle](#physics). `node scripts/smoke-game-web.mjs bin/crucible-mcp.mjs touch` exports the creature with `input: "touch"` and plays it in a Chrome context that emulates a phone (touch, mobile viewport) with real touch events: one finger drags the left-half stick up, a second finger taps to jump, and the game is won with no replay; while the first finger is down the smoke checks that the ring sits under it and the knob is cut back to the radius (`GAME_SMOKE_TOUCH_STILL=<png>` keeps that moment). It proves Chrome with touch emulation, not Safari or a real phone. `node scripts/smoke-game-web.mjs bin/crucible-mcp.mjs drive` does the same for a car that passes 3 gates and reaches a finish line under a `chase` camera.  The `character` sample walks a placed, retargeted humanoid (idle and walk clips of another file) to a goal, and checks that the page loads `assets/<id>.glb` and the character's limbs move. A game with a pattern or map material makes the export ship `engine/replace-textured-parts.js` and `startGame` load it; without it the first scene update and every hide or show fail with a replaceParts error, so the creature sample keeps a textured floor to catch that.
 
 ## From code
 
@@ -74,6 +74,16 @@ import { startGame } from 'crucible/addons/game';
 const game = await startGame(canvas, recipe, { replay, showStatus: true });
 game.dispose();
 ```
+
+### Touch stick
+
+A game with `input: "touch"` reads a stick in the left half of the canvas, but the area is invisible. Pass `touchControls: true` to `startGame` and the page draws it: a ring where the finger lands, a knob that follows the drag and stays inside the ring (the stick radius is 60 CSS pixels, so the ring is 120 px wide), and a fade-out of about a third of a second once the finger lifts. The drawing ignores touches, cannot be selected and keeps inside the safe area of a phone with a notch, so it never changes what the input sees. `touchControls` is off by default, is `false` for anything but an `input: "touch"` game without a replay, and must be a boolean. The page that `scene_export_web` writes turns it on when `matchMedia('(pointer: coarse)')` matches, so an exported touch game shows the stick on a phone and none on a desktop. There is no drawn action button: a tap on the right half still jumps.
+
+```js
+const game = await startGame(canvas, recipe, { touchControls: matchMedia('(pointer: coarse)').matches });
+```
+
+For your own page, `createTouchStickOverlay({ parent, source })` from `src/touch-stick-overlay.js` draws the sticks of any `touchSource(...)` (it reads `source.stickStates()`), and `createTouchStickModel` gives the ring and knob positions and opacity to draw them yourself.
 
 The `scene` system sends each frame's poses through `scene.apply`, and sends only the poses that differ from the last frame it sent. A game standing still calls `scene.apply` zero times per frame.
 
@@ -85,7 +95,7 @@ The `scene` system sends each frame's poses through `scene.apply`, and sends onl
 
 - The player node can be a `kinematic` body (shape `capsule`, `box` or `ball`): the controller drives it, so the player pushes dynamic bodies and is never pushed back.
 - A rules part named like a dynamic body reports that body's position, so a zone, a tag and `enter` work on crates and balls.
-- Give every fixed body `shape: "box"` (or `ball`, `capsule`, `convex`): the default `trimesh` is not built. Joints, ragdolls, trimesh and compound shapes are refused with the field to change, and `physics.duration` is only the length of the recorded film.
+- Give every fixed body `shape: "box"` (or `ball`, `capsule`, `convex`): the default `trimesh` is not built. Joints, ragdolls and trimesh are refused with the field to change (`cone` and `compound` bodies play, see [physics](physics.md)), and `physics.duration` is only the length of the recorded film.
 - The web export copies `jolt-physics.wasm.js` and its `.wasm` file to `engine/physics/` (about 3 MiB) and gives the page their URL, so Jolt fetches the wasm from beside the page. Nothing loads from another origin: a `physicsUrl` on another origin is refused. The `jolt-physics` package must be installed to export.
 
 The `puzzle` sample of `scripts/smoke-game-web.mjs` is two plank crates, two marble plates in brick pockets and an iron gate on a stone floor (pattern materials). The player walks into the first crate and pushes it onto its plate, crosses over and pushes the second; when both plates are pressed the gate part is hidden and the game is won. The smoke checks that the page loads only its own files, that the wasm comes from `engine/physics/`, that both crates moved, and that an export without physics carries no `engine/physics/` folder.
@@ -118,7 +128,7 @@ The `puzzle` sample of `scripts/smoke-game-web.mjs` is two plank crates, two mar
 - An NPC needs `rootMotion` and a number parameter `speed`. Its path follower sets `speed`, so idle, walk and run blend; it moves by the root motion, turns at corners and stops at the last of up to 256 `[x, z]` waypoints, where `speed` returns to 0. `cruiseSpeed` is 2.2 by default; `yaw` and `footOffset` work as for the player. Each NPC node is separate from the player and the other NPCs.
 - Root travel along +Z works as written; for clips whose root travels -Z set `rootMotion.facing` to `"-z"`.
 
-A wrong field is refused with its path and the values to use, for example `player.animation.clips.walk.tracks[0].target names "Ghost", which is not a child node of the character`. `window.__game.animation` and `window.__game.npcs` expose the graphs.
+A wrong field is refused with its path and the values to use, for example `player.animation.clips.walk.tracks[0].target names "Ghost", which is not a child node of the character`. `window.__game.animation` and `window.__game.npcs` expose the graphs. A malformed `nodes` or `npcs` table is skipped by the placed-asset scan so validation can name the field before any asset load.
 
 ### A placed character
 

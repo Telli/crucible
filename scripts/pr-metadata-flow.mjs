@@ -89,8 +89,13 @@ export function decideActions({ now, contributorFixes, previousState, exempt, dr
   if (!failing) {
     return { statusState: previousState ? {} : null, remind: false, close: false };
   }
-  const firstFailedAt = (!reopened && previousState?.firstFailedAt) || new Date(now).toISOString();
-  const reminderSentAt = reopened ? undefined : previousState?.reminderSentAt;
+  const storedFirstFailedAt = (!reopened && previousState?.firstFailedAt) || new Date(now).toISOString();
+  const storedElapsedHours = (now - Date.parse(storedFirstFailedAt)) / HOUR_MS;
+  // A draft never closes, so its clock does not run past the reminder time: marking it ready later starts the last
+  // stretch again and the one reminder still comes before the close, as the contributing guide promises.
+  const clockStopped = draft && storedElapsedHours >= REMINDER_AFTER_HOURS;
+  const firstFailedAt = clockStopped ? new Date(now).toISOString() : storedFirstFailedAt;
+  const reminderSentAt = reopened || clockStopped ? undefined : previousState?.reminderSentAt;
   const elapsedHours = (now - Date.parse(firstFailedAt)) / HOUR_MS;
   const protectedFromTimers = exempt || draft || labels.includes(NEEDS_OWNER_DECISION_LABEL);
   const remind = !protectedFromTimers && !reminderSentAt && elapsedHours >= REMINDER_AFTER_HOURS && elapsedHours < CLOSE_AFTER_HOURS;

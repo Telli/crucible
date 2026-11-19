@@ -353,3 +353,20 @@ test('bad input produces specific errors', () => {
   assert.throws(() => applyVehiclePoseToSceneGraph(rig, driveAlongPath(rig, STRAIGHT_PATH, { speed: 3 }).sample(0), {}), /built from parts, not graph/);
   assert.throws(() => findWheelCandidates('wheel'), /array of name strings/);
 });
+
+test('drive options refuse a NaN lean gain and a negative suspension travel', () => {
+  const { rig } = createTestRig();
+  for (const [field, value] of [['rollGain', NaN], ['pitchGain', Infinity], ['suspensionTravel', -1], ['suspensionTravel', NaN]]) {
+    assert.throws(() => driveAlongPath(rig, STRAIGHT_PATH, { speed: 5, [field]: value }), new RegExp(`${field}: got`), `${field} ${value}`);
+  }
+  const drive = driveAlongPath(rig, STRAIGHT_PATH, { speed: 5, suspensionTravel: 0, rollGain: -0.01 });
+  assert.ok(Number.isFinite(drive.sample(1).roll));
+});
+
+test('a drive too slow or paused for too long is refused with a clear error', () => {
+  const { rig } = createTestRig();
+  assert.throws(() => driveAlongPath(rig, STRAIGHT_PATH, { speed: 1e-9 }), /duration: got ".* seconds"; expected a drive of at most 3600 seconds/);
+  assert.throws(() => driveAlongPath(rig, STRAIGHT_PATH, { cruiseSpeed: 1e-3, acceleration: 1e-3 }), /at most 3600 seconds/);
+  assert.throws(() => driveAlongPath(rig, STRAIGHT_PATH, { speed: 5, startTime: 1e9 }), /at most 3600 seconds/);
+  assert.ok(driveAlongPath(rig, STRAIGHT_PATH, { speed: 0.01 }).duration <= 3600);
+});

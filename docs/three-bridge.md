@@ -4,7 +4,7 @@
 
 Left: the three.js scene. Right: the same scene after `fromThreeObject` turned it into Crucible parts. Geometry, colours, metalness, roughness and the checker texture carry over. Light and sky are not part of the tree: you set them on the Crucible side, so they differ by design.
 
-`@codepawlhq/crucible-three-bridge` (folder `packages/three-bridge`, not on npm yet: import it from a source checkout) moves meshes between a live three.js object tree and Crucible parts. Use it to try Crucible on a scene you already have, or to hand Crucible parts to code that expects three.js objects. For a GLB you do not need three.js at all: Crucible writes it.
+`@codepawlhq/crucible-three-bridge` (folder `packages/three-bridge`, install it with `npm install @codepawlhq/crucible-three-bridge three`) moves meshes between a live three.js object tree and Crucible parts. Use it to try Crucible on a scene you already have, or to hand Crucible parts to code that expects three.js objects. For a GLB you do not need three.js at all: Crucible writes it.
 
 The addon is optional and not part of the core archive. It imports neither `three` nor Crucible. `three` is a peer dependency of the addon only, and you pass the namespace in when you export.
 
@@ -40,7 +40,7 @@ Each mesh becomes one part with its world matrix, so groups, parents and their t
 
 Nothing is dropped silently. `warnings` names the object and the property for: morph targets, `drawRange`, `instanceColor`, `envMap`, `bumpMap`, `displacementMap`, `alphaMap`, `lightMap`, `wireframe`, `flatShading`, `BackSide`, texture repeat, offset and rotation, sheen, iridescence, anisotropy, separate roughness and metalness maps, and materials that are not `MeshStandardMaterial` (only colour, map and opacity are used). Invisible objects, points, lines, sprites, lights and cameras are skipped and listed. A `SkinnedMesh` with a skeleton is imported in its current pose.
 
-Two inputs throw an error that names the object and what to change: a `ShaderMaterial` or `RawShaderMaterial` (Crucible runs no custom shaders) and a `SkinnedMesh` without `skeleton.bones`. Pass `skipUnsupported: true` to leave such an object out and get a warning instead.
+Three inputs throw an error that names the object and what to change: a mesh with no material, a `ShaderMaterial` or `RawShaderMaterial` (Crucible runs no custom shaders) and a `SkinnedMesh` without `skeleton.bones`. Pass `skipUnsupported: true` to leave such an object out and get a warning instead.
 
 ### Limits
 
@@ -56,7 +56,7 @@ const { object, warnings } = toThreeObject(parts, THREE, { name: 'scene' });
 threeScene.add(object);
 ```
 
-`object` is a `Group` of `Mesh` objects with `MeshStandardMaterial` (`MeshPhysicalMaterial` when a part uses transmission, clearcoat or ior). Parts that share a geometry or material share one `BufferGeometry` or material. Each mesh keeps its part matrix exactly, with `matrixAutoUpdate` off, so the world matrix equals the part's. To animate a mesh with `position` and `rotation`, decompose the matrix first: `mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale); mesh.matrixAutoUpdate = true;`. Skin and morph targets are not exported and are listed in `warnings`.
+`object` is a `Group` of `Mesh` objects with `MeshStandardMaterial` (`MeshPhysicalMaterial` when a part uses transmission, clearcoat or ior). Parts that share a geometry or material share one `BufferGeometry` or material. A part with `geometry.colors` gets a material with `vertexColors` on, so a material shared with a plain part exists once for each kind. Each mesh keeps its part matrix exactly, with `matrixAutoUpdate` off, so the world matrix equals the part's. To animate a mesh with `position` and `rotation`, decompose the matrix first: `mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale); mesh.matrixAutoUpdate = true;`. Skin and morph targets are not exported and are listed in `warnings`.
 
 ## Export a GLB
 

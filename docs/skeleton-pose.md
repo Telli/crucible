@@ -139,3 +139,4 @@ root rather than of the lower leg, so two-bone IK refuses them with an error; it
 - Clip layers and masks are code only. Recipes and imported assets get IK through MCP with [`motion.ik`](agent-motion.md#inverse-kinematics).
 - The [animation mixer](https://crucible.codepawl.com/animation-mixer.md) works on rigid part transforms and has no layers, masks or IK. Use this addon
   for skinned rigs.
+- `createSkeletonPose` refuses a rig joint whose rest translation or rotation is NaN, or whose rotation is the zero quaternion, and a custom solver whose `create` returns no `joints` list or `solve` function.

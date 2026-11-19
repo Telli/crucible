@@ -12,8 +12,9 @@ function position(mesh, extraPositions, vertex) {
 const lerp = (first, second, fraction) => first.map((value, axis) => value + (second[axis] - value) * fraction);
 const distanceSquared = (first, second) => first.reduce((sum, value, axis) => sum + (value - second[axis]) ** 2, 0);
 
-function newVertex(mesh, extraPositions, point) {
+function newVertex(mesh, extraPositions, point, extraSources = null, source = -1) {
   extraPositions.push(point);
+  extraSources?.push(source);
   return mesh.vertexCount + extraPositions.length - 1;
 }
 
@@ -62,10 +63,12 @@ export function bridgeEdgeLoops(mesh, edgeMask, { segments = 1, twist = 0, name 
   const shift = closed ? (bestShift(mesh, near, farReversed) + (twist % edgeCount) + edgeCount) % edgeCount : 0;
   const far = near.map((_, index) => farReversed[(index + shift) % farReversed.length]);
   const extraPositions = [];
+  const extraSources = [];
   const rows = [near];
   for (let row = 1; row < segments; row++) {
     rows.push(near.map((vertex, index) => newVertex(
       mesh, extraPositions, lerp(position(mesh, extraPositions, vertex), position(mesh, extraPositions, far[index]), row / segments),
+      extraSources, { from: vertex, to: far[index], t: row / segments },
     )));
   }
   rows.push(far);
@@ -77,7 +80,7 @@ export function bridgeEdgeLoops(mesh, edgeMask, { segments = 1, twist = 0, name 
       polygons.push(strip([rows[row][next], rows[row][index], rows[row + 1][index], rows[row + 1][next]], sourceFace, `${name}.bridge`));
     }
   }
-  return { mesh: buildPolygonMesh(mesh, polygons, extraPositions), loopEdges: edgeCount, strips: segments * edgeCount };
+  return { mesh: buildPolygonMesh(mesh, polygons, extraPositions, extraSources), loopEdges: edgeCount, strips: segments * edgeCount };
 }
 
 function faceNextCorner(mesh, corner) {

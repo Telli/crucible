@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { constants, setPriority } from 'node:os';
 import * as RealThree from 'three';
 import * as core from '../src/index.js';
@@ -145,6 +146,21 @@ test('OrbitControls moves the camera around its target', () => {
   controls.rotate(Math.PI / 2, 0);
   assert.ok(Math.abs(camera.position.x - 4) < 1e-6);
   assert.ok(Math.abs(camera.position.z) < 1e-6);
+});
+
+test('MeshLambertMaterial and MeshPhongMaterial build matte Crucible materials', () => {
+  const lambert = new THREE.MeshLambertMaterial({ color: 0xff0000, metalness: 1, roughness: 0 }).toMaterial();
+  assert.equal(lambert.metallic, 0);
+  assert.equal(lambert.roughness, 1);
+  assert.deepEqual(lambert.color, new THREE.Color(0xff0000).toArray());
+  const defaultPhong = new THREE.MeshPhongMaterial({ color: 0x00ff00 }).toMaterial();
+  assert.equal(defaultPhong.metallic, 0);
+  assert.ok(Math.abs(defaultPhong.roughness - 0.5) < 1e-9);
+  const shiny = new THREE.MeshPhongMaterial({ shininess: 198, specular: 0xffffff }).toMaterial();
+  assert.ok(Math.abs(shiny.roughness - 0.01 ** 0.25) < 1e-9);
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshPhongMaterial());
+  assert.ok(mesh.material instanceof THREE.MeshStandardMaterial);
+  assert.ok(!unsupportedNames.includes('MeshLambertMaterial') && !unsupportedNames.includes('MeshPhongMaterial'));
 });
 
 test('unsupported three.js names throw an error that names the Crucible replacement', () => {
@@ -314,4 +330,12 @@ test('a torus with radius 0 throws an error that names the radius', () => {
   assert.throws(() => new THREE.TorusGeometry(0, 0.4), /TorusGeometry radius is 0.*positive/);
   assert.throws(() => new THREE.TorusGeometry(Number.NaN, 0.4), /TorusGeometry radius is NaN/);
   assert.doesNotThrow(() => new THREE.TorusGeometry(2, 0.4));
+});
+
+test('the addon stays outside the core bundles and under its size ceiling', async () => {
+  const addonBytes = statSync(new URL('../packages/three-compat/index.mjs', import.meta.url)).size;
+  assert.ok(addonBytes < 40000, `the addon is ${addonBytes} bytes; record the growth in changes/986.size.md and raise this ceiling`);
+  assert.ok(snippets.length >= 10, `only ${snippets.length} three.js-style snippets; the issue asks for at least 10`);
+  const coreSource = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
+  assert.ok(!coreSource.includes('three-compat'), 'the core must not import the addon');
 });

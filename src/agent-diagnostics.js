@@ -4,13 +4,17 @@
  * kind, a severity, a target (the material, node or asset it concerns), a message and a fix that names the next action.
  * Reads of an inspected scene include them only when there is something to say, to keep default results small.
  */
+import { agentSceneModule } from './agent-scene-modules.js';
+
 const PLAIN_SURFACE_TAGS = new Set(['surface', 'gltf']);
 const LAYER_FIELDS = ['clearcoat', 'sheenColor', 'specular', 'specularColor', 'anisotropy', 'iridescence'];
 // The pass that draws transmission is a separate shader without these layers.
 const FIELDS_IGNORED_BY_TRANSMISSION = ['anisotropy', 'iridescence'];
+// The water tag draws in the standard shader (shaders.js baseReflectance), so its specular layer sets the surface reflectance.
+const SPECULAR_FIELDS_READ_ON_WATER = ['specular', 'specularColor'];
 const TRANSMISSION_DETAIL_FIELDS = ['thickness', 'attenuationColor', 'attenuationDistance'];
 
-function diagnostic(kind, severity, target, message, fix) {
+export function diagnostic(kind, severity, target, message, fix) {
   return { kind, severity, target, message, fix };
 }
 
@@ -25,7 +29,7 @@ function materialProblems(material) {
   const tag = material.tag ?? 'surface';
   const transmitting = hasValue(material, 'transmission');
   if (tag !== 'surface' && tag !== 'liquid') {
-    for (const field of LAYER_FIELDS.filter(layer => hasValue(material, layer))) {
+    for (const field of LAYER_FIELDS.filter(layer => hasValue(material, layer) && !(tag === 'water' && SPECULAR_FIELDS_READ_ON_WATER.includes(layer)))) {
       problems.push(diagnostic('ignored-material-field', 'warning', material.id,
         `${field} is ignored on a material with tag ${tag}.`,
         `Remove ${field}, or set the material tag to surface with scene_apply set-material.`));
@@ -57,11 +61,23 @@ function materialProblems(material) {
   return problems;
 }
 
+// A mesh geometry may cut with another recipe geometry that no node draws (`edits[].cutter.geometry`), and that one with a third.
+function geometryIdsInUse({ geometries, nodes }) {
+  const inUse = new Set();
+  const visit = id => {
+    if (id === undefined || inUse.has(id)) return;
+    inUse.add(id);
+    geometries.find(geometry => geometry.id === id)?.edits?.forEach(edit => visit(edit?.cutter?.geometry));
+  };
+  nodes.forEach(node => visit(node.geometry));
+  return inUse;
+}
+
 /** Material and resource diagnostics for a normalized procedural recipe. */
 export function recipeDiagnostics(recipe) {
   const problems = recipe.materials.flatMap(materialProblems);
   const usedMaterials = new Set(recipe.nodes.map(node => node.material).filter(Boolean));
-  const usedGeometries = new Set(recipe.nodes.map(node => node.geometry).filter(Boolean));
+  const usedGeometries = geometryIdsInUse(recipe);
   for (const material of recipe.materials.filter(candidate => !usedMaterials.has(candidate.id))) {
     problems.push(diagnostic('unused-material', 'info', material.id,
       `Material ${material.id} is used by no node.`,
@@ -72,7 +88,18 @@ export function recipeDiagnostics(recipe) {
       `Geometry ${geometry.id} is used by no node, so nothing draws it.`,
       'Add a node that uses it with scene_apply add-node, or remove it with remove-geometry.'));
   }
+  problems.push(...recipe.geometries.filter(geometry => geometry.type === 'terrain').flatMap(geometry => agentSceneModule('terrain').terrainHoleDiagnostics(geometry)));
+  problems.push(...portalProblems(recipe.environment?.areaLights ?? []));
   return problems;
+}
+
+/** A portal emits nothing in the raster view and the WebGL tracer, so a render there shows no window light. */
+function portalProblems(areaLights) {
+  return areaLights.flatMap((light, index) => (light.portal === true
+    ? [diagnostic('portal-ignored-by-raster', 'info', `environment.areaLights[${index}]`,
+      'This portal emits nothing in the raster view and the WebGL tracer.',
+      'Render with Cook, the CPU tracer or the WebGPU tracer, or remove portal for an emitting panel.')]
+    : []));
 }
 
 /**

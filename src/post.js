@@ -179,7 +179,7 @@ const POST_STEP_CONDITIONS = {
 // The program with every step is the one a frame draws while a variant builds. It leaves out the steps below: the fog sky grid,
 // field and lights exist only inside a fog, and the volume fog and explosion code load from fog-shader.js and explosion-shader.js
 // only for a renderer that draws them.
-export const POST_STEPS_WITH_OPTIONAL_CODE = Object.freeze(['volume', 'sky', 'field', 'detail', 'lights', 'local', 'explosion']);
+export const POST_STEPS_WITH_OPTIONAL_CODE = Object.freeze(['volume', 'sky', 'field', 'detail', 'lights', 'local', 'explosion', 'linearOutput']);
 export const POST_STEPS = Object.freeze(Object.keys(POST_STEP_CONDITIONS).filter(step => !POST_STEPS_WITH_OPTIONAL_CODE.includes(step)));
 
 const EXPLOSION_STUB = 'vec3 explosion(vec3 background) { return background; }';
@@ -264,7 +264,7 @@ export function createPostFragment(steps = POST_STEPS) {
     .map(([step, [macro, condition]]) => `#define ${macro} ${enabled.has(step) ? `(${condition})` : 'false'}`)
     .join('\n');
   const fogCode = fogCodeFor(enabled);
-  return postFragmentSource(definitions, explosionFunctionFor(enabled), fogCode.declarations, fogCode.functions);
+  return postFragmentSource(definitions, explosionFunctionFor(enabled), fogCode.declarations, fogCode.functions, enabled.has('linearOutput') ? requireFeatureCode('linearOutput').post(POST_MAIN) : undefined);
 }
 
 export const postFragment = createPostFragment();
