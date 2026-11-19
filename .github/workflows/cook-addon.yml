@@ -316,6 +316,7 @@ on:
       - 'src/skeleton-pose.js'
       - 'src/skinning.js'
       - 'src/soft-body.js'
+      - 'src/spot-angle-advice.js'
       - 'src/spring-bones.js'
       - 'src/subsurface-limits.js'
       - 'src/subsurface-shader.js'
