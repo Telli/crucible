@@ -154,7 +154,7 @@ each blending over the pose so far, before tracks and IK:
 | Field | Meaning |
 | --- | --- |
 | `clip` | The `id` of an entry in `scene_inspect` `animations` |
-| `mask` | `{ joints, descendants = true, exclude }`, up to 32 node IDs or names each. The layer moves only these joints and what hangs below them; mesh parts follow their bone, and morph weights follow the bone that owns the mesh |
+| `mask` | `{ joints, descendants = true, exclude }`, up to 32 node IDs or names each; `exclude` may not cover every joint. The layer moves only these joints and what hangs below them; mesh parts follow their bone, and morph weights follow the bone that owns the mesh |
 | `weight` | 0 to 1, default 1 |
 | `speed`, `offset` | Layer time is `time * speed + offset`. `speed` 0.05 to 8, `offset` within 30 seconds |
 | `loop` | Default `true`: the clip repeats. `false` holds its last key |
