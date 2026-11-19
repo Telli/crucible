@@ -5,7 +5,7 @@ import { agentEnvironmentMap, fitAgentShadow, resolveAgentShadow } from './agent
 import { agentSceneModulesNeeded } from './agent-scene-modules.js';
 import { LIGHTING_SETUP_NAMES } from './agent-scene-capabilities.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
-import { CrucibleRenderer } from './renderer.js';
+import { CrucibleRenderer, studioFloorHeight } from './renderer.js';
 import { exportGlb } from './export.js';
 import { encodePack } from './scene-pack-format.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
@@ -19,7 +19,7 @@ import {
   saveStudioPreferences,
 } from './studio-preferences.js';
 import { studioIconPath } from './studio-icons.js';
-import { AXIS_COLORS, buildGridRecipe, createViewWidget, describeBounds, describeCamera } from './studio-viewport-aids.js';
+import { AXIS_COLORS, buildGridRecipe, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
 import {
   STUDIO_LENS_PRESETS,
@@ -525,13 +525,63 @@ function appendRotationSweep(documentReference, gizmoSvg, sweep) {
   );
 }
 
+// The flight to a framed object: long enough to follow, short enough never to wait for.
+const FLIGHT_MILLISECONDS = 320;
+const SILHOUETTE_FILTER_ID = 'crucible-studio-silhouette';
+const SILHOUETTE_EDGE_PIXELS = 1.5;
+
+// Draws the edge of the selected object's shape on screen: the triangles are filled as one shape, and a filter keeps
+// only the ring just outside it, so no line crosses the inside of the object.
+function appendSelectionSilhouette(documentReference, gizmoSvg, triangles) {
+  const filterId = gizmoSvg.getAttribute('data-silhouette-filter') ?? SILHOUETTE_FILTER_ID;
+  let pathData = '';
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (let offset = 0; offset < triangles.length; offset += 6) {
+    pathData += `M${triangles[offset].toFixed(1)} ${triangles[offset + 1].toFixed(1)}L${triangles[offset + 2].toFixed(1)} ${triangles[offset + 3].toFixed(1)}L${triangles[offset + 4].toFixed(1)} ${triangles[offset + 5].toFixed(1)}Z`;
+    for (let corner = 0; corner < 6; corner += 2) {
+      left = Math.min(left, triangles[offset + corner]);
+      right = Math.max(right, triangles[offset + corner]);
+      top = Math.min(top, triangles[offset + corner + 1]);
+      bottom = Math.max(bottom, triangles[offset + corner + 1]);
+    }
+  }
+  const margin = SILHOUETTE_EDGE_PIXELS + 2;
+  const filter = createSvgElement(documentReference, 'filter', {
+    id: filterId,
+    filterUnits: 'userSpaceOnUse',
+    x: (left - margin).toFixed(1),
+    y: (top - margin).toFixed(1),
+    width: (right - left + margin * 2).toFixed(1),
+    height: (bottom - top + margin * 2).toFixed(1),
+  });
+  filter.append(
+    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'dilate', radius: SILHOUETTE_EDGE_PIXELS, result: 'grown' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'grown', in2: 'SourceAlpha', operator: 'out', result: 'edge' }),
+    createSvgElement(documentReference, 'feFlood', { class: 'crucible-studio-silhouette-colour', result: 'colour' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'colour', in2: 'edge', operator: 'in' }),
+  );
+  const definitions = createSvgElement(documentReference, 'defs');
+  definitions.append(filter);
+  gizmoSvg.append(definitions, createSvgElement(documentReference, 'path', {
+    class: 'crucible-studio-selection-silhouette',
+    d: pathData,
+    filter: `url(#${filterId})`,
+  }));
+}
+
 function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
   gizmoSvg.replaceChildren();
   const width = controller.viewportWidth;
   const height = controller.viewportHeight;
   gizmoSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  const outline = controller.selectionOutline();
-  if (outline) {
+  const silhouette = controller.selectionSilhouette();
+  const outline = silhouette ? null : controller.selectionOutline();
+  if (silhouette) {
+    appendSelectionSilhouette(documentReference, gizmoSvg, silhouette);
+  } else if (outline) {
     gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
       class: 'crucible-studio-selection-outline',
       points: outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
@@ -755,6 +805,8 @@ export function createStudio(container, {
   let renderedTopology = initialScene.topologyRevision;
   let gridVisible = preferences.gridVisible;
   let gridParts = null;
+  let gridPartsByName = null;
+  let flightHandle = 0;
   let capturingStill = false;
   let selectionReadoutStale = true;
   let renderedShadowKey = null;
@@ -851,7 +903,7 @@ export function createStudio(container, {
     createMenuItem('Right view', '3', () => showView('right')),
     createMenuItem('Top view', '7', () => showView('top')),
     createMenuItem('Perspective / Orthographic', '5', () => controller.toggleCameraProjection()),
-    createMenuItem('Frame the selection', 'F', () => controller.frameSelection()),
+    createMenuItem('Frame the selection', 'F', () => flyToSelection()),
     createMenuToggle('Grid', '', () => gridButton.click(), () => gridVisible),
     createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true'),
     createMenuToggle('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true'),
@@ -1174,7 +1226,8 @@ export function createStudio(container, {
   if (!canvas.id) {
     canvas.id = `crucible-studio-canvas-${Math.random().toString(36).slice(2, 8)}`;
   }
-  const gizmoSvg = createSvgElement(documentReference, 'svg', { class: 'crucible-studio-gizmo', 'aria-hidden': 'true' });
+  // Each Studio on a page gets its own filter, so two of them never share one outline region.
+  const gizmoSvg = createSvgElement(documentReference, 'svg', { class: 'crucible-studio-gizmo', 'aria-hidden': 'true', 'data-silhouette-filter': `${SILHOUETTE_FILTER_ID}-${canvas.id.split('-').pop()}` });
   const statusRegion = createElement(documentReference, 'p', { className: 'crucible-studio-status', attributes: { role: 'status' } });
   const hintBar = createElement(documentReference, 'div', { className: 'crucible-studio-hintbar' });
   const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: 'Drop a scene.json to open it' });
@@ -1237,7 +1290,7 @@ export function createStudio(container, {
     }
   });
   frameButton.addEventListener('click', () => {
-    controller.frameSelection();
+    flyToSelection();
     announce('Framed selection');
   });
   toggleDocksButton.addEventListener('click', () => {
@@ -1860,7 +1913,8 @@ export function createStudio(container, {
   function syncViewportAids() {
     const camera = controller.scene.camera;
     viewWidget.update(camera);
-    readoutCamera.textContent = gridVisible ? `${describeCamera(camera)} · Grid 1 m` : describeCamera(camera);
+    const gridStep = gridLayout({ visibleHeight: cameraVisibleHeight(camera), viewportHeight: controller.viewportHeight, target: camera.target, eye: camera.eye }).step;
+    readoutCamera.textContent = gridVisible ? `${describeCamera(camera)} · Grid ${describeGridStep(gridStep)}` : describeCamera(camera);
     if (selectionReadoutStale) {
       selectionReadoutStale = false;
       readoutSelection.textContent = describeSelection();
@@ -2037,6 +2091,7 @@ export function createStudio(container, {
       environment: { ...environment, map: agentEnvironmentMap(environment) },
       shadowBounds: resolveAgentShadow(fitAgentShadow(controller.scene.shadow, controller.scene.parts), environment.lightDirection),
       pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      ground: viewportFloorPart(studioFloorHeight(controller.scene.parts)),
       ...rendererOptions,
     });
     renderedScene = controller.scene;
@@ -2062,7 +2117,54 @@ export function createStudio(container, {
       return controller.scene.parts;
     }
     gridParts ??= createAgentScene(buildGridRecipe()).parts;
+    gridPartsByName ??= new Map(gridParts.map(part => [part.name, part]));
+    const camera = controller.scene.camera;
+    placeGridParts(gridPartsByName, gridLayout({ visibleHeight: cameraVisibleHeight(camera), viewportHeight: controller.viewportHeight, target: camera.target, eye: camera.eye }));
     return [...controller.scene.parts, ...gridParts];
+  }
+
+  // F flies the camera to the framed object instead of jumping there, so the eye can follow where the view went. The
+  // flight ends the moment anything else moves the camera (an orbit, a view key, undo, a new file). With reduced motion
+  // the view jumps.
+  function stopFlight() {
+    if (flightHandle) {
+      cancelAnimationFrame(flightHandle);
+      flightHandle = 0;
+    }
+  }
+
+  function flyToSelection() {
+    stopFlight();
+    const reducedMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reducedMotion || typeof requestAnimationFrame !== 'function') {
+      controller.frameSelection();
+      return;
+    }
+    const camera = controller.scene.camera;
+    const from = { eye: [...camera.eye], target: [...camera.target], orthoScale: camera.orthoScale ?? 4 };
+    const flownScene = controller.scene;
+    const cameraSignature = () => `${controller.scene.camera.eye}|${controller.scene.camera.target}`;
+    let lastSignature = cameraSignature();
+    const to = controller.frameSelectionPose();
+    const mix = (start, end, progress) => start.map((value, axis) => value + (end[axis] - value) * progress);
+    let startTime = null;
+    const step = timestamp => {
+      if (controller.scene !== flownScene || cameraSignature() !== lastSignature) {
+        flightHandle = 0;
+        return;
+      }
+      startTime ??= timestamp;
+      const elapsed = Math.min(1, (timestamp - startTime) / FLIGHT_MILLISECONDS);
+      const progress = 1 - (1 - elapsed) ** 3;
+      const patch = elapsed === 1 ? to : { eye: mix(from.eye, to.eye, progress), target: mix(from.target, to.target, progress) };
+      if (elapsed < 1 && to.orthoScale !== undefined) {
+        patch.orthoScale = from.orthoScale + (to.orthoScale - from.orthoScale) * progress;
+      }
+      controller.moveViewportCamera(patch);
+      lastSignature = cameraSignature();
+      flightHandle = elapsed < 1 ? requestAnimationFrame(step) : 0;
+    };
+    flightHandle = requestAnimationFrame(step);
   }
 
   function syncRendererParts(activeRenderer) {
@@ -2100,6 +2202,7 @@ export function createStudio(container, {
     activeRenderer.world = environment.world;
     activeRenderer.render({
       ...controller.scene.camera,
+      ...(capturingStill ? {} : viewportClipPlanes(controller.scene.camera)),
       environment: { ...environment, map: agentEnvironmentMap(environment) },
       effects,
       exposure: effects.exposure,
@@ -2474,6 +2577,7 @@ export function createStudio(container, {
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   canvas.addEventListener('wheel', event => {
     event.preventDefault();
+    stopFlight();
     controller.orbitCamera({ zoomScale: 1 + Math.max(-0.35, Math.min(0.35, event.deltaY * 0.0012)) });
   }, { passive: false });
 
@@ -2551,7 +2655,7 @@ export function createStudio(container, {
     else if (viewPreset) {
       controller.setCameraViewPreset(viewPreset);
       announce(`${viewPreset[0].toUpperCase()}${viewPreset.slice(1)} view`);
-    } else if (event.key === '.') controller.frameSelection();
+    } else if (event.key === '.') flyToSelection();
     else if (lowerKey === 'n') setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true');
     else if (lowerKey === 'i') keyframeButton.click();
     else if (event.key === 'Escape') {
@@ -2561,7 +2665,7 @@ export function createStudio(container, {
     else if (lowerKey === 'r') controller.setTool('rotate');
     else if (lowerKey === 's') controller.setTool('scale');
     else if (lowerKey === 't') controller.setTool('snap');
-    else if (lowerKey === 'f') controller.frameSelection();
+    else if (lowerKey === 'f') flyToSelection();
     else if (event.key === '5') controller.toggleCameraProjection();
     else if (event.key === '?') shortcutsDialog.showModal();
     else if (lowerKey === 'k') keyframeButton.click();
@@ -2678,6 +2782,7 @@ export function createStudio(container, {
       clearTimeout(statusTimer);
       agentPresence.dispose();
       if (frameHandle) cancelAnimationFrame(frameHandle);
+      stopFlight();
       documentReference.removeEventListener('keydown', onWindowKeyDown);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
       resizeObserver?.disconnect();

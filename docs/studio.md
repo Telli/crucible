@@ -22,9 +22,11 @@ The scene fills the window and the controls float on top of it.
 | Bottom left | The camera (perspective and lens, or orthographic), the grid step, and the size of the selected object in metres. |
 | Bottom right | The view widget: the X, Y and Z axes as the camera sees them. Click an end to look from the right, left, top, front or back. |
 
-The ground carries a grid with one line per metre over 20 m, the X axis in red and the Z axis in blue. The grid is a working aid: it is not part of the recipe and stays out of PNG, GLB and pack exports. `studio.setGridVisible(false)` hides it from code.
+The ground carries a grid that covers the floor far out, with the X axis in red and the Z axis in blue. Up close it has one line per metre; as you zoom out the step grows tenfold (10 m, 100 m) and as you zoom in it shrinks (10 cm), and the readout at the bottom left names the step. Coarser lines reach further than fine ones, so the far floor is not crowded with lines. The grid is a working aid: it is not part of the recipe and stays out of PNG, GLB and pack exports. `studio.setGridVisible(false)` hides it from code.
 
-The selected object gets an outline. Below 820 px wide the two cards start closed so the scene keeps the screen; the panels button on the rail opens them.
+The floor of the viewport reaches the horizon however far you zoom out (up to 400 m from the target), and the viewport keeps drawing the scene beyond the `far` of the scene camera. A PNG export still uses the scene camera as it is saved.
+
+The selected object gets an outline that follows its shape: it goes in between the points of a star and around each letter of a text. An object with more than 8,000 triangles gets a simpler outline around its hull. Below 820 px wide the two cards start closed so the scene keeps the screen; the panels button on the rail opens them.
 
 ## Move, rotate and scale
 
@@ -51,7 +53,7 @@ The keys follow Blender where Studio has the same action. **Help ▸ Keyboard sh
 | Shift+D or Ctrl+D | Duplicate |
 | X or Delete | Delete |
 | Esc | Deselect |
-| F or . | Frame the selection |
+| F or . | Fly to the selection, or to the whole scene when nothing is selected |
 | 1, 3, 7 | Front, right and top view |
 | 5 | Perspective or orthographic |
 | N | Show or hide Properties |
@@ -60,6 +62,8 @@ The keys follow Blender where Studio has the same action. **Help ▸ Keyboard sh
 | Ctrl+Z, Ctrl+Shift+Z | Undo, redo |
 | Ctrl+O, Ctrl+S | Open, save |
 | Ctrl+, | Settings |
+
+F keeps the direction you look from and stands back just far enough for the object to fill the view. The camera flies there in a third of a second, so you can follow where the view went; any other camera input takes over at once, and with reduced motion the view jumps. Like an orbit, it is not an undo step.
 
 Keys do nothing while you type in a field or while a dialog is open. Typing an axis after G, R or S, as Blender does, is not supported: drag the handle of that axis instead.
 
@@ -116,7 +120,7 @@ controller.saveBookmark('Front');
 controller.setSunAngles({ azimuthDegrees: -40, elevationDegrees: 52 });
 ```
 
-`controller.gizmoHandles()` returns the pivot, the object's world axes (`basis`) and the screen points of each handle. `controller.selectionOutline()` returns the screen polygon around the selected object, or `null` when nothing is selected or part of it is behind the camera.
+`controller.gizmoHandles()` returns the pivot, the object's world axes (`basis`) and the screen points of each handle. `controller.selectionSilhouette()` returns the selected object's triangles on screen as a flat list of x, y pairs (six numbers a triangle), which the viewport fills and outlines; `controller.selectionOutline()` returns the hull polygon around it. Both return `null` when nothing is selected or part of the object is behind the camera. `controller.frameSelectionPose()` returns the camera that frames the selection without moving anything, and `controller.moveViewportCamera(patch)` moves the camera without an undo step.
 
 ## What Studio edits in the recipe
 

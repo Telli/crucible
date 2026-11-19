@@ -1,5 +1,6 @@
 import { mat4, quat, vec3 } from 'gl-matrix';
 import { applyProjection, cameraFieldOfView } from './camera.js';
+import { viewportClipPlanes } from './studio-viewport-aids.js';
 import { createAgentScene } from './agent-scene.js';
 import { createSceneQuery } from './scene-query.js';
 import { MAX_POINT_LIGHTS, MAX_AREA_LIGHTS, MAX_SPOT_LIGHTS } from './light-limits.js';
@@ -22,6 +23,8 @@ const ROTATION_RING_SEGMENTS = 32;
 const WORLD_BASIS = Object.freeze({ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] });
 const AXIS_PARALLEL_LIMIT = 0.002;
 const OUTLINE_VERTEX_BUDGET = 4000;
+// Above this many triangles the selection falls back to the hull outline: the silhouette is redrawn on every camera move.
+const SILHOUETTE_TRIANGLE_BUDGET = 8000;
 const RING_EDGE_ON_LIMIT = 0.12;
 const RING_RADIUS_FACTOR = 0.92;
 const MINIMUM_AXIS_SCREEN_SHARE = 0.8;
@@ -38,6 +41,9 @@ const MINIMUM_SCALE = 0.05;
 const MAXIMUM_SCALE = 100;
 const MINIMUM_DISTANCE = 0.25;
 const MAXIMUM_DISTANCE = 400;
+// A framed object fills the view with this much room around it; a point or a tiny object counts as this big.
+const FRAME_MARGIN = 1.15;
+const FRAME_MINIMUM_RADIUS = 0.25;
 const MAXIMUM_ELEVATION = 1.53;
 const ROUND_PRECISION = 10000;
 const DEGREE_PRECISION = 100;
@@ -179,8 +185,8 @@ function cameraMatrices(camera, aspect, worldMode) {
       sensorWidth: camera.sensorWidth,
       orthoScale: camera.orthoScale,
       shift: camera.shift,
-      near: camera.near ?? 0.1,
-      far: camera.far ?? (worldMode ? 600 : 100),
+      // The same planes the viewport draws with, so what shows can be picked and outlined however far the view is.
+      ...viewportClipPlanes({ ...camera, far: camera.far ?? (worldMode ? 600 : 100) }),
     },
     aspect,
     { world: worldMode },
@@ -874,6 +880,64 @@ export function createStudioController({
     }
     const hull = convexHull(screenPoints);
     return hull.length >= 3 ? hull : null;
+  }
+
+  let silhouetteCache = { scene: null, key: '', triangles: null };
+
+  // The selected object's triangles on screen, as a flat list of x, y pairs (six numbers a triangle), all wound the same
+  // way so a filled drawing of them has no holes where a back face meets a front face. The viewport draws the edge of
+  // that shape, which follows a star or a letter where the hull would cut across. Null when there is nothing to draw,
+  // part of the object is behind the camera, or it has more triangles than the budget.
+  function selectionSilhouette() {
+    if (!selectedNodeId) {
+      return null;
+    }
+    const camera = currentScene.camera;
+    const key = [currentScene.revision, selectedNodeId, width, height, camera.eye, camera.target, camera.fov, camera.focalLength, camera.orthoScale, camera.projection].join('|');
+    if (silhouetteCache.scene !== currentScene || silhouetteCache.key !== key) {
+      silhouetteCache = { scene: currentScene, key, triangles: computeSelectionSilhouette() };
+    }
+    return silhouetteCache.triangles;
+  }
+
+  function computeSelectionSilhouette() {
+    const memberIds = descendantIdsOf(currentScene.exportRecipe().nodes, selectedNodeId);
+    const memberParts = currentScene.parts.filter(part => memberIds.has(part.name) && part.matrix && part.geometry?.positions && part.geometry.indices?.length);
+    const triangleCount = memberParts.reduce((count, part) => count + part.geometry.indices.length / 3, 0);
+    if (triangleCount === 0 || triangleCount > SILHOUETTE_TRIANGLE_BUDGET) {
+      return null;
+    }
+    const point = vec3.create();
+    const triangles = [];
+    for (const part of memberParts) {
+      const positions = part.geometry.positions;
+      const screen = new Float32Array((positions.length / 3) * 2);
+      for (let vertex = 0; vertex < positions.length / 3; vertex += 1) {
+        vec3.set(point, positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]);
+        vec3.transformMat4(point, point, part.matrix);
+        const projected = projectWorldPoint([point[0], point[1], point[2]]);
+        if (!projected.visible) {
+          return null;
+        }
+        screen[vertex * 2] = projected.x;
+        screen[vertex * 2 + 1] = projected.y;
+      }
+      const indices = part.geometry.indices;
+      for (let offset = 0; offset < indices.length; offset += 3) {
+        const first = indices[offset] * 2;
+        let second = indices[offset + 1] * 2;
+        let third = indices[offset + 2] * 2;
+        const signedArea = (screen[second] - screen[first]) * (screen[third + 1] - screen[first + 1]) - (screen[third] - screen[first]) * (screen[second + 1] - screen[first + 1]);
+        if (signedArea === 0) {
+          continue;
+        }
+        if (signedArea < 0) {
+          [second, third] = [third, second];
+        }
+        triangles.push(screen[first], screen[first + 1], screen[second], screen[second + 1], screen[third], screen[third + 1]);
+      }
+    }
+    return triangles.length ? triangles : null;
   }
 
   function computeSnapTranslation(nodeId, pixelX, pixelY) {
@@ -1595,23 +1659,69 @@ export function createStudioController({
     return updateCamera({ projection: 'perspective', focalLength: roundValue(focalLength, DEGREE_PRECISION), sensorWidth: 36 });
   }
 
-  function frameSelection() {
-    const pivot = selectedPivotWorld();
+  // The bounds of the selection, or of every object when nothing is selected.
+  function framedBounds() {
+    if (selectedNodeId) {
+      return nodeBounds(selectedNodeId);
+    }
+    const minimum = [Infinity, Infinity, Infinity];
+    const maximum = [-Infinity, -Infinity, -Infinity];
+    const point = vec3.create();
+    for (const part of currentScene.parts) {
+      const positions = part.matrix && part.geometry?.positions;
+      for (let offset = 0; positions && offset < positions.length; offset += 3) {
+        vec3.set(point, positions[offset], positions[offset + 1], positions[offset + 2]);
+        vec3.transformMat4(point, point, part.matrix);
+        for (let axis = 0; axis < 3; axis += 1) {
+          minimum[axis] = Math.min(minimum[axis], point[axis]);
+          maximum[axis] = Math.max(maximum[axis], point[axis]);
+        }
+      }
+    }
+    return minimum[0] === Infinity ? null : { min: minimum, max: maximum };
+  }
+
+  /**
+   * The camera that frames the selection (or the whole scene when nothing is selected): it keeps the direction it looks
+   * from and stands back just far enough for the object to fit the view. Returns a set-camera patch and changes nothing.
+   */
+  function frameSelectionPose() {
     const camera = currentScene.camera;
-    const target = pivot ?? camera.target;
+    const bounds = framedBounds();
+    const target = bounds ? bounds.min.map((value, axis) => (value + bounds.max[axis]) / 2) : selectedPivotWorld() ?? [...camera.target];
+    const radius = bounds ? Math.max(FRAME_MINIMUM_RADIUS, vec3.distance(bounds.min, bounds.max) / 2) : FRAME_MINIMUM_RADIUS;
     const offset = vec3.subtract(vec3.create(), camera.eye, camera.target);
     const direction = vec3.normalize(vec3.create(), offset);
     if (vec3.length(direction) < 1e-6) {
       vec3.set(direction, 0.5, 0.4, 0.8);
       vec3.normalize(direction, direction);
     }
-    const distance = Math.max(2.4, Math.min(20, vec3.length(offset) * 0.7));
-    const eye = [
-      target[0] + direction[0] * distance,
-      target[1] + direction[1] * distance,
-      target[2] + direction[2] * distance,
-    ];
-    return updateCamera({ eye: roundVector(eye), target: roundVector(target) });
+    const aspect = width / height;
+    const narrowSide = Math.min(1, aspect);
+    const pose = {};
+    let distance = vec3.length(offset);
+    if (camera.projection === 'orthographic') {
+      pose.orthoScale = roundValue(Math.max(0.25, Math.min(100, (radius * 2 * FRAME_MARGIN) / narrowSide)));
+      distance = Math.max(distance, radius * 2);
+    } else {
+      const halfAngle = Math.atan(Math.tan((cameraFieldOfView(camera, aspect) * Math.PI) / 360) * narrowSide);
+      distance = (radius * FRAME_MARGIN) / Math.sin(halfAngle);
+    }
+    distance = Math.max(MINIMUM_DISTANCE, Math.min(MAXIMUM_DISTANCE, distance));
+    pose.target = roundVector(target);
+    pose.eye = roundVector([target[0] + direction[0] * distance, target[1] + direction[1] * distance, target[2] + direction[2] * distance]);
+    return pose;
+  }
+
+  function frameSelection() {
+    return moveViewportCamera(frameSelectionPose());
+  }
+
+  // Moves the viewport camera without an undo step, as an orbit does. A flight to a framed object calls it once a frame.
+  function moveViewportCamera(patch) {
+    applySceneOperations([{ type: 'set-camera', ...patch }], { recordUndo: false });
+    notify({ kind: 'camera' });
+    return currentScene.camera;
   }
 
   function listBookmarks() {
@@ -1751,6 +1861,7 @@ export function createStudioController({
     setInteractionSettings,
     get interactionSettings() { return { moveSnapStep, rotateSnapDegrees, gizmoPixels }; },
     selectionOutline,
+    selectionSilhouette,
     nodeOutline,
     nodeBounds,
     beginGizmoDrag,
@@ -1774,6 +1885,8 @@ export function createStudioController({
     toggleCameraProjection,
     setCameraLensMillimetres,
     frameSelection,
+    frameSelectionPose,
+    moveViewportCamera,
     listBookmarks,
     saveBookmark,
     applyBookmark,

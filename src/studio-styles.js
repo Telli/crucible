@@ -182,6 +182,14 @@ export const STUDIO_CSS = `
   --studio-trace: #f1f0ec;
   --studio-trace-edge: #17161a;
 }
+.crucible-studio-selection-silhouette {
+  fill: #fff;
+  stroke: none;
+  pointer-events: none;
+}
+.crucible-studio-silhouette-colour {
+  flood-color: var(--studio-accent);
+}
 .crucible-studio-selection-outline {
   fill: none;
   stroke: var(--studio-accent);

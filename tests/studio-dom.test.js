@@ -391,6 +391,8 @@ test('toolbar buttons undo, redo, duplicate, delete and frame the selection', te
   const eyeBefore = ui.controller.scene.camera.eye.slice();
   frameButton.click();
   assert.equal(ui.status(), 'Framed selection');
+  ui.dom.runAnimationFrames(0);
+  ui.dom.runAnimationFrames(500);
   assert.notDeepEqual(ui.controller.scene.camera.eye, eyeBefore);
 
   duplicateButton.click();
@@ -792,7 +794,12 @@ test('the gizmo draws handles for each tool and clears them when nothing is sele
   ui.tool('select').click();
   ui.studio.renderNow();
   assert.equal(ui.gizmo.getAttribute('viewBox'), '0 0 800 600');
-  assert.ok(ui.gizmo.querySelector('.crucible-studio-selection-outline').getAttribute('points').includes(','));
+  const silhouette = ui.gizmo.querySelector('.crucible-studio-selection-silhouette');
+  assert.ok(silhouette.getAttribute('d').startsWith('M') && silhouette.getAttribute('d').includes('L'), 'the selection is drawn from the triangles of the object');
+  const filterId = ui.gizmo.querySelector('filter').getAttribute('id');
+  assert.ok(filterId.startsWith('crucible-studio-silhouette-'), 'each Studio has its own filter');
+  assert.equal(silhouette.getAttribute('filter'), `url(#${filterId})`);
+  assert.equal(ui.gizmo.querySelector('.crucible-studio-selection-outline'), null, 'the hull is only the fallback');
   assert.deepEqual([...axesDrawn()], ['screen']);
 
   ui.tool('translate').click();
@@ -1017,6 +1024,8 @@ test('keyboard shortcuts edit, undo, redo, duplicate and delete from anywhere in
   ui.selectRow('hero');
   const eyeBefore = ui.controller.scene.camera.eye.slice();
   press('f');
+  ui.dom.runAnimationFrames(0);
+  ui.dom.runAnimationFrames(500);
   assert.notDeepEqual(ui.controller.scene.camera.eye, eyeBefore);
   press('5');
   assert.equal(ui.controller.scene.camera.projection, 'orthographic');
@@ -1524,11 +1533,70 @@ test('the viewport follows its element size, and the renderer is kept in step wi
   assert.ok(ui.studio.capturePngDataUrl().startsWith('data:image/png'));
 });
 
+test('F flies the camera to the selection in under half a second, without an undo step, and a wheel turn stops it', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  ui.controller.orbitCamera({ zoomScale: 6 });
+  const start = ui.controller.scene.camera.eye.slice();
+  const goal = ui.controller.frameSelectionPose();
+  const undoBefore = ui.controller.canUndo;
+  const distanceToGoal = () => Math.hypot(...ui.controller.scene.camera.eye.map((value, axis) => value - goal.eye[axis]));
+  dispatch(ui.dom.document, 'keydown', { key: 'f' });
+  assert.deepEqual(ui.controller.scene.camera.eye, start, 'nothing moves before the first frame');
+  ui.dom.runAnimationFrames(1000);
+  ui.dom.runAnimationFrames(1100);
+  const midway = distanceToGoal();
+  assert.ok(midway > 0.01 && midway < Math.hypot(...start.map((value, axis) => value - goal.eye[axis])), 'part of the way there after 100 ms');
+  ui.dom.runAnimationFrames(1490);
+  assert.ok(distanceToGoal() < 1e-6, 'there before half a second has passed');
+  assert.deepEqual(ui.controller.scene.camera.target, goal.target);
+  assert.equal(ui.controller.canUndo, undoBefore, 'a flight is a view change, not an edit');
+
+  ui.controller.orbitCamera({ zoomScale: 6 });
+  dispatch(ui.dom.document, 'keydown', { key: 'f' });
+  ui.dom.runAnimationFrames(2000);
+  ui.dom.runAnimationFrames(2100);
+  dispatch(ui.canvas, 'wheel', { deltaY: 100 });
+  const stopped = ui.controller.scene.camera.eye.slice();
+  ui.dom.runAnimationFrames(2400);
+  assert.deepEqual(ui.controller.scene.camera.eye, stopped, 'the wheel takes the camera back');
+
+  ui.dom.document.defaultView.matchMedia = () => ({ matches: true });
+  dispatch(ui.dom.document, 'keydown', { key: 'f' });
+  assert.ok(distanceToGoal() < 1e-6, 'with reduced motion the view jumps');
+});
+
+test('the viewport still draws the floor and the scene when the camera is as far out as it goes', testContext => {
+  const ui = mountStudio(testContext);
+  for (let turn = 0; turn < 12; turn += 1) {
+    ui.controller.orbitCamera({ zoomScale: 3 });
+  }
+  ui.studio.renderNow();
+  const camera = ui.controller.scene.camera;
+  const distance = Math.hypot(...camera.eye.map((value, axis) => value - camera.target[axis]));
+  const frame = ui.renderer.frames.at(-1);
+  assert.ok(distance > 300, 'the camera is far past the 120 m the scene camera reaches');
+  assert.ok(frame.far > distance * 10, 'the frame reaches far behind the scene, so nothing is cut away');
+  assert.ok(frame.near < distance / 10);
+  ui.selectRow('hero');
+  assert.ok(ui.controller.selectionOutline(), 'and the selection can still be outlined from there');
+  assert.ok(ui.controller.projectWorldPoint([0, 0.5, 0]).visible);
+});
+
+test('the readout names the grid step, which grows as the camera pulls back', testContext => {
+  const ui = mountStudio(testContext);
+  const readout = ui.dom.document.querySelector('.crucible-studio-readout');
+  assert.match(readout.textContent, /Grid 1 m/);
+  ui.controller.orbitCamera({ zoomScale: 12 });
+  ui.studio.renderNow();
+  assert.match(readout.textContent, /Grid 10 m/);
+});
+
 test('dispose removes the Studio and every listener it added to the page', testContext => {
   const ui = mountStudio(testContext);
   ui.selectRow('hero');
   ui.label('Frame in view (F)').click();
-  assert.equal(ui.dom.pendingAnimationFrameCount, 1);
+  assert.equal(ui.dom.pendingAnimationFrameCount, 2, 'the next draw and the flight to the framed object');
   assert.equal(ui.dom.pendingTimerCount > 0, true);
   const keydownListeners = ui.dom.document.listeners.filter(entry => entry.type === 'keydown').length;
   assert.equal(keydownListeners, 1);

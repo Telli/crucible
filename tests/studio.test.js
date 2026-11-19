@@ -660,6 +660,47 @@ test('a child node moves along its own parent axes and snaps in its parent space
   controller.dispose();
 });
 
+test('frameSelectionPose stands back far enough for the object to fit and changes nothing', () => {
+  const scene = createAgentScene(makeStudioRecipe());
+  const controller = createStudioController({ scene, viewportWidth: 800, viewportHeight: 600 });
+  controller.selectNode('hero');
+  const eyeBefore = [...controller.scene.camera.eye];
+  const pose = controller.frameSelectionPose();
+  assert.deepEqual(controller.scene.camera.eye, eyeBefore);
+  const bounds = controller.nodeBounds('hero');
+  const center = bounds.min.map((value, axis) => (value + bounds.max[axis]) / 2);
+  assert.ok(pose.target.every((value, axis) => Math.abs(value - center[axis]) < 1e-3), 'it looks at the middle of the object');
+  controller.moveViewportCamera(pose);
+  const outline = controller.selectionOutline();
+  assert.ok(outline.every(point => point[0] > 0 && point[0] < 800 && point[1] > 0 && point[1] < 600), 'the whole object is inside the view');
+  const outlineHeight = Math.max(...outline.map(point => point[1])) - Math.min(...outline.map(point => point[1]));
+  assert.ok(outlineHeight > 150, 'and it fills a good part of it');
+  assert.equal(controller.canUndo, false, 'moving the viewport camera is not an edit');
+  controller.selectNode(null);
+  const wholeScene = controller.frameSelectionPose();
+  assert.ok(wholeScene.eye.every(Number.isFinite), 'with nothing selected it frames every object');
+  controller.dispose();
+});
+
+test('selectionSilhouette gives the triangles of the selection on screen, all wound one way', () => {
+  const scene = createAgentScene(makeStudioRecipe());
+  const controller = createStudioController({ scene, viewportWidth: 800, viewportHeight: 600 });
+  controller.selectNode(null);
+  assert.equal(controller.selectionSilhouette(), null);
+  controller.selectNode('hero');
+  const triangles = controller.selectionSilhouette();
+  assert.ok(triangles.length >= 6 && triangles.length % 6 === 0);
+  const hull = controller.selectionOutline();
+  const hullLeft = Math.min(...hull.map(point => point[0]));
+  const hullRight = Math.max(...hull.map(point => point[0]));
+  for (let offset = 0; offset < triangles.length; offset += 6) {
+    const [ax, ay, bx, by, cx, cy] = triangles.slice(offset, offset + 6);
+    assert.ok((bx - ax) * (cy - ay) - (cx - ax) * (by - ay) > 0, 'every triangle turns the same way');
+    assert.ok(ax >= hullLeft - 0.5 && ax <= hullRight + 0.5, 'and lies inside the hull');
+  }
+  controller.dispose();
+});
+
 test('selectionOutline is null without a selection, for a group without parts and when everything is off screen', () => {
   const recipe = makeStudioRecipe();
   recipe.nodes.push({ id: 'empty-group', translation: [0, 0, 0] });
