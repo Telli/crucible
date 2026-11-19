@@ -15,10 +15,20 @@ function vector(input, name) {
   return Array.from(input, value => finite(value, name));
 }
 
+const STROKE_FIELDS = ['type', 'center', 'radius', 'strength', 'direction'];
+
 export function prepareStrokes(strokes) {
   return strokes.map(stroke => {
     if (!['inflate', 'displace', 'smooth'].includes(stroke?.type)) {
       throw new TypeError('Sculpt stroke type must be inflate, displace or smooth.');
+    }
+    for (const key of Object.keys(stroke)) {
+      if (!STROKE_FIELDS.includes(key)) {
+        throw new TypeError(`Sculpt stroke has an unsupported field "${key.slice(0, 48)}". Use type, center, radius, strength and, for displace, direction.`);
+      }
+    }
+    if (stroke.type !== 'displace' && stroke.direction !== undefined) {
+      throw new TypeError(`Only a displace stroke takes direction; remove it from this ${stroke.type} stroke.`);
     }
     const center = vector(stroke.center, 'center');
     const radius = finite(stroke.radius, 'radius');

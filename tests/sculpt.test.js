@@ -114,3 +114,10 @@ test('UV seam duplication does not change area-weighted sculpt normals', () => {
   assert.deepEqual(ordinary.normals.subarray(0, 3), seamed.normals.subarray(0, 3));
   assert.deepEqual(ordinary.normals.subarray(0, 3), seamed.normals.subarray(12, 15));
 });
+
+test('a stroke field the sculpt does not know, or a direction on a stroke that ignores it, is refused', () => {
+  const stroke = { type: 'inflate', center: [0, 0, 0], radius: 2, strength: 0.1 };
+  assert.throws(() => sculptGeometry(plane(), [{ ...stroke, radious: 3 }]), /unsupported field "radious"/);
+  assert.throws(() => sculptGeometry(plane(), [{ ...stroke, direction: [0, 0, 1] }]), /Only a displace stroke takes direction.*inflate/);
+  assert.throws(() => sculptGeometry(plane(), [{ ...stroke, type: 'smooth', direction: [0, 0, 1] }]), /smooth stroke/);
+});
