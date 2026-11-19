@@ -129,6 +129,23 @@ test('systems run in order and dispose in reverse', () => {
   assert.deepEqual(log.slice(-2), ['second:dispose', 'first:dispose']);
 });
 
+test('dispose runs every system even when one throws, then reports the failure (#2617)', () => {
+  const log = [];
+  const systems = [recorder('first', log), recorder('second', log), recorder('third', log)];
+  systems[1].dispose = () => {
+    log.push('second:dispose');
+    throw new Error('second dispose failed');
+  };
+  const harness = createHarness({ systems });
+  harness.runtime.start();
+  assert.throws(() => harness.runtime.dispose(), /second dispose failed/);
+  assert.deepEqual(log.filter(line => line.endsWith(':dispose')), ['third:dispose', 'second:dispose', 'first:dispose']);
+  assert.deepEqual(harness.runtime.systems, []);
+  assert.equal(harness.hasPendingFrame(), false);
+  harness.runtime.dispose();
+  assert.equal(log.filter(line => line.endsWith(':dispose')).length, 3, 'a second dispose does nothing');
+});
+
 test('systems can be left out, inserted, swapped and removed', () => {
   const log = [];
   const harness = createHarness({ mode: 'variable', systems: [{ name: 'game', update: () => log.push('game') }] });
