@@ -277,10 +277,16 @@ function materialAlphaState(material) {
 // Additive light is not a shadow caster unless the part asks for it. A blended part lying on a surface (a decal) would shade
 // the surface it covers, so it casts only when asked too. A shadow catcher only shows the shadow it receives, so it never
 // casts one unless the part asks for it. Other blended parts cast a shadow weighted by their opacity.
-function castsShadow(part) {
+/**
+ * Whether a part is drawn into the sun's shadow map. A water sheet defaults to no: the water shader already dims the sun
+ * along its leg through the water (Beer-Lambert), and a sheet that also shadowed itself drew dark blocks on the sea,
+ * where its own facets met the shadow map. Set `castShadow: true` to make a sheet cast anyway.
+ */
+export function castsShadow(part) {
   const alphaMode = part.material.alphaMode ?? 'opaque';
   const decal = alphaMode === 'blend' && depthLayerOf(part) > 0;
-  return part.castShadow ?? !(part.shadowCatcher === true || alphaMode === 'add' || decal);
+  const waterSheet = part.material.tag === 'water';
+  return part.castShadow ?? !(part.shadowCatcher === true || alphaMode === 'add' || decal || waterSheet);
 }
 
 /** A caster whose shadow is weighted by opacity or tinted by its colour: blended and transmissive parts. */
