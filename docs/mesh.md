@@ -32,8 +32,10 @@ uses for evaluated meshes:
 | `attributes` | `{ point, edge, face, corner }` | Named `{ data, size }` arrays per domain |
 
 Faces are polygons with three or more corners; consecutive corners cannot repeat a vertex. Inputs are not copied.
-Attribute arrays may be `Float32Array`, `Uint8Array`, `Uint16Array`, `Uint32Array` or `Int32Array` with 1 to 16
-components. Edge attributes need explicit `edgeVertices` and `cornerEdges`, because derived edge order is internal.
+`createMeshData()` with no object reports the missing `positions` array; `attributes: null` is rejected, but leaving
+`attributes` out is allowed. Attribute arrays may be `Float32Array`, `Uint8Array`, `Uint16Array`, `Uint32Array` or
+`Int32Array` with 1 to 16 components. Edge attributes need explicit `edgeVertices` and `cornerEdges`, because derived
+edge order is internal.
 
 Conventions used by the other functions:
 
