@@ -1,0 +1,1 @@
+- A render job whose scene could not be created in its page now reports that failure instead of the cleanup's "No scene is active: ... at Object.dispose", because the job only disposes a scene it created and a cleanup error never replaces the job's own (#2198)
