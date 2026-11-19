@@ -539,6 +539,33 @@ test('the Studio controller stops lights when the shadow atlas is full and refus
   controller.dispose();
 });
 
+test('an axis that points almost at the camera is drawn long enough to grab', () => {
+  const controller = createStudioController({ scene: createAgentScene(makeStudioRecipe()), viewportWidth: 800, viewportHeight: 600 });
+  controller.selectNode('hero');
+  controller.setTool('translate');
+  const screenLength = axis => {
+    const handles = controller.gizmoHandles();
+    return Math.hypot(handles.axes[axis].x - handles.origin.x, handles.axes[axis].y - handles.origin.y);
+  };
+  const longest = () => Math.max(screenLength('x'), screenLength('y'));
+
+  controller.setCameraViewPreset('front');
+  assert.ok(screenLength('z') < 1, 'an axis straight at the camera has no length to stretch');
+  controller.orbitCamera({ deltaAzimuth: 0.3 });
+  const plain = controller.projectWorldPoint(controller.gizmoHandles().pivot.map((value, index) => value + controller.gizmoHandles().basis.z[index] * controller.gizmoHandles().handleLength));
+  const origin = controller.gizmoHandles().origin;
+  const unstretched = Math.hypot(plain.x - origin.x, plain.y - origin.y);
+  assert.ok(unstretched < longest() * 0.4, 'without help the axis would be a stub');
+  assert.ok(screenLength('z') > unstretched * 1.5, 'the axis is stretched');
+  assert.ok(screenLength('z') >= longest() * 0.55 && screenLength('z') <= longest() * 1.05, 'and ends near the length of the others');
+
+  controller.orbitCamera({ deltaAzimuth: 0.6 });
+  const settled = controller.gizmoHandles();
+  const settledTip = controller.projectWorldPoint(settled.pivot.map((value, index) => value + settled.basis.z[index] * settled.handleLength));
+  assert.ok(Math.abs(settledTip.x - settled.axes.z.x) < 0.01 && Math.abs(settledTip.y - settled.axes.z.y) < 0.01, 'an axis seen from the side keeps its true length');
+  controller.dispose();
+});
+
 test('the Studio controller reports unchanged drags as cancelled and keeps single-step history', () => {
   const kinds = [];
   const controller = createStudioController({ scene: createAgentScene(makeStudioRecipe()), viewportWidth: 800, viewportHeight: 600, onChange: detail => kinds.push(detail.kind) });

@@ -12,9 +12,9 @@ The scene fills the window and the controls float on top of it.
 
 | Where | What it does |
 | --- | --- |
-| Top left | The file name opens the file menu: open, save, the recipe JSON and the starting scenes. A green dot means Studio reloads the file when an agent edits it. |
-| Top, beside the file name | The workspaces, in the order the work runs: **Build** (objects and their place), **Look** (materials, lighting, sun, exposure, fog) and **Animate** (camera, lens, shots and the timeline). Each one shows only the panels its step needs. Opening a panel from anywhere, or adding a keyframe, brings its workspace forward. A workspace is a way of looking at the scene: it is not saved in the recipe and undo does not touch it. |
-| Top right | Work with an agent, Settings, keyboard shortcuts, and **Export** (PNG image, GLB model, web pack). |
+| Top left | The menus. **File**: open, save, the recipe JSON, the three exports and the starting scenes. **Edit**: undo, redo, duplicate, delete, deselect and Settings. **View**: front, right and top view, perspective or orthographic, frame the selection, the grid and the panels. **Agent**: copy a prompt for an AI agent and reload when it edits the file. **Help**: the keyboard shortcuts. Each row shows its key. |
+| Top centre | The workspaces, in the order the work runs: **Build** (objects and their place), **Look** (materials, lighting, sun, exposure, fog) and **Animate** (camera, lens, shots and the timeline). Each one shows only the panels its step needs. Opening a panel from anywhere, or adding a keyframe, brings its workspace forward. A workspace is a way of looking at the scene: it is not saved in the recipe and undo does not touch it. |
+| Top right | The file name, which opens the File menu, and **Export** (PNG image, GLB model, web pack). A green dot beside the name means Studio reloads the file when an agent edits it. |
 | Left rail | Select, move, rotate, scale, snap to a surface, undo, redo, add an object or a light, show or hide the grid, show or hide the panels. |
 | Scene card | At the top of the right column, with a filter box. Every object in the scene, drawn as the shape of its geometry (cube, sphere, cylinder, cone, torus, plane, or a stack for a group) in the colour of its material, an eye to hide each one, and the scene materials as swatches. |
 | Properties | Under the Scene card, in the same column. The panels of the open workspace: the object in Build, material and look in Look, the camera (views, lens, shots) in Animate. |
@@ -28,9 +28,9 @@ The selected object gets an outline. Below 820 px wide the two cards start close
 
 ## Move, rotate and scale
 
-Each tool has its own handle shape, so the shape says what a drag will do: arrows move, rings turn, squares scale. The handles follow the object, not the camera: the three axes are the object's own X, Y and Z, so a turned object moves along the way it faces.
+Each tool has its own handle shape, so the shape says what a drag will do: arrows move, rings turn, squares scale. The handles follow the object, not the camera: the three axes are the object's own X, Y and Z, so a turned object moves along the way it faces. The handle under the pointer grows thicker and brighter and gets a border, so you see what a press will grab. An axis that points almost at the camera is drawn longer, so it never shrinks to a stub you cannot catch.
 
-- **Move** drags the object exactly as far as the pointer travels along the axis. Hold Shift to move in steps (0.25 m unless you change it in Settings). While you drag, a dashed outline stays where the object was and a dashed line runs from there to where it is now; scale and rotate drags keep the outline too. A new object lands on the ground beside the ones already there, not inside them.
+- **Move** drags the object exactly as far as the pointer travels along the axis. Hold Shift to move in steps (0.25 m unless you change it in Settings). While you drag, a dashed outline stays where the object was and a dashed line runs from there to where it is now; scale and rotate drags keep the outline too. The dashed lines carry a border in the background colour, so they show over a pale object and over the dark ground. A new object lands on the ground beside the ones already there, not inside them.
 - **Rotate** turns the object by the angle the pointer sweeps on the ring. Hold Shift to turn in steps (15 degrees unless you change it in Settings). While you drag, the other two rings leave, a dashed spoke stays where the drag began, a solid spoke follows the object, and a faint wedge between them fills the angle turned so far. A turn can go past half a circle and keeps counting.
 - **Scale** on an axis handle scales by how far you pull it: twice the distance doubles that axis. The centre handle scales all three.
 
@@ -38,7 +38,7 @@ One drag is one undo step, and undo leaves the viewport camera where you put it.
 
 ## Keys
 
-The keys follow Blender where Studio has the same action. The **?** button lists them all.
+The keys follow Blender where Studio has the same action. **Help ▸ Keyboard shortcuts** (or **?**) lists them all.
 
 | Key | Action |
 | --- | --- |
@@ -61,7 +61,7 @@ Keys do nothing while you type in a field or while a dialog is open. Typing an a
 
 ## Settings
 
-The sliders button at the top right opens Settings: the step and the angle a Shift drag snaps to, the size of the handles, the workspace Studio opens in, and whether the grid, the readout, the axis widget and the agent cursor show. They are kept in the browser (`localStorage`, key `crucible-studio-preferences`), not in the scene recipe, so a scene looks the same for everyone and each person keeps their own setup. **Reset** brings back the defaults. An app can pass `preferences` to `createStudio` to start from other values, `preferenceStorage: null` to keep nothing, and call `studio.setPreference(name, value)`.
+**Edit ▸ Settings** (Ctrl+,) opens Settings: the step and the angle a Shift drag snaps to, the size of the handles, the workspace Studio opens in, and whether the grid, the readout, the axis widget and the agent cursor show. They are kept in the browser (`localStorage`, key `crucible-studio-preferences`), not in the scene recipe, so a scene looks the same for everyone and each person keeps their own setup. **Reset** brings back the defaults. An app can pass `preferences` to `createStudio` to start from other values, `preferenceStorage: null` to keep nothing, and call `studio.setPreference(name, value)`.
 
 ## Mount the Studio in an app
 

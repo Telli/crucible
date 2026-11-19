@@ -1,6 +1,7 @@
 import './support/load-agent-scene-modules.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { STUDIO_CSS } from '../src/studio-styles.js';
 import { createStudio, createStudioController, STUDIO_PRIMITIVES, STUDIO_TABS, STUDIO_TEMPLATES, STUDIO_TOOLS } from '../src/studio.js';
 import { LIGHTING_SETUP_NAMES } from '../src/agent-scene-capabilities.js';
 import { directionToSunAngles } from '../src/studio-controller.js';
@@ -1084,7 +1085,7 @@ test('the Recipe JSON dialog shows the recipe, applies edits and reports bad JSO
   assert.equal(recipeDialog.open, false);
   assert.equal(fileInput.clicks, clicksBefore + 1);
 
-  ui.label('Keyboard shortcuts (?)').click();
+  byText(ui.root, 'Keyboard shortcuts').click();
   assert.equal(shortcutsDialog.open, true);
   assert.ok(shortcutsDialog.querySelectorAll('.crucible-studio-shortcut-item').length >= 8);
   shortcutsDialog.close('close');
@@ -1696,6 +1697,32 @@ test('move handles end in arrows, scale handles in squares and an axis that face
   assert.deepEqual(shapes().sort(), ['circle', 'polygon', 'polygon'], 'the Z axis points at the viewer');
 });
 
+test('the handle under the pointer is marked, stays marked through its drag and clears after', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  ui.tool('translate').click();
+  ui.studio.renderNow();
+  assert.equal(ui.gizmo.dataset.hoverAxis, undefined);
+  dispatch(ui.gizmoPart('y'), 'pointermove', { bubbles: true });
+  assert.equal(ui.gizmo.dataset.hoverAxis, 'y');
+  dispatch(ui.gizmoPart('x'), 'pointermove', { bubbles: true });
+  assert.equal(ui.gizmo.dataset.hoverAxis, 'x');
+  dispatch(ui.gizmo, 'pointerleave');
+  assert.equal(ui.gizmo.dataset.hoverAxis, undefined);
+
+  const handles = ui.controller.gizmoHandles();
+  const along = distance => ui.controller.projectWorldPoint(handles.pivot.map((value, index) => value + handles.basis.z[index] * distance));
+  dispatch(ui.gizmoPart('z'), 'pointerdown', ui.clientPoint(along(handles.handleLength)));
+  assert.equal(ui.gizmo.dataset.hoverAxis, 'z');
+  dispatch(ui.gizmo, 'pointerleave');
+  assert.equal(ui.gizmo.dataset.hoverAxis, 'z', 'the handle being dragged stays lit');
+  dispatch(ui.canvas, 'pointerup', ui.clientPoint(along(handles.handleLength)));
+  assert.equal(ui.gizmo.dataset.hoverAxis, undefined);
+  for (const axis of ['x', 'xy', 'screen']) {
+    assert.ok(STUDIO_CSS.includes(`.crucible-studio-gizmo[data-hover-axis="${axis}"] [data-gizmo-axis="${axis}"]`), `the stylesheet lights ${axis}`);
+  }
+});
+
 test('Studio opens on the blockout scene when it gets no recipe', testContext => {
   const dom = installStudioDom();
   testContext.after(() => dom.uninstall());
@@ -1793,6 +1820,14 @@ test('a drag leaves a ghost where the object was, and a move draws the line it h
     assert.equal(tracePart(part).getAttribute('pointer-events'), 'none');
   }
   assert.equal(Number(tracePart('travel').getAttribute('x2')).toFixed(1), trace.to.x.toFixed(1));
+  const haloPart = part => ui.gizmo.descendants().find(element => element.getAttribute('data-drag-halo') === part);
+  for (const part of ['ghost', 'travel']) {
+    assert.equal(haloPart(part).getAttribute('stroke'), 'var(--studio-bg)', 'a background line lies under the dashed one');
+    assert.equal(tracePart(part).getAttribute('stroke'), 'var(--studio-text)');
+    assert.ok(Number(haloPart(part).getAttribute('stroke-width')) > Number(tracePart(part).getAttribute('stroke-width')));
+    assert.ok(ui.gizmo.descendants().indexOf(haloPart(part)) < ui.gizmo.descendants().indexOf(tracePart(part)), 'the halo is drawn first');
+  }
+  assert.equal(tracePart('start').getAttribute('stroke'), 'var(--studio-bg)');
 
   dispatch(ui.canvas, 'pointerup', ui.clientPoint(along(handles.handleLength + 0.8)));
   ui.studio.renderNow();
@@ -1943,7 +1978,7 @@ test('Settings change the snap, the handles and what the viewport shows, and are
   assert.equal(control('moveSnapStep').value, '0.25');
   assert.equal(control('gridVisible').checked, true);
 
-  ui.label('Settings (Ctrl+,)').click();
+  byText(ui.root, 'Settings…').click();
   assert.equal(ui.root.querySelector('.crucible-studio-settings-dialog').open, true);
   choose('moveSnapStep', 1);
   choose('rotateSnapDegrees', 45);
@@ -2008,4 +2043,48 @@ test('Scene and Properties share one column and the Scene head carries its icons
   assert.ok(head.querySelector('.crucible-studio-dock-title').querySelector('svg'));
   assert.ok(head.querySelector('.crucible-studio-filter').querySelector('svg'));
   assert.ok(head.querySelector('.crucible-studio-filter').querySelector('input'));
+});
+
+test('the top bar has File, Edit, View, Agent and Help menus that do what their rows say', testContext => {
+  const ui = mountStudio(testContext);
+  const menus = ui.root.querySelector('.crucible-studio-menus').children.map(button => button.textContent);
+  assert.deepEqual(menus, ['File', 'Edit', 'View', 'Agent', 'Help']);
+  const menuButton = label => ui.root.querySelector('.crucible-studio-menus').children.find(button => button.textContent === label);
+  const popover = id => ui.root.querySelector(`#crucible-studio-pop-${id}`);
+  const rows = id => popover(id).querySelectorAll('button').map(button => button.textContent);
+
+  menuButton('File').click();
+  assert.equal(popover('new').popoverOpen, true);
+  assert.deepEqual(rows('new').slice(0, 7), ['Open…', 'Save', 'Save as…', 'Recipe JSON', 'Export PNG image', 'Export GLB model', 'Export web pack']);
+  assert.equal(byText(popover('new'), 'Save').dataset.shortcut, 'Ctrl+S');
+
+  menuButton('Edit').click();
+  assert.deepEqual(rows('edit'), ['Undo', 'Redo', 'Duplicate', 'Delete', 'Deselect', 'Settings…']);
+  ui.selectRow('hero');
+  const countBefore = ui.studio.exportRecipe().nodes.length;
+  byText(popover('edit'), 'Duplicate').click();
+  assert.equal(popover('edit').popoverOpen, false, 'a row closes its menu');
+  assert.equal(ui.studio.exportRecipe().nodes.length, countBefore + 1);
+  byText(popover('edit'), 'Undo').click();
+  assert.equal(ui.studio.exportRecipe().nodes.length, countBefore);
+  byText(popover('edit'), 'Redo').click();
+  byText(popover('edit'), 'Delete').click();
+  assert.equal(ui.studio.exportRecipe().nodes.length, countBefore);
+  ui.selectRow('hero');
+  byText(popover('edit'), 'Deselect').click();
+  assert.equal(ui.controller.selectedNodeId, null);
+
+  menuButton('View').click();
+  byText(popover('view'), 'Top view').click();
+  assert.equal(ui.status(), 'Top view');
+  byText(popover('view'), 'Perspective / Orthographic').click();
+  assert.equal(ui.controller.scene.camera.projection, 'orthographic');
+  byText(popover('view'), 'Grid').click();
+  assert.equal(ui.studio.gridVisible, false);
+  byText(popover('view'), 'Properties').click();
+  assert.equal(ui.root.dataset.inspectorCollapsed, 'true');
+
+  byText(popover('help'), 'Keyboard shortcuts').click();
+  assert.equal(ui.root.querySelector('.crucible-studio-shortcuts-dialog').open, true);
+  assert.equal(ui.root.querySelectorAll('button').filter(button => ['Settings (Ctrl+,)', 'Keyboard shortcuts (?)'].includes(button.getAttribute('aria-label'))).length, 0);
 });

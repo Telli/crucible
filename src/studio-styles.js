@@ -138,6 +138,45 @@ export const STUDIO_CSS = `
   pointer-events: all;
   cursor: pointer;
 }
+.crucible-studio-gizmo[data-hover-axis="x"] [data-gizmo-axis="x"],
+.crucible-studio-gizmo[data-hover-axis="y"] [data-gizmo-axis="y"],
+.crucible-studio-gizmo[data-hover-axis="z"] [data-gizmo-axis="z"],
+.crucible-studio-gizmo[data-hover-axis="xy"] [data-gizmo-axis="xy"],
+.crucible-studio-gizmo[data-hover-axis="xz"] [data-gizmo-axis="xz"],
+.crucible-studio-gizmo[data-hover-axis="yz"] [data-gizmo-axis="yz"],
+.crucible-studio-gizmo[data-hover-axis="screen"] [data-gizmo-axis="screen"],
+.crucible-studio-gizmo[data-hover-axis="uniform"] [data-gizmo-axis="uniform"],
+.crucible-studio-gizmo[data-hover-axis="surface"] [data-gizmo-axis="surface"] {
+  filter: brightness(1.18) saturate(1.3);
+}
+.crucible-studio-gizmo[data-hover-axis="x"] [data-gizmo-axis="x"]:is(line, polyline),
+.crucible-studio-gizmo[data-hover-axis="y"] [data-gizmo-axis="y"]:is(line, polyline),
+.crucible-studio-gizmo[data-hover-axis="z"] [data-gizmo-axis="z"]:is(line, polyline),
+.crucible-studio-gizmo[data-hover-axis="xy"] [data-gizmo-axis="xy"]:is(line, polyline),
+.crucible-studio-gizmo[data-hover-axis="xz"] [data-gizmo-axis="xz"]:is(line, polyline),
+.crucible-studio-gizmo[data-hover-axis="yz"] [data-gizmo-axis="yz"]:is(line, polyline),
+.crucible-studio-gizmo[data-hover-axis="screen"] [data-gizmo-axis="screen"]:is(line, polyline),
+.crucible-studio-gizmo[data-hover-axis="uniform"] [data-gizmo-axis="uniform"]:is(line, polyline),
+.crucible-studio-gizmo[data-hover-axis="surface"] [data-gizmo-axis="surface"]:is(line, polyline) {
+  stroke-width: 5px;
+}
+.crucible-studio-gizmo[data-hover-axis="x"] [data-gizmo-axis="x"]:is(polygon, rect, circle),
+.crucible-studio-gizmo[data-hover-axis="y"] [data-gizmo-axis="y"]:is(polygon, rect, circle),
+.crucible-studio-gizmo[data-hover-axis="z"] [data-gizmo-axis="z"]:is(polygon, rect, circle),
+.crucible-studio-gizmo[data-hover-axis="xy"] [data-gizmo-axis="xy"]:is(polygon, rect, circle),
+.crucible-studio-gizmo[data-hover-axis="xz"] [data-gizmo-axis="xz"]:is(polygon, rect, circle),
+.crucible-studio-gizmo[data-hover-axis="yz"] [data-gizmo-axis="yz"]:is(polygon, rect, circle),
+.crucible-studio-gizmo[data-hover-axis="screen"] [data-gizmo-axis="screen"]:is(polygon, rect, circle),
+.crucible-studio-gizmo[data-hover-axis="uniform"] [data-gizmo-axis="uniform"]:is(polygon, rect, circle),
+.crucible-studio-gizmo[data-hover-axis="surface"] [data-gizmo-axis="surface"]:is(polygon, rect, circle) {
+  stroke: var(--studio-text);
+  stroke-width: 2px;
+}
+.crucible-studio-gizmo[data-hover-axis="xy"] [data-gizmo-axis="xy"],
+.crucible-studio-gizmo[data-hover-axis="xz"] [data-gizmo-axis="xz"],
+.crucible-studio-gizmo[data-hover-axis="yz"] [data-gizmo-axis="yz"] {
+  fill-opacity: 0.6;
+}
 .crucible-studio-selection-outline {
   fill: none;
   stroke: var(--studio-accent);
@@ -243,12 +282,17 @@ export const STUDIO_CSS = `
 .crucible-studio-menubar {
   position: absolute;
   inset: var(--studio-edge) var(--studio-edge) auto;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
   align-items: center;
   gap: 8px;
   pointer-events: none;
   z-index: 6;
 }
+.crucible-studio-menubar > .crucible-studio-island:first-child { justify-self: start; }
+.crucible-studio-menubar > .crucible-studio-spacer { display: none; }
+.crucible-studio-menubar > .crucible-studio-spacer + .crucible-studio-island { justify-self: end; }
+.crucible-studio[data-tight="true"] .crucible-studio-filepill { display: none; }
 .crucible-studio[data-desktop="true"] .crucible-studio-menubar {
   -webkit-app-region: drag;
   pointer-events: auto;
@@ -346,6 +390,33 @@ export const STUDIO_CSS = `
   width: 100%;
   padding: 6px 10px;
   text-align: left;
+}
+.crucible-studio-popover button[data-shortcut]::after {
+  content: attr(data-shortcut);
+  margin-inline-start: auto;
+  padding-inline-start: 24px;
+  font-family: var(--studio-font-mono);
+  font-size: 11px;
+  color: var(--studio-muted);
+}
+.crucible-studio-menus {
+  display: flex;
+  align-items: center;
+}
+.crucible-studio button.crucible-studio-menu-button {
+  min-inline-size: 0;
+  padding: 4px 9px;
+  font-size: 13px;
+}
+.crucible-studio button.crucible-studio-menu-button:hover,
+.crucible-studio button.crucible-studio-menu-button:has(+ *):focus-visible {
+  background: color-mix(in srgb, var(--studio-text) 7%, transparent);
+}
+.crucible-studio[data-compact="true"] .crucible-studio-menu-button[popovertarget="crucible-studio-pop-view"],
+.crucible-studio[data-compact="true"] .crucible-studio-menu-button[popovertarget="crucible-studio-pop-help"],
+.crucible-studio[data-compact="true"] .crucible-studio-filepill,
+.crucible-studio[data-compact="true"] .crucible-studio-primary-btn span {
+  display: none;
 }
 .crucible-studio-popover-note {
   margin: 8px 10px 2px;
@@ -611,17 +682,9 @@ export const STUDIO_CSS = `
 .crucible-studio .crucible-studio-tablist button[hidden] {
   display: none;
 }
-/* Centred on the window, between the file name and the export side. Below the compact width there is no room for
-   that, so the tabs join the row and only the open one keeps its name. */
-.crucible-studio-workspaces {
-  position: absolute;
-  inset-inline-start: 50%;
-  transform: translateX(-50%);
-}
-.crucible-studio[data-compact="true"] .crucible-studio-workspaces {
-  position: static;
-  transform: none;
-}
+/* The two side columns of the top bar share the spare room evenly, which centres the tabs on the window; when the menus
+   need more than their half, the tabs give way instead of sliding under them. Below the compact width only the open
+   tab keeps its name. */
 .crucible-studio[data-compact="true"] .crucible-studio-workspaces button[aria-selected="false"] .crucible-studio-workspace-label {
   display: none;
 }

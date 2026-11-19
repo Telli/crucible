@@ -24,6 +24,8 @@ const AXIS_PARALLEL_LIMIT = 0.002;
 const OUTLINE_VERTEX_BUDGET = 4000;
 const RING_EDGE_ON_LIMIT = 0.12;
 const RING_RADIUS_FACTOR = 0.92;
+const MINIMUM_AXIS_SCREEN_SHARE = 0.62;
+const MAXIMUM_AXIS_STRETCH = 3;
 const SPAWN_CLEARANCE = 0.75;
 const SPAWN_STEP = 1.25;
 const SPAWN_ATTEMPTS = 16;
@@ -756,6 +758,22 @@ export function createStudioController({
       pivot[1] + basis.x[1] * alongX + basis.y[1] * alongY + basis.z[1] * alongZ,
       pivot[2] + basis.x[2] * alongX + basis.y[2] * alongY + basis.z[2] * alongZ,
     ]);
+    // An axis that points at the camera would shrink to a stub nobody can grab, so it is drawn longer in the scene
+    // until it covers a fair share of the handle size on screen.
+    const axisTip = direction => {
+      const tipAt = length => planeCorner(direction[0] * length, direction[1] * length, direction[2] * length);
+      const tip = tipAt(handleLength);
+      if (!tip.visible || !origin.visible) {
+        return tip;
+      }
+      const screenLength = Math.hypot(tip.x - origin.x, tip.y - origin.y);
+      const wantedLength = gizmoPixels * MINIMUM_AXIS_SCREEN_SHARE;
+      if (screenLength >= wantedLength || screenLength < 1e-3) {
+        return tip;
+      }
+      const stretched = tipAt(handleLength * Math.min(MAXIMUM_AXIS_STRETCH, wantedLength / screenLength));
+      return stretched.visible ? stretched : tip;
+    };
     const ringPoints = axis => {
       const points = [];
       for (let step = 0; step <= ROTATION_RING_SEGMENTS; step += 1) {
@@ -777,9 +795,9 @@ export function createStudioController({
       handleLength,
       origin,
       axes: {
-        x: planeCorner(handleLength, 0, 0),
-        y: planeCorner(0, handleLength, 0),
-        z: planeCorner(0, 0, handleLength),
+        x: axisTip([1, 0, 0]),
+        y: axisTip([0, 1, 0]),
+        z: axisTip([0, 0, 1]),
       },
       planes: {
         xy: [origin, planeCorner(planeExtent, 0, 0), planeCorner(planeExtent, planeExtent, 0), planeCorner(0, planeExtent, 0)],

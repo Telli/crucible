@@ -56,6 +56,7 @@ const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
 const STUDIO_STYLE_ID = 'crucible-studio-styles';
 const COMPACT_WIDTH = 820;
+const TIGHT_WIDTH = 920;
 // The work runs left to right: build the scene, give it its look, then set it in motion. Each workspace shows only the
 // panels its step needs.
 const STUDIO_WORKSPACES = Object.freeze([
@@ -453,32 +454,38 @@ function appendDragTrace(documentReference, gizmoSvg, trace) {
   if (!trace) {
     return;
   }
-  const quiet = { stroke: 'var(--studio-text)', 'stroke-opacity': '0.72', 'stroke-width': '1.6', 'stroke-dasharray': '5 4', 'pointer-events': 'none' };
+  // Each dashed line lies on a wider line in the background colour, so it reads over a pale object and over the dark
+  // ground alike, in either theme.
+  const quiet = { stroke: 'var(--studio-text)', 'stroke-width': '1.8', 'stroke-dasharray': '6 4', 'pointer-events': 'none' };
+  const halo = { stroke: 'var(--studio-bg)', 'stroke-opacity': '0.7', 'stroke-width': '4.2', 'stroke-linecap': 'round', 'pointer-events': 'none' };
   if (trace.outline) {
-    gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
+    const outline = {
       points: trace.outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
       fill: 'none',
       'stroke-linejoin': 'round',
-      'data-drag-trace': 'ghost',
-      ...quiet,
-    }));
+    };
+    gizmoSvg.append(
+      createSvgElement(documentReference, 'polygon', { ...outline, ...halo, 'data-drag-halo': 'ghost' }),
+      createSvgElement(documentReference, 'polygon', { ...outline, ...quiet, 'data-drag-trace': 'ghost' }),
+    );
   }
   if (trace.from?.visible && trace.to?.visible) {
+    const travel = {
+      x1: trace.from.x.toFixed(1),
+      y1: trace.from.y.toFixed(1),
+      x2: trace.to.x.toFixed(1),
+      y2: trace.to.y.toFixed(1),
+    };
     gizmoSvg.append(
-      createSvgElement(documentReference, 'line', {
-        x1: trace.from.x.toFixed(1),
-        y1: trace.from.y.toFixed(1),
-        x2: trace.to.x.toFixed(1),
-        y2: trace.to.y.toFixed(1),
-        'data-drag-trace': 'travel',
-        ...quiet,
-      }),
+      createSvgElement(documentReference, 'line', { ...travel, ...halo, 'data-drag-halo': 'travel' }),
+      createSvgElement(documentReference, 'line', { ...travel, ...quiet, 'data-drag-trace': 'travel' }),
       createSvgElement(documentReference, 'circle', {
         cx: trace.from.x.toFixed(1),
         cy: trace.from.y.toFixed(1),
-        r: '3.5',
+        r: '4',
         fill: 'var(--studio-text)',
-        'fill-opacity': '0.6',
+        stroke: 'var(--studio-bg)',
+        'stroke-width': '1.5',
         'pointer-events': 'none',
         'data-drag-trace': 'start',
       }),
@@ -791,11 +798,61 @@ export function createStudio(container, {
     title: 'Reloads when the agent edits this file',
     attributes: { role: 'img', 'aria-label': 'Reloads when the agent edits this file' },
   });
-  const openButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Open…' });
-  const saveButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save' });
-  const saveAsButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save as…' });
+  const openButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Open…', dataset: { shortcut: 'Ctrl+O' } });
+  const saveButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save', dataset: { shortcut: 'Ctrl+S' } });
+  const saveAsButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save as…', dataset: { shortcut: 'Ctrl+Shift+S' } });
   const addMenuButton = createIconButton(documentReference, 'add', 'Add an object or a light', { attributes: { popovertarget: 'crucible-studio-pop-add' } });
-  const aiSyncMenuButton = createIconButton(documentReference, 'agent', 'Work with an AI agent', { attributes: { popovertarget: 'crucible-studio-pop-sync' } });
+  // The menus of the top bar, as a desktop app lays them out. Each one opens a popover of rows.
+  const createMenuButton = (label, popoverId, attributes = {}) => createElement(documentReference, 'button', {
+    type: 'button',
+    className: 'crucible-studio-menu-button',
+    textContent: label,
+    attributes: { popovertarget: popoverId, ...attributes },
+  });
+  // One row of a menu: what it does on the left, its key on the right.
+  const createMenuItem = (label, shortcut, onChoose) => {
+    const item = createElement(documentReference, 'button', { type: 'button', textContent: label, dataset: shortcut ? { shortcut } : {} });
+    item.addEventListener('click', onChoose);
+    return item;
+  };
+  const createMenuPopover = (popoverId, ...items) => createElement(documentReference, 'div', {
+    id: popoverId,
+    className: 'crucible-studio-popover',
+    attributes: { popover: 'auto' },
+  }, ...items);
+  const fileMenuButton = createMenuButton('File', 'crucible-studio-pop-new');
+  const editMenuButton = createMenuButton('Edit', 'crucible-studio-pop-edit');
+  const viewMenuButton = createMenuButton('View', 'crucible-studio-pop-view');
+  const aiSyncMenuButton = createMenuButton('Agent', 'crucible-studio-pop-sync', { 'aria-label': 'Work with an AI agent' });
+  const helpMenuButton = createMenuButton('Help', 'crucible-studio-pop-help');
+  const showView = presetName => {
+    controller.setCameraViewPreset(presetName);
+    announce(`${presetName[0].toUpperCase()}${presetName.slice(1)} view`);
+  };
+  const editPopover = createMenuPopover(
+    'crucible-studio-pop-edit',
+    createMenuItem('Undo', 'Ctrl+Z', () => undoButton.click()),
+    createMenuItem('Redo', 'Ctrl+Shift+Z', () => redoButton.click()),
+    createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection()),
+    createMenuItem('Delete', 'X', () => deleteButton.click()),
+    createMenuItem('Deselect', 'Esc', () => controller.selectNode(null)),
+    createMenuItem('Settings…', 'Ctrl+,', () => settingsDialog.showModal()),
+  );
+  const viewPopover = createMenuPopover(
+    'crucible-studio-pop-view',
+    createMenuItem('Front view', '1', () => showView('front')),
+    createMenuItem('Right view', '3', () => showView('right')),
+    createMenuItem('Top view', '7', () => showView('top')),
+    createMenuItem('Perspective / Orthographic', '5', () => controller.toggleCameraProjection()),
+    createMenuItem('Frame the selection', 'F', () => controller.frameSelection()),
+    createMenuItem('Grid', '', () => gridButton.click()),
+    createMenuItem('Scene and Properties', '', () => toggleDocksButton.click()),
+    createMenuItem('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true')),
+  );
+  const helpPopover = createMenuPopover(
+    'crucible-studio-pop-help',
+    createMenuItem('Keyboard shortcuts', '?', () => shortcutsDialog.showModal()),
+  );
   const exportMenuButton = createElement(
     documentReference,
     'button',
@@ -803,8 +860,6 @@ export function createStudio(container, {
     createIcon(documentReference, 'export'),
     createElement(documentReference, 'span', { textContent: 'Export' }),
   );
-  const shortcutsButton = createIconButton(documentReference, 'help', 'Keyboard shortcuts (?)');
-  const settingsButton = createIconButton(documentReference, 'settings', 'Settings (Ctrl+,)');
 
   const newPopover = createElement(documentReference, 'div', {
     id: 'crucible-studio-pop-new',
@@ -920,9 +975,12 @@ export function createStudio(container, {
     saveButton,
     saveAsButton,
     editJsonButton,
+    createMenuItem('Export PNG image', '', () => exportPngButton.click()),
+    createMenuItem('Export GLB model', '', () => exportGlbButton.click()),
+    createMenuItem('Export web pack', '', () => exportPackButton.click()),
     createElement(documentReference, 'p', { className: 'crucible-studio-popover-note', textContent: 'New scene' }),
   );
-  for (const popoverElement of [newPopover, addPopover, exportPopover]) {
+  for (const popoverElement of [newPopover, addPopover, exportPopover, editPopover, viewPopover, helpPopover]) {
     popoverElement.addEventListener('click', event => {
       if (event.target.closest?.('button')) popoverElement.hidePopover?.();
     });
@@ -965,22 +1023,49 @@ export function createStudio(container, {
           : { className: 'crucible-studio-brand' },
         buildBrandMarkSvg(documentReference),
       ),
-      filePill,
-      watchPill,
+      createElement(
+        documentReference,
+        'nav',
+        { className: 'crucible-studio-menus', attributes: { 'aria-label': 'Menus' } },
+        fileMenuButton,
+        editMenuButton,
+        viewMenuButton,
+        aiSyncMenuButton,
+        helpMenuButton,
+      ),
     ),
     workspaceList,
     createElement(documentReference, 'span', { className: 'crucible-studio-spacer' }),
-    createElement(documentReference, 'div', { className: 'crucible-studio-island' }, aiSyncMenuButton, settingsButton, shortcutsButton, exportMenuButton),
+    createElement(documentReference, 'div', { className: 'crucible-studio-island' }, filePill, watchPill, exportMenuButton),
     newPopover,
     addPopover,
     aiSyncPopover,
     exportPopover,
+    editPopover,
+    viewPopover,
+    helpPopover,
   );
+
+  // With one menu open, moving over the next one opens it, as a desktop menu bar does.
+  const menuPairs = [[fileMenuButton, newPopover], [editMenuButton, editPopover], [viewMenuButton, viewPopover], [aiSyncMenuButton, aiSyncPopover], [helpMenuButton, helpPopover]];
+  for (const [menuButton, menuPopover] of menuPairs) {
+    menuButton.addEventListener('pointerenter', () => {
+      const openPair = menuPairs.find(([, otherPopover]) => otherPopover !== menuPopover && otherPopover.matches?.(':popover-open'));
+      if (openPair) {
+        openPair[1].hidePopover?.();
+        fileMenuAnchor = menuButton === fileMenuButton ? fileMenuButton : fileMenuAnchor;
+        menuPopover.showPopover?.();
+      }
+    });
+  }
+  let fileMenuAnchor = filePill;
+  filePill.addEventListener('click', () => { fileMenuAnchor = filePill; });
+  fileMenuButton.addEventListener('click', () => { fileMenuAnchor = fileMenuButton; });
 
   function bindPopoverAnchor(triggerButton, popoverElement, { beside = false } = {}) {
     popoverElement.addEventListener('beforetoggle', event => {
       if (event.newState !== 'open') return;
-      const rectangle = triggerButton.getBoundingClientRect();
+      const rectangle = (typeof triggerButton === 'function' ? triggerButton() : triggerButton).getBoundingClientRect();
       const viewportWidth = documentReference.defaultView?.innerWidth ?? 1280;
       const viewportHeight = documentReference.defaultView?.innerHeight ?? 800;
       const wantedLeft = beside ? rectangle.right + 16 : rectangle.left - 5;
@@ -994,7 +1079,10 @@ export function createStudio(container, {
       popoverElement.style.top = `${Math.round(clampedTop)}px`;
     });
   }
-  bindPopoverAnchor(filePill, newPopover);
+  bindPopoverAnchor(() => fileMenuAnchor, newPopover);
+  bindPopoverAnchor(editMenuButton, editPopover);
+  bindPopoverAnchor(viewMenuButton, viewPopover);
+  bindPopoverAnchor(helpMenuButton, helpPopover);
   bindPopoverAnchor(addMenuButton, addPopover, { beside: true });
   bindPopoverAnchor(aiSyncMenuButton, aiSyncPopover);
   bindPopoverAnchor(exportMenuButton, exportPopover);
@@ -1580,7 +1668,6 @@ export function createStudio(container, {
   shortcutsDialog.addEventListener('close', () => {
     shortcutsDialog.returnValue = '';
   });
-  shortcutsButton.addEventListener('click', () => shortcutsDialog.showModal());
 
   const settingControls = new Map();
   const settingRows = STUDIO_SETTING_ROWS.map(([name, label, describeChoice]) => {
@@ -1619,7 +1706,6 @@ export function createStudio(container, {
   settingsDialog.addEventListener('close', () => {
     settingsDialog.returnValue = '';
   });
-  settingsButton.addEventListener('click', () => settingsDialog.showModal());
 
   function storePreferences() {
     if (preferenceStorage) {
@@ -2253,12 +2339,26 @@ export function createStudio(container, {
     return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
   }
 
+  // The handle under the pointer lights up before it is pressed. The handles are redrawn as the camera moves, so the
+  // SVG remembers which one it is and the stylesheet does the lighting.
+  const clearHoveredHandle = () => {
+    if (pointerState?.mode !== 'gizmo') delete gizmoSvg.dataset.hoverAxis;
+  };
+  gizmoSvg.addEventListener('pointermove', event => {
+    const axis = event.target?.getAttribute?.('data-gizmo-axis');
+    if (axis) gizmoSvg.dataset.hoverAxis = axis;
+    else clearHoveredHandle();
+  });
+  gizmoSvg.addEventListener('pointerout', clearHoveredHandle);
+  gizmoSvg.addEventListener('pointerleave', clearHoveredHandle);
+
   gizmoSvg.addEventListener('pointerdown', event => {
     const axis = event.target?.getAttribute?.('data-gizmo-axis');
     if (!axis) return;
     event.preventDefault();
     event.stopPropagation();
     const coordinates = localCoordinates(event);
+    gizmoSvg.dataset.hoverAxis = axis;
     controller.beginGizmoDrag(axis, coordinates.x, coordinates.y);
     pointerState = { mode: 'gizmo', pointerId: event.pointerId };
     viewportElement.setPointerCapture?.(event.pointerId);
@@ -2306,6 +2406,7 @@ export function createStudio(container, {
     const finished = pointerState;
     pointerState = null;
     if (finished.mode === 'gizmo') {
+      delete gizmoSvg.dataset.hoverAxis;
       controller.endGizmoDrag();
       return;
     }
@@ -2457,6 +2558,9 @@ export function createStudio(container, {
 
   // Below the compact width the panels start closed, so the scene keeps the screen.
   function syncCompactLayout() {
+    // Between the compact width and this one the menus, the tabs and the file name do not fit on one row, so the file
+    // name leaves: it is also the title of the File menu's own rows.
+    root.dataset.tight = root.clientWidth > 0 && root.clientWidth < TIGHT_WIDTH ? 'true' : 'false';
     const compact = root.clientWidth > 0 && root.clientWidth < COMPACT_WIDTH;
     if ((root.dataset.compact === 'true') === compact) {
       return;
