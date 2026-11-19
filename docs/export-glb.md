@@ -198,3 +198,5 @@ Every draw reported zero WebGL errors.
 The original exporter lost vertex channels and produced maximum channel differences of 31, 194 and 185 in those respective fixtures.
 Each draw uses one renderer, which is disposed before the next draw.
 These measurements establish fidelity for the fixtures, not identical rendering across tools or recognizable character quality.
+
+The writer refuses accessor data that would make an invalid file: NaN or Infinity where bounds are computed (positions, normals, colours, morph targets) and a length that is not a multiple of the component count. An empty accessor is written without `min` and `max`.
