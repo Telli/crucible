@@ -95,7 +95,7 @@ export function uploadScene(gl, program, scene, options = {}) {
   const instanced = isInstancedScene(scene) ? packInstancedScene(scene) : null;
   const nodes = instanced?.nodes ?? packNodes(scene.bvh);
   const triangles = instanced?.triangles ?? packTriangles(scene, { secondUvSet: true });
-  const materials = packMaterials(scene.materials, atlas, scene.shadowOnlyParts);
+  const materials = packMaterials(scene.materials, atlas, scene.shadowOnlyParts, scene.lampLightMasks);
   const floatTables = [['uNodes', nodes], ['uTriangles', triangles], ['uMaterials', materials], ['uLights', lights.table]];
   if (instanced) floatTables.push(['uInstances', instanced.instances]);
   if (sceneUsesSubsurface(scene.materials)) floatTables.push(['uSubsurface', packSubsurface(scene.materials)]);

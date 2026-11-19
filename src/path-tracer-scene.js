@@ -11,6 +11,7 @@ import { lightShapeSupport } from './shader-registry.js';
 import { flushOrderOf } from './depth-layer.js';
 import { liftRankedTriangles } from './flush-lift.js';
 import { RAY_VISIBILITY_BITS } from './ray-visibility.js';
+import { lampLightMasks } from './lamp-mesh.js';
 
 // The scene a path trace reads: every part flattened into one world-space triangle soup with per-vertex normals, UVs
 // and colours, one resolved material per part, the lights in plain arrays, and the environment map as a sampling table.
@@ -547,6 +548,11 @@ function refuseLinkingBeyondMaskBits(environment, parts) {
   throw new RangeError(`Light linking (a light with \`affects\`, or a part with \`material.lightMask\`, here "${linkedPart.name}") needs at most ${maximum} ${field}, got ${environment[field].length}: each linked light keeps one mask bit. Remove the links, or keep ${field} to ${maximum}.`);
 }
 
+/** Per part, the point light bits whose own lamp mesh the part is (see src/lamp-mesh.js); null when the scene has none. */
+function ownLampMasks(parts, lights) {
+  return lampLightMasks(parts, lights.points, part => resolveMaterial(part.material ?? {}).emission.some(channel => channel > 0));
+}
+
 function resolveLights(environment, limit = resolveLightLimit(), parts = []) {
   const areaLights = environment.areaLights ?? [];
   const sunColor = Array.from(environment.keyColor ?? [0, 0, 0], channel => channel * (environment.keyIntensity ?? 1));
@@ -881,13 +887,15 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
   const geometryViews = new Map();
   const instances = parts.map((part, index) => instanceFor(part, geometries[index], index, materials[index], geometryViews));
   const extent = instancedExtent(instances);
+  const lights = resolveLights(environment, limits.lights, parts);
   return {
     instances,
     materials,
     traceMaterials,
     // The GPU tracers read this per part flag from the material table; the native kernel reads the instance visibility instead.
     ...(parts.some(part => part.shadowOnly === true) ? { shadowOnlyParts: Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) } : {}),
-    lights: resolveLights(environment, limits.lights, parts),
+    lights,
+    lampLightMasks: ownLampMasks(parts, lights),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
     volume: resolveTraceVolume(environment.volumeFog),
     localVolumes,
@@ -961,6 +969,7 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
   const bvh = buildTriangleBvh(geometry.positions, geometry.indices);
   let extent = 1e-3;
   for (let index = 0; index < geometry.positions.length; index++) extent = Math.max(extent, Math.abs(geometry.positions[index]));
+  const lights = resolveLights(environment, limits.lights, parts);
   return attachTracer({
     ...geometry,
     bvh,
@@ -970,7 +979,8 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
     shadowOnlyParts: parts.some(part => part.shadowOnly === true) ? Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) : null,
     // Per part FORMAT-v2 visibility bits for the native "cycles" kernel; the "legacy" kernel and the other tracers do not read them.
     partRayVisibility: flattenedRayVisibility(parts),
-    lights: resolveLights(environment, limits.lights, parts),
+    lights,
+    lampLightMasks: ownLampMasks(parts, lights),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
     volume: resolveTraceVolume(environment.volumeFog),
     localVolumes,
