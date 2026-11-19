@@ -18,6 +18,7 @@ Old demo scenes shade with Cycles-only Diffuse, Glossy and Glass nodes, which th
 Principled BSDF in their place first (base colour or the first image texture upstream of the Diffuse colour, roughness, metal for
 a lone Glossy, a soft alpha for Glass), so colours and textures survive. It is an approximation, not a Cycles match.
 """
+import os
 import sys
 
 import bpy
@@ -90,6 +91,22 @@ for material in bpy.data.materials:
     tree.links.new(principled.outputs["BSDF"], output.inputs["Surface"])
     replaced += 1
 print("REPLACED", replaced, "of", len(bpy.data.materials))
+
+# The published Classroom render lit the sun at strength 40, which the owner picked from previews at 15, 40 and 100 (#1083).
+# The .blend ships it at 15 (energy 1 times an Emission strength of 15 in the light's node tree), and the glTF exporter
+# writes their product, so the export sets energy 40 and Emission 1 to keep the README picture at its published brightness.
+SUN_STRENGTH_BY_DEMO = {"classroom.blend": 40.0}
+sun_strength = SUN_STRENGTH_BY_DEMO.get(os.path.basename(bpy.data.filepath))
+if sun_strength is not None:
+    for light in bpy.data.lights:
+        if light.type != "SUN":
+            continue
+        if light.use_nodes and light.node_tree is not None:
+            for node in light.node_tree.nodes:
+                if node.type == "EMISSION":
+                    node.inputs["Strength"].default_value = 1.0
+        light.energy = sun_strength
+        print("SUN", light.name, sun_strength)
 bpy.ops.export_scene.gltf(
     filepath=output_directory + "/scene.glb", export_format="GLB", export_apply=True,
     export_image_format="JPEG", export_jpeg_quality=85, export_cameras=False, export_lights=True,
