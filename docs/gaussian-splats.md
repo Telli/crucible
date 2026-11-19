@@ -60,7 +60,7 @@ const splats = await createGaussianSplatsAsync(data, options);
 
 ## Hand-built data
 
-Data written by code, not parsed, is checked at the call. `count` must be a whole number, `positions` and `scales` need `count * 3` values (Float32Array or Float64Array), `rotations` `count * 4` (w, x, y, z) and `colors` `count * 4` bytes (Uint8Array, starting on a 4-byte boundary of its buffer). A longer array is fine, a shorter or missing one throws an error that names the field, the length it needs and the length it got. `matrix` and the options object must be left out or be a 16-number array and an object; `null` throws. The same checks run in `createGaussianSplatsAsync` before any splat is packed.
+Data written by code, not parsed, is checked at the call. `count` must be a whole number, `positions` and `scales` need `count * 3` values (Float32Array or Float64Array), `rotations` `count * 4` (w, x, y, z) and `colors` `count * 4` bytes (Uint8Array, starting on a 4-byte boundary of its buffer). A longer array is fine, a shorter or missing one throws an error that names the field, the length it needs and the length it got. `bounds` must be `{ minimum, maximum }`, each three finite numbers (the parse result carries it), or a `TypeError` says so. A rotation of any length counts as its unit version, and all zero as no rotation. `matrix` and the options object must be left out or be a 16-number array and an object; `null` throws. The same checks run in `createGaussianSplatsAsync` before any splat is packed.
 
 ## What it draws
 
