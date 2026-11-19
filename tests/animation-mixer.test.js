@@ -346,3 +346,12 @@ test('invalid bindings fail without publishing partially registered material cop
   shear.matrix[4] = 0.5;
   assert.throws(() => createAnimationMixer([shear]), /shear/);
 });
+
+test('play refuses a timeScale that would overflow later applies', () => {
+  const mixer = createAnimationMixer([part('part')]);
+  const action = mixer.clipAction(constantClip('part', 'emission', 2));
+  assert.throws(() => action.play({ timeScale: 1e308 }), /timeScale must be within/);
+  assert.throws(() => action.play({ timeScale: -1e308 }), RangeError);
+  action.play({ timeScale: 1e6 });
+  assert.doesNotThrow(() => mixer.apply(10));
+});

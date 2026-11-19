@@ -3,6 +3,7 @@ import { compileAnimationSampler, retainAnimationMaterial } from './animation.js
 
 const MATERIAL_PROPERTIES = new Set(['emission', 'metallic', 'roughness']);
 const MINIMUM_POSITIVE_VALUE = 1e-8;
+const MAXIMUM_TIME_SCALE = 1e6;
 
 function finiteTime(time) {
   if (!Number.isFinite(time)) throw new TypeError('Mixer times must be finite.');
@@ -98,6 +99,7 @@ function playState(action, { at = 0, offset = 0, timeScale = 1, weight = 1 } = {
   controlState(action, at);
   finiteTime(offset);
   if (!Number.isFinite(timeScale)) throw new TypeError('Action timeScale must be finite.');
+  if (Math.abs(timeScale) > MAXIMUM_TIME_SCALE) throw new RangeError(`Action timeScale must be within ${MAXIMUM_TIME_SCALE}, got ${timeScale}.`);
   validWeight(weight);
   return { at, playing: true, origin: at, offset, timeScale, fromWeight: weight, toWeight: weight, fadeEnd: at };
 }
