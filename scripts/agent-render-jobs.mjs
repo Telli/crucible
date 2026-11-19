@@ -100,6 +100,19 @@ function bakedPhysicsDuration(recipe) {
   return durations.length ? Math.max(...durations) : undefined;
 }
 
+/** A scene that places clips plays them on scene time, so a film of one runs as long as its longest clip, counted from the start. */
+function placedClipDefaultDuration(input, clips, recipe, bakeSeconds) {
+  const asked = input.motion ?? input.animation;
+  if (!placesSceneClips(recipe, clips) || recipe.motion || bakeSeconds || input.kind === 'image' || !asked) return undefined;
+  const longest = Math.max(...clips.map(clip => clip.duration));
+  return Math.min(MAXIMUM_VIDEO_SECONDS, Math.max(0.1, longest - (Number(asked.start) || 0)));
+}
+
+/** In a scene recipe the snapshot clips are the placed asset clips, one per placement, each as long as it needs to play once. */
+function placesSceneClips(recipe, clips) {
+  return recipe?.format === 'crucible.scene' && clips.length > 0;
+}
+
 function playsPhysics(recipe) {
   return Boolean(recipe?.physics || recipe?.cloth || recipe?.particles);
 }
@@ -128,7 +141,8 @@ function settingsFrom(input, clips = [], recipe) {
   // A physics-only film runs as long as its bake, counted from the motion start.
   const bakeSeconds = recipe?.format === 'crucible.scene' && !recipe.motion ? bakedPhysicsDuration(recipe) : undefined;
   const bakeDefault = bakeSeconds && input.kind !== 'image' && input.motion ? Math.max(0.1, bakeSeconds - (Number(input.motion.start) || 0)) : undefined;
-  const defaultDuration = timelineStart === undefined || input.kind === 'image' ? bakeDefault ?? 1 : filmTimelineDuration(recipe.timeline) - timelineStart;
+  const clipDefault = placedClipDefaultDuration(input, clips, recipe, bakeSeconds);
+  const defaultDuration = timelineStart === undefined || input.kind === 'image' ? bakeDefault ?? clipDefault ?? 1 : filmTimelineDuration(recipe.timeline) - timelineStart;
   const framesAsked = stillsFrameCountFrom(input);
   // A stills job that sets frames samples the motion clock every 1 / fps seconds, like a video; its duration is the span of those samples.
   const duration = framesAsked === undefined
@@ -184,8 +198,14 @@ function settingsFrom(input, clips = [], recipe) {
     if (clips.length === 0) throw new RangeError('animation needs an animation clip, and this scene has none. Drop animation from the settings, or add a clip to the scene first.');
     const clip = boundedNumber(input.animation.clip, 0, clips.length - 1, 'clip', true);
     const start = boundedNumber(input.animation.start ?? 0, 0, clips[clip].duration, 'animation start');
-    if (input.kind !== 'image' && start + duration > clips[clip].duration) throw new RangeError('Animation range exceeds the selected clip duration.');
-    result.animation = { clip, start };
+    if (placesSceneClips(recipe, clips)) {
+      // Placed clips play on scene time, the clock of motion, and loop or hold on their own settings: animation.start is the motion start.
+      if (input.motion !== undefined) throw new TypeError('Send either motion or animation for a scene that places clips: both set the scene time the clips play on. Keep motion.start.');
+      result.motion = { start };
+    } else {
+      if (input.kind !== 'image' && start + duration > clips[clip].duration) throw new RangeError('Animation range exceeds the selected clip duration.');
+      result.animation = { clip, start };
+    }
   }
   if (input.rendererTime !== undefined) {
     objectKeys(input.rendererTime, ['start', 'rate'], 'rendererTime');

@@ -2114,6 +2114,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     get motionTime() {
       return state.motionTime;
     },
+    /** Seconds each placed asset clip needs to play once, in placement order: the clips a render job can play on scene time. */
+    placedClipEnds() {
+      return state.assetRuntime.animators.length ? agentSceneModule('assets').placedClipEnds(state.assetRuntime) : [];
+    },
     sequenceTextures() {
       return state.sequences;
     },

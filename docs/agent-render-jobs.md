@@ -321,6 +321,7 @@ The defaults are 24 fps and one second.
 Images sample `animation.start` without requiring the default duration to fit the clip.
 Stills and videos require the entire requested animation range to fit the selected clip.
 A scene with no clips rejects `settings.animation` with an error that says so; drop `animation` or add a clip first.
+A scene recipe that places clips (`asset.clip`) counts as having them, one per placement in placement order, each as long as it needs to play once (its `start` plus its length at its `speed`). They play on scene time, the clock of `motion`, so no motion track is needed: `settings.animation { clip, start }` is the same as `settings.motion { start }`, and sending both is an error. A video or stills job with one of them and no `duration` runs as long as the longest placed clip, counted from `start`. A clip loops or holds on its own `asset.clip.loop`, so the render may run longer than one pass.
 Renderer time defaults to `{ start: 0, rate: 1 }` and remains separate from animation sampling.
 
 `progress(update)` accepts monotonic `frames` and a `maximumPendingFrames` value of zero or one.

@@ -1004,7 +1004,7 @@ window.__agentPreview = {
     const record = requireSession(sessionId);
     if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('render snapshot', expectedRevision, record.scene.revision));
     return { sourceRevision: record.scene.revision, recipe: record.scene.exportRecipe(),
-      clips: record.asset?.animations.map(clip => ({ duration: clip.duration })) ?? [] };
+      clips: record.asset ? record.asset.animations.map(clip => ({ duration: clip.duration })) : record.scene.placedClipEnds().map(duration => ({ duration })) };
   },
   suspend({ sessionId }) {
     const record = lookupSession(sessionId);
