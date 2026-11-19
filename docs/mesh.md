@@ -489,6 +489,8 @@ the input's units) and `relativeError` (over the bounds diagonal); the asset for
 Skinned and morphed parts are refused. `surfaceDeviation(a, b)` gives the vertex Hausdorff distance both ways. Hand the levels to a
 part as `lods` and `CrucibleRenderer` picks one per instance by its size on screen: see `docs/culling-lod.md`.
 
+Called from code, `remeshMesh` needs `voxelSize` or `resolution` as a finite number above 0, `unwrapUv` takes `maxDistortion` from 0 to 100 and `generateGeometryLods` takes `smoothAngle` from 0 to 180 degrees; each error names the field.
+
 Why our own collapse and not meshoptimizer 1.3.0 (npm, MIT, 2026-09-25): on the same sphere, torus and open bowl at
 ratios 0.5, 0.2 and 0.05 our Hausdorff error was 0.25 to 0.85 of its error (0.0088 against 0.0153 at 0.5 and 0.0647 against 0.0773
 at 0.05 on the sphere, 0.0403 against 0.1603 at 0.05 on the open bowl with its borders locked), and the volume stayed closer
