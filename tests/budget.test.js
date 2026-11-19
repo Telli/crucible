@@ -93,7 +93,7 @@ test('a budget error never advises a value above the largest budget the runtime 
 });
 
 test('texture dimensions past the bound are refused instead of returning Infinity', () => {
-  assert.throws(() => estimateTextureBytes(1e300, 1e300), /estimateTextureBytes: width was 1e\+300/);
+  assert.throws(() => estimateTextureBytes(1e300, 1e300), /integer from 1 to 65536/);
   assert.throws(() => estimateTextureBytes(64, 2 ** 40), /integer from 1/);
 });
 
