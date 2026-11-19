@@ -71,6 +71,10 @@ A glass part with a material `dispersion` above 0 splits white light into colour
 - Measured on an RTX 3060 at 256 samples, a prism or gem view takes Cook 3.1 to 4.5 s against Cycles 1.0 to 1.8 s. Those timings and the 1 to 9% mean colour gap are from before the signed weights, which raised the fringe saturation from 0.67 to 0.90 times Cycles' to the figure above.
 - At 1080p Cook takes 8.6 s at 64 samples, 34.1 s at 256 and 138 s at 1024.
 
+## A lamp mesh around its own point light (issue #2299)
+
+A glowing part whose bounds hold a point light, such as a bulb mesh around its lamp, does not shadow that light: in the WebGL2 tracer (`backend: "gpu"`, also the WebGL2 light bake) shadow rays of the light pass through it, and the part still lights the room by its own emission. A part that does not glow (a shade) blocks the light as any wall does. The CPU, WebGPU and native tracers do not have this rule yet.
+
 ## What it does not draw
 
 `report.ignored` lists the ones this scene asks for; a render job returns it as `metrics.pathTracer.ignored`. It names occlusion maps, anisotropy, iridescence, sheen, moss, splat layers, baked `lightMap`s, tagged materials (foliage, liquid, water and the like, traced as plain surfaces), blended transparency, and the fog fields above.
