@@ -72,7 +72,7 @@ Two options keep large ground from looking flat. `variation` (0 to 2, default 1)
 Shading: world-space XZ UVs, a second rotated sample at 0.58 times the scale mixed by low-frequency noise (with contrast restored) so repetition is not visible from afar, normal tilts added in world space, roughness from the maps, and a slow macro brightness and dryness variation.
 Materials batch together only when they share the same `layers` array and `splat` object, so build them once and assign them to every chunk.
 
-Memory: three `TEXTURE_2D_ARRAY`s on units 11 to 13 (sRGB colour, normal, roughness in red with height in green), all layers resized to the largest source (at most `MAX_TEXTURE_SIZE`), with mipmaps and up to 8x anisotropic filtering when the extension exists. The weight texture uses unit 14. The renderer counts them in `memoryBudgetMiB` and reports them as `renderer.splatBytes`. Four 1K layers take 64 MiB; set `textureSize: 512` to quarter that.
+Memory: three `TEXTURE_2D_ARRAY`s on units 11, 12 and 14 (sRGB colour, normal, roughness in red with height in green), all layers resized to the largest source (at most `MAX_TEXTURE_SIZE`), with mipmaps and up to 8x anisotropic filtering when the extension exists. The weight texture uses unit 13, which a scene with blended shadow casters also gives to its tinted shadow map; splat parts take no tint. The renderer counts them in `memoryBudgetMiB` and reports them as `renderer.splatBytes`. Four 1K layers take 64 MiB; set `textureSize: 512` to quarter that.
 
 ## createTerrain
 
