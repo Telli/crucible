@@ -12,6 +12,7 @@ Usage: node scripts/render-file-native.mjs --config <scene.json> --out <prefix> 
   --width <n>, --height <n> picture size in pixels, 16 to 8192 (default 800 x 450)
   --samples <n>             paths per pixel, 1 to 100000 (default 128)
   --bounces <n>             bounces per path, 1 to 16 (default 8)
+  --time <seconds>          pose the first glTF animation clip at this time (it loops; default 0); a video is one run per frame time
   --seed <n>                noise seed, 0 to 2147483647 (default 1)
   --max-seconds <n>         wall-clock limit of the trace, 1 to 86400 (default 600)
   --denoise oidn|atrous|none  (default oidn, which falls back to atrous when OIDN is missing)
@@ -27,7 +28,7 @@ Usage: node scripts/render-file-native.mjs --config <scene.json> --out <prefix> 
 
 Exit code 2 means the native addon is not built; 1 is any other failure.`;
 
-const VALUE_FLAGS = new Set(['--config', '--out', '--width', '--height', '--samples', '--bounces', '--seed', '--max-seconds', '--denoise',
+const VALUE_FLAGS = new Set(['--config', '--out', '--width', '--height', '--samples', '--bounces', '--seed', '--time', '--max-seconds', '--denoise',
   '--camera', '--chrome', '--list-parts', '--hide-parts', '--patch-materials']);
 const SWITCH_FLAGS = new Set(['--instancing', '--software-gl', '--write-raw', '--help', '-h']);
 const DENOISERS = ['oidn', 'atrous', 'none'];
@@ -58,6 +59,15 @@ function readIntegerOption(argumentList, flagName, fallbackValue, minimum, maxim
   const parsed = Number(text);
   if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
     throw new RangeError(`Option ${flagName} must be a whole number from ${minimum} to ${maximum}, got "${text}".`);
+  }
+  return parsed;
+}
+
+function readSecondsOption(argumentList, flagName, fallbackValue) {
+  const text = readOption(argumentList, flagName, String(fallbackValue));
+  const parsed = Number(text);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new RangeError(`Option ${flagName} must be a number of seconds, 0 or more, got "${text}".`);
   }
   return parsed;
 }
@@ -135,6 +145,7 @@ export function parseArguments(argumentList) {
     samples: readIntegerOption(argumentList, '--samples', 128, 1, 100000),
     bounces: readIntegerOption(argumentList, '--bounces', 8, 1, 16),
     seed: readIntegerOption(argumentList, '--seed', 1, 0, 2147483647),
+    clipSeconds: readSecondsOption(argumentList, '--time', 0),
     maxSeconds: readIntegerOption(argumentList, '--max-seconds', 600, 1, 86400),
     denoise,
     writeRaw: argumentList.includes('--write-raw'),

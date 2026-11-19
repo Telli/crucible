@@ -78,7 +78,7 @@ async function start() {
     renderer.render({ ...frame, ...pose });
   };
   // `parts` and `environment` let scripts/render-file-native.mjs pack the same scene for the native path tracer.
-  window.__scene = { renderer, duration: camera?.duration, renderAt, pause() {}, parts: reflection.parts, environment: { ...(rendererOptions.environment ?? {}), map } };
+  window.__scene = { renderer, duration: camera?.duration, renderAt, poseClipAt: seconds => clipPlayer?.applyAt(seconds), pause() {}, parts: reflection.parts, environment: { ...(rendererOptions.environment ?? {}), map } };
 }
 
 start().catch(error => {

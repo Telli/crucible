@@ -18,8 +18,13 @@ export function createFileSceneClipPlayer({ asset, posedParts, sceneParts, rende
   const partsToUpdate = rendererParts.filter((part, index) => posed.has(sceneParts[index]));
   return {
     clip,
-    poseAt(renderer, seconds) {
+    // Poses the asset's parts without a renderer: the native path tracer packs the parts themselves (skinned vertices included),
+    // so it needs the pose and no updateParts call.
+    applyAt(seconds) {
       asset.applyAnimation(loopedClipTime(seconds, clip.duration), 0);
+    },
+    poseAt(renderer, seconds) {
+      this.applyAt(seconds);
       renderer.updateParts(partsToUpdate, { shadows: true });
     },
   };
