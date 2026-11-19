@@ -242,7 +242,7 @@ The renderer uploads these GPU-compressed formats as they are, with `texStorage2
 | ETC2 | `WEBGL_compressed_texture_etc` | 0.5 or 1 |
 
 A context with none of these, such as SwiftShader, gets RGBA8 (4 bytes a texel). Set `workerConfig` before the first load. A loader that you leave without a config throws.
-Color maps upload as sRGB and data maps as linear. A file with a partial mip chain keeps only its first level. A compressed texture cannot be exported to GLB or read by the path tracer, so transcode to RGBA8 for those.
+Color maps upload as sRGB and data maps as linear. A file with a partial mip chain keeps only its first level. A compressed texture cannot be exported to GLB or read by the path tracer, so transcode to RGBA8 for those. A mip level that is missing from a full chain fails the load, naming the level.
 `asset.textureFormats` lists `{ format, width, height, colorSpace, bytes }` for each texture, with `format` set to `bc7`, `bc1-rgb`, `bc1-rgba`, `bc3`, `astc-4x4`, `etc2-rgb`, `etc2-rgba` or `rgba8`.
 KTX2 dimensions count toward `maxTexturePixels` before decoding. KTX2 images are never scaled. When the loader's `workerConfig` allows a compressed format, a KTX2 image counts a quarter of its pixels, because it takes at most one byte a texel on the GPU. A KTX2-heavy file over the budget still fails.
 
