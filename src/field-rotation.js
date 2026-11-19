@@ -58,8 +58,9 @@ export function alignEuler(direction) {
   return [Math.atan2(entry(2, 1), entry(2, 2)), Math.asin(-entry(2, 0)), Math.atan2(entry(1, 0), entry(0, 0))];
 }
 
-function vectorOperand(value, label) {
-  if (value.kind !== 'vector') throw new TypeError(`${label} needs a vector.`);
+// `operand` names the argument that is wrong, so a recipe with three vectors tells which one to fix.
+function vectorOperand(value, operator, operand, example) {
+  if (value.kind !== 'vector') throw new TypeError(`Field expression: ${operator} ${operand} needs a vector, such as ${example}.`);
   return value.parts;
 }
 
@@ -81,23 +82,23 @@ function readVector(parts, index) {
 }
 
 function buildRotate([vector, axis, angle]) {
-  const vectorParts = vectorOperand(vector, 'rotate');
-  const axisParts = vectorOperand(axis, 'rotate');
-  const angleAt = requireScalar(angle, 'rotate');
+  const vectorParts = vectorOperand(vector, 'rotate', 'vector', '[1, 0, 0]');
+  const axisParts = vectorOperand(axis, 'rotate', 'axis', '[0, 1, 0]');
+  const angleAt = requireScalar(angle, 'rotate angle');
   const part = sharedVector(index => rotateAboutAxis(readVector(vectorParts, index), readVector(axisParts, index), angleAt(index)));
   return vectorValue(part(0), part(1), part(2));
 }
 
 function buildAlign([direction]) {
-  const directionParts = vectorOperand(direction, 'align');
+  const directionParts = vectorOperand(direction, 'align', 'direction', '[0, 1, 0]');
   const part = sharedVector(index => alignEuler(readVector(directionParts, index)));
   return vectorValue(part(0), part(1), part(2));
 }
 
 function buildTransform([point, move, euler, size]) {
-  const pointParts = vectorOperand(point, 'transform');
+  const pointParts = vectorOperand(point, 'transform', 'point', '[1, 0, 0]');
   const moveParts = move === undefined ? null : partsOf(move);
-  const eulerParts = euler === undefined ? null : vectorOperand(euler, 'transform');
+  const eulerParts = euler === undefined ? null : vectorOperand(euler, 'transform', 'euler', '[0, 0, 1.57]');
   const sizeParts = size === undefined ? null : partsOf(size);
   const part = sharedVector(index => {
     const scaled = readVector(pointParts, index).map((component, axis) => (sizeParts ? component * sizeParts[axis](index) : component));

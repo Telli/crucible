@@ -72,7 +72,7 @@ A recipe names a file; it never carries a path or a URL, and nothing is download
 | `teal-orange`, `noir` | `environment.look` | made for Crucible, CC0, 9 points per side |
 | 64-character ID | either | a `.hdr` or `.cube` file (an `.hdr` up to 8 MiB, which fits the 2k files from Poly Haven, and a `.cube` up to 4 MiB; a larger file is skipped and listed with a reason, it does not fail the catalog) in the MCP `--assets` directory, listed by `scene_asset_catalog` as kind `environment` or `look` |
 
-The four shipped files total about 100 KB. For a bigger HDRI, put a 2k or smaller `.hdr` (for example from Poly Haven; the 2k files are about 5 to 7 MiB) in the assets directory and use its ID. Outside MCP, decode with `parseRadianceHdr` or `parseCube` and register with `registerCatalogEnvironment(name, data)` or `registerCatalogLook(name, look)` from `src/look-catalog.js` before building the scene. The look needs the `view-transform-shader` module (`loadAgentSceneModules` loads it). Render jobs light the scene with the same entries.
+The four shipped files total about 100 KB. For a bigger HDRI, put a 2k or smaller `.hdr` (for example from Poly Haven; the 2k files are about 5 to 7 MiB) in the assets directory and use its ID. Outside MCP, decode with `parseRadianceHdr` (an ArrayBuffer or Uint8Array of the whole file; a header that claims more pixels than the file holds is refused) or `parseCube` and register with `registerCatalogEnvironment(name, data)` or `registerCatalogLook(name, look)` from `src/look-catalog.js` before building the scene. The look needs the `view-transform-shader` module (`loadAgentSceneModules` loads it). Render jobs light the scene with the same entries.
 
 ## Atomic look commands
 

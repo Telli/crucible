@@ -29,6 +29,9 @@ test('the subsurface block is checked against bounded ranges and names the field
   assert.throws(() => validateSubsurface({ radius: [1, 2, 101] }), /subsurface.radius must be three numbers between 0 and 100/);
   assert.throws(() => validateSubsurface({ color: [0, 0, 2] }), /subsurface.color must be three numbers between 0 and 1/);
   assert.throws(() => validateSubsurface({ anisotropy: 0.5 }), /Unknown subsurface field anisotropy/);
+  for (const inherited of ['constructor', 'toString', 'hasOwnProperty']) {
+    assert.throws(() => validateSubsurface(JSON.parse(`{"${inherited}": 1}`)), new RegExp(`Unknown subsurface field ${inherited}`));
+  }
   assert.throws(() => validateSubsurface([1]), /subsurface must be an object/);
   assert.throws(() => validateSubsurface({ weight: 1 }, 'foam'), /subsurface needs a standard PBR material tag/);
 });

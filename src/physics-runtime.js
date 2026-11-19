@@ -83,6 +83,9 @@ export const rapierAdapter = Object.freeze({
     const rapier = requireRapier();
     const { world, bodies, colliderIndices } = createRapierWorld(rapier, prepared);
     const eventQueue = new rapier.EventQueue(true);
+    // Rapier adds colliders to its query structure only in a step, so one step of zero time lets queries see the start world.
+    world.timestep = 0;
+    world.step(eventQueue);
 
     function queryFilter(filter) {
       const flags = filter.includeSensors ? undefined : rapier.QueryFilterFlags.EXCLUDE_SENSORS;
@@ -165,6 +168,14 @@ function validateAdapter(adapter) {
   return adapter;
 }
 
+function validateInitialBindings(bindings) {
+  if (!Array.isArray(bindings)) throw new TypeError(`createPhysicsSystem bindings must be an array like [{ body: "box", part }], got ${describe(bindings)}.`);
+  bindings.forEach((binding, position) => {
+    if (binding === null || typeof binding !== 'object') throw new TypeError(`createPhysicsSystem bindings[${position}] must be { body, part }, got ${describe(binding)}.`);
+  });
+  return bindings;
+}
+
 function requireQueryOptions(options) {
   if (options === null || typeof options !== 'object') throw new TypeError('A physics query options value must be an object like { mask, excludeBody, includeSensors } or left out.');
   return options;
@@ -197,6 +208,7 @@ export async function createPhysicsSystem(definition, options = {}) {
   if (options === null || typeof options !== 'object') throw new TypeError('createPhysicsSystem options must be an object or left out.');
   const { adapter: requestedAdapter, name, bindings: initialBindings, ...engineOptions } = options;
   const adapter = validateAdapter(requestedAdapter ?? rapierAdapter);
+  const startingBindings = validateInitialBindings(initialBindings ?? []);
   const timestep = engineOptions.timestep ?? 1 / 60;
   if (definition?.bodies?.some(body => body.float !== undefined)) await loadPhysicsBuoyancy();
   const prepared = prepareLivePhysics(definition, { ...engineOptions, timestep });
@@ -476,7 +488,7 @@ export async function createPhysicsSystem(definition, options = {}) {
     },
   };
   freeWorldOnFailure(() => {
-    for (const binding of initialBindings ?? []) bind(binding.body, binding.part);
+    for (const binding of startingBindings) bind(binding.body, binding.part);
   });
   return system;
 }

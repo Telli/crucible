@@ -161,6 +161,11 @@ export function totalsOf(files) {
   return { totals, percentages };
 }
 
+// The metrics the lcov files hold no records of. totalsOf reads those as 100%, which would hide a drop to nothing.
+export function unmeasuredMetrics(totals) {
+  return METRICS.filter(metric => totals[metric][1] === 0);
+}
+
 export function compareWithBaseline(percentages, baseline) {
   return METRICS.map(metric => ({
     metric,
@@ -219,6 +224,11 @@ function main() {
   }
   if (mergedOut) writeFileSync(mergedOut, toLcov(files));
   const { totals, percentages } = totalsOf(files);
+  const unmeasured = unmeasuredMetrics(totals);
+  if (unmeasured.length > 0) {
+    console.error(`The lcov files hold no ${unmeasured.join(' or ')} records, so that figure would read 100%. Rerun the tests with the same coverage reporters and pass the lcov they write.`);
+    process.exit(1);
+  }
   const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
   const results = compareWithBaseline(percentages, baseline);
 

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createSceneQuery, walkableMask } from '../src/scene-query.js';
 
 function quad(halfWidth, halfDepth = halfWidth) {
@@ -84,4 +85,41 @@ test('walkMap rejects unknown obstacles options', () => {
   const query = createSceneQuery(street);
   assert.throws(() => query.walkMap({ min: [0, 0], max: [1, 1], obstacles: { colour: 1 } }), /Unsupported walkMap obstacles option/);
   query.dispose();
+});
+
+function openGridWithOneObstacle() {
+  const cells = [];
+  for (let column = 0; column < 20; column++) {
+    for (let row = 0; row < 20; row++) cells.push([column, row, 0, 5, column === 10 && row === 10 ? 1 : 0]);
+  }
+  return { columns: 20, rows: 20, cellSize: 1, min: [0, 0], cells };
+}
+
+test('walkableMask refuses a keepOut that is not a finite number of metres', () => {
+  for (const keepOut of [NaN, -1, '2']) {
+    assert.throws(() => walkableMask(openGridWithOneObstacle(), { keepOut }), /walkableMask keepOut must be a finite number/);
+  }
+});
+
+test('walkableMask with a keepOut far larger than the map finishes and clears every cell', () => {
+  // Run in a child process: a regression loops or allocates without end, and a test timeout cannot stop that.
+  const script = `
+    import { walkableMask } from './src/scene-query.js';
+    const cells = [];
+    for (let column = 0; column < 20; column++) {
+      for (let row = 0; row < 20; row++) cells.push([column, row, 0, 5, column === 10 && row === 10 ? 1 : 0]);
+    }
+    const mask = walkableMask({ columns: 20, rows: 20, cellSize: 1, min: [0, 0], cells }, { keepOut: 100000 });
+    console.log(mask.reduce((total, value) => total + value, 0));
+    try {
+      walkableMask({ columns: 20, rows: 20, cellSize: 1, min: [0, 0], cells }, { keepOut: Infinity });
+    } catch (error) {
+      console.log(error.message);
+    }
+  `;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 20000 });
+  assert.equal(run.error, undefined, 'walkableMask did not finish within 20 s');
+  const [clearedCount, infiniteMessage] = run.stdout.trim().split(/\s*[\r\n]+\s*/);
+  assert.equal(clearedCount, '0');
+  assert.match(infiniteMessage, /walkableMask keepOut must be a finite number/);
 });
