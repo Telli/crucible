@@ -194,6 +194,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   let streamedSequencesUsed = false;
   // Scenes the page closed to stay under the scene cap, so a later call with one of them gets a clear error.
   const evictedSessionIds = [];
+  const evictionReasons = {};
   // Scenes that have a bake, so an edit that rebakes gets the longer deadline.
   const bakedSessionIds = new Set();
   let queuedCalls = 0;
@@ -805,7 +806,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   function requireSession(sessionId) {
     if (!openSessionIds.has(sessionId)) {
-      throw new Error(sessionProblem(sessionId, lastUsedSessionId(), { openSessionIds: [...openSessionIds], evictedSessionIds }));
+      throw new Error(sessionProblem(sessionId, lastUsedSessionId(), { openSessionIds: [...openSessionIds], evictedSessionIds, evictionReasons }));
     }
     // Re-insert so the Set order stays least to most recently used.
     openSessionIds.delete(sessionId);
@@ -817,8 +818,11 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     for (const evictedSessionId of result.evictedSessions ?? []) {
       forgetSession(evictedSessionId);
       evictedSessionIds.push(evictedSessionId);
+      if (result.evictionReason) evictionReasons[evictedSessionId] = result.evictionReason;
     }
-    evictedSessionIds.splice(0, Math.max(0, evictedSessionIds.length - MAXIMUM_REMEMBERED_EVICTIONS));
+    for (const forgottenId of evictedSessionIds.splice(0, Math.max(0, evictedSessionIds.length - MAXIMUM_REMEMBERED_EVICTIONS))) {
+      delete evictionReasons[forgottenId];
+    }
     openSessionIds.add(sessionId);
     if (hasBake) bakedSessionIds.add(sessionId);
   }
