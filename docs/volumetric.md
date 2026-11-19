@@ -43,6 +43,7 @@ renderer.render({ eye: [0, 2, 5], target: [0, 1, 0], time: 0 });
 | `noiseScale` | `0.3` | `0.001…100`, inverse scene units |
 | `drift` | `[0.03, 0, 0]` | Three components within ±100, scene units per second |
 | `maxDistance` | `100` | `0.01…10,000`, ray distance in scene units |
+| `heightFalloff` | `0` | `0…100,000` metres; `0` keeps the density flat. Above 0 the density is scaled by `exp(-y / heightFalloff)`, with `y` measured up from `minimum[1]`, so the fog halves every `0.69 × heightFalloff` metres. Measure from the box floor, not the visible ground: with `minimum[1]` 2 m under the ground, `heightFalloff: 0.1` leaves `exp(-20)` of the fog at ground level, which looks like no fog. Use a value near the height the fog should reach, such as `2` to `10` for ground mist |
 | `shadowAmbient` | derived | `0…1`; the share of `ambient` the fog keeps where the sun's shadow covers it. Left unset, 32 upward rays from the middle of the fog box decide: a closed room keeps 0.15, open ground under a sky keeps 1, and a partly covered scene lands between. Set it to override |
 | `field` | none | A fog field, see below |
 | `profile` | `'exponential'` | `'exponential'` or `'smoothstep'`; the vertical shape of a layer when a `field` is set |
