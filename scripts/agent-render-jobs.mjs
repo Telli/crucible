@@ -790,6 +790,41 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
     return bytes;
   }
 
+  async function releaseFinishedJob(jobId, job) {
+    await job.persistence.catch(() => {});
+    // A retry after a failed release finds a half-deleted folder: finish it here instead of failing on the missing owner file.
+    try {
+      if (!await discardRemnant(jobId)) await removeJobDirectory(await directoryFor(jobId));
+    } catch (error) {
+      if (!FILE_IN_USE_CODES.has(error.code)) throw error;
+      throw new Error(`Job ${jobId} is only partly released: a file in ${join(root, jobId)} is open in another program. Close it and call release again.`, { cause: error });
+    }
+    jobs.delete(jobId);
+  }
+
+  /** Completed jobs whose result was read, oldest first: the only jobs the store may release on its own. */
+  function fetchedJobsOldestFirst() {
+    return [...jobs.entries()].filter(([, job]) => job.fetched && job.record.state === 'completed' && active !== job);
+  }
+
+  /**
+   * Frees `neededBytes` for a new job. When the store is too full, it releases jobs whose output was already read through
+   * result(), oldest first, and stops as soon as the job fits. A job whose output was never read stays.
+   */
+  async function makeRoomInStore(neededBytes) {
+    let existingBytes = await storeBytes();
+    const releasable = fetchedJobsOldestFirst();
+    while (existingBytes + neededBytes > limits.maxStoreBytes && releasable.length) {
+      const [jobId, job] = releasable.shift();
+      await releaseFinishedJob(jobId, job);
+      existingBytes = await storeBytes();
+    }
+    if (existingBytes + neededBytes <= limits.maxStoreBytes) return;
+    const freeMiB = Math.max(0, Math.floor((limits.maxStoreBytes - existingBytes) / 1024 ** 2));
+    const neededMiB = Math.ceil(neededBytes / 1024 ** 2);
+    throw new RangeError(`Job store lacks space for the snapshot and output reservation: it needs ${neededMiB} MiB free and has ${freeMiB} MiB. Call scene_render_release on finished jobs you no longer need (jobs whose result you already read are released automatically, oldest first).`);
+  }
+
   async function storeBytes() {
     let bytes = 0;
     for (const name of await readdir(root)) {
@@ -1066,8 +1101,8 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       const operation = (async () => {
         if (jobs.size >= limits.maxRecords) throw new RangeError('Job record budget exhausted. Release a finished job.');
         const snapshotText = JSON.stringify(snapshotMetadata);
-        const existingBytes = await storeBytes();
-        if (existingBytes + Buffer.byteLength(snapshotText) + (snapshot.assetBytes?.length ?? 0) + limits.maxOutputBytes + 131072 > limits.maxStoreBytes) throw new RangeError('Job store lacks space for the snapshot and output reservation.');
+        const neededBytes = Buffer.byteLength(snapshotText) + (snapshot.assetBytes?.length ?? 0) + limits.maxOutputBytes + 131072;
+        await makeRoomInStore(neededBytes);
         const jobId = randomUUID();
         const directory = join(root, jobId);
         const staging = join(root, `.pending-${storeId}-${jobId}`);
@@ -1103,23 +1138,17 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       return structuredClone(job.record);
     },
     result(jobId) {
-      const record = getJob(jobId).record;
+      const job = getJob(jobId);
+      const record = job.record;
       if (record.state !== 'completed') throw new Error(`Render job is ${record.state}. No completed result is available.`);
+      job.fetched = true;
       return structuredClone({ jobId, sourceRevision: record.sourceRevision, artifacts: record.artifacts, metrics: record.metrics });
     },
     async release(jobId) {
       if (closed) throw new Error('Render job controller is closed.');
       const job = getJob(jobId);
       if (active === job || !TERMINAL.has(job.record.state)) throw new Error('Cancel and settle the active job before release.');
-      await job.persistence.catch(() => {});
-      // A retry after a failed release finds a half-deleted folder: finish it here instead of failing on the missing owner file.
-      try {
-        if (!await discardRemnant(jobId)) await removeJobDirectory(await directoryFor(jobId));
-      } catch (error) {
-        if (!FILE_IN_USE_CODES.has(error.code)) throw error;
-        throw new Error(`Job ${jobId} is only partly released: a file in ${join(root, jobId)} is open in another program. Close it and call release again.`, { cause: error });
-      }
-      jobs.delete(jobId);
+      await releaseFinishedJob(jobId, job);
       return { jobId, released: true };
     },
     async close() {

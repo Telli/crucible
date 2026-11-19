@@ -426,6 +426,7 @@ Admission reserves the maximum output budget plus snapshot and metadata space.
 The optional `limits` object can reduce controller budgets for bounded tests.
 It cannot increase production limits.
 Partial files count toward the store budget and remain until explicit release.
+Each submit needs room for its snapshot and a full output reservation (128 MiB by default). When the store is too full, the controller first releases completed jobs whose `scene_render_result` was already read, oldest first, and stops as soon as the new job fits; the files of a released job are gone, so copy outputs you keep before you submit the next job. A job whose result was never read is never released this way. If the job still does not fit, the error says how many MiB it needs and how many are free and names `scene_render_release`. A job read before a server restart counts as unread again.
 
 ## CPU checks
 
