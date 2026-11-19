@@ -32,6 +32,17 @@
       "height": 900,
       "alt": "A Paris street corner with a green cafe, red awnings and a blue scooter, rendered by Crucible",
       "assets": "Amazon Lumberyard Bistro, CC BY 4.0; Poly Haven sky (CC0)"
+    },
+    {
+      "title": "Classroom",
+      "author": "CodePawl",
+      "authorUrl": "https://x.com/anxuanng",
+      "link": "https://crucible.codepawl.com/showcase.html",
+      "image": "/community/classroom.webp",
+      "width": 1600,
+      "height": 900,
+      "alt": "A sunlit school classroom with wooden desks and a chalkboard, path traced by Cook in Crucible",
+      "assets": "Scene by Christophe Seux, CC0, from the Blender demo files"
     }
   ]
 }
