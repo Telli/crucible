@@ -113,6 +113,44 @@ test('a catalog says which hook is missing and refuses hooks and files it cannot
   assert.throws(() => createStudioCatalog([]), /catalog must be an object/);
 });
 
+function identityCubeText() {
+  const rows = [];
+  for (const blue of [0, 1]) {
+    for (const green of [0, 1]) {
+      for (const red of [0, 1]) {
+        rows.push(`${red} ${green} ${blue}`);
+      }
+    }
+  }
+  return `TITLE "identity"\nLUT_3D_SIZE 2\n${rows.join('\n')}\n`;
+}
+
+test('a catalog loads the .cube look a recipe names, once, and the scene builds with it', async () => {
+  const lookReference = '5e'.repeat(32);
+  const recipe = plainRecipe();
+  recipe.environment = { look: lookReference };
+  const lookCalls = [];
+  const catalog = createStudioCatalog({
+    async look(reference) {
+      lookCalls.push(reference);
+      return identityCubeText();
+    },
+  });
+  assert.equal(catalog.needsLoading(recipe), true);
+  await assert.rejects(createStudioCatalog().prepare(recipe), /catalog look 5e5e5e5e5e5e.*catalog: \{ look:/);
+  await assert.rejects(createStudioCatalog({ look: async () => new Uint8Array(4) }).prepare(recipe), /catalog\.look returned object.*Return the text of the \.cube file/);
+
+  await catalog.prepare(recipe);
+  await catalog.prepare(recipe);
+  assert.deepEqual(lookCalls, [lookReference]);
+  assert.equal(catalog.needsLoading(recipe), false);
+
+  const controller = createStudioController({ scene: createAgentScene(plainRecipe()), assets: catalog.pool });
+  controller.loadRecipe(recipe);
+  assert.equal(controller.exportRecipe().environment.look, lookReference, 'the recipe keeps naming the look by reference');
+  catalog.dispose();
+});
+
 // The fake browser never fires timers, and the GLB decoder hands the thread back through one when a slice runs long.
 // A scheduler that yields at once keeps the decode moving, as a real page's would.
 function installImmediateScheduler(testContext) {

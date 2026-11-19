@@ -123,7 +123,7 @@ await studio.ready;
 - `createStudio` still returns at once. When the recipe needs catalog files, Studio opens on the starting scene and swaps the recipe in when they have loaded; `studio.ready` settles then. Opening the scene is not an edit: nothing to undo, no unsaved mark.
 - `studio.loadExternalTextFile(text)`, the Open dialog and the recipe JSON dialog load catalog files the same way. `studio.openRecipe(recipe)` does it for a recipe object; `studio.loadRecipe(recipe)` stays synchronous and expects the files to be loaded already.
 - Without the function a scene needs, the scene on screen stays as it was and the status line says which file is missing and which function to pass.
-- GLB files compressed with Draco or KTX2 are decoded by the MCP server, not by Studio. Serve the plain GLB.
+- Studio loads no Draco or KTX2 decoder. Serve a GLB that uses neither.
 
 The viewport draws a scene's volume fog. Post passes written as shader code and other render-only steps show in the MCP preview and in renders, not in the Studio viewport.
 

@@ -897,7 +897,7 @@ export function createStudioController({
   // The selected object's triangles on screen, as a flat list of x, y pairs (six numbers a triangle), all wound the same
   // way so a filled drawing of them has no holes where a back face meets a front face. The viewport draws the edge of
   // that shape, which follows a star or a letter where the hull would cut across. Null when there is nothing to draw,
-  // part of the object is behind the camera, or it has more triangles than the budget.
+  // or part of the object is behind the camera. An object with more triangles than the budget gets its hull instead.
   function selectionSilhouette() {
     if (!selectedNodeId) {
       return null;
