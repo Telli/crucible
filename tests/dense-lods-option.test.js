@@ -59,3 +59,13 @@ test('a scene file is lit by its GLB lights, and its own renderer.environment wi
   assert.equal(merged.exposure, 2);
   assert.deepEqual(withSceneFileLights(undefined, { keyIntensity: 0.5 }), { keyIntensity: 0.5 });
 });
+
+test('a pixel ratio that is not a usable number is refused by name, and NaN thresholds are not read as "dense"', async () => {
+  const { addLodsToDenseParts } = await import('../src/dense-lods.js');
+  for (const pixelRatio of [0, -1, NaN, '1']) {
+    assert.throws(() => partsForRendererOptions([scanPart()], SMALL_CANVAS, { pixelRatio }), /partsForRendererOptions: pixelRatio was .*; pass a number from 0\.1 to 16/);
+  }
+  for (const options of [{ minimumTriangles: NaN }, { minimumTrianglesPerPixel: NaN }, { minimumTrianglesPerPixel: 'x' }]) {
+    assert.throws(() => addLodsToDenseParts([scanPart()], { pixels: 1e9, ...options }), /addLodsToDenseParts: minimumTriangle/);
+  }
+});

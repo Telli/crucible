@@ -38,6 +38,8 @@ const PROPERTIES = {
   // distortionStrength and flashIntensity are gains from 0 to 1 on every source of the distortion and flash steps.
   effects: { exposure: 1, focusDistance: 1, distortionStrength: 1, flashIntensity: 1 },
 };
+// Every kind a motion track may have; the MCP schema and its error message take this list so they cannot drift from the backend.
+export const MOTION_TRACK_KINDS = Object.freeze(Object.keys(PROPERTIES));
 // Kinds with one target in the scene, so a track names no ID.
 const SINGLETON_KINDS = new Set(['camera', 'sun', 'environment', 'effects']);
 const LOOK_KINDS = new Set(['light', 'sun', 'environment', 'effects']);

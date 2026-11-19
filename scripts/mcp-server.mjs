@@ -1,4 +1,5 @@
 import { answerCapabilities, MAX_TOPICS_PER_CALL } from './capabilities-topics.mjs';
+import { MOTION_TRACK_KIND_NAMES } from '../src/motion-track-kinds.js';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { readEnvironmentVariable } from '../src/environment-variable.js';
@@ -154,6 +155,7 @@ const materialLayerFields = {
   iridescenceIor: layerNumber('iridescenceIor'),
   iridescenceThickness: layerNumber('iridescenceThickness'),
   toon: layerNumber('toon'),
+  softEdge: layerNumber('softEdge'),
   toonColors: z.array(z.array(z.number().min(0).max(TOON_COLOR_MAXIMUM)).length(3)).min(1).max(8).optional().describe('One linear [r,g,b] per toon step, darkest first; the count must equal toon.'),
 };
 
@@ -162,6 +164,7 @@ const waterFields = {
   waterPreset: z.enum(['lake', 'sea', 'river']).optional().describe('Water tag.'),
   absorption: z.array(z.number().min(0).max(20)).length(3).optional().describe('Water tag: RGB per metre.'),
   turbidity: unit.optional().describe('Water tag: 0 clear to 1 murky.'),
+  caustics: z.record(z.string(), z.unknown()).nullable().optional().describe('Water tag: sun caustics on the bed, {scale, speed, intensity, depthFade}; scene_capabilities water.'),
   waterRamp: z.record(z.string(), z.unknown()).optional().describe('Water tag: flat colour ramp, see scene_capabilities water.'),
 };
 const subsurfaceTriple = ([minimum, maximum]) => z.tuple([0, 1, 2].map(() => z.number().min(minimum).max(maximum)));
@@ -198,7 +201,7 @@ const materialFields = {
 };
 const materialTag = z.enum(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']).optional().describe('Surface kind; liquid, foam, foliage, grass and water change how it renders: see scene_capabilities materialTags and water.');
 const materialCore = coreOf(materialFields, ['color', 'metallic', 'roughness', 'emission', 'opacity']);
-const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
+const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
 const materialListed = (strictSchema, description, extraCore) => listed('materialFields', strictSchema, `${description} ${materialMore}`, { ...extraCore, ...materialCore });
 const liquidOptics = z.strictObject({
   thickness: z.number().min(0).max(100).optional().describe('Metres of liquid where it faces the camera.'),
@@ -651,9 +654,11 @@ const motionTrackProperties = {
   node: ['translation', 'rotation', 'scale'],
   material: ['color', 'emissiveColor', 'emission', 'metallic', 'roughness'],
   camera: ['eye', 'target', 'fov', 'roll'],
+  morph: ['weight'],
   geometry: ['oceanTime'],
 };
-const motionTrackKinds = [...Object.keys(motionTrackProperties), 'light', 'sun', 'environment', 'effects'];
+// The backend's list, so scene_create and set-motion accept the same kinds.
+const motionTrackKinds = MOTION_TRACK_KIND_NAMES;
 const motionTrackFields = ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'];
 // A union reports only "Invalid input"; name the field and the allowed ones the way set-motion does.
 function motionTrackUnionMessage(issue) {
@@ -689,6 +694,7 @@ const motion = z.strictObject({
     motionTrack('camera', 'target', vector3, vector3),
     motionTrack('camera', 'fov', finite.gt(0).lt(180), finite),
     motionTrack('camera', 'roll', finite, finite),
+    motionTrack('morph', 'weight', unit, finite),
     motionTrack('geometry', 'oceanTime', finite.min(-1e6).max(1e6), finite),
     lookTrack,
   ], { error: motionTrackUnionMessage })).max(128).optional().describe('Keyframe tracks; leave out for a motion made only of drivers, ik or constraints.'),
@@ -904,11 +910,15 @@ const renderSettings = z.strictObject({
   width: z.number().int().min(64).max(MAXIMUM_JOB_SIDE).optional(),
   height: z.number().int().min(64).max(MAXIMUM_JOB_SIDE).optional(),
   items: z.array(z.string().max(260)).min(1).max(256).optional().describe('icons: catalog GLB names or asset ids; a PNG each plus atlas.png, icons.json. See scene_capabilities jobs.icons.'),
-  size: z.union([z.literal(64), z.literal(128), z.literal(256), z.literal(512)]).optional().describe('icons: pixels per icon side (default 256).'),
-  style: z.enum(['clean', 'toon', 'sketch']).optional().describe('icons: clean (default) or toon.'),
+  size: z.union([z.literal(64), z.literal(128), z.literal(256), z.literal(512)]).optional(),
+  style: z.enum(['clean', 'toon', 'sketch']).optional().describe('icons: clean (default), toon or sketch.'),
   viewpoint: z.union([z.literal('three-quarter'), z.strictObject({ azimuth: z.number().optional(), elevation: z.number().optional() })]).optional().describe('icons: three-quarter or azimuth/elevation degrees.'),
-  scale: z.enum(['fit', 'relative']).optional().describe('icons: fit fills every icon; relative keeps one scale for the set.'),
-  padding: z.number().optional().describe('icons: border fraction, 0.02 to 0.4.'),
+  scale: z.enum(['fit', 'relative']).optional(),
+  padding: z.number().optional(),
+  angles: z.number().optional(),
+  breakdown: z.boolean().optional(),
+  seed: z.number().optional(),
+  sketch: z.looseObject({}).optional(),
   fps: z.number().int().min(1).max(MAXIMUM_JOB_FPS).optional(),
   duration: z.number().min(0.1).max(60).optional(),
   animation: z.strictObject({ clip: z.number().int().min(0), start: z.number().min(0).max(3600).optional() }).optional(),

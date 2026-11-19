@@ -44,6 +44,7 @@ const MATERIAL_LAYER_NOTES = Object.freeze({
   iridescence: 'Thin-film colour shift on reflections.',
   iridescenceIor: 'Film index of refraction.',
   iridescenceThickness: 'Film nanometres; colours cycle as it grows.',
+  softEdge: 'Fades alpha toward the silhouette by the facing cosine to this power, so a translucent sphere reads as a soft round blob with no edge (dust, haze); 0 off. Pair with opacity and an unlit tag.',
   toon: 'Light steps (toon); 0 off. Add toonColors, one linear [r,g,b] (0-4) per step from darkest to lightest and as many as toon, to give each step its own colour; the side facing away from the light shows ambient.',
 });
 
@@ -269,7 +270,7 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   ]),
   materialTags: Object.freeze(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']),
   // A flat water sheet; the largest sets the level. A bed d metres down keeps exp(-absorption * d) per channel (RGB per metre).
-  water: Object.freeze({ presets: WATER_PRESETS_SUMMARY, default: 'lake', note: 'absorption 0..20, turbidity 0..1 softens shadows below; opacity under 1 shows the bed. waterRamp {colors [3-5 display colours, deep to bright: #rrggbb shows as that hex, rgb numbers as their sRGB encoding], drivers {height, facing, sun: weights 0-1; default height 1}, heightRange [low, high] world y (-1, 1), steps hard|soft (hard), crestTint {color, strength 0-1}} paints flat tones that own the colour (no sky reflection; foam and glint stay), off by default.' }),
+  water: Object.freeze({ presets: WATER_PRESETS_SUMMARY, default: 'lake', note: 'absorption 0..20, turbidity 0..1 softens shadows below; opacity under 1 shows the bed. caustics {scale m 0.05-50, speed 0-10, intensity 0-10, depthFade 0-10} adds a moving sun net on surfaces below (off unless given, raster only). waterRamp {colors [3-5 display colours, deep to bright: #rrggbb shows as that hex, rgb numbers as their sRGB encoding], drivers {height, facing, sun: weights 0-1; default height 1}, heightRange [low, high] world y (-1, 1), steps hard|soft (hard), crestTint {color, strength 0-1}} paints flat tones that own the colour (no sky reflection; foam and glint stay), off by default.' }),
   materialLayers: Object.freeze(Object.fromEntries(MATERIAL_LAYER_FIELDS.map(field => [field, Object.freeze({
     range: MATERIAL_LAYER_SCALAR_RANGES[field] ?? MATERIAL_LAYER_COLOR_RANGES[field] ?? 'above 0',
     note: MATERIAL_LAYER_NOTES[field],

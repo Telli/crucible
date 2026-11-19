@@ -18,17 +18,34 @@ function compileShader(gl, type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(`A real-time path tracer shader did not compile: ${gl.getShaderInfoLog(shader)}`);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(shader);
+    gl.deleteShader(shader);
+    throw new Error(`A real-time path tracer shader did not compile: ${log}`);
+  }
   return shader;
 }
 
 /** A program with a uniform lookup that remembers locations. */
 export function createPass(gl, fragmentSource, vertexSource = FULLSCREEN_VERTEX_SOURCE) {
   const program = gl.createProgram();
-  gl.attachShader(program, compileShader(gl, gl.VERTEX_SHADER, vertexSource));
-  gl.attachShader(program, compileShader(gl, gl.FRAGMENT_SHADER, fragmentSource));
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(`A real-time path tracer program did not link: ${gl.getProgramInfoLog(program)}`);
+  const shaders = [];
+  try {
+    const vertexShader = compileShader(gl, gl.VERTEX_SHADER, vertexSource);
+    shaders.push(vertexShader);
+    const fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+    shaders.push(fragmentShader);
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(`A real-time path tracer program did not link: ${gl.getProgramInfoLog(program)}`);
+  } catch (error) {
+    for (const shader of shaders) gl.deleteShader(shader);
+    gl.deleteProgram(program);
+    throw error;
+  }
+  // The program keeps its compiled shaders after linking, so they can be released here.
+  for (const shader of shaders) gl.deleteShader(shader);
   const locations = new Map();
   const locate = name => {
     if (!locations.has(name)) locations.set(name, gl.getUniformLocation(program, name));
@@ -51,6 +68,7 @@ export function createFloatTexture(gl, width, height) {
 
 /** A framebuffer from `{ slot, texture }` entries; slots without an entry are not drawn to. */
 export function createFramebuffer(gl, attachments) {
+  if (attachments.length === 0) throw new Error('A real-time path tracer framebuffer needs at least one { slot, texture } attachment.');
   const framebuffer = gl.createFramebuffer();
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
   const slotCount = Math.max(...attachments.map(entry => entry.slot)) + 1;
@@ -60,7 +78,10 @@ export function createFramebuffer(gl, attachments) {
     drawBuffers[slot] = gl.COLOR_ATTACHMENT0 + slot;
   }
   gl.drawBuffers(drawBuffers);
-  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error('The real-time path tracer cannot render to float targets here.');
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+    gl.deleteFramebuffer(framebuffer);
+    throw new Error('The real-time path tracer cannot render to float targets here.');
+  }
   return framebuffer;
 }
 
