@@ -4,6 +4,7 @@ import { parseGltf } from '../src/gltf.js';
 import { createAgentScene, loadAllAgentSceneModules } from '../src/agent-scene.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { groupParts } from '../src/renderer.js';
+import { normalizeJobSettings } from '../scripts/agent-render-jobs.mjs';
 import { skinnedStripAsset } from './fixtures/skinned-strip.js';
 
 const ASSET_ID = 'ab'.repeat(32);
@@ -134,4 +135,35 @@ test('an asset that is not in the pool is refused by id, and the 16 distinct ass
   for (const operation of many) pool.set(assetCopyKey(operation.node.asset.id, 0), await strip());
   scene.provideAssets(pool);
   assert.throws(() => scene.apply(many, { expectedRevision: scene.revision }), /at most 512 assets, 16 different ones/);
+});
+
+test('a placed clip gives the scene a timeline: render settings play it with no motion track (#2261)', async () => {
+  const nodes = [{ id: 'walker', asset: { id: ASSET_ID, clip: { index: 0, start: 0.5, speed: 2 } } }, { id: 'still', asset: { id: ASSET_ID } }];
+  const scene = createAgentScene(recipe(nodes), {}, { assets: await loadedAssets(3) });
+  assert.equal(scene.exportRecipe().motion, undefined, 'the recipe has no motion track');
+  const clipLength = scene.inspect().assets[0].clips[0].duration;
+  const clipEnds = scene.placedClipEnds();
+  assert.deepEqual(clipEnds, [0.5 + clipLength / 2]);
+  const joints = id => Array.from(scene.parts.find(part => part.name === `${id}/0`).skin.jointMatrices);
+  const first = joints('walker');
+  const settings = { kind: 'video', width: 64, height: 64, fps: 4 };
+  const clips = clipEnds.map(duration => ({ duration }));
+  const sceneRecipe = scene.exportRecipe();
+  const played = normalizeJobSettings({ ...settings, animation: { clip: 0, start: 0 } }, clips, sceneRecipe);
+  assert.deepEqual(played.motion, { start: 0 });
+  assert.equal(played.animation, undefined);
+  assert.equal(played.duration, clipEnds[0], 'a video with no duration runs as long as the placed clip');
+  scene.sampleMotion(played.motion.start + 0.75);
+  const later = joints('walker');
+  assert.notDeepEqual(later, first, 'the clip pose changes over the render time');
+  assert.throws(() => normalizeJobSettings({ ...settings, animation: { clip: 0 }, motion: { start: 0 } }, clips, sceneRecipe), /either motion or animation/);
+  assert.throws(() => normalizeJobSettings({ ...settings, animation: { clip: 0 } }, [], sceneRecipe), /this scene has none/);
+  assert.equal(normalizeJobSettings(settings, clips, sceneRecipe).duration, 1, 'a scene that plays no clip keeps the one second default');
+  assert.deepEqual(createAgentScene(recipe([]), {}).placedClipEnds(), []);
+});
+
+test('an empty motion on a scene that places a clip says how to play the clip', async () => {
+  const nodes = [{ id: 'walker', asset: { id: ASSET_ID, clip: { index: 0 } } }];
+  const scene = createAgentScene(recipe(nodes), {}, { assets: await loadedAssets(2) });
+  assert.throws(() => scene.apply([{ type: 'set-motion', motion: { duration: 1, tracks: [] } }], { expectedRevision: 0 }), /needs no motion: leave motion out/);
 });

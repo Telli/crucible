@@ -401,6 +401,16 @@ export function clipTimeAt(clip, duration, time) {
 }
 
 /**
+ * Scene seconds at which each placed clip finishes one pass, in placement order: its start plus its length at its speed.
+ * A render job reads these as the lengths of the scene's clips, so a scene that places a clip has a timeline of its own.
+ */
+export function placedClipEnds(runtime) {
+  return runtime.placements
+    .filter(record => record.clip)
+    .map(record => record.clip.start + record.asset.animations[record.clip.index].duration / record.clip.speed);
+}
+
+/**
  * Pose every animated placement at a scene time. Returns the world matrix of each part node and a commit/discard pair;
  * the pose is staged first so a failure leaves every asset where it was.
  */
