@@ -23,12 +23,14 @@ function buildUpDirections() {
   return directions;
 }
 
-function requireFinitePositions(positions, label) {
-  if (!positions || positions.length === 0 || positions.length % 3 !== 0) {
+function requireFinitePositions(positions, label, allowEmpty = false) {
+  if (!positions) throw new RangeError(`${label} needs vertex positions (a multiple of 3 finite floats).`);
+  if (!allowEmpty && positions.length === 0) {
     throw new RangeError(`${label} needs at least one vertex position (a multiple of 3 finite floats).`);
   }
+  if (positions.length % 3 !== 0) throw new RangeError(`${label} needs vertex positions as a multiple of 3 finite floats.`);
   for (let offset = 0; offset < positions.length; offset++) {
-    if (!Number.isFinite(positions[offset])) throw new RangeError(`${label} needs finite vertex positions; fix the NaN or Infinity before building the crown.`);
+    if (!Number.isFinite(positions[offset])) throw new RangeError(`${label} needs finite vertex positions; fix the NaN or Infinity before using the crown.`);
   }
 }
 
@@ -85,7 +87,7 @@ export function createCrownSkyField(positions) {
   }
 
   function visibilityOf(targetPositions) {
-    requireFinitePositions(targetPositions, 'visibilityOf');
+    requireFinitePositions(targetPositions, 'visibilityOf', true);
     const vertexCount = targetPositions.length / 3;
     const visibility = new Float32Array(vertexCount);
     for (let vertex = 0; vertex < vertexCount; vertex++) {

@@ -139,5 +139,12 @@ test('a missing or non-finite crown vertex is refused before it can taint the fi
     assert.throws(() => createCrownSkyField(bad), { name: 'RangeError', message: /vertex position|finite vertex positions/ });
   }
   const field = createCrownSkyField(new Float32Array([0, 0, 0, 1, 0, 0]));
+  assert.throws(() => field.visibilityOf(null), { name: 'RangeError', message: /needs vertex position/ });
+  assert.throws(() => field.visibilityOf(new Float32Array([0, 0])), { name: 'RangeError', message: /multiple of 3 finite floats/ });
   assert.throws(() => field.visibilityOf(new Float32Array([0, 0, Number.NaN])), { name: 'RangeError', message: /finite vertex positions/ });
+});
+
+test('visibilityOf keeps an empty target list empty', () => {
+  const field = createCrownSkyField(new Float32Array([0, 0, 0, 1, 0, 0]));
+  assert.deepEqual(field.visibilityOf(new Float32Array(0)), new Float32Array(0));
 });
