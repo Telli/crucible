@@ -1013,7 +1013,8 @@ vec3 environmentLighting(vec3 normal, vec3 specularNormal, vec3 baseReflectance,
 };
 
 // The world materials share one block of code in world-material-shader.js. A shader that draws none of them gets empty slots.
-const WORLD_MATERIAL_FEATURES = Object.freeze(['water', 'foliage', 'grass', 'terrain', 'moss', 'fire', 'smoke']);
+// The splat code calls terrainNoise, which this code defines, so a splat material pulls it in too (#2272).
+const WORLD_MATERIAL_FEATURES = ['water', 'foliage', 'grass', 'terrain', 'moss', 'fire', 'smoke', 'splat'];
 
 const MODULE_FEATURES = {
   splat: {

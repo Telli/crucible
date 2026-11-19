@@ -847,7 +847,13 @@ function createPeerSide(settings, stats) {
     entity.owner = peerId;
     entity.term = raw.m;
     entity.tag = delta.t ?? null;
-    entity.state = dequantizeEntity(delta, steps);
+    // A new owner sends the whole entity, but `x` is optional on the wire and a null value is the delete marker a delta
+    // uses: read a missing `x` as no variables and drop a null one instead of storing it as 0.
+    const variables = {};
+    for (const [name, value] of Object.entries(delta.x ?? {})) {
+      if (value !== null) variables[name] = value;
+    }
+    entity.state = dequantizeEntity({ ...delta, x: variables }, steps);
     entity.samples.push({ time: clock, state: cloneState(entity.state) });
     if (entity.samples.length > NETCODE_LIMITS.maximumSamplesPerEntity) entity.samples.shift();
     entities.set(id, entity);

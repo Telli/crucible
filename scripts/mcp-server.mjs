@@ -1,4 +1,5 @@
 import { answerCapabilities, MAX_TOPICS_PER_CALL } from './capabilities-topics.mjs';
+import { MOTION_TRACK_KIND_NAMES } from '../src/motion-track-kinds.js';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { readEnvironmentVariable } from '../src/environment-variable.js';
@@ -154,6 +155,7 @@ const materialLayerFields = {
   iridescenceIor: layerNumber('iridescenceIor'),
   iridescenceThickness: layerNumber('iridescenceThickness'),
   toon: layerNumber('toon'),
+  softEdge: layerNumber('softEdge'),
   toonColors: z.array(z.array(z.number().min(0).max(TOON_COLOR_MAXIMUM)).length(3)).min(1).max(8).optional().describe('One linear [r,g,b] per toon step, darkest first; the count must equal toon.'),
 };
 
@@ -652,9 +654,11 @@ const motionTrackProperties = {
   node: ['translation', 'rotation', 'scale'],
   material: ['color', 'emissiveColor', 'emission', 'metallic', 'roughness'],
   camera: ['eye', 'target', 'fov', 'roll'],
+  morph: ['weight'],
   geometry: ['oceanTime'],
 };
-const motionTrackKinds = [...Object.keys(motionTrackProperties), 'light', 'sun', 'environment', 'effects'];
+// The backend's list, so scene_create and set-motion accept the same kinds.
+const motionTrackKinds = MOTION_TRACK_KIND_NAMES;
 const motionTrackFields = ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'];
 // A union reports only "Invalid input"; name the field and the allowed ones the way set-motion does.
 function motionTrackUnionMessage(issue) {
@@ -690,6 +694,7 @@ const motion = z.strictObject({
     motionTrack('camera', 'target', vector3, vector3),
     motionTrack('camera', 'fov', finite.gt(0).lt(180), finite),
     motionTrack('camera', 'roll', finite, finite),
+    motionTrack('morph', 'weight', unit, finite),
     motionTrack('geometry', 'oceanTime', finite.min(-1e6).max(1e6), finite),
     lookTrack,
   ], { error: motionTrackUnionMessage })).max(128).optional().describe('Keyframe tracks; leave out for a motion made only of drivers, ik or constraints.'),

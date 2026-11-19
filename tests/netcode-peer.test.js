@@ -98,6 +98,24 @@ test('an entity of a peer that left is dropped, and bad messages and options are
   assert.deepEqual(alice.netcode.entityIds, ['bob']);
 });
 
+test('a peer entity without variables or with a null variable is read as no variables (#2606)', () => {
+  const network = createLoopbackNetwork({ seed: 12, latencyMilliseconds: 10 });
+  const observer = createPeer(network, 'observer');
+  const sender = network.createTransport('sender');
+  run(network, [observer], 1);
+  const message = (variables, tick) => ({
+    type: 'peer-state',
+    session: 'a',
+    tick,
+    entities: { crate: { p: [100, 0, 0], r: [0, 0, 0, 1000], v: [0, 0, 0], ...(variables && { x: variables }), m: 0 } },
+  });
+  sender.send('observer', message(undefined, 1));
+  sender.send('observer', message({ door: null }, 2));
+  run(network, [observer], 3);
+  assert.equal(observer.netcode.getEntityOwner('crate'), 'sender');
+  assert.deepEqual(observer.netcode.getEntityState('crate').variables, {});
+});
+
 test('an older run of a peer is stale and a restart on the same id is followed', () => {
   const network = createLoopbackNetwork({ seed: 9, latencyMilliseconds: 10 });
   const observer = createPeer(network, 'observer');

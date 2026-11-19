@@ -128,7 +128,7 @@ The `puzzle` sample of `scripts/smoke-game-web.mjs` is two plank crates, two mar
 - An NPC needs `rootMotion` and a number parameter `speed`. Its path follower sets `speed`, so idle, walk and run blend; it moves by the root motion, turns at corners and stops at the last of up to 256 `[x, z]` waypoints, where `speed` returns to 0. `cruiseSpeed` is 2.2 by default; `yaw` and `footOffset` work as for the player. Each NPC node is separate from the player and the other NPCs.
 - Root travel along +Z works as written; for clips whose root travels -Z set `rootMotion.facing` to `"-z"`.
 
-A wrong field is refused with its path and the values to use, for example `player.animation.clips.walk.tracks[0].target names "Ghost", which is not a child node of the character`. `window.__game.animation` and `window.__game.npcs` expose the graphs.
+A wrong field is refused with its path and the values to use, for example `player.animation.clips.walk.tracks[0].target names "Ghost", which is not a child node of the character`. `window.__game.animation` and `window.__game.npcs` expose the graphs. A malformed `nodes` or `npcs` table is skipped by the placed-asset scan so validation can name the field before any asset load.
 
 ### A placed character
 
