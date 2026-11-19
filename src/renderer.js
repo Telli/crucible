@@ -1190,7 +1190,14 @@ export class CrucibleRenderer {
     const missing = features.filter(feature => !this.shaderFeatures.has(feature));
     if (missing.length === 0) return;
     missing.forEach(feature => this.shaderFeatures.add(feature));
-    this.rebuildMainProgram();
+    try {
+      this.rebuildMainProgram();
+    } catch (error) {
+      // A program that is still linking (ProgramNotReady) leaves the old main program in place. Forget the features, so the draw that comes back asks for them again
+      // and finds the program built; keeping them would draw the old program with no render pass code, and the emission mask would read the lit image (#1360).
+      missing.forEach(feature => this.shaderFeatures.delete(feature));
+      throw error;
+    }
   }
 
   rebuildMainProgram() {
@@ -2744,6 +2751,10 @@ export class CrucibleRenderer {
   }
 
   render(frame) {
+    this.localEmissionMaskReady = false;
+    if (frame.pass === undefined && !frame.reflectionTarget && (frame.environment?.localVolumes ?? this.environment?.localVolumes)?.length > 0) {
+      this.localEmissionMaskReady = requireFeatureCode('volumeFog').support.drawEmissionMask(this, frame);
+    }
     const { eye, target = [0, 1.2, 0], armorColor = [0.53, 0.39, 0.24], armorSurface = [0.88, 0.32], exposure = 1, inspection = false } = frame;
     const effects = resolveEffects(frame.effects);
     const environment = { lightDirection: [-3, 6, 4], fogColor: [0.35, 0.43, 0.43], fogDensity: 0.006, daylight: 1, explosionCenter: [0, 0, 0], ...this.environment, ...frame.environment };
@@ -2879,7 +2890,7 @@ export class CrucibleRenderer {
       return;
     }
     if (passMode) {
-      this.passSupport.copyToCanvas();
+      if (!frame.emissionMaskPass) this.passSupport.copyToCanvas();
     } else if (!this.benchmark) {
       this.drawTranslucent(frame, environment, assemblyAmount, environmentMap);
       this.drawBlendBatches(frame);
