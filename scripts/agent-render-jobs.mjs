@@ -381,6 +381,9 @@ function allowedFile(name) {
 }
 
 const FILE_IN_USE_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
+// 7 attempts with 10 ms doubling waits is 630 ms in the worst case.
+const STATUS_RENAME_ATTEMPTS = 7;
+const STATUS_RENAME_BACKOFF_MS = 10;
 
 async function regularFile(path) {
   const details = await lstat(path);
@@ -445,7 +448,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
   // or the disk fills. Where hard links are not supported it falls back to creating the target with `wx` and writing into it.
   // The file operations used here can be replaced through `lockTakeoverHooks.fileOperations`, so tests can make one of them fail.
   const removeJobFile = lockTakeoverHooks.removeJobFile ?? unlink;
-  const publishOperations = { writeFile, link, open, unlink, ...lockTakeoverHooks.fileOperations };
+  const publishOperations = { writeFile, link, open, unlink, rename, ...lockTakeoverHooks.fileOperations };
 
   // Removing the temporary name can fail for a moment (a virus scanner holding the file on Windows), so it is retried with a
   // short backoff. The target must never be left with two names: that makes it fail the single-link check of the store.
@@ -808,6 +811,27 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
     return jobs.get(jobId);
   }
 
+  // A program that polls status.json (an agent's shell on Windows) can hold it open for a moment, and the rename onto it then fails
+  // with EPERM, EBUSY or EACCES. Retry for under a second. If it stays blocked, the last good status.json stays on disk, the job
+  // keeps running from its in-memory record, and a warning says so: a status write must never fail a render.
+  async function replaceStatusFile(job, pending, target) {
+    for (let attempt = 0; attempt < STATUS_RENAME_ATTEMPTS; attempt += 1) {
+      try {
+        await publishOperations.rename(pending, target);
+        return;
+      } catch (error) {
+        if (!FILE_IN_USE_CODES.has(error.code)) throw error;
+        if (attempt === STATUS_RENAME_ATTEMPTS - 1) {
+          job.statusWarning = `Could not update status.json (${error.code}); another program holds it open. The previous status stays on disk until it is released.`;
+          process.emitWarning(job.statusWarning, { code: 'CRUCIBLE_STATUS_BLOCKED' });
+          await publishOperations.unlink(pending).catch(() => {});
+          return;
+        }
+        await new Promise(resolveWait => setTimeout(resolveWait, STATUS_RENAME_BACKOFF_MS * 2 ** attempt));
+      }
+    }
+  }
+
   function persist(job, record = job.record) {
     const text = JSON.stringify(record);
     // A write that failed already told its own caller; it must not make every later write reject with the same old error.
@@ -815,7 +839,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       const directory = await directoryFor(job.record.jobId);
       const pending = join(directory, 'status.json.pending');
       await writeFile(pending, text, { mode: 0o600 });
-      await rename(pending, join(directory, 'status.json'));
+      await replaceStatusFile(job, pending, join(directory, 'status.json'));
     });
     return job.persistence;
   }
