@@ -54,6 +54,8 @@ Scenes built with Crucible open live in the browser on the [showcase](https://cr
   <a href="https://crucible.codepawl.com/object.html"><img src="https://crucible.codepawl.com/previews/wall-e.webp" alt="A robot model in the object studio, rendered by Crucible" width="49%"></a>
 </p>
 
+The pictures above are rebuilt from the current code with `node scripts/render-readme-previews.mjs` (add names to rebuild some, `--preview <folder>` for small test renders; [guide](docs/readme-previews.md)).
+
 Made something with Crucible? [Post it in Show and tell](https://github.com/codepawl/crucible/discussions/new?category=show-and-tell). We feature picked work on the [showcase](https://crucible.codepawl.com/showcase.html#community), with credit.
 
 ## What it is
