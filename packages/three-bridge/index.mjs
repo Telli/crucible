@@ -270,6 +270,9 @@ function instanceCount(object, state) {
 
 function importMesh(object, limits, state) {
   checkMesh(object, state);
+  if (!object.material) {
+    throw new ThreeBridgeError(`${describe(object)} has ${object.material === null ? 'null' : 'no'} material. Assign a MeshStandardMaterial to mesh.material, or pass skipUnsupported: true to leave the object out.`);
+  }
   const materials = Array.isArray(object.material) ? object.material : [object.material];
   const groups = Array.isArray(object.material) ? object.geometry.groups : [{ start: 0, count: Infinity, materialIndex: 0 }];
   if (!groups?.length) {
@@ -279,7 +282,7 @@ function importMesh(object, limits, state) {
   if (state.parts.length + instances * groups.length > limits.maxParts) {
     throw new ThreeBridgeError(`${describe(object)} would take the tree past ${limits.maxParts} parts (${instances} instances x ${groups.length} materials). Raise maxParts (up to ${HARD_LIMITS.maxParts}) or import fewer instances.`);
   }
-  const cacheKey = materials.some(material => material.vertexColors);
+  const cacheKey = materials.some(material => material?.vertexColors);
   const cached = state.geometries.get(object.geometry) ?? new Map();
   if (!cached.has(cacheKey)) cached.set(cacheKey, importGeometry(object, cacheKey, limits, state));
   state.geometries.set(object.geometry, cached);
@@ -290,7 +293,7 @@ function importMesh(object, limits, state) {
   const found = [];
   for (const group of groups) {
     const material = materials[group.materialIndex];
-    if (!material) throw new ThreeBridgeError(`${describe(object)} geometry.groups uses materialIndex ${group.materialIndex} but the material array has ${materials.length}. Fix the group.`);
+    if (!material) throw new ThreeBridgeError(`${describe(object)} geometry.groups uses materialIndex ${group.materialIndex} but the material array has no material there (${materials.length} entries). Fix the group or fill that entry of mesh.material.`);
     if (!state.materials.has(material)) state.materials.set(material, importMaterial(material, object, state));
     const geometry = Number.isFinite(group.count)
       ? { ...whole, indices: whole.indices.slice(group.start, group.start + group.count) }
