@@ -66,7 +66,7 @@ function targetOf(operation) {
 }
 
 // Applies one operation to the working copy and says what it changed. Fields it cannot judge count as changed.
-function describeOperation(working, operation, maxText) {
+function describeOperation(working, operation, maxText, after) {
   const { type } = operation;
   const add = /^add-(node|material|geometry)$/.exec(type);
   if (add) {
@@ -99,6 +99,14 @@ function describeOperation(working, operation, maxText) {
     if (differing.length === 0) return { warning: 'no change, values already set' };
     for (const name of differing) target[name] = structuredClone(operation[name]);
     return { changed: shortList(differing, maxText) };
+  }
+  if (type === 'set-motion' && Object.hasOwn(operation, 'removeTracks')) {
+    // The selectors are resolved by the scene when it applies the batch; the report reads the result from the recipe after it.
+    const before = working.motion?.tracks?.length ?? 0;
+    const remaining = after.motion;
+    if (remaining) working.motion = structuredClone(remaining);
+    else delete working.motion;
+    return { changed: `removed ${before - (remaining?.tracks?.length ?? 0)} motion tracks` };
   }
   if (Object.hasOwn(OWN_SECTIONS, type)) {
     const name = OWN_SECTIONS[type];
@@ -153,7 +161,7 @@ export function describeApplication(before, after, operations, limits = APPLY_RE
   const working = structuredClone(before);
   for (const collection of Object.values(COLLECTIONS)) working[collection] ??= [];
   const entries = operations.map((operation, index) => {
-    const outcome = describeOperation(working, operation, limits.maxText);
+    const outcome = describeOperation(working, operation, limits.maxText, after);
     const target = targetOf(operation);
     return { i: index, op: operation.type, ...(target === undefined ? {} : { target }), ...outcome };
   });
