@@ -6,7 +6,7 @@ import { applyWaterReflection, attachWaterReflection } from './water-reflection.
 import { createCameraSampler } from './camera-track.js';
 import { inWholeWorldOrder, readPartRanks } from './showcase-download.js';
 import { withinDrawnLightLimits } from './drawn-light-lists.js';
-import { createFileSceneClipPlayer } from './file-scene-clip.js';
+import { createFileSceneRenderAt } from './file-scene-clip.js';
 import { partsForRendererOptions, withSceneFileRendererDefaults } from './dense-lods.js';
 
 // Headless twin of the showcase page for scripts/render-media.mjs (--scene file). The export script serves the scene.json
@@ -71,12 +71,7 @@ async function start() {
   attachWaterReflection(renderer, reflection.surface, { updateEvery: 1 });
   const frame = { exposure: description.exposure ?? 1, ...(description.frame ?? {}) };
   // A GLB with an animation clip plays its first clip on a loop, as the showcase page does; one without a clip is drawn as before.
-  const clipPlayer = createFileSceneClipPlayer({ asset, posedParts: assetOwnParts, sceneParts: asset.parts, rendererParts });
-  const renderAt = seconds => {
-    clipPlayer?.poseAt(renderer, seconds);
-    const pose = camera ? camera.sample(seconds) : { eye: description.eye, target: description.target };
-    renderer.render({ ...frame, ...pose });
-  };
+  const renderAt = createFileSceneRenderAt({ asset, posedParts: assetOwnParts, sceneParts: asset.parts, rendererParts, renderer, camera, description, frame });
   // `parts` and `environment` let scripts/render-file-native.mjs pack the same scene for the native path tracer.
   window.__scene = { renderer, duration: camera?.duration, renderAt, pause() {}, parts: reflection.parts, environment: { ...(rendererOptions.environment ?? {}), map } };
 }
