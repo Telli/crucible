@@ -1519,3 +1519,68 @@ test('dispose removes the Studio and every listener it added to the page', testC
   dispatch(ui.dom.document, 'keydown', { key: 'r' });
   assert.equal(ui.controller.tool, 'translate');
 });
+
+test('a reload of the watched file walks a named agent cursor over the objects it changed', async testContext => {
+  const ui = mountStudio(testContext, { watchedPath: 'C:/agent/live.scene.json', agentName: 'Claude' });
+  const cursor = ui.viewport.querySelector('.crucible-studio-agent-cursor');
+  const outlines = () => ui.gizmo.descendants().filter(element => element.getAttribute('class') === 'crucible-studio-agent-outline');
+  assert.equal(cursor.hidden, true);
+  const edited = makeRecipe();
+  edited.nodes[1].translation = [-1.5, 0.5, 0];
+  edited.nodes[2].scale = [0.8, 0.8, 0.8];
+  await ui.studio.loadExternalTextFile(JSON.stringify(edited), { filePath: 'C:/agent/live.scene.json', fileName: 'live.scene.json', recordUndo: false });
+  assert.equal(cursor.hidden, false);
+  assert.equal(cursor.querySelector('.crucible-studio-agent-name').textContent, 'Claude');
+  assert.equal(cursor.dataset.nodeId, 'hero');
+  assert.equal(ui.status(), 'Claude edited hero, orb');
+  ui.studio.renderNow();
+  assert.equal(outlines().length, 1);
+  const heroLeft = Number.parseFloat(cursor.style.left);
+  assert.ok(heroLeft > 0 && heroLeft < 50, `the cursor sits on the hero, left of centre: ${cursor.style.left}`);
+  ui.dom.runTimers();
+  assert.equal(cursor.dataset.nodeId, 'orb');
+  assert.ok(Number.parseFloat(cursor.style.left) > 50, `the cursor moved to the orb: ${cursor.style.left}`);
+  ui.dom.runTimers();
+  assert.equal(cursor.hidden, true);
+  ui.studio.renderNow();
+  assert.equal(outlines().length, 0);
+});
+
+test('the agent cursor stays away for a file the person opens and takes a name per edit', async testContext => {
+  const ui = mountStudio(testContext, { watchedPath: 'C:/agent/live.scene.json' });
+  const cursor = ui.viewport.querySelector('.crucible-studio-agent-cursor');
+  const edited = makeRecipe();
+  edited.nodes[1].translation = [1, 0.5, 0];
+  await ui.studio.loadExternalTextFile(JSON.stringify(edited), { filePath: 'C:/other.scene.json', fileName: 'other.scene.json' });
+  assert.equal(cursor.hidden, true);
+  await ui.studio.loadExternalTextFile(JSON.stringify(makeRecipe()), { filePath: 'C:/other.scene.json', agent: { name: 'Builder' } });
+  assert.equal(cursor.hidden, false);
+  assert.equal(cursor.querySelector('.crucible-studio-agent-name').textContent, 'Builder');
+  await ui.studio.loadExternalTextFile(JSON.stringify(edited), { filePath: 'C:/other.scene.json', agent: false });
+  assert.equal(cursor.hidden, true);
+  const relit = makeRecipe();
+  relit.nodes = edited.nodes;
+  relit.environment.setup = 'sunset';
+  await ui.studio.loadExternalTextFile(JSON.stringify(relit), { agent: true });
+  assert.equal(cursor.hidden, true);
+  assert.equal(ui.status(), 'Agent changed the scene look');
+});
+
+test('showAgentEdit points at named objects, skips unknown ones and rejects bad input', testContext => {
+  const ui = mountStudio(testContext);
+  const cursor = ui.viewport.querySelector('.crucible-studio-agent-cursor');
+  ui.studio.showAgentEdit({ name: 'Claude', nodeIds: ['missing', 'orb'] });
+  assert.equal(cursor.dataset.nodeId, 'orb');
+  assert.equal(ui.status(), 'Claude edited missing, orb');
+  const before = cursor.style.left;
+  ui.controller.orbitCamera({ deltaAzimuth: 0.6 });
+  ui.studio.renderNow();
+  assert.notEqual(cursor.style.left, before, 'the cursor follows its object when the camera moves');
+  ui.studio.showAgentEdit({ nodeIds: [] });
+  assert.equal(cursor.hidden, true);
+  assert.throws(() => ui.studio.showAgentEdit({ name: '', nodeIds: [] }), /agent name must be a string/);
+  assert.throws(() => ui.studio.showAgentEdit({ nodeIds: [7] }), /nodeIds must be an array of node id strings/);
+  assert.throws(() => ui.studio.showAgentEdit({ nodeIds: 'orb' }), /nodeIds must be an array of node id strings/);
+  assert.throws(() => ui.controller.nodeOutline(''), /nodeOutline requires a node id string/);
+  assert.throws(() => mountStudio(testContext, { sharedDom: ui.dom, agentName: '' }), /agent name must be a string/);
+});

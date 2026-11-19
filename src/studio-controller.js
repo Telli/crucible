@@ -747,10 +747,15 @@ export function createStudioController({
 
   // Screen outline of the selection: the convex hull of its projected vertices, so the selected object reads in the viewport.
   function selectionOutline() {
-    if (!selectedNodeId) {
-      return null;
+    return selectedNodeId ? nodeOutline(selectedNodeId) : null;
+  }
+
+  // The same outline for any node, so the viewport can point at an object that is not the selection.
+  function nodeOutline(nodeId) {
+    if (typeof nodeId !== 'string' || nodeId === '') {
+      throw new TypeError('nodeOutline requires a node id string.');
     }
-    const memberIds = descendantIdsOf(currentScene.exportRecipe().nodes, selectedNodeId);
+    const memberIds = descendantIdsOf(currentScene.exportRecipe().nodes, nodeId);
     const memberParts = currentScene.parts.filter(part => memberIds.has(part.name) && part.matrix && part.geometry?.positions);
     const totalVertices = memberParts.reduce((count, part) => count + part.geometry.positions.length / 3, 0);
     if (totalVertices === 0) {
@@ -1584,6 +1589,7 @@ export function createStudioController({
     pickAt,
     gizmoHandles,
     selectionOutline,
+    nodeOutline,
     beginGizmoDrag,
     updateGizmoDrag,
     endGizmoDrag,

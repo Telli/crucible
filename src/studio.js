@@ -10,6 +10,7 @@ import { encodePack } from './scene-pack-format.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
 import { studioIconPath } from './studio-icons.js';
+import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
 import {
   STUDIO_LENS_PRESETS,
   STUDIO_MATERIAL_PRESETS,
@@ -565,12 +566,14 @@ export function createStudio(container, {
   fileName: initialFileName = 'untitled.scene.json',
   homeHref = null,
   watchedPath: initialWatchedPath = null,
+  agentName: initialAgentName = DEFAULT_AGENT_NAME,
   onDirtyChange,
 } = {}) {
   if (!container || typeof container.append !== 'function') {
     throw new TypeError('createStudio requires a DOM container element.');
   }
   const documentReference = container.ownerDocument;
+  const defaultAgentName = assertAgentName(initialAgentName);
   injectStudioStyles(documentReference);
 
   const initialRecipe = suppliedRecipe ?? (suppliedScene ? null : buildTemplateRecipe(template));
@@ -941,7 +944,8 @@ export function createStudio(container, {
     projectionPillButton,
   );
 
-  viewportElement.append(canvas, gizmoSvg, hintBar, statusRegion, dropOverlay);
+  const agentPresence = createAgentPresence(documentReference, { controller, requestDraw: () => requestFrame() });
+  viewportElement.append(canvas, gizmoSvg, agentPresence.element, hintBar, statusRegion, dropOverlay);
 
   // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
   const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
@@ -1401,10 +1405,19 @@ export function createStudio(container, {
     return { packBytes, posterDataUrl, title, stripped };
   }
 
-  async function loadExternalTextFile(text, { filePath = null, fileName = 'scene.json', recordUndo = true } = {}) {
+  // `agent` says whether an AI agent made this edit: true, false, or { name }. Left out, a reload of the watched file counts as one.
+  async function loadExternalTextFile(text, { filePath = null, fileName = 'scene.json', recordUndo = true, agent } = {}) {
     const parsed = JSON.parse(text);
+    const madeByAgent = agent ?? (filePath !== null && filePath === activeFilePath);
+    const agentLabel = assertAgentName(madeByAgent?.name ?? defaultAgentName);
+    const recipeBefore = madeByAgent ? controller.exportRecipe() : null;
     await loadAgentSceneModules(parsed);
     controller.loadRecipe(parsed, { recordUndo });
+    if (madeByAgent) {
+      showAgentEdit({ name: agentLabel, ...diffRecipeNodes(recipeBefore, controller.exportRecipe()) });
+    } else {
+      agentPresence.hide();
+    }
     activeFilePath = filePath;
     activeFileName = fileName;
     isDirty = false;
@@ -1590,12 +1603,30 @@ export function createStudio(container, {
     });
   }
 
+  function drawAgentOutline() {
+    const outline = agentPresence.place();
+    if (outline) {
+      gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
+        class: 'crucible-studio-agent-outline',
+        points: outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
+      }));
+    }
+  }
+
+  // Points the named agent cursor at each object an edit touched and says what changed.
+  function showAgentEdit({ name = defaultAgentName, nodeIds = [], removedNodeIds = [], otherChange = false } = {}) {
+    const label = assertAgentName(name);
+    agentPresence.show({ name: label, nodeIds });
+    announce(describeAgentEdit(label, { nodeIds, removedNodeIds, otherChange }));
+  }
+
   function renderPass() {
     insideDraw = true;
     try {
       syncViewportDimensions();
       drawSceneFrame();
       renderGizmoMarkup(documentReference, gizmoSvg, controller);
+      drawAgentOutline();
     } finally {
       insideDraw = false;
     }
@@ -2059,6 +2090,7 @@ export function createStudio(container, {
     exportRecipe: () => controller.exportRecipe(),
     loadRecipe: (recipeInput, options) => controller.loadRecipe(recipeInput, options),
     loadExternalTextFile,
+    showAgentEdit,
     selectNode: nodeId => controller.selectNode(nodeId),
     setTool: tool => controller.setTool(tool),
     setActiveTab: tab => selectInspectorTab(tab),
@@ -2082,6 +2114,7 @@ export function createStudio(container, {
     },
     dispose() {
       clearTimeout(statusTimer);
+      agentPresence.dispose();
       if (frameHandle) cancelAnimationFrame(frameHandle);
       documentReference.removeEventListener('keydown', onWindowKeyDown);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);

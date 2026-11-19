@@ -143,6 +143,46 @@ export const STUDIO_CSS = `
   stroke-linejoin: round;
   pointer-events: none;
 }
+.crucible-studio-agent-outline {
+  fill: none;
+  stroke: var(--studio-accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.crucible-studio-agent-cursor {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  pointer-events: none;
+  color: var(--studio-accent);
+}
+.crucible-studio-agent-cursor[hidden] { display: none; }
+.crucible-studio-agent-cursor svg {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+  stroke: var(--studio-bg);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+.crucible-studio-agent-name {
+  margin: 18px 0 0 -6px;
+  padding: 2px 8px;
+  border-radius: 4px 9px 9px 9px;
+  background: var(--studio-accent);
+  color: #17161a;
+  font: 600 11.5px/1.5 var(--studio-font);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .crucible-studio-agent-cursor {
+    transition: left 520ms cubic-bezier(0.2, 0, 0, 1), top 520ms cubic-bezier(0.2, 0, 0, 1);
+  }
+}
 .crucible-studio-drop-overlay {
   position: absolute;
   inset: var(--studio-edge);

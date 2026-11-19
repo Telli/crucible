@@ -54,6 +54,16 @@ const studio = createStudio(document.querySelector('#studio-root'), {
 const updatedRecipe = studio.exportRecipe();
 ```
 
+## See the agent at work
+
+When an agent edits the scene, Studio shows a pointer with the agent's name, the way a collaborator's cursor shows in a shared document. The pointer travels to each object the agent changed, a dashed outline marks that object, and the status line says what changed ("Claude edited hero, orb").
+
+- A reload of the watched file counts as an agent edit. `createStudio(container, { agentName: 'Claude' })` sets the name on the pointer; without it the name is "Agent".
+- `studio.loadExternalTextFile(text, { agent })` takes `agent: { name }` to name the agent for one edit, `agent: true` to mark any load as an agent edit, and `agent: false` to load without the pointer.
+- `studio.showAgentEdit({ name, nodeIds })` points at objects directly, for a host that hears about each agent step as it happens.
+
+The pointer keeps to its object while you orbit, visits at most eight objects for one edit, and with reduced motion it steps from object to object without gliding.
+
 ## Headless controller for tools and tests
 
 Import `createStudioController` to drive picking, gizmo drags, surface snapping, look edits and camera bookmarks without DOM rendering.
