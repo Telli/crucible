@@ -61,6 +61,12 @@ test('gridLayout grows its step tenfold as the view widens, keeps lines about a 
     assert.equal(shown(layout, 1)[0].scale[0], shown(layout, 0)[0].scale[0] * 10, 'the middle cells are ten fine cells wide');
     assert.equal(shown(layout, 2)[0].scale[0], shown(layout, 0)[0].scale[0] * 100, 'and the coarse cells a hundred');
   }
+  const textureOf = layout => Number(shown(layout, 0)[0].id.split('-').pop());
+  const fromAbove = gridLayout({ ...view(4), eye: [0, 5, 0] });
+  const lowOverTheFloor = gridLayout({ ...view(4), eye: [5, 0.2, 0] });
+  assert.equal(textureOf(fromAbove), textureOf(near), 'seen from above, lines are sized for the target');
+  assert.ok(textureOf(lowOverTheFloor) > textureOf(near), 'a camera low over the floor gets thinner lines, so the ones at its feet are not bands');
+  assert.ok(lowOverTheFloor.lines[0].scale[2] < fromAbove.lines[0].scale[2], 'and thinner axes');
   // What a line adds up to where sheets share it: a coarser sheet is drawn over the finer ones.
   const strengths = layout => {
     const [fine, middle, coarse] = [0, 1, 2].map(sheetIndex => shown(layout, sheetIndex)[0].opacity);

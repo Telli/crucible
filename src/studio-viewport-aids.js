@@ -18,6 +18,7 @@ const GRID_SHEET_REACH = 512;
 // size and shows the one whose line is closest to a pixel wide at the camera target.
 const GRID_TEXTURE_SIZES = Object.freeze([32, 64, 128, 256, 512, 1024]);
 const GRID_WIDEST_LINE_PIXELS = 1.5;
+const GRID_LOWEST_EYE_SHARE = 0.04;
 // How strong a line of the finest sheet is at most, and how strong every tenth line is.
 const GRID_FINE_OPACITY = 0.24;
 const GRID_COARSE_OPACITY = 0.42;
@@ -62,7 +63,7 @@ export function cameraVisibleHeight(camera) {
  * change moves no line and changes no brightness. `lines` places the two axis lines, which are textured strips as
  * well. The grid follows the camera target in whole cells.
  */
-export function gridLayout({ visibleHeight, viewportHeight, target } = DEFAULT_GRID_VIEW) {
+export function gridLayout({ visibleHeight, viewportHeight, target, eye } = DEFAULT_GRID_VIEW) {
   const level = Math.log10(Math.max(1e-3, visibleHeight) / GRID_STEPS_IN_VIEW);
   const step = 10 ** Math.floor(level);
   const blend = level - Math.floor(level);
@@ -75,11 +76,15 @@ export function gridLayout({ visibleHeight, viewportHeight, target } = DEFAULT_G
   const fineOpacity = GRID_FINE_OPACITY * (1 - blend ** 3);
   const middleTotal = GRID_COARSE_OPACITY - (GRID_COARSE_OPACITY - GRID_FINE_OPACITY) * blend ** 3;
   const opacities = [fineOpacity, 1 - (1 - middleTotal) / (1 - fineOpacity), 1 - (1 - GRID_COARSE_OPACITY) / (1 - middleTotal)];
+  // A camera low over the floor sees the ground just in front of it much closer than its target, and a line sized for
+  // the target would be many pixels wide there. With `eye` given, lines are sized for a point between the two.
+  const viewDistance = eye ? Math.hypot(eye[0] - target[0], eye[1] - target[1], eye[2] - target[2]) : 0;
+  const nearShare = viewDistance > 0 ? Math.sqrt(Math.min(1, Math.max(GRID_LOWEST_EYE_SHARE, Math.abs(eye[1] - GRID_FLOOR_HEIGHT) / viewDistance))) : 1;
   const sheets = [];
   for (let sheetIndex = 0; sheetIndex < GRID_SHEETS; sheetIndex += 1) {
     const spacing = step * 10 ** sheetIndex;
     const cellPixels = spacing / pixel;
-    const shownSize = GRID_TEXTURE_SIZES.find(size => cellPixels / size <= GRID_WIDEST_LINE_PIXELS) ?? GRID_TEXTURE_SIZES.at(-1);
+    const shownSize = GRID_TEXTURE_SIZES.find(size => cellPixels / size <= GRID_WIDEST_LINE_PIXELS * nearShare) ?? GRID_TEXTURE_SIZES.at(-1);
     for (const size of GRID_TEXTURE_SIZES) {
       const id = `${GRID_PART_PREFIX}sheet${sheetIndex}-${size}`;
       if (size !== shownSize) {
@@ -96,7 +101,7 @@ export function gridLayout({ visibleHeight, viewportHeight, target } = DEFAULT_G
   }
   const axisLength = GRID_SHEET_REACH * 2 * step * 10 ** (GRID_SHEETS - 1);
   // An axis strip is one texture cell wide and its line one texel of it, so the strip is this much wider than the line.
-  const axisWidth = pixel * GRID_AXIS_PIXELS * GRID_AXIS_TEXTURE_SIZE;
+  const axisWidth = pixel * GRID_AXIS_PIXELS * nearShare * GRID_AXIS_TEXTURE_SIZE;
   const lines = [
     { id: `${GRID_PART_PREFIX}axis-x`, translation: [Math.round(target[0] / step) * step, height + lift * 0.5, 0], scale: [axisLength, 1, axisWidth] },
     { id: `${GRID_PART_PREFIX}axis-z`, translation: [0, height + lift * 0.5, Math.round(target[2] / step) * step], scale: [axisWidth, 1, axisLength] },

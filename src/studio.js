@@ -1915,7 +1915,7 @@ export function createStudio(container, {
   function syncViewportAids() {
     const camera = controller.scene.camera;
     viewWidget.update(camera);
-    const gridStep = gridLayout({ visibleHeight: cameraVisibleHeight(camera), viewportHeight: controller.viewportHeight, target: camera.target }).step;
+    const gridStep = gridLayout({ visibleHeight: cameraVisibleHeight(camera), viewportHeight: controller.viewportHeight, target: camera.target, eye: camera.projection === 'orthographic' ? undefined : camera.eye }).step;
     readoutCamera.textContent = gridVisible ? `${describeCamera(camera)} · Grid ${describeGridStep(gridStep)}` : describeCamera(camera);
     if (selectionReadoutStale) {
       selectionReadoutStale = false;
