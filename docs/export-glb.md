@@ -184,6 +184,7 @@ Material tracks, IK and the camera are not exported; bake IK into rotation track
 It stores opaque metallic roughness materials without renderer tags, procedural weathering, custom shaders, lighting, cameras, or postprocessing.
 It does not promise identical rendered pixels across tools.
 Materials tagged `unlit` still export through this documented metallic roughness snapshot contract.
+The writer refuses accessor data that would make an invalid file: NaN or Infinity where bounds are computed (positions, normals, colours, morph targets) and a length that is not a multiple of the component count. An empty accessor is written without `min` and `max`.
 
 The [Blender glTF workflow](https://docs.blender.org/manual/en/5.3/addons/scene_gltf2.html) supports vertex colors, UV coordinates, shape keys, and emissive strength.
 These editable fields remain available to compatible tools after import.
@@ -198,5 +199,3 @@ Every draw reported zero WebGL errors.
 The original exporter lost vertex channels and produced maximum channel differences of 31, 194 and 185 in those respective fixtures.
 Each draw uses one renderer, which is disposed before the next draw.
 These measurements establish fidelity for the fixtures, not identical rendering across tools or recognizable character quality.
-
-The writer refuses accessor data that would make an invalid file: NaN or Infinity where bounds are computed (positions, normals, colours, morph targets) and a length that is not a multiple of the component count. An empty accessor is written without `min` and `max`.
