@@ -311,6 +311,20 @@ test('errors name the option and what to pass', () => {
   assert.throws(() => createOrbitCamera({ subject: { position: [0, 0, 0] }, zoom: 'zoom' }), /needs options.input/);
 });
 
+test('a refused teleport leaves the controller where it was (#2614)', () => {
+  const input = createScriptedInput();
+  const controllers = [
+    createCharacterController({ input, position: [1, 2, 3], yaw: 0.5 }),
+    createVehicleController({ input, position: [1, 2, 3], yaw: 0.5 }),
+    createFlightController({ input, position: [1, 2, 3], yaw: 0.5 }),
+  ];
+  for (const controller of controllers) {
+    const before = structuredClone(controller.state);
+    assert.throws(() => controller.teleport([9, 9, 9], NaN), /teleport yaw must be a number/);
+    assert.deepEqual(controller.state, before, controller.kind);
+  }
+});
+
 function approximately(actual, expected, tolerance = 1e-6) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `expected ${actual} to be within ${tolerance} of ${expected}`);
 }

@@ -288,10 +288,13 @@ export function createCharacterController(options = {}) {
     // Position drawn between the last two fixed steps; alpha is context.alpha.
     positionAt: alpha => blend(state.previousPosition, state.position, alpha),
     teleport(position, yaw = state.yaw) {
-      state.position = vectorOption(owner, 'teleport position', position);
-      state.previousPosition = [...state.position];
+      // Both arguments are checked before anything moves, so a refused teleport leaves the player where it was.
+      const nextPosition = vectorOption(owner, 'teleport position', position);
+      const nextYaw = numberOption(owner, 'teleport yaw', yaw, 0, -1000, 1000);
+      state.position = nextPosition;
+      state.previousPosition = [...nextPosition];
       state.velocity = [0, 0, 0];
-      state.yaw = numberOption(owner, 'teleport yaw', yaw, 0, -1000, 1000);
+      state.yaw = nextYaw;
       state.grounded = false;
       state.airborne = true;
       writeNode();
@@ -660,11 +663,14 @@ export function createVehicleController(options = {}) {
     writeNode,
     advance,
     teleport(position, yaw) {
-      state.position = vectorOption(owner, 'teleport position', position);
-      state.previousPosition = [...state.position];
+      // Checked before anything moves, so a refused teleport leaves the car where it was.
+      const nextPosition = vectorOption(owner, 'teleport position', position);
+      const nextYaw = numberOption(owner, 'teleport yaw', yaw, state.yaw, -1000, 1000);
+      state.position = nextPosition;
+      state.previousPosition = [...nextPosition];
       state.velocity = [0, 0, 0];
       state.forwardSpeed = 0;
-      state.yaw = numberOption(owner, 'teleport yaw', yaw, state.yaw, -1000, 1000);
+      state.yaw = nextYaw;
       state.grounded = false;
       state.airborne = true;
     },
@@ -774,10 +780,13 @@ export function createFlightController(options = {}) {
     writeNode,
     advance,
     teleport(position, yaw) {
-      state.position = vectorOption(owner, 'teleport position', position);
-      state.previousPosition = [...state.position];
+      // Checked before anything moves, so a refused teleport leaves the flyer where it was.
+      const nextPosition = vectorOption(owner, 'teleport position', position);
+      const nextYaw = numberOption(owner, 'teleport yaw', yaw, state.yaw, -1000, 1000);
+      state.position = nextPosition;
+      state.previousPosition = [...nextPosition];
       state.velocity = [0, 0, 0];
-      state.yaw = numberOption(owner, 'teleport yaw', yaw, state.yaw, -1000, 1000);
+      state.yaw = nextYaw;
       state.pitch = 0;
       state.grounded = false;
       state.airborne = true;
