@@ -25,6 +25,8 @@ All centers, radii and displacements use geometry-local units.
 | `displace` | Move along the supplied nonzero `direction`, normalized by the addon. | Signed distance. |
 | `smooth` | Move toward the mean of connected triangle neighbors. One Jacobi step reads a fixed position snapshot. | Blend from 0 to 1. |
 
+A stroke takes only `type`, `center`, `radius`, `strength` and, for `displace`, `direction`. Any other field, or a `direction` on `inflate` or `smooth`, throws.
+
 For normalized distance `t = distance / radius`, the radial influence is `1 - 10t³ + 15t⁴ - 6t⁵` inside the brush and zero outside. Its first and second derivatives vanish at the center and boundary, avoiding an abrupt ridge where the brush ends. Inflate uses the input normals throughout one call, so a long sequence does not repeatedly rebuild normals. Separate calls allow later inflation to follow newly sculpted normals.
 
 Laplacian smoothing can shrink volume and soften boundaries. It does not preserve volume or guarantee collision-free topology.

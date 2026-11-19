@@ -301,3 +301,7 @@ test('the capped profile is clean under default lint up to the highest segment c
     assert.deepEqual(lint.problems.filter(problem => problem.severity === 'error'), []);
   }
 });
+
+test('bevelEdges refuses a width of 0 instead of returning degenerate faces', () => {
+  assert.throws(() => bevelEdges(cube(), { all: true }, { width: 0 }), /bevelEdges: width was 0; pass a number above 0/);
+});
