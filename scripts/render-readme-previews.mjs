@@ -53,7 +53,9 @@ async function findBlendFile(folder) {
 }
 
 function unzip(archive, folder) {
-  const [command, argumentList] = process.platform === 'win32' ? ['tar', ['-xf', archive, '-C', folder]] : ['unzip', ['-oq', archive, '-d', folder]];
+  // Git Bash puts its GNU tar first on the PATH, and that tar reads "C:" in a path as a remote host; Windows ships bsdtar, which unzips.
+  const windowsTar = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe');
+  const [command, argumentList] = process.platform === 'win32' ? [windowsTar, ['-xf', archive, '-C', folder]] : ['unzip', ['-oq', archive, '-d', folder]];
   run(command, argumentList, `unzip ${archive}`);
 }
 
@@ -65,9 +67,12 @@ async function prepareDemoGlb(sourceName, cacheFolder) {
   await mkdir(sourceFolder, { recursive: true });
   const downloaded = join(sourceFolder, source.zipped ? `${sourceName}.zip` : `${sourceName}.blend`);
   if (!existsSync(downloaded)) await downloadTo(source.url, downloaded);
-  if (source.zipped) unzip(downloaded, join(sourceFolder, 'unzipped'));
+  if (source.zipped) {
+    await mkdir(join(sourceFolder, 'unzipped'), { recursive: true });
+    unzip(downloaded, join(sourceFolder, 'unzipped'));
+  }
   const blendFile = source.zipped ? await findBlendFile(join(sourceFolder, 'unzipped')) : downloaded;
-  run(process.env.BLENDER ?? 'blender', ['-b', blendFile, '--disable-autoexec', '--python', join(root, 'scripts', 'blender-demo-to-glb.py'), '--', sourceFolder], `Blender export of ${sourceName}`);
+  run(process.env.BLENDER ?? 'blender', ['-b', blendFile, '-t', '6', '--disable-autoexec', '--python', join(root, 'scripts', 'blender-demo-to-glb.py'), '--', sourceFolder], `Blender export of ${sourceName}`);
   return sourceFolder;
 }
 
