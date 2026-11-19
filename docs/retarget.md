@@ -135,7 +135,7 @@ An agent asks for a crowd in a recipe (`scene_create`, `scene_apply`) with the `
 { "id": "people", "asset": { "id": "<catalog asset id>", "crowd": { "clip": 3, "count": 200, "seed": 7, "spacing": 2, "farDistance": 25, "farRate": 6 } } }
 ```
 
-`clip` is the clip index (`scene_inspect` lists them), `count` is 1 to 1000, and `layout`, `spacing`, `columns`, `size`, `rateJitter`, `randomYaw`, `speed`,
+`clip` is the clip index (`scene_inspect` lists them), `count` is 1 to 1000, `seed` is a whole number from -2147483648 to 2147483647, and `layout`, `spacing`, `columns`, `size`, `rateJitter`, `randomYaw`, `speed`,
 `frameRate`, `lods`, `morphs`, `farDistance` and `farRate` are the options above. The crowd is a group node of generated part nodes (count times the
 materials, which count against `maxNodes`), placed by the node transform. The pose depends on the scene time, the seed and the recipe camera, so
 a frame rendered at a time equals the one reached by playing to it. `scene_inspect` lists the crowd under `assets` with `kind: "crowd"`, its instances, batches, clip, baked frames,
