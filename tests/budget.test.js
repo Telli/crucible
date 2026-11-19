@@ -20,7 +20,7 @@ test('HDR, two half-resolution bloom targets and cached texture mipmaps fit insi
   assert.equal(plan.estimatedBytes, estimateFrameBytes(plan.width, plan.height, 4, 2048, { hdr: true, bloom: true }) + textureBytes);
   assert.ok(estimateFrameBytes(100, 101, 4, 0, { hdr: true, bloom: true }) > estimateFrameBytes(100, 101, 4, 0));
   assert.throws(() => planRenderSize({ width: 640, height: 360, textureBytes: 200 * 1024 ** 2, memoryBudgetMiB: 128 }), /cannot hold/);
-  assert.throws(() => estimateTextureBytes(-1, 32), /positive/);
+  assert.throws(() => estimateTextureBytes(-1, 32), /integer from 1/);
 });
 
 test('presets fit their budget and device texture limits', () => {
@@ -90,4 +90,13 @@ test('a budget error never advises a value above the largest budget the runtime 
     return true;
   });
   assert.throws(() => planRenderSize({ ...scene, geometryBytes: 0, textureBytes: 200 * 1024 ** 2, width: 640, height: 360, maximumMemoryBudgetMiB: 384 }), /Fix: pass \{ memoryBudgetMiB: \d+ \}/);
+});
+
+test('texture dimensions past the bound are refused instead of returning Infinity', () => {
+  assert.throws(() => estimateTextureBytes(1e300, 1e300), /estimateTextureBytes: width was 1e\+300/);
+  assert.throws(() => estimateTextureBytes(64, 2 ** 40), /integer from 1/);
+});
+
+test('an unfixable memory budget error never suggests an infinite budget', () => {
+  assert.throws(() => planRenderSize({ width: 100, height: 100, shadowResolution: 1e200 }), error => error instanceof RangeError && !/Infinity }/.test(error.message) && /reduce/.test(error.message));
 });
