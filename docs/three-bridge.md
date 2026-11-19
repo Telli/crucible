@@ -40,7 +40,7 @@ Each mesh becomes one part with its world matrix, so groups, parents and their t
 
 Nothing is dropped silently. `warnings` names the object and the property for: morph targets, `drawRange`, `instanceColor`, `envMap`, `bumpMap`, `displacementMap`, `alphaMap`, `lightMap`, `wireframe`, `flatShading`, `BackSide`, texture repeat, offset and rotation, sheen, iridescence, anisotropy, separate roughness and metalness maps, and materials that are not `MeshStandardMaterial` (only colour, map and opacity are used). Invisible objects, points, lines, sprites, lights and cameras are skipped and listed. A `SkinnedMesh` with a skeleton is imported in its current pose.
 
-Two inputs throw an error that names the object and what to change: a `ShaderMaterial` or `RawShaderMaterial` (Crucible runs no custom shaders) and a `SkinnedMesh` without `skeleton.bones`. Pass `skipUnsupported: true` to leave such an object out and get a warning instead.
+Three inputs throw an error that names the object and what to change: a mesh with no material, a `ShaderMaterial` or `RawShaderMaterial` (Crucible runs no custom shaders) and a `SkinnedMesh` without `skeleton.bones`. Pass `skipUnsupported: true` to leave such an object out and get a warning instead.
 
 ### Limits
 

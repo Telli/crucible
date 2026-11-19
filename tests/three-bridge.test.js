@@ -83,6 +83,22 @@ test('a group is imported with vertex counts, index counts and world matrices', 
   assert.deepEqual(warnings, [], 'a supported tree gives no warnings');
 });
 
+test('a mesh without a material throws a ThreeBridgeError that names the mesh, and skipUnsupported leaves it out', () => {
+  for (const missing of [undefined, null]) {
+    const bare = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+    bare.name = 'bare';
+    bare.material = missing;
+    assert.throws(() => fromThreeObject(new THREE.Group().add(bare)), error => error.name === 'ThreeBridgeError' && /"bare".*material.*Assign a MeshStandardMaterial to mesh.material/.test(error.message));
+    const { parts, warnings } = fromThreeObject(new THREE.Group().add(bare), { skipUnsupported: true });
+    assert.equal(parts.length, 0);
+    assert.match(warnings[0], /"bare".*(skipped)/);
+  }
+  const holes = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), [new THREE.MeshStandardMaterial(), null]);
+  holes.name = 'holes';
+  holes.geometry.addGroup(0, 6, 1);
+  assert.throws(() => fromThreeObject(holes), error => error.name === 'ThreeBridgeError' && /"holes".*materialIndex 1/.test(error.message));
+});
+
 test('material fields map to the Crucible material', () => {
   const { parts } = fromThreeObject(buildSourceGroup());
   const [box, sphere, textured] = parts.map(part => part.material);
