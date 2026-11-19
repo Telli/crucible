@@ -133,3 +133,17 @@ test('anisotropy and iridescence survive a GLB export and import through their g
   assert.ok(Math.abs(mesh.material.iridescenceIOR - 1.7) < 1e-6);
   assert.ok(Math.abs(mesh.material.iridescenceThicknessRange[1] - 320) < 1e-6);
 });
+
+test('softEdge is checked at the boundary, defaults to off and reaches the renderer state and shader (#2304)', async () => {
+  assert.equal(materialLayerState({}).length, MATERIAL_LAYER_STATE_LENGTH);
+  assert.equal(materialLayerState({})[28], 0);
+  assert.equal(materialLayerState({ softEdge: 2 })[28], 2);
+  assert.throws(() => validateMaterialLayers({ softEdge: -1 }), /softEdge must be between 0 and 8/);
+  assert.throws(() => validateMaterialLayers({ softEdge: 9 }), /softEdge must be between 0 and 8/);
+  await import('../src/material-layer-shaders.js');
+  const { createFragmentShader } = await import('../src/shaders.js');
+  assert.match(createFragmentShader(['unlit', 'softEdge']), /alpha \*= pow\(clamp\(abs\(dot\(normal, viewDirection\)\)[^;]*materialSoftEdge\)/);
+  assert.doesNotMatch(createFragmentShader(['unlit']), /materialSoftEdge/, 'a material without softEdge compiles the same shader as before');
+  const scene = createAgentScene(recipeWithMaterial({ tag: 'unlit', color: [0.5, 0.4, 0.3], opacity: 0.3, softEdge: 2 }));
+  assert.equal(scene.exportRecipe().materials.find(material => material.id === 'finish').softEdge, 2);
+});

@@ -80,7 +80,7 @@ const MODULE_MARKERS = {
   patterns: ['"pattern"'],
   relations: ['"relations":'],
   timeline: ['"timeline":{'],
-  layerShaders: ['"anisotropy"', '"iridescence"', '"fresnel"', '"emissionMask"'],
+  layerShaders: ['"anisotropy"', '"iridescence"', '"fresnel"', '"emissionMask"', '"softEdge"'],
   emissionMask: ['"emissionMask"'],
   liquidShader: ['"transmission"', '"liquid"', '"foam"'],
   subsurfaceShader: ['"subsurface"'],

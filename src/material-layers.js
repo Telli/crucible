@@ -27,6 +27,7 @@ export const MATERIAL_LAYER_DEFAULTS = Object.freeze({
   iridescenceIor: 1.3,
   iridescenceThickness: 400,
   toon: 0,
+  softEdge: 0,
 });
 
 export const MATERIAL_LAYER_FIELDS = Object.freeze(Object.keys(MATERIAL_LAYER_DEFAULTS));
@@ -46,6 +47,7 @@ export const MATERIAL_LAYER_SCALAR_RANGES = Object.freeze({
   iridescenceIor: Object.freeze([1, 3]),
   iridescenceThickness: Object.freeze([0, 1200]),
   toon: Object.freeze([0, 8]),
+  softEdge: Object.freeze([0, 8]),
 });
 
 export const MATERIAL_LAYER_COLOR_RANGES = Object.freeze({
@@ -151,7 +153,7 @@ export function dielectricReflectance(material) {
 
 /**
  * Plain values the renderer batches by: dielectric F0 (3), coat (2), sheen (4), transmission (4), attenuation colour (3),
- * anisotropy strength and rotation (2), iridescence factor, film IOR and film thickness in nanometres (3), light mask (1), toon bands (1), and the subsurface block as JSON, or '' (1; subsurface-limits.js and the addon read it), emission fresnel (1), the emission mask: axis index or -1, from, to (3) and the toon step colours as JSON, or '' (1; toon-shader.js reads it).
+ * anisotropy strength and rotation (2), iridescence factor, film IOR and film thickness in nanometres (3), light mask (1), toon bands (1), and the subsurface block as JSON, or '' (1; subsurface-limits.js and the addon read it), emission fresnel (1), the emission mask: axis index or -1, from, to (3), the soft edge exponent (1; #2304) and the toon step colours as JSON, or '' (1; toon-shader.js reads it).
  */
 export function materialLayerState(material) {
   validateMaterialLayers(material);
@@ -178,8 +180,9 @@ export function materialLayerState(material) {
     'xyz'.indexOf(material.emissionMask?.axis),
     material.emissionMask?.from ?? 0,
     material.emissionMask?.to ?? 1,
+    materialLayerValue(material, 'softEdge'),
     material.toonColors ? JSON.stringify(material.toonColors) : '',
   ];
 }
 
-export const MATERIAL_LAYER_STATE_LENGTH = 29;
+export const MATERIAL_LAYER_STATE_LENGTH = 30;

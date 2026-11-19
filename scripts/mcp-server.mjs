@@ -154,6 +154,7 @@ const materialLayerFields = {
   iridescenceIor: layerNumber('iridescenceIor'),
   iridescenceThickness: layerNumber('iridescenceThickness'),
   toon: layerNumber('toon'),
+  softEdge: layerNumber('softEdge'),
   toonColors: z.array(z.array(z.number().min(0).max(TOON_COLOR_MAXIMUM)).length(3)).min(1).max(8).optional().describe('One linear [r,g,b] per toon step, darkest first; the count must equal toon.'),
 };
 

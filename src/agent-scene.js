@@ -289,7 +289,7 @@ function copyMaterialLayers(value, result) {
   }
   if (value.subsurface !== undefined) result.subsurface = agentSceneModule('subsurfaceShader').copySubsurface(value.subsurface, result.tag);
   if (value.snippet) result.snippet = agentSceneModule('materialSnippet').normalizeMaterialSnippet(value.snippet, { hasMap: Boolean(value.map || value.pattern) });
-  if (result.anisotropy > 0 || result.iridescence > 0 || JSON.stringify(value.pattern?.graph?.emission ?? null).includes('"fresnel"')) agentSceneModule('layerShaders');
+  if (result.anisotropy > 0 || result.iridescence > 0 || result.softEdge > 0 || JSON.stringify(value.pattern?.graph?.emission ?? null).includes('"fresnel"')) agentSceneModule('layerShaders');
   if (result.toon > 0) agentSceneModule('lineArt');
 }
 
