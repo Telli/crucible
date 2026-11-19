@@ -889,7 +889,7 @@ const jobWithFormatFields = { ...jobFields, response_format: responseFormatField
 const INLINE_IMAGE_LIMIT = 8;
 const jobResultFields = {
   ...jobWithFormatFields,
-  images: z.union([z.boolean(), z.array(z.number().int().min(0)).max(INLINE_IMAGE_LIMIT)]).optional().describe('false: paths only. Artifact indexes: attach only those. Default: attach all PNGs of a job of up to 8.'),
+  images: z.union([z.boolean(), z.array(z.number().int().min(0)).max(INLINE_IMAGE_LIMIT)]).optional().describe('false: paths only; indexes: those frames.'),
 };
 // Job tools take jobId alone; an agent that carries sessionId over from the scene tools gets told to drop it.
 function jobKeysHint(toolName, acceptedKeys) {
@@ -1158,7 +1158,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     return jsonResult(chosenFormat('scene_render_status', response_format) === 'concise' ? conciseJobStatus(record) : record);
   });
   register('scene_render_cancel', 'Request cancellation of one job. Poll status until terminal before using the preview again.', z.strictObject(jobFields, { error: jobKeysHint('scene_render_cancel', Object.keys(jobFields)) }), { ...edit, idempotentHint: true }, async argumentsValue => jsonResult(await runtime.cancelJob(argumentsValue)));
-  register('scene_render_result', 'Read completed local output paths, MIME types, byte counts, SHA-256 digests and measured render metrics. Attaches the PNGs of a job of up to 8 (images: false for paths only, or artifact indexes to pick frames of a larger job) and a resource link per file; video stays on disk.', z.strictObject(jobResultFields, { error: jobKeysHint('scene_render_result', Object.keys(jobResultFields)) }), readOnly, async ({ response_format, images, ...jobInput }) => {
+  register('scene_render_result', 'Read completed local output paths, MIME types, byte counts, SHA-256 digests and measured render metrics. Attaches each PNG of a job of up to 8 (images: false for paths only, or indexes of frames) and a resource link per file; video stays on disk.', z.strictObject(jobResultFields, { error: jobKeysHint('scene_render_result', Object.keys(jobResultFields)) }), readOnly, async ({ response_format, images, ...jobInput }) => {
     const result = await runtime.jobResult(jobInput);
     return renderResultContent(result, chosenFormat('scene_render_result', response_format) === 'concise' ? conciseJobResult(result) : result, { images });
   });
