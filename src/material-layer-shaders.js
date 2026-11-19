@@ -316,7 +316,7 @@ void applyAnisotropyTexture(vec3 normal) {
 `,
 }));
 
-// Layer textures share the units 11 to 13 with the splat arrays, so one renderer draws at most three different ones and
+// Layer textures share the units 11 to 13 with the splat samplers, so one renderer draws at most three different ones and
 // none beside splat layers. A batch without a texture gets the white texture and a NameOn flag of 0.
 const LAYER_TEXTURE_UNIT = 11;
 const MAX_LAYER_TEXTURES = 3;
@@ -324,7 +324,7 @@ const MAX_LAYER_TEXTURES = 3;
 function layerTextureNamesOf(renderer) {
   if (renderer.layerTextureNamesFor?.size !== renderer.shaderFeatures.size) {
     const names = [...renderer.shaderFeatures].filter(feature => feature.endsWith('Texture'));
-    if (names.length > MAX_LAYER_TEXTURES || renderer.shaderFeatures.has('splat')) {
+    if (names.length > MAX_LAYER_TEXTURES || (names.length > 0 && renderer.shaderFeatures.has('splat'))) {
       throw new Error(`A renderer draws at most ${MAX_LAYER_TEXTURES} layer textures and none beside splat layers, got ${names.join(', ')}.`);
     }
     renderer.layerTextureNames = names;
