@@ -46,7 +46,7 @@ import { parseRadianceHdr } from '../src/hdri.js';
 import { parseCube } from '../src/view-transform.js';
 import { weightTracksFromGltfAnimation } from '../src/export-skeleton.js';
 import { clipFromGltfAnimation } from '../src/skeleton-pose.js';
-import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
+import { sessionProblem, planSceneEviction } from '../src/agent-errors.js';
 import { AGENT_SCENE_DEFAULT_LIMITS, MEMORY_CEILING_MIB } from '../src/agent-scene-capabilities.js';
 import { describeApplication } from '../src/agent-apply-report.js';
 import { framingProblems, placementProblems, textureProblems, exposureProblems, lumaShares } from '../src/frame-checks.js';
@@ -62,11 +62,13 @@ const records = new Map();
 let leasedRecord = null;
 const EVICTED_SESSIONS_KEPT = 32;
 const evictedSessions = [];
+// Why each remembered evicted scene was closed, so a later call with its ID can say it.
+const evictionReasons = {};
 let canvas = document.querySelector('canvas');
 
 function sessionError(sessionId) {
   const openSessionIds = [...records.keys()];
-  return new Error(sessionProblem(sessionId, openSessionIds.at(-1), { openSessionIds, evictedSessionIds: evictedSessions }));
+  return new Error(sessionProblem(sessionId, openSessionIds.at(-1), { openSessionIds, evictedSessionIds: evictedSessions, evictionReasons }));
 }
 
 function lookupSession(sessionId) {
@@ -125,26 +127,19 @@ function residentBytesOf(record) {
   return record.scene.inspect().residentGeometryBytes ?? 0;
 }
 
-// Close the least recently used scenes until `incoming` more scenes of `incomingBytes` fit, and name them to the caller.
+// Close the least recently used scenes until the new scene fits both caps, and name them and the cap to the caller.
 function evictForNewScene(incomingBytes) {
-  const evicted = [];
-  let bytes = incomingBytes;
-  const sizes = new Map();
-  for (const record of records.values()) {
-    const size = residentBytesOf(record);
-    sizes.set(record, size);
-    bytes += size;
+  const openScenes = [...records.values()].map(record => ({ sessionId: record.sessionId, bytes: residentBytesOf(record) }));
+  const { sessionIds, reason } = planSceneEviction(openScenes, incomingBytes);
+  for (const sessionId of sessionIds) {
+    releaseRecord(records.get(sessionId));
+    evictedSessions.push(sessionId);
+    evictionReasons[sessionId] = reason;
   }
-  for (const record of [...records.values()]) {
-    const overCount = records.size + 1 > SCENE_STORE_LIMITS.maxOpenScenes;
-    if (!overCount && bytes <= SCENE_STORE_LIMITS.maxOpenSceneBytes) break;
-    bytes -= sizes.get(record);
-    releaseRecord(record);
-    evicted.push(record.sessionId);
-    evictedSessions.push(record.sessionId);
+  for (const forgottenId of evictedSessions.splice(0, Math.max(0, evictedSessions.length - EVICTED_SESSIONS_KEPT))) {
+    delete evictionReasons[forgottenId];
   }
-  evictedSessions.splice(0, Math.max(0, evictedSessions.length - EVICTED_SESSIONS_KEPT));
-  return evicted;
+  return { evicted: sessionIds, reason };
 }
 
 function bytesFromBase64(data) {
@@ -645,9 +640,9 @@ function createPreview(scene, { sessionId, memoryBudgetMiB, backend, transparent
     if (backend === 'gpu' && /swiftshader|llvmpipe|software/i.test(result.render.graphics)) {
       throw new Error('Hardware GPU rendering was requested, but the browser selected a software renderer.');
     }
-    const evicted = evictForNewScene(result.inspection.residentGeometryBytes ?? 0);
+    const { evicted, reason } = evictForNewScene(result.inspection.residentGeometryBytes ?? 0);
     records.set(sessionId, record);
-    return evicted.length ? { ...result, evictedSessions: evicted } : result;
+    return evicted.length ? { ...result, evictedSessions: evicted, evictionReason: reason } : result;
   } catch (error) {
     renderer?.dispose();
     // A throwing constructor may already own GPU objects without returning an instance.
@@ -1004,7 +999,7 @@ window.__agentPreview = {
     const record = requireSession(sessionId);
     if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('render snapshot', expectedRevision, record.scene.revision));
     return { sourceRevision: record.scene.revision, recipe: record.scene.exportRecipe(),
-      clips: record.asset?.animations.map(clip => ({ duration: clip.duration })) ?? [] };
+      clips: record.asset ? record.asset.animations.map(clip => ({ duration: clip.duration })) : record.scene.placedClipEnds().map(duration => ({ duration })) };
   },
   suspend({ sessionId }) {
     const record = lookupSession(sessionId);
@@ -1344,7 +1339,9 @@ window.__agentPreview = {
       }
       sampleMotionTime(record.scene, motionTime);
     }
-    draw(record);
+    // The post pass clock is the pose's motion time, as in a render job frame, so a pass anchored to a moving part stays on it.
+    const poseTime = record.scene.motionTime ?? undefined;
+    draw(record, 0, record.scene.camera, poseTime === undefined ? {} : { passTime: poseTime });
     const render = renderInfo(record.renderer, viewProblems(record, record.scene.camera, record.scene.effects.exposure, { placement: true }));
     record.lastRender = render;
     const labels = withLabels ? collectLabels(record, record.scene.camera, canvas.width, canvas.height) : undefined;

@@ -62,13 +62,14 @@ function decodeView(view, viewIndex, bufferBytes, decoder) {
   return decoded;
 }
 
-/** Returns a Map from buffer view index to its decoded bytes. The fallback buffer is never read. */
-export async function decodeMeshoptViews(bufferViews, bufferBytes, suppliedDecoder) {
+/** Returns a Map from buffer view index to its decoded bytes. The fallback buffer is never read. A view in `skippedViews` decodes to no bytes. */
+export async function decodeMeshoptViews(bufferViews, bufferBytes, suppliedDecoder, skippedViews = new Set()) {
   const decoder = suppliedDecoder ?? MeshoptDecoder;
   await decoder.ready;
   const decodedViews = new Map();
   bufferViews.forEach((view, index) => {
-    if (view.extensions?.EXT_meshopt_compression) decodedViews.set(index, decodeView(view, index, bufferBytes, decoder));
+    if (!view.extensions?.EXT_meshopt_compression) return;
+    decodedViews.set(index, skippedViews.has(index) ? new Uint8Array(0) : decodeView(view, index, bufferBytes, decoder));
   });
   return decodedViews;
 }

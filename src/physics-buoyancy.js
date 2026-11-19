@@ -57,11 +57,11 @@ export function normalizeFloat(input, label) {
     if (!Array.isArray(points) || points.length < 1 || points.length > BUOYANCY_LIMITS.maxPointsPerBody) {
       throw new RangeError(`${label}.points must be 1 to ${BUOYANCY_LIMITS.maxPointsPerBody} points in body space, such as [[-1, 0, -1], [1, 0, 1]]`);
     }
-    result.points = points.map((point, index) => {
+    result.points = Array.from(points, (point, index) => {
       if (!Array.isArray(point) || point.length !== 3) {
         throw new TypeError(`${label}.points[${index}] must be [x, y, z] in body space, such as [0, 0, 0]`);
       }
-      return point.map((component, axis) => boundedNumber(component, `${label}.points[${index}][${axis}]`, -1e6, 1e6, 0));
+      return Array.from(point, (component, axis) => boundedNumber(component, `${label}.points[${index}][${axis}]`, -1e6, 1e6, 0));
     });
   }
   if (input.boat !== undefined) result.boat = normalizeBoat(input.boat, `${label}.boat`);

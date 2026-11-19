@@ -5,14 +5,15 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { constants, setPriority } from 'node:os';
 import { chromium } from 'playwright';
+import { viteChildEnvironment, viteOutputMentionsAddress } from './vite-output.mjs';
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 const PORT = 5192;
-const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], { windowsHide: true, stdio: 'pipe' });
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], { windowsHide: true, stdio: 'pipe', env: viteChildEnvironment() });
 await new Promise((resolve, reject) => {
   const timeout = setTimeout(() => reject(new Error('The film physics smoke server did not start.')), 30000);
   server.stdout.on('data', bytes => {
-    if (bytes.toString().includes(`127.0.0.1:${PORT}`)) {
+    if (viteOutputMentionsAddress(bytes, `127.0.0.1:${PORT}`)) {
       clearTimeout(timeout);
       resolve();
     }

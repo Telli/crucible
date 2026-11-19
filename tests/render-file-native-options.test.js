@@ -131,3 +131,10 @@ test('without the built addon the command exits 2 with one message and no stack 
   assert.equal(result.stderr.trim(), missingAddonMessage());
   assert.doesNotMatch(result.stderr, /\n\s+at /);
 });
+
+test('--time sets the clip time, defaults to 0 and refuses a negative or non-numeric value', () => {
+  assert.equal(parseArguments(REQUIRED).clipSeconds, 0);
+  assert.equal(parseArguments([...REQUIRED, '--time', '1.25']).clipSeconds, 1.25);
+  assert.throws(() => parseArguments([...REQUIRED, '--time', '-1']), /Option --time must be a number of seconds/);
+  assert.throws(() => parseArguments([...REQUIRED, '--time', 'soon']), /Option --time must be a number of seconds/);
+});

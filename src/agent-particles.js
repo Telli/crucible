@@ -96,6 +96,24 @@ function normalizeVelocitySource(input, emitter, from, path) {
   emitter.velocityScale = input.velocityScale === undefined ? 1 : finiteNumber(input.velocityScale, `${path}.velocityScale`, -1000, 1000);
 }
 
+const DEFAULT_EMITTER_RADIUS = 0.5;
+
+// Only a sphere and a disc are sized by a radius, so only they get the default. A box takes its size from halfExtents and
+// rejects a radius, except the 0.5 earlier versions wrote into every box they stored: that one is dropped so the recipe still loads.
+function assignEmitterRadius(input, emitter, shape, path) {
+  if (shape === 'box') {
+    if (input.radius !== undefined && input.radius !== DEFAULT_EMITTER_RADIUS) {
+      throw invalidField(`${path}.radius`, input.radius, `left out on a box, sized by ${path}.halfExtents`);
+    }
+    return;
+  }
+  if (input.radius !== undefined) {
+    emitter.radius = finiteNumber(input.radius, `${path}.radius`, 0, POSITION_LIMIT);
+  } else if (shape === 'sphere' || shape === 'disc') {
+    emitter.radius = DEFAULT_EMITTER_RADIUS;
+  }
+}
+
 function normalizeEmitter(input, context, path) {
   knownKeys(input, EMITTER_FIELDS, path);
   const shape = input.shape ?? 'point';
@@ -106,11 +124,8 @@ function normalizeEmitter(input, context, path) {
     shape,
     position: input.position === undefined ? [0, 0, 0] : vectorOfThree(input.position, `${path}.position`, POSITION_LIMIT),
     halfExtents: input.halfExtents === undefined ? [0.5, 0.5, 0.5] : vectorOfThree(input.halfExtents, `${path}.halfExtents`, POSITION_LIMIT).map(Math.abs),
-    radius: input.radius === undefined ? 0.5 : finiteNumber(input.radius, `${path}.radius`, 0, POSITION_LIMIT),
   };
-  if (shape === 'box' && input.radius !== undefined) {
-    throw invalidField(`${path}.radius`, input.radius, `left out on a box, sized by ${path}.halfExtents`);
-  }
+  assignEmitterRadius(input, emitter, shape, path);
   if (shape === 'mesh') {
     normalizeMeshEmitter(input, emitter, context, path);
   } else {
