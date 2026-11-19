@@ -1,6 +1,7 @@
 import './support/load-agent-scene-modules.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { STUDIO_CSS } from '../src/studio-styles.js';
 import { createStudio, createStudioController, STUDIO_PRIMITIVES, STUDIO_TABS, STUDIO_TEMPLATES, STUDIO_TOOLS } from '../src/studio.js';
 import { LIGHTING_SETUP_NAMES } from '../src/agent-scene-capabilities.js';
@@ -442,6 +443,13 @@ test('the add menu opens beside its button and adds every primitive and both lig
   assert.equal(ui.status(), 'Spot lights: 1');
   assert.equal(ui.studio.exportRecipe().environment.pointLights.length, 1);
   assert.equal(ui.studio.exportRecipe().environment.spotLights.length, 1);
+  byText(addPopover, 'Area light').click();
+  assert.equal(ui.status(), 'Area lights: 1');
+  assert.equal(ui.studio.exportRecipe().environment.areaLights.length, 1);
+  assert.deepEqual(ui.studio.exportRecipe().environment.areaLights[0].direction, [0, -1, 0], 'a new area light shines down');
+  for (const type of ['circle', 'lathe', 'extrude', 'text']) {
+    assert.ok(ui.studio.exportRecipe().geometries.some(geometry => geometry.type === type), type);
+  }
 });
 
 test('popover buttons open each menu, close it again on a click inside and stay inside the window', testContext => {
@@ -2057,8 +2065,53 @@ test('Scene and Properties share one column and the Scene head carries its icons
   assert.deepEqual(docks, ['Scene outliner', 'Scene inspector']);
   const head = side.querySelector('.crucible-studio-dock-head');
   assert.ok(head.querySelector('.crucible-studio-dock-title').querySelector('svg'));
-  assert.ok(head.querySelector('.crucible-studio-filter').querySelector('svg'));
-  assert.ok(head.querySelector('.crucible-studio-filter').querySelector('input'));
+  assert.ok(STUDIO_CSS.includes('inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));'), 'the column sits beside the tool rail');
+
+  const filterRow = side.querySelector('.crucible-studio-filter');
+  const search = ui.label('Filter the scene list');
+  const findButton = ui.label('Find an object in the scene');
+  assert.ok(head.children.includes(findButton) && findButton.querySelector('svg'));
+  assert.equal(filterRow.hidden, true, 'the filter box stays away until asked for');
+  findButton.click();
+  assert.equal(filterRow.hidden, false);
+  assert.equal(findButton.getAttribute('aria-pressed'), 'true');
+  search.value = 'or';
+  dispatch(search, 'input');
+  assert.deepEqual(ui.rowLabels(), ['orb']);
+  dispatch(search, 'keydown', { key: 'Escape' });
+  assert.equal(filterRow.hidden, true);
+  assert.equal(search.value, '', 'closing the box clears the filter');
+  assert.ok(ui.rowLabels().length > 1);
+  assert.equal(findButton.getAttribute('aria-pressed'), 'false');
+
+  const addButton = ui.label('Add to the scene');
+  assert.ok(head.children.includes(addButton));
+  assert.equal(addButton.getAttribute('popovertarget'), 'crucible-studio-pop-add');
+});
+
+test('the top left shows the Crucible mark from the brand kit', testContext => {
+  const ui = mountStudio(testContext);
+  const mark = ui.root.querySelector('.crucible-studio-brand').querySelector('svg');
+  const layers = mark.children.map(path => path.getAttribute('class'));
+  assert.deepEqual(layers, ['body', 'shadow', 'molten-deep', 'molten', 'face-shadow', 'face', 'eye'].map(layer => 'crucible-studio-mark-' + layer));
+  const kit = readFileSync(new URL('../public/brand/crucible-mark.svg', import.meta.url), 'utf8');
+  assert.ok(kit.includes('viewBox="' + mark.getAttribute('viewBox') + '"'));
+  for (const path of mark.children) {
+    assert.ok(kit.includes(' d="' + path.getAttribute('d') + '"'), 'every path is the kit path, untouched');
+  }
+});
+
+test('handle heads have no border until the pointer is on them', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  ui.tool('translate').click();
+  ui.studio.renderNow();
+  const heads = ['x', 'y', 'z'].map(axis => ui.gizmo.descendants().find(element => element.tagName.toLowerCase() === 'polygon' && element.getAttribute('data-gizmo-axis') === axis));
+  for (const head of heads) {
+    assert.equal(head.getAttribute('stroke'), 'none');
+  }
+  const hoverRule = STUDIO_CSS.slice(STUDIO_CSS.indexOf('[data-gizmo-axis="surface"]:is(polygon, rect, circle) {'));
+  assert.ok(hoverRule.slice(0, 120).includes('stroke: var(--studio-trace);'), 'the border under the pointer is pale');
 });
 
 test('the top bar has File, Edit, View, Agent and Help menus that do what their rows say', testContext => {

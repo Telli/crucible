@@ -169,9 +169,8 @@ export const STUDIO_CSS = `
 .crucible-studio-gizmo[data-hover-axis="screen"] [data-gizmo-axis="screen"]:is(polygon, rect, circle),
 .crucible-studio-gizmo[data-hover-axis="uniform"] [data-gizmo-axis="uniform"]:is(polygon, rect, circle),
 .crucible-studio-gizmo[data-hover-axis="surface"] [data-gizmo-axis="surface"]:is(polygon, rect, circle) {
-  stroke: var(--studio-text);
-  stroke-width: 1.5px;
-  paint-order: stroke;
+  stroke: var(--studio-trace);
+  stroke-width: 3px;
 }
 .crucible-studio-gizmo[data-hover-axis="xy"] [data-gizmo-axis="xy"],
 .crucible-studio-gizmo[data-hover-axis="xz"] [data-gizmo-axis="xz"],
@@ -319,10 +318,19 @@ export const STUDIO_CSS = `
   color: var(--studio-text);
 }
 .crucible-studio-brand svg {
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   flex-shrink: 0;
 }
+/* The mark's own colours. On a dark panel the body is one step lighter, as the brand kit asks; mixing in a little of
+   the text colour does that in the dark theme and leaves the body as it is in the light one. */
+.crucible-studio-mark-body { fill: color-mix(in srgb, var(--studio-text) 20%, #393842); }
+.crucible-studio-mark-shadow { fill: color-mix(in srgb, var(--studio-text) 20%, #2a282d); }
+.crucible-studio-mark-molten-deep { fill: #df5829; }
+.crucible-studio-mark-molten { fill: #fc9132; }
+.crucible-studio-mark-face-shadow { fill: #c8c7ce; }
+.crucible-studio-mark-face { fill: #fefefd; }
+.crucible-studio-mark-eye { fill: #111114; }
 .crucible-studio button.crucible-studio-filepill {
   display: inline-block;
   max-inline-size: 220px;
@@ -390,6 +398,7 @@ export const STUDIO_CSS = `
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2px;
 }
+.crucible-studio-popover-grid + .crucible-studio-popover-grid { margin-block-start: 10px; }
 .crucible-studio-popover button {
   justify-content: flex-start;
   width: 100%;
@@ -476,7 +485,7 @@ export const STUDIO_CSS = `
 .crucible-studio-side {
   position: absolute;
   inset-block: var(--studio-top) 100px;
-  inset-inline-end: var(--studio-edge);
+  inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
   inline-size: 284px;
   display: flex;
   flex-direction: column;
@@ -527,11 +536,19 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-filter {
   position: relative;
-  flex: 1 1 auto;
-  min-inline-size: 0;
+  flex: none;
   display: flex;
   align-items: center;
+  margin: 2px 8px 6px;
 }
+.crucible-studio-filter[hidden] { display: none; }
+.crucible-studio-filter input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  font-family: var(--studio-font);
+  font-size: 12px;
+}
+.crucible-studio-dock-head .crucible-studio-spacer { flex: 1 1 auto; }
 .crucible-studio-filter .crucible-studio-icon {
   position: absolute;
   inset-inline-start: 8px;
@@ -540,7 +557,7 @@ export const STUDIO_CSS = `
   color: var(--studio-muted);
   pointer-events: none;
 }
-.crucible-studio .crucible-studio-dock-head .crucible-studio-filter input {
+.crucible-studio .crucible-studio-filter input {
   inline-size: 100%;
   padding-inline-start: 27px;
 }

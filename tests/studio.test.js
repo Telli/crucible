@@ -496,7 +496,7 @@ test('the Studio controller says what to pass when a scene, a callback or a poin
   assert.throws(() => controller.setSunAngles({ keyIntensity: -1 }), /keyIntensity must be a non-negative/);
   assert.throws(() => controller.updateCamera(null), /expects a camera patch object/);
   assert.throws(() => controller.setCameraViewPreset('under'), /Unknown camera view "under"/);
-  assert.throws(() => controller.addSceneLight('laser'), /Unsupported light type "laser"\. Use point or spot/);
+  assert.throws(() => controller.addSceneLight('laser'), /Unsupported light type "laser"\. Use point, spot or area/);
   assert.throws(() => controller.addPrimitive('torus-knot'), /torus-knot/);
   assert.throws(() => controller.insertNodeKeyframe('ghost'), /Unknown node "ghost"/);
   assert.throws(() => controller.setMotionTime(2), /Add a keyframe or motion track/);

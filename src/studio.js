@@ -1,3 +1,4 @@
+import { CRUCIBLE_MARK_LAYERS, CRUCIBLE_MARK_VIEW_BOX } from './studio-brand-mark.js';
 import { applyProjection } from './camera.js';
 import { createAgentScene, loadAgentSceneModules } from './agent-scene.js';
 import { agentEnvironmentMap, fitAgentShadow, resolveAgentShadow } from './agent-look.js';
@@ -24,6 +25,7 @@ import {
   STUDIO_LENS_PRESETS,
   STUDIO_MATERIAL_PRESETS,
   STUDIO_PRIMITIVES,
+  primitiveGeometrySpec,
   STUDIO_TABS,
   STUDIO_TEMPLATES,
   STUDIO_TOOLS,
@@ -64,7 +66,10 @@ const STUDIO_WORKSPACES = Object.freeze([
   Object.freeze({ id: 'look', label: 'Look', icon: 'material', tabs: Object.freeze(['material', 'look']) }),
   Object.freeze({ id: 'animate', label: 'Animate', icon: 'play', tabs: Object.freeze(['camera']) }),
 ]);
+const PRIMITIVE_LABELS = Object.freeze({ icoSphere: 'Icosphere' });
+const primitiveLabel = primitiveType => PRIMITIVE_LABELS[primitiveType] ?? primitiveType[0].toUpperCase() + primitiveType.slice(1);
 const TREE_ICON_BY_GEOMETRY = Object.freeze({
+  circle: 'plane',
   box: 'node',
   sphere: 'sphere',
   icoSphere: 'sphere',
@@ -407,19 +412,10 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
 }
 
 function buildBrandMarkSvg(documentReference) {
-  const mark = createSvgElement(documentReference, 'svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
-  mark.append(
-    createSvgElement(documentReference, 'polygon', {
-      points: '12,2 21,7 21,17 12,22 3,17 3,7',
-      fill: 'color-mix(in srgb, var(--studio-accent) 13%, transparent)',
-      stroke: 'var(--studio-accent)',
-      'stroke-width': '1.8',
-    }),
-    createSvgElement(documentReference, 'polygon', {
-      points: '12,6.5 17,9.5 17,15 12,18 7,15 7,9.5',
-      fill: 'var(--studio-accent)',
-    }),
-  );
+  const mark = createSvgElement(documentReference, 'svg', { viewBox: CRUCIBLE_MARK_VIEW_BOX, 'aria-hidden': 'true' });
+  for (const [layer, pathData] of CRUCIBLE_MARK_LAYERS) {
+    mark.append(createSvgElement(documentReference, 'path', { class: `crucible-studio-mark-${layer}`, 'fill-rule': 'evenodd', d: pathData }));
+  }
   return mark;
 }
 
@@ -636,7 +632,7 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
       }));
     } else {
       const arrowPoints = tool === 'translate' ? arrowHeadPoints(origin, tip) : null;
-      const handleAttributes = { fill: AXIS_COLORS[axis], stroke: 'var(--studio-bg)', 'stroke-width': '1.5', 'stroke-linejoin': 'round', 'data-gizmo-axis': axis };
+      const handleAttributes = { fill: AXIS_COLORS[axis], stroke: 'none', 'stroke-linejoin': 'round', 'data-gizmo-axis': axis };
       gizmoSvg.append(arrowPoints
         ? createSvgElement(documentReference, 'polygon', { points: arrowPoints, 'data-gizmo-shape': 'arrow', ...handleAttributes })
         : createSvgElement(documentReference, 'circle', { cx: tip.x.toFixed(1), cy: tip.y.toFixed(1), r: '7', ...handleAttributes }));
@@ -903,14 +899,11 @@ export function createStudio(container, {
   });
   const primitiveGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid' });
   for (const primitiveType of STUDIO_PRIMITIVES) {
-    const label = primitiveType === 'icoSphere' ? 'Icosphere' : primitiveType[0].toUpperCase() + primitiveType.slice(1);
-    const addPrimitiveButton = createElement(documentReference, 'button', { type: 'button', textContent: label });
+    const addPrimitiveButton = createElement(documentReference, 'button', { type: 'button', textContent: primitiveLabel(primitiveType) });
     addPrimitiveButton.addEventListener('click', async () => {
       addPopover.hidePopover?.();
       try {
-        if (primitiveType === 'terrain') {
-          await loadAgentSceneModules({ geometries: [{ type: 'terrain' }] });
-        }
+        await loadAgentSceneModules({ geometries: [primitiveGeometrySpec(primitiveType).geometry] });
         const created = controller.addPrimitive(primitiveType);
         announce(`Added ${created.label}`);
       } catch (error) {
@@ -939,8 +932,20 @@ export function createStudio(container, {
       announce(error.message);
     }
   });
-  primitiveGrid.append(addPointLightButton, addSpotLightButton);
-  addPopover.append(primitiveGrid);
+  const addAreaLightButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Area light' });
+  addAreaLightButton.addEventListener('click', () => {
+    addPopover.hidePopover?.();
+    try {
+      const count = controller.addSceneLight('area');
+      announce(`Area lights: ${count}`);
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+  const lightGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid', attributes: { role: 'group', 'aria-label': 'Lights' } }, addPointLightButton, addSpotLightButton, addAreaLightButton);
+  primitiveGrid.setAttribute('role', 'group');
+  primitiveGrid.setAttribute('aria-label', 'Shapes');
+  addPopover.append(primitiveGrid, lightGrid);
 
   const syncStatusNote = createElement(documentReference, 'p', {
     className: 'crucible-studio-popover-note',
@@ -1097,12 +1102,18 @@ export function createStudio(container, {
   bindPopoverAnchor(editMenuButton, editPopover);
   bindPopoverAnchor(viewMenuButton, viewPopover);
   bindPopoverAnchor(helpMenuButton, helpPopover);
-  bindPopoverAnchor(addMenuButton, addPopover, { beside: true });
+  let addMenuAnchor = addMenuButton;
+  addMenuButton.addEventListener('click', () => { addMenuAnchor = addMenuButton; });
+  bindPopoverAnchor(() => addMenuAnchor, addPopover, { beside: true });
   bindPopoverAnchor(aiSyncMenuButton, aiSyncPopover);
   bindPopoverAnchor(exportMenuButton, exportPopover);
 
   // Left Outliner + Material Palette Dock
-  const outlinerSearch = createElement(documentReference, 'input', { type: 'search', placeholder: 'Filter', attributes: { 'aria-label': 'Filter the scene list' } });
+  const outlinerSearch = createElement(documentReference, 'input', { type: 'search', placeholder: 'Find an object', attributes: { 'aria-label': 'Filter the scene list' } });
+  const filterRow = createElement(documentReference, 'label', { className: 'crucible-studio-filter', hidden: true }, createIcon(documentReference, 'search'), outlinerSearch);
+  const filterToggleButton = createIconButton(documentReference, 'search', 'Find an object in the scene', { attributes: { 'aria-pressed': 'false', 'aria-expanded': 'false' } });
+  const sceneAddButton = createIconButton(documentReference, 'add', 'Add to the scene', { attributes: { popovertarget: 'crucible-studio-pop-add' } });
+  sceneAddButton.addEventListener('click', () => { addMenuAnchor = sceneAddButton; });
   const outlinerTree = createElement(documentReference, 'div', { className: 'crucible-studio-tree', attributes: { role: 'tree', 'aria-label': 'Scene hierarchy' } });
   const swatchContainer = createElement(documentReference, 'div', { className: 'crucible-studio-swatches' });
   const newMaterialQuickButton = createIconButton(documentReference, 'add', 'New material', { className: 'crucible-studio-swatch-add' });
@@ -1121,12 +1132,37 @@ export function createStudio(container, {
       'div',
       { className: 'crucible-studio-dock-head' },
       createElement(documentReference, 'span', { className: 'crucible-studio-dock-title' }, createIcon(documentReference, 'scene'), createElement(documentReference, 'span', { textContent: 'Scene' })),
-      createElement(documentReference, 'label', { className: 'crucible-studio-filter' }, createIcon(documentReference, 'search'), outlinerSearch),
+      createElement(documentReference, 'span', { className: 'crucible-studio-spacer' }),
+      filterToggleButton,
+      sceneAddButton,
     ),
+    filterRow,
     outlinerTree,
     createElement(documentReference, 'div', { className: 'crucible-studio-palette-section' }, swatchContainer),
   );
   outlinerSearch.addEventListener('input', () => syncUi());
+  // The filter box stays out of the way until its button is pressed; closing it clears the filter, so a closed box
+  // never hides rows.
+  function setFilterOpen(open) {
+    filterRow.hidden = !open;
+    filterToggleButton.setAttribute('aria-pressed', open ? 'true' : 'false');
+    filterToggleButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      outlinerSearch.focus?.();
+      return;
+    }
+    if (outlinerSearch.value !== '') {
+      outlinerSearch.value = '';
+      syncUi();
+    }
+  }
+  filterToggleButton.addEventListener('click', () => setFilterOpen(filterRow.hidden));
+  outlinerSearch.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.stopPropagation();
+    setFilterOpen(false);
+    filterToggleButton.focus?.();
+  });
 
   // Center Viewport
   const viewportElement = createElement(documentReference, 'div', { className: 'crucible-studio-viewport' });

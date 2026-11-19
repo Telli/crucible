@@ -1,6 +1,6 @@
 export const STUDIO_TOOLS = Object.freeze(['select', 'translate', 'rotate', 'scale', 'snap']);
 export const STUDIO_TABS = Object.freeze(['node', 'material', 'look', 'camera']);
-export const STUDIO_PRIMITIVES = Object.freeze(['box', 'sphere', 'cylinder', 'cone', 'torus', 'plane', 'icoSphere', 'terrain']);
+export const STUDIO_PRIMITIVES = Object.freeze(['box', 'sphere', 'cylinder', 'cone', 'torus', 'plane', 'icoSphere', 'disc', 'ring', 'arch', 'vase', 'star', 'text', 'terrain']);
 export const STUDIO_VIEW_PRESETS = Object.freeze(['front', 'back', 'right', 'left', 'top', 'isometric']);
 export const STUDIO_LENS_PRESETS = Object.freeze([24, 35, 50, 85]);
 
@@ -13,6 +13,17 @@ export const STUDIO_MATERIAL_PRESETS = Object.freeze({
   'neon-teal': Object.freeze({ label: 'Neon', color: [0.06, 0.62, 0.56], roughness: 0.3, metallic: 0.08, clearcoat: 0, opacity: 1, emission: 2.2, emissiveColor: [0.1, 0.85, 0.74] }),
   'matte-slate': Object.freeze({ label: 'Slate', color: [0.1, 0.12, 0.15], roughness: 0.86, metallic: 0.04, clearcoat: 0, opacity: 1, emission: 0 }),
 });
+
+// The outline of a star, point up: outer and inner corners in turn.
+function starContour(pointCount, outerRadius, innerRadius) {
+  const contour = [];
+  for (let corner = 0; corner < pointCount * 2; corner += 1) {
+    const radius = corner % 2 === 0 ? outerRadius : innerRadius;
+    const angle = Math.PI / 2 + (corner * Math.PI) / pointCount;
+    contour.push([Number((Math.cos(angle) * radius).toFixed(4)), Number((Math.sin(angle) * radius).toFixed(4))]);
+  }
+  return contour;
+}
 
 export function primitiveGeometrySpec(primitiveType) {
   switch (primitiveType) {
@@ -71,6 +82,54 @@ export function primitiveGeometrySpec(primitiveType) {
         translation: [0, 0.5, 0],
         rotation: [0, 0, 0, 1],
         scale: [0.5, 0.5, 0.5],
+      };
+    case 'disc':
+      return {
+        labelPrefix: 'Disc',
+        geometry: { type: 'circle', segments: 64 },
+        translation: [0, 0.02, 0],
+        rotation: [-0.7071, 0, 0, 0.7071],
+        scale: [1, 1, 1],
+      };
+    case 'ring':
+      return {
+        labelPrefix: 'Ring',
+        geometry: { type: 'circle', segments: 64, innerRadius: 0.6 },
+        translation: [0, 0.02, 0],
+        rotation: [-0.7071, 0, 0, 0.7071],
+        scale: [1, 1, 1],
+      };
+    case 'arch':
+      return {
+        labelPrefix: 'Arch',
+        geometry: { type: 'torus', tubeRadius: 0.16, segments: 48, sides: 20, arc: Math.PI },
+        translation: [0, 0, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+      };
+    case 'vase':
+      return {
+        labelPrefix: 'Vase',
+        geometry: { type: 'lathe', profile: [[0.3, -0.5], [0.46, -0.2], [0.42, 0.05], [0.24, 0.3], [0.34, 0.5]], segments: 48 },
+        translation: [0, 0.5, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+      };
+    case 'star':
+      return {
+        labelPrefix: 'Star',
+        geometry: { type: 'extrude', contour: starContour(5, 0.5, 0.21), depth: 0.2 },
+        translation: [0, 0.5, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+      };
+    case 'text':
+      return {
+        labelPrefix: 'Text',
+        geometry: { type: 'text', text: 'Text', size: 0.6, depth: 0.12 },
+        translation: [0, 0.05, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1],
       };
     case 'terrain':
       return {

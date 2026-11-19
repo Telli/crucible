@@ -16,7 +16,7 @@ The scene fills the window and the controls float on top of it.
 | Top centre | The workspaces, in the order the work runs: **Build** (objects and their place), **Look** (materials, lighting, sun, exposure, fog) and **Animate** (camera, lens, shots and the timeline). Each one shows only the panels its step needs. Opening a panel from anywhere, or adding a keyframe, brings its workspace forward. A workspace is a way of looking at the scene: it is not saved in the recipe and undo does not touch it. |
 | Top right | The file name, which opens the File menu, and **Export** (PNG image, GLB model, web pack). A green dot beside the name means Studio reloads the file when an agent edits it. |
 | Left rail | Select, move, rotate, scale, snap to a surface, undo, redo, add an object or a light, show or hide the grid, show or hide the panels. |
-| Scene card | At the top of the right column, with a filter box. Every object in the scene, drawn as the shape of its geometry (cube, sphere, cylinder, cone, torus, plane, or a stack for a group) in the colour of its material, an eye to hide each one, and the scene materials as swatches. |
+| Scene card | At the top of the left column, beside the rail. Its head has a search button, which opens a box that filters the list as you type (Esc closes it and clears the filter), and an add button with the same menu as the rail. Every object in the scene, drawn as the shape of its geometry (cube, sphere, cylinder, cone, torus, plane, or a stack for a group) in the colour of its material, an eye to hide each one, and the scene materials as swatches. |
 | Properties | Under the Scene card, in the same column. The panels of the open workspace: the object in Build, material and look in Look, the camera (views, lens, shots) in Animate. |
 | Bottom, in Animate | Play, add a keyframe, scrub the time, jump to a saved shot. The readout and the view widget move up to make room for it. |
 | Bottom left | The camera (perspective and lens, or orthographic), the grid step, and the size of the selected object in metres. |
@@ -28,13 +28,17 @@ The selected object gets an outline. Below 820 px wide the two cards start close
 
 ## Move, rotate and scale
 
-Each tool has its own handle shape, so the shape says what a drag will do: arrows move, rings turn, squares scale. The handles follow the object, not the camera: the three axes are the object's own X, Y and Z, so a turned object moves along the way it faces. The handle under the pointer grows thicker and brighter and gets a border, so you see what a press will grab. An axis that points almost at the camera is drawn longer, so it never shrinks to a stub you cannot catch.
+Each tool has its own handle shape, so the shape says what a drag will do: arrows move, rings turn, squares scale. The handles follow the object, not the camera: the three axes are the object's own X, Y and Z, so a turned object moves along the way it faces. The handles have no border at rest; the one under the pointer grows thicker and brighter and gets a pale border, so you see what a press will grab. An axis that points almost at the camera is drawn longer, so it never shrinks to a stub you cannot catch.
 
 - **Move** drags the object exactly as far as the pointer travels along the axis. Hold Shift to move in steps (0.25 m unless you change it in Settings). While you drag, a dashed outline stays where the object was and a dashed line runs from there to where it is now; scale and rotate drags keep the outline too. The dashed lines are pale with a dark border, so they show over a pale object and over the dark ground. A new object lands on the ground beside the ones already there, not inside them.
 - **Rotate** turns the object by the angle the pointer sweeps on the ring. Hold Shift to turn in steps (15 degrees unless you change it in Settings). While you drag, the other two rings leave, a dashed spoke stays where the drag began, a solid spoke follows the object, and a faint wedge between them fills the angle turned so far. A turn can go past half a circle and keeps counting.
 - **Scale** on an axis handle scales by how far you pull it: twice the distance doubles that axis. The centre handle scales all three.
 
 One drag is one undo step, and undo leaves the viewport camera where you put it.
+
+## Add an object or a light
+
+The add button on the rail and the one in the Scene head (or Shift+A) open the same menu. Shapes: box, sphere, cylinder, cone, torus, plane, icosphere, disc, ring, arch, vase, star, 3D text and terrain. Lights: point, spot and area. Each shape is an ordinary recipe geometry (a ring is a `circle` with `innerRadius`, a vase is a `lathe`, a star is an `extrude`), so an agent can keep editing it.
 
 ## Keys
 

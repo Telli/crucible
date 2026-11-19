@@ -2,7 +2,7 @@ import { mat4, quat, vec3 } from 'gl-matrix';
 import { applyProjection, cameraFieldOfView } from './camera.js';
 import { createAgentScene } from './agent-scene.js';
 import { createSceneQuery } from './scene-query.js';
-import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS } from './light-limits.js';
+import { MAX_POINT_LIGHTS, MAX_AREA_LIGHTS, MAX_SPOT_LIGHTS } from './light-limits.js';
 import {
   STUDIO_MATERIAL_PRESETS,
   STUDIO_PRIMITIVES,
@@ -1325,7 +1325,16 @@ export function createStudioController({
       updateLook({ environment: { spotLights: nextLights } });
       return nextLights.length;
     }
-    throw new RangeError(`Unsupported light type "${String(lightType)}". Use point or spot.`);
+    if (lightType === 'area') {
+      const existing = environment.areaLights ?? [];
+      if (existing.length >= MAX_AREA_LIGHTS) {
+        throw new RangeError(`Scene already reached the limit of ${MAX_AREA_LIGHTS} area lights.`);
+      }
+      const nextLights = [...existing, { position: [0, 3.2, 0], direction: [0, -1, 0], up: [0, 0, 1], width: 2, height: 2, color: [1, 0.96, 0.9], intensity: 4 }];
+      updateLook({ environment: { areaLights: nextLights } });
+      return nextLights.length;
+    }
+    throw new RangeError(`Unsupported light type "${String(lightType)}". Use point, spot or area.`);
   }
 
   function duplicateSelected() {
