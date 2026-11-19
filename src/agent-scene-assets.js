@@ -183,7 +183,9 @@ export function visitPlacements(value, visit, depth = 0) {
   const placement = value.asset;
   if (placement && typeof placement === 'object') visit(placement);
   for (const [key, child] of Object.entries(value)) {
-    if (key !== 'asset') visitPlacements(child, visit, depth + 1);
+    if (key === 'asset') continue;
+    if ((key === 'nodes' || key === 'npcs') && !Array.isArray(child)) continue;
+    visitPlacements(child, visit, depth + 1);
   }
 }
 

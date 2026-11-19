@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { parseGltf } from '../src/gltf.js';
 import { createAgentScene, loadAllAgentSceneModules } from '../src/agent-scene.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { gameAssetIds } from '../src/game-assets.js';
 import { groupParts } from '../src/renderer.js';
 import { normalizeJobSettings } from '../scripts/agent-render-jobs.mjs';
 import { skinnedStripAsset } from './fixtures/skinned-strip.js';
@@ -75,9 +76,15 @@ test('material overrides name the source material and stay shared between placem
 });
 
 test('recipeAssetNeeds skips a malformed node list, null node and non-list npcs (#2623)', () => {
+  const asset = { id: ASSET_ID };
   assert.deepEqual(recipeAssetNeeds({ nodes: {} }), []);
   assert.deepEqual(recipeAssetNeeds({ nodes: [null] }), []);
   assert.deepEqual(recipeAssetNeeds({ game: { npcs: {} } }), []);
+  assert.deepEqual(recipeAssetNeeds({ nodes: { asset } }), []);
+  assert.deepEqual(recipeAssetNeeds({ game: { npcs: { asset } } }), []);
+  assert.deepEqual(recipeAssetNeeds({ nodes: [{ asset }], game: { npcs: { asset } } }), [{ id: ASSET_ID, copies: 1 }]);
+  assert.deepEqual(gameAssetIds({ game: { npcs: {} } }), []);
+  assert.deepEqual(gameAssetIds({ game: { npcs: [null] } }), []);
 });
 
 test('a placed clip plays on its own time offset and a seek gives the same frame', async () => {
