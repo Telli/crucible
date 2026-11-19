@@ -29,6 +29,8 @@ Omitting `motionTime` preserves the current preview pose.
 Its bounds remain in `authored-base-world` space, independent of the sampled pose.
 
 `set-motion` requires a complete motion record or explicit `null` to clear it.
+To drop only some tracks, give `removeTracks` instead of `motion`: selectors such as `{ kind: 'camera' }` or `{ kind: 'node', id: 'cube', property: 'translation' }`, where a field left out matches any track.
+The other tracks and fields stay. A selector that matches nothing throws an error that lists the tracks there are. Giving both `motion` and `removeTracks` is refused.
 The final batch must resolve every track reference, including after node or material removal.
 Failed edits or seeks preserve the previous recipe, rendered pose and revisions.
 

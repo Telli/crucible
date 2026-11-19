@@ -218,7 +218,7 @@ A `mesh` geometry starts from one of the others as `base` and replays an edit lo
 Geometry fields remain flat inside each geometry record.
 Set operations use `set-node`, `set-material`, or `set-camera`, with fields directly on each command.
 
-`set-motion` accepts a complete motion record or `null` to clear it.
+`set-motion` accepts a complete motion record or `null` to clear it, or `removeTracks` selectors to drop some tracks {since 0.22.0}.
 `scene_look` can seek procedural `motionTime` without changing revisions. Omission preserves the last preview pose.
 An explicit `null` restores the authored base pose. Release `0.8.0` also supports imported source-node motion.
 Imported clip sampling remains available through `set-animation`.

@@ -2213,6 +2213,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const removals = [];
       for (const operation of operations) {
         const section = Object.hasOwn(NULLABLE_SECTION_OPERATIONS, operation.type) ? NULLABLE_SECTION_OPERATIONS[operation.type] : null;
+        if (operation.type === 'set-motion' && Object.hasOwn(operation, 'removeTracks')) {
+          candidate.motion = agentSceneModule('motionTrackRemoval').removeMotionTracks(operation, candidate.motion);
+          continue;
+        }
         if (section) {
           knownKeys(operation, ['type', section], 'operation');
           if (!Object.hasOwn(operation, section)) {
