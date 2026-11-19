@@ -367,7 +367,7 @@ export function mirrorWeight(surface, out) {
 
 // ---- Glass ----
 
-function dielectricFresnel(cosineIncident, relativeIndex) {
+export function dielectricFresnel(cosineIncident, relativeIndex) {
   const sineSquared = relativeIndex * relativeIndex * (1 - cosineIncident * cosineIncident);
   if (sineSquared >= 1) return 1;
   const cosineTransmitted = Math.sqrt(1 - sineSquared);
