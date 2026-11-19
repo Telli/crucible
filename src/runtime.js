@@ -123,9 +123,23 @@ export function createRuntime(target, options = {}) {
     try {
       system[hook](...args, context);
     } catch (error) {
-      error.message = `Runtime system "${system.name}" ${hook} failed: ${error.message}`;
-      throw error;
+      throw hookFailure(system, hook, error);
     }
+  }
+
+  // Names the system and hook on the failure. An ordinary Error keeps its identity and gets the prefixed message. Anything else
+  // (a string, null, a frozen Error) cannot take the prefix, so it becomes the cause of a new Error that does.
+  function hookFailure(system, hook, thrown) {
+    const message = `Runtime system "${system.name}" ${hook} failed: ${thrown instanceof Error ? thrown.message : String(thrown)}`;
+    if (thrown instanceof Error) {
+      try {
+        thrown.message = message;
+        return thrown;
+      } catch {
+        // A frozen or read-only message cannot carry the prefix; the new Error below does.
+      }
+    }
+    return new Error(message, { cause: thrown });
   }
 
   function initialise(system) {

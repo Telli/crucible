@@ -219,6 +219,33 @@ test('a throwing system stops the loop and names the system', () => {
   assert.equal(harness.hasPendingFrame(), false);
 });
 
+test('a hook that throws a non-Error names the system, the hook and the original text (#2615)', () => {
+  const frozen = Object.freeze(new Error('frozen boom'));
+  const cases = [
+    ['a string', 'boom', 'boom'],
+    ['null', null, 'null'],
+    ['a frozen Error', frozen, 'frozen boom'],
+  ];
+  for (const [label, thrown, text] of cases) {
+    const harness = createHarness({ mode: 'variable', systems: [{ name: 'bad', update() { throw thrown; } }] });
+    let caught;
+    try {
+      harness.runtime.step(0);
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof Error, label);
+    assert.equal(caught.message, `Runtime system "bad" update failed: ${text}`, label);
+    assert.equal(caught.cause, thrown, `${label} is kept as the cause`);
+  }
+});
+
+test('an ordinary Error keeps its identity and gets the prefixed message (#2615)', () => {
+  const failure = new Error('boom');
+  const harness = createHarness({ mode: 'variable', systems: [{ name: 'bad', update() { throw failure; } }] });
+  assert.throws(() => harness.runtime.step(0), error => error === failure && error.message === 'Runtime system "bad" update failed: boom');
+});
+
 test('step runs one frame without a scheduler', () => {
   const log = [];
   const harness = createHarness({ mode: 'fixed', fixedStepSeconds: 0.01, systems: [recorder('a', log)] });
