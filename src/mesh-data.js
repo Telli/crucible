@@ -136,6 +136,10 @@ export function createMeshData({ positions, faceOffsets, cornerVertices, edgeVer
   if (vertexCount > MAX_MESH_VERTICES) throw new RangeError(`Meshes support at most ${MAX_MESH_VERTICES} vertices.`);
   if (!allFinite(positions)) throw new RangeError('positions must be finite.');
   validateFaces(vertexCount, faceOffsets, cornerVertices);
+  if (Boolean(edgeVertices) !== Boolean(cornerEdges)) {
+    const missing = edgeVertices ? 'cornerEdges' : 'edgeVertices';
+    throw new TypeError(`Pass both edgeVertices and cornerEdges together; ${missing} is missing.`);
+  }
   let edges;
   if (edgeVertices && cornerEdges) {
     validateExplicitEdges(vertexCount, faceOffsets, cornerVertices, edgeVertices, cornerEdges);
