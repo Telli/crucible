@@ -268,3 +268,25 @@ test('a review shot passes projection and orthoScale through to the drawn camera
   assert.equal(harness.renders.at(-1).camera.projection, 'orthographic');
   assert.equal(harness.renders.at(-1).camera.orthoScale, 8);
 });
+
+test('a review shot at a motion time gives the post pass the same clock as a frame at that time', () => {
+  const { preview, renders } = previewHarness();
+  const sessionId = 'review-pass-clock';
+  const input = recipe();
+  input.motion = { duration: 8, tracks: [{ kind: 'node', id: 'cube', property: 'translation',
+    keyframes: [{ time: 0, value: [0, 0, 0] }, { time: 8, value: [4, 0, 0] }] }] };
+  preview.create({ recipe: input, sessionId, backend: 'cpu', memoryBudgetMiB: 192 });
+  preview.reviewBegin({ sessionId, width: 768, height: 408 });
+  const reviewClocks = [];
+  const frameClocks = [];
+  for (const [index, motionTime] of [5.65, 2].entries()) {
+    preview.reviewShot({ sessionId, index, width: 384, height: 384, columns: 2, shot: { label: `t${motionTime}`, motionTime } });
+    reviewClocks.push({ passTime: renders.at(-1).camera.passTime, anchorX: renders.at(-1).parts[0].matrix[12] });
+    preview.frame({ sessionId, motionTime });
+    frameClocks.push({ passTime: renders.at(-1).camera.passTime, anchorX: renders.at(-1).parts[0].matrix[12] });
+  }
+  assert.deepEqual(reviewClocks, frameClocks);
+  assert.equal(reviewClocks[0].passTime, 5.65);
+  preview.reviewShot({ sessionId, index: 0, width: 384, height: 384, columns: 2, shot: { label: 'base', motionTime: null } });
+  assert.equal(renders.at(-1).camera.passTime, undefined);
+});
