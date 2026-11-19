@@ -64,7 +64,7 @@ test('MeshData derives unique edges for a cube', () => {
 });
 
 test('MeshData names a missing input object and null attributes at the public boundary', () => {
-  assert.throws(() => createMeshData(), /positions must be a nonempty Float32Array/);
+  assert.throws(() => createMeshData(), /createMeshData needs an object like/);
   assert.throws(() => createMeshData(null), /createMeshData needs an object like/);
   assert.throws(() => polygonMesh([0, 0, 0, 1, 0, 0, 0, 1, 0], [[0, 1, 2]], null), /createMeshData attributes must be an object/);
 });

@@ -128,7 +128,7 @@ export function deriveEdges(vertexCount, faceOffsets, cornerVertices) {
  * attributes: { point: { name: { data, size } }, edge: {...}, face: {...}, corner: {...} }.
  * Edge attributes are only accepted together with edgeVertices and cornerEdges, because derived edge order is internal.
  */
-export function createMeshData(options = {}) {
+export function createMeshData(options) {
   if (options === null || typeof options !== 'object' || Array.isArray(options)) {
     throw new TypeError('createMeshData needs an object like { positions, faceOffsets, cornerVertices }.');
   }
