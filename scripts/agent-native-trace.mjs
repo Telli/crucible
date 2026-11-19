@@ -108,7 +108,7 @@ export async function chooseTraceBackend({ requested, runtimeBackend, locator })
   const found = await locator.find();
   if (found.tracer) return { backend: 'native', tracer: found.tracer };
   const fallback = runtimeBackend === 'cpu' ? 'cpu' : 'gpu';
-  return { backend: fallback, note: `${found.reason} The ${fallback} backend ran instead.` };
+  return { backend: fallback, reason: found.reason, note: `${found.reason} The ${fallback} backend ran instead.` };
 }
 
 const V2_TABLE_TYPES = { Uint8Array, Uint32Array, Int32Array, Float32Array };

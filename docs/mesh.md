@@ -138,6 +138,7 @@ Edits (names follow Blender's `bmesh.ops` where they match):
 | `delete` | `select` (required) | |
 | `flip_normals` | `select` | |
 | `translate` | `select`, `offset` [x, y, z], optional `falloff` `{ radius, curve, connected }` | |
+| `transform_selection` | `select`, optional `pivot` [x, y, z] (default: mean of the selected vertices), `rotation` `{ axis, angle }` (angle in radians), `scale` (above 0, up to 1000; one number or [x, y, z]), the same `falloff` as `translate` | Needs `rotation` or `scale`. Scales, then rotates about the pivot. With `falloff`, a vertex follows by its curve weight: it turns by weight times the angle and scales by 1 + weight times (scale - 1). |
 | `merge_by_distance` | `distance` (default 1e-4) | |
 | `tag` | `select`, `name` (required) | `<name>` |
 | `boolean` | `operation` (`union`, `difference`, `intersect`), `cutter`, optional `translation`, `rotation` (XYZW), `scale`, `name` | `<name>.cut` |
@@ -307,6 +308,11 @@ Uses:
 - `displace` (`select`, `field`, `strength`, `midlevel`, `direction`) is Blender's Displace modifier with a field as
   the texture: each vertex moves by `(field - midlevel) * strength` along `normal` (default), `x`, `y` or `z`.
   `displace` also takes `group`, the name of a vertex group: each move is scaled by the vertex's weight.
+  Along `normal`, a vertex on a sharp edge (faces that bend apart by more than 60 degrees) moves to the meeting point of the
+  offset planes of its sides, so the faces stay unfolded. The move fades to zero toward such an edge over a band, measured
+  along the surface, twice as wide as the largest requested move, so a face eases into its rim instead of stepping up from it
+  and the look does not change with the segment count; the rim's own inward move stays within half its shortest edge.
+  Smooth surfaces are unchanged.
 - Both are also stack nodes, so a late change reuses the cached earlier nodes.
 - `vertex_group` (`name`, `select`, and one of `weight`, `field`, `gradient` or `measure`) writes the weights, 0 to 1, of a named group for the
   vertices of the selected faces; the others keep theirs (0 in a new group). `gradient` is `{ "axis": "y", "range": [0, 1], "weights": [0, 1] }`,

@@ -58,12 +58,22 @@ function worldMatrixOf(index, nodes, cache) {
 /** Hierarchy records from `options.nodes` (the `nodes` of a parsed asset, or the same fields): name, id, parent id. */
 function nodesFromRecords(records) {
   const indexById = new Map(records.map((record, index) => [record.id ?? record.name, index]));
-  return records.map(record => {
+  const nodes = records.map(record => {
     if (typeof record.name !== 'string' || !record.name) throw new TypeError('GLB nodes need a name.');
     const parent = record.parent === null || record.parent === undefined ? -1 : indexById.get(record.parent);
     if (parent === undefined) throw new RangeError(`GLB node ${record.name} names a parent that is not in the node list.`);
     return { name: record.name, parent, translation: record.translation, rotation: record.rotation, scale: record.scale, meshIds: record.meshIds ?? [] };
   });
+  requireNoParentLoop(nodes);
+  return nodes;
+}
+
+function requireNoParentLoop(nodes) {
+  for (const node of nodes) {
+    let ancestor = node.parent;
+    for (let step = 0; ancestor >= 0 && step < nodes.length; step++) ancestor = nodes[ancestor].parent;
+    if (ancestor >= 0) throw new RangeError(`GLB node ${node.name} has a parent loop.`);
+  }
 }
 
 function jointWorld(skin, joint) {
@@ -194,6 +204,13 @@ function validateKeyframes(track) {
   const timesValid = keyframes?.length > 0 && keyframes.every(({ time }) => time > previousTime && Number.isFinite(previousTime = time));
   const valuesValid = keyframes?.every(({ value }) => Array.from(value).every(Number.isFinite));
   if (!timesValid || !valuesValid) throw new RangeError(`GLB ${track.property} track on ${track.target} needs keyframes with finite values and strictly increasing finite times.`);
+  const fixedWidth = COMPONENTS_BY_PATH[track.property];
+  const width = fixedWidth ?? keyframes[0].value.length;
+  const sized = (list, size) => list?.length === size && Array.from(list).every(Number.isFinite);
+  const cubic = track.interpolation === 'CUBICSPLINE';
+  if (!keyframes.every(({ value, inTangent, outTangent }) => (!fixedWidth || value.length === width) && (!cubic || (sized(inTangent, width) && sized(outTangent, width))))) {
+    throw new RangeError(`GLB ${track.property} track on ${track.target} needs ${width} values${cubic ? ' and tangents' : ''} in every keyframe.`);
+  }
 }
 
 function writeTrack(writer, animation, sourceTrack, nodeIndex) {

@@ -43,7 +43,6 @@
         <label class="exposure-label" for="exposure">Exposure <output id="exposure-value">1.0</output></label>
         <input id="exposure" type="range" min="0.5" max="1.8" step="0.1" value="1" />
         <div class="demo-presets" role="group" aria-label="Model composition"><button data-view="hero" aria-pressed="true">Hero</button><button data-view="face" aria-pressed="false">Face</button><button data-view="machine" aria-pressed="false">Machinery</button></div><label class="quality-label" for="look">Lighting<select id="look"><option value="studio">Soft studio</option><option value="warm">Warm key</option><option value="cool">Cool metal</option></select></label><div class="demo-presets"><button id="assembly-tour">Play assembly</button><button id="save-model">Save PNG</button></div><div class="view-actions">
-          <button id="rotate" aria-pressed="false">↻ Auto orbit</button>
           <button id="inspect" aria-pressed="false">Surface normals</button>
         </div>
         <label class="quality-label" for="quality">Resolution
@@ -53,6 +52,7 @@
       <footer>
         <p class="hint">Drag to orbit <span>·</span> Scroll to zoom</p>
         <div class="metrics" aria-label="Renderer statistics"><span id="parts">Loading geometry…</span><span id="calls"></span><span id="cpu"></span></div>
+        <button id="rotate" aria-pressed="false">↻ Auto orbit</button>
         <button id="benchmark">Measure performance ↗</button>
       </footer>
       <section id="benchmark-result" class="benchmark-result" hidden aria-label="Performance results">

@@ -325,7 +325,7 @@ const environment = z.strictObject({
   sunBounce: z.number().min(0).optional().describe('Sun bounce in a closed room: 0 off, 1 default.'),
   specularAntiAliasing: z.number().min(0).max(4).optional().describe('Specular anti-aliasing: 0 off, 1 default; widens highlights that sparkle on grainy normal-mapped metal.'),
   resolveCoplanar: z.union([z.literal('offset'), z.literal(false)]).optional().describe("Flush faces are ranked at draw time by default ('offset'); false opts out."),
-  viewTransform: z.enum(VIEW_TRANSFORM_NAMES).optional().describe('Display transform, for example agx to compare with Blender.'),
+  viewTransform: z.enum(VIEW_TRANSFORM_NAMES).optional().describe('Display transform, agx or standard to compare with Blender.'),
   look: catalogReference([...LOOK_NAMES, ...BUNDLED_CUBE_LOOK_NAMES], '.cube').nullable().optional().describe('Look preset or .cube; scene_capabilities catalogLooks. null clears.'),
   sky: z.record(z.string(), z.unknown()).nullable().optional().describe('Physical sky: {type:"physical", sunElevation, sunRotation, turbidity, groundAlbedo, aerialPerspective}; sets key light, sky and fog. Or {type:"gradient", stops:[{at,color}], horizonGlow:{color,width,intensity}}. Fields in scene_capabilities physicalSky, gradientSky.'),
   wind: z.strictObject({ strength: bounded(0, 4).optional(), direction: bounded(-360, 360).optional().describe('Degrees: 0 toward +x, 90 toward +z.') }).optional().describe('Sway of foliage and grass materials; strength defaults to 0.3.'),
@@ -406,6 +406,7 @@ const meshEdit = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('delete'), select: selectRule }),
   z.strictObject({ op: z.literal('flip_normals'), select: selectRule.optional() }),
   z.strictObject({ op: z.literal('translate'), select: selectRule.optional(), offset: vector3, falloff: z.strictObject({ radius: finite, curve: z.enum(['smooth', 'sphere', 'root', 'sharp', 'linear', 'constant', 'inverseSquare']).optional(), connected: z.boolean().optional().describe('Measure distance along edges instead of straight lines.') }).optional() }),
+  z.strictObject({ op: z.literal('transform_selection'), select: selectRule.optional(), pivot: vector3.optional().describe('Point to turn and scale about. Defaults to the mean of the selected vertices.'), rotation: z.strictObject({ axis: vector3, angle: bounded(-6.283185307179586, 6.283185307179586).describe('Radians, not degrees: 90 degrees is 1.5708.') }).optional(), scale: z.union([bounded(0.000001, 1000), z.array(bounded(0.000001, 1000)).length(3)]).optional().describe('Factor above 0, or one per axis; applied before the rotation.'), falloff: z.strictObject({ radius: finite, curve: z.enum(['smooth', 'sphere', 'root', 'sharp', 'linear', 'constant', 'inverseSquare']).optional(), connected: z.boolean().optional().describe('Measure distance along edges instead of straight lines.') }).optional() }).describe('Rotate and/or scale the selected vertices about a pivot; falloff fades the move to nothing at its radius.'),
   z.strictObject({ op: z.literal('merge_by_distance'), distance: finite.optional() }),
   z.strictObject({
     op: z.literal('loop_cut'), name: editName,
@@ -885,7 +886,11 @@ const checkpointFields = { ...sessionFields, checkpointId: z.uuid().describe('Ch
 const expectedRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).describe('Current revision returned by create, inspect, apply or restore. Stale edits fail atomically.');
 const jobFields = { jobId: z.uuid().describe('Render job UUID returned by scene_render_submit or capabilities jobs.records.') };
 const jobWithFormatFields = { ...jobFields, response_format: responseFormatField };
-const jobResultFields = { ...jobWithFormatFields, images: z.boolean().optional() };
+const INLINE_IMAGE_LIMIT = 8;
+const jobResultFields = {
+  ...jobWithFormatFields,
+  images: z.union([z.boolean(), z.array(z.number().int().min(0)).max(INLINE_IMAGE_LIMIT)]).optional().describe('false: paths only; indexes: those frames.'),
+};
 // Job tools take jobId alone; an agent that carries sessionId over from the scene tools gets told to drop it.
 function jobKeysHint(toolName, acceptedKeys) {
   const accepted = acceptedKeys.length > 1 ? `${acceptedKeys[0]} (and ${acceptedKeys.slice(1).join(', ')})` : acceptedKeys[0];
@@ -953,10 +958,28 @@ const OUTPUT_SCHEMAS = {
 const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const INLINE_IMAGE_MAXIMUM_BYTES = 1024 * 1024;
 
-async function renderResultContent(result, shown = result, { attachImages = true } = {}) {
+function isAttachableImage(artifact) {
+  return INLINE_IMAGE_TYPES.has(artifact.mimeType) && artifact.bytes <= INLINE_IMAGE_MAXIMUM_BYTES;
+}
+
+// images: undefined or true attaches every PNG of a small job and none of a larger one (a 96-frame job would put
+// ~100 MB in the transcript); false attaches none; an array of artifact indexes attaches exactly those.
+function indexesToAttach(artifacts, images) {
+  if (Array.isArray(images)) {
+    const outOfRange = images.filter(index => index >= artifacts.length);
+    if (outOfRange.length > 0) throw new RangeError(`images index ${outOfRange[0]} is past the last artifact (${artifacts.length - 1}). Pass indexes from 0 to ${artifacts.length - 1} of the artifacts list, or images: false for paths only.`);
+    return new Set(images);
+  }
+  if (images === false) return new Set();
+  const imageIndexes = artifacts.flatMap((artifact, index) => (isAttachableImage(artifact) ? [index] : []));
+  return new Set(imageIndexes.length <= INLINE_IMAGE_LIMIT ? imageIndexes : []);
+}
+
+async function renderResultContent(result, shown = result, { images } = {}) {
   const content = [{ type: 'text', text: JSON.stringify(shown) }];
-  for (const artifact of result.artifacts) {
-    if (attachImages && INLINE_IMAGE_TYPES.has(artifact.mimeType) && artifact.bytes <= INLINE_IMAGE_MAXIMUM_BYTES) {
+  const attachIndexes = indexesToAttach(result.artifacts, images);
+  for (const [index, artifact] of result.artifacts.entries()) {
+    if (attachIndexes.has(index) && isAttachableImage(artifact)) {
       content.push({ type: 'image', data: (await readFile(artifact.path)).toString('base64'), mimeType: artifact.mimeType });
     }
     content.push({ type: 'resource_link', uri: pathToFileURL(artifact.path).href, name: artifact.filename, mimeType: artifact.mimeType, size: artifact.bytes });
@@ -1135,9 +1158,9 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     return jsonResult(chosenFormat('scene_render_status', response_format) === 'concise' ? conciseJobStatus(record) : record);
   });
   register('scene_render_cancel', 'Request cancellation of one job. Poll status until terminal before using the preview again.', z.strictObject(jobFields, { error: jobKeysHint('scene_render_cancel', Object.keys(jobFields)) }), { ...edit, idempotentHint: true }, async argumentsValue => jsonResult(await runtime.cancelJob(argumentsValue)));
-  register('scene_render_result', 'Read completed local output paths, MIME types, byte counts, SHA-256 digests and measured render metrics. Attaches each PNG (images: false for paths only) and a resource link per file; video stays on disk.', z.strictObject(jobResultFields, { error: jobKeysHint('scene_render_result', Object.keys(jobResultFields)) }), readOnly, async ({ response_format, images, ...jobInput }) => {
+  register('scene_render_result', 'Read completed local output paths, MIME types, byte counts, SHA-256 digests and measured render metrics. Attaches each PNG of a job of up to 8 (images: false for paths only, or indexes of frames) and a resource link per file; video stays on disk.', z.strictObject(jobResultFields, { error: jobKeysHint('scene_render_result', Object.keys(jobResultFields)) }), readOnly, async ({ response_format, images, ...jobInput }) => {
     const result = await runtime.jobResult(jobInput);
-    return renderResultContent(result, chosenFormat('scene_render_result', response_format) === 'concise' ? conciseJobResult(result) : result, { attachImages: images !== false });
+    return renderResultContent(result, chosenFormat('scene_render_result', response_format) === 'concise' ? conciseJobResult(result) : result, { images });
   });
   register('scene_render_release', 'Delete the owned files and record for a terminal job, freeing store quota. Active jobs must be cancelled first.', z.strictObject(jobFields, { error: jobKeysHint('scene_render_release', Object.keys(jobFields)) }), destroy, async argumentsValue => jsonResult(await runtime.releaseJob(argumentsValue)));
   return server;
