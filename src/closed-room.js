@@ -1,3 +1,5 @@
+import { invalidField } from './field-error.js';
+
 // A cheap test for a closed room: shoot a fixed set of rays from the middle of the scene's bounds and count how many hit
 // the inner face of a part. A solid object has only back faces facing a ray that starts inside it, so it never counts as a
 // room. It reads no clock and uses no random numbers, so the same scene gives the same share.
@@ -162,6 +164,9 @@ export const SKY_OPENNESS_RAYS = 32;
  * spiral, so the same scene gives the same share.
  */
 export function skyOpenness(parts, point) {
+  if (![0, 1, 2].every(axis => Number.isFinite(point?.[axis]))) {
+    throw invalidField('point', point, '[x, y, z] as three finite numbers');
+  }
   const worldMatrices = partMatrixLookup(parts);
   const triangles = worldTriangles(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)), worldMatrices);
   if (!triangles) {
