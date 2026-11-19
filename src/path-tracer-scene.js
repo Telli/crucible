@@ -397,14 +397,44 @@ function resolveInstanceLimit(options) {
   return { native: true, count: requested };
 }
 
-function flattenedLimitMessage(limits, triangleCount) {
+/**
+ * How many parts reuse a geometry another part also uses, and the triangles left when each shared geometry counts once.
+ * A flattened trace copies every instance into one triangle buffer, so the limit sees the first number's expansion.
+ */
+export function measureInstanceExpansion(parts, geometries) {
+  const useCounts = new Map();
+  parts.forEach((part, index) => {
+    if (sharesAuthoredGeometry(part, geometries[index])) useCounts.set(geometries[index], (useCounts.get(geometries[index]) ?? 0) + 1);
+  });
+  let instancedNodes = 0;
+  let uniqueTriangles = 0;
+  const counted = new Set();
+  parts.forEach((part, index) => {
+    const geometry = geometries[index];
+    const triangles = geometry.indices.length / 3;
+    const shared = useCounts.get(geometry) > 1;
+    if (shared) instancedNodes++;
+    if (shared && counted.has(geometry)) return;
+    counted.add(geometry);
+    uniqueTriangles += triangles;
+  });
+  return { instancedNodes, uniqueTriangles };
+}
+
+function instancingNote(triangleCount, expansion) {
+  if (!expansion || expansion.instancedNodes < 1) return '';
+  return ` That is ${triangleCount} triangles after expanding ${expansion.instancedNodes} instanced nodes (${expansion.uniqueTriangles} unique): this backend copies every instance into one triangle buffer. Use fewer copies, a simpler GLB, or the Glaze renderer.`;
+}
+
+function flattenedLimitMessage(limits, triangleCount, expansion) {
+  const note = instancingNote(triangleCount, expansion);
   if (limits.native) {
-    return `A native path trace takes at most ${limits.unique} triangles in total, got ${triangleCount}, ${triangleCount - limits.unique} too many. Share geometry between copies (they stay instances) or simplify the meshes.`;
+    return `A native path trace takes at most ${limits.unique} triangles in total, got ${triangleCount}, ${triangleCount - limits.unique} too many. Share geometry between copies (they stay instances) or simplify the meshes.${note}`;
   }
   if (limits.gpu) {
-    return `This GPU path trace takes at most ${limits.unique} triangles in total (what the device's texture or buffer limits hold, up to ${MAX_GPU_TRACE_TRIANGLES}), got ${triangleCount}. Simplify or drop meshes (a crowd can use a lower detail level for the avatars far from the camera), or render the frame with the native Cook backend.`;
+    return `This GPU path trace takes at most ${limits.unique} triangles in total (what the device's texture or buffer limits hold, up to ${MAX_GPU_TRACE_TRIANGLES}), got ${triangleCount}. Simplify or drop meshes (a crowd can use a lower detail level for the avatars far from the camera), or render the frame with the native Cook backend.${note}`;
   }
-  return `A path trace takes at most ${MAX_TRACE_TRIANGLES} triangles in total, got ${triangleCount}. Simplify or drop meshes, or trace on the GPU backend, which holds more when the device allows it.`;
+  return `A path trace takes at most ${MAX_TRACE_TRIANGLES} triangles in total, got ${triangleCount}. Simplify or drop meshes, or trace on the GPU backend, which holds more when the device allows it.${note}`;
 }
 
 function flattenParts(parts, geometries = parts.map(traceGeometry), limits = resolveTriangleLimits()) {
@@ -416,7 +446,7 @@ function flattenParts(parts, geometries = parts.map(traceGeometry), limits = res
     indexTotal += geometry.indices.length;
   }
   if (indexTotal / 3 > limits.unique) {
-    throw new RangeError(flattenedLimitMessage(limits, indexTotal / 3));
+    throw new RangeError(flattenedLimitMessage(limits, indexTotal / 3, measureInstanceExpansion(parts, geometries)));
   }
   const world = allocateWorld(vertexTotal, indexTotal, geometries.some(geometry => geometry.lightUvs));
   let vertexOffset = 0;
@@ -449,6 +479,21 @@ function softFalloffOf(light, label) {
   return light.softFalloff ? { softFalloff: true } : {};
 }
 
+// The most bounces a light's own limit may name: Cook keeps it in 8 bits as the limit plus one.
+const MAXIMUM_LIGHT_BOUNCES = 254;
+
+/**
+ * A light's own bounce limit, as the `max_bounces` of a Cycles light: the light adds direct light only at path vertices 0 to the limit,
+ * on top of the scene's bounces. Left out, the light runs to the scene limit. Only the native cycles kernel reads it.
+ */
+function maxBouncesOf(value, label) {
+  if (value === undefined) return {};
+  if (!Number.isInteger(value) || value < 0 || value > MAXIMUM_LIGHT_BOUNCES) {
+    throw new RangeError(`${label} is a whole number of bounces from 0 to ${MAXIMUM_LIGHT_BOUNCES}, got ${JSON.stringify(value)}. Leave it out for no limit beyond the scene's bounces.`);
+  }
+  return { maxBounces: value };
+}
+
 // Missing colour and intensity default as in the rasterizer (lighting.js); a value that is given must be usable.
 function lightEmission(light, label) {
   const color = light.color ?? [1, 1, 1];
@@ -476,7 +521,7 @@ function resolveAreaLight(light, index) {
   }
   const across = rawAcrossLength < MINIMUM_ACROSS_LENGTH ? [1, 0, 0] : normalized(rawAcross);
   const along = [normal[1] * across[2] - normal[2] * across[1], normal[2] * across[0] - normal[0] * across[2], normal[0] * across[1] - normal[1] * across[0]];
-  return { bit: AREA_FIRST_BIT + index, position: light.position, ...lightEmission(light, label), width: light.width, height: light.height, normal, across, along, profile: traceProfile(light) };
+  return { bit: AREA_FIRST_BIT + index, position: light.position, ...lightEmission(light, label), width: light.width, height: light.height, normal, across, along, profile: traceProfile(light), ...maxBouncesOf(light.maxBounces, `${label}.maxBounces`) };
 }
 
 /**
@@ -530,10 +575,14 @@ function resolveLights(environment, limit = resolveLightLimit(), parts = []) {
     refuseLinkingBeyondMaskBits(environment, parts);
   }
   return {
-    sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: sunColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS } : null,
-    points: (environment.pointLights ?? []).map((light, index) => ({ bit: POINT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.pointLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`) })),
+    sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: sunColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS, ...maxBouncesOf(environment.sunMaxBounces, 'environment.sunMaxBounces') } : null,
+    points: (environment.pointLights ?? []).map((light, index) => ({
+      bit: POINT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.pointLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`),
+      ...maxBouncesOf(light.maxBounces, `environment.pointLights[${index}].maxBounces`),
+    })),
     spots: (environment.spotLights ?? []).map((light, index) => ({
       bit: SPOT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.spotLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.spotLights[${index}]`),
+      ...maxBouncesOf(light.maxBounces, `environment.spotLights[${index}].maxBounces`),
       direction: normalized(light.direction),
       cosineHalfAngle: Math.cos(light.angle),
       profile: traceProfile(light),
@@ -593,7 +642,7 @@ export function attachTracer(scene) {
 /** Local volumes are traced by the CPU path tracer and, for boxes and spheres, the WebGPU final tracer. Every other tracer entry point calls this so none drops them silently. */
 export function refuseLocalVolumes(scene, tracerName) {
   if (!scene.localVolumes) return;
-  throw new RangeError(`environment.localVolumes is traced by the CPU path tracer only; ${tracerName} cannot draw them. Use backend "cpu" (backend "webgpu" draws box, sphere and grid volumes) or remove the volumes.`);
+  throw new RangeError(`environment.localVolumes is traced by the CPU path tracer only; ${tracerName} cannot draw them. Use backend "cpu" (backend "webgpu" draws box, sphere, mesh and grid volumes) or remove the volumes.`);
 }
 
 // The rasterizer's own test (renderer.js `isHidden`): a part hides by `visible: false` or by the `visibility.visible` that a posed scene keys.
@@ -855,6 +904,8 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
     instances,
     materials,
     traceMaterials,
+    // The GPU tracers read this per part flag from the material table; the native kernel reads the instance visibility instead.
+    ...(parts.some(part => part.shadowOnly === true) ? { shadowOnlyParts: Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) } : {}),
     lights: resolveLights(environment, limits.lights, parts),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
     volume: resolveTraceVolume(environment.volumeFog),
@@ -862,6 +913,19 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
     surfaceOffset: extent * 1e-5,
     farDistance: extent * 1e4,
   };
+}
+
+/** True for a trace scene that keeps copies of one mesh as instances instead of flattened triangles. */
+export function isInstancedScene(scene) {
+  return Array.isArray(scene.instances);
+}
+
+/** The triangles a scene holds once per distinct mesh: what the GPU tables carry, and what the triangle limit counts. */
+export function uniqueTriangleCount(scene) {
+  if (!isInstancedScene(scene)) return scene.indices.length / 3;
+  let total = 0;
+  for (const geometry of new Set(scene.instances.map(instance => instance.geometry))) total += geometry.indices.length / 3;
+  return total;
 }
 
 /**
@@ -877,7 +941,9 @@ export async function buildTraceSceneForDevice(allParts, environment, gpuModule)
   } catch {
     deviceLimit = undefined;
   }
-  return buildTraceScene(allParts, environment, deviceLimit === undefined ? {} : { gpuTriangleLimit: deviceLimit });
+  const options = deviceLimit === undefined ? {} : { gpuTriangleLimit: deviceLimit };
+  if (gpuModule.supportsInstancing === true) options.instancing = true;
+  return buildTraceScene(allParts, environment, options);
 }
 
 /**

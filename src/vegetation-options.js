@@ -1,7 +1,7 @@
 // Option checks that stop a hang, an out-of-memory death or an opaque TypeError inside the vegetation builders.
 
 function need(value, label, minimum, maximum, whole) {
-  if (!(value >= minimum && value <= maximum) || (whole && !Number.isInteger(value))) {
+  if (typeof value !== 'number' || !(value >= minimum && value <= maximum) || (whole && !Number.isInteger(value))) {
     throw new RangeError(`${label} must be ${whole ? 'a whole number ' : ''}from ${minimum} to ${maximum}; got ${value}.`);
   }
 }
@@ -24,4 +24,18 @@ export function checkScatterOptions({ area, density, spacing, variants, scale, m
 export function checkClumpOptions(label, count, maximumCount, height) {
   need(count, `${label} count`, 1, maximumCount, true);
   need(height, `${label} height`, 0.001, 100);
+}
+
+export function checkTreeHeight(height) {
+  need(height, 'Tree height', 0.01, 1000);
+}
+
+export function checkGrassRadius(radius) {
+  need(radius, 'Grass blade radius', 0, 100);
+}
+
+export function checkSeed(functionName, seed) {
+  if (typeof seed !== 'number' || !Number.isFinite(seed)) {
+    throw new TypeError(`${functionName} seed must be a finite number; got ${seed}.`);
+  }
 }

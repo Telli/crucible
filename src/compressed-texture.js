@@ -58,6 +58,7 @@ export function describeCompressedImage(glFormat, levels, field, colorSpace) {
   }
   const usable = levels.length === levelCountFor(base.width, base.height) ? levels : [base];
   usable.forEach((level, index) => {
+    if (!hasPositiveIntegerSize(level)) throw new Error(`${field} ${info.name} mip level ${index} is missing or has no whole width and height; pass { width, height, data } for every level.`);
     const expectedWidth = Math.max(1, base.width >> index);
     const expectedHeight = Math.max(1, base.height >> index);
     if (level.width !== expectedWidth || level.height !== expectedHeight) {

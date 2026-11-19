@@ -99,3 +99,11 @@ test('looping and cubic lens overshoot obey camera domain constraints', () => {
   assert.throws(() => createCameraPath({ duration: 1, eye: [0, 4, 0] }), /parallel/);
   assert.throws(() => createCameraPath({ duration: 1, eye: [0, 0, 4], far: 0.05 }), /clipping/);
 });
+
+test('a non-finite roll override names the roll, not the up vector (#2358)', () => {
+  const path = createCameraPath({ duration: 1, eye: [0, 0, 5] });
+  for (const roll of [NaN, Infinity, 'a']) {
+    assert.throws(() => path.sample(0, undefined, { overrides: { roll } }), /Camera roll must be a finite number of radians/);
+  }
+  assert.doesNotThrow(() => path.sample(0, undefined, { overrides: { roll: 0.5 } }));
+});

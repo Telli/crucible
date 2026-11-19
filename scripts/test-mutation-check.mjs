@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isMainModule, repositoryRoot, runTestFiles } from './test-run.mjs';
 
-export const REVERTED_FOLDERS = ['src', 'bin', 'packages'];
+export const REVERTED_FOLDERS = ['src', 'bin', 'packages', 'scripts'];
 
 function git(arguments_, folder, input) {
   const result = spawnSync('git', arguments_, { cwd: folder, encoding: 'utf8', input, maxBuffer: 256 * 1024 * 1024 });
@@ -77,17 +77,26 @@ export function runMutationCheck(testFiles, { folder = repositoryRoot, baseRef =
 }
 
 export function parseArguments(arguments_) {
-  const baseIndex = arguments_.indexOf('--base');
-  const baseRef = baseIndex < 0 ? 'origin/main' : arguments_[baseIndex + 1];
-  const valueIndex = baseIndex < 0 ? -1 : baseIndex + 1;
-  const testFiles = arguments_.filter((argument, index) => !argument.startsWith('--') && index !== valueIndex);
+  let baseRef = 'origin/main';
+  const testFiles = [];
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (argument === '--base' || argument.startsWith('--base=')) {
+      baseRef = argument === '--base' ? arguments_[(index += 1)] : argument.slice('--base='.length);
+      if (!baseRef) throw new Error('--base needs a ref: --base <ref> or --base=<ref>, for example --base origin/main.');
+    } else if (argument.startsWith('--')) {
+      throw new Error(`Unknown option ${argument}. The only option is --base <ref>.`);
+    } else {
+      testFiles.push(argument);
+    }
+  }
   return { baseRef, testFiles };
 }
 
 function main(arguments_) {
-  const { baseRef, testFiles } = parseArguments(arguments_);
   let result;
   try {
+    const { baseRef, testFiles } = parseArguments(arguments_);
     result = runMutationCheck(testFiles, { baseRef });
   } catch (error) {
     console.error(error.message);

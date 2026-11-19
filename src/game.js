@@ -6,6 +6,7 @@ import { groundBounceEnvironment } from './ground-bounce.js';
 import { createRuntime } from './runtime.js';
 import { createInput, gamepadSource, keyboardSource } from './input.js';
 import { replaySource, touchSource } from './input-sources.js';
+import { createTouchStickOverlay } from './touch-stick-overlay.js';
 import { createCharacterController, createChaseCamera, createController, createCameraRigOfKind, createFirstPersonCamera, createFollowCamera, createTopDownCamera, createVehicleController } from './player.js';
 import { createGameRules } from './game-rules.js';
 import { hasTexturedMaterial, parentTranslation } from './game-needs.js';
@@ -40,11 +41,18 @@ export function inputDefinition(preset) {
   return { actions, axes };
 }
 
-function inputSources(preset, canvas) {
+function inputSources(preset, touch) {
   const sources = [keyboardSource()];
   if (preset === 'gamepad') sources.push(gamepadSource());
-  if (preset === 'touch') sources.push(touchSource({ target: canvas, sticks: [MOVE_STICK] }));
+  if (touch) sources.push(touch);
   return sources;
+}
+
+function requireTouchControls(value) {
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`startGame option touchControls must be true or false, got ${value === null ? 'null' : typeof value}. Pass true to draw the touch stick on a game with input "touch".`);
+  }
+  return value;
 }
 
 function cameraRigFor(kind, controller, input) {
@@ -141,7 +149,7 @@ async function loadAnimationRuntime() {
 
 /**
  * Start the game a recipe describes on a canvas and return its parts: `scene`, `runtime`, `rules`, `input`, `controller`, `renderer`,
- * `restart()` (puts the player, camera, NPCs, animation graphs, physics bodies and rules back at the start; returns a promise that settles once the physics world is rebuilt) and `dispose()`. Options: `replay` (a recording from recordInput; the keyboard is not attached) `showStatus` (default true) `assets` (decoded catalog assets by assetCopyKey) or `assetUrls` (asset id to GLB URL, which startGame fetches and decodes), `physicsUrl` (where the page keeps jolt-physics.wasm.js, on its own origin; a recipe with game.physics true needs it unless the jolt-physics package resolves) and `createRenderer` (tests pass a stand-in for the WebGL renderer).
+ * `restart()` (puts the player, camera, NPCs, animation graphs, physics bodies and rules back at the start; returns a promise that settles once the physics world is rebuilt) and `dispose()`. Options: `replay` (a recording from recordInput; the keyboard is not attached) `showStatus` (default true) `touchControls` (default false; true draws a virtual stick under the finger on a game with `input: "touch"`) `assets` (decoded catalog assets by assetCopyKey) or `assetUrls` (asset id to GLB URL, which startGame fetches and decodes), `physicsUrl` (where the page keeps jolt-physics.wasm.js, on its own origin; a recipe with game.physics true needs it unless the jolt-physics package resolves) and `createRenderer` (tests pass a stand-in for the WebGL renderer).
  */
 export async function startGame(canvas, recipe, options = {}) {
   const cleanups = [];
@@ -203,7 +211,7 @@ export function operationsToSend(operations, lastSentOperations) {
   return candidates.filter(operation => changedTargets.has(operationTarget(operation)));
 }
 
-async function buildGame(canvas, recipe, { replay, showStatus = true, assets: providedAssets, assetUrls, physicsUrl, createRenderer = (...rendererArguments) => new CrucibleRenderer(...rendererArguments) }, cleanups) {
+async function buildGame(canvas, recipe, { replay, showStatus = true, touchControls = false, assets: providedAssets, assetUrls, physicsUrl, createRenderer = (...rendererArguments) => new CrucibleRenderer(...rendererArguments) }, cleanups) {
   const setup = recipe.game;
   if (!setup) throw new Error('startGame needs a recipe with a game section. Add one with the set-game operation.');
   // Live physics replaces the recorded bake of the same section, so the scene is built without it.
@@ -227,7 +235,13 @@ async function buildGame(canvas, recipe, { replay, showStatus = true, assets: pr
   cleanups.push(() => renderer.dispose());
 
   const { actions, axes } = inputDefinition(game.input);
-  const input = createInput({ sources: replay ? [replaySource(replay)] : inputSources(game.input, canvas), actions, axes });
+  const drawTouchStick = requireTouchControls(touchControls) && game.input === 'touch' && !replay;
+  const touch = game.input === 'touch' && !replay ? touchSource({ target: canvas, sticks: [MOVE_STICK] }) : null;
+  const input = createInput({ sources: replay ? [replaySource(replay)] : inputSources(game.input, touch), actions, axes });
+  if (drawTouchStick) {
+    const stickOverlay = createTouchStickOverlay({ parent: canvas.parentNode, source: touch });
+    cleanups.push(() => stickOverlay.dispose());
+  }
   const footOffset = game.player.footOffset;
   const start = nodeTranslation(recipe.nodes, game.player.node);
   const playerParentOffset = parentTranslation(recipe.nodes, game.player.node, 'game.player.node');
