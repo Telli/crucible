@@ -51,7 +51,8 @@ test('the branch total does not depend on how the same shards are grouped', () =
   assert.deepEqual(allApart, together);
 });
 
-const shardText = ['SF:src/example.js', 'DA:1,1', 'end_of_record'].join('\n');
+const shardText = ['SF:src/example.js', 'FN:1,example', 'FNDA:1,example', 'BRDA:1,0,0,1', 'DA:1,1', 'end_of_record'].join('
+');
 
 function shardSet(shardNumbers) {
   return {
