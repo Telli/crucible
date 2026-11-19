@@ -139,6 +139,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
   class FakePage {
     constructor(privateTarget) { this.privateTarget = privateTarget; this.closed = false; }
     route() {}
+    exposeFunction() {}
     setDefaultTimeout() {}
     setViewportSize(size) { this.viewport = size; viewports.push(size); }
     goto() {
@@ -228,7 +229,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     runAnnotateSession: async () => ({ outcome: 'timeout' }), openInDefaultBrowser: async () => {},
     createNativeTracerLocator: () => ({ find: async () => ({ reason: 'no native tracer in tests' }) }),
     createAgentRenderJobs: async () => ({ list: () => [], close: async () => {} }), resolveJobRoot: path => path,
-    chromium: { launch: async () => { browserConnected = true; return browser; } }, URL, Buffer, AbortController, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
+    chromium: { launch: async () => { browserConnected = true; return browser; } },
+    launchWithShaderCache: async () => { browserConnected = true; return browser; }, URL, Buffer, AbortController, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
     setTimeout: (callback, delay) => {
       deadlines.push(delay);
       const timer = setTimeout(callback, delay);
@@ -475,11 +477,11 @@ runTest('a job frame over 1920x1080 that --memory shrinks is refused with the me
 
 const NON_INDEXED_INSPECTION = vertices => ({ counts: { parts: 1, vertices, materials: 1 }, nodes: [], look: {} });
 
-async function submitWithInspection(inspection, settings) {
+async function submitWithInspection(inspection, settings, backend) {
   const submitted = [];
   const controller = { list: () => [], close: async () => {}, submit: async request => { submitted.push(request); return { jobId: 'job' }; } };
   const { runtime, sessionId } = await reviewRuntimeHarness({ inspection,
-    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test'), ...(backend ? { backend } : {}) },
     contextOverrides: { createAgentRenderJobs: async () => controller } });
   try {
     const attempt = await runtime.submitJob({ sessionId, expectedRevision: 0, settings }).then(() => undefined, error => error);
@@ -499,7 +501,7 @@ runTest('submitJob accepts the same oversized scene as a raster job, with backen
   const raster = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64 });
   assert.equal(raster.attempt, undefined);
   assert.equal(raster.submitted.length, 1);
-  const gpu = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer', backend: 'gpu' } });
+  const gpu = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer', backend: 'gpu' } }, 'gpu');
   assert.equal(gpu.attempt, undefined);
   assert.equal(gpu.submitted.length, 1);
   // 1,150,000 vertices without indices are about 383,000 real triangles; the estimate says 575,000, inside the safety margin.

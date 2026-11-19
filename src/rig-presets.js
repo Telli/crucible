@@ -69,11 +69,28 @@ function quadrupedLayout(bounds) {
   return bones;
 }
 
+// Bone offsets scale with these extents (x, y, z of the box); a zero one puts every bone on one point.
+const SCALING_AXES = { humanoid: [1], quadruped: [0, 1, 2] };
+// A mesh turned flat leaves rounding noise in its thin axis, so flat means thin next to the box's longest side.
+const FLAT_RATIO = 1e-6;
+const AXIS_NAMES = ['width', 'height', 'depth'];
+
+function requireExtents(preset, bounds) {
+  const extents = bounds.max.map((value, axis) => value - bounds.min[axis]);
+  const flatBelow = Math.max(...extents) * FLAT_RATIO;
+  const flat = SCALING_AXES[preset].filter(axis => !(extents[axis] > flatBelow));
+  if (flat.length) {
+    const missing = flat.map(axis => AXIS_NAMES[axis]).join(' and ');
+    throw new RangeError(`A ${preset} fit box has no ${missing}; every bone would land on one point. Fit a taller mesh or pass bones.`);
+  }
+}
+
 const LAYOUTS = { humanoid: humanoidLayout, quadruped: quadrupedLayout };
 
 /** Bones for a preset fitted to `bounds` ({ min, max } in armature space). `landmarks` replace a bone's head by name, or its tail as `<name>Tail`. */
 export function presetBones(preset, bounds, landmarks = {}) {
   if (!Object.hasOwn(LAYOUTS, preset)) throw new RangeError(`Armature preset must be one of ${RIG_PRESETS.join(', ')}.`);
+  requireExtents(preset, bounds);
   const names = new Set();
   const bones = LAYOUTS[preset](bounds).map(bone => {
     names.add(bone.name);

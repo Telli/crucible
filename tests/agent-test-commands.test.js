@@ -157,3 +157,31 @@ test('mutation check arguments keep every test path and read --base', () => {
   assert.deepEqual(parseArguments(['tests/a.test.js', 'tests/b.test.js']), { baseRef: 'origin/main', testFiles: ['tests/a.test.js', 'tests/b.test.js'] });
   assert.deepEqual(parseArguments(['tests/a.test.js', '--base', 'main']), { baseRef: 'main', testFiles: ['tests/a.test.js'] });
 });
+
+test('mutation check reverts a change under scripts/ too', () => {
+  const folder = makeRepository();
+  try {
+    git(folder, 'checkout', '-q', 'main');
+    write(folder, 'scripts/answer.mjs', 'export const answer = 1;\n');
+    write(folder, 'tests/answer.test.js', "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { answer } from '../scripts/answer.mjs';\ntest('answer is two', () => assert.equal(answer, 2));\n");
+    git(folder, 'add', '-A');
+    git(folder, 'commit', '-q', '-m', 'script and test');
+    git(folder, 'checkout', '-q', '-b', 'script-fix');
+    write(folder, 'scripts/answer.mjs', 'export const answer = 2;\n');
+    git(folder, 'commit', '-q', '-am', 'fix script');
+    const result = runMutationCheck(['tests/answer.test.js'], { folder, baseRef: 'main', runTests: (files, options) => runTestFiles(files, { ...options, quiet: true }) });
+    assert.deepEqual(result.failingTests.map(failure => failure.name), ['answer is two']);
+    assert.equal(readFileSync(join(folder, 'scripts/answer.mjs'), 'utf8'), 'export const answer = 2;\n');
+    assert.equal(findBlockingChanges('?? scripts/new.mjs\n').length, 1);
+    assert.deepEqual(findBlockingChanges(' M scripts/answer.mjs\n'), []);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('mutation check arguments accept --base=<ref> and refuse a missing ref or an unknown option', () => {
+  assert.deepEqual(parseArguments(['tests/a.test.js', '--base=main']), { baseRef: 'main', testFiles: ['tests/a.test.js'] });
+  assert.throws(() => parseArguments(['tests/a.test.js', '--base']), /--base needs a ref/);
+  assert.throws(() => parseArguments(['--base=', 'tests/a.test.js']), /--base needs a ref/);
+  assert.throws(() => parseArguments(['tests/a.test.js', '--bsae', 'main']), /Unknown option --bsae/);
+});

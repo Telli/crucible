@@ -1,102 +1,146 @@
-// The `icons` render job: draws each item as a transparent square icon, frames its silhouette, and writes one PNG per item,
-// an atlas of all of them and icons.json. The browser side is passed in as `openItem`, so the loop runs without a page.
+// The `icons` render job: draws each item as a transparent square icon (at one or more angles), frames its silhouette, and writes one
+// PNG per frame, an optional breakdown strip per item, an atlas of all the frames and icons.json. The browser side is passed in as
+// `openItem`, so the loop runs without a page.
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { ICON_ARTIFACTS, alphaBounds, cameraForFraming, iconArtifactName, iconManifest, isFramed, layoutAtlas, refineFraming, relativeScale, sphereFraming } from '../src/icon-sheet.js';
+import { ICON_ARTIFACTS, alphaBounds, breakdownArtifactName, cameraForFraming, iconArtifactName, iconFrames, iconManifest, isFramed, layoutAtlas, refineFraming, relativeScale, sphereFraming, BREAKDOWN_STEPS } from '../src/icon-sheet.js';
 import { blankImage, copyIntoAtlas, decodePng, encodePng } from './agent-icon-png.mjs';
 
-/** Draws and measures at most this many times per item: the sphere guess, then up to three refinements. */
+/** Draws and measures at most this many times per frame: the sphere guess, then up to three refinements. */
 const MAXIMUM_DRAWS = 4;
 const PNG_MIME = 'image/png';
 
-function drewNothingError(settings, index) {
-  const { source } = settings.items[index];
-  return new Error(`items[${index}] (${source}) drew no pixels. Check that the GLB has visible, opaque geometry in front of the camera.`);
+function describeFrame(settings, frame) {
+  const { source } = settings.items[frame.itemIndex];
+  return settings.angles > 1 ? `items[${frame.itemIndex}] (${source}) at ${frame.view.azimuth} degrees` : `items[${frame.itemIndex}] (${source})`;
 }
 
-function tooSmallForRelativeError(settings, index, sizeRatio) {
-  const { source } = settings.items[index];
-  return new Error(`items[${index}] (${source}) is too small for scale "relative": the largest item of the set is about ${Math.round(sizeRatio)} times its size, so it draws under one pixel. Use scale "fit", or give the set consistent units.`);
+function drewNothingError(settings, frame) {
+  return new Error(`${describeFrame(settings, frame)} drew no pixels. Check that the GLB has visible, opaque geometry in front of the camera.`);
 }
 
-function notFramedError(settings, index, box) {
-  const { source } = settings.items[index];
-  return new Error(`items[${index}] (${source}) could not be framed in ${MAXIMUM_DRAWS} draws: its silhouette spans ${box.left},${box.top} to ${box.right},${box.bottom} of ${settings.size} px. Try a smaller padding or another view.`);
+function tooSmallForSharedScaleError(settings, frame, sizeRatio) {
+  if (settings.scale === 'relative') {
+    return new Error(`${describeFrame(settings, frame)} is too small for scale "relative": the largest item of the set is about ${Math.round(sizeRatio)} times its size, so it draws under one pixel. Use scale "fit", or give the set consistent units.`);
+  }
+  return new Error(`${describeFrame(settings, frame)} is too small next to the largest view of its item: that view is about ${Math.round(sizeRatio)} times its size, so it draws under one pixel. Use fewer angles, or a viewpoint that shows the item more evenly.`);
+}
+
+function notFramedError(settings, frame, box) {
+  return new Error(`${describeFrame(settings, frame)} could not be framed in ${MAXIMUM_DRAWS} draws: its silhouette spans ${box.left},${box.top} to ${box.right},${box.bottom} of ${settings.size} px. Try a smaller padding or another view.`);
 }
 
 /**
- * Draws one item until its silhouette is centred and inside the icon: a first guess from the bounding sphere, then each measured
- * box moves the camera. With `fixedScale` the view height stays, so a set keeps one scale.
+ * Draws one frame until its silhouette is centred and inside the icon: a first guess from the bounding sphere, then each measured
+ * box moves the camera. With `fixedScale` the view height stays, so a set (or the views of one item) keeps one scale.
  */
-async function frameItem({ item, index, settings, startFraming, fixedScale, signal }) {
-  const { size, viewpoint: view, padding } = settings;
+async function frameItem({ item, frame, settings, startFraming, fixedScale, signal }) {
+  const { size, padding } = settings;
   let framing = startFraming;
   for (let draw = 1; draw <= MAXIMUM_DRAWS; draw++) {
     signal.throwIfAborted();
-    const image = decodePng(await item.draw(cameraForFraming(framing, view)));
-    if (image.width !== size || image.height !== size) throw new Error(`items[${index}] was drawn at ${image.width}x${image.height}, not ${size}x${size}. The render budget may have reduced the frame; raise --memory.`);
+    const image = decodePng(await item.draw(cameraForFraming(framing, frame.view)));
+    if (image.width !== size || image.height !== size) throw new Error(`${describeFrame(settings, frame)} was drawn at ${image.width}x${image.height}, not ${size}x${size}. The render budget may have reduced the frame; raise --memory.`);
     const box = alphaBounds(image.data, size, size);
-    if (!box) throw fixedScale === undefined ? drewNothingError(settings, index) : tooSmallForRelativeError(settings, index, fixedScale / startFraming.fittedScale);
+    if (!box) throw fixedScale === undefined ? drewNothingError(settings, frame) : tooSmallForSharedScaleError(settings, frame, fixedScale / startFraming.fittedScale);
     if (isFramed(box, { size, padding, fit: fixedScale === undefined })) return { framing, image, box };
-    if (draw === MAXIMUM_DRAWS) throw notFramedError(settings, index, box);
-    framing = refineFraming(framing, box, { size, view, padding, fixedScale });
+    if (draw === MAXIMUM_DRAWS) throw notFramedError(settings, frame, box);
+    framing = refineFraming(framing, box, { size, view: frame.view, padding, fixedScale });
   }
-  throw notFramedError(settings, index, { left: 0, top: 0, right: 0, bottom: 0 });
+  throw notFramedError(settings, frame, { left: 0, top: 0, right: 0, bottom: 0 });
 }
 
 function entryOf({ framing, box }) {
   return { bounds: { x: box.left, y: box.top, width: box.right - box.left, height: box.bottom - box.top }, viewHeight: Number(framing.orthoScale.toPrecision(7)) };
 }
 
+/** The strip of one item: shaded, outline, hatching, final side by side, each drawn from the camera the final icon used. */
+async function drawBreakdownStrip({ item, framed, settings }) {
+  const { size } = settings;
+  const strip = blankImage(size * BREAKDOWN_STEPS.length, size);
+  const camera = cameraForFraming(framed.framing, framed.view);
+  for (const [position, step] of BREAKDOWN_STEPS.entries()) {
+    const panel = step === 'final' ? framed.image : decodePng(await item.drawStep(camera, step));
+    copyIntoAtlas(strip, panel, position * size, 0);
+  }
+  return strip;
+}
+
 /**
- * Runs the job. `openItem(item, index)` resolves to `{ bounds, draw(camera), close() }`: the item's world bounds, a function that
- * draws it with a camera and returns a transparent PNG of the icon size, and a release. Returns the runner result the job store reads.
+ * Runs the job. `openItem(item, index, frame)` resolves to `{ bounds, draw(camera), drawStep(camera, step), close() }`: the item's
+ * world bounds, a function that draws it with a camera and returns a transparent PNG of the icon size, one that draws a step of the
+ * sketch (outline, hatching or shaded) the same way, and a release. Returns the runner result the job store reads.
  */
 export async function renderIconJob({ settings, directory, signal, progress, openItem }) {
-  const layout = layoutAtlas(settings.items.length, settings.size);
+  const frames = iconFrames(settings);
+  const layout = layoutAtlas(frames.length, settings.size, settings.angles > 1 ? settings.angles : undefined);
   const atlas = blankImage(layout.width, layout.height);
   const artifacts = [];
+  const strips = [];
   const entries = [];
   const fitted = [];
 
-  async function withItem(index, work) {
-    const item = await openItem(settings.items[index], index);
+  async function withItem(frame, work) {
+    const item = await openItem(settings.items[frame.itemIndex], frame.itemIndex, frame);
     try { return await work(item); }
     finally { await item.close(); }
   }
 
-  async function keep(index, image, framed) {
-    copyIntoAtlas(atlas, image, layout.rectangles[index].x, layout.rectangles[index].y);
-    const filename = iconArtifactName(index);
-    await writeFile(join(directory, `${filename}.partial`), encodePng(image), { flag: 'wx' });
-    artifacts.push({ temporary: `${filename}.partial`, filename, mimeType: PNG_MIME });
-    entries[index] = entryOf(framed);
+  async function writeArtifact(filename, bytes, mimeType = PNG_MIME) {
+    await writeFile(join(directory, `${filename}.partial`), bytes, { flag: 'wx' });
+    artifacts.push({ temporary: `${filename}.partial`, filename, mimeType });
   }
 
-  for (let index = 0; index < settings.items.length; index++) {
+  async function keep(frameIndex, framed) {
+    copyIntoAtlas(atlas, framed.image, layout.rectangles[frameIndex].x, layout.rectangles[frameIndex].y);
+    await writeArtifact(iconArtifactName(frameIndex), encodePng(framed.image));
+    entries[frameIndex] = entryOf(framed);
+  }
+
+  /** Frames one frame and, when it is the one a strip hangs on, draws the strip while its scene is still open. */
+  async function drawFinal(frameIndex, startFor, fixedScale) {
+    const frame = frames[frameIndex];
+    return withItem(frame, async item => {
+      const startFraming = startFor(item);
+      const framed = { ...(await frameItem({ item, frame, settings, startFraming, fixedScale, signal })), view: frame.view };
+      if (settings.breakdown && frame.angleIndex === 0) strips[frame.itemIndex] = await drawBreakdownStrip({ item, framed, settings });
+      return framed;
+    });
+  }
+
+  // One shared scale needs every frame measured first: the set's largest for relative, the item's largest view for a turnaround.
+  const sharesScale = settings.scale === 'relative' || settings.angles > 1;
+  for (let frameIndex = 0; frameIndex < frames.length; frameIndex++) {
     signal.throwIfAborted();
-    const framed = await withItem(index, async item => frameItem({ item, index, settings, startFraming: sphereFraming(item.bounds), signal }));
-    fitted[index] = framed.framing;
-    if (settings.scale === 'fit') await keep(index, framed.image, framed);
-    await progress({ frames: index + 1, maximumPendingFrames: 0 });
+    const frame = frames[frameIndex];
+    if (sharesScale) {
+      const measured = await withItem(frame, item => frameItem({ item, frame, settings, startFraming: sphereFraming(item.bounds), signal }));
+      fitted[frameIndex] = measured.framing;
+    } else {
+      await keep(frameIndex, await drawFinal(frameIndex, item => sphereFraming(item.bounds)));
+    }
+    await progress({ frames: frameIndex + 1, maximumPendingFrames: 0 });
   }
 
-  if (settings.scale === 'relative') {
-    const fixedScale = relativeScale(fitted.map(framing => framing.orthoScale));
-    for (let index = 0; index < settings.items.length; index++) {
+  if (sharesScale) {
+    const setScale = relativeScale(fitted.map(framing => framing.orthoScale));
+    const itemScales = new Map();
+    for (const [frameIndex, frame] of frames.entries()) {
+      itemScales.set(frame.itemIndex, Math.max(itemScales.get(frame.itemIndex) ?? 0, fitted[frameIndex].orthoScale));
+    }
+    for (const [frameIndex, frame] of frames.entries()) {
       signal.throwIfAborted();
-      const startFraming = { ...fitted[index], fittedScale: fitted[index].orthoScale, orthoScale: fixedScale };
-      const framed = await withItem(index, item => frameItem({ item, index, settings, startFraming, fixedScale, signal }));
-      await keep(index, framed.image, framed);
+      const fixedScale = settings.scale === 'relative' ? setScale : itemScales.get(frame.itemIndex);
+      const startFraming = { ...fitted[frameIndex], fittedScale: fitted[frameIndex].orthoScale, orthoScale: fixedScale };
+      await keep(frameIndex, await drawFinal(frameIndex, () => startFraming, fixedScale));
     }
   }
 
-  const atlasName = ICON_ARTIFACTS.atlas;
-  await writeFile(join(directory, `${atlasName}.partial`), encodePng(atlas), { flag: 'wx' });
-  artifacts.push({ temporary: `${atlasName}.partial`, filename: atlasName, mimeType: PNG_MIME });
-  const manifestName = ICON_ARTIFACTS.manifest;
-  await writeFile(join(directory, `${manifestName}.partial`), `${JSON.stringify(iconManifest({ settings, layout, entries }), null, 2)}\n`, { flag: 'wx' });
-  artifacts.push({ temporary: `${manifestName}.partial`, filename: manifestName, mimeType: 'application/json' });
-  return { artifacts, metrics: { icons: settings.items.length, atlasWidth: layout.width, atlasHeight: layout.height } };
+  for (const [itemIndex, strip] of strips.entries()) {
+    if (strip) await writeArtifact(breakdownArtifactName(itemIndex), encodePng(strip));
+  }
+  await writeArtifact(ICON_ARTIFACTS.atlas, encodePng(atlas));
+  await writeArtifact(ICON_ARTIFACTS.manifest, `${JSON.stringify(iconManifest({ settings, layout, entries }), null, 2)}\n`, 'application/json');
+  return { artifacts, metrics: { icons: frames.length, items: settings.items.length, atlasWidth: layout.width, atlasHeight: layout.height } };
 }

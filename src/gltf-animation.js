@@ -172,7 +172,9 @@ function tracksForChannel(channel, sampler, node, readAccessor) {
     targetByTrack.set(track, node);
     return [track];
   }
-  const meshes = [node, ...node.children].filter(candidate => candidate.morphTargetInfluences);
+  // Only the node's own primitives move. A child that carries a glTF node index is another node with its own weights.
+  const ownPrimitives = node.children.filter(child => child.association?.nodes === undefined);
+  const meshes = [node, ...ownPrimitives].filter(candidate => candidate.morphTargetInfluences);
   return meshes.map(mesh => {
     const track = createTrack(`${nodeTrackName(mesh)}.${property}`, times, values, interpolation);
     targetByTrack.set(track, mesh);

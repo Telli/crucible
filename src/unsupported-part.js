@@ -1,7 +1,7 @@
 // Warns when a whole part hangs off the surface it rests on, such as a building with half its footprint past the edge of a
 // rock. mesh_inspect's floating-part check only looks inside one mesh; this one looks across the parts of the scene.
 //
-// Each candidate part gets a grid of probe points over its footprint (its bounds seen from above). A probe is supported when
+// Each candidate part gets a grid of probe points over its bounds seen from above; probes outside its real outline (a part turned about the vertical axis) are skipped. A probe is supported when
 // a surface of another part lies within SUPPORT_TOLERANCE of the part's lowest point, or inside the part's own height (a
 // building sunk into terrain). A part is reported only when it is partly supported, under SUPPORT_SHARE, and the support
 // reaches past the part on some side: a roof over its walls or a table top on one pedestal has supports that sit inside its
@@ -25,6 +25,8 @@ export const MINIMUM_FOOTPRINT = 0.1;
 export const MAXIMUM_TRIANGLES = 400_000;
 // Rays that pass through a part's own family (itself, its parents and children) before reaching another part.
 const MAXIMUM_SELF_HITS = 6;
+// How far below a surface of the part the enclosing-support check looks, in metres.
+const COPLANAR_DEPTH = 1e-4;
 // The support must reach past the part by this share of the part's size to count as a base the part is perched on.
 const OVERHANG_SHARE = 0.05;
 const REPORTED_PARTS = 8;
@@ -97,6 +99,7 @@ function buildSupportWorld(parts) {
   const indices = new Uint32Array(indexTotal);
   const triangleOwner = new Uint32Array(indexTotal / 3);
   const bounds = [];
+  const vertexStarts = [];
   let vertexOffset = 0;
   let triangleOffset = 0;
   parts.forEach((part, partIndex) => {
@@ -120,10 +123,35 @@ function buildSupportWorld(parts) {
     }
     triangleOwner.fill(partIndex, triangleOffset, triangleOffset + part.geometry.indices.length / 3);
     bounds.push({ minimum, maximum });
+    vertexStarts.push(vertexOffset);
     vertexOffset += source.length / 3;
     triangleOffset += part.geometry.indices.length / 3;
   });
-  return { triangleOwner, bounds, tracer: createTracer({ positions, indices, bvh: buildTriangleBvh(positions, indices) }) };
+  vertexStarts.push(vertexOffset);
+  return { positions, indices, vertexStarts, triangleOwner, bounds, tracer: createTracer({ positions, indices, bvh: buildTriangleBvh(positions, indices) }) };
+}
+
+/**
+ * The part that encloses the point just below a surface of the probing part, as a part index, or -1. A support whose top is
+ * coplanar with the part's base ties with the part's own bottom face, and the tracer may return either; a ray straight down
+ * that leaves another family's part through its underside shows that the support is there.
+ */
+function enclosingSupport(world, family, x, y, z) {
+  const hit = world.tracer.trace(x, y, z, 0, -1, 0, Infinity, false);
+  if (hit.nearestTriangle < 0) {
+    return -1;
+  }
+  const owner = world.triangleOwner[hit.nearestTriangle];
+  if (family.has(owner)) {
+    return -1;
+  }
+  const corner = world.indices[hit.nearestTriangle * 3] * 3;
+  const second = world.indices[hit.nearestTriangle * 3 + 1] * 3;
+  const third = world.indices[hit.nearestTriangle * 3 + 2] * 3;
+  const { positions } = world;
+  const normalY = (positions[second + 2] - positions[corner + 2]) * (positions[third] - positions[corner])
+    - (positions[second] - positions[corner]) * (positions[third + 2] - positions[corner + 2]);
+  return normalY < 0 ? owner : -1;
 }
 
 /**
@@ -132,8 +160,10 @@ function buildSupportWorld(parts) {
  */
 function supportAbove(world, family, x, y, z, reach) {
   let originY = y;
-  for (let attempt = 0; attempt < MAXIMUM_SELF_HITS; attempt++) {
+  let rays = 0;
+  while (rays < MAXIMUM_SELF_HITS) {
     const hit = world.tracer.trace(x, originY, z, 0, 1, 0, reach - (originY - y), false);
+    rays++;
     if (hit.nearestTriangle < 0) {
       return -1;
     }
@@ -141,9 +171,49 @@ function supportAbove(world, family, x, y, z, reach) {
     if (!family.has(owner)) {
       return owner;
     }
-    originY += hit.nearestDistance + 1e-6;
+    const surfaceY = originY + hit.nearestDistance;
+    if (rays === 1 && rays < MAXIMUM_SELF_HITS) {
+      const enclosing = enclosingSupport(world, family, x, surfaceY - COPLANAR_DEPTH, z);
+      rays++;
+      if (enclosing >= 0) {
+        return enclosing;
+      }
+    }
+    originY = surfaceY + 1e-6;
   }
   return -1;
+}
+
+/** The convex outline of a part seen from above, counter-clockwise as [x, z] pairs, from its world-space vertices. */
+function footprintOutline(world, partIndex) {
+  const points = [];
+  for (let vertex = world.vertexStarts[partIndex]; vertex < world.vertexStarts[partIndex + 1]; vertex++) {
+    points.push([world.positions[vertex * 3], world.positions[vertex * 3 + 2]]);
+  }
+  points.sort((first, second) => first[0] - second[0] || first[1] - second[1]);
+  const turn = (origin, first, second) => (first[0] - origin[0]) * (second[1] - origin[1]) - (first[1] - origin[1]) * (second[0] - origin[0]);
+  const chain = ordered => {
+    const hull = [];
+    for (const point of ordered) {
+      while (hull.length >= 2 && turn(hull[hull.length - 2], hull[hull.length - 1], point) <= 0) {
+        hull.pop();
+      }
+      hull.push(point);
+    }
+    hull.pop();
+    return hull;
+  };
+  return [...chain(points), ...chain([...points].reverse())];
+}
+
+function insideOutline(outline, x, z) {
+  if (outline.length < 3) {
+    return true;
+  }
+  return outline.every((point, index) => {
+    const next = outline[(index + 1) % outline.length];
+    return (next[0] - point[0]) * (z - point[1]) - (next[1] - point[1]) * (x - point[0]) >= -1e-9;
+  });
 }
 
 function overhangs(supportBounds, partBounds) {
@@ -195,11 +265,17 @@ export function findUnsupportedParts(parts, recipe) {
     const family = familyOf(part, solid, ancestors);
     const reach = bounds.maximum[1] - bounds.minimum[1] + 2 * SUPPORT_TOLERANCE;
     const supporters = new Set();
+    const outline = footprintOutline(world, index);
     let supported = 0;
+    let probed = 0;
     for (let row = 0; row < PROBES_PER_SIDE; row++) {
       for (let column = 0; column < PROBES_PER_SIDE; column++) {
         const x = bounds.minimum[0] + (column + 0.5) / PROBES_PER_SIDE * (bounds.maximum[0] - bounds.minimum[0]);
         const z = bounds.minimum[2] + (row + 0.5) / PROBES_PER_SIDE * (bounds.maximum[2] - bounds.minimum[2]);
+        if (!insideOutline(outline, x, z)) {
+          continue;
+        }
+        probed++;
         const owner = supportAbove(world, family, x, bounds.minimum[1] - SUPPORT_TOLERANCE, z, reach);
         if (owner >= 0) {
           supported++;
@@ -207,8 +283,8 @@ export function findUnsupportedParts(parts, recipe) {
         }
       }
     }
-    const supportedShare = supported / (PROBES_PER_SIDE * PROBES_PER_SIDE);
-    if (supported > 0 && supportedShare < SUPPORT_SHARE && [...supporters].some(owner => overhangs(world.bounds[owner], bounds))) {
+    const supportedShare = supported / probed;
+    if (probed > 0 && supported > 0 && supportedShare < SUPPORT_SHARE && [...supporters].some(owner => overhangs(world.bounds[owner], bounds))) {
       findings.push({ part, index, supportedShare, supporters: [...supporters].map(owner => solid[owner].name) });
     }
   }

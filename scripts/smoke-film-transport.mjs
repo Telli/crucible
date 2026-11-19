@@ -3,15 +3,16 @@ import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { setPriority, constants } from 'node:os';
 import { existsSync } from 'node:fs';
+import { viteChildEnvironment, viteOutputMentionsAddress } from './vite-output.mjs';
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
-const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5191', '--strictPort'], { windowsHide:true, stdio:'pipe' });
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5191', '--strictPort'], { windowsHide:true, stdio:'pipe', env: viteChildEnvironment() });
 let browser;
 try {
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Transport test server did not start.')), 15000);
     server.stdout.on('data', bytes => {
-      if (bytes.toString().includes('127.0.0.1:5191')) { clearTimeout(timeout); resolve(); }
+      if (viteOutputMentionsAddress(bytes, '127.0.0.1:5191')) { clearTimeout(timeout); resolve(); }
     });
     server.on('error', reject);
   });
