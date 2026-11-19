@@ -135,7 +135,7 @@ export default defineConfig({
         'mcp/preview': 'scripts/agent-preview-browser.js',
       },
       formats: ['es'],
-      fileName: (_, entry) => entry === 'core' ? '67.module.js' : `${entry}.js`,
+      fileName: (_, entry) => entry === 'core' ? 'crucible.module.js' : `${entry}.js`,
     },
     minify: true,
   },

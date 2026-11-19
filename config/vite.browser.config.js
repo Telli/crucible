@@ -3,8 +3,8 @@ import { defineConfig } from 'vite';
 
 // One self-contained ES module with no relative chunk import. It lands in build/ beside the library files, so the npm package
 // carries it and a CDN that mirrors npm (jsdelivr, unpkg) serves it from a single URL. The library build runs first and empties
-// build/, so this build must not empty it again. The site copies the same bytes to /releases/<version>/67.module.js.
-export const STANDALONE_FILE_NAME = '67.standalone.js';
+// build/, so this build must not empty it again. The site copies the same bytes to /releases/<version>/crucible.module.js.
+export const STANDALONE_FILE_NAME = 'crucible.standalone.js';
 
 export default defineConfig({
   build: {
