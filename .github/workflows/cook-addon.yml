@@ -208,6 +208,7 @@ on:
       - 'src/mesh-data.js'
       - 'src/mesh-decimate.js'
       - 'src/mesh-deform-modifiers.js'
+      - 'src/mesh-displace-directions.js'
       - 'src/mesh-dissolve.js'
       - 'src/mesh-edgesplit.js'
       - 'src/mesh-edit-field.js'

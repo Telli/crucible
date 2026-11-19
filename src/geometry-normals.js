@@ -1,4 +1,8 @@
+import { findNonFiniteVertex } from './triangle-math.js';
+
 export function recomputeNormals(source, positions, fallbackNormals = source.normals) {
+  const badVertex = findNonFiniteVertex(positions);
+  if (badVertex >= 0) throw new RangeError(`Cannot recompute normals: vertex ${badVertex} has a NaN or infinite position. Pass finite positions.`);
   const groups = new Map();
   const vertexGroups = new Array(positions.length / 3);
   const normals = new Float32Array(positions.length);
