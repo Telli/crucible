@@ -47,7 +47,11 @@ export function normalizeShapeKeys(shapeKeys) {
     if (typeof value !== 'number' || !(value >= 0 && value <= 1)) throw keyError(index, 'value is the starting weight, from 0 to 1');
     const edits = key.edits ?? (Array.isArray(key.offsets) ? key.offsets.map(entry => offsetEdit(entry, index)) : null);
     if (!edits) throw keyError(index, 'offsets must be an array');
-    normalizeMeshEdits(edits);
+    try {
+      normalizeMeshEdits(edits);
+    } catch (error) {
+      throw keyError(index, `${key.name}: ${error.message}`);
+    }
     return { name: key.name, value, edits };
   });
 }

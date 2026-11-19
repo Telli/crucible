@@ -27,6 +27,7 @@ export function facePolygons(mesh) {
  * two vertices, or `{ weights }` to blend several (see MeshBuilder.addVertex).
  */
 export function buildPolygonMesh(mesh, polygons, extraPositions = [], extraSources = []) {
+  if (polygons.length === 0) throw new RangeError('The edit left no faces. Select fewer faces or edges.');
   const used = new Set();
   for (const polygon of polygons) {
     for (const vertex of polygon.vertices) used.add(vertex);
