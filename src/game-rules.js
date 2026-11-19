@@ -453,13 +453,11 @@ export function createGameRules(document, options = {}) {
   }
 
   function matchTimer(trigger, previousSeconds) {
-    if (trigger.repeat) {
-      const before = Math.floor(previousSeconds / trigger.seconds + TIMER_EPSILON);
-      const now = Math.floor(elapsedSeconds / trigger.seconds + TIMER_EPSILON);
-      return now > before ? {} : null;
-    }
-    const crossed = previousSeconds < trigger.seconds - TIMER_EPSILON && elapsedSeconds >= trigger.seconds - TIMER_EPSILON;
-    return crossed ? {} : null;
+    // Counting whole intervals keeps a duration shorter than TIMER_EPSILON firing, which subtracting the epsilon would not.
+    const before = Math.floor(previousSeconds / trigger.seconds + TIMER_EPSILON);
+    const now = Math.floor(elapsedSeconds / trigger.seconds + TIMER_EPSILON);
+    if (trigger.repeat) return now > before ? {} : null;
+    return before < 1 && now >= 1 ? {} : null;
   }
 
   // A variable trigger fires when its expression turns true, not on every step it stays true.

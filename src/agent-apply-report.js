@@ -2,6 +2,8 @@
 // and a compact diff of the node, material and geometry IDs the batch added, removed and changed. Pure recipe data in,
 // plain JSON out, so a library user gets the same answer as an MCP client.
 
+import { motionAfterRemoval } from './motion-track-selector.js';
+
 export const APPLY_REPORT_LIMITS = Object.freeze({ maxEntries: 20, maxDiffIds: 8, maxText: 48 });
 
 const COLLECTIONS = Object.freeze({ node: 'nodes', material: 'materials', geometry: 'geometries' });
@@ -99,6 +101,12 @@ function describeOperation(working, operation, maxText) {
     if (differing.length === 0) return { warning: 'no change, values already set' };
     for (const name of differing) target[name] = structuredClone(operation[name]);
     return { changed: shortList(differing, maxText) };
+  }
+  if (type === 'set-motion' && Object.hasOwn(operation, 'removeTracks')) {
+    const { motion, removed } = motionAfterRemoval(working.motion, operation.removeTracks);
+    if (motion) working.motion = motion;
+    else delete working.motion;
+    return { changed: `removed ${removed} motion tracks` };
   }
   if (Object.hasOwn(OWN_SECTIONS, type)) {
     const name = OWN_SECTIONS[type];

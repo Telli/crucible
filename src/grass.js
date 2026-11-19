@@ -9,6 +9,7 @@ import {
 } from './vegetation-geometry.js';
 import { createTileField, hashTile, tileMatrix } from './tile-field.js';
 import { requireSeed } from './seeded-random.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 export const GRASS_LEVELS = Object.freeze([
   Object.freeze({ distance: 10, keep: 1, segments: 4, widthScale: 1 }),
@@ -215,10 +216,13 @@ function resolveSettings(options) {
     throw new TypeError('Grass area needs finite minX < maxX and minZ < maxZ.');
   }
   if (!(settings.density > 0)) throw new RangeError('Grass density must be a positive number of blades per square metre.');
-  if (!(settings.tileSize > 0)) throw new RangeError('Grass tileSize must be positive.');
-  if (!Array.isArray(settings.height) || !(settings.height[0] > 0) || !(settings.height[1] >= settings.height[0])) throw new RangeError('Grass height must be [minimum, maximum] in metres.');
-  if (!(settings.width > 0)) throw new RangeError('Grass width must be positive.');
-  for (const name of ['patchiness', 'stalks', 'dryness']) {
+  requireFiniteInRange('createGrass', 'tileSize', settings.tileSize, 1e-3, 1e6);
+  if (!Array.isArray(settings.height) || !(settings.height[0] > 0) || !(settings.height[1] >= settings.height[0]) || !(settings.height[1] < Infinity)) throw new RangeError('Grass height must be finite [minimum, maximum] in metres, such as [0.25, 0.6].');
+  requireFiniteInRange('createGrass', 'width', settings.width, 1e-6, 1e3);
+  requireFiniteInRange('createGrass', 'clumpSize', settings.clumpSize, 1e-3, 1e6);
+  if (!Array.isArray(settings.bend) || settings.bend.length !== 2 || !(settings.bend[1] >= settings.bend[0])) throw new RangeError('Grass bend must be [minimum, maximum], such as [0.18, 0.6].');
+  requireFiniteInRange('createGrass', 'bend', settings.bend, 0, 10);
+  for (const name of ['patchiness', 'stalks', 'dryness', 'clumpStrength']) {
     if (!(settings[name] >= 0 && settings[name] <= 1)) throw new RangeError(`Grass ${name} must be between 0 and 1.`);
   }
   if (settings.mask !== undefined && typeof settings.mask !== 'function') throw new TypeError('Grass mask must be a function (x, z) => 0..1.');

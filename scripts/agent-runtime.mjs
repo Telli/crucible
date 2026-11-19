@@ -65,6 +65,7 @@ import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { createSharedGpuCard } from './agent-gpu-queue.mjs';
 import { isBrowserLoss, describeBrowserLoss } from './agent-browser-loss.mjs';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
+import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
@@ -1631,7 +1632,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           if (Buffer.byteLength(result.data, 'base64') > MAXIMUM_IMAGE_BYTES) throw new Error('The review PNG exceeds the 1 MiB image response budget. Request smaller shots.');
           output = { ...result, metadata: { sessionId: settings.sessionId, sourceRevision: snapshot.sourceRevision,
             backend, width: settings.gridWidth, height: settings.gridHeight, shots,
-            peakNodeBytes, peakBrowserHeap, maximumPendingFrames: 1 } };
+            peakNodeBytes, peakBrowserHeap, maximumPendingFrames: 1,
+              ...(recipeMoves(snapshot.recipe) && settings.shots.some(shot => shot.motionTime === null) ? { hints: [MOTION_NOT_SET_HINT] } : {}) } };
         } catch (error) {
           if (deadlineExpired) throw new Error(reviewDeadlineText());
           throw error;

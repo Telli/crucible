@@ -342,7 +342,7 @@ An asset placement with a `crowd` field fills its group node with `count` (1 to 
 { "id": "people", "asset": { "id": "<catalog asset id>", "crowd": { "clip": 3, "count": 200, "seed": 7, "spacing": 2, "farDistance": 25, "farRate": 6 } } }
 ```
 
-- `clip` is a clip index, `layout` is `grid` or `scatter`, and the pose is a pure function of scene time, `seed` and the recipe camera, so a render at a time equals the frame reached by playing. People farther than `farDistance` from the recipe camera hold each pose for `1 / farRate` seconds. The distance is measured from each person's world position at that time, so it follows a parent group that moves or has a motion track.
+- `clip` is a clip index, `seed` is a whole number from -2147483648 to 2147483647, `layout` is `grid` or `scatter`, and the pose is a pure function of scene time, `seed` and the recipe camera, so a render at a time equals the frame reached by playing. People farther than `farDistance` from the recipe camera hold each pose for `1 / farRate` seconds. The distance is measured from each person's world position at that time, so it follows a parent group that moves or has a motion track.
 - The crowd takes one decoded copy of the asset, the generated part nodes (count times materials) count against `maxNodes`, and `scene_inspect` lists it under `assets` with `kind: "crowd"`, `instances`, `batches`, `frames`, `paletteBytes` and `boundsRadius`.
 
 ### Seams between meshes

@@ -7,6 +7,7 @@ import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_
 import { parseQuality } from './agent-render-quality.mjs';
 import { estimateFrameBytes } from '../src/budget.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { recipeMoves } from '../src/motion-hint.js';
 import { normalizeFilmTimeline, filmTimelineDuration, videoFrameCount } from '../src/film-timeline.js';
 import { OIDN_DEFAULT_SAMPLES, PATH_TRACER_DENOISERS, PATH_TRACER_JOB_LIMITS } from '../src/path-tracer-capabilities.js';
 import { AGENT_ASSET_LIMITS, describeAssetBytes } from '../src/agent-asset-limits.js';
@@ -117,6 +118,15 @@ function playsPhysics(recipe) {
   return Boolean(recipe?.physics || recipe?.cloth || recipe?.particles);
 }
 
+/**
+ * Whether a job with no `motion` setting should still play the recipe's motion tracks, particles, physics or cloth from second 0.
+ * Without a motion clock every frame is frame 0, so such a stills or video job would come out frozen with no warning.
+ */
+function playsSimulationFromStart(input, recipe, timelineStart) {
+  return input.kind !== 'image' && timelineStart === undefined && input.animation === undefined
+    && recipe?.format === 'crucible.scene' && recipeMoves(recipe);
+}
+
 /** The settings of a job as the store keeps them: every default filled in, every limit checked. */
 export function normalizeJobSettings(input, clips, recipe) {
   return settingsFrom(input, clips, recipe);
@@ -169,8 +179,10 @@ function settingsFrom(input, clips = [], recipe) {
     result.encoder = input.encoder;
   }
   if (input.audio !== undefined) result.audio = audioFrom(input.audio, input.kind);
-  if (input.motion !== undefined) {
-    objectKeys(input.motion, ['start'], 'motion');
+  const impliedMotion = input.motion === undefined && playsSimulationFromStart(input, recipe, timelineStart);
+  if (input.motion !== undefined || impliedMotion) {
+    const motionInput = input.motion ?? { start: 0 };
+    objectKeys(motionInput, ['start'], 'motion');
     // Clips of placed assets play on scene time, so a scene that places one needs no authored motion.
     const placesClips = recipe?.format === 'crucible.scene' && recipeAssetNeeds(recipe).some(need => need.copies > 1);
     // A map sequence and a grid volume sequence read the same clock.
@@ -183,15 +195,16 @@ function settingsFrom(input, clips = [], recipe) {
     if (recipe.motion?.loop !== undefined && typeof recipe.motion.loop !== 'boolean') {
       throw new TypeError('Motion loop must be boolean.');
     }
-    const start = boundedNumber(input.motion.start === undefined ? 0 : input.motion.start, 0, 3600, 'motion start');
+    const start = boundedNumber(motionInput.start === undefined ? 0 : motionInput.start, 0, 3600, 'motion start');
     boundedNumber(start + lastSampleTime, 0, 3600, 'motion end');
-    if (recipe.motion && !recipe.motion.loop && start + lastSampleTime > motionDuration) {
-      throw new RangeError('Motion range exceeds the authored duration.');
-    }
-    if (!recipe.motion && bakeSeconds && start + lastSampleTime > bakeSeconds) {
+    const exceedsAuthoredMotion = recipe.motion && !recipe.motion.loop && start + lastSampleTime > motionDuration;
+    const exceedsBake = !recipe.motion && bakeSeconds && start + lastSampleTime > bakeSeconds;
+    if (exceedsAuthoredMotion && !impliedMotion) throw new RangeError('Motion range exceeds the authored duration.');
+    if (exceedsBake && !impliedMotion) {
       throw new RangeError(`Motion range exceeds the physics bake duration of ${bakeSeconds} s; shorten the job or lengthen physics.duration.`);
     }
-    result.motion = { start };
+    // An implied start of 0 is only kept while the job fits the motion; a longer job keeps the old held pose rather than failing.
+    if (!(impliedMotion && (exceedsAuthoredMotion || exceedsBake))) result.motion = { start };
   }
   if (input.animation !== undefined) {
     objectKeys(input.animation, ['clip', 'start'], 'animation');

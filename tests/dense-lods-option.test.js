@@ -49,3 +49,13 @@ test('a scene file picks levels at 0.5 pixels of error unless its renderer says 
   assert.equal(withSceneFileRendererDefaults({ lodPixelError: 2 }).lodPixelError, 2);
   assert.equal(withSceneFileRendererDefaults({ samples: 2 }).samples, 2);
 });
+
+test('a pixel ratio that is not a usable number is refused by name, and NaN thresholds are not read as "dense"', async () => {
+  const { addLodsToDenseParts } = await import('../src/dense-lods.js');
+  for (const pixelRatio of [0, -1, NaN, '1']) {
+    assert.throws(() => partsForRendererOptions([scanPart()], SMALL_CANVAS, { pixelRatio }), /partsForRendererOptions: pixelRatio was .*; pass a number from 0\.1 to 16/);
+  }
+  for (const options of [{ minimumTriangles: NaN }, { minimumTrianglesPerPixel: NaN }, { minimumTrianglesPerPixel: 'x' }]) {
+    assert.throws(() => addLodsToDenseParts([scanPart()], { pixels: 1e9, ...options }), /addLodsToDenseParts: minimumTriangle/);
+  }
+});

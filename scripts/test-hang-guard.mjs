@@ -16,6 +16,8 @@ import { ChildProcess, spawnSync } from 'node:child_process';
 
 export const DEFAULT_FILE_LIMIT_MS = 660000;
 export const DEFAULT_GRACE_AFTER_TIMEOUT_MS = 10000;
+// setTimeout runs a longer delay after 1 ms, which would stop a healthy file at once.
+const LONGEST_TIMER_MS = 2 ** 31 - 1;
 const TEST_TIMEOUT_MESSAGE = /test timed out after \d+ms/;
 
 const startedChildren = [];
@@ -106,8 +108,8 @@ function positiveMilliseconds(environment, name, defaultValue) {
   const raw = environment[name];
   if (raw === undefined || raw === '') return defaultValue;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive number of milliseconds, got "${raw}". Unset it to use ${defaultValue}.`);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > LONGEST_TIMER_MS) {
+    throw new Error(`${name} must be a positive number of milliseconds, at most ${LONGEST_TIMER_MS}, got "${raw}". Unset it to use ${defaultValue}.`);
   }
   return parsed;
 }

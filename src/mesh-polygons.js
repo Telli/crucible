@@ -23,7 +23,8 @@ export function facePolygons(mesh) {
 
 /**
  * Build MeshData from polygons, dropping vertices that no polygon uses. Point attributes follow their vertex; an extra
- * vertex copies the values of `extraSources[index]` (a source vertex number) when that is given.
+ * vertex copies the values of `extraSources[index]` when that is given: a source vertex number, `{ from, to, t }` to blend
+ * two vertices, or `{ weights }` to blend several (see MeshBuilder.addVertex).
  */
 export function buildPolygonMesh(mesh, polygons, extraPositions = [], extraSources = []) {
   if (polygons.length === 0) throw new RangeError('The edit left no faces. Select fewer faces or edges.');
