@@ -5,6 +5,7 @@ import { createAgentScene } from '../src/agent-scene.js';
 import { MAX_POINT_LIGHTS } from '../src/light-limits.js';
 import { hexToLinearRgb } from '../src/studio-controller.js';
 import {
+  STUDIO_PRIMITIVE_GROUPS,
   STUDIO_PRIMITIVES,
   STUDIO_TABS,
   STUDIO_TEMPLATES,
@@ -458,6 +459,61 @@ test('every Studio primitive has a starting shape that sits on the ground and bu
       nodes: [{ id: 'node', geometry: 'shape', material: 'paint', translation: spec.translation, rotation: spec.rotation, scale: spec.scale }],
     });
     assert.equal(scene.parts.length, 1, `${primitiveType} did not build one part`);
+  }
+});
+
+test('the shapes beyond the first set build from ordinary recipe geometries, rest on the ground and keep hard edges', () => {
+  const expectedTypes = { capsule: 'lathe', dome: 'mesh', pyramid: 'mesh', prism: 'extrude', hexagon: 'extrude', wedge: 'extrude', pipe: 'mesh', gem: 'mesh', heart: 'extrude', spring: 'tube', stairs: 'extrude', bowl: 'mesh', knot: 'tube' };
+  assert.ok(STUDIO_PRIMITIVE_GROUPS.every(group => group.primitives.length % 3 === 0), 'each group fills whole rows of the three columns');
+  assert.deepEqual(STUDIO_PRIMITIVE_GROUPS.flatMap(group => group.primitives), [...STUDIO_PRIMITIVES]);
+  assert.ok(STUDIO_PRIMITIVE_GROUPS.every(group => group.label.length > 0 && group.primitives.length > 0));
+  assert.ok(STUDIO_PRIMITIVES.every(primitiveType => /^[a-z][a-zA-Z]*$/.test(primitiveType)), 'ids are one word, because node ids and labels are made from them');
+  for (const [primitiveType, geometryType] of Object.entries(expectedTypes)) {
+    assert.ok(STUDIO_PRIMITIVES.includes(primitiveType), `${primitiveType} is in the add menu`);
+    const spec = primitiveGeometrySpec(primitiveType);
+    assert.equal(spec.geometry.type, geometryType, primitiveType);
+    const controller = createStudioController({ scene: createAgentScene(buildTemplateRecipe('empty')), viewportWidth: 960, viewportHeight: 540 });
+    const created = controller.addPrimitive(primitiveType);
+    const part = controller.scene.parts.find(candidate => candidate.name === created.id);
+    const positions = part.geometry.positions;
+    const matrix = part.matrix;
+    let lowest = Infinity;
+    let widest = 0;
+    for (let offset = 0; offset < positions.length; offset += 3) {
+      const [x, y, z] = [positions[offset], positions[offset + 1], positions[offset + 2]];
+      lowest = Math.min(lowest, matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13]);
+      widest = Math.max(widest, Math.abs(matrix[0] * x + matrix[4] * y + matrix[8] * z), Math.abs(matrix[2] * x + matrix[6] * y + matrix[10] * z));
+    }
+    assert.ok(Math.abs(lowest) < 0.01, `${primitiveType} rests on the ground (lowest point ${lowest.toFixed(3)})`);
+    assert.ok(widest <= 1.01, `${primitiveType} is about a metre wide (${widest.toFixed(2)} from its middle)`);
+    assert.ok(positions.length / 3 < 8000, `${primitiveType} is light enough for the outline that follows its shape`);
+  }
+  // Hard edges: on a pyramid and a pipe every corner of a triangle carries the normal of its own face.
+  for (const primitiveType of ['pyramid', 'pipe', 'prism']) {
+    const spec = primitiveGeometrySpec(primitiveType);
+    const scene = createAgentScene({
+      format: 'crucible.scene',
+      schemaVersion: 1,
+      geometries: [{ id: 'shape', ...spec.geometry }],
+      materials: [{ id: 'paint', tag: 'surface', color: [0.5, 0.5, 0.5], roughness: 0.5, metallic: 0 }],
+      nodes: [{ id: 'node', geometry: 'shape', material: 'paint' }],
+    });
+    const { positions, normals, indices } = scene.parts[0].geometry;
+    let worstAgreement = 1;
+    for (let triangle = 0; triangle < indices.length; triangle += 3) {
+      const [first, second, third] = [indices[triangle] * 3, indices[triangle + 1] * 3, indices[triangle + 2] * 3];
+      const edgeOne = [0, 1, 2].map(axis => positions[second + axis] - positions[first + axis]);
+      const edgeTwo = [0, 1, 2].map(axis => positions[third + axis] - positions[first + axis]);
+      const face = [edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1], edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2], edgeOne[0] * edgeTwo[1] - edgeOne[1] * edgeTwo[0]];
+      const length = Math.hypot(...face);
+      if (length < 1e-9) {
+        continue;
+      }
+      for (const corner of [first, second, third]) {
+        worstAgreement = Math.min(worstAgreement, (face[0] * normals[corner] + face[1] * normals[corner + 1] + face[2] * normals[corner + 2]) / length);
+      }
+    }
+    assert.ok(worstAgreement > 0.95, `${primitiveType} has hard edges (a normal is ${worstAgreement.toFixed(2)} of its face)`);
   }
 });
 

@@ -1,6 +1,14 @@
 export const STUDIO_TOOLS = Object.freeze(['select', 'translate', 'rotate', 'scale', 'snap']);
 export const STUDIO_TABS = Object.freeze(['node', 'material', 'look', 'camera']);
-export const STUDIO_PRIMITIVES = Object.freeze(['box', 'sphere', 'cylinder', 'cone', 'torus', 'plane', 'icoSphere', 'disc', 'ring', 'arch', 'vase', 'star', 'text', 'terrain']);
+// The shapes of the add menu, in the groups it shows them in: solids, flat outlines, and shapes swept from a profile, a
+// path. Every id is one lowercase word, because node ids and button labels are made from it, and every group
+// fills whole rows of the menu's three columns.
+export const STUDIO_PRIMITIVE_GROUPS = Object.freeze([
+  Object.freeze({ label: 'Solids', primitives: Object.freeze(['box', 'sphere', 'icoSphere', 'cylinder', 'cone', 'torus', 'capsule', 'dome', 'pyramid', 'prism', 'hexagon', 'wedge', 'pipe', 'arch', 'gem']) }),
+  Object.freeze({ label: 'Flat shapes', primitives: Object.freeze(['plane', 'disc', 'ring', 'star', 'heart', 'text']) }),
+  Object.freeze({ label: 'Swept and grown shapes', primitives: Object.freeze(['vase', 'bowl', 'spring', 'knot', 'stairs', 'terrain']) }),
+]);
+export const STUDIO_PRIMITIVES = Object.freeze(STUDIO_PRIMITIVE_GROUPS.flatMap(group => group.primitives));
 export const STUDIO_VIEW_PRESETS = Object.freeze(['front', 'back', 'right', 'left', 'top', 'isometric']);
 export const STUDIO_LENS_PRESETS = Object.freeze([24, 35, 50, 85]);
 
@@ -25,7 +33,143 @@ function starContour(pointCount, outerRadius, innerRadius) {
   return contour;
 }
 
+const roundCoordinate = value => Number(value.toFixed(4));
+
+// Points along an arc of a circle in the radius and height plane of a lathe profile, both ends included.
+function arcProfile(centreHeight, radius, fromAngle, toAngle, steps) {
+  const profile = [];
+  for (let step = 0; step <= steps; step += 1) {
+    const angle = fromAngle + ((toAngle - fromAngle) * step) / steps;
+    profile.push([roundCoordinate(Math.cos(angle) * radius), roundCoordinate(centreHeight + Math.sin(angle) * radius)]);
+  }
+  return profile;
+}
+
+// The corners of a regular polygon around the origin.
+function polygonContour(sides, radius, startAngle) {
+  const contour = [];
+  for (let corner = 0; corner < sides; corner += 1) {
+    const angle = startAngle + (corner * 2 * Math.PI) / sides;
+    contour.push([roundCoordinate(Math.cos(angle) * radius), roundCoordinate(Math.sin(angle) * radius)]);
+  }
+  return contour;
+}
+
+// The outline of a heart about one unit wide, counter-clockwise, from the usual parametric curve.
+function heartContour(pointCount) {
+  const contour = [];
+  for (let point = 0; point < pointCount; point += 1) {
+    const angle = (point * 2 * Math.PI) / pointCount;
+    const across = 16 * Math.sin(angle) ** 3;
+    const up = 13 * Math.cos(angle) - 5 * Math.cos(2 * angle) - 2 * Math.cos(3 * angle) - Math.cos(4 * angle);
+    contour.push([roundCoordinate(-across / 34), roundCoordinate(up / 34)]);
+  }
+  return contour;
+}
+
+// The centre line of a coil that climbs around the Y axis.
+function helixPath(turns, radius, height, steps) {
+  const path = [];
+  for (let step = 0; step <= steps; step += 1) {
+    const share = step / steps;
+    const angle = share * turns * 2 * Math.PI;
+    path.push([roundCoordinate(Math.cos(angle) * radius), roundCoordinate(share * height), roundCoordinate(Math.sin(angle) * radius)]);
+  }
+  return path;
+}
+
+// The centre line of a trefoil knot standing upright, as a closed loop.
+function knotPath(steps, size) {
+  const path = [];
+  for (let step = 0; step < steps; step += 1) {
+    const angle = (step * 2 * Math.PI) / steps;
+    const across = Math.sin(angle) + 2 * Math.sin(2 * angle);
+    const up = Math.cos(angle) - 2 * Math.cos(2 * angle);
+    const deep = -Math.sin(3 * angle);
+    path.push([roundCoordinate(across * size), roundCoordinate(up * size), roundCoordinate(deep * size)]);
+  }
+  return path;
+}
+
+const UPRIGHT = Object.freeze([0, 0, 0, 1]);
+const LYING_FLAT = Object.freeze([-0.7071, 0, 0, 0.7071]);
+// A lathe shades its profile corners round. Wrapped in a mesh with a smooth angle, the corners of these shapes stay hard.
+const hardEdged = base => ({ type: 'mesh', base, smoothAngle: 30 });
+
+// The shapes added after the first set. Each returns the same record as a case of primitiveGeometrySpec.
+const MORE_PRIMITIVE_SPECS = Object.freeze({
+  capsule: () => ({
+    labelPrefix: 'Capsule',
+    geometry: { type: 'lathe', profile: [...arcProfile(0.3, 0.3, -Math.PI / 2, 0, 8), ...arcProfile(0.9, 0.3, 0, Math.PI / 2, 8)], segments: 32 },
+    translation: [0, 0, 0],
+  }),
+  dome: () => ({
+    labelPrefix: 'Dome',
+    geometry: hardEdged({ type: 'lathe', profile: [[0, 0], ...arcProfile(0, 0.5, 0, Math.PI / 2, 12)], segments: 40 }),
+    translation: [0, 0, 0],
+  }),
+  pyramid: () => ({
+    labelPrefix: 'Pyramid',
+    geometry: hardEdged({ type: 'lathe', profile: [[0, 0], [0.7071, 0], [0, 1]], segments: 4, startAngle: Math.PI / 4 }),
+    translation: [0, 0, 0],
+  }),
+  prism: () => ({
+    labelPrefix: 'Prism',
+    geometry: { type: 'extrude', contour: [[-0.5, 0], [0.5, 0], [0, 0.866]], depth: 1 },
+    translation: [0, 0, -0.5],
+  }),
+  hexagon: () => ({
+    labelPrefix: 'Hexagon',
+    geometry: { type: 'extrude', contour: polygonContour(6, 0.5, 0), depth: 1 },
+    translation: [0, 0, 0],
+    rotation: [...LYING_FLAT],
+  }),
+  wedge: () => ({
+    labelPrefix: 'Wedge',
+    geometry: { type: 'extrude', contour: [[-0.5, 0], [0.5, 0], [0.5, 0.6]], depth: 1 },
+    translation: [0, 0, -0.5],
+  }),
+  pipe: () => ({
+    labelPrefix: 'Pipe',
+    geometry: hardEdged({ type: 'lathe', profile: [[0.5, 0], [0.5, 1], [0.38, 1], [0.38, 0], [0.5, 0]], segments: 40 }),
+    translation: [0, 0, 0],
+  }),
+  gem: () => ({
+    labelPrefix: 'Gem',
+    geometry: { type: 'mesh', base: { type: 'lathe', profile: [[0, 0], [0.45, 0.55], [0.3, 0.75], [0, 0.75]], segments: 8 }, smoothAngle: 10 },
+    translation: [0, 0, 0],
+  }),
+  heart: () => ({
+    labelPrefix: 'Heart',
+    geometry: { type: 'extrude', contour: heartContour(48), depth: 0.25, bevel: 0.03 },
+    translation: [0, 0.5424, 0],
+  }),
+  spring: () => ({
+    labelPrefix: 'Spring',
+    geometry: { type: 'tube', path: helixPath(4, 0.35, 1, 96), radius: 0.05, segments: 192, radialSegments: 8 },
+    translation: [0, 0.05, 0],
+  }),
+  bowl: () => ({
+    labelPrefix: 'Bowl',
+    geometry: hardEdged({ type: 'lathe', profile: [[0, 0], [0.26, 0], [0.5, 0.34], [0.46, 0.34], [0.24, 0.04], [0, 0.04]], segments: 40 }),
+    translation: [0, 0, 0],
+  }),
+  knot: () => ({
+    labelPrefix: 'Knot',
+    geometry: { type: 'tube', path: knotPath(120, 0.15), radius: 0.06, segments: 240, radialSegments: 8, closed: true },
+    translation: [0, 0.51, 0],
+  }),
+  stairs: () => ({
+    labelPrefix: 'Stairs',
+    geometry: { type: 'extrude', contour: [[-0.5, 0], [0.5, 0], [0.5, 0.8], [0.25, 0.8], [0.25, 0.6], [0, 0.6], [0, 0.4], [-0.25, 0.4], [-0.25, 0.2], [-0.5, 0.2]], depth: 1 },
+    translation: [0, 0, -0.5],
+  }),
+});
+
 export function primitiveGeometrySpec(primitiveType) {
+  if (Object.hasOwn(MORE_PRIMITIVE_SPECS, primitiveType)) {
+    return { rotation: [...UPRIGHT], scale: [1, 1, 1], ...MORE_PRIMITIVE_SPECS[primitiveType]() };
+  }
   switch (primitiveType) {
     case 'box':
       return {

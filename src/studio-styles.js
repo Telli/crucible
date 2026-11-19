@@ -411,6 +411,8 @@ export const STUDIO_CSS = `
   gap: 2px;
 }
 .crucible-studio-popover-grid + .crucible-studio-popover-grid { margin-block-start: 10px; }
+#crucible-studio-pop-add { max-width: 348px; max-block-size: calc(100dvh - 16px); overflow-y: auto; }
+#crucible-studio-pop-add .crucible-studio-popover-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .crucible-studio-popover button {
   justify-content: flex-start;
   width: 100%;

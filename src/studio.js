@@ -26,6 +26,7 @@ import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgent
 import {
   STUDIO_LENS_PRESETS,
   STUDIO_MATERIAL_PRESETS,
+  STUDIO_PRIMITIVE_GROUPS,
   STUDIO_PRIMITIVES,
   primitiveGeometrySpec,
   STUDIO_TABS,
@@ -46,6 +47,7 @@ import {
 export {
   STUDIO_LENS_PRESETS,
   STUDIO_MATERIAL_PRESETS,
+  STUDIO_PRIMITIVE_GROUPS,
   STUDIO_PRIMITIVES,
   STUDIO_TABS,
   STUDIO_TEMPLATES,
@@ -951,8 +953,7 @@ export function createStudio(container, {
     className: 'crucible-studio-popover',
     attributes: { popover: 'auto' },
   });
-  const primitiveGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid' });
-  for (const primitiveType of STUDIO_PRIMITIVES) {
+  const addPrimitiveButtonFor = primitiveType => {
     const addPrimitiveButton = createElement(documentReference, 'button', { type: 'button', textContent: primitiveLabel(primitiveType) });
     addPrimitiveButton.addEventListener('click', async () => {
       addPopover.hidePopover?.();
@@ -964,8 +965,15 @@ export function createStudio(container, {
         announce(error.message);
       }
     });
-    primitiveGrid.append(addPrimitiveButton);
-  }
+    return addPrimitiveButton;
+  };
+  // The shapes come in groups with a gap between them and no captions; a screen reader hears each group's name.
+  const primitiveGrids = STUDIO_PRIMITIVE_GROUPS.map(group => createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-popover-grid', attributes: { role: 'group', 'aria-label': group.label } },
+    ...group.primitives.map(addPrimitiveButtonFor),
+  ));
   const addPointLightButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Point light' });
   const addSpotLightButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Spot light' });
   addPointLightButton.addEventListener('click', () => {
@@ -997,9 +1005,7 @@ export function createStudio(container, {
     }
   });
   const lightGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid', attributes: { role: 'group', 'aria-label': 'Lights' } }, addPointLightButton, addSpotLightButton, addAreaLightButton);
-  primitiveGrid.setAttribute('role', 'group');
-  primitiveGrid.setAttribute('aria-label', 'Shapes');
-  addPopover.append(primitiveGrid, lightGrid);
+  addPopover.append(...primitiveGrids, lightGrid);
 
   const syncStatusNote = createElement(documentReference, 'p', {
     className: 'crucible-studio-popover-note',
@@ -1149,7 +1155,11 @@ export function createStudio(container, {
       const opensLeftward = !beside && rectangle.left > viewportWidth / 2;
       popoverElement.style.left = opensLeftward ? 'auto' : `${Math.round(clampedLeft)}px`;
       popoverElement.style.right = opensLeftward ? `${Math.round(Math.max(8, viewportWidth - rectangle.right - 5))}px` : 'auto';
-      popoverElement.style.top = `${Math.round(clampedTop)}px`;
+      // A menu beside a trigger in the lower half hangs from its foot and grows upward, so a tall menu stays on screen
+      // without its height being known before it opens.
+      const opensUpward = beside && rectangle.top > viewportHeight / 2;
+      popoverElement.style.top = opensUpward ? 'auto' : `${Math.round(clampedTop)}px`;
+      popoverElement.style.bottom = opensUpward ? `${Math.round(Math.max(8, viewportHeight - rectangle.bottom - 8))}px` : 'auto';
     });
   }
   bindPopoverAnchor(() => fileMenuAnchor, newPopover);

@@ -6,6 +6,7 @@ import { createSceneQuery } from './scene-query.js';
 import { MAX_POINT_LIGHTS, MAX_AREA_LIGHTS, MAX_SPOT_LIGHTS } from './light-limits.js';
 import {
   STUDIO_MATERIAL_PRESETS,
+  STUDIO_PRIMITIVE_GROUPS,
   STUDIO_PRIMITIVES,
   STUDIO_TABS,
   STUDIO_TEMPLATES,
@@ -1909,6 +1910,7 @@ export function createStudioController({
 
 export {
   STUDIO_MATERIAL_PRESETS,
+  STUDIO_PRIMITIVE_GROUPS,
   STUDIO_PRIMITIVES,
   STUDIO_TABS,
   STUDIO_TEMPLATES,
