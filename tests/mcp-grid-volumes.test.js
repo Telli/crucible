@@ -134,6 +134,10 @@ test('a grid name that is not a file in the grid folder is refused with what to 
   }
 });
 
+test('a non-list frames value is named in the grid error (#2624)', () => {
+  assert.throws(() => readVolumeGridFiles(gridRecipe({ frames: 5 }), '.'), /names the grid 5/);
+});
+
 test('grid bytes are bounded by name: one sequence may not pass its byte budget', async context => {
   const gridFolder = await mkdtemp(join(tmpdir(), 'crucible-grid-big-'));
   context.after(() => rm(gridFolder, { recursive: true, force: true }));
