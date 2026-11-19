@@ -334,8 +334,11 @@ export function skinnedWorldBounds(geometry, pose, worldMatrix) {
     let matrix = worldMatrix;
     if (skinned) {
       blended.fill(0);
+      // The renderer divides each vertex's weights by their total, so the bounds do the same.
+      let weightTotal = 0;
+      for (let slot = 0; slot < 4; slot++) weightTotal += skinWeights[vertex * 4 + slot];
       for (let slot = 0; slot < 4; slot++) {
-        const weight = skinWeights[vertex * 4 + slot];
+        const weight = skinWeights[vertex * 4 + slot] / weightTotal;
         if (weight === 0) continue;
         const jointOffset = skinIndices[vertex * 4 + slot] * 16;
         for (let element = 0; element < 16; element++) blended[element] += weight * palette[jointOffset + element];
