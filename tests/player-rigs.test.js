@@ -219,6 +219,33 @@ test('a zero-length variable update leaves vehicle and flyer state finite', () =
   }
 });
 
+test('one non-finite axis sample leaves vehicle, flyer and orbit camera state finite (#2612)', () => {
+  let sample = 1;
+  const input = { getAxis: () => sample, isHeld: () => false, wasPressed: () => false };
+  const makers = [
+    ['vehicle', () => createVehicleController({ input })],
+    ['flyer', () => createFlightController({ input })],
+    ['orbit', () => createOrbitCamera({ subject: { position: [0, 0, 0] }, input, zoom: 'zoom' })],
+  ];
+  for (const [kind, make] of makers) {
+    sample = 1;
+    const system = make();
+    const runtime = createRuntime(fakeRenderer, { mode: 'fixed', fixedStepSeconds: 1 / 60, systems: [system], scheduler });
+    runtime.step(STEP_MILLISECONDS);
+    for (const bad of [NaN, Infinity, 1]) {
+      sample = bad;
+      runtime.step(STEP_MILLISECONDS);
+    }
+    const state = system.state ?? system;
+    const numbers = Object.values(state).flatMap(value => (typeof value === 'number' ? [value] : Array.isArray(value) ? value : []));
+    assert.ok(numbers.length > 0 && numbers.every(Number.isFinite), `${kind} state is not finite after a bad sample: ${numbers}`);
+    if (kind === 'orbit') {
+      const { eye, target } = system.pose({ alpha: 1 });
+      assert.ok([...eye, ...target].every(Number.isFinite), `orbit pose is not finite: ${eye} ${target}`);
+    }
+  }
+});
+
 test('flight and driving are deterministic for the same inputs', () => {
   const finalStates = [0, 1].map(() => {
     const game = createGame(input => createFlightController({ input }));
@@ -309,6 +336,20 @@ test('errors name the option and what to pass', () => {
   registerController('test-broken', () => ({}));
   assert.throws(() => createController('test-broken'), /must return a runtime system with state.position/);
   assert.throws(() => createOrbitCamera({ subject: { position: [0, 0, 0] }, zoom: 'zoom' }), /needs options.input/);
+});
+
+test('a refused teleport leaves the controller where it was (#2614)', () => {
+  const input = createScriptedInput();
+  const controllers = [
+    createCharacterController({ input, position: [1, 2, 3], yaw: 0.5 }),
+    createVehicleController({ input, position: [1, 2, 3], yaw: 0.5 }),
+    createFlightController({ input, position: [1, 2, 3], yaw: 0.5 }),
+  ];
+  for (const controller of controllers) {
+    const before = structuredClone(controller.state);
+    assert.throws(() => controller.teleport([9, 9, 9], NaN), /teleport yaw must be a number/);
+    assert.deepEqual(controller.state, before, controller.kind);
+  }
 });
 
 function approximately(actual, expected, tolerance = 1e-6) {

@@ -11,6 +11,7 @@ Coding agents are welcome to open pull requests. There is no disclosure box: the
 1. Install Node.js 20.19 or later (the `Test` workflow uses 24) and Google Chrome.
 2. Clone the repository and run `npm ci`.
 3. Run `npm run dev`. Vite prints the local URL of the showcase.
+4. For the Cook tests and native renders, run `npm run cook:fetch` to get the prebuilt addon of the pinned Cook (or `npm run cook:build` with Rust). `npm run cook:check` says whether the installed Cook is the one `package-lock.json` pins. When it is not, the Cook tests skip and `tests/cook-install.test.js` fails with what to run. Set `COOK_ALLOW_UNPINNED=1` only when you link a Cook checkout on purpose.
 
 The library source is in `src/` and the Node tools and smoke scripts are in `scripts/`.
 The tests are in `tests/` and the guides are in `docs/`.
@@ -218,7 +219,7 @@ Docs-only, CI-only and test-only pull requests skip everything except the local 
 
 - The comment updates itself when you fix an item. One reminder follows when 24 hours are left.
 - A maintainer gives a first answer within about 7 days. That reply time is separate from the bot clock, which counts only items on your side. If an item is still open 72 hours after the first comment (the end of that UTC day, weekends included), the bot closes the pull request. It invites you to reopen it once the item is fixed, and reopening starts the time again.
-- Pull requests from the owner, members, collaborators and bots never close by themselves. Drafts and pull requests labelled `needs-owner-decision` do not close either.
+- Pull requests from the owner, members, collaborators and bots never close by themselves. Drafts and pull requests labelled `needs-owner-decision` do not close either; the clock of a draft restarts once it passes the reminder time, so marking it ready later still gets the reminder first.
 - Labels and the milestone never count against you. The bot adds `needs-triage` when they are missing and `status:needs-author` while something of yours is missing.
 
 For maintainers: the workflow is `.github/workflows/pr-metadata.yml`, and the rules are the pure modules `scripts/pr-metadata-check.mjs` (what is missing) and `scripts/pr-metadata-flow.mjs` (the clock and the wording). The workflow runs on `pull_request_target`, so it never checks out or runs the code of the pull request. It reads the description and the file list through the API only. Do not change that. It is not a required check.

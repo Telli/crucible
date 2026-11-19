@@ -597,8 +597,17 @@ export function configureTexture(renderer, info) {
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, info.magFilter);
   if (info.mipmaps) {
     context.generateMipmap(context.TEXTURE_2D);
-    renderer.applyAnisotropy(context.TEXTURE_2D);
+    if (filtersSmoothly(info)) renderer.applyAnisotropy(context.TEXTURE_2D);
   }
+}
+
+// Anisotropic filtering replaces both filters with its own smooth one, so it would turn a NEAREST sampler (pixel art, block
+// textures) into a blur. Only a texture that already filters linearly in both directions gets it.
+function filtersSmoothly({ minFilter, magFilter }) {
+  const LINEAR = 9729;
+  const LINEAR_MIPMAP_NEAREST = 9985;
+  const LINEAR_MIPMAP_LINEAR = 9987;
+  return magFilter === LINEAR && (minFilter === LINEAR_MIPMAP_NEAREST || minFilter === LINEAR_MIPMAP_LINEAR);
 }
 
 export function textureDescriptorInfo(map, maximumSize = Infinity) {
@@ -1445,6 +1454,12 @@ export class CrucibleRenderer {
       if (!this.geometryBuffers.has(geometry)) validateReplacementGeometry(geometry);
     }
     const retained = new Set();
+    // Groups share a few materials, and the layer state is 28 validated values, so each material answers once per call.
+    const layerStates = new Map();
+    const layerStateOf = material => {
+      if (!layerStates.has(material)) layerStates.set(material, materialLayerState(material));
+      return layerStates.get(material);
+    };
     const replacements = groups.map(group => {
       const first = group[0];
       const location = this.partLocations.get(first);
@@ -1456,7 +1471,7 @@ export class CrucibleRenderer {
         batch.floor === (first.material.tag === 'floor') && batchPass(batch) === partPass(first) &&
         [batch.alphaMode, batch.alphaCutoff, batch.opacity, batch.doubleSided, batch.retro, batch.waterGlint].every((value, index) => value === alphaState[index]) &&
         batch.mapState.every((value, index) => value === mapState[index]) &&
-        batch.layerState.every((value, index) => value === materialLayerState(first.material)[index]);
+        batch.layerState.every((value, index) => value === layerStateOf(first.material)[index]);
       if (sameParts && sameState) {
         retained.add(batch);
         return { group, batch };

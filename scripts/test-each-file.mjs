@@ -16,6 +16,12 @@ const testFiles = readdirSync(testsDirectory)
   .filter(name => !nameFragment || name.includes(nameFragment))
   .sort();
 
+// A fragment that matches nothing is a typo, and "0 of 0 pass" would read as green.
+if (testFiles.length === 0) {
+  console.error(`No test file in tests/ matches "${nameFragment ?? ''}". Pass part of a tests/*.test.js file name, or no argument to run every file.`);
+  process.exit(1);
+}
+
 function runTestFile(name) {
   return new Promise(resolve => {
     const startedAt = Date.now();

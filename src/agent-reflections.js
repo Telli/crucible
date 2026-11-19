@@ -1,4 +1,4 @@
-import { traceObjectProbes } from './probe-trace.js';
+import { NO_REFLECTIVE_PART, traceObjectProbes } from './probe-trace.js';
 import { placeProbes } from './reflection-probes.js';
 
 // Object reflections: every smooth metal part of a recipe gets a probe of its own, traced from the scene around it, so
@@ -42,7 +42,17 @@ export function stageObjectReflections(cache, recipe, sourceParts, drawnParts, g
     return cache;
   }
   const placed = placeObjectReflections(sourceParts, drawnParts, environment, environmentMap);
-  return { key, worldMatrices, sourceParts, drawnParts, result: placed.report.placed > 0 ? placed : null };
+  const skipped = placed.report.placed > 0 || placed.report.skipped === NO_REFLECTIVE_PART ? null : placed.report.skipped ?? null;
+  return { key, worldMatrices, sourceParts, drawnParts, result: placed.report.placed > 0 ? placed : null, skipped };
+}
+
+/** The scene_inspect and scene_apply diagnostic for smooth metal that keeps only the sky reflection because the automatic probes were skipped. */
+export function reflectionSkippedDiagnostic(reason) {
+  return {
+    kind: 'reflection-skipped', severity: 'warning', target: 'environment.objectReflections',
+    message: `Smooth metal parts reflect only the sky: the automatic object reflection probes were skipped (${reason}).`,
+    fix: 'Use fewer triangles or fewer reflective parts so the probes can trace, or set environment.objectReflections to false (scene_apply set-environment) to turn them off and drop this warning.',
+  };
 }
 
 function sameFloats(first, second) {

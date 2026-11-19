@@ -65,6 +65,13 @@ function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
+// Reads an axis and treats a non-finite sample as released: one bad reading from a gamepad bridge or a custom source must not
+// leave a controller's yaw, steer or camera angles NaN for every later step.
+function readAxis(input, name) {
+  const value = input.getAxis(name);
+  return Number.isFinite(value) ? value : 0;
+}
+
 function blend(from, to, amount) {
   return from.map((value, index) => value + (to[index] - value) * amount);
 }
@@ -229,8 +236,8 @@ export function createCharacterController(options = {}) {
   function advance(stepSeconds) {
     if (!(stepSeconds > 0)) return;
     state.previousPosition = [...state.position];
-    const sideInput = input.getAxis(names.moveX);
-    const forwardInput = input.getAxis(names.moveForward);
+    const sideInput = readAxis(input, names.moveX);
+    const forwardInput = readAxis(input, names.moveForward);
     const intentLength = Math.min(1, Math.hypot(sideInput, forwardInput));
     const intentScale = intentLength > 0 ? intentLength / Math.hypot(sideInput, forwardInput) : 0;
     const viewYaw = currentCameraYaw();
@@ -288,10 +295,13 @@ export function createCharacterController(options = {}) {
     // Position drawn between the last two fixed steps; alpha is context.alpha.
     positionAt: alpha => blend(state.previousPosition, state.position, alpha),
     teleport(position, yaw = state.yaw) {
-      state.position = vectorOption(owner, 'teleport position', position);
-      state.previousPosition = [...state.position];
+      // Both arguments are checked before anything moves, so a refused teleport leaves the player where it was.
+      const nextPosition = vectorOption(owner, 'teleport position', position);
+      const nextYaw = numberOption(owner, 'teleport yaw', yaw, 0, -1000, 1000);
+      state.position = nextPosition;
+      state.previousPosition = [...nextPosition];
       state.velocity = [0, 0, 0];
-      state.yaw = numberOption(owner, 'teleport yaw', yaw, 0, -1000, 1000);
+      state.yaw = nextYaw;
       state.grounded = false;
       state.airborne = true;
       writeNode();
@@ -377,13 +387,13 @@ function createCameraRig(kind, options) {
     // A zero, negative or NaN step would leave the look angles or the focus NaN for good, as the controllers already refuse.
     if (!(stepSeconds > 0)) return;
     if (wantsLook) {
-      rig.yaw = wrapAngle(rig.yaw + input.getAxis(lookNames.x) * lookSpeed * stepSeconds);
+      rig.yaw = wrapAngle(rig.yaw + readAxis(input, lookNames.x) * lookSpeed * stepSeconds);
     }
     if (lookNames.y) {
-      rig.pitch = clamp(rig.pitch + input.getAxis(lookNames.y) * lookSpeed * stepSeconds, minimumPitch, maximumPitch);
+      rig.pitch = clamp(rig.pitch + readAxis(input, lookNames.y) * lookSpeed * stepSeconds, minimumPitch, maximumPitch);
     }
     if (zoomName !== null) {
-      rig.distance = clamp(rig.distance - input.getAxis(zoomName) * zoomSpeed * stepSeconds, minimumDistance, maximumDistance);
+      rig.distance = clamp(rig.distance - readAxis(input, zoomName) * zoomSpeed * stepSeconds, minimumDistance, maximumDistance);
     }
     if (yawFollowSeconds > 0) {
       const yawAmount = 1 - Math.exp(-stepSeconds / yawFollowSeconds);
@@ -623,8 +633,8 @@ export function createVehicleController(options = {}) {
   function advance(stepSeconds) {
     if (!(stepSeconds > 0)) return;
     state.previousPosition = [...state.position];
-    updateSpeed(clamp(input.getAxis(names.throttle), -1, 1), stepSeconds);
-    const steerWanted = clamp(input.getAxis(names.steer), -1, 1);
+    updateSpeed(clamp(readAxis(input, names.throttle), -1, 1), stepSeconds);
+    const steerWanted = clamp(readAxis(input, names.steer), -1, 1);
     state.steer += (steerWanted - state.steer) * (1 - Math.exp(-stepSeconds / settings.steerSeconds));
     const yawRate = (state.forwardSpeed / settings.wheelbase) * Math.tan(state.steer * settings.maximumSteer);
     state.yaw = wrapAngle(state.yaw + yawRate * stepSeconds);
@@ -660,11 +670,14 @@ export function createVehicleController(options = {}) {
     writeNode,
     advance,
     teleport(position, yaw) {
-      state.position = vectorOption(owner, 'teleport position', position);
-      state.previousPosition = [...state.position];
+      // Checked before anything moves, so a refused teleport leaves the car where it was.
+      const nextPosition = vectorOption(owner, 'teleport position', position);
+      const nextYaw = numberOption(owner, 'teleport yaw', yaw, state.yaw, -1000, 1000);
+      state.position = nextPosition;
+      state.previousPosition = [...nextPosition];
       state.velocity = [0, 0, 0];
       state.forwardSpeed = 0;
-      state.yaw = numberOption(owner, 'teleport yaw', yaw, state.yaw, -1000, 1000);
+      state.yaw = nextYaw;
       state.grounded = false;
       state.airborne = true;
     },
@@ -724,8 +737,8 @@ export function createFlightController(options = {}) {
   }
 
   function steer(stepSeconds) {
-    const yawInput = clamp(input.getAxis(names.yaw), -1, 1);
-    const pitchInput = clamp(input.getAxis(names.pitch), -1, 1);
+    const yawInput = clamp(readAxis(input, names.yaw), -1, 1);
+    const pitchInput = clamp(readAxis(input, names.pitch), -1, 1);
     state.yaw = wrapAngle(state.yaw + yawInput * settings.turnRate * stepSeconds);
     if (pitchInput !== 0) state.pitch += pitchInput * settings.pitchRate * stepSeconds;
     else state.pitch -= state.pitch * (1 - Math.exp(-stepSeconds / settings.levelSeconds));
@@ -774,10 +787,13 @@ export function createFlightController(options = {}) {
     writeNode,
     advance,
     teleport(position, yaw) {
-      state.position = vectorOption(owner, 'teleport position', position);
-      state.previousPosition = [...state.position];
+      // Checked before anything moves, so a refused teleport leaves the flyer where it was.
+      const nextPosition = vectorOption(owner, 'teleport position', position);
+      const nextYaw = numberOption(owner, 'teleport yaw', yaw, state.yaw, -1000, 1000);
+      state.position = nextPosition;
+      state.previousPosition = [...nextPosition];
       state.velocity = [0, 0, 0];
-      state.yaw = numberOption(owner, 'teleport yaw', yaw, state.yaw, -1000, 1000);
+      state.yaw = nextYaw;
       state.pitch = 0;
       state.grounded = false;
       state.airborne = true;
@@ -842,8 +858,8 @@ export function createBoatController(options = {}) {
 
   function advance(stepSeconds) {
     if (!(stepSeconds > 0)) return;
-    state.throttle = clamp(input.getAxis(names.throttle), -1, 1);
-    state.steer = clamp(input.getAxis(names.rudder), -1, 1);
+    state.throttle = clamp(readAxis(input, names.throttle), -1, 1);
+    state.steer = clamp(readAxis(input, names.rudder), -1, 1);
     physics.setBoatControls(bodyName, { throttle: state.throttle, rudder: state.steer });
     readHull(stepSeconds);
     writeNode();
