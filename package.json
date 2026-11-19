@@ -65,9 +65,7 @@
   "bin": {
     "crucible-mcp": "./bin/crucible-mcp.mjs",
     "crucible": "./bin/crucible.mjs",
-    "crucible-addon-check": "./bin/crucible-addon-check.mjs",
-    "67js-mcp": "./bin/67js-mcp.mjs",
-    "67js-addon-check": "./bin/67js-addon-check.mjs"
+    "crucible-addon-check": "./bin/crucible-addon-check.mjs"
   },
   "engines": {
     "node": ">=20.19.0"

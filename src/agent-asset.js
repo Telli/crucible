@@ -1,4 +1,3 @@
-import { currentFormatName } from './legacy-names.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { createAgentScene, REVISION_HISTORY_LIMIT } from './agent-scene.js';
 import { environmentPatchWithSetup } from './agent-look.js';
@@ -490,7 +489,6 @@ export function createAgentAssetScene(asset, inputRecipe, { sources } = {}) {
   function normalize(input) {
     const candidate = copiedJson(input);
     knownKeys(candidate, ['format', 'schemaVersion', 'assetId', 'camera', ...LOOK_FIELDS, 'root', 'animation', 'materialOverrides', 'nodeOverrides', 'motion', 'physics', 'meshEdits'], 'asset recipe');
-    candidate.format = currentFormatName(candidate.format);
     if (candidate.format !== 'crucible.asset' || candidate.schemaVersion !== 1 ||
         typeof candidate.assetId !== 'string' || candidate.assetId.toLowerCase() !== canonicalAssetId) {
       const wrongField = candidate.format !== 'crucible.asset' ? 'format' : candidate.schemaVersion !== 1 ? 'schemaVersion' : 'assetId';

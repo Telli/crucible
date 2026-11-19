@@ -29,16 +29,9 @@ import { installVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { setExplosionBakeStore } from '../src/explosion-grids.js';
 import { bakeCacheDirectory, createExplosionBakeCache } from '../src/explosion-bake-cache.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from '../src/light-limits.js';
-import { currentFormatName, warnLegacyOnce } from '../src/legacy-names.js';
 import { annotateViewHtml, clientSupportsMcpApps, ANNOTATE_VIEW_URI, MCP_APPS_MIME_TYPE } from './annotate-app-view.mjs';
 import { loadAskUserFixture, describeAskUserFixture } from './ask-user-fixture.mjs';
 import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
-
-function acceptLegacyFormat(value) {
-  const current = currentFormatName(value);
-  if (current !== value) warnLegacyOnce(`recipe format "${value}" is now "${current}"; the old name stops working in the next release.`);
-  return current;
-}
 
 describeSchemaInputsWithReceivedValues();
 
@@ -796,7 +789,7 @@ const clothListed = listed('cloth', cloth, 'Baked cloth sheets: duration, gravit
 const armatureListed = listed('armatures', armature, 'A skeleton { id, parent, preset humanoid|quadruped, fit, bones [{name, parent, head, tail}], prefix, translation, rotation }; see scene_capabilities armatures.', { id: identifier });
 const gameReference = z.record(z.string(), z.unknown()).describe('Playable setup as plain JSON, never code: {player:{node}, camera, input, physics, ground, rules}. Fields and an example: scene_capabilities game.');
 const recipe = z.strictObject({
-  format: z.preprocess(acceptLegacyFormat, z.literal('crucible.scene')),
+  format: z.literal('crucible.scene'),
   schemaVersion: z.literal(1),
   geometries: z.array(geometryListed).max(256).optional(),
   materials: z.array(materialListed(z.strictObject({ id: identifier, tag: materialTag, ...materialFields }), 'Material.', { id: identifier })).max(256).optional().describe('Omit for none.'),
@@ -816,7 +809,7 @@ const recipe = z.strictObject({
   game: gameReference.nullable().optional(),
 }).describe('Bounded scene recipe; the backend validates it.');
 const assetRecipe = z.strictObject({
-  format: z.preprocess(acceptLegacyFormat, z.literal('crucible.asset')),
+  format: z.literal('crucible.asset'),
   schemaVersion: z.literal(1),
   assetId: z.string().regex(/^[a-f0-9]{64}$/).optional().describe('SHA-256 asset ID from scene_asset_catalog, or assetName.'),
   assetName: z.string().max(256).optional(),
