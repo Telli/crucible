@@ -110,3 +110,12 @@ test('bounding_box and convex_hull run as recipe edits', () => {
   const { mesh } = applyMeshEdits(pointCloudMesh(cubePoints()), [{ op: 'convex_hull' }, { op: 'bounding_box' }]);
   assert.equal(mesh.faceCount, 6);
 });
+
+test('rotate, align and transform name the operand that is not a vector', () => {
+  assert.throws(() => evaluateVector({ rotate: [[1, 0, 0], 1, 1] }), /Field expression: rotate axis needs a vector, such as \[0, 1, 0\]/);
+  assert.throws(() => evaluateVector({ rotate: [1, [0, 1, 0], 1] }), /Field expression: rotate vector needs a vector/);
+  assert.throws(() => evaluateVector({ rotate: [[1, 0, 0], [0, 1, 0], [1, 1, 1]] }), /rotate angle needs a number/);
+  assert.throws(() => evaluateVector({ align: [1] }), /Field expression: align direction needs a vector/);
+  assert.throws(() => evaluateVector({ transform: [[1, 0, 0], [0, 0, 0], 1] }), /Field expression: transform euler needs a vector/);
+  assert.throws(() => evaluateVector({ transform: [1] }), /Field expression: transform point needs a vector/);
+});
