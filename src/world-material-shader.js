@@ -1,43 +1,19 @@
+import { resolveWaterMaterial } from './water-presets.js';
 import { layerTextureSupport, registerShaderFeatureCode } from './shader-registry.js';
+import { causticsDeclarations, resolveWaterCaustics, waterCausticsUniform } from './water-caustics.js';
 
 // Water bodies. A material with the water tag can carry `absorption` (RGB per metre: how fast each colour fades going down) and
 // `turbidity` (0 clear to 1 murky: how much light the water scatters into shadows). The largest flat water part of a scene sets
 // the water level. Every surface below it is dimmed by Beer-Lambert absorption of the column above it, and its shadows are lifted
 // by in-scatter and widened with depth times turbidity (worldVisibility below). Absorption folds the way down and the way back up
 // into one coefficient, so a bed `depth` metres down keeps exp(-absorption * depth) of its light.
-/** Water the way people name it: where the light goes and how far a shadow stays sharp. */
-export const WATER_PRESETS = Object.freeze({
-  lake: Object.freeze({ absorption: Object.freeze([0.35, 0.07, 0.04]), turbidity: 0.02 }),
-  sea: Object.freeze({ absorption: Object.freeze([0.4, 0.06, 0.02]), turbidity: 0.1 }),
-  river: Object.freeze({ absorption: Object.freeze([0.8, 0.9, 1.6]), turbidity: 0.75 }),
-});
-export const WATER_DEFAULT_PRESET = 'lake';
-export const WATER_MAXIMUM_ABSORPTION = 20;
+export { WATER_PRESETS, WATER_DEFAULT_PRESET, WATER_MAXIMUM_ABSORPTION, resolveWaterMaterial } from './water-presets.js';
 // A water part counts as one level when it is this flat: thickness against its wider side.
 const WATER_MAXIMUM_THICKNESS_RATIO = 0.02;
 
-/** Resolves a material's water fields: an explicit absorption or turbidity beats the preset, which beats the default lake. */
-export function resolveWaterMaterial({ waterPreset, absorption, turbidity } = {}) {
-  const preset = waterPreset ?? WATER_DEFAULT_PRESET;
-  if (!Object.hasOwn(WATER_PRESETS, preset)) {
-    throw new RangeError(`waterPreset must be one of ${Object.keys(WATER_PRESETS).join(', ')}.`);
-  }
-  const resolvedAbsorption = absorption ?? WATER_PRESETS[preset].absorption;
-  const absorptionValid = Array.isArray(resolvedAbsorption) && resolvedAbsorption.length === 3
-    && resolvedAbsorption.every(channel => Number.isFinite(channel) && channel >= 0 && channel <= WATER_MAXIMUM_ABSORPTION);
-  if (!absorptionValid) {
-    throw new RangeError(`absorption must be three numbers from 0 to ${WATER_MAXIMUM_ABSORPTION} (per metre).`);
-  }
-  const resolvedTurbidity = turbidity ?? WATER_PRESETS[preset].turbidity;
-  if (!Number.isFinite(resolvedTurbidity) || resolvedTurbidity < 0 || resolvedTurbidity > 1) {
-    throw new RangeError('turbidity must be within zero and one.');
-  }
-  return { waterPreset: preset, absorption: [...resolvedAbsorption], turbidity: resolvedTurbidity };
-}
-
 /** Copies a recipe material's water fields: a water material always carries the resolved absorption, turbidity and preset. */
 export function copyWaterFields(value, result, toVector) {
-  const given = ['waterPreset', 'absorption', 'turbidity'].filter(field => value[field] !== undefined);
+  const given = ['waterPreset', 'absorption', 'turbidity', 'caustics'].filter(field => value[field] !== undefined);
   if (result.tag !== 'water') {
     if (given.length > 0) {
       throw new RangeError(`${given.join(', ')} need the water tag.`);
@@ -46,6 +22,95 @@ export function copyWaterFields(value, result, toVector) {
   }
   const absorption = value.absorption === undefined ? undefined : toVector(value.absorption, 3, 'absorption');
   Object.assign(result, resolveWaterMaterial({ ...value, absorption }));
+  const caustics = resolveWaterCaustics(value.caustics);
+  if (caustics) {
+    result.caustics = caustics;
+  }
+}
+
+export const WATER_RAMP_COLOR_COUNT = Object.freeze([3, 5]);
+const WATER_RAMP_DRIVERS = Object.freeze(['height', 'facing', 'sun']);
+const WATER_RAMP_FIELDS = Object.freeze(['colors', 'drivers', 'heightRange', 'steps', 'crestTint']);
+const WATER_RAMP_STEPS = Object.freeze(['hard', 'soft']);
+const WATER_RAMP_DEFAULT_HEIGHT_RANGE = Object.freeze([-1, 1]);
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+function srgbByteToLinear(byte) {
+  const encoded = byte / 255;
+  return encoded <= 0.04045 ? encoded / 12.92 : ((encoded + 0.055) / 1.055) ** 2.4;
+}
+
+/** A ramp colour: three linear numbers (0 to 16) whose sRGB encoding is the colour shown, or a `#rrggbb` hex shown as that hex. */
+function rampColor(value, name, toVector) {
+  if (typeof value === 'string' && HEX_COLOR.test(value)) {
+    return Object.freeze([1, 3, 5].map(offset => srgbByteToLinear(Number.parseInt(value.slice(offset, offset + 2), 16))));
+  }
+  const color = toVector(value, 3, name);
+  if (color.some(component => !Number.isFinite(component) || component < 0 || component > 16)) {
+    throw new RangeError(`${name} must be three numbers from 0 to 16, such as [0.1, 0.5, 0.6].`);
+  }
+  return Object.freeze([...color]);
+}
+
+function rampDrivers(drivers) {
+  const given = drivers ?? { height: 1 };
+  const unknown = Object.keys(given).filter(name => !WATER_RAMP_DRIVERS.includes(name));
+  if (unknown.length > 0) {
+    throw new RangeError(`waterRamp.drivers has no ${unknown.join(', ')}; pass weights for ${WATER_RAMP_DRIVERS.join(', ')}, such as { "height": 1, "sun": 0.5 }.`);
+  }
+  const weights = WATER_RAMP_DRIVERS.map(name => given[name] ?? 0);
+  if (weights.some(weight => !Number.isFinite(weight) || weight < 0 || weight > 1) || weights.every(weight => weight === 0)) {
+    throw new RangeError('waterRamp.drivers weights must be numbers from 0 to 1 with at least one above 0, such as { "height": 1, "sun": 0.5 }.');
+  }
+  return Object.freeze(Object.fromEntries(WATER_RAMP_DRIVERS.map((name, index) => [name, weights[index]])));
+}
+
+/**
+ * The stylized colour ramp of a water material. `colors` (3 to 5, deep to bright) are picked by a weighted mix of drivers: `height`
+ * (world y across `heightRange`, default -1 to 1), `facing` (grazing view, 1 at the horizon) and `sun` (how squarely the wave face meets
+ * the sun). `steps` hard (default) keeps flat tones, soft blends them. `crestTint` { color, strength 0-1 } colours the folded crests.
+ */
+export function resolveWaterRamp(ramp, toVector) {
+  if (typeof ramp !== 'object' || ramp === null || Array.isArray(ramp)) {
+    throw new RangeError('waterRamp must be an object such as { "colors": [[0.02, 0.2, 0.3], [0.1, 0.6, 0.7], [0.5, 0.95, 0.95]] }.');
+  }
+  const unknown = Object.keys(ramp).filter(name => !WATER_RAMP_FIELDS.includes(name));
+  if (unknown.length > 0) {
+    throw new RangeError(`waterRamp has no ${unknown.join(', ')}; use ${WATER_RAMP_FIELDS.join(', ')}.`);
+  }
+  const [minimumColors, maximumColors] = WATER_RAMP_COLOR_COUNT;
+  if (!Array.isArray(ramp.colors) || ramp.colors.length < minimumColors || ramp.colors.length > maximumColors) {
+    throw new RangeError(`waterRamp.colors must list ${minimumColors} to ${maximumColors} colours from deep to bright, such as [[0.02, 0.2, 0.3], [0.1, 0.6, 0.7], [0.5, 0.95, 0.95]].`);
+  }
+  const steps = ramp.steps ?? 'hard';
+  if (!WATER_RAMP_STEPS.includes(steps)) {
+    throw new RangeError(`waterRamp.steps must be one of ${WATER_RAMP_STEPS.join(', ')}, such as hard.`);
+  }
+  const heightRange = ramp.heightRange ?? WATER_RAMP_DEFAULT_HEIGHT_RANGE;
+  if (!Array.isArray(heightRange) || heightRange.length !== 2 || !heightRange.every(Number.isFinite) || heightRange[0] >= heightRange[1]) {
+    throw new RangeError('waterRamp.heightRange must be [low, high] world heights with low below high, such as [-1, 1].');
+  }
+  const resolved = { colors: Object.freeze(ramp.colors.map((color, index) => rampColor(color, `waterRamp.colors[${index}]`, toVector))), drivers: rampDrivers(ramp.drivers), heightRange: Object.freeze([...heightRange]), steps };
+  if (ramp.crestTint !== undefined) {
+    const { color, strength = 1, ...extra } = ramp.crestTint ?? {};
+    if (color === undefined || Object.keys(extra).length > 0 || !Number.isFinite(strength) || strength < 0 || strength > 1) {
+      throw new RangeError('waterRamp.crestTint must be { "color": [r, g, b], "strength": 0 to 1 }, such as { "color": [0.7, 1, 0.9], "strength": 0.8 }.');
+    }
+    resolved.crestTint = Object.freeze({ color: rampColor(color, 'waterRamp.crestTint.color', toVector), strength });
+  }
+  return Object.freeze(resolved);
+}
+
+/** Copies a recipe material's `waterRamp`: it needs the water tag. */
+export function copyWaterRamp(value, result, toVector) {
+  if (value.waterRamp === undefined) {
+    return;
+  }
+  if (result.tag !== 'water') {
+    throw new RangeError('waterRamp needs the water tag.');
+  }
+  result.waterRamp = resolveWaterRamp(value.waterRamp, toVector);
 }
 
 function partBounds(part) {
@@ -98,7 +163,7 @@ export function findWaterBody(parts) {
     return null;
   }
   const { absorption, turbidity } = resolveWaterMaterial(best.material);
-  return { level: best.level, absorption, turbidity, refractive: best.refractive };
+  return { level: best.level, absorption, turbidity, refractive: best.refractive, caustics: best.material.caustics ?? null };
 }
 
 const waterLocations = new WeakMap();
@@ -127,7 +192,7 @@ function bindWaterBody(renderer) {
   const context = renderer.context;
   let locations = waterLocations.get(renderer);
   if (locations?.program !== renderer.program) {
-    locations = { program: renderer.program, body: context.getUniformLocation(renderer.program, 'waterBody'), absorption: context.getUniformLocation(renderer.program, 'waterAbsorption'), scene: context.getUniformLocation(renderer.program, 'waterScene'), resolved: false };
+    locations = { program: renderer.program, body: context.getUniformLocation(renderer.program, 'waterBody'), absorption: context.getUniformLocation(renderer.program, 'waterAbsorption'), scene: context.getUniformLocation(renderer.program, 'waterScene'), caustics: context.getUniformLocation(renderer.program, 'waterCaustics'), resolved: false };
     waterLocations.set(renderer, locations);
   }
   const waterParts = renderer.batches.flatMap(batch => (batch.parts[0].material.tag === 'water' ? batch.parts : []));
@@ -137,6 +202,7 @@ function bindWaterBody(renderer) {
   // Refraction needs the frame texture, so it is off for a transparent canvas, whose alpha is the picture's own.
   const refracts = active && body.refractive && !renderer.transparent && !renderer.benchmark && Boolean(renderer.frameTexture);
   context.uniform4f(locations.body, active ? body.level : 0, active ? body.turbidity : 0, active ? 1 : 0, refracts ? 1 : 0);
+  context.uniform4f(locations.caustics, ...waterCausticsUniform(active ? body.caustics : null));
   context.uniform3f(locations.absorption, ...(active ? body.absorption : [0, 0, 0]));
   if (!context.isEnabled(context.BLEND)) {
     locations.resolved = false;
@@ -168,10 +234,33 @@ export const worldMaterialSlots = {
   // Shadow of a surface under murky water: the classic shadow map read over a wider disc. A cascaded map is read through
   // its own macro and keeps its filter.
   declarations: `uniform vec4 waterBody;
+${causticsDeclarations}
+uniform vec4 waterRampHead;
+uniform vec3 waterRampWeights;
+uniform vec2 waterRampHeightRange;
+uniform vec4 waterRampCrest;
+uniform vec3 waterRampColors[5];
 uniform vec3 waterAbsorption;
 uniform sampler2D waterScene;
 uniform mat4 viewProjection;
 // The frame texture holds the picture as it leaves the shader: scaled by exposure and, outside HDR, tone mapped and encoded.
+// The stylized ramp: waterRampHead is (colour count, 1 for soft steps, 0, 0) and waterRampWeights the height, facing and sun weights.
+// A hard ramp has a one pixel edge (fwidth) so a band does not crawl.
+vec3 waterRampTone(float height, float facing, float sun) {
+  float count = waterRampHead.x;
+  float heightFraction = clamp((height - waterRampHeightRange.x) / (waterRampHeightRange.y - waterRampHeightRange.x), 0.0, 1.0);
+  float driven = dot(waterRampWeights, vec3(heightFraction, facing, sun)) / dot(waterRampWeights, vec3(1.0));
+  if (waterRampHead.y > 0.5) {
+    float blendPosition = clamp(driven, 0.0, 1.0) * (count - 1.0);
+    int lower = int(floor(min(blendPosition, count - 1.001)));
+    return mix(waterRampColors[lower], waterRampColors[lower + 1], blendPosition - float(lower));
+  }
+  float position = clamp(driven, 0.0, 0.9999) * count;
+  int band = int(floor(position));
+  float edge = smoothstep(0.0, max(fwidth(position), 0.0001), fract(position));
+  return band == 0 ? waterRampColors[0] : mix(waterRampColors[band - 1], waterRampColors[band], edge);
+}
+
 vec3 waterDecode(vec3 encoded) {
   vec3 linear = encoded;
   if (hdrEnabled < 0.5) {
@@ -258,6 +347,7 @@ float underwaterVisibility(float visibility, vec3 normal, float depth) {
     float sunSine = sqrt(max(1.0 - pow(normalize(lightDirection).y, 2.0), 0.0)) / 1.33;
     waterSunTransmittance = exp(-(waterAbsorption + 0.9 * waterBody.y * (1.0 - waterBody.y)) * waterDepth / sqrt(1.0 - sunSine * sunSine));
     waterScatterShare = waterBody.y * (1.0 - exp(-0.4 * waterBody.y * waterDepth));
+    if (waterCaustics.z > 0.0) waterSunTransmittance *= causticGain(worldPosition, waterDepth);
   }
   vec3 keyColor = keyColor * waterSunTransmittance;
 `,
@@ -359,6 +449,8 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
 
 `,
   worldSurface: `  float waterFoam = 0.0;
+  vec3 waterRampRadiance = vec3(0.0);
+  float waterRampOwns = 0.0;
   float waterLostVariance = 0.0;
   if (TAG_WATER) {
     // Small ripples tilt the surface's own normal, so a sea mesh keeps its waves; a flat sheet (normal up) gets the same ripples as before.
@@ -393,6 +485,14 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     color = mix(color, vec3(0.0137, 0.147, 0.195), grazing * 0.85);
     color = mix(color, vec3(0.92, 0.95, 0.97) * (0.68 + 0.32 * (fineLace * 0.5 + midLace * 0.5)), waterFoam);
     roughness = mix(0.16, 0.8, waterFoam);
+    if (waterRampHead.x > 0.5) {
+      float rampSun = clamp(dot(normal, normalize(lightDirection)), 0.0, 1.0);
+      vec3 rampTone = waterRampTone(worldPosition.y, 1.0 - max(dot(normal, viewDirection), 0.0), rampSun);
+      float crestEdge = waterRampHead.y > 0.5 ? 0.15 : max(1.5 * fwidth(foamMask), 0.0001);
+      float crestAmount = waterRampCrest.w * smoothstep(0.2 - crestEdge, 0.2 + crestEdge, foamMask);
+      waterRampRadiance = waterRampRadianceFor(mix(rampTone, waterRampCrest.rgb, crestAmount));
+      waterRampOwns = 1.0;
+    }
   }
   if (CANOPY_TAG) {
     float leaves = sin(worldPosition.x * 13.0 + sin(worldPosition.y * 9.0)) * sin(worldPosition.z * 11.0 - worldPosition.y * 5.0);
@@ -457,6 +557,8 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     mirrorDirection.y = max(mirrorDirection.y, 0.02);
     vec3 skyColor = ENVIRONMENT_ENABLED ? surroundingsColor(mirrorDirection, 0.05) : mix(vec3(0.12, 0.24, 0.28), vec3(0.40, 0.63, 0.78), clamp(mirrorDirection.y, 0.0, 1.0)) * daylight;
     radiance = mix(radiance * 0.6 + color * ambientIntensity * daylight * 1.7, skyColor * ambientIntensity, clamp(reflectivity, 0.0, 1.0));
+    // A ramp owns the colour: no sky reflection, so the tones stay flat; foam and the sun glint still add on top.
+    if (waterRampOwns > 0.5) radiance = waterRampRadiance * (1.0 - waterFoam);
     // Sun glint: a narrow lobe around the mirror direction, the width of open water slopes, bright enough to bloom.
     vec3 halfVector = normalize(normalize(lightDirection) + viewDirection);
     float glintSharpness = 1.0 / (1.0 / 500.0 + 0.35 * waterLostVariance);
@@ -471,7 +573,24 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     }
   }
 `,
-  worldFinal: `  if (waterDepth > 0.0 && waterBody.w > 0.5 && alphaMode < 0.5) alpha = 0.5 + 0.498 * clamp(waterDepth / 8.0, 0.0, 1.0);
+  // The ramp colours are display colours: the radiance a ramp writes is the one the view transform maps back to the colour asked for.
+  libraries: `// Radiance that exposure and the view transform turn into the display colour whose sRGB encoding is the asked linear colour.
+// Newton steps on the renderer's own curve (ACES, AgX or Neutral), so a ramp stop given as a hex shows as that hex.
+vec3 waterRampRadianceFor(vec3 asked) {
+  vec3 encoded = mix(asked * 12.92, 1.055 * pow(max(asked, vec3(0.0031308)), vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), asked));
+  vec3 target = pow(clamp(encoded, 0.0, 1.0), vec3(2.2));
+  vec3 guess = target;
+  for (int iteration = 0; iteration < 24; iteration++) {
+    vec3 here = toneMap(guess);
+    vec3 slope = (toneMap(guess + 0.002) - here) / 0.002;
+    guess = max(guess + (target - here) / max(slope, vec3(0.05)), vec3(0.0));
+  }
+  return guess / max(exposure, 0.0001);
+}
+`,
+  worldFinal: `  // A ramp stands clear of the distance haze, which would shift the colour it was asked to show: a local density of 0 shadows the uniform.
+  float fogDensity = waterRampOwns > 0.5 ? 0.0 : fogDensity;
+  if (waterDepth > 0.0 && waterBody.w > 0.5 && alphaMode < 0.5) alpha = 0.5 + 0.498 * clamp(waterDepth / 8.0, 0.0, 1.0);
   if (TAG_FIRE) {
     float turbulence = sin(worldPosition.x * 3.0 + time * 4.0) * sin(worldPosition.y * 4.2 - time * 3.0) * sin(worldPosition.z * 3.7);
     float heat = pow(clamp(0.55 + turbulence * 0.5 - explosionProgress * 0.12, 0.0, 1.0), 3.0);
@@ -502,3 +621,34 @@ export function applyWindHeading(renderer, radians) {
   if (renderer.windHeading !== radians) renderer.shadowsDirty = true;
   renderer.windHeading = radians;
 }
+
+const waterRampLocations = new WeakMap();
+const NO_RAMP = Object.freeze({ colors: [], drivers: { height: 1, facing: 0, sun: 0 }, heightRange: [-1, 1], steps: 'hard' });
+const RAMP_COLOR_SLOTS = WATER_RAMP_COLOR_COUNT[1];
+
+/** Sends the ramp of a water batch; a batch without one sends a colour count of 0, which leaves the water as it was. */
+function bindWaterRamp(renderer, batch) {
+  if (!renderer.shaderFeatures?.has('water')) {
+    return;
+  }
+  let locations = waterRampLocations.get(renderer);
+  if (locations?.program !== renderer.program) {
+    const locate = name => renderer.context.getUniformLocation(renderer.program, name);
+    locations = { program: renderer.program, head: locate('waterRampHead'), weights: locate('waterRampWeights'), heightRange: locate('waterRampHeightRange'), crest: locate('waterRampCrest'), colors: locate('waterRampColors') };
+    waterRampLocations.set(renderer, locations);
+  }
+  const ramp = batch.parts[0].material.waterRamp ?? NO_RAMP;
+  const context = renderer.context;
+  context.uniform4f(locations.head, ramp.colors.length, ramp.steps === 'soft' ? 1 : 0, 0, 0);
+  context.uniform3f(locations.weights, ramp.drivers.height, ramp.drivers.facing, ramp.drivers.sun);
+  context.uniform2f(locations.heightRange, ...ramp.heightRange);
+  context.uniform4f(locations.crest, ...(ramp.crestTint?.color ?? [0, 0, 0]), ramp.crestTint?.strength ?? 0);
+  const padding = Array.from({ length: RAMP_COLOR_SLOTS - ramp.colors.length }, () => [0, 0, 0]);
+  context.uniform3fv(locations.colors, new Float32Array([...ramp.colors, ...padding].flat()));
+}
+
+const bindBeforeRamp = layerTextureSupport.bind;
+layerTextureSupport.bind = (renderer, mapState, layerState, batch) => {
+  bindBeforeRamp?.(renderer, mapState, layerState, batch);
+  bindWaterRamp(renderer, batch);
+};

@@ -7,6 +7,8 @@
 // Every plane counts once (not by face area), so the square root of a quadric cost is a distance in the units of the
 // positions and scales with the mesh: tiny triangles do not make a collapse look cheaper.
 
+import { findNonFiniteVertex } from './triangle-math.js';
+
 const PER_VERTEX_ATTRIBUTES = [['normals', 3], ['uvs', 2], ['lightUvs', 2], ['colors', 3], ['skyVisibility', 1]];
 const MINIMUM_NORMAL_AGREEMENT = 0.2;
 const MINIMUM_TRIANGLES = 4;
@@ -73,6 +75,8 @@ function validateGeometry(geometry) {
     if (geometry[field]) throw new RangeError(`simplifyGeometry cannot reduce skinned or morphed geometry (${field}); its per-vertex weights would break.`);
   }
   validateIndexValues(geometry.indices, vertexCount);
+  const badVertex = findNonFiniteVertex(geometry.positions);
+  if (badVertex >= 0) throw new RangeError(`simplifyGeometry found a NaN or infinite position at vertex ${badVertex}: pass finite x, y, z for every vertex.`);
 }
 
 function validateIndexValues(indices, vertexCount) {

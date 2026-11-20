@@ -129,6 +129,23 @@ test('systems run in order and dispose in reverse', () => {
   assert.deepEqual(log.slice(-2), ['second:dispose', 'first:dispose']);
 });
 
+test('dispose runs every system even when one throws, then reports the failure (#2617)', () => {
+  const log = [];
+  const systems = [recorder('first', log), recorder('second', log), recorder('third', log)];
+  systems[1].dispose = () => {
+    log.push('second:dispose');
+    throw new Error('second dispose failed');
+  };
+  const harness = createHarness({ systems });
+  harness.runtime.start();
+  assert.throws(() => harness.runtime.dispose(), /second dispose failed/);
+  assert.deepEqual(log.filter(line => line.endsWith(':dispose')), ['third:dispose', 'second:dispose', 'first:dispose']);
+  assert.deepEqual(harness.runtime.systems, []);
+  assert.equal(harness.hasPendingFrame(), false);
+  harness.runtime.dispose();
+  assert.equal(log.filter(line => line.endsWith(':dispose')).length, 3, 'a second dispose does nothing');
+});
+
 test('systems can be left out, inserted, swapped and removed', () => {
   const log = [];
   const harness = createHarness({ mode: 'variable', systems: [{ name: 'game', update: () => log.push('game') }] });
@@ -219,6 +236,33 @@ test('a throwing system stops the loop and names the system', () => {
   assert.equal(harness.hasPendingFrame(), false);
 });
 
+test('a hook that throws a non-Error names the system, the hook and the original text (#2615)', () => {
+  const frozen = Object.freeze(new Error('frozen boom'));
+  const cases = [
+    ['a string', 'boom', 'boom'],
+    ['null', null, 'null'],
+    ['a frozen Error', frozen, 'frozen boom'],
+  ];
+  for (const [label, thrown, text] of cases) {
+    const harness = createHarness({ mode: 'variable', systems: [{ name: 'bad', update() { throw thrown; } }] });
+    let caught;
+    try {
+      harness.runtime.step(0);
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof Error, label);
+    assert.equal(caught.message, `Runtime system "bad" update failed: ${text}`, label);
+    assert.equal(caught.cause, thrown, `${label} is kept as the cause`);
+  }
+});
+
+test('an ordinary Error keeps its identity and gets the prefixed message (#2615)', () => {
+  const failure = new Error('boom');
+  const harness = createHarness({ mode: 'variable', systems: [{ name: 'bad', update() { throw failure; } }] });
+  assert.throws(() => harness.runtime.step(0), error => error === failure && error.message === 'Runtime system "bad" update failed: boom');
+});
+
 test('step runs one frame without a scheduler', () => {
   const log = [];
   const harness = createHarness({ mode: 'fixed', fixedStepSeconds: 0.01, systems: [recorder('a', log)] });
@@ -245,6 +289,9 @@ test('input is validated with messages that say what to pass', () => {
   assert.throws(() => createRuntime(target, { scheduler, systems: [{ update() {} }] }), /unique name/);
   assert.throws(() => createRuntime(target, { scheduler, systems: [{ name: 'x', update: 3 }] }), /update must be a function/);
   assert.throws(() => createRuntime(target, { scheduler, frame: 3 }), /frame must be a function/);
+  assert.throws(() => createRuntime(target, { scheduler, clock: 'x' }), /clock must be a function/);
+  assert.doesNotThrow(() => createRuntime(target, { scheduler, clock: () => 0 }));
+  assert.doesNotThrow(() => createRuntime(target, { scheduler }));
   assert.throws(() => createRuntime(target), /requestAnimationFrame/);
 });
 

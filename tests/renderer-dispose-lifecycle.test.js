@@ -61,9 +61,25 @@ const SIMULATE_SLOW_LINKS_ON_DEMAND = `
   const realGetProgramParameter = context.getProgramParameter.bind(context);
   context.getProgramParameter = (program, parameter) => (parameter === 0x91B1 ? !context.linksAreSlow : realGetProgramParameter(program, parameter));
 `;
-// Resolves 'settled' when the promise finishes, or 'hung' when it is still waiting after the timeout.
+// Counts every read of the completion status, which is how both waits in the renderer poll a link. The renderer polls on its own 8 ms timer, so the
+// tests wait on these reads (an event of the renderer) and never on a wall clock, which a loaded machine stretches without bound.
+const COUNT_COMPLETION_POLLS = `
+  context.completionPolls = 0;
+  const pollWaiters = [];
+  const parameterBeforeCounting = context.getProgramParameter.bind(context);
+  context.getProgramParameter = (program, parameter) => {
+    if (parameter === 0x91B1) {
+      context.completionPolls += 1;
+      for (const waiter of pollWaiters.filter(entry => entry.count <= context.completionPolls)) waiter.resolve();
+    }
+    return parameterBeforeCounting(program, parameter);
+  };
+  context.untilCompletionPolls = (count) => (context.completionPolls >= count ? Promise.resolve() : new Promise(resolve => pollWaiters.push({ count, resolve })));
+`;
+// Resolves 'settled' when the promise finishes, or 'hung' when the renderer has polled this many more times without finishing. A renderer that ignores dispose
+// keeps polling, so the poll count catches it the same way on a fast and on a loaded machine.
 const SETTLES_OR_HANGS = `
-  const settlement = (promise) => Promise.race([promise.then(() => 'settled'), new Promise(resolve => setTimeout(() => resolve('hung'), 1500))]);
+  const settlement = (promise) => Promise.race([promise.then(() => 'settled'), context.untilCompletionPolls(context.completionPolls + 20).then(() => 'hung')]);
 `;
 
 test('dispose before programsReady deletes the pending programs and shaders', async (testContext) => {
@@ -84,9 +100,9 @@ test('programsReady after dispose builds nothing on the disposed renderer', asyn
 
 test('dispose while programsReady is waiting settles it without building', async (testContext) => {
   await withDevServerPage(testContext, async (page) => {
-    const result = await liveObjectsAfter(page, `${SIMULATE_SLOW_DRIVER}${SETTLES_OR_HANGS}
+    const result = await liveObjectsAfter(page, `${SIMULATE_SLOW_DRIVER}${COUNT_COMPLETION_POLLS}${SETTLES_OR_HANGS}
       const ready = renderer.programsReady();
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await Promise.race([context.untilCompletionPolls(context.completionPolls + 2), ready]);
       renderer.dispose();
       if (await settlement(ready) !== 'settled') throw new Error('programsReady kept waiting after dispose');
     `);
@@ -97,9 +113,9 @@ test('dispose while programsReady is waiting settles it without building', async
 
 test('dispose while prepareFrame is waiting resolves false without building', async (testContext) => {
   await withDevServerPage(testContext, async (page) => {
-    const result = await liveObjectsAfter(page, `${SIMULATE_SLOW_DRIVER}${SETTLES_OR_HANGS}
+    const result = await liveObjectsAfter(page, `${SIMULATE_SLOW_DRIVER}${COUNT_COMPLETION_POLLS}${SETTLES_OR_HANGS}
       const prepared = renderer.prepareFrame({});
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await Promise.race([context.untilCompletionPolls(context.completionPolls + 2), prepared]);
       renderer.dispose();
       if (await settlement(prepared) !== 'settled') throw new Error('prepareFrame kept waiting after dispose');
       if (await prepared !== false) throw new Error('prepareFrame must resolve false on a disposed renderer');
@@ -114,7 +130,7 @@ const AMBIENT_OCCLUSION_FRAME = '{ eye: [3, 2, 3], effects: { ambientOcclusion: 
 
 test('dispose while prepareFrame waits for a program started by its own draw resolves false without drawing', async (testContext) => {
   await withDevServerPage(testContext, async (page) => {
-    const result = await liveObjectsAfter(page, `${SIMULATE_SLOW_LINKS_ON_DEMAND}${SETTLES_OR_HANGS}
+    const result = await liveObjectsAfter(page, `${SIMULATE_SLOW_LINKS_ON_DEMAND}${COUNT_COMPLETION_POLLS}${SETTLES_OR_HANGS}
       await renderer.programsReady();
       context.linksAreSlow = true;
       const linkStatusReads = new Set();
@@ -136,8 +152,9 @@ test('dispose while prepareFrame waits for a program started by its own draw res
         return deleteBeforeSpy(program);
       };
       const errorsBefore = context.getError();
+      const pollsBeforeFrame = context.completionPolls;
       const prepared = renderer.prepareFrame(${AMBIENT_OCCLUSION_FRAME});
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await Promise.race([context.untilCompletionPolls(pollsBeforeFrame + 3), prepared]);
       if (await Promise.race([prepared, 'waiting']) !== 'waiting') throw new Error('the frame never waited for a program, got ' + await prepared);
       // The links stay slow after dispose, so only the disposed guard in the second wait can end it.
       renderer.dispose();
@@ -198,8 +215,9 @@ test('resize on a lost context returns without the dimensions error', async (tes
   await withDevServerPage(testContext, async (page) => {
     const result = await liveObjectsAfter(page, `
       await renderer.programsReady();
+      const contextLost = new Promise(resolve => context.canvas.addEventListener('webglcontextlost', resolve, { once: true }));
       context.getExtension('WEBGL_lose_context').loseContext();
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await contextLost;
       renderer.resize();
       renderer.render({ eye: [3, 2, 3] });
       renderer.dispose();

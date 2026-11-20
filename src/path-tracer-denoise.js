@@ -162,6 +162,15 @@ function filterPass({ width, height, light, variance, normal, depth }, settings,
   }
 }
 
+const FLOATS_PER_PIXEL = { color: 3, albedo: 3, normal: 3, depth: 1, variance: 1 };
+
+function requireBufferSizes(pixelCount, buffers) {
+  for (const [name, buffer] of Object.entries(buffers)) {
+    const needed = pixelCount * FLOATS_PER_PIXEL[name];
+    if (!(buffer?.length >= needed)) throw new RangeError(`denoiseRadiance: ${name} has ${buffer?.length} values; pass ${needed} (${FLOATS_PER_PIXEL[name]} per pixel).`);
+  }
+}
+
 /**
  * Filters a radiance image with the features gathered at each pixel's first hit. All buffers are row-major; colour,
  * albedo and normal hold three floats per pixel, depth and variance one. Returns a new colour buffer.
@@ -169,6 +178,7 @@ function filterPass({ width, height, light, variance, normal, depth }, settings,
 export function denoiseRadiance({ width, height, color, albedo, normal, depth, variance }, overrides = {}) {
   const settings = { ...DEFAULT_DENOISE_SETTINGS, ...overrides };
   const pixelCount = width * height;
+  requireBufferSizes(pixelCount, { color, albedo, normal, depth, variance });
   let light = demodulate(color, albedo, pixelCount);
   let noise = smoothedVariance(variance, albedo, width, height);
   let nextLight = new Float32Array(light.length);

@@ -1,5 +1,5 @@
 import { buildFrame } from './path-tracer-shading.js';
-import { subsurfaceUniformValues } from './subsurface-limits.js';
+import { subsurfaceUniformValues, validateSubsurface } from './subsurface-limits.js';
 
 // Subsurface scattering for the path tracer, after the Random Walk model of Blender's Principled BSDF: light that enters
 // a part walks through it with an isotropic phase function and per-channel mean free path (radius times scale, in metres),
@@ -14,7 +14,9 @@ export const WALK_OUTCOME = Object.freeze({ exit: 0, thin: 1, lost: 2 });
 
 /** The traced form of a material's subsurface block: null when the weight is 0, so those parts take the unchanged code path. */
 export function resolveTraceSubsurface(block) {
-  if (!block || !(block.weight > 0)) return null;
+  if (!block) return null;
+  validateSubsurface(block);
+  if (!(block.weight > 0)) return null;
   const [weight, ...rest] = subsurfaceUniformValues(block);
   const meanFreePath = rest.slice(0, CHANNELS).map(length => Math.max(length, MINIMUM_FREE_PATH));
   const color = rest[CHANNELS] < 0 ? null : rest.slice(CHANNELS, CHANNELS * 2);

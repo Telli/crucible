@@ -79,7 +79,7 @@ An agent builds the same graph without code: a scene recipe carries it in `game.
 
 ## States and blend spaces
 
-A state is `{ name, clip }` or `{ name, blend }`, plus optional `speed` (play rate, default 1), `speedParameter` (a number parameter that multiplies it, for example to match walking pace to ground speed) and `loop` (default: the clip's `loop`, true for a blend space). A clip that does not loop holds its last frame.
+A state is `{ name, clip }` or `{ name, blend }`, plus optional `speed` (play rate, default 1), `speedParameter` (a number parameter that multiplies it, for example to match walking pace to ground speed; the multiplier is held between 0 and 100) and `loop` (default: the clip's `loop`, true for a blend space). A clip that does not loop holds its last frame.
 
 - 1D: `blend: { parameter, motions: [{ clip, threshold }] }`. Weights interpolate linearly between the two nearest thresholds and clamp outside them.
 - 2D: `blend: { parameters: [x, y], motions: [{ clip, position: [x, y] }] }`. Weights use gradient band interpolation: each motion is 1 at its own position, falls to 0 at every other motion, and stays local. Positions must differ.

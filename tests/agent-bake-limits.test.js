@@ -57,7 +57,11 @@ test('an explicit bake that passes maxSeconds fails cleanly with a lower setting
     return realNow.call(performance) + clockReads * 1000;
   };
   try {
-    assert.throws(() => createAgentScene(largeRoom(slow)), error => /maxSeconds/.test(error.message) && /Try samples 128/.test(error.message));
+    // The advised samples follow how many clock reads the bake made, which follows the texel count, so the test pins that the advice is lower than the ask and not one number.
+    assert.throws(() => createAgentScene(largeRoom(slow)), (error) => {
+      const advised = Number(/Try samples (\d+)/.exec(error.message)?.[1]);
+      return /maxSeconds/.test(error.message) && advised >= 1 && advised < slow.samples;
+    });
   } finally {
     performance.now = realNow;
   }
