@@ -2548,3 +2548,23 @@ test('a right click on an object in the viewport selects it and opens its menu; 
   assert.equal(menu.popoverOpen, true);
   assert.equal(menu.style.left, `${Math.round(heroNow.clientX)}px`);
 });
+
+test('menu rows start with their icon or an empty square, so the labels line up', testContext => {
+  const ui = mountStudio(testContext);
+  const menuIds = ['crucible-studio-pop-new', 'crucible-studio-pop-edit', 'crucible-studio-pop-object', 'crucible-studio-pop-view', 'crucible-studio-pop-help'];
+  for (const menuId of menuIds) {
+    const menu = ui.root.descendants().find(element => element.id === menuId);
+    const rows = menu.children.filter(element => element.tagName === 'BUTTON');
+    assert.ok(rows.length > 0, menuId);
+    for (const row of rows) {
+      const lead = row.children[0];
+      const leadClass = lead.getAttribute('class') ?? lead.className;
+      assert.match(String(leadClass), /crucible-studio-icon|crucible-studio-menu-gap/, `${menuId}: ${row.textContent}`);
+    }
+  }
+  const editMenu = ui.root.descendants().find(element => element.id === 'crucible-studio-pop-edit');
+  const rowNamed = label => editMenu.children.find(element => element.textContent === label);
+  assert.equal(rowNamed('Reset rotation').children[0].getAttribute('data-motion'), 'spin');
+  assert.equal(rowNamed('Delete').children[0].getAttribute('data-motion'), 'shake');
+  assert.equal(rowNamed('Deselect').children[0].getAttribute('data-motion'), null);
+});

@@ -36,7 +36,39 @@ export const STUDIO_ICON_PATHS = Object.freeze({
   torus: 'M12 6c5 0 9 2.7 9 6s-4 6-9 6-9-2.7-9-6 4-6 9-6zM8.5 11.5c0 1 1.6 1.8 3.5 1.8s3.5-.8 3.5-1.8',
   plane: 'M6.5 8h15l-4 8h-15z',
   group: 'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',
+  open: 'M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
+  save: 'M5 3h11l4 4v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a1 1 0 0 1 1-1zM8 3v5h7V3M8 21v-7h8v7',
+  saveAs: 'M12 4v10M8 10l4 4 4-4M5 17v2h14v-2',
+  code: 'M8 4c-2 0-3 1-3 3v2c0 1.5-.8 3-2 3 1.2 0 2 1.5 2 3v2c0 2 1 3 3 3M16 4c2 0 3 1 3 3v2c0 1.5.8 3 2 3-1.2 0-2 1.5-2 3v2c0 2-1 3-3 3',
+  image: 'M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM4 16l4.5-4.5 4 4 2.5-2.5 5 5M15.5 8.5h.01',
+  globe: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9s1.3-6.4 3.8-9z',
+  keyboard: 'M4 7h16a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1zM7 10.5h.01M11 10.5h.01M15 10.5h.01M8 14h8',
   agent: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
+});
+
+// How an icon moves while the pointer rests on its menu row. An icon with no entry stays still.
+export const STUDIO_ICON_MOTIONS = Object.freeze({
+  rotate: 'spin',
+  settings: 'pulse',
+  globe: 'spin',
+  undo: 'swing-back',
+  redo: 'swing',
+  open: 'lift',
+  export: 'lift',
+  save: 'drop',
+  saveAs: 'drop',
+  translate: 'slide',
+  duplicate: 'slide',
+  code: 'pulse',
+  scale: 'pulse',
+  frame: 'pulse',
+  image: 'pulse',
+  node: 'swing',
+  camera: 'pulse',
+  keyboard: 'drop',
+  eye: 'blink',
+  eyeOff: 'blink',
+  remove: 'shake',
 });
 
 export const STUDIO_ICON_NAMES = Object.freeze(Object.keys(STUDIO_ICON_PATHS));

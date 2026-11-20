@@ -415,9 +415,67 @@ export const STUDIO_CSS = `
 #crucible-studio-pop-add .crucible-studio-popover-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .crucible-studio-popover button {
   justify-content: flex-start;
+  gap: 9px;
   width: 100%;
   padding: 6px 10px;
   text-align: left;
+}
+.crucible-studio-popover button > .crucible-studio-icon { color: var(--studio-muted); }
+.crucible-studio-popover button:hover > .crucible-studio-icon,
+.crucible-studio-popover button:focus-visible > .crucible-studio-icon { color: inherit; }
+.crucible-studio-menu-gap {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 17px;
+  block-size: 17px;
+}
+.crucible-studio-menu-gap::before {
+  content: "";
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: transparent;
+}
+@keyframes crucible-studio-icon-spin { to { transform: rotate(360deg); } }
+@keyframes crucible-studio-icon-swing { 50% { transform: rotate(24deg); } }
+@keyframes crucible-studio-icon-swing-back { 50% { transform: rotate(-24deg); } }
+@keyframes crucible-studio-icon-lift { 50% { transform: translateY(-2.5px); } }
+@keyframes crucible-studio-icon-drop { 50% { transform: translateY(2.5px); } }
+@keyframes crucible-studio-icon-slide { 50% { transform: translate(2px, -2px); } }
+@keyframes crucible-studio-icon-pulse { 50% { transform: scale(1.18); } }
+@keyframes crucible-studio-icon-blink { 0%, 70%, 100% { transform: scaleY(1); } 85% { transform: scaleY(0.25); } }
+@keyframes crucible-studio-icon-shake { 25% { transform: rotate(-11deg); } 75% { transform: rotate(11deg); } }
+/* The icon of the row under the pointer keeps moving for as long as the pointer stays, and comes to rest when it leaves. */
+@media (prefers-reduced-motion: no-preference) {
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion] {
+    animation: 0.9s ease-in-out infinite;
+  }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="spin"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="spin"] { animation-name: crucible-studio-icon-spin; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="swing"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="swing"] { animation-name: crucible-studio-icon-swing; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="swing-back"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="swing-back"] { animation-name: crucible-studio-icon-swing-back; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="lift"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="lift"] { animation-name: crucible-studio-icon-lift; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="drop"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="drop"] { animation-name: crucible-studio-icon-drop; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="slide"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="slide"] { animation-name: crucible-studio-icon-slide; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="pulse"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="pulse"] { animation-name: crucible-studio-icon-pulse; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="blink"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="blink"] { animation-name: crucible-studio-icon-blink; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="shake"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="shake"] { animation-name: crucible-studio-icon-shake; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="spin"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="spin"] { animation-duration: 1.8s; animation-timing-function: linear; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="shake"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="shake"] { animation-duration: 0.45s; }
+  .crucible-studio-popover button:hover > .crucible-studio-icon[data-motion="blink"],
+  .crucible-studio-popover button:focus-visible > .crucible-studio-icon[data-motion="blink"] { animation-duration: 1.4s; }
 }
 .crucible-studio-popover button[data-shortcut]::after {
   content: attr(data-shortcut);
@@ -427,16 +485,7 @@ export const STUDIO_CSS = `
   font-size: 11px;
   color: var(--studio-muted);
 }
-#crucible-studio-pop-view button::before {
-  content: "";
-  flex: none;
-  inline-size: 7px;
-  block-size: 7px;
-  margin-inline-end: 8px;
-  border-radius: 50%;
-  background: transparent;
-}
-.crucible-studio-popover button[role="menuitemcheckbox"][aria-checked="true"]::before {
+.crucible-studio-popover button[role="menuitemcheckbox"][aria-checked="true"] > .crucible-studio-menu-gap::before {
   background: var(--studio-text);
 }
 .crucible-studio-menus {

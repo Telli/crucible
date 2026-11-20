@@ -20,7 +20,7 @@ import {
   normalizeStudioPreferences,
   saveStudioPreferences,
 } from './studio-preferences.js';
-import { studioIconPath } from './studio-icons.js';
+import { STUDIO_ICON_MOTIONS, studioIconPath } from './studio-icons.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
@@ -880,11 +880,24 @@ export function createStudio(container, {
     textContent: label,
     attributes: { popovertarget: popoverId, ...attributes },
   });
-  // One row of a menu: what it does on the left, its key on the right.
-  const createMenuItem = (label, shortcut, onChoose) => {
+  // Every menu row starts with the same square: its icon, or nothing, so the labels line up either way.
+  const giveMenuIcon = (item, iconName) => {
+    if (!iconName) {
+      item.prepend(createElement(documentReference, 'span', { className: 'crucible-studio-menu-gap', attributes: { 'aria-hidden': 'true' } }));
+      return item;
+    }
+    const icon = createIcon(documentReference, iconName);
+    if (STUDIO_ICON_MOTIONS[iconName]) {
+      icon.setAttribute('data-motion', STUDIO_ICON_MOTIONS[iconName]);
+    }
+    item.prepend(icon);
+    return item;
+  };
+  // One row of a menu: its icon, what it does, and its key on the right.
+  const createMenuItem = (label, shortcut, onChoose, iconName) => {
     const item = createElement(documentReference, 'button', { type: 'button', textContent: label, dataset: shortcut ? { shortcut } : {} });
     item.addEventListener('click', onChoose);
-    return item;
+    return giveMenuIcon(item, iconName);
   };
   const menuToggles = [];
   const syncMenuToggles = () => menuToggles.forEach(({ item, isOn }) => item.setAttribute('aria-checked', isOn() ? 'true' : 'false'));
@@ -913,29 +926,29 @@ export function createStudio(container, {
   };
   const editPopover = createMenuPopover(
     'crucible-studio-pop-edit',
-    createMenuItem('Undo', 'Ctrl+Z', () => undoButton.click()),
-    createMenuItem('Redo', 'Ctrl+Shift+Z', () => redoButton.click()),
-    createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection()),
-    createMenuItem('Delete', 'X', () => deleteButton.click()),
+    createMenuItem('Undo', 'Ctrl+Z', () => undoButton.click(), 'undo'),
+    createMenuItem('Redo', 'Ctrl+Shift+Z', () => redoButton.click(), 'redo'),
+    createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection(), 'duplicate'),
+    createMenuItem('Delete', 'X', () => deleteButton.click(), 'remove'),
     createMenuItem('Deselect', 'Esc', () => controller.selectNode(null)),
-    createMenuItem('Hide', 'H', () => hideSelection()),
-    createMenuItem('Show all', 'Alt+H', () => showAllHidden()),
-    createMenuItem('Reset position', 'Alt+G', () => resetSelectionTransform('translation')),
-    createMenuItem('Reset rotation', 'Alt+R', () => resetSelectionTransform('rotation')),
-    createMenuItem('Reset scale', 'Alt+S', () => resetSelectionTransform('scale')),
-    createMenuItem('Settings…', 'Ctrl+,', () => settingsDialog.showModal()),
+    createMenuItem('Hide', 'H', () => hideSelection(), 'eyeOff'),
+    createMenuItem('Show all', 'Alt+H', () => showAllHidden(), 'eye'),
+    createMenuItem('Reset position', 'Alt+G', () => resetSelectionTransform('translation'), 'translate'),
+    createMenuItem('Reset rotation', 'Alt+R', () => resetSelectionTransform('rotation'), 'rotate'),
+    createMenuItem('Reset scale', 'Alt+S', () => resetSelectionTransform('scale'), 'scale'),
+    createMenuItem('Settings…', 'Ctrl+,', () => settingsDialog.showModal(), 'settings'),
   );
   // A right click on an object, in the viewport or in the Scene list, opens the actions on that object where the
   // pointer is. The rows are the Edit menu's own, so a key learned in one place works in the other.
   const objectPopover = createMenuPopover(
     'crucible-studio-pop-object',
-    createMenuItem('Frame', 'F', () => flyToSelection()),
-    createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection()),
-    createMenuItem('Hide', 'H', () => hideSelection()),
-    createMenuItem('Reset position', 'Alt+G', () => resetSelectionTransform('translation')),
-    createMenuItem('Reset rotation', 'Alt+R', () => resetSelectionTransform('rotation')),
-    createMenuItem('Reset scale', 'Alt+S', () => resetSelectionTransform('scale')),
-    createMenuItem('Delete', 'X', () => deleteButton.click()),
+    createMenuItem('Frame', 'F', () => flyToSelection(), 'frame'),
+    createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection(), 'duplicate'),
+    createMenuItem('Hide', 'H', () => hideSelection(), 'eyeOff'),
+    createMenuItem('Reset position', 'Alt+G', () => resetSelectionTransform('translation'), 'translate'),
+    createMenuItem('Reset rotation', 'Alt+R', () => resetSelectionTransform('rotation'), 'rotate'),
+    createMenuItem('Reset scale', 'Alt+S', () => resetSelectionTransform('scale'), 'scale'),
+    createMenuItem('Delete', 'X', () => deleteButton.click(), 'remove'),
   );
   function openObjectMenu(clientX, clientY) {
     const windowWidth = documentReference.defaultView?.innerWidth ?? 1280;
@@ -977,8 +990,8 @@ export function createStudio(container, {
     createMenuItem('Front view', '1', () => showView('front')),
     createMenuItem('Right view', '3', () => showView('right')),
     createMenuItem('Top view', '7', () => showView('top')),
-    createMenuItem('Perspective / Orthographic', '5', () => controller.toggleCameraProjection()),
-    createMenuItem('Frame the selection', 'F', () => flyToSelection()),
+    createMenuItem('Perspective / Orthographic', '5', () => controller.toggleCameraProjection(), 'camera'),
+    createMenuItem('Frame the selection', 'F', () => flyToSelection(), 'frame'),
     createMenuToggle('Grid', '', () => gridButton.click(), () => gridVisible),
     createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true'),
     createMenuToggle('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true'),
@@ -989,7 +1002,7 @@ export function createStudio(container, {
   syncMenuToggles();
   const helpPopover = createMenuPopover(
     'crucible-studio-pop-help',
-    createMenuItem('Keyboard shortcuts', '?', () => shortcutsDialog.showModal()),
+    createMenuItem('Keyboard shortcuts', '?', () => shortcutsDialog.showModal(), 'keyboard'),
   );
   const exportMenuButton = createElement(
     documentReference,
@@ -1017,7 +1030,7 @@ export function createStudio(container, {
       syncFileBanner();
       announce(`New ${spec.label}`);
     });
-    newPopover.append(templateButton);
+    newPopover.append(giveMenuIcon(templateButton));
   }
 
   const addPopover = createElement(documentReference, 'div', {
@@ -1121,14 +1134,21 @@ export function createStudio(container, {
     className: 'crucible-studio-popover',
     attributes: { popover: 'auto' },
   }, exportPngButton, exportGlbButton, exportPackButton);
+  giveMenuIcon(openButton, 'open');
+  giveMenuIcon(saveButton, 'save');
+  giveMenuIcon(saveAsButton, 'saveAs');
+  giveMenuIcon(editJsonButton, 'code');
+  giveMenuIcon(exportPngButton, 'image');
+  giveMenuIcon(exportGlbButton, 'node');
+  giveMenuIcon(exportPackButton, 'globe');
   newPopover.prepend(
     openButton,
     saveButton,
     saveAsButton,
     editJsonButton,
-    createMenuItem('Export PNG image', '', () => exportPngButton.click()),
-    createMenuItem('Export GLB model', '', () => exportGlbButton.click()),
-    createMenuItem('Export web pack', '', () => exportPackButton.click()),
+    createMenuItem('Export PNG image', '', () => exportPngButton.click(), 'image'),
+    createMenuItem('Export GLB model', '', () => exportGlbButton.click(), 'node'),
+    createMenuItem('Export web pack', '', () => exportPackButton.click(), 'globe'),
     createElement(documentReference, 'p', { className: 'crucible-studio-popover-note', textContent: 'New scene' }),
   );
   for (const popoverElement of [newPopover, addPopover, exportPopover, editPopover, objectPopover, viewPopover, helpPopover]) {
