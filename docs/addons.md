@@ -2,6 +2,8 @@
 
 A code addon is an npm package that extends Crucible through the extension points it already has. Crucible's own addons (`crucible/addons/*`) are first-party; this page is the contract for third-party ones.
 
+The [Marketplace page](https://crucible.codepawl.com/marketplace.html#addons) lists every first-party addon by area with its import line. Each one needs a row in `src/addon-catalog.js` (name, area, one-line summary); a test fails when an `./addons/*` export has none.
+
 ## Security
 
 A code addon runs with the full rights of your page or Node process: it can read files, use the network and change anything in the scene. The MCP server loads one only when its owner allowlists it at startup ([below](#the-mcp-server-and-addons)), never from a tool call. Install only addons you trust, and read what an addon does before you add it.
