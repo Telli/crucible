@@ -41,8 +41,29 @@ export async function attributeFloatsInSlices(attribute, checkpoint) {
   return values;
 }
 
+const MATRIX_COLUMNS = { MAT2: 2, MAT3: 3, MAT4: 4 };
+
+/** Matrix columns as [tight bytes, stored bytes]: the glTF spec pads each MAT2 or MAT3 column to a multiple of 4 bytes. */
+function columnBytesOf(accessor) {
+  const tight = MATRIX_COLUMNS[accessor.type] * COMPONENT_TYPES[accessor.componentType].BYTES_PER_ELEMENT;
+  return [tight, Math.ceil(tight / 4) * 4];
+}
+
 function elementBytesOf(accessor) {
+  const columns = MATRIX_COLUMNS[accessor.type];
+  if (columns) return columns * columnBytesOf(accessor)[1];
   return COMPONENT_TYPES[accessor.componentType].BYTES_PER_ELEMENT * COMPONENT_COUNTS[accessor.type];
+}
+
+function removeColumnPadding(packed, accessor) {
+  const columns = MATRIX_COLUMNS[accessor.type];
+  const [tightBytes, storedBytes] = columnBytesOf(accessor);
+  if (!columns || tightBytes === storedBytes) return packed;
+  const tight = new Uint8Array(accessor.count * columns * tightBytes);
+  for (let column = 0; column < accessor.count * columns; column++) {
+    tight.set(packed.subarray(column * storedBytes, column * storedBytes + tightBytes), column * tightBytes);
+  }
+  return tight;
 }
 
 /** The distance between elements of a buffer view: its byteStride, which must hold one element and be a multiple of 4. */
@@ -167,7 +188,7 @@ export function createAccessorReader(document, bufferBytes, meshoptDecoder) {
   }
 
   function finishAccessor({ accessor, ArrayType, itemSize }, packed) {
-    const array = new ArrayType(packed.buffer);
+    const array = new ArrayType(removeColumnPadding(packed, accessor).buffer);
     if (accessor.sparse) applySparse(accessor, array, itemSize);
     return { array, itemSize, count: accessor.count, normalized: accessor.normalized === true, componentType: accessor.componentType };
   }

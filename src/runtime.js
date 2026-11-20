@@ -74,6 +74,9 @@ function validateOptions(target, options) {
   if (options.frame !== undefined && typeof options.frame !== 'function') {
     throw new TypeError('createRuntime frame must be a function (context) => frame for target.render, or left out.');
   }
+  if (options.clock !== undefined && typeof options.clock !== 'function') {
+    throw new TypeError(`createRuntime clock must be a function () => milliseconds or left out, got ${describe(options.clock)}.`);
+  }
   for (const name of ['pauseWhenHidden', 'pauseWhenOffscreen', 'idleSleep']) {
     if (typeof (options[name] ?? true) !== 'boolean') throw new TypeError(`createRuntime ${name} must be a boolean.`);
   }
@@ -123,9 +126,23 @@ export function createRuntime(target, options = {}) {
     try {
       system[hook](...args, context);
     } catch (error) {
-      error.message = `Runtime system "${system.name}" ${hook} failed: ${error.message}`;
-      throw error;
+      throw hookFailure(system, hook, error);
     }
+  }
+
+  // Names the system and hook on the failure. An ordinary Error keeps its identity and gets the prefixed message. Anything else
+  // (a string, null, a frozen Error) cannot take the prefix, so it becomes the cause of a new Error that does.
+  function hookFailure(system, hook, thrown) {
+    const message = `Runtime system "${system.name}" ${hook} failed: ${thrown instanceof Error ? thrown.message : String(thrown)}`;
+    if (thrown instanceof Error) {
+      try {
+        thrown.message = message;
+        return thrown;
+      } catch {
+        // A frozen or read-only message cannot carry the prefix; the new Error below does.
+      }
+    }
+    return new Error(message, { cause: thrown });
   }
 
   function initialise(system) {
@@ -326,14 +343,23 @@ export function createRuntime(target, options = {}) {
       };
     },
 
-    // Stops the loop and disposes every system in reverse order. The runtime cannot start again.
+    // Stops the loop and disposes every system in reverse order. Every dispose hook runs so one failure cannot keep the others
+    // from releasing their resources; the first failure is thrown after the list is cleared. The runtime cannot start again.
     dispose() {
       if (disposed) return;
       stopLoop();
       governor.dispose();
       disposed = true;
-      for (const system of [...systems].reverse()) disposeSystem(system);
+      let failure = null;
+      for (const system of [...systems].reverse()) {
+        try {
+          disposeSystem(system);
+        } catch (error) {
+          failure ??= { error };
+        }
+      }
       systems.length = 0;
+      if (failure) throw failure.error;
     },
   };
 

@@ -53,7 +53,7 @@ Its nonempty triangle index buffer must use `Uint32Array`.
 The retained target matrix must use `Float32Array(16)`.
 It must remain finite, affine, and nonsingular.
 Binding checks all target vertices and triangle indices within the supplied budgets.
-It rejects degenerate base triangles.
+It rejects a zero-area bound triangle; other triangles of the target may be degenerate.
 
 Morph and skin bindings use the renderer's existing geometry validators.
 These validators check all declared channels and the initial deformation pose once at binding.

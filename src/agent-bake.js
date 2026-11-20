@@ -64,7 +64,7 @@ export function normalizeAgentBake(input) {
   }
   for (const field of ['samples', 'bounces']) {
     if (!Number.isInteger(resolved[field])) {
-      throw invalidField(`bake.${field}`, resolved[field], 'a whole number, such as 64');
+      throw invalidField(`bake.${field}`, resolved[field], `a whole number, such as ${Math.ceil(resolved[field])}`);
     }
   }
   return resolved;

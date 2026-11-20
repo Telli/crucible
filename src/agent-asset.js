@@ -1,4 +1,3 @@
-import { currentFormatName } from './legacy-names.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { createAgentScene, REVISION_HISTORY_LIMIT } from './agent-scene.js';
 import { environmentPatchWithSetup } from './agent-look.js';
@@ -490,7 +489,6 @@ export function createAgentAssetScene(asset, inputRecipe, { sources } = {}) {
   function normalize(input) {
     const candidate = copiedJson(input);
     knownKeys(candidate, ['format', 'schemaVersion', 'assetId', 'camera', ...LOOK_FIELDS, 'root', 'animation', 'materialOverrides', 'nodeOverrides', 'motion', 'physics', 'meshEdits'], 'asset recipe');
-    candidate.format = currentFormatName(candidate.format);
     if (candidate.format !== 'crucible.asset' || candidate.schemaVersion !== 1 ||
         typeof candidate.assetId !== 'string' || candidate.assetId.toLowerCase() !== canonicalAssetId) {
       const wrongField = candidate.format !== 'crucible.asset' ? 'format' : candidate.schemaVersion !== 1 ? 'schemaVersion' : 'assetId';
@@ -985,6 +983,8 @@ export function createAgentAssetScene(asset, inputRecipe, { sources } = {}) {
               candidate.root[field] = operation[field];
             }
           }
+        } else if (operation.type === 'set-motion' && Object.hasOwn(operation, 'removeTracks')) {
+          candidate.motion = agentSceneModule('motionTrackRemoval').removeMotionTracks(operation, candidate.motion, path);
         } else if (operation.type === 'set-motion') {
           knownKeys(operation, ['type', 'motion'], path);
           if (!Object.hasOwn(operation, 'motion')) {
@@ -1133,7 +1133,7 @@ export function createAgentAssetScene(asset, inputRecipe, { sources } = {}) {
       return {
         revision, topologyRevision, assetId: canonicalAssetId, ...diagnosticsReport(),
         counts: { nodes: parts.length, parts: parts.length, geometries: activeGeometries.size, materials: materials.size, vertices },
-        geometryBytes, animation: structuredClone(recipe.animation),
+        geometryBytes, residentGeometryBytes: geometryBytes, residentGeometryVertices: vertices, animation: structuredClone(recipe.animation),
         motion: recipe.motion ? { duration: recipe.motion.duration, loop: recipe.motion.loop, tracks: recipe.motion.tracks.length, layers: recipe.motion.layers?.length ?? 0, time: motionTime } : null,
         physics: physicsSampler ? physicsSampler.report() : null,
         animations: asset.animations.map((clip, index) => ({ id: index, label: clipDisplayName(clip, index).slice(0, 256), duration: clip.duration })),
