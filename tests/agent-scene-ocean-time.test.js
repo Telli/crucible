@@ -87,7 +87,7 @@ test('an edit that does not touch the sea keeps the posed sea part, the topology
   const sea = partNamed('surface');
   const signRanks = flushOrderOf(partNamed('sign')).ranges.map(range => range.rank);
   const drawnOrders = scene.parts.map(flushOrderOf);
-  assert.ok(flushOrderOf(partNamed('still')), 'the still sea is ranked against the posed sea');
+  assert.equal(flushOrderOf(partNamed('surface')), null, 'the moving sea is left out of the flush ranking');
   const flush = scene.inspect().flush;
   const topology = scene.topologyRevision;
   scene.apply([{ type: 'set-camera', eye: [25, 18, 30], target: [0, 0, 0] }], { expectedRevision: scene.revision });
@@ -136,4 +136,28 @@ test('an edit after a seek keeps the playhead, the posed sea part and the topolo
   const fresh = createAgentScene({ ...recipe, geometries: [calmer, recipe.geometries[1]] });
   fresh.sampleMotion(1.25);
   assert.deepEqual(positionsOf(scene), positionsOf(fresh), 'the edited sea is posed at the playhead, as a fresh scene sampled there');
+});
+
+// #2730: each new sea frame searched the whole still scene for flush faces again, seconds a frame on the lighthouse.
+test('seeking to new sea frames keeps the ranks of the still parts and the staged list of each frame', async () => {
+  const { flushOrderOf } = await import('../src/depth-layer.js');
+  const recipe = seaRecipe();
+  recipe.geometries.push({ id: 'box', type: 'box', bevel: 0 });
+  recipe.nodes.push(
+    { id: 'wall', geometry: 'box', material: 'water', translation: [0, 5, 0], scale: [10, 4, 0.2] },
+    { id: 'sign', geometry: 'box', material: 'water', translation: [0, 5, 0], scale: [1, 0.5, 0.2] },
+  );
+  const scene = createAgentScene(recipe);
+  const sign = () => scene.parts.find(part => part.name === 'sign');
+  const order = flushOrderOf(sign());
+  assert.ok(order, 'the sign is ranked against the wall');
+  for (const time of [0.5, 1.25, 2, 3.5]) {
+    scene.sampleMotion(time);
+    assert.equal(flushOrderOf(sign()), order, `the sign keeps its ranks at ${time} s`);
+    assert.equal(flushOrderOf(scene.parts[0]), null, `the sea at ${time} s is not ranked`);
+  }
+  scene.sampleMotion(1.25);
+  const parts = scene.parts;
+  scene.sampleMotion(1.25);
+  assert.equal(scene.parts, parts, 'the same frame keeps its staged parts');
 });
