@@ -7,6 +7,7 @@ import { constants, setPriority } from 'node:os';
 import { resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { PREVIEW_DEADLINE_VARIABLE } from './preview-deadline.mjs';
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 const assetsDirectory = resolve('artifacts/branch-assets-assets');
@@ -18,6 +19,8 @@ const transport = new StdioClientTransport({
   command: process.execPath,
   args: [resolve('scripts/mcp-server.mjs'), '--backend', 'cpu', '--memory', '192', '--assets', assetsDirectory],
   stderr: 'pipe', cwd: process.cwd(),
+  // SwiftShader on a loaded CI runner can pass the 30 second production deadline; the harness allows 90 (#2741).
+  env: { ...process.env, [PREVIEW_DEADLINE_VARIABLE]: '90' },
 });
 let diagnostics = '';
 transport.stderr.on('data', chunk => { diagnostics += chunk.toString(); });
@@ -50,7 +53,7 @@ try {
     operations: [{ type: 'add-node', node: { id: 'robot-2', translation: [1.5, 0, 0], asset: { id: robot } } }] })).structuredContent;
   assert.deepEqual(crowd.branches.sort(), ['crowd', 'moved']);
 
-  // One shot per call keeps each review well under its 30 second deadline on a loaded SwiftShader runner.
+  // One shot per call keeps each review well under its deadline on a loaded SwiftShader runner.
   for (const branch of ['moved', 'crowd']) {
     const review = await call('scene_review', { sessionId, expectedRevision: revision, width: 160, height: 100, shots: [{ branch }] });
     assert.equal(review.structuredContent.shots.length, 1);

@@ -377,7 +377,7 @@ Render targets can shrink to fit the configured memory budget.
 Image metadata reports actual dimensions alongside requested dimensions and estimated render bytes.
 
 An oversized PNG response returns an error. Request a smaller preview rather than treating the failure as an empty image.
-Browser evaluations have a 30-second deadline. A timeout closes the preview browser and makes the runtime unavailable.
+Browser evaluations have a 30-second deadline. A timeout closes the preview browser and makes the runtime unavailable. A test harness that starts the server can raise it with `CRUCIBLE_TEST_PREVIEW_DEADLINE_SECONDS` (whole seconds from 30 to 180); the live smokes that render on SwiftShader set it so a loaded CI runner does not fail them. No tool call can set it.
 Camera matrices must remain finite at every supported preview aspect ratio, from 1:16 to 16:1.
 
 Geometry resources remain immutable. Remove an unused definition and add its replacement in one batch, or add a new resource ID and rebind its nodes.
