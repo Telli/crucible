@@ -1,4 +1,5 @@
 import { mat4, mat3 } from 'gl-matrix';
+import { roomJoinedBoxNodeIds } from './room-box-joins.js';
 import { box, checkTorusShape, circle, cone, cylinder, grid, icoSphere, sphere, torus } from './geometry.js';
 import { createSceneGraph } from './scene-graph.js';
 import { currentFormatName } from './legacy-names.js';
@@ -13,6 +14,7 @@ import { normalizeMaterialWear, geometryWithSurfaceMasks } from './material-wear
 import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from './material-layers.js';
 import { recipeDiagnostics, closedRoomDiagnostic } from './agent-diagnostics.js';
 import { closedRoomShare, CLOSED_ROOM_SHARE } from './closed-room.js';
+import { roomEdgeLeakDiagnostic } from './room-edge-leak.js';
 import { depthLayerOf, MAXIMUM_DEPTH_LAYER } from './depth-layer.js';
 import { normalizeRayVisibility } from './ray-visibility.js';
 import { armatureNodes, bakeRigExport, bindSkins, createSkinStages, normalizeArmatures, publishSkinPoses, restWorldMatrix, rigReport, stageSkinPoses, transformedBounds, withoutArmatureNodes } from './rig.js';
@@ -289,7 +291,7 @@ function copyMaterialLayers(value, result) {
   }
   if (value.subsurface !== undefined) result.subsurface = agentSceneModule('subsurfaceShader').copySubsurface(value.subsurface, result.tag);
   if (value.snippet) result.snippet = agentSceneModule('materialSnippet').normalizeMaterialSnippet(value.snippet, { hasMap: Boolean(value.map || value.pattern) });
-  if (result.anisotropy > 0 || result.iridescence > 0 || JSON.stringify(value.pattern?.graph?.emission ?? null).includes('"fresnel"')) agentSceneModule('layerShaders');
+  if (result.anisotropy > 0 || result.iridescence > 0 || result.softEdge > 0 || JSON.stringify(value.pattern?.graph?.emission ?? null).includes('"fresnel"')) agentSceneModule('layerShaders');
   if (result.toon > 0) agentSceneModule('lineArt');
 }
 
@@ -828,6 +830,13 @@ export function generateCutterGeometry(cutter, maxVertices) {
   return generateGeometry(cutter, maxVertices);
 }
 
+// The box a room's walls are drawn with where they meet (#2298): its edges are sharp, so joined walls leave no groove for light to enter.
+let sharpJoinBox = null;
+function sharpJoinBoxGeometry() {
+  sharpJoinBox ??= Object.freeze(box(0));
+  return sharpJoinBox;
+}
+
 function generateGeometry(value, maxVertices, scope) {
   switch (value.type) {
     case 'box':
@@ -1026,10 +1035,7 @@ function checkLightLinkNames(recipe) {
   if (!environmentLinksLights(recipe.environment)) {
     return;
   }
-  const unknown = agentSceneModule('lightLinking').unknownLightLinkNames(recipe.environment, recipe.nodes);
-  if (unknown.length > 0) {
-    throw invalidField('environment.keyAffects', unknown.slice(0, 4), 'node IDs that exist in nodes in every affects list; scene_inspect lists them');
-  }
+  agentSceneModule('lightLinking').requireKnownLightLinkNames(recipe.environment, recipe.nodes);
 }
 
 // A typo in lines.nodes would turn nothing off without a sign. A node that exists but is hidden stays valid.
@@ -1813,10 +1819,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const activeParts = new Map(state?.sourceRestParts.map(part => [part.name, part]) ?? []);
     const preferredParts = new Map(preferred?.sourceRestParts.map(part => [part.name, part]) ?? []);
     const usesVisibility = recipeUsesVisibility(recipe);
+    const roomJoinedNodeIds = roomJoinedBoxNodeIds(recipe);
     const nextParts = recipe.nodes.filter(node => node.geometry !== undefined).map(node => {
       const binding = skinBindings.get(node.id);
       const recipeMaterial = materialHandles.get(node.material);
-      const sourceGeometry = binding?.geometry ?? geometries.get(node.geometry);
+      const sourceGeometry = binding?.geometry ?? (roomJoinedNodeIds.has(node.id) ? sharpJoinBoxGeometry() : geometries.get(node.geometry));
       const foamGeometry = sourceGeometry.vertexGroups?.foam ? agentSceneModule('mesh').waterFoamGeometry(sourceGeometry, recipeMaterial.output) : sourceGeometry;
       const geometry = recipeMaterial.output.wear ? geometryWithSurfaceMasks(foamGeometry, recipeMaterial.output.wear, node.id) : foamGeometry;
       // A graph with a vertexGroup node bakes with this mesh's weights, so its textures belong to the mesh.
@@ -1970,15 +1977,14 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   let closedRoomCache = null;
   function closedRoomProblems() {
-    if (state.recipe.bake) {
-      return [];
-    }
     if (closedRoomCache?.revision !== revision) {
       const worldMatrices = new Map(state.parts.map(part => [part, state.graph.getNode(part.name).worldMatrix]));
       closedRoomCache = { revision, share: closedRoomShare(state.parts, worldMatrices) };
     }
     const { share } = closedRoomCache;
-    return share !== null && share >= CLOSED_ROOM_SHARE ? [closedRoomDiagnostic(share, isLitByLampsOnly(state.recipe.environment))] : [];
+    if (share === null || share < CLOSED_ROOM_SHARE) return [];
+    const edgeLeak = roomEdgeLeakDiagnostic(state.recipe);
+    return [...(state.recipe.bake ? [] : [closedRoomDiagnostic(share, isLitByLampsOnly(state.recipe.environment))]), ...(edgeLeak ? [edgeLeak] : [])];
   }
 
   // Near-coplanar triangles are ranked at draw time (issue #751) unless environment.resolveCoplanar is false, once the
