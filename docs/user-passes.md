@@ -48,7 +48,7 @@ A pass reads the depth, the world position and the object IDs at one sample per 
 | `"fxaa"` (default) | One edge antialias step after the last pass. It is skipped when the last pass has a `scale` under 1, because that enlargement into hard pixels is the look. |
 | `"off"` | The last pass is the final picture. Use it for dither, pixel art and any pass whose single pixels must stay exact. |
 
-In JavaScript, `renderer.userPasses.setAntialias("off")`. In a recipe, `{ "postPassesAntialias": "off" }` next to `postPasses`; `scene_create` takes it. Any other value is refused with the allowed values.
+In JavaScript, `renderer.userPasses.setAntialias("off")`. In a recipe, `{ "postPassesAntialias": "off" }` next to `postPasses`; `scene_create` takes it. Any other value is refused with the allowed values. The icon sketch look sets `"off"` itself, since its ink and paper pixels are measured.
 
 ## Limits and rules
 
