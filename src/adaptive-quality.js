@@ -60,7 +60,7 @@ export function createGpuTimer(context) {
  */
 export class AdaptiveResolution {
   constructor({ targetMilliseconds = 1000 / 60, minimumScale = 0.5, step = 0.125, window = 20, raiseBelow = 0.6 } = {}) {
-    if (!(targetMilliseconds > 0)) throw new RangeError('targetMilliseconds must be above 0.');
+    if (!(targetMilliseconds > 0 && targetMilliseconds < Infinity)) throw new RangeError('targetMilliseconds must be above 0 and finite.');
     if (!(minimumScale > 0) || minimumScale > 1) throw new RangeError('minimumScale must be above 0 and at most 1.');
     if (!(step > 0) || step >= 1) throw new RangeError('step must be above 0 and below 1.');
     if (!Number.isInteger(window) || window < 1) throw new RangeError('window must be a whole number of frames.');

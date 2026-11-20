@@ -38,7 +38,7 @@ const POINT_LIGHT_FIELDS = ['position', 'color', 'intensity', 'radius', 'range',
 const SPOT_LIGHT_FIELDS = ['position', 'direction', 'angle', 'penumbra', 'color', 'intensity', 'radius', 'range', 'castShadow', 'softFalloff', 'ies', 'affects'];
 const AREA_LIGHT_FIELDS = ['position', 'direction', 'up', 'width', 'height', 'color', 'intensity', 'castShadow', 'ies', 'portal', 'affects'];
 const VOLUME_VECTOR_FIELDS = ['minimum', 'maximum', 'color', 'ambient', 'drift'];
-const VOLUME_NUMBER_FIELDS = ['density', 'steps', 'anisotropy', 'noiseAmount', 'noiseScale', 'maxDistance', 'shadowAmbient', 'heightFalloff', 'detailOctaves', 'detailAmount', 'warp', 'contrast', 'profileSoftness', 'keyScattering', 'scatterOctaves', 'multiScatter', 'multiExtinction', 'multiAnisotropy', 'keyTransmittance', 'surfaceTransmittance'];
+const VOLUME_NUMBER_FIELDS = ['density', 'steps', 'anisotropy', 'noiseAmount', 'noiseScale', 'maxDistance', 'shadowAmbient', 'heightFalloff', 'detailOctaves', 'detailAmount', 'warp', 'contrast', 'profileSoftness', 'keyScattering', 'scatterOctaves', 'multiScatter', 'multiExtinction', 'multiAnisotropy', 'keyTransmittance', 'surfaceTransmittance', 'beamRadius'];
 export const VOLUME_FOG_FIELDS = Object.freeze([...VOLUME_VECTOR_FIELDS, ...VOLUME_NUMBER_FIELDS]);
 const BLOOM_FIELDS = ['strength', 'threshold', 'radius'];
 const DEPTH_OF_FIELD_FIELDS = ['blur', 'focusDistance'];
@@ -275,6 +275,9 @@ function volumeFogFrom(input = {}) {
   return copiedJson(resolved);
 }
 
+/** The fields a physical sky fills from its sun and haze that a recipe may still set itself: its own value wins over the sky's. */
+export const SKY_OVERRIDABLE_FIELDS = Object.freeze(['keyColor', 'fogColor', 'fogDensity']);
+
 function environmentFrom(input = {}) {
   knownKeys(input, ENVIRONMENT_FIELDS, 'environment');
   const world = fallback(input.world, false);
@@ -386,7 +389,10 @@ function environmentFrom(input = {}) {
     environment.liquid = copiedJson(resolveLiquidOptics(copiedJson(input.liquid)));
   }
   if (input.sky !== undefined && input.sky !== null) {
+    // The sky derives these from its sun; a value written beside the sky is a choice and stays.
+    const explicit = Object.fromEntries(SKY_OVERRIDABLE_FIELDS.filter(field => input[field] !== undefined && input[field] !== null).map(field => [field, environment[field]]));
     agentSceneModule('physicalSky').applyPhysicalSky(input.sky, environment, invalidField);
+    Object.assign(environment, explicit);
   }
   lightShapeSupport.normalize?.(input, environment);
   updateLightingState(createLightingState(), environment, { world });

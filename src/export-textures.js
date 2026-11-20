@@ -12,12 +12,7 @@ const VALID_MAG_FILTERS = [9728, 9729];
 const VALID_MIN_FILTERS = [9728, 9729, 9984, 9985, 9986, 9987];
 
 
-function pixelsOf(image, channel) {
-  const width = image?.naturalWidth ?? image?.width;
-  const height = image?.naturalHeight ?? image?.height;
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
-    throw new TypeError(`GLB ${channel} needs an image with a whole width and height.`);
-  }
+function pixelsOf(image, channel, { width, height }) {
   if (image?.compressed) throw new TypeError(`GLB ${channel} is a GPU-compressed texture, which export cannot read back. Transcode KTX2 to RGBA8 to export it.`);
   if (image.data) {
     if (image.data.length < width * height * 4) throw new RangeError(`GLB ${channel} image data must hold RGBA8 pixels for every texel.`);
@@ -63,11 +58,12 @@ export function createTextureWriter(writer, maxTextureSize = DEFAULT_MAX_TEXTURE
     const known = imageIndices.get(descriptor.image);
     if (known?.has(flipRows)) return known.get(flipRows);
     const sourceEncoding = flipRows ? undefined : sourceEncodingOf(descriptor.image);
-    const decoded = sourceEncoding ? undefined : pixelsOf(descriptor.image, channel);
-    const { width, height } = decoded ?? imageSize(descriptor.image, channel);
+    const size = imageSize(descriptor.image, channel);
+    const { width, height } = size;
     if (width > maxTextureSize || height > maxTextureSize) {
       throw new RangeError(`GLB ${channel} image is ${width}x${height}, above maxTextureSize ${maxTextureSize}. Resize the image, or pass exportGlb(parts, { maxTextureSize }) up to ${ABSOLUTE_MAX_TEXTURE_SIZE} if the file size is acceptable.`);
     }
+    const decoded = sourceEncoding ? undefined : pixelsOf(descriptor.image, channel, size);
     const bytes = sourceEncoding?.bytes ?? encodePng(decoded.pixels, width, height, { flipRows });
     const mimeType = sourceEncoding?.mimeType ?? 'image/png';
     document.images.push({ bufferView: writer.addBufferView(bytes), mimeType });

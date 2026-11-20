@@ -50,6 +50,7 @@ A descriptor contains `image`, `uvChannel`, `colorSpace`, `flipY`, `wrapS`, `wra
 
 Sampler fields use WebGL enum values. Wrapping supports repeat, clamp-to-edge, and mirrored repeat.
 Magnification supports nearest and linear. Minification also supports all four mipmap filters.
+A texture whose magnification or minification is nearest stays hard-edged: anisotropic filtering, which would blur it, is applied only to textures that filter linearly in both directions.
 
 Descriptor identity determines GPU texture reuse. Repeated parts can share descriptors without duplicating GPU textures or texture-budget charges.
 Different descriptors allocate separately even when they reference the same decoded image.
@@ -152,6 +153,31 @@ glTF import maps `alphaMode` MASK and BLEND, `alphaCutoff`, `doubleSided` and `b
 - The code is the lazy `retro-shader` addon (`@codepawlhq/crucible/addons/retro-shader`; a recipe loads it on its own). A renderer that draws a retro part without it throws an error that names the import. A material without `retro` compiles to the same shader as before.
 - The snap grid and the affine switch are batch state like `doubleSided`: parts with different `retro` objects never share a draw call. `updateParts` rejects a `retro` change after the part is created with an error that says to set it when the part is made, which needs a new renderer.
 
+## Water glints
+
+`material.waterGlint` adds stylized highlights to a `water` material (sparkles come on top of the physical sun glint, the edge redraws it). Both parts are off until the field names them, so water without the field draws exactly as before.
+
+```json
+{ "tag": "water", "waterGlint": { "edge": { "threshold": 0.4 }, "sparkle": { "shape": "star", "size": 0.4 } } }
+```
+
+| Part | Field | Accepts (default) | Does |
+|---|---|---|---|
+| `edge` | `threshold` | 0.05 to 0.95 (0.4) | Replaces the soft glint with the lobe cut at this share of its peak, so the highlight is a flat shape with a clean border that follows the waves. Higher is smaller. |
+| `edge` | `intensity` | 0 to 4 (1) | Brightness of that shape. |
+| `sparkle` | `density` | 0 to 1 (0.35) | Share of cells that carry a sparkle. |
+| `sparkle` | `size` | 0.02 to 2 m (0.12) | Width of a cell on the water, so how big a sparkle is. |
+| `sparkle` | `threshold` | 0.9 to 0.9999 (0.985) | A sparkle lights when its mirror direction has at least this cosine to the sun. Higher is fewer and tighter. |
+| `sparkle` | `shape` | `dot` or `star` (`star`) | Four-point star, or a round dot. |
+| `sparkle` | `twinkle` | 0 to 8 per second (1) | How fast each facet turns; 0 keeps them still, though waves and camera still move them. |
+| `sparkle` | `intensity` | 0 to 4 (1) | Brightness. |
+
+- Sparkles show on the sun path only: toward the sun they glitter, and none appear on the side away from it, in foam or in shadow.
+- Cells are on the water plane, so far sparkles are flattened by perspective and a cell under two pixels fades out.
+- Painted light streaks are not built.
+- Raster only. The path tracer ignores it. The material needs the `water` tag; any other tag throws with what to pass.
+- The code is the lazy `glitter-shader` addon (`@codepawlhq/crucible/addons/glitter-shader`; a recipe loads it on its own). Parts with different `waterGlint` objects never share a draw call, and `updateParts` rejects a change after the part is created.
+
 ## Moss layer
 
 A standard-tag material can grow moss: `moss` (0 to 1, default 0) sets how much of the up-facing surface it covers, and `mossColor` (linear RGB, default `[0.05, 0.085, 0.02]`) its colour.
@@ -164,7 +190,7 @@ Moss is shaded as its own material, not as a tint. Where it grows, roughness bec
 
 ## Splat layers
 
-A standard-tag material can carry `layers` (up to four `{ color, normal, roughness, height, scale, tint, triplanar }` entries built from `loadTextureSet`) and a `splat` rule object instead of these single maps. The layers are blended by slope, height and a weight mask, sampled in world space and packed into texture arrays on units 11 to 14. They replace `map`, `normalMap`, `metallicRoughnessMap` and `occlusionMap`, which must be absent, and parts batch only when `layers` and `splat` are the same objects. See [Terrain](https://github.com/codepawl/crucible/blob/main/docs/terrain.md).
+A standard-tag material can carry `layers` (up to four `{ color, normal, roughness, height, scale, tint, triplanar }` entries built from `loadTextureSet`) and a `splat` rule object instead of these single maps. The layers are blended by slope, height and a weight mask, sampled in world space and packed into texture arrays and a weight mask on units 11 to 14. They replace `map`, `normalMap`, `metallicRoughnessMap` and `occlusionMap`, which must be absent, and parts batch only when `layers` and `splat` are the same objects. See [Terrain](https://github.com/codepawl/crucible/blob/main/docs/terrain.md).
 
 ## Material layers
 
@@ -176,11 +202,13 @@ A material on a standard tag (`surface` in recipes, `gltf` and `armor` in code) 
 | `transmission` | 0 to 1 | The share of light that passes through. The material draws after the opaque scene and refracts it. |
 | `thickness` | 0 to 1000 metres | How far light travels inside. 0 is a thin sheet that does not bend the view. |
 | `ior` | 1 to 2.5 | Index of refraction. It bends transmitted light and sets the reflectance at normal incidence, 4 percent at 1.5. |
+| `dispersion` | 0 to 10 | Colour fringes through glass, 20 over the Abbe number (diamond 0.36), as in `KHR_materials_dispersion`. The path tracer renders it; the rasterizer ignores it. |
 | `attenuationColor`, `attenuationDistance` | colour 0 to 1, distance above 0 | The colour light keeps after that many metres inside. Leave the distance out for no absorption. |
 | `sheenColor`, `sheenRoughness` | colour 0 to 1, 0 to 1 | A soft glow at grazing angles for cloth. Black is off. |
 | `specular`, `specularColor` | 0 to 4, colour 0 to 1000 | Strength and tint of the non-metal reflection. |
 | `anisotropy`, `anisotropyRotation` | 0 to 1, -2π to 2π | Stretches highlights along a grain (brushed metal, hair): the surface is rougher along the tangent than across it, as in `KHR_materials_anisotropy`. The grain follows the UV direction, or rings the world up axis on a mesh without UVs. The rotation turns it around the normal, in radians. |
 | `iridescence`, `iridescenceIor`, `iridescenceThickness` | 0 to 1, 1 to 3, 0 to 1200 nm | A thin film over the surface (soap, oil, beetle shell, anodised metal) that shifts the reflection colour with the view angle, as in `KHR_materials_iridescence`. The film is as thick as `iridescenceThickness` everywhere; the glTF thickness minimum and texture are not kept. |
+| `softEdge` | 0 to 8 (0, off) | Fades a translucent surface toward its silhouette: alpha is multiplied by the cosine between the view and the normal, raised to this power, so a sphere has no edge and reads as a soft round blob. Use it with `opacity` on an unlit material for dust or haze; overlapping blobs then blend into one cloud. A material without it draws as before. |
 | `subsurface` (`weight`, `radius`, `scale`, `color`) | 0 to 1, each channel 0 to 100 (units of `scale`), 0 to 10 m, 0 to 1 | Light scattered under the surface (skin, wax, leaves), named as Blender's Principled BSDF Subsurface Weight, Radius and Scale. `radius` is the mean free path of red, green and blue in units of `scale` (metres); defaults `[1, 0.2, 0.1]` and `0.05`; `weight` 0 is off. The rasterizer widens the sun's diffuse past the shadow edge per channel and lets light through thin parts by the thickness the sun shadow map gives; the code loads only for a recipe that has a `subsurface` block (`@codepawlhq/crucible/addons/subsurface-shader` otherwise). Sun only, surface tag, no anisotropy; `color` is read by Crucible but Blender takes the base colour. The path tracer ignores it. |
 
 A material that uses none of them costs nothing extra: the shader branches on uniforms that are zero, and transmission only exists in the pass that was already there for `liquid`. Anisotropy and iridescence go further: their shader code is not in the core bundle at all. It lives in `@codepawlhq/crucible/addons/material-layer-shaders`, and the renderer asks for it only when a part uses a layer, so a scene without them downloads and draws with the same shader as before. In code, add `import "@codepawlhq/crucible/addons/material-layer-shaders"` before rendering such a part; without it the renderer throws a message that names the import. A recipe loads it through `await loadAgentSceneModules(recipe)`, the MCP server does so itself, and the glTF loader brings it in for a file that uses `KHR_materials_anisotropy` or `KHR_materials_iridescence`.

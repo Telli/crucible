@@ -100,6 +100,8 @@ export function normalizeFilmTimeline(timeline, recipe, { checkCamera } = {}) {
 
 /** Frames needed for a duration. A sum such as 0.1 + 0.2 lands a hair above its exact value and must not gain a whole frame. */
 export function videoFrameCount(fps, durationSeconds) {
+  if (!Number.isFinite(fps) || fps <= 0) throw new RangeError(`fps must be a number above 0, got ${String(fps)}.`);
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 0) throw new RangeError(`duration must be a number of seconds from 0, got ${String(durationSeconds)}.`);
   return Math.ceil(fps * durationSeconds - 1e-9);
 }
 

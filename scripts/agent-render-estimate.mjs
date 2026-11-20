@@ -88,6 +88,27 @@ function round(value, digits) {
   return Math.round(value * scale) / scale;
 }
 
+// A kernel compile shorter than this is lost beside a trace; the native tracer's per-frame note uses the same line.
+export const NOTEWORTHY_COMPILE_SECONDS = 1;
+
+/**
+ * Adds one traced frame's kernel compile to the job's total. The path tracer report in the metrics describes only the last
+ * frame, so without this a film whose first frame compiled for seconds ended with no trace of it (#1949).
+ */
+export function addKernelCompile(total, frameReport) {
+  const seconds = frameReport?.compileSeconds;
+  if (!(seconds > 0)) return total;
+  return { seconds: (total?.seconds ?? 0) + seconds, frames: (total?.frames ?? 0) + 1 };
+}
+
+function kernelCompileFrom(metrics) {
+  const compile = metrics.kernelCompile;
+  if (!(compile?.seconds >= NOTEWORTHY_COMPILE_SECONDS)) return undefined;
+  const seconds = round(compile.seconds, 1);
+  const note = `First render of this scene variant: ${seconds.toFixed(1)} s of the job compiled kernels, which is not trace time and is counted in secondsRatio. A later job of the same variant in this server reuses them.`;
+  return { seconds, frames: compile.frames, note };
+}
+
 function pathTracerFrameSeconds({ size, settings, backend }) {
   const renderer = settings.renderer;
   const secondsPerSampleBounce = COST_MODEL.pathTracerSecondsPerSampleBounce[renderer.backend ?? backend] ?? COST_MODEL.pathTracerSecondsPerSampleBounce.cpu;
@@ -208,6 +229,8 @@ export function renderReport({ estimate, settings, metrics }) {
     report.secondsRatio = round(measuredSeconds / estimate.seconds, 2);
   }
   if (frameWasReduced(metrics)) report.frameReduced = true;
+  const kernelCompile = kernelCompileFrom(metrics);
+  if (kernelCompile) report.kernelCompile = kernelCompile;
   const traced = metrics.pathTracer;
   if (traced) {
     // The path tracer's report describes the last frame; the samples asked for are in the job's settings.
@@ -241,7 +264,8 @@ export function historyWithJob(history, { settings, backend, estimate, report })
   const entry = {
     kind: jobKind(settings, backend),
     estimatedSeconds: estimate.modelSeconds,
-    measuredSeconds: report.measured.seconds,
+    // A compile is paid once per scene variant and process; the estimate is for the render, so the history learns without it.
+    measuredSeconds: Math.max(0.01, round(report.measured.seconds - (report.kernelCompile?.seconds ?? 0), 2)),
     estimatedPeakMemoryMiB: estimate.modelPeakMemoryMiB,
     measuredPeakMemoryMiB: report.measured.peakMemoryMiB,
   };

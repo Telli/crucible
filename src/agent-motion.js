@@ -38,6 +38,8 @@ const PROPERTIES = {
   // distortionStrength and flashIntensity are gains from 0 to 1 on every source of the distortion and flash steps.
   effects: { exposure: 1, focusDistance: 1, distortionStrength: 1, flashIntensity: 1 },
 };
+// Every kind a motion track may have; the MCP schema and its error message take this list so they cannot drift from the backend.
+export const MOTION_TRACK_KINDS = Object.freeze(Object.keys(PROPERTIES));
 // Kinds with one target in the scene, so a track names no ID.
 const SINGLETON_KINDS = new Set(['camera', 'sun', 'environment', 'effects']);
 const LOOK_KINDS = new Set(['light', 'sun', 'environment', 'effects']);
@@ -122,6 +124,16 @@ function copiedKeyframe(keyframe, interpolation) {
   return result;
 }
 
+// A CUBICSPLINE keyframe carries both tangents, each as wide as its value.
+function tangentFrom(keyframe, field, size) {
+  if (keyframe[field] === undefined) {
+    const example = size === 1 ? '0' : `[${Array(size).fill(0).join(', ')}]`;
+    const shape = size === 1 ? 'a number' : `an array of ${size} numbers`;
+    throw invalidField(field, undefined, `${shape}, such as ${example}; a CUBICSPLINE keyframe takes inTangent and outTangent (or use interpolation "SMOOTH")`, TypeError);
+  }
+  return valueFrom(keyframe[field], size, field);
+}
+
 function normalizedKeyframe(keyframe, track, duration, interpolation) {
   knownKeys(keyframe, ['time', 'value', 'inTangent', 'outTangent', 'easing'], 'motion keyframe');
   const size = PROPERTIES[track.kind][track.property];
@@ -136,8 +148,8 @@ function normalizedKeyframe(keyframe, track, duration, interpolation) {
   }
   Object.assign(result, easing);
   if (interpolation === 'CUBICSPLINE') {
-    result.inTangent = valueFrom(keyframe.inTangent, size, 'Incoming tangent');
-    result.outTangent = valueFrom(keyframe.outTangent, size, 'Outgoing tangent');
+    result.inTangent = tangentFrom(keyframe, 'inTangent', size);
+    result.outTangent = tangentFrom(keyframe, 'outTangent', size);
   } else if (Object.hasOwn(keyframe, 'inTangent') || Object.hasOwn(keyframe, 'outTangent')) {
     throw invalidField(Object.hasOwn(keyframe, 'inTangent') ? 'inTangent' : 'outTangent', keyframe.inTangent ?? keyframe.outTangent, `a field left out unless the track interpolation is CUBICSPLINE, such as "interpolation": "CUBICSPLINE" (this track is ${interpolation})`, TypeError);
   }
@@ -518,7 +530,10 @@ export function normalizeAgentMotion(input, recipe) {
   const inputTracks = input.tracks ?? [];
   denseArray(inputTracks, 128, 'Motion tracks');
   if (!inputTracks.length && !input.layers?.length && !input.ik?.length && !input.springs && !input.constraints?.length && !input.drivers?.length && !drive) {
-    throw invalidField('motion', input, 'at least one track or driver (or an IK solver, constraint, layer, spring or drive), such as { "duration": 1, "tracks": [...] } or { "duration": 1, "drivers": [...] }; use null to clear it');
+    const placedClipHint = (recipe.nodes ?? []).some(node => node.asset?.clip)
+      ? '. A placed asset.clip needs no motion: leave motion out, and a render job plays the clip with settings.motion { "start": 0 } or settings.animation'
+      : '';
+    throw invalidField('motion', input, `at least one track or driver (or an IK solver, constraint, layer, spring or drive), such as { "duration": 1, "tracks": [...] } or { "duration": 1, "drivers": [...] }; use null to clear it${placedClipHint}`);
   }
   const nodes = new Set((recipe.nodes ?? []).map(node => node.id));
   // A material track may also name the id of an asset.materials override, which gives a placed asset's material a handle.

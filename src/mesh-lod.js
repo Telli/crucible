@@ -4,6 +4,7 @@ import { meshBounds } from './mesh-data.js';
 import { meshFromGeometry } from './mesh-convert.js';
 import { extractRender } from './mesh-render.js';
 import { simplifyGeometry } from './geometry-simplify.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 // Levels of detail for runtime selection (issue 37). Level 0 is the input; each next level keeps the given ratio of
 // the input's triangles. Every level reports the farthest its vertices lie from the input surface, in the input's
@@ -95,6 +96,7 @@ function generateAttributeLods(geometry, { ratios }) {
  * level carries a geometry made by extractRender, with edges sharper than `smoothAngle` degrees kept hard.
  */
 export function generateGeometryLods(geometry, { ratios = DEFAULT_LOD_RATIOS, smoothAngle = 30 } = {}) {
+  requireFiniteInRange('generateGeometryLods', 'smoothAngle', smoothAngle, 0, 180);
   if (hasPerVertexLook(geometry)) return generateAttributeLods(geometry, { ratios });
   const mesh = meshFromGeometry(geometry, { quads: false, tags: 'none' });
   return generateMeshLods(mesh, { ratios }).map(({ mesh: levelMesh, ...rest }) => ({

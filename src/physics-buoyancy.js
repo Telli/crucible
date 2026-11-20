@@ -6,7 +6,9 @@ import { boundedInteger, boundedNumber, rejectUnknownKeys, rotateByQuaternion } 
 // the body's volume as a vertical column the height of the body. Where the sea surface (the same function the ocean
 // modifier draws) stands above the point, the column is submerged by a fraction and the water pushes up with
 // waterDensity * gravity * (volume / points) * fraction, applied at the point. That lifts, tips and rolls the body. Drag then
-// damps the body's linear and angular velocity in proportion to how much of it is under water. Nothing is random, so the same
+// damps the body's linear and angular velocity in proportion to how much of it is under water. Each point also damps its own vertical
+// speed relative to the water's, at half the critical damping of the heave spring that the point's column makes with the surface.
+// Without it a hull rings after a slam on a steep sea and tumbles; relative to the water, so riding a wave costs nothing. Nothing is random, so the same
 // seed and definition give the same frames.
 
 export const BUOYANCY_LIMITS = Object.freeze({ maxPointsPerBody: 16, maxWaveEvaluations: 100_000_000 });
@@ -15,7 +17,11 @@ const OCEAN_KEYS = ['level', 'waterDensity', 'windSpeed', 'direction', 'choppine
 const FLOAT_KEYS = ['drag', 'angularDrag', 'points', 'boat'];
 const MAX_SEED = 0x7fffffff;
 const DEFAULT_DRAG = 2;
+// Fraction of critical damping for the heave spring each point makes with the water (see waterDampingImpulse).
+const POINT_DAMPING_RATIO = 0.5;
 const CHOPPY_REST_PASSES = 2;
+// The surface is read twice per point and step: where it is now and where it will be one step later, for its vertical speed.
+const SURFACE_SAMPLES_PER_POINT = 2;
 
 /**
  * Validate the sea bodies float on. The wave fields are those of the ocean mesh edit (same defaults), so a body floats on the
@@ -51,11 +57,11 @@ export function normalizeFloat(input, label) {
     if (!Array.isArray(points) || points.length < 1 || points.length > BUOYANCY_LIMITS.maxPointsPerBody) {
       throw new RangeError(`${label}.points must be 1 to ${BUOYANCY_LIMITS.maxPointsPerBody} points in body space, such as [[-1, 0, -1], [1, 0, 1]]`);
     }
-    result.points = points.map((point, index) => {
+    result.points = Array.from(points, (point, index) => {
       if (!Array.isArray(point) || point.length !== 3) {
         throw new TypeError(`${label}.points[${index}] must be [x, y, z] in body space, such as [0, 0, 0]`);
       }
-      return point.map((component, axis) => boundedNumber(component, `${label}.points[${index}][${axis}]`, -1e6, 1e6, 0));
+      return Array.from(point, (component, axis) => boundedNumber(component, `${label}.points[${index}][${axis}]`, -1e6, 1e6, 0));
     });
   }
   if (input.boat !== undefined) result.boat = normalizeBoat(input.boat, `${label}.boat`);
@@ -122,7 +128,7 @@ export function floatingBody(floatSpec, bodyColliders, label) {
 export function checkBuoyancyWork(ocean, floatingBodies, frameCount) {
   const pointCount = floatingBodies.reduce((total, body) => total + body.points.length, 0);
   const passes = ocean.choppiness > 0 ? CHOPPY_REST_PASSES + 1 : 1;
-  const evaluations = ocean.waves.length * pointCount * frameCount * passes;
+  const evaluations = ocean.waves.length * pointCount * frameCount * passes * SURFACE_SAMPLES_PER_POINT;
   if (evaluations > BUOYANCY_LIMITS.maxWaveEvaluations) {
     throw new RangeError(`buoyancy would make ${evaluations} wave evaluations, over the limit of ${BUOYANCY_LIMITS.maxWaveEvaluations}. Lower ocean.resolution, the float points or the duration.`);
   }
@@ -158,6 +164,10 @@ export function applyBuoyancy(preparedScene, bodies, time) {
     const translation = body.translation();
     const rotation = body.rotation();
     const pointVolume = floater.volume / floater.points.length;
+    const pointMass = body.mass() / floater.points.length;
+    const dampingRate = POINT_DAMPING_RATIO * 2 * Math.sqrt(ocean.waterDensity * gravity * floater.volume / (body.mass() * floater.columnHeight));
+    const startVelocity = body.linvel();
+    const startSpin = body.angvel();
     let submergedTotal = 0;
     for (const localPoint of floater.points) {
       const offset = rotateByQuaternion(localPoint, rotation);
@@ -169,7 +179,10 @@ export function applyBuoyancy(preparedScene, bodies, time) {
       if (submerged === 0) continue;
       submergedTotal += submerged;
       const lift = ocean.waterDensity * gravity * pointVolume * submerged * step;
-      body.applyImpulseAtPoint({ x: 0, y: lift, z: 0 }, { x: pointX, y: pointY, z: pointZ }, true);
+      const waterRise = (ocean.level + seaHeightAt(ocean, pointX, pointZ, time + step) - surfaceHeight) / step;
+      const pointRise = startVelocity.y + startSpin.z * offset[0] - startSpin.x * offset[2];
+      const damping = -dampingRate * pointMass * submerged * (pointRise - waterRise) * step;
+      body.applyImpulseAtPoint({ x: 0, y: lift + damping, z: 0 }, { x: pointX, y: pointY, z: pointZ }, true);
     }
     if (submergedTotal === 0) continue;
     const meanSubmerged = submergedTotal / floater.points.length;
