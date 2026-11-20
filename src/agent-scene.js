@@ -2121,10 +2121,24 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return particleBake.sampler;
   }
 
+  // An edit keeps the time the scene was sampled at (#2730): posing it at 0 again rebuilt and ranked every animated part,
+  // and the host sampled the old time again right after. A rebaked light bake and a pose that fails at that time start at 0.
+  function poseAtPlayhead(stagedState) {
+    const time = state?.motionTime;
+    if (!stagedState.poseGraph || typeof time !== 'number' || time === 0 || stagedState.recipe.bake?.rebake) {
+      return stagedState.initialPose;
+    }
+    try {
+      return stagePose(stagedState, time);
+    } catch {
+      return stagePose(stagedState, 0);
+    }
+  }
+
   function commit(stagedState, incrementRevision) {
     // A pose that swaps in new parts (particles, cloth) is a topology change too: a renderer holding the old parts would
     // otherwise try to update parts it never saw, which failed with "Unknown part identity" (#2204).
-    const posedPartsChanged = publishPose(stagedState, stagedState.initialPose);
+    const posedPartsChanged = publishPose(stagedState, poseAtPlayhead(stagedState));
     if (stagedState.topologyChanged || posedPartsChanged) {
       topologyRevision++;
     }

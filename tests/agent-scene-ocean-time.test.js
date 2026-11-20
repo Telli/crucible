@@ -110,3 +110,23 @@ test('an edit to the sea stack builds the posed sea again', () => {
   const still = createAgentScene(seaRecipe({ stack: calmer.stack }));
   assert.deepEqual(positionsOf(scene), positionsOf(still), 'the edited sea equals a scene built with that stack');
 });
+
+test('an edit after a seek keeps the playhead, the posed sea part and the topology, and an edit to the sea poses it there', () => {
+  const recipe = seaRecipe();
+  recipe.geometries.push({ id: 'box', type: 'box', bevel: 0 });
+  recipe.nodes.push({ id: 'crate', geometry: 'box', material: 'water', translation: [8, 1, 8] });
+  const scene = createAgentScene(recipe);
+  scene.sampleMotion(1.25);
+  const sea = scene.parts[0];
+  const topology = scene.topologyRevision;
+  scene.apply([{ type: 'set-camera', eye: [25, 18, 30], target: [0, 0, 0] }], { expectedRevision: scene.revision });
+  scene.apply([{ type: 'set-node', id: 'crate', translation: [9, 1, 8] }], { expectedRevision: scene.revision });
+  assert.equal(scene.motionTime, 1.25, 'the playhead stays where the host put it');
+  assert.equal(scene.topologyRevision, topology, 'neither edit is a topology change');
+  assert.equal(scene.parts[0], sea, 'the sea posed at 1.25 s is the same part');
+  const calmer = { ...recipe.geometries[0], stack: [{ op: 'subdivide', levels: 3 }, { ...OCEAN, windSpeed: 9 }] };
+  scene.apply([{ type: 'remove-geometry', id: 'sea' }, { type: 'add-geometry', geometry: calmer }], { expectedRevision: scene.revision });
+  const fresh = createAgentScene({ ...recipe, geometries: [calmer, recipe.geometries[1]] });
+  fresh.sampleMotion(1.25);
+  assert.deepEqual(positionsOf(scene), positionsOf(fresh), 'the edited sea is posed at the playhead, as a fresh scene sampled there');
+});
