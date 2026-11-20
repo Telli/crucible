@@ -585,7 +585,7 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: none: not a page
 
 ### `npm-test-mutation-check`
-- Name: Reverts your src, bin and packages changes, runs a test file and fails when it still passes
+- Name: Reverts your src, bin, packages and scripts changes, runs a test file and fails when it still passes
 - Surface: CLI
 - Reach: command `npm run test:mutation-check`
 - Source: `scripts/test-mutation-check.mjs`

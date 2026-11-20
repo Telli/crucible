@@ -4,6 +4,7 @@ import { CLOSED_ROOM_SHARE, partMatrixLookup } from './closed-room.js';
 import { fittedClosedRoomShare } from './fitted-closed-room.js';
 import { partDiffuseAlbedo } from './ground-bounce.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 // Light a sunlit patch sends on to the rest of a closed room. The patches are found once, when the scene is prepared: surfaces
 // of the room are sampled, the samples the sun reaches (a shadow ray) and that sit inside the room (most of a short cosine ray
@@ -31,6 +32,8 @@ export const DEFAULT_SUN_BOUNCE = 1;
 // A light closer than this share of the scene to a surface blows up as 1/d^2 into a hard speck, so a patch with less free space in front is left out.
 const MINIMUM_LIFT_SHARE = 0.03;
 const KEY_THRESHOLD = 1e-3;
+// A light's intensity is capped at this, so a larger strength only blows the frame out.
+const MAXIMUM_STRENGTH = 1e5;
 const EXCLUDED_TAGS = new Set(['liquid', 'foam', 'unlit', 'fire', 'smoke']);
 
 function isBounceSurface(part) {
@@ -192,6 +195,7 @@ function lightOfPatch(group, strength, tracer, probeOffset, sceneSize) {
  * `maximumLights` caps how many patches there are.
  */
 export function findSunBounceLights(parts, environment, { strength = 1, maximumLights = SUN_BOUNCE_PATCH_LIGHTS } = {}) {
+  requireFiniteInRange('findSunBounceLights', 'strength', strength, 0, MAXIMUM_STRENGTH);
   if (strength <= 0 || maximumLights <= 0 || !hasSun(environment) || parts.some(part => part.material?.lightMap || part.material?.irradianceGrid)) return [];
   const share = fittedClosedRoomShare(parts, partMatrixLookup(parts));
   if (share === null || share < CLOSED_ROOM_SHARE) return [];
@@ -216,7 +220,7 @@ const lightsOfParts = new WeakMap();
  * them; 0 returns the environment itself. The patches are found once for these parts and this sun and kept.
  */
 export function withSunBounce(parts, environment) {
-  const strength = environment.sunBounce ?? DEFAULT_SUN_BOUNCE;
+  const strength = requireFiniteInRange('withSunBounce', 'environment.sunBounce', environment.sunBounce ?? DEFAULT_SUN_BOUNCE, 0, MAXIMUM_STRENGTH);
   if (strength <= 0 || !hasSun(environment)) return environment;
   const existing = environment.pointLights ?? [];
   const room = Math.min(SUN_BOUNCE_PATCH_LIGHTS, MAX_POINT_LIGHTS - existing.length);

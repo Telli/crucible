@@ -20,7 +20,7 @@ function integer(value, minimum, maximum, name) {
 
 function pointsFrom(input, size, minimum, name) {
   if (!Array.isArray(input) || input.length < minimum || input.length > MAX_INPUT_POINTS) throw new RangeError(`${name} needs ${minimum} to ${MAX_INPUT_POINTS} points.`);
-  const points = input.map(point => {
+  const points = Array.from(input, point => {
     if ((!Array.isArray(point) && !ArrayBuffer.isView(point)) || point.length !== size) throw new TypeError(`${name} points need ${size} components.`);
     return Array.from(point, value => finite(value, name));
   });
@@ -36,7 +36,7 @@ function pointsFrom(input, size, minimum, name) {
 
 function vectorFrom(input, name) {
   if (!Array.isArray(input) || input.length !== 3) throw new TypeError(`${name} needs three components.`);
-  return input.map(value => finite(value, name));
+  return Array.from(input, value => finite(value, name));
 }
 
 function knotFrom(input, index) {
@@ -55,7 +55,7 @@ function knotFrom(input, index) {
 function taperFrom(taper) {
   if (taper === undefined) return null;
   if (!Array.isArray(taper) || taper.length < 2 || taper.length > 64) throw new RangeError('taper needs 2 to 64 radius factors.');
-  return taper.map(factor => {
+  return Array.from(taper, factor => {
     finite(factor, 'taper');
     if (factor < 0) throw new RangeError('taper factors cannot be negative.');
     return factor;
@@ -387,7 +387,7 @@ function splineFrom(input, label) {
   for (const key of ['weights', 'order', 'knots', 'knotMode']) {
     if (kind !== 'nurbs' && input[key] !== undefined) throw new TypeError(`${label}.${key} is not allowed here: weights apply to kind nurbs only, as do order, knots and knotMode.`);
   }
-  const resolved = kind === 'bezier' ? points.map(knotFrom) : points.map(point => vectorFrom(point, 'point'));
+  const resolved = kind === 'bezier' ? Array.from(points, knotFrom) : Array.from(points, point => vectorFrom(point, 'point'));
   const weights = kind === 'nurbs' ? weightsFrom(input.weights, points.length, `${label}.weights`) : undefined;
   const basis = kind === 'nurbs' ? nurbsBasisFrom(input, points.length, closed, label) : undefined;
   return { type: kind, closed, points: resolved, weights, basis, trim: trimFrom(input.trim, `${label}.trim`) };

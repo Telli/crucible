@@ -162,6 +162,7 @@ export function strongestLights(environment) {
   const lights = [{ field: 'environment.keyIntensity', intensity: environment.keyIntensity ?? 1 }];
   for (const listName of ['pointLights', 'spotLights', 'areaLights']) {
     (environment[listName] ?? []).forEach((light, index) => {
+      if (light.portal === true) return;
       lights.push({ field: `environment.${listName}[${index}].intensity`, intensity: light.intensity ?? 1 });
     });
   }

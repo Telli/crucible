@@ -216,3 +216,32 @@ test('a clip that targets a missing node names the fix', () => {
   const clip = { duration: 1, loop: false, tracks: [{ target: 'ghost', property: 'translation', keyframes: [{ time: 0, value: [0, 0, 0] }] }] };
   assert.throws(() => exportGlb([part], { clips: [clip] }), /ghost.*options\.nodes/);
 });
+
+function skinnedRod(jointNames, jointMatrixCount) {
+  const geometry = box();
+  const vertexCount = geometry.positions.length / 3;
+  geometry.skinIndices = new Uint16Array(vertexCount * 4);
+  geometry.skinWeights = new Float32Array(vertexCount * 4);
+  for (let vertex = 0; vertex < vertexCount; vertex++) geometry.skinWeights[vertex * 4] = 1;
+  const identityMatrices = count => {
+    const matrices = new Float32Array(count * 16);
+    for (let joint = 0; joint < count; joint++) mat4.identity(matrices.subarray(joint * 16, joint * 16 + 16));
+    return matrices;
+  };
+  const joints = jointNames.map((name, index) => ({ name, parent: index - 1 }));
+  const skin = { jointMatrices: identityMatrices(jointMatrixCount), joints, inverseBindMatrices: identityMatrices(joints.length), jointWorldMatrices: identityMatrices(joints.length) };
+  return { name: 'Rod', geometry, matrix: mat4.create(), material: { color: [1, 1, 1], metallic: 0, roughness: 1 }, skin };
+}
+
+test('export names the part, vertex and joint count when a weighted joint index is past the skin joints', () => {
+  const part = skinnedRod(['root', 'tip'], 3);
+  assert.ok(exportGlb([part]).byteLength > 0);
+  part.geometry.skinIndices[4] = 2;
+  assert.throws(() => exportGlb([part]), /GLB part Rod vertex 1 has joint index 2.*2 joints/);
+});
+
+test('export ignores a joint index on a zero weight slot of a padded influence', () => {
+  const part = skinnedRod(['root', 'tip'], 2);
+  part.geometry.skinIndices[1] = 1;
+  assert.ok(exportGlb([part]).byteLength > 0);
+});

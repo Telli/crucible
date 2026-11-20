@@ -95,12 +95,28 @@ function startsRunLengthScanline(bytes, position, width) {
     && ((bytes[position + 2] << 8) | bytes[position + 3]) === width;
 }
 
+// Old-format rows are the smallest: one pixel and at most two repeat pixels (255 and 65280 pixels each), and a
+// run-length row never costs less than that, so this bound holds for both.
+function allocatePixels(availableBytes, width, height) {
+  const repeatPixels = Math.min(2, Math.ceil(Math.log(width) / Math.log(256)));
+  if (availableBytes < height * 4 * (1 + repeatPixels)) {
+    throw new RangeError(`Radiance HDR pixel data is truncated: the header says ${width}x${height} but the file holds ${availableBytes} bytes; pass the whole file.`);
+  }
+  return new Float32Array(width * height * 3);
+}
+
+function requireBytes(buffer) {
+  if (buffer instanceof Uint8Array) return buffer;
+  if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer);
+  throw new TypeError('parseRadianceHdr needs an ArrayBuffer or Uint8Array.');
+}
+
 // Decodes one scanline per step, so a caller can run it to the end at once or hand the thread back between rows.
 function* decodeRadianceRows(buffer) {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const bytes = requireBytes(buffer);
   if (bytes.length > MAXIMUM_FILE_BYTES) throw new RangeError('Radiance HDR file is larger than 256 MiB.');
   const { width, height, dataStart } = parseHeader(bytes);
-  const data = new Float32Array(width * height * 3);
+  let data;
   const scanline = new Uint8Array(width * 4);
   let position = dataStart;
   for (let row = 0; row < height; row++) {
@@ -109,6 +125,7 @@ function* decodeRadianceRows(buffer) {
     } else {
       position = readFlatScanline(bytes, position, width, scanline);
     }
+    data ??= allocatePixels(bytes.length - dataStart, width, height);
     for (let column = 0; column < width; column++) {
       const exponent = scanline[column * 4 + 3];
       const target = (row * width + column) * 3;
@@ -244,6 +261,16 @@ export function sunFromEnvironmentMap(map) {
   };
 }
 
+function isPoint(point) {
+  return Array.isArray(point) && point.length === 3 && point.every(Number.isFinite);
+}
+
+function requireBounds(bounds) {
+  if (!isPoint(bounds?.min) || !isPoint(bounds?.max)) {
+    throw new TypeError('keyLightFromHdri bounds must be { min, max } of three finite numbers each.');
+  }
+}
+
 /**
  * Lights a scene from the HDRI sun. Spread the result into the renderer's `environment` and pass its `shadowBounds`:
  * `{ environment: { lightDirection, keyColor, keyIntensity }, shadowBounds }`. The shadow view looks at the middle of
@@ -251,6 +278,7 @@ export function sunFromEnvironmentMap(map) {
  * so the caller keeps its defaults.
  */
 export function keyLightFromHdri(map, bounds) {
+  requireBounds(bounds);
   const sun = sunFromEnvironmentMap(map);
   if (!sun) return null;
   const target = bounds.min.map((minimum, axis) => (minimum + bounds.max[axis]) / 2);

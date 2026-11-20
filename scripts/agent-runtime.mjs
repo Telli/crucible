@@ -40,14 +40,14 @@ import { TEXTURE_SEQUENCE_CAPABILITIES, TEXTURE_SEQUENCE_LIMITS } from '../src/t
 import { writeWebBuild } from './web-export.mjs';
 import { gameAssetIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
-import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError } from './agent-render-jobs.mjs';
+import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError, requireTracerBackendAvailable } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
-import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
+import { RENDER_ESTIMATE_NOTE, addKernelCompile, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
 import { objectIdMetrics } from './agent-object-id-metrics.mjs';
 import { renderIconsInPage } from './agent-icon-page.mjs';
 import { ICON_CAPABILITIES } from '../src/icon-sheet.js';
-import { renderJobMattes } from './job-mattes.mjs';
+import { renderJobMattes, requireMatteTargets } from './job-mattes.mjs';
 import { encodeRenderOutput, encodeMultilayerExr } from './render-output-encoders.mjs';
 import { createFrameEncoder } from './frame-encoder.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
@@ -65,6 +65,7 @@ import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { createSharedGpuCard } from './agent-gpu-queue.mjs';
 import { isBrowserLoss, describeBrowserLoss } from './agent-browser-loss.mjs';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
+import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
@@ -194,6 +195,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   let streamedSequencesUsed = false;
   // Scenes the page closed to stay under the scene cap, so a later call with one of them gets a clear error.
   const evictedSessionIds = [];
+  const evictionReasons = {};
   // Scenes that have a bake, so an edit that rebakes gets the longer deadline.
   const bakedSessionIds = new Set();
   let queuedCalls = 0;
@@ -805,7 +807,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   function requireSession(sessionId) {
     if (!openSessionIds.has(sessionId)) {
-      throw new Error(sessionProblem(sessionId, lastUsedSessionId(), { openSessionIds: [...openSessionIds], evictedSessionIds }));
+      throw new Error(sessionProblem(sessionId, lastUsedSessionId(), { openSessionIds: [...openSessionIds], evictedSessionIds, evictionReasons }));
     }
     // Re-insert so the Set order stays least to most recently used.
     openSessionIds.delete(sessionId);
@@ -817,8 +819,11 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     for (const evictedSessionId of result.evictedSessions ?? []) {
       forgetSession(evictedSessionId);
       evictedSessionIds.push(evictedSessionId);
+      if (result.evictionReason) evictionReasons[evictedSessionId] = result.evictionReason;
     }
-    evictedSessionIds.splice(0, Math.max(0, evictedSessionIds.length - MAXIMUM_REMEMBERED_EVICTIONS));
+    for (const forgottenId of evictedSessionIds.splice(0, Math.max(0, evictedSessionIds.length - MAXIMUM_REMEMBERED_EVICTIONS))) {
+      delete evictionReasons[forgottenId];
+    }
     openSessionIds.add(sessionId);
     if (hasBake) bakedSessionIds.add(sessionId);
   }
@@ -882,6 +887,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   async function runJob({ jobId, sessionId, directory, snapshot, settings, signal, progress, startRenderClock = () => {} }) {
     let jobPage;
+    let jobFailed = false;
     let session;
     let encoder;
     let frameReceiver;
@@ -1021,7 +1027,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         if (streamedJob && frameInput.motionTime !== undefined) await supplyStreamedFrames(jobPage, jobId, frameInput.motionTime);
         if (settings.renderer) {
           const { type, ...tracerOptions } = settings.renderer;
-          if (settings.renderer.backend === 'gpu' && backend === 'cpu') throw new Error('renderer.backend "gpu" needs a runtime on the GPU backend, and this one runs on SwiftShader.');
+          requireTracerBackendAvailable(settings.renderer, backend);
           nativeTracerLocator ??= createNativeTracerLocator();
           const trace = await chooseTraceBackend({ requested: settings.renderer.backend, runtimeBackend: backend, locator: nativeTracerLocator });
           // Only a job that really traces on native defaults to OIDN; the cpu, gpu and webgpu defaults do not change.
@@ -1087,6 +1093,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           metrics.width = width;
           metrics.height = height;
           metrics.pathTracer = traced.report;
+          const kernelCompile = addKernelCompile(metrics.kernelCompile, traced.report);
+          if (kernelCompile) metrics.kernelCompile = kernelCompile;
           if (frame === 0) {
             const looked = await jobPage.evaluate(input => window.__agentPreview.findings(input), frameInput);
             mergeFrameDiagnostics(metrics, [pathTracerFindingsLimit(), pathTracerSkippedPassesWarning(snapshot.recipe.postPasses), ...looked.diagnostics].filter(Boolean));
@@ -1230,6 +1238,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       await rememberRenderJob({ settings, estimate, report: metrics.report });
       return { artifacts, metrics };
     } catch (error) {
+      jobFailed = true;
       if (signal.aborted || !isBrowserLoss(error)) throw error;
       browserLossFailure = describeBrowserLoss({ error, frameIndex, frameCount: settings.frameCount, width: settings.width, height: settings.height, passes: settings.passes, memoryMiB: memory, estimatedPeakMemoryMiB: estimate?.peakMemoryMiB });
       throw browserLossFailure;
@@ -1242,8 +1251,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       finally {
         try {
           if (jobPage && !jobPage.isClosed()) {
-            // A crashed or navigated page cannot dispose its scene (its bridge is gone: "reading 'dispose'"); the close below frees it, and the failure that matters is the job's own (#2198).
-            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!browserLossFailure && !isBrowserLoss(error)) throw error; }); }
+            // After a failed job the dispose may fail too: a page whose create failed answers "No scene is active", a crashed or navigated page has no bridge ("reading 'dispose'").
+            // The close below frees the page, and the failure that matters is the job's own, never this cleanup's (#2198).
+            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!jobFailed && !browserLossFailure && !isBrowserLoss(error)) throw error; }); }
             finally { await jobPage.close().catch(error => { if (!browserLossFailure && !isBrowserLoss(error)) throw error; }); }
           }
         }
@@ -1627,7 +1637,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           if (Buffer.byteLength(result.data, 'base64') > MAXIMUM_IMAGE_BYTES) throw new Error('The review PNG exceeds the 1 MiB image response budget. Request smaller shots.');
           output = { ...result, metadata: { sessionId: settings.sessionId, sourceRevision: snapshot.sourceRevision,
             backend, width: settings.gridWidth, height: settings.gridHeight, shots,
-            peakNodeBytes, peakBrowserHeap, maximumPendingFrames: 1 } };
+            peakNodeBytes, peakBrowserHeap, maximumPendingFrames: 1,
+              ...(recipeMoves(snapshot.recipe) && settings.shots.some(shot => shot.motionTime === null) ? { hints: [MOTION_NOT_SET_HINT] } : {}) } };
         } catch (error) {
           if (deadlineExpired) throw new Error(reviewDeadlineText());
           throw error;
@@ -1768,6 +1779,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           }
           const triangleProblem = pathTraceTriangleProblem(size, jobSettings?.renderer, { canChooseBackend: backend !== 'cpu', picksRenderer: settings?.budget !== undefined || settings?.quality !== undefined });
           if (triangleProblem) throw new RangeError(triangleProblem);
+          requireTracerBackendAvailable(jobSettings?.renderer, backend);
+          if (jobSettings?.mattes) requireMatteTargets({ mattes: jobSettings.mattes, ...(await invoke('matteTargets', { sessionId })) });
           const estimate = estimateOf(jobSettings);
           estimateForNextJob = estimate;
           try {

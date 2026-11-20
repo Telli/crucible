@@ -179,3 +179,27 @@ test('the scene refuses an unknown node and a gain track for a step the recipe d
   assert.throws(() => sceneWith({}, [{ kind: 'effects', property: 'flashIntensity', keyframes: [{ time: 0, value: 1 }, { time: 1, value: 0 }] }]), /effects\.flashIntensity.*effects\.flash names a source/);
   assert.throws(() => sceneWith({ flash: {} }, [{ kind: 'effects', property: 'flashIntensity', keyframes: [{ time: 0, value: 2 }, { time: 1, value: 0 }] }]), /values from 0 to 1/);
 });
+
+test('a placed source still resolves when the scene clock runs past an hour or the clock or a followed node is not usable (#2426)', async () => {
+  const { placeAirSteps } = await import('../src/post-air.js');
+  const placed = effects => resolvePostSteps(placeAirSteps(effects, 4000, []));
+  assert.equal(placed(resolvePostSteps({ flash: {} })).flash[0].time, 4000);
+  assert.equal(placed(resolvePostSteps({ distortion: { shape: 'ring' } })).distortion[0].time, 4000);
+  for (const badClock of [NaN, Infinity, -1]) {
+    const kept = resolvePostSteps(placeAirSteps(resolvePostSteps({ flash: { time: 2 } }), badClock, []));
+    assert.equal(kept.flash[0].time, 2);
+  }
+  const matrixAt = x => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 5, 6, 1];
+  for (const badX of [NaN, 2e5]) {
+    const kept = resolvePostSteps(placeAirSteps(resolvePostSteps({ flash: { node: 'bomb', centre: [1, 2, 3] } }), 1, [{ name: 'bomb', matrix: matrixAt(badX) }]));
+    assert.deepEqual(kept.flash[0].centre, [1, 2, 3]);
+  }
+  const followed = resolvePostSteps(placeAirSteps(resolvePostSteps({ flash: { node: 'bomb' } }), 1, [{ name: 'bomb', matrix: matrixAt(7) }]));
+  assert.deepEqual(followed.flash[0].centre, [7, 5, 6]);
+});
+
+test('a null in a three-number post field is refused, naming the component (#2427)', () => {
+  assert.throws(() => resolvePostSteps({ colorBalance: { lift: [null, 0, 0] } }), /colorBalance\.lift\[0\] must be between/);
+  assert.throws(() => resolveFlash({ color: [1, null, 1] }), /flash\[0\]\.color\[1\] must be between/);
+  assert.deepEqual(resolvePostSteps({ colorBalance: { lift: [0.1, 0, 0] } }).colorBalance.lift, [0.1, 0, 0]);
+});

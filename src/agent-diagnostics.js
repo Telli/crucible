@@ -10,6 +10,8 @@ const PLAIN_SURFACE_TAGS = new Set(['surface', 'gltf']);
 const LAYER_FIELDS = ['clearcoat', 'sheenColor', 'specular', 'specularColor', 'anisotropy', 'iridescence'];
 // The pass that draws transmission is a separate shader without these layers.
 const FIELDS_IGNORED_BY_TRANSMISSION = ['anisotropy', 'iridescence'];
+// The water tag draws in the standard shader (shaders.js baseReflectance), so its specular layer sets the surface reflectance.
+const SPECULAR_FIELDS_READ_ON_WATER = ['specular', 'specularColor'];
 const TRANSMISSION_DETAIL_FIELDS = ['thickness', 'attenuationColor', 'attenuationDistance'];
 
 export function diagnostic(kind, severity, target, message, fix) {
@@ -27,7 +29,7 @@ function materialProblems(material) {
   const tag = material.tag ?? 'surface';
   const transmitting = hasValue(material, 'transmission');
   if (tag !== 'surface' && tag !== 'liquid') {
-    for (const field of LAYER_FIELDS.filter(layer => hasValue(material, layer))) {
+    for (const field of LAYER_FIELDS.filter(layer => hasValue(material, layer) && !(tag === 'water' && SPECULAR_FIELDS_READ_ON_WATER.includes(layer)))) {
       problems.push(diagnostic('ignored-material-field', 'warning', material.id,
         `${field} is ignored on a material with tag ${tag}.`,
         `Remove ${field}, or set the material tag to surface with scene_apply set-material.`));
@@ -59,11 +61,23 @@ function materialProblems(material) {
   return problems;
 }
 
+// A mesh geometry may cut with another recipe geometry that no node draws (`edits[].cutter.geometry`), and that one with a third.
+function geometryIdsInUse({ geometries, nodes }) {
+  const inUse = new Set();
+  const visit = id => {
+    if (id === undefined || inUse.has(id)) return;
+    inUse.add(id);
+    geometries.find(geometry => geometry.id === id)?.edits?.forEach(edit => visit(edit?.cutter?.geometry));
+  };
+  nodes.forEach(node => visit(node.geometry));
+  return inUse;
+}
+
 /** Material and resource diagnostics for a normalized procedural recipe. */
 export function recipeDiagnostics(recipe) {
   const problems = recipe.materials.flatMap(materialProblems);
   const usedMaterials = new Set(recipe.nodes.map(node => node.material).filter(Boolean));
-  const usedGeometries = new Set(recipe.nodes.map(node => node.geometry).filter(Boolean));
+  const usedGeometries = geometryIdsInUse(recipe);
   for (const material of recipe.materials.filter(candidate => !usedMaterials.has(candidate.id))) {
     problems.push(diagnostic('unused-material', 'info', material.id,
       `Material ${material.id} is used by no node.`,
