@@ -577,18 +577,28 @@ float localVolumeWarpedFade(float position, float noiseAmount, float noise) {
 // scale, z the blackbody intensity times the emission strength and w the anisotropy. volume-grid.js (blackbodyRadiance) repeats the blackbody.
 ${withGridDetail ? `// The fine detail a grid volume with noiseAmount adds to its density and flame (#2289): the grid's cells are the coarsest structure of the smoke, and the noise (the
 // one of the box and sphere volumes, in world metres) breaks them into the small clumps a close camera expects. It averages 1, so the far look keeps its optical depth.
+// A march step reads the density and the blackbody at one point, so the second read takes the detail the first one computed (#2301: the
+// fractal noise ran twice per step and doubled the CPU preview look). The result is the same number either way.
+vec3 localGridDetailPosition = vec3(1e30);
+int localGridDetailIndex = -1;
+float localGridDetailValue = 1.0;
 float localGridDetail(int index, vec3 position) {
   float noiseAmount = localVolumeAbsorption[index].w;
   if (noiseAmount <= 0.0) return 1.0;
+  if (index == localGridDetailIndex && position == localGridDetailPosition) return localGridDetailValue;
   float noise = ${noiseOctaves ? 'localVolumeFractalNoise(position * localVolumeEmission[index].w, 1 + int(localVolumeAxes[index * 3 + 1].w + 0.5))' : 'localVolumeNoise(position * localVolumeEmission[index].w)'};
   float stretched = clamp((noise - 0.5) * ${GRID_DETAIL_CONTRAST.toFixed(1)} + 0.5, 0.0, 1.0);
-  return 1.0 + (2.0 * (stretched * stretched * (3.0 - 2.0 * stretched)) - 1.0) * noiseAmount;
+  localGridDetailIndex = index;
+  localGridDetailPosition = position;
+  localGridDetailValue = 1.0 + (2.0 * (stretched * stretched * (3.0 - 2.0 * stretched)) - 1.0) * noiseAmount;
+  return localGridDetailValue;
 }
 ` : ''}// A grid cell at a world point: x density, y temperature, z flame, all linear taps of the padded texture (a texel centre is at i + 0.5).
 vec3 localGridSample(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   vec3 paddedSize = vec3(textureSize(localGridTexture, 0));
   ${withGridDetail ? `vec3 cell = textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+  if (cell.x == 0.0 && cell.z == 0.0) return cell;
   float detail = localGridDetail(index, position);
   return vec3(cell.x * detail, cell.y, cell.z * detail);` : `return textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;`}
 }
@@ -596,7 +606,8 @@ vec3 localGridSample(int index, vec3 position) {
 vec3 localGridBlackbody(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   vec3 paddedSize = vec3(textureSize(localGridEmissionTexture, 0));
-  return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb${withGridDetail ? ' * localGridDetail(index, position)' : ''};
+  ${withGridDetail ? `vec3 radiance = textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+  return radiance == vec3(0.0) ? radiance : radiance * localGridDetail(index, position);` : `return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;`}
 }
 ` : ''}${motion ? LOCAL_MOTION_POSITION_FUNCTION : ''}${STEP_INTEGRAL_GLSL}// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
 // code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and
