@@ -50,9 +50,11 @@ try {
     operations: [{ type: 'add-node', node: { id: 'robot-2', translation: [1.5, 0, 0], asset: { id: robot } } }] })).structuredContent;
   assert.deepEqual(crowd.branches.sort(), ['crowd', 'moved']);
 
-  const review = await call('scene_review', { sessionId, expectedRevision: revision, width: 240, height: 160,
-    shots: [{ branch: 'moved' }, { branch: 'crowd' }] });
-  assert.equal(review.structuredContent.shots.length, 2);
+  // One shot per call keeps each review well under its 30 second deadline on a loaded SwiftShader runner.
+  for (const branch of ['moved', 'crowd']) {
+    const review = await call('scene_review', { sessionId, expectedRevision: revision, width: 160, height: 100, shots: [{ branch }] });
+    assert.equal(review.structuredContent.shots.length, 1);
+  }
   await call('scene_dispose', { sessionId });
   console.log(JSON.stringify({ branches: ['moved', 'crowd'], sourceRevision: revision }));
 } catch (error) {
