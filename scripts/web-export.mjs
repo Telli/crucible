@@ -85,7 +85,8 @@ const recipe = await (await fetch('./game.json')).json();
 const replayName = new URLSearchParams(location.search).get('replay');
 const replay = /^[\\w.-]+\\.json$/.test(replayName ?? '') ? await (await fetch('./' + replayName)).json() : undefined;
 const assetUrls = ${JSON.stringify(assetUrls)};
-${physicsUrl ? `const physicsUrl = ${JSON.stringify(physicsUrl)};\n` : ''}window.__game = await startGame(canvas, recipe, { replay, assetUrls${physicsUrl ? ', physicsUrl' : ''} });
+${physicsUrl ? `const physicsUrl = ${JSON.stringify(physicsUrl)};\n` : ''}const touchControls = matchMedia('(pointer: coarse)').matches;
+window.__game = await startGame(canvas, recipe, { replay, touchControls, assetUrls${physicsUrl ? ', physicsUrl' : ''} });
 </script>
 </body>
 </html>

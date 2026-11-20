@@ -8,7 +8,7 @@ const prepareRelease = await readFile(new URL('../scripts/prepare-release.mjs', 
 const installGuide = await readFile(new URL('../docs/learn/install.md', import.meta.url), 'utf8');
 
 test('the standalone module builds into build/ after the library build without emptying it', () => {
-  assert.equal(STANDALONE_FILE_NAME, '67.standalone.js');
+  assert.equal(STANDALONE_FILE_NAME, 'crucible.standalone.js');
   assert.equal(browserConfiguration.build.outDir, 'build');
   assert.equal(browserConfiguration.build.emptyOutDir, false);
   assert.deepEqual(browserConfiguration.build.lib.formats, ['es']);
@@ -20,8 +20,8 @@ test('the standalone module builds into build/ after the library build without e
 
 test('the package ships the standalone module and exports it', () => {
   assert.ok(metadata.files.includes('build'));
-  assert.ok(!metadata.files.includes('!build/67.standalone.js'));
-  assert.equal(metadata.exports['./standalone'], './build/67.standalone.js');
+  assert.ok(!metadata.files.includes('!build/crucible.standalone.js'));
+  assert.equal(metadata.exports['./standalone'], './build/crucible.standalone.js');
 });
 
 test('release preparation builds the standalone module before npm pack and checks the site copy byte for byte', () => {
@@ -32,5 +32,5 @@ test('release preparation builds the standalone module before npm pack and check
 });
 
 test('the install guide shows a pinned jsdelivr snippet with a single module script', () => {
-  assert.match(installGuide, /https:\/\/cdn\.jsdelivr\.net\/npm\/@codepawlhq\/crucible@\d+\.\d+\.\d+\/build\/67\.standalone\.js/);
+  assert.match(installGuide, /https:\/\/cdn\.jsdelivr\.net\/npm\/@codepawlhq\/crucible@\d+\.\d+\.\d+\/build\/crucible\.standalone\.js/);
 });

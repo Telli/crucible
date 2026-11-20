@@ -47,6 +47,32 @@ function validateEntryObjects(document) {
   }
 }
 
+// A null or absent list loads as empty; any other non-array would reach a for...of and fail with a raw TypeError.
+function requireList(value, fieldPath) {
+  if (value === undefined || value === null || Array.isArray(value)) return;
+  throw new Error(`Invalid glTF ${fieldPath}: expected an array. Fix: pass an array or remove the field.`);
+}
+
+const ENTRY_LIST_FIELDS = [['nodes', 'children'], ['animations', 'channels'], ['animations', 'samplers']];
+
+function validateListAndNameFields(document) {
+  requireList(document.extensionsUsed, 'extensionsUsed');
+  requireList(document.extensionsRequired, 'extensionsRequired');
+  for (const [arrayName, fieldName] of ENTRY_LIST_FIELDS) {
+    (document[arrayName] ?? []).forEach((entry, entryIndex) => requireList(entry[fieldName], `${arrayName}[${entryIndex}].${fieldName}`));
+  }
+  for (const arrayName of ['nodes', 'meshes']) {
+    (document[arrayName] ?? []).forEach((entry, entryIndex) => {
+      if (entry.name !== undefined && entry.name !== null && typeof entry.name !== 'string') {
+        throw new Error(`Invalid glTF ${arrayName}[${entryIndex}].name ${JSON.stringify(entry.name)}: expected a string. Fix: pass a string or remove the field.`);
+      }
+    });
+  }
+  (document.animations ?? []).forEach((animation, animationIndex) => {
+    (animation.channels ?? []).forEach((channel, channelIndex) => requireObject(channel, `animations[${animationIndex}].channels[${channelIndex}]`));
+  });
+}
+
 const NODE_TRANSFORM_LENGTHS = { matrix: 16, translation: 3, rotation: 4, scale: 3 };
 
 function validateNodeTransforms(document) {
@@ -68,6 +94,7 @@ function validateNodeTransforms(document) {
 export function validateDocumentReferences(document) {
   if (!document || typeof document !== 'object' || Array.isArray(document)) throw new Error('glTF JSON must be an object. Fix: pass a glTF 2.0 document.');
   validateEntryObjects(document);
+  validateListAndNameFields(document);
   validateMeshReferences(document);
   validateAccessorReferences(document);
   validateSceneReferences(document);

@@ -58,7 +58,7 @@ export const KIND_REFERENCES = {
   modeling: ['mesh-modeling.md', 'errors-and-recovery.md'],
   revision: ['mesh-modeling.md', 'errors-and-recovery.md'],
   scene: ['mesh-modeling.md', 'errors-and-recovery.md'],
-  look: ['look.md', 'errors-and-recovery.md'],
+  look: ['look.md', 'materials.md', 'errors-and-recovery.md'],
   light: ['light.md', 'errors-and-recovery.md'],
   camera: ['camera.md', 'errors-and-recovery.md'],
   animation: ['film-and-animation.md', 'errors-and-recovery.md'],
@@ -70,6 +70,8 @@ export const TOPIC_REFERENCES = {
   placedAssets: ['game.md'],
   motionIk: ['film-and-animation.md'],
   explosion: ['effects-and-feedback.md'],
+  particles: ['particles-and-vfx.md'],
+  localVolumes: ['particles-and-vfx.md'],
   askUser: ['effects-and-feedback.md'],
 };
 

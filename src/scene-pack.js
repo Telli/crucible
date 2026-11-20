@@ -12,6 +12,11 @@ export const PACK_FILE_NAME = 'scene.pack';
 export const PACK_RUNTIME_FILE_NAME = 'crucible-scene.js';
 export const PACK_POSTER_EXTENSIONS = Object.freeze(['.webp', '.png', '.jpg', '.jpeg']);
 const RECIPE_FORMAT = 'crucible.scene';
+// Lightmap texels one pack may carry: 262,144 is 1 MB of raw RGBA bytes. A recipe build may trace up to 1,000,000 texels,
+// but a page downloads every texel, so a pack holds a quarter of that.
+export const PACK_MAX_LIGHTMAP_TEXELS = 262_144;
+// The bake writes bounced light into the emissive slot (parts with their own emission use the light map slot) and sky visibility into the occlusion slot.
+const LIGHTMAP_SLOTS = Object.freeze(['emissiveMap', 'lightMap', 'occlusionMap']);
 // Sections of a recipe that move or simulate. Slice 1 of #2178 packs the scene at time zero only.
 const UNSUPPORTED_SECTIONS = Object.freeze(['motion', 'timeline', 'physics', 'cloth', 'particles', 'game', 'postPasses', 'armatures']);
 
@@ -46,12 +51,35 @@ export function validatePackRecipe(recipe) {
   }
 }
 
-/** Compiles a recipe to the bytes of a `.pack` file: its parts, camera, lighting and effects, ready for the runtime. */
-export async function compileRecipeToPack(recipe) {
+/** The texels of every baked light texture on the parts. */
+export function countLightmapTexels(parts) {
+  let texels = 0;
+  for (const part of parts) {
+    for (const slot of LIGHTMAP_SLOTS) {
+      const image = part.material?.[slot]?.image;
+      if (image) texels += image.width * image.height;
+    }
+  }
+  return texels;
+}
+
+function checkLightmapBudget(recipe, parts, maxLightmapTexels) {
+  const texels = countLightmapTexels(parts);
+  if (texels <= maxLightmapTexels) return;
+  const density = recipe.bake?.texelsPerUnit ?? recipe.bake?.preset ?? 'standard';
+  refuse(`recipe.bake.texelsPerUnit: the bake wrote ${texels} lightmap texels, over the ${maxLightmapTexels} one pack carries (the page downloads every texel). Lower bake.texelsPerUnit (now ${density}; 1 to 12), set bake.preset to "draft", or bake fewer and smaller parts.`);
+}
+
+/**
+ * Compiles a recipe to the bytes of a `.pack` file: its parts, camera, lighting and effects, ready for the runtime.
+ * A recipe `bake` runs here, in Node, and its lightmaps travel in the pack as bytes: the page never traces.
+ */
+export async function compileRecipeToPack(recipe, { maxLightmapTexels = PACK_MAX_LIGHTMAP_TEXELS } = {}) {
   validatePackRecipe(recipe);
   await loadAllAgentSceneModules();
   const scene = createAgentScene(recipe);
   const environment = scene.environment;
+  if (recipe.bake) checkLightmapBudget(recipe, scene.parts, maxLightmapTexels);
   return encodePack({
     shaderModules: agentSceneModulesNeeded(recipe).filter(name => Object.hasOwn(PACK_SHADER_MODULES, name)),
     camera: scene.camera,

@@ -8,7 +8,7 @@ export function memoryBudgetError(geometry, textures, frame, memoryBudgetMiB, { 
   const mebibytes = bytes => (bytes / MEBIBYTE).toFixed(1);
   const requiredMiB = Math.ceil((geometry + textures + frame) / MEBIBYTE);
   const counted = `Memory budget cannot hold geometry ${mebibytes(geometry)} MiB, textures ${mebibytes(textures)} MiB and frame ${mebibytes(frame)} MiB, over memoryBudgetMiB ${memoryBudgetMiB}.`;
-  if (requiredMiB > maximumMemoryBudgetMiB) {
+  if (!(requiredMiB < Infinity) || requiredMiB > maximumMemoryBudgetMiB) {
     return new RangeError(`${counted} It needs ${requiredMiB} MiB, more than the ${maximumMemoryBudgetMiB} MiB largest budget this runtime accepts. Fix: reduce the textures, the geometry, the frame size, or turn off HDR or bloom.`);
   }
   return new RangeError(`${counted} Fix: pass { memoryBudgetMiB: ${requiredMiB} }.`);
@@ -22,7 +22,7 @@ export const RENDER_PRESETS = Object.freeze({
 });
 
 export function estimateTextureBytes(width, height, { mipmaps = true } = {}) {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error('Texture dimensions must be positive integers.');
+  if (!(width > 0 && height > 0 && width <= 65536 && height <= 65536 && Number.isInteger(width) && Number.isInteger(height))) throw new Error('Texture size must be an integer from 1 to 65536.');
   let bytes = 0;
   do {
     bytes += width * height * 4;
@@ -53,9 +53,9 @@ export function planRenderSize({ width, height, pixelRatio = 1, samples = 4, mem
   for (const value of [width, height, pixelRatio, samples, memoryBudgetMiB, maximumSize]) {
     if (!Number.isFinite(value) || value <= 0) throw new Error('Render dimensions, sample count and budget must be positive finite numbers.');
   }
-  if (geometryBytes < 0 || !Number.isFinite(geometryBytes)) throw new Error('Geometry memory must be a nonnegative finite number.');
-  if (textureBytes < 0 || !Number.isFinite(textureBytes)) throw new Error('Texture memory must be a nonnegative finite number.');
-  if (!Number.isFinite(shadowResolution) || shadowResolution < 0) throw new Error('Shadow resolution must be nonnegative and finite.');
+  for (const value of [geometryBytes, textureBytes, shadowResolution]) {
+    if (!(value >= 0 && value < Infinity)) throw new Error('Memory bytes and shadow resolution must be finite and 0 or more.');
+  }
   const available = memoryBudgetMiB * MEBIBYTE - geometryBytes - textureBytes - shadowResolution ** 2 * 4;
   const bytesPerPixel = (hdr ? 12 : 8) * Math.max(1, samples) + (hdr ? 24 : 20) + (bloom ? hdr ? 4 : 2 : 0) + (depth ? 4 : 0);
   // The suggested budget fits the full requested frame, not only the minimum target.

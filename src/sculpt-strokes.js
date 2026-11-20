@@ -15,11 +15,15 @@ function vector(input, name) {
   return Array.from(input, value => finite(value, name));
 }
 
+const STROKE_FIELDS = ['type', 'center', 'radius', 'strength', 'direction'];
+
 export function prepareStrokes(strokes) {
   return strokes.map(stroke => {
     if (!['inflate', 'displace', 'smooth'].includes(stroke?.type)) {
       throw new TypeError('Sculpt stroke type must be inflate, displace or smooth.');
     }
+    const unsupported = Object.keys(stroke).find(key => !STROKE_FIELDS.includes(key) || (key === 'direction' && stroke.type !== 'displace'));
+    if (unsupported) throw new TypeError(`Sculpt ${stroke.type} stroke does not take "${unsupported.slice(0, 32)}"; remove it.`);
     const center = vector(stroke.center, 'center');
     const radius = finite(stroke.radius, 'radius');
     const strength = finite(stroke.strength, 'strength');

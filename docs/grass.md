@@ -55,7 +55,7 @@ The technique follows the grass of Ghost of Tsushima (GDC 2021) and the open por
 | `patchiness` | from preset | Field-scale variation of height, density and shade (0 to 1). Zero gives an even field. |
 | `stalks` | from preset | Share of seed stalks (0 to 1). `lawn` has none. |
 | `base`, `tip`, `dry` | from preset | Linear RGB colours for the root, the green tip and the dry tip. |
-| `tileSize` | `4` | Tile edge in metres. Each tile is one part and one draw. An area needing over 262144 tiles throws. |
+| `tileSize` | `4` | Tile edge in metres, finite. Each tile is one part and one draw. An area needing over 262144 tiles throws. |
 | `levels` | `GRASS_LEVELS` | Distance, kept share, segments and width scale per level of detail. |
 | `cullDistance` | last level's distance | Tiles farther than this are dropped. |
 | `castShadow` | `false` | Blade shadows cost a full extra pass of every blade. Blades still receive shadows. |

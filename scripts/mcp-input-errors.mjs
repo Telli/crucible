@@ -1,5 +1,6 @@
 import * as z from 'zod/v4';
 import { describeReceived } from '../src/field-error.js';
+import { describeUnionIssue } from './mcp-union-errors.mjs';
 
 const ISSUES_WITH_A_REJECTED_VALUE = new Set(['too_big', 'too_small', 'invalid_value', 'invalid_format', 'not_multiple_of']);
 
@@ -83,6 +84,10 @@ function wrongTypeMessage(issue, wording) {
 // was expected ("Too big: expected number to be <=1") but not what arrived, so the received value is added here, and an
 // unrecognized key names the valid key it was probably meant to be.
 function messageWithReceivedValue(issue) {
+  const unionMessage = describeUnionIssue(issue);
+  if (unionMessage) {
+    return unionMessage;
+  }
   const wording = z.locales.en().localeError(issue);
   const text = typeof wording === 'string' ? wording : wording?.message;
   if (!text) {

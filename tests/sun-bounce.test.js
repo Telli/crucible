@@ -91,3 +91,13 @@ test('environment.sunBounce that is not a number of 0 or more is refused', () =>
   }
   assert.equal(createAgentScene(roomWithOpening({ sunBounce: 2 })).environment.sunBounce, 2);
 });
+
+test('a sun bounce strength that is not a finite number refuses instead of making NaN lights', () => {
+  const { parts, environment } = createAgentScene(roomWithOpening());
+  for (const sunBounce of [NaN, Infinity, 'strong']) {
+    assert.throws(() => withSunBounce(parts, { ...environment, sunBounce }), /environment\.sunBounce was .*pass a number from 0 to 100000/);
+  }
+  assert.throws(() => findSunBounceLights(parts, environment, { strength: NaN }), /strength was NaN/);
+  const lights = withSunBounce(parts, { ...environment, sunBounce: 2 }).pointLights;
+  assert.ok(lights.length > 0 && lights.every(light => Number.isFinite(light.intensity)));
+});

@@ -122,8 +122,16 @@ void main() {
 const UNIFORM_NAMES = ['splatData', 'modelView', 'projection', 'focal', 'viewport', 'hdrEnabled', 'exposure', 'alphaCut'];
 export const GAUSSIAN_SPLAT_SHADER_SOURCES = Object.freeze({ vertex: VERTEX_SOURCE, fragment: FRAGMENT_SOURCE, opaqueFragment: OPAQUE_FRAGMENT_SOURCE });
 
-function covarianceOf(scales, rotations, index) {
+// A quaternion of any length stands for the rotation of its unit version; all zero stands for no rotation.
+function unitQuaternion(rotations, index) {
   const [w, x, y, z] = rotations.subarray(index * 4, index * 4 + 4);
+  const length = Math.hypot(w, x, y, z);
+  if (!(length > 0) || !Number.isFinite(length)) return length === 0 ? [1, 0, 0, 0] : [w, x, y, z];
+  return [w / length, x / length, y / length, z / length];
+}
+
+function covarianceOf(scales, rotations, index) {
+  const [w, x, y, z] = unitQuaternion(rotations, index);
   const rotation = [
     1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y),
     2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x),
@@ -180,6 +188,13 @@ function checkSplatArray(data, { field, stride, types, meaning }, caller) {
   }
 }
 
+function checkSplatBounds(bounds, caller) {
+  const isCorner = corner => (Array.isArray(corner) || ArrayBuffer.isView(corner)) && corner.length === 3 && Array.from(corner).every(Number.isFinite);
+  if (!isCorner(bounds?.minimum) || !isCorner(bounds?.maximum)) {
+    throw new TypeError(`${caller} needs data.bounds as { minimum, maximum }, each three finite numbers (the box that holds every splat centre; parseGaussianSplatPly returns it). Pass the bounds from the parse result`);
+  }
+}
+
 function resolveSplatOptions(options, caller) {
   if (options === undefined) return {};
   if (options === null || typeof options !== 'object') {
@@ -205,6 +220,7 @@ function checkSplatInput(data, maximumCount, caller) {
   if (!Number.isInteger(data.count)) throw new RangeError(`${caller} needs data.count to be a whole number of splats, got ${data.count}`);
   if (data.count > limit) throw new RangeError(`Gaussian splat scene holds ${data.count} splats, over the limit of ${limit}`);
   for (const description of SPLAT_ARRAYS) checkSplatArray(data, description, caller);
+  checkSplatBounds(data.bounds, caller);
 }
 
 function resolveAlphaCut(alphaCut, caller) {
