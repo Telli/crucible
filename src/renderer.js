@@ -43,6 +43,28 @@ function isTranslucentMode(alphaMode) {
   return alphaMode === 'blend' || alphaMode === 'add';
 }
 const ZERO_VECTOR = Object.freeze([0, 0, 0]);
+/**
+ * Whether a material's shader reads the opaque scene behind it (its depth and colour, resolved once per frame before the first
+ * blended batch draws). Only water does today: contact foam measures the gap to what lies behind the water. Add a reader here and
+ * its batches stay in the blend pass, where the resolve happens, at any opacity.
+ */
+export function materialReadsOpaqueScene(material) {
+  return material.tag === 'water' && material.contactFoam !== undefined;
+}
+
+/**
+ * Whether a blend batch first draws as a cutout of its fully opaque texels. Most of a baked scene exported as BLEND is opaque, and a
+ * cutout writes depth, so it hides whatever lies behind it in any draw order. The cutout draws before the opaque-scene resolve,
+ * so a batch whose shader reads that scene stays in the blend pass, where it is drawn after the resolve.
+ */
+export function blendBatchDrawsCutoutFirst(batch) {
+  if (materialReadsOpaqueScene(batch.parts[0].material)) return false;
+  for (let index = 0; index < batch.instanceCount; index++) {
+    if (batch.instanceData[index * INSTANCE_STRIDE + OPACITY_OFFSET] >= 0.999) return true;
+  }
+  return false;
+}
+
 const MATERIAL_MAPS = ['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
 const MAP_UNIFORMS = ['baseMap', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
 const MAP_FLAGS = ['hasBaseMap', 'hasNormalMap', 'hasMetallicRoughnessMap', 'hasOcclusionMap', 'hasEmissiveMap'];
@@ -234,7 +256,7 @@ function materialMapState(material) {
   const occlusionStrength = material.occlusionStrength ?? 1;
   if (material.layers || material.splat) requireSplatSupport().validate(material);
   if (material.layers && PROCEDURAL_MATERIAL_TAGS.has(material.tag)) throw new Error('Splat layers require a standard PBR material tag.');
-  return [...MATERIAL_MAPS.map(field => material[field] ?? null), normalScale[0], normalScale[1], occlusionStrength, ...mossState(material), material.boxMapScale ?? 0, material.boxMapAxis ?? 1, ...lightMapState(material), material.layers ?? null, material.splat ?? null, material.layerMaps ?? null, material.environmentProbe ?? null, material.waterReflection ?? null, material.irradianceGrid ?? null, material.wear ?? null, material.foamEdge ?? null, material.foamWidth ?? null, material.foamVeins ?? null, material.waterRamp ?? null];
+  return [...MATERIAL_MAPS.map(field => material[field] ?? null), normalScale[0], normalScale[1], occlusionStrength, ...mossState(material), material.boxMapScale ?? 0, material.boxMapAxis ?? 1, ...lightMapState(material), material.layers ?? null, material.splat ?? null, material.layerMaps ?? null, material.environmentProbe ?? null, material.waterReflection ?? null, material.irradianceGrid ?? null, material.wear ?? null, material.foamEdge ?? null, material.foamWidth ?? null, material.foamVeins ?? null, material.contactFoam ?? null, material.waterRamp ?? null];
 }
 
 // A baked light map reads the second UV set, so it is only drawn for parts that cannot be skinned or morphed.
@@ -2574,14 +2596,6 @@ export class CrucibleRenderer {
     this.context.bufferSubData(this.context.ARRAY_BUFFER, 0, batch.sortedData);
   }
 
-  /** Whether any instance of a blend batch is fully opaque, and so has opaque texels to draw as a cutout first. */
-  hasOpaqueInstance(batch) {
-    for (let index = 0; index < batch.instanceCount; index++) {
-      if (batch.instanceData[index * INSTANCE_STRIDE + OPACITY_OFFSET] >= 0.999) return true;
-    }
-    return false;
-  }
-
   /** Alpha-blended batches draw after opaque and masked geometry, farthest first, without writing depth. Additive batches draw last. */
   drawBlendBatches(frame) {
     const context = this.context;
@@ -2610,7 +2624,7 @@ export class CrucibleRenderer {
     // Fully opaque texels (most of a baked scene exported as BLEND) draw first as a cutout that writes depth, so they hide
     // whatever lies behind them in any draw order. The blend pass below then shades only the translucent texels (depth LESS).
     for (const { batch } of ordered) {
-      if (this.hasOpaqueInstance(batch)) this.drawAlphaBatch({ ...batch, alphaMode: 'mask', alphaCutoff: 0.999 }, true);
+      if (blendBatchDrawsCutoutFirst(batch)) this.drawAlphaBatch({ ...batch, alphaMode: 'mask', alphaCutoff: 0.999 }, true);
     }
     context.enable(context.BLEND);
     // The program writes a blended part premultiplied, so its specular is not faded by alpha (blend-output.js).
