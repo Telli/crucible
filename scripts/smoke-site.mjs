@@ -19,9 +19,9 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   for (const route of ['/', '/downloads.html', '/docs.html', '/getting-started.html', '/object.html', '/motion.html', '/nature.html', '/assets.html', '/view2d.html', '/film.html']) {
     await page.goto(origin + route);
-    if (route === '/downloads.html') await page.waitForURL(origin + '/#downloads');
+    if (route === '/downloads.html') await page.waitForURL(origin + '/#install');
     if (route === '/getting-started.html') await page.waitForURL(origin + '/docs.html#install');
-    if (['/', '/downloads.html', '/docs.html', '/getting-started.html'].includes(route)) {
+    if (['/downloads.html', '/docs.html', '/getting-started.html'].includes(route)) {
       await page.locator('.navigation nav a .nav-label').first().waitFor();
     }
     if (route.includes('object')) await page.waitForFunction(() => window.__studio?.renderer);
@@ -36,7 +36,7 @@ try {
         await page.locator('img').evaluateAll(images => images.forEach(image => { image.loading = 'eager'; }));
         await page.waitForFunction(() => [...document.images].every(image => image.complete));
         if (width < 760) {
-          const commandHeight = await page.locator('.home-install .command-row').evaluate(element => element.getBoundingClientRect().height);
+          const commandHeight = await page.locator('#install .command').evaluate(element => element.getBoundingClientRect().height);
           assert.ok(commandHeight < 180, `Homepage command consumes excessive mobile height: ${commandHeight}`);
         }
       }
@@ -56,7 +56,10 @@ try {
       report.layouts.push({ route,width,overflow });
     }
     await page.setViewportSize({ width:1440,height:1000 });
-    if (['/', '/downloads.html', '/docs.html', '/getting-started.html'].includes(route)) {
+    if (route === '/') {
+      assert.equal(await page.locator('.navigation nav a[href]').count(), 7, 'Landing navigation lost a link');
+    }
+    if (['/downloads.html', '/docs.html', '/getting-started.html'].includes(route)) {
       assert.equal(await page.locator('aside.navigation').count(), 0);
       assert.deepEqual(await page.locator('.navigation nav .nav-label').allTextContents(), ['Docs', 'Changelog']);
       assert.equal(await page.locator('.navigation nav a[aria-current="page"]').count(), ['/', '/downloads.html'].includes(route) ? 0 : 1);
@@ -65,11 +68,11 @@ try {
     }
     if (route === '/') {
       assert.equal(await page.locator('video').count(), 0, 'Homepage still embeds video');
-      assert.equal(await page.locator('#downloads').count(), 1, 'Homepage install controls are missing');
-      const scenePaths = await page.locator('.gallery .example').evaluateAll(links => links.map(link => { const url = new URL(link.href); return url.pathname + url.search; }));
+      assert.equal(await page.locator('#install').count(), 1, 'Homepage install controls are missing');
+      const scenePaths = await page.locator('#showcase .work').evaluateAll(links => links.map(link => { const url = new URL(link.href); return url.pathname + url.search; }));
       assert.equal(new Set(scenePaths).size, scenePaths.length, 'Showcase repeats the same scene');
-      assert.equal(await page.locator('.hero-loop #scene-tabs button').count(), 5, 'Hero scene tabs are missing');
-      assert.equal(await page.locator('.hero-loop #credits-toggle').count(), 1, 'Hero credits control is missing');
+      assert.equal(await page.locator('.beat').count(), 5, 'Landing story beats are missing');
+      assert.equal(await page.locator('.still').count(), 5, 'Landing fallback stills are missing');
       const showcase = await browser.newPage({ viewport:{ width:1440,height:900 }, reducedMotion:'reduce' });
       showcase.on('pageerror', error => errors.push(error.message));
       await showcase.goto(origin + '/showcase.html?scene=datacenter');
@@ -87,12 +90,12 @@ try {
       await chip.waitFor({ state:'hidden', timeout:10000 });
       assert.equal(await showcase.locator('#showcase-tabs button[data-scene="airport"]').getAttribute('aria-pressed'), 'true');
       await showcase.close();
-      report.interactions.push('Hero shows five scene tabs and credits, and the showcase opens the data center scene');
+      report.interactions.push('Landing shows five story beats and five fallback stills, and the showcase opens the data center scene');
     }
     if (['/', '/downloads.html'].includes(route)) {
-      if (route === '/downloads.html') assert.match(page.url(), /\/#downloads$/);
+      if (route === '/downloads.html') assert.match(page.url(), /\/#install$/);
       await page.waitForFunction(() => window.__home.state.status === 'ready');
-      assert.equal(await page.locator('.package-managers .package-logo').count(), 4);
+      assert.equal(await page.locator('.managers [data-package-manager] .pixel-icon').count(), 4);
       assert.equal(await page.locator('[data-package-manager]').count(), 4);
       assert.equal(await page.locator('[data-release-tarball], [data-release-module]').count(), 0);
       for (const [manager, prefix] of [['npm', 'npm install'], ['pnpm', 'pnpm add'], ['yarn', 'yarn add'], ['bun', 'bun add']]) {
@@ -100,7 +103,7 @@ try {
         const expectedCommand = await page.evaluate(prefix => window.__home.state.release.installCommand.replace(/^npm install/, prefix), prefix);
         assert.equal(await page.locator('[data-install-command]').textContent(), expectedCommand);
         assert.equal(await page.locator(`[data-package-manager="${manager}"]`).getAttribute('aria-pressed'), 'true');
-        await page.locator('[data-copy-install]').click();
+        await page.locator('#install .command .copy').click();
         assert.equal(await page.evaluate(() => window.__copiedText), expectedCommand);
       }
       report.interactions.push('Homepage installation with four branded package managers, copying and legacy URL redirect');

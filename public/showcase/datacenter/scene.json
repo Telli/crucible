@@ -11,7 +11,7 @@
   "hdri": "/showcase/datacenter/sky.hdr",
   "hdriOptions": {
     "intensity": 0.42,
-    "rotation": 0,
+    "rotation": 1.5708,
     "showBackground": false,
     "backgroundBlur": 0.5
   },

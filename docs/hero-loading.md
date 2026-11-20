@@ -1,5 +1,7 @@
 # How the home hero loads
 
+The home page no longer plays this loop. It runs the pour-to-cast scroll story (`src/landing.js`, `src/landing-scene.js`), which draws one small scene of its own and falls back to five still pictures for reduced motion, a light connection or a failed scene. This guide describes `src/hero-lab`, which the home page does not load.
+
 The hero on the home page plays a flight over the Port showcase world. The world is 9.7 MB, so on a slow link the page loads a small copy first and replaces it with the full world when that has arrived.
 
 ## Order of the files
@@ -32,7 +34,7 @@ The first view is cut from the full world, so a flaw in the world shows in both.
 
 ## An animated world
 
-The chip fab is the one world with an animation clip: engineers walk, hoist vehicles and pods ride the rails. `src/hero-lab/loop/world.js` plays the clip from the first frame the world draws, with its time modulo the clip length (`loopedClipTime`), so a world that stays on screen longer than the clip, because the next one is still building, keeps moving instead of stopping on the last pose. That only works for a clip whose last pose is its first. `node scripts/hero-clip-loop.mjs <in.glb> <out.glb> --walk-source <UAL1_Standard.glb> --walk-clip Walk_Loop --engineer-speed 0.83` turns the one-way clip into a 24 s patrol that goes out and back with a rounded turn, faces each engineer along its path and plays the Quaternius Walk_Loop (CC0) at the speed that keeps the planted foot still. `tests/hero-chipfab-animation.test.js` checks the loop seam, the facing, the step and the slide on the committed GLB.
+No world in the loop has an animation clip since the chip fab left it (#2743); its scene still has one (engineers walk, hoist vehicles and pods ride the rails) and keeps the tooling below. `src/hero-lab/loop/world.js` plays a world's clip from the first frame the world draws, with its time modulo the clip length (`loopedClipTime`), so a world that stays on screen longer than the clip, because the next one is still building, keeps moving instead of stopping on the last pose. That only works for a clip whose last pose is its first. `node scripts/hero-clip-loop.mjs <in.glb> <out.glb> --walk-source <UAL1_Standard.glb> --walk-clip Walk_Loop --engineer-speed 0.83` turns the one-way clip into a 24 s patrol that goes out and back with a rounded turn, faces each engineer along its path and plays the Quaternius Walk_Loop (CC0) at the speed that keeps the planted foot still. `tests/hero-chipfab-animation.test.js` checks the loop seam, the facing, the step and the slide on the committed GLB.
 
 ## Measuring
 

@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 
 const MODEL_SIZES = [4, 26, 65, 400, 4000];
 const BACKGROUND = [37, 41, 45];
@@ -80,7 +80,7 @@ test('a model from 4 to 4000 units wide draws with explicit near and far', async
       return;
     }
     const page = await browser.newPage({ viewport: { width: 128, height: 128 } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const counts = await drawnPixelCounts(page, MODEL_SIZES);
     counts.forEach((count, index) => assert.ok(count > 500, `a model ${MODEL_SIZES[index]} units wide drew ${count} pixels`));
   } finally {
