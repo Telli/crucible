@@ -51,7 +51,7 @@ Scenes built with Crucible open live in the browser on the [showcase](https://cr
   <a href="https://crucible.codepawl.com/showcase.html?scene=airport"><img src="https://crucible.codepawl.com/previews/showcase-airport.webp" alt="Airport ramp, rendered by Crucible" width="49%"></a>
   <a href="https://crucible.codepawl.com/showcase.html?scene=port"><img src="https://crucible.codepawl.com/previews/showcase-port.webp" alt="Container port, rendered by Crucible" width="49%"></a>
   <a href="https://crucible.codepawl.com/showcase.html"><img src="https://crucible.codepawl.com/previews/cook-monk.webp" alt="A monastery courtyard with a stone well, seen from a desk with an open book, path traced by Cook" width="49%"></a>
-  <a href="https://crucible.codepawl.com/showcase.html"><img src="https://crucible.codepawl.com/previews/robot.webp" alt="A yellow low-poly robot with round dark eyes, rendered by Crucible" width="49%"></a>
+  <a href="https://crucible.codepawl.com/object.html"><img src="https://crucible.codepawl.com/previews/wall-e.webp" alt="A robot model in the object studio, rendered by Crucible" width="49%"></a>
 </p>
 
 The pictures above are rebuilt from the current code with `node scripts/render-readme-previews.mjs` (add names to rebuild some, `--preview <folder>` for small test renders; [guide](docs/readme-previews.md)).
@@ -288,7 +288,6 @@ Company sponsors get their logo here from $100 a month.
 
 - [gl-matrix](https://github.com/toji/gl-matrix) supplies the matrix math.
 - The glTF addon has its own parser. The Draco, meshopt and KTX2 decoders are [three.js](https://threejs.org/) loaders that you pass in.
-- The robot picture uses RobotExpressive by Tomás Laulhé ([Quaternius](https://quaternius.com), CC0 1.0), as packed for three.js by Don McCurdy.
 - The textures and the HDRI on the site are CC0 scans from [Poly Haven](https://polyhaven.com) and [ambientCG](https://ambientcg.com). See [the texture credits](https://github.com/codepawl/crucible/blob/main/public/textures/CREDITS.md).
 - The Bistro renders use [Amazon Lumberyard Bistro](https://developer.nvidia.com/orca/amazon-lumberyard-bistro) (CC BY 4.0, from the NVIDIA ORCA library) under a CC0 [Poly Haven](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky) sky.
 - The showcase models and their sources are listed in each world's `scene.json` under `public/showcase/`.

@@ -1,11 +1,10 @@
-// The eight pictures at the top of README.md and how each one is made. Pure data and option parsing, so a test can read it
+// The pictures at the top of README.md and how each one is made. Pure data and option parsing, so a test can read it
 // without starting Chrome; scripts/render-readme-previews.mjs does the rendering.
 
 /**
  * renderer:
  *   cook-file  a Blender demo scene, converted to a GLB and path traced with Cook (needs Blender and the Cook native addon)
  *   media      scripts/render-media.mjs on a page of the site or a showcase scene.json (Chrome, GPU)
- *   media-glb  scripts/render-media.mjs on a downloaded CC0 glTF model in a scene file the script writes (Chrome, GPU)
  *   recipe     a scene recipe from scripts/readme-previews/, rendered through the MCP render job tools
  * A still that is not path traced, and every clip, is rendered STILL_SUPERSAMPLE times wider and taller than it is published and then
  * shrunk with a Lanczos filter, which measured sharper than rendering at the published size (docs/readme-previews.md has the numbers).
@@ -28,8 +27,6 @@ export const PREVIEWS = [
   { name: 'cook-monk', kind: 'still', renderer: 'cook-file', width: 1600, height: 1200, quality: 86,
     source: 'monk', samples: 512, bounces: 8,
     eye: [20, 0.9, -9.5], target: [20, 0.9, -19.5], fov: 55.7945 },
-  { name: 'robot', kind: 'still', renderer: 'media-glb', width: 1280, height: 720, quality: 82,
-    source: 'robot', eye: [3.2, 3.2, 10.5], target: [0, 2.3, 0], fov: 35 },
 ];
 
 /** The Blender demo files the cook-file previews start from (all CC0 or CC-BY, credited in README.md). */
@@ -38,10 +35,8 @@ export const DEMO_SOURCES = {
   monk: { url: 'https://download.blender.org/demo/cycles/lone-monk_cycles_and_exposure-node_demo.blend', zipped: false },
 };
 
-/** CC0 glTF models the media-glb previews show. RobotExpressive is by Tomas Laulhe (Quaternius), CC0 1.0, as packed for three.js by Don McCurdy. */
-export const MODEL_SOURCES = {
-  robot: { url: 'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/RobotExpressive/RobotExpressive.glb', file: 'RobotExpressive.glb' },
-};
+/** README pictures this script does not rebuild: the object studio tile stays the published file. */
+export const KEPT_README_PICTURES = ['wall-e'];
 
 export const PREVIEW_STILL_WIDTH = 640;
 export const STILL_SUPERSAMPLE = 2;

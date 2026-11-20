@@ -5,7 +5,7 @@
 Each demo is a Crucible scene with its source in the repository.
 
 ```cards
-Object studio | /object.html | Orbit, lighting looks, an exploded view and PNG export. | /previews/robot.webp
+Object studio | /object.html | Orbit, lighting looks, an exploded view and PNG export. | /previews/wall-e.webp
 Procedural modeling | /modeling.html | Lathe, extrude and tube geometry in one lantern. | /previews/modeling.webp
 Nature | /nature.html | Terrain, trees, grass, wind and a moving sun. | /previews/grass.webp
 Assets | /assets.html | GLB models with their animation. | /previews/assets.webp

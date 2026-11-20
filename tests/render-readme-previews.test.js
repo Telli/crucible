@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
-import { PREVIEWS, PREVIEW_STILL_WIDTH, needsCook, parseArguments, previewNamesInReadme, drawSize, renderSize, selectPreviews } from '../scripts/readme-previews-plan.mjs';
+import { KEPT_README_PICTURES, PREVIEWS, PREVIEW_STILL_WIDTH, needsCook, parseArguments, previewNamesInReadme, drawSize, renderSize, selectPreviews } from '../scripts/readme-previews-plan.mjs';
 
 const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
 
-test('the plan lists exactly the pictures README.md shows, each with a published file', () => {
-  assert.deepEqual([...PREVIEWS.map(preview => preview.name)].sort(), [...new Set(previewNamesInReadme(readme))].sort());
+test('the plan lists exactly the pictures README.md shows, less the kept ones, each with a published file', () => {
+  assert.deepEqual([...PREVIEWS.map(preview => preview.name), ...KEPT_README_PICTURES].sort(), [...new Set(previewNamesInReadme(readme))].sort());
   for (const preview of PREVIEWS) assert.ok(existsSync(new URL(`../public/previews/${preview.name}.webp`, import.meta.url)), `${preview.name}.webp is missing`);
 });
 
@@ -20,8 +20,8 @@ test('every recipe preview has its recipe file and every clip states its frame b
 });
 
 test('parseArguments reads names and options and rejects what it cannot use', () => {
-  const options = parseArguments(['robot', 'cook-monk', '--preview', 'out', '--pairs', 'pairs', '--skip-cook']);
-  assert.deepEqual(options.names, ['robot', 'cook-monk']);
+  const options = parseArguments(['showcase-port', 'cook-monk', '--preview', 'out', '--pairs', 'pairs', '--skip-cook']);
+  assert.deepEqual(options.names, ['showcase-port', 'cook-monk']);
   assert.equal(options.preview, 'out');
   assert.equal(options.pairs, 'pairs');
   assert.equal(options.skipCook, true);
@@ -32,7 +32,7 @@ test('parseArguments reads names and options and rejects what it cannot use', ()
 
 test('selectPreviews keeps table order and --skip-cook drops the Cook previews', () => {
   assert.equal(selectPreviews(parseArguments([])).length, PREVIEWS.length);
-  assert.deepEqual(selectPreviews(parseArguments(['robot', 'hero-classroom'])).map(preview => preview.name), ['hero-classroom', 'robot']);
+  assert.deepEqual(selectPreviews(parseArguments(['showcase-port', 'hero-classroom'])).map(preview => preview.name), ['hero-classroom', 'showcase-port']);
   const withoutCook = selectPreviews(parseArguments(['--skip-cook']));
   assert.deepEqual(PREVIEWS.filter(needsCook).map(preview => preview.name), ['hero-classroom', 'feature-cook-dof', 'cook-monk']);
   assert.ok(withoutCook.every(preview => !needsCook(preview)));
@@ -51,7 +51,7 @@ test('renderSize keeps the published size, and shrinks only wide stills in previ
 test('drawSize draws everything but the Cook stills at twice the published size', () => {
   const byName = name => PREVIEWS.find(preview => preview.name === name);
   assert.deepEqual(drawSize(byName('showcase-airport'), false), { width: 2560, height: 1440 });
-  assert.deepEqual(drawSize(byName('robot'), false), { width: 2560, height: 1440 });
+  assert.deepEqual(drawSize(byName('showcase-port'), false), { width: 2560, height: 1440 });
   assert.deepEqual(drawSize(byName('showcase-airport'), true), { width: PREVIEW_STILL_WIDTH, height: 360 });
   assert.deepEqual(drawSize(byName('hero-classroom'), false), { width: 1600, height: 900 });
   assert.deepEqual(drawSize(byName('feature-clockwork'), false), { width: 960, height: 540 });
