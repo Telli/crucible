@@ -29,6 +29,8 @@ Omitting `motionTime` preserves the current preview pose.
 Its bounds remain in `authored-base-world` space, independent of the sampled pose.
 
 `set-motion` requires a complete motion record or explicit `null` to clear it.
+To drop only some tracks, give `removeTracks` instead of `motion`: selectors such as `{ kind: 'camera' }` or `{ kind: 'node', id: 'cube', property: 'translation' }`, where a field left out matches any track.
+The other tracks and fields stay. A selector that matches nothing throws an error that lists the tracks there are. Giving both `motion` and `removeTracks` is refused.
 The final batch must resolve every track reference, including after node or material removal.
 Failed edits or seeks preserve the previous recipe, rendered pose and revisions.
 
@@ -152,7 +154,7 @@ each blending over the pose so far, before tracks and IK:
 | Field | Meaning |
 | --- | --- |
 | `clip` | The `id` of an entry in `scene_inspect` `animations` |
-| `mask` | `{ joints, descendants = true, exclude }`, up to 32 node IDs or names each. The layer moves only these joints and what hangs below them; mesh parts follow their bone, and morph weights follow the bone that owns the mesh |
+| `mask` | `{ joints, descendants = true, exclude }`, up to 32 node IDs or names each; `exclude` may not cover every joint. The layer moves only these joints and what hangs below them; mesh parts follow their bone, and morph weights follow the bone that owns the mesh |
 | `weight` | 0 to 1, default 1 |
 | `speed`, `offset` | Layer time is `time * speed + offset`. `speed` 0.05 to 8, `offset` within 30 seconds |
 | `loop` | Default `true`: the clip repeats. `false` holds its last key |

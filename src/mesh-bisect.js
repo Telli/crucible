@@ -57,7 +57,7 @@ function planeSigns(mesh, point, normal, distance) {
 }
 
 /** One point per mesh edge whose ends lie on opposite sides of the plane. */
-function crossingPoints(mesh, signs, offsets, extraPositions) {
+function crossingPoints(mesh, signs, offsets, extraPositions, extraSources) {
   const points = new Map();
   for (let edge = 0; edge < mesh.edgeCount; edge++) {
     const first = mesh.edgeVertices[edge * 2];
@@ -65,6 +65,7 @@ function crossingPoints(mesh, signs, offsets, extraPositions) {
     if (signs[first] * signs[second] !== -1) continue;
     const fraction = offsets[first] / (offsets[first] - offsets[second]);
     extraPositions.push(lerp(positionOf(mesh, [], first), positionOf(mesh, [], second), fraction));
+    extraSources.push({ from: first, to: second, t: fraction });
     points.set(edge, { vertex: mesh.vertexCount + extraPositions.length - 1, from: first, fraction });
   }
   return points;
@@ -182,7 +183,8 @@ export function bisectPlane(mesh, { point, normal, distance = 1e-4, clearInner =
   const planeNormal = unit(normal);
   const { signs, offsets } = planeSigns(mesh, point, planeNormal, distance);
   const extraPositions = [];
-  const points = crossingPoints(mesh, signs, offsets, extraPositions);
+  const extraSources = [];
+  const points = crossingPoints(mesh, signs, offsets, extraPositions, extraSources);
   const pieces = [];
   let cutFaces = 0;
   facePolygons(mesh).forEach((polygon, index) => {
@@ -211,21 +213,22 @@ export function bisectPlane(mesh, { point, normal, distance = 1e-4, clearInner =
     const innerCaps = clearInner ? { caps: [], open: 0 } : capsOf(inner);
     const outerCaps = clearOuter ? { caps: [], open: 0 } : capsOf(outer);
     if (!clearInner && !clearOuter) {
-      separateOuterShell(mesh, [...outer.map(({ polygon }) => polygon), ...outerCaps.caps], onPlane, extraPositions);
+      separateOuterShell(mesh, [...outer.map(({ polygon }) => polygon), ...outerCaps.caps], onPlane, extraPositions, extraSources);
     }
     polygons.push(...innerCaps.caps, ...outerCaps.caps);
     capped = innerCaps.caps.length + outerCaps.caps.length;
     unfilled = innerCaps.open + outerCaps.open;
   }
-  return { mesh: buildPolygonMesh(mesh, polygons, extraPositions), cutFaces, capped, unfilled, newVertices: points.size };
+  return { mesh: buildPolygonMesh(mesh, polygons, extraPositions, extraSources), cutFaces, capped, unfilled, newVertices: points.size };
 }
 
 // With both halves kept and capped, the outer half gets its own copies of the vertices on the plane.
-function separateOuterShell(mesh, outerPolygons, onPlane, extraPositions) {
+function separateOuterShell(mesh, outerPolygons, onPlane, extraPositions, extraSources) {
   const copies = new Map();
   const copyOf = vertex => {
     if (!copies.has(vertex)) {
       extraPositions.push(positionOf(mesh, extraPositions, vertex));
+      extraSources.push(vertex < mesh.vertexCount ? vertex : extraSources[vertex - mesh.vertexCount]);
       copies.set(vertex, mesh.vertexCount + extraPositions.length - 1);
     }
     return copies.get(vertex);

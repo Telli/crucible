@@ -121,7 +121,7 @@ function hitNearestLamp(ray) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, disposeGate, disposeLostBridge = false, hangBrowserClose = false, closeTimeoutMs, failFirstGoto = false, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, disposeGate, disposeLostBridge = false, disposeWithoutScene = false, hangBrowserClose = false, closeTimeoutMs, failFirstGoto = false, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
   const events = [];
   const sourceCalls = [];
   const sandboxTimers = new Set();
@@ -139,6 +139,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
   class FakePage {
     constructor(privateTarget) { this.privateTarget = privateTarget; this.closed = false; }
     route() {}
+    exposeFunction() {}
     setDefaultTimeout() {}
     setViewportSize(size) { this.viewport = size; viewports.push(size); }
     goto() {
@@ -163,6 +164,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
         throw new Error(typeof failPrivateCreateMessage === 'string' ? failPrivateCreateMessage : 'Injected private create failure');
       }
       if (method === 'dispose' && this.privateTarget && disposeLostBridge) throw new TypeError("page.evaluate: TypeError: Cannot read properties of undefined (reading 'dispose')");
+      if (method === 'dispose' && this.privateTarget && disposeWithoutScene) throw new Error('page.evaluate: Error: No scene is active: it was never created, was disposed, or scene_create failed. Call scene_create or scene_create_asset first, then pass the sessionId it returns.');
       if (method === 'dispose' && disposeGate) await disposeGate;
       if (method === 'resume' && failResume) throw new Error('Injected resume failure');
       if (method === 'create' && this.privateTarget && blockPrivateCreate) return new Promise((resolve, reject) => { this.rejectShot = reject; });
@@ -228,7 +230,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     runAnnotateSession: async () => ({ outcome: 'timeout' }), openInDefaultBrowser: async () => {},
     createNativeTracerLocator: () => ({ find: async () => ({ reason: 'no native tracer in tests' }) }),
     createAgentRenderJobs: async () => ({ list: () => [], close: async () => {} }), resolveJobRoot: path => path,
-    chromium: { launch: async () => { browserConnected = true; return browser; } }, URL, Buffer, AbortController, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
+    chromium: { launch: async () => { browserConnected = true; return browser; } },
+    launchWithShaderCache: async () => { browserConnected = true; return browser; }, URL, Buffer, AbortController, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
     setTimeout: (callback, delay) => {
       deadlines.push(delay);
       const timer = setTimeout(callback, delay);
@@ -475,11 +478,11 @@ runTest('a job frame over 1920x1080 that --memory shrinks is refused with the me
 
 const NON_INDEXED_INSPECTION = vertices => ({ counts: { parts: 1, vertices, materials: 1 }, nodes: [], look: {} });
 
-async function submitWithInspection(inspection, settings) {
+async function submitWithInspection(inspection, settings, backend) {
   const submitted = [];
   const controller = { list: () => [], close: async () => {}, submit: async request => { submitted.push(request); return { jobId: 'job' }; } };
   const { runtime, sessionId } = await reviewRuntimeHarness({ inspection,
-    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test'), ...(backend ? { backend } : {}) },
     contextOverrides: { createAgentRenderJobs: async () => controller } });
   try {
     const attempt = await runtime.submitJob({ sessionId, expectedRevision: 0, settings }).then(() => undefined, error => error);
@@ -499,7 +502,7 @@ runTest('submitJob accepts the same oversized scene as a raster job, with backen
   const raster = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64 });
   assert.equal(raster.attempt, undefined);
   assert.equal(raster.submitted.length, 1);
-  const gpu = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer', backend: 'gpu' } });
+  const gpu = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer', backend: 'gpu' } }, 'gpu');
   assert.equal(gpu.attempt, undefined);
   assert.equal(gpu.submitted.length, 1);
   // 1,150,000 vertices without indices are about 383,000 real triangles; the estimate says 575,000, inside the safety margin.
@@ -622,6 +625,22 @@ runTest('a job that fails for its own reason is not masked by a lost page bridge
     const failure = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
       settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }).then(() => assert.fail('the job must fail'), error => error);
     assert.match(failure.message, /Injected scene problem/);
+  } finally { await runtime.close(); }
+});
+
+runTest('a job whose scene was never created reports the create failure, not "No scene is active" from the cleanup (#2198)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const harness = await reviewRuntimeHarness({ failPrivateCreate: true, disposeWithoutScene: true, failPrivateCreateMessage: 'Injected particles problem',
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  const { runtime, sessionId } = harness;
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const failure = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }).then(() => assert.fail('the job must fail'), error => error);
+    assert.match(failure.message, /Injected particles problem/);
+    assert.doesNotMatch(failure.message, /No scene is active/);
   } finally { await runtime.close(); }
 });
 

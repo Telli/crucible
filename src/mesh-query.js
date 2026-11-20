@@ -638,5 +638,7 @@ export function createMeshPairQuery(indexA, indexB, options = {}) {
 
 /** A query index over indexed triangles in any typed or plain arrays, for callers that hold render geometry or MeshData triangles. */
 export function createTriangleSurfaceIndex({ positions, indices }) {
-  return createMeshQueryIndex({ positions: Float32Array.from(positions), indices: Uint32Array.from(indices) });
+  const wholeIndices = Uint32Array.from(indices);
+  if (wholeIndices.some((index, slot) => index !== indices[slot])) throw new TypeError('indices must be whole vertex numbers');
+  return createMeshQueryIndex({ positions: Float32Array.from(positions), indices: wholeIndices });
 }

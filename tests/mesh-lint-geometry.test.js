@@ -106,3 +106,13 @@ test('a prism over a concave outline raises no spatial warning at any starting c
     assert.equal(result.skippedChecks, undefined, `shift ${shift}`);
   }
 });
+
+test('part pairs stay distinct in the sample once a mesh has more than 1000 parts', () => {
+  const boxes = Array.from({ length: 1501 }, (_, index) => placedBox({ translation: [index * 10, 0, 0] }));
+  boxes[1500] = placedBox({ translation: [0.5, 0.5, 0.5] });
+  boxes[500] = placedBox({ translation: [10.5, 0.5, 0.5] });
+  const mesh = meshFromGeometry(joined(...boxes));
+  const crossing = lintMesh(mesh, { geometry: true }).problems.find(problem => problem.kind === 'intersecting-parts');
+  assert.equal(crossing.count, 2);
+  assert.equal(new Set(crossing.sample).size, 2);
+});

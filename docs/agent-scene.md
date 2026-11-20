@@ -85,7 +85,7 @@ The generators also enforce their existing numeric and modeling constraints.
 
 | Type | Fields | Defaults |
 | --- | --- | --- |
-| `box` | `bevel`, `subdivisions` | `0.08`, `6` (walls, floors and ceilings that touch take `bevel: 0`: the rounded edges of two touching boxes leave a groove at the corner that lets sky light into a closed room, #2000) |
+| `box` | `bevel`, `subdivisions` | `0.08`, `6` (a closed room of touching boxes is drawn with sharp edges: see the paragraph after this table) |
 | `cylinder` | `segments`, `bevel`, `bevelSegments` | `80`, `0.025`, `6` |
 | `sphere` | `segments`, `rings` | `64`, `40` |
 | `torus` | `tubeRadius`, `segments`, `sides`, `arc`, `start` | `0.08`, `96`, `24`, `2π`, `0` |
@@ -98,6 +98,8 @@ The generators also enforce their existing numeric and modeling constraints.
 
 `seed` is a whole number from 0 to 2147483647 (anything else is refused, not rounded or wrapped). `terrain` is one seeded ground mesh from `-size / 2` to `size / 2` on X and Z with hills about y = 0 and up to 16 round `holes` (`{ center: [x, z], radius }`) that leave no surface; it loads on demand. Details are in `scene_capabilities` under `terrain`.
 
+Boxes that meet in a room: the rounded edge of a default box leaves a groove where two boxes touch, and sun, sky and lamps shine through it. When at least four pairs of plain boxes (translation and scale only, no parent) touch and the joined boxes have a thin slab on each of the six sides, the engine draws those boxes with sharp edges, whatever their `bevel`. Props that only stand on a floor, rooms without a ceiling, rotated or parented boxes, and scenes with more than 1500 rounded boxes keep their rounded edges. The recipe is not changed, so `bevel` still reads as written.
+
 `curve` and `text` are described in full by `scene_capabilities` under `curveText.details`; see [modeling.md](modeling.md).
 
 Modeling point inputs have a maximum of 4096 points.
@@ -109,6 +111,7 @@ The defaults are `surface`, `[0.5, 0.5, 0.5]`, `0`, `0.5`, `0`, opacity `1`, `op
 The tag can be `surface`, `unlit`, `liquid`, `foam`, `water`, `foliage` or `grass` (the last two sway in `environment.wind`) and remains fixed during editing.
 `liquid` refracts and tints what lies behind it: its color is the light one metre lets through, so `[0.56, 0.84, 0.88]` is clear water. `foam` draws soft blended droplets.
 `water` is a flat mirror sheet (a plane or thin box). The largest one sets the water level: everything below it fades by `exp(-absorption * depth)` per colour channel (`absorption` is RGB per metre), and its shadows are lifted and softened with depth times `turbidity` (0 clear to 1 murky). `waterPreset` fills both: `lake` (default), `sea` or `river`. A shadow on the surface is faint and never darkens the reflection; give the sheet an `opacity` below one when the bed should show. The sun's leg to a bed is bent at n = 1.33 and absorbed over `depth / cos(theta_t)`, so a clear lake keeps little shadow contrast on a bed 4 m down, and a murky river keeps about a quarter.
+`caustics` on a water material (`{ scale, speed, intensity, depthFade }`, off unless given; `null` or `intensity: 0` switches it off) draws a moving net of bright lines on every opaque surface below the water level. Two rotated Voronoi nets, warped by a slow pan, are projected from the sun along the refracted ray onto the surface and added to the sun's light, so a shadow still blocks them and a surface turned from the sun gets none. `scale` is metres across one cell (0.05 to 50, default 1.2), `speed` how fast the net drifts (0 to 10, default 0.5), `intensity` the extra sun on a line at the surface (0 to 10, default 2) and `depthFade` the loss per metre of depth, `exp(-depthFade * depth)` (0 to 10, default 0.35). It follows the renderer time the water waves use (`rendererTime` of a render job), so a still at one time is a frozen net. Raster only: the path tracer draws no caustics. The level comes from the largest flat water part, as for absorption.
 `waterRamp` (off by default) paints the sea in flat anime tones: `{ colors: [3 to 5 RGB, deep to bright], drivers: { height, facing, sun } (weights 0 to 1, default height 1), heightRange: [low, high] (world y, default -1 to 1), steps: hard (default) or soft, crestTint: { color, strength } }`. A weighted mix of the drivers picks the tone: `height` is world y across `heightRange`, `facing` rises toward the horizon, `sun` is how squarely a wave face meets the key light. The ramp owns the colour, so the sky reflection and the lit shading are not drawn; foam and the sun glint still add on top. `crestTint` colours the folded crests the `foam` group marks, wider than the foam itself. It needs the water tag; depth and a shallow and deep pair are not drivers yet.
 
 Ramp colours are display colours. A stop given as `#rrggbb` shows on screen as that hex; three numbers show as the sRGB encoding of those linear values (`[0.04, 0.4, 0.5]` shows as `#38aabc`). The shader maps each stop back through the exposure and the view transform (ACES, AgX or Neutral), so the tone curve does not shift it, and the distance haze (`fogDensity`) stays off the ramp. Measured on 640x360 stills under the default view: `#19617c` and `#38aabc` measured exactly as requested; a bright stop `#95edf3` measured `#99eef4` on lit faces. Things that run after the shader still change the picture: bloom, grade, vignette, grain, a look and the volume fog step, and foam, the sun glint and the crest tint add on top by design.
@@ -342,7 +345,7 @@ An asset placement with a `crowd` field fills its group node with `count` (1 to 
 { "id": "people", "asset": { "id": "<catalog asset id>", "crowd": { "clip": 3, "count": 200, "seed": 7, "spacing": 2, "farDistance": 25, "farRate": 6 } } }
 ```
 
-- `clip` is a clip index, `layout` is `grid` or `scatter`, and the pose is a pure function of scene time, `seed` and the recipe camera, so a render at a time equals the frame reached by playing. People farther than `farDistance` from the recipe camera hold each pose for `1 / farRate` seconds. The distance is measured from each person's world position at that time, so it follows a parent group that moves or has a motion track.
+- `clip` is a clip index, `seed` is a whole number from -2147483648 to 2147483647, `layout` is `grid` or `scatter`, and the pose is a pure function of scene time, `seed` and the recipe camera, so a render at a time equals the frame reached by playing. People farther than `farDistance` from the recipe camera hold each pose for `1 / farRate` seconds. The distance is measured from each person's world position at that time, so it follows a parent group that moves or has a motion track.
 - The crowd takes one decoded copy of the asset, the generated part nodes (count times materials) count against `maxNodes`, and `scene_inspect` lists it under `assets` with `kind: "crowd"`, `instances`, `batches`, `frames`, `paletteBytes` and `boundsRadius`.
 
 ### Seams between meshes
@@ -451,7 +454,7 @@ What it writes (read it back with `scene_export_recipe`, then tweak any part):
 - The motion duration becomes at least `start` plus the playing time of the blast plus 1 s.
 
 It needs a scene with no grid volume yet (a scene draws one), a free local volume, 3 of the 4 particle systems, and a free flash and distortion slot, and fails naming the field otherwise.
-Gaps: the grid is 32 cubed, so the detail is coarser than the 64 cubed preview and the smoke holds its last frame after the simulation ends; the dust is a puff, not a flat ring; there is no crater.
+Gaps: the grid is 32 cubed, so the detail is coarser than the 64 cubed preview and the smoke holds its last frame after the simulation ends; the dust is an unlit warm-brown haze of about 600 large overlapping round puffs lifted slightly off the floor, each faded toward its silhouette by the material's `softEdge`, so it reads as a low cloud with no outlines; it is not a flat ring; there is no crater.
 
 Timing: `node scripts/measure-explosion-render-time.mjs --runs 3` builds a blast over a floor disc through the MCP runtime, submits an 8 s 1080p video job and prints, per run, the seconds from `scene_create` to the encoded MP4 split into `scene_apply` (the grid bake and the first draw), drawing, frame capture and encoding. Each run starts a fresh server; with the default bake cache (#1876) only the first run on a machine bakes, and `--bake-cache off` forces a cold bake every run (or pass an absolute folder for a clean cache). Run it through `gpu-lock.sh`; it stops a run that passes `--max-seconds` (180).
 

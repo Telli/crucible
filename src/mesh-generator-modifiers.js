@@ -2,7 +2,7 @@ import { createMeshData } from './mesh-data.js';
 import { vertexNormals, faceNormals } from './mesh-normals.js';
 import { evaluateField, meshFieldContext } from './mesh-fields.js';
 import { invalidField } from './field-error.js';
-import { editInteger, editBoolean, editAxis } from './mesh-edit-field.js';
+import { editInteger, editBoolean, editAxis, editDefault } from './mesh-edit-field.js';
 
 // Modifiers that build new surface from the mesh they are given: screw revolves its edges, wireframe turns its faces into
 // struts and skin puts a square tube on every edge. Each one checks the size of its result against the limits before it
@@ -232,7 +232,7 @@ export function skinMesh(mesh, { radius }, limits) {
 export function normalizeGeneratorEdit(edit, normalized, index, { finiteNumber, checkedField }) {
   switch (edit.op) {
     case 'screw':
-      normalized.axis = edit.axis ?? 'z';
+      normalized.axis = editDefault(edit.axis, 'z');
       editAxis(normalized.axis, index);
       normalized.angle = edit.angle === undefined ? 360 : finiteNumber(edit.angle, index, 'angle', { minimum: -3600, maximum: 3600 });
       normalized.steps = edit.steps === undefined ? 16 : editInteger(edit.steps, index, 'steps', 1, MAX_SCREW_STEPS);
@@ -242,8 +242,8 @@ export function normalizeGeneratorEdit(edit, normalized, index, { finiteNumber, 
     case 'wireframe':
       normalized.thickness = edit.thickness === undefined ? 0.02 : finiteNumber(edit.thickness, index, 'thickness', { minimum: 0, maximum: 1e3, exclusiveMinimum: true });
       normalized.offset = edit.offset === undefined ? 0 : finiteNumber(edit.offset, index, 'offset', { minimum: -1, maximum: 1 });
-      normalized.evenOffset = edit.evenOffset ?? true;
-      normalized.replace = edit.replace ?? true;
+      normalized.evenOffset = editDefault(edit.evenOffset, true);
+      normalized.replace = editDefault(edit.replace, true);
       editBoolean(normalized.evenOffset, index, 'evenOffset');
       editBoolean(normalized.replace, index, 'replace');
       break;

@@ -208,3 +208,9 @@ test('a placed car drives its path in the placement frame, with its own decoded 
     for (const asset of assets.values()) asset.dispose();
   }
 });
+
+test('a drive path or leg path that is not a list of points says it wants points, not an object', () => {
+  for (const input of [{ path: 'abc' }, { path: null }, { legs: [{}] }, { legs: [{ path: 7 }] }]) {
+    assert.throws(() => normalizeDrive(input), error => error instanceof TypeError && /array of \[x, y, z\] points/.test(error.message));
+  }
+});

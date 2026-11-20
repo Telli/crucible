@@ -13,6 +13,8 @@ export const MAXIMUM_PROBES = 4;
 // Probes and the irradiance grid trace on the CPU, and their work grows with the node count, samples and the time limit rather
 // than with the part count, so they take as many parts as the GPU lightmap bake does (#1218).
 export const MAX_PROBE_GRID_PARTS = 1024;
+/** The skip reason of a scene that has nothing to reflect: not a problem, so no diagnostic follows it. */
+export const NO_REFLECTIVE_PART = 'no reflective part';
 export const PROBE_MAP_WIDTH = 64;
 // An automatic probe is only worth placing in a room: below this share of rays hitting a part the scene is open air.
 export const ENCLOSED_HIT_FRACTION = 0.9;
@@ -300,9 +302,10 @@ export function traceObjectProbes(parts, lighting, options = {}) {
   // Many small metal parts (lamp posts, spires) read as shapes and not as mirrors, and each probe costs a trace and a draw batch.
   const tooManyOthers = parts.length - 1 > MAX_PROBE_GRID_PARTS;
   // The probe trace builds a triangle world that takes at most MAX_BAKE_TRIANGLES; a big scene keeps its sky reflection instead of failing the edit.
-  const tooManyTriangles = reflective.length > 0 && countTriangles(parts) > MAX_BAKE_TRIANGLES;
+  const triangleCount = reflective.length > 0 ? countTriangles(parts) : 0;
+  const tooManyTriangles = triangleCount > MAX_BAKE_TRIANGLES;
   const wanted = reflective.length > MAXIMUM_OBJECT_PROBES || tooManyOthers || tooManyTriangles ? [] : reflective;
-  const skipped = wanted.length > 0 ? null : reflective.length > MAXIMUM_OBJECT_PROBES ? `more than ${MAXIMUM_OBJECT_PROBES} reflective parts` : tooManyOthers ? `more than ${MAX_PROBE_GRID_PARTS} other parts` : tooManyTriangles ? `more than ${MAX_BAKE_TRIANGLES} triangles for the automatic object reflection probes (set environment.objectReflections to false to silence this)` : 'no reflective part';
+  const skipped = wanted.length > 0 ? null : reflective.length > MAXIMUM_OBJECT_PROBES ? `more than ${MAXIMUM_OBJECT_PROBES} reflective parts` : tooManyOthers ? `more than ${MAX_PROBE_GRID_PARTS} other parts` : tooManyTriangles ? `${triangleCount} triangles, more than the ${MAX_BAKE_TRIANGLES} the automatic object reflection probes take` : NO_REFLECTIVE_PART;
   if (wanted.length === 0 || parts.length < 2) {
     return { traced: [], automatic: true, requested: reflective.length, skipped, seconds: 0 };
   }

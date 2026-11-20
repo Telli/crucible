@@ -110,3 +110,13 @@ test('bad settings fail with the field and what to pass', () => {
   assert.throws(() => normalizeSettle({ colliders: BIN_WALLS, area: { min: [0, 0], max: [1, 1] }, count: 3, bounce: 1 }), /settle\.bounce/);
   assert.throws(() => normalizeSettle({ colliders: BIN_WALLS, instances: [{ translation: [0, 1, 0], size: [1, 1, 1] }], count: 3 }), /settle\.count/);
 });
+
+test('a floor above ten kilometres receives props like the same floor at the origin', async () => {
+  const area = { min: [-1, -1], max: [1, 1] };
+  const floorAt = height => ({ shape: 'box', translation: [0, height, 0], halfExtents: [3, 0.1, 3] });
+  const onGround = await settleProps({ colliders: [floorAt(0)], area, count: 5, seed: 4 });
+  const high = await settleProps({ colliders: [floorAt(20000)], area, count: 5, seed: 4 });
+  assert.equal(high.report.skipped.noGround, 0, 'the ground under a high floor is found');
+  assert.equal(high.instances.length, onGround.instances.length);
+  for (const instance of high.instances) assert.ok(Math.abs(instance.translation[1] - 20000.1) < 0.5, `rests on the high floor, got ${instance.translation[1]}`);
+});

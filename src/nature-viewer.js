@@ -5,6 +5,7 @@ import { CrucibleRenderer } from './renderer.js';
 import { createNatureWorld } from './nature.js';
 import { installMeshBlend } from './mesh-blend.js';
 import { createFlagAnimation } from './nature-flag.js';
+import { readQueryNumber } from './query-number.js';
 
 const renderParameters = new URLSearchParams(location.search);
 const canvas = document.querySelector('#viewport');
@@ -106,7 +107,8 @@ function initializeRenderer() {
   const parts = softening ? world.parts : world.parts.filter(part => part !== world.flag && part.name !== 'Flagpole').map(({ blend, ...part }) => part);
   renderer = new CrucibleRenderer(canvas, parts, {
     world: true, ground: false, hdr: true, depth: softening, environment: world.environment,
-    pixelRatio: renderParameters.get('export') === '1' ? 1 : 1.25, memoryBudgetMiB: Number(renderParameters.get('memory') ?? 256), samples: Number(renderParameters.get('samples') ?? 4),
+    pixelRatio: renderParameters.get('export') === '1' ? 1 : 1.25, memoryBudgetMiB: readQueryNumber(renderParameters, 'memory', 256, { minimum: 1 }),
+    samples: readQueryNumber(renderParameters, 'samples', 4, { minimum: 1, integer: true }),
   });
   if (softening) installMeshBlend(renderer);
   flagAnimation = softening ? createFlagAnimation(renderer, world.flag) : null;

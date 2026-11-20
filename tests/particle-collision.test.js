@@ -5,6 +5,7 @@ import { createAgentScene } from '../src/agent-scene.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
 import { createCollisionSurface, findFirstCollision } from '../src/particle-collision.js';
 import { PARTICLE_LIMITS, createParticleLaunches, particleStateAt } from '../src/particles.js';
+import { icoSphere } from '../src/geometry.js';
 
 // A unit box is 1 m wide; the slab is scaled to 4 m x 0.2 m x 4 m, so its top face sits at y = 0.1.
 const SLAB_TOP = 0.1;
@@ -241,4 +242,21 @@ test('the default bounce with colliders reads as debris', () => {
   const heights = traceOf(createAgentScene(dropRecipe({})), frames).map(center => center[1]);
   const rise = Math.max(...heights.slice(65, 100)) - SLAB_TOP;
   assert.ok(rise > 0 && rise < 0.3, `default bounce rebounds ${rise} m from a 1.9 m drop`);
+});
+
+test('a path through a vertex or an edge midpoint of a scaled mesh always hits it', () => {
+  const geometry = icoSphere(2);
+  const positions = Float64Array.from(geometry.positions, value => value * 0.37);
+  const surface = createCollisionSurface([{ positions, indices: geometry.indices }]);
+  const drops = [];
+  for (let vertex = 0; vertex < positions.length; vertex += 3) drops.push([positions[vertex], positions[vertex + 2]]);
+  for (let corner = 0; corner < geometry.indices.length; corner += 3) {
+    for (const [first, second] of [[0, 1], [1, 2], [2, 0]]) {
+      const start = geometry.indices[corner + first] * 3;
+      const end = geometry.indices[corner + second] * 3;
+      drops.push([(positions[start] + positions[end]) / 2, (positions[start + 2] + positions[end + 2]) / 2]);
+    }
+  }
+  const leaks = drops.filter(([x, z]) => !findFirstCollision(surface, [x, 6, z], [x, -6, z], { fraction: Infinity, normal: [0, 1, 0], onFloor: false }));
+  assert.equal(leaks.length, 0, `${leaks.length} of ${drops.length} drops fell through the mesh`);
 });
