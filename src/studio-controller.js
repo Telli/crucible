@@ -57,6 +57,21 @@ export function roundVector(values, precision = ROUND_PRECISION) {
   return Array.from(values, component => roundValue(component, precision));
 }
 
+const SCENE_LIGHT_FIELDS = Object.freeze({ point: 'pointLights', spot: 'spotLights', area: 'areaLights' });
+
+/** True when a motion has no track and nothing else that animates, so it can be dropped from the recipe. */
+function motionIsEmpty(motion) {
+  return !(
+    motion.tracks?.length ||
+    motion.ik?.length ||
+    motion.layers?.length ||
+    motion.drivers?.length ||
+    motion.constraints?.length ||
+    motion.springs ||
+    motion.drive
+  );
+}
+
 function assertPositiveFinite(value, label) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     throw new RangeError(`${label} must be a positive finite number, got ${JSON.stringify(value)}.`);
@@ -511,6 +526,7 @@ export function createStudioController({
   let selectedNodeId = currentScene.exportRecipe().nodes.find(node => node.geometry !== undefined)?.id
     ?? currentScene.exportRecipe().nodes[0]?.id
     ?? null;
+  let selectedObjectKey = null;
   let activeTool = 'translate';
   let activeTab = 'node';
   let motionTime = currentScene.motionTime ?? 0;
@@ -654,6 +670,9 @@ export function createStudioController({
     if (selectedNodeId && !recipe.nodes.some(node => node.id === selectedNodeId)) {
       selectedNodeId = recipe.nodes[0]?.id ?? null;
     }
+    if (selectedObjectKey && !lightKeysOf(recipe.environment).concat('camera', 'sun').includes(selectedObjectKey)) {
+      selectedObjectKey = null;
+    }
     if (motionTime > 0 && hasAnimatedData(recipe)) {
       const limit = recipe.motion?.duration ?? motionTime;
       motionTime = Math.max(0, Math.min(limit, motionTime));
@@ -734,6 +753,7 @@ export function createStudioController({
       }
     }
     selectedNodeId = nodeId;
+    selectedObjectKey = null;
     notify({ kind: 'selection' });
     return selectedNodeId;
   }
@@ -786,12 +806,14 @@ export function createStudioController({
     const hit = ensureQuery().raycast(ray);
     if (!hit) {
       selectedNodeId = null;
+      selectedObjectKey = null;
       notify({ kind: 'pick', hit: null });
       return null;
     }
     const recipe = currentScene.exportRecipe();
     const resolvedId = resolveRecipeNodeId(hit.id, recipe);
     selectedNodeId = resolvedId;
+    selectedObjectKey = null;
     const result = {
       id: resolvedId ?? hit.id,
       partId: hit.id,
@@ -1450,6 +1472,7 @@ export function createStudioController({
     operations.push({ type: 'add-node', node: nodeRecord });
     applySceneOperations(operations);
     selectedNodeId = nodeId;
+    selectedObjectKey = null;
     notify({ kind: 'topology', nodeId });
     return nodeRecord;
   }
@@ -1486,6 +1509,139 @@ export function createStudioController({
     throw new RangeError(`Unsupported light type "${String(lightType)}". Use point, spot or area.`);
   }
 
+  // The camera and the lights are not recipe nodes, so Studio lists them as scene objects backed by recipe.camera and recipe.environment.
+  function lightKeysOf(environment) {
+    return Object.entries(SCENE_LIGHT_FIELDS).flatMap(([lightType, field]) => (environment?.[field] ?? []).map((_, index) => `${lightType}:${index}`));
+  }
+
+  function sceneObjectKeys() {
+    return ['camera', 'sun', ...lightKeysOf(currentScene.exportRecipe().environment)];
+  }
+
+  function parseLightKey(key) {
+    const match = /^(point|spot|area):(\d+)$/.exec(String(key));
+    return match ? { lightType: match[1], index: Number(match[2]), field: SCENE_LIGHT_FIELDS[match[1]] } : null;
+  }
+
+  function assertSceneObjectKey(key) {
+    if (!sceneObjectKeys().includes(key)) {
+      throw new RangeError(`Unknown scene object "${String(key)}". Pass one of: ${sceneObjectKeys().join(', ')}.`);
+    }
+  }
+
+  /** The properties of one scene object that a motion track or driver animates. */
+  function drivenPropertiesOf(motionKind, motionId) {
+    const motion = currentScene.exportRecipe().motion;
+    const matchesTarget = target => target?.kind === motionKind && (motionId === undefined || target.id === motionId);
+    const properties = new Set();
+    for (const track of motion?.tracks ?? []) {
+      if (matchesTarget(track)) {
+        properties.add(track.property);
+      }
+    }
+    for (const driver of motion?.drivers ?? []) {
+      if (matchesTarget(driver.target)) {
+        properties.add(driver.target.property);
+      }
+    }
+    return properties;
+  }
+
+  function lightLabel(lightType, index) {
+    const name = `${lightType[0].toUpperCase()}${lightType.slice(1)} light`;
+    return index === 0 ? name : `${name} ${index + 1}`;
+  }
+
+  /** The camera, the sun and every light, in that order, read from the sampled scene so positions follow playback. */
+  function listSceneObjects() {
+    const sampledCamera = currentScene.camera;
+    const sampledEnvironment = currentScene.environment;
+    const objects = [
+      { key: 'camera', kind: 'camera', label: 'Camera', position: [...sampledCamera.eye], driven: cameraIsDriven() },
+      {
+        key: 'sun',
+        kind: 'sun',
+        label: 'Sun',
+        position: null,
+        direction: Array.from(vec3.normalize(vec3.create(), sampledEnvironment.lightDirection ?? [0, 1, 0])),
+        driven: drivenPropertiesOf('sun').size > 0,
+      },
+    ];
+    for (const [lightType, field] of Object.entries(SCENE_LIGHT_FIELDS)) {
+      (sampledEnvironment[field] ?? []).forEach((light, index) => {
+        const key = `${lightType}:${index}`;
+        objects.push({ key, kind: lightType, label: lightLabel(lightType, index), position: [...light.position], driven: drivenPropertiesOf('light', key).size > 0 });
+      });
+    }
+    return objects;
+  }
+
+  function selectSceneObject(key) {
+    assertSceneObjectKey(key);
+    selectedObjectKey = key;
+    selectedNodeId = null;
+    notify({ kind: 'selection' });
+    return selectedObjectKey;
+  }
+
+  function editableLight(key, action) {
+    const light = parseLightKey(key);
+    if (!light) {
+      throw new RangeError(`"${String(key)}" cannot be ${action}: the camera and the sun are always part of a scene. Pass a light key such as point:0, spot:0 or area:0.`);
+    }
+    assertSceneObjectKey(key);
+    return light;
+  }
+
+  /** Moves a point, spot or area light. A light whose position a motion track or driver animates is refused, since the motion would win. */
+  function moveSceneObject(key, position) {
+    const light = editableLight(key, 'moved');
+    const nextPosition = roundVector(assertFiniteVector(position, 3, 'position'));
+    if (drivenPropertiesOf('light', key).has('position')) {
+      throw new RangeError(`The ${key} light position is animated by a motion track or driver, so a move would not show. Remove that motion or edit its keyframes.`);
+    }
+    const lights = structuredClone(currentScene.exportRecipe().environment[light.field]);
+    lights[light.index].position = nextPosition;
+    updateLook({ environment: { [light.field]: lights } });
+    return nextPosition;
+  }
+
+  function lightIdAfterDelete(id, deleted) {
+    const parsed = parseLightKey(id);
+    if (!parsed || parsed.lightType !== deleted.lightType || parsed.index <= deleted.index) {
+      return id;
+    }
+    return `${parsed.lightType}:${parsed.index - 1}`;
+  }
+
+  // Lights are addressed by their index, so removing one drops its motion and renumbers the lights after it.
+  function motionAfterLightDelete(motion, key, deleted) {
+    const isDeleted = target => target?.kind === 'light' && target.id === key;
+    const renumber = target => (target?.kind === 'light' ? { ...target, id: lightIdAfterDelete(target.id, deleted) } : target);
+    const tracks = (motion.tracks ?? []).filter(track => !isDeleted(track)).map(renumber);
+    const next = { ...motion, tracks };
+    if (motion.drivers) {
+      next.drivers = motion.drivers.filter(driver => !isDeleted(driver.target)).map(driver => ({ ...driver, target: renumber(driver.target) }));
+    }
+    return next;
+  }
+
+  function deleteSceneObject(key) {
+    const light = editableLight(key, 'deleted');
+    const recipe = currentScene.exportRecipe();
+    const operations = [];
+    if (recipe.motion && (recipe.motion.tracks ?? []).concat((recipe.motion.drivers ?? []).map(driver => driver.target)).some(target => target?.kind === 'light' && parseLightKey(target.id)?.lightType === light.lightType)) {
+      const nextMotion = motionAfterLightDelete(recipe.motion, key, light);
+      operations.push({ type: 'set-motion', motion: motionIsEmpty(nextMotion) ? null : nextMotion });
+    }
+    const lights = recipe.environment[light.field].filter((_, index) => index !== light.index);
+    operations.push({ type: 'set-environment', environment: { [light.field]: lights } });
+    applySceneOperations(operations);
+    selectedObjectKey = selectedObjectKey === key || selectedObjectKey === null ? null : lightIdAfterDelete(selectedObjectKey, light);
+    notify({ kind: 'look' });
+    return key;
+  }
+
   function duplicateSelected() {
     if (!selectedNodeId) {
       throw new RangeError('Select a node before duplicating it.');
@@ -1508,6 +1664,7 @@ export function createStudioController({
     ]);
     applySceneOperations([{ type: 'add-node', node: cloned }]);
     selectedNodeId = copyId;
+    selectedObjectKey = null;
     notify({ kind: 'topology', nodeId: copyId });
     return cloned;
   }
@@ -1524,19 +1681,8 @@ export function createStudioController({
     const operations = [];
     if (recipe.motion?.tracks?.some(track => track.kind === 'node' && removed.has(track.id))) {
       const remainingTracks = recipe.motion.tracks.filter(track => !(track.kind === 'node' && removed.has(track.id)));
-      const hasOtherDrivers = Boolean(
-        recipe.motion.ik?.length ||
-        recipe.motion.layers?.length ||
-        recipe.motion.drivers?.length ||
-        recipe.motion.constraints?.length ||
-        recipe.motion.springs ||
-        recipe.motion.drive,
-      );
-      if (remainingTracks.length === 0 && !hasOtherDrivers) {
-        operations.push({ type: 'set-motion', motion: null });
-      } else {
-        operations.push({ type: 'set-motion', motion: { ...recipe.motion, tracks: remainingTracks } });
-      }
+      const nextMotion = { ...recipe.motion, tracks: remainingTracks };
+      operations.push({ type: 'set-motion', motion: motionIsEmpty(nextMotion) ? null : nextMotion });
     }
     if (recipe.environment?.lines?.nodes && Object.keys(recipe.environment.lines.nodes).some(id => removed.has(id))) {
       const nextLineNodes = Object.fromEntries(Object.entries(recipe.environment.lines.nodes).filter(([id]) => !removed.has(id)));
@@ -1936,7 +2082,12 @@ export function createStudioController({
       height = assertPositiveFinite(nextHeight, 'viewportHeight');
       notify({ kind: 'resize' });
     },
+    get selectedObjectKey() { return selectedObjectKey; },
     selectNode,
+    listSceneObjects,
+    selectSceneObject,
+    moveSceneObject,
+    deleteSceneObject,
     setTool,
     setActiveTab,
     projectWorldPoint,

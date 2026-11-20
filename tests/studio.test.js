@@ -521,6 +521,9 @@ test('every Studio tool and tab has an icon, and an unknown icon name lists the 
   for (const name of [...STUDIO_TOOLS, ...STUDIO_TABS]) {
     assert.match(studioIconPath(name), /^M[\d.]/, `${name} has no path`);
   }
+  for (const name of ['camera', 'sun', 'pointLight', 'spotLight', 'areaLight']) {
+    assert.match(studioIconPath(name), /^M[\d.]/, `${name} has no path`);
+  }
   assert.equal(new Set(Object.values(STUDIO_ICON_PATHS)).size, STUDIO_ICON_NAMES.length, 'two icons share one drawing');
   assert.throws(() => studioIconPath('rocket'), /Unknown Studio icon "rocket"\. Use one of: select, translate/);
 });
@@ -906,4 +909,147 @@ test('on a scene whose camera a motion track drives, the viewport looks around o
   assert.equal(plain.cameraDriven, false);
   assert.equal(plain.freeView, false);
   assert.deepEqual(plain.exportRecipe().camera.eye, [0, 1, 5], 'without a camera track an orbit still writes the recipe');
+});
+
+function makeLitRecipe({ withLightMotion = false } = {}) {
+  const recipe = {
+    format: 'crucible.scene',
+    schemaVersion: 1,
+    geometries: [{ id: 'g_box', type: 'box' }],
+    materials: [{ id: 'm_box', color: [0.5, 0.5, 0.5] }],
+    nodes: [{ id: 'box', geometry: 'g_box', material: 'm_box' }],
+    camera: { eye: [0, 2, 10], target: [0, 0, 0] },
+    environment: { setup: 'studio', lightDirection: [0, 2, 0] },
+  };
+  if (withLightMotion) {
+    recipe.motion = {
+      duration: 2,
+      loop: false,
+      tracks: [
+        { kind: 'light', id: 'point:0', property: 'position', interpolation: 'LINEAR', keyframes: [{ time: 0, value: [0, 3, 0] }, { time: 2, value: [4, 3, 0] }] },
+        { kind: 'light', id: 'point:1', property: 'intensity', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 1 }, { time: 2, value: 3 }] },
+      ],
+    };
+  }
+  return recipe;
+}
+
+function makeLitController(options) {
+  const controller = createStudioController({ scene: createAgentScene(makeLitRecipe()) });
+  controller.addSceneLight('point');
+  controller.addSceneLight('point');
+  controller.addSceneLight('spot');
+  controller.addSceneLight('area');
+  if (options?.withLightMotion) {
+    const recipe = controller.exportRecipe();
+    recipe.motion = makeLitRecipe(options).motion;
+    controller.loadRecipe(recipe, { recordUndo: false });
+  }
+  return controller;
+}
+
+test('scene objects list the camera, the sun and every light, and selecting one clears the node selection', () => {
+  const controller = makeLitController();
+  const objects = controller.listSceneObjects();
+  assert.deepEqual(objects.map(object => object.key), ['camera', 'sun', 'point:0', 'point:1', 'spot:0', 'area:0']);
+  assert.deepEqual(objects.map(object => object.label), ['Camera', 'Sun', 'Point light', 'Point light 2', 'Spot light', 'Area light']);
+  assert.deepEqual(objects[0].position, [0, 2, 10]);
+  assert.equal(objects[1].position, null);
+  assert.ok(Math.abs(Math.hypot(...objects[1].direction) - 1) < 1e-9, 'the sun direction is a unit vector');
+  assert.deepEqual(objects[2].position, [2.2, 3, 2.2]);
+  assert.ok(objects.every(object => object.driven === false));
+
+  const notifications = [];
+  const watched = createStudioController({ scene: createAgentScene(makeLitRecipe()), onChange: detail => notifications.push(detail) });
+  assert.equal(watched.selectedNodeId, 'box');
+  watched.selectSceneObject('sun');
+  assert.equal(watched.selectedObjectKey, 'sun');
+  assert.equal(watched.selectedNodeId, null);
+  assert.equal(notifications.at(-1).kind, 'selection');
+  watched.selectNode('box');
+  assert.equal(watched.selectedObjectKey, null);
+  assert.equal(watched.selectedNodeId, 'box');
+
+  controller.selectSceneObject('spot:0');
+  assert.equal(controller.selectedObjectKey, 'spot:0');
+  controller.pickAt(1, 1);
+  assert.equal(controller.selectedObjectKey, null, 'a click on empty sky clears the object');
+  assert.throws(() => controller.selectSceneObject('spot:5'), /Unknown scene object "spot:5"\. Pass one of: camera, sun, point:0/);
+  assert.throws(() => controller.selectSceneObject(null), RangeError);
+});
+
+test('a light moves in one undo step, and the camera, the sun and driven lights refuse to move', () => {
+  const controller = makeLitController({ withLightMotion: true });
+  const objects = controller.listSceneObjects();
+  assert.equal(objects.find(object => object.key === 'point:0').driven, true);
+  assert.equal(objects.find(object => object.key === 'point:1').driven, true);
+  assert.equal(objects.find(object => object.key === 'spot:0').driven, false);
+  assert.throws(() => controller.moveSceneObject('point:0', [1, 1, 1]), /point:0 light position is animated/);
+
+  controller.moveSceneObject('point:1', [1, 2, 3]);
+  assert.deepEqual(controller.exportRecipe().environment.pointLights[1].position, [1, 2, 3], 'an intensity track does not stop a move');
+
+  const positionBefore = controller.exportRecipe().environment.spotLights[0].position;
+  controller.beginUndoGroup();
+  controller.moveSceneObject('spot:0', [1, 1, 1]);
+  controller.moveSceneObject('spot:0', [2, 2, 2]);
+  controller.moveSceneObject('spot:0', [3, 3, 3]);
+  controller.endUndoGroup();
+  assert.deepEqual(controller.exportRecipe().environment.spotLights[0].position, [3, 3, 3]);
+  controller.undo();
+  assert.deepEqual(controller.exportRecipe().environment.spotLights[0].position, positionBefore, 'one undo reverts the whole drag');
+  controller.redo();
+  assert.deepEqual(controller.exportRecipe().environment.spotLights[0].position, [3, 3, 3]);
+
+  assert.throws(() => controller.moveSceneObject('camera', [0, 0, 0]), /"camera" cannot be moved/);
+  assert.throws(() => controller.moveSceneObject('sun', [0, 0, 0]), /"sun" cannot be moved/);
+  assert.throws(() => controller.moveSceneObject('area:3', [0, 0, 0]), /Unknown scene object/);
+  assert.throws(() => controller.moveSceneObject('area:0', [0, 0]), /position must be an array of 3 finite numbers/);
+});
+
+test('the listed position follows the sampled time of a moving light', () => {
+  const controller = makeLitController({ withLightMotion: true });
+  controller.setMotionTime(2);
+  assert.deepEqual(controller.listSceneObjects().find(object => object.key === 'point:0').position, [4, 3, 0]);
+});
+
+test('deleting a light drops its motion, renumbers the later lights and undo brings it back', () => {
+  const controller = makeLitController({ withLightMotion: true });
+  controller.selectSceneObject('point:1');
+  controller.deleteSceneObject('point:0');
+  assert.equal(controller.exportRecipe().environment.pointLights.length, 1);
+  assert.equal(controller.selectedObjectKey, 'point:0', 'the selection follows its light to the new index');
+  const tracks = controller.exportRecipe().motion.tracks;
+  assert.deepEqual(tracks.map(track => `${track.id}.${track.property}`), ['point:0.intensity']);
+
+  controller.undo();
+  assert.equal(controller.exportRecipe().environment.pointLights.length, 2);
+  assert.equal(controller.exportRecipe().motion.tracks.length, 2);
+
+  controller.selectSceneObject('area:0');
+  controller.deleteSceneObject('area:0');
+  assert.equal(controller.selectedObjectKey, null);
+  assert.deepEqual(controller.listSceneObjects().map(object => object.key), ['camera', 'sun', 'point:0', 'point:1', 'spot:0']);
+  controller.undo();
+  controller.selectSceneObject('area:0');
+  controller.redo();
+  assert.equal(controller.selectedObjectKey, null, 'redo removes the light the selection named');
+
+  assert.throws(() => controller.deleteSceneObject('camera'), /"camera" cannot be deleted/);
+  assert.throws(() => controller.deleteSceneObject('sun'), /"sun" cannot be deleted/);
+  assert.throws(() => controller.deleteSceneObject('point:9'), /Unknown scene object/);
+});
+
+test('the sun and the camera report a track that drives them', () => {
+  const recipe = makeLitRecipe();
+  recipe.motion = {
+    duration: 2,
+    loop: false,
+    tracks: [
+      { kind: 'sun', property: 'direction', interpolation: 'LINEAR', keyframes: [{ time: 0, value: [0, 1, 0] }, { time: 2, value: [1, 1, 0] }] },
+      { kind: 'camera', property: 'eye', interpolation: 'LINEAR', keyframes: [{ time: 0, value: [0, 2, 10] }, { time: 2, value: [1, 2, 10] }] },
+    ],
+  };
+  const objects = createStudioController({ scene: createAgentScene(recipe) }).listSceneObjects();
+  assert.deepEqual(objects.slice(0, 2).map(object => object.driven), [true, true]);
 });
