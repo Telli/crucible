@@ -3,19 +3,35 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAgentScene } from '../src/agent-scene.js';
 import { createStudioController } from '../src/studio.js';
-import { PROPERTY_FIELDS, motionPropertyOf, propertyFieldsFor, propertyIsVisible, propertySectionsFor } from '../src/studio-properties.js';
+import { parseRadianceHdr } from '../src/hdri.js';
+import { registerCatalogEnvironment } from '../src/look-catalog.js';
+import { tinyHdrBytes } from './helpers/tiny-hdr.js';
+import { PROPERTY_FIELDS, PROPERTY_SECTIONS_CLOSED_BY_DEFAULT, motionPropertyOf, propertyFieldsFor, propertyIsVisible, propertySectionsFor } from '../src/studio-properties.js';
 
 const EXPECTED_FIELDS = {
   point: ['color', 'intensity', 'radius', 'range', 'castShadow', 'softFalloff', 'position'],
   spot: ['color', 'intensity', 'radius', 'range', 'angle', 'penumbra', 'castShadow', 'softFalloff', 'position', 'direction'],
   area: ['color', 'intensity', 'width', 'height', 'castShadow', 'portal', 'position', 'direction'],
   sun: ['direction', 'keyIntensity', 'keyColor', 'sunAngularRadius'],
+  world: [
+    'hdri', 'world', 'ground', 'environmentIntensity', 'environmentRotation', 'skyTop', 'skyBottom', 'daylight', 'fillIntensity', 'ambientIntensity',
+    'fogDensity', 'fogColor', 'volumeFog.density', 'volumeFog.color', 'volumeFog.anisotropy', 'volumeFog.steps', 'volumeFog.noiseAmount', 'volumeFog.noiseScale', 'volumeFog.maxDistance',
+  ],
+  quality: ['objectReflections', 'floorSkyTrace', 'resolveCoplanar', 'shadowCascades', 'sunBounce', 'specularAntiAliasing'],
+  effects: [
+    'exposure', 'contrast', 'saturation', 'temperature', 'vignette', 'grain', 'ambientOcclusion', 'ambientOcclusionRadius',
+    'bloom.strength', 'bloom.threshold', 'bloom.radius', 'depthOfField.blur', 'depthOfField.focusDistance', 'motionBlur.shutter', 'motionBlur.objects',
+  ],
+  shadow: ['target', 'extent', 'distance', 'near', 'far'],
   camera: ['projection', 'focalLength', 'sensorWidth', 'fov', 'orthoScale', 'near', 'far', 'shift', 'fStop', 'focusDistance', 'eye', 'target'],
 };
 
 const CONTEXT = { aspect: 16 / 9 };
 
-function makeRecipe({ motion } = {}) {
+registerCatalogEnvironment('sky-clouds', parseRadianceHdr(tinyHdrBytes()));
+registerCatalogEnvironment('studio-softbox', parseRadianceHdr(tinyHdrBytes()));
+
+function makeRecipe({ motion, effects } = {}) {
   const recipe = {
     format: 'crucible.scene',
     schemaVersion: 1,
@@ -31,6 +47,9 @@ function makeRecipe({ motion } = {}) {
       areaLights: [{ position: [0, 3.2, 0], direction: [0, -1, 0], width: 2, height: 2, color: [1, 0.96, 0.9], intensity: 4 }],
     },
   };
+  if (effects) {
+    recipe.effects = effects;
+  }
   if (motion) {
     recipe.motion = motion;
   }
@@ -81,7 +100,7 @@ test('the property table has a row for every light, sun and camera field a perso
     }
   }
   for (const field of PROPERTY_FIELDS) {
-    assert.ok(['number', 'slider', 'colour', 'toggle', 'vector', 'sunpad'].includes(field.control), `${field.id} control ${field.control}`);
+    assert.ok(['select', 'number', 'slider', 'colour', 'toggle', 'vector', 'sunpad'].includes(field.control), `${field.id} control ${field.control}`);
     assert.ok(field.label.length > 0 && field.label.length <= 20, `${field.id} label is short`);
     if (field.control === 'number' || field.control === 'slider') {
       assert.ok(field.min < field.max && field.step > 0, `${field.id} range`);
@@ -89,6 +108,117 @@ test('the property table has a row for every light, sun and camera field a perso
   }
   assert.deepEqual(propertySectionsFor('spot').map(section => section.title), ['Light', 'Shape', 'Shadows', 'Transform']);
   assert.deepEqual(propertySectionsFor('camera').map(section => section.title), ['Lens', 'Depth of field', 'Transform']);
+  assert.deepEqual(propertySectionsFor('world').map(section => section.title), ['World', 'Fog']);
+  assert.deepEqual(propertySectionsFor('effects').map(section => section.title), ['Film', 'Effects']);
+  assert.deepEqual(propertySectionsFor('quality').map(section => section.title), ['Quality']);
+  assert.deepEqual(propertySectionsFor('shadow').map(section => section.title), ['Shadows']);
+  assert.deepEqual([...PROPERTY_SECTIONS_CLOSED_BY_DEFAULT], ['sceneShadow', 'quality']);
+});
+
+const SCENE_SAMPLE_VALUES = {
+  hdri: 'sky-clouds', world: true, ground: false, environmentIntensity: 2, environmentRotation: 1.5, skyTop: [0.2, 0.3, 0.4], skyBottom: [0.5, 0.4, 0.3],
+  daylight: 0.5, fillIntensity: 0.7, ambientIntensity: 0.6, fogDensity: 0.03, fogColor: [0.1, 0.2, 0.3],
+  'volumeFog.density': 0.4, 'volumeFog.color': [0.5, 0.5, 0.6], 'volumeFog.anisotropy': 0.5, 'volumeFog.steps': 24,
+  'volumeFog.noiseAmount': 0.8, 'volumeFog.noiseScale': 0.7, 'volumeFog.maxDistance': 50,
+  objectReflections: false, floorSkyTrace: false, resolveCoplanar: false, shadowCascades: 3, sunBounce: 2, specularAntiAliasing: 2,
+  exposure: 1.5, contrast: 1.2, saturation: 0.7, temperature: 0.2, vignette: 0.3, grain: 0.05, ambientOcclusion: 0.5, ambientOcclusionRadius: 2,
+  'bloom.strength': 0.8, 'bloom.threshold': 2, 'bloom.radius': 2, 'depthOfField.blur': 0.4, 'depthOfField.focusDistance': 7,
+  'motionBlur.shutter': 0.3, 'motionBlur.objects': 0.5,
+  target: [1, 2, 3], extent: 6, distance: 10, near: 0.5, far: 30,
+};
+
+function writeSceneRecord(controller, kind, patch) {
+  if (kind === 'effects') {
+    controller.updateLook({ effects: patch });
+  } else if (kind === 'shadow') {
+    controller.updateSceneShadow(patch);
+  } else {
+    controller.updateLook({ environment: patch });
+  }
+}
+
+test('every world, quality, effects and shadow row writes its recipe field in one undo step and reads it back', () => {
+  const controller = makeController();
+  for (const kind of ['world', 'quality', 'effects', 'shadow']) {
+    for (const field of propertyFieldsFor(kind)) {
+      assert.ok(Object.hasOwn(SCENE_SAMPLE_VALUES, field.id), `${kind} ${field.id} has a sample value`);
+      const before = controller.exportRecipe();
+      const description = controller.describeSceneObject(kind);
+      assert.equal(description.kind, kind);
+      writeSceneRecord(controller, kind, field.write(SCENE_SAMPLE_VALUES[field.id], description.source, CONTEXT));
+      assert.deepEqual(field.read(controller.describeSceneObject(kind).source, CONTEXT), SCENE_SAMPLE_VALUES[field.id], `${kind} ${field.id}`);
+      assert.equal(controller.undo(), true);
+      assert.deepEqual(controller.exportRecipe(), before, `${kind} ${field.id} is one undo step`);
+    }
+  }
+});
+
+test('the depth of field rows keep the other fields of their group', () => {
+  const controller = makeController();
+  controller.updateLook({ effects: { depthOfField: { blur: 0.5, focusDistance: 9 } } });
+  const blurRow = propertyFieldsFor('effects').find(field => field.id === 'depthOfField.blur');
+  controller.updateLook({ effects: blurRow.write(0.2, controller.describeSceneObject('effects').source, CONTEXT) });
+  assert.deepEqual(controller.exportRecipe().effects.depthOfField, { blur: 0.2, focusDistance: 9 });
+});
+
+test('the HDRI row clears the choice with None and offers the bundled names', () => {
+  const controller = makeController();
+  const hdriRow = propertyFieldsFor('world').find(field => field.id === 'hdri');
+  assert.deepEqual(hdriRow.choices.map(choice => choice.value), [null, 'sky-clouds', 'studio-softbox']);
+  controller.updateLook({ environment: hdriRow.write('studio-softbox') });
+  assert.equal(hdriRow.read(controller.describeSceneObject('world').source), 'studio-softbox');
+  controller.updateLook({ environment: hdriRow.write(null) });
+  assert.equal(hdriRow.read(controller.describeSceneObject('world').source), null);
+  const catalogId = 'a'.repeat(64);
+  registerCatalogEnvironment(catalogId, parseRadianceHdr(tinyHdrBytes()));
+  controller.updateLook({ environment: hdriRow.write(catalogId) });
+  assert.equal(hdriRow.read(controller.describeSceneObject('world').source), catalogId, 'a catalog file the list lacks is still read');
+});
+
+test('a shadow box the renderer cannot use is refused and leaves the recipe alone', () => {
+  const controller = makeController();
+  const before = controller.exportRecipe();
+  assert.throws(() => controller.updateSceneShadow({ near: 50, far: 10 }), /near/i);
+  assert.throws(() => controller.updateSceneShadow('wide'), /patch object/);
+  assert.deepEqual(controller.exportRecipe(), before);
+  assert.equal(controller.canUndo, false);
+});
+
+test('fields an environment or effects track drives are reported per panel', () => {
+  const controller = makeController({
+    effects: { depthOfField: { blur: 0.5, focusDistance: 5 } },
+    motion: {
+      duration: 2,
+      loop: false,
+      tracks: [
+        { kind: 'environment', property: 'fogDensity', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 0 }, { time: 2, value: 0.05 }] },
+        { kind: 'environment', property: 'volumeFogDensity', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 0 }, { time: 2, value: 0.5 }] },
+        { kind: 'environment', property: 'skyTop', interpolation: 'LINEAR', keyframes: [{ time: 0, value: [0.1, 0.2, 0.3] }, { time: 2, value: [0.3, 0.2, 0.1] }] },
+        { kind: 'effects', property: 'exposure', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 1 }, { time: 2, value: 2 }] },
+        { kind: 'effects', property: 'focusDistance', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 2 }, { time: 2, value: 8 }] },
+      ],
+    },
+  });
+  const drivenIds = kind => propertyFieldsFor(kind)
+    .filter(field => controller.describeSceneObject(kind).drivenProperties.has(motionPropertyOf(field)))
+    .map(field => field.id);
+  assert.deepEqual(drivenIds('world'), ['skyTop', 'fogDensity', 'volumeFog.density']);
+  assert.deepEqual(drivenIds('effects'), ['exposure', 'depthOfField.focusDistance']);
+  assert.deepEqual(drivenIds('quality'), []);
+  assert.deepEqual(drivenIds('shadow'), []);
+});
+
+test('an outside change to the environment, effects or shadow shows in what the rows read', () => {
+  const controller = makeController();
+  const outsideRecipe = controller.exportRecipe();
+  outsideRecipe.environment.fogDensity = 0.07;
+  outsideRecipe.effects.vignette = 0.4;
+  outsideRecipe.shadow.extent = 9;
+  controller.loadRecipe(outsideRecipe);
+  const read = (kind, id) => propertyFieldsFor(kind).find(field => field.id === id).read(controller.describeSceneObject(kind).source, CONTEXT);
+  assert.equal(read('world', 'fogDensity'), 0.07);
+  assert.equal(read('effects', 'vignette'), 0.4);
+  assert.equal(read('shadow', 'extent'), 9);
 });
 
 test('every light row writes its field in one undo step and reads it back', () => {

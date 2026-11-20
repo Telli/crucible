@@ -1088,12 +1088,32 @@ export const STUDIO_CSS = `
   gap: 10px;
 }
 .crucible-studio-property-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  inline-size: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
   font-family: var(--studio-font-heading);
   font-size: 12px;
   font-weight: 600;
   color: var(--studio-text);
+  text-align: start;
+  cursor: pointer;
+  user-select: none;
 }
-.crucible-studio-properties [hidden] { display: none; }
+.crucible-studio-property-title .crucible-studio-icon {
+  inline-size: 14px;
+  block-size: 14px;
+  transition: transform 120ms ease-out;
+}
+.crucible-studio-property-section[data-open="true"] .crucible-studio-property-title .crucible-studio-icon { transform: rotate(90deg); }
+.crucible-studio-property-rows {
+  display: grid;
+  gap: 10px;
+}
+.crucible-studio-properties[hidden], .crucible-studio-properties [hidden] { display: none; }
 .crucible-studio-vector[data-axes="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .crucible-studio-driven-mark {
   display: inline-flex;

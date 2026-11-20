@@ -20,6 +20,7 @@ export const STUDIO_ICON_PATHS = Object.freeze({
   panels: 'M3 5h18v14H3zM9 5v14M5.5 9h1M5.5 12h1',
   minimize: 'M6 15l6-6 6 6',
   expand: 'M6 9l6 6 6-6',
+  chevron: 'M9 6l6 6-6 6',
   grid: 'M4 4h16v16H4zM9.33 4v16M14.67 4v16M4 9.33h16M4 14.67h16',
   link: 'M9.5 14.5l5-5M11 6.5l1.2-1.2a4.2 4.2 0 0 1 6 6L17 12.5M13 17.5l-1.2 1.2a4.2 4.2 0 0 1-6-6L7 11.5',
   settings: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4',

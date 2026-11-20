@@ -1,5 +1,7 @@
 import { cameraFieldOfView } from './camera.js';
 import { DEFAULT_SUN_ANGULAR_RADIUS } from './environment-shading.js';
+import { BUNDLED_ENVIRONMENT_NAMES } from './look-catalog.js';
+import { DEFAULT_SPECULAR_ANTI_ALIASING, MAXIMUM_SPECULAR_ANTI_ALIASING } from './lighting.js';
 
 // The properties of the camera, the sun and the lights that Studio lets a person edit, as one declarative table.
 // Studio draws its property panels from these rows, so a later area (world, effects) adds rows and no panel code.
@@ -31,7 +33,21 @@ export const PROPERTY_SECTIONS = Object.freeze({
   lens: 'Lens',
   depthOfField: 'Depth of field',
   sun: 'Sun',
+  world: 'World',
+  atmosphere: 'Fog',
+  film: 'Film',
+  effects: 'Effects',
+  sceneShadow: 'Shadows',
+  quality: 'Quality',
 });
+
+/** The groups a panel draws folded until a person opens them; every other group starts open. */
+export const PROPERTY_SECTIONS_CLOSED_BY_DEFAULT = Object.freeze(['sceneShadow', 'quality']);
+
+// The scene-level kinds read one record of the recipe: the environment (world, quality), the effects or the shadow.
+export const PROPERTY_SCENE_KINDS = Object.freeze(['world', 'quality', 'effects', 'shadow']);
+const DEFAULT_SUN_BOUNCE = 1;
+const HDRI_CHOICES = Object.freeze([{ value: null, label: 'None' }, ...BUNDLED_ENVIRONMENT_NAMES.map(name => ({ value: name, label: name }))]);
 
 function isPerspective(camera) {
   return camera.projection !== 'orthographic';
@@ -218,7 +234,115 @@ const CAMERA_ROWS = [
   },
 ];
 
-export const PROPERTY_FIELDS = Object.freeze([...CAMERA_ROWS, ...SUN_ROWS, ...LIGHT_ROWS].map(row => Object.freeze(row)));
+// A row of the environment (kind world or quality): `field` is the environment field it reads and writes.
+function environmentRow(field, label, control, kind, section, extra = {}) {
+  return { id: field, label, control, section, appliesTo: [kind], write: value => ({ [field]: value }), ...extra };
+}
+
+function volumeFogRow(field, label, control, extra = {}) {
+  return {
+    id: `volumeFog.${field}`, label, control, section: 'atmosphere', appliesTo: ['world'],
+    write: value => ({ volumeFog: { [field]: value } }),
+    ...extra,
+  };
+}
+
+function volumeFogOf(environment) {
+  return environment.volumeFog ?? {};
+}
+
+const WORLD_ROWS = [
+  environmentRow('hdri', 'HDRI', 'select', 'world', 'world', {
+    choices: HDRI_CHOICES, read: environment => environment.hdri ?? null, preparation: value => ({ environment: { hdri: value } }),
+  }),
+  environmentRow('world', 'Show sky', 'toggle', 'world', 'world', { read: environment => environment.world === true }),
+  environmentRow('ground', 'Ground', 'toggle', 'world', 'world', { read: environment => environment.ground !== false }),
+  environmentRow('environmentIntensity', 'HDRI strength', 'number', 'world', 'world', {
+    min: 0, max: 100, step: 0.05, read: environment => environment.environmentIntensity ?? 1,
+  }),
+  environmentRow('environmentRotation', 'HDRI rotation', 'number', 'world', 'world', {
+    min: -100, max: 100, step: 0.05, read: environment => environment.environmentRotation ?? 0,
+  }),
+  environmentRow('skyTop', 'Sky top', 'colour', 'world', 'world', { read: environment => environment.skyTop ?? DEFAULT_LIGHT_COLOR }),
+  environmentRow('skyBottom', 'Sky bottom', 'colour', 'world', 'world', { read: environment => environment.skyBottom ?? DEFAULT_LIGHT_COLOR }),
+  environmentRow('daylight', 'Daylight', 'number', 'world', 'world', { min: 0, max: 100, step: 0.05, read: environment => environment.daylight ?? 1 }),
+  environmentRow('fillIntensity', 'Fill strength', 'number', 'world', 'world', { min: 0, max: 100, step: 0.05, read: environment => environment.fillIntensity ?? 0 }),
+  environmentRow('ambientIntensity', 'Ambient strength', 'number', 'world', 'world', { min: 0, max: 100, step: 0.05, read: environment => environment.ambientIntensity ?? 0 }),
+  environmentRow('fogDensity', 'Fog', 'slider', 'world', 'atmosphere', { min: 0, max: 0.1, step: 0.002, read: environment => environment.fogDensity ?? 0 }),
+  environmentRow('fogColor', 'Fog color', 'colour', 'world', 'atmosphere', { read: environment => environment.fogColor ?? DEFAULT_LIGHT_COLOR }),
+  volumeFogRow('density', 'Volume density', 'number', {
+    min: 0, max: 10, step: 0.01, motionProperty: 'volumeFogDensity', read: environment => volumeFogOf(environment).density ?? 0,
+  }),
+  volumeFogRow('color', 'Volume color', 'colour', { read: environment => volumeFogOf(environment).color ?? DEFAULT_LIGHT_COLOR }),
+  volumeFogRow('anisotropy', 'Anisotropy', 'slider', { min: -0.9, max: 0.9, step: 0.05, read: environment => volumeFogOf(environment).anisotropy ?? 0.3 }),
+  volumeFogRow('steps', 'Volume steps', 'number', { min: 8, max: 48, step: 1, read: environment => volumeFogOf(environment).steps ?? 16 }),
+  volumeFogRow('noiseAmount', 'Noise amount', 'slider', { min: 0, max: 1, step: 0.05, read: environment => volumeFogOf(environment).noiseAmount ?? 0.5 }),
+  volumeFogRow('noiseScale', 'Noise scale', 'number', { min: 0.001, max: 100, step: 0.05, read: environment => volumeFogOf(environment).noiseScale ?? 0.3 }),
+  volumeFogRow('maxDistance', 'Volume distance', 'number', { min: 0.01, max: 1e4, step: 1, read: environment => volumeFogOf(environment).maxDistance ?? 100 }),
+];
+
+const QUALITY_ROWS = [
+  environmentRow('objectReflections', 'Object reflections', 'toggle', 'quality', 'quality', { read: environment => environment.objectReflections !== false }),
+  environmentRow('floorSkyTrace', 'Floor sky trace', 'toggle', 'quality', 'quality', { read: environment => environment.floorSkyTrace !== false }),
+  environmentRow('resolveCoplanar', 'Resolve coplanar', 'toggle', 'quality', 'quality', {
+    read: environment => environment.resolveCoplanar !== false,
+    write: value => ({ resolveCoplanar: value ? 'offset' : false }),
+  }),
+  environmentRow('shadowCascades', 'Shadow cascades', 'number', 'quality', 'quality', { min: 0, max: 4, step: 1, read: environment => environment.shadowCascades ?? 0 }),
+  environmentRow('sunBounce', 'Sun bounce', 'number', 'quality', 'quality', { min: 0, max: 100, step: 0.1, read: environment => environment.sunBounce ?? DEFAULT_SUN_BOUNCE }),
+  environmentRow('specularAntiAliasing', 'Specular AA', 'number', 'quality', 'quality', {
+    min: 0, max: MAXIMUM_SPECULAR_ANTI_ALIASING, step: 0.1, read: environment => environment.specularAntiAliasing ?? DEFAULT_SPECULAR_ANTI_ALIASING,
+  }),
+];
+
+function effectRow(field, label, control, section, extra = {}) {
+  return { id: field, label, control, section, appliesTo: ['effects'], write: value => ({ [field]: value }), ...extra };
+}
+
+// A patch replaces the depth of field and motion blur groups whole, so their rows write the group with the one field changed.
+function effectGroupRow(group, field, label, control, extra = {}) {
+  return {
+    id: `${group}.${field}`, label, control, section: 'effects', appliesTo: ['effects'],
+    write: (value, effects) => ({ [group]: { ...effects[group], [field]: value } }),
+    ...extra,
+  };
+}
+
+const EFFECT_ROWS = [
+  effectRow('exposure', 'Exposure', 'slider', 'film', { min: 0.2, max: 3, step: 0.05, read: effects => effects.exposure ?? 1 }),
+  effectRow('contrast', 'Contrast', 'slider', 'film', { min: 0.4, max: 1.8, step: 0.02, read: effects => effects.contrast ?? 1 }),
+  effectRow('saturation', 'Saturation', 'slider', 'film', { min: 0, max: 2, step: 0.02, read: effects => effects.saturation ?? 1 }),
+  effectRow('temperature', 'Temperature', 'slider', 'film', { min: -1, max: 1, step: 0.01, read: effects => effects.temperature ?? 0 }),
+  effectRow('vignette', 'Vignette', 'slider', 'film', { min: 0, max: 1, step: 0.01, read: effects => effects.vignette ?? 0 }),
+  effectRow('grain', 'Grain', 'slider', 'film', { min: 0, max: 0.1, step: 0.002, read: effects => effects.grain ?? 0 }),
+  effectRow('ambientOcclusion', 'Ambient occlusion', 'slider', 'effects', { min: 0, max: 1, step: 0.02, read: effects => effects.ambientOcclusion ?? 0 }),
+  effectRow('ambientOcclusionRadius', 'AO radius', 'number', 'effects', { min: 0.01, max: 100, step: 0.05, read: effects => effects.ambientOcclusionRadius ?? 0.5 }),
+  effectGroupRow('bloom', 'strength', 'Bloom', 'slider', { min: 0, max: 2, step: 0.02, read: effects => effects.bloom?.strength ?? 0 }),
+  effectGroupRow('bloom', 'threshold', 'Bloom threshold', 'number', { min: 0, max: 10, step: 0.05, read: effects => effects.bloom?.threshold ?? 1 }),
+  effectGroupRow('bloom', 'radius', 'Bloom radius', 'number', { min: 0.1, max: 4, step: 0.05, read: effects => effects.bloom?.radius ?? 1 }),
+  effectGroupRow('depthOfField', 'blur', 'DoF blur', 'slider', { min: 0, max: 1, step: 0.02, read: effects => effects.depthOfField?.blur ?? 0 }),
+  effectGroupRow('depthOfField', 'focusDistance', 'DoF focus', 'number', {
+    min: 0.01, max: 1e5, step: 0.1, motionProperty: 'focusDistance', read: effects => effects.depthOfField?.focusDistance ?? 5,
+  }),
+  effectGroupRow('motionBlur', 'shutter', 'Shutter', 'slider', { min: 0, max: 0.5, step: 0.01, read: effects => effects.motionBlur?.shutter ?? 0 }),
+  effectGroupRow('motionBlur', 'objects', 'Object blur', 'slider', { min: 0, max: 1, step: 0.02, read: effects => effects.motionBlur?.objects ?? 0 }),
+];
+
+function shadowRow(field, label, control, extra = {}) {
+  return { id: field, label, control, section: 'sceneShadow', appliesTo: ['shadow'], write: value => ({ [field]: value }), ...extra };
+}
+
+const SHADOW_ROWS = [
+  shadowRow('target', 'Shadow target', 'vector', { min: -POSITION_LIMIT, max: POSITION_LIMIT, step: 0.05, read: shadow => shadow.target ?? [0, 1, 0] }),
+  shadowRow('extent', 'Shadow extent', 'number', { min: 0.01, max: 1e5, step: 0.1, read: shadow => shadow.extent ?? 3.5 }),
+  shadowRow('distance', 'Shadow distance', 'number', { min: 0.01, max: 1e6, step: 0.1, read: shadow => shadow.distance ?? 8 }),
+  shadowRow('near', 'Shadow clip start', 'number', { min: 0.001, max: 1e6, step: 0.01, read: shadow => shadow.near ?? 0.1 }),
+  shadowRow('far', 'Shadow clip end', 'number', { min: 0.001, max: 1e6, step: 0.5, read: shadow => shadow.far ?? 15 }),
+];
+
+export const PROPERTY_FIELDS = Object.freeze([
+  ...CAMERA_ROWS, ...SUN_ROWS, ...LIGHT_ROWS, ...WORLD_ROWS, ...EFFECT_ROWS, ...QUALITY_ROWS, ...SHADOW_ROWS,
+].map(row => Object.freeze(row)));
 
 /** The rows that apply to one kind of scene object, in the order the panel shows them. */
 export function propertyFieldsFor(kind) {
@@ -232,7 +356,7 @@ export function propertySectionsFor(kind) {
     const title = PROPERTY_SECTIONS[field.section];
     let section = sections.find(candidate => candidate.title === title);
     if (!section) {
-      section = { title, fields: [] };
+      section = { id: field.section, title, fields: [] };
       sections.push(section);
     }
     section.fields.push(field);

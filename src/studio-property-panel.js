@@ -1,5 +1,5 @@
 import { directionToSunAngles, hexToLinearRgb, linearRgbToHex, roundValue } from './studio-controller.js';
-import { motionPropertyOf, propertyIsVisible, propertySectionsFor } from './studio-properties.js';
+import { motionPropertyOf, PROPERTY_SECTIONS_CLOSED_BY_DEFAULT, propertyIsVisible, propertySectionsFor } from './studio-properties.js';
 
 const DISPLAY_PRECISION = 10000;
 const DRIVEN_LABEL = 'Animated by a motion track';
@@ -8,8 +8,10 @@ const DRIVEN_LABEL = 'Animated by a motion track';
  * Draws the property rows of one scene object from the table in studio-properties.js and keeps them in step with the recipe.
  * The panel shows whatever object `resolveKey` names; `sync` re-reads the recipe, so an edit an agent makes shows up there.
  * `builders` are the control builders of studio.js, handed in so both draw the same controls.
+ * `groups` ({ isOpen(id, openByDefault), setOpen(id, open) }) remembers which section titles a person folded.
+ * `prepareRecipe` loads what a choice needs before it is written (the file of an HDRI), for a row that names a `preparation`.
  */
-export function createPropertyPanel({ documentReference, controller, announce, builders, resolveKey }) {
+export function createPropertyPanel({ documentReference, controller, announce, builders, resolveKey, groups, prepareRecipe }) {
   const { createElement, createIcon, createSliderField, createVectorRow, createSunPad } = builders;
   const element = createElement(documentReference, 'div', { className: 'crucible-studio-properties' });
   let shownKind = null;
@@ -19,25 +21,42 @@ export function createPropertyPanel({ documentReference, controller, announce, b
     return { aspect: controller.viewportWidth / controller.viewportHeight };
   }
 
+  // Where the patch of each kind goes; every other kind is a light.
+  const PATCH_WRITERS = {
+    camera: (key, patch) => controller.updateSceneCamera(patch),
+    sun: (key, patch) => controller.updateLook({ environment: patch }),
+    world: (key, patch) => controller.updateLook({ environment: patch }),
+    quality: (key, patch) => controller.updateLook({ environment: patch }),
+    effects: (key, patch) => controller.updateLook({ effects: patch }),
+    shadow: (key, patch) => controller.updateSceneShadow(patch),
+  };
+
   function writePatch(key, kind, patch) {
-    if (kind === 'camera') {
-      controller.updateSceneCamera(patch);
-    } else if (kind === 'sun') {
-      controller.updateLook({ environment: patch });
-    } else {
-      controller.updateSceneLight(key, patch);
-    }
+    const write = PATCH_WRITERS[kind] ?? ((lightKey, lightPatch) => controller.updateSceneLight(lightKey, lightPatch));
+    write(key, patch);
+  }
+
+  function reportRefusal(error) {
+    announce(error.message);
+    sync();
+  }
+
+  function writeField(field, value) {
+    const key = resolveKey();
+    const description = controller.describeSceneObject(key);
+    writePatch(key, description.kind, field.write(value, description.source, currentContext()));
   }
 
   // An edit the recipe refuses (a far plane behind the near one) is told to the person and the controls go back to the recipe.
   function commit(field, value) {
-    const key = resolveKey();
+    if (field.preparation && value !== null && prepareRecipe) {
+      prepareRecipe(field.preparation(value)).then(() => writeField(field, value)).catch(reportRefusal);
+      return;
+    }
     try {
-      const description = controller.describeSceneObject(key);
-      writePatch(key, description.kind, field.write(value, description.source, currentContext()));
+      writeField(field, value);
     } catch (error) {
-      announce(error.message);
-      sync();
+      reportRefusal(error);
     }
   }
 
@@ -130,6 +149,31 @@ export function createPropertyPanel({ documentReference, controller, announce, b
     return { container: row.container, setValue: row.setValues, setDisabled: row.setDisabled };
   }
 
+  // A choice from a short list. A value the list lacks (a catalog file the scene names) shows as a read-only current choice.
+  function selectControl(field) {
+    const select = createElement(documentReference, 'select', { attributes: { 'aria-label': field.label } });
+    const optionValue = value => (value === null ? '' : value);
+    select.append(...field.choices.map(choice => createElement(documentReference, 'option', { value: optionValue(choice.value), textContent: choice.label })));
+    select.addEventListener('change', () => commit(field, select.value === '' ? null : select.value));
+    let unlistedOption = null;
+    const container = createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'div', { className: 'crucible-studio-field-head' }, createElement(documentReference, 'span', { textContent: field.label })), select);
+    return {
+      container,
+      setValue: value => {
+        unlistedOption?.remove();
+        unlistedOption = null;
+        if (value !== null && !field.choices.some(choice => choice.value === value)) {
+          unlistedOption = createElement(documentReference, 'option', { value, textContent: `${value.slice(0, 8)}…`, disabled: true });
+          select.append(unlistedOption);
+        }
+        select.value = optionValue(value);
+      },
+      setDisabled: disabled => {
+        select.disabled = disabled;
+      },
+    };
+  }
+
   function sunPadControl(field) {
     const pad = createSunPad(documentReference, angles => controller.setSunAngles(angles), {
       onDragStart: () => controller.beginUndoGroup(),
@@ -146,7 +190,7 @@ export function createPropertyPanel({ documentReference, controller, announce, b
     };
   }
 
-  const CONTROL_BUILDERS = { number: numberControl, slider: sliderControl, colour: colourControl, toggle: toggleControl, vector: vectorControl, sunpad: sunPadControl };
+  const CONTROL_BUILDERS = { select: selectControl, number: numberControl, slider: sliderControl, colour: colourControl, toggle: toggleControl, vector: vectorControl, sunpad: sunPadControl };
 
   function buildRow(field) {
     const control = CONTROL_BUILDERS[field.control](field);
@@ -159,17 +203,33 @@ export function createPropertyPanel({ documentReference, controller, announce, b
   function rebuild(kind) {
     shownKind = kind;
     controls = new Map();
-    element.replaceChildren(...propertySectionsFor(kind).map(section => createElement(
-      documentReference,
-      'div',
-      { className: 'crucible-studio-property-section' },
-      createElement(documentReference, 'span', { className: 'crucible-studio-property-title', textContent: section.title }),
-      ...section.fields.map(field => {
-        const row = buildRow(field);
-        controls.set(field.id, { field, ...row });
-        return row.container;
-      }),
-    )));
+    element.replaceChildren(...propertySectionsFor(kind).map(buildSection));
+  }
+
+  function buildSection(section) {
+    const rows = createElement(documentReference, 'div', { className: 'crucible-studio-property-rows' }, ...section.fields.map(field => {
+      const row = buildRow(field);
+      controls.set(field.id, { field, ...row });
+      return row.container;
+    }));
+    const title = createElement(documentReference, 'button', {
+      type: 'button',
+      className: 'crucible-studio-property-title',
+      attributes: { 'aria-expanded': 'true' },
+    }, createIcon(documentReference, 'chevron'), createElement(documentReference, 'span', { textContent: section.title }));
+    const container = createElement(documentReference, 'div', { className: 'crucible-studio-property-section', dataset: { section: section.id } }, title, rows);
+    const showOpen = open => {
+      container.dataset.open = open ? 'true' : 'false';
+      title.setAttribute('aria-expanded', open ? 'true' : 'false');
+      rows.hidden = !open;
+    };
+    showOpen(groups.isOpen(section.id, !PROPERTY_SECTIONS_CLOSED_BY_DEFAULT.includes(section.id)));
+    title.addEventListener('click', () => {
+      const open = container.dataset.open !== 'true';
+      groups.setOpen(section.id, open);
+      showOpen(open);
+    });
+    return container;
   }
 
   function sync() {

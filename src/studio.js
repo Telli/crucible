@@ -1783,16 +1783,20 @@ export function createStudio(container, {
   });
   // The light the selection names, or the sun when no light is selected; the camera has its own panel in the Camera tab.
   const propertyBuilders = { createElement, createIcon, createSliderField, createVectorRow, createSunPad };
-  const lightPanel = createPropertyPanel({
-    documentReference,
-    controller,
-    announce,
-    builders: propertyBuilders,
-    resolveKey: () => (/^(point|spot|area):/u.test(controller.selectedObjectKey ?? '') ? controller.selectedObjectKey : 'sun'),
-  });
-  const exposureField = createSliderField(documentReference, 'Exposure', { min: 0.2, max: 3, step: 0.05, value: 1 }, value => controller.updateLook({ effects: { exposure: value } }));
-  const contrastField = createSliderField(documentReference, 'Contrast', { min: 0.4, max: 1.8, step: 0.02, value: 1 }, value => controller.updateLook({ effects: { contrast: value } }));
-  const saturationField = createSliderField(documentReference, 'Saturation', { min: 0, max: 2, step: 0.02, value: 1 }, value => controller.updateLook({ effects: { saturation: value } }));
+  // Which property groups are folded is a preference of the person, kept with the others and shared by every panel.
+  const propertyGroups = {
+    isOpen: (groupId, openByDefault) => preferences.propertyGroupsOpen[groupId] ?? openByDefault,
+    setOpen: (groupId, open) => setPreference('propertyGroupsOpen', { ...preferences.propertyGroupsOpen, [groupId]: open }),
+  };
+  const createLookPanel = resolveKey => createPropertyPanel({ documentReference, controller, announce, builders: propertyBuilders, resolveKey, groups: propertyGroups, prepareRecipe });
+  const selectedLightKey = () => (/^(point|spot|area):/u.test(controller.selectedObjectKey ?? '') ? controller.selectedObjectKey : null);
+  const lightPanel = createLookPanel(() => selectedLightKey() ?? 'sun');
+  const worldPanel = createLookPanel(() => 'world');
+  const effectsPanel = createLookPanel(() => 'effects');
+  const shadowPanel = createLookPanel(() => 'shadow');
+  const qualityPanel = createLookPanel(() => 'quality');
+  // The world, shadow and quality groups describe the whole scene, so a selected light's panel takes the tab alone.
+  const scenePanels = [worldPanel, shadowPanel, qualityPanel];
   const viewTransformSelect = createElement(
     documentReference,
     'select',
@@ -1804,8 +1808,6 @@ export function createStudio(container, {
     await loadAgentSceneModules({ environment: { viewTransform } });
     controller.updateLook({ environment: { viewTransform } });
   });
-  const bloomField = createSliderField(documentReference, 'Bloom', { min: 0, max: 1, step: 0.02, value: 0.1 }, value => controller.updateLook({ effects: { bloom: { strength: value } } }));
-  const fogField = createSliderField(documentReference, 'Fog', { min: 0, max: 0.1, step: 0.002, value: 0 }, value => controller.updateLook({ environment: { fogDensity: value } }));
 
   const lookPanelBody = createElement(
     documentReference,
@@ -1813,12 +1815,11 @@ export function createStudio(container, {
     { className: 'crucible-studio-panel-body' },
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lighting' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...setupButtons)),
     lightPanel.element,
+    worldPanel.element,
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Color look' }), viewTransformSelect),
-    exposureField.container,
-    contrastField.container,
-    saturationField.container,
-    bloomField.container,
-    fogField.container,
+    effectsPanel.element,
+    shadowPanel.element,
+    qualityPanel.element,
   );
 
   // Tab 4: Camera Panel
@@ -1827,7 +1828,7 @@ export function createStudio(container, {
     button.addEventListener('click', () => controller.setCameraLensMillimetres(millimetres));
     return button;
   });
-  const cameraPanel = createPropertyPanel({ documentReference, controller, announce, builders: propertyBuilders, resolveKey: () => 'camera' });
+  const cameraPanel = createLookPanel(() => 'camera');
   const bookmarkNameInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Shot name', attributes: { 'aria-label': 'Shot name', maxlength: '24' } });
   const saveBookmarkButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save shot' });
   const bookmarkListElement = createElement(documentReference, 'div', { className: 'crucible-studio-field' });
@@ -2917,15 +2918,9 @@ export function createStudio(container, {
     }
 
     const environment = recipe.environment ?? {};
-    const effects = recipe.effects ?? {};
     const activeSetup = environment.setup ?? 'daylight';
     setupButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.setup === activeSetup ? 'true' : 'false'));
     viewTransformSelect.value = environment.viewTransform ?? 'aces';
-    exposureField.setValue(effects.exposure ?? 1);
-    contrastField.setValue(effects.contrast ?? 1);
-    saturationField.setValue(effects.saturation ?? 1);
-    bloomField.setValue(effects.bloom?.strength ?? 0);
-    fogField.setValue(environment.fogDensity ?? 0);
 
     const camera = controller.scene.camera;
     const isOrthographic = camera.projection === 'orthographic';
@@ -2967,8 +2962,18 @@ export function createStudio(container, {
 
   // Only the panel in view is redrawn: orbiting the viewport notifies a change many times a second.
   function syncPropertyPanels() {
-    if (controller.activeTab === 'look') lightPanel.sync();
+    if (controller.activeTab === 'look') syncLookPanels();
     if (controller.activeTab === 'camera') cameraPanel.sync();
+  }
+
+  function syncLookPanels() {
+    lightPanel.sync();
+    effectsPanel.sync();
+    const lightSelected = selectedLightKey() !== null;
+    for (const panel of scenePanels) {
+      panel.element.hidden = lightSelected;
+      if (!lightSelected) panel.sync();
+    }
   }
 
   // While a key holds the object, the bar names the keys that act on it; a handle drag shows only how far it has gone.

@@ -39,6 +39,7 @@ export const STUDIO_PREFERENCE_DEFAULTS = Object.freeze({
   sceneShare: STUDIO_SCENE_SHARE.automatic,
   sceneMinimized: false,
   propertiesMinimized: false,
+  propertyGroupsOpen: Object.freeze({}),
   panelsFloating: true,
   moveSnapStep: 0.25,
   rotateSnapDegrees: 15,
@@ -50,6 +51,14 @@ export const STUDIO_PREFERENCE_DEFAULTS = Object.freeze({
   agentCursorVisible: true,
 });
 
+// Which property groups a person opened or folded, by group id. Only true and false entries are kept.
+function propertyGroupStatesOf(candidate) {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return {};
+  }
+  return Object.fromEntries(Object.entries(candidate).filter(([, open]) => typeof open === 'boolean'));
+}
+
 /** The preferences in `value` that are valid, over the defaults. Anything unknown or out of range is dropped. */
 export function normalizeStudioPreferences(value) {
   const preferences = { ...STUDIO_PREFERENCE_DEFAULTS };
@@ -60,7 +69,9 @@ export function normalizeStudioPreferences(value) {
     const candidate = value[name];
     const choices = STUDIO_PREFERENCE_CHOICES[name];
     const sizeInRange = STUDIO_PREFERENCE_SIZES[name];
-    if (sizeInRange) {
+    if (name === 'propertyGroupsOpen') {
+      preferences[name] = propertyGroupStatesOf(candidate);
+    } else if (sizeInRange) {
       if (Number.isFinite(candidate)) {
         preferences[name] = sizeInRange(candidate);
       }

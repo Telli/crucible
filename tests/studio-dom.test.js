@@ -2102,6 +2102,7 @@ test('Settings change the snap, the handles and what the viewport shows, and are
     sceneShare: 0,
     sceneMinimized: false,
     propertiesMinimized: false,
+    propertyGroupsOpen: {},
     panelsFloating: true,
     moveSnapStep: 1,
     rotateSnapDegrees: 45,
