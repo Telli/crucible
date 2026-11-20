@@ -83,12 +83,16 @@ test('an edit that does not touch the sea keeps the posed sea part, the topology
   const partNamed = name => scene.parts.find(part => part.name === name);
   const sea = partNamed('surface');
   const signRanks = flushOrderOf(partNamed('sign')).ranges.map(range => range.rank);
+  const drawnOrders = scene.parts.map(flushOrderOf);
+  const flush = scene.inspect().flush;
   const topology = scene.topologyRevision;
   scene.apply([{ type: 'set-camera', eye: [25, 18, 30], target: [0, 0, 0] }], { expectedRevision: scene.revision });
   scene.apply([{ type: 'set-node', id: 'crate', translation: [9, 1, 8] }], { expectedRevision: scene.revision });
   assert.equal(scene.topologyRevision, topology, 'neither edit is a topology change');
   assert.equal(partNamed('surface'), sea, 'the posed sea is the same part');
   assert.deepEqual(flushOrderOf(partNamed('sign')).ranges.map(range => range.rank), signRanks, 'the sign keeps its ranks');
+  scene.parts.forEach((part, index) => assert.equal(flushOrderOf(part), drawnOrders[index], `${part.name} draws with the ranks of the drawn parts`));
+  assert.deepEqual(scene.inspect().flush, flush);
   assert.ok(flushOrderOf(partNamed('wall')).geometry, 'the wall is still cut under the sign');
 });
 

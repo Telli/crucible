@@ -1401,7 +1401,7 @@ function oceanTimeGeometries(stagedState, sampled, time) {
     const source = `${stagedState.geometryRecords.get(geometryId)?.signature}|${stagedState.maxGeometryVertices}|${patch.oceanTime}`;
     const key = wakeField ? `${source}|${time}` : source;
     if (frame?.key !== key) {
-      frame = { key, geometry: oceanTimeGeometry(stagedState.recipe, stagedState.maxGeometryVertices, geometryId, patch.oceanTime, wakeField) };
+      frame = { key, wake: Boolean(wakeField), geometry: oceanTimeGeometry(stagedState.recipe, stagedState.maxGeometryVertices, geometryId, patch.oceanTime, wakeField) };
       frames.set(geometryId, frame);
     }
     for (const node of stagedState.recipe.nodes) {
@@ -1516,10 +1516,11 @@ function publishPose(stagedState, pose) {
   stagedState.renderCamera = pose.camera;
   stagedState.movedLook = pose.movedLook;
   stagedState.motionTime = pose.time;
-  const sampledParts = partsWithCloth(stagedState.restParts, pose.clothGeometries, stagedState.parts);
-  const partsChanged = sampledParts !== stagedState.parts;
-  stagedState.parts = partsChanged && stagedState.rankFlushParts ? stagedState.rankFlushParts(sampledParts) : sampledParts;
-  return partsChanged;
+  const previousParts = stagedState.parts;
+  const sampledParts = partsWithCloth(stagedState.restParts, pose.clothGeometries, previousParts);
+  // Ranked also when the parts did not change: staging an edit ranks the rest parts, so the drawn parts get their ranks back.
+  stagedState.parts = stagedState.rankFlushParts ? stagedState.rankFlushParts(sampledParts) : sampledParts;
+  return stagedState.parts !== previousParts;
 }
 
 // The recipe an agent wrote: without the geometries, materials and part nodes that placed assets generate.
@@ -1862,7 +1863,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       // Part identity decides what the next stage reuses, so it compares the parts as built, before any bake.
       sourceRestParts,
       parts: restUnchanged ? state.parts : restParts, restParts,
-      oceanFrames: state?.oceanFrames,
+      // A sea a wake deforms depends on the physics bake as well, so only frames built without one outlive the edit.
+      oceanFrames: new Map([...(state?.oceanFrames ?? [])].filter(([, frame]) => !frame.wake)),
       // Parts a pose replaces (cloth, particles, ocean) are new objects with no flush rank, so the pose ranks them again.
       rankFlushParts: parts => stageCoplanarOffsets(recipe, parts),
       bakeSkipped: skippedBake,
@@ -2023,11 +2025,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       flushCache = null;
       return parts;
     }
-    if (flushCache?.parts !== parts) {
+    if (flushCache?.parts !== parts && flushCache?.staged !== parts) {
       const list = rankedList(coplanar, partsToRank(recipe, parts));
       // Ranked parts batch apart, so the list they are staged in is a new one: the renderer then regroups, also when the
-      // ranking is switched on or off for parts that did not change. The same parts get the same staged list back.
-      if (list.parts !== parts) {
+      // ranking is switched on or off for parts that did not change. The same parts, or their staged list, get it back.
+      if (list.parts !== parts && list.staged !== parts) {
         list.parts = parts;
         list.staged = list.resolved.ranked ? Object.freeze([...parts]) : parts;
       }
