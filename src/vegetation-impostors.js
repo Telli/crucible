@@ -7,12 +7,15 @@
 // dither (`alphaMode: 'dither'`), chosen from the distance alone, so a seek to any camera repeats the same picture.
 
 import { IMPOSTOR_FRAMES } from './impostor-shader.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 export const FADE_STEPS = 8;
 export const IMPOSTOR_CARD_TRIANGLES = 2;
 const DEFAULT_FRAME_SIZE = 96;
 const DEFAULT_BAKE_LEVEL = 3;
 const FRAME_MARGIN_PIXELS = 2;
+const MINIMUM_FRAME_SIZE = 8;
+const MAXIMUM_FRAME_SIZE = 512;
 const EMPTY_BAND = 1e-6;
 
 const impostorCache = new WeakMap();
@@ -236,6 +239,7 @@ function bleedColors(colorPixels, size, frameColumn, frameRow, atlasWidth) {
  * Returns the pixels of the colour and normal atlas and the card: `radius` and `centerHeight` in the tree's meters.
  */
 export function bakeImpostorAtlas(variant, { frameSize = DEFAULT_FRAME_SIZE, level = DEFAULT_BAKE_LEVEL } = {}) {
+  requireFiniteInRange('bakeImpostorAtlas', 'frameSize', frameSize, MINIMUM_FRAME_SIZE, MAXIMUM_FRAME_SIZE, true);
   const minimum = variant.bounds.minimum;
   const maximum = variant.bounds.maximum;
   const center = [(minimum[0] + maximum[0]) / 2, (minimum[1] + maximum[1]) / 2, (minimum[2] + maximum[2]) / 2];

@@ -47,7 +47,7 @@ Clutter shows best on paths, clearings, riverbanks and forest floor. Under a den
 | `stoneColor`, `mossColor`, `soilColor`, `twigColor` | earth tones | Linear RGB. |
 | `leafColors` | four dry browns | A list of linear RGB colours. Each leaf picks one. |
 | `castShadow` | `true` | Stones cast shadows. Twigs and leaves never do. |
-| `tileSize`, `levels`, `cullDistance` | `4`, `CLUTTER_LEVELS`, last level | Tiling and level of detail. An area needing over 262144 tiles throws. |
+| `tileSize`, `levels`, `cullDistance` | `4`, `CLUTTER_LEVELS`, last level | Tiling and level of detail; `tileSize` must be finite. An area needing over 262144 tiles throws. |
 | `eye`, `seed` | area centre, `1` | Initial camera position and random seed. |
 
 `createClutter` returns `{ parts, update(eye), stats(), materials, settings }`.

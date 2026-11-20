@@ -1,12 +1,15 @@
 // Icon sheets: the pure part of the `icons` render job (docs/agent-render-jobs.md, "Icons"). Validation of the job settings, the camera
 // and light rig, the framing arithmetic that fits one silhouette, the atlas layout and the icons.json manifest. No browser, no files.
 import { invalidField } from './field-error.js';
+import { BREAKDOWN_ORDER, SKETCH_CAPABILITIES, normalizeSketchSettings, seedFrom, sketchPass } from './icon-sketch.js';
 
 export const ICON_LIMITS = Object.freeze({
   maximumItems: 256,
   sizes: Object.freeze([64, 128, 256, 512]),
-  styles: Object.freeze(['clean', 'toon']),
+  styles: Object.freeze(['clean', 'toon', 'sketch']),
   scales: Object.freeze(['fit', 'relative']),
+  angles: Object.freeze([1, 4, 8]),
+  maximumFrames: 256,
   maximumAtlasSide: 4096,
   minimumPadding: 0.02,
   maximumPadding: 0.4,
@@ -17,8 +20,6 @@ export const ICON_LIMITS = Object.freeze({
 
 /** What `icons` leaves out of this release, named so an error can say it is coming and not that it is unknown. */
 const COMING_FIELDS = Object.freeze({
-  angles: 'turnaround sheets (angles 4 or 8)',
-  breakdown: 'the step-by-step strip',
   lighting: 'an HDRI rig (the three-point rig is fixed)',
   background: 'a background colour (icons are transparent)',
   outline: 'an outline colour and width',
@@ -27,7 +28,8 @@ const COMING_FIELDS = Object.freeze({
 const ASSET_ID = /^[0-9a-f]{64}$/;
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 const DERIVED_FIELDS = ['width', 'height', 'fps', 'duration', 'transparent'];
-const SETTING_FIELDS = ['kind', 'items', 'size', 'style', 'viewpoint', 'scale', 'padding', ...DERIVED_FIELDS];
+const SETTING_FIELDS = ['kind', 'items', 'size', 'style', 'viewpoint', 'scale', 'padding', 'angles', 'breakdown', 'seed', 'sketch', ...DERIVED_FIELDS];
+const SKETCH_ONLY_FIELDS = ['sketch', 'seed'];
 const MAXIMUM_ITEM_LENGTH = 260;
 
 export const ICON_ARTIFACTS = Object.freeze({ atlas: 'atlas.png', manifest: 'icons.json' });
@@ -36,14 +38,34 @@ export function iconArtifactName(index) {
   return `icon-${index}.png`;
 }
 
-/** Every artifact of an icons job, in the order the runner writes them: one PNG per item, the atlas, then icons.json. */
-export function iconArtifactNames(itemCount) {
-  return [...Array.from({ length: itemCount }, (_, index) => iconArtifactName(index)), ICON_ARTIFACTS.atlas, ICON_ARTIFACTS.manifest];
+/** The breakdown strip of one item. The job folder is flat, so the item number is in the name and not in a folder. */
+export function breakdownArtifactName(itemIndex) {
+  return `breakdown-${itemIndex}.png`;
+}
+
+/**
+ * Every artifact of an icons job, in the order the runner writes them: one PNG per frame (an item at one angle), the breakdown
+ * strip of each item when asked, the atlas, then icons.json. `options.itemCount` names how many items get a strip; leave it out for none.
+ */
+export function iconArtifactNames(frameCount, options = {}) {
+  const frames = Array.from({ length: frameCount }, (_, index) => iconArtifactName(index));
+  const strips = Array.from({ length: options.itemCount ?? 0 }, (_, index) => breakdownArtifactName(index));
+  return [...frames, ...strips, ICON_ARTIFACTS.atlas, ICON_ARTIFACTS.manifest];
 }
 
 /** How many items fit one atlas at this size: a square grid no wider than the atlas limit. */
 export function atlasCapacity(size) {
   return (ICON_LIMITS.maximumAtlasSide / size) ** 2;
+}
+
+/**
+ * How many items one job takes at this size and angle count. One angle packs a square grid. More angles give each item a row
+ * of its own (one cell per angle), so the rows must fit the atlas side, and so must the cells of a row.
+ */
+export function itemCapacity(size, angles) {
+  if (angles === 1) return Math.min(ICON_LIMITS.maximumFrames, atlasCapacity(size));
+  if (angles * size > ICON_LIMITS.maximumAtlasSide) return 0;
+  return Math.min(Math.floor(ICON_LIMITS.maximumFrames / angles), Math.floor(ICON_LIMITS.maximumAtlasSide / size));
 }
 
 function itemFrom(item, position) {
@@ -103,13 +125,25 @@ export function normalizeIconSettings(input) {
   }
   const size = input.size ?? 256;
   if (!ICON_LIMITS.sizes.includes(size)) throw invalidField('size', size, `one of ${ICON_LIMITS.sizes.join(', ')} (pixels per icon side)`, RangeError);
-  const capacity = atlasCapacity(size);
+  const angles = input.angles ?? 1;
+  if (!ICON_LIMITS.angles.includes(angles)) throw invalidField('angles', String(angles), `one of ${ICON_LIMITS.angles.join(', ')} (views around the item; 4 and 8 give a turnaround row per item)`, RangeError);
+  const capacity = itemCapacity(size, angles);
   if (input.items.length > capacity) {
-    throw invalidField('items', input.items.length, `at most ${capacity} items at size ${size} (the atlas side is capped at ${ICON_LIMITS.maximumAtlasSide} px), or a smaller size`, RangeError);
+    const reason = angles === 1 ? `the atlas side is capped at ${ICON_LIMITS.maximumAtlasSide} px` : `${angles} angles make one row of ${angles} icons per item, and a job holds ${ICON_LIMITS.maximumFrames} icons and an atlas side of ${ICON_LIMITS.maximumAtlasSide} px`;
+    throw invalidField('items', input.items.length, `at most ${capacity} items at size ${size} with ${angles} angle${angles === 1 ? '' : 's'} (${reason}), or a smaller size or fewer angles`, RangeError);
   }
   const style = input.style ?? 'clean';
-  if (style === 'sketch') throw invalidField('style', 'sketch', 'clean or toon: the sketch style is coming (issue #2031)', RangeError);
   if (!ICON_LIMITS.styles.includes(style)) throw invalidField('style', String(style), `one of ${ICON_LIMITS.styles.join(', ')}`, RangeError);
+  if (style !== 'sketch') {
+    for (const field of SKETCH_ONLY_FIELDS) {
+      if (input[field] !== undefined) throw invalidField(field, 'a field of the sketch style', `no ${field} unless style is "sketch" (the style is ${style})`, RangeError);
+    }
+  }
+  if (input.breakdown !== undefined && typeof input.breakdown !== 'boolean') throw invalidField('breakdown', typeof input.breakdown, 'true or false', TypeError);
+  const breakdown = input.breakdown ?? false;
+  if (breakdown && style !== 'sketch') {
+    throw invalidField('breakdown', 'true', `a style that is drawn in steps: set style to "sketch" (the style is ${style}); clean and toon have no steps to show`, RangeError);
+  }
   const scale = input.scale ?? 'fit';
   if (!ICON_LIMITS.scales.includes(scale)) throw invalidField('scale', String(scale), `fit (every item fills its frame) or relative (one scale for the set)`, RangeError);
   const padding = input.padding ?? ICON_LIMITS.defaultPadding;
@@ -117,7 +151,31 @@ export function normalizeIconSettings(input) {
     throw invalidField('padding', padding, `a fraction of the icon side from ${ICON_LIMITS.minimumPadding} to ${ICON_LIMITS.maximumPadding}`, RangeError);
   }
   const items = input.items.map(itemFrom);
-  return { kind: 'icons', size, width: size, height: size, fps: 1, duration: 1, frameCount: items.length, transparent: true, items, style, viewpoint: viewFrom(input.viewpoint), scale, padding };
+  const settings = {
+    kind: 'icons', size, width: size, height: size, fps: 1, duration: 1, frameCount: items.length * angles, transparent: true,
+    items, style, viewpoint: viewFrom(input.viewpoint), scale, padding, angles,
+  };
+  if (breakdown) settings.breakdown = true;
+  if (style === 'sketch') Object.assign(settings, { sketch: normalizeSketchSettings(input.sketch), seed: seedFrom(input.seed) });
+  return settings;
+}
+
+/** The azimuth of the k-th of `angles` views around the item, in degrees from -180 to 180, starting at the base azimuth. */
+export function turnaroundAzimuth(baseAzimuth, angleIndex, angles) {
+  const turned = (baseAzimuth + angleIndex * 360 / angles) % 360;
+  return turned > 180 ? turned - 360 : turned <= -180 ? turned + 360 : turned;
+}
+
+/**
+ * Every icon the job draws, item by item and angle by angle (the order of icon-<n>.png and of the atlas): the item, the angle
+ * number and the view. An item at one angle is one frame.
+ */
+export function iconFrames(settings) {
+  return settings.items.flatMap((item, itemIndex) => Array.from({ length: settings.angles }, (_, angleIndex) => ({
+    itemIndex,
+    angleIndex,
+    view: { azimuth: turnaroundAzimuth(settings.viewpoint.azimuth, angleIndex, settings.angles), elevation: settings.viewpoint.elevation },
+  })));
 }
 
 /** The lowercase unit vector from the subject toward the camera, and the camera's right and up axes, for a azimuth and elevation in degrees. */
@@ -173,12 +231,25 @@ export function toonLineWidth(size) {
   return Math.max(0.75, size / 128);
 }
 
-/** The scene recipe that draws one catalog asset as an icon: the asset at the origin, the light rig, and line art for toon. */
-export function iconRecipe({ assetId, style, view, size }) {
+/**
+ * The scene recipe that draws one catalog asset as an icon: the asset at the origin, the light rig, line art for toon, and for
+ * sketch the sketch user pass. `sketch` and `seed` are the job's normalized settings; `stage` is a step of the breakdown strip.
+ */
+export function iconRecipe({ assetId, style, view, size, sketch, seed = 0, stage = 'final' }) {
   const environment = lightRigEnvironment(view);
   if (style === 'toon') environment.lines = { width: toonLineWidth(size), toon: 3 };
-  return { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [{ id: 'icon', asset: { id: assetId } }], environment };
+  const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [{ id: 'icon', asset: { id: assetId } }], environment };
+  if (style === 'sketch') recipe.postPasses = [sketchPass({ settings: { sketch, seed }, size, stage })];
+  return recipe;
 }
+
+/** The sketch pass of one breakdown step, for `set-post-passes` on a session that already holds the item. */
+export function sketchStagePass({ sketch, seed, size, stage }) {
+  return sketchPass({ settings: { sketch, seed }, size, stage });
+}
+
+/** The steps of a breakdown strip, left to right. */
+export const BREAKDOWN_STEPS = BREAKDOWN_ORDER;
 
 /** The pixel box of the pixels whose alpha passes `threshold`, with exclusive right and bottom, or null when nothing is drawn. */
 export function alphaBounds(rgba, width, height, threshold = 1) {
@@ -230,9 +301,8 @@ export function relativeScale(fittedScales) {
   return Math.max(...fittedScales);
 }
 
-/** A square grid of cells, row by row: the atlas rectangle of every item. */
-export function layoutAtlas(count, size) {
-  const columns = Math.ceil(Math.sqrt(count));
+/** A grid of cells, row by row: the atlas rectangle of every frame. Near square unless `columns` is given (a turnaround sheet has one column per angle). */
+export function layoutAtlas(count, size, columns = Math.ceil(Math.sqrt(count))) {
   const rows = Math.ceil(count / columns);
   const rectangles = Array.from({ length: count }, (_, index) => ({ x: index % columns * size, y: Math.floor(index / columns) * size, width: size, height: size }));
   return { columns, rows, width: columns * size, height: rows * size, rectangles };
@@ -256,16 +326,23 @@ export function iconManifest({ settings, layout, entries }) {
     scale: settings.scale,
     padding: settings.padding,
     viewpoint: settings.viewpoint,
+    angles: settings.angles,
+    ...(settings.style === 'sketch' ? { sketch: settings.sketch, seed: settings.seed } : {}),
     atlas: { file: ICON_ARTIFACTS.atlas, width: layout.width, height: layout.height, columns: layout.columns, rows: layout.rows },
-    icons: settings.items.map((item, index) => ({
-      name: names[index],
-      file: iconArtifactName(index),
-      source: item.source,
-      asset: item.asset,
-      angle: settings.viewpoint.azimuth,
-      rect: layout.rectangles[index],
-      bounds: entries[index].bounds,
-      viewHeight: entries[index].viewHeight,
+    // One entry per frame. `angle` is the azimuth in degrees the frame is drawn from; `item` and `turn` say which item and which
+    // of its views it is. The strip of an item hangs on its first view (turn 0).
+    icons: iconFrames(settings).map(({ itemIndex, angleIndex, view }, frameIndex) => ({
+      name: names[itemIndex],
+      file: iconArtifactName(frameIndex),
+      source: settings.items[itemIndex].source,
+      asset: settings.items[itemIndex].asset,
+      item: itemIndex,
+      turn: angleIndex,
+      angle: view.azimuth,
+      rect: layout.rectangles[frameIndex],
+      bounds: entries[frameIndex].bounds,
+      viewHeight: entries[frameIndex].viewHeight,
+      ...(settings.breakdown && angleIndex === 0 ? { breakdown: breakdownArtifactName(itemIndex) } : {}),
     })),
   };
 }
@@ -273,15 +350,18 @@ export function iconManifest({ settings, layout, entries }) {
 /** What `scene_capabilities` jobs reports for kind icons: the limits the validator enforces and the files a job writes. */
 export const ICON_CAPABILITIES = Object.freeze({
   kind: 'icons',
-  note: 'settings.kind icons draws each item (a catalog GLB name or asset id from scene_asset_catalog) as a transparent square icon with an orthographic three-quarter view, a fixed three-point light rig and a silhouette fit. Writes icon-<n>.png per item, atlas.png and icons.json (name, atlas rect, source, bounds). The submitted scene is not drawn.',
+  note: 'settings.kind icons draws each item (a catalog GLB name or asset id from scene_asset_catalog) as a transparent square icon with an orthographic three-quarter view, a fixed three-point light rig and a silhouette fit. Writes icon-<n>.png per item and angle, atlas.png and icons.json (name, angle, atlas rect, source, bounds). angles 4 or 8 turns each item around into a row of the atlas. The submitted scene is not drawn.',
   maximumItems: ICON_LIMITS.maximumItems,
+  maximumIcons: ICON_LIMITS.maximumFrames,
   sizes: ICON_LIMITS.sizes,
   styles: ICON_LIMITS.styles,
-  comingStyles: Object.freeze(['sketch']),
+  angles: ICON_LIMITS.angles,
+  sketch: SKETCH_CAPABILITIES,
   scales: ICON_LIMITS.scales,
   viewpoint: Object.freeze({ default: 'three-quarter', azimuth: ICON_LIMITS.defaultView.azimuth, elevation: ICON_LIMITS.defaultView.elevation, maximumElevation: ICON_LIMITS.maximumElevation }),
   padding: Object.freeze({ default: ICON_LIMITS.defaultPadding, minimum: ICON_LIMITS.minimumPadding, maximum: ICON_LIMITS.maximumPadding }),
   maximumAtlasSide: ICON_LIMITS.maximumAtlasSide,
-  itemsPerSize: Object.freeze(Object.fromEntries(ICON_LIMITS.sizes.map(size => [size, Math.min(ICON_LIMITS.maximumItems, atlasCapacity(size))]))),
+  itemsPerSize: Object.freeze(Object.fromEntries(ICON_LIMITS.sizes.map(size => [size, itemCapacity(size, 1)]))),
+  itemsPerSizeAndAngles: Object.freeze(Object.fromEntries(ICON_LIMITS.angles.filter(angles => angles > 1).map(angles => [angles, Object.freeze(Object.fromEntries(ICON_LIMITS.sizes.map(size => [size, itemCapacity(size, angles)])))]))),
   notYet: Object.freeze(Object.keys(COMING_FIELDS)),
 });

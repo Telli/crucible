@@ -743,8 +743,10 @@ function createClient(settings, stats) {
   }
 
   // Moves the drawing clock on with real time, nudged by at most a tenth toward "newest snapshot minus the delay".
+  // A frame time that is not a finite, non-negative number (a bad timer reading) is skipped, so the clock never turns NaN.
   function advanceRenderTime(deltaSeconds) {
     if (renderTime === null) return;
+    if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) return;
     const target = latestTick * stepSeconds - settings.interpolationDelaySeconds;
     const error = target - renderTime;
     if (Math.abs(error) > 1) {
@@ -847,7 +849,13 @@ function createPeerSide(settings, stats) {
     entity.owner = peerId;
     entity.term = raw.m;
     entity.tag = delta.t ?? null;
-    entity.state = dequantizeEntity(delta, steps);
+    // A new owner sends the whole entity, but `x` is optional on the wire and a null value is the delete marker a delta
+    // uses: read a missing `x` as no variables and drop a null one instead of storing it as 0.
+    const variables = {};
+    for (const [name, value] of Object.entries(delta.x ?? {})) {
+      if (value !== null) variables[name] = value;
+    }
+    entity.state = dequantizeEntity({ ...delta, x: variables }, steps);
     entity.samples.push({ time: clock, state: cloneState(entity.state) });
     if (entity.samples.length > NETCODE_LIMITS.maximumSamplesPerEntity) entity.samples.shift();
     entities.set(id, entity);
@@ -881,6 +889,11 @@ function createPeerSide(settings, stats) {
     const present = new Set(transport.peers());
     for (const [id, entity] of entities) {
       if (!isLocal(entity) && !present.has(entity.owner)) entities.delete(id);
+    }
+    // The sender table keeps a record per peer ever heard: a peer that left frees its slot, so a room with reloads or random
+    // ids does not fill all 32 slots and reject every newcomer.
+    for (const peerId of senders.keys()) {
+      if (!present.has(peerId)) senders.delete(peerId);
     }
   }
 

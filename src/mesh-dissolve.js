@@ -1,4 +1,5 @@
 import { faceNormals } from './mesh-normals.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 import {
   facePolygons, buildPolygonMesh, boundaryLoops, edgeFaces, vertexNeighbors, faceOfCorner,
 } from './mesh-polygons.js';
@@ -11,6 +12,7 @@ import {
  * edges. The cap copies non-tag face data from a face beside the hole and gets the tag `<name>.fill`.
  */
 export function fillHoles(mesh, { sides = Infinity, name = 'fill' } = {}) {
+  if (sides !== Infinity) requireFiniteInRange('fillHoles', 'sides', sides, 3, 4096, true);
   const polygons = facePolygons(mesh);
   let filled = 0;
   let skipped = 0;
@@ -179,6 +181,7 @@ function edgeDirection(mesh, from, to) {
  * allows), then vertices left with two edges that run straight within the same angle. Faces keep their tags.
  */
 export function dissolveLimited(mesh, edgeMask, { angle = 5, name = 'dissolve' } = {}) {
+  requireFiniteInRange('dissolveLimited', 'angle', angle, 0, 180);
   const table = edgeFaces(mesh);
   const { normals } = faceNormals(mesh);
   const limit = Math.cos(angle * Math.PI / 180) - 1e-9;

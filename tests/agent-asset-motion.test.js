@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseGltf } from '../src/gltf.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
+import { loadAgentSceneModules } from '../src/agent-scene-modules.js';
 import { skinnedStripAsset } from './fixtures/skinned-strip.js';
 
 const recipe = () => ({ format: 'crucible.asset', schemaVersion: 1, assetId: 'ac'.repeat(32) });
@@ -146,5 +147,19 @@ test('independent imported and authored clocks stage once without an invalid int
     scene.sampleFrame({ animation: null, motionTime: 0 });
     scene.sampleFrame({ animation: { clip: 0, time: 2 }, motionTime: 2 });
     assert.deepEqual(pose(scene), final);
+  } finally { asset.dispose(); }
+});
+
+test('set-motion removeTracks drops one asset track and names the tracks there are when a selector misses', async () => {
+  await loadAgentSceneModules([{ type: 'set-motion', removeTracks: [] }]);
+  const asset = await parseGltf(skinnedStripAsset());
+  try {
+    const scene = createAgentAssetScene(asset, { ...recipe(), motion: motion() });
+    assert.throws(
+      () => scene.apply([{ type: 'set-motion', removeTracks: [{ kind: 'camera' }] }], { expectedRevision: 0 }),
+      error => error.message.includes('camera') && error.message.includes('node.node-3.rotation'),
+    );
+    scene.apply([{ type: 'set-motion', removeTracks: [{ kind: 'node', id: 'node-3' }] }], { expectedRevision: 0 });
+    assert.equal(scene.exportRecipe().motion ?? null, null);
   } finally { asset.dispose(); }
 });

@@ -75,6 +75,8 @@ test('edge rules select rims, sharp edges, region borders and everything', () =>
   assert.equal(count({ boundaryOf: { tag: 'front' } }), 4);
   assert.equal(count({ all: true }), 12);
   assert.throws(() => selectEdges(mesh, { angle: 30, all: true }, table), /exactly one/);
+  assert.throws(() => selectEdges(mesh, { open: true, along: [1, 0, 0] }, table), /open does not take along/);
+  assert.throws(() => selectEdges(mesh, { open: true, maxAngle: 5 }, table), /open does not take maxAngle/);
 });
 
 test('chamfering one edge removes exactly the triangular prism', () => {

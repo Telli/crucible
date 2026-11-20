@@ -440,4 +440,4 @@ const requestedScene = resolveRequestedScene(new URLSearchParams(location.search
 if (requestedScene.notice) showNotice(requestedScene.notice);
 selectScene(requestedScene.id);
 
-renderCommunity({ grid: document.querySelector('#community-grid'), emailLink: document.querySelector('#community-email') });
+renderCommunity({ grid: document.querySelector('#community-grid'), emailLink: document.querySelector('#community-email'), emptyState: document.querySelector('#community-empty') });

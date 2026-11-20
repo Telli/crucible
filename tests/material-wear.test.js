@@ -94,3 +94,14 @@ test('the shader breaks the wear edge with noise, darkens the layer under dirt a
   assert.match(shader, /coatKept \*= 1\.0 - dirty;/);
   assert.match(shader, /uniform vec4 wearDirt;/);
 });
+
+test('a NaN weight packs as no wear and a shorter dirt group is refused (#2387)', () => {
+  const wear = normalizeMaterialWear(WEAR);
+  const geometry = { vertexGroups: { edge: [Number.NaN, 0.5, Infinity], cavity: [0, Number.NaN, 1] } };
+  const packed = packSurfaceMasks(geometry, wear, 'part');
+  assert.ok(Array.from(packed).every(Number.isFinite));
+  assert.deepEqual(unpackSurfaceMask(packed[0]), { wear: 0, dirt: 0 });
+  assert.equal(unpackSurfaceMask(packed[1]).dirt, 0);
+  const shorter = { vertexGroups: { edge: [1, 1, 1], cavity: [1] } };
+  assert.throws(() => packSurfaceMasks(shorter, wear, 'part'), /wear\.dirt\.mask.*the 3 weights of wear\.mask.*not 1/);
+});
