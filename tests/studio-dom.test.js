@@ -3578,6 +3578,8 @@ test('a lost graphics context pauses the picture with a notice, and restoring it
   ui.studio.renderNow();
   assert.equal(ui.renderer.calls.length, renderCallsWhileLost, 'nothing is drawn while the context is lost');
   assert.equal(ui.dom.pendingAnimationFrameCount, 0, 'the frame loop stays quiet until the context returns');
+  assert.throws(() => ui.studio.capturePngDataUrl(), /graphics context was lost/, 'a still is refused instead of returning a blank picture');
+  assert.equal(ui.dom.pendingAnimationFrameCount, 0);
 
   ui.controller.selectNode(selectionBefore);
   const framesBefore = ui.renderer.frames.length;

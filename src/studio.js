@@ -2232,6 +2232,10 @@ export function createStudio(container, {
   }
 
   function capturePngDataUrl() {
+    // Nothing draws while the context is gone, so a still taken then would be a blank picture.
+    if (contextLost) {
+      throw new Error(CONTEXT_LOST_MESSAGE);
+    }
     capturingStill = true;
     try {
       renderPass();
