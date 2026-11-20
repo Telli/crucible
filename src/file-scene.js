@@ -7,7 +7,7 @@ import { createCameraSampler } from './camera-track.js';
 import { inWholeWorldOrder, readPartRanks } from './showcase-download.js';
 import { withinDrawnLightLimits } from './drawn-light-lists.js';
 import { createFileSceneRenderAt } from './file-scene-clip.js';
-import { partsForRendererOptions, withSceneFileLights, withSceneFileRendererDefaults } from './dense-lods.js';
+import { partsForRendererOptions, sceneFileLighting, sunShadowBounds, withSceneFileLights, withSceneFileRendererDefaults } from './dense-lods.js';
 
 // Headless twin of the showcase page for scripts/render-media.mjs (--scene file). The export script serves the scene.json
 // at /__file/config.json with every asset path already pointing at a file it can read, and an optional camera track at
@@ -62,13 +62,17 @@ async function start() {
   const reflection = description.waterReflection ? applyWaterReflection(asset.parts) : { parts: asset.parts, surface: null };
   // The GLB's punctual lights light the scene, for the drawn frame and the native trace alike (#2664).
   const sceneEnvironment = withSceneFileLights(asset.lights, rendererOptions.environment);
+  // The drawn frame takes the HDRI's sun as its shadowed key light, with the sun's shadow view fitted to the scene (#2761).
+  // A scene with lights of its own is drawn as before, and the native trace keeps the whole map.
+  const drawn = sceneFileLighting(map, asset.lights, rendererOptions.environment, { hdriSun: description.hdriSun !== false });
   const viewport = document.querySelector('#file-viewport');
   const rendererParts = partsForRendererOptions(reflection.parts, viewport, rendererOptions);
   const renderer = new CrucibleRenderer(viewport, rendererParts, {
     ground: false, hdr: true, samples: 4, memoryBudgetMiB: 384,
+    shadowBounds: drawn.sunSplit ? sunShadowBounds(reflection.parts, drawn.environment.lightDirection) : {},
     ...rendererOptions,
     shadowCascades,
-    environment: { ...environmentForRenderer(sceneEnvironment), map },
+    environment: { ...environmentForRenderer(drawn.environment), map: drawn.map },
   });
   attachWaterReflection(renderer, reflection.surface, { updateEvery: 1 });
   const frame = { exposure: description.exposure ?? 1, ...(description.frame ?? {}) };
