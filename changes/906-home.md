@@ -1,0 +1,1 @@
+- The home page tier cards are now written from the tier matrix, so their figures cannot drift from the measured results (#906)

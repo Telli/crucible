@@ -1,3 +1,4 @@
+import { requireFiniteInRange } from './modeling-limits.js';
 import { generateGeometryLods, checkRatios, DEFAULT_LOD_RATIOS } from './mesh-lod.js';
 import { MAXIMUM_SIMPLIFY_TRIANGLES } from './geometry-simplify.js';
 import { DENSE_TRIANGLES_PER_PIXEL, partTakesLods } from './renderer.js';
@@ -17,6 +18,14 @@ export function withSceneFileRendererDefaults(rendererOptions = {}) {
   return { lodPixelError: SCENE_FILE_LOD_PIXEL_ERROR, ...rendererOptions };
 }
 
+/**
+ * The environment of a scene file: the GLB's own KHR_lights_punctual lights (`asset.lights`) with the scene file's
+ * `renderer.environment` on top, key by key, so a scene file can still override the file's key light or light lists.
+ */
+export function withSceneFileLights(fileLights = {}, sceneEnvironment = {}) {
+  return { ...fileLights, ...sceneEnvironment };
+}
+
 /** Triangles over pixels for these parts on a canvas of `pixels` pixels (the canvas size times the pixel ratio squared). */
 export function trianglesPerPixel(parts, pixels) {
   if (!(pixels > 0)) throw new RangeError('pixels must be the canvas width times its height times the pixel ratio squared, a positive number.');
@@ -34,6 +43,8 @@ export function addLodsToDenseParts(parts, { pixels, minimumTrianglesPerPixel = 
   if (!Array.isArray(parts)) throw new TypeError('parts must be the array of parts that goes to CrucibleRenderer.');
   // Checked here so bad ratios fail on a sparse scene too, not only on the frame a scene turns dense.
   checkRatios(ratios);
+  requireFiniteInRange('addLodsToDenseParts', 'minimumTrianglesPerPixel', minimumTrianglesPerPixel, 0, 1e9);
+  requireFiniteInRange('addLodsToDenseParts', 'minimumTriangles', minimumTriangles, 0, 1e9);
   if (trianglesPerPixel(parts, pixels) <= minimumTrianglesPerPixel) return parts;
   const levelsByGeometry = new Map();
   return parts.map(part => {
@@ -53,6 +64,7 @@ export function partsForRendererOptions(parts, canvas, rendererOptions = {}) {
   const { denseLods = true, pixelRatio = 1.5 } = rendererOptions;
   if (typeof denseLods !== 'boolean') throw new TypeError('renderer.denseLods must be true or false.');
   if (!denseLods) return parts;
+  requireFiniteInRange('partsForRendererOptions', 'pixelRatio', pixelRatio, 0.1, 16);
   const pixels = Math.max(1, canvas.clientWidth) * Math.max(1, canvas.clientHeight) * pixelRatio * pixelRatio;
   return addLodsToDenseParts(parts, { pixels });
 }

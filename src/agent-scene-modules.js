@@ -9,6 +9,7 @@ const MODULE_LOADERS = {
   text: () => import('./text-geometry.js'),
   motion: () => import('./agent-motion.js'),
   motionBake: () => import('./agent-motion-bake.js'),
+  motionTrackRemoval: () => import('./motion-track-removal.js'),
   springs: () => import('./spring-bones.js'),
   settle: () => import('./agent-settle.js'),
   drive: () => import('./agent-drive.js'),
@@ -28,6 +29,7 @@ const MODULE_LOADERS = {
   liquidShader: () => import('./liquid-shader.js'),
   subsurfaceShader: () => import('./subsurface-shader.js'),
   fogShader: () => import('./fog-shader.js'),
+  volumeEmissionMask: () => import('./volume-emission-mask.js'),
   retroShader: () => import('./retro-shader.js'),
   glitterShader: () => import('./glitter-shader.js'),
   worldMaterials: () => import('./world-material-shader.js'),
@@ -41,6 +43,7 @@ const MODULE_LOADERS = {
   lineArt: () => import('./line-art.js'),
   viewTransform: () => import('./view-transform-shader.js'),
   coplanar: () => import('./coplanar-overlap.js'),
+  unsupportedPart: () => import('./unsupported-part.js'),
   physicalSky: () => import('./physical-sky.js'),
   floorSky: () => import('./floor-sky-visibility.js'),
   userPass: () => import('./user-pass.js'),
@@ -54,8 +57,21 @@ const MODULE_LOADERS = {
 
 const loadedModules = {};
 const pendingLoads = {};
+// Set by loadAllAgentSceneModules: the host runs any recipe and wants every default stage on (the MCP preview).
+let hostLoadedEveryModule = false;
 let manifoldLoader = null;
 let physicsLoader = null;
+
+// The two modules that switch a default stage on for every scene once loaded. Kept apart so createAgentScene can ask for just
+// these without carrying the whole marker table.
+const DEFAULT_STAGE_MARKERS = {
+  // Flush faces are ranked whenever this is loaded (issue #751): the MCP preview registers it, loadAllAgentSceneModules loads it,
+  // and so does a recipe that names resolveCoplanar or places an asset, since glTF models nest facades a few millimetres apart.
+  // A recipe of plain primitives in a host without it stays free of the 85 KB of flush code, so it needs no on-demand module.
+  coplanar: ['"resolveCoplanar"', '"asset":{'],
+  // A closed room a sun lights gets the floor sky trace by default. The recipe text can not say whether a room is closed, so a recipe that names its sun loads it and the module skips an open scene.
+  floorSky: ['"keyColor"', '"keyIntensity"'],
+};
 
 // Each test errs on the side of loading: a false positive costs a chunk, a false negative a clear error.
 const MODULE_MARKERS = {
@@ -64,6 +80,7 @@ const MODULE_MARKERS = {
   text: ['"type":"text"'],
   motion: ['"motion":{', '"bake-motion"', '"add-explosion"'],
   motionBake: ['"bake-motion"'],
+  motionTrackRemoval: ['"removeTracks"'],
   springs: ['"springs":{'],
   settle: ['"type":"settle"'],
   drive: ['"drive":{'],
@@ -79,7 +96,7 @@ const MODULE_MARKERS = {
   patterns: ['"pattern"'],
   relations: ['"relations":'],
   timeline: ['"timeline":{'],
-  layerShaders: ['"anisotropy"', '"iridescence"', '"fresnel"', '"emissionMask"'],
+  layerShaders: ['"anisotropy"', '"iridescence"', '"fresnel"', '"emissionMask"', '"softEdge"'],
   emissionMask: ['"emissionMask"'],
   liquidShader: ['"transmission"', '"liquid"', '"foam"'],
   subsurfaceShader: ['"subsurface"'],
@@ -87,7 +104,9 @@ const MODULE_MARKERS = {
   glitterShader: ['"waterGlint"'],
   // Any mention loads it, because an edit can set the density through a path or the environment of an operation.
   fogShader: ['volumeFog', 'localVolumes', '"add-explosion"'],
-  worldMaterials: ['"tag":"water"', '"waterPreset"', '"absorption"', '"turbidity"', '"waterRamp"', '"vegetation":{', '"tag":"foliage"', '"tag":"grass"', '"tag":"terrain"', '"tag":"fire"', '"tag":"smoke"', '"moss"'],
+  // A volume that casts a shadow draws the emission of the parts it covers apart from the dimmed light (#1360); loaded up front, the first frame already has it.
+  volumeEmissionMask: ['"castShadow":true'],
+  worldMaterials: ['"tag":"water"', '"waterPreset"', '"absorption"', '"turbidity"', '"caustics"', '"waterRamp"', '"vegetation":{', '"tag":"foliage"', '"tag":"grass"', '"tag":"terrain"', '"tag":"fire"', '"tag":"smoke"', '"moss"'],
   terrain: ['"type":"terrain"'],
   // No recipe text asks for it, only the path option of scene_inspect does, so a host loads it with loadAllAgentSceneModules.
   navigation: [],
@@ -98,13 +117,15 @@ const MODULE_MARKERS = {
   vegetation: ['"vegetation":{', '"wind":{'],
   crowd: ['"crowd":{'],
   lineArt: ['"lines":{', '"toon":'],
-  viewTransform: ['"viewTransform":"agx"', '"viewTransform":"neutral"', '"look":"'],
+  viewTransform: ['"viewTransform":"agx"', '"viewTransform":"neutral"', '"viewTransform":"standard"', '"look":"'],
   // Flush faces are ranked whenever this is loaded (issue #751): the MCP preview registers it, loadAllAgentSceneModules loads it,
   // and so does a recipe that names resolveCoplanar or places an asset, since glTF models nest facades a few millimetres apart.
   // A recipe of plain primitives in a host without it stays free of the 85 KB of flush code, so it needs no on-demand module.
-  coplanar: ['"resolveCoplanar"', '"asset":{'],
+  coplanar: DEFAULT_STAGE_MARKERS.coplanar,
+  // The support check needs no recipe text: the MCP preview and loadAllAgentSceneModules load it, and a plain host stays free of it.
+  unsupportedPart: [],
   // A closed room a sun lights gets the floor sky trace by default. The recipe text can not say whether a room is closed, so a recipe that names its sun loads it and the module skips an open scene.
-  floorSky: ['"keyColor"', '"keyIntensity"'],
+  floorSky: DEFAULT_STAGE_MARKERS.floorSky,
   physicalSky: ['"type":"physical"', '"type":"gradient"'],
   userPass: ['"postPasses"'],
   game: ['"game":{', '"set-game"'],
@@ -132,16 +153,25 @@ export function needsBuoyancy(value) {
   return JSON.stringify(value ?? null).includes('"float":{');
 }
 
-/** Names of the on-demand modules a recipe, or a list of edit operations, needs. */
-export function agentSceneModulesNeeded(value) {
+function namedModules(value, markers, fallback) {
   let text;
   try {
     text = JSON.stringify(value ?? null);
   } catch {
-    return Object.keys(MODULE_LOADERS);
+    return fallback;
   }
   const compact = text.replace(/"\s*:\s*/g, '":');
-  return Object.keys(MODULE_MARKERS).filter(name => MODULE_MARKERS[name].some(marker => (marker instanceof RegExp ? marker.test(compact) : compact.includes(marker))));
+  return Object.keys(markers).filter(name => markers[name].some(marker => (marker instanceof RegExp ? marker.test(compact) : compact.includes(marker))));
+}
+
+/** Names of the on-demand modules a recipe, or a list of edit operations, needs. */
+export function agentSceneModulesNeeded(value) {
+  return namedModules(value, MODULE_MARKERS, Object.keys(MODULE_LOADERS));
+}
+
+/** Which default-stage modules (flush ranking, floor sky) a recipe or a list of edit operations names. */
+export function defaultStageModulesNamed(value) {
+  return namedModules(value, DEFAULT_STAGE_MARKERS, Object.keys(DEFAULT_STAGE_MARKERS));
 }
 
 function loadModule(name) {
@@ -162,6 +192,7 @@ export async function loadAgentSceneModules(value) {
 
 /** Load every on-demand module, for hosts that run any recipe an agent writes. */
 export async function loadAllAgentSceneModules() {
+  hostLoadedEveryModule = true;
   await Promise.all(Object.keys(MODULE_LOADERS).map(loadModule));
 }
 
@@ -185,6 +216,15 @@ export function allAgentSceneModulesLoaded() {
 
 export function agentSceneModuleLoaded(name) {
   return Boolean(loadedModules[name]);
+}
+
+/**
+ * Whether a default stage that needs this module runs for one scene. A module another scene loaded earlier in the same
+ * process does not count: the stage runs when the host loaded every module, or when this scene's own recipe or edits
+ * asked for it (`requestedNames`, from agentSceneModulesNeeded). So a scene builds the same bytes whatever was built before it.
+ */
+export function agentSceneModuleActive(name, requestedNames) {
+  return Boolean(loadedModules[name]) && (hostLoadedEveryModule || requestedNames.has(name));
 }
 
 /** Add a font table that recipes can name in a text geometry. Loads the text code first. */

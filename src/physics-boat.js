@@ -23,7 +23,8 @@ function normalizeControls(controls, label) {
     throw new RangeError(`${label} must be an array of at most ${BOAT_LIMITS.maxControls} keyframes { time, throttle, rudder }, such as [{ "time": 0, "throttle": 1, "rudder": 0 }]`);
   }
   let previousTime = -Infinity;
-  return controls.map((key, index) => {
+  // Array.from visits holes of a sparse array, which map would skip.
+  return Array.from(controls, (key, index) => {
     const path = `${label}[${index}]`;
     rejectUnknownKeys(key, ['time', 'throttle', 'rudder'], path);
     const time = boundedNumber(key.time, `${path}.time`, 0, 1e6, 0);
@@ -61,12 +62,12 @@ export function normalizeBoat(input, label) {
     keelDrag: boundedNumber(input.keelDrag ?? DEFAULT_KEEL_DRAG, `${label}.keelDrag`, 0, 100, DEFAULT_KEEL_DRAG),
     forward: input.forward ?? '-z',
   };
-  if (!Object.hasOwn(FORWARD_AXES, boat.forward)) {
+  if (typeof boat.forward !== 'string' || !Object.hasOwn(FORWARD_AXES, boat.forward)) {
     throw new RangeError(`${label}.forward must be one of ${Object.keys(FORWARD_AXES).join(', ')}, got ${String(input.forward)}`);
   }
   if (input.stern !== undefined) {
     if (!Array.isArray(input.stern) || input.stern.length !== 3) throw new TypeError(`${label}.stern must be [x, y, z] in body space, such as [0, 0, 1.9]`);
-    boat.stern = input.stern.map((component, axis) => boundedNumber(component, `${label}.stern[${axis}]`, -1e6, 1e6, 0));
+    boat.stern = Array.from(input.stern, (component, axis) => boundedNumber(component, `${label}.stern[${axis}]`, -1e6, 1e6, 0));
   }
   if (input.controls !== undefined) boat.controls = normalizeControls(input.controls, `${label}.controls`);
   if (input.wake !== undefined) boat.wake = normalizeBoatWake(input.wake, `${label}.wake`);
@@ -85,9 +86,10 @@ export function resolveBoat(boat, low, high) {
 
 /** Set the controls a live controller holds: throttle and rudder from -1 to 1. Once set they replace the keyframes. */
 export function setBoatControls(boat, controls, label = 'setBoatControls') {
-  boat.live.throttle = boundedNumber(controls.throttle ?? 0, `${label} throttle`, -1, 1, 1);
-  boat.live.rudder = boundedNumber(controls.rudder ?? 0, `${label} rudder`, -1, 1, 0);
-  boat.live.set = true;
+  if (controls === null || typeof controls !== 'object') throw new TypeError(`${label} needs controls like { throttle: 1, rudder: 0 }`);
+  const throttle = boundedNumber(controls.throttle ?? 0, `${label} throttle`, -1, 1, 1);
+  const rudder = boundedNumber(controls.rudder ?? 0, `${label} rudder`, -1, 1, 0);
+  Object.assign(boat.live, { throttle, rudder, set: true });
 }
 
 /** Throttle and rudder at a physics time: the live values when set, else the keyframes linearly, held after the last one. */

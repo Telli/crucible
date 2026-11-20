@@ -1,6 +1,6 @@
 import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, link, unlink, open } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, link, unlink, open, rename as renameFile } from 'node:fs/promises';
 import { watch, writeFileSync } from 'node:fs';
 import { tmpdir, constants, setPriority } from 'node:os';
 import { join } from 'node:path';
@@ -58,7 +58,7 @@ test('motion job ranges use immutable recipe duration, loops and actual sample t
   await assert.rejects(controller.submit(input), /Motion range/);
   input.snapshot.recipe.motion.loop = true;
   input.settings.motion.start = 3600;
-  await assert.rejects(controller.submit(input), /motion end/);
+  await assert.rejects(controller.submit(input), /motion.start 3600 plus the last sample at 1 s is 3601 s; the motion clock stops at 3600 s. Lower motion.start or duration./);
   input.settings.motion.start = null;
   await assert.rejects(controller.submit(input), /motion start/);
   input.snapshot.recipe = { format: 'crucible.asset', motion: { duration: 1 } };
@@ -693,7 +693,7 @@ test('a path tracer job runs on the cpu unless it asks for the gpu, and film job
     await writeFile(join(directory, 'render.png.partial'), Buffer.alloc(32, 1));
     return { artifacts: [{ temporary: 'render.png.partial', filename: 'render.png', mimeType: 'image/png' }], metrics: {} };
   } });
-  const submitWith = (renderer, kind = 'image') => controller.submit({ sourceRevision: 1, snapshot, settings: { kind, width: 64, height: 64, duration: 1, fps: 2, renderer: { type: 'pathTracer', ...renderer } } });
+  const submitWith = (renderer, kind = 'image') => controller.submit({ sourceRevision: 1, snapshot, settings: { kind, width: 64, height: 64, ...(kind === 'image' ? {} : { duration: 1, fps: 2 }), renderer: { type: 'pathTracer', ...renderer } } });
   const defaulted = await submitWith({});
   await terminal(controller, defaulted.jobId);
   assert.equal(controller.status(defaulted.jobId).settings.renderer.backend, 'cpu');
@@ -991,4 +991,123 @@ test('a GPU queue that fails the wait fails the job with the queue message', asy
   assert.equal(failed.state, 'failed');
   assert.match(failed.reason, /GPU queue command did not grant/);
   await controller.close();
+});
+
+test('a sequence that passes its combined output budget late keeps its leading complete frames readable via result (#2199)', async context => {
+  const root = await temporary(context);
+  const sequenceLimits = { ...limits, maxOutputBytes: 1000, maxFrameBytes: 400 };
+  const controller = await createAgentRenderJobs({
+    root,
+    limits: sequenceLimits,
+    async run({ directory }) {
+      const artifacts = [];
+      for (let frame = 0; frame < 4; frame += 1) {
+        const filename = `frame-${frame}.png`;
+        await writeFile(join(directory, `${filename}.partial`), Buffer.alloc(300, frame + 1));
+        artifacts.push({ temporary: `${filename}.partial`, filename, mimeType: 'image/png' });
+      }
+      return { artifacts, metrics: { maximumPendingFrames: 1 } };
+    },
+  });
+  const { jobId } = await controller.submit({
+    sourceRevision: 1,
+    snapshot: { recipe: { format: 'crucible.scene' } },
+    settings: { kind: 'stills', width: 64, height: 64, fps: 10, stillCount: 4 },
+  });
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.match(failed.reason, /combined output byte budget/);
+  assert.match(failed.reason, /kept 3 of 4 artifacts/);
+  assert.deepEqual(failed.artifacts.map(item => item.filename), ['frame-0.png', 'frame-1.png', 'frame-2.png']);
+  const folderFiles = await readdir(join(root, jobId));
+  assert.equal(folderFiles.includes('frame-3.png.partial'), false);
+  assert.equal(folderFiles.includes('frame-3.png'), false);
+
+  const partialResult = controller.result(jobId);
+  assert.equal(partialResult.state, 'failed');
+  assert.equal(partialResult.artifacts.length, 3);
+  await controller.close();
+
+  const recovered = await createAgentRenderJobs({ root, limits: sequenceLimits, run: writeImage });
+  assert.equal(recovered.status(jobId).state, 'failed');
+  assert.equal(recovered.result(jobId).artifacts.length, 3);
+  await recovered.release(jobId);
+  await recovered.close();
+});
+
+test('late output overflow keeps or drops all artifacts of a frame together when passes are enabled (#2199)', async context => {
+  const root = await temporary(context);
+  const controller = await createAgentRenderJobs({
+    root,
+    limits: { ...limits, maxOutputBytes: 900, maxFrameBytes: 400 },
+    async run({ directory }) {
+      const artifacts = [];
+      for (const name of ['frame-0.png', 'frame-0-depth.png', 'frame-1.png', 'frame-1-depth.png']) {
+        await writeFile(join(directory, `${name}.partial`), Buffer.alloc(260, 7));
+        artifacts.push({ temporary: `${name}.partial`, filename: name, mimeType: 'image/png' });
+      }
+      return { artifacts, metrics: {} };
+    },
+  });
+  const { jobId } = await controller.submit({
+    sourceRevision: 2,
+    snapshot: { recipe: { format: 'crucible.scene' } },
+    settings: { kind: 'stills', width: 64, height: 64, fps: 10, stillCount: 2, passes: ['depth'] },
+  });
+  const failed = await terminal(controller, jobId);
+  assert.equal(failed.state, 'failed');
+  assert.deepEqual(failed.artifacts.map(item => item.filename), ['frame-0.png', 'frame-0-depth.png']);
+  await controller.release(jobId);
+  await controller.close();
+});
+
+function blockedRename(failuresBeforeSuccess, code) {
+  const counter = { failures: 0 };
+  const rename = async (from, to) => {
+    if (to.endsWith('status.json') && counter.failures < failuresBeforeSuccess) {
+      counter.failures += 1;
+      throw Object.assign(new Error(`${code}: operation not permitted, rename`), { code });
+    }
+    return renameFile(from, to);
+  };
+  return { counter, rename };
+}
+
+test('a job survives a status.json rename that another reader blocks a few times', async context => {
+  const root = await temporary(context);
+  const { counter, rename } = blockedRename(3, 'EPERM');
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { fileOperations: { rename } } });
+  const submitted = await controller.submit(request());
+  const finished = await terminal(controller, submitted.jobId);
+  assert.equal(finished.state, 'completed');
+  assert.equal(counter.failures, 3);
+  const onDisk = JSON.parse(await readFile(join(root, submitted.jobId, 'status.json'), 'utf8'));
+  assert.equal(onDisk.state, 'completed');
+});
+
+test('a status.json rename that stays blocked keeps the last good status and does not fail the job', async context => {
+  const root = await temporary(context);
+  const { rename } = blockedRename(Infinity, 'EBUSY');
+  const warnings = [];
+  const onWarning = warning => warnings.push(warning.code);
+  process.on('warning', onWarning);
+  context.after(() => process.off('warning', onWarning));
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { fileOperations: { rename } } });
+  const submitted = await controller.submit(request());
+  const finished = await terminal(controller, submitted.jobId);
+  assert.equal(finished.state, 'completed');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(warnings.includes('CRUCIBLE_STATUS_BLOCKED'));
+  const onDisk = JSON.parse(await readFile(join(root, submitted.jobId, 'status.json'), 'utf8'));
+  assert.equal(onDisk.jobId, submitted.jobId);
+  assert.ok(!(await readdir(join(root, submitted.jobId))).includes('status.json.pending'));
+});
+
+test('a status.json rename that fails for another reason still fails the write', async context => {
+  const root = await temporary(context);
+  const { rename } = blockedRename(Infinity, 'ENOSPC');
+  const controller = await createAgentRenderJobs({ root, limits, run: writeImage, lockTakeoverHooks: { fileOperations: { rename } } });
+  const submitted = await controller.submit(request());
+  const finished = await terminal(controller, submitted.jobId);
+  assert.equal(finished.state, 'failed');
 });
