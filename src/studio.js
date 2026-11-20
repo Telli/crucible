@@ -26,6 +26,7 @@ import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-prope
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
+import { CONTEXT_LOST_MESSAGE, createPausedPictureNotice, describeFrameFailure, watchContextLoss } from './studio-context-loss.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
 import {
   STUDIO_LENS_PRESETS,
@@ -997,6 +998,7 @@ export function createStudio(container, {
   let capturingStill = false;
   let selectionReadoutStale = true;
   let renderedShadowKey = null;
+  let contextLost = false;
   let resizeObserver = null;
   let intersectionObserver = null;
   let frameHandle = 0;
@@ -1635,7 +1637,13 @@ export function createStudio(container, {
   const readoutSelection = createElement(documentReference, 'span', { className: 'crucible-studio-readout-selection' });
   const readout = createElement(documentReference, 'div', { className: 'crucible-studio-readout', attributes: { 'aria-hidden': 'true' } }, readoutCamera, readoutSelection);
   const agentPresence = createAgentPresence(documentReference, { controller, requestDraw: () => requestFrame() });
-  viewportElement.append(canvas, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay);
+  const pausedNotice = createPausedPictureNotice({
+    documentReference,
+    createIcon: iconName => createIcon(documentReference, iconName),
+    reload: () => documentReference.defaultView?.location?.reload?.(),
+  });
+  const stopWatchingContextLoss = watchContextLoss(canvas, { onLost: pauseForContextLoss, onRestored: recoverFromContextLoss });
+  viewportElement.append(canvas, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element);
 
   // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
   const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
@@ -2590,6 +2598,9 @@ export function createStudio(container, {
   }
 
   function renderPass() {
+    if (contextLost) {
+      return;
+    }
     insideDraw = true;
     try {
       syncViewportDimensions();
@@ -2605,13 +2616,54 @@ export function createStudio(container, {
     }
   }
 
+  // A frame that fails pauses the picture with a notice instead of ending the loop in silence; the next requested frame tries again.
+  function renderScheduledPass() {
+    try {
+      renderPass();
+      if (!contextLost) {
+        pausedNotice.hide();
+      }
+      return true;
+    } catch (error) {
+      pausedNotice.show(describeFrameFailure(error));
+      return false;
+    }
+  }
+
+  // The scene, selection and camera stay in the controller. Only what the renderer holds is rebuilt, from the current scene.
+  function recoverFromContextLoss() {
+    contextLost = false;
+    if (!suppliedRenderer && renderer) {
+      try {
+        renderer.dispose();
+      } catch {
+        // The lost context has nothing left to free, so a failed dispose changes nothing.
+      }
+      renderer = null;
+    }
+    renderedScene = null;
+    renderedTopology = null;
+    renderedShadowKey = null;
+    pausedNotice.hide();
+    requestFrame();
+  }
+
+  function pauseForContextLoss() {
+    contextLost = true;
+    if (frameHandle) {
+      cancelAnimationFrame(frameHandle);
+      frameHandle = 0;
+    }
+    pausedNotice.show(CONTEXT_LOST_MESSAGE);
+  }
+
   function requestFrame() {
-    if (frameHandle || !isVisible || documentReference.hidden) {
+    if (frameHandle || contextLost || !isVisible || documentReference.hidden) {
       return;
     }
     frameHandle = requestAnimationFrame(timestamp => {
       frameHandle = 0;
-      if (!isVisible || documentReference.hidden) {
+      if (contextLost || !isVisible || documentReference.hidden) {
         return;
       }
       if (playing) {
@@ -2629,8 +2681,8 @@ export function createStudio(container, {
       } else {
         lastFrameTime = timestamp;
       }
-      renderPass();
-      if (playing && !frameHandle) {
+      const drawn = renderScheduledPass();
+      if (drawn && playing && !frameHandle) {
         requestFrame();
       }
     });
@@ -3532,6 +3584,8 @@ export function createStudio(container, {
       documentReference.removeEventListener('pointerdown', onAnyPointerDown, true);
       documentReference.removeEventListener('keydown', onWindowKeyDown);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
+      stopWatchingContextLoss();
+      pausedNotice.hide();
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
       controller.dispose();

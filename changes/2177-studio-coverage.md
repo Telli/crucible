@@ -1,1 +1,2 @@
 - Studio has property panels for lights, the sun, the camera, the world, fog, film, effects, shadows and quality, laid out one line per row in groups that fold; its panels dock to the window edges by default, the axis widget sits at the top right, and floating cards resize one at a time (#2177)
+- Studio pauses the picture with a notice and a Reload button when the browser drops the WebGL context or a frame throws, and draws again by itself when the context returns instead of freezing for good (#2739)

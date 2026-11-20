@@ -326,6 +326,25 @@ export const STUDIO_CSS = `
   display: grid;
 }
 
+/* Shown while the picture is paused (a lost graphics context or a frame that failed). It sits over the viewport, under the menu bar. */
+.crucible-studio-paused {
+  position: absolute;
+  inset-block-start: var(--studio-top);
+  inset-inline: var(--studio-edge);
+  inline-size: fit-content;
+  max-inline-size: min(520px, calc(100% - 2 * var(--studio-edge)));
+  margin-inline: auto;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--studio-text);
+  font-family: var(--studio-font);
+  font-size: 13px;
+  z-index: 9;
+}
+.crucible-studio-paused[hidden] { display: none; }
+.crucible-studio-paused p { margin: 0; }
+.crucible-studio-paused .crucible-studio-icon { flex: none; color: var(--studio-accent); }
+
 .crucible-studio-menubar {
   position: absolute;
   inset: var(--studio-edge) var(--studio-edge) auto;

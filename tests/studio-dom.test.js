@@ -3531,3 +3531,76 @@ test('the stylesheet fades rows under a pinned group title and at the bottom of 
   assert.ok(STUDIO_CSS.includes('grid-template-columns: minmax(min-content, 45%) minmax(0, 1fr);'), 'a label column grows to its label');
   assert.ok(STUDIO_CSS.includes('scroll-snap-type: y mandatory;'), 'the Scene list scrolls a whole row at a time');
 });
+
+function pausedNotice(ui) {
+  return ui.root.querySelector('.crucible-studio-paused');
+}
+
+test('a lost graphics context pauses the picture with a notice, and restoring it draws the same scene again', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  ui.controller.orbitCamera({ zoomScale: 2 });
+  const eyeBefore = ui.controller.viewCamera.eye.slice();
+  const selectionBefore = ui.controller.selectedNodeId;
+  assert.equal(pausedNotice(ui).hidden, true);
+
+  const lostEvent = dispatch(ui.canvas, 'webglcontextlost');
+  assert.equal(lostEvent.defaultPrevented, true, 'cancelling the event lets the browser restore the context');
+  const notice = pausedNotice(ui);
+  assert.equal(notice.hidden, false);
+  assert.equal(notice.getAttribute('role'), 'status');
+  assert.equal(notice.getAttribute('aria-live'), 'polite');
+  assert.match(notice.textContent, /graphics context was lost/);
+  assert.ok(notice.querySelector('svg'), 'the notice leads with an icon');
+  const reloadButton = notice.querySelector('button');
+  assert.equal(reloadButton.hidden, true, 'Reload is offered only after a few seconds');
+  ui.dom.runTimers();
+  assert.equal(reloadButton.hidden, false);
+
+  const renderCallsWhileLost = ui.renderer.calls.length;
+  ui.controller.selectNode('orb');
+  ui.dom.runAnimationFrames(100);
+  ui.studio.renderNow();
+  assert.equal(ui.renderer.calls.length, renderCallsWhileLost, 'nothing is drawn while the context is lost');
+  assert.equal(ui.dom.pendingAnimationFrameCount, 0, 'the frame loop stays quiet until the context returns');
+
+  ui.controller.selectNode(selectionBefore);
+  const framesBefore = ui.renderer.frames.length;
+  dispatch(ui.canvas, 'webglcontextrestored');
+  assert.equal(pausedNotice(ui).hidden, true);
+  assert.equal(ui.dom.pendingAnimationFrameCount, 1, 'restoring asks for a frame');
+  ui.dom.runAnimationFrames(200);
+  assert.equal(ui.renderer.frames.length, framesBefore + 1);
+  assert.ok(ui.renderer.calls.slice(renderCallsWhileLost).includes('replaceParts'), 'the parts are uploaded again');
+  assert.equal(ui.controller.selectedNodeId, selectionBefore);
+  assert.deepEqual(ui.controller.viewCamera.eye, eyeBefore);
+});
+
+test('a frame that throws once shows the notice, and the next requested frame draws again', testContext => {
+  const ui = mountStudio(testContext);
+  ui.renderer.updateFailure = new Error('WebGL replacement allocation failed with error 37442');
+  ui.selectRow('hero');
+  assert.equal(ui.dom.pendingAnimationFrameCount, 1);
+  assert.doesNotThrow(() => ui.dom.runAnimationFrames(100));
+  const notice = pausedNotice(ui);
+  assert.equal(notice.hidden, false);
+  assert.match(notice.textContent, /37442/);
+  assert.equal(ui.dom.pendingAnimationFrameCount, 0, 'a failed frame does not retry on its own');
+
+  ui.renderer.updateFailure = null;
+  const framesBefore = ui.renderer.frames.length;
+  ui.selectRow('orb');
+  ui.dom.runAnimationFrames(200);
+  assert.equal(ui.renderer.frames.length, framesBefore + 1);
+  assert.equal(pausedNotice(ui).hidden, true);
+});
+
+test('disposing Studio removes the context loss listeners from the canvas', testContext => {
+  const ui = mountStudio(testContext);
+  const listenerTypes = () => ui.canvas.listeners.map(entry => entry.type);
+  assert.ok(listenerTypes().includes('webglcontextlost'));
+  assert.ok(listenerTypes().includes('webglcontextrestored'));
+  ui.studio.dispose();
+  assert.ok(!listenerTypes().includes('webglcontextlost'));
+  assert.ok(!listenerTypes().includes('webglcontextrestored'));
+});
