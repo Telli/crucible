@@ -579,6 +579,51 @@ function appendSelectionSilhouette(documentReference, gizmoSvg, triangles) {
   }));
 }
 
+// How far from a handle a press still takes it, in pixels: the drawn handle stays thin, the area that answers is wide.
+const GIZMO_HIT_LINE_WIDTH = 22;
+const GIZMO_HIT_TIP_RADIUS = 16;
+const GIZMO_HIT_ORIGIN_RADIUS = 13;
+
+// The unseen areas go in first, so every drawn handle lies above them and a press on a drawn handle is still its own.
+function appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool) {
+  const hitAttributes = axis => ({ fill: 'none', stroke: 'transparent', 'data-gizmo-axis': axis, 'data-gizmo-hit': 'line' });
+  const hitDisc = (point, radius, axis) => createSvgElement(documentReference, 'circle', {
+    cx: point.x.toFixed(1),
+    cy: point.y.toFixed(1),
+    r: String(radius),
+    fill: 'transparent',
+    stroke: 'none',
+    'data-gizmo-axis': axis,
+    'data-gizmo-hit': 'disc',
+  });
+  if (tool === 'rotate') {
+    for (const axis of AXIS_NAMES) {
+      const pointString = handles.rings[axis].filter(point => point.visible).map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ');
+      if (pointString) {
+        gizmoSvg.append(createSvgElement(documentReference, 'polyline', { points: pointString, ...hitAttributes(axis) }));
+      }
+    }
+    return;
+  }
+  const origin = handles.origin;
+  for (const axis of AXIS_NAMES) {
+    const tip = handles.axes[axis];
+    if (!tip.visible) continue;
+    gizmoSvg.append(
+      createSvgElement(documentReference, 'line', {
+        x1: origin.x.toFixed(1),
+        y1: origin.y.toFixed(1),
+        x2: tip.x.toFixed(1),
+        y2: tip.y.toFixed(1),
+        'stroke-linecap': 'round',
+        ...hitAttributes(axis),
+      }),
+      hitDisc(tip, GIZMO_HIT_TIP_RADIUS, axis),
+    );
+  }
+  gizmoSvg.append(hitDisc(origin, GIZMO_HIT_ORIGIN_RADIUS, tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen'));
+}
+
 function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
   gizmoSvg.replaceChildren();
   const width = controller.viewportWidth;
@@ -613,6 +658,10 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
       'data-gizmo-axis': 'screen',
     }));
     return;
+  }
+
+  if (!controller.dragging) {
+    appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool);
   }
 
   if (tool === 'rotate') {

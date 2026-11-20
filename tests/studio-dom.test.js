@@ -808,7 +808,7 @@ test('the gizmo draws handles for each tool and clears them when nothing is sele
   ui.tool('rotate').click();
   ui.studio.renderNow();
   assert.deepEqual([...axesDrawn()].sort(), ['x', 'y', 'z']);
-  assert.equal(ui.gizmo.querySelectorAll('polyline').length, 3);
+  assert.equal(ui.gizmo.querySelectorAll('polyline').filter(element => !element.getAttribute('data-gizmo-hit')).length, 3);
   ui.tool('scale').click();
   ui.studio.renderNow();
   assert.deepEqual([...axesDrawn()].sort(), ['uniform', 'x', 'y', 'z']);
@@ -1760,7 +1760,7 @@ test('the readout names the camera and gives the size of the selection in metres
 test('move handles end in arrows, scale handles in squares and an axis that faces the viewer falls back to a dot', testContext => {
   const ui = mountStudio(testContext);
   ui.controller.selectNode('hero');
-  const shapes = () => ui.gizmo.descendants().filter(element => ['x', 'y', 'z'].includes(element.getAttribute('data-gizmo-axis')) && element.tagName.toLowerCase() !== 'line').map(element => element.tagName.toLowerCase());
+  const shapes = () => ui.gizmo.descendants().filter(element => ['x', 'y', 'z'].includes(element.getAttribute('data-gizmo-axis')) && !element.getAttribute('data-gizmo-hit') && element.tagName.toLowerCase() !== 'line').map(element => element.tagName.toLowerCase());
   ui.tool('translate').click();
   ui.studio.renderNow();
   assert.deepEqual(shapes(), ['polygon', 'polygon', 'polygon']);
@@ -1848,7 +1848,7 @@ test('turning a ring shows where the turn began, how far it has gone and hides t
     handles.pivot[2] - Math.sin((degrees * Math.PI) / 180),
   ]);
   const sweepPart = part => ui.gizmo.descendants().find(element => element.getAttribute('data-rotation-sweep') === part);
-  const rings = () => ui.gizmo.descendants().filter(element => element.tagName.toLowerCase() === 'polyline').map(element => element.getAttribute('data-gizmo-axis'));
+  const rings = () => ui.gizmo.descendants().filter(element => element.tagName.toLowerCase() === 'polyline' && !element.getAttribute('data-gizmo-hit')).map(element => element.getAttribute('data-gizmo-axis'));
   assert.equal(ui.controller.rotationSweep(), null);
   assert.equal(sweepPart('wedge'), undefined);
   assert.deepEqual(rings(), ['x', 'y', 'z']);
@@ -2562,4 +2562,27 @@ test('menu rows start with their icon or an empty square, so the labels line up'
       assert.match(String(leadClass), /crucible-studio-icon|crucible-studio-menu-gap/, `${menuId}: ${row.textContent}`);
     }
   }
+});
+
+test('each handle answers a press well outside what is drawn, and a drawn handle still lies on top', testContext => {
+  const ui = mountStudio(testContext);
+  const hitAreas = () => ui.gizmo.descendants().filter(element => element.getAttribute('data-gizmo-hit'));
+  const axesOf = kind => hitAreas().filter(element => element.getAttribute('data-gizmo-hit') === kind).map(element => element.getAttribute('data-gizmo-axis'));
+  ui.tool('translate').click();
+  ui.studio.renderNow();
+  assert.deepEqual(axesOf('line'), ['x', 'y', 'z']);
+  assert.deepEqual(axesOf('disc'), ['x', 'y', 'z', 'screen']);
+  const parts = ui.gizmo.descendants().filter(element => element.getAttribute('data-gizmo-axis'));
+  const lastHit = Math.max(...hitAreas().map(element => parts.indexOf(element)));
+  const firstDrawn = parts.findIndex(element => !element.getAttribute('data-gizmo-hit'));
+  assert.ok(lastHit < firstDrawn, 'unseen areas come first, so drawn handles win a press');
+  assert.ok(Number(hitAreas().find(element => element.getAttribute('data-gizmo-hit') === 'disc').getAttribute('r')) >= 13);
+  assert.ok(STUDIO_CSS.includes('[data-gizmo-hit="line"] { stroke-width: 22px !important; }'));
+  ui.tool('scale').click();
+  ui.studio.renderNow();
+  assert.deepEqual(axesOf('disc'), ['x', 'y', 'z', 'uniform']);
+  ui.tool('rotate').click();
+  ui.studio.renderNow();
+  assert.deepEqual(axesOf('line'), ['x', 'y', 'z']);
+  assert.deepEqual(axesOf('disc'), []);
 });

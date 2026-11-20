@@ -138,6 +138,13 @@ export const STUDIO_CSS = `
   pointer-events: all;
   cursor: pointer;
 }
+/* The wide area that answers for a thin handle. It is never drawn, whatever the hover rules below give the handle. */
+.crucible-studio-gizmo [data-gizmo-hit] {
+  stroke: transparent !important;
+  filter: none !important;
+}
+.crucible-studio-gizmo [data-gizmo-hit="line"] { stroke-width: 22px !important; }
+.crucible-studio-gizmo [data-gizmo-hit="disc"] { stroke-width: 0 !important; }
 .crucible-studio-gizmo[data-hover-axis="x"] [data-gizmo-axis="x"],
 .crucible-studio-gizmo[data-hover-axis="y"] [data-gizmo-axis="y"],
 .crucible-studio-gizmo[data-hover-axis="z"] [data-gizmo-axis="z"],
