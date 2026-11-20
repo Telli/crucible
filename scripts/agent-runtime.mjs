@@ -67,6 +67,7 @@ import { isBrowserLoss, describeBrowserLoss } from './agent-browser-loss.mjs';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
 import { GLB_EXPORT_NOTES } from '../src/glb-export-omissions.js';
 import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
+import { previewDeadlineMilliseconds } from './preview-deadline.mjs';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
@@ -83,7 +84,8 @@ const MAXIMUM_KEPT_GLBS = 8;
 const MAXIMUM_KEPT_WEB_BUILDS = 4;
 const EXPORTED_GLB_NAME = /^[0-9a-f-]{36}\.glb$/;
 const EXPORTED_WEB_BUILD_NAME = /^web-[0-9a-f-]{36}$/;
-const EVALUATION_TIMEOUT_MS = 30000;
+// 30 seconds unless a test harness that starts the server asks for longer (#2741).
+const EVALUATION_TIMEOUT_MS = previewDeadlineMilliseconds();
 // A browser stuck in a long shader compile may never answer the close request; teardown waits this long, then goes on (#2200).
 const BROWSER_CLOSE_TIMEOUT_MS = 5000;
 const RECOVERY_HINT = 'The scenes in this runtime are lost. Call scene_create (or scene_create_asset) to start a fresh runtime; no server restart is needed.';
