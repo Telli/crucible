@@ -149,7 +149,7 @@ Name the task ids you ran in the pull request (`--dry-run` lists them). Skipped 
 
 ### Look changes
 
-A change to shaders, lighting, materials, the default render or a post step changes how every scene looks. Add a before and an after picture to the pull request. A bot adds the label `hold:look-approval`. Only the owner removes it, and nothing with that label merges. Once the owner removes it, the check counts the look as approved and stops asking for pictures.
+A change to shaders, lighting, materials, the default render or a post step changes how every scene looks. Add a before and an after picture to the pull request. Run every picture and clip through `node scripts/check-preview.mjs <file> [--reference <Cook or Cycles still>]` before you send it for review, and fix what it fails ([docs/check-preview.md](docs/check-preview.md)). A bot adds the label `hold:look-approval`. Only the owner removes it, and nothing with that label merges. Once the owner removes it, the check counts the look as approved and stops asking for pictures.
 
 ### Who runs the GPU and person checks
 
