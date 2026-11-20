@@ -88,6 +88,7 @@ test('an edit that does not touch the sea keeps the posed sea part, the topology
   const signRanks = flushOrderOf(partNamed('sign')).ranges.map(range => range.rank);
   const drawnOrders = scene.parts.map(flushOrderOf);
   assert.equal(flushOrderOf(partNamed('surface')), null, 'the moving sea is left out of the flush ranking');
+  assert.equal(flushOrderOf(partNamed('still')), null, 'so the still sea lying flush with it is not cut against it');
   const flush = scene.inspect().flush;
   const topology = scene.topologyRevision;
   scene.apply([{ type: 'set-camera', eye: [25, 18, 30], target: [0, 0, 0] }], { expectedRevision: scene.revision });
