@@ -9,7 +9,7 @@
   "hdri": "/showcase/port/sky.hdr",
   "hdriOptions": {
     "intensity": 0.6,
-    "rotation": 2.2,
+    "rotation": 3.7708,
     "showBackground": true,
     "backgroundBlur": 0
   },
