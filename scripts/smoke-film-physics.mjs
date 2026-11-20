@@ -5,14 +5,15 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { constants, setPriority } from 'node:os';
 import { chromium } from 'playwright';
+import { viteChildEnvironment, viteOutputMentionsAddress } from './vite-output.mjs';
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 const PORT = 5192;
-const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], { windowsHide: true, stdio: 'pipe' });
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], { windowsHide: true, stdio: 'pipe', env: viteChildEnvironment() });
 await new Promise((resolve, reject) => {
   const timeout = setTimeout(() => reject(new Error('The film physics smoke server did not start.')), 30000);
   server.stdout.on('data', bytes => {
-    if (bytes.toString().includes(`127.0.0.1:${PORT}`)) {
+    if (viteOutputMentionsAddress(bytes, `127.0.0.1:${PORT}`)) {
       clearTimeout(timeout);
       resolve();
     }
@@ -28,7 +29,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/src/film.js', route => route.fulfill({ contentType: 'application/javascript', body: "export * from '/build/film.js';" }));
-    await page.route('**/src/renderer.js', route => route.fulfill({ contentType: 'application/javascript', body: "export { CrucibleRenderer } from '/build/67.module.js';" }));
+    await page.route('**/src/renderer.js', route => route.fulfill({ contentType: 'application/javascript', body: "export { CrucibleRenderer } from '/build/crucible.module.js';" }));
     await page.goto(`http://127.0.0.1:${PORT}/film.html?export=1&width=${width}&height=${height}`);
     await page.waitForFunction(() => window.__filmReady);
     const result = await page.evaluate(() => {

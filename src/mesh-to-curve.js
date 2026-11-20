@@ -94,7 +94,10 @@ function chainsOf(adjacency) {
     if (adjacency.get(start).length === 2) continue;
     for (const step of adjacency.get(start)) {
       if (usedEdges.has(step[1])) continue;
-      chains.push({ vertices: walk(start, step, adjacency, usedEdges), closed: false });
+      const vertices = walk(start, step, adjacency, usedEdges);
+      // A loop that leaves a junction and returns to it is closed: drop the repeated end vertex instead of doubling it.
+      const returnsToStart = vertices.length > 3 && vertices.at(-1) === start;
+      chains.push({ vertices: returnsToStart ? vertices.slice(0, -1) : vertices, closed: returnsToStart });
     }
   }
   // What is left is closed loops; each starts at its lowest vertex.

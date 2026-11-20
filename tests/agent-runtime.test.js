@@ -121,7 +121,7 @@ function hitNearestLamp(ray) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, disposeGate, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, disposeGate, disposeLostBridge = false, disposeWithoutScene = false, hangBrowserClose = false, closeTimeoutMs, failFirstGoto = false, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
   const events = [];
   const sourceCalls = [];
   const sandboxTimers = new Set();
@@ -139,9 +139,15 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
   class FakePage {
     constructor(privateTarget) { this.privateTarget = privateTarget; this.closed = false; }
     route() {}
+    exposeFunction() {}
     setDefaultTimeout() {}
     setViewportSize(size) { this.viewport = size; viewports.push(size); }
-    goto() {}
+    goto() {
+      if (!this.privateTarget && failFirstGoto) {
+        failFirstGoto = false;
+        throw new Error('page.goto: Timeout 15000ms exceeded.');
+      }
+    }
     waitForFunction() {}
     isClosed() { return this.closed; }
     context() { return { newCDPSession: async () => ({
@@ -157,6 +163,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
         failPrivateCreate = false;
         throw new Error(typeof failPrivateCreateMessage === 'string' ? failPrivateCreateMessage : 'Injected private create failure');
       }
+      if (method === 'dispose' && this.privateTarget && disposeLostBridge) throw new TypeError("page.evaluate: TypeError: Cannot read properties of undefined (reading 'dispose')");
+      if (method === 'dispose' && this.privateTarget && disposeWithoutScene) throw new Error('page.evaluate: Error: No scene is active: it was never created, was disposed, or scene_create failed. Call scene_create or scene_create_asset first, then pass the sessionId it returns.');
       if (method === 'dispose' && disposeGate) await disposeGate;
       if (method === 'resume' && failResume) throw new Error('Injected resume failure');
       if (method === 'create' && this.privateTarget && blockPrivateCreate) return new Promise((resolve, reject) => { this.rejectShot = reject; });
@@ -205,7 +213,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
       resolveAcquisitionStarted();
       return stallPrivatePage ? acquiredPage : (privatePage = new FakePage(true));
     },
-    close: async () => { await privatePage?.close(); await sourcePage.close(); events.push('browser:close'); },
+    close: async () => { if (hangBrowserClose) { hangBrowserClose = false; return new Promise(() => {}); } await privatePage?.close(); await sourcePage.close(); events.push('browser:close'); },
   };
   const originalSource = await readFile(new URL('../scripts/agent-runtime.mjs', import.meta.url), 'utf8');
   let source = originalSource
@@ -214,6 +222,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     .replace('export function createAgentRuntime', 'function createAgentRuntime')
     .replaceAll('import.meta.url', JSON.stringify(import.meta.url))
     .replace("import('playwright-core')", 'Promise.resolve({ chromium: globalThis.chromium })');
+  if (closeTimeoutMs) source = source.replace('const BROWSER_CLOSE_TIMEOUT_MS = 5000;', `const BROWSER_CLOSE_TIMEOUT_MS = ${closeTimeoutMs};`);
   if (deadlineMs) source = source.replace('const EVALUATION_TIMEOUT_MS = 30000;', `const EVALUATION_TIMEOUT_MS = ${deadlineMs};`);
   const context = createContext({ ...(await importedBindings(originalSource)),
     packageMetadata: { version: 'test' }, existsSync: () => true, readFile: async () => '',
@@ -221,7 +230,8 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     runAnnotateSession: async () => ({ outcome: 'timeout' }), openInDefaultBrowser: async () => {},
     createNativeTracerLocator: () => ({ find: async () => ({ reason: 'no native tracer in tests' }) }),
     createAgentRenderJobs: async () => ({ list: () => [], close: async () => {} }), resolveJobRoot: path => path,
-    chromium: { launch: async () => { browserConnected = true; return browser; } }, URL, Buffer, AbortController, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
+    chromium: { launch: async () => { browserConnected = true; return browser; } },
+    launchWithShaderCache: async () => { browserConnected = true; return browser; }, URL, Buffer, AbortController, process, performance, clearTimeout, runtimeOptions, ...contextOverrides,
     setTimeout: (callback, delay) => {
       deadlines.push(delay);
       const timer = setTimeout(callback, delay);
@@ -468,11 +478,11 @@ runTest('a job frame over 1920x1080 that --memory shrinks is refused with the me
 
 const NON_INDEXED_INSPECTION = vertices => ({ counts: { parts: 1, vertices, materials: 1 }, nodes: [], look: {} });
 
-async function submitWithInspection(inspection, settings) {
+async function submitWithInspection(inspection, settings, backend) {
   const submitted = [];
   const controller = { list: () => [], close: async () => {}, submit: async request => { submitted.push(request); return { jobId: 'job' }; } };
   const { runtime, sessionId } = await reviewRuntimeHarness({ inspection,
-    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test'), ...(backend ? { backend } : {}) },
     contextOverrides: { createAgentRenderJobs: async () => controller } });
   try {
     const attempt = await runtime.submitJob({ sessionId, expectedRevision: 0, settings }).then(() => undefined, error => error);
@@ -492,7 +502,7 @@ runTest('submitJob accepts the same oversized scene as a raster job, with backen
   const raster = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64 });
   assert.equal(raster.attempt, undefined);
   assert.equal(raster.submitted.length, 1);
-  const gpu = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer', backend: 'gpu' } });
+  const gpu = await submitWithInspection(NON_INDEXED_INSPECTION(1700000), { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer', backend: 'gpu' } }, 'gpu');
   assert.equal(gpu.attempt, undefined);
   assert.equal(gpu.submitted.length, 1);
   // 1,150,000 vertices without indices are about 383,000 real triangles; the estimate says 575,000, inside the safety margin.
@@ -512,6 +522,16 @@ runTest('submitJob refuses a scene of plain nodes whose exact count is over the 
   const underCap = { ...inspection, nodes: exactNodes.map(node => ({ ...node, triangles: 90000 })) };
   const accepted = await submitWithInspection(underCap, { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
   assert.equal(accepted.attempt, undefined);
+});
+
+runTest('submitJob refuses stills estimated over the combined output byte budget before rendering (#2199)', async () => {
+  const rejected = await submitWithInspection(NON_INDEXED_INSPECTION(100), {
+    kind: 'stills', width: 1280, height: 720, fps: 24, stillCount: 288, quality: 'realtime-high',
+  });
+  assert.match(rejected.attempt?.message ?? '', /combined output byte budget/);
+  assert.match(rejected.attempt?.message ?? '', /224 frames/);
+  assert.equal(rejected.submitted.length, 0);
+  assert.equal(rejected.phase, 'ready');
 });
 
 runTest('a slow suspend at job start does not fail the runtime (#1256)', async () => {
@@ -556,6 +576,81 @@ runTest('a scene page that times out fails the runtime with the recovery hint, a
     const fresh = await runtime.create({ recipe: FRESH_RECIPE });
     assert.equal((await runtime.capabilities()).phase, 'ready');
     assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a timed-out preview call names the operation that ran long (#2200)', async () => {
+  const { runtime, sessionId } = await reviewRuntimeHarness({ hangMethod: 'apply', deadlineMs: 40 });
+  try {
+    await assert.rejects(runtime.apply({ sessionId, operations: [{ type: 'add-material', material: { id: 'stone', pattern: 'stone' } }, { type: 'add-material', material: { id: 'tiles', pattern: 'tiles' } }] }),
+      /operation "apply" \(2 operations: add-material\) exceeded 0\.04 seconds/);
+  } finally { await runtime.close(); }
+});
+
+runTest('the next scene_create after a timeout succeeds first try even when the old browser never finishes closing (#2200)', async () => {
+  const { runtime, sessionId } = await reviewRuntimeHarness({ hangMethod: 'inspect', deadlineMs: 40, hangBrowserClose: true, closeTimeoutMs: 30 });
+  try {
+    await assert.rejects(runtime.inspect({ sessionId }), /operation "inspect" exceeded.*scene_create/s);
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a browser start whose page load times out is retried once on a fresh browser (#2200)', async () => {
+  const harness = await reviewRuntimeHarness({ failFirstGoto: true });
+  try {
+    assert.equal(typeof harness.sessionId, 'string');
+  } finally { await harness.runtime.close(); }
+});
+
+runTest('a job whose page navigates under it fails with the page loss and the budget, then the next scene works (#2198)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const submitted = { kind: 'video', width: 1280, height: 720, fps: 24, duration: 12 };
+  const settings = { ...submitted, frameCount: 288 };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ failPrivateCreate: true, disposeLostBridge: true,
+    failPrivateCreateMessage: 'page.evaluate: Execution context was destroyed, most likely because of a navigation',
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test'), memory: 192 },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: submitted });
+    const failure = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} }, settings,
+      signal: new AbortController().signal, progress: async () => {} }).then(() => assert.fail('the job must fail'), error => error);
+    assert.match(failure.message, /preview page navigated or reloaded before the first frame at 1280x720/);
+    assert.match(failure.message, /raise --memory \(now 192 MiB\)/);
+    assert.doesNotMatch(failure.message, /reading 'dispose'/);
+    const fresh = await runtime.create({ recipe: FRESH_RECIPE });
+    assert.equal((await runtime.apply({ sessionId: fresh.sessionId })).revision, 1);
+  } finally { await runtime.close(); }
+});
+
+runTest('a job that fails for its own reason is not masked by a lost page bridge on dispose (#2198)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const { runtime, sessionId } = await reviewRuntimeHarness({ failPrivateCreate: true, disposeLostBridge: true, failPrivateCreateMessage: 'Injected scene problem',
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const failure = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }).then(() => assert.fail('the job must fail'), error => error);
+    assert.match(failure.message, /Injected scene problem/);
+  } finally { await runtime.close(); }
+});
+
+runTest('a job whose scene was never created reports the create failure, not "No scene is active" from the cleanup (#2198)', async () => {
+  let runJob;
+  const controller = { list: () => [], close: async () => {}, submit: async () => ({ jobId: 'job' }) };
+  const harness = await reviewRuntimeHarness({ failPrivateCreate: true, disposeWithoutScene: true, failPrivateCreateMessage: 'Injected particles problem',
+    runtimeOptions: { jobs: join(tmpdir(), 'crucible-job-root-test') },
+    contextOverrides: { createAgentRenderJobs: async ({ run }) => { runJob = run; return controller; } } });
+  const { runtime, sessionId } = harness;
+  try {
+    await runtime.submitJob({ sessionId, expectedRevision: 0, settings: { kind: 'image', width: 64, height: 64 } });
+    const failure = await runJob({ jobId: randomUUID(), sessionId, directory: tmpdir(), snapshot: { recipe: {} },
+      settings: { kind: 'image', width: 64, height: 64 }, signal: new AbortController().signal, progress: async () => {} }).then(() => assert.fail('the job must fail'), error => error);
+    assert.match(failure.message, /Injected particles problem/);
+    assert.doesNotMatch(failure.message, /No scene is active/);
   } finally { await runtime.close(); }
 });
 
@@ -1057,6 +1152,14 @@ runTest('scene_apply add-node places a catalog GLB by file name (#1843)', async 
   assert.deepEqual(applyCall.input.operations[0].node.asset, { id: sheepId });
 });
 
+runTest('scene_apply with a branch sends the bytes of the catalog GLB it places (#2267)', async context => {
+  const { runtime, sessionId, sourceCalls, sheepId } = await namedAssetHarness(context);
+  await runtime.apply({ sessionId, branch: 'flock', operations: [{ type: 'add-node', node: { id: 'sheep1-body', asset: { name: 'sheep_body.glb' } } }] });
+  const branchCall = sourceCalls.filter(call => call.method === 'branchApply').at(-1);
+  assert.deepEqual(branchCall.input.operations[0].node.asset, { id: sheepId });
+  assert.deepEqual(Object.keys(branchCall.input.assetData), [sheepId]);
+});
+
 runTest('an unknown asset name is refused with near names and the catalog tool to run (#1843)', async context => {
   const { runtime } = await namedAssetHarness(context);
   await assert.rejects(runtime.create({ recipe: recipePlacing({ name: 'sheep_body' }) }), /No catalog GLB is named "sheep_body".*"sheep_body\.glb"/);
@@ -1076,6 +1179,56 @@ runTest('scene_create_asset opens a catalog GLB by assetName and refuses assetNa
   assert.equal(createCall.input.recipe.assetId, sheepId);
   assert.equal(createCall.input.recipe.assetName, undefined);
   await assert.rejects(runtime.createAsset({ recipe: { ...assetRecipe, assetId: sheepId, assetName: 'sheep_body.glb' } }), /exactly one of recipe\.assetId/);
+});
+
+// Files that arrive or leave the --assets folder after the server started (#2209).
+async function rescanHarness(context) {
+  const directory = await mkdtemp(join(tmpdir(), 'crucible-rescan-assets-'));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  await cp(new URL('./fixtures/kenney-boat/', import.meta.url), directory, { recursive: true });
+  const boatBytes = await readFile(join(directory, 'boat-fishing-small.glb'));
+  await rm(join(directory, 'boat-fishing-small.glb'));
+  await writeFile(join(directory, 'first.glb'), boatBytes);
+  const harness = await reviewRuntimeHarness({ runtimeOptions: { assets: directory } });
+  const addGlb = (name, marker) => writeFile(join(directory, name), withDistinctDocument(boatBytes, marker));
+  return { ...harness, directory, addGlb };
+}
+
+function radianceFile() {
+  return Buffer.concat([Buffer.from('#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 2 +X 4\n'), Buffer.alloc(2 * 4 * 4, 128)]);
+}
+
+const listedNames = async runtime => (await runtime.assetCatalog()).assets.map(asset => asset.name);
+
+runTest('a GLB and an HDRI copied into --assets after start are listed by the next catalog call and placed by name (#2209)', async context => {
+  const { runtime, sessionId, sourceCalls, directory, addGlb } = await rescanHarness(context);
+  assert.deepEqual(await listedNames(runtime), ['first.glb']);
+  await addGlb('downloaded.glb', 'downloaded');
+  await writeFile(join(directory, 'sky.hdr'), radianceFile());
+  const listing = await runtime.assetCatalog();
+  assert.deepEqual(listing.assets.map(asset => asset.name).sort(), ['downloaded.glb', 'first.glb', 'sky.hdr']);
+  const downloadedId = listing.assets.find(asset => asset.name === 'downloaded.glb').assetId;
+  await runtime.apply({ sessionId, operations: [{ type: 'add-node', node: { id: 'new-boat', asset: { name: 'downloaded.glb' } } }] });
+  assert.deepEqual(sourceCalls.filter(call => call.method === 'apply').at(-1).input.operations[0].node.asset, { id: downloadedId });
+});
+
+runTest('an asset name that appeared since the last catalog call is found without listing the catalog first (#2209)', async context => {
+  const { runtime, sessionId, sourceCalls, addGlb } = await rescanHarness(context);
+  await listedNames(runtime);
+  await addGlb('late.glb', 'late');
+  await runtime.apply({ sessionId, operations: [{ type: 'add-node', node: { id: 'late-boat', asset: { name: 'late.glb' } } }] });
+  assert.equal(sourceCalls.filter(call => call.method === 'apply').at(-1).input.operations[0].node.asset.id.length, 64);
+});
+
+runTest('a file removed from --assets leaves the catalog and a rewritten file gets its new id (#2209)', async context => {
+  const { runtime, directory, addGlb } = await rescanHarness(context);
+  await addGlb('temporary.glb', 'one');
+  const before = (await runtime.assetCatalog()).assets.find(asset => asset.name === 'temporary.glb').assetId;
+  await addGlb('temporary.glb', 'two');
+  const after = (await runtime.assetCatalog()).assets.find(asset => asset.name === 'temporary.glb').assetId;
+  assert.notEqual(after, before);
+  await rm(join(directory, 'temporary.glb'));
+  assert.deepEqual(await listedNames(runtime), ['first.glb']);
 });
 
 // The same GLB with one extra field in its JSON chunk, so the catalog gives it another asset id.

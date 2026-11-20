@@ -150,6 +150,9 @@ export function explosionGridBytes(name) {
  * Returns the frame names. Same fuel and seed give the same bytes.
  */
 export function registerExplosionGrids(fuel, seed, velocity = false) {
+  if (!Object.hasOwn(FUEL_OPTIONS, fuel)) {
+    throw new RangeError(`registerExplosionGrids: fuel is ${JSON.stringify(fuel)}; use one of ${Object.keys(FUEL_OPTIONS).join(', ')}`);
+  }
   const names = explosionGridNames(fuel, seed, velocity);
   const emptyName = explosionEmptyGridName(velocity);
   // The MCP server sends these grids with the call (explosionGridNamesFor), so the preview page has them already and bakes nothing.

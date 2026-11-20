@@ -38,7 +38,7 @@ function insidePolygon(point, polygon) {
 }
 
 /** Where each mesh edge meets the projected line: { t, vertex, s, inserted } sorted by t from the edge's first vertex. */
-function edgeCrossings(mesh, flat, vertexPoint, line, extraPositions) {
+function edgeCrossings(mesh, flat, vertexPoint, line, extraPositions, extraSources) {
   const crossings = new Map();
   for (let edge = 0; edge < mesh.edgeCount; edge++) {
     const first = mesh.edgeVertices[edge * 2];
@@ -62,6 +62,7 @@ function edgeCrossings(mesh, flat, vertexPoint, line, extraPositions) {
       else if (clamped > 1 - SNAP) found.push({ t: 1, vertex: second, s: distanceAlongLine, inserted: false });
       else {
         extraPositions.push(lerp(vertexPoint(first), vertexPoint(second), clamped));
+        extraSources.push({ from: first, to: second, t: clamped });
         found.push({ t: clamped, vertex: mesh.vertexCount + extraPositions.length - 1, s: distanceAlongLine, inserted: true });
       }
     }
@@ -135,21 +136,22 @@ export function knifeCut(mesh, { path, direction, name = 'knife' }) {
   }
   const line = { points, lengths };
   const extraPositions = [];
-  const crossings = edgeCrossings(mesh, flat, vertexPoint, line, extraPositions);
+  const extraSources = [];
+  const crossings = edgeCrossings(mesh, flat, vertexPoint, line, extraPositions, extraSources);
   const output = [];
   let cutFaces = 0;
   for (const polygon of facePolygons(mesh)) {
     const { outline, events } = outlineWithCrossings(mesh, polygon, crossings);
-    const parts = splitFace(mesh, polygon, outline, events, { basis, line, flat, vertexPoint, extraPositions, name });
+    const parts = splitFace(mesh, polygon, outline, events, { basis, line, flat, vertexPoint, extraPositions, extraSources, name });
     if (parts.length > 1) cutFaces++;
     output.push(...parts);
   }
   if (cutFaces === 0) throw new RangeError('The line does not cross any face when projected along the direction. Check path and direction against the mesh bounds.');
-  return { mesh: buildPolygonMesh(mesh, output, extraPositions), cutFaces, newVertices: extraPositions.length };
+  return { mesh: buildPolygonMesh(mesh, output, extraPositions, extraSources), cutFaces, newVertices: extraPositions.length };
 }
 
 function splitFace(mesh, polygon, outline, events, context) {
-  const { basis, line, flat, vertexPoint, extraPositions, name } = context;
+  const { basis, line, flat, vertexPoint, extraPositions, extraSources, name } = context;
   const corners3d = polygon.vertices.map(vertexPoint);
   const normal = faceNormal(corners3d);
   if (Math.abs(dot(normal, basis.along)) < 1e-9 * Math.hypot(...normal)) return [outline];
@@ -171,6 +173,7 @@ function splitFace(mesh, polygon, outline, events, context) {
     line.lengths.forEach((length, vertexIndex) => {
       if (length <= from.s + 1e-9 || length >= to.s - 1e-9) return;
       extraPositions.push(liftOntoFace(line.points[vertexIndex], basis, centre, normal));
+      extraSources.push(-1);
       inner.push(mesh.vertexCount + extraPositions.length - 1);
     });
     parts = parts.flatMap(part => {
