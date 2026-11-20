@@ -67,6 +67,7 @@ import { isBrowserLoss, describeBrowserLoss } from './agent-browser-loss.mjs';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
 import { GLB_EXPORT_NOTES } from '../src/glb-export-omissions.js';
 import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
+import { previewDeadlineMilliseconds } from './preview-deadline.mjs';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
@@ -83,7 +84,8 @@ const MAXIMUM_KEPT_GLBS = 8;
 const MAXIMUM_KEPT_WEB_BUILDS = 4;
 const EXPORTED_GLB_NAME = /^[0-9a-f-]{36}\.glb$/;
 const EXPORTED_WEB_BUILD_NAME = /^web-[0-9a-f-]{36}$/;
-const EVALUATION_TIMEOUT_MS = 30000;
+// 30 seconds unless a test harness that starts the server asks for longer (#2741).
+const EVALUATION_TIMEOUT_MS = previewDeadlineMilliseconds();
 // A browser stuck in a long shader compile may never answer the close request; teardown waits this long, then goes on (#2200).
 const BROWSER_CLOSE_TIMEOUT_MS = 5000;
 const RECOVERY_HINT = 'The scenes in this runtime are lost. Call scene_create (or scene_create_asset) to start a fresh runtime; no server restart is needed.';
@@ -1029,8 +1031,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           requireTracerBackendAvailable(settings.renderer, backend);
           nativeTracerLocator ??= createNativeTracerLocator();
           const trace = await chooseTraceBackend({ requested: settings.renderer.backend, runtimeBackend: backend, locator: nativeTracerLocator });
-          // Only a job that really traces on native defaults to OIDN; the cpu, gpu and webgpu defaults do not change.
-          let choice = await chooseDenoiser(settings.renderer.denoise, { preferOidn: trace.backend === 'native' });
+          // denoise true means OIDN on every backend when its package is installed; native differs only in its fallback filter.
+          const keepWavelet = settings.quality === 'final';
+          let choice = await chooseDenoiser(settings.renderer.denoise, { native: trace.backend === 'native', keepWavelet });
           const traceOptions = { width, height, ...tracerOptions, backend: trace.backend === 'native' ? 'gpu' : trace.backend, denoise: choice.denoise, threads: PATH_TRACER_THREADS };
           let traced;
           let backendNote = trace.note;
@@ -1052,7 +1055,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
                 nativeTemporalShotIndex = shotSample?.shotIndex;
               }
               traced = await traceFrameNative({ tracer: trace.tracer, sequence: nativeSequence, temporal: nativeTemporal, exported, width, height, samples: tracerOptions.samples, bounces: tracerOptions.bounces,
-                seed: frameSeed, denoise: choice.denoise === true ? 'wavelet' : choice.denoise === false ? 'none' : choice.denoise, denoiser: choice.denoiser,
+                seed: frameSeed, denoise: choice.denoise === false ? 'none' : choice.denoise, denoiser: choice.denoiser,
                 maxSeconds: tracerOptions.maxSeconds, noiseThreshold: tracerOptions.noiseThreshold, exposure: snapshot.recipe.effects?.exposure ?? 1 });
               nativeMemoryAllowance.grantForAdapter(traced.report.gpu);
             } catch (error) {
@@ -1068,7 +1071,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               fallbackReason = exportedScene ? (await nativeTracerLocator.find()).reason : `renderer.backend "native" could not export the scene (${error.message}).`;
               backendNote = fallbackReason;
               traceOptions.backend = backend === 'cpu' ? 'cpu' : 'gpu';
-              choice = await chooseDenoiser(settings.renderer.denoise);
+              choice = await chooseDenoiser(settings.renderer.denoise, { keepWavelet });
               traceOptions.denoise = choice.denoise;
               backendNote += ' The ' + traceOptions.backend + ' backend ran instead.';
             }

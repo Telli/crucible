@@ -223,7 +223,11 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     .replaceAll('import.meta.url', JSON.stringify(import.meta.url))
     .replace("import('playwright-core')", 'Promise.resolve({ chromium: globalThis.chromium })');
   if (closeTimeoutMs) source = source.replace('const BROWSER_CLOSE_TIMEOUT_MS = 5000;', `const BROWSER_CLOSE_TIMEOUT_MS = ${closeTimeoutMs};`);
-  if (deadlineMs) source = source.replace('const EVALUATION_TIMEOUT_MS = 30000;', `const EVALUATION_TIMEOUT_MS = ${deadlineMs};`);
+  const deadlineLine = 'const EVALUATION_TIMEOUT_MS = previewDeadlineMilliseconds();';
+  if (deadlineMs) {
+    assert.ok(source.includes(deadlineLine), `the harness shortens the deadline by rewriting "${deadlineLine}"; update it to match agent-runtime.mjs`);
+    source = source.replace(deadlineLine, `const EVALUATION_TIMEOUT_MS = ${deadlineMs};`);
+  }
   const context = createContext({ ...(await importedBindings(originalSource)),
     packageMetadata: { version: 'test' }, existsSync: () => true, readFile: async () => '',
     createRequire: () => ({ resolve: () => { throw new Error('no peer in tests'); } }),
