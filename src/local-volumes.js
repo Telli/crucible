@@ -224,7 +224,7 @@ export function localVolumeGridSample(volume, x, y, z, out, withBlackbody = fals
     out.fill(0);
     return out;
   }
-  const baked = withBlackbody ? bakedGridEmission(volume.gridData, volume.temperatureScale) : null;
+  const baked = withBlackbody ? bakedGridEmission(volume.gridData, volume.temperatureScale, volume.flameTemperature) : null;
   return sampleVolumeGrid(volumeGridFloats(volume.gridData), volume.gridData.resolution, unitX, unitY, unitZ, out, baked);
 }
 

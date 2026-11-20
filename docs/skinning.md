@@ -106,7 +106,8 @@ Texture dimensions must fit `MAX_TEXTURE_SIZE`.
 Both RGBA32F textures, including padding, contribute to the renderer's existing texture memory budget.
 Palette textures use 64 bytes per joint before padding. Influence textures use 32 bytes per vertex before padding.
 
-The importer limits declared joints and the combined joint count of instantiated poses through `maxJoints`, which defaults to `4096`.
+The importer limits the joints declared by each skin through `maxJoints`, which defaults to `4096`. A skin worn by many primitives counts once.
+Each skinned primitive keeps its own pose copy, 448 bytes per joint, and those copies count against `maxDecodedBytes` with the decoded accessors, so many primitives on a large skin fail on bytes, not on joints.
 Existing byte, vertex, part, image, and resource limits remain active.
 Palette creation supports at most `65536` joints, subject to GPU texture capacity and memory budgets.
 

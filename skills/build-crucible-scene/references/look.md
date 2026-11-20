@@ -35,6 +35,8 @@ target hex and scale `emission`.
 
 Time of day comes from the sun alone: `"sky": { "type": "physical", "preset": "golden-hour" }` (also `sunset`, `blue-hour`) sets sun elevation and azimuth, and the key, sky and haze follow from one atmosphere, so a low sun reads warm with no grading. Put `sunElevation` or `sunRotation` beside a preset to move the sun; a preset starts the sky again, so earlier sky fields are dropped.
 
+For a mood that physics does not give, pick the colours: `"sky": { "type": "gradient", "stops": [{ "at": 0, "color": "#1a8a9c" }, { "at": 1, "color": "#0e5d73" }], "horizonGlow": { "color": "#19d0e8", "width": 1, "intensity": 1 } }` runs from the horizon (`at` 0) to the zenith (1), adds a bright band at the horizon, and lights the scene and shows in water like any sky. It leaves the sun to the setup. The stop and glow colours show as the hex you give, under any view transform (the sky compensates for it; it assumes exposure 1 and no look or post effect).
+
 ## HDRI from the catalog
 
 Call `scene_asset_catalog` (no arguments). It lists two shipped HDRIs, `sky-clouds` and `studio-softbox`, two shipped
@@ -58,8 +60,9 @@ key light. `"hdri": null` clears it. `ambientIntensity` also scales the HDRI's d
 ## Color look and tone mapping
 
 `environment.look` is one of `warm`, `cool`, `contrast`, `faded`, a shipped cube (`teal-orange`, `noir`) or the
-64-character ID of a `.cube` file from `scene_asset_catalog`. `environment.viewTransform` is `aces` (default), `agx` or
-`neutral`.
+64-character ID of a `.cube` file from `scene_asset_catalog`. `environment.viewTransform` is `aces` (default), `agx`,
+`neutral` or `standard` (Blender Standard: sRGB, no tone curve, values above 1 clip; pick it to match a Cycles
+reference rendered with Standard).
 
 Tool `scene_apply`:
 
@@ -98,7 +101,8 @@ act only above 1 octave. Each octave costs three extra density taps per step, so
 `keyTransmittance` and `surfaceTransmittance` are also opt in. `scene_capabilities` with `topic: "environment"` lists
 every `volumeFog` field and its range.
 
-Point lights do not scatter in volume fog; the sun does. A sunlit closed room with fog uses `bake.gridFog`
+The sun scatters in volume fog, and so do point and spot lights: at most 8, points first, with no shadows in the fog
+(`docs/volumetric.md`, "Point and spot lights in the fog"). A sunlit closed room with fog uses `bake.gridFog`
 (see `light.md`). Animate density with an `environment` track `volumeFogDensity` (see `film-and-animation.md`).
 
 ## Exposure, bloom, contrast, occlusion

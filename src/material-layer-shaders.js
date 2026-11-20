@@ -95,6 +95,14 @@ registerShaderFeatureCode('emissionFresnel', Object.freeze({
 `,
 }));
 
+// A soft edge (#2304): alpha fades by how face-on the surface is, so a sphere has no silhouette and reads as a round soft blob.
+// materialSoftEdge is the exponent of the facing cosine; 0 leaves alpha alone.
+registerShaderFeatureCode('softEdge', Object.freeze({
+  declarations: 'uniform float materialSoftEdge;\n',
+  emissionHook: `  alpha *= pow(clamp(abs(dot(normal, viewDirection)), 0.0, 1.0), materialSoftEdge);
+`,
+}));
+
 // An emission mask (material-layers.js): a smoothstep ramp along one axis of the part's own space in metres, the boxPosition
 // varying that the vertex shader fills for this feature. Axis -1 means this part has no mask.
 registerShaderFeatureCode('emissionMask', Object.freeze({
@@ -308,7 +316,7 @@ void applyAnisotropyTexture(vec3 normal) {
 `,
 }));
 
-// Layer textures share the units 11 to 13 with the splat arrays, so one renderer draws at most three different ones and
+// Layer textures share the units 11 to 13 with the splat samplers, so one renderer draws at most three different ones and
 // none beside splat layers. A batch without a texture gets the white texture and a NameOn flag of 0.
 const LAYER_TEXTURE_UNIT = 11;
 const MAX_LAYER_TEXTURES = 3;
@@ -316,7 +324,7 @@ const MAX_LAYER_TEXTURES = 3;
 function layerTextureNamesOf(renderer) {
   if (renderer.layerTextureNamesFor?.size !== renderer.shaderFeatures.size) {
     const names = [...renderer.shaderFeatures].filter(feature => feature.endsWith('Texture'));
-    if (names.length > MAX_LAYER_TEXTURES || renderer.shaderFeatures.has('splat')) {
+    if (names.length > MAX_LAYER_TEXTURES || (names.length > 0 && renderer.shaderFeatures.has('splat'))) {
       throw new Error(`A renderer draws at most ${MAX_LAYER_TEXTURES} layer textures and none beside splat layers, got ${names.join(', ')}.`);
     }
     renderer.layerTextureNames = names;

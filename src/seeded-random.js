@@ -17,3 +17,9 @@ export function requireSeed(value, label) {
   if (!Number.isFinite(value)) throw new TypeError(`${label} must be a finite number such as 1.`);
   return value;
 }
+
+/** Returns `value` when it is a whole number from -2147483648 to 4294967295, else throws. A fraction or a number outside 32 bits would repeat another seed's sequence. */
+export function requireWholeSeed(value, label) {
+  if (!Number.isInteger(value) || value < -0x80000000 || value > 0xffffffff) throw new RangeError(`${label} must be a whole number from -2147483648 to 4294967295; pass e.g. 1.`);
+  return value;
+}

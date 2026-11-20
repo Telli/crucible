@@ -1,6 +1,7 @@
 import { mat4, quat, vec3 } from 'gl-matrix';
 import { createAnimationClip, compileAnimationSampler } from './animation.js';
 import { updateSkinPose } from './skinning.js';
+import { requireWholeSeed } from './seeded-random.js';
 
 const SIDES = ['left', 'right'];
 const FINGERS = ['thumb', 'index', 'middle', 'ring', 'little'];
@@ -208,6 +209,10 @@ export function validateRigJoints(joints, label) {
     const parentIsValid = Number.isInteger(joint.parent) && joint.parent >= -1 && joint.parent < joints.length;
     if (typeof joint.name !== 'string' || !parentIsValid) throw new TypeError(`${label} rig joints need a name and a parent index.`);
     if (joint.translation?.length !== 3 || joint.rotation?.length !== 4) throw new TypeError(`${label} rig joint ${joint.name} needs translation and rotation rest values.`);
+    const rotationLength = Math.hypot(...joint.rotation);
+    if (!Array.from(joint.translation).every(Number.isFinite) || !(rotationLength > 0) || !Number.isFinite(rotationLength)) {
+      throw new RangeError(`${label} rig joint ${joint.name} needs a finite translation and a finite nonzero rotation.`);
+    }
   });
 }
 
@@ -248,7 +253,11 @@ function prepareRig(rig, label, overrides) {
   }
   const indexByName = new Map(jointNames.map((name, index) => [name, index]));
   const indexByBone = {};
+  const boneByJoint = new Map();
   for (const [bone, jointName] of Object.entries(mapping)) {
+    if (!HUMANOID_BONES.includes(bone)) throw new RangeError(`${label} mapping names an unknown bone: ${bone}. Use a canonical humanoid bone name.`);
+    if (boneByJoint.has(jointName)) throw new RangeError(`${label} mapping sends ${boneByJoint.get(jointName)} and ${bone} to one joint: ${jointName}`);
+    boneByJoint.set(jointName, bone);
     if (!indexByName.has(jointName)) throw new RangeError(`${label} mapping names a joint that is not in the rig: ${jointName}`);
     indexByBone[bone] = indexByName.get(jointName);
   }
@@ -499,7 +508,7 @@ export function createCrowd({ count, clip, seed = 1, layout = 'grid', spacing = 
   if (size !== undefined && (!Number.isFinite(size) || size <= 0)) {
     throw new RangeError(`Crowd size must be a positive finite number, got ${size}.`);
   }
-  const nextRandom = createRandomGenerator(seed);
+  const nextRandom = createRandomGenerator(requireWholeSeed(seed, 'Crowd seed'));
   const columnCount = columns ?? Math.ceil(Math.sqrt(count));
   const positions = layout === 'grid'
     ? gridPositions(count, spacing, columnCount)

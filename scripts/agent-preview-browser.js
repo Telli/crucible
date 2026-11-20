@@ -28,9 +28,13 @@ import { groundBounceEnvironment } from '../src/ground-bounce.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
 import { parseGltf } from '../src/gltf.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { clipDisplayName, resolveClipIndex } from '../src/clip-name.js';
 import { exportGlb } from '../src/export.js';
+import { omittedFromGlb } from '../src/glb-export-omissions.js';
+import { matrixFrame } from '../src/export-skeleton.js';
 import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
+import { sampleMotionAtZeroForGround } from './motion-ground-sample.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
@@ -43,7 +47,7 @@ import { parseRadianceHdr } from '../src/hdri.js';
 import { parseCube } from '../src/view-transform.js';
 import { weightTracksFromGltfAnimation } from '../src/export-skeleton.js';
 import { clipFromGltfAnimation } from '../src/skeleton-pose.js';
-import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
+import { sessionProblem, planSceneEviction } from '../src/agent-errors.js';
 import { AGENT_SCENE_DEFAULT_LIMITS, MEMORY_CEILING_MIB } from '../src/agent-scene-capabilities.js';
 import { describeApplication } from '../src/agent-apply-report.js';
 import { framingProblems, placementProblems, textureProblems, exposureProblems, lumaShares } from '../src/frame-checks.js';
@@ -51,6 +55,7 @@ import { BRANCH_LIMITS, createBranchStore, printableLabel } from '../src/agent-b
 import { agentAssetDecodeOptions, withCatalogLimitAdvice } from '../src/agent-asset-limits.js';
 import { describeMarks, validateMarks } from '../src/agent-annotate.js';
 import { sceneQueryFor, partMaterialsFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache } from './agent-walkmap.js';
+import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 
 // Open scenes by sessionId, least recently used first. One canvas serves them all, so at most one record owns a renderer;
 // a call on another scene hands the canvas over (the scene data stays, the renderer is rebuilt).
@@ -59,11 +64,13 @@ const records = new Map();
 let leasedRecord = null;
 const EVICTED_SESSIONS_KEPT = 32;
 const evictedSessions = [];
+// Why each remembered evicted scene was closed, so a later call with its ID can say it.
+const evictionReasons = {};
 let canvas = document.querySelector('canvas');
 
 function sessionError(sessionId) {
   const openSessionIds = [...records.keys()];
-  return new Error(sessionProblem(sessionId, openSessionIds.at(-1), { openSessionIds, evictedSessionIds: evictedSessions }));
+  return new Error(sessionProblem(sessionId, openSessionIds.at(-1), { openSessionIds, evictedSessionIds: evictedSessions, evictionReasons }));
 }
 
 function lookupSession(sessionId) {
@@ -122,26 +129,19 @@ function residentBytesOf(record) {
   return record.scene.inspect().residentGeometryBytes ?? 0;
 }
 
-// Close the least recently used scenes until `incoming` more scenes of `incomingBytes` fit, and name them to the caller.
+// Close the least recently used scenes until the new scene fits both caps, and name them and the cap to the caller.
 function evictForNewScene(incomingBytes) {
-  const evicted = [];
-  let bytes = incomingBytes;
-  const sizes = new Map();
-  for (const record of records.values()) {
-    const size = residentBytesOf(record);
-    sizes.set(record, size);
-    bytes += size;
+  const openScenes = [...records.values()].map(record => ({ sessionId: record.sessionId, bytes: residentBytesOf(record) }));
+  const { sessionIds, reason } = planSceneEviction(openScenes, incomingBytes);
+  for (const sessionId of sessionIds) {
+    releaseRecord(records.get(sessionId));
+    evictedSessions.push(sessionId);
+    evictionReasons[sessionId] = reason;
   }
-  for (const record of [...records.values()]) {
-    const overCount = records.size + 1 > SCENE_STORE_LIMITS.maxOpenScenes;
-    if (!overCount && bytes <= SCENE_STORE_LIMITS.maxOpenSceneBytes) break;
-    bytes -= sizes.get(record);
-    releaseRecord(record);
-    evicted.push(record.sessionId);
-    evictedSessions.push(record.sessionId);
+  for (const forgottenId of evictedSessions.splice(0, Math.max(0, evictedSessions.length - EVICTED_SESSIONS_KEPT))) {
+    delete evictionReasons[forgottenId];
   }
-  evictedSessions.splice(0, Math.max(0, evictedSessions.length - EVICTED_SESSIONS_KEPT));
-  return evicted;
+  return { evicted: sessionIds, reason };
 }
 
 function bytesFromBase64(data) {
@@ -212,6 +212,7 @@ function viewProblems(record, camera, exposure, { placement = false } = {}) {
   if (record.scene.bakeStaleness) problems.push(...record.scene.bakeStaleness());
   problems.push(...textureProblems({ parts: record.scene.parts }));
   if (record.scene.flushLeftovers) problems.push(...record.scene.flushLeftovers());
+  problems.push(...(record.scene.inspect({}).diagnostics ?? []).filter(problem => problem.kind === 'particle-node-transform-ignored'));
   if (exposure !== undefined) problems.push(...exposureProblems({ shares: sampleFrameShares(), exposure, environment: record.scene.environment }));
   return problems;
 }
@@ -357,7 +358,7 @@ function automaticGroundPlacement(scene) {
 
 function sampleMotionTime(scene, time) {
   if (motionGrounds.get(scene)?.revision !== scene.revision) {
-    scene.sampleMotion(0);
+    sampleMotionAtZeroForGround(scene, time);
     motionGrounds.set(scene, { revision: scene.revision, placement: agentGroundPlacement(scene.parts, scene.environment) });
   }
   scene.sampleMotion(time);
@@ -641,9 +642,9 @@ function createPreview(scene, { sessionId, memoryBudgetMiB, backend, transparent
     if (backend === 'gpu' && /swiftshader|llvmpipe|software/i.test(result.render.graphics)) {
       throw new Error('Hardware GPU rendering was requested, but the browser selected a software renderer.');
     }
-    const evicted = evictForNewScene(result.inspection.residentGeometryBytes ?? 0);
+    const { evicted, reason } = evictForNewScene(result.inspection.residentGeometryBytes ?? 0);
     records.set(sessionId, record);
-    return evicted.length ? { ...result, evictedSessions: evicted } : result;
+    return evicted.length ? { ...result, evictedSessions: evicted, evictionReason: reason } : result;
   } catch (error) {
     renderer?.dispose();
     // A throwing constructor may already own GPU objects without returning an instance.
@@ -688,6 +689,19 @@ async function loadPlacedAssets(pool, value, assetData) {
       pool.set(key, await parseCatalogAsset(bytesFromBase64(assetData[id]).buffer));
     }
   }
+}
+
+// A scene created without placed assets gets its pool the first time an edit places one; later edits reuse what is decoded.
+async function loadPlacedAssetsIntoSession(record, value, assetData) {
+  if (!record.placedAssets) {
+    if (typeof record.scene.provideAssets !== 'function') {
+      throw new Error('This session holds an imported asset, which cannot place other assets. Create a scene with scene_create, then add the asset node with scene_apply.');
+    }
+    record.placedAssets = new Map();
+    record.scene.provideAssets(record.placedAssets);
+  }
+  await loadAllAgentSceneModules();
+  await loadPlacedAssets(record.placedAssets, value, assetData);
 }
 
 function afterMeshBooleans(value, run) {
@@ -776,7 +790,20 @@ function seekForExport(record, motionTime) {
 // The scene's parts already carry the current pose, including IK and node overrides, so skinned parts export it as is.
 function posedExport(record) {
   const rig = record.scene.rigExport?.() ?? { nodes: [], clips: [] };
-  return { parts: record.scene.parts.map(withoutRoundoffShear), options: rig.nodes.length ? rig : {} };
+  const options = rig.nodes.length ? rig : {};
+  return { parts: record.scene.parts.map(withoutRoundoffShear), options: { ...options, nodePaths: nodePathsOf(record.scene.exportRecipe().nodes) } };
+}
+
+/** "parent > child" for each node that has a parent, so an export error says where the node sits. */
+function nodePathsOf(nodes = []) {
+  const parentOf = new Map(nodes.map(node => [node.id, node.parent]));
+  const paths = {};
+  for (const node of nodes) {
+    const chain = [node.id];
+    for (let parent = node.parent; parent && chain.length <= nodes.length; parent = parentOf.get(parent)) chain.unshift(parent);
+    if (chain.length > 1) paths[node.id] = chain.join(' > ');
+  }
+  return paths;
 }
 
 // Chains of bone transforms leave world matrices with Float32 roundoff that the exporter reads as shear. Real shear
@@ -792,24 +819,22 @@ function withoutRoundoffShear(part) {
   });
   const dots = [[0, 1], [0, 2], [1, 2]].map(([first, second]) => Math.abs(columns[first].reduce((sum, value, axis) => sum + value * columns[second][axis], 0)));
   if (Math.max(...dots) > ROUNDOFF_SHEAR_LIMIT) return part;
-  const scale = mat4.getScaling([0, 0, 0], part.matrix);
-  const rotation = mat4.getRotation([0, 0, 0, 1], part.matrix);
-  const translation = mat4.getTranslation([0, 0, 0], part.matrix);
+  const { translation, rotation, scale } = matrixFrame(part.matrix);
   return { ...part, matrix: mat4.fromRotationTranslationScale(mat4.create(), rotation, translation, scale) };
 }
 
 // A source clip animates the source skeleton, so the scene must not carry a pose of its own that the clip would fight.
-function clipExport(record, clipIndex) {
+function clipExport(record, clipReference) {
   const { asset, scene } = record;
   if (!asset) throw new Error('clip needs an imported asset scene. Recipe scenes export their current pose.');
+  const clipIndex = resolveClipIndex(asset.animations, clipReference);
   const animation = asset.animations[clipIndex];
-  if (!animation) throw new RangeError(`clip ${clipIndex} does not exist. The asset has ${asset.animations.length} clips.`);
   const recipe = scene.exportRecipe();
   if (recipe.animation || recipe.nodeOverrides.length || recipe.motion) {
     throw new Error('Exporting a clip needs the unposed asset: remove animation, node overrides and motion first, or export without clip for the current pose.');
   }
   const sourceClip = clipFromGltfAnimation(animation);
-  const name = String(animation.name || `clip ${clipIndex}`);
+  const name = clipDisplayName(animation, clipIndex);
   const clip = { ...sourceClip, name, tracks: [...sourceClip.tracks, ...weightTracksFromGltfAnimation(animation)] };
   // Edited parts export their edited geometry on the source part's own matrix, skin and morph.
   const parts = asset.parts.map((part, index) => scene.parts[index].geometry === part.geometry ? part : { ...part, geometry: scene.parts[index].geometry });
@@ -960,12 +985,15 @@ window.__agentPreview = {
       record.scene.sampleFrame({ animation, motionTime: shot.motionTime });
     } else {
       if (shot.animation !== undefined) throw new RangeError('Imported animation requires an asset scene.');
-      record.scene.sampleMotion(shot.motionTime);
+      // The same sampling a look and a render job use, so a camera track gives the same pose here as there.
+      if (shot.motionTime === null) record.scene.sampleMotion(null);
+      else sampleMotionTime(record.scene, shot.motionTime);
     }
-    const camera = createAgentScene({ format: 'crucible.scene', schemaVersion: 1,
-      geometries: [], materials: [], nodes: [], camera: { ...record.scene.camera, ...shot.camera } }).camera;
-    validatePreviewCamera(camera);
-    draw(record, shot.rendererTime, camera);
+    const camera = withCameraOverrides(record.scene.camera, shot.camera);
+    // The post pass clock is the pose's motion time, as in a look and a render job frame, so a pass anchored to a moving
+    // part stays on it.
+    const poseTime = record.scene.motionTime ?? undefined;
+    draw(record, shot.rendererTime, camera, poseTime === undefined ? {} : { passTime: poseTime });
     const render = renderInfo(record.renderer, viewProblems(record, camera, record.scene.effects.exposure));
     if (render.width < 64 || render.height < 64) throw new Error('Render budget reduced review below its minimum output size.');
     const context = reviewGrid.getContext('2d');
@@ -989,7 +1017,12 @@ window.__agentPreview = {
     const record = requireSession(sessionId);
     if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('render snapshot', expectedRevision, record.scene.revision));
     return { sourceRevision: record.scene.revision, recipe: record.scene.exportRecipe(),
-      clips: record.asset?.animations.map(clip => ({ duration: clip.duration })) ?? [] };
+      clips: record.asset ? record.asset.animations.map(clip => ({ duration: clip.duration })) : record.scene.placedClipEnds().map(duration => ({ duration })) };
+  },
+  // The part and material names an ID matte can name, read from the loaded scene so a job submit can refuse a name no frame will contain.
+  matteTargets({ sessionId }) {
+    const { passSupport } = requireSession(sessionId).renderer;
+    return { objectNames: passSupport.objectNames(), materialNames: Object.keys(passSupport.cryptomatteManifest().materials) };
   },
   suspend({ sessionId }) {
     const record = lookupSession(sessionId);
@@ -1271,15 +1304,7 @@ window.__agentPreview = {
   },
   async applyWithAssets(input) {
     const record = requireSession(input.sessionId);
-    if (!record.placedAssets) {
-      if (typeof record.scene.provideAssets !== 'function') {
-        throw new Error('This session holds an imported asset, which cannot place other assets. Create a scene with scene_create, then add the asset node with scene_apply.');
-      }
-      record.placedAssets = new Map();
-      record.scene.provideAssets(record.placedAssets);
-    }
-    await loadAllAgentSceneModules();
-    await loadPlacedAssets(record.placedAssets, input.assetNeeds ?? input.operations, input.assetData);
+    await loadPlacedAssetsIntoSession(record, input.assetNeeds ?? input.operations, input.assetData);
     return afterMeshBooleans(input.operations, () => this.applyLoaded(input));
   },
   applyLoaded({ sessionId, operations, expectedRevision }) {
@@ -1329,7 +1354,9 @@ window.__agentPreview = {
       }
       sampleMotionTime(record.scene, motionTime);
     }
-    draw(record);
+    // The post pass clock is the pose's motion time, as in a render job frame, so a pass anchored to a moving part stays on it.
+    const poseTime = record.scene.motionTime ?? undefined;
+    draw(record, 0, record.scene.camera, poseTime === undefined ? {} : { passTime: poseTime });
     const render = renderInfo(record.renderer, viewProblems(record, record.scene.camera, record.scene.effects.exposure, { placement: true }));
     record.lastRender = render;
     const labels = withLabels ? collectLabels(record, record.scene.camera, canvas.width, canvas.height) : undefined;
@@ -1337,7 +1364,8 @@ window.__agentPreview = {
       data: labeledPng(labels),
       mimeType: 'image/png',
       metadata: { sessionId, revision: record.scene.revision, topologyRevision: record.scene.topologyRevision,
-        motionTime: record.scene.motionTime ?? null, ...render, ...(labels ? { labels } : {}) },
+        motionTime: record.scene.motionTime ?? null, ...render, ...(labels ? { labels } : {}),
+        ...(motionTime === undefined && recipeMoves(record.scene.exportRecipe()) ? { hints: [MOTION_NOT_SET_HINT] } : {}) },
     };
   },
   // The findings of a view without drawing it, for a job whose frames the page does not draw (the path tracer). Exposure is
@@ -1405,13 +1433,15 @@ window.__agentPreview = {
     return { sessionId, checkpointId, released: true };
   },
   /** Apply operations to a scratch copy and store the result as a branch. The source scene and its revision stay as they are. */
-  branchApply({ sessionId, name, operations, expectedRevision }) {
+  async branchApply({ sessionId, name, operations, expectedRevision, assetData }) {
+    const record = requireSession(sessionId);
+    if (record.asset) throw new TypeError('Branches support procedural recipe scenes.');
+    // The scratch copy places the same catalog assets as the scene, so it shares the scene's decoded pool.
+    if (recipeAssetNeeds(operations).length) await loadPlacedAssetsIntoSession(record, operations, assetData);
     return afterMeshBooleans(operations, () => {
-      const record = requireSession(sessionId);
-      if (record.asset) throw new TypeError('Branches support procedural recipe scenes.');
       if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('branch', expectedRevision, record.scene.revision));
       const baseRecipe = record.scene.exportRecipe();
-      const scratch = createAgentScene(baseRecipe);
+      const scratch = createAgentScene(baseRecipe, {}, { assets: record.placedAssets, sequenceFrames: record.sequenceFrames });
       validatePreviewCamera(candidateCamera(record, operations));
       scratch.apply(operations, { expectedRevision: scratch.revision });
       const { shared } = record.branches.fork(name, { recipe: scratch.exportRecipe(), baseRecipe, operations, baseRevision: expectedRevision });
@@ -1448,7 +1478,8 @@ window.__agentPreview = {
       throw new RangeError(`The GLB is ${binary.byteLength} bytes, above the ${maximumBytes} byte limit. Lower maxTextureSize or simplify the scene.`);
     }
     return { sessionId, revision: record.scene.revision, bytes: binary.byteLength,
-      parts: parts.length, clips: options.clips?.length ?? 0, data: bytesToBase64(new Uint8Array(binary)) };
+      parts: parts.length, clips: options.clips?.length ?? 0,
+      omitted: omittedFromGlb(record.scene.exportRecipe(), options.clips?.length ? (options.nodes ?? []).map(node => node.id) : []), data: bytesToBase64(new Uint8Array(binary)) };
   },
   dispose({ sessionId }) {
     releaseRecord(lookupSession(sessionId));

@@ -19,6 +19,7 @@ export const ANIMATION_GRAPH_LIMITS = Object.freeze({
   maximumMotions: 16,
   maximumFadeSeconds: 10,
   maximumDeltaSeconds: 10,
+  maximumSpeedMultiplier: 100,
 });
 
 const PARAMETER_TYPES = ['number', 'boolean', 'trigger'];
@@ -351,7 +352,8 @@ function writeBlend2DWeights(state, x, y, weights) {
     weights[index] = weight;
     total += weight;
   }
-  if (total === 0) {
+  if (!(total > 0)) {
+    weights.fill(0);
     weights[0] = 1;
     return;
   }
@@ -365,7 +367,7 @@ function createStateRuntime(state) {
 function stateSpeed(runtime, parameters) {
   const { state } = runtime;
   const multiplier = state.speedParameter ? parameters.get(state.speedParameter).value : 1;
-  return state.speed * Math.max(0, multiplier);
+  return state.speed * Math.min(ANIMATION_GRAPH_LIMITS.maximumSpeedMultiplier, Math.max(0, multiplier));
 }
 
 function advanceStateRuntime(runtime, parameters, deltaSeconds) {

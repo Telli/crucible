@@ -11,7 +11,9 @@ import {
 // forward. Quaternions are XYZW; IK targets and poles are in the rig's world space.
 
 const NEAR_ZERO = 1e-9;
-const TO_RADIANS = Math.PI / 180;
+// A two-bone target closer to the root than this fraction of the limb's length warns that it sits on the root.
+const ROOT_TARGET_FRACTION = 1e-3;
+const TO_RADIANS =Math.PI / 180;
 const IDENTITY_ROTATION = Object.freeze([0, 0, 0, 1]);
 
 function jointResolver(rig, prepared) {
@@ -330,12 +332,29 @@ function bendWarnings(solver, state, prepared) {
   return warnings;
 }
 
+/** A NaN or zero-quaternion rest value poses its joint and everything below as NaN, with no error. */
+function checkRestValues(joints) {
+  joints.forEach(({ name, translation, rotation, scale }) => {
+    const finite = values => Array.from(values ?? []).every(Number.isFinite);
+    if (!finite(translation) || !finite(rotation) || !finite(scale?.slice(0, 1)) || !Math.hypot(...rotation)) {
+      throw new RangeError(`Pose rig joint ${name} needs finite translation and scale and a nonzero rotation, such as [0, 0, 0, 1].`);
+    }
+  });
+}
+
+function checkedCustomSolver(created, jointCount, label) {
+  const validJoints = Array.isArray(created?.joints) && created.joints.every(index => index >= 0 && index < jointCount);
+  if (!validJoints || typeof created.solve !== 'function') throw new TypeError(`${label} create must return { joints, solve } with rig joint indices.`);
+  return created;
+}
+
 function createSolver(definition, position, prepared, resolveJoint) {
   const label = `IK ${position}`;
+  if (!definition || typeof definition !== 'object') throw new TypeError(`${label} must be an object with a type.`);
   const weight = weightFunction(definition?.weight ?? 1, `${label} weight`);
   if (definition?.type === 'custom') {
     if (typeof definition.create !== 'function') throw new TypeError(`${label} type custom needs create(prepared, resolveJoint, label) => { joints, solve(time, context, weight) }.`);
-    return { type: 'custom', label, weight, ...definition.create(prepared, resolveJoint, label) };
+    return { type: 'custom', label, weight, ...checkedCustomSolver(definition.create(prepared, resolveJoint, label), prepared.joints.length, label) };
   }
   const solverType = definition?.type === 'ik' ? 'chain' : definition?.type === 'spline_ik' ? 'spline' : definition?.type;
   if (solverType !== 'spline' && typeof definition?.target !== 'function') checkedVector(definition?.target, `${label} target`);
@@ -361,6 +380,7 @@ function createSolver(definition, position, prepared, resolveJoint) {
   }
   if (definition.type === 'aim') {
     const names = definition.joints ?? (definition.joint === undefined ? [] : [definition.joint]);
+    if (!Array.isArray(names)) throw new TypeError(`${label} joints must be a list of joint names.`);
     if (!names.length) throw new TypeError(`${label} needs joint, or joints listed from the base of the chain to the aiming joint.`);
     const joints = names.map(name => resolveJoint(name, label));
     joints.slice(1).forEach((joint, slot) => {
@@ -454,10 +474,12 @@ function solveTwoBone(solver, time, context) {
   const lowerLength = vec3.distance(middlePosition, startEnd);
   const toTarget = vec3.subtract(new Float64Array(3), target, rootPosition);
   const targetDistance = vec3.length(toTarget);
-  if (targetDistance < NEAR_ZERO || upperLength < NEAR_ZERO || lowerLength < NEAR_ZERO) {
+  if (upperLength < NEAR_ZERO || lowerLength < NEAR_ZERO) {
     return { reached: false, error: vec3.distance(startEnd, target), warnings: [], limited: [] };
   }
-  const direction = vec3.scale(new Float64Array(3), toTarget, 1 / targetDistance);
+  const direction = targetDistance < NEAR_ZERO
+    ? foldDirection(rootPosition, middlePosition, startEnd)
+    : vec3.scale(new Float64Array(3), toTarget, 1 / targetDistance);
   // Stop just short of the limits: a fully straight limb has no defined bend plane for the next frame.
   const margin = (upperLength + lowerLength) * 1e-4;
   const reachLimit = upperLength + lowerLength - margin;
@@ -502,7 +524,20 @@ function solveTwoBone(solver, time, context) {
     setWorldRotation(solver.end, quat.multiply(new Float64Array(4), turn, state.rotations[solver.end]), weight);
   }
   const error = vec3.distance(state.positions[solver.end], target);
-  return { reached: error <= margin * 2 + NEAR_ZERO, error, warnings: bendWarnings(solver, state, prepared), limited };
+  const warnings = bendWarnings(solver, state, prepared);
+  const rootTargetDistance = (upperLength + lowerLength) * ROOT_TARGET_FRACTION;
+  if (targetDistance < rootTargetDistance) {
+    warnings.unshift({ code: 'target-at-root', message: `The target is ${Number(targetDistance.toFixed(6))} m from ${prepared.joints[solver.root].name}, so the limb folds with no direction from the target. Move the target at least ${Number(rootTargetDistance.toFixed(4))} m off ${prepared.joints[solver.root].name}.` });
+  }
+  return { reached: error <= margin * 2 + NEAR_ZERO, error, warnings, limited };
+}
+
+/** Where a limb folds when the target sits on its root: along the way the end already points, else toward the middle joint. */
+function foldDirection(rootPosition, middlePosition, endPosition) {
+  const toEnd = vec3.subtract(new Float64Array(3), endPosition, rootPosition);
+  if (vec3.length(toEnd) >= NEAR_ZERO) return vec3.normalize(toEnd, toEnd);
+  const toMiddle = vec3.subtract(new Float64Array(3), middlePosition, rootPosition);
+  return vec3.normalize(toMiddle, toMiddle);
 }
 
 /** Turn a joint, or a chain sharing the turn evenly, so its forward axis points at the target. */
@@ -957,6 +992,7 @@ export function createAssetPose(asset, { layers = [], ik = [] } = {}) {
 export function createSkeletonPose({ skin, rig = skin && createRigFromSkin(skin), meshWorldMatrix, layers = [], ik = [] } = {}) {
   if (!rig) throw new TypeError('createSkeletonPose needs a skin or a rig.');
   validateRigJoints(rig.joints, 'Pose');
+  checkRestValues(rig.joints);
   if (!Array.isArray(layers) || !Array.isArray(ik)) throw new TypeError('layers and ik must be arrays.');
   const prepared = prepareRigGeometry(rig, 'Pose');
   const resolveJoint = jointResolver(rig, prepared);

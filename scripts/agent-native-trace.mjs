@@ -1,6 +1,7 @@
 // renderer.backend "native" on render jobs: the optional hardware ray query tracer (Cook, @codepawlhq/cook) traces the scene
 // the job page exported, then the job runner denoises and writes the PNG. The package and its binary are optional: when they,
 // or a Vulkan ray query adapter, are missing, the job runs on the gpu or cpu backend and the report says why.
+import { NOTEWORTHY_COMPILE_SECONDS } from './agent-render-estimate.mjs';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -108,7 +109,7 @@ export async function chooseTraceBackend({ requested, runtimeBackend, locator })
   const found = await locator.find();
   if (found.tracer) return { backend: 'native', tracer: found.tracer };
   const fallback = runtimeBackend === 'cpu' ? 'cpu' : 'gpu';
-  return { backend: fallback, note: `${found.reason} The ${fallback} backend ran instead.` };
+  return { backend: fallback, reason: found.reason, note: `${found.reason} The ${fallback} backend ran instead.` };
 }
 
 const V2_TABLE_TYPES = { Uint8Array, Uint32Array, Int32Array, Float32Array };
@@ -367,8 +368,6 @@ export function yieldToEventLoop() {
   return new Promise(resolve => setImmediate(resolve));
 }
 
-/** A kernel compile shorter than this is not worth a sentence in the report. */
-const NOTEWORTHY_COMPILE_SECONDS = 1;
 
 /**
  * The sentence for a frame that spent seconds compiling its kernel, or undefined when it did not. Cook compiles one kernel per

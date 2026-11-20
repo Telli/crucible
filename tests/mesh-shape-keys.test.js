@@ -113,3 +113,12 @@ test('the starting value of a key is the weight without motion, and a GLB export
   assert.deepEqual(document.meshes[0].extras.targetNames, ['lift', 'widen']);
   assert.deepEqual(document.nodes.find(node => node.mesh === 0).weights, [0.75, 0]);
 });
+
+test('an error inside a shape key names the key', async () => {
+  const { normalizeShapeKeys } = await import('../src/mesh-shape-keys.js');
+  const keys = [
+    { name: 'ok', offsets: [{ offset: [0, 1, 0] }] },
+    { name: 'blink', offsets: [{ offset: [Number.NaN, 1, 0] }] },
+  ];
+  assert.throws(() => normalizeShapeKeys(keys), /^TypeError: Shape key 1 \(blink: edits\[0\]\.offset/);
+});

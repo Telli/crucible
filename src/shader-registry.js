@@ -38,8 +38,12 @@ export const texturedReplaceSupport = {};
 // packParameters and buildPixels. The renderer calls them only for a material with layers.
 const splatSupport = {};
 
-/** The texture units of the splat samplers. */
-export const SPLAT_UNITS = Object.freeze({ splatColor: 11, splatNormal: 12, splatPacked: 13, splatMask: 14 });
+/**
+ * The texture units of the splat samplers. The weight mask is the only 2D sampler among them and sits on unit 13, which the
+ * tinted shadow map also reads: two samplers of different types on one unit make every draw fail, so the array samplers keep
+ * off it (#2272).
+ */
+export const SPLAT_UNITS = Object.freeze({ splatColor: 11, splatNormal: 12, splatMask: 13, splatPacked: 14 });
 
 export function registerSplatSupport(functions) {
   Object.assign(splatSupport, functions);
@@ -58,7 +62,7 @@ export function registerShaderFeatureCode(feature, slots) {
 }
 
 // The addon that registers each feature's code; a feature not listed here is registered by material-layer-shaders.
-const FEATURE_ADDONS = { splat: 'splat-shader', liquid: 'liquid-shader', worldMaterials: 'world-material-shader', subsurface: 'subsurface-shader', volumeFog: 'fog-shader', linearOutput: 'linear-output-shader', retro: 'retro-shader' };
+const FEATURE_ADDONS = { splat: 'splat-shader', liquid: 'liquid-shader', worldMaterials: 'world-material-shader', subsurface: 'subsurface-shader', volumeFog: 'fog-shader', linearOutput: 'linear-output-shader', retro: 'retro-shader', waterGlint: 'glitter-shader' };
 
 export function requireFeatureCode(feature) {
   const slots = registeredFeatureCode.get(feature);

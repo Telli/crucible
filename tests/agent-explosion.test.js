@@ -8,6 +8,7 @@ import { EXPLOSION_EMPTY_GRID, EXPLOSION_EMPTY_VELOCITY_GRID, explosionGridBytes
 import { decodeVolumeGrid, hasGridVelocity } from '../src/volume-grid.js';
 import { readVolumeGridFiles } from '../src/mcp-volume-grids.js';
 import { agentSceneModulesNeeded, needsPhysics } from '../src/agent-scene-modules.js';
+import { findCoplanarOverlaps } from '../src/coplanar-overlap.js';
 
 await loadPhysicsEngine();
 
@@ -204,10 +205,10 @@ test('the MCP server finds the grids an add-explosion operation will name, so th
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
 });
 
-// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change).
+// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom, and for #2304's puff-shaped translucent dust).
 const FIRST_RELEASE_HASHES = new Map([
-  ['{}', 'f4243c2be216986f1db1dbd8a20f32a0e76bebb01d361c1973f00bc939bf8a79'],
-  ['{"start":0.5,"fuel":"oily","seed":7}', 'eea21da58c694709f99fab840c6b73e58ef9b7cf3b8720db00ed8a3d7fb67f61'],
+  ['{}', 'f4588400da3ed0f32bfe3cef4370b6aa0ba49f7d66f03b6976e2de5ec3b70c47'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', '58f00612c7efb84ab0ce7041c965c4826a405baed5eca45160e2a0e405d8f020'],
 ]);
 
 test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {
@@ -259,6 +260,14 @@ test('by default the sparks are streaks born at start and the fireball grid carr
   assert.equal(applyBlast(blast({ fuel: 'oily' })).recipe.particles.systems[0].count, 900);
 });
 
+test('the blast leaves the scene bloom as it is, so the fire glows only as far as its own emission (#1735)', () => {
+  const plain = applyBlast(blast()).recipe.effects.bloom;
+  assert.equal(plain.strength, 0.12);
+  const withBloom = setRecipe();
+  withBloom.effects = { bloom: { strength: 0.3 } };
+  assert.equal(applyBlast(blast(), withBloom).recipe.effects.bloom.strength, 0.3);
+});
+
 test('motionBlur takes the shutter the scene already has, and leaves the effects alone when off', () => {
   const withShutter = setRecipe();
   withShutter.effects = { motionBlur: { shutter: 0.02 } };
@@ -295,4 +304,48 @@ test('bad sparks and motionBlur values name the field and a valid value', () => 
     [blast({ motionBlur: 'on' }), /motionBlur.*true.*false/],
   ];
   for (const [operation, pattern] of cases) assert.throws(() => applyBlast(operation), pattern, JSON.stringify(operation));
+});
+
+test('the fireball emits by the Blender flame remap, 1500 K to 3000 K, at every size and fuel (#1735)', () => {
+  for (const extra of [{ size: 2.5 }, { size: 10 }, { fuel: 'oily' }]) {
+    const volume = applyBlast(blast(extra)).recipe.environment.localVolumes[0];
+    assert.deepEqual(volume.flameTemperature, { ignition: 1.5, maximum: 3 });
+    assert.equal(volume.temperatureScale, 1000);
+  }
+});
+
+test('the blast dust and rubble sampled at a later time are ranked against a box floor, so no coplanar pair is left (#2054)', () => {
+  const recipe = setRecipe();
+  delete recipe.physics;
+  recipe.nodes = [{ id: 'floor', geometry: 'slab', material: 'stone', translation: [0, -0.05, 0], scale: [6, 0.1, 6] }];
+  const { scene } = applyBlast(blast({ start: 0.5, seed: 7, fuel: 'oily', shake: 0.4 }), recipe);
+  scene.sampleMotion(1.2);
+  const blastParts = scene.parts.filter(part => part.name.startsWith('blast-'));
+  assert.ok(blastParts.some(part => part.name === 'blast-dust'), 'the sampled dust part exists');
+  const pairs = findCoplanarOverlaps(scene.parts).overlaps.map(overlap => [overlap.first?.name ?? overlap.larger?.name, overlap.second?.name ?? overlap.smaller?.name]);
+  assert.deepEqual(pairs, []);
+});
+
+test('the blast dust is a translucent round puff that never fades to black, so it cannot end as an opaque cube (#2304)', () => {
+  const { recipe } = applyBlast(blast({ seed: 7 }));
+  const dustNode = recipe.nodes.find(node => node.id === 'blast-dust');
+  const dustGeometry = recipe.geometries.find(geometry => geometry.id === dustNode.geometry);
+  const dustMaterial = recipe.materials.find(material => material.id === dustNode.material);
+  const dustSystem = recipe.particles.systems.find(system => system.node === 'blast-dust');
+  assert.equal(dustGeometry.type, 'sphere', 'dust is drawn as round puffs, not boxes');
+  assert.ok(dustMaterial.opacity > 0 && dustMaterial.opacity < 1, `dust opacity ${dustMaterial.opacity} lets the floor show through`);
+  assert.equal(dustMaterial.alphaMode, 'blend');
+  assert.equal(dustMaterial.tag, 'unlit', 'a lit puff shows a specular or Fresnel rim that outlines each sphere as a glassy bubble');
+  assert.ok(dustMaterial.color[0] > dustMaterial.color[2], 'dust is warm brown, never blue-grey');
+  assert.ok(dustMaterial.opacity <= 0.4 && dustMaterial.softEdge > 0, `dust opacity ${dustMaterial.opacity} with softEdge ${dustMaterial.softEdge} fades each puff to nothing at its silhouette, so overlapping puffs blend into one haze with no outlines`);
+  assert.ok(dustSystem.emitter.position[1] > 0, 'the dust starts above the floor so no puff is cut flat where it meets it');
+  assert.equal(dustSystem.alpha, undefined, 'the renderer has no per-vertex alpha, so a dust alpha fade would darken each puff to black');
+});
+
+test('the rubble and sparks keep their box pieces while the dust gets its own geometry (#2304)', () => {
+  const { recipe } = applyBlast(blast({ seed: 7, sparks: 'specks' }));
+  const geometryOf = nodeId => recipe.geometries.find(geometry => geometry.id === recipe.nodes.find(node => node.id === nodeId).geometry).type;
+  assert.equal(geometryOf('blast-rubble'), 'box');
+  assert.equal(geometryOf('blast-sparks'), 'box');
+  assert.equal(geometryOf('blast-dust'), 'sphere');
 });

@@ -3,7 +3,7 @@
 // Runs use the Claude Code subscription, so the summary has tokens, calls and time and never dollars.
 //
 // node bench/agent-modeling/bench.mjs --claude <claude executable> --models haiku,sonnet,opus --runs 3 --label baseline
-//   [--tasks crate,look-fog] [--kinds look,light] [--topics relations,explosion] [--dry-run] [--suggest <base ref>] [--smoke] [--skill-mode none|legacy|references] [--findings off] [--backend gpu|cpu] [--budget 3] [--timeout 1200] [--resume]
+//   [--tasks crate,look-fog] [--kinds look,light] [--topics relations,explosion] [--dry-run] [--suggest <base ref>] [--smoke] [--skill-mode none|legacy|references] [--findings off] [--backend gpu|cpu] [--budget 3] [--timeout 1200] [--resume] [--prompt-note <text>]
 //
 // --tasks, --kinds and --topics add to each other (a union of the tasks named, of the kinds and of the tasks tagged with a topic);
 // with none of them the bench runs every task in suite.mjs. --tasks also takes the tasks scenes.mjs defines that the default run
@@ -12,6 +12,7 @@
 // ref (a full bench for the MCP server file or SKILL.md, a subset for a reference file under skills/ and a subset otherwise; a skill change adds --skill-mode references) and stops. Bench what changed (subsets.mjs); the full
 // bench runs for those shared changes and once before a release cut.
 //
+// --prompt-note <text> appends one line to every task prompt (prompt-note.mjs) and records it, to compare prompt wording.
 // --smoke runs the two smoke tasks once. --resume continues the same label (same models, same --runs): attempts already
 // recorded are skipped. The summary goes to bench/agent-modeling/results/bench-<label>.json and holds the per-run records
 // of every model, so `compare-bench.mjs` can diff it against another bench file.
@@ -23,6 +24,7 @@ import { benchSummary, formatSummaryTable } from './bench-summary.mjs';
 import { BENCH_TASKS, OPTIONAL_TASK_IDS, SMOKE_TASKS } from './suite.mjs';
 import { selectTasks, skillModeAdvice, subsetCommand, suggestSubset } from './subsets.mjs';
 import { resolveSkillMode } from './skill-prompt.mjs';
+import { resolvePromptNote } from './prompt-note.mjs';
 
 const resultsDirectory = join(resolve(import.meta.dirname), 'results');
 
@@ -44,6 +46,7 @@ const { values: options } = parseArgs({
     timeout: { type: 'string', default: '1200' },
     resume: { type: 'boolean', default: false },
     findings: { type: 'string', default: 'on' },
+    'prompt-note': { type: 'string' },
   },
 });
 
@@ -60,10 +63,12 @@ if (options.suggest) {
   process.exit(0);
 }
 const skillMode = resolveSkillMode({ skillMode: options['skill-mode'] });
+const promptNote = resolvePromptNote(options['prompt-note']);
 const hasSelection = options.tasks || options.kinds || options.topics;
 const taskIds = options.smoke && !hasSelection ? SMOKE_TASKS : selectTasks(options, BENCH_TASKS, OPTIONAL_TASK_IDS);
 if (options['dry-run']) {
   console.log(`${taskIds.length} of ${BENCH_TASKS.length} tasks: ${taskIds.join(', ')}`);
+  if (promptNote) console.log(`Prompt note: ${promptNote}`);
   process.exit(0);
 }
 const models = options.models.split(',');
@@ -77,6 +82,7 @@ function runModel(model) {
     '--backend', options.backend, '--budget', options.budget, '--timeout', options.timeout,
     '--findings', options.findings, '--skill-mode', skillMode, '--label', benchName, '--run-name', runName,
     ...(options.resume ? ['--resume', runName] : []),
+    ...(promptNote ? ['--prompt-note', promptNote] : []),
   ];
   return new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, argumentsList, { stdio: 'inherit', windowsHide: true });
@@ -99,5 +105,5 @@ for (const model of models) {
 
 const summary = benchSummary(recordsByModel, runs);
 const benchFile = join(resultsDirectory, `bench-${benchName}.json`);
-await writeFile(benchFile, `${JSON.stringify({ bench: benchName, date: new Date().toISOString(), runsPerTask: runs, tasks: taskIds, backend: options.backend, skillMode, summary, recordsByModel }, null, 2)}\n`);
+await writeFile(benchFile, `${JSON.stringify({ bench: benchName, date: new Date().toISOString(), runsPerTask: runs, tasks: taskIds, backend: options.backend, skillMode, promptNote, summary, recordsByModel }, null, 2)}\n`);
 console.log(`\n${formatSummaryTable(summary, runs)}\n\nBench file: bench/agent-modeling/results/bench-${benchName}.json`);

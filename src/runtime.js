@@ -4,6 +4,8 @@
 // without real time. Systems (physics, input, animation, audio, game code) plug in through the interface in
 // docs/runtime.md and can be added, replaced or left out.
 
+import { createFrameGovernor } from './frame-governor.js';
+
 export const RUNTIME_MODES = Object.freeze(['fixed', 'variable', 'both']);
 
 export const RUNTIME_LIMITS = Object.freeze({
@@ -47,29 +49,8 @@ function validateSystem(system, existingNames) {
   }
 }
 
-function defaultScheduler() {
-  if (typeof requestAnimationFrame !== 'function' || typeof cancelAnimationFrame !== 'function') {
-    throw new TypeError('createRuntime found no requestAnimationFrame. Pass options.scheduler as { request(callback), cancel(handle) }.');
-  }
-  return {
-    request: callback => requestAnimationFrame(callback),
-    cancel: handle => cancelAnimationFrame(handle),
-  };
-}
-
 function defaultClock() {
   return () => performance.now();
-}
-
-function defaultVisibility() {
-  if (typeof document === 'undefined') return { hidden: false, subscribe: () => () => {} };
-  return {
-    get hidden() { return document.hidden; },
-    subscribe(callback) {
-      document.addEventListener('visibilitychange', callback);
-      return () => document.removeEventListener('visibilitychange', callback);
-    },
-  };
 }
 
 function validateOptions(target, options) {
@@ -93,7 +74,15 @@ function validateOptions(target, options) {
   if (options.frame !== undefined && typeof options.frame !== 'function') {
     throw new TypeError('createRuntime frame must be a function (context) => frame for target.render, or left out.');
   }
-  if (typeof (options.pauseWhenHidden ?? true) !== 'boolean') throw new TypeError('createRuntime pauseWhenHidden must be a boolean.');
+  if (options.clock !== undefined && typeof options.clock !== 'function') {
+    throw new TypeError(`createRuntime clock must be a function () => milliseconds or left out, got ${describe(options.clock)}.`);
+  }
+  for (const name of ['pauseWhenHidden', 'pauseWhenOffscreen', 'idleSleep']) {
+    if (typeof (options[name] ?? true) !== 'boolean') throw new TypeError(`createRuntime ${name} must be a boolean.`);
+  }
+  if (options.isIdle !== undefined && typeof options.isIdle !== 'function') {
+    throw new TypeError('createRuntime isIdle must be a function (context) => boolean that is true when nothing changed, or left out.');
+  }
   const systems = options.systems ?? [];
   if (!Array.isArray(systems)) throw new TypeError('createRuntime systems must be an array of system objects, in the order they run.');
   return { mode, fixedStepSeconds, maximumFrameSeconds, maximumStepsPerFrame, systems };
@@ -102,10 +91,7 @@ function validateOptions(target, options) {
 export function createRuntime(target, options = {}) {
   const settings = validateOptions(target, options);
   const { mode, fixedStepSeconds, maximumFrameSeconds, maximumStepsPerFrame } = settings;
-  const scheduler = options.scheduler ?? defaultScheduler();
   const now = options.clock ?? defaultClock();
-  const visibility = options.visibility ?? defaultVisibility();
-  const pauseWhenHidden = options.pauseWhenHidden ?? true;
   const buildFrame = options.frame ?? (context => ({ time: context.elapsedSeconds }));
   const usesFixed = mode !== 'variable';
   const usesVariable = mode !== 'fixed';
@@ -119,21 +105,44 @@ export function createRuntime(target, options = {}) {
   let running = false;
   let manuallyPaused = false;
   let disposed = false;
-  let handle = null;
   let lastTime = null;
   let accumulator = 0;
-  let unsubscribeVisibility = null;
-
-  const isPaused = () => manuallyPaused || (pauseWhenHidden && visibility.hidden === true);
+  // Sleeping needs a signal that nothing changed: a runtime with systems cannot know that by itself, so it never sleeps
+  // unless options.isIdle says so (docs/runtime.md). Offscreen and hidden pauses need no signal and are on by default.
+  const governor = createFrameGovernor({
+    draw: renderFrame,
+    isBusy: () => options.isIdle === undefined || options.isIdle(context) !== true,
+    idleSleep: options.idleSleep ?? true,
+    pauseWhenHidden: options.pauseWhenHidden ?? true,
+    pauseWhenOffscreen: options.pauseWhenOffscreen ?? true,
+    element: options.element,
+    observe: options.observe,
+    scheduler: options.scheduler,
+    visibility: options.visibility,
+  });
 
   function callHook(system, hook, ...args) {
     if (!system[hook]) return;
     try {
       system[hook](...args, context);
     } catch (error) {
-      error.message = `Runtime system "${system.name}" ${hook} failed: ${error.message}`;
-      throw error;
+      throw hookFailure(system, hook, error);
     }
+  }
+
+  // Names the system and hook on the failure. An ordinary Error keeps its identity and gets the prefixed message. Anything else
+  // (a string, null, a frozen Error) cannot take the prefix, so it becomes the cause of a new Error that does.
+  function hookFailure(system, hook, thrown) {
+    const message = `Runtime system "${system.name}" ${hook} failed: ${thrown instanceof Error ? thrown.message : String(thrown)}`;
+    if (thrown instanceof Error) {
+      try {
+        thrown.message = message;
+        return thrown;
+      } catch {
+        // A frozen or read-only message cannot carry the prefix; the new Error below does.
+      }
+    }
+    return new Error(message, { cause: thrown });
   }
 
   function initialise(system) {
@@ -146,16 +155,6 @@ export function createRuntime(target, options = {}) {
   function disposeSystem(system) {
     if (!initialised.delete(system)) return;
     callHook(system, 'dispose');
-  }
-
-  function cancelFrame() {
-    if (handle === null) return;
-    scheduler.cancel(handle);
-    handle = null;
-  }
-
-  function scheduleFrame() {
-    if (running && handle === null && !isPaused()) handle = scheduler.request(tick);
   }
 
   function recordFrameTime(milliseconds) {
@@ -192,9 +191,8 @@ export function createRuntime(target, options = {}) {
     context.alpha = mode === 'both' ? accumulator / fixedStepSeconds : 1;
   }
 
-  function tick() {
-    handle = null;
-    if (!running || isPaused()) return;
+  function renderFrame(timestamp, resumed) {
+    if (resumed) lastTime = null;
     const frameStart = now();
     const measuredMilliseconds = lastTime === null ? 0 : frameStart - lastTime;
     // A clock that returns NaN once would otherwise turn the accumulator and elapsed time into NaN for good.
@@ -215,23 +213,13 @@ export function createRuntime(target, options = {}) {
     stats.frames += 1;
     stats.frameMilliseconds = elapsedMilliseconds;
     if (stats.frames > 1) recordFrameTime(elapsedMilliseconds);
-    scheduleFrame();
   }
 
   function stopLoop() {
     running = false;
-    cancelFrame();
+    governor.stop();
     lastTime = null;
     accumulator = 0;
-  }
-
-  function onVisibilityChange() {
-    if (isPaused()) {
-      cancelFrame();
-      return;
-    }
-    lastTime = null;
-    scheduleFrame();
   }
 
   function assertUsable(action) {
@@ -241,7 +229,9 @@ export function createRuntime(target, options = {}) {
   const runtime = {
     get mode() { return mode; },
     get running() { return running; },
-    get paused() { return running && isPaused(); },
+    get paused() { return running && (manuallyPaused || governor.paused); },
+    /** True while the loop waits for wake() because options.isIdle reported nothing changed: zero draws, zero scheduled frames. */
+    get sleeping() { return running && governor.sleeping; },
     get systems() { return systems.map(system => system.name); },
 
     // Initialises the systems once, then schedules frames. Starting a running runtime does nothing.
@@ -256,8 +246,7 @@ export function createRuntime(target, options = {}) {
         running = false;
         throw error;
       }
-      unsubscribeVisibility ??= visibility.subscribe(onVisibilityChange);
-      scheduleFrame();
+      governor.start();
       return runtime;
     },
 
@@ -270,7 +259,7 @@ export function createRuntime(target, options = {}) {
     // Holds the loop without ending it. The time while paused is never simulated.
     pause() {
       manuallyPaused = true;
-      cancelFrame();
+      governor.hold();
       return runtime;
     },
 
@@ -278,7 +267,14 @@ export function createRuntime(target, options = {}) {
       assertUsable('resume');
       manuallyPaused = false;
       lastTime = null;
-      scheduleFrame();
+      governor.release();
+      return runtime;
+    },
+
+    // Call after input or a state change that options.isIdle would now report as busy: it draws the next frame at once.
+    wake() {
+      assertUsable('wake');
+      governor.wake();
       return runtime;
     },
 
@@ -347,15 +343,23 @@ export function createRuntime(target, options = {}) {
       };
     },
 
-    // Stops the loop and disposes every system in reverse order. The runtime cannot start again.
+    // Stops the loop and disposes every system in reverse order. Every dispose hook runs so one failure cannot keep the others
+    // from releasing their resources; the first failure is thrown after the list is cleared. The runtime cannot start again.
     dispose() {
       if (disposed) return;
       stopLoop();
-      unsubscribeVisibility?.();
-      unsubscribeVisibility = null;
+      governor.dispose();
       disposed = true;
-      for (const system of [...systems].reverse()) disposeSystem(system);
+      let failure = null;
+      for (const system of [...systems].reverse()) {
+        try {
+          disposeSystem(system);
+        } catch (error) {
+          failure ??= { error };
+        }
+      }
       systems.length = 0;
+      if (failure) throw failure.error;
     },
   };
 

@@ -104,6 +104,8 @@ function findFloatingParts(bounds, contactDistance) {
 
 function findIntersectingParts(geometries, bounds, contactDistance, skipped) {
   const crossing = [];
+  // Larger than every part index, so two different pairs never share a code.
+  const pairStride = Math.max(1000, geometries.length);
   let pairsTested = 0;
   for (let first = 0; first < geometries.length; first++) {
     for (let second = first + 1; second < geometries.length; second++) {
@@ -116,7 +118,7 @@ function findIntersectingParts(geometries, bounds, contactDistance, skipped) {
       const secondIndex = createMeshQueryIndex(geometries[second]);
       try {
         const result = createMeshPairQuery(firstIndex, secondIndex).evaluate(IDENTITY_MATRIX, IDENTITY_MATRIX);
-        if (result.kind === 'surface-intersection') crossing.push(first * 1000 + second);
+        if (result.kind === 'surface-intersection') crossing.push(first * pairStride + second);
       } catch {
         skipped.add('intersecting-parts');
       } finally {
@@ -234,7 +236,7 @@ function problem(kind, elements, extra = {}) {
 /**
  * Runs the spatial checks on a polygon mesh. `solidParts` lists the parts that are closed, consistently wound and
  * outward facing. Returns { problems, skipped }, where each problem has kind, count and a sample of element indices
- * (part pairs as first * 1000 + second, parts, faces or vertices by kind).
+ * (part pairs as first * max(1000, partCount) + second, parts, faces or vertices by kind).
  */
 export function lintMeshGeometry(mesh, { facePart, partCount, solidParts, bounds, diagonal }) {
   const skipped = new Set();
