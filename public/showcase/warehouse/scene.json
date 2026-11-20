@@ -4,7 +4,7 @@
   "blurb": "A distribution warehouse with racking, forklifts and dock doors.",
   "glb": "/showcase/warehouse/scene.glb",
   "hdri": "/showcase/warehouse/sky.hdr",
-  "hdriOptions": { "intensity": 0.7, "rotation": 0, "showBackground": true, "backgroundBlur": 0.6 },
+  "hdriOptions": { "intensity": 0.7, "rotation": 1.5708, "showBackground": true, "backgroundBlur": 0.6 },
   "gltfOptions": { "maxTexturePixels": 67108864 },
   "exposure": 1,
   "renderer": {
