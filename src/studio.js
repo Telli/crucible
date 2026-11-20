@@ -752,6 +752,9 @@ const AXIS_KEYS = Object.freeze(['x', 'y', 'z']);
 const MODAL_TOOL_BY_KEY = Object.freeze({ g: 'translate', r: 'rotate', s: 'scale' });
 const MODAL_FREE_AXIS = Object.freeze({ translate: 'screen', scale: 'uniform' });
 const MODAL_TOOL_WORDS = Object.freeze({ translate: 'Move', rotate: 'Rotate', scale: 'Scale' });
+const TRANSFORM_PART_BY_KEY = Object.freeze({ g: 'translation', r: 'rotation', s: 'scale' });
+const TRANSFORM_AT_REST = Object.freeze({ translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
+const TRANSFORM_PART_WORDS = Object.freeze({ translation: 'Position', rotation: 'Rotation', scale: 'Scale' });
 const VIEW_PRESET_BY_KEY = Object.freeze({ 1: 'front', 3: 'right', 7: 'top' });
 
 // One row of the Settings dialog each: the preference, what the row is called and, for a choice, how a value reads.
@@ -914,8 +917,60 @@ export function createStudio(container, {
     createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection()),
     createMenuItem('Delete', 'X', () => deleteButton.click()),
     createMenuItem('Deselect', 'Esc', () => controller.selectNode(null)),
+    createMenuItem('Hide', 'H', () => hideSelection()),
+    createMenuItem('Show all', 'Alt+H', () => showAllHidden()),
+    createMenuItem('Reset position', 'Alt+G', () => resetSelectionTransform('translation')),
+    createMenuItem('Reset rotation', 'Alt+R', () => resetSelectionTransform('rotation')),
+    createMenuItem('Reset scale', 'Alt+S', () => resetSelectionTransform('scale')),
     createMenuItem('Settings…', 'Ctrl+,', () => settingsDialog.showModal()),
   );
+  // A right click on an object, in the viewport or in the Scene list, opens the actions on that object where the
+  // pointer is. The rows are the Edit menu's own, so a key learned in one place works in the other.
+  const objectPopover = createMenuPopover(
+    'crucible-studio-pop-object',
+    createMenuItem('Frame', 'F', () => flyToSelection()),
+    createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection()),
+    createMenuItem('Hide', 'H', () => hideSelection()),
+    createMenuItem('Reset position', 'Alt+G', () => resetSelectionTransform('translation')),
+    createMenuItem('Reset rotation', 'Alt+R', () => resetSelectionTransform('rotation')),
+    createMenuItem('Reset scale', 'Alt+S', () => resetSelectionTransform('scale')),
+    createMenuItem('Delete', 'X', () => deleteButton.click()),
+  );
+  function openObjectMenu(clientX, clientY) {
+    const windowWidth = documentReference.defaultView?.innerWidth ?? 1280;
+    const windowHeight = documentReference.defaultView?.innerHeight ?? 800;
+    objectPopover.togglePopover?.(false);
+    objectPopover.style.left = `${Math.round(Math.max(8, Math.min(clientX, windowWidth - 256)))}px`;
+    objectPopover.style.right = 'auto';
+    // In the lower half the menu hangs from the pointer and grows upward, so it stays on screen at any height.
+    const opensUpward = clientY > windowHeight / 2;
+    objectPopover.style.top = opensUpward ? 'auto' : `${Math.round(clientY)}px`;
+    objectPopover.style.bottom = opensUpward ? `${Math.round(Math.max(8, windowHeight - clientY))}px` : 'auto';
+    objectPopover.showPopover?.();
+  }
+  function hideSelection() {
+    if (!controller.selectedNodeId) return;
+    controller.updateNodeTransform(controller.selectedNodeId, { visible: false });
+    announce('Hidden. Alt+H shows everything again');
+  }
+  function showAllHidden() {
+    const hiddenNodes = controller.exportRecipe().nodes.filter(node => node.visible === false);
+    if (hiddenNodes.length === 0) {
+      announce('Nothing is hidden');
+      return;
+    }
+    controller.beginUndoGroup();
+    for (const node of hiddenNodes) {
+      controller.updateNodeTransform(node.id, { visible: true });
+    }
+    controller.endUndoGroup();
+    announce(`Showing ${hiddenNodes.length} hidden ${hiddenNodes.length === 1 ? 'object' : 'objects'}`);
+  }
+  function resetSelectionTransform(part) {
+    if (!controller.selectedNodeId) return;
+    controller.updateNodeTransform(controller.selectedNodeId, { [part]: [...TRANSFORM_AT_REST[part]] });
+    announce(`${TRANSFORM_PART_WORDS[part]} reset`);
+  }
   const viewPopover = createMenuPopover(
     'crucible-studio-pop-view',
     createMenuItem('Front view', '1', () => showView('front')),
@@ -1075,7 +1130,7 @@ export function createStudio(container, {
     createMenuItem('Export web pack', '', () => exportPackButton.click()),
     createElement(documentReference, 'p', { className: 'crucible-studio-popover-note', textContent: 'New scene' }),
   );
-  for (const popoverElement of [newPopover, addPopover, exportPopover, editPopover, viewPopover, helpPopover]) {
+  for (const popoverElement of [newPopover, addPopover, exportPopover, editPopover, objectPopover, viewPopover, helpPopover]) {
     popoverElement.addEventListener('click', event => {
       if (event.target.closest?.('button')) popoverElement.hidePopover?.();
     });
@@ -1137,6 +1192,7 @@ export function createStudio(container, {
     aiSyncPopover,
     exportPopover,
     editPopover,
+    objectPopover,
     viewPopover,
     helpPopover,
   );
@@ -1782,6 +1838,9 @@ export function createStudio(container, {
     ['Shift+D / Ctrl+D', 'Duplicate'],
     ['X / Delete', 'Delete'],
     ['Esc', 'Deselect'],
+    ['H / Alt+H', 'Hide the selection / show all'],
+    ['Alt+G / Alt+R / Alt+S', 'Reset position / rotation / scale'],
+    ['Right click', 'Menu of the object under the pointer'],
     ['F / .', 'Frame the selection'],
     ['1 / 3 / 7', 'Front / Right / Top view'],
     ['5', 'Perspective or orthographic'],
@@ -2498,6 +2557,11 @@ export function createStudio(container, {
       );
       selectButton.style.paddingLeft = `${4 + depth * 12}px`;
       selectButton.addEventListener('click', () => controller.selectNode(node.id));
+      selectButton.addEventListener('contextmenu', event => {
+        event.preventDefault();
+        controller.selectNode(node.id);
+        openObjectMenu(event.clientX, event.clientY);
+      });
       selectButton.addEventListener('dblclick', () => {
         controller.selectNode(node.id);
         selectInspectorTab('node');
@@ -2837,7 +2901,7 @@ export function createStudio(container, {
 
   gizmoSvg.addEventListener('pointerdown', event => {
     const axis = event.target?.getAttribute?.('data-gizmo-axis');
-    if (!axis) return;
+    if (!axis || (event.button ?? 0) !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     const coordinates = localCoordinates(event);
@@ -2845,6 +2909,14 @@ export function createStudio(container, {
     controller.beginGizmoDrag(axis, coordinates.x, coordinates.y);
     pointerState = { mode: 'gizmo', pointerId: event.pointerId };
     viewportElement.setPointerCapture?.(event.pointerId);
+  });
+
+  // The handles lie over the selected object, so a right click on one is a right click on that object.
+  gizmoSvg.addEventListener('contextmenu', event => {
+    event.preventDefault();
+    if (controller.selectedNodeId) {
+      openObjectMenu(event.clientX, event.clientY);
+    }
   });
 
   canvas.addEventListener('pointerdown', event => {
@@ -2899,6 +2971,12 @@ export function createStudio(container, {
         controller.snapSelectedToAt(coordinates.x, coordinates.y);
       } else {
         controller.pickAt(coordinates.x, coordinates.y);
+        // A right press that did not drag picked what is under it: an object there gets its menu. It opens after
+        // this release has been handled, because the release itself closes any open menu.
+        if (event.button === 2 && controller.selectedNodeId) {
+          const { clientX, clientY } = event;
+          setTimeout(() => openObjectMenu(clientX, clientY), 0);
+        }
       }
     }
   }
@@ -2989,10 +3067,22 @@ export function createStudio(container, {
       }
       return;
     }
-    if (event.altKey || recipeDialog.open || shortcutsDialog.open || settingsDialog.open) {
+    if (recipeDialog.open || shortcutsDialog.open || settingsDialog.open) {
       return;
     }
     const lowerKey = event.key.toLowerCase();
+    if (event.altKey) {
+      // Alt takes the plain key's action back: G, R and S change a transform and Alt+key resets it, H hides and
+      // Alt+H shows.
+      if (lowerKey === 'h') {
+        event.preventDefault();
+        showAllHidden();
+      } else if (TRANSFORM_PART_BY_KEY[lowerKey]) {
+        event.preventDefault();
+        resetSelectionTransform(TRANSFORM_PART_BY_KEY[lowerKey]);
+      }
+      return;
+    }
     const viewPreset = VIEW_PRESET_BY_KEY[event.key];
     if (event.shiftKey && lowerKey === 'd') duplicateSelection();
     else if (event.shiftKey && lowerKey === 'a') addMenuButton.click();
@@ -3000,6 +3090,7 @@ export function createStudio(container, {
       controller.setCameraViewPreset(viewPreset);
       announce(`${viewPreset[0].toUpperCase()}${viewPreset.slice(1)} view`);
     } else if (event.key === '.') flyToSelection();
+    else if (lowerKey === 'h') hideSelection();
     else if (lowerKey === 'n') setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true');
     else if (lowerKey === 'i') keyframeButton.click();
     else if (event.key === 'Escape') {

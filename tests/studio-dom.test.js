@@ -2209,7 +2209,7 @@ test('the top bar has File, Edit, View, Agent and Help menus that do what their 
   assert.equal(byText(popover('new'), 'Save').dataset.shortcut, 'Ctrl+S');
 
   menuButton('Edit').click();
-  assert.deepEqual(rows('edit'), ['Undo', 'Redo', 'Duplicate', 'Delete', 'Deselect', 'Settings…']);
+  assert.deepEqual(rows('edit'), ['Undo', 'Redo', 'Duplicate', 'Delete', 'Deselect', 'Hide', 'Show all', 'Reset position', 'Reset rotation', 'Reset scale', 'Settings…']);
   ui.selectRow('hero');
   const countBefore = ui.studio.exportRecipe().nodes.length;
   byText(popover('edit'), 'Duplicate').click();
@@ -2412,4 +2412,44 @@ test('G picks the selected object up under the pointer; X locks an axis, Esc put
   dispatch(ui.dom.document, 'pointerdown', { button: 2, clientX: 420, clientY: 120 });
   assert.equal(ui.root.dataset.modal, undefined);
   assert.equal(ui.controller.canUndo, false);
+});
+
+test('a right click on an object opens its menu; H hides, Alt+H shows all and Alt+G, R and S reset the transform', testContext => {
+  const ui = mountStudio(testContext);
+  const menu = ui.root.querySelector('#crucible-studio-pop-object');
+  const heroNode = () => ui.controller.exportRecipe().nodes.find(node => node.id === 'hero');
+  const press = (key, modifiers = {}) => dispatch(ui.dom.document, 'keydown', { key, ...modifiers });
+  assert.deepEqual(menu.querySelectorAll('button').map(button => button.textContent), ['Frame', 'Duplicate', 'Hide', 'Reset position', 'Reset rotation', 'Reset scale', 'Delete']);
+
+  // In the Scene list the row is selected first, then the menu opens on it.
+  const heroRow = ui.rows().find(row => row.textContent.includes(heroNode().label ?? 'hero'));
+  const opened = dispatch(heroRow.querySelector('.crucible-studio-tree-select'), 'contextmenu', { clientX: 900, clientY: 120 });
+  assert.equal(opened.defaultPrevented, true);
+  assert.equal(ui.controller.selectedNodeId, 'hero');
+  assert.equal(menu.popoverOpen, true);
+  assert.equal(menu.style.left, '900px');
+  assert.equal(menu.style.top, '120px');
+
+  byText(menu, 'Hide').click();
+  assert.equal(menu.popoverOpen, false);
+  assert.equal(heroNode().visible, false);
+  press('h', { altKey: true });
+  assert.notEqual(heroNode().visible, false);
+  assert.match(ui.status(), /Showing 1 hidden object/);
+  press('h');
+  assert.equal(heroNode().visible, false);
+  ui.controller.undo();
+  assert.notEqual(heroNode().visible, false);
+  press('h', { altKey: true });
+  assert.equal(ui.status(), 'Nothing is hidden');
+
+  ui.controller.updateNodeTransform('hero', { translation: [2, 3, 4], scale: [2, 2, 2], rotation: [0, 0.7071068, 0, 0.7071068] });
+  press('g', { altKey: true });
+  assert.deepEqual(heroNode().translation, [0, 0, 0]);
+  assert.equal(ui.root.dataset.modal, undefined);
+  press('r', { altKey: true });
+  assert.deepEqual(heroNode().rotation ?? [0, 0, 0, 1], [0, 0, 0, 1]);
+  byText(menu, 'Reset scale').click();
+  assert.deepEqual(heroNode().scale ?? [1, 1, 1], [1, 1, 1]);
+  assert.equal(ui.status(), 'Scale reset');
 });
