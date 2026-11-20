@@ -334,6 +334,7 @@ on:
       - 'src/retro-shader.js'
       - 'src/rig-presets.js'
       - 'src/rig.js'
+      - 'src/room-edge-leak.js'
       - 'src/rotation-euler.js'
       - 'src/room-box-joins.js'
       - 'src/scene-graph.js'
