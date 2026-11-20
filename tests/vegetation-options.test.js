@@ -61,3 +61,28 @@ test('scatter scale maximum must be finite and at least the minimum', () => {
 test('scatter mix refuses an infinite weight and names the species', () => {
   assert.throws(scatter({ mix: { grass: Infinity, bush: 1 } }), /Scatter mix weight for grass must be finite/);
 });
+
+test('tree height must be from 0.01 to 1000 meters', async () => {
+  const { createTree } = await import('../src/vegetation.js');
+  for (const height of [NaN, 0, -3, Infinity, 1e6, 'tall']) {
+    assert.throws(() => createTree({ species: 'broadleaf', height }), /Tree height must be from 0.01 to 1000/, `height ${height}`);
+  }
+  assert.ok(createTree({ species: 'bush', height: 1000 }).bounds.maximum.every(Number.isFinite));
+  assert.ok(createTree('broadleaf', 3).bounds.maximum.every(Number.isFinite));
+});
+
+test('grass blade radius must be finite and from 0 to 100', () => {
+  for (const radius of [NaN, -1, Infinity, '0.1']) {
+    assert.throws(() => createGrassClump({ radius }), /Grass blade radius must be from 0 to 100/, `radius ${radius}`);
+  }
+  assert.ok(createGrassClump({ radius: 0 }).bounds.maximum.every(Number.isFinite));
+});
+
+test('scatter, grass and flower seeds must be finite numbers', () => {
+  for (const seed of [NaN, Infinity, 'x']) {
+    assert.throws(scatter({ seed }), /scatterVegetation seed must be a finite number/, `scatter ${seed}`);
+    assert.throws(() => createGrassClump({ seed }), /createGrassClump seed must be a finite number/, `grass ${seed}`);
+    assert.throws(() => createFlowerPatch({ seed }), /createFlowerPatch seed must be a finite number/, `flower ${seed}`);
+  }
+  assert.equal(scatter({ seed: -4.5 })().instances.length > 0, true);
+});

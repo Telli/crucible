@@ -39,8 +39,9 @@ Do this as a maintainer.
 ```
 
    - `link` is optional. When it is set, the still opens it. When it is not set, the still opens the discussion.
+   - `discussion` may be left out only when `link` is set. The studio's own pieces use this, since they have no Show and tell post.
    - Put the newest entry first.
 4. Run `node --test tests/community-showcase.test.js`. The test checks every field and checks that each still exists. It prints each bad field and the value it expects.
 5. Reply in the discussion with a link to the showcase page, so the author knows their work is up.
 
-The page hides the grid when the list is empty or does not load, and the submit links always stay on the page.
+When the list is empty or does not load, the page shows one example card of what a featured piece looks like instead of a blank grid. The submit links always stay on the page.

@@ -568,7 +568,7 @@ float alphaAtNearestHit() {
   return sampleAtlas(mapRectangle, fetchData(uMaterials, material + 4).y, uv).a;
 }
 
-bool occluded(vec3 origin, vec3 direction, float limit) {
+bool occluded(vec3 origin, vec3 direction, float limit, int lightBit) {
   vec3 start = origin;
   float remaining = limit;
   // A solid any-hit shadows the point wherever it lies; a transparent one hides what sits before it, so retrace for nearest hits.
@@ -577,9 +577,9 @@ bool occluded(vec3 origin, vec3 direction, float limit) {
     traceRay(start, direction, remaining, anyHit);
     if (nearestSlot < 0) return false;
     int material = nearestMaterialIndex() * MATERIAL_TEXELS;
+    bool ownLamp = lightBit >= 0 && ((int(fetchData(uMaterials, material + 5).w) >> lightBit) & 1) == 1;
     float cutoff = fetchData(uMaterials, material + 3).z;
-    if (cutoff == 0.0) return true;
-    if (alphaAtNearestHit() >= cutoff) return true;
+    if (!ownLamp && (cutoff == 0.0 || alphaAtNearestHit() >= cutoff)) return true;
     if (anyHit) {
       anyHit = false;
       continue;
@@ -958,6 +958,7 @@ float shadowLimit;
 vec3 shadowAmount;
 int shadowDepth;
 bool shadowPending = false;
+int sampleLightBit = -1;
 
 void addDirect(int depth, vec3 normal, float distance, int weightMode) {
   if (inMedium) {
@@ -986,7 +987,7 @@ void addDirect(int depth, vec3 normal, float distance, int weightMode) {
 void flushShadowRay() {
   if (!shadowPending) return;
   shadowPending = false;
-  if (!occluded(shadowOrigin, shadowDirection, shadowLimit)) addRadiance(shadowDepth, shadowAmount);
+  if (!occluded(shadowOrigin, shadowDirection, shadowLimit, sampleLightBit)) addRadiance(shadowDepth, shadowAmount);
 }
 
 bool reaches(int bit) {
@@ -1022,6 +1023,7 @@ float pointLightFalloff(float distanceSquared, float range, float radius) {
 void sampleEmitter(int depth, vec3 normal, int emitter) {
   float distance = 0.0;
   int weightMode = 0;
+  sampleLightBit = -1;
   if (uHasSun && emitter == 0) {
     if (!reaches(0)) return;
     float cosineTheta = 1.0 - nextRandom() * (1.0 - uSunCosineMax);
@@ -1052,6 +1054,7 @@ void sampleEmitter(int depth, vec3 normal, int emitter) {
         if (distance < 1e-6 || emitCosine <= 0.0) return;
         lightRadiance = colorBit.rgb * (intensityRange.x * emitCosine / distanceSquared);
       } else {
+        if (type == 0) sampleLightBit = int(colorBit.w);
         vec3 jitter = randomOnSphere(directionRadius.w);
         distance = aimAt(positionType.xyz + jitter, distanceSquared);
         if (distance < 1e-6) return;

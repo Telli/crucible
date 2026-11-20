@@ -238,3 +238,13 @@ test('detail is checked and the velocity channels are not warped', () => {
   const plainVelocity = bakeGasSim({ resolution: 16, frames: 2, velocity: true });
   assert.deepEqual(withVelocity.frames[1].velocityX, plainVelocity.frames[1].velocityX);
 });
+
+test('bakeGasSim refuses an over-budget bake before it allocates anything (#2476)', () => {
+  assert.throws(() => bakeGasSim({ resolution: 96, frames: 240 }), /bakeGasSim: 240 frames of 96x96x96 take \d+ bytes, over the \d+ byte sequence limit; pass frames up to \d+/);
+  assert.throws(() => bakeGasSim({ resolution: 64, frames: 120, velocity: true }), /sequence limit/);
+});
+
+test('a sparse burstPosition is refused instead of baking NaN (#2477)', () => {
+  // eslint-disable-next-line no-sparse-arrays
+  assert.throws(() => bakeGasSim({ resolution: 8, frames: 1, burstPosition: [0.5, , 0.5] }), /burstPosition must be \[x, y, z\]/);
+});

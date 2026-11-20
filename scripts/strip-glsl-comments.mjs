@@ -10,21 +10,53 @@ function countBackticks(line) {
   return (line.match(/(?<!\\)`/g) ?? []).length;
 }
 
-function stripLine(line) {
-  if (/^\s*\/\/.*$/.test(line)) return null;
-  if (line.includes('${') || line.includes('`')) return line;
-  return line.replace(/\s+\/\/.*$/, '');
+// Strips a trailing line comment, leaving block comments intact and reporting whether a block spans the next line.
+function stripLineComments(line, startedInBlock) {
+  if (/^\s*\/\/.*$/.test(line) && !startedInBlock) return { text: null, inBlock: startedInBlock };
+  if (line.includes('${') || line.includes('`')) return { text: line, inBlock: startedInBlock };
+  let inBlock = startedInBlock;
+  let text = '';
+  for (let index = 0; index < line.length; index += 1) {
+    const current = line[index];
+    const next = line[index + 1];
+    if (inBlock) {
+      text += current;
+      if (current === '*' && next === '/') {
+        text += next;
+        index += 1;
+        inBlock = false;
+      }
+    } else if (current === '/' && next === '*') {
+      text += current + next;
+      index += 1;
+      inBlock = true;
+    } else if (current === '/' && next === '/') {
+      return { text: text.replace(/\s+$/, ''), inBlock };
+    } else {
+      text += current;
+    }
+  }
+  return { text, inBlock };
 }
 
 export function stripGlslComments(source) {
   if (!GLSL_MARKER.test(source)) return source;
   let insideTemplate = false;
+  let inBlock = false;
   const kept = [];
   for (const line of source.split(/\r?\n/)) {
     const startedInside = insideTemplate;
-    if (countBackticks(line) % 2 === 1) insideTemplate = !insideTemplate;
-    const stripped = startedInside ? stripLine(line) : line;
-    if (stripped !== null) kept.push(stripped);
+    if (countBackticks(line) % 2 === 1) {
+      insideTemplate = !insideTemplate;
+      if (insideTemplate) inBlock = false;
+    }
+    if (startedInside) {
+      const result = stripLineComments(line, inBlock);
+      inBlock = result.inBlock;
+      if (result.text !== null) kept.push(result.text);
+    } else {
+      kept.push(line);
+    }
   }
   return kept.join('\n');
 }

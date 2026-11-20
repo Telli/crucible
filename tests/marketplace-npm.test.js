@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { firstPartyPackages, npmManifestPath } from '../src/marketplace-npm.js';
+import { addonPackages, firstPartyPackages, npmManifestPath } from '../src/marketplace-npm.js';
 
 test('a plain or scoped npm name becomes its registry manifest path', () => {
   assert.equal(npmManifestPath('hover-controller'), 'hover-controller/latest');
@@ -27,6 +27,19 @@ test('only published @codepawlhq/crucible- companion packages are listed, sorted
   assert.deepEqual(firstPartyPackages(objects), [
     { name: '@codepawlhq/crucible-denoise-oidn', version: '0.2.0', description: '' },
     { name: '@codepawlhq/crucible-three-bridge', version: '0.1.0', description: 'three.js bridge' },
+  ]);
+});
+
+test('one malformed addon entry is skipped without hiding the rest of the list', () => {
+  const objects = [
+    { package: { name: 'hover-controller', version: '1.0.0' } },
+    { package: null },
+    { package: { name: '../bad', version: '2.0.0' } },
+    { package: { name: '@studio/crucible-hover', version: '2.0.0', description: 'A hover addon' } },
+  ];
+  assert.deepEqual(addonPackages(objects), [
+    { name: 'hover-controller', version: '1.0.0', description: '', range: null },
+    { name: '@studio/crucible-hover', version: '2.0.0', description: 'A hover addon', range: null },
   ]);
 });
 

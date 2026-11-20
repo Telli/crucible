@@ -83,6 +83,9 @@ export function normalizeMaterialWear(value) {
   return Object.freeze(result);
 }
 
+// A weight that is not a number packs as no wear, so one bad vertex never turns the packed value into NaN.
+const levelOf = weight => (Number.isFinite(weight) ? Math.round(Math.min(1, Math.max(0, weight)) * WEAR_LIMITS.levels) : 0);
+
 function groupWeights(geometry, name, label, nodeId) {
   const weights = geometry.vertexGroups?.[name];
   if (!weights) {
@@ -96,11 +99,13 @@ function groupWeights(geometry, name, label, nodeId) {
 export function packSurfaceMasks(geometry, wear, nodeId) {
   const wearWeights = groupWeights(geometry, wear.mask, 'wear.mask', nodeId);
   const dirtWeights = wear.dirt ? groupWeights(geometry, wear.dirt.mask, 'wear.dirt.mask', nodeId) : null;
+  if (dirtWeights && dirtWeights.length !== wearWeights.length) {
+    throw invalidField('wear.dirt.mask', wear.dirt.mask, `a vertex group of the ${wearWeights.length} weights of wear.mask on node ${nodeId}, not ${dirtWeights.length}`);
+  }
   const packed = new Float32Array(wearWeights.length);
-  const levels = WEAR_LIMITS.levels;
   for (let vertex = 0; vertex < packed.length; vertex++) {
-    const wearLevel = Math.round(Math.min(1, Math.max(0, wearWeights[vertex])) * levels);
-    const dirtLevel = dirtWeights ? Math.round(Math.min(1, Math.max(0, dirtWeights[vertex])) * levels) : 0;
+    const wearLevel = levelOf(wearWeights[vertex]);
+    const dirtLevel = dirtWeights ? levelOf(dirtWeights[vertex]) : 0;
     packed[vertex] = PACK_OFFSET + wearLevel * PACK_BASE + dirtLevel;
   }
   return packed;

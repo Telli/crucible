@@ -3,7 +3,7 @@ import { mkdir, open, readFile, writeFile, rename, link, unlink, rmdir, readdir,
 import { randomUUID, createHash } from 'node:crypto';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 
-import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, VIDEO_ENCODERS, AUDIO_FILE_PATTERN, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, MAXIMUM_STILLS_FRAMES, MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE } from '../src/agent-scene-capabilities.js';
+import { RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, VIDEO_ENCODERS, AUDIO_FILE_PATTERN, audioFileNameError, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, MAXIMUM_STILLS_FRAMES, MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE } from '../src/agent-scene-capabilities.js';
 import { parseQuality } from './agent-render-quality.mjs';
 import { estimateFrameBytes } from '../src/budget.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
@@ -23,17 +23,34 @@ export const MAXIMUM_QUEUE_WAIT_MS = 5 * 60 * 1000;
 const BASE_DEADLINE_MS = 60 * 1000;
 const FRAME_ALLOWANCE_MS = 2000;
 const REFERENCE_FRAME_PIXELS = 1024 * 576;
+/** Hard ceiling on one job's combined output bytes (128 MiB). */
+export const MAXIMUM_JOB_OUTPUT_BYTES = 128 * 1024 ** 2;
 /** A 1920x1080 PNG of a busy scene runs to several MiB, so a frame may be up to 12 MiB. */
-const DEFAULT_LIMITS = Object.freeze({ maxRecords: 32, maxStoreBytes: 512 * 1024 ** 2, maxOutputBytes: 128 * 1024 ** 2, maxFrameBytes: 12 * 1024 ** 2, deadlineMs: MAXIMUM_JOB_DEADLINE_MS, queueWaitMs: MAXIMUM_QUEUE_WAIT_MS, cleanupMs: 5000 });
+export const MAXIMUM_JOB_FRAME_BYTES = 12 * 1024 ** 2;
+const DEFAULT_LIMITS = Object.freeze({ maxRecords: 32, maxStoreBytes: 512 * 1024 ** 2, maxOutputBytes: MAXIMUM_JOB_OUTPUT_BYTES, maxFrameBytes: MAXIMUM_JOB_FRAME_BYTES, deadlineMs: MAXIMUM_JOB_DEADLINE_MS, queueWaitMs: MAXIMUM_QUEUE_WAIT_MS, cleanupMs: 5000 });
 
 /** Time the page needs to start, draw the scene and encode the PNG around a path trace that runs for its whole maxSeconds. */
 const PATH_TRACE_OVERHEAD_MS = 60 * 1000;
+
+const ICON_FRAME_ALLOWANCE_MS = 4000;
+const ICON_BREAKDOWN_ALLOWANCE_MS = 6000;
+
+/**
+ * An icon is its own scene: the job loads the GLB and draws it up to four times to frame it, and draws it all again when the
+ * set shares one scale (relative, or several angles). A breakdown adds three draws of each item. Measured on the cpu backend
+ * at about 5 s per icon with a breakdown and 3 s without.
+ */
+function iconDeadlineMs({ frameCount, scale, angles, breakdown, items }) {
+  const passes = scale === 'relative' || angles > 1 ? 2 : 1;
+  return BASE_DEADLINE_MS + frameCount * ICON_FRAME_ALLOWANCE_MS * passes + (breakdown ? items.length * ICON_BREAKDOWN_ALLOWANCE_MS : 0);
+}
 
 /**
  * 60 s plus 2 s per frame, scaled up for frames larger than 1024x576, never above the ceiling. A path trace may run for
  * its own maxSeconds on every frame, so its deadline also reaches that plus the overhead and the trace stops itself first.
  */
-export function jobDeadlineMs({ frameCount, width, height, renderer }, maximumMs = MAXIMUM_JOB_DEADLINE_MS) {
+export function jobDeadlineMs({ kind, frameCount, width, height, renderer, scale, angles, breakdown, items }, maximumMs = MAXIMUM_JOB_DEADLINE_MS) {
+  if (kind === 'icons') return Math.min(maximumMs, iconDeadlineMs({ frameCount, scale, angles, breakdown, items }));
   const sizeScale = Math.max(1, (width * height) / REFERENCE_FRAME_PIXELS);
   const frameDeadline = Math.ceil(BASE_DEADLINE_MS + frameCount * FRAME_ALLOWANCE_MS * sizeScale);
   const traceDeadline = renderer?.type === 'pathTracer' ? Math.ceil(renderer.maxSeconds * 1000 * frameCount) + PATH_TRACE_OVERHEAD_MS : 0;
@@ -136,6 +153,7 @@ function settingsFrom(input, clips = [], recipe) {
   if (input?.kind === 'icons') return normalizeIconSettings(input);
   objectKeys(input, ['kind', 'width', 'height', 'fps', 'duration', 'animation', 'motion', 'rendererTime', 'passes', 'renderer', 'timeline', 'audio', 'encoder', 'transparent', 'format', 'multilayer', 'region', 'quality', 'stillCount', 'mattes'], 'settings');
   if (!['image', 'stills', 'video'].includes(input.kind)) throw new TypeError('kind must be image, stills, video or icons.');
+  rejectImageClockFields(input);
   const largeFrame = input.kind === 'image';
   const maximumSide = largeFrame ? MAXIMUM_JOB_SIDE : MAXIMUM_SEQUENCE_JOB_SIDE;
   const maximumPixels = largeFrame ? MAXIMUM_JOB_PIXELS : MAXIMUM_SEQUENCE_JOB_PIXELS;
@@ -196,7 +214,7 @@ function settingsFrom(input, clips = [], recipe) {
       throw new TypeError('Motion loop must be boolean.');
     }
     const start = boundedNumber(motionInput.start === undefined ? 0 : motionInput.start, 0, 3600, 'motion start');
-    boundedNumber(start + lastSampleTime, 0, 3600, 'motion end');
+    motionEndWithinClock(start, lastSampleTime);
     const exceedsAuthoredMotion = recipe.motion && !recipe.motion.loop && start + lastSampleTime > motionDuration;
     const exceedsBake = !recipe.motion && bakeSeconds && start + lastSampleTime > bakeSeconds;
     if (exceedsAuthoredMotion && !impliedMotion) throw new RangeError('Motion range exceeds the authored duration.');
@@ -226,8 +244,36 @@ function settingsFrom(input, clips = [], recipe) {
   } else {
     result.rendererTime = { start: 0, rate: 1 };
   }
-  boundedNumber(result.rendererTime.start + lastSampleTime * result.rendererTime.rate, 0, 3600, 'renderer time end');
+  rendererTimeEndWithinClock(result.rendererTime, lastSampleTime);
   return result;
+}
+
+/** The motion clock stops at 3600 s; name the fields the caller sent and the end they produce. */
+function motionEndWithinClock(start, lastSampleTime) {
+  const end = start + lastSampleTime;
+  if (end <= 3600) return;
+  throw new RangeError(`motion.start ${start} plus the last sample at ${lastSampleTime} s is ${end} s; the motion clock stops at 3600 s. Lower motion.start or duration.`);
+}
+
+/** The renderer clock runs from 0 to 3600 s; name rendererTime.start, rate and the end they produce. */
+function rendererTimeEndWithinClock({ start, rate }, lastSampleTime) {
+  const end = start + lastSampleTime * rate;
+  if (end < 0) {
+    const neededStart = Math.ceil(-lastSampleTime * rate * 1000) / 1000;
+    throw new RangeError(`rendererTime.start ${start} with rate ${rate} reaches ${end} s; the renderer clock cannot go below 0. Raise rendererTime.start to at least ${neededStart} or use a positive rate.`);
+  }
+  if (end > 3600) {
+    throw new RangeError(`rendererTime.start ${start} with rate ${rate} reaches ${end} s; the renderer clock stops at 3600 s. Lower rendererTime.start, rate or duration.`);
+  }
+}
+
+/** An image is one frame at motion.start, so duration and fps would be echoed and never used. */
+function rejectImageClockFields(input) {
+  if (input.kind !== 'image') return;
+  const given = ['duration', 'fps'].filter(name => input[name] !== undefined);
+  if (given.length === 0) return;
+  const received = given.map(name => `${name} ${JSON.stringify(input[name])}`).join(' and ');
+  throw new TypeError(`${given.join(' and ')} ${given.length > 1 ? 'need' : 'needs'} kind stills or video; an image is one frame at motion.start (received kind image with ${received}). Drop ${given.join(' and ')}, or use kind stills or video.`);
 }
 
 function stillsFrameCountFrom(input) {
@@ -322,7 +368,7 @@ function audioFrom(audio, kind) {
   objectKeys(audio, ['file', 'offset', 'track'], 'audio');
   if (audio.track !== undefined && !['aac', 'pcm'].includes(audio.track)) throw new TypeError('audio.track must be aac or pcm.');
   if (typeof audio.file !== 'string' || !AUDIO_FILE_PATTERN.test(audio.file)) {
-    throw new TypeError('audio.file must be a file name in the configured audio folder ending in .wav, .mp3, .ogg or .flac.');
+    throw audioFileNameError(audio.file);
   }
   return { file: audio.file, offset: boundedNumber(audio.offset ?? 0, 0, 3600, 'audio offset'), track: audio.track ?? 'aac' };
 }
@@ -339,6 +385,11 @@ function passesFrom(passes, kind) {
 
 const MAXIMUM_MATTES = 8;
 const MAXIMUM_MATTE_NAME_LENGTH = 120;
+
+/** Refuses a path tracer backend this runtime cannot provide. The runner calls it for each frame and submit calls it first, so a doomed job is never queued. */
+export function requireTracerBackendAvailable(renderer, runtimeBackend) {
+  if (renderer?.backend === 'gpu' && runtimeBackend === 'cpu') throw new Error('renderer.backend "gpu" needs a runtime on the GPU backend, and this one runs on SwiftShader.');
+}
 
 /** The ID mattes of a job: each names one object (part) or one material, and writes one gray PNG per frame. */
 function mattesFrom(input) {
@@ -359,14 +410,60 @@ function mattesFrom(input) {
 }
 
 /** Every artifact filename of a job, lit image first and then each requested pass and matte, frame by frame. */
-export function artifactNames(kind, passes = [], format = 'png', multilayer = false, stillCount = 8, mattes = []) {
+export function artifactNames(kind, passes = [], format = 'png', multilayer = false, stillCount = 8, mattes = [], iconSettings = {}) {
   if (kind === 'video') return ['render.mp4'];
-  // An icons job has one frame per item, so its frame count is its item count.
-  if (kind === 'icons') return iconArtifactNames(stillCount);
+  // An icons job has one frame per icon (an item at one angle); a breakdown adds one strip per item.
+  if (kind === 'icons') return iconArtifactNames(stillCount, { itemCount: iconSettings.breakdown ? iconSettings.items.length : 0 });
   const extension = format === 'exr' ? 'exr' : 'png';
   const stems = kind === 'image' ? ['render'] : Array.from({ length: stillCount }, (_, index) => `frame-${index}`);
   if (multilayer) return stems.map(stem => `${stem}.${extension}`);
   return stems.flatMap(stem => [`${stem}.${extension}`, ...passes.map(pass => `${stem}-${pass}.${extension}`), ...mattes.map((_, index) => `${stem}-matte-${index}.png`)]);
+}
+
+function artifactGroupKey(filename, passes = []) {
+  const dotIndex = filename.lastIndexOf('.');
+  const stem = dotIndex > 0 ? filename.slice(0, dotIndex) : filename;
+  const strippedMatte = stem.replace(/-matte-\d+$/, '');
+  if (strippedMatte !== stem) return strippedMatte;
+  for (const pass of passes) {
+    const suffix = `-${pass}`;
+    if (stem.endsWith(suffix)) return stem.slice(0, -suffix.length);
+  }
+  return stem;
+}
+
+function describeJobBytes(bytes) {
+  return bytes >= 1024 ** 2 ? `${Number((bytes / 1024 ** 2).toFixed(1))} MiB` : `${bytes} bytes`;
+}
+
+function partitionArtifactsByBudget(artifacts, maximumOutputBytes, passes) {
+  const groups = [];
+  const groupsByKey = new Map();
+  for (const artifact of artifacts) {
+    const key = artifactGroupKey(artifact.filename, passes);
+    let group = groupsByKey.get(key);
+    if (!group) {
+      group = { bytes: 0, items: [] };
+      groupsByKey.set(key, group);
+      groups.push(group);
+    }
+    group.bytes += artifact.bytes;
+    group.items.push(artifact);
+  }
+  const kept = [];
+  const dropped = [];
+  let keptBytes = 0;
+  let overflowed = false;
+  for (const group of groups) {
+    if (!overflowed && keptBytes + group.bytes <= maximumOutputBytes) {
+      kept.push(...group.items);
+      keptBytes += group.bytes;
+    } else {
+      overflowed = true;
+      dropped.push(...group.items);
+    }
+  }
+  return { kept, dropped, keptBytes };
 }
 
 function artifactMimeType(settings, filename = '') {
@@ -409,7 +506,7 @@ function artifactByteLimit(settings, limits) {
 
 function allowedFile(name) {
   const passNames = RENDER_PASS_NAMES.join('|');
-  const artifact = new RegExp(`^(?:render\\.(?:png|mp4|exr)|(?:icon-\\d{1,3}|atlas)\\.png|icons\\.json|(?:render|frame-\\d{1,3})(?:-(?:${passNames}|matte-[0-7]))?\\.(?:png|exr))(?:\\.partial)?$`);
+  const artifact = new RegExp(`^(?:render\\.(?:png|mp4|exr)|(?:icon-\\d{1,3}|breakdown-\\d{1,3}|atlas)\\.png|icons\\.json|(?:render|frame-\\d{1,3})(?:-(?:${passNames}|matte-[0-7]))?\\.(?:png|exr))(?:\\.partial)?$`);
   return INTERNAL_FILES.has(name) || artifact.test(name);
 }
 
@@ -947,7 +1044,10 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
         const asset = await hashFile(join(directory, 'asset.glb'), MAXIMUM_ASSET_BYTES);
         if (asset.sha256 !== snapshot.recipe.assetId) throw new Error('Persisted asset does not match its recipe digest.');
       }
-      const { frameCount, ...inputSettings } = record.settings;
+      const { frameCount, ...storedSettings } = record.settings;
+      // A stored image job echoes the fps and duration it defaulted to; a submission may not send them.
+      const { fps: echoedFps, duration: echoedDuration, ...imageSettings } = storedSettings;
+      const inputSettings = storedSettings.kind === 'image' ? imageSettings : storedSettings;
       const settings = settingsFrom(inputSettings, snapshot.clips ?? [], snapshot.recipe);
       if (frameCount !== settings.frameCount) throw new Error('Invalid persisted frame count.');
       record.settings = settings;
@@ -956,7 +1056,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       boundedNumber(record.progress.maximumPendingFrames, 0, 1, 'persisted pending frames', true);
       if (record.metrics !== undefined) record.metrics = jsonCopy(record.metrics, 65536);
       if (record.reason !== undefined && (typeof record.reason !== 'string' || record.reason.length > 2048)) throw new Error('Invalid persisted job reason.');
-      const namesAllowed = artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer, settings.frameCount, settings.mattes);
+      const namesAllowed = artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer, settings.frameCount, settings.mattes, settings);
       if (!Array.isArray(record.artifacts) || record.artifacts.length > namesAllowed.length) throw new Error('Invalid persisted artifacts.');
       const seen = new Set();
       for (const artifact of record.artifacts) {
@@ -1039,32 +1139,49 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       record.state = 'finalizing';
       await persist(job);
       objectKeys(completed, ['artifacts', 'metrics'], 'runner result');
-      const expected = artifactNames(record.settings.kind, record.settings.passes, record.settings.format, record.settings.multilayer, record.settings.frameCount, record.settings.mattes);
+      const expected = artifactNames(record.settings.kind, record.settings.passes, record.settings.format, record.settings.multilayer, record.settings.frameCount, record.settings.mattes, record.settings);
       if (!Array.isArray(completed.artifacts) || completed.artifacts.length !== expected.length) throw new Error('Runner did not return the required fixed artifacts.');
       const directory = await directoryFor(record.jobId);
       const metrics = jsonCopy(completed.metrics ?? {}, 65536);
       const artifacts = [];
       const seen = new Set();
-      let outputBytes = 0;
+      let totalOutputBytes = 0;
       for (const output of completed.artifacts) {
         objectKeys(output, ['temporary', 'filename', 'mimeType'], 'runner artifact');
         if (!expected.includes(output.filename) || seen.has(output.filename) || output.temporary !== `${output.filename}.partial` || output.mimeType !== artifactMimeType(record.settings, output.filename)) throw new Error('Runner artifact must use the fixed filename and MIME type.');
         seen.add(output.filename);
         const artifact = { filename: output.filename, mimeType: output.mimeType, ...await hashFile(join(directory, output.temporary), artifactByteLimit(record.settings, limits)) };
-        outputBytes += artifact.bytes;
-        if (outputBytes > limits.maxOutputBytes) throw new RangeError('Job exceeds its combined output byte budget.');
+        totalOutputBytes += artifact.bytes;
         artifacts.push(artifact);
+      }
+      const publishArtifacts = async items => {
+        for (const artifact of items) {
+          if (controller.signal.aborted) throw controller.signal.reason;
+          const target = join(directory, artifact.filename);
+          try { await lstat(target); throw new Error('Final artifact already exists.'); }
+          catch (error) { if (error.code !== 'ENOENT') throw error; }
+          await rename(join(directory, `${artifact.filename}.partial`), target);
+          renamed.push(artifact.filename);
+        }
+      };
+      if (totalOutputBytes > limits.maxOutputBytes) {
+        const { kept, dropped, keptBytes } = partitionArtifactsByBudget(artifacts, limits.maxOutputBytes, record.settings.passes);
+        if (kept.length === 0) throw new RangeError('Job exceeds its combined output byte budget.');
+        for (const unused of dropped) await unlink(join(directory, `${unused.filename}.partial`));
+        await storeBytes();
+        if (controller.signal.aborted) throw controller.signal.reason;
+        await publishArtifacts(kept);
+        if (controller.signal.aborted) throw controller.signal.reason;
+        const reason = `Job exceeds its combined output byte budget (${describeJobBytes(totalOutputBytes)} > ${describeJobBytes(limits.maxOutputBytes)}): kept ${kept.length} of ${expected.length} artifacts (${describeJobBytes(keptBytes)}). Call scene_render_result to read them.`;
+        const partialRecord = { ...record, artifacts: kept, metrics, state: 'failed', reason };
+        await persist(job, partialRecord);
+        if (controller.signal.aborted) throw controller.signal.reason;
+        Object.assign(record, partialRecord);
+        return;
       }
       await storeBytes();
       if (controller.signal.aborted) throw controller.signal.reason;
-      for (const artifact of artifacts) {
-        if (controller.signal.aborted) throw controller.signal.reason;
-        const target = join(directory, artifact.filename);
-        try { await lstat(target); throw new Error('Final artifact already exists.'); }
-        catch (error) { if (error.code !== 'ENOENT') throw error; }
-        await rename(join(directory, `${artifact.filename}.partial`), target);
-        renamed.push(artifact.filename);
-      }
+      await publishArtifacts(artifacts);
       if (controller.signal.aborted) throw controller.signal.reason;
       const completedRecord = { ...record, artifacts, metrics, state: 'completed' };
       await persist(job, completedRecord);
@@ -1153,9 +1270,15 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
     result(jobId) {
       const job = getJob(jobId);
       const record = job.record;
-      if (record.state !== 'completed') throw new Error(`Render job is ${record.state}. No completed result is available.`);
-      job.fetched = true;
-      return structuredClone({ jobId, sourceRevision: record.sourceRevision, artifacts: record.artifacts, metrics: record.metrics });
+      if (record.state === 'completed') {
+        job.fetched = true;
+        return structuredClone({ jobId, sourceRevision: record.sourceRevision, artifacts: record.artifacts, metrics: record.metrics });
+      }
+      if (record.state === 'failed' && record.artifacts.length > 0) {
+        job.fetched = true;
+        return structuredClone({ jobId, state: record.state, reason: record.reason, sourceRevision: record.sourceRevision, artifacts: record.artifacts, metrics: record.metrics });
+      }
+      throw new Error(`Render job is ${record.state}. No completed result is available.`);
     },
     async release(jobId) {
       if (closed) throw new Error('Render job controller is closed.');

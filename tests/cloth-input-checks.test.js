@@ -30,3 +30,21 @@ test('createCloth names a triangle index that is not a particle instead of blami
   assert.throws(() => createCloth(positions, Uint32Array.from([0, 1, 999])), /triangle 0 uses particle 999; the sheet has 4/);
   assert.throws(() => createCloth(positions, Uint32Array.from([0, 1, 2, 3])), /3 indices each/);
 });
+
+test('createCloth names bend and stiffness for every value outside 0 to 1', () => {
+  const { positions, triangles } = smallSheet();
+  for (const option of ['bend', 'stiffness']) {
+    for (const value of [Number.NaN, Infinity, -1, 5, 'x']) {
+      assert.throws(() => createCloth(positions, triangles, { [option]: value }), new RegExp(`Cloth ${option} must be a number from 0 to 1`), `${option} ${value}`);
+    }
+  }
+});
+
+test('createCloth self collision names a zero-length edge instead of the radius', () => {
+  const positions = Float32Array.from([0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1]);
+  const triangles = Uint32Array.from([0, 2, 1, 1, 2, 3, 3, 4, 2]);
+  for (const selfCollision of [true, { radius: 0.1 }]) {
+    assert.throws(() => createCloth(positions, triangles, { selfCollision }), /vertices 3 and 4 share one point/);
+  }
+  assert.doesNotThrow(() => createCloth(positions, triangles, {}));
+});
