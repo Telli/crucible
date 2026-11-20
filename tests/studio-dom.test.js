@@ -2209,7 +2209,7 @@ test('the top bar has File, Edit, View, Agent and Help menus that do what their 
   assert.equal(byText(popover('new'), 'Save').dataset.shortcut, 'Ctrl+S');
 
   menuButton('Edit').click();
-  assert.deepEqual(rows('edit'), ['Undo', 'Redo', 'Duplicate', 'Delete', 'Deselect', 'Settings…']);
+  assert.deepEqual(rows('edit'), ['Undo', 'Redo', 'Duplicate', 'Delete', 'Deselect', 'Hide', 'Show all', 'Reset position', 'Reset rotation', 'Reset scale', 'Settings…']);
   ui.selectRow('hero');
   const countBefore = ui.studio.exportRecipe().nodes.length;
   byText(popover('edit'), 'Duplicate').click();
@@ -2351,4 +2351,220 @@ test('panels float over the scene by default and dock to the window edges from t
   const viewportRule = STUDIO_CSS.slice(STUDIO_CSS.indexOf(docked + ' .crucible-studio-viewport {'));
   assert.ok(viewportRule.startsWith(docked), 'the docked viewport has a rule of its own');
   assert.ok(viewportRule.slice(0, viewportRule.indexOf('}')).includes('inset: var(--studio-dock-bar) var(--studio-dock-side) 0 var(--studio-rail)'), 'the viewport is the room the panels leave, so the scene is drawn at that size');
+});
+
+test('G picks the selected object up under the pointer; X locks an axis, Esc puts it back and a click places it', testContext => {
+  const ui = mountStudio(testContext);
+  const hintBar = ui.root.querySelector('.crucible-studio-hintbar');
+  const heroNode = () => ui.controller.exportRecipe().nodes.find(node => node.id === ui.controller.selectedNodeId);
+  const press = key => dispatch(ui.dom.document, 'keydown', { key });
+
+  // With nothing selected, or the pointer away from the viewport, the key only switches the tool.
+  press('g');
+  assert.equal(ui.root.dataset.modal, undefined);
+  ui.controller.selectNode(ui.controller.exportRecipe().nodes[0].id);
+  press('g');
+  assert.equal(ui.root.dataset.modal, undefined);
+
+  const before = structuredClone(heroNode().translation);
+  dispatch(ui.viewport, 'pointermove', { clientX: 300, clientY: 200 });
+  press('g');
+  assert.equal(ui.root.dataset.modal, 'translate');
+  assert.equal(ui.controller.dragging, true);
+  dispatch(ui.dom.document, 'pointermove', { clientX: 380, clientY: 150 });
+  assert.notDeepEqual(heroNode().translation, before);
+  assert.equal(hintBar.querySelectorAll('kbd').filter(key => key.getAttribute('aria-pressed') === 'true').length, 0);
+
+  press('x');
+  const pressed = hintBar.querySelectorAll('kbd').filter(key => key.getAttribute('aria-pressed') === 'true');
+  assert.deepEqual(pressed.map(key => key.textContent), ['X']);
+  assert.equal(heroNode().translation[1], before[1]);
+  assert.equal(heroNode().translation[2], before[2]);
+  press('x');
+  assert.equal(hintBar.querySelectorAll('kbd').filter(key => key.getAttribute('aria-pressed') === 'true').length, 0);
+
+  press('Escape');
+  assert.equal(ui.root.dataset.modal, undefined);
+  assert.deepEqual(heroNode().translation, before);
+  assert.equal(ui.controller.canUndo, false);
+  assert.equal(hintBar.textContent, '');
+
+  // Placed with a click: one undo step takes the whole move back, axis changes included.
+  press('g');
+  dispatch(ui.dom.document, 'pointermove', { clientX: 380, clientY: 150 });
+  press('y');
+  press('z');
+  dispatch(ui.dom.document, 'pointermove', { clientX: 420, clientY: 120 });
+  const placing = dispatch(ui.dom.document, 'pointerdown', { button: 0, clientX: 420, clientY: 120 });
+  assert.equal(placing.defaultPrevented, true);
+  assert.equal(ui.root.dataset.modal, undefined);
+  assert.notDeepEqual(heroNode().translation, before);
+  ui.controller.undo();
+  assert.deepEqual(heroNode().translation, before);
+  assert.equal(ui.controller.canUndo, false);
+
+  // R while holding swaps the tool; a right press cancels.
+  press('s');
+  assert.equal(ui.root.dataset.modal, 'scale');
+  press('r');
+  assert.equal(ui.root.dataset.modal, 'rotate');
+  assert.equal(ui.controller.tool, 'rotate');
+  dispatch(ui.dom.document, 'pointerdown', { button: 2, clientX: 420, clientY: 120 });
+  assert.equal(ui.root.dataset.modal, undefined);
+  assert.equal(ui.controller.canUndo, false);
+});
+
+test('a right click on an object opens its menu; H hides, Alt+H shows all and Alt+G, R and S reset the transform', testContext => {
+  const ui = mountStudio(testContext);
+  const menu = ui.root.querySelector('#crucible-studio-pop-object');
+  const heroNode = () => ui.controller.exportRecipe().nodes.find(node => node.id === 'hero');
+  const press = (key, modifiers = {}) => dispatch(ui.dom.document, 'keydown', { key, ...modifiers });
+  assert.deepEqual(menu.querySelectorAll('button').map(button => button.textContent), ['Frame', 'Duplicate', 'Hide', 'Reset position', 'Reset rotation', 'Reset scale', 'Delete']);
+
+  // In the Scene list the row is selected first, then the menu opens on it.
+  const heroRow = ui.rows().find(row => row.textContent.includes(heroNode().label ?? 'hero'));
+  const opened = dispatch(heroRow.querySelector('.crucible-studio-tree-select'), 'contextmenu', { clientX: 900, clientY: 120 });
+  assert.equal(opened.defaultPrevented, true);
+  assert.equal(ui.controller.selectedNodeId, 'hero');
+  assert.equal(menu.popoverOpen, true);
+  assert.equal(menu.style.left, '900px');
+  assert.equal(menu.style.top, '120px');
+
+  byText(menu, 'Hide').click();
+  assert.equal(menu.popoverOpen, false);
+  assert.equal(heroNode().visible, false);
+  press('h', { altKey: true });
+  assert.notEqual(heroNode().visible, false);
+  assert.match(ui.status(), /Showing 1 hidden object/);
+  press('h');
+  assert.equal(heroNode().visible, false);
+  ui.controller.undo();
+  assert.notEqual(heroNode().visible, false);
+  press('h', { altKey: true });
+  assert.equal(ui.status(), 'Nothing is hidden');
+
+  ui.controller.updateNodeTransform('hero', { translation: [2, 3, 4], scale: [2, 2, 2], rotation: [0, 0.7071068, 0, 0.7071068] });
+  press('g', { altKey: true });
+  assert.deepEqual(heroNode().translation, [0, 0, 0]);
+  assert.equal(ui.root.dataset.modal, undefined);
+  press('r', { altKey: true });
+  assert.deepEqual(heroNode().rotation ?? [0, 0, 0, 1], [0, 0, 0, 1]);
+  byText(menu, 'Reset scale').click();
+  assert.deepEqual(heroNode().scale ?? [1, 1, 1], [1, 1, 1]);
+  assert.equal(ui.status(), 'Scale reset');
+});
+
+test('the press that ends a held move reaches nothing under it, and held or modified keys leave the lock alone', testContext => {
+  const ui = mountStudio(testContext);
+  const hintBar = ui.root.querySelector('.crucible-studio-hintbar');
+  const menu = ui.root.querySelector('#crucible-studio-pop-object');
+  const press = (key, modifiers = {}) => dispatch(ui.dom.document, 'keydown', { key, ...modifiers });
+  const lockedKeys = () => hintBar.querySelectorAll('kbd').filter(key => key.getAttribute('aria-pressed') === 'true').map(key => key.textContent);
+  const hold = key => {
+    dispatch(ui.viewport, 'pointermove', { clientX: 300, clientY: 200 });
+    press(key);
+    dispatch(ui.dom.document, 'pointermove', { clientX: 360, clientY: 170 });
+  };
+  ui.controller.selectNode('hero');
+  const nodeCount = ui.controller.exportRecipe().nodes.length;
+
+  hold('g');
+  press('x');
+  press('x', { repeat: true });
+  assert.deepEqual(lockedKeys(), ['X']);
+  press('z', { ctrlKey: true });
+  press('s', { ctrlKey: true });
+  assert.deepEqual(lockedKeys(), ['X']);
+  assert.equal(ui.root.dataset.modal, 'translate');
+
+  // Placed over the Delete button: the click that follows the press must not delete the object.
+  const deleteButton = ui.label('Delete (Del)');
+  dispatch(ui.dom.document, 'pointerdown', { button: 0, clientX: 900, clientY: 300 });
+  const strayClick = dispatch(deleteButton, 'click', {});
+  assert.equal(strayClick.defaultPrevented, true);
+  assert.equal(ui.controller.exportRecipe().nodes.length, nodeCount);
+  assert.equal(ui.controller.canUndo, true);
+
+  // Enter places too.
+  hold('r');
+  press('Enter');
+  assert.equal(ui.root.dataset.modal, undefined);
+
+  // A right press on a handle cancels and its context menu does not open the object's menu.
+  hold('s');
+  dispatch(ui.dom.document, 'pointerdown', { button: 2, clientX: 300, clientY: 200 });
+  const swallowed = dispatch(ui.gizmo, 'contextmenu', { clientX: 300, clientY: 200 });
+  assert.equal(swallowed.defaultPrevented, true);
+  assert.notEqual(menu.popoverOpen, true);
+  // The next right click on a handle is a real one.
+  dispatch(ui.dom.document, 'pointerdown', { button: 2, clientX: 300, clientY: 200 });
+  dispatch(ui.gizmo, 'contextmenu', { clientX: 300, clientY: 200 });
+  assert.equal(menu.popoverOpen, true);
+
+  // A middle press cancels and leaves the next right click alone.
+  menu.hidePopover();
+  hold('g');
+  dispatch(ui.dom.document, 'pointerdown', { button: 1, clientX: 300, clientY: 200 });
+  assert.equal(ui.root.dataset.modal, undefined);
+  dispatch(ui.gizmo, 'contextmenu', { clientX: 300, clientY: 200 });
+  assert.equal(menu.popoverOpen, true);
+
+  // The window losing focus lets go.
+  const windowListeners = new Map();
+  ui.dom.document.defaultView.addEventListener = (type, listener) => windowListeners.set(type, listener);
+  ui.dom.document.defaultView.removeEventListener = type => windowListeners.delete(type);
+  const beforeBlur = structuredClone(ui.controller.exportRecipe().nodes.find(node => node.id === 'hero').translation);
+  hold('g');
+  windowListeners.get('blur')();
+  assert.equal(ui.root.dataset.modal, undefined);
+  assert.equal(windowListeners.has('blur'), false);
+  assert.deepEqual(ui.controller.exportRecipe().nodes.find(node => node.id === 'hero').translation, beforeBlur);
+});
+
+test('a right click on an object in the viewport selects it and opens its menu; a right drag only pans', testContext => {
+  const ui = mountStudio(testContext);
+  const menu = ui.root.querySelector('#crucible-studio-pop-object');
+  ui.controller.selectNode('hero');
+  const onHero = ui.clientPoint(ui.controller.projectWorldPoint(ui.controller.gizmoHandles().pivot));
+  ui.controller.selectNode(null);
+
+  dispatch(ui.canvas, 'pointerdown', { button: 2, pointerId: 3, ...onHero });
+  dispatch(ui.canvas, 'pointermove', { clientX: onHero.clientX + 60, clientY: onHero.clientY + 40 });
+  dispatch(ui.canvas, 'pointerup', { button: 2, clientX: onHero.clientX + 60, clientY: onHero.clientY + 40 });
+  ui.dom.runTimers();
+  assert.notEqual(menu.popoverOpen, true);
+
+  ui.controller.selectNode(null);
+  const heroNow = (() => {
+    ui.controller.selectNode('hero');
+    const point = ui.clientPoint(ui.controller.projectWorldPoint(ui.controller.gizmoHandles().pivot));
+    ui.controller.selectNode(null);
+    return point;
+  })();
+  dispatch(ui.canvas, 'pointerdown', { button: 2, pointerId: 4, ...heroNow });
+  dispatch(ui.canvas, 'pointerup', { button: 2, ...heroNow });
+  assert.equal(ui.controller.selectedNodeId, 'hero');
+  ui.dom.runTimers();
+  assert.equal(menu.popoverOpen, true);
+  assert.equal(menu.style.left, `${Math.round(heroNow.clientX)}px`);
+});
+
+test('menu rows start with their icon or an empty square, so the labels line up', testContext => {
+  const ui = mountStudio(testContext);
+  const menuIds = ['crucible-studio-pop-new', 'crucible-studio-pop-edit', 'crucible-studio-pop-object', 'crucible-studio-pop-view', 'crucible-studio-pop-help'];
+  for (const menuId of menuIds) {
+    const menu = ui.root.descendants().find(element => element.id === menuId);
+    const rows = menu.children.filter(element => element.tagName === 'BUTTON');
+    assert.ok(rows.length > 0, menuId);
+    for (const row of rows) {
+      const lead = row.children[0];
+      const leadClass = lead.getAttribute('class') ?? lead.className;
+      assert.match(String(leadClass), /crucible-studio-icon|crucible-studio-menu-gap/, `${menuId}: ${row.textContent}`);
+    }
+  }
+  const editMenu = ui.root.descendants().find(element => element.id === 'crucible-studio-pop-edit');
+  const rowNamed = label => editMenu.children.find(element => element.textContent === label);
+  assert.equal(rowNamed('Reset rotation').children[0].getAttribute('data-motion'), 'spin');
+  assert.equal(rowNamed('Delete').children[0].getAttribute('data-motion'), 'shake');
+  assert.equal(rowNamed('Deselect').children[0].getAttribute('data-motion'), null);
 });

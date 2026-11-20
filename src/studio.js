@@ -21,7 +21,7 @@ import {
   normalizeStudioPreferences,
   saveStudioPreferences,
 } from './studio-preferences.js';
-import { studioIconPath } from './studio-icons.js';
+import { STUDIO_ICON_MOTIONS, studioIconPath } from './studio-icons.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
@@ -749,6 +749,13 @@ function depthSortedNodes(nodes) {
   return ordered;
 }
 
+const AXIS_KEYS = Object.freeze(['x', 'y', 'z']);
+const MODAL_TOOL_BY_KEY = Object.freeze({ g: 'translate', r: 'rotate', s: 'scale' });
+const MODAL_FREE_AXIS = Object.freeze({ translate: 'screen', scale: 'uniform' });
+const MODAL_TOOL_WORDS = Object.freeze({ translate: 'Move', rotate: 'Rotate', scale: 'Scale' });
+const TRANSFORM_PART_BY_KEY = Object.freeze({ g: 'translation', r: 'rotation', s: 'scale' });
+const TRANSFORM_AT_REST = Object.freeze({ translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
+const TRANSFORM_PART_WORDS = Object.freeze({ translation: 'Position', rotation: 'Rotation', scale: 'Scale' });
 const VIEW_PRESET_BY_KEY = Object.freeze({ 1: 'front', 3: 'right', 7: 'top' });
 
 // One row of the Settings dialog each: the preference, what the row is called and, for a choice, how a value reads.
@@ -842,6 +849,10 @@ export function createStudio(container, {
   let isVisible = true;
   let insideDraw = false;
   let pointerState = null;
+  let viewportPointer = null;
+  let modalTransform = null;
+  let swallowContextMenu = false;
+  let swallowClick = false;
   let statusTimer = 0;
   let liveDeltaLabel = '';
 
@@ -881,19 +892,32 @@ export function createStudio(container, {
     textContent: label,
     attributes: { popovertarget: popoverId, ...attributes },
   });
-  // One row of a menu: what it does on the left, its key on the right.
-  const createMenuItem = (label, shortcut, onChoose) => {
+  // Every menu row starts with the same square: its icon, or nothing, so the labels line up either way.
+  const giveMenuIcon = (item, iconName) => {
+    if (!iconName) {
+      item.prepend(createElement(documentReference, 'span', { className: 'crucible-studio-menu-gap', attributes: { 'aria-hidden': 'true' } }));
+      return item;
+    }
+    const icon = createIcon(documentReference, iconName);
+    if (STUDIO_ICON_MOTIONS[iconName]) {
+      icon.setAttribute('data-motion', STUDIO_ICON_MOTIONS[iconName]);
+    }
+    item.prepend(icon);
+    return item;
+  };
+  // One row of a menu: its icon, what it does, and its key on the right.
+  const createMenuItem = (label, shortcut, onChoose, iconName) => {
     const item = createElement(documentReference, 'button', { type: 'button', textContent: label, dataset: shortcut ? { shortcut } : {} });
     item.addEventListener('click', onChoose);
-    return item;
+    return giveMenuIcon(item, iconName);
   };
   const menuToggles = [];
   const syncMenuToggles = () => menuToggles.forEach(({ item, isOn }) => item.setAttribute('aria-checked', isOn() ? 'true' : 'false'));
-  const createMenuToggle = (label, shortcut, onChoose, isOn) => {
+  const createMenuToggle = (label, shortcut, onChoose, isOn, iconName) => {
     const item = createMenuItem(label, shortcut, () => {
       onChoose();
       syncMenuToggles();
-    });
+    }, iconName);
     item.setAttribute('role', 'menuitemcheckbox');
     menuToggles.push({ item, isOn });
     return item;
@@ -914,31 +938,83 @@ export function createStudio(container, {
   };
   const editPopover = createMenuPopover(
     'crucible-studio-pop-edit',
-    createMenuItem('Undo', 'Ctrl+Z', () => undoButton.click()),
-    createMenuItem('Redo', 'Ctrl+Shift+Z', () => redoButton.click()),
-    createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection()),
-    createMenuItem('Delete', 'X', () => deleteButton.click()),
+    createMenuItem('Undo', 'Ctrl+Z', () => undoButton.click(), 'undo'),
+    createMenuItem('Redo', 'Ctrl+Shift+Z', () => redoButton.click(), 'redo'),
+    createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection(), 'duplicate'),
+    createMenuItem('Delete', 'X', () => deleteButton.click(), 'remove'),
     createMenuItem('Deselect', 'Esc', () => controller.selectNode(null)),
-    createMenuItem('Settings…', 'Ctrl+,', () => settingsDialog.showModal()),
+    createMenuItem('Hide', 'H', () => hideSelection(), 'eyeOff'),
+    createMenuItem('Show all', 'Alt+H', () => showAllHidden(), 'eye'),
+    createMenuItem('Reset position', 'Alt+G', () => resetSelectionTransform('translation'), 'translate'),
+    createMenuItem('Reset rotation', 'Alt+R', () => resetSelectionTransform('rotation'), 'rotate'),
+    createMenuItem('Reset scale', 'Alt+S', () => resetSelectionTransform('scale'), 'scale'),
+    createMenuItem('Settings…', 'Ctrl+,', () => settingsDialog.showModal(), 'settings'),
   );
+  // A right click on an object, in the viewport or in the Scene list, opens the actions on that object where the
+  // pointer is. The rows are the Edit menu's own, so a key learned in one place works in the other.
+  const objectPopover = createMenuPopover(
+    'crucible-studio-pop-object',
+    createMenuItem('Frame', 'F', () => flyToSelection(), 'frame'),
+    createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection(), 'duplicate'),
+    createMenuItem('Hide', 'H', () => hideSelection(), 'eyeOff'),
+    createMenuItem('Reset position', 'Alt+G', () => resetSelectionTransform('translation'), 'translate'),
+    createMenuItem('Reset rotation', 'Alt+R', () => resetSelectionTransform('rotation'), 'rotate'),
+    createMenuItem('Reset scale', 'Alt+S', () => resetSelectionTransform('scale'), 'scale'),
+    createMenuItem('Delete', 'X', () => deleteButton.click(), 'remove'),
+  );
+  function openObjectMenu(clientX, clientY) {
+    const windowWidth = documentReference.defaultView?.innerWidth ?? 1280;
+    const windowHeight = documentReference.defaultView?.innerHeight ?? 800;
+    objectPopover.togglePopover?.(false);
+    objectPopover.style.left = `${Math.round(Math.max(8, Math.min(clientX, windowWidth - 256)))}px`;
+    objectPopover.style.right = 'auto';
+    // In the lower half the menu hangs from the pointer and grows upward, so it stays on screen at any height.
+    const opensUpward = clientY > windowHeight / 2;
+    objectPopover.style.top = opensUpward ? 'auto' : `${Math.round(clientY)}px`;
+    objectPopover.style.bottom = opensUpward ? `${Math.round(Math.max(8, windowHeight - clientY))}px` : 'auto';
+    objectPopover.showPopover?.();
+  }
+  function hideSelection() {
+    if (!controller.selectedNodeId) return;
+    controller.updateNodeTransform(controller.selectedNodeId, { visible: false });
+    announce('Hidden. Alt+H shows everything again');
+  }
+  function showAllHidden() {
+    const hiddenNodes = controller.exportRecipe().nodes.filter(node => node.visible === false);
+    if (hiddenNodes.length === 0) {
+      announce('Nothing is hidden');
+      return;
+    }
+    controller.beginUndoGroup();
+    for (const node of hiddenNodes) {
+      controller.updateNodeTransform(node.id, { visible: true });
+    }
+    controller.endUndoGroup();
+    announce(`Showing ${hiddenNodes.length} hidden ${hiddenNodes.length === 1 ? 'object' : 'objects'}`);
+  }
+  function resetSelectionTransform(part) {
+    if (!controller.selectedNodeId) return;
+    controller.updateNodeTransform(controller.selectedNodeId, { [part]: [...TRANSFORM_AT_REST[part]] });
+    announce(`${TRANSFORM_PART_WORDS[part]} reset`);
+  }
   const viewPopover = createMenuPopover(
     'crucible-studio-pop-view',
     createMenuItem('Front view', '1', () => showView('front')),
     createMenuItem('Right view', '3', () => showView('right')),
     createMenuItem('Top view', '7', () => showView('top')),
-    createMenuItem('Perspective / Orthographic', '5', () => controller.toggleCameraProjection()),
-    createMenuItem('Frame the selection', 'F', () => flyToSelection()),
-    createMenuToggle('Grid', '', () => gridButton.click(), () => gridVisible),
-    createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true'),
-    createMenuToggle('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true'),
-    createMenuToggle('Floating panels', '', () => setPreference('panelsFloating', !preferences.panelsFloating), () => preferences.panelsFloating),
+    createMenuItem('Perspective / Orthographic', '5', () => controller.toggleCameraProjection(), 'camera'),
+    createMenuItem('Frame the selection', 'F', () => flyToSelection(), 'frame'),
+    createMenuToggle('Grid', '', () => gridButton.click(), () => gridVisible, 'grid'),
+    createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true', 'panels'),
+    createMenuToggle('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true', 'settings'),
+    createMenuToggle('Floating panels', '', () => setPreference('panelsFloating', !preferences.panelsFloating), () => preferences.panelsFloating, 'scene'),
   );
   // A row that switches something shows whether it is on each time its menu opens.
   viewPopover.addEventListener('toggle', syncMenuToggles);
   syncMenuToggles();
   const helpPopover = createMenuPopover(
     'crucible-studio-pop-help',
-    createMenuItem('Keyboard shortcuts', '?', () => shortcutsDialog.showModal()),
+    createMenuItem('Keyboard shortcuts', '?', () => shortcutsDialog.showModal(), 'keyboard'),
   );
   const exportMenuButton = createElement(
     documentReference,
@@ -966,7 +1042,7 @@ export function createStudio(container, {
       syncFileBanner();
       announce(`New ${spec.label}`);
     });
-    newPopover.append(templateButton);
+    newPopover.append(giveMenuIcon(templateButton));
   }
 
   const addPopover = createElement(documentReference, 'div', {
@@ -1055,6 +1131,8 @@ export function createStudio(container, {
       openImportDialog(promptText);
     }
   });
+  giveMenuIcon(autoReloadButton);
+  giveMenuIcon(copyPromptButton, 'duplicate');
   const aiSyncPopover = createElement(documentReference, 'div', {
     id: 'crucible-studio-pop-sync',
     className: 'crucible-studio-popover',
@@ -1070,17 +1148,24 @@ export function createStudio(container, {
     className: 'crucible-studio-popover',
     attributes: { popover: 'auto' },
   }, exportPngButton, exportGlbButton, exportPackButton);
+  giveMenuIcon(openButton, 'open');
+  giveMenuIcon(saveButton, 'save');
+  giveMenuIcon(saveAsButton, 'saveAs');
+  giveMenuIcon(editJsonButton, 'code');
+  giveMenuIcon(exportPngButton, 'image');
+  giveMenuIcon(exportGlbButton, 'node');
+  giveMenuIcon(exportPackButton, 'globe');
   newPopover.prepend(
     openButton,
     saveButton,
     saveAsButton,
     editJsonButton,
-    createMenuItem('Export PNG image', '', () => exportPngButton.click()),
-    createMenuItem('Export GLB model', '', () => exportGlbButton.click()),
-    createMenuItem('Export web pack', '', () => exportPackButton.click()),
+    createMenuItem('Export PNG image', '', () => exportPngButton.click(), 'image'),
+    createMenuItem('Export GLB model', '', () => exportGlbButton.click(), 'node'),
+    createMenuItem('Export web pack', '', () => exportPackButton.click(), 'globe'),
     createElement(documentReference, 'p', { className: 'crucible-studio-popover-note', textContent: 'New scene' }),
   );
-  for (const popoverElement of [newPopover, addPopover, exportPopover, editPopover, viewPopover, helpPopover]) {
+  for (const popoverElement of [newPopover, addPopover, exportPopover, editPopover, objectPopover, viewPopover, helpPopover]) {
     popoverElement.addEventListener('click', event => {
       if (event.target.closest?.('button')) popoverElement.hidePopover?.();
     });
@@ -1142,6 +1227,7 @@ export function createStudio(container, {
     aiSyncPopover,
     exportPopover,
     editPopover,
+    objectPopover,
     viewPopover,
     helpPopover,
   );
@@ -1778,12 +1864,18 @@ export function createStudio(container, {
   const shortcutsHeading = createElement(documentReference, 'h2', { id: 'crucible-studio-shortcuts-title', textContent: 'Studio keyboard shortcuts' });
   const shortcutEntries = [
     ['Q', 'Select'],
-    ['G / R / S / T', 'Move / Rotate / Scale / Snap'],
+    ['G / R / S', 'Pick up to move / rotate / scale'],
+    ['X / Y / Z', 'While holding: keep to that axis'],
+    ['Click or Enter / Esc', 'While holding: place / put back'],
+    ['T', 'Snap to a surface'],
     ['Shift + drag', 'Snap to a step or an angle'],
     ['Shift+A', 'Add an object or a light'],
     ['Shift+D / Ctrl+D', 'Duplicate'],
     ['X / Delete', 'Delete'],
     ['Esc', 'Deselect'],
+    ['H / Alt+H', 'Hide the selection / show all'],
+    ['Alt+G / Alt+R / Alt+S', 'Reset position / rotation / scale'],
+    ['Right click', 'Menu of the object under the pointer'],
     ['F / .', 'Frame the selection'],
     ['1 / 3 / 7', 'Front / Right / Top view'],
     ['5', 'Perspective or orthographic'],
@@ -2513,6 +2605,11 @@ export function createStudio(container, {
       );
       selectButton.style.paddingLeft = `${4 + depth * 12}px`;
       selectButton.addEventListener('click', () => controller.selectNode(node.id));
+      selectButton.addEventListener('contextmenu', event => {
+        event.preventDefault();
+        controller.selectNode(node.id);
+        openObjectMenu(event.clientX, event.clientY);
+      });
       selectButton.addEventListener('dblclick', () => {
         controller.selectNode(node.id);
         selectInspectorTab('node');
@@ -2682,8 +2779,177 @@ export function createStudio(container, {
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
     setButtonIcon(playButton, playing ? 'pause' : 'play', playing ? 'Pause (Space)' : 'Play (Space)');
     timeOutput.textContent = `${controller.motionTime.toFixed(1)} / ${duration.toFixed(1)} s`;
-    hintBar.textContent = liveDeltaLabel;
+    syncHintBar();
     syncFileBanner();
+  }
+
+  // While a key holds the object, the bar names the keys that act on it; a handle drag shows only how far it has gone.
+  function syncHintBar() {
+    if (!modalTransform) {
+      hintBar.textContent = liveDeltaLabel;
+      return;
+    }
+    const chip = (keys, word) => createElement(
+      documentReference,
+      'span',
+      { className: 'crucible-studio-hint-chip' },
+      createElement(documentReference, 'kbd', { textContent: keys }),
+      word,
+    );
+    const lockedAxis = modalTransform.locked ? modalTransform.axis : null;
+    const axisChips = AXIS_KEYS.map(axis => {
+      const key = createElement(documentReference, 'kbd', { textContent: axis.toUpperCase(), dataset: { axis } });
+      key.setAttribute('aria-pressed', lockedAxis === axis ? 'true' : 'false');
+      return key;
+    });
+    hintBar.replaceChildren(
+      createElement(documentReference, 'span', { className: 'crucible-studio-hint-delta', textContent: (liveDeltaLabel || MODAL_TOOL_WORDS[modalTransform.tool]).replace(/^SCREEN/, MODAL_TOOL_WORDS.translate) }),
+      createElement(documentReference, 'span', { className: 'crucible-studio-hint-chip' }, ...axisChips, 'axis'),
+      chip('Click', 'place'),
+      chip('Esc', 'cancel'),
+    );
+  }
+
+  // Blender's G, R and S: the key picks the object up under the pointer, with no handle to aim at. X, Y or Z keeps
+  // it on that axis of the object, a click or Enter places it and Esc or a right click puts it back.
+  function modalFreeAxis(tool) {
+    return tool === 'rotate' ? controller.axisFacingView() : MODAL_FREE_AXIS[tool];
+  }
+
+  function beginModalDrag(axis, locked) {
+    controller.beginGizmoDrag(axis, modalTransform.startX, modalTransform.startY);
+    modalTransform.axis = axis;
+    modalTransform.locked = locked;
+    if (modalTransform.lastX !== modalTransform.startX || modalTransform.lastY !== modalTransform.startY) {
+      controller.updateGizmoDrag(modalTransform.lastX, modalTransform.lastY, { shiftKey: modalTransform.shiftKey });
+    }
+  }
+
+  function onModalPointerMove(event) {
+    const coordinates = localCoordinates(event);
+    modalTransform.lastX = coordinates.x;
+    modalTransform.lastY = coordinates.y;
+    modalTransform.shiftKey = event.shiftKey;
+    controller.updateGizmoDrag(coordinates.x, coordinates.y, { shiftKey: event.shiftKey });
+  }
+
+  // The press that places or cancels belongs to the move: it must not also orbit, select or press a button under it.
+  function onModalPointerDown(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    swallowClick = event.button === 0;
+    swallowContextMenu = event.button === 2;
+    finishModalTransform(event.button === 0);
+  }
+
+  // The browser still sends the click and the context menu that follow that press: neither may reach what lies under
+  // the pointer, such as a Delete button or the object's own menu.
+  function onModalContextMenu(event) {
+    if (modalTransform || swallowContextMenu) {
+      event.preventDefault();
+      event.stopPropagation();
+      swallowContextMenu = false;
+    }
+  }
+
+  function onModalClick(event) {
+    if (swallowClick) {
+      event.preventDefault();
+      event.stopPropagation();
+      swallowClick = false;
+    }
+  }
+
+  // A press outside a held move starts something new: nothing is left to swallow from the move before it.
+  function onAnyPointerDown() {
+    if (!modalTransform) {
+      swallowClick = false;
+      swallowContextMenu = false;
+    }
+  }
+
+  function onModalBlur() {
+    finishModalTransform(false);
+  }
+
+  function startModalTransform(tool) {
+    if (modalTransform || pointerState || !viewportPointer || !controller.selectedNodeId) {
+      return false;
+    }
+    stopFlight();
+    modalTransform = {
+      tool,
+      axis: null,
+      locked: false,
+      startX: viewportPointer.x,
+      startY: viewportPointer.y,
+      lastX: viewportPointer.x,
+      lastY: viewportPointer.y,
+      shiftKey: false,
+    };
+    root.dataset.modal = tool;
+    beginModalDrag(modalFreeAxis(tool), false);
+    documentReference.addEventListener('pointermove', onModalPointerMove);
+    documentReference.addEventListener('pointerdown', onModalPointerDown, true);
+    documentReference.defaultView?.addEventListener?.('blur', onModalBlur);
+    syncHintBar();
+    return true;
+  }
+
+  function finishModalTransform(confirmed) {
+    if (!modalTransform) {
+      return;
+    }
+    const finishedTool = modalTransform.tool;
+    modalTransform = null;
+    delete root.dataset.modal;
+    documentReference.removeEventListener('pointermove', onModalPointerMove);
+    documentReference.removeEventListener('pointerdown', onModalPointerDown, true);
+    documentReference.defaultView?.removeEventListener?.('blur', onModalBlur);
+    if (confirmed) {
+      controller.endGizmoDrag();
+    } else if (controller.cancelGizmoDrag()) {
+      announce(`${MODAL_TOOL_WORDS[finishedTool]} cancelled`);
+    }
+    syncHintBar();
+  }
+
+  // The same axis key again lets the object go free; another one moves the lock there. The move restarts from where
+  // the key picked the object up, so a placed move is still one undo step.
+  function lockModalAxis(axis) {
+    const release = modalTransform.locked && modalTransform.axis === axis;
+    // No axis while the drag is swapped: the change this cancel reports must not read as the object being let go.
+    modalTransform.axis = null;
+    controller.cancelGizmoDrag();
+    beginModalDrag(release ? modalFreeAxis(modalTransform.tool) : axis, !release);
+    syncHintBar();
+  }
+
+  function handleModalKey(event) {
+    const lowerKey = event.key.toLowerCase();
+    if (event.key === 'Shift') {
+      return;
+    }
+    event.preventDefault();
+    // A key held down repeats, and Ctrl+Z is not the Z axis: neither may flip the lock or swap the tool.
+    if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+    if (event.key === 'Escape') {
+      finishModalTransform(false);
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      finishModalTransform(true);
+    } else if (AXIS_KEYS.includes(lowerKey)) {
+      lockModalAxis(lowerKey);
+    } else if (MODAL_TOOL_BY_KEY[lowerKey] && MODAL_TOOL_BY_KEY[lowerKey] !== modalTransform.tool) {
+      finishModalTransform(false);
+      pickUpWithTool(MODAL_TOOL_BY_KEY[lowerKey]);
+    }
+  }
+
+  function pickUpWithTool(tool) {
+    controller.setTool(tool);
+    startModalTransform(tool);
   }
 
   // Viewport Interaction: Gizmo Drag, Pick, Orbit, Pan, Zoom, File Drop
@@ -2707,7 +2973,7 @@ export function createStudio(container, {
 
   gizmoSvg.addEventListener('pointerdown', event => {
     const axis = event.target?.getAttribute?.('data-gizmo-axis');
-    if (!axis) return;
+    if (!axis || (event.button ?? 0) !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     const coordinates = localCoordinates(event);
@@ -2715,6 +2981,14 @@ export function createStudio(container, {
     controller.beginGizmoDrag(axis, coordinates.x, coordinates.y);
     pointerState = { mode: 'gizmo', pointerId: event.pointerId };
     viewportElement.setPointerCapture?.(event.pointerId);
+  });
+
+  // The handles lie over the selected object, so a right click on one is a right click on that object.
+  gizmoSvg.addEventListener('contextmenu', event => {
+    event.preventDefault();
+    if (controller.selectedNodeId) {
+      openObjectMenu(event.clientX, event.clientY);
+    }
   });
 
   canvas.addEventListener('pointerdown', event => {
@@ -2769,9 +3043,24 @@ export function createStudio(container, {
         controller.snapSelectedToAt(coordinates.x, coordinates.y);
       } else {
         controller.pickAt(coordinates.x, coordinates.y);
+        // A right press that did not drag picked what is under it: an object there gets its menu. It opens after
+        // this release has been handled, because the release itself closes any open menu.
+        if (event.button === 2 && controller.selectedNodeId) {
+          const { clientX, clientY } = event;
+          setTimeout(() => openObjectMenu(clientX, clientY), 0);
+        }
       }
     }
   }
+  viewportElement.addEventListener('pointermove', event => {
+    viewportPointer = localCoordinates(event);
+  });
+  viewportElement.addEventListener('pointerleave', () => {
+    viewportPointer = null;
+  });
+  documentReference.addEventListener('contextmenu', onModalContextMenu, true);
+  documentReference.addEventListener('click', onModalClick, true);
+  documentReference.addEventListener('pointerdown', onAnyPointerDown, true);
   viewportElement.addEventListener('pointerup', finishPointer);
   viewportElement.addEventListener('pointercancel', finishPointer);
   canvas.addEventListener('contextmenu', event => event.preventDefault());
@@ -2814,7 +3103,14 @@ export function createStudio(container, {
   }
 
   const onWindowKeyDown = async event => {
-    if (!root.isConnected || isEditableTarget(event.target)) {
+    if (!root.isConnected) {
+      return;
+    }
+    if (modalTransform) {
+      handleModalKey(event);
+      return;
+    }
+    if (isEditableTarget(event.target)) {
       return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
@@ -2845,10 +3141,22 @@ export function createStudio(container, {
       }
       return;
     }
-    if (event.altKey || recipeDialog.open || shortcutsDialog.open || settingsDialog.open) {
+    if (recipeDialog.open || shortcutsDialog.open || settingsDialog.open) {
       return;
     }
     const lowerKey = event.key.toLowerCase();
+    if (event.altKey) {
+      // Alt takes the plain key's action back: G, R and S change a transform and Alt+key resets it, H hides and
+      // Alt+H shows.
+      if (lowerKey === 'h') {
+        event.preventDefault();
+        showAllHidden();
+      } else if (TRANSFORM_PART_BY_KEY[lowerKey]) {
+        event.preventDefault();
+        resetSelectionTransform(TRANSFORM_PART_BY_KEY[lowerKey]);
+      }
+      return;
+    }
     const viewPreset = VIEW_PRESET_BY_KEY[event.key];
     if (event.shiftKey && lowerKey === 'd') duplicateSelection();
     else if (event.shiftKey && lowerKey === 'a') addMenuButton.click();
@@ -2856,14 +3164,13 @@ export function createStudio(container, {
       controller.setCameraViewPreset(viewPreset);
       announce(`${viewPreset[0].toUpperCase()}${viewPreset.slice(1)} view`);
     } else if (event.key === '.') flyToSelection();
+    else if (lowerKey === 'h') hideSelection();
     else if (lowerKey === 'n') setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true');
     else if (lowerKey === 'i') keyframeButton.click();
     else if (event.key === 'Escape') {
       if (controller.selectedNodeId) controller.selectNode(null);
     } else if (lowerKey === 'q') controller.setTool('select');
-    else if (lowerKey === 'g') controller.setTool('translate');
-    else if (lowerKey === 'r') controller.setTool('rotate');
-    else if (lowerKey === 's') controller.setTool('scale');
+    else if (MODAL_TOOL_BY_KEY[lowerKey]) pickUpWithTool(MODAL_TOOL_BY_KEY[lowerKey]);
     else if (lowerKey === 't') controller.setTool('snap');
     else if (lowerKey === 'f') flyToSelection();
     else if (event.key === '5') controller.toggleCameraProjection();
@@ -2899,6 +3206,10 @@ export function createStudio(container, {
 
   handleChange = detail => {
     selectionReadoutStale = true;
+    // The object a key is holding is gone or no longer the selection: let go without touching the new scene.
+    if (modalTransform && modalTransform.axis && !controller.dragging) {
+      finishModalTransform(false);
+    }
     if (detail.deltaLabel !== undefined) {
       liveDeltaLabel = detail.deltaLabel;
     }
@@ -3003,6 +3314,10 @@ export function createStudio(container, {
       agentPresence.dispose();
       if (frameHandle) cancelAnimationFrame(frameHandle);
       stopFlight();
+      finishModalTransform(false);
+      documentReference.removeEventListener('contextmenu', onModalContextMenu, true);
+      documentReference.removeEventListener('click', onModalClick, true);
+      documentReference.removeEventListener('pointerdown', onAnyPointerDown, true);
       documentReference.removeEventListener('keydown', onWindowKeyDown);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
       resizeObserver?.disconnect();

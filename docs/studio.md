@@ -56,11 +56,17 @@ The keys follow Blender where Studio has the same action. **Help ▸ Keyboard sh
 
 | Key | Action |
 | --- | --- |
-| Q, G, R, S, T | Select, move, rotate, scale, snap to a surface |
+| Q, T | Select, snap to a surface |
+| G, R, S | Pick the selected object up to move, rotate or scale it |
+| X, Y, Z | While holding an object: keep it to that axis; the same key again frees it |
+| Click or Enter, Esc or right click | While holding an object: place it, put it back |
 | Shift+A | Add an object or a light |
 | Shift+D or Ctrl+D | Duplicate |
 | X or Delete | Delete |
 | Esc | Deselect |
+| H, Alt+H | Hide the selection, show everything that is hidden |
+| Alt+G, Alt+R, Alt+S | Reset the position, rotation or scale of the selection |
+| Right click | Menu of the object under the pointer |
 | F or . | Fly to the selection, or to the whole scene when nothing is selected |
 | 1, 3, 7 | Front, right and top view |
 | 5 | Perspective or orthographic |
@@ -73,7 +79,11 @@ The keys follow Blender where Studio has the same action. **Help ▸ Keyboard sh
 
 F keeps the direction you look from and stands back just far enough for the object to fill the view. The camera flies there in a third of a second, so you can follow where the view went; any other camera input takes over at once, and with reduced motion the view jumps. Like an orbit, it is not an undo step.
 
-Keys do nothing while you type in a field or while a dialog is open. Typing an axis after G, R or S, as Blender does, is not supported: drag the handle of that axis instead.
+Keys do nothing while you type in a field or while a dialog is open.
+
+G, R and S work as in Blender. With an object selected and the pointer over the viewport, the key picks the object up: it follows the pointer with no handle to aim at, and a pill at the bottom of the viewport shows how far it has gone and the keys that act on it. X, Y or Z keeps the move to that axis of the object, a click or Enter places it, and Esc or a right click puts it back as if nothing happened. A placed move is one undo step. With nothing selected, or the pointer over a panel, the key only switches the tool, and the handles work as before. Typing a number while holding an object is not supported: type it in Properties instead.
+
+A right click on an object, in the viewport or in the Scene list, selects it and opens its menu at the pointer: Frame, Duplicate, Hide, the three resets and Delete. They are the same rows as in **Edit**, with the same keys. A menu row starts with its icon when one fits and with an empty square when none does, so the labels line up. The icon of the row under the pointer moves in a loop, and stays still when the system asks for reduced motion. Dragging with the right button still pans. Alt takes back what the plain key does: G, R and S change a transform and Alt+G, Alt+R and Alt+S reset it, H hides the selection and Alt+H shows everything again, as one undo step.
 
 ## Settings
 

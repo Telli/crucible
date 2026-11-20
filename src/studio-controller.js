@@ -608,6 +608,8 @@ export function createStudioController({
 
   function swapRecipe(recipeInput) {
     invalidateQuery();
+    // A drag in progress belongs to the scene it began on.
+    dragState = null;
     // `assets` is the host's pool of decoded catalog assets. It outlives each scene, so undo and redo rebuild from it.
     currentScene = createAgentScene(recipeInput, {}, assets ? { assets } : {});
     const recipe = currentScene.exportRecipe();
@@ -1309,6 +1311,38 @@ export function createStudioController({
     return changed;
   }
 
+  // Puts the object back where the drag found it. Nothing is added to undo: the drag never happened.
+  function cancelGizmoDrag() {
+    if (!dragState) {
+      return false;
+    }
+    const { nodeId, baseTranslation, baseRotation, baseScale, changed } = dragState;
+    dragState = null;
+    if (changed && currentScene.exportRecipe().nodes.some(node => node.id === nodeId)) {
+      applySceneOperations([{ type: 'set-node', id: nodeId, translation: baseTranslation, rotation: baseRotation, scale: baseScale }], { recordUndo: false });
+    }
+    notify({ kind: 'transformCancel', deltaLabel: '' });
+    return true;
+  }
+
+  /** The axis of the selected object that points most nearly at the camera: the one a turn in the screen plane goes around. */
+  function axisFacingView() {
+    const worldMatrix = selectedWorldMatrix();
+    const basis = worldMatrix ? worldBasisOf(worldMatrix) : WORLD_BASIS;
+    const camera = currentScene.camera;
+    const viewDirection = vec3.normalize(vec3.create(), vec3.subtract(vec3.create(), camera.target, camera.eye));
+    let facingAxis = 'y';
+    let strongest = -1;
+    for (const axis of AXIS_NAMES) {
+      const alignment = Math.abs(vec3.dot(viewDirection, basis[axis]));
+      if (alignment > strongest) {
+        strongest = alignment;
+        facingAxis = axis;
+      }
+    }
+    return facingAxis;
+  }
+
   function updateNodeTransform(nodeId, patch) {
     if (!patch || typeof patch !== 'object') {
       throw new TypeError('updateNodeTransform expects a patch object.');
@@ -1904,6 +1938,9 @@ export function createStudioController({
     beginGizmoDrag,
     updateGizmoDrag,
     endGizmoDrag,
+    cancelGizmoDrag,
+    axisFacingView,
+    get dragging() { return Boolean(dragState); },
     snapSelectedToAt,
     updateNodeTransform,
     addPrimitive,
