@@ -28,7 +28,7 @@ async function fetchPack(url) {
 
 // The renderer and its lighting load after the poster is on screen, so the first paint never waits for them.
 async function createLiveRenderer(canvas, scene) {
-  const [{ CrucibleRenderer }, { createLightingSetupMap }] = await Promise.all([
+  const [{ CrucibleRenderer }, { createLightingSetupMap, setupMapShowsBackground }] = await Promise.all([
     import('./renderer.js'),
     import('./lighting-setups.js'),
     loadPackShaderModules(scene.shaderModules),
@@ -38,7 +38,7 @@ async function createLiveRenderer(canvas, scene) {
     map: createLightingSetupMap(scene.environment.setup, {
       intensity: scene.environment.environmentIntensity,
       rotation: scene.environment.environmentRotation,
-      showBackground: scene.environment.world,
+      showBackground: setupMapShowsBackground(scene.environment),
     }),
   };
   // Baked lightmaps arrive as plain bytes; the renderer uploads ImageData.
