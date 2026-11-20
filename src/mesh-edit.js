@@ -74,7 +74,11 @@ class ElementStore {
   }
 
   isLive(index) {
-    return index >= 0 && index < this.count && !this.removed[index];
+    return Number.isInteger(index) && index >= 0 && index < this.count && !this.removed[index];
+  }
+
+  requireLive(index, label) {
+    if (!this.isLive(index)) throw new RangeError(`${label} ${index} does not exist or was already removed.`);
   }
 }
 
@@ -299,6 +303,7 @@ export class EditMesh {
   }
 
   removeEdge(edge) {
+    this.edges.requireLive(edge, 'Edge');
     while (this.edges.arrays.loop[edge] !== -1) {
       this.removeFace(this.loops.arrays.face[this.edges.arrays.loop[edge]]);
     }
@@ -354,6 +359,7 @@ export class EditMesh {
     for (const vertex of vertices) {
       if (!this.vertices.isLive(vertex)) throw new RangeError(`Vertex ${vertex} does not exist.`);
     }
+    if (this.faceExists(vertices)) throw new RangeError('A face over these vertices already exists.');
     const edges = new Array(size);
     for (let corner = 0; corner < size; corner++) {
       edges[corner] = this.ensureEdge(vertices[corner], vertices[(corner + 1) % size]);
@@ -383,8 +389,20 @@ export class EditMesh {
     return face;
   }
 
+  /** Whether a face already uses exactly these vertices in any order, as BM_face_exists does. */
+  faceExists(vertices) {
+    const firstEdge = this.findEdge(vertices[0], vertices[1]);
+    if (firstEdge === -1) return false;
+    const wanted = new Set(vertices);
+    return this.edgeLoops(firstEdge).some(loop => {
+      const face = this.loops.arrays.face[loop];
+      return this.faces.arrays.size[face] === vertices.length && this.faceVertices(face).every(vertex => wanted.has(vertex));
+    });
+  }
+
   /** Remove a face and its loops. Edges and vertices stay, as BM_face_kill. */
   removeFace(face) {
+    this.faces.requireLive(face, 'Face');
     const loopArrays = this.loops.arrays;
     const first = this.faces.arrays.loop[face];
     let loop = first;
@@ -400,6 +418,7 @@ export class EditMesh {
 
   /** Remove a vertex together with every edge and face using it. */
   removeVertex(vertex) {
+    this.vertices.requireLive(vertex, 'Vertex');
     while (this.vertices.arrays.edgeSlot[vertex] !== -1) {
       this.removeEdge(this.vertices.arrays.edgeSlot[vertex] >> 1);
     }

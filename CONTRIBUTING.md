@@ -11,6 +11,7 @@ Coding agents are welcome to open pull requests. There is no disclosure box: the
 1. Install Node.js 20.19 or later (the `Test` workflow uses 24) and Google Chrome.
 2. Clone the repository and run `npm ci`.
 3. Run `npm run dev`. Vite prints the local URL of the showcase.
+4. For the Cook tests and native renders, run `npm run cook:fetch` to get the prebuilt addon of the pinned Cook (or `npm run cook:build` with Rust). `npm run cook:check` says whether the installed Cook is the one `package-lock.json` pins. When it is not, the Cook tests skip and `tests/cook-install.test.js` fails with what to run. Set `COOK_ALLOW_UNPINNED=1` only when you link a Cook checkout on purpose.
 
 The library source is in `src/` and the Node tools and smoke scripts are in `scripts/`.
 The tests are in `tests/` and the guides are in `docs/`.
@@ -80,7 +81,7 @@ Between one test file and the full pass there are four commands made for coding 
 
 - `npm run test:affected -- <files...>` runs every test file that mentions one of the files, or a module that re-exports it; with no files it uses the files your branch changed.
 - `npm run test:fast` runs a deterministic 10 percent of the test files, seeded by the branch name (`-- --seed <text> --percent <n>` changes it). It does not replace `npm test`.
-- `npm run test:mutation-check -- tests/<name>.test.js` reverts your changes under `src/`, `bin/` and `packages/`, runs the tests, prints the ones that fail and restores the tree. It exits 1 when none fail, because then the test does not pin your change. Stage unstaged edits outside those folders first and `git add -N` new files under them.
+- `npm run test:mutation-check -- tests/<name>.test.js` reverts your changes under `src/`, `bin/`, `packages/` and `scripts/`, runs the tests, prints the ones that fail and restores the tree. It exits 1 when none fail, because then the test does not pin your change. Stage unstaged edits outside those folders first and `git add -N` new files under them.
 - `npm test -- --test-reporter=./scripts/test-compact-reporter.mjs` gives the full pass the same short output.
 
 The checks it runs, if you want one alone:

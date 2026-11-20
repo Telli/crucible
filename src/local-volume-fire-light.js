@@ -1,5 +1,5 @@
 import { MAX_POINT_LIGHTS } from './light-limits.js';
-import { volumeGridFloats, blackbodyRadiance } from './volume-grid.js';
+import { volumeGridFloats, gridTemperature, blackbodyRadiance } from './volume-grid.js';
 
 // Fire is light (#1046). A local volume with `lightsScene: true` adds one point light at the centre of its emission, so the ground, the
 // props and the smoke around a fireball are lit by it. The light's intensity is the emission integrated over the volume: a medium that
@@ -25,13 +25,13 @@ const totalsByGrid = new WeakMap();
 
 // The summed emission of one grid frame in grid cell units and its luminance-weighted centroid in the unit cube. Decoded once per frame of the sequence.
 function gridEmissionSums(gridData, volume) {
-  const key = `${volume.emission}|${volume.emissionStrength}|${volume.temperatureScale}|${volume.blackbodyIntensity}`;
+  const key = `${volume.emission}|${volume.emissionStrength}|${volume.temperatureScale}|${volume.blackbodyIntensity}|${volume.flameTemperature?.ignition}|${volume.flameTemperature?.maximum}`;
   const cached = totalsByGrid.get(gridData);
   if (cached?.key === key) return cached;
   const floats = volumeGridFloats(gridData);
   const [width, height, depth] = gridData.resolution;
   const flame = floats.flame ?? floats.density;
-  const temperature = floats.temperature ?? null;
+  const temperature = gridTemperature(gridData, volume.flameTemperature) ?? null;
   const total = [0, 0, 0];
   const centroidWeight = [0, 0, 0];
   const blackbody = [0, 0, 0];

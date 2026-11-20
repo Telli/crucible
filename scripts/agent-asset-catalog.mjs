@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { open, readdir, realpath, lstat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
+import { clipDisplayName } from '../src/clip-name.js';
 import { AGENT_ASSET_LIMITS, assetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { MAXIMUM_CATALOG_ENVIRONMENT_BYTES, MAXIMUM_CATALOG_LOOK_BYTES } from '../src/look-catalog.js';
 import { imageLimitProblem, readImageDimensions } from '../src/image-header.js';
@@ -313,7 +314,7 @@ export function describeCatalogFile(name, { bytes, document, assetId, imageForma
     images: document.images?.length ?? 0,
     animationCount: animations.length,
     animationsTruncated: animations.length > 16,
-    animations: animations.slice(0, 16).map((animation, index) => ({ index, name: String(animation?.name ?? `Clip ${index}`).slice(0, 80) })),
+    animations: animations.slice(0, 16).map((animation, index) => ({ index, name: clipDisplayName(animation, index).slice(0, 80) })),
   });
 }
 
@@ -354,6 +355,30 @@ async function hashFrames(sequence, frameEntries) {
   }
   await Promise.all(Array.from({ length: HASH_CONCURRENCY }, worker));
   return frameIds;
+}
+
+/**
+ * A cheap summary of the catalog files in `root` (name, size and modification time, no bytes read), so the runtime can tell whether a
+ * file was added, removed or rewritten since the catalog was built (#2209). Only the files the catalog lists are looked at, and at
+ * most as many as the catalog accepts plus one, so a huge folder costs a bounded number of stats.
+ */
+export async function fingerprintAssetDirectory(root) {
+  let directory;
+  let listing;
+  try {
+    directory = await realpath(root);
+    listing = await readdir(directory, { withFileTypes: true });
+  } catch {
+    // An unreadable folder has no fingerprint; building the catalog reports the real error with its own advice.
+    return 'unreadable';
+  }
+  const names = listing.filter(entry => /\.(glb|png|jpe?g|webp|hdr|cube)$/i.test(entry.name)).map(entry => entry.name).sort();
+  const parts = [`${names.length}`];
+  for (const name of names.slice(0, MAXIMUM_ASSETS + TEXTURE_SEQUENCE_LIMITS.maxFrames + 1)) {
+    const status = await lstat(join(directory, name)).catch(() => null);
+    parts.push(`${name}:${status ? `${status.size}:${status.mtimeMs}` : 'gone'}`);
+  }
+  return parts.join('|');
 }
 
 /**

@@ -205,10 +205,10 @@ test('the MCP server finds the grids an add-explosion operation will name, so th
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
 });
 
-// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change).
+// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom).
 const FIRST_RELEASE_HASHES = new Map([
-  ['{}', 'f4243c2be216986f1db1dbd8a20f32a0e76bebb01d361c1973f00bc939bf8a79'],
-  ['{"start":0.5,"fuel":"oily","seed":7}', 'eea21da58c694709f99fab840c6b73e58ef9b7cf3b8720db00ed8a3d7fb67f61'],
+  ['{}', 'df70567bd19d0d575a77bf3d6b8209768f859d0ac689986baa46c15075f1b7f0'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', '9c8225756d33fd331a836f0018a4c78200f1d9a55a41d91355c833eebf8f535e'],
 ]);
 
 test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {
@@ -260,6 +260,14 @@ test('by default the sparks are streaks born at start and the fireball grid carr
   assert.equal(applyBlast(blast({ fuel: 'oily' })).recipe.particles.systems[0].count, 900);
 });
 
+test('the blast leaves the scene bloom as it is, so the fire glows only as far as its own emission (#1735)', () => {
+  const plain = applyBlast(blast()).recipe.effects.bloom;
+  assert.equal(plain.strength, 0.12);
+  const withBloom = setRecipe();
+  withBloom.effects = { bloom: { strength: 0.3 } };
+  assert.equal(applyBlast(blast(), withBloom).recipe.effects.bloom.strength, 0.3);
+});
+
 test('motionBlur takes the shutter the scene already has, and leaves the effects alone when off', () => {
   const withShutter = setRecipe();
   withShutter.effects = { motionBlur: { shutter: 0.02 } };
@@ -296,6 +304,14 @@ test('bad sparks and motionBlur values name the field and a valid value', () => 
     [blast({ motionBlur: 'on' }), /motionBlur.*true.*false/],
   ];
   for (const [operation, pattern] of cases) assert.throws(() => applyBlast(operation), pattern, JSON.stringify(operation));
+});
+
+test('the fireball emits by the Blender flame remap, 1500 K to 3000 K, at every size and fuel (#1735)', () => {
+  for (const extra of [{ size: 2.5 }, { size: 10 }, { fuel: 'oily' }]) {
+    const volume = applyBlast(blast(extra)).recipe.environment.localVolumes[0];
+    assert.deepEqual(volume.flameTemperature, { ignition: 1.5, maximum: 3 });
+    assert.equal(volume.temperatureScale, 1000);
+  }
 });
 
 test('the blast dust and rubble sampled at a later time are ranked against a box floor, so no coplanar pair is left (#2054)', () => {

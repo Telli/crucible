@@ -15,7 +15,7 @@ function seaRecipe({ tag, smoothAngle, inStack = false }) {
     { op: 'subdivide', levels: 2 },
     { op: 'set_position', position: { mul: [{ attr: 'position' }, [100, 1, 100]] } },
   ];
-  const ocean = { op: 'ocean', windSpeed: 16, choppiness: 1.5, size: 50, seed: 3, resolution: 3 };
+  const ocean = { op: 'ocean', windSpeed: 16, choppiness: 1.5, size: 50, seed: 3, resolution: 3, foamMemory: 2 };
   return {
     format: 'crucible.scene', schemaVersion: 1,
     geometries: [{ id: 'sea', type: 'mesh', base: { type: 'box', bevel: 0 }, edits: inStack ? edits : [...edits, ocean], stack: inStack ? [ocean] : [], ...(smoothAngle === undefined ? {} : { smoothAngle }) }],

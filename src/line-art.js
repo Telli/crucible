@@ -190,7 +190,11 @@ export function resolveLineArt(input = {}) {
 export function lineNodeTable(lines, groups) {
   if (!lines.nodes || Object.keys(lines.nodes).length === 0) return { count: 0, data: null, width: 0, height: 0 };
   const names = Object.keys(groups);
-  const count = names.reduce((highest, name) => Math.max(highest, ...groups[name]), 0) + 1;
+  let highestIdentifier = 0;
+  for (const name of names) {
+    for (const identifier of groups[name]) highestIdentifier = Math.max(highestIdentifier, identifier);
+  }
+  const count = highestIdentifier + 1;
   const height = Math.ceil(count / NODE_TABLE_WIDTH);
   const data = new Float32Array(NODE_TABLE_WIDTH * height * 4);
   names.forEach((name, nodeIndex) => {

@@ -1,5 +1,6 @@
 import { layerTextureSupport, liquidWaterSupport, registerShaderFeatureCode } from './shader-registry.js';
 import { worldBounds } from './probe-trace.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 import { WATER_MAXIMUM_ROUGHNESS, WATER_BLUR_LIMIT_ROUGHNESS, WATER_MAXIMUM_BLUR_LEVEL, WATER_FADE_START_ROUGHNESS, waterMirrorUniformsGlsl, waterMirrorFunctionsGlsl } from './water-mirror-glsl.js';
 
 export { WATER_MAXIMUM_ROUGHNESS, WATER_BLUR_LIMIT_ROUGHNESS, WATER_MAXIMUM_BLUR_LEVEL, WATER_FADE_START_ROUGHNESS };
@@ -373,6 +374,8 @@ function hideMirrorOnlyLevels(batch) {
 }
 
 export function attachWaterReflection(renderer, surface, { scale = WATER_REFLECTION_SCALE, updateEvery = 1 } = {}) {
+  requireFiniteInRange('attachWaterReflection', 'scale', scale, 0.05, 1);
+  requireFiniteInRange('attachWaterReflection', 'updateEvery', updateEvery, 0, 1000);
   if (!surface) {
     return () => {};
   }
