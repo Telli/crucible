@@ -322,6 +322,7 @@ if (foundry) {
   readScroll();
   shownProgress = targetProgress;
   drawAt(shownProgress, performance.now() / 1000);
+  story.classList.add('scene-live');
   requestAnimationFrame(loop);
 } else {
   showStaticStory();
