@@ -44,6 +44,17 @@ export function sceneFileLighting(map, fileLights = {}, sceneEnvironment = {}, {
   return { environment: { ...split.environment, fillIntensity: 0, ...environment }, map: split.map, sunSplit: true };
 }
 
+// A closed room a sun lights gets the sky each surface sees and the light its sunlit patches bounce, as recipe scenes do
+// (#2761). Both steps decide for themselves whether the parts make a closed room, so open scenes come back unchanged;
+// `renderer.environment.floorSkyTrace: false` and `sunBounce: 0` turn them off. The module loads only for a scene with a sun.
+// `floorSkyOptions` go to the trace (its texel and ray budgets); `skyReport` says what the trace did, or why it did not run.
+export async function withFileSceneInteriorLight(parts, environment, floorSkyOptions = {}) {
+  const { applyDefaultFloorSky, environmentHasSun, withSunBounce } = await import('./floor-sky-visibility.js');
+  if (!environmentHasSun(environment)) return { parts, environment, skyReport: null };
+  const traced = applyDefaultFloorSky(parts, environment, floorSkyOptions);
+  return { parts: traced.parts, environment: withSunBounce(traced.parts, environment), skyReport: traced.report };
+}
+
 /** Triangles over pixels for these parts on a canvas of `pixels` pixels (the canvas size times the pixel ratio squared). */
 export function trianglesPerPixel(parts, pixels) {
   if (!(pixels > 0)) throw new RangeError('pixels must be the canvas width times its height times the pixel ratio squared, a positive number.');
