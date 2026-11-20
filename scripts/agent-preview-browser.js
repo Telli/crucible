@@ -971,12 +971,15 @@ window.__agentPreview = {
       record.scene.sampleFrame({ animation, motionTime: shot.motionTime });
     } else {
       if (shot.animation !== undefined) throw new RangeError('Imported animation requires an asset scene.');
-      record.scene.sampleMotion(shot.motionTime);
+      // The same sampling a look and a render job use, so a camera track gives the same pose here as there.
+      if (shot.motionTime === null) record.scene.sampleMotion(null);
+      else sampleMotionTime(record.scene, shot.motionTime);
     }
-    const camera = createAgentScene({ format: 'crucible.scene', schemaVersion: 1,
-      geometries: [], materials: [], nodes: [], camera: { ...record.scene.camera, ...shot.camera } }).camera;
-    validatePreviewCamera(camera);
-    draw(record, shot.rendererTime, camera);
+    const camera = withCameraOverrides(record.scene.camera, shot.camera);
+    // The post pass clock is the pose's motion time, as in a look and a render job frame, so a pass anchored to a moving
+    // part stays on it.
+    const poseTime = record.scene.motionTime ?? undefined;
+    draw(record, shot.rendererTime, camera, poseTime === undefined ? {} : { passTime: poseTime });
     const render = renderInfo(record.renderer, viewProblems(record, camera, record.scene.effects.exposure));
     if (render.width < 64 || render.height < 64) throw new Error('Render budget reduced review below its minimum output size.');
     const context = reviewGrid.getContext('2d');

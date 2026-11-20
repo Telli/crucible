@@ -1170,7 +1170,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     submitAskUserTool.enable();
     askUserTool.update({ _meta: { ui: { resourceUri: ANNOTATE_VIEW_URI } } });
   };
-  register('scene_review', 'Compare one to four independent camera or motion samples in one labeled PNG grid. Preserves source revision, transient pose, viewport and checkpoints. Omitted motionTime restores authored base pose; omitted animation uses the authored asset clip pose; rendererTime defaults to zero. No render job store is required.', z.strictObject({
+  register('scene_review', 'Compare one to four independent camera or motion samples in one labeled PNG grid. Preserves source revision, transient pose, viewport and checkpoints. Omitted motionTime restores authored base pose; omitted animation uses the authored asset clip pose; rendererTime defaults to the shot motionTime (or animation time), else zero. No render job store is required.', z.strictObject({
     ...sessionFields, expectedRevision,
     width: z.number().int().min(64).max(480).default(384),
     height: z.number().int().min(64).max(480).default(384),
