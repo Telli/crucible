@@ -189,6 +189,30 @@ export const STUDIO_CSS = `
   --studio-trace: #f1f0ec;
   --studio-trace-edge: #17161a;
 }
+.crucible-studio-scene-mark {
+  color: var(--studio-text);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.crucible-studio-scene-mark[data-selected="true"] { color: var(--studio-accent); }
+.crucible-studio-scene-mark-disc {
+  fill: color-mix(in srgb, var(--studio-bg) 72%, transparent);
+  stroke: none;
+}
+.crucible-studio-scene-mark-ray {
+  stroke: var(--studio-text);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+.crucible-studio-scene-mark-ray[data-selected="true"] { stroke: var(--studio-accent); }
+.crucible-studio-gizmo [data-scene-object] {
+  pointer-events: all;
+  cursor: pointer;
+}
 .crucible-studio-selection-silhouette {
   fill: #fff;
   stroke: none;
@@ -718,6 +742,7 @@ export const STUDIO_CSS = `
   background: transparent;
   overflow: hidden;
 }
+.crucible-studio button.crucible-studio-tree-select { min-block-size: 28px; }
 .crucible-studio-tree-select[data-hidden="true"] { color: var(--studio-muted); }
 .crucible-studio-tree-badge {
   inline-size: 15px;
