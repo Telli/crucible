@@ -840,6 +840,7 @@ export function createStudio(container, {
   let viewportPointer = null;
   let modalTransform = null;
   let swallowContextMenu = false;
+  let swallowClick = false;
   let statusTimer = 0;
   let liveDeltaLabel = '';
 
@@ -2789,13 +2790,33 @@ export function createStudio(container, {
   function onModalPointerDown(event) {
     event.preventDefault();
     event.stopPropagation();
-    swallowContextMenu = event.button !== 0;
+    swallowClick = event.button === 0;
+    swallowContextMenu = event.button === 2;
     finishModalTransform(event.button === 0);
   }
 
+  // The browser still sends the click and the context menu that follow that press: neither may reach what lies under
+  // the pointer, such as a Delete button or the object's own menu.
   function onModalContextMenu(event) {
     if (modalTransform || swallowContextMenu) {
       event.preventDefault();
+      event.stopPropagation();
+      swallowContextMenu = false;
+    }
+  }
+
+  function onModalClick(event) {
+    if (swallowClick) {
+      event.preventDefault();
+      event.stopPropagation();
+      swallowClick = false;
+    }
+  }
+
+  // A press outside a held move starts something new: nothing is left to swallow from the move before it.
+  function onAnyPointerDown() {
+    if (!modalTransform) {
+      swallowClick = false;
       swallowContextMenu = false;
     }
   }
@@ -2863,6 +2884,10 @@ export function createStudio(container, {
       return;
     }
     event.preventDefault();
+    // A key held down repeats, and Ctrl+Z is not the Z axis: neither may flip the lock or swap the tool.
+    if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
     if (event.key === 'Escape') {
       finishModalTransform(false);
     } else if (event.key === 'Enter' || event.key === ' ') {
@@ -2987,6 +3012,8 @@ export function createStudio(container, {
     viewportPointer = null;
   });
   documentReference.addEventListener('contextmenu', onModalContextMenu, true);
+  documentReference.addEventListener('click', onModalClick, true);
+  documentReference.addEventListener('pointerdown', onAnyPointerDown, true);
   viewportElement.addEventListener('pointerup', finishPointer);
   viewportElement.addEventListener('pointercancel', finishPointer);
   canvas.addEventListener('contextmenu', event => event.preventDefault());
@@ -3222,6 +3249,8 @@ export function createStudio(container, {
       stopFlight();
       finishModalTransform(false);
       documentReference.removeEventListener('contextmenu', onModalContextMenu, true);
+      documentReference.removeEventListener('click', onModalClick, true);
+      documentReference.removeEventListener('pointerdown', onAnyPointerDown, true);
       documentReference.removeEventListener('keydown', onWindowKeyDown);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
       resizeObserver?.disconnect();

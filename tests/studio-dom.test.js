@@ -2453,3 +2453,98 @@ test('a right click on an object opens its menu; H hides, Alt+H shows all and Al
   assert.deepEqual(heroNode().scale ?? [1, 1, 1], [1, 1, 1]);
   assert.equal(ui.status(), 'Scale reset');
 });
+
+test('the press that ends a held move reaches nothing under it, and held or modified keys leave the lock alone', testContext => {
+  const ui = mountStudio(testContext);
+  const hintBar = ui.root.querySelector('.crucible-studio-hintbar');
+  const menu = ui.root.querySelector('#crucible-studio-pop-object');
+  const press = (key, modifiers = {}) => dispatch(ui.dom.document, 'keydown', { key, ...modifiers });
+  const lockedKeys = () => hintBar.querySelectorAll('kbd').filter(key => key.getAttribute('aria-pressed') === 'true').map(key => key.textContent);
+  const hold = key => {
+    dispatch(ui.viewport, 'pointermove', { clientX: 300, clientY: 200 });
+    press(key);
+    dispatch(ui.dom.document, 'pointermove', { clientX: 360, clientY: 170 });
+  };
+  ui.controller.selectNode('hero');
+  const nodeCount = ui.controller.exportRecipe().nodes.length;
+
+  hold('g');
+  press('x');
+  press('x', { repeat: true });
+  assert.deepEqual(lockedKeys(), ['X']);
+  press('z', { ctrlKey: true });
+  press('s', { ctrlKey: true });
+  assert.deepEqual(lockedKeys(), ['X']);
+  assert.equal(ui.root.dataset.modal, 'translate');
+
+  // Placed over the Delete button: the click that follows the press must not delete the object.
+  const deleteButton = ui.label('Delete (Del)');
+  dispatch(ui.dom.document, 'pointerdown', { button: 0, clientX: 900, clientY: 300 });
+  const strayClick = dispatch(deleteButton, 'click', {});
+  assert.equal(strayClick.defaultPrevented, true);
+  assert.equal(ui.controller.exportRecipe().nodes.length, nodeCount);
+  assert.equal(ui.controller.canUndo, true);
+
+  // Enter places too.
+  hold('r');
+  press('Enter');
+  assert.equal(ui.root.dataset.modal, undefined);
+
+  // A right press on a handle cancels and its context menu does not open the object's menu.
+  hold('s');
+  dispatch(ui.dom.document, 'pointerdown', { button: 2, clientX: 300, clientY: 200 });
+  const swallowed = dispatch(ui.gizmo, 'contextmenu', { clientX: 300, clientY: 200 });
+  assert.equal(swallowed.defaultPrevented, true);
+  assert.notEqual(menu.popoverOpen, true);
+  // The next right click on a handle is a real one.
+  dispatch(ui.dom.document, 'pointerdown', { button: 2, clientX: 300, clientY: 200 });
+  dispatch(ui.gizmo, 'contextmenu', { clientX: 300, clientY: 200 });
+  assert.equal(menu.popoverOpen, true);
+
+  // A middle press cancels and leaves the next right click alone.
+  menu.hidePopover();
+  hold('g');
+  dispatch(ui.dom.document, 'pointerdown', { button: 1, clientX: 300, clientY: 200 });
+  assert.equal(ui.root.dataset.modal, undefined);
+  dispatch(ui.gizmo, 'contextmenu', { clientX: 300, clientY: 200 });
+  assert.equal(menu.popoverOpen, true);
+
+  // The window losing focus lets go.
+  const windowListeners = new Map();
+  ui.dom.document.defaultView.addEventListener = (type, listener) => windowListeners.set(type, listener);
+  ui.dom.document.defaultView.removeEventListener = type => windowListeners.delete(type);
+  const beforeBlur = structuredClone(ui.controller.exportRecipe().nodes.find(node => node.id === 'hero').translation);
+  hold('g');
+  windowListeners.get('blur')();
+  assert.equal(ui.root.dataset.modal, undefined);
+  assert.equal(windowListeners.has('blur'), false);
+  assert.deepEqual(ui.controller.exportRecipe().nodes.find(node => node.id === 'hero').translation, beforeBlur);
+});
+
+test('a right click on an object in the viewport selects it and opens its menu; a right drag only pans', testContext => {
+  const ui = mountStudio(testContext);
+  const menu = ui.root.querySelector('#crucible-studio-pop-object');
+  ui.controller.selectNode('hero');
+  const onHero = ui.clientPoint(ui.controller.projectWorldPoint(ui.controller.gizmoHandles().pivot));
+  ui.controller.selectNode(null);
+
+  dispatch(ui.canvas, 'pointerdown', { button: 2, pointerId: 3, ...onHero });
+  dispatch(ui.canvas, 'pointermove', { clientX: onHero.clientX + 60, clientY: onHero.clientY + 40 });
+  dispatch(ui.canvas, 'pointerup', { button: 2, clientX: onHero.clientX + 60, clientY: onHero.clientY + 40 });
+  ui.dom.runTimers();
+  assert.notEqual(menu.popoverOpen, true);
+
+  ui.controller.selectNode(null);
+  const heroNow = (() => {
+    ui.controller.selectNode('hero');
+    const point = ui.clientPoint(ui.controller.projectWorldPoint(ui.controller.gizmoHandles().pivot));
+    ui.controller.selectNode(null);
+    return point;
+  })();
+  dispatch(ui.canvas, 'pointerdown', { button: 2, pointerId: 4, ...heroNow });
+  dispatch(ui.canvas, 'pointerup', { button: 2, ...heroNow });
+  assert.equal(ui.controller.selectedNodeId, 'hero');
+  ui.dom.runTimers();
+  assert.equal(menu.popoverOpen, true);
+  assert.equal(menu.style.left, `${Math.round(heroNow.clientX)}px`);
+});

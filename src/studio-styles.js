@@ -780,6 +780,8 @@ export const STUDIO_CSS = `
   align-items: center;
   gap: 14px;
   padding: 6px 14px;
+  /* Wider than the distance readout it replaces, so it sits above the readout in the corner instead of over it. */
+  inset-block-end: 118px;
 }
 .crucible-studio[data-modal] .crucible-studio-viewport { cursor: move; }
 .crucible-studio-hint-delta { min-inline-size: 9ch; }
