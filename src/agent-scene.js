@@ -1997,13 +1997,19 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // runs again only when the parts are new objects.
   // Particle parts are left out (#2728): their specks move every frame, so a rank found for one frame is wrong for the next,
   // and searching thousands of small coplanar boxes on every seek took minutes at the 2,000 particle limit.
+  // A sea with an oceanTime track is left out too (#2730): its waves move every frame, and each new frame searched the whole
+  // still scene again, seconds per frame, so playback could not run.
   let flushCache = null;
   function partsToRank(recipe, parts) {
-    const particleNodes = new Set(recipe.particles?.systems.map(system => system.node) ?? []);
-    if (particleNodes.size === 0) {
+    const movingNodes = new Set(recipe.particles?.systems.map(system => system.node) ?? []);
+    const oceanGeometries = new Set((recipe.motion?.tracks ?? []).filter(track => track.kind === 'geometry' && track.property === 'oceanTime').map(track => track.id));
+    for (const node of recipe.nodes) {
+      if (oceanGeometries.has(node.geometry)) movingNodes.add(node.id);
+    }
+    if (movingNodes.size === 0) {
       return parts;
     }
-    return parts.filter(part => !particleNodes.has(part.name));
+    return parts.filter(part => !movingNodes.has(part.name));
   }
 
   function sameParts(first, second) {
@@ -2021,6 +2027,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       }
       restRankedList = null;
       posedRankedLists = [];
+      stagedByParts = new WeakMap();
       flushCache = null;
       return parts;
     }
@@ -2028,11 +2035,14 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const list = rankedList(coplanar, partsToRank(recipe, parts), rest);
       // Ranked parts batch apart, so the list they are staged in is a new one: the renderer then regroups, also when the
       // ranking is switched on or off for parts that did not change. The same parts, or their staged list, get it back.
-      if (list.parts !== parts && list.staged !== parts) {
-        list.parts = parts;
-        list.staged = list.resolved.ranked ? Object.freeze([...parts]) : parts;
+      // The rest and posed parts of a moving sea share one ranking (#2730), so each keeps its own staged list.
+      let staged = stagedByParts.get(parts);
+      if (!staged) {
+        staged = list.resolved.ranked ? Object.freeze([...parts]) : parts;
+        stagedByParts.set(parts, staged);
+        stagedByParts.set(staged, staged);
       }
-      flushCache = { parts, staged: list.staged, list, ...list.resolved };
+      flushCache = { parts, staged, list, ...list.resolved };
     }
     return flushCache.staged;
   }
@@ -2043,6 +2053,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // it out and the next edit finds it. A seek that only swaps the particle parts finds the same list.
   let restRankedList = null;
   let posedRankedLists = [];
+  let stagedByParts = new WeakMap();
   function rankedLists() {
     return restRankedList ? [restRankedList, ...posedRankedLists] : posedRankedLists;
   }
