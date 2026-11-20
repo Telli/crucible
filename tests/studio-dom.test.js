@@ -2140,7 +2140,8 @@ test('Scene and Properties share one column and the Scene head carries its icons
   assert.deepEqual(docks, ['Scene outliner', 'Scene inspector']);
   const head = side.querySelector('.crucible-studio-dock-head');
   assert.ok(head.querySelector('.crucible-studio-dock-title').querySelector('svg'));
-  assert.ok(STUDIO_CSS.includes('inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));'), 'the column sits beside the tool rail');
+  const sideRule = STUDIO_CSS.slice(STUDIO_CSS.indexOf('.crucible-studio-side {'), STUDIO_CSS.indexOf('.crucible-studio-side > .crucible-studio-dock {'));
+  assert.ok(sideRule.includes('inset-inline-end: var(--studio-edge);') && !sideRule.includes('inset-inline-start'), 'the column sits on the right, across from the tool rail');
 
   const filterRow = side.querySelector('.crucible-studio-filter');
   const search = ui.label('Filter the scene list');
