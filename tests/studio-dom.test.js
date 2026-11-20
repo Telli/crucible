@@ -3203,6 +3203,15 @@ test('lengths, angles and lens values show a quiet unit beside the number and ke
   assert.equal(ui.controller.scene.camera.near, 0.123456, 'what is stored is what was typed');
 });
 
+test('the group title button keeps its own look over the generic button rule, so it stays opaque and left aligned', () => {
+  const rule = STUDIO_CSS.slice(STUDIO_CSS.indexOf('.crucible-studio button.crucible-studio-property-title {'));
+  const body = rule.slice(0, rule.indexOf('}'));
+  assert.match(body, /position: sticky/u);
+  assert.match(body, /inset-block-start: 0/u);
+  assert.ok(body.includes('background: var(--studio-panel)'));
+  assert.match(body, /justify-items: start/u);
+});
+
 test('the sun row shows its azimuth and elevation in degrees beside the pad', testContext => {
   const ui = mountStudio(testContext);
   ui.tab('look').click();
