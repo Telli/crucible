@@ -21,12 +21,18 @@ a lone Glossy, a soft alpha for Glass), so colours and textures survive. It is a
 A base colour built from nodes with no image texture upstream (a ColorRamp on Random Per Island, a Noise texture on Object
 coordinates) is dropped by the exporter, which writes only image textures. Such colours are baked per object to a face-corner
 colour attribute (Cycles, Diffuse colour only) and wired into the Base Color, so they reach the GLB as COLOR_0 (#2766). It prints
-one line per material: kept, approximated (a Cycles-only BSDF replaced) or baked.
+one line per material: kept, approximated (a Cycles-only BSDF replaced), graded or baked.
+
+An image texture tinted on its way to the Base Color by constant nodes only (Hue Saturation Value, a Mix or Multiply toward a
+flat colour) is graded instead: the tint is applied to a copy of the image in linear light, as Cycles does, and that copy is
+wired in, so the texture keeps its full resolution (#2761). Baking those to vertex colours left blotches on large plaster walls.
+Modifiers are applied before the bake so a subdivided wall gets its colour on the vertices that are exported.
 """
 import os
 import sys
 
 import bpy
+import numpy
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 output_directory = sys.argv[sys.argv.index("--") + 1]
@@ -96,6 +102,158 @@ for material in bpy.data.materials:
     tree.links.new(principled.outputs["BSDF"], output.inputs["Surface"])
     approximated.add(material.name)
 
+
+def srgb_to_linear(values):
+    return numpy.where(values <= 0.04045, values / 12.92, ((values + 0.055) / 1.055) ** 2.4)
+
+
+def linear_to_srgb(values):
+    values = numpy.clip(values, 0.0, 1.0)
+    return numpy.where(values <= 0.0031308, values * 12.92, 1.055 * values ** (1 / 2.4) - 0.055)
+
+
+def rgb_to_hsv(rgb):
+    maximum = rgb.max(axis=1)
+    minimum = rgb.min(axis=1)
+    delta = maximum - minimum
+    safe_delta = numpy.where(delta > 0, delta, 1.0)
+    red, green, blue = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+    hue = numpy.where(maximum == red, ((green - blue) / safe_delta) % 6, numpy.where(maximum == green, (blue - red) / safe_delta + 2, (red - green) / safe_delta + 4))
+    hue = numpy.where(delta > 0, hue / 6, 0.0)
+    saturation = numpy.where(maximum > 0, delta / numpy.where(maximum > 0, maximum, 1.0), 0.0)
+    return numpy.stack([hue, saturation, maximum], axis=1)
+
+
+def hsv_to_rgb(hsv):
+    hue, saturation, value = hsv[:, 0] * 6, hsv[:, 1], hsv[:, 2]
+    sector = numpy.floor(hue).astype(int) % 6
+    fraction = hue - numpy.floor(hue)
+    low = value * (1 - saturation)
+    falling = value * (1 - saturation * fraction)
+    rising = value * (1 - saturation * (1 - fraction))
+    choices = [
+        numpy.stack([value, rising, low], axis=1), numpy.stack([falling, value, low], axis=1), numpy.stack([low, value, rising], axis=1),
+        numpy.stack([low, falling, value], axis=1), numpy.stack([rising, low, value], axis=1), numpy.stack([value, low, falling], axis=1),
+    ]
+    result = numpy.zeros_like(hsv)
+    for index, choice in enumerate(choices):
+        result = numpy.where((sector == index)[:, None], choice, result)
+    return result
+
+
+def linked_from(socket):
+    return socket.links[0].from_node if socket.is_linked else None
+
+
+def constant_color(socket):
+    return numpy.array(socket.default_value[:3], dtype=numpy.float64)
+
+
+def colour_step(node):
+    """(operation, upstream socket) for a node that changes each pixel by constants only, or None when it does more.
+    The operation is None for a node that leaves the colour as it is."""
+    if node.type == "REROUTE":
+        return None, node.inputs[0]
+    if node.type == "HUE_SAT":
+        if any(node.inputs[name].is_linked for name in ("Hue", "Saturation", "Value", "Fac")):
+            return None
+        hue, saturation, value, factor = (node.inputs[name].default_value for name in ("Hue", "Saturation", "Value", "Fac"))
+        if factor == 0 or (hue == 0.5 and saturation == 1 and value == 1):
+            return None, node.inputs["Color"]
+
+        def hue_saturation(rgb):
+            # Cycles' HSV node: hue shifts by hue + 0.5 (so 0.5 changes nothing), saturation is clamped, value scales.
+            hsv = rgb_to_hsv(rgb)
+            hsv[:, 0] = (hsv[:, 0] + hue + 0.5) % 1.0
+            hsv[:, 1] = numpy.clip(hsv[:, 1] * saturation, 0.0, 1.0)
+            hsv[:, 2] = hsv[:, 2] * value
+            return numpy.maximum(rgb * (1 - factor) + hsv_to_rgb(hsv) * factor, 0.0)
+        return hue_saturation, node.inputs["Color"]
+    if node.type == "MIX" and node.data_type == "RGBA" and node.blend_type in ("MIX", "MULTIPLY"):
+        factor_socket = next(socket for socket in node.inputs if socket.enabled and socket.name == "Factor")
+        first, second = (next(socket for socket in node.inputs if socket.enabled and socket.name == name) for name in ("A", "B"))
+        if factor_socket.is_linked or first.is_linked == second.is_linked:
+            return None
+        factor = factor_socket.default_value
+        image_first = first.is_linked
+        other = constant_color(second if image_first else first)
+        if node.blend_type == "MIX":
+            image_weight = 1 - factor if image_first else factor
+            return (lambda rgb: rgb * image_weight + other * (1 - image_weight)), (first if image_first else second)
+        if image_first:
+            return (lambda rgb: rgb * (1 - factor + factor * other)), first
+        # Multiply mixes A toward A x B: with the image as B that is A x (1 - factor) + factor x A x image.
+        return (lambda rgb: other * (1 - factor) + factor * other * rgb), second
+    return None
+
+
+def graded_image_chain(material):
+    """The image node and the per-pixel steps between it and the Base Color, nearest the image first; None otherwise."""
+    principled = first_node(material, "BSDF_PRINCIPLED")
+    if principled is None:
+        return None
+    steps = []
+    node = linked_from(principled.inputs["Base Color"])
+    while node is not None and node.type != "TEX_IMAGE":
+        step = colour_step(node)
+        if step is None:
+            return None
+        operation, upstream = step
+        if operation is not None:
+            steps.append(operation)
+        node = linked_from(upstream)
+    if node is None or node.image is None or not steps:
+        return None
+    return node, list(reversed(steps))
+
+
+def grade_image(image_node, steps):
+    """A copy of the node's image with the colour steps applied to every pixel, in linear light like Cycles."""
+    source = image_node.image
+    width, height = source.size
+    pixels = numpy.empty(width * height * 4, dtype=numpy.float32)
+    source.pixels.foreach_get(pixels)
+    pixels = pixels.reshape(-1, 4).astype(numpy.float64)
+    stored_as_srgb = source.colorspace_settings.name == "sRGB"
+    rgb = srgb_to_linear(pixels[:, :3]) if stored_as_srgb else pixels[:, :3]
+    for step in steps:
+        rgb = step(rgb)
+    pixels[:, :3] = linear_to_srgb(rgb) if stored_as_srgb else numpy.clip(rgb, 0.0, 1.0)
+    graded = bpy.data.images.new(source.name + " graded", width, height, alpha=True)
+    graded.colorspace_settings.name = source.colorspace_settings.name
+    graded.pixels.foreach_set(pixels.astype(numpy.float32).ravel())
+    graded.pack()
+    return graded
+
+
+def wire_graded_image(material, image_node, graded):
+    tree = material.node_tree
+    graded_node = tree.nodes.new("ShaderNodeTexImage")
+    graded_node.image = graded
+    graded_node.interpolation = image_node.interpolation
+    graded_node.extension = image_node.extension
+    graded_node.projection = image_node.projection
+    if image_node.inputs["Vector"].is_linked:
+        tree.links.new(image_node.inputs["Vector"].links[0].from_socket, graded_node.inputs["Vector"])
+    tree.links.new(graded_node.outputs["Color"], first_node(material, "BSDF_PRINCIPLED").inputs["Base Color"])
+
+
+# An image texture tinted by constant colour nodes (a Mix toward a flat colour, Hue Saturation Value) reaches the GLB as
+# the raw image, because the exporter keeps only the image. The tint is applied to a copy of the image instead (#2761).
+graded_images = {}
+graded = set()
+for material in bpy.data.materials:
+    if material.users == 0 or not material.use_nodes or material.node_tree is None:
+        continue
+    chain = graded_image_chain(material)
+    if chain is None:
+        continue
+    image_node, steps = chain
+    key = (image_node.image.name, material.name)
+    graded_images[key] = grade_image(image_node, steps)
+    wire_graded_image(material, image_node, graded_images[key])
+    graded.add(material.name)
+
 BAKED_ATTRIBUTE = "baked_base_color"
 
 
@@ -117,7 +275,21 @@ def mesh_users(material):
     ]
 
 
+def apply_modifiers(objects):
+    """Applies each object's modifiers, so the bake writes one colour per corner of the mesh that is exported: an Array
+    of roof tiles baked on the source tile would give every copy the colour of the first one (#2761)."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    for candidate in objects:
+        if not candidate.modifiers:
+            continue
+        evaluated = candidate.evaluated_get(depsgraph)
+        mesh = bpy.data.meshes.new_from_object(evaluated, preserve_all_data_layers=True, depsgraph=depsgraph)
+        candidate.modifiers.clear()
+        candidate.data = mesh
+
+
 def bake_base_colors(objects):
+    apply_modifiers(objects)
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
     scene.cycles.device = "CPU"
@@ -156,9 +328,9 @@ baked = {material.name for material in to_bake}
 for material in bpy.data.materials:
     if material.users == 0:
         continue
-    state = "baked" if material.name in baked else "approximated" if material.name in approximated else "kept"
+    state = "baked" if material.name in baked else "graded" if material.name in graded else "approximated" if material.name in approximated else "kept"
     print("MATERIAL", state, material.name)
-print("APPROXIMATED", len(approximated), "BAKED", len(baked), "materials on", len(baked_objects), "objects, of", len(bpy.data.materials))
+print("APPROXIMATED", len(approximated), "GRADED", len(graded), "BAKED", len(baked), "materials on", len(baked_objects), "objects, of", len(bpy.data.materials))
 
 # The published Classroom render lit the sun at strength 40, which the owner picked from previews at 15, 40 and 100 (#1083).
 # The .blend ships it at 15 (energy 1 times an Emission strength of 15 in the light's node tree), and the glTF exporter
