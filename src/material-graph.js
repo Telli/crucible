@@ -31,6 +31,24 @@ function describeKey(key) {
   return JSON.stringify(clipped);
 }
 
+function describeValue(value) {
+  if (value === undefined) return 'nothing (the field is missing)';
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return `an array of ${value.length}`;
+  if (typeof value === 'string') return describeKey(value);
+  return typeof value === 'object' ? 'an object' : String(value);
+}
+
+// A one-argument operator given a list of three reads as a vector literal by mistake; say how to pass one (#2403).
+function describeArgumentCount(name, argumentCount, operands) {
+  const plural = argumentCount === 1 ? '' : 's';
+  const got = Array.isArray(operands) ? `a list of ${operands.length}` : describeValue(operands);
+  const hint = argumentCount === 1 && Array.isArray(operands) && operands.length === 3
+    ? ` A list is read as the arguments; to pass a vector, wrap it: {"${name}": [[x, y, z]]} or {"${name}": {"vec": [x, y, z]}}.`
+    : '';
+  return `${name} needs ${argumentCount} argument${plural}, got ${got}.${hint}`;
+}
+
 function isPlainObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
@@ -110,7 +128,7 @@ function compileCoordinates(node) {
 
 function compilePosition(settings, state, depth) {
   if (settings.at === undefined) return [u => u, (u, v) => v];
-  const position = compileNode(settings.at, state, depth + 1);
+  const position = compileNode(settings.at, state, depth + 1, '"at"');
   if (position.kind !== 'vector') throw graphError('"at" needs a vector such as {"uv":"both"}.');
   return position.parts;
 }
@@ -299,7 +317,7 @@ function compileRamp(node, state, depth) {
     return checked;
   });
   if (!stops.every(stop => stop.isVector === stops[0].isVector)) throw graphError('ramp stops are all numbers or all [r, g, b].');
-  const input = compileNode(settings.value, state, depth + 1);
+  const input = compileNode(settings.value, state, depth + 1, 'ramp "value"');
   if (input.kind !== 'scalar') throw graphError('ramp "value" needs a number.');
   const channelRamp = channel => (u, v) => {
     const position = clampUnit(input.evaluate(u, v));
@@ -320,8 +338,8 @@ function compileRamp(node, state, depth) {
 
 function compileVector(node, state, depth) {
   if (!Array.isArray(node.vec) || node.vec.length !== 3 || Object.keys(node).length !== 1) throw graphError('vec needs [x, y, z] in an array.');
-  const [partX, partY, partZ] = node.vec.map(part => {
-    const compiled = compileNode(part, state, depth + 1);
+  const [partX, partY, partZ] = node.vec.map((part, index) => {
+    const compiled = compileNode(part, state, depth + 1, `vec part ${index + 1}`);
     if (compiled.kind !== 'scalar') throw graphError('vec parts must be numbers.');
     return compiled.evaluate;
   });
@@ -331,15 +349,15 @@ function compileVector(node, state, depth) {
 function compileMath(name, node, state, depth) {
   const [argumentCount, compute] = MATH_OPERATORS.get(name);
   const operands = argumentCount === 1 && !Array.isArray(node[name]) ? [node[name]] : node[name];
-  if (!Array.isArray(operands) || operands.length !== argumentCount) throw graphError(`${name} needs ${argumentCount} argument${argumentCount === 1 ? '' : 's'}.`);
-  return liftComponentwise(operands.map(operand => compileNode(operand, state, depth + 1)), compute);
+  if (!Array.isArray(operands) || operands.length !== argumentCount) throw graphError(describeArgumentCount(name, argumentCount, operands));
+  return liftComponentwise(operands.map((operand, index) => compileNode(operand, state, depth + 1, `${name} argument ${index + 1}`)), compute);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Mixing nodes: a layer put over another where a mask passes, a hue shift and a curve.
 
 function compileScalarInput(node, state, depth, label) {
-  const compiled = compileNode(node, state, depth + 1);
+  const compiled = compileNode(node, state, depth + 1, label);
   if (compiled.kind !== 'scalar') throw graphError(`${label} needs a number.`);
   return compiled;
 }
@@ -352,8 +370,8 @@ function compileLayer(node, state, depth) {
   const edge = settings.edge ?? 0.5;
   const softness = settings.softness ?? 0.1;
   if (!finiteLiteral(edge) || !finiteLiteral(softness) || softness < 0) throw graphError('layer edge is a number and softness a number from 0.');
-  const base = compileNode(settings.base, state, depth + 1);
-  const top = compileNode(settings.top, state, depth + 1);
+  const base = compileNode(settings.base, state, depth + 1, 'layer "base"');
+  const top = compileNode(settings.top, state, depth + 1, 'layer "top"');
   const mask = compileScalarInput(settings.mask, state, depth, 'layer "mask"');
   const coverage = scalarValue((u, v) => {
     const value = mask.evaluate(u, v);
@@ -389,7 +407,7 @@ function compileHue(node, state, depth) {
   for (const factor of [saturation, brightness]) {
     if (typeof factor !== 'number' || !Number.isFinite(factor) || factor < 0 || factor > 4) throw graphError('hue saturation and value are numbers from 0 to 4.');
   }
-  const color = compileNode(settings.color, state, depth + 1);
+  const color = compileNode(settings.color, state, depth + 1, 'hue "color"');
   if (color.kind !== 'vector') throw graphError('hue "color" needs a colour such as [r, g, b].');
   const shift = compileScalarInput(settings.shift ?? 0, state, depth, 'hue "shift"');
   state.cost += 4;
@@ -431,7 +449,7 @@ function compileCurve(node, state, depth) {
     return points[points.length - 1][1];
   };
   state.cost += 2;
-  return liftComponentwise([compileNode(settings.value, state, depth + 1)], remap);
+  return liftComponentwise([compileNode(settings.value, state, depth + 1, 'curve "value"')], remap);
 }
 
 const COORDINATE_SPACES = ['generated', 'object', 'world'];
@@ -463,7 +481,7 @@ function compileMapping(node, state, depth) {
   const [offsetX, offsetY, offsetZ] = mappingTriple(settings.offset, [0, 0, 0], 'offset');
   const rotation = settings.rotate ?? 0;
   if (!finiteLiteral(rotation)) throw graphError('mapping "rotate" is an angle in radians around Z.');
-  const input = compileNode(settings.vector ?? { coord: 'generated' }, state, depth + 1);
+  const input = compileNode(settings.vector ?? { coord: 'generated' }, state, depth + 1, 'mapping "vector"');
   if (input.kind !== 'vector') throw graphError('mapping "vector" needs a vector such as {"coord":"generated"}.');
   const [inputX, inputY, inputZ] = input.parts;
   const cosine = Math.cos(rotation);
@@ -651,7 +669,8 @@ const TEXTURE_COMPILERS = new Map([
   ['image', compileImage], ['noise', compileNoise], ['whiteNoise', compileWhiteNoise], ['brick', compileBrick], ['voronoi', compileVoronoi], ['wave', compileWave], ['checker', compileChecker], ['gradient', compileGradient],
 ]);
 
-function compileNode(node, state, depth) {
+// `field` names where the node sits (such as 'hue "color"'), so a missing or wrong input says which one it is (#2403).
+function compileNode(node, state, depth, field) {
   state.nodeCount++;
   state.cost++;
   if (state.nodeCount > MATERIAL_GRAPH_LIMITS.maxNodes) throw graphError(`more than ${MATERIAL_GRAPH_LIMITS.maxNodes} nodes.`);
@@ -665,7 +684,10 @@ function compileNode(node, state, depth) {
     const [literalX, literalY, literalZ] = node;
     return vectorValue(() => literalX, () => literalY, () => literalZ);
   }
-  if (!isPlainObject(node)) throw graphError('each node is a number, a vector of three numbers or an object with one operator.');
+  if (!isPlainObject(node)) {
+    const where = field === undefined ? 'each node' : field;
+    throw graphError(`${where} must be a number, a vector of three numbers or an object with one operator, got ${describeValue(node)}.`);
+  }
   const keys = Object.keys(node);
   if (keys.length !== 1) throw graphError(`a node holds exactly one operator; got ${keys.length}.`);
   const name = keys[0];
@@ -705,7 +727,7 @@ export function compileMaterialGraph(graph, { size = 1, images, groups } = {}) {
       node = split.base;
       emissionFresnel = split.ior;
     }
-    outputs[name] = compileNode(node, state, 0);
+    outputs[name] = compileNode(node, state, 0, `output "${name}"`);
     if (SCALAR_OUTPUTS.includes(name) && outputs[name].kind !== 'scalar') throw graphError(`${name} needs a number, not a vector.`);
   }
   return { outputs, emissionFresnel, nodeCount: state.nodeCount, cost: state.cost };
@@ -713,6 +735,7 @@ export function compileMaterialGraph(graph, { size = 1, images, groups } = {}) {
 
 /** Throw when a graph is too costly to bake at this size. Called while normalizing, so a bad scene fails at once. */
 export function checkMaterialGraphWork(compiled, resolution) {
+  integerInRange(resolution, 1, 16384, 'resolution');
   const work = compiled.cost * resolution * resolution;
   if (work > MATERIAL_GRAPH_LIMITS.maxWork) {
     throw new RangeError(`Material graph: ${compiled.cost} work units per pixel at ${resolution} by ${resolution} is over the limit of ${MATERIAL_GRAPH_LIMITS.maxWork}. Use fewer nodes or a smaller resolution.`);

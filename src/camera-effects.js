@@ -1,5 +1,5 @@
 import { mat4 } from 'gl-matrix';
-import { applyProjection, requirePositiveFinite } from './camera.js';
+import { applyProjection, requireNonDegenerateView, requirePositiveFinite } from './camera.js';
 import { compileProgram, fullscreenVertex } from './gl-program.js';
 
 // Depth of field and camera motion blur as optional full-frame stages. The core renderer carries no shader text for
@@ -197,7 +197,9 @@ export function previousViewProjectionOf(renderer, frame) {
   const previous = { ...frame, ...frame.previousCamera };
   const aspect = renderer.canvas.width / renderer.canvas.height;
   const projection = applyProjection(mat4.create(), previous, aspect, { world: renderer.world });
-  const view = mat4.lookAt(mat4.create(), previous.eye, previous.target ?? [0, 1.2, 0], previous.up ?? [0, 1, 0]);
+  const lookView = { eye: previous.eye, target: previous.target ?? [0, 1.2, 0], up: previous.up ?? [0, 1, 0] };
+  requireNonDegenerateView(lookView, 'previousCamera');
+  const view = mat4.lookAt(mat4.create(), lookView.eye, lookView.target, lookView.up);
   return mat4.multiply(mat4.create(), projection, view);
 }
 

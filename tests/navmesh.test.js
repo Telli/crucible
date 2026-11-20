@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNavmesh } from '../src/navmesh.js';
+import { spawnSync } from 'node:child_process';
+import { createNavmesh, NAVMESH_LIMITS } from '../src/navmesh.js';
 import { createTerrain } from '../src/terrain.js';
 import { createAgentScene, loadAllAgentSceneModules } from '../src/agent-scene.js';
 
@@ -101,4 +102,51 @@ test('geometry with non-finite positions or indices past the positions is refuse
   const brokenIndices = Uint32Array.from(ground.indices);
   brokenIndices[0] = ground.positions.length;
   assert.throws(() => createNavmesh({ positions: ground.positions, indices: brokenIndices }), /index/i);
+});
+
+test('an agent radius far above the cell size finishes and leaves nothing walkable around an obstacle', () => {
+  // Run in a child process: a regression loops forever, and a synchronous loop cannot be cut short by a test timeout.
+  const script = `
+    import { createNavmesh } from './src/navmesh.js';
+    const positions = Float32Array.of(0, 0, 0, 20, 0, 0, 0, 0, 20, 20, 0, 20);
+    const indices = Uint32Array.of(0, 2, 1, 1, 2, 3);
+    const navmesh = createNavmesh({ positions, indices, agentRadius: 1e6, cellSize: 0.1, obstacles: [{ min: [1, 1], max: [2, 2] }] });
+    console.log(navmesh.walkableCellCount);
+  `;
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 20000 });
+  assert.equal(run.error, undefined, 'createNavmesh did not finish within 20 s');
+  assert.equal(run.stdout.trim(), '0');
+});
+
+test('a fractional triangle index is refused and named', () => {
+  const positions = Float32Array.of(0, 0, 0, 10, 0, 0, 0, 0, 10, 10, 0, 10);
+  assert.throws(() => createNavmesh({ positions, indices: [0, 2, 1.5, 1, 2, 3] }), /navmesh index 2 is 1\.5; use a whole number/);
+});
+
+// A floor of parallel strips joined at alternate ends, so the route turns at every strip (#2403).
+function serpentineFloor(strips) {
+  const positions = [];
+  const indices = [];
+  const addQuad = (minX, maxX, minZ, maxZ) => {
+    const base = positions.length / 3;
+    positions.push(minX, 0, minZ, maxX, 0, minZ, maxX, 0, maxZ, minX, 0, maxZ);
+    indices.push(base, base + 2, base + 1, base, base + 3, base + 2);
+  };
+  for (let strip = 0; strip < strips; strip++) {
+    addQuad(0, 12, strip * 3, strip * 3 + 1.5);
+    if (strip === strips - 1) continue;
+    const joinsAtRight = strip % 2 === 0;
+    addQuad(joinsAtRight ? 10.5 : 0, joinsAtRight ? 12 : 1.5, strip * 3 + 1.5, strip * 3 + 3);
+  }
+  const navmesh = createNavmesh({ positions: new Float32Array(positions), indices: new Uint32Array(indices), cellSize: 0.25, agentRadius: 0.3 });
+  const goal = [strips % 2 === 1 ? 11.25 : 0.75, (strips - 1) * 3 + 0.75];
+  return { navmesh, goal };
+}
+
+test('a winding route keeps to the point limit, and one with more corners than the limit is refused', () => {
+  const short = serpentineFloor(20);
+  const path = short.navmesh.findPath([0.75, 0.75], short.goal);
+  assert.ok(path.points.length <= NAVMESH_LIMITS.maximumPathPoints, `${path.points.length} points`);
+  const long = serpentineFloor(120);
+  assert.throws(() => long.navmesh.findPath([0.75, 0.75], long.goal), /route has \d+ corners, more than the 200 points a path may hold\. Split the trip into legs/);
 });

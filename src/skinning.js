@@ -66,6 +66,10 @@ function validateMatrices(values, count, label) {
   }
 }
 
+// CPU bytes one imported skinned primitive keeps per joint: seven 4 x 4 float matrices. They are the live and the pending
+// pose (a palette and its workspace copy each), the inverse bind matrix, and the live and the pending joint world matrix.
+export const SKIN_POSE_BYTES_PER_JOINT = 7 * 16 * 4;
+
 /** Create a retained mesh-local joint palette. Shared pose identity shares a GPU palette. */
 export function createSkinPose(jointCount) {
   if (!Number.isSafeInteger(jointCount) || jointCount < 1 || jointCount > 65536) throw new Error('Joint count must be within one and 65536.');
@@ -330,8 +334,11 @@ export function skinnedWorldBounds(geometry, pose, worldMatrix) {
     let matrix = worldMatrix;
     if (skinned) {
       blended.fill(0);
+      // The renderer divides each vertex's weights by their total, so the bounds do the same.
+      let weightTotal = 0;
+      for (let slot = 0; slot < 4; slot++) weightTotal += skinWeights[vertex * 4 + slot];
       for (let slot = 0; slot < 4; slot++) {
-        const weight = skinWeights[vertex * 4 + slot];
+        const weight = skinWeights[vertex * 4 + slot] / weightTotal;
         if (weight === 0) continue;
         const jointOffset = skinIndices[vertex * 4 + slot] * 16;
         for (let element = 0; element < 16; element++) blended[element] += weight * palette[jointOffset + element];

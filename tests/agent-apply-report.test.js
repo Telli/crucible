@@ -85,3 +85,14 @@ test('the diff caps a long ID list', () => {
   assert.equal(result.diff.nodes.added.length, 9);
   assert.equal(result.diff.nodes.added.at(-1), '+4 more');
 });
+
+test('removeTracks counts the tracks it removes even when a later set-motion replaces the motion', () => {
+  const track = (kind, property) => ({ kind, property, ...(kind === 'node' ? { id: 'cube' } : {}), keyframes: [{ time: 0, value: 0 }, { time: 1, value: 1 }] });
+  const before = { ...recipe(), motion: { duration: 1, tracks: [track('camera', 'fov'), track('node', 'translation'), track('node', 'rotation')] } };
+  const replacement = { duration: 1, tracks: [track('node', 'scale'), track('camera', 'fov')] };
+  const after = { ...recipe(), motion: replacement };
+  const operations = [{ type: 'set-motion', removeTracks: [{ kind: 'node', id: 'cube' }] }, { type: 'set-motion', motion: replacement }];
+  const { results } = describeApplication(before, after, operations);
+  assert.equal(results[0].changed, 'removed 2 motion tracks');
+  assert.equal(results[1].changed, 'set motion');
+});
