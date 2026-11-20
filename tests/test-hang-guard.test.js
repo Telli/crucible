@@ -95,3 +95,9 @@ test('the limits have defaults and reject a value that is not a positive number'
   assert.throws(() => fileLimitMilliseconds({ CRUCIBLE_TEST_FILE_LIMIT_MS: '-1' }), /must be a positive number of milliseconds/);
   assert.throws(() => graceAfterTimeoutMilliseconds({ CRUCIBLE_TEST_GRACE_AFTER_TIMEOUT_MS: '0' }), /must be a positive number of milliseconds/);
 });
+
+test('a limit longer than a timer can hold is refused instead of stopping the file after 1 ms', () => {
+  assert.equal(fileLimitMilliseconds({ CRUCIBLE_TEST_FILE_LIMIT_MS: '2147483647' }), 2147483647);
+  assert.throws(() => fileLimitMilliseconds({ CRUCIBLE_TEST_FILE_LIMIT_MS: '3000000000' }), /at most 2147483647/);
+  assert.throws(() => graceAfterTimeoutMilliseconds({ CRUCIBLE_TEST_GRACE_AFTER_TIMEOUT_MS: '2147483648' }), /at most 2147483647/);
+});

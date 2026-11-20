@@ -6,6 +6,7 @@ import { createAgentScene } from '../src/agent-scene.js';
 import { exportGlb } from '../src/export.js';
 import { mapHumanoidBones } from '../src/retarget.js';
 import { computeSkinWeights, createRigFromArmature, armatureProblems } from '../src/rig.js';
+import { presetBones } from '../src/rig-presets.js';
 import { gradeRecipe } from '../bench/agent-modeling/check.mjs';
 import { taskById } from '../bench/agent-modeling/tasks.mjs';
 import { walkerRecipe } from '../bench/agent-modeling/walker.mjs';
@@ -139,4 +140,17 @@ test('set-armatures replaces the rig and refuses to leave a skin without one', (
   assert.throws(() => scene.apply([{ type: 'set-armatures', armatures: null }], { expectedRevision: scene.revision }), /skin/);
   scene.apply([{ type: 'set-armatures', armatures: [{ id: 'rig', preset: 'humanoid', fit: { bounds: { min: [-0.3, 0, -0.1], max: [0.3, 2, 0.1] } } }] }], { expectedRevision: scene.revision });
   assert.equal(scene.exportRecipe().armatures[0].bones.find(bone => bone.name === 'head').tail[1], 2);
+});
+
+test('a preset fitted to a flat mesh is refused instead of putting every bone on one point', () => {
+  const flatMesh = armature => ({
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'sheet', type: 'plane' }],
+    materials: [{ id: 'paint' }],
+    armatures: [armature],
+    nodes: [{ id: 'mesh', geometry: 'sheet', material: 'paint', rotation: [-0.7071067811865476, 0, 0, 0.7071067811865476] }],
+  });
+  assert.throws(() => createAgentScene(flatMesh({ id: 'rig', preset: 'humanoid', fit: { node: 'mesh' } })), /humanoid fit box has no height/);
+  assert.throws(() => presetBones('quadruped', { min: [0, 0, 0], max: [1, 1, 0] }), /width and height|depth/);
+  assert.equal(presetBones('humanoid', { min: [0, 0, 0], max: [0, 2, 0] }).length > 0, true, 'a humanoid only scales with height');
 });

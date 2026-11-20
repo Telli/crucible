@@ -1,6 +1,7 @@
 import { createMeshData, deriveEdges, DOMAINS, meshBounds, TAG_PREFIX } from './mesh-data.js';
 import { faceNormals } from './mesh-normals.js';
 import { cornerCycles, cornerFaces, edgeCornerTable } from './mesh-topology.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 const NORMAL_SPLIT_TOLERANCE = 1e-4;
 const AXIS_TAGS = Object.freeze([
@@ -220,6 +221,7 @@ function orderByError(errors, count) {
  * Best-shaped pairs (corners closest to right angles) join first.
  */
 export function joinTriangles(mesh, { maxAngle = Math.PI / 180 } = {}) {
+  requireFiniteInRange('joinTriangles', 'maxAngle', maxAngle, 0, Math.PI);
   const { normals } = faceNormals(mesh);
   const table = edgeCornerTable(mesh);
   const { nextCorner } = cornerCycles(mesh);

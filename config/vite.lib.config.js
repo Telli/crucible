@@ -6,7 +6,7 @@ import { glslCommentStripperForVite } from '../scripts/strip-glsl-comments.mjs';
 import { cookOptionalForVite } from '../scripts/vite-cook-optional.mjs';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-export const MCP_BUILD_RUNNING = 'SIXTYSEVEN_MCP_BUILD_RUNNING';
+export const MCP_BUILD_RUNNING = 'CRUCIBLE_MCP_BUILD_RUNNING';
 
 // build/mcp/preview.js imports the hashed chunks of this build, and emptyOutDir deletes build/mcp, so a library build on its
 // own would leave the MCP server broken until someone reran build-mcp.mjs. Rebuild it after every build into build/.
@@ -37,7 +37,7 @@ export default defineConfig({
   build: {
     copyPublicDir: false,
     rolldownOptions: {
-      external: ['@dimforge/rapier3d-compat', 'jolt-physics', 'manifold-3d'],
+      external: ['@dimforge/rapier3d-compat', 'jolt-physics', 'manifold-3d', 'playwright-core', /^node:/],
       output: { banner: legalBanner },
     },
     outDir: 'build',
@@ -73,6 +73,9 @@ export default defineConfig({
         grass: 'src/grass.js',
         clutter: 'src/clutter.js',
         'light-bake': 'src/light-bake.js',
+        'scene-pack': 'src/scene-pack.js',
+        'scene-pack-poster': 'src/scene-pack-poster.js',
+        'crucible-scene': 'src/crucible-scene.js',
         'light-bake-gpu': 'src/light-bake-gpu.js',
         'ground-bounce': 'src/ground-bounce.js',
         'floor-sky-visibility': 'src/floor-sky-visibility.js',
@@ -103,6 +106,7 @@ export default defineConfig({
         'fog-shader': 'src/fog-shader.js',
         'linear-output-shader': 'src/linear-output-shader.js',
         'retro-shader': 'src/retro-shader.js',
+        'glitter-shader': 'src/glitter-shader.js',
         'light-linking': 'src/light-linking.js',
         'cascaded-shadows': 'src/cascaded-shadows.js',
         'light-shapes': 'src/light-shapes.js',
@@ -131,7 +135,7 @@ export default defineConfig({
         'mcp/preview': 'scripts/agent-preview-browser.js',
       },
       formats: ['es'],
-      fileName: (_, entry) => entry === 'core' ? '67.module.js' : `${entry}.js`,
+      fileName: (_, entry) => entry === 'core' ? 'crucible.module.js' : `${entry}.js`,
     },
     minify: true,
   },

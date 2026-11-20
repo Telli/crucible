@@ -10,7 +10,8 @@ export class RenderTargetLedger {
   record(name, { width, height, format, samples = 1, layers = 1 }) {
     // Two negative sizes multiply to a positive byte count, so each size is checked on its own.
     const bytes = width * height * layers * samples * BYTES_PER_PIXEL[format];
-    if (!(width >= 0 && height >= 0 && layers >= 0 && samples >= 0 && bytes >= 0)) throw new RangeError(`Render target ${name} needs a positive width and height and a known format, got ${width}x${height} ${format}.`);
+    // An infinite size gives an infinite byte count, which would pass a `>= 0` test and poison every later total.
+    if (!(width >= 0 && height >= 0 && layers >= 0 && samples >= 0 && Number.isFinite(bytes))) throw new RangeError(`Render target ${name} needs a positive width and height and a known format, got ${width}x${height} ${format}.`);
     this.targets.set(name, { name, width, height, layers, format, samples, bytes, megabytes: Number((bytes / BYTES_PER_MEGABYTE).toFixed(2)) });
   }
 

@@ -29,6 +29,8 @@ Omitting `motionTime` preserves the current preview pose.
 Its bounds remain in `authored-base-world` space, independent of the sampled pose.
 
 `set-motion` requires a complete motion record or explicit `null` to clear it.
+To drop only some tracks, give `removeTracks` instead of `motion`: selectors such as `{ kind: 'camera' }` or `{ kind: 'node', id: 'cube', property: 'translation' }`, where a field left out matches any track.
+The other tracks and fields stay. A selector that matches nothing throws an error that lists the tracks there are. Giving both `motion` and `removeTracks` is refused.
 The final batch must resolve every track reference, including after node or material removal.
 Failed edits or seeks preserve the previous recipe, rendered pose and revisions.
 
@@ -152,7 +154,7 @@ each blending over the pose so far, before tracks and IK:
 | Field | Meaning |
 | --- | --- |
 | `clip` | The `id` of an entry in `scene_inspect` `animations` |
-| `mask` | `{ joints, descendants = true, exclude }`, up to 32 node IDs or names each. The layer moves only these joints and what hangs below them; mesh parts follow their bone, and morph weights follow the bone that owns the mesh |
+| `mask` | `{ joints, descendants = true, exclude }`, up to 32 node IDs or names each; `exclude` may not cover every joint. The layer moves only these joints and what hangs below them; mesh parts follow their bone, and morph weights follow the bone that owns the mesh |
 | `weight` | 0 to 1, default 1 |
 | `speed`, `offset` | Layer time is `time * speed + offset`. `speed` 0.05 to 8, `offset` within 30 seconds |
 | `loop` | Default `true`: the clip repeats. `false` holds its last key |
@@ -277,6 +279,7 @@ the foot short of its target and `reached` turns false. `motionIk[n].limited` li
 | --- | --- |
 | `hyperextended` | The middle joint is within 5 degrees of straight: the target is at or past the limb's reach |
 | `wrong-bend` | The middle joint bends opposite to its natural side, which a pole on the wrong side produces while the foot still arrives |
+| `target-at-root` | A two-bone target is within 0.1 percent of the limb's length from the root joint. The limb folds along the way it already points; move the target at least that far off the root. Unequal bones cannot fold fully, so `reached` stays false |
 
 The natural side is `bendToward` (a world direction, such as `[0, 0, 1]` for a knee on a character that faces +z) or, when
 that is absent, the way the limb is bent in its rest pose. A limb that rests perfectly straight and has no `bendToward` is
@@ -316,9 +319,9 @@ own transform under its parent.
 | `shrinkwrap` | `target`, `mode` (`nearest`, `project`, `surface`), `projectAxis` (default `-y`), `distance` (default `0`) | Snap the node onto the target's bounding surface or along `projectAxis` at `distance` |
 | `armature` | `targets` (1 to 8 of `{ target, weight }`) | Blend `child_of` transforms from multiple target nodes by their weights |
 
-Over MCP, the seven newest types (`copy_transforms` to `action`) take `node`, `type` and `args`, an object holding every other
-field above (`target`, `influence` and the type's own); the validator names the allowed fields when one is wrong. Direct fields
-also work from code, but not both for the same key.
+Over MCP, `scene_create` and `scene_apply` take the fourteen newest types (`copy_transforms` to `armature`) with their fields flat beside
+`node` and `type`, or inside `args`, an object holding every other field above (`target`, `influence` and the type's own); the
+validator names the allowed fields when one is wrong. Giving the same key both ways is an error.
 
 Not covered yet: `use_*` switches on `child_of`, `damped_track`, bone sub-targets and `head_tail`.
 
@@ -460,8 +463,8 @@ A body node takes its pose from the recording. A node cannot have a body and a m
 ## Bounds and checks
 
 The controller accepts durations between 0.1 and 30 seconds.
-A motion requires at least one track or driver (or an IK solver, constraint, layer, spring or drive); `tracks` can be left out of a motion made of drivers alone.
-It can contain at most 128 tracks, 64 keys per track, and 2048 keys in total.
+A motion requires at least one track or driver (or an IK solver, constraint, layer, spring or drive); `tracks` can be left out of a motion made of drivers alone. An empty `tracks` array is refused. A placed `asset.clip` does not need a motion: it plays on scene time when a render job sets `settings.motion` (see agent-render-jobs).
+It can contain at most 128 tracks, 256 keys per track, and 2048 keys in total.
 Values and tangents must remain finite at Float32 precision.
 The scene integration must also enforce its total recipe byte budget.
 

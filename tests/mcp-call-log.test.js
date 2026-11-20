@@ -97,3 +97,21 @@ test('the summary script reads several log files and prints a table', async cont
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /scene_look\s+2\s+1\s+50\.0%\s+6\.0/);
 });
+
+test('the summary skips lines that parse as JSON but are not call records', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'crucible-call-log-'));
+  const logPath = join(folder, 'calls.jsonl');
+  const record = { tool: 'scene_look', ok: true, durationMs: 4 };
+  await writeFile(logPath, ['null', '5', '{"ok":true}', JSON.stringify({ tool: 'scene_look', ok: true }), JSON.stringify(record)].join('\n'));
+  const { readCalls } = await import('../scripts/summarize-mcp-log.mjs');
+  const originalError = console.error;
+  const notes = [];
+  console.error = message => notes.push(message);
+  try {
+    assert.deepEqual(readCalls([logPath]), [record]);
+  } finally {
+    console.error = originalError;
+    await rm(folder, { recursive: true, force: true });
+  }
+  assert.equal(notes.length, 4);
+});

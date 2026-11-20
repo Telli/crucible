@@ -60,20 +60,19 @@
     "docs/skeleton-pose.md",
     "docs/verification.md"
   ],
-  "main": "./build/67.module.js",
-  "module": "./build/67.module.js",
+  "main": "./build/crucible.module.js",
+  "module": "./build/crucible.module.js",
   "bin": {
     "crucible-mcp": "./bin/crucible-mcp.mjs",
-    "crucible-addon-check": "./bin/crucible-addon-check.mjs",
-    "67js-mcp": "./bin/67js-mcp.mjs",
-    "67js-addon-check": "./bin/67js-addon-check.mjs"
+    "crucible": "./bin/crucible.mjs",
+    "crucible-addon-check": "./bin/crucible-addon-check.mjs"
   },
   "engines": {
     "node": ">=20.19.0"
   },
   "exports": {
-    ".": "./build/67.module.js",
-    "./standalone": "./build/67.standalone.js",
+    ".": "./build/crucible.module.js",
+    "./standalone": "./build/crucible.standalone.js",
     "./addons/model": "./build/model.js",
     "./addons/nature": "./build/nature.js",
     "./addons/motion": "./build/motion.js",
@@ -102,6 +101,7 @@
     "./addons/grass": "./build/grass.js",
     "./addons/clutter": "./build/clutter.js",
     "./addons/light-bake": "./build/light-bake.js",
+    "./addons/crucible-scene": "./build/crucible-scene.js",
     "./addons/light-bake-gpu": "./build/light-bake-gpu.js",
     "./addons/ground-bounce": "./build/ground-bounce.js",
     "./addons/floor-sky-visibility": "./build/floor-sky-visibility.js",
@@ -128,6 +128,7 @@
     "./addons/splat-shader": "./build/splat-shader.js",
     "./addons/subsurface-shader": "./build/subsurface-shader.js",
     "./addons/retro-shader": "./build/retro-shader.js",
+    "./addons/glitter-shader": "./build/glitter-shader.js",
     "./addons/fog-shader": "./build/fog-shader.js",
     "./addons/linear-output-shader": "./build/linear-output-shader.js",
     "./addons/light-linking": "./build/light-linking.js",
@@ -177,6 +178,8 @@
     "test:coverage": "node --test --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --experimental-test-coverage --test-coverage-exclude=\"tests/**\" --test-coverage-exclude=\"scripts/**\" --test-coverage-exclude=\"build/**\"",
     "coverage:gate": "node scripts/coverage-gate.mjs",
     "cook:build": "node node_modules/@codepawlhq/cook/build.mjs",
+    "cook:check": "node scripts/cook-install-check.mjs",
+    "cook:fetch": "node node_modules/@codepawlhq/cook/fetch-addon.mjs",
     "preflight": "node scripts/preflight.mjs",
     "render:file-cook": "node scripts/render-file-native.mjs",
     "smoke": "node scripts/smoke.mjs",
@@ -239,6 +242,7 @@
     "smoke:agent-branches": "node scripts/smoke-agent-branches.mjs",
     "parity": "node scripts/parity-report.mjs",
     "bench:agent": "node bench/agent-modeling/bench.mjs",
+    "bench:scene-frames": "node bench/scene-frames/check-default-cameras.mjs",
     "reference": "node bench/reference/run.mjs",
     "reference:line-art": "node bench/reference/line-art.mjs",
     "size": "node scripts/measure-size.mjs",
@@ -289,7 +293,7 @@
   },
   "devDependencies": {
     "@codepawlhq/crucible-denoise-oidn": "file:packages/denoise-oidn",
-    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#55f2448dbb5121d82a5b125c3564403b64798d03",
+    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#e95e91daf84010ce8d6a0df48d823fc77444ad3e",
     "@dimforge/rapier3d-compat": "0.21.0",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",

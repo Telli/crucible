@@ -36,7 +36,8 @@ export const frameControlScript = `
   const enhanceRange = slider => {
     if (slider.dataset.crucibleRange) return;
     slider.dataset.crucibleRange = 'true';
-    const decimals = (String(slider.step || '1').split('.')[1] || '').length;
+    const stepSize = slider.step === 'any' ? 0.001 : Number(slider.step || 1);
+    const decimals = stepSize > 0 ? (Number(stepSize.toFixed(10)).toString().split('.')[1] || '').length : 0;
     const value = document.createElement('output');
     value.className = 'crucible-value';
     if (!slider.id) slider.id = 'crucible-range-' + (++rangeCounter);
