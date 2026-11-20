@@ -1587,7 +1587,7 @@ export function createStudioController({
   function drivenCameraProperties() {
     const properties = drivenPropertiesOf('camera');
     if (cameraIsDriven()) {
-      VIEW_POSE_FIELDS.forEach(field => properties.add(field));
+      ['eye', 'target', 'up'].forEach(field => properties.add(field));
     }
     return properties;
   }
