@@ -9,13 +9,13 @@ function triangleCountOf(part) {
   return part.geometry.indices.length / 3;
 }
 
-// The lightest parts that fit the triangle budget: walls and floors are a few triangles, a scanned prop is thousands.
-function lightestParts(parts) {
+/** The lightest parts that fit `budget` triangles: walls and floors are a few triangles, a scanned prop is thousands. */
+export function lightestParts(parts, budget = CLOSED_ROOM_MAXIMUM_TRIANGLES) {
   const kept = new Set();
   let total = 0;
   for (const part of [...parts].sort((first, second) => triangleCountOf(first) - triangleCountOf(second))) {
     total += triangleCountOf(part);
-    if (total > CLOSED_ROOM_MAXIMUM_TRIANGLES) {
+    if (total > budget) {
       break;
     }
     kept.add(part);
