@@ -1079,6 +1079,33 @@ export const STUDIO_CSS = `
   padding: 3px 6px;
   font-size: 11.5px;
 }
+.crucible-studio-properties {
+  display: grid;
+  gap: 16px;
+}
+.crucible-studio-property-section {
+  display: grid;
+  gap: 10px;
+}
+.crucible-studio-property-title {
+  font-family: var(--studio-font-heading);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--studio-text);
+}
+.crucible-studio-properties [hidden] { display: none; }
+.crucible-studio-vector[data-axes="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.crucible-studio-driven-mark {
+  display: inline-flex;
+  align-items: center;
+  color: var(--studio-text);
+}
+.crucible-studio-driven-mark .crucible-studio-icon {
+  inline-size: 14px;
+  block-size: 14px;
+}
+.crucible-studio-properties [data-driven="true"] :is(input, button, svg.crucible-studio-sunpad) { opacity: 0.5; }
+.crucible-studio-properties [data-driven="true"] .crucible-studio-driven-mark { opacity: 1; }
 .crucible-studio-sunpad {
   width: 120px;
   height: 120px;

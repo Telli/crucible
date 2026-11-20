@@ -1583,6 +1583,32 @@ export function createStudioController({
     return properties;
   }
 
+  // A camera track or driver stages the eye, target and up whichever field it animates, so those three are always driven then.
+  function drivenCameraProperties() {
+    const properties = drivenPropertiesOf('camera');
+    if (cameraIsDriven()) {
+      VIEW_POSE_FIELDS.forEach(field => properties.add(field));
+    }
+    return properties;
+  }
+
+  /**
+   * What the property panel needs of one scene object: its kind, a copy of the recipe record that holds its fields
+   * (the camera, the environment for the sun, or one light) and the fields a motion track or driver animates.
+   */
+  function describeSceneObject(key) {
+    assertSceneObjectKey(key);
+    const recipe = currentScene.exportRecipe();
+    if (key === 'camera') {
+      return { key, kind: 'camera', source: structuredClone(recipe.camera), drivenProperties: drivenCameraProperties() };
+    }
+    if (key === 'sun') {
+      return { key, kind: 'sun', source: structuredClone(recipe.environment ?? {}), drivenProperties: drivenPropertiesOf('sun') };
+    }
+    const light = parseLightKey(key);
+    return { key, kind: light.lightType, source: structuredClone(recipe.environment[light.field][light.index]), drivenProperties: drivenPropertiesOf('light', key) };
+  }
+
   function lightLabel(lightType, index) {
     const name = `${lightType[0].toUpperCase()}${lightType.slice(1)} light`;
     return index === 0 ? name : `${name} ${index + 1}`;
@@ -1640,6 +1666,42 @@ export function createStudioController({
     lights[light.index].position = nextPosition;
     updateLook({ environment: { [light.field]: lights } });
     return nextPosition;
+  }
+
+  function roundPatchValue(value) {
+    if (typeof value === 'number') {
+      return roundValue(value);
+    }
+    return Array.isArray(value) && value.every(component => typeof component === 'number') ? roundVector(value) : value;
+  }
+
+  /**
+   * Sets fields of a point, spot or area light. A field the patch sets to undefined is removed. A field that a motion
+   * track or driver animates is refused, since the motion would win. recordUndo false leaves the step to a gesture's undo group.
+   */
+  function updateSceneLight(key, patch, { recordUndo = true } = {}) {
+    const light = editableLight(key, 'edited');
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      throw new TypeError('updateSceneLight expects a patch object such as { intensity: 3 }.');
+    }
+    const drivenFields = drivenPropertiesOf('light', key);
+    const blockedField = Object.keys(patch).find(field => drivenFields.has(field));
+    if (blockedField) {
+      throw new RangeError(`The ${key} light ${blockedField} is animated by a motion track or driver, so an edit would not show. Remove that motion or edit its keyframes.`);
+    }
+    const lights = structuredClone(currentScene.exportRecipe().environment[light.field]);
+    const nextLight = { ...lights[light.index] };
+    for (const [field, value] of Object.entries(patch)) {
+      if (value === undefined) {
+        delete nextLight[field];
+      } else {
+        nextLight[field] = roundPatchValue(value);
+      }
+    }
+    lights[light.index] = nextLight;
+    applySceneOperations([{ type: 'set-environment', environment: { [light.field]: lights } }], { recordUndo });
+    notify({ kind: 'look' });
+    return structuredClone(nextLight);
   }
 
   function lightIdAfterDelete(id, deleted) {
@@ -1884,6 +1946,34 @@ export function createStudioController({
     return viewCamera();
   }
 
+  /**
+   * Sets camera fields from the property panel. A field the patch sets to undefined is removed, which set-camera cannot do,
+   * so that edit goes through a reload of the recipe, still as one undo step.
+   */
+  function updateSceneCamera(patch) {
+    if (!patch || typeof patch !== 'object') {
+      throw new TypeError('updateSceneCamera expects a camera patch object.');
+    }
+    const patchFields = Object.keys(patch);
+    if (patchFields.length === 1 && patchFields[0] === 'projection') {
+      // Switching projection also converts the lens, which toggleCameraProjection knows how to do.
+      return (viewCamera().projection ?? 'perspective') === patch.projection ? viewCamera() : toggleCameraProjection();
+    }
+    if (!Object.values(patch).includes(undefined)) {
+      return updateCamera(patch);
+    }
+    const recipe = currentScene.exportRecipe();
+    for (const [field, value] of Object.entries(patch)) {
+      if (value === undefined) {
+        delete recipe.camera[field];
+      } else {
+        recipe.camera[field] = value;
+      }
+    }
+    loadRecipe(recipe);
+    return viewCamera();
+  }
+
   function setCameraViewPreset(presetName) {
     if (!STUDIO_VIEW_PRESETS.includes(presetName)) {
       throw new RangeError(`Unknown camera view "${String(presetName)}". Use ${STUDIO_VIEW_PRESETS.join(', ')}.`);
@@ -2123,6 +2213,8 @@ export function createStudioController({
     listSceneObjects,
     selectSceneObject,
     moveSceneObject,
+    describeSceneObject,
+    updateSceneLight,
     deleteSceneObject,
     setTool,
     setActiveTab,
@@ -2158,6 +2250,7 @@ export function createStudioController({
     setSunAngles,
     orbitCamera,
     updateCamera,
+    updateSceneCamera,
     setCameraViewPreset,
     toggleCameraProjection,
     setCameraLensMillimetres,

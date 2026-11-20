@@ -22,6 +22,7 @@ import {
   saveStudioPreferences,
 } from './studio-preferences.js';
 import { studioIconPath } from './studio-icons.js';
+import { createPropertyPanel } from './studio-property-panel.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
@@ -40,7 +41,6 @@ import {
 } from './studio-templates.js';
 import {
   createStudioController,
-  directionToSunAngles,
   hasAnimatedData,
   linearRgbToHex,
   quaternionToEulerDegrees,
@@ -196,10 +196,11 @@ function wireRovingFocusFallback(container, items, { vertical = false, followFoc
   });
 }
 
-function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02, minimumComponent = -Infinity, lockToggle = null } = {}) {
-  let latestValues = [0, 0, 0];
+function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02, minimumComponent = -Infinity, lockToggle = null, axisNames = AXIS_NAMES, onGestureStart, onGestureEnd } = {}) {
+  let latestValues = axisNames.map(() => 0);
   let locked = false;
-  const inputs = AXIS_NAMES.map(axis => createElement(documentReference, 'input', {
+  let disabled = false;
+  const inputs = axisNames.map(axis => createElement(documentReference, 'input', {
     type: 'number',
     step: '0.05',
     attributes: { 'aria-label': `${title} ${axis.toUpperCase()}` },
@@ -228,7 +229,7 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
     });
   });
 
-  const axisLabels = AXIS_NAMES.map((axis, axisIndex) => {
+  const axisLabels = axisNames.map((axis, axisIndex) => {
     const badge = createElement(documentReference, 'span', {
       className: 'crucible-studio-axis-scrub',
       textContent: axis.toUpperCase(),
@@ -238,6 +239,8 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
     let scrubState = null;
     badge.addEventListener('pointerdown', event => {
       event.preventDefault();
+      if (disabled) return;
+      onGestureStart?.();
       scrubState = { startX: event.clientX, startValue: Number(inputs[axisIndex].value) || 0 };
       badge.setPointerCapture?.(event.pointerId);
     });
@@ -248,6 +251,7 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
       emitEditedAxis(axisIndex, nextValue);
     });
     const finishScrub = () => {
+      if (scrubState) onGestureEnd?.();
       scrubState = null;
     };
     badge.addEventListener('pointerup', finishScrub);
@@ -281,7 +285,7 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
     createElement(
       documentReference,
       'div',
-      { className: 'crucible-studio-vector' },
+      { className: 'crucible-studio-vector', dataset: { axes: String(axisNames.length) } },
       ...inputs.map((input, axisIndex) => createElement(
         documentReference,
         'label',
@@ -294,6 +298,12 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
   return {
     container,
     inputs,
+    setDisabled(nextDisabled) {
+      disabled = nextDisabled;
+      inputs.forEach(input => {
+        input.disabled = nextDisabled;
+      });
+    },
     setValues(values, precision = ROUND_PRECISION) {
       latestValues = Array.from(values, component => Number(component) || 0);
       inputs.forEach((input, index) => {
@@ -380,6 +390,7 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
   padSvg.append(outerRing, midRing, sunRay, sunKnob);
 
   let dragging = false;
+  let disabled = false;
   function updateFromPointer(event) {
     const bounds = padSvg.getBoundingClientRect();
     const normalizedX = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
@@ -390,6 +401,7 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
     onSunChange({ azimuthDegrees, elevationDegrees });
   }
   padSvg.addEventListener('pointerdown', event => {
+    if (disabled) return;
     dragging = true;
     onDragStart?.();
     padSvg.setPointerCapture?.(event.pointerId);
@@ -407,6 +419,10 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
 
   return {
     element: padSvg,
+    setDisabled(nextDisabled) {
+      disabled = nextDisabled;
+      padSvg.setAttribute('aria-disabled', nextDisabled ? 'true' : 'false');
+    },
     setAngles(azimuthDegrees, elevationDegrees) {
       const radial = Math.max(0.05, Math.min(1, (88 - elevationDegrees) / (88 * 0.88))) * 50;
       const radians = (azimuthDegrees * Math.PI) / 180;
@@ -1765,11 +1781,15 @@ export function createStudio(container, {
     button.addEventListener('click', () => controller.updateLook({ environment: { setup } }));
     return button;
   });
-  const sunPad = createSunPad(documentReference, angles => controller.setSunAngles(angles), {
-    onDragStart: () => controller.beginUndoGroup(),
-    onDragEnd: () => controller.endUndoGroup(),
+  // The light the selection names, or the sun when no light is selected; the camera has its own panel in the Camera tab.
+  const propertyBuilders = { createElement, createIcon, createSliderField, createVectorRow, createSunPad };
+  const lightPanel = createPropertyPanel({
+    documentReference,
+    controller,
+    announce,
+    builders: propertyBuilders,
+    resolveKey: () => (/^(point|spot|area):/u.test(controller.selectedObjectKey ?? '') ? controller.selectedObjectKey : 'sun'),
   });
-  const keyIntensityField = createSliderField(documentReference, 'Sun strength', { min: 0, max: 8, step: 0.1, value: 1.7 }, value => controller.updateLook({ environment: { keyIntensity: value } }));
   const exposureField = createSliderField(documentReference, 'Exposure', { min: 0.2, max: 3, step: 0.05, value: 1 }, value => controller.updateLook({ effects: { exposure: value } }));
   const contrastField = createSliderField(documentReference, 'Contrast', { min: 0.4, max: 1.8, step: 0.02, value: 1 }, value => controller.updateLook({ effects: { contrast: value } }));
   const saturationField = createSliderField(documentReference, 'Saturation', { min: 0, max: 2, step: 0.02, value: 1 }, value => controller.updateLook({ effects: { saturation: value } }));
@@ -1792,8 +1812,7 @@ export function createStudio(container, {
     'div',
     { className: 'crucible-studio-panel-body' },
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lighting' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...setupButtons)),
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Sun' }), sunPad.element),
-    keyIntensityField.container,
+    lightPanel.element,
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Color look' }), viewTransformSelect),
     exposureField.container,
     contrastField.container,
@@ -1808,8 +1827,7 @@ export function createStudio(container, {
     button.addEventListener('click', () => controller.setCameraLensMillimetres(millimetres));
     return button;
   });
-  const fovField = createSliderField(documentReference, 'Field of view', { min: 15, max: 110, step: 1, value: 45 }, value => controller.updateCamera({ fov: value }));
-  const orthoScaleField = createSliderField(documentReference, 'Orthographic size', { min: 1, max: 40, step: 0.5, value: 6 }, value => controller.updateCamera({ projection: 'orthographic', orthoScale: value }));
+  const cameraPanel = createPropertyPanel({ documentReference, controller, announce, builders: propertyBuilders, resolveKey: () => 'camera' });
   const bookmarkNameInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Shot name', attributes: { 'aria-label': 'Shot name', maxlength: '24' } });
   const saveBookmarkButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save shot' });
   const bookmarkListElement = createElement(documentReference, 'div', { className: 'crucible-studio-field' });
@@ -1830,8 +1848,7 @@ export function createStudio(container, {
     { className: 'crucible-studio-panel-body' },
     viewCubeElement,
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lens' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...lensChips)),
-    fovField.container,
-    orthoScaleField.container,
+    cameraPanel.element,
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Shots' }), createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, bookmarkNameInput, saveBookmarkButton), bookmarkListElement),
   );
 
@@ -1868,6 +1885,7 @@ export function createStudio(container, {
 
   function showInspectorTab(nextTab) {
     controller.setActiveTab(nextTab);
+    syncPropertyPanels();
     for (const button of tabButtons) {
       const selected = button.dataset.tab === nextTab;
       button.setAttribute('aria-selected', selected ? 'true' : 'false');
@@ -2902,9 +2920,6 @@ export function createStudio(container, {
     const effects = recipe.effects ?? {};
     const activeSetup = environment.setup ?? 'daylight';
     setupButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.setup === activeSetup ? 'true' : 'false'));
-    const sunAngles = directionToSunAngles(environment.lightDirection);
-    sunPad.setAngles(sunAngles.azimuthDegrees, sunAngles.elevationDegrees);
-    keyIntensityField.setValue(environment.keyIntensity ?? 1.5);
     viewTransformSelect.value = environment.viewTransform ?? 'aces';
     exposureField.setValue(effects.exposure ?? 1);
     contrastField.setValue(effects.contrast ?? 1);
@@ -2916,8 +2931,6 @@ export function createStudio(container, {
     const isOrthographic = camera.projection === 'orthographic';
     projectionPillButton.textContent = isOrthographic ? 'Orthographic' : 'Perspective';
     projectionPillButton.setAttribute('aria-pressed', isOrthographic ? 'true' : 'false');
-    fovField.setValue(Math.round(camera.fov ?? 45));
-    orthoScaleField.setValue(roundValue(camera.orthoScale ?? 6, 10));
     lensChips.forEach(chip => chip.setAttribute('aria-pressed', !isOrthographic && Number(chip.dataset.focal) === Math.round(camera.focalLength ?? 0) ? 'true' : 'false'));
 
     const bookmarks = controller.listBookmarks();
@@ -2947,8 +2960,15 @@ export function createStudio(container, {
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
     setButtonIcon(playButton, playing ? 'pause' : 'play', playing ? 'Pause (Space)' : 'Play (Space)');
     timeOutput.textContent = `${controller.motionTime.toFixed(1)} / ${duration.toFixed(1)} s`;
+    syncPropertyPanels();
     syncHintBar();
     syncFileBanner();
+  }
+
+  // Only the panel in view is redrawn: orbiting the viewport notifies a change many times a second.
+  function syncPropertyPanels() {
+    if (controller.activeTab === 'look') lightPanel.sync();
+    if (controller.activeTab === 'camera') cameraPanel.sync();
   }
 
   // While a key holds the object, the bar names the keys that act on it; a handle drag shows only how far it has gone.
