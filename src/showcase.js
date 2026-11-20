@@ -5,6 +5,7 @@ import './pointer-light.js';
 import { CrucibleRenderer } from './renderer.js';
 import { createSharedTextures, loadGltf } from './gltf.js';
 import { loadHdri } from './hdri.js';
+import { loadViewTransformForRendererOptions } from './view-transform-loading.js';
 import { createCascadedShadows } from './cascaded-shadows.js';
 import { applyWaterReflection, attachWaterReflection } from './water-reflection.js';
 
@@ -329,6 +330,8 @@ async function selectScene(id) {
     if (request !== loadingRequest) return;
     renderer?.dispose();
     const rendererOptions = description.renderer ?? {};
+    await loadViewTransformForRendererOptions(rendererOptions);
+    if (request !== loadingRequest) return;
     // scene.json stores cascades as plain options; the renderer takes the cascade object built from them.
     const shadowCascades = rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined;
     // A scene that sets waterReflection mirrors itself in its largest flat, smooth surface (water or a polished floor).
