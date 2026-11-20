@@ -781,7 +781,8 @@ export const STUDIO_CSS = `
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
-  padding: 10px 12px 12px;
+  /* The right inset matches the fields below: the panel padding plus the room its scrollbar keeps. */
+  padding: 10px 20px 12px 12px;
 }
 /* One row that scrolls sideways, so it never sits beside the list's own scrollbar. The padding keeps the ring of the chosen swatch inside the strip. */
 .crucible-studio-swatches {
@@ -797,8 +798,25 @@ export const STUDIO_CSS = `
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  container-type: scroll-state;
 }
 .crucible-studio-swatches::-webkit-scrollbar { display: none; }
+/* While more swatches lie to the right, the last one in view dissolves into the panel instead of being sliced. */
+.crucible-studio-swatches::after {
+  content: "";
+  position: sticky;
+  inset-inline-end: -4px;
+  flex: none;
+  inline-size: 28px;
+  block-size: 24px;
+  margin-inline-start: -28px;
+  background: linear-gradient(to right, transparent, var(--studio-panel) 85%);
+  opacity: 0;
+  pointer-events: none;
+}
+@container scroll-state(scrollable: right) {
+  .crucible-studio-swatches::after { opacity: 1; }
+}
 .crucible-studio-swatches > button { flex: none; }
 .crucible-studio button.crucible-studio-swatch-btn,
 .crucible-studio button.crucible-studio-swatch-add {
@@ -1651,6 +1669,10 @@ export const STUDIO_CSS = `
 }
 .crucible-studio[data-floating="false"][data-outliner-collapsed="true"][data-inspector-collapsed="true"] .crucible-studio-side {
   display: none;
+}
+/* A docked column runs the whole window height, so the Scene list takes more of it and less is left empty under a short Properties panel. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]):not([data-scene-sized="true"]):not([data-outliner-minimized="true"]) .crucible-studio-side > .crucible-studio-outliner {
+  flex-basis: 45%;
 }
 /* Inside the docked viewport nothing has to step around the rail or the bar. */
 .crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-readout {
