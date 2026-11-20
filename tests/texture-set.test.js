@@ -63,3 +63,17 @@ test('leaf textures load color, normal and crown per species, clamped at the car
   const missing = async (url) => { throw new Error(`Texture request failed with status 404: ${url}`); };
   await assert.rejects(loadLeafTextures('/textures/leaves', { species: ['palm'], fetchBlob: missing, decodeBlob }), /404/);
 });
+// A signed or versioned CDN folder carries a query; the file name goes before it, not into it (#2403).
+test('a baseUrl with a query string or hash keeps it after the file name', async () => {
+  const requested = [];
+  const fetchBlob = async url => {
+    requested.push(url);
+    return { channel: 'color' };
+  };
+  await loadTextureSet('https://cdn.example.com/textures/bark/?v=3&token=abc', { channels: ['color'], fetchBlob, decodeBlob });
+  await loadTextureSet('/textures/bark#section', { channels: ['color'], fetchBlob, decodeBlob });
+  await loadLeafTextures('https://cdn.example.com/leaves?v=3', { species: ['oak'], fetchBlob, decodeBlob });
+  assert.equal(requested[0], 'https://cdn.example.com/textures/bark/color.webp?v=3&token=abc');
+  assert.equal(requested[1], '/textures/bark/color.webp#section');
+  assert.ok(requested.slice(2).every(url => /^https:\/\/cdn\.example\.com\/leaves\/oak\/\w+\.webp\?v=3$/.test(url)), requested.slice(2).join(' '));
+});
