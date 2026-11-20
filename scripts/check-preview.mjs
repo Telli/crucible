@@ -13,7 +13,7 @@ import { checkPreview, luminanceFromPixels, resizePlane } from './preview-checks
 const CLIP_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.mkv', '.gif']);
 
 function parseArguments(argv) {
-  const options = { width: 640, frames: 48, from: 0, at: null, json: false, minimumSimilarity: null, reference: null, candidate: null };
+  const options = { width: 640, frames: 240, from: 0, at: null, json: false, minimumSimilarity: null, reference: null, candidate: null };
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
     const value = () => {

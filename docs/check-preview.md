@@ -19,7 +19,7 @@ node scripts/check-preview.mjs clip.mp4 --reference cook.png --at 1.5
 
 - `--reference` is a Cook or Cycles still of the same scene and camera. Without one, exposure is judged on its own.
 - `--at` is the time in seconds of the clip frame to compare with the reference; `--from` skips the start of a clip.
-- `--frames` (48) is how many consecutive frames of a clip are read, and `--width` (640) is the size they are measured at.
+- `--frames` (240, ten seconds at 24 fps) caps how many consecutive frames of a clip are read; a shorter clip is read whole, and `--width` (640) is the size they are measured at.
 - `--json` prints the measurements for a script.
 
 PNG files are read directly. JPEG, WebP and clips need `ffmpeg` and `ffprobe` on the path.
@@ -38,10 +38,11 @@ The limits come from the realtime candidates rejected in #2755 and from clean co
 
 | Input | exposure | shimmer | near-plane |
 | --- | --- | --- | --- |
-| Monk realtime still against its Cook still, same camera | fail: median 218 against 34, darkest 5% at 190 | | fail: the frame is near-uniform white |
-| Classroom realtime still against its Cook still, same camera | pass: median 115 against 123 | | pass |
+| Monk realtime still (courtyard view) | fail: median 183, darkest 5% at 118 | | pass |
+| Monk realtime still at the camera of its Cook still, which starts inside a wall | fail: median 224 | | fail: 100% featureless |
+| Classroom realtime still against its Cook still (similarity 0.59) | pass: median 115 against 123 | | pass |
 | Monk arcade and push clips | fail: darkest 5% at 119 | pass: 0.2 to 0.4% | pass |
-| Classroom truck clip | pass | fail: 2.2%, lower left (chairs) | fail: 27% featureless at frame 0 against 10% typical |
+| Classroom truck clip | pass | fail: 1.9%, lower left (chairs) | fail: 27% featureless at frame 0 against 10% typical |
 | Cook still panned and zoomed without minifying | | pass: 0 to 0.2% | pass |
 | Cook still zoomed while minified with bilinear sampling (aliased on purpose) | | fail: 1.5% | |
 
