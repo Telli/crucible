@@ -13,6 +13,14 @@ function polygonMesh(positions, faces, attributes) {
   return createMeshData({ positions: new Float32Array(positions), faceOffsets, cornerVertices: new Uint32Array(faces.flat()), attributes });
 }
 
+test('createMeshData refuses an unknown attribute domain', () => {
+  assert.throws(
+    () => polygonMesh([0, 0, 0, 1, 0, 0, 0, 1, 0], [[0, 1, 2]], { points: { foo: { data: new Float32Array(3), size: 1 } } }),
+    /Unknown attribute domain points.*point, edge, face, corner/,
+  );
+  assert.ok(polygonMesh([0, 0, 0, 1, 0, 0, 0, 1, 0], [[0, 1, 2]], { point: { foo: { data: new Float32Array(3), size: 1 } } }));
+});
+
 function unitCube() {
   return polygonMesh(
     [-1, -1, -1, 1, -1, -1, 1, 1, -1, -1, 1, -1, -1, -1, 1, 1, -1, 1, 1, 1, 1, -1, 1, 1],
