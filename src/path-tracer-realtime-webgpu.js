@@ -69,7 +69,8 @@ export async function createWebGpuRealtimeTracer(scene, resolved, suppliedCanvas
     pendingMotion = motion;
     currentParts = parts;
     currentEnvironment = environment;
-    traceScene = await buildTraceSceneForDevice(parts, environment, webGpuTracer);
+    // The real-time kernel reads a flat scene only, so the module it passes does not offer instancing.
+    traceScene = await buildTraceSceneForDevice(parts, environment, { gpuTriangleLimit: webGpuTracer.gpuTriangleLimit });
     refuseLocalVolumes(traceScene, 'the WebGPU realtime path tracer');
     const next = await webGpuTracer.prepareRealtimeKernel(traceScene, options, REALTIME_KERNEL_PIECES);
     const previousKernel = kernel;

@@ -142,3 +142,16 @@ test('a reused cutTag counts only the faces of the latest cutter', () => {
   assert.equal(second.mesh.attributes.face['boolean-cutter-faces'], undefined);
   assert.equal(tagCounts(second.mesh).cut, 10);
 });
+
+test('meshBoolean names the argument when the mesh, cutter or cutTag is unusable', () => {
+  const cube = () => meshFromGeometry(box(0, 1));
+  assert.throws(() => meshBoolean(cube(), null, 'union'), /meshBoolean: cutter must be mesh data/);
+  assert.throws(() => meshBoolean(undefined, cube(), 'union'), /meshBoolean: mesh must be mesh data/);
+  assert.throws(() => meshBoolean(cube(), cube(), 'union', { cutTag: 5 }), /meshBoolean: cutTag was 5; pass a non-empty string/);
+  assert.throws(() => meshBoolean(cube(), cube(), 'union', { cutTag: '' }), /meshBoolean: cutTag was ""/);
+});
+
+test('meshBoolean turns a solver failure on extreme sizes into an error that says what to check', () => {
+  const tiny = transformMesh(meshFromGeometry(box(0, 1)), { translation: [0.5, 0, 0], rotation: [0, 0, 0, 1], scale: [1e-30, 1e-30, 1e-30] });
+  assert.throws(() => meshBoolean(meshFromGeometry(box(0, 1)), tiny, 'difference'), error => error instanceof RangeError && /The difference failed in the solver.*extremely small or large/.test(error.message));
+});

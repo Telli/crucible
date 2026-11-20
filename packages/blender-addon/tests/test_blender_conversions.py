@@ -123,17 +123,17 @@ class LightNoteTests(unittest.TestCase):
         self.assertTrue(any("blackbody" in note for note in notes))
         self.assertTrue(any("shadows off" in note for note in notes))
 
-    def test_light_max_bounces_below_the_scene_is_named(self):
-        notes = conversions.light_feature_notes("Sun", "SUN", False, True, 1.0, 1.0, 2, 12)
-        self.assertEqual(len(notes), 1)
-        self.assertIn("Sun", notes[0])
-        self.assertIn("max bounces 2", notes[0])
-        self.assertIn("not reproduced", notes[0])
+    def test_light_max_bounces_below_the_scene_is_carried_as_the_light_limit(self):
+        self.assertEqual(conversions.light_bounce_limit(2, 12), 2)
+        self.assertEqual(conversions.light_bounce_limit(0, 12), 0)
+        entry = conversions.with_bounce_limit(conversions.point_light_entry([0, 0, 0], [1, 1, 1], 4.0 * math.pi * 10.0, 0.1), 1)
+        self.assertEqual(entry["maxBounces"], 1)
 
-    def test_light_max_bounces_at_or_above_the_scene_or_unreadable_is_silent(self):
-        self.assertEqual(conversions.light_feature_notes("Sun", "SUN", False, True, 1.0, 1.0, 12, 12), [])
-        self.assertEqual(conversions.light_feature_notes("Sun", "SUN", False, True, 1.0, 1.0, 1024, 12), [])
-        self.assertEqual(conversions.light_feature_notes("Sun", "SUN", False, True, 1.0, 1.0, None, 12), [])
+    def test_light_max_bounces_at_or_above_the_scene_or_unreadable_carries_no_limit(self):
+        for light_limit, scene_limit in ((12, 12), (1024, 12), (None, 12), (2, None)):
+            self.assertIsNone(conversions.light_bounce_limit(light_limit, scene_limit))
+        entry = conversions.with_bounce_limit(conversions.point_light_entry([0, 0, 0], [1, 1, 1], 1.0, 0.1), None)
+        self.assertNotIn("maxBounces", entry)
 
 
 def emission_tree(strength_input, colour_input, extra_nodes=None):

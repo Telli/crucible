@@ -4,7 +4,7 @@
 // Usage: node scripts/build-pack-index.mjs [--packs <folder>] [--out <folder>]
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateRawSync } from 'node:zlib';
@@ -165,8 +165,22 @@ export async function buildPackIndex({ packsDirectory = join(repositoryRoot, 'pa
     if (entry.isDirectory() || entry.isSymbolicLink()) folders.push(entry.name);
   }
   folders.sort();
-  await rm(output, { recursive: true, force: true });
-  await mkdir(output, { recursive: true });
+  const staging = `${output}.building-${process.pid}`;
+  await rm(staging, { recursive: true, force: true });
+  await mkdir(staging, { recursive: true });
+  try {
+    const packs = await buildIntoFolder(source, folders, staging);
+    await rm(output, { recursive: true, force: true });
+    await rename(staging, output);
+    return packs;
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** Builds into a staging folder, so a failed build never empties or half fills the real output folder. */
+async function buildIntoFolder(source, folders, output) {
   const packs = [];
   const failures = [];
   for (const name of folders) {
@@ -188,17 +202,25 @@ export async function buildPackIndex({ packsDirectory = join(repositoryRoot, 'pa
   return packs;
 }
 
-function optionValue(name) {
-  const position = process.argv.indexOf(name);
-  if (position === -1) return undefined;
-  const value = process.argv[position + 1];
-  if (value === undefined || value.startsWith('--')) throw new Error(`${name} needs a folder after it, such as ${name} public/packs.`);
-  return value;
+const USAGE = 'Usage: node scripts/build-pack-index.mjs [--packs <folder>] [--out <folder>]';
+
+/** Reads `--packs` and `--out`, each at most once with a folder after it; anything else is a usage error. */
+export function parseBuildArguments(argumentList) {
+  const options = {};
+  for (let position = 0; position < argumentList.length; position += 2) {
+    const flag = argumentList[position];
+    const value = argumentList[position + 1];
+    const key = { '--packs': 'packsDirectory', '--out': 'outputDirectory' }[flag];
+    if (!key || key in options) throw new Error(`${flag} is not a flag to pass here, or is repeated. ${USAGE}`);
+    if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a folder after it, such as ${flag} public/packs. ${USAGE}`);
+    options[key] = value;
+  }
+  return options;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const packs = await buildPackIndex({ packsDirectory: optionValue('--packs'), outputDirectory: optionValue('--out') });
+    const packs = await buildPackIndex(parseBuildArguments(process.argv.slice(2)));
     for (const pack of packs) console.log(`pack ${pack.name} ${pack.version} ${pack.bytes} bytes sha256 ${pack.sha256.slice(0, 12)}`);
     if (packs.length === 0) console.log('no packs found');
   } catch (error) {

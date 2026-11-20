@@ -85,3 +85,20 @@ test('declareWebpTextures moves only the WebP images into the extension and does
   declareWebpTextures(untouched);
   assert.deepEqual(untouched, { images: [{ mimeType: 'image/png' }], textures: [{ source: 0 }] });
 });
+
+test('parseArguments refuses a quality above 100 and a texture cap that is not a whole number', () => {
+  assert.throws(() => parseArguments(['in.glb', 'out.glb', '--webp-quality', '150']), /webpQuality was 150; pass a whole number from 1 to 100/);
+  assert.throws(() => parseArguments(['in.glb', 'out.glb', '--max-texture', '0.5']), /maxTexture was 0.5/);
+});
+
+test('an image that lives at a URI is left alone and the other images still convert', async () => {
+  const { glb } = await buildGlb(256);
+  const { json, binary } = readGlb(glb);
+  json.images.unshift({ uri: 'external.png' });
+  json.textures = [{ source: 1, sampler: 0 }, { source: 0 }];
+  const result = await recodeGlbTextures(writeGlb(json, binary), { webpQuality: 60, maxTexture: 4096 });
+  const recoded = readGlb(result.glb).json;
+  assert.deepEqual(recoded.images[0], { uri: 'external.png' });
+  assert.equal(recoded.images[1].mimeType, 'image/webp');
+  assert.deepEqual(recoded.textures, [{ sampler: 0, extensions: { EXT_texture_webp: { source: 1 } } }, { source: 0 }]);
+});

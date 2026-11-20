@@ -30,3 +30,8 @@ export function editRuleObject(value, index, label, hint) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw editField(index, label, value, hint);
   return value;
 }
+
+/** The field's value, or the fallback only when the field is left out; null is a wrong value that the check after this call rejects. */
+export function editDefault(value, fallback) {
+  return value === undefined ? fallback : value;
+}

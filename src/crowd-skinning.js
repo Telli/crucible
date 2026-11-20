@@ -9,7 +9,7 @@
 // the same frame reached by playing.
 import { mat4 } from 'gl-matrix';
 import { installCrowdShader } from './shaders.js';
-import './skinning.js';
+import { validateSkinGeometry } from './skinning.js';
 
 const FLOATS_PER_MATRIX = 16;
 const TEXELS_PER_MATRIX = 4;
@@ -54,6 +54,7 @@ export function createCrowdRig(sourceParts, { morphs = false } = {}) {
   for (const part of sourceParts) {
     if (!part.geometry?.positions || !part.geometry.indices || !part.material) throw new TypeError(`A crowd part needs a geometry and a material: ${part.name}`);
     if (part.skin && !part.geometry.skinIndices) throw new TypeError(`A skinned crowd part needs skin indices and weights: ${part.name}`);
+    if (part.skin) validateCrowdSkin(part);
     jointOffsets.push(jointCount);
     jointCount += part.skin ? part.skin.jointMatrices.length / FLOATS_PER_MATRIX : 1;
   }
@@ -100,6 +101,15 @@ export function createCrowdRig(sourceParts, { morphs = false } = {}) {
       return output;
     },
   };
+}
+
+// A joint index past the part's own joints would read another part's joint, and weights that total zero pack as NaN.
+function validateCrowdSkin(part) {
+  try {
+    validateSkinGeometry(part.geometry, part.skin);
+  } catch (error) {
+    throw new RangeError(`Crowd part ${part.name}: ${error.message}`);
+  }
 }
 
 function mergeCrowdGeometry(entries) {
