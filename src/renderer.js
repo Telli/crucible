@@ -25,10 +25,9 @@ import { wearUniformValues } from './material-wear.js';
 import { fittedFogDensity } from './fog-fit.js';
 import { canUseCompactColor, respecifyColorTargets } from './compact-color.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
-import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope } from './shadow-light.js';
+import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope, sunShadowMapSize } from './shadow-light.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
 
-const SHADOW_MAP_SIZE = 2048;
 // Liquid and foam see the resolved opaque scene, so they draw in their own pass after it.
 const TRANSLUCENT_TAGS = new Set(['liquid', 'foam']);
 // The 42nd float is the opacity of a blend or add part, so parts that differ only in opacity share a batch.
@@ -1742,7 +1741,9 @@ export class CrucibleRenderer {
   // cascades replace the main shader's lookup and nothing else (volume fog, subsurface thickness) still reads this map.
   shadowMapSizeWanted() {
     const casts = this.batches.some(batch => !batch.floor && batch.castShadow && !this.tintsShadow(batch));
-    return casts && !this.shadowCascades?.replacesSingleMap(this) ? SHADOW_MAP_SIZE : 1;
+    if (!casts || this.shadowCascades?.replacesSingleMap(this)) return 1;
+    const light = resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds, this.fittedWorldShadowView());
+    return sunShadowMapSize(light.extent);
   }
 
   createShadowMap() {
@@ -1781,7 +1782,7 @@ export class CrucibleRenderer {
     context.enable(context.DEPTH_TEST);
     context.enable(context.CULL_FACE);
     context.clear(context.DEPTH_BUFFER_BIT);
-    this.shadowBiasPerSlope = shadowBiasPerSlope(light, SHADOW_MAP_SIZE);
+    this.shadowBiasPerSlope = shadowBiasPerSlope(light, mapSize);
     this.drawShadowCasters(this.lightProjection, mapSize, true);
     this.drawTintedShadows();
     context.bindFramebuffer(context.FRAMEBUFFER, null);
