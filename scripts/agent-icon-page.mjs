@@ -1,5 +1,5 @@
 // The browser side of the `icons` job: one scene per item in the job page, drawn through the same preview API as every other job.
-import { iconRecipe } from '../src/icon-sheet.js';
+import { iconRecipe, sketchStagePass } from '../src/icon-sheet.js';
 import { renderIconJob } from './agent-icon-job.mjs';
 
 const SCREENSHOT_OPTIONS = { fromSurface: true, format: 'png', optimizeForSpeed: true };
@@ -18,9 +18,9 @@ export async function renderIconsInPage({ jobPage, jobId, settings, directory, s
   });
   const metrics = { backend, requestedWidth: settings.size, requestedHeight: settings.size, drawCount: 0 };
 
-  async function openItem(item, index) {
+  async function openItem(item, index, frame) {
     if (!item.asset) throw new Error(`items[${index}] (${item.source}) has no pinned asset id. The runtime pins catalog names when the job is submitted.`);
-    const recipe = iconRecipe({ assetId: item.asset, style: settings.style, view: settings.viewpoint, size: settings.size });
+    const recipe = iconRecipe({ assetId: item.asset, style: settings.style, view: frame.view, size: settings.size, sketch: settings.sketch, seed: settings.seed });
     const input = { sessionId: jobId, recipe, memoryBudgetMiB, backend, transparent: true, ...(tier ? { tier } : {}), ...(await assetData(recipe)) };
     const created = await jobPage.evaluate(createInput => window.__agentPreview.create(createInput), input)
       .catch(error => { throw new Error(`items[${index}] (${item.source}) could not be loaded: ${String(error.message).split('\n')[0]}`); });
@@ -31,18 +31,27 @@ export async function renderIconsInPage({ jobPage, jobId, settings, directory, s
       const inspected = await jobPage.evaluate(sessionId => window.__agentPreview.inspect({ sessionId }), jobId);
       const bounds = inspected.assets?.[0]?.bounds;
       if (!bounds) throw new Error(`items[${index}] (${item.source}) placed no geometry. Check that the GLB holds meshes.`);
+      let revision = created.revision;
+      async function draw(camera) {
+        signal.throwIfAborted();
+        const drawn = await jobPage.evaluate(drawInput => window.__agentPreview.frame(drawInput), { sessionId: jobId, camera });
+        if (backend === 'cpu' && !/swiftshader/i.test(drawn.graphics)) throw new Error('CPU job did not select SwiftShader.');
+        metrics.graphics = drawn.graphics;
+        metrics.drawCount++;
+        metrics.width = drawn.width;
+        metrics.height = drawn.height;
+        const captured = await cdp.send('Page.captureScreenshot', SCREENSHOT_OPTIONS);
+        return Buffer.from(captured.data, 'base64');
+      }
       return {
         bounds,
-        async draw(camera) {
-          signal.throwIfAborted();
-          const frame = await jobPage.evaluate(drawInput => window.__agentPreview.frame(drawInput), { sessionId: jobId, camera });
-          if (backend === 'cpu' && !/swiftshader/i.test(frame.graphics)) throw new Error('CPU job did not select SwiftShader.');
-          metrics.graphics = frame.graphics;
-          metrics.drawCount++;
-          metrics.width = frame.width;
-          metrics.height = frame.height;
-          const captured = await cdp.send('Page.captureScreenshot', SCREENSHOT_OPTIONS);
-          return Buffer.from(captured.data, 'base64');
+        draw,
+        // A step of the sketch changes the pass's stage value, which is a uniform, so nothing recompiles.
+        async drawStep(camera, step) {
+          const operations = [{ type: 'set-post-passes', postPasses: [sketchStagePass({ sketch: settings.sketch, seed: settings.seed, size: settings.size, stage: step })] }];
+          const applied = await jobPage.evaluate(applyInput => window.__agentPreview.apply(applyInput), { sessionId: jobId, operations, expectedRevision: revision });
+          revision = applied.revision;
+          return draw(camera);
         },
         async close() {
           await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId);

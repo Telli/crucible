@@ -11,6 +11,7 @@ const LOADING_LABEL = 'Loading 3D';
 
 export function createPlayOnDemand({ playButton, beginLive, showError, focusTarget, onLive, wait = setTimeout }) {
   const label = playButton.querySelector('.play-label');
+  let inFlight = null;
 
   function showLoading() {
     playButton.disabled = true;
@@ -24,7 +25,7 @@ export function createPlayOnDemand({ playButton, beginLive, showError, focusTarg
     label.textContent = PLAY_LABEL;
   }
 
-  return async function playOnDemand() {
+  async function press() {
     showLoading();
     try {
       await beginLive();
@@ -37,5 +38,11 @@ export function createPlayOnDemand({ playButton, beginLive, showError, focusTarg
     focusTarget?.focus({ preventScroll: true });
     wait(onLive, PLAY_HANDOFF_MS);
     return true;
+  }
+
+  // A second press while the world loads joins the first one instead of starting the world again.
+  return function playOnDemand() {
+    inFlight ??= press().finally(() => { inFlight = null; });
+    return inFlight;
   };
 }

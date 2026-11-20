@@ -278,3 +278,17 @@ test('a NaN step and null query options throw errors that say what to pass', asy
   assert.throws(() => physics.overlap({ type: 'ball', radius: 0.5 }, [0, 1, 0], null), /query options value must be an object/);
   physics.dispose();
 });
+
+test('queries see the world before the first step', async () => {
+  const physics = await createPhysicsSystem(worldDefinition());
+  const hit = physics.raycast([0, 5, 0], [0, -1, 0]);
+  assert.equal(hit?.body, 'box', 'a ray down from above the crate hits it before any step');
+  assert.deepEqual(physics.overlap({ type: 'ball', radius: 0.2 }, [0, 2, 0]), ['box']);
+  assert.equal(physics.shapeCast({ type: 'ball', radius: 0.1 }, [0, 5, 0], [0, -1, 0])?.body, 'box');
+  physics.dispose();
+});
+
+test('bindings that are not an array of { body, part } fail with a message that says so', async () => {
+  await assert.rejects(createPhysicsSystem(worldDefinition(), { bindings: { body: 'box' } }), /bindings must be an array/);
+  await assert.rejects(createPhysicsSystem(worldDefinition(), { bindings: [null] }), /bindings\[0\] must be \{ body, part \}/);
+});

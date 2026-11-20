@@ -141,3 +141,12 @@ test('removing a node that lines.nodes names says to drop its entry in the same 
   assert.throws(() => scene.apply([{ type: 'remove-node', id: 'rug' }], { expectedRevision: 0 }), /rug.*drop that node's entry from lines\.nodes in the same call/s);
   scene.apply([{ type: 'remove-node', id: 'rug' }, { type: 'set-environment', environment: { lines: { nodes: { floor: { silhouetteOnly: true } } } } }], { expectedRevision: 0 });
 });
+
+test('a node with hundreds of thousands of object IDs still gets its table', () => {
+  const crowdSize = 400_000;
+  const crowd = Array.from({ length: crowdSize }, (unused, index) => index + 1);
+  const lines = resolveLineArt({ nodes: { crowd: { silhouetteOnly: true } } });
+  const table = lineNodeTable(lines, { crowd });
+  assert.equal(table.count, crowdSize + 1);
+  assert.equal(table.data[crowdSize * 4 + 3], 2 + 4 * 1, 'the last ID carries the mode and the node index');
+});

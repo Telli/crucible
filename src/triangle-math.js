@@ -34,8 +34,16 @@ export function triangleNormal(triangle, out) {
   return out;
 }
 
-/** Writes the point of the triangle nearest to the query point (Ericson, Real-Time Collision Detection). */
+/**
+ * Writes the point of the triangle nearest to the query point (Ericson, Real-Time Collision Detection).
+ * A triangle with no area divides by zero in the region tests, so it falls back to its nearest edge.
+ */
 export function closestPointOnTriangle(point, triangle, out) {
+  closestPointByRegions(point, triangle, out);
+  return Number.isFinite(out[0] + out[1] + out[2]) ? out : closestPointOnEdges(point, triangle, out);
+}
+
+function closestPointByRegions(point, triangle, out) {
   const [ax, ay, az, bx, by, bz, cx, cy, cz] = triangle;
   const abX = bx - ax;
   const abY = by - ay;
@@ -80,6 +88,38 @@ export function closestPointOnTriangle(point, triangle, out) {
   const secondWeight = vb * scale;
   const thirdWeight = vc * scale;
   return setPoint(out, ax + abX * secondWeight + acX * thirdWeight, ay + abY * secondWeight + acY * thirdWeight, az + abZ * secondWeight + acZ * thirdWeight);
+}
+
+// A triangle with no area has no interior to project onto: the answer is the nearest point of its three edges.
+function closestPointOnEdges(point, triangle, out) {
+  let nearest = Infinity;
+  for (let corner = 0; corner < 3; corner++) {
+    const start = corner * 3;
+    const end = (corner + 1) % 3 * 3;
+    let lengthSquared = 0;
+    let along = 0;
+    for (let axis = 0; axis < 3; axis++) {
+      const step = triangle[end + axis] - triangle[start + axis];
+      lengthSquared += step * step;
+      along += step * (point[axis] - triangle[start + axis]);
+    }
+    const fraction = lengthSquared > 0 ? Math.min(1, Math.max(0, along / lengthSquared)) : 0;
+    const x = triangle[start] + (triangle[end] - triangle[start]) * fraction;
+    const y = triangle[start + 1] + (triangle[end + 1] - triangle[start + 1]) * fraction;
+    const z = triangle[start + 2] + (triangle[end + 2] - triangle[start + 2]) * fraction;
+    const distance = Math.hypot(point[0] - x, point[1] - y, point[2] - z);
+    if (distance < nearest) {
+      nearest = distance;
+      setPoint(out, x, y, z);
+    }
+  }
+  return out;
+}
+
+/** Index of the first vertex with a NaN or infinite coordinate in a flat x, y, z array, or -1. */
+export function findNonFiniteVertex(positions) {
+  const bad = positions.findIndex(value => !Number.isFinite(value));
+  return bad < 0 ? -1 : Math.floor(bad / 3);
 }
 
 function setPoint(out, x, y, z) {

@@ -460,11 +460,26 @@ function checkTimeStep(deltaSeconds) {
   return deltaSeconds;
 }
 
+function checkTriangles(triangles, particleCount) {
+  for (let corner = 0; corner < triangles.length; corner++) {
+    if (!(triangles[corner] >= 0 && triangles[corner] < particleCount)) throw new RangeError(`Cloth triangle ${Math.floor(corner / 3)} uses particle ${triangles[corner]}; the sheet has ${particleCount}.`);
+  }
+  if (triangles.length % 3) throw new RangeError('Cloth triangles must hold 3 indices each.');
+}
+
 function checkUnit(value, field, maximum) {
   if (!Number.isFinite(value) || value < 0 || value > maximum) {
     throw new RangeError(`Cloth ${field} must be a number from 0 to ${maximum}; found ${value}.`);
   }
   return value;
+}
+
+// Self collision needs a radius above 0, so two vertices at one point have to be welded first.
+function assertNoZeroLengthEdge(constraints) {
+  for (let edge = 0; edge < constraints.stretchCount; edge++) {
+    if (constraints.restLengths[edge] > 0) continue;
+    throw new RangeError(`Cloth selfCollision: vertices ${constraints.firsts[edge]} and ${constraints.seconds[edge]} share one point; weld them.`);
+  }
 }
 
 // Soft body and self collision terms, as two hooks the step calls: once per substep and once per iteration.
@@ -493,6 +508,7 @@ function prepareExtras(options, positions, triangles, particleCount, constraints
     if (particleCount > SELF_COLLISION_LIMITS.maxParticles) {
       throw new RangeError(`Cloth selfCollision handles ${SELF_COLLISION_LIMITS.maxParticles} particles at most; this sheet has ${particleCount}. Use a coarser grid or drop selfCollision.`);
     }
+    assertNoZeroLengthEdge(constraints);
     const longest = maxSelfCollisionRadius(constraints);
     const radius = selfCollision === true ? defaultSelfCollisionRadius(longest, options.thickness) : selfCollision.radius;
     if (!(radius > 0 && radius <= longest)) {
@@ -568,6 +584,7 @@ export function createCloth(positions, triangles, options = {}) {
   const particleCount = positions.length / 3;
   const colliders = options.colliders ?? [];
   const moving = options.moving ?? null;
+  checkTriangles(triangles, particleCount);
   for (const collider of colliders) {
     if (!Object.hasOwn(PUSH_OUT, collider?.kind ?? '')) throw new TypeError(`Cloth collider kind must be one of ${Object.keys(PUSH_OUT).join(', ')}.`);
   }
@@ -579,7 +596,7 @@ export function createCloth(positions, triangles, options = {}) {
   if (!BEND_MODELS.includes(bendModel)) {
     throw new RangeError(`Cloth bendModel must be one of ${BEND_MODELS.join(', ')}; found ${bendModel}.`);
   }
-  const constraints = buildConstraints(positions, triangles, particleCount, options.bend ?? 0.1, options.stiffness ?? 0.9, stiffnessWeights, bendModel);
+  const constraints = buildConstraints(positions, triangles, particleCount, checkUnit(options.bend ?? 0.1, 'bend', 1), checkUnit(options.stiffness ?? 0.9, 'stiffness', 1), stiffnessWeights, bendModel);
   const bendYield = options.bendYield === undefined ? null : checkUnit(options.bendYield, 'bendYield', Math.PI);
   const bendSet = checkUnit(options.bendSet ?? DEFAULT_BEND_SET, 'bendSet', 1);
   if (bendYield !== null && !constraints.dihedrals) {
@@ -587,7 +604,7 @@ export function createCloth(positions, triangles, options = {}) {
   }
   const extras = prepareExtras(options, positions, triangles, particleCount, constraints);
   checkWork(particleCount, constraints.count, triangles.length / 3, colliders.length + (moving?.colliderCount ?? 0), options.frameCount ?? 1, extras.workPerIteration + (constraints.dihedrals?.count ?? 0) * DIHEDRAL_WORK);
-  const density = options.density ?? 0.2;
+  const density = checkUnit(options.density ?? 0.2, 'density', 1000);
   const areas = particleAreas(positions, triangles, particleCount);
   const totalArea = areas.reduce((sum, area) => sum + area, 0);
   const cloth = {
@@ -613,10 +630,10 @@ export function createCloth(positions, triangles, options = {}) {
     velocities: new Float64Array(positions.length), windScratch: new Float64Array(positions.length),
   };
   const gravity = options.gravity ?? GRAVITY_DEFAULT;
-  const damping = options.damping ?? 0.3;
-  const friction = options.friction ?? 0.3;
+  const damping = checkUnit(options.damping ?? 0.3, 'damping', 100);
+  const friction = checkUnit(options.friction ?? 0.3, 'friction', 1);
   const staticFriction = checkUnit(options.staticFriction ?? 0, 'staticFriction', 1);
-  const thickness = options.thickness ?? 0.01;
+  const thickness = checkUnit(options.thickness ?? 0.01, 'thickness', 0.5);
   const previous = new Float64Array(positions.length);
   const contactNormals = extras.bounce > 0 ? new Float64Array(positions.length) : null;
   const reflectBody = extras.bounce > 0 ? createBodyBounce(extras.bounce, particleCount) : null;

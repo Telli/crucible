@@ -60,7 +60,7 @@ Made something with Crucible? [Post it in Show and tell](https://github.com/code
 
 Crucible is a realtime 3D engine for designers, web pages and AI agents. It has a fast WebGL2 rasterizer, a path tracer, addons for terrain, vegetation, characters, liquid, vehicles and media export, and an MCP server. A scene is plain data: each part has a geometry, a matrix and a material.
 
-Designers shape composition, lighting and materials directly alongside agents building through the MCP server. Exported scenes stay lightweight on the web, while keeping Blender-grade visuals and strict runtime budgets. [docs/goal.md](https://github.com/codepawl/crucible/blob/main/docs/goal.md) defines each part.
+Designers shape composition, lighting and materials directly alongside agents building through the MCP server. Exported scenes stay lightweight on the web and keep strict runtime budgets. [docs/goal.md](https://github.com/codepawl/crucible/blob/main/docs/goal.md) defines each part.
 See the [documentation](https://crucible.codepawl.com/docs.html), the [guide for agents](https://crucible.codepawl.com/llms.txt) and the [FAQ](https://crucible.codepawl.com/docs.html#faq).
 
 ## Install

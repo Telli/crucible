@@ -124,7 +124,7 @@ function toLocal(collider, point) {
 }
 
 /** Top surface of one collider under (x, z): its height and unit normal, or null when the vertical line misses it. */
-function surfaceUnder(collider, x, z) {
+function surfaceUnder(collider, x, z, rayHeight) {
   if (collider.shape === 'ball') {
     const horizontal = Math.hypot(x - collider.translation[0], z - collider.translation[2]);
     if (horizontal >= collider.radius) return null;
@@ -133,7 +133,7 @@ function surfaceUnder(collider, x, z) {
     return { height, normal };
   }
   const inverse = quat.invert(quat.create(), collider.rotation);
-  const origin = toLocal(collider, [x, 1e4, z]);
+  const origin = toLocal(collider, [x, rayHeight, z]);
   const direction = vec3.transformQuat(vec3.create(), [0, -1, 0], inverse);
   let entry = -Infinity;
   let exit = Infinity;
@@ -159,13 +159,19 @@ function surfaceUnder(collider, x, z) {
   const normalLocal = [0, 0, 0];
   normalLocal[entryAxis] = entrySign;
   const normal = vec3.transformQuat(vec3.create(), normalLocal, collider.rotation);
-  return { height: 1e4 - entry, normal };
+  return { height: rayHeight - entry, normal };
 }
 
-function groundUnder(colliders, x, z) {
+/** A height above every collider, where the downward ray for ground height starts. */
+function rayStartHeight(colliders) {
+  const tops = colliders.map(collider => collider.translation[1] + (collider.shape === 'ball' ? collider.radius : Math.hypot(...collider.halfExtents)));
+  return Math.max(...tops) + 1;
+}
+
+function groundUnder(colliders, x, z, rayHeight) {
   let best = null;
   for (const collider of colliders) {
-    const surface = surfaceUnder(collider, x, z);
+    const surface = surfaceUnder(collider, x, z, rayHeight);
     if (surface && (!best || surface.height > best.height)) best = surface;
   }
   return best;
@@ -197,6 +203,7 @@ function scatterCandidates(settings, skipped) {
   const meanRadius = boundingRadius(shape, [meanEdge, meanEdge, meanEdge]);
   const areaSize = (area.max[0] - area.min[0]) * (area.max[1] - area.min[1]);
   let columnHeight = Math.min(MAX_COLUMN_HEIGHT, Math.max(0.3, settings.count * (4 / 3) * Math.PI * meanRadius ** 3 / PACKING_FRACTION / areaSize));
+  const rayHeight = rayStartHeight(colliders);
   const candidates = [];
   const flatSlope = Math.cos(maxSlope * Math.PI / 180);
   for (let index = 0; index < settings.count; index++) {
@@ -209,7 +216,7 @@ function scatterCandidates(settings, skipped) {
       const radius = boundingRadius(shape, size);
       const x = area.min[0] + (area.max[0] - area.min[0]) * rolls[4];
       const z = area.min[1] + (area.max[1] - area.min[1]) * rolls[5];
-      const ground = groundUnder(colliders, x, z);
+      const ground = groundUnder(colliders, x, z, rayHeight);
       if (!ground) {
         skipped.noGround++;
         continue;

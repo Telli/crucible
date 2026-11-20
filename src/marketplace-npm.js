@@ -10,6 +10,18 @@ export function npmManifestPath(name) {
 export const FIRST_PARTY_PREFIX = '@codepawlhq/crucible-';
 const ADDON_KEYWORD = 'crucible-addon';
 
+/** The addons from an npm search result: only publishable names, so one bad entry cannot hide the rest of the list. */
+export function addonPackages(searchObjects) {
+  if (!Array.isArray(searchObjects)) return [];
+  const packages = [];
+  for (const object of searchObjects) {
+    const entry = object?.package;
+    if (typeof entry?.name !== 'string' || npmManifestPath(entry.name) === null) continue;
+    packages.push({ name: entry.name, version: entry.version, description: entry.description ?? '', range: null });
+  }
+  return packages;
+}
+
 /**
  * The companion packages CodePawl publishes beside the engine, from an npm search result: names under
  * `@codepawlhq/crucible-`, valid npm names, and not addons (those carry the `crucible-addon` keyword and list under Addons).
