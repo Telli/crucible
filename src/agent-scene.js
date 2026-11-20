@@ -105,6 +105,14 @@ function knownKeys(value, allowed, label) {
   }
 }
 
+// An edit that names no field is almost always a typo or a dropped field name, so it fails and lists what the operation takes
+// instead of spending a revision on a change that changed nothing.
+function requireChange(namesAField, operation, acceptedFields) {
+  if (!namesAField) {
+    throw invalidField('operation', operation, `${operation.type} with at least one field to change: ${acceptedFields.join(', ')}`);
+  }
+}
+
 function resolveLimits(input) {
   knownKeys(input, Object.keys(DEFAULT_LIMITS), 'limits');
   const result = { ...DEFAULT_LIMITS, ...input };
@@ -2330,6 +2338,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           // Spot and area lights, cascades and sun links are absent from a recipe until it sets them.
           const optionalFields = lookField === 'environment' ? ['ground', 'spotLights', 'areaLights', 'shadowCascades', 'localVolumes', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'hdri', 'sky'] : lookField === 'effects' ? postStepSupport.fields : [];
           knownKeys(patch, [...Object.keys(candidate[lookField]), ...optionalFields], lookField);
+          requireChange(Object.keys(patch).length > 0, operation, [...Object.keys(candidate[lookField]), ...optionalFields]);
           const nestedField = lookField === 'environment' ? 'volumeFog' : 'bloom';
           const merged = { ...candidate[lookField], ...(lookField === 'environment' ? environmentPatchWithSetup(patch) : patch) };
           if (nestedField && Object.hasOwn(patch, nestedField)) {
@@ -2456,6 +2465,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         if (!target) {
           throw invalidField('id', operation.id, `the ID of an existing ${operation.type === 'set-node' ? 'node' : 'material'}; scene_inspect lists them, or add it first with an add operation`);
         }
+        requireChange(Object.keys(operation).some(key => fields.includes(key)), operation, fields);
         if (operation.type === 'set-camera') {
           applyCameraFields(target, operation);
         } else {
