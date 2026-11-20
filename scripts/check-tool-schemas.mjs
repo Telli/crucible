@@ -217,11 +217,18 @@ export function summarizeFindings(findings) {
   return summary;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const tools = await listTools();
+// What the command prints and the exit code it ends with. A portable finding is a bug in our schema, so it fails the gate.
+export function reportToolSchemas(tools) {
   const findings = checkToolSchemas(tools);
-  console.log(JSON.stringify({ tools: tools.length, summary: summarizeFindings(findings) }, null, 2));
-  for (const item of findings.filter(candidate => candidate.profile === 'portable')) {
-    console.log(`${item.rule} ${item.path}: ${item.detail}`);
-  }
+  const portable = findings.filter(candidate => candidate.profile === 'portable');
+  const lines = [JSON.stringify({ tools: tools.length, summary: summarizeFindings(findings) }, null, 2)];
+  for (const item of portable) lines.push(`${item.rule} ${item.path}: ${item.detail}`);
+  if (portable.length > 0) lines.push(`FAIL ${portable.length} portable finding(s). Fix: change the schema each line names until every client accepts it.`);
+  return { lines, exitCode: portable.length > 0 ? 1 : 0 };
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const { lines, exitCode } = reportToolSchemas(await listTools());
+  console.log(lines.join('\n'));
+  process.exitCode = exitCode;
 }

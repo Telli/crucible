@@ -20,7 +20,7 @@ export const MESH_PROBLEMS = Object.freeze({
 // Spatial checks, opt in through lintMesh(mesh, { geometry: true }) because each builds a BVH. All are warnings: a mesh
 // can cross itself, be thin or float on purpose, so none of them turns ok off.
 export const GEOMETRY_PROBLEMS = Object.freeze({
-  'intersecting-parts': { severity: 'warning', fix: 'Two parts cross each other (sample holds first * 1000 + second part index). Move them apart, or run a union boolean if they should be one solid.' },
+  'intersecting-parts': { severity: 'warning', fix: 'Two parts cross each other (sample holds first * max(1000, part count) + second part index). Move them apart, or run a union boolean if they should be one solid.' },
   'self-intersection': { severity: 'warning', fix: 'A closed part cuts through itself. Undo the last extrude, inset or translate that folded it, or lower its offset.' },
   'thin-wall': { severity: 'warning', fix: 'The wall behind these faces (sample is face indices) is under 0.5% of the mesh size thick. Thicken it with solidify, or move the faces apart.' },
   'floating-part': { severity: 'warning', fix: 'This part (sample is part indices) touches no other part. Translate it onto its neighbour, or ignore this if it is meant to stand alone.' },

@@ -22,6 +22,11 @@ export function tileMatrix(tile) {
  * A tile keeps `tile.cache` between rebuilds for whatever the caller wants to plan once.
  */
 export function createTileField({ area, tileSize, levels, cullDistance, terrainHeight, buildParts }) {
+  const extents = [area?.minX, area?.maxX, area?.minZ, area?.maxZ];
+  if (!extents.every(Number.isFinite) || area.maxX <= area.minX || area.maxZ <= area.minZ) {
+    throw new TypeError('area needs finite minX < maxX and minZ < maxZ; pass e.g. { minX: 0, maxX: 100, minZ: 0, maxZ: 100 }.');
+  }
+  if (!Number.isFinite(tileSize) || tileSize <= 0) throw new RangeError('tileSize must be a finite number > 0; pass e.g. 4.');
   const columns = Math.ceil((area.maxX - area.minX) / tileSize);
   const rows = Math.ceil((area.maxZ - area.minZ) / tileSize);
   if (!(columns * rows <= MAXIMUM_TILES)) {

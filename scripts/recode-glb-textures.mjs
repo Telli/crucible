@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { requireFiniteInRange } from '../src/modeling-limits.js';
 
 const GLB_MAGIC = 0x46546c67;
 const JSON_CHUNK = 0x4e4f534a;
@@ -27,6 +28,8 @@ export function parseArguments(argv) {
     if (!(key in options) || !Number.isFinite(value) || value <= 0) throw new Error(`Unknown or invalid option ${name}.`);
     options[key] = value;
   }
+  requireFiniteInRange('recode-glb-textures', 'webpQuality', options.webpQuality, 1, 100, true);
+  requireFiniteInRange('recode-glb-textures', 'maxTexture', options.maxTexture, 1, 16384, true);
   if (positional.length !== 2) throw new Error('Pass <input.glb> and <output.glb>.');
   return { input: positional[0], output: positional[1], options };
 }
@@ -65,7 +68,7 @@ async function recodeImage(original, options) {
   let pipeline = sharp(original);
   if (longest > options.maxTexture) {
     const scale = options.maxTexture / longest;
-    pipeline = pipeline.resize({ width: Math.round(metadata.width * scale), height: Math.round(metadata.height * scale) });
+    pipeline = pipeline.resize({ width: Math.max(1, Math.round(metadata.width * scale)), height: Math.max(1, Math.round(metadata.height * scale)) });
   }
   const converted = await pipeline.webp({ quality: options.webpQuality, effort: 6, alphaQuality: 90 }).toBuffer();
   return converted.length < original.length ? converted : null;
@@ -100,6 +103,7 @@ export async function recodeGlbTextures(buffer, options) {
   const recodedByView = new Map();
   let imageBytesBefore = 0;
   for (const image of json.images ?? []) {
+    if (image.bufferView === undefined) continue;
     const view = json.bufferViews[image.bufferView];
     const original = binary.subarray(view.byteOffset ?? 0, (view.byteOffset ?? 0) + view.byteLength);
     imageBytesBefore += original.length;

@@ -174,6 +174,7 @@ renderer.render({ eye: [58, 31, 84], target: [-8, 3, -18] });</code></pre>
         <div id="tiers-table">
           <div class="tier-rail" aria-hidden="true"><span class="tier-line"></span><span class="tier-end is-start">Cheapest</span><span class="tier-end is-finish">Best looking</span></div>
           <ol class="tier-cards">
+          <!-- tier-cards:start (written by bench/tiers/make-home-tiers.mjs) -->
           <li class="tier-card" data-tier="draft" data-glaze-ms="0.54-1.04" data-eevee-ms="56-59" data-flip-glaze="0.045-0.188" data-flip-eevee="0.041-0.562">
             <div class="tier-top"><svg class="tier-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></svg><h3>draft</h3></div>
             <p class="tier-for">A quick look while editing</p>
@@ -227,6 +228,7 @@ renderer.render({ eye: [58, 31, 84], target: [-8, 3, -18] });</code></pre>
             </div>
             <p class="tier-plan">Slower to the same noise. Not reached on metal, glass, outdoor-hdri. Vulkan needs the optional Cook package.</p>
           </li>
+          <!-- tier-cards:end -->
           </ol>
         </div>
         <p class="tiers-note">Blender times are one whole EEVEE render call (scene sync, ray tracing off, no GI), not a frame rate. Details: <a href="https://github.com/codepawl/crucible/blob/main/bench/tiers/results/matrix-960.table.md">bench/tiers</a>.</p>

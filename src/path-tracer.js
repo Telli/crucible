@@ -3,7 +3,7 @@ import { cameraFieldOfView, resolveThinLens } from './camera.js';
 import { fresnelSchlick } from './material-layers.js';
 import { pointLightFalloff } from './ray-query.js';
 import { profileGain } from './light-profile.js';
-import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS } from './path-tracer-scene.js';
+import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS, uniqueTriangleCount } from './path-tracer-scene.js';
 import { denoiseRadiance, estimateRelativeNoise } from './path-tracer-denoise.js';
 import { acesChannel, displayColor } from './view-transform.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
@@ -1286,7 +1286,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
       denoiser: options.denoiser, threads,
       backend: options.backend, ...(gpuName ? { gpu: gpuName, gpuCompileSeconds, gpuKernelCompiles } : {}),
       averageSamples, noiseThreshold: options.noiseThreshold, ...(estimatedNoise === null ? {} : { estimatedNoise }),
-      triangles: scene.indices.length / 3, tracedSeconds, seconds: (performance.now() - started) / 1000,
+      triangles: uniqueTriangleCount(scene), tracedSeconds, seconds: (performance.now() - started) / 1000,
       ignored: describeIgnoredFeatures(parts, environment, options.backend, { clipStart: view.clipStart }),
     },
   };
