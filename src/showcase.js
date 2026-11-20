@@ -6,6 +6,7 @@ import { CrucibleRenderer } from './renderer.js';
 import { createSharedTextures, loadGltf } from './gltf.js';
 import { loadHdri } from './hdri.js';
 import { createCascadedShadows } from './cascaded-shadows.js';
+import { showcaseEnvironment } from './dense-lods.js';
 import { applyWaterReflection, attachWaterReflection } from './water-reflection.js';
 
 // The mirror redraws every second lit frame while the camera moves: about 1.3 ms off the orbiting port frame
@@ -337,7 +338,7 @@ async function selectScene(id) {
       ground: false, hdr: true, samples: 4, memoryBudgetMiB: 384,
       ...rendererOptions,
       shadowCascades,
-      environment: { ...(rendererOptions.environment ?? {}), map },
+      environment: showcaseEnvironment(asset.lights, rendererOptions.environment, map),
     });
     const detachReflection = attachWaterReflection(renderer, reflection.surface, WATER_REFLECTION_OPTIONS);
     scene = { frame: { exposure: description.exposure ?? 1, ...(description.frame ?? {}) } };

@@ -29,6 +29,11 @@ export function withSceneFileLights(fileLights = {}, sceneEnvironment = {}) {
   return { ...fileLights, ...sceneEnvironment };
 }
 
+/** The environment a showcase page draws with: the GLB's own lights under the scene's `renderer.environment`, plus the sky `map` (#2666). */
+export function showcaseEnvironment(fileLights, sceneEnvironment, map) {
+  return { ...withSceneFileLights(fileLights, sceneEnvironment), map };
+}
+
 /**
  * The environment and map a scene file lights with. A file without a directional light of its own, whose scene file
  * names no key light, is lit by the HDRI's sun as a shadowed key with no fill, and the sun leaves the map, so it no
