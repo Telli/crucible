@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { mat4 } from 'gl-matrix';
-import { attachGaussianSplats, createGaussianSplats, createGaussianSplatsAsync, GAUSSIAN_SPLAT_SHADER_SOURCES, parseGaussianSplatPly, parseGaussianSplatPlyAsync } from '../src/gaussian-splats.js';
+import { attachGaussianSplats, SPLAT_DEPTH_ALPHA_THRESHOLD, createGaussianSplats, createGaussianSplatsAsync, GAUSSIAN_SPLAT_SHADER_SOURCES, parseGaussianSplatPly, parseGaussianSplatPlyAsync } from '../src/gaussian-splats.js';
 
 const PROPERTIES = ['x', 'y', 'z', 'f_dc_0', 'f_dc_1', 'f_dc_2', 'opacity', 'scale_0', 'scale_1', 'scale_2', 'rot_0', 'rot_1', 'rot_2', 'rot_3'];
 const SQUARE_ROOT_HALF = Math.SQRT1_2;
@@ -131,13 +131,13 @@ function drawOneFrame(alphaCut) {
   return calls;
 }
 
-test('a soft splat scene draws blended without depth write, as before', () => {
+test('a soft splat scene draws blended without depth write, then writes depth in a colourless pass (#2752)', () => {
   const calls = drawOneFrame();
   const names = calls.map(([name]) => name);
   assert.ok(names.includes('enable') && calls.some(([name, mode]) => name === 'enable' && mode === 'BLEND'));
-  assert.deepEqual(calls.filter(([name]) => name === 'depthMask').map(call => call[1]), [false, true]);
-  assert.equal(names.filter(name => name === 'useProgram').length, 1);
-  assert.equal(names.filter(name => name === 'drawArraysInstanced').length, 1);
+  assert.deepEqual(calls.filter(([name]) => name === 'depthMask').map(call => call[1]), [false, true, true]);
+  assert.equal(names.filter(name => name === 'useProgram').length, 2);
+  assert.equal(names.filter(name => name === 'drawArraysInstanced').length, 2);
 });
 
 test('an alphaCut scene draws opaque with depth write, no blending and the cut as a uniform', () => {
@@ -162,6 +162,19 @@ test('soft and opaque scenes on one renderer draw the opaque one first, then the
   renderer.drawBlendBatches({ eye: [0, 0, 0], exposure: 1 });
   const stateChanges = calls.filter(([name, value]) => name === 'depthMask' || name === 'drawArraysInstanced' || (name === 'enable' && value === 'BLEND'));
   assert.deepEqual(stateChanges.map(([name, value]) => (name === 'depthMask' ? `depthMask:${value}` : name)), [
-    'depthMask:true', 'drawArraysInstanced', 'depthMask:false', 'enable', 'drawArraysInstanced', 'depthMask:true',
+    'depthMask:true', 'drawArraysInstanced', 'depthMask:false', 'enable', 'drawArraysInstanced', 'depthMask:true', 'drawArraysInstanced', 'depthMask:true',
   ]);
+});
+
+test('a soft splat scene writes depth with colour writes off, after the blended draw, then restores colour writes (#2752)', () => {
+  const calls = drawOneFrame();
+  const names = calls.map(([name, ...parameters]) => (name === 'colorMask' ? `colorMask:${parameters.join(',')}` : name));
+  const draws = names.flatMap((name, index) => (name === 'drawArraysInstanced' ? [index] : []));
+  assert.equal(draws.length, 2);
+  const maskOffIndex = names.indexOf('colorMask:false,false,false,false');
+  assert.ok(maskOffIndex > draws[0] && maskOffIndex < draws[1], 'colour writes go off between the blended draw and the depth draw');
+  assert.ok(names.indexOf('colorMask:true,true,true,true') > draws[1], 'colour writes come back after the depth draw');
+  const depthMaskBeforeSecondDraw = calls.slice(0, draws[1]).filter(([name]) => name === 'depthMask').at(-1)[1];
+  assert.equal(depthMaskBeforeSecondDraw, true);
+  assert.ok(calls.some(([name, , value]) => name === 'uniform1f' && value === SPLAT_DEPTH_ALPHA_THRESHOLD), 'the depth threshold reaches the shader');
 });
