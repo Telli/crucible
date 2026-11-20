@@ -2517,6 +2517,21 @@ test('the card grips answer the arrow keys, with Ctrl for both cards, and a doub
   assert.equal(savedPreferences().sceneHeight, 0);
 });
 
+test('Ctrl or Meta with a double click on a card grip puts both cards back to automatic in that dimension', testContext => {
+  const { ui, grips } = floatingPanelGrips(testContext, { preferences: { panelsFloating: true, sceneWidth: 400, propertiesWidth: 360, sceneHeight: 300, propertiesHeight: 280 } });
+  dispatch(grips.sceneWidth, 'dblclick', { ctrlKey: true });
+  assert.deepEqual([ui.studio.preferences.sceneWidth, ui.studio.preferences.propertiesWidth], [0, 0], 'both widths');
+  assert.deepEqual([ui.studio.preferences.sceneHeight, ui.studio.preferences.propertiesHeight], [300, 280], 'the heights stay');
+  dispatch(grips.propertiesHeight, 'dblclick', { metaKey: true });
+  assert.deepEqual([ui.studio.preferences.sceneHeight, ui.studio.preferences.propertiesHeight], [0, 0], 'both heights');
+
+  dispatch(grips.sceneWidth, 'keydown', { key: 'ArrowLeft' });
+  dispatch(grips.propertiesWidth, 'keydown', { key: 'ArrowLeft' });
+  dispatch(grips.propertiesWidth, 'dblclick');
+  assert.equal(ui.studio.preferences.propertiesWidth, 0);
+  assert.equal(ui.studio.preferences.sceneWidth, 300, 'a plain double click still resets one card');
+});
+
 test('card sizes are saved, pulled back into their limits on load, and leave the docked column alone', testContext => {
   const { ui, grips, saved, savedPreferences, drag } = floatingPanelGrips(testContext);
   drag(grips.sceneWidth, { fromX: 600, toX: 540 });
@@ -3603,4 +3618,20 @@ test('disposing Studio removes the context loss listeners from the canvas', test
   ui.studio.dispose();
   assert.ok(!listenerTypes().includes('webglcontextlost'));
   assert.ok(!listenerTypes().includes('webglcontextrestored'));
+});
+
+test('in a compact window both cards start right of the tool rail and share the height without overlapping', () => {
+  const rule = selector => {
+    const start = STUDIO_CSS.indexOf(`${selector} {`);
+    assert.ok(start >= 0, `a rule for ${selector}`);
+    return STUDIO_CSS.slice(start, STUDIO_CSS.indexOf('}', start));
+  };
+  const room = 'calc((100% - var(--studio-top) - 72px - 6px) / 2)';
+  const inspector = rule('.crucible-studio[data-compact="true"] .crucible-studio-inspector');
+  assert.ok(inspector.includes('inset-inline: calc(var(--studio-edge) * 2 + var(--studio-rail)) var(--studio-edge);'), 'Properties starts where the Scene card does, right of the rail');
+  assert.ok(!inspector.includes('inset-inline: var(--studio-edge);'), 'not under the rail');
+  assert.ok(inspector.includes('inset-block-end: 72px;'));
+  assert.ok(inspector.includes(`max-block-size: min(320px, ${room});`), 'at most half of the room between the bar and the bottom bar');
+  const outliner = rule('.crucible-studio[data-compact="true"] .crucible-studio-outliner');
+  assert.ok(outliner.includes(`max-block-size: min(300px, ${room});`), 'the Scene card takes the other half, less the gap');
 });

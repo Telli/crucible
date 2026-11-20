@@ -25,6 +25,11 @@ function isRegistered(read, reference) {
   }
 }
 
+// A malformed recipe reaches the normal validation, which says what to pass; nodes that are not a list name nothing to load.
+function recipeNodes(recipe) {
+  return Array.isArray(recipe?.nodes) ? recipe.nodes : [];
+}
+
 function describeReference(reference) {
   return reference.length > 16 ? reference.slice(0, 12) : reference;
 }
@@ -117,7 +122,7 @@ export function createStudioCatalog(hooks = {}) {
 
   async function prepareNow(recipe) {
     const { environments, looks } = catalogLookReferences(recipe);
-    if (recipe?.nodes?.some(node => node?.asset)) {
+    if (recipeNodes(recipe).some(node => node?.asset)) {
       const { assetCopyKey, recipeAssetNeeds } = await import('./agent-scene-assets.js');
       for (const { id, copies } of recipeAssetNeeds(recipe)) {
         await loadAsset(id, copies, assetCopyKey);
@@ -136,7 +141,7 @@ export function createStudioCatalog(hooks = {}) {
     /** Whether the recipe names a catalog file that `prepare` has yet to load. A placement that plays a clip always counts, since it takes a copy of its own. */
     needsLoading(recipe) {
       const { environments, looks } = catalogLookReferences(recipe);
-      const placements = (recipe?.nodes ?? []).map(node => node?.asset).filter(Boolean);
+      const placements = recipeNodes(recipe).map(node => node?.asset).filter(Boolean);
       return placements.some(placement => !loadedAssetIds.has(String(placement.id).toLowerCase()) || ANIMATED_PLACEMENT_FIELDS.some(field => placement[field]))
         || environments.some(reference => !isRegistered(catalogEnvironmentSource, reference))
         || looks.some(reference => !isRegistered(catalogLook, reference));

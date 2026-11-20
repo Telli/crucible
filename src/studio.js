@@ -8,6 +8,7 @@ import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
 import { CrucibleRenderer, studioFloorHeight } from './renderer.js';
 import { exportGlb } from './export.js';
 import { encodePack } from './scene-pack-format.js';
+import { encodePackOrRefuse } from './studio-pack-refusal.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
 import { createStudioCatalog } from './studio-catalog.js';
@@ -2287,7 +2288,7 @@ export function createStudio(container, {
         stripped.push(PACK_UNSUPPORTED_MODULES[moduleName]);
       }
     }
-    const packBytes = encodePack({
+    const packBytes = encodePackOrRefuse(encodePack, {
       shaderModules,
       camera: stillScene.camera,
       environment,

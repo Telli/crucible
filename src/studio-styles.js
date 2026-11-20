@@ -1611,17 +1611,19 @@ export const STUDIO_CSS = `
 
 .crucible-studio[data-compact="true"] .crucible-studio-side { display: contents; }
 .crucible-studio[data-compact="true"] .crucible-studio-side > .crucible-studio-dock { position: absolute; }
+/* Both cards start right of the tool rail and share the room between the bar and the bottom bar, so neither covers the rail and
+   the two never overlap: each takes at most half of that room, less the gap between them. */
 .crucible-studio[data-compact="true"] .crucible-studio-outliner {
   inline-size: min(228px, calc(100% - var(--studio-edge) * 3 - var(--studio-rail)));
-  max-block-size: min(300px, calc(100% - var(--studio-top) - 84px));
+  max-block-size: min(300px, calc((100% - var(--studio-top) - 72px - 6px) / 2));
   z-index: 5;
 }
 .crucible-studio[data-compact="true"] .crucible-studio-inspector {
   inset-block-start: auto;
   inset-block-end: 72px;
-  inset-inline: var(--studio-edge);
+  inset-inline: calc(var(--studio-edge) * 2 + var(--studio-rail)) var(--studio-edge);
   inline-size: auto;
-  max-block-size: min(40%, 320px);
+  max-block-size: min(320px, calc((100% - var(--studio-top) - 72px - 6px) / 2));
 }
 .crucible-studio[data-compact="true"] .crucible-studio-shots { display: none; }
 .crucible-studio[data-compact="true"] .crucible-studio-status {

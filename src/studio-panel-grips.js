@@ -3,7 +3,7 @@
 // Docked, the column is one piece: its inner edge sets the width of both cards and the gap between the cards sets how
 // much of the column the Scene card takes. Floating, each card is its own window: its left edge sets only its width and
 // its bottom edge only its height, and holding Ctrl (Meta on a Mac) works on both cards at once. A drag previews the
-// size and letting go saves it. Arrow keys do the same in steps, and a double click goes back to the automatic size.
+// size and letting go saves it. Arrow keys do the same in steps, and a double click goes back to the automatic size, for both cards with Ctrl.
 
 import {
   STUDIO_CARD_SIZE,
@@ -172,6 +172,9 @@ export function createPanelGrips({ documentReference, createElement, root, outli
     return { [`${card}Width`]: start[`${card}Width`] + growth };
   }
 
+  const resetBothWidths = () => ({ sceneWidth: STUDIO_CARD_SIZE.automatic, propertiesWidth: STUDIO_CARD_SIZE.automatic });
+  const resetBothHeights = () => ({ sceneHeight: STUDIO_CARD_SIZE.automatic, propertiesHeight: STUDIO_CARD_SIZE.automatic });
+
   const gripBehaviours = [
     // The column is on the right, so its inner edge moving left makes it wider.
     {
@@ -204,6 +207,7 @@ export function createPanelGrips({ documentReference, createElement, root, outli
       startSizes: currentWidths,
       changesAfterGrowth: (start, growth, bothCards) => cardWidthChanges('scene', start, growth, bothCards),
       resetChanges: () => ({ sceneWidth: STUDIO_CARD_SIZE.automatic }),
+      resetBothCardsChanges: resetBothWidths,
     },
     {
       grip: propertiesWidthGrip,
@@ -214,6 +218,7 @@ export function createPanelGrips({ documentReference, createElement, root, outli
       startSizes: currentWidths,
       changesAfterGrowth: (start, growth, bothCards) => cardWidthChanges('properties', start, growth, bothCards),
       resetChanges: () => ({ propertiesWidth: STUDIO_CARD_SIZE.automatic }),
+      resetBothCardsChanges: resetBothWidths,
     },
     // Ctrl on the Scene card's bottom edge is the docked split: the Properties card takes what the Scene card leaves.
     {
@@ -228,6 +233,7 @@ export function createPanelGrips({ documentReference, createElement, root, outli
         return bothCards ? { sceneHeight, propertiesHeight: STUDIO_CARD_SIZE.automatic } : { sceneHeight };
       },
       resetChanges: () => ({ sceneHeight: STUDIO_CARD_SIZE.automatic }),
+      resetBothCardsChanges: resetBothHeights,
     },
     {
       grip: propertiesHeightGrip,
@@ -238,11 +244,12 @@ export function createPanelGrips({ documentReference, createElement, root, outli
       startSizes: currentHeights,
       changesAfterGrowth: (start, growth) => ({ propertiesHeight: Math.min(start.propertiesHeight + growth, maximumPropertiesHeight()) }),
       resetChanges: () => ({ propertiesHeight: STUDIO_CARD_SIZE.automatic }),
+      resetBothCardsChanges: resetBothHeights,
     },
   ];
 
   function wireGrip(behaviour) {
-    const { grip, axis, keyStep, growKey, shrinkKey, startSizes, changesAfterGrowth, resetChanges } = behaviour;
+    const { grip, axis, keyStep, growKey, shrinkKey, startSizes, changesAfterGrowth, resetChanges, resetBothCardsChanges } = behaviour;
     const pixelsToUnits = behaviour.pixelsToUnits ?? (pixels => pixels);
     let drag = null;
     grip.addEventListener('pointerdown', event => {
@@ -290,7 +297,10 @@ export function createPanelGrips({ documentReference, createElement, root, outli
       event.stopPropagation();
       changePreferences(changesAfterGrowth(startSizes(), direction * keyStep, bothCardsRequested(event)));
     });
-    grip.addEventListener('dblclick', () => changePreferences(resetChanges()));
+    grip.addEventListener('dblclick', event => {
+      const useBothCards = bothCardsRequested(event) && resetBothCardsChanges;
+      changePreferences(useBothCards ? resetBothCardsChanges() : resetChanges());
+    });
   }
 
   gripBehaviours.forEach(wireGrip);
