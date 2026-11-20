@@ -748,6 +748,10 @@ function depthSortedNodes(nodes) {
   return ordered;
 }
 
+const AXIS_KEYS = Object.freeze(['x', 'y', 'z']);
+const MODAL_TOOL_BY_KEY = Object.freeze({ g: 'translate', r: 'rotate', s: 'scale' });
+const MODAL_FREE_AXIS = Object.freeze({ translate: 'screen', scale: 'uniform' });
+const MODAL_TOOL_WORDS = Object.freeze({ translate: 'Move', rotate: 'Rotate', scale: 'Scale' });
 const VIEW_PRESET_BY_KEY = Object.freeze({ 1: 'front', 3: 'right', 7: 'top' });
 
 // One row of the Settings dialog each: the preference, what the row is called and, for a choice, how a value reads.
@@ -830,6 +834,9 @@ export function createStudio(container, {
   let isVisible = true;
   let insideDraw = false;
   let pointerState = null;
+  let viewportPointer = null;
+  let modalTransform = null;
+  let swallowContextMenu = false;
   let statusTimer = 0;
   let liveDeltaLabel = '';
 
@@ -1766,7 +1773,10 @@ export function createStudio(container, {
   const shortcutsHeading = createElement(documentReference, 'h2', { id: 'crucible-studio-shortcuts-title', textContent: 'Studio keyboard shortcuts' });
   const shortcutEntries = [
     ['Q', 'Select'],
-    ['G / R / S / T', 'Move / Rotate / Scale / Snap'],
+    ['G / R / S', 'Pick up to move / rotate / scale'],
+    ['X / Y / Z', 'While holding: keep to that axis'],
+    ['Click or Enter / Esc', 'While holding: place / put back'],
+    ['T', 'Snap to a surface'],
     ['Shift + drag', 'Snap to a step or an angle'],
     ['Shift+A', 'Add an object or a light'],
     ['Shift+D / Ctrl+D', 'Duplicate'],
@@ -2657,8 +2667,153 @@ export function createStudio(container, {
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
     setButtonIcon(playButton, playing ? 'pause' : 'play', playing ? 'Pause (Space)' : 'Play (Space)');
     timeOutput.textContent = `${controller.motionTime.toFixed(1)} / ${duration.toFixed(1)} s`;
-    hintBar.textContent = liveDeltaLabel;
+    syncHintBar();
     syncFileBanner();
+  }
+
+  // While a key holds the object, the bar names the keys that act on it; a handle drag shows only how far it has gone.
+  function syncHintBar() {
+    if (!modalTransform) {
+      hintBar.textContent = liveDeltaLabel;
+      return;
+    }
+    const chip = (keys, word) => createElement(
+      documentReference,
+      'span',
+      { className: 'crucible-studio-hint-chip' },
+      createElement(documentReference, 'kbd', { textContent: keys }),
+      word,
+    );
+    const lockedAxis = modalTransform.locked ? modalTransform.axis : null;
+    const axisChips = AXIS_KEYS.map(axis => {
+      const key = createElement(documentReference, 'kbd', { textContent: axis.toUpperCase(), dataset: { axis } });
+      key.setAttribute('aria-pressed', lockedAxis === axis ? 'true' : 'false');
+      return key;
+    });
+    hintBar.replaceChildren(
+      createElement(documentReference, 'span', { className: 'crucible-studio-hint-delta', textContent: (liveDeltaLabel || MODAL_TOOL_WORDS[modalTransform.tool]).replace(/^SCREEN/, MODAL_TOOL_WORDS.translate) }),
+      createElement(documentReference, 'span', { className: 'crucible-studio-hint-chip' }, ...axisChips, 'axis'),
+      chip('Click', 'place'),
+      chip('Esc', 'cancel'),
+    );
+  }
+
+  // Blender's G, R and S: the key picks the object up under the pointer, with no handle to aim at. X, Y or Z keeps
+  // it on that axis of the object, a click or Enter places it and Esc or a right click puts it back.
+  function modalFreeAxis(tool) {
+    return tool === 'rotate' ? controller.axisFacingView() : MODAL_FREE_AXIS[tool];
+  }
+
+  function beginModalDrag(axis, locked) {
+    controller.beginGizmoDrag(axis, modalTransform.startX, modalTransform.startY);
+    modalTransform.axis = axis;
+    modalTransform.locked = locked;
+    if (modalTransform.lastX !== modalTransform.startX || modalTransform.lastY !== modalTransform.startY) {
+      controller.updateGizmoDrag(modalTransform.lastX, modalTransform.lastY, { shiftKey: modalTransform.shiftKey });
+    }
+  }
+
+  function onModalPointerMove(event) {
+    const coordinates = localCoordinates(event);
+    modalTransform.lastX = coordinates.x;
+    modalTransform.lastY = coordinates.y;
+    modalTransform.shiftKey = event.shiftKey;
+    controller.updateGizmoDrag(coordinates.x, coordinates.y, { shiftKey: event.shiftKey });
+  }
+
+  // The press that places or cancels belongs to the move: it must not also orbit, select or press a button under it.
+  function onModalPointerDown(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    swallowContextMenu = event.button !== 0;
+    finishModalTransform(event.button === 0);
+  }
+
+  function onModalContextMenu(event) {
+    if (modalTransform || swallowContextMenu) {
+      event.preventDefault();
+      swallowContextMenu = false;
+    }
+  }
+
+  function onModalBlur() {
+    finishModalTransform(false);
+  }
+
+  function startModalTransform(tool) {
+    if (modalTransform || pointerState || !viewportPointer || !controller.selectedNodeId) {
+      return false;
+    }
+    stopFlight();
+    modalTransform = {
+      tool,
+      axis: null,
+      locked: false,
+      startX: viewportPointer.x,
+      startY: viewportPointer.y,
+      lastX: viewportPointer.x,
+      lastY: viewportPointer.y,
+      shiftKey: false,
+    };
+    root.dataset.modal = tool;
+    beginModalDrag(modalFreeAxis(tool), false);
+    documentReference.addEventListener('pointermove', onModalPointerMove);
+    documentReference.addEventListener('pointerdown', onModalPointerDown, true);
+    documentReference.defaultView?.addEventListener?.('blur', onModalBlur);
+    syncHintBar();
+    return true;
+  }
+
+  function finishModalTransform(confirmed) {
+    if (!modalTransform) {
+      return;
+    }
+    const finishedTool = modalTransform.tool;
+    modalTransform = null;
+    delete root.dataset.modal;
+    documentReference.removeEventListener('pointermove', onModalPointerMove);
+    documentReference.removeEventListener('pointerdown', onModalPointerDown, true);
+    documentReference.defaultView?.removeEventListener?.('blur', onModalBlur);
+    if (confirmed) {
+      controller.endGizmoDrag();
+    } else if (controller.cancelGizmoDrag()) {
+      announce(`${MODAL_TOOL_WORDS[finishedTool]} cancelled`);
+    }
+    syncHintBar();
+  }
+
+  // The same axis key again lets the object go free; another one moves the lock there. The move restarts from where
+  // the key picked the object up, so a placed move is still one undo step.
+  function lockModalAxis(axis) {
+    const release = modalTransform.locked && modalTransform.axis === axis;
+    // No axis while the drag is swapped: the change this cancel reports must not read as the object being let go.
+    modalTransform.axis = null;
+    controller.cancelGizmoDrag();
+    beginModalDrag(release ? modalFreeAxis(modalTransform.tool) : axis, !release);
+    syncHintBar();
+  }
+
+  function handleModalKey(event) {
+    const lowerKey = event.key.toLowerCase();
+    if (event.key === 'Shift') {
+      return;
+    }
+    event.preventDefault();
+    if (event.key === 'Escape') {
+      finishModalTransform(false);
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      finishModalTransform(true);
+    } else if (AXIS_KEYS.includes(lowerKey)) {
+      lockModalAxis(lowerKey);
+    } else if (MODAL_TOOL_BY_KEY[lowerKey] && MODAL_TOOL_BY_KEY[lowerKey] !== modalTransform.tool) {
+      finishModalTransform(false);
+      pickUpWithTool(MODAL_TOOL_BY_KEY[lowerKey]);
+    }
+  }
+
+  function pickUpWithTool(tool) {
+    controller.setTool(tool);
+    startModalTransform(tool);
   }
 
   // Viewport Interaction: Gizmo Drag, Pick, Orbit, Pan, Zoom, File Drop
@@ -2747,6 +2902,13 @@ export function createStudio(container, {
       }
     }
   }
+  viewportElement.addEventListener('pointermove', event => {
+    viewportPointer = localCoordinates(event);
+  });
+  viewportElement.addEventListener('pointerleave', () => {
+    viewportPointer = null;
+  });
+  documentReference.addEventListener('contextmenu', onModalContextMenu, true);
   viewportElement.addEventListener('pointerup', finishPointer);
   viewportElement.addEventListener('pointercancel', finishPointer);
   canvas.addEventListener('contextmenu', event => event.preventDefault());
@@ -2789,7 +2951,14 @@ export function createStudio(container, {
   }
 
   const onWindowKeyDown = async event => {
-    if (!root.isConnected || isEditableTarget(event.target)) {
+    if (!root.isConnected) {
+      return;
+    }
+    if (modalTransform) {
+      handleModalKey(event);
+      return;
+    }
+    if (isEditableTarget(event.target)) {
       return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
@@ -2836,9 +3005,7 @@ export function createStudio(container, {
     else if (event.key === 'Escape') {
       if (controller.selectedNodeId) controller.selectNode(null);
     } else if (lowerKey === 'q') controller.setTool('select');
-    else if (lowerKey === 'g') controller.setTool('translate');
-    else if (lowerKey === 'r') controller.setTool('rotate');
-    else if (lowerKey === 's') controller.setTool('scale');
+    else if (MODAL_TOOL_BY_KEY[lowerKey]) pickUpWithTool(MODAL_TOOL_BY_KEY[lowerKey]);
     else if (lowerKey === 't') controller.setTool('snap');
     else if (lowerKey === 'f') flyToSelection();
     else if (event.key === '5') controller.toggleCameraProjection();
@@ -2874,6 +3041,10 @@ export function createStudio(container, {
 
   handleChange = detail => {
     selectionReadoutStale = true;
+    // The object a key is holding is gone or no longer the selection: let go without touching the new scene.
+    if (modalTransform && modalTransform.axis && !controller.dragging) {
+      finishModalTransform(false);
+    }
     if (detail.deltaLabel !== undefined) {
       liveDeltaLabel = detail.deltaLabel;
     }
@@ -2958,6 +3129,8 @@ export function createStudio(container, {
       agentPresence.dispose();
       if (frameHandle) cancelAnimationFrame(frameHandle);
       stopFlight();
+      finishModalTransform(false);
+      documentReference.removeEventListener('contextmenu', onModalContextMenu, true);
       documentReference.removeEventListener('keydown', onWindowKeyDown);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
       resizeObserver?.disconnect();

@@ -2352,3 +2352,64 @@ test('panels float over the scene by default and dock to the window edges from t
   assert.ok(viewportRule.startsWith(docked), 'the docked viewport has a rule of its own');
   assert.ok(viewportRule.slice(0, viewportRule.indexOf('}')).includes('inset: var(--studio-dock-bar) var(--studio-dock-side) 0 var(--studio-rail)'), 'the viewport is the room the panels leave, so the scene is drawn at that size');
 });
+
+test('G picks the selected object up under the pointer; X locks an axis, Esc puts it back and a click places it', testContext => {
+  const ui = mountStudio(testContext);
+  const hintBar = ui.root.querySelector('.crucible-studio-hintbar');
+  const heroNode = () => ui.controller.exportRecipe().nodes.find(node => node.id === ui.controller.selectedNodeId);
+  const press = key => dispatch(ui.dom.document, 'keydown', { key });
+
+  // With nothing selected, or the pointer away from the viewport, the key only switches the tool.
+  press('g');
+  assert.equal(ui.root.dataset.modal, undefined);
+  ui.controller.selectNode(ui.controller.exportRecipe().nodes[0].id);
+  press('g');
+  assert.equal(ui.root.dataset.modal, undefined);
+
+  const before = structuredClone(heroNode().translation);
+  dispatch(ui.viewport, 'pointermove', { clientX: 300, clientY: 200 });
+  press('g');
+  assert.equal(ui.root.dataset.modal, 'translate');
+  assert.equal(ui.controller.dragging, true);
+  dispatch(ui.dom.document, 'pointermove', { clientX: 380, clientY: 150 });
+  assert.notDeepEqual(heroNode().translation, before);
+  assert.equal(hintBar.querySelectorAll('kbd').filter(key => key.getAttribute('aria-pressed') === 'true').length, 0);
+
+  press('x');
+  const pressed = hintBar.querySelectorAll('kbd').filter(key => key.getAttribute('aria-pressed') === 'true');
+  assert.deepEqual(pressed.map(key => key.textContent), ['X']);
+  assert.equal(heroNode().translation[1], before[1]);
+  assert.equal(heroNode().translation[2], before[2]);
+  press('x');
+  assert.equal(hintBar.querySelectorAll('kbd').filter(key => key.getAttribute('aria-pressed') === 'true').length, 0);
+
+  press('Escape');
+  assert.equal(ui.root.dataset.modal, undefined);
+  assert.deepEqual(heroNode().translation, before);
+  assert.equal(ui.controller.canUndo, false);
+  assert.equal(hintBar.textContent, '');
+
+  // Placed with a click: one undo step takes the whole move back, axis changes included.
+  press('g');
+  dispatch(ui.dom.document, 'pointermove', { clientX: 380, clientY: 150 });
+  press('y');
+  press('z');
+  dispatch(ui.dom.document, 'pointermove', { clientX: 420, clientY: 120 });
+  const placing = dispatch(ui.dom.document, 'pointerdown', { button: 0, clientX: 420, clientY: 120 });
+  assert.equal(placing.defaultPrevented, true);
+  assert.equal(ui.root.dataset.modal, undefined);
+  assert.notDeepEqual(heroNode().translation, before);
+  ui.controller.undo();
+  assert.deepEqual(heroNode().translation, before);
+  assert.equal(ui.controller.canUndo, false);
+
+  // R while holding swaps the tool; a right press cancels.
+  press('s');
+  assert.equal(ui.root.dataset.modal, 'scale');
+  press('r');
+  assert.equal(ui.root.dataset.modal, 'rotate');
+  assert.equal(ui.controller.tool, 'rotate');
+  dispatch(ui.dom.document, 'pointerdown', { button: 2, clientX: 420, clientY: 120 });
+  assert.equal(ui.root.dataset.modal, undefined);
+  assert.equal(ui.controller.canUndo, false);
+});

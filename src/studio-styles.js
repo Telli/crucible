@@ -774,6 +774,27 @@ export const STUDIO_CSS = `
   z-index: 3;
 }
 .crucible-studio-hintbar:empty { display: none; }
+/* While a key holds the object the pill lists the keys that act on it. */
+.crucible-studio[data-modal] .crucible-studio-hintbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 14px;
+}
+.crucible-studio[data-modal] .crucible-studio-viewport { cursor: move; }
+.crucible-studio-hint-delta { min-inline-size: 9ch; }
+.crucible-studio-hint-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--studio-font);
+  font-size: 12px;
+  color: var(--studio-muted);
+}
+.crucible-studio-hintbar kbd[aria-pressed="true"] {
+  background: var(--studio-text);
+  color: var(--studio-panel);
+}
 .crucible-studio-status {
   position: absolute;
   inset-inline-start: 50%;

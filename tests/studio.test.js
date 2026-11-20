@@ -828,3 +828,34 @@ test('orthographic zoom scales the view size and Studio history keeps only the n
   assert.equal(undone, 3);
   controller.dispose();
 });
+
+test('cancelling a drag puts the object back and leaves undo and redo as they were', () => {
+  const kinds = [];
+  const controller = createStudioController({ scene: createAgentScene(makeStudioRecipe()), viewportWidth: 800, viewportHeight: 600, onChange: detail => kinds.push(detail.kind) });
+  const heroNode = () => controller.exportRecipe().nodes.find(node => node.id === 'hero');
+  assert.equal(controller.cancelGizmoDrag(), false);
+  assert.equal(controller.axisFacingView(), 'z');
+
+  controller.selectNode('hero');
+  controller.setTool('translate');
+  const before = structuredClone(heroNode());
+  const pivot = controller.projectWorldPoint(controller.gizmoHandles().pivot);
+  assert.equal(controller.dragging, false);
+  controller.beginGizmoDrag('screen', pivot.x, pivot.y);
+  assert.equal(controller.dragging, true);
+  controller.updateGizmoDrag(pivot.x + 90, pivot.y - 40);
+  assert.notDeepEqual(heroNode().translation, before.translation);
+  assert.equal(controller.cancelGizmoDrag(), true);
+  assert.equal(controller.dragging, false);
+  assert.deepEqual(heroNode().translation, before.translation);
+  assert.deepEqual(heroNode().rotation, before.rotation);
+  assert.deepEqual(heroNode().scale, before.scale);
+  assert.equal(controller.canUndo, false);
+  assert.equal(controller.canRedo, false);
+  assert.equal(kinds.at(-1), 'transformCancel');
+
+  // A free turn uses the axis of the object that points most nearly at the camera.
+  controller.orbitCamera({ deltaElevation: 2 });
+  assert.equal(controller.axisFacingView(), 'y');
+  controller.dispose();
+});
