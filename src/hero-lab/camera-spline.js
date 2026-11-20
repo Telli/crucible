@@ -12,6 +12,10 @@ function blendVectors(before, from, to, after, amount) {
 }
 
 export function createCameraSpline(keys) {
+  if (keys.length < 2) throw new RangeError('Pass at least two camera keys, each with at, eye, target and fov.');
+  for (let index = 1; index < keys.length; index++) {
+    if (!(keys[index].at > keys[index - 1].at)) throw new RangeError('Camera key times must rise, such as at: 0, then at: 1.');
+  }
   return function sample(progress) {
     const bounded = Math.max(0, Math.min(1, progress));
     let index = 0;

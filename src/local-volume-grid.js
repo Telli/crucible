@@ -4,8 +4,6 @@ import { VOLUME_GRID_SEQUENCE_MAX_FRAMES } from './volume-grid-sequence.js';
 // Resolves a local volume of shape "grid" (#1045). It loads on demand (the volumeGrid module), so a scene without grid volumes does not carry it.
 export const LOCAL_VOLUME_GRID_MAXIMUM_STEPS = 128;
 
-const RESOLVED_DEFAULTS = Object.freeze({ falloff: 0, noiseAmount: 0, noiseScale: 1, noiseOctaves: 1 });
-
 function resolveFrameNames(frames, label) {
   if (!Array.isArray(frames) || frames.length < 1 || frames.length > VOLUME_GRID_SEQUENCE_MAX_FRAMES) {
     throw new RangeError(`${label}.frames must be a list of 1 to ${VOLUME_GRID_SEQUENCE_MAX_FRAMES} grid names`);
@@ -31,7 +29,8 @@ function resolveFlameTemperature(input, label) {
 }
 
 // A grid volume is a box (center, size) whose density, temperature and flame come from a registered grid (volume-grid.js). Its size defaults to the
-// grid file's own size once the grid is bound. The faded edge and the noise belong to the other shapes: a grid has its own detail.
+// grid file's own size once the grid is bound. The faded edge belongs to the other shapes: a grid has its own edge.
+// noiseAmount, noiseScale and noiseOctaves add fine detail on top of the grid's density and flame (#2289): a grid of 32 cells a side shows soft blobs close up.
 export function resolveGridVolume(input, resolved, label) {
   const animated = input.frames !== undefined;
   if (animated) {
@@ -47,10 +46,8 @@ export function resolveGridVolume(input, resolved, label) {
   for (const field of ['part', 'fit', 'radius']) {
     if (input[field] !== undefined) throw new TypeError(`${label}.${field} does not apply to a grid volume; it takes center, size and grid`);
   }
-  // A resolved volume carries these three at their defaults, and a scene resolves its look again (a rebuild, an export read back), so the defaults pass.
-  for (const [field, value] of Object.entries(RESOLVED_DEFAULTS)) {
-    if (input[field] !== undefined && input[field] !== value) throw new TypeError(`${label}.${field} does not apply to a grid volume: its detail comes from the grid`);
-  }
+  // A resolved volume carries falloff 0, and a scene resolves its look again (a rebuild, an export read back), so 0 passes.
+  if (input.falloff !== undefined && input.falloff !== 0) throw new TypeError(`${label}.falloff does not apply to a grid volume: its edge comes from the grid`);
   const steps = finiteRange(input.steps ?? 64, 4, LOCAL_VOLUME_GRID_MAXIMUM_STEPS, `${label}.steps`);
   if (!Number.isInteger(steps)) throw new RangeError(`${label}.steps must be an integer`);
   return {

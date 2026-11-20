@@ -180,3 +180,18 @@ test('the web export carries the placed assets and the page loads them by URL', 
   assert.deepEqual([...loaded.keys()].sort(), [assetCopyKey(HERO_ID, 0), assetCopyKey(HERO_ID, 1), assetCopyKey(SOURCE_ID, 0)].sort());
   await assert.rejects(loadGameAssets(recipe, { [HERO_ID]: 'hero.glb' }, async () => files['hero.glb']), /assetUrls has no URL for it/);
 });
+
+// Past the copy limit the scene used to fail later with "copy 18 is not loaded", which did not say why (#2403).
+test('loadGameAssets refuses more animated placements of one asset than the copy limit, and names the limit', async () => {
+  const nodes = Array.from({ length: 18 }, (unused, index) => ({ id: `hero${index}`, asset: { id: HERO_ID, clip: { index: 0 } } }));
+  let fetched = 0;
+  const fetchBytes = async () => {
+    fetched += 1;
+    return new ArrayBuffer(0);
+  };
+  await assert.rejects(
+    loadGameAssets({ nodes }, { [HERO_ID]: 'hero.glb' }, fetchBytes),
+    /asset cdcdcdcdcdcd needs 19 decoded copies \(one for the still placements and one for each of its 18 animated, driven or posed placements\); a game loads at most 18\. Animate at most 17 placements of it/,
+  );
+  assert.equal(fetched, 0, 'refused before any download');
+});

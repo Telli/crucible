@@ -105,6 +105,14 @@ function knownKeys(value, allowed, label) {
   }
 }
 
+// An edit that names no field is almost always a typo or a dropped field name, so it fails and lists what the operation takes
+// instead of spending a revision on a change that changed nothing.
+function requireChange(namesAField, operation, acceptedFields) {
+  if (!namesAField) {
+    throw invalidField('operation', operation, `${operation.type} with at least one field to change: ${acceptedFields.join(', ')}`);
+  }
+}
+
 function resolveLimits(input) {
   knownKeys(input, Object.keys(DEFAULT_LIMITS), 'limits');
   const result = { ...DEFAULT_LIMITS, ...input };
@@ -454,9 +462,13 @@ function nodeFrom(value) {
 /** Sets the given camera fields on a camera; a focal length replaces fov and a fov replaces focal length and sensor, never both. */
 export function applyCameraFields(camera, fields) {
   rejectFovWithFocalLength(fields);
+  rejectFocusDistanceWithoutFStop(fields);
   for (const field of CAMERA_FIELDS) {
     if (Object.hasOwn(fields, field)) camera[field] = fields[field];
   }
+  // null clears: fStop takes focusDistance with it, focusDistance clears only itself.
+  if (fields.fStop === null) delete camera.fStop;
+  if (fields.fStop === null || fields.focusDistance === null) delete camera.focusDistance;
   if (Object.hasOwn(fields, 'focalLength')) delete camera.fov;
   // Back to a perspective view: the old orthographic size no longer applies.
   if (fields.projection === 'perspective' && !Object.hasOwn(fields, 'orthoScale')) delete camera.orthoScale;
@@ -465,6 +477,12 @@ export function applyCameraFields(camera, fields) {
     delete camera.sensorWidth;
   }
   return camera;
+}
+
+function rejectFocusDistanceWithoutFStop(fields) {
+  if (fields.fStop === null && fields.focusDistance !== undefined && fields.focusDistance !== null) {
+    throw invalidField('camera.focusDistance', fields.focusDistance, 'null or left out: fStop null already clears focusDistance; to keep depth of field pass a number fStop such as 2.8');
+  }
 }
 
 function rejectFovWithFocalLength(fields) {
@@ -1137,7 +1155,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
   }
   Object.assign(recipe, normalizeAgentLook(look));
   if (recipe.camera.fStop !== undefined && recipe.effects?.depthOfField.blur > 0) {
-    throw invalidField('camera.fStop', recipe.camera.fStop, 'a camera without effects.depthOfField.blur above 0; set blur to 0 or remove fStop');
+    throw invalidField('camera.fStop', recipe.camera.fStop, 'a camera without effects.depthOfField.blur above 0; set blur to 0 or set-camera fStop null');
   }
   checkLightLinkNames(recipe);
   checkLineNodeNames(recipe);
@@ -2324,6 +2342,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           // Spot and area lights, cascades and sun links are absent from a recipe until it sets them.
           const optionalFields = lookField === 'environment' ? ['ground', 'spotLights', 'areaLights', 'shadowCascades', 'localVolumes', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'hdri', 'sky'] : lookField === 'effects' ? postStepSupport.fields : [];
           knownKeys(patch, [...Object.keys(candidate[lookField]), ...optionalFields], lookField);
+          requireChange(Object.keys(patch).length > 0, operation, [...Object.keys(candidate[lookField]), ...optionalFields]);
           const nestedField = lookField === 'environment' ? 'volumeFog' : 'bloom';
           const merged = { ...candidate[lookField], ...(lookField === 'environment' ? environmentPatchWithSetup(patch) : patch) };
           if (nestedField && Object.hasOwn(patch, nestedField)) {
@@ -2450,6 +2469,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         if (!target) {
           throw invalidField('id', operation.id, `the ID of an existing ${operation.type === 'set-node' ? 'node' : 'material'}; scene_inspect lists them, or add it first with an add operation`);
         }
+        requireChange(Object.keys(operation).some(key => fields.includes(key)), operation, fields);
         if (operation.type === 'set-camera') {
           applyCameraFields(target, operation);
         } else {

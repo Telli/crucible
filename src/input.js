@@ -231,6 +231,8 @@ export function createInput(options = {}) {
       for (const { control: controlName, scale } of axis.bindings) {
         total += (controls.get(controlName)?.value ?? 0) * scale;
       }
+      // Huge scales on a control past 1 can make Infinity minus Infinity; NaN would stay in the smoothed value for good (#2403).
+      if (Number.isNaN(total)) total = 0;
       const target = applyDeadZone(Math.max(-1, Math.min(1, total)), axis.deadZone);
       axis.smoothed = axis.smoothing === 0 ? target : axis.smoothed + (target - axis.smoothed) * (1 - axis.smoothing);
       axes.set(name, axis.smoothed);

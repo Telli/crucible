@@ -62,6 +62,14 @@ test('PFM files keep the pixels and store rows bottom to top', () => {
   assert.throws(() => decodePfm(bytes, 5, 3), /not the expected/);
 });
 
+test('decodePfm refuses a truncated pixel body and names both sizes', () => {
+  const pixels = Float32Array.from({ length: 4 * 3 * 3 }, (_, index) => index / 7);
+  const bytes = encodePfm(pixels, 4, 3);
+  const truncated = bytes.subarray(0, bytes.length - 4);
+  assert.throws(() => decodePfm(truncated, 4, 3), /truncated PFM: 140 pixel bytes for 4 x 3, expected 144/);
+  assert.deepEqual(decodePfm(bytes, 4, 3), pixels);
+});
+
 test('the installed OIDN removes noise from a flat image and gives the same bytes twice', { skip: findOidnBinary() ? false : 'the oidnDenoise binary is not fetched' }, async () => {
   assert.ok(existsSync(findOidnBinary()));
   const width = 64;

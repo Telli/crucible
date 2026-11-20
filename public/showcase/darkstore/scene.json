@@ -4,7 +4,7 @@
   "blurb": "A dark store: aisles of shelving packed for delivery.",
   "glb": "/showcase/darkstore/scene.glb",
   "hdri": "/showcase/darkstore/sky.hdr",
-  "hdriOptions": { "intensity": 0.6, "rotation": 0, "showBackground": true, "backgroundBlur": 0.6 },
+  "hdriOptions": { "intensity": 0.6, "rotation": 1.5708, "showBackground": true, "backgroundBlur": 0.6 },
   "gltfOptions": { "maxTexturePixels": 67108864 },
   "exposure": 1,
   "eye": [8, 9, 3],

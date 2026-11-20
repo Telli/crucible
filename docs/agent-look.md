@@ -362,6 +362,10 @@ Derived projectors do not automatically fit scene or fog bounds.
 
 Recipes always derive the eye from `lightDirection`, so shadows follow the light. A custom adapter that passes its own `shadowBounds.eye` to the renderer overrides that: the eye decides where shadows fall, and `lightDirection` only moves the shading. When the two differ by 10 degrees or more, the renderer lists a `shadow-light-direction-mismatch` warning in `renderer.diagnostics`. Leave `eye` out of `shadowBounds` to make the shadow follow the light.
 
+`renderer.render({ effects })` draws `depthOfField` (`blur`, `focusDistance`), `motionBlur` (`shutter`, `objects`), `bloom` (`strength`, `threshold`, `radius`), `saturation`, `contrast`, `temperature`, `vignette`, `grain` and `ambientOcclusion` with `ambientOcclusionRadius`. Any other key, or a field inside one of those groups it does not read (such as `depthOfField.aperture`), is not drawn, and the renderer lists an `effect-not-drawn` warning for it in `renderer.diagnostics`. `exposure` belongs on the frame (`render({ exposure })`). The post steps (`glare`, `lensDistortion`, `stylize`, `distortion`, `flash`, `colorBalance`, `composite`) run only in a scene recipe's render, not in a bare `renderer.render` call.
+
+The renderer refuses a `lightDirection` holding NaN or Infinity, and a shadow view whose `extent` is 0 or whose `far` is not above `near`, with an error that names the value to pass.
+
 ## Validation boundary
 
 Every object rejects unknown keys.
