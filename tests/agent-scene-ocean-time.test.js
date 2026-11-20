@@ -73,8 +73,11 @@ test('per-frame ocean work stays inside the ocean work limit', () => {
 test('an edit that does not touch the sea keeps the posed sea part, the topology and the flush ranks', async () => {
   const { flushOrderOf } = await import('../src/depth-layer.js');
   const recipe = seaRecipe();
-  recipe.geometries.push({ id: 'box', type: 'box', bevel: 0 });
+  // The track starts at ocean time 1, so the posed sea lies flush with a still sea built at time 1 and the rest sea does not.
+  recipe.motion.tracks[0].keyframes[0].value = 1;
+  recipe.geometries.push({ id: 'box', type: 'box', bevel: 0 }, { ...recipe.geometries[0], id: 'still', stack: [{ op: 'subdivide', levels: 3 }, { ...OCEAN, time: 1 }] });
   recipe.nodes.push(
+    { id: 'still', geometry: 'still', material: 'water' },
     { id: 'wall', geometry: 'box', material: 'water', translation: [0, 5, 0], scale: [10, 4, 0.2] },
     { id: 'sign', geometry: 'box', material: 'water', translation: [0, 5, 0], scale: [1, 0.5, 0.2] },
     { id: 'crate', geometry: 'box', material: 'water', translation: [8, 1, 8] },
@@ -84,6 +87,7 @@ test('an edit that does not touch the sea keeps the posed sea part, the topology
   const sea = partNamed('surface');
   const signRanks = flushOrderOf(partNamed('sign')).ranges.map(range => range.rank);
   const drawnOrders = scene.parts.map(flushOrderOf);
+  assert.ok(flushOrderOf(partNamed('still')), 'the still sea is ranked against the posed sea');
   const flush = scene.inspect().flush;
   const topology = scene.topologyRevision;
   scene.apply([{ type: 'set-camera', eye: [25, 18, 30], target: [0, 0, 0] }], { expectedRevision: scene.revision });
