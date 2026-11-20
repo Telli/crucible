@@ -474,7 +474,12 @@ function intersect(scene, originX, originY, originZ, directionX, directionY, dir
   return false;
 }
 
-function occluded(scene, originX, originY, originZ, directionX, directionY, directionZ, limit, hit) {
+/** True when the part is the glowing lamp mesh of the point light `lightBit` (src/lamp-mesh.js), which its own shadow rays pass through. */
+function isOwnLampMesh(scene, materialIndex, lightBit) {
+  return lightBit >= 0 && ((scene.lampLightMasks?.[materialIndex] ?? 0) >> lightBit & 1) === 1;
+}
+
+function occluded(scene, originX, originY, originZ, directionX, directionY, directionZ, limit, hit, lightBit = -1) {
   let startX = originX;
   let startY = originY;
   let startZ = originZ;
@@ -485,10 +490,14 @@ function occluded(scene, originX, originY, originZ, directionX, directionY, dire
   for (let attempt = 0; attempt < ALPHA_STEP_LIMIT; attempt++) {
     const found = scene.tracer.trace(startX, startY, startZ, directionX, directionY, directionZ, remaining, anyHit);
     if (found.nearestTriangle < 0) return false;
+    const materialIndex = scene.triangleMaterial[found.nearestTriangle];
+    const ownLamp = isOwnLampMesh(scene, materialIndex, lightBit);
     // Only a cutout material needs its texture read to know whether the ray passes through: skip the interpolation for the rest.
-    if (scene.materials[scene.triangleMaterial[found.nearestTriangle]].alphaCutoff === 0) return true;
-    const alpha = fillHit(scene, found.nearestTriangle, startX, startY, startZ, directionX, directionY, directionZ, found.nearestDistance, hit);
-    if (alpha >= hit.material.alphaCutoff) return true;
+    if (!ownLamp) {
+      if (scene.materials[materialIndex].alphaCutoff === 0) return true;
+      const alpha = fillHit(scene, found.nearestTriangle, startX, startY, startZ, directionX, directionY, directionZ, found.nearestDistance, hit);
+      if (alpha >= hit.material.alphaCutoff) return true;
+    }
     if (anyHit) {
       anyHit = false;
       continue;
@@ -572,7 +581,7 @@ function createPathTracer(scene, options) {
     const cosine = lightDirection[0] * direction[0] + lightDirection[1] * direction[1] + lightDirection[2] * direction[2];
     const phase = henyeyGreensteinPhase(volume.anisotropy, cosine);
     const [originX, originY, originZ] = hit.point;
-    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit)) return;
+    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, sampleLightBit)) return;
     phaseCandidate.pdf = phase;
     const scale = phase * fogTransmittance(originX, originY, originZ, distance) * weight(phaseCandidate);
     addRadiance(
@@ -597,7 +606,7 @@ function createPathTracer(scene, options) {
     const originX = hit.point[0] + normal[0] * scene.surfaceOffset;
     const originY = hit.point[1] + normal[1] * scene.surfaceOffset;
     const originZ = hit.point[2] + normal[2] * scene.surfaceOffset;
-    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit)) return;
+    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, sampleLightBit)) return;
     const scale = cosine * weight(surface) * fogTransmittance(originX, originY, originZ, distance);
     if (lightIsSun && writeSunShadow) writeSunShadow(originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], sunShadow);
     else sunShadow.fill(1);
@@ -612,6 +621,8 @@ function createPathTracer(scene, options) {
   // Past the first hit one light is drawn at random instead of all of them, so a scene with many lights costs one shadow
   // ray per bounce. `selectionProbability` is the chance that this light was the one drawn; dividing by it keeps the sum unbiased.
   let selectionProbability = 1;
+  // The point light whose shadow ray is being traced, or -1: that light's own lamp mesh does not block it.
+  let sampleLightBit = -1;
   const fullWeight = () => 1 / selectionProbability;
 
   // A light skips a part whose mask has its bit clear, at every bounce, so it is no bounce source there either.
@@ -661,7 +672,9 @@ function createPathTracer(scene, options) {
     if (distance < 1e-6) return;
     const strength = light.intensity * pointLightFalloff(distanceSquared, light);
     for (let channel = 0; channel < 3; channel++) lightRadiance[channel] = light.color[channel] * strength;
+    sampleLightBit = light.bit;
     addDirect(depth, normal, distance - scene.surfaceOffset, fullWeight);
+    sampleLightBit = -1;
   }
 
   function sampleSpotLight(depth, normal, light) {
@@ -944,9 +957,12 @@ function createPathTracer(scene, options) {
     let positionZ = originZ;
     let previousPdf = 0;
     let afterMirror = true;
+    // The material of the transmissive part the path is inside, when it absorbs; null outside and inside parts that do not absorb.
+    let absorbingMaterial = null;
     let isCameraRay = true;
     for (let depth = 0; depth <= options.bounces; depth++) {
       const found = intersect(scene, positionX, positionY, positionZ, direction[0], direction[1], direction[2], hit, depth === 0);
+      if (absorbingMaterial && found) absorbOverDistance(absorbingMaterial, hit.distance, throughput);
       const scattersInFog = scene.volume && scatterInFog(positionX, positionY, positionZ, found ? hit.distance : scene.farDistance);
       if (crossLocalVolumes) {
         const segmentLength = scattersInFog ? Math.hypot(hit.point[0] - positionX, hit.point[1] - positionY, hit.point[2] - positionZ) : (found ? hit.distance : scene.farDistance);
@@ -994,6 +1010,7 @@ function createPathTracer(scene, options) {
           throughput[0] *= hit.color[0];
           throughput[1] *= hit.color[1];
           throughput[2] *= hit.color[2];
+          absorbingMaterial = entering && Number.isFinite(material.attenuationDistance) ? material : null;
         }
         afterMirror = true;
       } else {
@@ -1036,6 +1053,12 @@ function createPathTracer(scene, options) {
   return { trace, radiance, features };
 }
 
+/** Beer-Lambert: the colour `attenuationColor` is what `attenuationDistance` metres of the part let through, so a path of `distance` metres keeps colour^(distance / attenuationDistance). */
+function absorbOverDistance(material, distance, throughput) {
+  const metres = distance / material.attenuationDistance;
+  for (let channel = 0; channel < 3; channel++) throughput[channel] *= material.attenuationColor[channel] ** metres;
+}
+
 // ---- Image ----
 
 /** The display transform of the rasterizer's post pass (exposure, view transform, gamma 2.2, optional look) applied to linear pixels. */
@@ -1069,6 +1092,7 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   if (hasPortal && !kernelMaterials && backend === 'gpu') notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel, the CPU tracer and the WebGPU tracer sample the environment through them, the other tracers draw no light from a portal.');
   const hasGridVolume = (environment?.localVolumes ?? []).some(volume => volume?.shape === 'grid');
   if (hasGridVolume && kernelMaterials && environment.volumeShutter > 0) notes.add('environment.volumeShutter is ignored for a grid volume: Cook draws the grid as it is at the frame time, with no motion blur from its velocity channel. Use backend "cpu" or "webgpu" for a blurred blast.');
+  if ((environment?.localVolumes ?? []).some(volume => volume?.shape === 'grid' && volume.noiseAmount > 0)) notes.add('noiseAmount, noiseScale and noiseOctaves of a grid volume are ignored: only the rasterizer adds that fine detail on top of the grid, a trace reads the grid as it is.');
   if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
   if (environment?.fillIntensity > 0) notes.add('fillIntensity is ignored: the two fixed fill lights are rasterizer only. Add a point or area light, or raise environmentIntensity, to light the shadow side of a trace.');
   if (environment?.world === true) notes.add('world: true is ignored: the outdoor haze shading is rasterizer only, and a trace draws the environment map behind the picture and lights with it.');

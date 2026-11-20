@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { encodePng } from '../src/export-png.js';
 
 const SIZE = 96;
@@ -108,7 +108,7 @@ test('a fireball with lightsScene brightens the floor around it, and with the fl
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const { frames: [unnamed, flagOff, flagOn], glError } = await rasterFrames(page, [[FIREBALL], [{ ...FIREBALL, lightsScene: false }], [{ ...FIREBALL, lightsScene: true }]]);
     assert.equal(glError, 0);
     assert.deepEqual(flagOff, unnamed, 'lightsScene false must draw exactly as a volume that does not name the field');

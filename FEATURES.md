@@ -14,10 +14,10 @@ optional `Ready` expression the driver waits for, and `Drive`.
 ## Site pages
 
 ### `home`
-- Name: Home (hero world loop, install, downloads section)
+- Name: Home (pour-to-cast scroll story, install, showcase, agent and tier sections)
 - Surface: Site
 - Reach: `/`
-- Source: `site/index.html`, `src/home.js`, `src/hero-lab/hero-loop.js`
+- Source: `site/index.html`, `src/landing.js`, `src/landing-scene.js`, `src/landing-story.js`, `src/landing.css`
 - Drive: `node scripts/drive.mjs shot home`
 
 ### `downloads`

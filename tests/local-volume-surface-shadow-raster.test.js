@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { encodePng } from '../src/export-png.js';
 import { encodeVolumeGrid, registerVolumeGrid } from '../src/volume-grid.js';
@@ -131,7 +131,7 @@ test('the rasterizer darkens the floor under a smoke box as the CPU path tracer 
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const { frames, glError } = await rasterFrames(page, [[SMOKE], [{ ...SMOKE, castShadow: false }], [withoutFlag]]);
     assert.equal(glError, 0);
     const [shadowed, open, byDefault] = frames;
@@ -175,7 +175,7 @@ test('the rasterizer darkens the floor under a smoke grid as the CPU path tracer
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const { frames, glError } = await rasterFrames(page, [[GRID_SMOKE], [{ ...GRID_SMOKE, castShadow: false }], [gridWithoutFlag]], { [GRID_NAME]: GRID_BYTES });
     assert.equal(glError, 0);
     const [shadowed, open, byDefault] = frames;

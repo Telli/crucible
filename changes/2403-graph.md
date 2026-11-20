@@ -1,0 +1,1 @@
+- Material graph errors name the missing or wrong input (`hue "color"`, `curve "value"`, `add argument 2`, `output "roughness"`) and what came instead, and a one-argument operator given three numbers says how to pass a vector (#2403)

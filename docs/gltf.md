@@ -267,6 +267,8 @@ Both are checked from the accessor counts before any data is decoded.
 The bridge does not import cameras or scene environments into CrucibleRenderer. The caller supplies its own camera and base lighting.
 Lights from `KHR_lights_punctual` come back in `asset.lights` and are applied only when the caller passes them on (see the extension table). A scene file (`scripts/render-media.mjs --scene file` and `scripts/render-file-native.mjs`) passes them on: the GLB's lights are its environment, and keys in the scene file's `renderer.environment` override them one by one.
 
+A scene file whose GLB has no lights of its own, and whose `renderer.environment` names no key light, is lit by the HDRI's sun (#2761). `splitHdriSun` (`src/hdri.js`) takes the sun disc out of the map and turns its energy into the key light, with fill set to 0. The background still draws the disc. The sun then lights only the points it can reach, instead of reaching every point through the unshadowed sky term. On the Lone Monk courtyard this took the frame median from 183 to 110 and the darkest 5% from 114 to 47 (luma 0 to 255). Set `"hdriSun": false` in the scene file to keep the whole map and the renderer's default key. The native trace (`render-file-native.mjs`) always gets the whole map. Such a frame also fits the sun's shadow view to the scene (`sunShadowBounds`, as world scenes do since #1695), rather than using the 7 m studio box at the origin; a scene file's `renderer.shadowBounds` overrides it. A scene whose GLB has lights of its own is drawn as before.
+
 ## Verification
 
 `node --test tests/gltf.test.js` covers generated GLB triangles and the existing `exportGlb` roundtrip.

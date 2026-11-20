@@ -29,10 +29,13 @@ export async function listRegisteredTools() {
 // a sentence when a letter or digit precedes it and a space follows it.
 export function summarize(description) {
   const flat = description.replace(/\s+/g, ' ').trim();
-  const firstSentence = flat.match(/^.*?[a-z0-9)`]\.(?=\s|$)/i)?.[0] ?? flat;
+  const firstSentence = flat.match(/^.*?[a-z0-9)`](?<!e\.g)(?<!i\.e)\.(?=\s|$)/i)?.[0] ?? flat;
   if (firstSentence.length <= maximumSummaryLength) return firstSentence;
   const cut = firstSentence.slice(0, maximumSummaryLength - 3);
-  return `${cut.slice(0, cut.lastIndexOf(' '))}...`;
+  const lastSpace = cut.lastIndexOf(' ');
+  const lastBacktick = cut.lastIndexOf('`');
+  const balanced = (cut.match(/`/g) ?? []).length % 2 === 0 ? cut : cut.slice(0, lastBacktick);
+  return `${balanced.slice(0, balanced.lastIndexOf(' ')) || balanced.slice(0, lastSpace)}...`;
 }
 
 const page = name => `${siteOrigin}/${name}`;

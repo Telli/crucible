@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { applyViewTransform } from '../src/view-transform.js';
 
 const SIZE = 16;
@@ -128,7 +128,7 @@ test('overlapping box volumes add their glow and dimming along the shared stretc
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const [alone, apart, overlapping] = await drawInChrome(page, [[NEAR], [NEAR, SEPARATE], [NEAR, FAR]]);
     for (const frame of [alone, apart, overlapping]) {
       assert.equal(frame.message, null);

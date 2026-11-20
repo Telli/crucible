@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { applyViewTransform } from '../src/view-transform.js';
 
@@ -140,7 +140,7 @@ async function openPage(context) {
   try {
     const browser = await launchChrome(chromium);
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     return {
       page,
       async close() {
