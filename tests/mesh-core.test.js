@@ -85,6 +85,12 @@ test('MeshData derives unique edges for a cube', () => {
   assert.ok(Object.isFrozen(cube));
 });
 
+test('MeshData names a missing input object and null attributes at the public boundary', () => {
+  assert.throws(() => createMeshData(), /createMeshData needs an object like/);
+  assert.throws(() => createMeshData(null), /createMeshData needs an object like/);
+  assert.throws(() => polygonMesh([0, 0, 0, 1, 0, 0, 0, 1, 0], [[0, 1, 2]], null), /createMeshData attributes must be an object/);
+});
+
 test('MeshData rejects invalid faces and attributes with actionable messages', () => {
   assert.throws(() => polygonMesh([0, 0, 0, 1, 0, 0], [[0, 1]]), /at least three corners/);
   assert.throws(() => polygonMesh([0, 0, 0, 1, 0, 0, 0, 1, 0], [[0, 1, 5]]), /missing vertex 5/);
