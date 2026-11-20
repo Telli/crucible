@@ -63,6 +63,20 @@ function surfaceArea(geometry) {
   return area;
 }
 
+test('createMeshData refuses half of an explicit edge table', () => {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  const faceOffsets = new Uint32Array([0, 3]);
+  const cornerVertices = new Uint32Array([0, 1, 2]);
+  assert.throws(
+    () => createMeshData({ positions, faceOffsets, cornerVertices, edgeVertices: new Uint32Array([0, 1]) }),
+    /Pass both edgeVertices and cornerEdges together; cornerEdges is missing/,
+  );
+  assert.throws(
+    () => createMeshData({ positions, faceOffsets, cornerVertices, cornerEdges: new Uint32Array([0, 1, 2]) }),
+    /Pass both edgeVertices and cornerEdges together; edgeVertices is missing/,
+  );
+});
+
 test('MeshData derives unique edges for a cube', () => {
   const cube = unitCube();
   assert.equal(cube.vertexCount, 8);
