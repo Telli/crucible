@@ -2093,6 +2093,10 @@ test('Settings change the snap, the handles and what the viewport shows, and are
   choose('startWorkspace', 'animate');
   assert.equal(ui.root.dataset.workspace, 'build', 'the workspace in use is left alone');
   assert.deepEqual(JSON.parse(saved.get('crucible-studio-preferences')), {
+    panelWidth: 284,
+    sceneShare: 0,
+    sceneMinimized: false,
+    propertiesMinimized: false,
     moveSnapStep: 1,
     rotateSnapDegrees: 45,
     gizmoSize: 'large',
@@ -2137,7 +2141,7 @@ test('Scene and Properties share one column and the Scene head carries its icons
   const ui = mountStudio(testContext);
   const side = ui.root.querySelector('.crucible-studio-side');
   const docks = side.children.map(child => child.getAttribute('aria-label'));
-  assert.deepEqual(docks, ['Scene outliner', 'Scene inspector']);
+  assert.deepEqual(docks, ['Panel width', 'Scene outliner', 'Scene card height', 'Scene inspector']);
   const head = side.querySelector('.crucible-studio-dock-head');
   assert.ok(head.querySelector('.crucible-studio-dock-title').querySelector('svg'));
   const sideRule = STUDIO_CSS.slice(STUDIO_CSS.indexOf('.crucible-studio-side {'), STUDIO_CSS.indexOf('.crucible-studio-side > .crucible-studio-dock {'));
@@ -2232,4 +2236,94 @@ test('the top bar has File, Edit, View, Agent and Help menus that do what their 
   byText(popover('help'), 'Keyboard shortcuts').click();
   assert.equal(ui.root.querySelector('.crucible-studio-shortcuts-dialog').open, true);
   assert.equal(ui.root.querySelectorAll('button').filter(button => ['Settings (Ctrl+,)', 'Keyboard shortcuts (?)'].includes(button.getAttribute('aria-label'))).length, 0);
+});
+
+test('the rail keeps scene tools above one line and the show and hide switches below it', testContext => {
+  const ui = mountStudio(testContext);
+  const toolbar = ui.root.querySelector('.crucible-studio-toolbar');
+  const rows = toolbar.children.map(child => child.getAttribute('role') === 'separator' ? 'line' : child.getAttribute('aria-label'));
+  assert.deepEqual(rows, ['Transform tool', 'Edit the scene', 'line', 'Show or hide']);
+  const below = toolbar.children.at(-1).children.map(button => button.getAttribute('aria-label'));
+  assert.deepEqual(below, ['Show or hide the grid', 'Show or hide the panels']);
+  const above = toolbar.children[1].children.map(button => button.dataset.icon);
+  assert.deepEqual(above, ['add', 'undo', 'redo']);
+});
+
+test('each card minimizes to its head, apart from the panels switch, and stays that way on the next visit', testContext => {
+  const saved = new Map();
+  const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const ui = mountStudio(testContext, { preferenceStorage });
+  assert.equal(ui.root.dataset.outlinerMinimized, 'false');
+  const minimizeScene = ui.label('Minimize Scene');
+  assert.equal(minimizeScene.getAttribute('aria-expanded'), 'true');
+  minimizeScene.click();
+  assert.equal(ui.root.dataset.outlinerMinimized, 'true');
+  assert.equal(ui.root.dataset.outlinerCollapsed, 'false', 'a minimized card is still shown');
+  assert.equal(minimizeScene.getAttribute('aria-label'), 'Expand Scene');
+  assert.equal(minimizeScene.getAttribute('aria-expanded'), 'false');
+  assert.equal(minimizeScene.dataset.icon, 'expand');
+  ui.label('Minimize Properties').click();
+  assert.equal(ui.root.dataset.inspectorMinimized, 'true');
+
+  ui.label('Show or hide the panels').click();
+  ui.label('Show or hide the panels').click();
+  assert.equal(ui.root.dataset.outlinerMinimized, 'true', 'hiding and showing the panels keeps a card minimized');
+
+  const next = mountStudio(testContext, { preferenceStorage, sharedDom: ui.dom });
+  assert.equal(next.root.dataset.outlinerMinimized, 'true');
+  assert.equal(next.root.dataset.inspectorMinimized, 'true');
+  next.label('Expand Scene').click();
+  assert.equal(next.root.dataset.outlinerMinimized, 'false');
+  assert.ok(STUDIO_CSS.includes('[data-outliner-minimized="true"] .crucible-studio-outliner > :not(.crucible-studio-dock-head)'));
+});
+
+test('the panel column resizes by dragging its grips or with the arrow keys, inside its limits, and keeps the size', testContext => {
+  const saved = new Map();
+  const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const ui = mountStudio(testContext, { preferenceStorage });
+  const widthGrip = ui.label('Panel width');
+  const splitGrip = ui.label('Scene card height');
+  const savedPreferences = () => JSON.parse(saved.get('crucible-studio-preferences'));
+  assert.equal(widthGrip.getAttribute('aria-valuenow'), '284');
+  assert.equal(ui.root.dataset.sceneSized, 'false', 'the Scene card sizes itself until someone drags the split');
+
+  dispatch(widthGrip, 'pointerdown', { clientX: 600 });
+  dispatch(widthGrip, 'pointermove', { clientX: 540 });
+  assert.equal(widthGrip.getAttribute('aria-valuenow'), '344', 'the drag previews the width');
+  assert.equal(saved.has('crucible-studio-preferences'), false, 'and saves nothing until the pointer lets go');
+  dispatch(widthGrip, 'pointerup', { clientX: 540 });
+  assert.equal(ui.studio.preferences.panelWidth, 344);
+  assert.equal(savedPreferences().panelWidth, 344);
+
+  dispatch(widthGrip, 'pointerdown', { clientX: 540 });
+  dispatch(widthGrip, 'pointermove', { clientX: -900 });
+  dispatch(widthGrip, 'pointerup', { clientX: -900 });
+  assert.equal(ui.studio.preferences.panelWidth, 520, 'the column stops at its widest');
+  dispatch(widthGrip, 'pointerdown', { clientX: 0 });
+  dispatch(widthGrip, 'pointermove', { clientX: 900 });
+  dispatch(widthGrip, 'pointerup', { clientX: 900 });
+  assert.equal(ui.studio.preferences.panelWidth, 240, 'and at its narrowest');
+
+  const widen = dispatch(widthGrip, 'keydown', { key: 'ArrowLeft' });
+  assert.equal(widen.defaultPrevented, true);
+  assert.equal(ui.studio.preferences.panelWidth, 256);
+  dispatch(widthGrip, 'keydown', { key: 'ArrowRight' });
+  assert.equal(ui.studio.preferences.panelWidth, 240);
+  assert.equal(dispatch(widthGrip, 'keydown', { key: 'a' }).defaultPrevented, false);
+  dispatch(widthGrip, 'dblclick');
+  assert.equal(ui.studio.preferences.panelWidth, 284, 'a double click goes back to the opening width');
+
+  dispatch(splitGrip, 'keydown', { key: 'ArrowDown' });
+  assert.equal(ui.studio.preferences.sceneShare, 47);
+  assert.equal(ui.root.dataset.sceneSized, 'true');
+  dispatch(splitGrip, 'keydown', { key: 'ArrowUp' });
+  assert.equal(ui.studio.preferences.sceneShare, 42);
+  dispatch(splitGrip, 'dblclick');
+  assert.equal(ui.studio.preferences.sceneShare, 0);
+  assert.equal(ui.root.dataset.sceneSized, 'false');
+
+  const next = mountStudio(testContext, { preferenceStorage, sharedDom: ui.dom, preferences: { panelWidth: 9000, sceneShare: 3 } });
+  assert.equal(next.studio.preferences.panelWidth, 520, 'a saved width outside the limits is pulled back in');
+  assert.equal(next.studio.preferences.sceneShare, 15);
+  assert.equal(mountStudio(testContext, { sharedDom: ui.dom, preferences: { panelWidth: Number.NaN } }).studio.preferences.panelWidth, 284);
 });
