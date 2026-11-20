@@ -178,7 +178,7 @@ test('graph and preset fields do not mix', () => {
 test('every capability operator compiles, and no other operator does', () => {
   const samples = {
     uv: { uv: 'u' }, image: { image: { asset: 'a'.repeat(64) } }, coord: { coord: 'object' }, mapping: { mapping: {} }, whiteNoise: { whiteNoise: {} }, brick: { brick: {} }, vec: { vec: [1, 2, 3] }, ramp: { ramp: { value: 0.5, stops: [[0, 0], [1, 1]] } },
-    fresnel: { fresnel: {} }, noise: { noise: {} }, voronoi: { voronoi: {} }, wave: { wave: {} }, checker: { checker: {} }, gradient: { gradient: {} },
+    fresnel: { fresnel: {} }, vertexGroup: { vertexGroup: { name: 'edge' } }, noise: { noise: {} }, voronoi: { voronoi: {} }, wave: { wave: {} }, checker: { checker: {} }, gradient: { gradient: {} },
     layer: { layer: { base: [0, 0, 0], top: [1, 1, 1], mask: 0.5 } }, hue: { hue: { color: [1, 0, 0], shift: 0.1 } }, curve: { curve: { value: 0.5, points: [[0, 0], [1, 1]] } },
   };
   for (const name of MATERIAL_GRAPH_OPERATORS) {
@@ -298,9 +298,18 @@ test('graph errors name the valid options, and scene_capabilities lists the node
   }
 });
 
-test('scene_capabilities says fresnel exists only as an emission factor and lists what is missing', () => {
+test('scene_capabilities says fresnel exists only as an emission factor and lists what is missing, vertexGroup no longer among it', () => {
   const coordinates = AGENT_SCENE_CAPABILITIES.materialGraph.nodes.coordinates;
   assert.match(coordinates, /In graphs: fresnel, only as an emission factor/);
-  assert.match(coordinates, /Not in graphs: vertexGroup, AO, bevel, curvature/);
+  assert.match(coordinates, /Not in graphs: AO, bevel, curvature/);
   assert.doesNotMatch(coordinates, /Not in graphs yet: AO, bevel, curvature, fresnel/);
+});
+
+test('a graph refuses a bake resolution that is missing, fractional or below 1 (#2388)', async () => {
+  const { bakeMaterialGraph, normalizeMaterialGraph } = await import('../src/material-graph.js');
+  for (const resolution of [undefined, Number.NaN, 0, -4, 1.5]) {
+    assert.throws(() => normalizeMaterialGraph({ roughness: 0.5 }, resolution), /resolution must be a whole number from 1 to 16384/);
+    assert.throws(() => bakeMaterialGraph({ roughness: 0.5 }, { resolution, bump: 1 }), /resolution must be a whole number from 1 to 16384/);
+  }
+  assert.equal(bakeMaterialGraph({ roughness: 0.5 }, { resolution: 2, bump: 1 }).metallicRoughnessMap.image.data.length, 16);
 });

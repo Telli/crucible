@@ -34,6 +34,16 @@ test('a complete entry has no problems, with or without a live link', () => {
   assert.deepEqual(communityEntryProblems({ ...VALID_ENTRY, link: 'https://example.com/scene' }), []);
 });
 
+test('discussion may be left out only when a live link is set', () => {
+  const { discussion, ...withoutDiscussion } = VALID_ENTRY;
+  assert.match(communityEntryProblems(withoutDiscussion).join(' '), /"discussion".*"link"/);
+  const linkedOnly = { ...withoutDiscussion, link: 'https://example.com/scene' };
+  assert.deepEqual(communityEntryProblems(linkedOnly), []);
+  const markup = communityFigureMarkup(linkedOnly);
+  assert.doesNotMatch(markup, /Discussion/);
+  assert.match(markup, /class="community-still" href="https:\/\/example\.com\/scene"/);
+});
+
 test('each bad field is named with what to pass instead', () => {
   const problems = communityEntryProblems({
     ...VALID_ENTRY,
@@ -76,9 +86,11 @@ test('the email link carries the subject and the permission line', () => {
 
 test('renderCommunity fills the grid, and hides it when the list is empty or fails', async () => {
   const grid = { innerHTML: '', hidden: true };
+  const emptyState = { hidden: false };
   const emailLink = { href: '' };
-  assert.equal(await renderCommunity({ grid, emailLink, fetchJson: async () => ({ entries: [VALID_ENTRY] }) }), 1);
+  assert.equal(await renderCommunity({ grid, emailLink, emptyState, fetchJson: async () => ({ entries: [VALID_ENTRY] }) }), 1);
   assert.equal(grid.hidden, false);
+  assert.equal(emptyState.hidden, true);
   assert.match(grid.innerHTML, /Night market/);
   assert.match(emailLink.href, /^mailto:/);
 
@@ -86,11 +98,12 @@ test('renderCommunity fills the grid, and hides it when the list is empty or fai
   const warnings = [];
   console.warn = (message) => warnings.push(message);
   try {
-    assert.equal(await renderCommunity({ grid, fetchJson: async () => { throw new Error('offline'); } }), 0);
+    assert.equal(await renderCommunity({ grid, emptyState, fetchJson: async () => { throw new Error('offline'); } }), 0);
   } finally {
     console.warn = originalWarn;
   }
   assert.equal(grid.hidden, true);
+  assert.equal(emptyState.hidden, false);
   assert.equal(grid.innerHTML, '');
   assert.match(warnings[0], /offline/);
 });

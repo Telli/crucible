@@ -11,7 +11,8 @@ const ASSET_ID = /^[a-f0-9]{64}$/;
 /** The ids of every catalog asset the game needs: the placed ones and the sources of its animation clips. */
 export function gameAssetIds(recipe) {
   const ids = new Set(recipeAssetNeeds(recipe).map(need => need.id));
-  const animations = [recipe.game?.player?.animation, ...(recipe.game?.npcs ?? []).map(npc => npc.animation)];
+  const npcs = Array.isArray(recipe.game?.npcs) ? recipe.game.npcs : [];
+  const animations = [recipe.game?.player?.animation, ...npcs.map(npc => npc?.animation)];
   for (const animation of animations) {
     for (const clip of Object.values(animation?.clips ?? {})) {
       const id = clip?.from?.asset;

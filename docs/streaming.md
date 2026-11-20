@@ -26,7 +26,7 @@ const runtime = createRuntime(renderer, { systems: [input, physics, streaming] }
 
 ## Memory budget
 
-`budgetBytes` caps loaded bytes plus the `estimatedBytes` of loads in flight. Before a load starts, assets nobody wants are freed until it fits. The order is lowest `priority` first (a number from -100 to 100, default 0, set on the asset), then by `evictionOrder`: `"recency"` (the default, unchanged from before) frees the least recently used first and breaks ties by distance; `"distance"` frees the farthest from the focus first and breaks ties by recency. Last comes the id, so the same walk always frees the same assets. Reading an asset with `getAsset(id)` or keeping it wanted counts as a use. If nothing can be freed, the load waits and update tries again. When a loader reports more bytes than estimated, the system frees unwanted assets to get back under the budget. Wanted and requested assets are never freed, so a budget smaller than what the player needs shows as waiting loads in `stats`.
+`budgetBytes` caps loaded bytes plus the `estimatedBytes` of loads in flight. Before a load starts, assets nobody wants are freed until it fits. The order is lowest `priority` first (a number from -100 to 100, default 0, set on the asset), then by `evictionOrder`: `"recency"` (the default, unchanged from before) frees the least recently used first and breaks ties by distance; `"distance"` frees the farthest from the focus first and breaks ties by recency. Last comes the id, so the same walk always frees the same assets. Reading an asset with `getAsset(id)` or keeping it wanted counts as a use. If freeing every unwanted asset would still not make room, nothing is freed and the load waits; update tries again. When a loader reports more bytes than estimated, the system frees unwanted assets to get back under the budget. Wanted and requested assets are never freed, so a budget smaller than what the player needs shows as waiting loads in `stats`.
 
 ## Detail levels
 
@@ -48,7 +48,7 @@ A loader is `{ load(request), dispose(asset) }`. `load` returns `{ asset, bytes 
 
 ## Reading the state
 
-`getState(id)` returns `{ state, level, bytes, failure }`, with `state` one of `idle`, `pending`, `loaded`, `evicted` or `failed`. A failed asset stays failed until `request(id)` retries it. `stats` has the count of each state plus `bytesInUse`, `budgetBytes`, `activeLoads` and `assets`. `events` is the last 256 events (`load-start`, `loaded`, `evict`, `failed`), each with the update count (`tick`), and `onEvent` receives them as they happen. `settled()` resolves when no load is in flight, for a loading screen.
+`getState(id)` returns `{ state, level, bytes, failure }`, with `state` one of `idle`, `pending`, `loaded`, `evicted` or `failed`. A load that rejects, or resolves without an `asset`, fails the asset, and it stays failed until `request(id)` retries it. `stats` has the count of each state plus `bytesInUse`, `budgetBytes`, `activeLoads` and `assets`. `events` is the last 256 events (`load-start`, `loaded`, `evict`, `failed`), each with the update count (`tick`), and `onEvent` receives them as they happen. `settled()` resolves when no load is in flight, for a loading screen.
 
 ## Limits
 

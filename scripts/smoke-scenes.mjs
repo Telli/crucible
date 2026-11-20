@@ -3,14 +3,15 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import { viteChildEnvironment, viteOutputMentionsAddress } from './vite-output.mjs';
 
-const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5179', '--strictPort'], { windowsHide: true, stdio: 'pipe' });
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5179', '--strictPort'], { windowsHide: true, stdio: 'pipe', env: viteChildEnvironment() });
 let browser;
 try {
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Scene smoke server did not start.')), 15000);
     server.stdout.on('data', (data) => {
-      if (data.toString().includes('127.0.0.1:5179')) { clearTimeout(timeout); resolve(); }
+      if (viteOutputMentionsAddress(data, '127.0.0.1:5179')) { clearTimeout(timeout); resolve(); }
     });
     server.on('error', reject);
     server.on('exit', (code) => { clearTimeout(timeout); reject(new Error(`Scene server exited ${code}.`)); });
@@ -20,6 +21,66 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  for (const size of [{ width: 1280, height: 800 }, { width: 1024, height: 700 }, { width: 1024, height: 768 }, { width: 1280, height: 720 }]) {
+    await page.setViewportSize(size);
+    await page.goto('http://127.0.0.1:5179/object.html');
+    await page.waitForSelector('#benchmark');
+    const toolbarProblems = await page.evaluate(() => {
+      const bar = document.querySelector('.toolbar').getBoundingClientRect();
+      const items = [...document.querySelectorAll('.toolbar .brand, .toolbar .studio-nav a, .toolbar-actions button')];
+      const boxes = items.map((item) => ({ name: item.textContent.trim(), box: item.getBoundingClientRect() }));
+      const problems = [];
+      for (const [index, { name, box }] of boxes.entries()) {
+        if (box.left < bar.left - 0.5 || box.right > bar.right + 0.5) problems.push(`${name} overflows the toolbar`);
+        if (box.height > 0 && box.height < 32) problems.push(`${name} is under 32 px tall`);
+        for (const other of boxes.slice(index + 1)) {
+          if (box.left < other.box.right && box.right > other.box.left && box.top < other.box.bottom && box.bottom > other.box.top) problems.push(`${name} overlaps ${other.name}`);
+        }
+      }
+      const actions = [...document.querySelectorAll('.toolbar-actions button')];
+      if (actions.some((button) => button.getBoundingClientRect().height > 50)) problems.push('a toolbar button label wraps');
+      if (document.documentElement.scrollWidth > window.innerWidth) problems.push('the page scrolls sideways');
+      return problems;
+    });
+    assert.deepEqual(toolbarProblems, [], `Object studio toolbar does not fit at ${size.width}x${size.height}.`);
+    const overlaps = await page.evaluate(() => {
+      const panel = document.querySelector('.controls').getBoundingClientRect();
+      const footerItems = ['#benchmark', '#cpu', '#parts'].map((selector) => document.querySelector(selector).getBoundingClientRect());
+      return footerItems.filter((item) => item.width > 0 && item.left < panel.right && item.right > panel.left && item.top < panel.bottom && item.bottom > panel.top).length;
+    });
+    assert.equal(overlaps, 0, `Object studio footer overlaps the settings panel at ${size.width}x${size.height}.`);
+    const autoOrbitProblems = await page.evaluate(() => {
+      const orbit = document.querySelector('#rotate').getBoundingClientRect();
+      const panel = document.querySelector('.controls').getBoundingClientRect();
+      const problems = [];
+      if (orbit.left < 0 || orbit.top < 0 || orbit.right > window.innerWidth || orbit.bottom > window.innerHeight) problems.push('sits outside the viewport');
+      if (orbit.height < 32) problems.push('is under 32 px tall');
+      if (orbit.left < panel.right && orbit.right > panel.left && orbit.top < panel.bottom && orbit.bottom > panel.top) problems.push('overlaps the settings panel');
+      return problems;
+    });
+    assert.deepEqual(autoOrbitProblems, [], `Object studio Auto orbit button is not fully visible at ${size.width}x${size.height}.`);
+    const lastRowReachable = await page.evaluate(() => {
+      const panel = document.querySelector('.controls');
+      panel.scrollTop = panel.scrollHeight;
+      const lastRow = document.querySelector('#quality').getBoundingClientRect();
+      return lastRow.bottom <= panel.getBoundingClientRect().bottom;
+    });
+    assert.ok(lastRowReachable, `Object studio Resolution row cannot be scrolled into view at ${size.width}x${size.height}.`);
+    const fade = await page.evaluate(async () => {
+      const panel = document.querySelector('.controls');
+      const read = async (top) => {
+        panel.scrollTop = top;
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return parseFloat(getComputedStyle(panel).getPropertyValue('--controls-fade')) || 0;
+      };
+      return { overflows: panel.scrollHeight > panel.clientHeight, atTop: await read(0), atBottom: await read(panel.scrollHeight) };
+    });
+    if (fade.overflows) {
+      assert.ok(fade.atTop > 0, `Object studio panel shows no fade while more controls are below at ${size.width}x${size.height}.`);
+      assert.equal(fade.atBottom, 0, `Object studio panel still fades at its bottom edge at ${size.width}x${size.height}.`);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('http://127.0.0.1:5179/nature.html');
   await page.waitForFunction(() => window.__nature?.renderer);
   assert.equal(await page.evaluate(() => window.__nature.state.paused), true);

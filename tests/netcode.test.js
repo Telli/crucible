@@ -183,7 +183,7 @@ test('invalid options and calls throw errors that say what to pass', () => {
   assert.throws(() => createNetcode({ transport: { id: 'x' } }), /transport\.peers must be a function/);
   assert.throws(() => createNetcode({ transport, role: 'spectator' }), /role must be one of authority, client/);
   assert.throws(() => createNetcode({ transport, role: 'client' }), /serverId/);
-  assert.throws(() => createNetcode({ transport, role: 'authority', authority: 'peer' }), /peer to peer\) is not supported yet/);
+  assert.throws(() => createNetcode({ transport, role: 'authority', authority: 'peer' }), /authority "peer" has no authority or client role/);
   assert.throws(() => createNetcode({ transport, role: 'authority', authority: 'cloud' }), /authority must be one of server, host/);
   assert.throws(() => createNetcode({ transport, role: 'authority', snapshotEveryTicks: 0 }), /snapshotEveryTicks/);
   assert.throws(() => createNetcode({ transport, role: 'authority', simulate: 3 }), /simulate must be a function/);
@@ -589,4 +589,21 @@ test('a client adopts a lower run id when only that run keeps arriving, and a sn
   network.advance(1);
   assert.equal(client.netcode.stats.authorityRestarts, 1, 'the 30th in a row of the lower run is adopted');
   assert.equal(client.netcode.tick, 59);
+});
+
+// ----- A bad frame time (#2608) -----
+
+test('a client ignores a NaN, infinite or negative frame time and keeps drawing real positions', () => {
+  const network = createLoopbackNetwork({ latencyMilliseconds: 40 });
+  const server = createPeer({ role: 'authority', authority: 'server', transport: network.createTransport('server') });
+  server.netcode.addEntity('other', { owner: 'someone-else', tag: 'player' });
+  const client = createPeer({ role: 'client', serverId: 'server', transport: network.createTransport('client-a'), localEntityId: 'a', readInput: () => ({ moveX: 0, moveZ: 0 }) });
+  runFrames(network, [server, client], 100);
+  const before = client.netcode.getEntityState('other');
+  assert.ok(before.position.every(Number.isFinite));
+  for (const badDelta of [NaN, Infinity, -Infinity, -0.5, undefined]) client.netcode.update(badDelta);
+  const after = client.netcode.getEntityState('other');
+  assert.deepEqual(after, before, 'a bad frame time leaves the drawing clock where it was');
+  runFrames(network, [server, client], 50);
+  assert.ok(client.netcode.getEntityState('other').position.every(Number.isFinite));
 });

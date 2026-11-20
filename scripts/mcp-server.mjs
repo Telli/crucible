@@ -1,4 +1,5 @@
 import { answerCapabilities, MAX_TOPICS_PER_CALL } from './capabilities-topics.mjs';
+import { MOTION_TRACK_KIND_NAMES } from '../src/motion-track-kinds.js';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { readEnvironmentVariable } from '../src/environment-variable.js';
@@ -13,11 +14,12 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import packageMetadata from '../package.json' with { type: 'json' };
-import { MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
+import { MESH_EDIT_OPERATIONS, MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from '../src/view-transform-names.js';
 import { BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES, CATALOG_FILE_ID } from '../src/look-catalog.js';
-import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES } from '../src/agent-scene-capabilities.js';
-import { MATERIAL_LAYER_SCALAR_RANGES, MATERIAL_LAYER_COLOR_RANGES } from '../src/material-layers.js';
+import { describeReceived } from '../src/field-error.js';
+import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES, RECIPE_ALPHA_MODES } from '../src/agent-scene-capabilities.js';
+import { MATERIAL_LAYER_SCALAR_RANGES, MATERIAL_LAYER_COLOR_RANGES, TOON_COLOR_MAXIMUM } from '../src/material-layers.js';
 import { SUBSURFACE_RANGES } from '../src/subsurface-limits.js';
 import { responseFormatField, chosenFormat, conciseReview, conciseJobStatus, conciseJobResult, conciseCapabilities } from './mcp-response-format.mjs';
 import { resolveAddons } from './mcp-addons.mjs';
@@ -140,6 +142,7 @@ const materialLayerFields = {
   transmission: layerNumber('transmission'),
   thickness: layerNumber('thickness'),
   ior: layerNumber('ior'),
+  dispersion: layerNumber('dispersion'),
   attenuationColor: layerColor('attenuationColor'),
   attenuationDistance: z.number().positive('attenuationDistance must be above 0. Leave it out for no absorption.').max(3.4e38).describe('Metres to reach attenuationColor.').optional(),
   sheenColor: layerColor('sheenColor'),
@@ -152,6 +155,8 @@ const materialLayerFields = {
   iridescenceIor: layerNumber('iridescenceIor'),
   iridescenceThickness: layerNumber('iridescenceThickness'),
   toon: layerNumber('toon'),
+  softEdge: layerNumber('softEdge'),
+  toonColors: z.array(z.array(z.number().min(0).max(TOON_COLOR_MAXIMUM)).length(3)).min(1).max(8).optional().describe('One linear [r,g,b] per toon step, darkest first; the count must equal toon.'),
 };
 
 
@@ -159,6 +164,8 @@ const waterFields = {
   waterPreset: z.enum(['lake', 'sea', 'river']).optional().describe('Water tag.'),
   absorption: z.array(z.number().min(0).max(20)).length(3).optional().describe('Water tag: RGB per metre.'),
   turbidity: unit.optional().describe('Water tag: 0 clear to 1 murky.'),
+  caustics: z.record(z.string(), z.unknown()).nullable().optional().describe('Water tag: sun caustics on the bed, {scale, speed, intensity, depthFade}; scene_capabilities water.'),
+  waterRamp: z.record(z.string(), z.unknown()).optional().describe('Water tag: flat colour ramp, see scene_capabilities water.'),
 };
 const subsurfaceTriple = ([minimum, maximum]) => z.tuple([0, 1, 2].map(() => z.number().min(minimum).max(maximum)));
 const subsurface = z.strictObject({
@@ -175,6 +182,7 @@ const materialFields = {
   snippet: z.record(z.string(), z.unknown()).nullable().optional().describe('GLSL fragment hook; scene_capabilities materialSnippet.'),
   wear: z.record(z.string(), z.unknown()).nullable().optional().describe('Metal showing through paint and dirt, from vertex groups; scene_capabilities materialWear.'),
   retro: z.record(z.string(), z.unknown()).nullable().optional().describe('PS1 look, raster only: vertexSnap [w, h] and affineUV; scene_capabilities materialRetro.'),
+  waterGlint: z.record(z.string(), z.unknown()).nullable().optional().describe('Water tag only, raster only: stylized highlights, edge { threshold } and sparkle { density, size, shape dot or star }; scene_capabilities materialWaterGlint.'),
   pattern: listed('pattern', materialPattern, 'Procedural texture; box mapping needs no UVs. type is a preset or graph (give graph); also mapping, colors, size, count, bump, seed, axis, resolution; see scene_capabilities pattern.', coreOf(materialPattern.shape, ['type'])).optional(),
   map: z.strictObject({ sequence: z.strictObject({
     frames: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(2).max(TEXTURE_SEQUENCE_LIMITS.maxFrames),
@@ -187,13 +195,13 @@ const materialFields = {
   emission: nonnegative.optional().describe('Emission multiplier. Backend checks Float32 radiance products.'),
   emissiveColor: z.tuple([nonnegative, nonnegative, nonnegative]).optional().describe('Independent linear RGB emission color.'),
   opacity: unit.optional().describe('Surface opacity. Any value below one draws the material blended (glass, windows, visors).'),
-  alphaMode: z.enum(['opaque', 'blend']).optional().describe('blend draws after opaque geometry, sorted back to front.'),
+  alphaMode: z.enum(RECIPE_ALPHA_MODES).optional().describe('blend draws after opaque geometry, sorted back to front; add adds its light to what is behind it.'),
   doubleSided: z.boolean().optional().describe('Draw and light both faces (thin sheets, leaves, cloth).'),
   aov: z.union([unit, color]).optional(),
 };
 const materialTag = z.enum(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']).optional().describe('Surface kind; liquid, foam, foliage, grass and water change how it renders: see scene_capabilities materialTags and water.');
 const materialCore = coreOf(materialFields, ['color', 'metallic', 'roughness', 'emission', 'opacity']);
-const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon; see scene_capabilities materialFields.';
+const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
 const materialListed = (strictSchema, description, extraCore) => listed('materialFields', strictSchema, `${description} ${materialMore}`, { ...extraCore, ...materialCore });
 const liquidOptics = z.strictObject({
   thickness: z.number().min(0).max(100).optional().describe('Metres of liquid where it faces the camera.'),
@@ -250,12 +258,18 @@ const volumeFog = z.strictObject({
 const affects = z.array(z.string()).optional();
 const iesProfile = z.any().optional();
 const lines = z.record(z.string(), z.unknown()).describe('Outlines, toon light and polylines as plain JSON; fields and limits in scene_capabilities lineArt. null clears.');
+// An invalid name says which names work. The union alone reports only its 64-hex branch (issue 2049).
+function catalogReference(names, fileKind) {
+  const error = issue => `Invalid value: expected a built-in name (${names.join(', ')}), or a 64-character ${fileKind} ID from scene_asset_catalog (got ${describeReceived(issue.input)})`;
+  return z.union([z.enum(names, { error }), z.string().regex(CATALOG_FILE_ID, { error })], { error });
+}
+
 const environment = z.strictObject({
   world: z.boolean().optional().describe('Draw the sky and apply surface fog.'),
   ground: z.boolean().optional().describe('false: no automatic floor.'),
   setup: z.enum(LIGHTING_SETUP_NAMES).optional().describe('Named lighting; resets key, fill and ambient fields. Default daylight.'),
   environmentIntensity: bounded(0, 100).optional().describe('Scales the setup environment light and its reflections.'),
-  hdri: z.union([z.enum(BUNDLED_ENVIRONMENT_NAMES), z.string().regex(CATALOG_FILE_ID)]).nullable().optional().describe('HDRI instead of the setup sky; scene_capabilities catalogLooks.'),
+  hdri: catalogReference(BUNDLED_ENVIRONMENT_NAMES, '.hdr').nullable().optional().describe('HDRI instead of the setup sky; scene_capabilities catalogLooks.'),
   environmentRotation: bounded(-100, 100).optional().describe('Turns the setup environment around the vertical axis, in radians.'),
   lightDirection: boundedVector(-1e6, 1e6).optional().describe('Direction toward the key light; shadows follow.'),
   keyColor: boundedVector(0, 1000).optional(),
@@ -314,9 +328,9 @@ const environment = z.strictObject({
   sunBounce: z.number().min(0).optional().describe('Sun bounce in a closed room: 0 off, 1 default.'),
   specularAntiAliasing: z.number().min(0).max(4).optional().describe('Specular anti-aliasing: 0 off, 1 default; widens highlights that sparkle on grainy normal-mapped metal.'),
   resolveCoplanar: z.union([z.literal('offset'), z.literal(false)]).optional().describe("Flush faces are ranked at draw time by default ('offset'); false opts out."),
-  viewTransform: z.enum(VIEW_TRANSFORM_NAMES).optional().describe('Display transform, for example agx to compare with Blender.'),
-  look: z.union([z.enum([...LOOK_NAMES, ...BUNDLED_CUBE_LOOK_NAMES]), z.string().regex(CATALOG_FILE_ID)]).nullable().optional().describe('Look preset or .cube; scene_capabilities catalogLooks. null clears.'),
-  sky: z.record(z.string(), z.unknown()).nullable().optional().describe('Physical sky: {type:"physical", sunElevation, sunRotation, turbidity, groundAlbedo, aerialPerspective}; sets key light, sky and fog. Fields in scene_capabilities physicalSky.'),
+  viewTransform: z.enum(VIEW_TRANSFORM_NAMES).optional().describe('Display transform, agx or standard to compare with Blender.'),
+  look: catalogReference([...LOOK_NAMES, ...BUNDLED_CUBE_LOOK_NAMES], '.cube').nullable().optional().describe('Look preset or .cube; scene_capabilities catalogLooks. null clears.'),
+  sky: z.record(z.string(), z.unknown()).nullable().optional().describe('Physical sky: {type:"physical", sunElevation, sunRotation, turbidity, groundAlbedo, aerialPerspective}; sets key light, sky and fog. Or {type:"gradient", stops:[{at,color}], horizonGlow:{color,width,intensity}}. Fields in scene_capabilities physicalSky, gradientSky.'),
   wind: z.strictObject({ strength: bounded(0, 4).optional(), direction: bounded(-360, 360).optional().describe('Degrees: 0 toward +x, 90 toward +z.') }).optional().describe('Sway of foliage and grass materials; strength defaults to 0.3.'),
 });
 // Every tool lists the same short environment; the full schema is served by scene_capabilities topic environment.
@@ -364,6 +378,7 @@ function curveAndTextGeometries(id) {
       .describe('Sweep along points, a shape or splines; see scene_capabilities curveText.'),
     z.strictObject({ ...id, type: z.literal('sdf'), root: z.record(z.string(), z.unknown()), resolution: looseField }).describe('Signed-distance shapes with smooth union; see scene_capabilities curveText.'),
     z.strictObject({ ...id, type: z.literal('text'), text: z.string().max(256), size: looseField, depth: looseField, font: looseField, align: looseField, curveSegments: looseField }).describe('3D text; see scene_capabilities curveText.'),
+    z.strictObject({ ...id, type: z.literal('cloud'), seed: looseField, puffs: looseField, width: looseField, height: looseField, flatBase: looseField, resolution: looseField, levels: z.array(z.unknown()).max(4).optional(), upBias: looseField, unionSoftness: looseField }).describe('Seeded cumulus of round puffs; see scene_capabilities cloud.'),
     z.strictObject({ ...id, type: z.literal('terrain'), size: looseField, resolution: looseField, seed: looseField, amplitude: looseField, holes: z.array(z.unknown()).max(16).optional() }).describe('Hills with round holes; see scene_capabilities terrain.'),
   ];
 }
@@ -385,6 +400,7 @@ const editName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/).optional(
 const edgeRule = z.record(z.string(), z.unknown()).describe('Edge rule: {"all":true}, {"angle":30}, {"along":[x,y,z]}, {"between":[faceRule,faceRule]}, {"boundaryOf":faceRule} or {"open":true} for boundary edges (also {"open":{"inside":{"min":[x,y,z],"max":[x,y,z]}}}).');
 const shortSelect = z.record(z.string(), z.unknown()).describe('Face rule, as in set_position.');
 const shortField = z.union([finite, z.record(z.string(), z.unknown())]);
+const vertexRule = z.record(z.string(), z.unknown()).describe('Vertex rule: {"all":true}, {"vertices":[indices]}, {"valence":2} or {"inside":{"min":[x,y,z],"max":[x,y,z]}}.');
 const meshEdit = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('extrude_face_region'), select: selectRule.optional(), name: editName, offset: finite.describe('Distance along each connected region\'s average normal (negative pushes in).'), direction: vector3.optional().describe('Move along this direction instead of the normal.'), alongNormals: z.boolean().optional().describe('Move each vertex along its own normal instead, keeping the region joined: use for rings and curved bands.') }),
   z.strictObject({ op: z.literal('extrude_individual'), select: selectRule.optional(), name: editName, offset: finite.describe('Distance along each face\'s own normal.'), direction: vector3.optional() }),
@@ -393,6 +409,7 @@ const meshEdit = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('delete'), select: selectRule }),
   z.strictObject({ op: z.literal('flip_normals'), select: selectRule.optional() }),
   z.strictObject({ op: z.literal('translate'), select: selectRule.optional(), offset: vector3, falloff: z.strictObject({ radius: finite, curve: z.enum(['smooth', 'sphere', 'root', 'sharp', 'linear', 'constant', 'inverseSquare']).optional(), connected: z.boolean().optional().describe('Measure distance along edges instead of straight lines.') }).optional() }),
+  z.strictObject({ op: z.literal('transform_selection'), select: selectRule.optional(), pivot: vector3.optional().describe('Point to turn and scale about. Defaults to the mean of the selected vertices.'), rotation: z.strictObject({ axis: vector3, angle: bounded(-6.283185307179586, 6.283185307179586).describe('Radians, not degrees: 90 degrees is 1.5708.') }).optional(), scale: z.union([bounded(0.000001, 1000), z.array(bounded(0.000001, 1000)).length(3)]).optional().describe('Factor above 0, or one per axis; applied before the rotation.'), falloff: z.strictObject({ radius: finite, curve: z.enum(['smooth', 'sphere', 'root', 'sharp', 'linear', 'constant', 'inverseSquare']).optional(), connected: z.boolean().optional().describe('Measure distance along edges instead of straight lines.') }).optional() }).describe('Rotate and/or scale the selected vertices about a pivot; falloff fades the move to nothing at its radius.'),
   z.strictObject({ op: z.literal('merge_by_distance'), distance: finite.optional() }),
   z.strictObject({
     op: z.literal('loop_cut'), name: editName,
@@ -428,6 +445,11 @@ const meshEdit = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('symmetrize'), name: editName, axis: z.enum(['x', 'y', 'z']).optional(), keep: z.enum(['positive', 'negative']).optional().describe('Side of the plane kept and mirrored. Defaults to positive.'), distance: bounded(0, 1).optional().describe('Vertices this close to the plane count as on it. Defaults to 0.0001.') }).describe('Cut at the plane through the origin, drop the other half and mirror the kept half. Mirrored faces get <name>.mirrored.'),
   z.strictObject({ op: z.literal('scale_elements'), select: selectRule.optional(), scale: finite.describe('Factor above 0 about each connected group of selected faces.') }).describe('Scale connected groups of selected faces about their own centres.'),
   z.strictObject({ op: z.literal('extrude_edges'), name: editName, edges: edgeRule.describe('Edges to extrude, usually {"open":true} for a boundary.'), offset: vector3.describe('Where the copied vertices move.') }).describe('Extrude edges into quads, tagged <name>.side.'),
+  z.strictObject({ op: z.literal('split_edges'), name: editName, edges: edgeRule.describe('Edges to open.') }).describe('Open the surface along these edges.'),
+  z.strictObject({ op: z.literal('delete_loose') }).describe('Remove vertices no face uses.'),
+  z.strictObject({ op: z.literal('flatten'), verts: vertexRule, normal: vector3.optional().describe('Plane normal.'), factor: unit.optional().describe('0 to 1, default 1.') }).describe('Move vertices onto a plane.'),
+  z.strictObject({ op: z.literal('unsubdivide') }).describe('Reverse one Catmull-Clark level.'),
+  z.strictObject({ op: z.literal('circularize'), verts: vertexRule, factor: unit.optional().describe('0 to 1, default 1.'), regular: z.boolean().optional().describe('Default true.') }).describe('Put each closed loop of vertices on a circle.'),
   z.strictObject({ op: z.literal('tag'), select: selectRule, name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/).describe('Tag to add to the selected faces.') }),
   z.strictObject({
     op: z.literal('boolean'), name: editName,
@@ -505,6 +527,14 @@ const stackNodeUnion = z.union([z.discriminatedUnion('op', stackNodes), modifier
 const meshEditUnion = z.union([z.discriminatedUnion('op', [...meshEdit.options, ...stackNodes]), modifierRecord]);
 const stackOperationNames = [...stackNodes.map(node => node.shape.op.value), ...Object.keys(MODIFIER_OPERATIONS)];
 const editOperationNames = [...meshEdit.options.map(option => option.shape.op.value), ...stackOperationNames];
+// The tool's op list must be the engine's list (MESH_EDIT_OPERATIONS, also what scene_capabilities meshEdits reports): an op the engine
+// takes but this schema lacks, or the reverse, is refused here at load instead of by an agent mid-edit.
+const engineOperationNames = Object.keys(MESH_EDIT_OPERATIONS);
+const missingFromSchema = engineOperationNames.filter(name => !editOperationNames.includes(name));
+const missingFromEngine = editOperationNames.filter(name => !engineOperationNames.includes(name));
+if (missingFromSchema.length > 0 || missingFromEngine.length > 0) {
+  throw new Error(`mesh_edit schema and MESH_EDIT_OPERATIONS differ: schema lacks [${missingFromSchema.join(', ')}], engine lacks [${missingFromEngine.join(', ')}]. Add the op to both.`);
+}
 const meshStack = z.array(listed('meshStack', stackNodeUnion, 'Stack node { op, ...fields }; fields per op: scene_capabilities meshStack.', { op: z.enum(stackOperationNames) })).max(16);
 const meshEdits = z.array(listed('meshEdit', meshEditUnion, 'Edit { op, ...fields }, applied in order; fields per op: scene_capabilities meshEdit, or meshEdit.<op> for one op.', { op: z.enum(editOperationNames) })).max(64);
 // The full edit and stack schemas live in mesh_edit and mesh_stack. Repeating them in every recipe cost about 45 KB
@@ -575,7 +605,7 @@ const expression = z.lazy(() => z.union([
   z.literal('time'),
   z.strictObject({ node: identifier, property: z.enum(['translation', 'rotation', 'scale']), component: axisName, space: z.enum(['local', 'world']).optional() }),
   z.record(z.string().max(24), z.union([z.array(expression).min(1).max(8), expression])),
-])).describe('Number, "time", {"node","property","component","space"} read, or an operator like {"mul":[2,"time"]}, {"neg":x} too. Operators as in field expressions (scene_capabilities), no vectors, attributes or noise. At most 64 parts, 8 deep.');
+])).describe('Number, "time", {"node","property","component","space"} read, or an operator like {"mul":[2,"time"]}, {"neg":x} too. Operators as in field expressions (scene_capabilities), no vectors, attributes or noise. At most 64 parts, 8 deep.').meta({ id: 'Expression' });
 const influence = z.union([unit, expression]).optional().describe('0 to 1 blend of the constraint, or an expression.');
 const constraint = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('copy_location'), node: identifier, target: identifier, axes: axisNames.optional(), invert: axisNames.optional(), offset: z.boolean().optional(), space: constraintSpace, influence }),
@@ -624,9 +654,11 @@ const motionTrackProperties = {
   node: ['translation', 'rotation', 'scale'],
   material: ['color', 'emissiveColor', 'emission', 'metallic', 'roughness'],
   camera: ['eye', 'target', 'fov', 'roll'],
+  morph: ['weight'],
   geometry: ['oceanTime'],
 };
-const motionTrackKinds = [...Object.keys(motionTrackProperties), 'light', 'sun', 'environment', 'effects'];
+// The backend's list, so scene_create and set-motion accept the same kinds.
+const motionTrackKinds = MOTION_TRACK_KIND_NAMES;
 const motionTrackFields = ['kind', 'id', 'property', 'interpolation', 'keyframes', 'extrapolation', 'modifiers'];
 // A union reports only "Invalid input"; name the field and the allowed ones the way set-motion does.
 function motionTrackUnionMessage(issue) {
@@ -662,6 +694,7 @@ const motion = z.strictObject({
     motionTrack('camera', 'target', vector3, vector3),
     motionTrack('camera', 'fov', finite.gt(0).lt(180), finite),
     motionTrack('camera', 'roll', finite, finite),
+    motionTrack('morph', 'weight', unit, finite),
     motionTrack('geometry', 'oceanTime', finite.min(-1e6).max(1e6), finite),
     lookTrack,
   ], { error: motionTrackUnionMessage })).max(128).optional().describe('Keyframe tracks; leave out for a motion made only of drivers, ik or constraints.'),
@@ -814,7 +847,8 @@ const nodeOperations = (nodeFieldShape, nodeSchema) => [
 const otherOperations = [
   materialListed(z.strictObject({ type: z.literal('set-material'), id: identifier, ...materialFields }, { error: flatFieldsHint('set-material', 'material') }), 'Change a material.', { type: z.literal('set-material'), id: identifier }),
   z.strictObject({ type: z.literal('set-camera'), ...cameraFields }),
-  z.strictObject({ type: z.literal('set-motion'), motion: recipeMotionReference.nullable() }),
+  z.strictObject({ type: z.literal('set-motion'), motion: recipeMotionReference.nullable().optional(), removeTracks: z.array(z.record(z.string(), z.string())).min(1).max(64).optional().describe('Instead of motion: selectors { kind, id, property } of tracks to drop.') })
+    .refine(operationBody => (operationBody.motion !== undefined) !== (operationBody.removeTracks !== undefined), { message: 'set-motion takes one of motion or removeTracks.' }),
   z.strictObject({ type: z.literal('bake-motion'), nodes: z.array(identifier).min(1).max(32), start: nonnegative.optional(), end: nonnegative.optional(), step: positive.optional(), tolerance: z.record(z.string(), z.number()).optional() }),
   z.strictObject({
     type: z.literal('fracture-node'), node: identifier, cells: z.number().int().min(2).max(64), strength: positive,
@@ -859,6 +893,11 @@ const checkpointFields = { ...sessionFields, checkpointId: z.uuid().describe('Ch
 const expectedRevision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).describe('Current revision returned by create, inspect, apply or restore. Stale edits fail atomically.');
 const jobFields = { jobId: z.uuid().describe('Render job UUID returned by scene_render_submit or capabilities jobs.records.') };
 const jobWithFormatFields = { ...jobFields, response_format: responseFormatField };
+const INLINE_IMAGE_LIMIT = 8;
+const jobResultFields = {
+  ...jobWithFormatFields,
+  images: z.union([z.boolean(), z.array(z.number().int().min(0)).max(INLINE_IMAGE_LIMIT)]).optional().describe('false: paths only; indexes: those frames.'),
+};
 // Job tools take jobId alone; an agent that carries sessionId over from the scene tools gets told to drop it.
 function jobKeysHint(toolName, acceptedKeys) {
   const accepted = acceptedKeys.length > 1 ? `${acceptedKeys[0]} (and ${acceptedKeys.slice(1).join(', ')})` : acceptedKeys[0];
@@ -867,9 +906,19 @@ function jobKeysHint(toolName, acceptedKeys) {
     : undefined);
 }
 const renderSettings = z.strictObject({
-  kind: z.enum(['image', 'stills', 'video']),
-  width: z.number().int().min(64).max(MAXIMUM_JOB_SIDE),
-  height: z.number().int().min(64).max(MAXIMUM_JOB_SIDE),
+  kind: z.enum(['image', 'stills', 'video', 'icons']),
+  width: z.number().int().min(64).max(MAXIMUM_JOB_SIDE).optional(),
+  height: z.number().int().min(64).max(MAXIMUM_JOB_SIDE).optional(),
+  items: z.array(z.string().max(260)).min(1).max(256).optional().describe('icons: catalog GLB names or asset ids; a PNG each plus atlas.png, icons.json. See scene_capabilities jobs.icons.'),
+  size: z.union([z.literal(64), z.literal(128), z.literal(256), z.literal(512)]).optional(),
+  style: z.enum(['clean', 'toon', 'sketch']).optional().describe('icons: clean (default), toon or sketch.'),
+  viewpoint: z.union([z.literal('three-quarter'), z.strictObject({ azimuth: z.number().optional(), elevation: z.number().optional() })]).optional().describe('icons: three-quarter or azimuth/elevation degrees.'),
+  scale: z.enum(['fit', 'relative']).optional(),
+  padding: z.number().optional(),
+  angles: z.number().optional(),
+  breakdown: z.boolean().optional(),
+  seed: z.number().optional(),
+  sketch: z.looseObject({}).optional(),
   fps: z.number().int().min(1).max(MAXIMUM_JOB_FPS).optional(),
   duration: z.number().min(0.1).max(60).optional(),
   animation: z.strictObject({ clip: z.number().int().min(0), start: z.number().min(0).max(3600).optional() }).optional(),
@@ -920,10 +969,28 @@ const OUTPUT_SCHEMAS = {
 const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const INLINE_IMAGE_MAXIMUM_BYTES = 1024 * 1024;
 
-async function renderResultContent(result, shown = result) {
+function isAttachableImage(artifact) {
+  return INLINE_IMAGE_TYPES.has(artifact.mimeType) && artifact.bytes <= INLINE_IMAGE_MAXIMUM_BYTES;
+}
+
+// images: undefined or true attaches every PNG of a small job and none of a larger one (a 96-frame job would put
+// ~100 MB in the transcript); false attaches none; an array of artifact indexes attaches exactly those.
+function indexesToAttach(artifacts, images) {
+  if (Array.isArray(images)) {
+    const outOfRange = images.filter(index => index >= artifacts.length);
+    if (outOfRange.length > 0) throw new RangeError(`images index ${outOfRange[0]} is past the last artifact (${artifacts.length - 1}). Pass indexes from 0 to ${artifacts.length - 1} of the artifacts list, or images: false for paths only.`);
+    return new Set(images);
+  }
+  if (images === false) return new Set();
+  const imageIndexes = artifacts.flatMap((artifact, index) => (isAttachableImage(artifact) ? [index] : []));
+  return new Set(imageIndexes.length <= INLINE_IMAGE_LIMIT ? imageIndexes : []);
+}
+
+async function renderResultContent(result, shown = result, { images } = {}) {
   const content = [{ type: 'text', text: JSON.stringify(shown) }];
-  for (const artifact of result.artifacts) {
-    if (INLINE_IMAGE_TYPES.has(artifact.mimeType) && artifact.bytes <= INLINE_IMAGE_MAXIMUM_BYTES) {
+  const attachIndexes = indexesToAttach(result.artifacts, images);
+  for (const [index, artifact] of result.artifacts.entries()) {
+    if (attachIndexes.has(index) && isAttachableImage(artifact)) {
       content.push({ type: 'image', data: (await readFile(artifact.path)).toString('base64'), mimeType: artifact.mimeType });
     }
     content.push({ type: 'resource_link', uri: pathToFileURL(artifact.path).href, name: artifact.filename, mimeType: artifact.mimeType, size: artifact.bytes });
@@ -1093,7 +1160,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
   register('scene_restore', 'Restore a checkpoint atomically using the current revision. The checkpoint remains available and revision increments. Pass exactly one of checkpointId, revision or branch. With revision (last 4 kept), undo with no checkpoint. With branch, keep that branch (one revision) and drop all branches.', z.strictObject({ ...sessionFields, checkpointId: restoreCheckpointId, revision: z.number().int().min(0).optional(), ...restoreBranchField, expectedRevision }), edit, async argumentsValue => jsonResult(await runtime.restore(argumentsValue)));
   register('scene_release_checkpoint', 'Release one checkpoint slot. Released or foreign checkpoints fail.', z.strictObject(checkpointFields), destroy, async argumentsValue => jsonResult(await runtime.releaseCheckpoint(argumentsValue)));
   register('scene_export_recipe', 'Read a detached canonical JSON recipe for reproduction.', z.strictObject(sessionFields), readOnly, async argumentsValue => jsonResult(await runtime.exportRecipe(argumentsValue)));
-  register('scene_export_glb', 'Write the active scene as a GLB file in the configured jobs folder, under a server-chosen name (the result has the path, byte count and SHA-256). Needs --jobs. Exports the current pose with pattern and imported textures, skins, morph weights and IK as posed; motionTime seeks authored motion first. For an imported asset, clip adds that source clip (translation, rotation, scale and morph weight tracks) on the source skeleton, which needs no animation, node overrides or motion in the scene. At most eight files are kept, oldest removed first; the GLB is at most 32 MiB.', z.strictObject({ ...sessionFields, clip: z.number().int().min(0).max(255).optional().describe('Imported assets only: index of the source clip to write.'), motionTime: z.number().min(0).max(3600).optional().describe('Seek authored motion (and IK) to this time before exporting. Leaves the preview there, like scene_look.'), maxTextureSize: z.number().int().min(1).max(4096).optional().describe('Largest texture side in pixels. Defaults to 2048.') }), edit, async argumentsValue => jsonResult(await runtime.exportGlb(argumentsValue)));
+  register('scene_export_glb', 'Write the active scene as a GLB file in the configured jobs folder, under a server-chosen name (the result has the path, byte count and SHA-256). Needs --jobs. Exports the current pose with pattern and imported textures, skins, morph weights and IK as posed; motionTime seeks authored motion first. For an imported asset, clip adds that source clip (translation, rotation, scale and morph weight tracks) on the source skeleton, which needs no animation, node overrides or motion in the scene. At most eight files are kept, oldest removed first; the GLB is at most 32 MiB.', z.strictObject({ ...sessionFields, clip: z.union([z.number().int().min(0).max(255), z.string().min(1).max(256)]).optional().describe('Imported assets only: source clip index or name, as scene_asset_catalog lists.'), motionTime: z.number().min(0).max(3600).optional().describe('Seek authored motion (and IK) to this time before exporting. Leaves the preview there, like scene_look.'), maxTextureSize: z.number().int().min(1).max(4096).optional().describe('Largest texture side in pixels. Defaults to 2048.') }), edit, async argumentsValue => jsonResult(await runtime.exportGlb(argumentsValue)));
   register('scene_export_web', 'Write the scene with its game as a static web build in the jobs folder: index.html, game.json and engine/, which any static host serves with no server code. Needs --jobs and a game set with set-game. Procedural scenes only; the newest four builds are kept. review: true writes a page of the current view for a person to pin on a phone instead (no game); read its saved file with scene_ask_user reviewFile.', z.strictObject({ ...sessionFields, title: z.string().max(64).optional().describe('Page title.'), review: z.boolean().optional() }), edit, async argumentsValue => jsonResult(await runtime.exportWeb(argumentsValue)));
   register('scene_dispose', 'Dispose the active scene and its checkpoints, releasing renderer resources.', z.strictObject(sessionFields), destroy, async argumentsValue => jsonResult(await runtime.dispose(argumentsValue)));
   register('scene_render_submit', 'Start one asynchronous snapshot job in the configured private job store. Requires the current revision. Temporarily leases the preview renderer; does not change source revision or checkpoints.', z.strictObject({ ...sessionFields, expectedRevision, settings: renderSettings }), { ...edit, destructiveHint: false }, async argumentsValue => jsonResult(await runtime.submitJob(argumentsValue)));
@@ -1102,9 +1169,9 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     return jsonResult(chosenFormat('scene_render_status', response_format) === 'concise' ? conciseJobStatus(record) : record);
   });
   register('scene_render_cancel', 'Request cancellation of one job. Poll status until terminal before using the preview again.', z.strictObject(jobFields, { error: jobKeysHint('scene_render_cancel', Object.keys(jobFields)) }), { ...edit, idempotentHint: true }, async argumentsValue => jsonResult(await runtime.cancelJob(argumentsValue)));
-  register('scene_render_result', 'Read completed local output paths, MIME types, byte counts, SHA-256 digests and measured render metrics. Returns a PNG inline and a resource link to each file; video stays on disk.', z.strictObject(jobWithFormatFields, { error: jobKeysHint('scene_render_result', Object.keys(jobWithFormatFields)) }), readOnly, async ({ response_format, ...jobInput }) => {
+  register('scene_render_result', 'Read completed local output paths, MIME types, byte counts, SHA-256 digests and measured render metrics. Attaches each PNG of a job of up to 8 (images: false for paths only, or indexes of frames) and a resource link per file; video stays on disk.', z.strictObject(jobResultFields, { error: jobKeysHint('scene_render_result', Object.keys(jobResultFields)) }), readOnly, async ({ response_format, images, ...jobInput }) => {
     const result = await runtime.jobResult(jobInput);
-    return renderResultContent(result, chosenFormat('scene_render_result', response_format) === 'concise' ? conciseJobResult(result) : result);
+    return renderResultContent(result, chosenFormat('scene_render_result', response_format) === 'concise' ? conciseJobResult(result) : result, { images });
   });
   register('scene_render_release', 'Delete the owned files and record for a terminal job, freeing store quota. Active jobs must be cancelled first.', z.strictObject(jobFields, { error: jobKeysHint('scene_render_release', Object.keys(jobFields)) }), destroy, async argumentsValue => jsonResult(await runtime.releaseJob(argumentsValue)));
   return server;

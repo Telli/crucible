@@ -76,7 +76,7 @@ function checkResolution(value) {
 
 function checkPosition(value, resolution, cellSize) {
   if (value === undefined) return [resolution[0] * cellSize / 2, 0, resolution[2] * cellSize / 2];
-  if (!Array.isArray(value) || value.length !== 3 || !value.every(Number.isFinite)) {
+  if (!Array.isArray(value) || value.length !== 3 || !Array.from(value).every(Number.isFinite)) {
     throw new TypeError(`bakeGasSim: burstPosition must be [x, y, z] in metres from the grid's corner (floor at y 0), got ${JSON.stringify(value)}; leave it out for the middle of the floor`);
   }
   const size = resolution.map(axis => axis * cellSize);
@@ -102,6 +102,18 @@ export function resolveGasSimOptions(options = {}) {
   resolved.burstPosition = checkPosition(options.burstPosition, resolved.resolution, resolved.cellSize);
   resolved.size = resolved.resolution.map(axis => axis * resolved.cellSize);
   return resolved;
+}
+
+// Bytes a bake takes as half-float grids, the figure the sequence limit counts.
+function sequenceBytes(resolved) {
+  return resolved.resolution[0] * resolved.resolution[1] * resolved.resolution[2] * 2 * (resolved.velocity ? 6 : 3) * resolved.frames;
+}
+
+function checkSequenceBytes(caller, resolved) {
+  const bytes = sequenceBytes(resolved);
+  if (bytes <= VOLUME_GRID_SEQUENCE_MAX_BYTES) return;
+  const fitting = Math.floor(resolved.frames * VOLUME_GRID_SEQUENCE_MAX_BYTES / bytes);
+  throw new RangeError(`${caller}: ${resolved.frames} frames of ${resolved.resolution.join('x')} take ${bytes} bytes, over the ${VOLUME_GRID_SEQUENCE_MAX_BYTES} byte sequence limit; pass frames up to ${fitting} or a smaller resolution`);
 }
 
 function smoothstep(edge0, edge1, value) {
@@ -538,6 +550,7 @@ function runGasSim(options, onFrame) {
  */
 export function bakeGasSim(options = {}) {
   const resolved = resolveGasSimOptions(options);
+  checkSequenceBytes('bakeGasSim', resolved);
   const frames = [];
   runGasSim(resolved, frame => frames.push(frame));
   return { frames, resolution: resolved.resolution, size: resolved.size, fps: resolved.fps };
@@ -550,11 +563,7 @@ export function bakeGasSim(options = {}) {
 export function bakeGasSimToGrids(options = {}, namePrefix = 'gas') {
   if (typeof namePrefix !== 'string' || namePrefix === '') throw new TypeError('bakeGasSimToGrids: namePrefix must be a non-empty string, such as "blast"');
   const resolved = resolveGasSimOptions(options);
-  const frameBytes = resolved.resolution[0] * resolved.resolution[1] * resolved.resolution[2] * 2 * (resolved.velocity ? 6 : 3);
-  if (frameBytes * resolved.frames > VOLUME_GRID_SEQUENCE_MAX_BYTES) {
-    const fitting = Math.floor(VOLUME_GRID_SEQUENCE_MAX_BYTES / frameBytes);
-    throw new RangeError(`bakeGasSimToGrids: ${resolved.frames} frames of ${resolved.resolution.join('x')} take ${frameBytes * resolved.frames} bytes, over the ${VOLUME_GRID_SEQUENCE_MAX_BYTES} byte sequence limit; pass frames up to ${fitting} or a smaller resolution`);
-  }
+  checkSequenceBytes('bakeGasSimToGrids', resolved);
   const names = [];
   runGasSim(resolved, (frame, index) => {
     const name = `${namePrefix}_${String(index).padStart(4, '0')}.67vg`;
