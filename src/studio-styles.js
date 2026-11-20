@@ -421,6 +421,7 @@ export const STUDIO_CSS = `
 #crucible-studio-pop-add { max-width: 348px; max-block-size: calc(100dvh - 16px); overflow-y: auto; }
 #crucible-studio-pop-add .crucible-studio-popover-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .crucible-studio-popover > button { gap: 9px; }
+.crucible-studio-popover > button[hidden] { display: none; }
 .crucible-studio-popover button {
   justify-content: flex-start;
   width: 100%;
