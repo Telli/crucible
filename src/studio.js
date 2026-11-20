@@ -760,6 +760,7 @@ const STUDIO_SETTING_ROWS = Object.freeze([
   ['readoutVisible', 'Camera and size readout'],
   ['viewWidgetVisible', 'Axis widget'],
   ['agentCursorVisible', 'Agent cursor'],
+  ['panelsFloating', 'Floating panels'],
 ]);
 
 // What the Scene card takes of the column while nothing was measured yet, and the arrow key steps of the two grips.
@@ -918,6 +919,7 @@ export function createStudio(container, {
     createMenuToggle('Grid', '', () => gridButton.click(), () => gridVisible),
     createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true'),
     createMenuToggle('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true'),
+    createMenuToggle('Floating panels', '', () => setPreference('panelsFloating', !preferences.panelsFloating), () => preferences.panelsFloating),
   );
   // A row that switches something shows whether it is on each time its menu opens.
   viewPopover.addEventListener('toggle', syncMenuToggles);
@@ -1860,6 +1862,9 @@ export function createStudio(container, {
     });
     root.dataset.readout = preferences.readoutVisible ? 'on' : 'off';
     root.dataset.viewWidget = preferences.viewWidgetVisible ? 'on' : 'off';
+    // Floating panels lie over a scene that fills the window. Docked ones take the window's edges and the viewport
+    // is the room they leave, measured again on the next frame, so the scene keeps its proportions.
+    root.dataset.floating = preferences.panelsFloating ? 'true' : 'false';
     if (!preferences.agentCursorVisible) {
       agentPresence.hide();
     }

@@ -39,6 +39,7 @@ export const STUDIO_PREFERENCE_DEFAULTS = Object.freeze({
   sceneShare: STUDIO_SCENE_SHARE.automatic,
   sceneMinimized: false,
   propertiesMinimized: false,
+  panelsFloating: true,
   moveSnapStep: 0.25,
   rotateSnapDegrees: 15,
   gizmoSize: 'medium',
