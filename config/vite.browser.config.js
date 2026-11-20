@@ -10,7 +10,9 @@ export default defineConfig({
   build: {
     copyPublicDir: false,
     emptyOutDir: false,
-    rolldownOptions: { output: { banner: `/*! ${readFileSync('LICENSE', 'utf8')} */` } },
+    // The entry imports some modules lazily, and those share the renderer with the entry, so by default the shared code
+    // splits into a renderer chunk the standalone file imports (#2726). codeSplitting false inlines every chunk into the one file.
+    rolldownOptions: { output: { banner: `/*! ${readFileSync('LICENSE', 'utf8')} */`, codeSplitting: false } },
     outDir: 'build',
     lib: { entry: 'src/index.js', formats: ['es'], fileName: () => STANDALONE_FILE_NAME },
     minify: true,
