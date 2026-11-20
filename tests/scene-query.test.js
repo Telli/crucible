@@ -81,6 +81,10 @@ test('walkMap refuses a region above maxCells and unknown options', () => {
   const query = createSceneQuery(parts);
   assert.throws(() => query.walkMap({ min: [0, 0], max: [1000, 1000], cellSize: 1 }), /maxCells/);
   assert.throws(() => query.walkMap({ min: [0, 0], max: [1, 1], radius: 1 }), /Unsupported walkMap option/);
+  // #2403: a lowerPass that is not an object is named, not a raw "Cannot convert null to object".
+  for (const lowerPass of [null, 5, [3, 1]]) {
+    assert.throws(() => query.walkMap({ min: [0, 0], max: [1, 1], lowerPass }), /walkMap lowerPass must be an object such as { fromY: 3, groundBelow: 0 }, got /, String(lowerPass));
+  }
   query.dispose();
 });
 

@@ -32,6 +32,11 @@ export async function loadGameAssets(recipe, assetUrls, fetchBytes = defaultFetc
     throw new RangeError(`This game uses ${ids.length} catalog assets; the limit is ${GAME_ASSET_LIMITS.maxAssets}.`);
   }
   const copiesById = new Map(recipeAssetNeeds(recipe).map(need => [need.id, need.copies]));
+  // Checked before any download: past the limit the scene would fail later with "copy N is not loaded" (#2403).
+  for (const [id, copies] of copiesById) {
+    if (copies <= GAME_ASSET_LIMITS.maxCopiesPerAsset) continue;
+    throw new RangeError(`The game's asset ${id.slice(0, 12)} needs ${copies} decoded copies (one for the still placements and one for each of its ${copies - 1} animated, driven or posed placements); a game loads at most ${GAME_ASSET_LIMITS.maxCopiesPerAsset}. Animate at most ${GAME_ASSET_LIMITS.maxCopiesPerAsset - 1} placements of it, or use a crowd for the rest.`);
+  }
   const assets = new Map();
   for (const id of ids) {
     const url = assetUrls?.[id];
@@ -39,7 +44,7 @@ export async function loadGameAssets(recipe, assetUrls, fetchBytes = defaultFetc
       throw new RangeError(`The game places or retargets from asset ${id.slice(0, 12)}, but assetUrls has no URL for it. Export the game again with the web export, which writes assets/<id>.glb.`);
     }
     const bytes = await fetchBytes(url);
-    const copies = Math.min(copiesById.get(id) ?? 1, GAME_ASSET_LIMITS.maxCopiesPerAsset);
+    const copies = copiesById.get(id) ?? 1;
     for (let copy = 0; copy < copies; copy++) {
       assets.set(assetCopyKey(id, copy), await parseGltf(bytes.slice(0), agentAssetDecodeOptions()));
     }

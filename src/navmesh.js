@@ -246,6 +246,10 @@ export function createNavmesh({ positions, indices, agentRadius, maxSlopeDegrees
     const cellRoute = searchCells(startCell, goalCell, budget);
     const corners = [from, ...cellRoute.cells.slice(1, -1).map(centerOf), to];
     const pulled = pullString(corners);
+    // Each corner must stay in the route, so a route with more corners than the point limit cannot be resampled under it (#2403).
+    if (pulled.length > NAVMESH_LIMITS.maximumPathPoints) {
+      throw new RangeError(`navmesh route has ${pulled.length} corners, more than the ${NAVMESH_LIMITS.maximumPathPoints} points a path may hold. Split the trip into legs: findPath to a point part way along, then from there to the goal.`);
+    }
     const points = resample(pulled, positiveNumber(spacing, Math.max(1.5, size * 2), 'spacing'));
     let length = 0;
     for (let index = 1; index < pulled.length; index++) {
