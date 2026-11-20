@@ -13,6 +13,7 @@ const NAVIGATION_LINKS = [
   { href: '/docs.html', label: 'Docs' },
   { href: '/recipes.html', label: 'Recipes' },
   { href: '/marketplace.html', label: 'Marketplace' },
+  { href: '/showcase.html', label: 'Showcase' },
   { href: '/changelog.html', label: 'Changelog' },
 ];
 

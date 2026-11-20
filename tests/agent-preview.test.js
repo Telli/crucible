@@ -290,3 +290,24 @@ test('a review shot at a motion time gives the post pass the same clock as a fra
   preview.reviewShot({ sessionId, index: 0, width: 384, height: 384, columns: 2, shot: { label: 'base', motionTime: null } });
   assert.equal(renders.at(-1).camera.passTime, undefined);
 });
+
+test('a look at a motion time gives the post pass the same clock as a frame at that time', () => {
+  const { preview, renders } = previewHarness();
+  const sessionId = 'look-pass-clock';
+  const input = recipe();
+  input.motion = { duration: 8, tracks: [{ kind: 'node', id: 'cube', property: 'translation',
+    keyframes: [{ time: 0, value: [0, 0, 0] }, { time: 8, value: [4, 0, 0] }] }] };
+  preview.create({ recipe: input, sessionId, backend: 'cpu', memoryBudgetMiB: 192 });
+  const lookClocks = [];
+  const frameClocks = [];
+  for (const motionTime of [5.65, 2]) {
+    preview.look({ sessionId, motionTime });
+    lookClocks.push({ passTime: renders.at(-1).camera.passTime, anchorX: renders.at(-1).parts[0].matrix[12] });
+    preview.frame({ sessionId, motionTime });
+    frameClocks.push({ passTime: renders.at(-1).camera.passTime, anchorX: renders.at(-1).parts[0].matrix[12] });
+  }
+  assert.deepEqual(lookClocks, frameClocks);
+  assert.equal(lookClocks[0].passTime, 5.65);
+  preview.look({ sessionId, motionTime: null });
+  assert.equal(renders.at(-1).camera.passTime, undefined);
+});

@@ -9,14 +9,18 @@ const NODE_RSS_MARGIN_MIB = 128;
 // The browser heap is the scene's JavaScript objects, a share of the budget; two thirds of 384 MiB is the old 256 MiB.
 const BROWSER_HEAP_SHARE = 2 / 3;
 
+function requireMemoryBudget(memoryMiB) {
+  if (!Number.isFinite(memoryMiB) || memoryMiB < 0) {
+    throw new RangeError(`The memory guard needs a memory budget of zero or more MiB, got ${memoryMiB}.`);
+  }
+}
+
 /**
  * The two limits of a job that runs with `--memory memoryMiB`. They follow the budget instead of fixed constants (#1776, #1696),
  * so raising --memory (up to what the machine holds, see maximumMemoryMiB) raises the guard with it, and never below the floors above.
  */
 export function memoryGuardLimits(memoryMiB = 0) {
-  if (!Number.isFinite(memoryMiB) || memoryMiB < 0) {
-    throw new RangeError(`memoryGuardLimits needs a memory budget of zero or more MiB, got ${memoryMiB}.`);
-  }
+  requireMemoryBudget(memoryMiB);
   return {
     nodeBytes: Math.max(NODE_RSS_LIMIT_BYTES, (memoryMiB + NODE_RSS_MARGIN_MIB) * 1024 ** 2),
     browserHeapBytes: Math.max(BROWSER_HEAP_LIMIT_BYTES, Math.ceil(memoryMiB * BROWSER_HEAP_SHARE) * 1024 ** 2),
@@ -72,6 +76,7 @@ export function nativeNodeAllowanceBytes({ width, height, memoryMiB = 0 }) {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
     throw new Error(`nativeNodeAllowanceBytes needs a positive integer width and height, got ${width} x ${height}.`);
   }
+  requireMemoryBudget(memoryMiB);
   const sceneBytes = memoryMiB * NATIVE_SCENE_MIB_PER_BUDGET_MIB * 1024 ** 2;
   const allowance = NATIVE_FIXED_ALLOWANCE_BYTES + width * height * NATIVE_BYTES_PER_PIXEL + sceneBytes;
   return Math.min(allowance, NATIVE_ALLOWANCE_CAP_BYTES + sceneBytes);

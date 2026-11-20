@@ -26,3 +26,9 @@ test('the query-only cache asks for the file once, walks it and replaces it for 
 test('a file that is not a GLB with a JSON chunk first is refused', () => {
   assert.throws(() => geometryOnlyGlb(Buffer.alloc(64)), /GLB/);
 });
+
+test('a GLB whose JSON chunk is longer than the file says so', () => {
+  const whole = Buffer.from(carAsset());
+  const jsonLength = whole.readUInt32LE(12);
+  assert.throws(() => geometryOnlyGlb(whole.subarray(0, 20 + jsonLength - 8)), /JSON chunk.*longer than the file/);
+});

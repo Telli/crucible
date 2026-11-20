@@ -267,3 +267,13 @@ test('world clearance must remain outward and nonzero after Float32 rounding', (
   const attachment = createSurfaceAttachment(part, { ...bind, clearance: 1 });
   assert.equal(attachment.matrix[14], 1e6 + 1);
 });
+
+test('a zero-area triangle elsewhere in the mesh does not block binding to a healthy triangle', () => {
+  const part = target();
+  part.geometry.positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 2, 2]);
+  part.geometry.normals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  part.geometry.indices = new Uint32Array([0, 1, 2, 3, 3, 3]);
+  const attachment = createSurfaceAttachment(part, bind);
+  assert.equal(attachment.matrix.length, 16);
+  assert.throws(() => createSurfaceAttachment(part, { ...bind, triangle: 1 }), /triangle is degenerate/);
+});
