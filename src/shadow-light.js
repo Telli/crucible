@@ -1,3 +1,7 @@
+import { requireFiniteInRange } from './modeling-limits.js';
+
+// Far beyond any scene, and small enough that squaring it stays finite.
+const MAXIMUM_COORDINATE = 1e100;
 const DEFAULT_SUN_DIRECTION = [-3, 6, 4];
 const SHADOW_VIEWS = {
   world: { distance: 75, target: [0, 2, -10], extent: 65, near: 1, far: 220 },
@@ -37,6 +41,9 @@ export function fitWorldShadowView(bounds) {
 export function resolveShadowLight(world, lightDirection, shadowBounds = {}, fittedView = null) {
   const { distance, ...view } = fittedView ?? SHADOW_VIEWS[world ? 'world' : 'studio'];
   const target = shadowBounds.target ?? view.target;
+  if (lightDirection != null) {
+    requireFiniteInRange('resolveShadowLight', 'lightDirection', Array.from(lightDirection), -MAXIMUM_COORDINATE, MAXIMUM_COORDINATE);
+  }
   const requested = lightDirection ?? DEFAULT_SUN_DIRECTION;
   const direction = Math.hypot(requested[0], requested[1], requested[2]) > 1e-6 ? requested : DEFAULT_SUN_DIRECTION;
   const length = Math.hypot(direction[0], direction[1], direction[2]);
@@ -54,6 +61,8 @@ const FILTER_REACH_TEXELS = 3.5;
  * for any depth range. `light` is the result of `resolveShadowLight`.
  */
 export function shadowBiasPerSlope(light, mapSize) {
+  requireFiniteInRange('shadowBiasPerSlope', 'mapSize and light.extent', [mapSize, light.extent], Number.MIN_VALUE, MAXIMUM_COORDINATE);
+  requireFiniteInRange('shadowBiasPerSlope', 'light.far - light.near', light.far - light.near, Number.MIN_VALUE, MAXIMUM_COORDINATE);
   const texelWorldSize = (light.extent * 2) / mapSize;
   return (texelWorldSize * FILTER_REACH_TEXELS) / (light.far - light.near);
 }

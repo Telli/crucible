@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
+import { openBlankPage } from './helpers/dev-server-browser.js';
 
 const IMAGE_SIZE = 160;
 // Differences in 8-bit display values. The blur and the noise leave a flat wall within one level of the pass-free frame.
@@ -84,7 +85,7 @@ test('ambient occlusion leaves a flat wall seen at a slant within one display le
     }
     const page = await browser.newPage({ viewport: { width: IMAGE_SIZE, height: IMAGE_SIZE } });
     page.on('pageerror', (error) => { throw error; });
-    await page.goto(`http://127.0.0.1:${port}/`, { timeout: 60000 });
+    await openBlankPage(page, port);
     const frames = await drawWall(page, false);
     // The middle band of rows, away from the wall's edges, where nothing can occlude.
     let compared = 0;

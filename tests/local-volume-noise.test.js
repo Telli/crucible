@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { applyViewTransform } from '../src/view-transform.js';
 import { encodePng } from '../src/export-png.js';
@@ -213,7 +213,7 @@ test('the rasterizer and the CPU path tracer let the same light through a noisy 
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const frames = await rasterFrames(page, NOISY_BOX);
     assert.equal(frames.glError, 0);
     const raster = rasterTransmittance(frames);
@@ -286,7 +286,7 @@ test('with noiseOctaves 4 the rasterizer still matches the CPU path tracer, and 
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const measured = {};
     for (const octaves of [1, 4]) {
       const volume = octaves > 1 ? { ...NOISY_BOX, noiseOctaves: octaves } : NOISY_BOX;

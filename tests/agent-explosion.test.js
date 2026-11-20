@@ -205,10 +205,10 @@ test('the MCP server finds the grids an add-explosion operation will name, so th
   assert.equal(readVolumeGridFiles([blast({ seed: -1 })], '.').size, 0);
 });
 
-// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom, and for #2304's puff-shaped translucent dust).
+// Both options are off: the recipe is the one the first release wrote, byte for byte (hashes taken from main before #1775, refreshed for #1736's emission change and #1735's flame remap and unraised bloom, #2289's grid noise and its cooler, redder flame, and #2304's puff-shaped translucent dust).
 const FIRST_RELEASE_HASHES = new Map([
-  ['{}', 'f4588400da3ed0f32bfe3cef4370b6aa0ba49f7d66f03b6976e2de5ec3b70c47'],
-  ['{"start":0.5,"fuel":"oily","seed":7}', '58f00612c7efb84ab0ce7041c965c4826a405baed5eca45160e2a0e405d8f020'],
+  ['{}', '780fae915ab586e9e049a665c99713a9240621f8f4b953997aae254e6a0f3dbb'],
+  ['{"start":0.5,"fuel":"oily","seed":7}', 'a32f5e237e4a543fff6ec0b9eaf3ced6bcf0b38a119316295ee9cd0af5181429'],
 ]);
 
 test('sparks specks and motionBlur false write exactly the recipe of the first release, and false is an alias of specks', () => {
@@ -306,10 +306,10 @@ test('bad sparks and motionBlur values name the field and a valid value', () => 
   for (const [operation, pattern] of cases) assert.throws(() => applyBlast(operation), pattern, JSON.stringify(operation));
 });
 
-test('the fireball emits by the Blender flame remap, 1500 K to 3000 K, at every size and fuel (#1735)', () => {
+test('the fireball emits by a cooled flame remap, 1300 K to 1900 K, at every size and fuel (#1735, #2289)', () => {
   for (const extra of [{ size: 2.5 }, { size: 10 }, { fuel: 'oily' }]) {
     const volume = applyBlast(blast(extra)).recipe.environment.localVolumes[0];
-    assert.deepEqual(volume.flameTemperature, { ignition: 1.5, maximum: 3 });
+    assert.deepEqual(volume.flameTemperature, { ignition: 1.3, maximum: 1.9 });
     assert.equal(volume.temperatureScale, 1000);
   }
 });
