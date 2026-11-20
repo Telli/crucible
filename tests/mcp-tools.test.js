@@ -381,9 +381,16 @@ test('real SDK round trip authors motion, seeks without revisions and rejects un
   assert.equal(exported.structuredContent.recipe.motion.tracks[0].property, 'translation');
   await rejected(client, 'scene_apply', { sessionId, expectedRevision: 0, operations: [{ type: 'set-motion',
     motion: { ...motion, tracks: [{ ...motion.tracks[0], javascript: 'run()' }] } }] });
-  const cleared = await client.callTool({ name: 'scene_apply', arguments: { sessionId, expectedRevision: 0,
+  await rejected(client, 'scene_apply', { sessionId, expectedRevision: 0, operations: [{ type: 'set-motion', motion: null, removeTracks: [{ kind: 'node' }] }] });
+  const trimmed = await client.callTool({ name: 'scene_apply', arguments: { sessionId, expectedRevision: 0,
+    operations: [{ type: 'set-motion', removeTracks: [{ kind: 'node', id: 'mesh' }] }] } });
+  assert.equal(trimmed.isError, undefined);
+  assert.equal(trimmed.structuredContent.revision, 1);
+  const withoutTracks = await client.callTool({ name: 'scene_export_recipe', arguments: { sessionId } });
+  assert.equal(withoutTracks.structuredContent.recipe.motion ?? null, null);
+  const cleared = await client.callTool({ name: 'scene_apply', arguments: { sessionId, expectedRevision: 1,
     operations: [{ type: 'set-motion', motion: null }] } });
-  assert.equal(cleared.structuredContent.revision, 1);
+  assert.equal(cleared.structuredContent.revision, 2);
 });
 
 test('real SDK calls preserve atomic revisions, checkpoints, recipe snapshots and PNG content', async context => {

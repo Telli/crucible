@@ -77,7 +77,7 @@ const MAP_SHADER_FEATURES = ['baseMap', 'normalMap', 'metallicRoughnessMap', 'oc
 // Part or material fields that name their shader feature and switch it on when set.
 const PRESENT_SHADER_FEATURES = ['skin', 'crowd', 'morph', 'lightMap', 'waterReflection', 'retro', 'waterGlint'];
 // Material fields that name their shader feature and switch it on above zero.
-const POSITIVE_SHADER_FEATURES = ['moss', 'anisotropy', 'iridescence', 'toon', 'boxMapScale', 'emissionFresnel'];
+const POSITIVE_SHADER_FEATURES = ['moss', 'anisotropy', 'iridescence', 'toon', 'boxMapScale', 'emissionFresnel', 'softEdge'];
 // Tags whose look the main fragment shader draws with code that other tags never reach.
 const TAG_SHADER_FEATURES = new Set(['floor', 'water', 'foliage', 'terrain', 'grass', 'fire', 'smoke', 'unlit']);
 
@@ -597,8 +597,17 @@ export function configureTexture(renderer, info) {
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, info.magFilter);
   if (info.mipmaps) {
     context.generateMipmap(context.TEXTURE_2D);
-    renderer.applyAnisotropy(context.TEXTURE_2D);
+    if (filtersSmoothly(info)) renderer.applyAnisotropy(context.TEXTURE_2D);
   }
+}
+
+// Anisotropic filtering replaces both filters with its own smooth one, so it would turn a NEAREST sampler (pixel art, block
+// textures) into a blur. Only a texture that already filters linearly in both directions gets it.
+function filtersSmoothly({ minFilter, magFilter }) {
+  const LINEAR = 9729;
+  const LINEAR_MIPMAP_NEAREST = 9985;
+  const LINEAR_MIPMAP_LINEAR = 9987;
+  return magFilter === LINEAR && (minFilter === LINEAR_MIPMAP_NEAREST || minFilter === LINEAR_MIPMAP_LINEAR);
 }
 
 export function textureDescriptorInfo(map, maximumSize = Infinity) {
@@ -1068,7 +1077,7 @@ export class CrucibleRenderer {
 
   finishMainProgram(pendingProgram) {
     this.program = this.backend.finishProgram(pendingProgram);
-    this.uniforms = Object.fromEntries(['materialDielectric', 'materialEmissionFresnel', 'materialCoat', 'materialSheen', 'materialAnisotropy', 'materialIridescence', 'lightLinkMask', 'boxMapScale', 'boxMapAxis', 'lightMap', 'lightMapScale', 'hasLightMap', 'viewProjection', 'flushBias', 'clipPerMetre', 'lightProjection', 'eye', 'armorColor', 'armorSurface', 'exposure', 'inspection', 'shadowMap', 'shadowBiasPerSlope', ...MAP_UNIFORMS, ...MAP_FLAGS, ...SKIN_UNIFORMS, ...MORPH_UNIFORMS, 'normalScale', 'occlusionStrength', 'materialMoss', 'wearEnabled', 'wearMetal', 'wearDirt', 'wearShape', 'wearDirtShape', ...SPLAT_UNIFORMS, 'hdrEnabled', 'time', 'wind', 'worldMode', 'daylight', 'fogColor', 'lightDirection', 'fogDensity', 'waterRipple', 'rippleTime', 'explosionProgress', 'explosionCenter', 'assemblyAmount', 'renderPassMode', 'renderPassDepthRange', 'renderPassObjectBase', 'baseColor', 'surface', 'instanceEmission', 'instanceOpacity', 'boxNormalMatrix', 'shadowBlind', 'compositeMode', 'tintShadowMap', 'tintBlind', ...ALPHA_UNIFORMS].map((name) => [name, this.context.getUniformLocation(this.program, name)]));
+    this.uniforms = Object.fromEntries(['materialDielectric', 'materialEmissionFresnel', 'materialSoftEdge', 'materialCoat', 'materialSheen', 'materialAnisotropy', 'materialIridescence', 'lightLinkMask', 'boxMapScale', 'boxMapAxis', 'lightMap', 'lightMapScale', 'hasLightMap', 'viewProjection', 'flushBias', 'clipPerMetre', 'lightProjection', 'eye', 'armorColor', 'armorSurface', 'exposure', 'inspection', 'shadowMap', 'shadowBiasPerSlope', ...MAP_UNIFORMS, ...MAP_FLAGS, ...SKIN_UNIFORMS, ...MORPH_UNIFORMS, 'normalScale', 'occlusionStrength', 'materialMoss', 'wearEnabled', 'wearMetal', 'wearDirt', 'wearShape', 'wearDirtShape', ...SPLAT_UNIFORMS, 'hdrEnabled', 'time', 'wind', 'worldMode', 'daylight', 'fogColor', 'lightDirection', 'fogDensity', 'waterRipple', 'rippleTime', 'explosionProgress', 'explosionCenter', 'assemblyAmount', 'renderPassMode', 'renderPassDepthRange', 'renderPassObjectBase', 'baseColor', 'surface', 'instanceEmission', 'instanceOpacity', 'boxNormalMatrix', 'shadowBlind', 'compositeMode', 'tintShadowMap', 'tintBlind', ...ALPHA_UNIFORMS].map((name) => [name, this.context.getUniformLocation(this.program, name)]));
     for (const name of LIGHT_UNIFORMS) {
       this.uniforms[name] = this.context.getUniformLocation(this.program, name);
     }
@@ -1181,7 +1190,14 @@ export class CrucibleRenderer {
     const missing = features.filter(feature => !this.shaderFeatures.has(feature));
     if (missing.length === 0) return;
     missing.forEach(feature => this.shaderFeatures.add(feature));
-    this.rebuildMainProgram();
+    try {
+      this.rebuildMainProgram();
+    } catch (error) {
+      // A program that is still linking (ProgramNotReady) leaves the old main program in place. Forget the features, so the draw that comes back asks for them again
+      // and finds the program built; keeping them would draw the old program with no render pass code, and the emission mask would read the lit image (#1360).
+      missing.forEach(feature => this.shaderFeatures.delete(feature));
+      throw error;
+    }
   }
 
   rebuildMainProgram() {
@@ -1445,6 +1461,12 @@ export class CrucibleRenderer {
       if (!this.geometryBuffers.has(geometry)) validateReplacementGeometry(geometry);
     }
     const retained = new Set();
+    // Groups share a few materials, and the layer state is 28 validated values, so each material answers once per call.
+    const layerStates = new Map();
+    const layerStateOf = material => {
+      if (!layerStates.has(material)) layerStates.set(material, materialLayerState(material));
+      return layerStates.get(material);
+    };
     const replacements = groups.map(group => {
       const first = group[0];
       const location = this.partLocations.get(first);
@@ -1456,7 +1478,7 @@ export class CrucibleRenderer {
         batch.floor === (first.material.tag === 'floor') && batchPass(batch) === partPass(first) &&
         [batch.alphaMode, batch.alphaCutoff, batch.opacity, batch.doubleSided, batch.retro, batch.waterGlint].every((value, index) => value === alphaState[index]) &&
         batch.mapState.every((value, index) => value === mapState[index]) &&
-        batch.layerState.every((value, index) => value === materialLayerState(first.material)[index]);
+        batch.layerState.every((value, index) => value === layerStateOf(first.material)[index]);
       if (sameParts && sameState) {
         retained.add(batch);
         return { group, batch };
@@ -2024,6 +2046,8 @@ export class CrucibleRenderer {
 
   releaseFrameTargets() {
     const context = this.context;
+    // The fog step may have left one of the textures deleted below on a mipmapped filter; binding it later is INVALID_OPERATION (1282, #2205).
+    this.mipmappedTexture = null;
     if (this.multisampleFramebuffer) this.backend.deleteFramebuffer(this.multisampleFramebuffer);
     if (this.resolveFramebuffer) this.backend.deleteFramebuffer(this.resolveFramebuffer);
     if (this.multisampleColor) this.backend.deleteRenderbuffer(this.multisampleColor);
@@ -2685,6 +2709,7 @@ export class CrucibleRenderer {
       this.context.uniform1i(this.uniforms.lightLinkMask, layers[21]);
       this.context.uniform1f(this.uniforms.materialToon, layers[22]);
       this.context.uniform1f(this.uniforms.materialEmissionFresnel, layers[24]);
+      this.context.uniform1f(this.uniforms.materialSoftEdge, layers[28]);
       this.context.uniform1f(this.uniforms.boxMapScale, batch.mapState[12]);
       this.context.uniform1i(this.uniforms.boxMapAxis, batch.mapState[13]);
       if (this.shaderFeatures?.has('splat')) requireSplatSupport().bind(this, batch.splat);
@@ -2728,6 +2753,10 @@ export class CrucibleRenderer {
   }
 
   render(frame) {
+    this.localEmissionMaskReady = false;
+    if (frame.pass === undefined && !frame.reflectionTarget && (frame.environment?.localVolumes ?? this.environment?.localVolumes)?.length > 0) {
+      this.localEmissionMaskReady = requireFeatureCode('volumeFog').support.drawEmissionMask(this, frame);
+    }
     const { eye, target = [0, 1.2, 0], armorColor = [0.53, 0.39, 0.24], armorSurface = [0.88, 0.32], exposure = 1, inspection = false } = frame;
     const effects = resolveEffects(frame.effects);
     const environment = { lightDirection: [-3, 6, 4], fogColor: [0.35, 0.43, 0.43], fogDensity: 0.006, daylight: 1, explosionCenter: [0, 0, 0], ...this.environment, ...frame.environment };
@@ -2863,7 +2892,7 @@ export class CrucibleRenderer {
       return;
     }
     if (passMode) {
-      this.passSupport.copyToCanvas();
+      if (!frame.emissionMaskPass) this.passSupport.copyToCanvas();
     } else if (!this.benchmark) {
       this.drawTranslucent(frame, environment, assemblyAmount, environmentMap);
       this.drawBlendBatches(frame);

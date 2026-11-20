@@ -140,7 +140,7 @@ const LEAF_PAINTERS = {
 
 /** RGBA leaf texture: the stem base sits at the bottom edge, transparent elsewhere. */
 export function createLeafPixels(kind, color, seed = 1) {
-  const painter = LEAF_PAINTERS[kind];
+  const painter = Object.hasOwn(LEAF_PAINTERS, kind) ? LEAF_PAINTERS[kind] : null;
   if (!painter) throw new RangeError(`Unknown leaf texture kind: ${kind}`);
   const pixels = createPixels(color);
   painter(pixels, color, createRandom(seed));
@@ -155,7 +155,7 @@ const BARK_STYLES = {
 
 /** Opaque, tileable bark luminance texture with vertical furrows (rough) or dark lenticels (birch). */
 export function createBarkPixels(kind, seed = 1) {
-  const style = BARK_STYLES[kind];
+  const style = Object.hasOwn(BARK_STYLES, kind) ? BARK_STYLES[kind] : null;
   if (!style) throw new RangeError(`Unknown bark texture kind: ${kind}`);
   const pixels = createPixels(style.base);
   for (let y = 0; y < TEXTURE_SIZE; y++) {

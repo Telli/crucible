@@ -22,9 +22,10 @@ import { chooseDenoiser, finishWithOidn } from './agent-path-trace-denoise.mjs';
 import { createNativeSequence } from './agent-native-sequence.mjs';
 import { chooseNativeTemporal, createTemporalAccumulator, temporalFrameSeed } from './agent-native-temporal.mjs';
 import { readNativeCapacity } from './native-capacity.mjs';
+import { backendFallbackForFrame, explainFailureAfterFallback } from '../src/agent-backend-fallback.js';
 import { chooseNativeInstancing, chooseNativeKernel, chooseTraceBackend, createNativeTracerLocator, fetchNativeExport, isNativeTimeLimitError, traceFrameNative, traceTexelsNative } from './agent-native-trace.mjs';
 import { addonCapabilities, addonFileFor, addonImportMap } from './mcp-addons.mjs';
-import { createAgentAssetCatalog } from './agent-asset-catalog.mjs';
+import { createAgentAssetCatalog, fingerprintAssetDirectory } from './agent-asset-catalog.mjs';
 import { launchWithShaderCache, shaderCacheDirectory } from './agent-shader-cache.mjs';
 import { createPackRegistry } from './agent-packs.mjs';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
@@ -39,14 +40,14 @@ import { TEXTURE_SEQUENCE_CAPABILITIES, TEXTURE_SEQUENCE_LIMITS } from '../src/t
 import { writeWebBuild } from './web-export.mjs';
 import { gameAssetIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
-import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, MAXIMUM_JOB_FRAME_BYTES, MAXIMUM_JOB_OUTPUT_BYTES, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError } from './agent-render-jobs.mjs';
+import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, MAXIMUM_JOB_FRAME_BYTES, MAXIMUM_JOB_OUTPUT_BYTES, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError, requireTracerBackendAvailable } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
-import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, outputByteBudgetProblem, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
+import { RENDER_ESTIMATE_NOTE, addKernelCompile, estimateRenderJob, historyWithJob, outputByteBudgetProblem, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
 import { objectIdMetrics } from './agent-object-id-metrics.mjs';
 import { renderIconsInPage } from './agent-icon-page.mjs';
 import { ICON_CAPABILITIES } from '../src/icon-sheet.js';
-import { renderJobMattes } from './job-mattes.mjs';
+import { renderJobMattes, requireMatteTargets } from './job-mattes.mjs';
 import { encodeRenderOutput, encodeMultilayerExr } from './render-output-encoders.mjs';
 import { createFrameEncoder } from './frame-encoder.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
@@ -59,11 +60,12 @@ import { ANNOTATE_LIMITS, validateMarks, isBoundedPng } from '../src/agent-annot
 import { REVIEW_LINK_LIMITS, newReviewId, parseReviewFile, validateReviewMarks } from '../src/review-link.js';
 import { writeReviewBuild } from './review-page.mjs';
 import { normalizeReview, reviewDeadlineMessage, REVIEW_LIMITS } from './agent-review.mjs';
-import { mergeFrameDiagnostics, pathTracerFindingsLimit } from '../src/frame-checks.js';
+import { mergeFrameDiagnostics, pathTracerFindingsLimit, pathTracerSkippedPassesWarning } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { createSharedGpuCard } from './agent-gpu-queue.mjs';
 import { isBrowserLoss, describeBrowserLoss } from './agent-browser-loss.mjs';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
+import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
@@ -191,12 +193,14 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   let streamedSequencesUsed = false;
   // Scenes the page closed to stay under the scene cap, so a later call with one of them gets a clear error.
   const evictedSessionIds = [];
+  const evictionReasons = {};
   // Scenes that have a bake, so an edit that rebakes gets the longer deadline.
   const bakedSessionIds = new Set();
   let queuedCalls = 0;
   let queue = Promise.resolve();
   let closing;
   let catalogPromise;
+  let catalogFingerprint;
   let packsPromise;
   let jobsPromise;
   // Set by submitJob for the one job that may run; runJob takes it. Kept in the job folder, the history never leaves the machine.
@@ -370,6 +374,25 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     catalogPromise ??= packs().then(registry => createAgentAssetCatalog(assetRoot ?? null, registry?.files));
     return catalogPromise;
   }
+  /**
+   * The catalog after a stat-only look at the --assets folder: a file that appeared, vanished or was rewritten since the last build
+   * makes a new catalog (#2209), so a download made mid-session is listed and placeable by name. Used where an agent asks for the
+   * list or names a file; reads by asset ID keep the catalog they were pinned against.
+   */
+  async function rescannedCatalog() {
+    if (assetRoot) {
+      const fingerprint = await fingerprintAssetDirectory(assetRoot);
+      if (fingerprint !== catalogFingerprint) {
+        catalogFingerprint = fingerprint;
+        catalogPromise = undefined;
+      }
+    }
+    const ready = catalog();
+    ready.catch(() => {
+      if (catalogPromise === ready) catalogPromise = undefined;
+    });
+    return ready;
+  }
   // Installed data-only packs (docs/packs.md): checked once per runtime; their GLB, image, look and HDRI files join the catalog.
   function packs() {
     if (!packsRoot) return Promise.resolve(null);
@@ -379,15 +402,15 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   /** Replaces each `asset: { name }` placement of a recipe or edit list with its catalog id, so everything after this holds the pinned hash. */
   async function pinNamedAssets(value) {
-    if (namesCatalogFiles(value)) resolveAssetPlacementNames(value, (await catalog()).resolveName);
-    if (namesCatalogSequences(value)) await resolveCatalogSequenceNames(value, pattern => catalog().then(assets => assets.resolveSequence(pattern)));
+    if (namesCatalogFiles(value)) resolveAssetPlacementNames(value, (await rescannedCatalog()).resolveName);
+    if (namesCatalogSequences(value)) await resolveCatalogSequenceNames(value, pattern => rescannedCatalog().then(assets => assets.resolveSequence(pattern)));
   }
 
   /** The same for the asset recipe of scene_create_asset: `assetName` (a catalog file name) becomes `assetId`. */
   async function pinNamedAssetRecipe(recipe) {
     if (recipe?.assetName === undefined) return;
     if (recipe.assetId !== undefined) throw new TypeError('Pass exactly one of recipe.assetId (the pinned SHA-256) or recipe.assetName (the catalog file name), not both.');
-    recipe.assetId = (await catalog()).resolveName(recipe.assetName);
+    recipe.assetId = (await rescannedCatalog()).resolveName(recipe.assetName);
     delete recipe.assetName;
   }
 
@@ -441,7 +464,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
    */
   async function pinIconItems(settings) {
     if (!Array.isArray(settings.items)) return settings;
-    const readyCatalog = await catalog();
+    const readyCatalog = await rescannedCatalog();
     const items = await Promise.all(settings.items.map(async item => {
       if (typeof item !== 'string') return item;
       if (/^[0-9a-f]{64}$/.test(item)) {
@@ -782,7 +805,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   function requireSession(sessionId) {
     if (!openSessionIds.has(sessionId)) {
-      throw new Error(sessionProblem(sessionId, lastUsedSessionId(), { openSessionIds: [...openSessionIds], evictedSessionIds }));
+      throw new Error(sessionProblem(sessionId, lastUsedSessionId(), { openSessionIds: [...openSessionIds], evictedSessionIds, evictionReasons }));
     }
     // Re-insert so the Set order stays least to most recently used.
     openSessionIds.delete(sessionId);
@@ -794,8 +817,11 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     for (const evictedSessionId of result.evictedSessions ?? []) {
       forgetSession(evictedSessionId);
       evictedSessionIds.push(evictedSessionId);
+      if (result.evictionReason) evictionReasons[evictedSessionId] = result.evictionReason;
     }
-    evictedSessionIds.splice(0, Math.max(0, evictedSessionIds.length - MAXIMUM_REMEMBERED_EVICTIONS));
+    for (const forgottenId of evictedSessionIds.splice(0, Math.max(0, evictedSessionIds.length - MAXIMUM_REMEMBERED_EVICTIONS))) {
+      delete evictionReasons[forgottenId];
+    }
     openSessionIds.add(sessionId);
     if (hasBake) bakedSessionIds.add(sessionId);
   }
@@ -859,6 +885,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   async function runJob({ jobId, sessionId, directory, snapshot, settings, signal, progress, startRenderClock = () => {} }) {
     let jobPage;
+    let jobFailed = false;
     let session;
     let encoder;
     let frameReceiver;
@@ -998,7 +1025,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         if (streamedJob && frameInput.motionTime !== undefined) await supplyStreamedFrames(jobPage, jobId, frameInput.motionTime);
         if (settings.renderer) {
           const { type, ...tracerOptions } = settings.renderer;
-          if (settings.renderer.backend === 'gpu' && backend === 'cpu') throw new Error('renderer.backend "gpu" needs a runtime on the GPU backend, and this one runs on SwiftShader.');
+          requireTracerBackendAvailable(settings.renderer, backend);
           nativeTracerLocator ??= createNativeTracerLocator();
           const trace = await chooseTraceBackend({ requested: settings.renderer.backend, runtimeBackend: backend, locator: nativeTracerLocator });
           // Only a job that really traces on native defaults to OIDN; the cpu, gpu and webgpu defaults do not change.
@@ -1006,6 +1033,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const traceOptions = { width, height, ...tracerOptions, backend: trace.backend === 'native' ? 'gpu' : trace.backend, denoise: choice.denoise, threads: PATH_TRACER_THREADS };
           let traced;
           let backendNote = trace.note;
+          let fallbackReason = trace.reason;
           if (trace.backend === 'native') {
             let exportedScene = false;
             nativeMemoryAllowance.grantForFrame({ width, height, memoryMiB: memory });
@@ -1036,29 +1064,38 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               nativeTemporal?.restart('a frame rendered on another backend');
               // Only a tracer or adapter failure makes the tracer unusable; a scene that failed to export says so for this job alone.
               if (exportedScene) nativeTracerLocator.markUnusable(error.message);
-              backendNote = exportedScene ? (await nativeTracerLocator.find()).reason : `renderer.backend "native" could not export the scene (${error.message}).`;
+              fallbackReason = exportedScene ? (await nativeTracerLocator.find()).reason : `renderer.backend "native" could not export the scene (${error.message}).`;
+              backendNote = fallbackReason;
               traceOptions.backend = backend === 'cpu' ? 'cpu' : 'gpu';
               choice = await chooseDenoiser(settings.renderer.denoise);
               traceOptions.denoise = choice.denoise;
               backendNote += ' The ' + traceOptions.backend + ' backend ran instead.';
             }
           }
+          const fallback = backendFallbackForFrame({ requestedBackend: settings.renderer.backend, tracedNatively: Boolean(traced), usedBackend: traceOptions.backend, fallbackReason });
           if (!traced) {
-            traced = await jobPage.evaluate(input => window.__agentPreview.pathTrace(input), { ...frameInput, options: traceOptions });
+            try {
+              traced = await jobPage.evaluate(input => window.__agentPreview.pathTrace(input), { ...frameInput, options: traceOptions });
+            } catch (error) {
+              throw explainFailureAfterFallback(error, fallback);
+            }
             if (traced.features) {
               traced = await finishWithOidn({ traced, denoiser: choice.denoiser, drawLinear: input => jobPage.evaluate(drawInput => window.__agentPreview.finishPathTrace(drawInput), input) });
             }
           }
           if (backendNote) traced.report.backendNote = backendNote;
+          if (fallback) traced.report.backendFallback = fallback;
           const denoiserNote = [choice.note, traced.report.denoiserNote].filter(Boolean).join(' ');
           if (denoiserNote) traced.report.denoiserNote = denoiserNote;
           metrics.renderSeconds += (performance.now() - renderStarted) / 1000;
           metrics.width = width;
           metrics.height = height;
           metrics.pathTracer = traced.report;
+          const kernelCompile = addKernelCompile(metrics.kernelCompile, traced.report);
+          if (kernelCompile) metrics.kernelCompile = kernelCompile;
           if (frame === 0) {
             const looked = await jobPage.evaluate(input => window.__agentPreview.findings(input), frameInput);
-            mergeFrameDiagnostics(metrics, [pathTracerFindingsLimit(), ...looked.diagnostics]);
+            mergeFrameDiagnostics(metrics, [pathTracerFindingsLimit(), pathTracerSkippedPassesWarning(snapshot.recipe.postPasses), ...looked.diagnostics].filter(Boolean));
           }
           if (traced.report.nativeSession) (metrics.nativeSessionRoutes ??= []).push(traced.report.nativeSession.path);
           const tracedBytes = Buffer.from(traced.data, 'base64');
@@ -1199,6 +1236,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       await rememberRenderJob({ settings, estimate, report: metrics.report });
       return { artifacts, metrics };
     } catch (error) {
+      jobFailed = true;
       if (signal.aborted || !isBrowserLoss(error)) throw error;
       browserLossFailure = describeBrowserLoss({ error, frameIndex, frameCount: settings.frameCount, width: settings.width, height: settings.height, passes: settings.passes, memoryMiB: memory, estimatedPeakMemoryMiB: estimate?.peakMemoryMiB });
       throw browserLossFailure;
@@ -1211,8 +1249,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       finally {
         try {
           if (jobPage && !jobPage.isClosed()) {
-            // A crashed or navigated page cannot dispose its scene (its bridge is gone: "reading 'dispose'"); the close below frees it, and the failure that matters is the job's own (#2198).
-            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!browserLossFailure && !isBrowserLoss(error)) throw error; }); }
+            // After a failed job the dispose may fail too: a page whose create failed answers "No scene is active", a crashed or navigated page has no bridge ("reading 'dispose'").
+            // The close below frees the page, and the failure that matters is the job's own, never this cleanup's (#2198).
+            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!jobFailed && !browserLossFailure && !isBrowserLoss(error)) throw error; }); }
             finally { await jobPage.close().catch(error => { if (!browserLossFailure && !isBrowserLoss(error)) throw error; }); }
           }
         }
@@ -1317,7 +1356,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           return { pack, [kind === 'recipes' ? 'recipe' : 'material']: recipe ?? material, json: (await packs()).read(kind, pack, recipe ?? material) };
         }
         if (!assetRoot && !packsRoot) return { configured: false, assets: [] };
-        return { configured: true, ...(await catalog()).list(), ...(packsRoot && { packs: (await packs()).list() }) };
+        return { configured: true, ...(await rescannedCatalog()).list(), ...(packsRoot && { packs: (await packs()).list() }) };
       });
     },
     createAsset({ recipe }) {
@@ -1596,7 +1635,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           if (Buffer.byteLength(result.data, 'base64') > MAXIMUM_IMAGE_BYTES) throw new Error('The review PNG exceeds the 1 MiB image response budget. Request smaller shots.');
           output = { ...result, metadata: { sessionId: settings.sessionId, sourceRevision: snapshot.sourceRevision,
             backend, width: settings.gridWidth, height: settings.gridHeight, shots,
-            peakNodeBytes, peakBrowserHeap, maximumPendingFrames: 1 } };
+            peakNodeBytes, peakBrowserHeap, maximumPendingFrames: 1,
+              ...(recipeMoves(snapshot.recipe) && settings.shots.some(shot => shot.motionTime === null) ? { hints: [MOTION_NOT_SET_HINT] } : {}) } };
         } catch (error) {
           if (deadlineExpired) throw new Error(reviewDeadlineText());
           throw error;
@@ -1740,6 +1780,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const normalizedSettings = normalizeJobSettings(jobSettings, snapshot.clips, snapshot.recipe);
           const outputProblem = outputByteBudgetProblem(normalizedSettings, controller.limits?.maxOutputBytes ?? MAXIMUM_JOB_OUTPUT_BYTES);
           if (outputProblem) throw new RangeError(outputProblem);
+          requireTracerBackendAvailable(jobSettings?.renderer, backend);
+          if (jobSettings?.mattes) requireMatteTargets({ mattes: jobSettings.mattes, ...(await invoke('matteTargets', { sessionId })) });
           const estimate = estimateOf(jobSettings);
           estimateForNextJob = estimate;
           try {

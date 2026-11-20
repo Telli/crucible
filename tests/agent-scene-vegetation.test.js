@@ -164,3 +164,21 @@ test('an imported tree with a foliage override gets the swaying tag and shares i
   assert.notEqual(material('plain').tag, 'foliage');
   assert.throws(() => createAgentScene({ ...recipe, nodes: [{ id: 'a', asset: { id, materials: [{ name: 'Leaves', tag: 'water' }] } }] }, {}, { assets }), /^RangeError: nodes\[0\]\.asset\.materials\[0\]\.tag: got "water"; expected one of surface, foliage, grass/);
 });
+
+test('moving the parent of a node the scatter excludes around regrows the forest like a fresh scene', () => {
+  const recipe = pondParentX => ({
+    ...stillRecipe(),
+    nodes: [
+      { id: 'hills', geometry: 'ground', material: 'grass' },
+      { id: 'pondgroup', translation: [pondParentX, 0, 0] },
+      { id: 'pond', parent: 'pondgroup', geometry: 'marker', material: 'steel' },
+      { id: 'forest', vegetation: { species: 'broadleaf', seed: 11, scatter: { ground: 'hills', density: 0.02, exclude: [{ node: 'pond', radius: 9 }], variants: 2 } } },
+    ],
+  });
+  const treesWithin = (scene, centerX) => scene.parts.filter(part => part.name.startsWith('forest/') && Math.hypot(part.matrix[12] - centerX, part.matrix[14]) <= 9).length;
+  const edited = createAgentScene(recipe(0));
+  assert.equal(treesWithin(edited, 0), 0);
+  edited.apply([{ type: 'set-node', id: 'pondgroup', translation: [15, 0, 0] }], { expectedRevision: 0 });
+  assert.equal(treesWithin(edited, 15), 0, 'no tree stands in the new clearing');
+  assert.deepEqual(vegetationMatrices(edited), vegetationMatrices(createAgentScene(recipe(15))));
+});

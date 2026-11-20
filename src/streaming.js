@@ -141,6 +141,10 @@ export function createWorkerLoader({ createWorker, dispose } = {}) {
   };
 }
 
+function hasAsset(result) {
+  return result !== null && typeof result === 'object' && result.asset != null;
+}
+
 function validateLoader(format, loader) {
   if (typeof format !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(format)) {
     throw new TypeError(`A loader format must be a lowercase name like "glb" or "terrain-tile", got ${describe(format)} ${String(format)}.`);
@@ -280,7 +284,11 @@ export function createStreaming(options = {}) {
   function makeRoom(neededBytes) {
     let used = bytesInUse();
     if (used + neededBytes <= budgetBytes) return true;
-    for (const candidate of evictable()) {
+    const candidates = evictable();
+    const reclaimable = candidates.reduce((total, candidate) => total + candidate.resident.bytes, 0);
+    // Freeing everything would still not fit the load, so keep what is resident.
+    if (neededBytes > 0 && used - reclaimable + neededBytes > budgetBytes) return false;
+    for (const candidate of candidates) {
       used -= candidate.resident.bytes;
       evict(candidate, 'budget');
       if (used + neededBytes <= budgetBytes) return true;
@@ -300,7 +308,10 @@ export function createStreaming(options = {}) {
     const request = { id: record.id, format: record.format, source: levelDefinition.source, level, signal: controller.signal };
     Promise.resolve()
       .then(() => loader.load(request))
-      .then(result => finishLoad(record, level, pending, loader, result), error => failLoad(record, level, pending, error));
+      .then(
+        result => (hasAsset(result) ? finishLoad(record, level, pending, loader, result) : failLoad(record, level, pending, new TypeError(`Loader "${record.format}" must resolve { asset, bytes }, got ${describe(result)}.`))),
+        error => failLoad(record, level, pending, error),
+      );
   }
 
   function finishLoad(record, level, pending, loader, result) {

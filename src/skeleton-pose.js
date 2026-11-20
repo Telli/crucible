@@ -332,12 +332,29 @@ function bendWarnings(solver, state, prepared) {
   return warnings;
 }
 
+/** A NaN or zero-quaternion rest value poses its joint and everything below as NaN, with no error. */
+function checkRestValues(joints) {
+  joints.forEach(({ name, translation, rotation, scale }) => {
+    const finite = values => Array.from(values ?? []).every(Number.isFinite);
+    if (!finite(translation) || !finite(rotation) || !finite(scale?.slice(0, 1)) || !Math.hypot(...rotation)) {
+      throw new RangeError(`Pose rig joint ${name} needs finite translation and scale and a nonzero rotation, such as [0, 0, 0, 1].`);
+    }
+  });
+}
+
+function checkedCustomSolver(created, jointCount, label) {
+  const validJoints = Array.isArray(created?.joints) && created.joints.every(index => index >= 0 && index < jointCount);
+  if (!validJoints || typeof created.solve !== 'function') throw new TypeError(`${label} create must return { joints, solve } with rig joint indices.`);
+  return created;
+}
+
 function createSolver(definition, position, prepared, resolveJoint) {
   const label = `IK ${position}`;
+  if (!definition || typeof definition !== 'object') throw new TypeError(`${label} must be an object with a type.`);
   const weight = weightFunction(definition?.weight ?? 1, `${label} weight`);
   if (definition?.type === 'custom') {
     if (typeof definition.create !== 'function') throw new TypeError(`${label} type custom needs create(prepared, resolveJoint, label) => { joints, solve(time, context, weight) }.`);
-    return { type: 'custom', label, weight, ...definition.create(prepared, resolveJoint, label) };
+    return { type: 'custom', label, weight, ...checkedCustomSolver(definition.create(prepared, resolveJoint, label), prepared.joints.length, label) };
   }
   const solverType = definition?.type === 'ik' ? 'chain' : definition?.type === 'spline_ik' ? 'spline' : definition?.type;
   if (solverType !== 'spline' && typeof definition?.target !== 'function') checkedVector(definition?.target, `${label} target`);
@@ -363,6 +380,7 @@ function createSolver(definition, position, prepared, resolveJoint) {
   }
   if (definition.type === 'aim') {
     const names = definition.joints ?? (definition.joint === undefined ? [] : [definition.joint]);
+    if (!Array.isArray(names)) throw new TypeError(`${label} joints must be a list of joint names.`);
     if (!names.length) throw new TypeError(`${label} needs joint, or joints listed from the base of the chain to the aiming joint.`);
     const joints = names.map(name => resolveJoint(name, label));
     joints.slice(1).forEach((joint, slot) => {
@@ -974,6 +992,7 @@ export function createAssetPose(asset, { layers = [], ik = [] } = {}) {
 export function createSkeletonPose({ skin, rig = skin && createRigFromSkin(skin), meshWorldMatrix, layers = [], ik = [] } = {}) {
   if (!rig) throw new TypeError('createSkeletonPose needs a skin or a rig.');
   validateRigJoints(rig.joints, 'Pose');
+  checkRestValues(rig.joints);
   if (!Array.isArray(layers) || !Array.isArray(ik)) throw new TypeError('layers and ik must be arrays.');
   const prepared = prepareRigGeometry(rig, 'Pose');
   const resolveJoint = jointResolver(rig, prepared);
