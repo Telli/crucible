@@ -75,6 +75,8 @@ test('edge rules select rims, sharp edges, region borders and everything', () =>
   assert.equal(count({ boundaryOf: { tag: 'front' } }), 4);
   assert.equal(count({ all: true }), 12);
   assert.throws(() => selectEdges(mesh, { angle: 30, all: true }, table), /exactly one/);
+  assert.throws(() => selectEdges(mesh, { open: true, along: [1, 0, 0] }, table), /open does not take along/);
+  assert.throws(() => selectEdges(mesh, { open: true, maxAngle: 5 }, table), /open does not take maxAngle/);
 });
 
 test('chamfering one edge removes exactly the triangular prism', () => {
@@ -298,4 +300,8 @@ test('the capped profile is clean under default lint up to the highest segment c
     const lint = lintMesh(bevelAllEdges({ profile: 1, segments }).mesh, { geometry: true });
     assert.deepEqual(lint.problems.filter(problem => problem.severity === 'error'), []);
   }
+});
+
+test('bevelEdges refuses a width of 0 instead of returning degenerate faces', () => {
+  assert.throws(() => bevelEdges(cube(), { all: true }, { width: 0 }), /bevelEdges: width was 0; pass a number above 0/);
 });

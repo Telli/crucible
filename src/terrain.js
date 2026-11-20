@@ -155,15 +155,22 @@ function resolveHeightFunction(height, size, seed) {
   return createNoiseHeight(height ?? {}, seed);
 }
 
+/** Largest chunk count per side and largest finest-grid cell count per side: 4096 cells is a 17 million sample grid. */
+export const TERRAIN_GRID_LIMITS = Object.freeze({ chunks: 64, cellsPerSide: 4096 });
+
 function validateOptions({ size, resolution, chunks, levels, mirrorLevels, lodDistance }) {
   if (lodDistance !== undefined && !(lodDistance > 0 && Number.isFinite(lodDistance))) {
     throw new RangeError(`lodDistance must be a positive number of metres, such as ${size / 8}; got ${lodDistance}.`);
   }
   if (!(size > 0) || !Number.isFinite(size)) throw new RangeError('size must be a positive number of metres.');
   if (!Number.isInteger(chunks) || chunks < 1) throw new RangeError('chunks must be a positive integer.');
+  if (chunks > TERRAIN_GRID_LIMITS.chunks) throw new RangeError(`chunks must be at most ${TERRAIN_GRID_LIMITS.chunks} per side; got ${chunks}.`);
   if (!Number.isInteger(levels) || levels < 1) throw new RangeError('levels must be a positive integer.');
   if (!Number.isInteger(resolution) || resolution < 1 || resolution % (2 ** (levels - 1)) !== 0) {
     throw new RangeError(`resolution must be a positive integer divisible by 2^(levels - 1) = ${2 ** (levels - 1)}.`);
+  }
+  if (chunks * resolution > TERRAIN_GRID_LIMITS.cellsPerSide) {
+    throw new RangeError(`chunks * resolution must be at most ${TERRAIN_GRID_LIMITS.cellsPerSide} cells per side; got ${chunks} * ${resolution}. Lower resolution or chunks.`);
   }
   if (!Number.isInteger(mirrorLevels) || mirrorLevels < 0 || resolution % (2 ** (levels - 1 + mirrorLevels)) !== 0) {
     throw new RangeError('mirrorLevels must be a whole number of extra halvings that the resolution divides by (2^(levels - 1 + mirrorLevels)).');

@@ -2,6 +2,7 @@ import { createMeshData, meshBounds } from './mesh-data.js';
 import { lintMesh } from './mesh-lint.js';
 import { edgeCornerTable } from './mesh-topology.js';
 import { createSurfaceDistance, triangulatedSurface } from './mesh-surface-distance.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 import { placeCellVertices, quadsAroundEdges, splitSaddleVertices } from './surface-nets.js';
 
 // Voxel remesh: sample the signed distance to the surface on a grid, then place one vertex in each cell the surface
@@ -49,8 +50,10 @@ export function remeshGridSize(mesh, { voxelSize, resolution }) {
   const extent = bounds.max.map((value, axis) => value - bounds.min[axis]);
   const longest = Math.max(...extent);
   if ((voxelSize === undefined) === (resolution === undefined)) throw new RangeError('remesh takes either voxelSize or resolution.');
+  if (voxelSize !== undefined) requireFiniteInRange('remesh', 'voxelSize', voxelSize, 1e-12, 1e12);
+  if (resolution !== undefined) requireFiniteInRange('remesh', 'resolution', resolution, 1e-12, 1e12);
+  if (!(longest > 0)) throw new RangeError('remesh needs a mesh with volume.');
   const edge = voxelSize ?? longest / resolution;
-  if (!(edge > 0) || !(longest > 0)) throw new RangeError('remesh needs a positive voxel size and a mesh with volume.');
   const points = extent.map(value => Math.ceil(value / edge) + 1 + PADDING_VOXELS * 2);
   const cells = points.reduce((product, count) => product * (count - 1), 1);
   if (longest / edge > MAX_REMESH_RESOLUTION || cells > MAX_REMESH_CELLS) {

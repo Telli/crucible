@@ -82,7 +82,7 @@ Pass `keepOut` (metres) and bollards, lamp posts, planters and tables stop being
 For each cell a ray goes down from 2.6 m above the street level, and when its first hit stands more than 0.3 m above the lowest surface under it, the cell is an obstacle.
 A kerb is 0.15 to 0.2 m, so kerbs stay walkable.
 `streetY` is the street level; it defaults to the lowest surface in a sample of the region.
-A closing step fills one-cell seams (kerb faces, cracks narrower than 0.75 m), obstacles are cut back out, and a cell closer than `keepOut` to an obstacle, a wall or a gap is not walkable (`x`).
+A closing step fills one-cell seams (kerb faces, cracks narrower than 0.75 m), obstacles are cut back out, and a cell closer than `keepOut` to an obstacle, a wall or a gap is not walkable (`x`). `keepOut` must be a finite number of 0 or more; a value past the map clears every cell next to a closed one.
 In code pass `obstacles: true` or `obstacles: { streetY, fromY, reach, minHeight }` to `walkMap`, and give the result to `walkableMask(map, { clearance, groundRange, keepOut })`, which returns one 0 or 1 per cell, `column * rows + row`.
 Cells then carry a fifth value, 1 for an obstacle.
 Use a small `cellSize`: a 0.25 m grid caught poles that a 1 m grid missed.

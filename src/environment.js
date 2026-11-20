@@ -34,7 +34,17 @@ function requireNumberInRange(value, name, minimum, maximum) {
   }
 }
 
-export function createEnvironmentMap({ width, height, data, intensity = 1, rotation = 0, showBackground = false, backgroundBlur = 0 } = {}) {
+// A sun the background pass draws as a sharp disc on top of the baked map: a unit direction in map space and its linear radiance.
+function requireSunDisc(sunDisc) {
+  const { direction, radiance } = sunDisc;
+  const isTriple = value => Array.isArray(value) && value.length === 3 && value.every(Number.isFinite);
+  if (!isTriple(direction) || !isTriple(radiance)) {
+    throw new TypeError('Environment map sunDisc must be { direction: [x, y, z], radiance: [r, g, b] } with finite numbers.');
+  }
+  return Object.freeze({ direction: Object.freeze([...direction]), radiance: Object.freeze([...radiance]) });
+}
+
+export function createEnvironmentMap({ width, height, data, intensity = 1, rotation = 0, showBackground = false, backgroundBlur = 0, sunDisc = null } = {}) {
   requireIntegerInRange(width, 'width', 4, MAXIMUM_ENVIRONMENT_SIZE);
   requireIntegerInRange(height, 'height', 2, MAXIMUM_ENVIRONMENT_SIZE);
   if (!(data instanceof Float32Array)) throw new TypeError('Environment map data must be a Float32Array of linear RGB or RGBA values.');
@@ -48,7 +58,8 @@ export function createEnvironmentMap({ width, height, data, intensity = 1, rotat
   requireNumberInRange(rotation, 'rotation', -1e6, 1e6);
   requireNumberInRange(backgroundBlur, 'backgroundBlur', 0, 1);
   if (typeof showBackground !== 'boolean') throw new TypeError('Environment map showBackground must be a boolean.');
-  return Object.freeze({ kind: 'environment-map', width, height, channels, data, intensity, rotation, showBackground, backgroundBlur });
+  const resolvedSunDisc = sunDisc === null ? null : requireSunDisc(sunDisc);
+  return Object.freeze({ kind: 'environment-map', width, height, channels, data, intensity, rotation, showBackground, backgroundBlur, sunDisc: resolvedSunDisc });
 }
 
 // The renderer accepts descriptors that were spread from a created map (to animate rotation), so it re-checks the shape without rescanning the data.
@@ -97,7 +108,12 @@ function sphericalHarmonicBasis(x, y, z) {
 
 // Returns 27 floats (9 RGB triples) with basis constants and the Lambert kernel folded in,
 // so evaluateIrradiance(coefficients, normal) is the diffuse radiance for a white surface.
-const IRRADIANCE_ROWS_PER_STEP = 32;
+// Texels one step of a pass over the whole map handles, so a step costs about the same on a small map and a large one.
+const PIXELS_PER_STEP = 65536;
+
+function rowsPerStep(width) {
+  return Math.max(1, Math.floor(PIXELS_PER_STEP / width));
+}
 
 // One step per few rows of the map, so a caller can hand the thread back between steps.
 function* irradianceSteps(map) {
@@ -112,6 +128,7 @@ function* irradianceSteps(map) {
   }
   const sums = new Float64Array(27);
   const pixelSolidAngleScale = (2 * Math.PI / width) * (Math.PI / height);
+  const stepRows = rowsPerStep(width);
   for (let row = 0; row < height; row++) {
     const polar = (row + 0.5) / height * Math.PI;
     const sinePolar = Math.sin(polar);
@@ -127,7 +144,7 @@ function* irradianceSteps(map) {
         sums[term * 3 + 2] += data[offset + 2] * termWeight;
       }
     }
-    if (row % IRRADIANCE_ROWS_PER_STEP === IRRADIANCE_ROWS_PER_STEP - 1) yield;
+    if (row % stepRows === stepRows - 1) yield;
   }
   const coefficients = new Float32Array(27);
   for (let term = 0; term < 9; term++) {
@@ -147,13 +164,14 @@ const IRRADIANCE_ROWS_PER_GRID_STEP = 4;
 
 // Averages the map down to at most 128 by 64 texels, weighting rows by their solid angle, so the cosine integral below
 // costs about four million multiply-adds however large the map is. Light is conserved, so a sun stays as bright overall.
-function irradianceSourceTexels(map) {
+function* irradianceSourceTexelSteps(map) {
   const { width, height, channels, data } = map;
   const scale = Math.min(1, MAXIMUM_IRRADIANCE_SOURCE_WIDTH / width);
   const sourceWidth = Math.max(4, Math.round(width * scale));
   const sourceHeight = Math.max(2, Math.round(height * scale));
   const sums = new Float64Array(sourceWidth * sourceHeight * 3);
   const weights = new Float64Array(sourceWidth * sourceHeight);
+  const stepRows = rowsPerStep(width);
   for (let row = 0; row < height; row++) {
     const rowWeight = Math.sin((row + 0.5) / height * Math.PI);
     const targetRow = Math.min(sourceHeight - 1, Math.floor(row * sourceHeight / height));
@@ -165,6 +183,7 @@ function irradianceSourceTexels(map) {
       sums[target * 3 + 2] += data[offset + 2] * rowWeight;
       weights[target] += rowWeight;
     }
+    if (row % stepRows === stepRows - 1) yield;
   }
   const texelCount = sourceWidth * sourceHeight;
   const directions = new Float64Array(texelCount * 3);
@@ -193,7 +212,7 @@ function irradianceSourceTexels(map) {
 // convolution, so a strong sun does not ring the way a nine-term spherical harmonic fit does.
 function* irradianceGridSteps(map) {
   assertEnvironmentMap(map);
-  const { texelCount, directions, radiance } = irradianceSourceTexels(map);
+  const { texelCount, directions, radiance } = yield* irradianceSourceTexelSteps(map);
   const grid = new Float32Array(ENVIRONMENT_IRRADIANCE_WIDTH * ENVIRONMENT_IRRADIANCE_HEIGHT * 3);
   for (let row = 0; row < ENVIRONMENT_IRRADIANCE_HEIGHT; row++) {
     const polar = (row + 0.5) / ENVIRONMENT_IRRADIANCE_HEIGHT * Math.PI;
@@ -397,6 +416,9 @@ uniform vec3 eye;
 uniform float backgroundLevel;
 uniform float exposure;
 uniform float hdrEnabled;
+uniform vec3 sunMapDirection;
+uniform vec3 sunDiscRadiance;
+uniform float sunDiscRadius;
 out vec4 outputColor;
 ${environmentLookupGlsl}
 vec3 toneMap(vec3 color) {
@@ -406,6 +428,12 @@ void main() {
   vec4 world = inverseViewProjection * vec4(textureCoordinate * 2.0 - 1.0, 1.0, 1.0);
   vec3 direction = normalize(world.xyz / world.w - eye);
   vec3 radiance = environmentRadiance(direction, backgroundLevel);
+  // The sun is a disc of sunDiscRadius radians drawn per pixel, not baked into the map, so a narrow lens still sees a sharp round edge.
+  vec3 mapDirection = environmentDirection(direction);
+  float sunAngle = atan(length(cross(mapDirection, sunMapDirection)), dot(mapDirection, sunMapDirection));
+  float edgeWidth = max(fwidth(sunAngle), 1e-7);
+  float discCoverage = clamp((sunDiscRadius - sunAngle) / edgeWidth + 0.5, 0.0, 1.0) * step(0.0, mapDirection.y) * (1.0 - clamp(backgroundLevel, 0.0, 1.0));
+  radiance += sunDiscRadiance * environmentIntensity * discCoverage;
   outputColor = vec4(hdrEnabled > 0.5 ? min(radiance * exposure, vec3(65504.0)) : pow(toneMap(radiance * exposure), vec3(1.0 / 2.2)), 1.0);
 }`;
 
@@ -445,8 +473,9 @@ function* environmentResourceSteps(context, map, { compileProgram, fullscreenVer
   const layout = environmentSpecularLayout(map);
   const sourceLevelCount = Math.floor(Math.log2(Math.max(map.width, map.height))) + 1;
   const sourceTexture = createHalfFloatTexture(context, context.RGBA16F, sourceLevelCount, map.width, map.height, { wrapHorizontally: true });
-  for (let firstRow = 0; firstRow < map.height; firstRow += UPLOAD_ROWS_PER_STEP) {
-    const rowCount = Math.min(UPLOAD_ROWS_PER_STEP, map.height - firstRow);
+  const uploadRows = Math.min(UPLOAD_ROWS_PER_STEP, rowsPerStep(map.width));
+  for (let firstRow = 0; firstRow < map.height; firstRow += uploadRows) {
+    const rowCount = Math.min(uploadRows, map.height - firstRow);
     context.texSubImage2D(context.TEXTURE_2D, 0, 0, firstRow, map.width, rowCount, context.RGBA, context.FLOAT, paddedHalfFloatRows(map, firstRow, rowCount));
     yield;
   }

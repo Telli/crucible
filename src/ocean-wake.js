@@ -8,6 +8,7 @@ export const WAKE_FOAM_REACH = 1.5;
 
 const DEFAULT_WAKE_HEIGHT = 0.06;
 const MAXIMUM_WAKE_HEIGHT = 2;
+const MAXIMUM_WAKE_WIDTH = 1000;
 const REFERENCE_SPEED = 3;
 // The trail starts this fraction of `width` wide at the stern and spreads by this multiple of `width` over its life: a V that opens.
 const STERN_WIDTH_FRACTION = 0.5;
@@ -42,14 +43,24 @@ export function normalizeWake(input, label = 'wake') {
   if (typeof height !== 'number' || !Number.isFinite(height) || height < 0 || height > MAXIMUM_WAKE_HEIGHT) {
     throw new RangeError(`${label}.height must be a number from 0 to ${MAXIMUM_WAKE_HEIGHT}, such as ${DEFAULT_WAKE_HEIGHT}`);
   }
-  const checked = points.map((point, index) => {
-    const valid = Array.isArray(point) && point.length === 4 && point.every(Number.isFinite) && point[2] >= 0 && point[2] <= 1 && point[3] > 0 && point[3] <= 1000;
-    if (!valid) {
-      throw new RangeError(`${label}.points[${index}] must be [x, z, strength, width] with strength from 0 to 1 and width above 0, such as [0, 0, 1, 1.2]`);
-    }
-    return point.slice();
-  });
+  const checked = [];
+  for (let index = 0; index < points.length; index++) {
+    checked.push(checkedPoint(points, index, label));
+  }
   return { points: checked, height };
+}
+
+const POINT_SHAPE = '[x, z, strength, width], such as [0, 0, 1, 1.2]';
+
+function checkedPoint(points, index, label) {
+  const point = points[index];
+  const name = `${label}.points[${index}]`;
+  const isFilled = Array.isArray(point) && point.length === 4 && [0, 1, 2, 3].every(position => position in point);
+  if (!isFilled || !Array.from(point).every(Number.isFinite)) throw new RangeError(`${name} must be four finite numbers ${POINT_SHAPE}`);
+  const [, , strength, width] = point;
+  if (strength < 0 || strength > 1) throw new RangeError(`${name} strength must be from 0 to 1, got ${strength}; the point is ${POINT_SHAPE}`);
+  if (width <= 0 || width > MAXIMUM_WAKE_WIDTH) throw new RangeError(`${name} width must be above 0 and at most ${MAXIMUM_WAKE_WIDTH} metres, got ${width}; the point is ${POINT_SHAPE}`);
+  return point.slice();
 }
 
 /** A repeatable value from -1 to 1 for one horizontal position: the same position always gives the same churn. */
