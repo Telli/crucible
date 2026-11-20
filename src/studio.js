@@ -2633,14 +2633,6 @@ export function createStudio(container, {
   // The scene, selection and camera stay in the controller. Only what the renderer holds is rebuilt, from the current scene.
   function recoverFromContextLoss() {
     contextLost = false;
-    if (!suppliedRenderer && renderer) {
-      try {
-        renderer.dispose();
-      } catch {
-        // The lost context has nothing left to free, so a failed dispose changes nothing.
-      }
-      renderer = null;
-    }
     renderedScene = null;
     renderedTopology = null;
     renderedShadowKey = null;
@@ -2654,7 +2646,22 @@ export function createStudio(container, {
       cancelAnimationFrame(frameHandle);
       frameHandle = 0;
     }
+    releaseRendererOfLostContext();
     pausedNotice.show(CONTEXT_LOST_MESSAGE);
+  }
+
+  // A renderer is released while its context is gone, when the browser ignores every delete. Releasing it after the
+  // context is back would delete objects of the old context, and that error would fail the first upload of the new one.
+  function releaseRendererOfLostContext() {
+    if (suppliedRenderer || !renderer) {
+      return;
+    }
+    try {
+      renderer.dispose();
+    } catch {
+      // The lost context has nothing left to free, so a failed dispose changes nothing.
+    }
+    renderer = null;
   }
 
   function requestFrame() {
