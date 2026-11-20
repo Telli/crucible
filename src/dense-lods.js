@@ -5,6 +5,7 @@ import { DENSE_TRIANGLES_PER_PIXEL, partTakesLods } from './renderer.js';
 import { splitHdriSun } from './hdri.js';
 import { fitWorldShadowView } from './shadow-light.js';
 import { sceneBoundsOfParts } from './near-plane-fit.js';
+import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS } from './light-limits.js';
 
 // Parts for a scene with more than one triangle per pixel (a scan, a sculpt), given `lods` so that each draws with the
 // fewest triangles whose error stays under `lodPixelError` pixels (#1163). On such a scene every pixel is shaded about
@@ -27,6 +28,27 @@ export function withSceneFileRendererDefaults(rendererOptions = {}) {
  */
 export function withSceneFileLights(fileLights = {}, sceneEnvironment = {}) {
   return { ...fileLights, ...sceneEnvironment };
+}
+
+/**
+ * The lights of every part of a staged world as one partial environment: point and spot lights of all parts in part
+ * order up to the renderer's limits, and the key light of the first part that has a directional light (#2666).
+ * Parts without lights contribute nothing, and a world with no lights at all gives `{}`.
+ */
+export function mergePartLights(lightsPerPart) {
+  const merged = {};
+  const pointLights = lightsPerPart.flatMap(lights => lights.pointLights ?? []).slice(0, MAX_POINT_LIGHTS);
+  const spotLights = lightsPerPart.flatMap(lights => lights.spotLights ?? []).slice(0, MAX_SPOT_LIGHTS);
+  if (pointLights.length) merged.pointLights = pointLights;
+  if (spotLights.length) merged.spotLights = spotLights;
+  const keyed = lightsPerPart.find(lights => lights.lightDirection);
+  if (keyed) {
+    Object.assign(merged, { keyColor: keyed.keyColor, lightDirection: keyed.lightDirection, keyIntensity: keyed.keyIntensity });
+  } else if (pointLights.length || spotLights.length) {
+    merged.keyIntensity = 0;
+  }
+  if (Object.keys(merged).length) merged.fillIntensity = 0;
+  return merged;
 }
 
 /** The environment a showcase page draws with: the GLB's own lights under the scene's `renderer.environment`, plus the sky `map` (#2666). */

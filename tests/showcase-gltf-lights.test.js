@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseGltf } from '../src/gltf.js';
-import { showcaseEnvironment } from '../src/dense-lods.js';
+import { mergePartLights, showcaseEnvironment } from '../src/dense-lods.js';
 
 const TRIANGLE_POSITIONS = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
 
@@ -35,4 +35,21 @@ test('a showcase scene.json renderer.environment still wins key by key over the 
   const environment = showcaseEnvironment(asset.lights, { pointLights: [], exposure: 2 }, null);
   assert.deepEqual(environment.pointLights, []);
   assert.equal(environment.exposure, 2);
+});
+
+test('the lights of every staged part of a showcase world reach the environment (#2666)', async () => {
+  const firstPart = await parseGltf(glbWithPointLight());
+  const laterPart = await parseGltf(glbWithPointLight());
+  const merged = mergePartLights([firstPart.lights, laterPart.lights, {}]);
+  assert.equal(merged.pointLights.length, 2);
+  assert.equal(merged.keyIntensity, 0);
+  assert.equal(merged.fillIntensity, 0);
+});
+
+test('a later staged part with a directional light still gives the world its key light (#2666)', () => {
+  const sun = { keyColor: [3, 3, 3], lightDirection: [0, 1, 0], keyIntensity: 1, fillIntensity: 0 };
+  const merged = mergePartLights([{}, sun]);
+  assert.deepEqual(merged.lightDirection, [0, 1, 0]);
+  assert.equal(merged.keyIntensity, 1);
+  assert.deepEqual(mergePartLights([{}, {}]), {});
 });
