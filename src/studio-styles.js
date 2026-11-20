@@ -1188,6 +1188,62 @@ export const STUDIO_CSS = `
 .crucible-studio dialog.crucible-studio-shortcuts-dialog {
   width: min(680px, calc(100vw - 32px));
 }
+/* Docked panels: the bar, the rail and the column take the edges of the window and the viewport is the room they
+   leave, so the scene is drawn at that size and nothing lies over it. Below the compact width the panels float. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) {
+  --studio-dock-bar: 52px;
+  --studio-dock-side: min(var(--studio-side-width, 284px), calc(100% - var(--studio-rail) - 160px));
+}
+.crucible-studio[data-floating="false"][data-outliner-collapsed="true"][data-inspector-collapsed="true"] {
+  --studio-dock-side: 0px;
+}
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-viewport {
+  inset: var(--studio-dock-bar) var(--studio-dock-side) 0 var(--studio-rail);
+}
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-menubar {
+  inset: 0 0 auto;
+  box-sizing: border-box;
+  block-size: var(--studio-dock-bar);
+  padding-inline: 4px;
+  background: var(--studio-panel);
+  pointer-events: auto;
+}
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-menubar .crucible-studio-island,
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-toolbar,
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-side > .crucible-studio-dock {
+  border-color: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-toolbar {
+  inset-block: var(--studio-dock-bar) 0;
+  inset-inline-start: 0;
+  box-sizing: border-box;
+  inline-size: var(--studio-rail);
+}
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-side {
+  inset-block: var(--studio-dock-bar) 0;
+  inset-inline-end: 0;
+  inline-size: var(--studio-dock-side);
+  max-inline-size: none;
+  gap: 0;
+  background: var(--studio-panel);
+  pointer-events: auto;
+}
+.crucible-studio[data-floating="false"][data-outliner-collapsed="true"][data-inspector-collapsed="true"] .crucible-studio-side {
+  display: none;
+}
+/* Inside the docked viewport nothing has to step around the rail or the bar. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-readout {
+  inset-inline-start: var(--studio-edge);
+}
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-status {
+  inset-block-start: var(--studio-edge);
+}
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-bottombar {
+  inset-inline-start: calc(var(--studio-rail) + (100% - var(--studio-rail) - var(--studio-dock-side)) / 2);
+  inline-size: min(620px, calc(100% - var(--studio-rail) - var(--studio-dock-side) - var(--studio-edge) * 2));
+}
 @media (forced-colors: active) {
   .crucible-studio button[aria-pressed="true"] {
     outline: 2px solid Highlight;

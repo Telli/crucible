@@ -2097,6 +2097,7 @@ test('Settings change the snap, the handles and what the viewport shows, and are
     sceneShare: 0,
     sceneMinimized: false,
     propertiesMinimized: false,
+    panelsFloating: true,
     moveSnapStep: 1,
     rotateSnapDegrees: 45,
     gizmoSize: 'large',
@@ -2326,4 +2327,28 @@ test('the panel column resizes by dragging its grips or with the arrow keys, ins
   assert.equal(next.studio.preferences.panelWidth, 520, 'a saved width outside the limits is pulled back in');
   assert.equal(next.studio.preferences.sceneShare, 15);
   assert.equal(mountStudio(testContext, { sharedDom: ui.dom, preferences: { panelWidth: Number.NaN } }).studio.preferences.panelWidth, 284);
+});
+test('panels float over the scene by default and dock to the window edges from the View menu or Settings', testContext => {
+  const saved = new Map();
+  const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const ui = mountStudio(testContext, { preferenceStorage });
+  assert.equal(ui.root.dataset.floating, 'true');
+  const viewMenu = ui.root.descendants().find(element => element.id === 'crucible-studio-pop-view');
+  byText(viewMenu, 'Floating panels').click();
+  assert.equal(ui.root.dataset.floating, 'false');
+  assert.equal(ui.studio.preferences.panelsFloating, false);
+  assert.equal(JSON.parse(saved.get('crucible-studio-preferences')).panelsFloating, false);
+
+  const next = mountStudio(testContext, { preferenceStorage, sharedDom: ui.dom });
+  assert.equal(next.root.dataset.floating, 'false', 'the next visit opens docked');
+  const control = next.root.querySelector('.crucible-studio-settings-dialog').descendants().find(element => element.dataset?.setting === 'panelsFloating');
+  assert.equal(control.checked, false);
+  control.checked = true;
+  dispatch(control, 'change');
+  assert.equal(next.root.dataset.floating, 'true');
+
+  const docked = '.crucible-studio[data-floating="false"]:not([data-compact="true"])';
+  const viewportRule = STUDIO_CSS.slice(STUDIO_CSS.indexOf(docked + ' .crucible-studio-viewport {'));
+  assert.ok(viewportRule.startsWith(docked), 'the docked viewport has a rule of its own');
+  assert.ok(viewportRule.slice(0, viewportRule.indexOf('}')).includes('inset: var(--studio-dock-bar) var(--studio-dock-side) 0 var(--studio-rail)'), 'the viewport is the room the panels leave, so the scene is drawn at that size');
 });
