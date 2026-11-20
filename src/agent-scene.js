@@ -1919,7 +1919,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   function stageRestParts(recipe, sourceRestParts, lightBakeResult, graph) {
     const baked = lightBakeResult?.parts ?? sourceRestParts;
     const reflected = stageObjectReflections(recipe, sourceRestParts, baked, graph);
-    return { reflected, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked))) };
+    return { reflected, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked)), { rest: true }) };
   }
 
   // bake.rebake: a frame sampled at a pose the bake was not traced at is lit by a bake of that pose, cached by its key.
@@ -2012,21 +2012,22 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return first.length === second.length && first.every((part, index) => part === second[index]);
   }
 
-  function stageCoplanarOffsets(recipe, parts) {
+  function stageCoplanarOffsets(recipe, parts, { rest = false } = {}) {
     if (!agentSceneModuleActive('coplanar', requestedModules)) {
       return parts;
     }
     const coplanar = agentSceneModule('coplanar');
     if (recipe.environment.resolveCoplanar === false) {
-      for (const list of rankedLists) {
+      for (const list of rankedLists()) {
         coplanar.clearFlushParts(list.rankedParts);
       }
-      rankedLists = [];
+      restRankedList = null;
+      posedRankedLists = [];
       flushCache = null;
       return parts;
     }
     if (flushCache?.parts !== parts && flushCache?.staged !== parts) {
-      const list = rankedList(coplanar, partsToRank(recipe, parts));
+      const list = rankedList(coplanar, partsToRank(recipe, parts), rest);
       // Ranked parts batch apart, so the list they are staged in is a new one: the renderer then regroups, also when the
       // ranking is switched on or off for parts that did not change. The same parts, or their staged list, get it back.
       if (list.parts !== parts && list.staged !== parts) {
@@ -2038,16 +2039,22 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return flushCache.staged;
   }
 
-  // The last two part lists ranked. A scene whose pose replaces parts (a sea with an oceanTime track) stages its rest parts
-  // and then its posed parts on every edit (#2730); going back to a list ranked before puts its stored ranks back instead of
-  // searching the whole scene again. A seek that only swaps the particle parts finds the same list.
-  let rankedLists = [];
-  function rankedList(coplanar, rankedParts) {
-    let list = rankedLists.find(candidate => sameParts(candidate.rankedParts, rankedParts));
+  // The rest parts ranked last and the last two posed lists. A scene whose pose replaces parts (a sea with an oceanTime track)
+  // stages its rest parts and then its posed parts on every edit (#2730); going back to a list ranked before puts its stored
+  // ranks back instead of searching the whole scene again. The rest list is kept apart, so seeking to new times does not push
+  // it out and the next edit finds it. A seek that only swaps the particle parts finds the same list.
+  let restRankedList = null;
+  let posedRankedLists = [];
+  function rankedLists() {
+    return restRankedList ? [restRankedList, ...posedRankedLists] : posedRankedLists;
+  }
+  function rankedList(coplanar, rankedParts, rest) {
+    let list = rankedLists().find(candidate => sameParts(candidate.rankedParts, rankedParts));
     if (!list) {
       const resolved = coplanar.resolveFlushParts(rankedParts);
       list = { rankedParts, resolved, orders: rankedParts.map(flushOrderOf) };
-      rankedLists = [list, ...rankedLists].slice(0, 2);
+      if (rest) restRankedList = list;
+      else posedRankedLists = [list, ...posedRankedLists].slice(0, 2);
     } else if (list !== flushCache?.list) {
       list.rankedParts.forEach((part, index) => setFlushOrder(part, list.orders[index]));
     }

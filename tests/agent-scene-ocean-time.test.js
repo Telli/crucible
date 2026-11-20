@@ -116,6 +116,8 @@ test('an edit after a seek keeps the playhead, the posed sea part and the topolo
   recipe.geometries.push({ id: 'box', type: 'box', bevel: 0 });
   recipe.nodes.push({ id: 'crate', geometry: 'box', material: 'water', translation: [8, 1, 8] });
   const scene = createAgentScene(recipe);
+  // Two seeks to new times rank two posed lists, which must not push out the ranks of the rest parts.
+  scene.sampleMotion(0.5);
   scene.sampleMotion(1.25);
   const sea = scene.parts[0];
   const topology = scene.topologyRevision;
