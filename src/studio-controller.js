@@ -608,8 +608,9 @@ export function createStudioController({
 
   function cameraIsDriven() {
     if (drivenCameraCache.scene !== currentScene || drivenCameraCache.revision !== currentScene.revision) {
-      const tracks = currentScene.exportRecipe().motion?.tracks ?? [];
-      const driven = tracks.some(track => track.kind === 'camera' && VIEW_POSE_FIELDS.includes(track.property));
+      // Any camera track or driver makes the scene stage its own eye, target and up, whichever field it animates.
+      const motion = currentScene.exportRecipe().motion;
+      const driven = (motion?.tracks ?? []).some(track => track.kind === 'camera') || (motion?.drivers ?? []).some(driver => driver.target?.kind === 'camera');
       drivenCameraCache = { scene: currentScene, revision: currentScene.revision, driven };
     }
     return drivenCameraCache.driven;

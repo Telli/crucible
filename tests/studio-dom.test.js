@@ -2586,3 +2586,36 @@ test('each handle answers a press well outside what is drawn, and a drawn handle
   assert.deepEqual(axesOf('line'), ['x', 'y', 'z']);
   assert.deepEqual(axesOf('disc'), []);
 });
+
+test('the Animated camera row shows only when a track drives the camera, and switches the free view', testContext => {
+  const viewRow = ui => ui.root.descendants().find(element => element.getAttribute('role') === 'menuitemcheckbox' && element.textContent === 'Animated camera');
+  const openViewMenu = ui => dispatch(ui.root.descendants().find(element => element.id === 'crucible-studio-pop-view'), 'toggle');
+  const plain = mountStudio(testContext);
+  openViewMenu(plain);
+  assert.equal(viewRow(plain).hidden, true);
+
+  const drivenRecipe = makeRecipe();
+  drivenRecipe.motion = {
+    duration: 4,
+    loop: false,
+    tracks: [{ kind: 'camera', property: 'fov', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 40 }, { time: 4, value: 30 }] }],
+  };
+  const sharedDom = plain.dom;
+  const driven = mountStudio(testContext, { recipe: drivenRecipe, sharedDom });
+  openViewMenu(driven);
+  const row = viewRow(driven);
+  assert.equal(row.hidden, false);
+  assert.equal(row.getAttribute('aria-checked'), 'true');
+  const sceneEye = Array.from(driven.controller.scene.camera.eye);
+  row.click();
+  assert.equal(driven.controller.freeView, true);
+  assert.equal(row.getAttribute('aria-checked'), 'false');
+  assert.deepEqual([...driven.controller.viewCamera.eye], sceneEye, 'the free view starts where the animated camera stands');
+  driven.controller.orbitCamera({ zoomScale: 0.5 });
+  driven.studio.renderNow();
+  assert.deepEqual([...driven.renderer.frames.at(-1).eye], [...driven.controller.viewCamera.eye], 'the frame is drawn from the free view');
+  assert.deepEqual(Array.from(driven.controller.scene.camera.eye), sceneEye);
+  row.click();
+  assert.equal(driven.controller.freeView, false);
+  assert.equal(row.getAttribute('aria-checked'), 'true');
+});
