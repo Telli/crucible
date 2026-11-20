@@ -45,7 +45,7 @@ The check runs on the text before any compile. A snippet that breaks a rule is r
 - At most 4 passes, 4096 bytes of code per snippet (comments and runs of spaces are not counted; the error shows both sizes), 16 uniforms per pass. Uniform names match `^[a-z][A-Za-z0-9]{0,31}$`, are not GLSL keywords and do not reuse an input name. Values are finite numbers.
 - No `#` lines (no `#define`, `#extension`, `#version`). No backslash, and ASCII text only.
 - No `while` or `do`. A `for` loop has the exact form `for (int i = 0; i < 8; i++) { ... }`: a counter that starts at an integer literal, a test against an integer literal, a step of `i++`, `++i`, `i--`, `--i`, `i += N` or `i -= N`, and a body in braces. It runs 64 iterations at most, and the body does not change the counter.
-- Loop work stays under 4096 iterations per pixel: nested loops multiply, and a call to your own helper counts that helper's loops again.
+- Loop work stays under 4096 iterations per pixel: nested loops multiply, and a call to your own helper counts the loops inside that helper again, and a helper without loops adds nothing. The error lists which loops add up.
 - No `uniform`, `layout`, `attribute`, `varying` or `buffer` declarations.
 - No name that starts with `gl_`, except `gl_FragCoord`. No name that starts with `u67_`; the engine keeps that prefix.
 
