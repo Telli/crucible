@@ -113,6 +113,31 @@ test('the renderer fits the world sun view to its casters and leaves the floor a
   assert.equal(rendererWith({ batches: [{ floor: false, castShadow: true, parts: [...walls, skinned] }] }).fittedWorldShadowView(), null);
 });
 
+test('a light direction with Infinity or NaN is refused instead of giving a NaN shadow eye', () => {
+  for (const direction of [[Infinity, 1, 0], [0, NaN, 1], [-Infinity, 0, 0]]) {
+    assert.throws(() => resolveShadowLight(true, direction), /resolveShadowLight: lightDirection .*pass a number/);
+  }
+  assert.ok(resolveShadowLight(true, [0, 1, 0]).eye.every(Number.isFinite));
+});
+
+test('the shadow bias refuses a view with no depth range or no extent instead of Infinity or 0', () => {
+  const light = resolveShadowLight(false, [-3, 6, 4], { extent: 8, near: 1, far: 200 });
+  assert.ok(Number.isFinite(shadowBiasPerSlope(light, 2048)) && shadowBiasPerSlope(light, 2048) > 0);
+  assert.throws(() => shadowBiasPerSlope({ ...light, far: light.near }, 2048), /light\.far/);
+  assert.throws(() => shadowBiasPerSlope({ ...light, extent: 0 }, 2048), /light\.extent/);
+  assert.throws(() => shadowBiasPerSlope(light, 0), /mapSize/);
+});
+
+test('fitWorldShadowView returns null for empty or non finite bounds', () => {
+  assert.equal(fitWorldShadowView({ minimum: [0, 0, 0], maximum: [0, 0, 0] }), null);
+  assert.equal(fitWorldShadowView({ minimum: [NaN, 0, 0], maximum: [1, 1, 1] }), null);
+  assert.equal(fitWorldShadowView({ minimum: [-Infinity, 0, 0], maximum: [1, 1, 1] }), null);
+});
+
+test('a typed array light direction is accepted', () => {
+  assert.deepEqual(resolveShadowLight(true, new Float32Array([0, 1, 0])).eye, resolveShadowLight(true, [0, 1, 0]).eye);
+});
+
 // The mountain-valley-a view in bench/reference/grand-scenes.js: a 4.6 km wide shadow box over a valley (issue #2687).
 const VALLEY_SHADOW = { eye: [-2625, 1620, 1050], target: [0, 150, -400], up: [0, 1, 0], extent: 2300, near: 1, far: 7000 };
 const STAIR_FREE_TEXEL_METRES = 1.25;

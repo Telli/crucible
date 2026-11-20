@@ -25,8 +25,10 @@ test('a volume without the field, or with 1, resolves to the same object as befo
   assert.deepEqual(resolveLocalVolumes([resolveLocalVolumes([{ ...SPHERE, noiseOctaves: 3 }])[0]])[0], resolveLocalVolumes([{ ...SPHERE, noiseOctaves: 3 }])[0], 'a resolved volume resolves again');
 });
 
-test('a grid volume refuses octaves, since its detail comes from the grid', () => {
-  assert.throws(() => resolveLocalVolumes([{ shape: 'grid', center: [0, 0, 0], grid: 'smoke', noiseOctaves: 3 }]), /noiseOctaves does not apply to a grid volume/);
+test('a grid volume takes octaves as fine detail on top of its cells (#2289)', () => {
+  const [volume] = resolveLocalVolumes([{ shape: 'grid', center: [0, 0, 0], grid: 'smoke', noiseAmount: 0.5, noiseOctaves: 3 }]);
+  assert.equal(volume.noiseOctaves, 3);
+  assert.throws(() => resolveLocalVolumes([{ shape: 'grid', center: [0, 0, 0], grid: 'smoke', noiseOctaves: 9 }]), /noiseOctaves must be a whole number from 1 to 5/);
 });
 
 test('one octave is the plain noise and several are a deterministic, different field', () => {

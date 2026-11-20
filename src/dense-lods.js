@@ -2,6 +2,9 @@ import { requireFiniteInRange } from './modeling-limits.js';
 import { generateGeometryLods, checkRatios, DEFAULT_LOD_RATIOS } from './mesh-lod.js';
 import { MAXIMUM_SIMPLIFY_TRIANGLES } from './geometry-simplify.js';
 import { DENSE_TRIANGLES_PER_PIXEL, partTakesLods } from './renderer.js';
+import { splitHdriSun } from './hdri.js';
+import { fitWorldShadowView } from './shadow-light.js';
+import { sceneBoundsOfParts } from './near-plane-fit.js';
 
 // Parts for a scene with more than one triangle per pixel (a scan, a sculpt), given `lods` so that each draws with the
 // fewest triangles whose error stays under `lodPixelError` pixels (#1163). On such a scene every pixel is shaded about
@@ -24,6 +27,21 @@ export function withSceneFileRendererDefaults(rendererOptions = {}) {
  */
 export function withSceneFileLights(fileLights = {}, sceneEnvironment = {}) {
   return { ...fileLights, ...sceneEnvironment };
+}
+
+/**
+ * The environment and map a scene file lights with. A file without a directional light of its own, whose scene file
+ * names no key light, is lit by the HDRI's sun as a shadowed key with no fill, and the sun leaves the map, so it no
+ * longer reaches shaded points through the unshadowed sky term (#2761). `hdriSun: false` in the scene file keeps the
+ * HDRI whole and the renderer's default key. Returns `{ environment, map, sunSplit }`; a scene with lights of its own
+ * comes back unchanged with `sunSplit` false.
+ */
+export function sceneFileLighting(map, fileLights = {}, sceneEnvironment = {}, { hdriSun = true } = {}) {
+  const environment = withSceneFileLights(fileLights, sceneEnvironment);
+  const namesKey = ['lightDirection', 'keyColor', 'keyIntensity'].some(key => environment[key] !== undefined);
+  const split = hdriSun && map && !namesKey ? splitHdriSun(map) : null;
+  if (!split) return { environment, map, sunSplit: false };
+  return { environment: { ...split.environment, fillIntensity: 0, ...environment }, map: split.map, sunSplit: true };
 }
 
 /** Triangles over pixels for these parts on a canvas of `pixels` pixels (the canvas size times the pixel ratio squared). */
@@ -67,4 +85,17 @@ export function partsForRendererOptions(parts, canvas, rendererOptions = {}) {
   requireFiniteInRange('partsForRendererOptions', 'pixelRatio', pixelRatio, 0.1, 16);
   const pixels = Math.max(1, canvas.clientWidth) * Math.max(1, canvas.clientHeight) * pixelRatio * pixelRatio;
   return addLodsToDenseParts(parts, { pixels });
+}
+
+/**
+ * The sun's shadow view for a file scene lit by its HDRI sun, as `shadowBounds`: fitted to the parts the way a world
+ * scene's view is (#1695), with the eye on the sun's side, instead of the 7 m studio box at the origin (#2761).
+ * Returns `{}` (the studio view) when the parts have no fixed bounds or are too large to fit.
+ */
+export function sunShadowBounds(parts, lightDirection) {
+  const view = fitWorldShadowView(sceneBoundsOfParts(parts));
+  if (!view) return {};
+  const length = Math.hypot(lightDirection[0], lightDirection[1], lightDirection[2]);
+  const eye = view.target.map((value, axis) => value + (lightDirection[axis] / length) * view.distance);
+  return { eye, target: view.target, extent: view.extent, near: view.near, far: view.far };
 }
