@@ -75,8 +75,11 @@ function mountStudio(testContext, { recipe = makeRecipe(), containerWidth = 0, d
     tab: tab => byDataset(root, 'tab', tab),
     panel: tab => root.querySelector(`#crucible-studio-panel-${tab}`),
     status: () => root.querySelector('.crucible-studio-status').textContent,
-    rows: () => root.querySelectorAll('.crucible-studio-tree-row'),
-    rowLabels: () => root.querySelectorAll('.crucible-studio-tree-label').map(element => element.textContent),
+    // The camera and light rows sit above the node rows; these two helpers read the node rows only.
+    rows: () => root.querySelectorAll('.crucible-studio-tree-row').filter(row => row.dataset.sceneObject === undefined),
+    rowLabels: () => ui.rows().map(row => row.querySelector('.crucible-studio-tree-label').textContent),
+    objectRows: () => root.querySelectorAll('.crucible-studio-tree-row').filter(row => row.dataset.sceneObject !== undefined),
+    objectLabels: () => ui.objectRows().map(row => row.querySelector('.crucible-studio-tree-label').textContent),
     node: nodeId => studio.exportRecipe().nodes.find(node => node.id === nodeId),
     material: materialId => studio.exportRecipe().materials.find(material => material.id === materialId),
     selectRow: nodeId => {
@@ -788,7 +791,9 @@ test('the gizmo draws handles for each tool and clears them when nothing is sele
   const axesDrawn = () => new Set(ui.gizmo.descendants().map(element => element.getAttribute('data-gizmo-axis')).filter(Boolean));
   ui.controller.selectNode(null);
   ui.studio.renderNow();
-  assert.equal(ui.gizmo.children.length, 0);
+  // Nothing selected leaves no handles or outline; only the sun's mark and its ray stay.
+  assert.deepEqual(ui.gizmo.children.map(element => element.getAttribute('class')), ['crucible-studio-scene-mark-ray', 'crucible-studio-scene-mark']);
+  assert.equal(axesDrawn().size, 0);
 
   ui.selectRow('hero');
   ui.tool('select').click();
@@ -2618,4 +2623,150 @@ test('the Animated camera row shows only when a track drives the camera, and swi
   row.click();
   assert.equal(driven.controller.freeView, false);
   assert.equal(row.getAttribute('aria-checked'), 'true');
+});
+
+test('the scene list shows the camera, the sun and each light above the nodes, selects them and honours the filter', testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.addSceneLight('point');
+  ui.controller.addSceneLight('spot');
+  ui.controller.addSceneLight('area');
+  assert.deepEqual(ui.objectLabels(), ['Camera', 'Sun', 'Point light', 'Spot light', 'Area light']);
+  const tree = ui.rows()[0].parentNode;
+  assert.deepEqual(tree.children.slice(0, 5).map(row => row.dataset.sceneObject), ['camera', 'sun', 'point:0', 'spot:0', 'area:0'], 'the object rows come first');
+  assert.equal(tree.children.length, 8);
+  assert.ok(ui.objectRows().every(row => row.getAttribute('role') === 'treeitem' && row.querySelector('.crucible-studio-tree-eye') === null));
+  assert.deepEqual(ui.objectRows().map(row => row.querySelector('.crucible-studio-tree-badge').getAttribute('data-shape')), ['camera', 'sun', 'pointLight', 'spotLight', 'areaLight']);
+
+  ui.objectRows()[0].querySelector('.crucible-studio-tree-select').click();
+  assert.equal(ui.controller.selectedObjectKey, 'camera');
+  assert.equal(ui.controller.selectedNodeId, null);
+  assert.equal(ui.objectRows()[0].getAttribute('aria-selected'), 'true');
+  assert.equal(ui.rows().filter(row => row.dataset.selected === 'true').length, 0, 'no node row stays selected');
+  assert.equal(ui.tab('camera').getAttribute('aria-selected'), 'true');
+
+  ui.objectRows()[3].querySelector('.crucible-studio-tree-select').click();
+  assert.equal(ui.controller.selectedObjectKey, 'spot:0');
+  assert.equal(ui.objectRows()[0].getAttribute('aria-selected'), 'false');
+  assert.equal(ui.objectRows()[3].getAttribute('aria-selected'), 'true');
+  assert.equal(ui.tab('look').getAttribute('aria-selected'), 'true');
+
+  ui.selectRow('hero');
+  assert.equal(ui.controller.selectedObjectKey, null);
+  assert.equal(ui.objectRows().filter(row => row.dataset.selected === 'true').length, 0);
+
+  const search = ui.label('Filter the scene list');
+  search.value = 'SPOT';
+  dispatch(search, 'input');
+  assert.deepEqual(ui.objectLabels(), ['Spot light']);
+  assert.deepEqual(ui.rowLabels(), []);
+  search.value = 'orb';
+  dispatch(search, 'input');
+  assert.deepEqual(ui.objectLabels(), []);
+  assert.deepEqual(ui.rowLabels(), ['orb']);
+});
+
+test('a light has a mark in the viewport that selects it and drags it in the plane facing the view', testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.addSceneLight('point');
+  ui.controller.moveSceneObject('point:0', [1, 1.5, 1]);
+  ui.studio.renderNow();
+  const markOf = key => ui.gizmo.descendants().find(element => element.getAttribute('data-scene-object') === key && element.tagName.toLowerCase() === 'circle');
+  assert.ok(markOf('sun'), 'the sun has a mark');
+  assert.equal(markOf('camera'), undefined, 'the camera you look through is not drawn');
+  assert.ok(markOf('point:0'));
+  assert.ok(ui.gizmo.querySelector('.crucible-studio-scene-mark-ray'), 'the sun points along its light');
+
+  const lightPosition = ui.controller.listSceneObjects().find(object => object.key === 'point:0').position;
+  const grab = ui.controller.projectWorldPoint(lightPosition);
+  const down = dispatch(markOf('point:0'), 'pointerdown', { ...ui.clientPoint(grab), pointerId: 6 });
+  assert.equal(down.defaultPrevented, true);
+  assert.equal(down.propagationStopped, true);
+  assert.equal(ui.controller.selectedObjectKey, 'point:0');
+  assert.equal(ui.controller.selectedNodeId, null);
+  assert.equal(ui.tab('look').getAttribute('aria-selected'), 'true');
+  ui.studio.renderNow();
+  assert.equal(ui.gizmo.querySelector('.crucible-studio-scene-mark[data-selected="true"]').children[0].getAttribute('data-scene-object'), 'point:0');
+
+  const release = { x: grab.x + 80, y: grab.y };
+  dispatch(ui.canvas, 'pointermove', ui.clientPoint(release));
+  const moved = ui.studio.exportRecipe().environment.pointLights[0].position;
+  assert.ok(moved[0] > lightPosition[0] || moved[2] !== lightPosition[2], 'the light followed the pointer');
+  const projectedAfter = ui.controller.projectWorldPoint(moved);
+  assert.ok(Math.abs(projectedAfter.x - release.x) < 1 && Math.abs(projectedAfter.y - release.y) < 1, 'the light sits under the pointer');
+  dispatch(ui.canvas, 'pointermove', ui.clientPoint({ x: release.x + 20, y: release.y }));
+  dispatch(ui.canvas, 'pointerup', ui.clientPoint(release));
+  assert.equal(ui.studio.dirty, true);
+  ui.controller.undo();
+  assert.deepEqual(ui.studio.exportRecipe().environment.pointLights[0].position, lightPosition, 'one undo puts the light back after the whole drag');
+
+  ui.tool('select').click();
+  const stillDown = dispatch(markOf('point:0') ?? ui.gizmo.descendants().find(element => element.getAttribute('data-scene-object') === 'point:0'), 'pointerdown', { ...ui.clientPoint(grab), pointerId: 7 });
+  assert.equal(stillDown.defaultPrevented, true);
+  dispatch(ui.canvas, 'pointermove', ui.clientPoint(release));
+  assert.deepEqual(ui.studio.exportRecipe().environment.pointLights[0].position, lightPosition, 'only the move tool drags a light');
+  dispatch(ui.canvas, 'pointerup', ui.clientPoint(release));
+});
+
+test('a light that a track moves refuses the drag and says why', testContext => {
+  const recipe = makeRecipe();
+  recipe.environment = { setup: 'studio', lightDirection: [-2, 5, 3], pointLights: [{ position: [1, 1.5, 1], color: [1, 1, 1], intensity: 2, radius: 0.1, range: 12, castShadow: false }] };
+  recipe.motion = {
+    duration: 2,
+    loop: false,
+    tracks: [{ kind: 'light', id: 'point:0', property: 'position', interpolation: 'LINEAR', keyframes: [{ time: 0, value: [1, 1.5, 1] }, { time: 2, value: [1, 1.5, 2] }] }],
+  };
+  const ui = mountStudio(testContext, { recipe });
+  const mark = ui.gizmo.descendants().find(element => element.getAttribute('data-scene-object') === 'point:0');
+  const grab = ui.controller.projectWorldPoint([1, 1.5, 1]);
+  dispatch(mark, 'pointerdown', { ...ui.clientPoint(grab), pointerId: 8 });
+  dispatch(ui.canvas, 'pointermove', ui.clientPoint({ x: grab.x + 60, y: grab.y }));
+  dispatch(ui.canvas, 'pointerup', ui.clientPoint(grab));
+  assert.deepEqual(ui.studio.exportRecipe().environment.pointLights[0].position, [1, 1.5, 1]);
+  assert.match(ui.status(), /point:0 light position is animated/);
+});
+
+test('the camera is drawn once the view looks away from it', testContext => {
+  const recipe = makeRecipe();
+  recipe.motion = {
+    duration: 2,
+    loop: false,
+    tracks: [{ kind: 'camera', property: 'eye', interpolation: 'LINEAR', keyframes: [{ time: 0, value: [0, 2, 6] }, { time: 2, value: [1, 2, 6] }] }],
+  };
+  const ui = mountStudio(testContext, { recipe });
+  const cameraMark = () => ui.gizmo.descendants().find(element => element.getAttribute('data-scene-object') === 'camera');
+  assert.equal(cameraMark(), undefined);
+  ui.controller.orbitCamera({ zoomScale: 2 });
+  ui.studio.renderNow();
+  assert.ok(cameraMark(), 'the scene camera shows once the view is free');
+  dispatch(cameraMark(), 'pointerdown', { ...ui.clientPoint(ui.controller.projectWorldPoint([0, 2, 6])), pointerId: 9 });
+  assert.equal(ui.controller.selectedObjectKey, 'camera');
+  dispatch(ui.canvas, 'pointerup', ui.clientPoint({ x: 0, y: 0 }));
+  assert.equal(ui.tab('camera').getAttribute('aria-selected'), 'true');
+});
+
+test('Delete removes the selected light, and the camera and sun stay', testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.addSceneLight('point');
+  ui.controller.addSceneLight('spot');
+  const press = (key, properties = {}) => dispatch(ui.dom.document, 'keydown', { key, ...properties });
+  ui.objectRows()[2].querySelector('.crucible-studio-tree-select').click();
+  assert.equal(ui.label('Delete (Del)').getAttribute('aria-disabled'), 'false');
+  press('Delete');
+  assert.deepEqual(ui.objectLabels(), ['Camera', 'Sun', 'Spot light']);
+  assert.equal(ui.status(), 'Deleted Point light');
+  assert.equal(ui.controller.selectedObjectKey, null);
+  assert.equal(ui.studio.exportRecipe().nodes.length, 3, 'no node went with it');
+
+  ui.objectRows()[2].querySelector('.crucible-studio-tree-select').click();
+  ui.label('Delete (Del)').click();
+  assert.deepEqual(ui.objectLabels(), ['Camera', 'Sun']);
+
+  ui.objectRows()[1].querySelector('.crucible-studio-tree-select').click();
+  assert.equal(ui.label('Delete (Del)').getAttribute('aria-disabled'), 'true');
+  press('Delete');
+  assert.deepEqual(ui.objectLabels(), ['Camera', 'Sun']);
+  press('Escape');
+  assert.equal(ui.controller.selectedObjectKey, null);
+  ui.controller.undo();
+  assert.deepEqual(ui.objectLabels(), ['Camera', 'Sun', 'Spot light']);
 });

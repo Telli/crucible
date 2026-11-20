@@ -50,6 +50,10 @@ The add button on the rail and the one in the Scene head (or Shift+A) open the s
 
 Each shape is an ordinary recipe geometry, so an agent can keep editing it: a ring is a `circle` with `innerRadius`, a vase and a capsule are a `lathe`, a star, a heart, a prism, a wedge and stairs are an `extrude`, a spring and a knot are a `tube` along a path, and a pyramid, a dome, a pipe, a bowl and a gem are a `mesh` around a `lathe` with a `smoothAngle` that keeps their edges hard. A new shape is about a metre wide and rests on the ground. A menu that opens low on the screen grows upward, so it stays inside the window.
 
+## Camera and lights in the Scene list
+
+The scene camera, the sun and every point, spot and area light are listed above the nodes in the Scene list, each with its own icon, and a mark for each light and the sun is drawn in the viewport. Click a row or a mark to select it: the camera opens the Camera tab, the sun and the lights open the Look tab. With the Move tool a light drags in the plane through it that faces the view, as one undo step. Delete removes a selected light. The camera is drawn only while the viewport looks away from it, after you orbit a scene whose camera a track moves. These are not recipe nodes: they edit `camera` and `environment`, so a light a motion track moves cannot be dragged, and the camera and the sun cannot be deleted. In code, `listSceneObjects()`, `selectSceneObject(key)`, `moveSceneObject(key, position)` and `deleteSceneObject(key)` on the controller do the same, with keys `camera`, `sun`, `point:0`, `spot:0` and `area:0`.
+
 ## Keys
 
 The keys follow Blender where Studio has the same action. **Help ▸ Keyboard shortcuts** (or **?**) lists them all.
