@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { STUDIO_CSS } from '../src/studio-styles.js';
 import { createStudio, createStudioController, STUDIO_PRIMITIVES, STUDIO_TABS, STUDIO_TEMPLATES, STUDIO_TOOLS } from '../src/studio.js';
 import { LIGHTING_SETUP_NAMES } from '../src/agent-scene-capabilities.js';
-import { directionToSunAngles } from '../src/studio-controller.js';
+import { directionToSunAngles, hexToLinearRgb } from '../src/studio-controller.js';
 import { buildGridParts } from '../src/studio-viewport-aids.js';
 import { VIEW_TRANSFORM_NAMES } from '../src/view-transform-names.js';
 import {
@@ -2769,4 +2769,187 @@ test('Delete removes the selected light, and the camera and sun stay', testConte
   assert.equal(ui.controller.selectedObjectKey, null);
   ui.controller.undo();
   assert.deepEqual(ui.objectLabels(), ['Camera', 'Sun', 'Spot light']);
+});
+
+function selectSceneObjectRow(ui, key) {
+  const row = ui.objectRows().find(candidate => candidate.dataset.sceneObject === key);
+  row.querySelector('.crucible-studio-tree-select').click();
+}
+
+function editNumber(ui, label, value) {
+  const input = ui.label(label);
+  input.value = String(value);
+  dispatch(input, 'change');
+}
+
+function countUndoSteps(controller) {
+  let steps = 0;
+  while (controller.undo()) steps += 1;
+  while (controller.redo());
+  return steps;
+}
+
+test('selecting a light opens its properties, and each control writes its field as one undo step', testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.addSceneLight('point');
+  ui.controller.addSceneLight('spot');
+  ui.controller.addSceneLight('area');
+  assert.equal(countUndoSteps(ui.controller), 3);
+
+  selectSceneObjectRow(ui, 'point:0');
+  assert.equal(ui.controller.activeTab, 'look');
+  const lightOf = key => {
+    const [kind, index] = key.split(':');
+    return ui.studio.exportRecipe().environment[`${kind}Lights`][Number(index)];
+  };
+  const expectOneStep = (key, edit, check) => {
+    const before = ui.studio.exportRecipe();
+    edit();
+    check(lightOf(key));
+    assert.equal(ui.controller.undo(), true);
+    assert.deepEqual(ui.studio.exportRecipe(), before, 'one undo reverts the edit');
+    ui.controller.redo();
+    check(lightOf(key));
+  };
+
+  expectOneStep('point:0', () => editNumber(ui, 'Intensity', 6), light => assert.equal(light.intensity, 6));
+  expectOneStep('point:0', () => editNumber(ui, 'Radius', 0.3), light => assert.equal(light.radius, 0.3));
+  expectOneStep('point:0', () => editNumber(ui, 'Range', 20), light => assert.equal(light.range, 20));
+  expectOneStep('point:0', () => editNumber(ui, 'Light position Y', 4.5), light => assert.equal(light.position[1], 4.5));
+  expectOneStep('point:0', () => ui.button('Soft falloff').click(), light => assert.equal(light.softFalloff, true));
+  expectOneStep('point:0', () => ui.button('Shadow').click(), light => assert.equal(light.castShadow, undefined));
+  const colour = ui.label('Color');
+  expectOneStep('point:0', () => {
+    colour.value = '#ff0000';
+    dispatch(colour, 'input');
+    colour.value = '#00ff00';
+    dispatch(colour, 'input');
+    dispatch(colour, 'change');
+  }, light => assert.deepEqual(light.color, [0, 1, 0]));
+  assert.equal(ui.label('Color').value, '#00ff00');
+
+  selectSceneObjectRow(ui, 'spot:0');
+  expectOneStep('spot:0', () => ui.setSlider('Angle °', 40), light => assert.ok(Math.abs(light.angle - (40 * Math.PI) / 180) < 1e-3));
+  expectOneStep('spot:0', () => ui.setSlider('Penumbra', 0.6), light => assert.equal(light.penumbra, 0.6));
+  expectOneStep('spot:0', () => editNumber(ui, 'Light direction X', 1), light => assert.equal(light.direction[0], 1));
+  assert.equal(ui.button('Portal'), undefined, 'a spot light has no portal');
+
+  selectSceneObjectRow(ui, 'area:0');
+  expectOneStep('area:0', () => editNumber(ui, 'Width', 5), light => assert.equal(light.width, 5));
+  expectOneStep('area:0', () => editNumber(ui, 'Height', 1.5), light => assert.equal(light.height, 1.5));
+  expectOneStep('area:0', () => ui.button('Portal').click(), light => assert.equal(light.portal, true));
+  expectOneStep('area:0', () => ui.button('Shadow').click(), light => assert.equal(light.castShadow, true));
+  assert.equal(ui.button('Soft falloff'), undefined, 'an area light has no soft falloff');
+});
+
+test('the sun properties edit the key light, and the panel shows the sun when no light is selected', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  ui.setSlider('Sun strength', 3.5);
+  assert.equal(ui.studio.exportRecipe().environment.keyIntensity, 3.5);
+  const colour = ui.label('Sun color');
+  colour.value = '#ff8000';
+  dispatch(colour, 'input');
+  dispatch(colour, 'change');
+  assert.deepEqual(ui.studio.exportRecipe().environment.keyColor, hexToLinearRgb('#ff8000'));
+  editNumber(ui, 'Sun size', 0.03);
+  assert.equal(ui.studio.exportRecipe().environment.sunAngularRadius, 0.03);
+  ui.controller.undo();
+  assert.equal(ui.studio.exportRecipe().environment.sunAngularRadius, undefined);
+  assert.equal(ui.label('Sun size').value, String(Math.round((Math.PI / 360) * 10000) / 10000), 'undo puts the control back');
+});
+
+test('the Camera tab edits focal length, sensor, clip planes, shift, depth of field and the eye and target', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  const cameraOf = () => ui.studio.exportRecipe().camera;
+  editNumber(ui, 'Focal length mm', 85);
+  assert.equal(cameraOf().focalLength, 85);
+  assert.equal(cameraOf().fov, undefined);
+  editNumber(ui, 'Sensor width mm', 24);
+  assert.equal(cameraOf().sensorWidth, 24);
+  editNumber(ui, 'Clip start', 0.25);
+  assert.equal(cameraOf().near, 0.25);
+  editNumber(ui, 'Clip end', 300);
+  assert.equal(cameraOf().far, 300);
+  editNumber(ui, 'Shift X', 0.2);
+  assert.deepEqual(cameraOf().shift, [0.2, 0]);
+  assert.equal(ui.label('Focus distance').parentNode.hidden, true, 'no focus distance until an f-stop is set');
+  editNumber(ui, 'F-stop', 2.8);
+  assert.equal(cameraOf().fStop, 2.8);
+  assert.equal(ui.label('Focus distance').parentNode.hidden, false);
+  editNumber(ui, 'Focus distance', 5);
+  assert.equal(cameraOf().focusDistance, 5);
+  editNumber(ui, 'Eye X', 3);
+  assert.equal(cameraOf().eye[0], 3);
+  editNumber(ui, 'Target Y', 1);
+  assert.equal(cameraOf().target[1], 1);
+  assert.equal(countUndoSteps(ui.controller), 9, 'each edit is one undo step');
+
+  editNumber(ui, 'F-stop', '');
+  assert.equal(cameraOf().fStop, undefined);
+  assert.equal(cameraOf().focusDistance, undefined);
+  ui.controller.undo();
+  assert.equal(cameraOf().fStop, 2.8);
+  assert.equal(ui.label('F-stop').value, '2.8');
+
+  ui.button('Ortho').click();
+  assert.equal(cameraOf().projection, 'orthographic');
+  assert.equal(ui.label('Focal length mm').parentNode.hidden, true);
+  assert.equal(ui.label('Orthographic size').parentNode.hidden, false);
+  editNumber(ui, 'Clip end', 0.01);
+  assert.match(ui.status(), /near/, 'a far plane in front of the near plane is told to the person');
+  assert.equal(cameraOf().far, 300);
+  assert.equal(ui.label('Clip end').value, '300', 'the control goes back to the recipe');
+});
+
+test('a change an agent makes from outside shows in the light and camera controls', async testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.addSceneLight('point');
+  selectSceneObjectRow(ui, 'point:0');
+  assert.equal(ui.label('Intensity').value, '2.5');
+
+  const agentRecipe = ui.studio.exportRecipe();
+  agentRecipe.environment.pointLights[0].intensity = 9;
+  agentRecipe.environment.keyIntensity = 2.2;
+  agentRecipe.camera.focalLength = 50;
+  delete agentRecipe.camera.fov;
+  await ui.studio.loadExternalTextFile(JSON.stringify(agentRecipe), { filePath: null, agent: true });
+  assert.equal(ui.label('Intensity').value, '9');
+
+  ui.controller.selectSceneObject('sun');
+  ui.tab('look').click();
+  assert.equal(ui.label('Sun strength').value, '2.2');
+  ui.tab('camera').click();
+  assert.equal(ui.label('Focal length mm').value, '50');
+
+  ui.studio.loadRecipe({ ...agentRecipe, camera: { ...agentRecipe.camera, focalLength: 135 } }, { recordUndo: false });
+  assert.equal(ui.label('Focal length mm').value, '135');
+});
+
+test('fields a motion track drives are disabled with a mark, in the light and camera panels', testContext => {
+  const recipe = makeRecipe();
+  recipe.environment.pointLights = [{ position: [1, 3, 1], intensity: 2 }];
+  recipe.motion = {
+    duration: 2,
+    loop: false,
+    tracks: [
+      { kind: 'light', id: 'point:0', property: 'intensity', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 1 }, { time: 2, value: 3 }] },
+      { kind: 'camera', property: 'fov', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 40 }, { time: 2, value: 60 }] },
+    ],
+  };
+  const ui = mountStudio(testContext, { recipe });
+  selectSceneObjectRow(ui, 'point:0');
+  const intensity = ui.label('Intensity');
+  const row = intensity.parentNode;
+  assert.equal(intensity.disabled, true);
+  assert.equal(row.dataset.driven, 'true');
+  assert.equal(row.querySelector('.crucible-studio-driven-mark').hidden, false);
+  assert.equal(ui.label('Radius').disabled, false, 'a field the track leaves alone stays editable');
+  assert.equal(ui.label('Radius').parentNode.querySelector('.crucible-studio-driven-mark').hidden, true);
+
+  ui.tab('camera').click();
+  assert.equal(ui.label('Field of view').disabled, true);
+  assert.equal(ui.label('Eye X').disabled, true, 'a camera track drives the eye whichever field it animates');
+  assert.equal(ui.label('Clip end').disabled, false);
 });
