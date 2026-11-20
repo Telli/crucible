@@ -1153,7 +1153,7 @@ export const STUDIO_CSS = `
   cursor: pointer;
   container-type: scroll-state;
 }
-/* While a title is pinned to the top, the rows scrolling under it dissolve over 12px instead of being sliced; the title itself stays opaque. */
+/* While a title is pinned to the top, the rows scrolling under it dissolve over 16px instead of being sliced; the title itself stays opaque. */
 .crucible-studio button.crucible-studio-property-title::after {
   content: "";
   position: absolute;

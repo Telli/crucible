@@ -2874,6 +2874,16 @@ test('the sun properties edit the key light, and the panel shows the sun when no
   assert.equal(ui.label('Sun size').value, '0.5', 'undo puts the control back, shown in degrees');
 });
 
+test('a scene file an agent rewrote shows its new sun values in the open Look panel', async testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const edited = ui.studio.exportRecipe();
+  edited.environment = { ...edited.environment, keyIntensity: 4.25, sunAngularRadius: (2 * Math.PI) / 180 };
+  await ui.studio.loadExternalTextFile(JSON.stringify(edited), { filePath: 'C:/agent/live.scene.json', fileName: 'live.scene.json', recordUndo: false });
+  assert.equal(Number(ui.label('Sun strength').value), 4.25, 'the slider follows the file the agent wrote');
+  assert.equal(ui.label('Sun size').value, '2', 'the size is shown in degrees');
+});
+
 test('the Camera tab edits focal length, sensor, clip planes, shift, depth of field and the eye and target', testContext => {
   const ui = mountStudio(testContext);
   ui.tab('camera').click();
