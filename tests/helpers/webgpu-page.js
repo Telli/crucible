@@ -2,7 +2,9 @@
 // Where Chrome, playwright or an adapter is missing the test skips on a developer machine and fails on CI, as withDevServerPage does.
 import { spawn } from 'node:child_process';
 import { freePort } from './free-port.js';
-import { skipOrThrow } from './dev-server-browser.js';
+import { openBlankPage, skipOrThrow } from './dev-server-browser.js';
+
+export { BLANK_PAGE_PATH } from './dev-server-browser.js';
 
 const WEBGPU_ARGUMENTS = [process.platform === 'win32' ? '--use-angle=d3d11' : '--use-angle=swiftshader', '--enable-unsafe-webgpu', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-features=Vulkan'];
 
@@ -59,7 +61,7 @@ export async function withWebGpuPage(testContext, body, options = {}) {
       return;
     }
     const page = await browser.newPage({ viewport: { width: 128, height: 128 } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     if (!await page.evaluate(async () => Boolean(navigator.gpu && await navigator.gpu.requestAdapter()))) {
       skipOrThrow(testContext, 'Chrome has no WebGPU adapter');
       return;

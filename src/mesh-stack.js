@@ -28,7 +28,8 @@ export class MeshBuilder {
 
   /**
    * sourceVertex: the source vertex whose point attributes this vertex copies (-1 for none), or { from, to, t } to blend
-   * two source vertices: floats blend by t, integer and boolean values take `from`.
+   * two source vertices (floats blend by t, integer and boolean values take `from`), or { weights: [[vertex, weight], ...] }
+   * to blend several (integer and boolean values take the heaviest).
    */
   addVertex(x, y, z, sourceVertex = -1) {
     this.positions.push(x, y, z);
@@ -65,6 +66,10 @@ export class MeshBuilder {
         if (sourceVertex === -1) return;
         if (typeof sourceVertex === 'number') {
           data.set(attribute.data.subarray(sourceVertex * size, (sourceVertex + 1) * size), vertex * size);
+          return;
+        }
+        if (sourceVertex.weights) {
+          blendWeighted(data, attribute, vertex, sourceVertex.weights, blends);
           return;
         }
         const { from, to, t } = sourceVertex;
@@ -116,6 +121,10 @@ export class MeshBuilder {
           data.set(attribute.data.subarray(sourceCorner * attribute.size, (sourceCorner + 1) * attribute.size), corner * attribute.size);
           return;
         }
+        if (sourceCorner.weights) {
+          blendWeighted(data, attribute, corner, sourceCorner.weights, blends);
+          return;
+        }
         // Interpolated corner: linear for float attributes (UVs, colours), nearest for integer ones.
         const { from, to, t } = sourceCorner;
         for (let component = 0; component < attribute.size; component++) {
@@ -144,17 +153,17 @@ export class MeshBuilder {
   }
 }
 
-/** A corner made from several source corners, each with a weight; integer attributes copy the heaviest one. */
-function blendWeighted(data, attribute, corner, weights, blends) {
+/** A corner or vertex made from several sources, each with a weight; integer attributes copy the heaviest one. */
+function blendWeighted(data, attribute, slot, weights, blends) {
   const heaviest = weights.reduce((best, entry) => (entry[1] > best[1] ? entry : best));
   for (let component = 0; component < attribute.size; component++) {
     if (!blends) {
-      data[corner * attribute.size + component] = attribute.data[heaviest[0] * attribute.size + component];
+      data[slot * attribute.size + component] = attribute.data[heaviest[0] * attribute.size + component];
       continue;
     }
     let sum = 0;
     for (const [source, weight] of weights) sum += attribute.data[source * attribute.size + component] * weight;
-    data[corner * attribute.size + component] = sum;
+    data[slot * attribute.size + component] = sum;
   }
 }
 

@@ -135,6 +135,11 @@ function validateMeta(meta) {
   if (typeof meta.frameFile !== 'string' || !meta.frameFile.includes('%04d')) throw new TypeError('Spume meta.frameFile must contain %04d.');
   const sprayIndex = meta.spray?.index;
   if (meta.spray && (!Array.isArray(sprayIndex) || sprayIndex.length !== meta.frameCount)) throw new RangeError('Spume spray index must list every frame.');
+  sprayIndex?.forEach((entry, frame) => {
+    if (!Array.isArray(entry) || entry.length !== 2 || !entry.every(value => Number.isInteger(value) && value >= 0)) {
+      throw new RangeError(`Spume spray.index[${frame}] must be [first, count] as two whole numbers from 0.`);
+    }
+  });
   if (meta.spray && meta.spray.floatsPerPoint !== SPRAY_FLOATS_PER_POINT) throw new RangeError('Spume spray must store six floats per point.');
 }
 

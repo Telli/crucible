@@ -4,13 +4,14 @@ import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
 import { COPLANAR_TOLERANCE, clearFlushParts, findCoplanarOverlaps, coplanarOverlapDiagnostics, flushLeftoverDiagnostics, installCoplanarDiagnostics, resolveFlushParts } from '../src/coplanar-overlap.js';
 import { depthLayerOf, flushOrderOf } from '../src/depth-layer.js';
-import { loadAgentSceneModules } from '../src/agent-scene-modules.js';
+import { loadAllAgentSceneModules } from '../src/agent-scene-modules.js';
 import { frameDiagnostics } from '../src/frame-diagnostics.js';
 import { groupParts } from '../src/renderer.js';
 import { resolveEffects } from '../src/effects.js';
 import { sphere } from '../src/geometry.js';
 
-await loadAgentSceneModules({ environment: { resolveCoplanar: 'offset' } });
+// A host that runs any recipe loads every module (the MCP preview does), which turns the default flush ranking on for plain recipes.
+await loadAllAgentSceneModules();
 
 function node(id, translation, scale, extra = {}) {
   return { id, geometry: 'box', material: 'paint', translation, scale, ...extra };
@@ -360,4 +361,38 @@ test('two dense overlapping meshes are found without one object per triangle (#1
   const bytesPerTriangle = measured.heapGrowth / measured.triangles;
   // Allocated per triangle: about 3200 bytes with the flat triangle table, about 5600 with one object per triangle.
   assert.ok(bytesPerTriangle < 4400, `plane search allocated ${Math.round(bytesPerTriangle)} bytes of heap per triangle`);
+});
+
+// Two 20 m plates facing up, `gap` metres apart in height, in a scene stretched by a far-off marker so the scene-wide reach is large.
+function platesApart(gap) {
+  return coplanarWarnings([
+    node('plate-low', [0, 0, 0], [20, 0.1, 20]),
+    node('plate-high', [0, gap, 0], [20, 0.1, 20]),
+    node('far-marker', [1500, 0, 0], [1, 1, 1]),
+  ]).filter(warning => warning.parts?.includes('plate-high'));
+}
+
+test('plates 2 mm apart fight, plates 100 mm and 250 mm apart do not, even in a scene thousands of metres wide', () => {
+  assert.equal(platesApart(0.002).length, 1);
+  assert.deepEqual(platesApart(0.1), []);
+  assert.deepEqual(platesApart(0.25), []);
+});
+
+// #2728: thousands of moving specks made every create and seek search them all for flush faces, about 110 s at the 2,000 limit.
+test('particle specks stay out of the flush ranking, and the wall and sign keep theirs across seeks', () => {
+  const sparks = { id: 'sparks', geometry: 'box', material: 'paint', scale: [0.05, 0.05, 0.05] };
+  const scene = createAgentScene({
+    ...recipe([wall, sign, sparks]),
+    particles: { systems: [{ node: 'sparks', count: 2000, floor: 0, lifetime: [1, 3], speed: [1, 8], spread: 180 }] },
+  });
+  const started = performance.now();
+  const partNamed = name => scene.parts.find(part => part.name === name);
+  for (const time of [0, 0.4, 1.3, 2.2, 0.4]) {
+    scene.sampleMotion(time);
+    assert.equal(flushOrderOf(partNamed('sparks')), null, `the specks are not ranked at ${time} s`);
+    assert.deepEqual(flushOrderOf(partNamed('sign')).ranges.map(range => range.rank), [0, 1], `the sign still wins at ${time} s`);
+    assert.ok(flushOrderOf(partNamed('wall')).geometry, `the wall is still cut at ${time} s`);
+  }
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 5000, `five seeks with 2,000 specks took ${elapsed.toFixed(0)} ms`);
 });

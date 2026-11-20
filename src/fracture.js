@@ -67,10 +67,21 @@ function validateOptions(options) {
   return { seed, cells, impact, impactRadius };
 }
 
+function vertexOf({ positions, normals }, vertex) {
+  if (!Number.isInteger(vertex) || vertex < 0 || vertex * 3 + 2 >= positions.length) {
+    throw failure('fracture geometry index', vertex, `an integer below ${positions.length / 3}, a vertex of the positions`);
+  }
+  const point = [positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]];
+  const normal = normals ? [normals[vertex * 3], normals[vertex * 3 + 1], normals[vertex * 3 + 2]] : [0, 0, 0];
+  if (![...point, ...normal].every(Number.isFinite)) {
+    throw failure('fracture geometry vertex', `${vertex} with a NaN or Infinity position or normal`, 'finite numbers in both');
+  }
+  return { point, normal };
+}
+
 /** The source triangles as convex polygons with a vertex normal each, after checking it is a closed, outward, convex solid. */
 function sourcePolygons(geometry) {
-  const { positions, indices } = geometry;
-  const normals = geometry.normals;
+  const { indices } = geometry;
   const triangleCount = indices.length / 3;
   if (!Number.isInteger(triangleCount) || triangleCount < 4) {
     throw failure('fracture geometry', `${triangleCount} triangles`, 'a closed mesh with at least 4 triangles, such as a box');
@@ -81,15 +92,10 @@ function sourcePolygons(geometry) {
   const polygons = [];
   const planes = [];
   for (let triangle = 0; triangle < triangleCount; triangle++) {
-    const vertices = [0, 1, 2].map(corner => {
-      const vertex = indices[triangle * 3 + corner];
-      const point = [positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]];
-      const normal = normals ? [normals[vertex * 3], normals[vertex * 3 + 1], normals[vertex * 3 + 2]] : [0, 0, 0];
-      return { point, normal };
-    });
+    const vertices = [0, 1, 2].map(corner => vertexOf(geometry, indices[triangle * 3 + corner]));
     const faceNormal = normalized(cross(subtract(vertices[1].point, vertices[0].point), subtract(vertices[2].point, vertices[0].point)));
     if (faceNormal[0] === 0 && faceNormal[1] === 0 && faceNormal[2] === 0) continue;
-    if (!normals) vertices.forEach(vertex => { vertex.normal = faceNormal; });
+    if (!geometry.normals) vertices.forEach(vertex => { vertex.normal = faceNormal; });
     polygons.push({ vertices, slot: OUTSIDE_SLOT });
     planes.push({ normal: faceNormal, offset: dot(faceNormal, vertices[0].point) });
   }
@@ -300,6 +306,12 @@ export function fractureMesh(geometry, rawOptions) {
   return { fragments, glue, volume: polygonsVolume(polygons) };
 }
 
+function checkFiniteList(field, value, length) {
+  if (!Array.isArray(value) || value.length !== length || !value.every(Number.isFinite)) {
+    throw failure(field, JSON.stringify(value), `${length} finite numbers`);
+  }
+}
+
 function distinctHullPoints(positions) {
   const distinct = new Map();
   for (let index = 0; index < positions.length; index += 3) {
@@ -318,6 +330,14 @@ export function fragmentPhysics(fracture, { translation = [0, 0, 0], rotation = 
   if (!(Number.isFinite(strength) && strength > 0)) {
     throw failure('glue strength', strength, 'an impulse above 0 in N s, such as 5');
   }
+  if (!(Number.isFinite(density) && density > 0)) {
+    throw failure('fragment density', density, 'a number above 0, such as 1');
+  }
+  if (friction !== undefined && !(Number.isFinite(friction) && friction >= 0)) {
+    throw failure('fragment friction', friction, '0 or more, such as 0.5');
+  }
+  checkFiniteList('fragment translation', translation, 3);
+  checkFiniteList('fragment rotation', rotation, 4);
   const bodies = [];
   const colliders = [];
   fracture.fragments.forEach((fragment, index) => {
