@@ -13,8 +13,10 @@ import { STUDIO_CSS } from './studio-styles.js';
 import { createStudioCatalog } from './studio-catalog.js';
 import {
   STUDIO_GIZMO_PIXELS,
+  STUDIO_PANEL_WIDTH,
   STUDIO_PREFERENCE_CHOICES,
   STUDIO_PREFERENCE_DEFAULTS,
+  STUDIO_SCENE_SHARE,
   loadStudioPreferences,
   normalizeStudioPreferences,
   saveStudioPreferences,
@@ -761,6 +763,11 @@ const STUDIO_SETTING_ROWS = Object.freeze([
   ['agentCursorVisible', 'Agent cursor'],
 ]);
 
+// What the Scene card takes of the column while nothing was measured yet, and the arrow key steps of the two grips.
+const DEFAULT_SCENE_SHARE = 42;
+const PANEL_WIDTH_KEY_STEP = 16;
+const SCENE_SHARE_KEY_STEP = 5;
+
 function browserPreferenceStorage() {
   try {
     return globalThis.localStorage ?? null;
@@ -1199,6 +1206,11 @@ export function createStudio(container, {
     announce(`Created ${created.id}`);
   });
 
+  const sceneMinimizeButton = createIconButton(documentReference, 'minimize', 'Minimize Scene', { attributes: { 'aria-expanded': 'true' } });
+  sceneMinimizeButton.addEventListener('click', () => setPreference('sceneMinimized', !preferences.sceneMinimized));
+  const propertiesMinimizeButton = createIconButton(documentReference, 'minimize', 'Minimize Properties', { attributes: { 'aria-expanded': 'true' } });
+  propertiesMinimizeButton.addEventListener('click', () => setPreference('propertiesMinimized', !preferences.propertiesMinimized));
+
   const outlinerDock = createElement(
     documentReference,
     'aside',
@@ -1211,6 +1223,7 @@ export function createStudio(container, {
       createElement(documentReference, 'span', { className: 'crucible-studio-spacer' }),
       filterToggleButton,
       sceneAddButton,
+      sceneMinimizeButton,
     ),
     filterRow,
     outlinerTree,
@@ -1331,10 +1344,12 @@ export function createStudio(container, {
       attributes: { role: 'toolbar', focusgroup: 'toolbar wrap', 'aria-orientation': 'vertical', 'aria-label': 'Tools', 'aria-controls': canvas.id },
     },
     createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Transform tool' } }, ...toolButtons),
-    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'History' } }, undoButton, redoButton),
-    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Scene' } }, addMenuButton, gridButton, toggleDocksButton),
+    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Edit the scene' } }, addMenuButton, undoButton, redoButton),
+    // Above the line: what changes the scene. Below it: what only shows or hides parts of Studio.
+    createElement(documentReference, 'div', { className: 'crucible-studio-toolbar-rule', attributes: { role: 'separator', 'aria-orientation': 'horizontal' } }),
+    createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Show or hide' } }, gridButton, toggleDocksButton),
   );
-  wireRovingFocusFallback(toolbarElement, [...toolButtons, undoButton, redoButton, addMenuButton, gridButton, toggleDocksButton], { vertical: true });
+  wireRovingFocusFallback(toolbarElement, [...toolButtons, addMenuButton, undoButton, redoButton, gridButton, toggleDocksButton], { vertical: true });
 
   // Viewport Top-Right 3D View Widget
   const viewPresetButtons = ['front', 'right', 'top', 'isometric'].map(preset => {
@@ -1662,6 +1677,14 @@ export function createStudio(container, {
     documentReference,
     'aside',
     { className: 'crucible-studio-dock crucible-studio-inspector', attributes: { 'aria-label': 'Scene inspector' } },
+    createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-dock-head' },
+      createElement(documentReference, 'span', { className: 'crucible-studio-dock-title' }, createIcon(documentReference, 'settings'), createElement(documentReference, 'span', { textContent: 'Properties' })),
+      createElement(documentReference, 'span', { className: 'crucible-studio-spacer' }),
+      propertiesMinimizeButton,
+    ),
     tabListElement,
     createElement(documentReference, 'div', { className: 'crucible-studio-panels' }, panelsByTab.node, panelsByTab.material, panelsByTab.look, panelsByTab.camera),
   );
@@ -1853,6 +1876,9 @@ export function createStudio(container, {
       agentPresence.hide();
     }
     setGridVisible(preferences.gridVisible);
+    showPanelSizes(preferences.panelWidth, preferences.sceneShare);
+    showPanelMinimized(sceneMinimizeButton, 'outlinerMinimized', 'Scene', preferences.sceneMinimized);
+    showPanelMinimized(propertiesMinimizeButton, 'inspectorMinimized', 'Properties', preferences.propertiesMinimized);
     for (const [name, control] of settingControls) {
       if (STUDIO_PREFERENCE_CHOICES[name]) control.value = String(preferences[name]);
       else control.checked = preferences[name];
@@ -1873,8 +1899,140 @@ export function createStudio(container, {
   if (preferences.startWorkspace !== 'build') {
     selectWorkspace(preferences.startWorkspace);
   }
+  // The panel column is resized from two grips: its inner edge sets the width, the gap between the cards sets how
+  // much of the column the Scene card takes. A drag previews the size and letting go saves it. Arrow keys do the
+  // same in steps, and a double click goes back to the size Studio opens with.
+  const widthGrip = createElement(documentReference, 'div', {
+    className: 'crucible-studio-grip crucible-studio-grip-width',
+    tabIndex: 0,
+    attributes: {
+      role: 'separator',
+      'aria-orientation': 'vertical',
+      'aria-label': 'Panel width',
+      'aria-valuemin': String(STUDIO_PANEL_WIDTH.least),
+      'aria-valuemax': String(STUDIO_PANEL_WIDTH.most),
+    },
+  });
+  const splitGrip = createElement(documentReference, 'div', {
+    className: 'crucible-studio-grip crucible-studio-grip-split',
+    tabIndex: 0,
+    attributes: {
+      role: 'separator',
+      'aria-orientation': 'horizontal',
+      'aria-label': 'Scene card height',
+      'aria-valuemin': String(STUDIO_SCENE_SHARE.least),
+      'aria-valuemax': String(STUDIO_SCENE_SHARE.most),
+    },
+  });
+  const sideColumn = createElement(documentReference, 'div', { className: 'crucible-studio-side' }, widthGrip, outlinerDock, splitGrip, inspectorElement);
+
+  function setRootVariable(name, value) {
+    if (typeof root.style?.setProperty === 'function') {
+      root.style.setProperty(name, value);
+    } else if (root.style) {
+      root.style[name] = value;
+    }
+  }
+
+  function showPanelSizes(panelWidth, sceneShare) {
+    setRootVariable('--studio-side-width', `${panelWidth}px`);
+    setRootVariable('--studio-scene-share', `${sceneShare}%`);
+    root.dataset.sceneSized = sceneShare > STUDIO_SCENE_SHARE.automatic ? 'true' : 'false';
+    widthGrip.setAttribute('aria-valuenow', String(panelWidth));
+    splitGrip.setAttribute('aria-valuenow', String(sceneShare));
+  }
+
+  function showPanelMinimized(button, datasetName, panelName, minimized) {
+    root.dataset[datasetName] = minimized ? 'true' : 'false';
+    setButtonIcon(button, minimized ? 'expand' : 'minimize', minimized ? `Expand ${panelName}` : `Minimize ${panelName}`);
+    button.setAttribute('aria-expanded', minimized ? 'false' : 'true');
+  }
+
+  // The share the Scene card takes now: the saved one, or what its rows came to while it sizes itself.
+  function currentSceneShare() {
+    if (preferences.sceneShare > STUDIO_SCENE_SHARE.automatic) {
+      return preferences.sceneShare;
+    }
+    const columnHeight = sideColumn.getBoundingClientRect?.().height;
+    const sceneHeight = outlinerDock.getBoundingClientRect?.().height;
+    if (!(columnHeight > 0) || !(sceneHeight > 0)) {
+      return DEFAULT_SCENE_SHARE;
+    }
+    return (sceneHeight / columnHeight) * 100;
+  }
+
+  function wirePanelGrip(grip, { preference, currentValue, valueAfterDrag, keyStep, decreaseKey, increaseKey }) {
+    let drag = null;
+    grip.addEventListener('pointerdown', event => {
+      if (event.button !== 0) {
+        return;
+      }
+      drag = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, startValue: currentValue(), latestValue: null };
+      grip.setPointerCapture?.(event.pointerId);
+      grip.dataset.dragging = 'true';
+      event.preventDefault();
+    });
+    grip.addEventListener('pointermove', event => {
+      if (!drag || event.pointerId !== drag.pointerId) {
+        return;
+      }
+      drag.latestValue = valueAfterDrag(drag, event);
+      const previewed = normalizeStudioPreferences({ ...preferences, [preference]: drag.latestValue });
+      showPanelSizes(previewed.panelWidth, previewed.sceneShare);
+    });
+    const finishDrag = event => {
+      if (!drag || event.pointerId !== drag.pointerId) {
+        return;
+      }
+      const latestValue = drag.latestValue;
+      drag = null;
+      delete grip.dataset.dragging;
+      if (latestValue !== null) {
+        setPreference(preference, latestValue);
+      }
+    };
+    grip.addEventListener('pointerup', finishDrag);
+    grip.addEventListener('pointercancel', finishDrag);
+    grip.addEventListener('keydown', event => {
+      let direction = 0;
+      if (event.key === increaseKey) {
+        direction = 1;
+      } else if (event.key === decreaseKey) {
+        direction = -1;
+      }
+      if (direction === 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setPreference(preference, currentValue() + direction * keyStep);
+    });
+    grip.addEventListener('dblclick', () => setPreference(preference, STUDIO_PREFERENCE_DEFAULTS[preference]));
+  }
+  // The column is on the right, so its inner edge moving left makes it wider.
+  wirePanelGrip(widthGrip, {
+    preference: 'panelWidth',
+    currentValue: () => preferences.panelWidth,
+    valueAfterDrag: (drag, event) => drag.startValue + (drag.clientX - event.clientX),
+    keyStep: PANEL_WIDTH_KEY_STEP,
+    decreaseKey: 'ArrowRight',
+    increaseKey: 'ArrowLeft',
+  });
+  wirePanelGrip(splitGrip, {
+    preference: 'sceneShare',
+    currentValue: currentSceneShare,
+    valueAfterDrag: (drag, event) => {
+      const columnHeight = sideColumn.getBoundingClientRect?.().height;
+      if (!(columnHeight > 0)) {
+        return drag.startValue;
+      }
+      return drag.startValue + ((event.clientY - drag.clientY) / columnHeight) * 100;
+    },
+    keyStep: SCENE_SHARE_KEY_STEP,
+    decreaseKey: 'ArrowUp',
+    increaseKey: 'ArrowDown',
+  });
   applyPreferences();
-  const sideColumn = createElement(documentReference, 'div', { className: 'crucible-studio-side' }, outlinerDock, inspectorElement);
   root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, recipeDialog, shortcutsDialog, settingsDialog);
   container.append(root);
 

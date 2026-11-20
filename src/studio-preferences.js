@@ -12,7 +12,33 @@ export const STUDIO_PREFERENCE_CHOICES = Object.freeze({
   startWorkspace: Object.freeze(['build', 'look', 'animate']),
 });
 
+export const STUDIO_PANEL_WIDTH = Object.freeze({ least: 240, most: 520, initial: 284 });
+
+// The Scene card's share of the panel column, in percent. Zero leaves it as tall as its rows need.
+export const STUDIO_SCENE_SHARE = Object.freeze({ least: 15, most: 75, automatic: 0 });
+
+function panelWidthInRange(value) {
+  return Math.round(Math.min(STUDIO_PANEL_WIDTH.most, Math.max(STUDIO_PANEL_WIDTH.least, value)));
+}
+
+function sceneShareInRange(value) {
+  if (value <= STUDIO_SCENE_SHARE.automatic) {
+    return STUDIO_SCENE_SHARE.automatic;
+  }
+  return Math.round(Math.min(STUDIO_SCENE_SHARE.most, Math.max(STUDIO_SCENE_SHARE.least, value)));
+}
+
+// Preferences that are a size: a saved number outside the range is pulled back into it.
+const STUDIO_PREFERENCE_SIZES = Object.freeze({
+  panelWidth: panelWidthInRange,
+  sceneShare: sceneShareInRange,
+});
+
 export const STUDIO_PREFERENCE_DEFAULTS = Object.freeze({
+  panelWidth: STUDIO_PANEL_WIDTH.initial,
+  sceneShare: STUDIO_SCENE_SHARE.automatic,
+  sceneMinimized: false,
+  propertiesMinimized: false,
   moveSnapStep: 0.25,
   rotateSnapDegrees: 15,
   gizmoSize: 'medium',
@@ -32,7 +58,12 @@ export function normalizeStudioPreferences(value) {
   for (const [name, fallback] of Object.entries(STUDIO_PREFERENCE_DEFAULTS)) {
     const candidate = value[name];
     const choices = STUDIO_PREFERENCE_CHOICES[name];
-    if (choices) {
+    const sizeInRange = STUDIO_PREFERENCE_SIZES[name];
+    if (sizeInRange) {
+      if (Number.isFinite(candidate)) {
+        preferences[name] = sizeInRange(candidate);
+      }
+    } else if (choices) {
       if (choices.includes(candidate)) {
         preferences[name] = candidate;
       }

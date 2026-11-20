@@ -471,8 +471,15 @@ export const STUDIO_CSS = `
   inset-block-start: var(--studio-top);
   inset-inline-start: var(--studio-edge);
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
   z-index: 5;
+}
+/* The one line in the rail: scene tools above it, show and hide switches below. */
+.crucible-studio-toolbar-rule {
+  inline-size: 20px;
+  block-size: 1px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--studio-text) 18%, transparent);
 }
 .crucible-studio-group {
   display: flex;
@@ -500,7 +507,8 @@ export const STUDIO_CSS = `
   position: absolute;
   inset-block: var(--studio-top) 100px;
   inset-inline-end: var(--studio-edge);
-  inline-size: 284px;
+  inline-size: var(--studio-side-width, 284px);
+  max-inline-size: calc(100% - var(--studio-edge) * 3 - var(--studio-rail) - 160px);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -515,6 +523,74 @@ export const STUDIO_CSS = `
 .crucible-studio-side > .crucible-studio-outliner {
   flex-shrink: 0;
   max-block-size: 42%;
+}
+.crucible-studio[data-scene-sized="true"]:not([data-outliner-minimized="true"]) .crucible-studio-side > .crucible-studio-outliner {
+  block-size: var(--studio-scene-share);
+  max-block-size: none;
+}
+.crucible-studio[data-outliner-minimized="true"] .crucible-studio-outliner > :not(.crucible-studio-dock-head),
+.crucible-studio[data-inspector-minimized="true"] .crucible-studio-inspector > :not(.crucible-studio-dock-head) {
+  display: none;
+}
+.crucible-studio[data-outliner-minimized="true"] .crucible-studio-outliner > .crucible-studio-dock-head,
+.crucible-studio[data-inspector-minimized="true"] .crucible-studio-inspector > .crucible-studio-dock-head {
+  padding-block-end: 8px;
+}
+/* The grips of the panel column: nothing to see until the pointer or the keyboard is on one. */
+.crucible-studio-grip {
+  position: relative;
+  flex: none;
+  pointer-events: auto;
+  touch-action: none;
+  outline: none;
+}
+.crucible-studio-grip::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+  background: var(--studio-accent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.crucible-studio-grip:focus-visible::after,
+.crucible-studio-grip[data-dragging="true"]::after {
+  opacity: 1;
+}
+@media (hover: hover) {
+  .crucible-studio-grip:hover::after { opacity: 0.7; }
+}
+.crucible-studio-grip-width {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: -7px;
+  inline-size: 8px;
+  cursor: ew-resize;
+}
+.crucible-studio-grip-width::after {
+  inset-block: 12px;
+  inset-inline-start: 3px;
+  inline-size: 2px;
+}
+/* The split grip lies in the gap between the two cards without adding to it. */
+.crucible-studio-grip-split {
+  block-size: 6px;
+  margin-block: -6px;
+  cursor: ns-resize;
+}
+.crucible-studio-grip-split::after {
+  inset-inline: 12px;
+  inset-block-start: 2px;
+  block-size: 2px;
+}
+.crucible-studio[data-outliner-minimized="true"] .crucible-studio-grip-split,
+.crucible-studio[data-inspector-minimized="true"] .crucible-studio-grip-split,
+.crucible-studio[data-outliner-collapsed="true"] .crucible-studio-grip,
+.crucible-studio[data-inspector-collapsed="true"] .crucible-studio-grip-split,
+.crucible-studio[data-compact="true"] .crucible-studio-grip {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .crucible-studio-grip::after { transition: none; }
 }
 .crucible-studio-outliner {
   inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
