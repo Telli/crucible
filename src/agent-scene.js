@@ -15,7 +15,7 @@ import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from '
 import { recipeDiagnostics, closedRoomDiagnostic } from './agent-diagnostics.js';
 import { closedRoomShare, CLOSED_ROOM_SHARE } from './closed-room.js';
 import { roomEdgeLeakDiagnostic } from './room-edge-leak.js';
-import { depthLayerOf, MAXIMUM_DEPTH_LAYER } from './depth-layer.js';
+import { depthLayerOf, flushOrderOf, MAXIMUM_DEPTH_LAYER, setFlushOrder } from './depth-layer.js';
 import { normalizeRayVisibility } from './ray-visibility.js';
 import { armatureNodes, bakeRigExport, bindSkins, createSkinStages, normalizeArmatures, publishSkinPoses, restWorldMatrix, rigReport, stageSkinPoses, transformedBounds, withoutArmatureNodes } from './rig.js';
 export { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS };
@@ -1397,7 +1397,9 @@ function oceanTimeGeometries(stagedState, sampled, time) {
   for (const [geometryId, patch] of patches) {
     let frame = frames.get(geometryId);
     const wakeField = stagedState.physicsSampler?.wakeField?.(geometryId, time);
-    const key = wakeField ? `${patch.oceanTime}|${time}` : patch.oceanTime;
+    // The frames outlive an edit (#2730), so the key names the stack they were built from as well as the time.
+    const source = `${stagedState.geometryRecords.get(geometryId)?.signature}|${stagedState.maxGeometryVertices}|${patch.oceanTime}`;
+    const key = wakeField ? `${source}|${time}` : source;
     if (frame?.key !== key) {
       frame = { key, geometry: oceanTimeGeometry(stagedState.recipe, stagedState.maxGeometryVertices, geometryId, patch.oceanTime, wakeField) };
       frames.set(geometryId, frame);
@@ -1852,19 +1854,22 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const sourceRestParts = sameParts ? state.sourceRestParts : Object.freeze(nextParts);
     const lightBakeResult = stageLightBake(recipe, sourceRestParts, graph);
     const { reflected, restParts } = stageRestParts(recipe, sourceRestParts, lightBakeResult, graph);
+    // Unchanged rest parts start from the parts the last pose drew (#2730): a pose that samples the same sea, cloth or
+    // particles keeps those parts, and only a pose that differs swaps them, which publishPose counts as a topology change.
+    const restUnchanged = Boolean(state) && restParts === state.restParts;
     const stagedState = {
       recipe, geometryRecords, geometries, graph, materialHandles,
       // Part identity decides what the next stage reuses, so it compares the parts as built, before any bake.
       sourceRestParts,
-      parts: restParts, restParts,
+      parts: restUnchanged ? state.parts : restParts, restParts,
+      oceanFrames: state?.oceanFrames,
       // Parts a pose replaces (cloth, particles, ocean) are new objects with no flush rank, so the pose ranks them again.
       rankFlushParts: parts => stageCoplanarOffsets(recipe, parts),
       bakeSkipped: skippedBake,
       reflectionSkipped: skippedReflections,
       bakeReport: lightBakeResult ? agentSceneModule('bake').withLocalVolumeReport({ ...lightBakeResult.report, reused: lightBakeResult.reused }, recipe.environment.localVolumes) : null,
       reflectionReport: reflected ? reflected.report : null,
-      // A renderer holding the deformed cloth parts of the old state needs the rest parts back as a topology change.
-      topologyChanged: Boolean(state && (restParts !== state.restParts || state.parts !== state.restParts)),
+      topologyChanged: Boolean(state) && !restUnchanged,
       stats: geometryStats(geometryRecords.values()),
     };
     stagedState.assetRuntime = assetRuntime;
@@ -2011,21 +2016,40 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     }
     const coplanar = agentSceneModule('coplanar');
     if (recipe.environment.resolveCoplanar === false) {
-      if (flushCache) {
-        coplanar.clearFlushParts(flushCache.parts);
+      for (const list of rankedLists) {
+        coplanar.clearFlushParts(list.rankedParts);
       }
+      rankedLists = [];
       flushCache = null;
       return parts;
     }
     if (flushCache?.parts !== parts) {
-      const rankedParts = partsToRank(recipe, parts);
-      // A seek that only swaps the particle parts keeps the ranks of the parts that did not change.
-      const resolved = flushCache && sameParts(flushCache.rankedParts, rankedParts) ? flushCache.resolved : coplanar.resolveFlushParts(rankedParts);
+      const list = rankedList(coplanar, partsToRank(recipe, parts));
       // Ranked parts batch apart, so the list they are staged in is a new one: the renderer then regroups, also when the
-      // ranking is switched on or off for parts that did not change.
-      flushCache = { parts, rankedParts, resolved, staged: resolved.ranked ? Object.freeze([...parts]) : parts, ...resolved };
+      // ranking is switched on or off for parts that did not change. The same parts get the same staged list back.
+      if (list.parts !== parts) {
+        list.parts = parts;
+        list.staged = list.resolved.ranked ? Object.freeze([...parts]) : parts;
+      }
+      flushCache = { parts, staged: list.staged, list, ...list.resolved };
     }
     return flushCache.staged;
+  }
+
+  // The last two part lists ranked. A scene whose pose replaces parts (a sea with an oceanTime track) stages its rest parts
+  // and then its posed parts on every edit (#2730); going back to a list ranked before puts its stored ranks back instead of
+  // searching the whole scene again. A seek that only swaps the particle parts finds the same list.
+  let rankedLists = [];
+  function rankedList(coplanar, rankedParts) {
+    let list = rankedLists.find(candidate => sameParts(candidate.rankedParts, rankedParts));
+    if (!list) {
+      const resolved = coplanar.resolveFlushParts(rankedParts);
+      list = { rankedParts, resolved, orders: rankedParts.map(flushOrderOf) };
+      rankedLists = [list, ...rankedLists].slice(0, 2);
+    } else if (list !== flushCache?.list) {
+      list.rankedParts.forEach((part, index) => setFlushOrder(part, list.orders[index]));
+    }
+    return list;
   }
 
   // scene_inspect names what the ranking could not settle. A scene that opted out gets the pairs of parts that fight instead:

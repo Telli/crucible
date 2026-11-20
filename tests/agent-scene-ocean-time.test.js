@@ -68,3 +68,37 @@ test('per-frame ocean work stays inside the ocean work limit', () => {
   const scene = createAgentScene(seaRecipe({ stack: [{ op: 'subdivide', levels: 3 }, { ...OCEAN, resolution: 16 }] }));
   assert.doesNotThrow(() => scene.sampleMotion(1));
 });
+
+// #2730: Studio moves its camera with set-camera, and every apply rebuilt the posed sea and re-ranked the whole scene.
+test('an edit that does not touch the sea keeps the posed sea part, the topology and the flush ranks', async () => {
+  const { flushOrderOf } = await import('../src/depth-layer.js');
+  const recipe = seaRecipe();
+  recipe.geometries.push({ id: 'box', type: 'box', bevel: 0 });
+  recipe.nodes.push(
+    { id: 'wall', geometry: 'box', material: 'water', translation: [0, 5, 0], scale: [10, 4, 0.2] },
+    { id: 'sign', geometry: 'box', material: 'water', translation: [0, 5, 0], scale: [1, 0.5, 0.2] },
+    { id: 'crate', geometry: 'box', material: 'water', translation: [8, 1, 8] },
+  );
+  const scene = createAgentScene(recipe);
+  const partNamed = name => scene.parts.find(part => part.name === name);
+  const sea = partNamed('surface');
+  const signRanks = flushOrderOf(partNamed('sign')).ranges.map(range => range.rank);
+  const topology = scene.topologyRevision;
+  scene.apply([{ type: 'set-camera', eye: [25, 18, 30], target: [0, 0, 0] }], { expectedRevision: scene.revision });
+  scene.apply([{ type: 'set-node', id: 'crate', translation: [9, 1, 8] }], { expectedRevision: scene.revision });
+  assert.equal(scene.topologyRevision, topology, 'neither edit is a topology change');
+  assert.equal(partNamed('surface'), sea, 'the posed sea is the same part');
+  assert.deepEqual(flushOrderOf(partNamed('sign')).ranges.map(range => range.rank), signRanks, 'the sign keeps its ranks');
+  assert.ok(flushOrderOf(partNamed('wall')).geometry, 'the wall is still cut under the sign');
+});
+
+test('an edit to the sea stack builds the posed sea again', () => {
+  const recipe = seaRecipe();
+  const scene = createAgentScene(recipe);
+  const before = positionsOf(scene);
+  const calmer = { ...recipe.geometries[0], stack: [{ op: 'subdivide', levels: 3 }, { ...OCEAN, windSpeed: 9 }] };
+  scene.apply([{ type: 'remove-geometry', id: 'sea' }, { type: 'add-geometry', geometry: calmer }], { expectedRevision: scene.revision });
+  assert.notDeepEqual(positionsOf(scene), before, 'the new wind gives new waves');
+  const still = createAgentScene(seaRecipe({ stack: calmer.stack }));
+  assert.deepEqual(positionsOf(scene), positionsOf(still), 'the edited sea equals a scene built with that stack');
+});
