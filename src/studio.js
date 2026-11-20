@@ -901,11 +901,11 @@ export function createStudio(container, {
   };
   const menuToggles = [];
   const syncMenuToggles = () => menuToggles.forEach(({ item, isOn }) => item.setAttribute('aria-checked', isOn() ? 'true' : 'false'));
-  const createMenuToggle = (label, shortcut, onChoose, isOn) => {
+  const createMenuToggle = (label, shortcut, onChoose, isOn, iconName) => {
     const item = createMenuItem(label, shortcut, () => {
       onChoose();
       syncMenuToggles();
-    });
+    }, iconName);
     item.setAttribute('role', 'menuitemcheckbox');
     menuToggles.push({ item, isOn });
     return item;
@@ -992,10 +992,10 @@ export function createStudio(container, {
     createMenuItem('Top view', '7', () => showView('top')),
     createMenuItem('Perspective / Orthographic', '5', () => controller.toggleCameraProjection(), 'camera'),
     createMenuItem('Frame the selection', 'F', () => flyToSelection(), 'frame'),
-    createMenuToggle('Grid', '', () => gridButton.click(), () => gridVisible),
-    createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true'),
-    createMenuToggle('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true'),
-    createMenuToggle('Floating panels', '', () => setPreference('panelsFloating', !preferences.panelsFloating), () => preferences.panelsFloating),
+    createMenuToggle('Grid', '', () => gridButton.click(), () => gridVisible, 'grid'),
+    createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true', 'panels'),
+    createMenuToggle('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true', 'settings'),
+    createMenuToggle('Floating panels', '', () => setPreference('panelsFloating', !preferences.panelsFloating), () => preferences.panelsFloating, 'scene'),
   );
   // A row that switches something shows whether it is on each time its menu opens.
   viewPopover.addEventListener('toggle', syncMenuToggles);
@@ -1119,6 +1119,8 @@ export function createStudio(container, {
       openImportDialog(promptText);
     }
   });
+  giveMenuIcon(autoReloadButton);
+  giveMenuIcon(copyPromptButton, 'duplicate');
   const aiSyncPopover = createElement(documentReference, 'div', {
     id: 'crucible-studio-pop-sync',
     className: 'crucible-studio-popover',

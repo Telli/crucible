@@ -413,29 +413,20 @@ export const STUDIO_CSS = `
 .crucible-studio-popover-grid + .crucible-studio-popover-grid { margin-block-start: 10px; }
 #crucible-studio-pop-add { max-width: 348px; max-block-size: calc(100dvh - 16px); overflow-y: auto; }
 #crucible-studio-pop-add .crucible-studio-popover-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.crucible-studio-popover > button { gap: 9px; }
 .crucible-studio-popover button {
   justify-content: flex-start;
-  gap: 9px;
   width: 100%;
   padding: 6px 10px;
   text-align: left;
 }
-.crucible-studio-popover button > .crucible-studio-icon { color: var(--studio-muted); }
-.crucible-studio-popover button:hover > .crucible-studio-icon,
-.crucible-studio-popover button:focus-visible > .crucible-studio-icon { color: inherit; }
+.crucible-studio-popover > button > .crucible-studio-icon { color: var(--studio-muted); }
+.crucible-studio-popover > button:hover > .crucible-studio-icon,
+.crucible-studio-popover > button:focus-visible > .crucible-studio-icon { color: inherit; }
 .crucible-studio-menu-gap {
-  display: grid;
-  place-items: center;
   flex: none;
   inline-size: 17px;
   block-size: 17px;
-}
-.crucible-studio-menu-gap::before {
-  content: "";
-  inline-size: 7px;
-  block-size: 7px;
-  border-radius: 50%;
-  background: transparent;
 }
 @keyframes crucible-studio-icon-spin { to { transform: rotate(360deg); } }
 @keyframes crucible-studio-icon-swing { 50% { transform: rotate(24deg); } }
@@ -485,7 +476,22 @@ export const STUDIO_CSS = `
   font-size: 11px;
   color: var(--studio-muted);
 }
-.crucible-studio-popover button[role="menuitemcheckbox"][aria-checked="true"] > .crucible-studio-menu-gap::before {
+/* A row that switches something keeps its icon and shows a dot at its end while it is on. */
+.crucible-studio-popover button[role="menuitemcheckbox"]::before {
+  content: "";
+  order: 2;
+  flex: none;
+  inline-size: 7px;
+  block-size: 7px;
+  margin-inline-start: auto;
+  border-radius: 50%;
+  background: transparent;
+}
+.crucible-studio-popover button[role="menuitemcheckbox"][data-shortcut]::before { margin-inline-start: 8px; }
+.crucible-studio-popover button[role="menuitemcheckbox"][data-shortcut]::after { order: 1; }
+/* Rows beside the switches leave the dot's column free, so every key in the menu ends on one line. */
+#crucible-studio-pop-view button:not([role]) { padding-inline-end: 25px; }
+.crucible-studio-popover button[role="menuitemcheckbox"][aria-checked="true"]::before {
   background: var(--studio-text);
 }
 .crucible-studio-menus {
