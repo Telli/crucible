@@ -8,6 +8,7 @@ import { LIGHTING_SETUP_NAMES } from '../src/agent-scene-capabilities.js';
 import { directionToSunAngles, hexToLinearRgb } from '../src/studio-controller.js';
 import { buildGridParts } from '../src/studio-viewport-aids.js';
 import { VIEW_TRANSFORM_NAMES } from '../src/view-transform-names.js';
+import { tinyHdrBytes } from './helpers/tiny-hdr.js';
 import {
   byDataset,
   byLabel,
@@ -2953,4 +2954,205 @@ test('fields a motion track drives are disabled with a mark, in the light and ca
   assert.equal(ui.label('Field of view').disabled, true);
   assert.equal(ui.label('Eye X').disabled, true, 'a camera track drives the eye whichever field it animates');
   assert.equal(ui.label('Clip end').disabled, false);
+});
+
+function editColour(ui, label, hex) {
+  const input = ui.label(label);
+  input.value = hex;
+  dispatch(input, 'input');
+  dispatch(input, 'change');
+}
+
+function expectOneUndoStep(ui, edit, check) {
+  const before = ui.studio.exportRecipe();
+  edit();
+  check(ui.studio.exportRecipe());
+  assert.equal(ui.controller.undo(), true);
+  assert.deepEqual(ui.studio.exportRecipe(), before, 'one undo reverts the edit');
+  ui.controller.redo();
+  check(ui.studio.exportRecipe());
+}
+
+test('the Look tab edits the world, fog, film, effects, shadow box and quality fields, each as one undo step', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const environmentOf = recipe => recipe.environment;
+
+  expectOneUndoStep(ui, () => editNumber(ui, 'HDRI strength', 2), recipe => assert.equal(environmentOf(recipe).environmentIntensity, 2));
+  expectOneUndoStep(ui, () => editNumber(ui, 'HDRI rotation', 0.5), recipe => assert.equal(environmentOf(recipe).environmentRotation, 0.5));
+  expectOneUndoStep(ui, () => editColour(ui, 'Sky top', '#ff0000'), recipe => assert.deepEqual(environmentOf(recipe).skyTop, [1, 0, 0]));
+  expectOneUndoStep(ui, () => editColour(ui, 'Sky bottom', '#0000ff'), recipe => assert.deepEqual(environmentOf(recipe).skyBottom, [0, 0, 1]));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Daylight', 0.4), recipe => assert.equal(environmentOf(recipe).daylight, 0.4));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Fill strength', 0.9), recipe => assert.equal(environmentOf(recipe).fillIntensity, 0.9));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Ambient strength', 0.2), recipe => assert.equal(environmentOf(recipe).ambientIntensity, 0.2));
+  expectOneUndoStep(ui, () => ui.button('Show sky').click(), recipe => assert.equal(environmentOf(recipe).world, true));
+  expectOneUndoStep(ui, () => ui.button('Ground').click(), recipe => assert.equal(environmentOf(recipe).ground, false));
+
+  expectOneUndoStep(ui, () => ui.setSlider('Fog', 0.02), recipe => assert.equal(environmentOf(recipe).fogDensity, 0.02));
+  expectOneUndoStep(ui, () => editColour(ui, 'Fog color', '#00ff00'), recipe => assert.deepEqual(environmentOf(recipe).fogColor, [0, 1, 0]));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Volume density', 0.3), recipe => assert.equal(environmentOf(recipe).volumeFog.density, 0.3));
+  expectOneUndoStep(ui, () => editColour(ui, 'Volume color', '#ffffff'), recipe => assert.deepEqual(environmentOf(recipe).volumeFog.color, [1, 1, 1]));
+  expectOneUndoStep(ui, () => ui.setSlider('Anisotropy', 0.5), recipe => assert.equal(environmentOf(recipe).volumeFog.anisotropy, 0.5));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Volume steps', 20), recipe => assert.equal(environmentOf(recipe).volumeFog.steps, 20));
+  expectOneUndoStep(ui, () => ui.setSlider('Noise amount', 0.8), recipe => assert.equal(environmentOf(recipe).volumeFog.noiseAmount, 0.8));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Noise scale', 0.6), recipe => assert.equal(environmentOf(recipe).volumeFog.noiseScale, 0.6));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Volume distance', 60), recipe => assert.equal(environmentOf(recipe).volumeFog.maxDistance, 60));
+
+  expectOneUndoStep(ui, () => ui.setSlider('Exposure', 1.3), recipe => assert.equal(recipe.effects.exposure, 1.3));
+  expectOneUndoStep(ui, () => ui.setSlider('Temperature', 0.3), recipe => assert.equal(recipe.effects.temperature, 0.3));
+  expectOneUndoStep(ui, () => ui.setSlider('Vignette', 0.2), recipe => assert.equal(recipe.effects.vignette, 0.2));
+  expectOneUndoStep(ui, () => ui.setSlider('Grain', 0.04), recipe => assert.equal(recipe.effects.grain, 0.04));
+  expectOneUndoStep(ui, () => ui.setSlider('Ambient occlusion', 0.6), recipe => assert.equal(recipe.effects.ambientOcclusion, 0.6));
+  expectOneUndoStep(ui, () => editNumber(ui, 'AO radius', 1.5), recipe => assert.equal(recipe.effects.ambientOcclusionRadius, 1.5));
+  expectOneUndoStep(ui, () => ui.setSlider('Bloom', 0.4), recipe => assert.equal(recipe.effects.bloom.strength, 0.4));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Bloom threshold', 2), recipe => assert.equal(recipe.effects.bloom.threshold, 2));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Bloom radius', 1.5), recipe => assert.equal(recipe.effects.bloom.radius, 1.5));
+  expectOneUndoStep(ui, () => ui.setSlider('DoF blur', 0.4), recipe => assert.equal(recipe.effects.depthOfField.blur, 0.4));
+  expectOneUndoStep(ui, () => editNumber(ui, 'DoF focus', 6), recipe => assert.equal(recipe.effects.depthOfField.focusDistance, 6));
+  expectOneUndoStep(ui, () => ui.setSlider('Shutter', 0.2), recipe => assert.equal(recipe.effects.motionBlur.shutter, 0.2));
+  expectOneUndoStep(ui, () => ui.setSlider('Object blur', 0.5), recipe => assert.equal(recipe.effects.motionBlur.objects, 0.5));
+
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow extent', 5), recipe => assert.equal(recipe.shadow.extent, 5));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow distance', 12), recipe => assert.equal(recipe.shadow.distance, 12));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow clip start', 0.2), recipe => assert.equal(recipe.shadow.near, 0.2));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow clip end', 40), recipe => assert.equal(recipe.shadow.far, 40));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow target Y', 2), recipe => assert.equal(recipe.shadow.target[1], 2));
+
+  expectOneUndoStep(ui, () => ui.button('Object reflections').click(), recipe => assert.equal(environmentOf(recipe).objectReflections, false));
+  expectOneUndoStep(ui, () => ui.button('Floor sky trace').click(), recipe => assert.equal(environmentOf(recipe).floorSkyTrace, false));
+  expectOneUndoStep(ui, () => ui.button('Resolve coplanar').click(), recipe => assert.equal(environmentOf(recipe).resolveCoplanar, false));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow cascades', 2), recipe => assert.equal(environmentOf(recipe).shadowCascades, 2));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Sun bounce', 0.5), recipe => assert.equal(environmentOf(recipe).sunBounce, 0.5));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Specular AA', 2), recipe => assert.equal(environmentOf(recipe).specularAntiAliasing, 2));
+});
+
+test('the HDRI select loads the file before it writes the choice, and None clears it', async testContext => {
+  const requested = [];
+  const catalog = { environment: async reference => { requested.push(reference); return tinyHdrBytes(); } };
+  const ui = mountStudio(testContext, { catalog });
+  ui.tab('look').click();
+  const select = ui.label('HDRI');
+  assert.deepEqual(select.children.map(option => option.value), ['', 'sky-clouds', 'studio-softbox']);
+  select.value = 'sky-clouds';
+  dispatch(select, 'change');
+  await ui.dom.settle();
+  assert.equal(ui.studio.exportRecipe().environment.hdri, 'sky-clouds');
+  assert.deepEqual(requested, ['sky-clouds']);
+  select.value = '';
+  dispatch(select, 'change');
+  assert.equal(ui.studio.exportRecipe().environment.hdri, undefined);
+  assert.equal(ui.controller.undo(), true);
+  assert.equal(ui.label('HDRI').value, 'sky-clouds', 'undo puts the choice back');
+});
+
+test('a catalog HDRI the list lacks shows as the current value', async testContext => {
+  const ui = mountStudio(testContext, { catalog: { environment: async () => tinyHdrBytes() } });
+  ui.tab('look').click();
+  const agentRecipe = ui.studio.exportRecipe();
+  agentRecipe.environment.hdri = 'b'.repeat(64);
+  await ui.studio.loadExternalTextFile(JSON.stringify(agentRecipe), { filePath: null, agent: true });
+  const shown = ui.label('HDRI');
+  assert.equal(shown.value, 'b'.repeat(64));
+  assert.equal(shown.children.at(-1).disabled, true);
+  assert.equal(shown.children.length, 4);
+});
+
+test('a change an agent makes from outside shows in the world, effects, shadow and quality controls', async testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const agentRecipe = ui.studio.exportRecipe();
+  agentRecipe.environment.fogDensity = 0.05;
+  agentRecipe.environment.skyTop = [0, 1, 0];
+  agentRecipe.environment.volumeFog = { density: 0.9 };
+  agentRecipe.environment.sunBounce = 3;
+  agentRecipe.environment.objectReflections = false;
+  agentRecipe.effects.vignette = 0.4;
+  agentRecipe.effects.bloom = { strength: 0.7, threshold: 3, radius: 2 };
+  agentRecipe.shadow.extent = 9;
+  await ui.studio.loadExternalTextFile(JSON.stringify(agentRecipe), { filePath: null, agent: true });
+  assert.equal(ui.label('Fog').value, '0.05');
+  assert.equal(ui.label('Sky top').value, '#00ff00');
+  assert.equal(ui.label('Volume density').value, '0.9');
+  assert.equal(ui.label('Sun bounce').value, '3');
+  assert.equal(ui.button('Object reflections').getAttribute('aria-pressed'), 'false');
+  assert.equal(ui.label('Vignette').value, '0.4');
+  assert.equal(ui.label('Bloom threshold').value, '3');
+  assert.equal(ui.label('Shadow extent').value, '9');
+
+  ui.controller.updateLook({ environment: { fogDensity: 0.01 }, effects: { vignette: 0.1 } });
+  assert.equal(ui.label('Fog').value, '0.01', 'a controller op shows too');
+  assert.equal(ui.label('Vignette').value, '0.1');
+  ui.controller.updateSceneShadow({ extent: 4 });
+  assert.equal(ui.label('Shadow extent').value, '4');
+});
+
+test('property groups fold, start with Quality and Shadows closed, and stay as a person left them', testContext => {
+  const saved = new Map();
+  const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const ui = mountStudio(testContext, { preferenceStorage });
+  ui.tab('look').click();
+  const section = (target, id) => byDataset(target.root, 'section', id);
+  const rowsOf = (target, id) => section(target, id).querySelector('.crucible-studio-property-rows');
+  const titleOf = (target, id) => section(target, id).querySelector('.crucible-studio-property-title');
+  for (const id of ['sun', 'world', 'atmosphere', 'film', 'effects']) {
+    assert.equal(rowsOf(ui, id).hidden, false, `${id} starts open`);
+    assert.equal(titleOf(ui, id).getAttribute('aria-expanded'), 'true');
+  }
+  for (const id of ['quality', 'sceneShadow']) {
+    assert.equal(rowsOf(ui, id).hidden, true, `${id} starts closed`);
+    assert.equal(titleOf(ui, id).getAttribute('aria-expanded'), 'false');
+  }
+
+  titleOf(ui, 'quality').click();
+  titleOf(ui, 'world').click();
+  assert.equal(rowsOf(ui, 'quality').hidden, false);
+  assert.equal(rowsOf(ui, 'world').hidden, true);
+  assert.deepEqual(JSON.parse(saved.get('crucible-studio-preferences')).propertyGroupsOpen, { quality: true, world: false });
+  assert.deepEqual(ui.studio.preferences.propertyGroupsOpen, { quality: true, world: false });
+
+  const returning = mountStudio(testContext, { sharedDom: ui.dom, preferenceStorage });
+  returning.tab('look').click();
+  assert.equal(rowsOf(returning, 'quality').hidden, false, 'the next visit keeps Quality open');
+  assert.equal(rowsOf(returning, 'world').hidden, true, 'and World folded');
+  assert.equal(rowsOf(returning, 'sceneShadow').hidden, true);
+});
+
+test('a selected light takes the Look tab alone, and the scene groups return with the sun selected', testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.addSceneLight('point');
+  ui.tab('look').click();
+  const panels = () => ui.root.querySelectorAll('.crucible-studio-properties').slice(0, 5).map(panel => panel.hidden === true);
+  ui.controller.selectSceneObject('sun');
+  assert.deepEqual(panels(), [false, false, false, false, false]);
+  selectSceneObjectRow(ui, 'point:0');
+  assert.deepEqual(panels(), [false, true, false, true, true], 'the world, shadow and quality groups leave; the film and effects stay');
+  ui.controller.selectSceneObject('sun');
+  assert.deepEqual(panels(), [false, false, false, false, false]);
+});
+
+test('fields an environment or effects track drives are disabled with a mark in the Look tab', testContext => {
+  const recipe = makeRecipe();
+  recipe.effects = { depthOfField: { blur: 0.5, focusDistance: 5 } };
+  recipe.motion = {
+    duration: 2,
+    loop: false,
+    tracks: [
+      { kind: 'environment', property: 'fogDensity', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 0 }, { time: 2, value: 0.05 }] },
+      { kind: 'environment', property: 'skyTop', interpolation: 'LINEAR', keyframes: [{ time: 0, value: [0.1, 0.2, 0.3] }, { time: 2, value: [0.3, 0.2, 0.1] }] },
+      { kind: 'environment', property: 'volumeFogDensity', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 0 }, { time: 2, value: 0.5 }] },
+      { kind: 'effects', property: 'exposure', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 1 }, { time: 2, value: 2 }] },
+      { kind: 'effects', property: 'focusDistance', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 2 }, { time: 2, value: 8 }] },
+    ],
+  };
+  const ui = mountStudio(testContext, { recipe });
+  ui.tab('look').click();
+  for (const label of ['Fog', 'Sky top', 'Volume density', 'Exposure', 'DoF focus']) {
+    const control = ui.label(label);
+    assert.equal(control.disabled, true, `${label} is disabled`);
+    assert.equal(control.parentNode.dataset.driven, 'true');
+    assert.equal(control.parentNode.querySelector('.crucible-studio-driven-mark').hidden, false);
+  }
+  for (const label of ['Fog color', 'Contrast', 'DoF blur', 'Sky bottom']) {
+    assert.equal(ui.label(label).disabled, false, `${label} stays editable`);
+  }
 });
