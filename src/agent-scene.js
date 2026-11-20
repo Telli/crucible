@@ -1886,7 +1886,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     stagedState.particleSampler = stageParticles(recipe, geometryRecords, stagedState);
     const animated = Boolean(stagedState.motionSampler || stagedState.physicsSampler || stagedState.clothSampler || stagedState.particleSampler || assetRuntime.animators.length);
     stagedState.poseGraph = animated ? compile(recipe, geometries, localBounds, limits) : null;
-    stagedState.initialPose = stagePose(stagedState, animated ? 0 : null);
+    stagedState.initialPose = animated ? poseAtPlayhead(stagedState) : stagePose(stagedState, null);
     return stagedState;
   }
 
@@ -2125,8 +2125,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // and the host sampled the old time again right after. A rebaked light bake and a pose that fails at that time start at 0.
   function poseAtPlayhead(stagedState) {
     const time = state?.motionTime;
-    if (!stagedState.poseGraph || typeof time !== 'number' || time === 0 || stagedState.recipe.bake?.rebake) {
-      return stagedState.initialPose;
+    if (typeof time !== 'number' || time === 0 || stagedState.recipe.bake?.rebake) {
+      return stagePose(stagedState, 0);
     }
     try {
       return stagePose(stagedState, time);
@@ -2138,7 +2138,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   function commit(stagedState, incrementRevision) {
     // A pose that swaps in new parts (particles, cloth) is a topology change too: a renderer holding the old parts would
     // otherwise try to update parts it never saw, which failed with "Unknown part identity" (#2204).
-    const posedPartsChanged = publishPose(stagedState, poseAtPlayhead(stagedState));
+    const posedPartsChanged = publishPose(stagedState, stagedState.initialPose);
     if (stagedState.topologyChanged || posedPartsChanged) {
       topologyRevision++;
     }
