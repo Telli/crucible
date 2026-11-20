@@ -17,6 +17,10 @@ export const STUDIO_PANEL_WIDTH = Object.freeze({ least: 240, most: 520, initial
 // The Scene card's share of the panel column, in percent. Zero leaves it as tall as its rows need.
 export const STUDIO_SCENE_SHARE = Object.freeze({ least: 15, most: 75, automatic: 0 });
 
+// Floating panels only: each card has its own width and height, in pixels. Zero leaves a size automatic, which is the
+// column width and the Scene share (or the rest of the column for Properties) that the docked column uses.
+export const STUDIO_CARD_SIZE = Object.freeze({ automatic: 0, leastHeight: 96, mostHeight: 1600 });
+
 function panelWidthInRange(value) {
   return Math.round(Math.min(STUDIO_PANEL_WIDTH.most, Math.max(STUDIO_PANEL_WIDTH.least, value)));
 }
@@ -28,15 +32,37 @@ function sceneShareInRange(value) {
   return Math.round(Math.min(STUDIO_SCENE_SHARE.most, Math.max(STUDIO_SCENE_SHARE.least, value)));
 }
 
+function cardWidthInRange(value) {
+  if (value === STUDIO_CARD_SIZE.automatic) {
+    return STUDIO_CARD_SIZE.automatic;
+  }
+  return panelWidthInRange(value);
+}
+
+function cardHeightInRange(value) {
+  if (value === STUDIO_CARD_SIZE.automatic) {
+    return STUDIO_CARD_SIZE.automatic;
+  }
+  return Math.round(Math.min(STUDIO_CARD_SIZE.mostHeight, Math.max(STUDIO_CARD_SIZE.leastHeight, value)));
+}
+
 // Preferences that are a size: a saved number outside the range is pulled back into it.
 const STUDIO_PREFERENCE_SIZES = Object.freeze({
   panelWidth: panelWidthInRange,
   sceneShare: sceneShareInRange,
+  sceneWidth: cardWidthInRange,
+  propertiesWidth: cardWidthInRange,
+  sceneHeight: cardHeightInRange,
+  propertiesHeight: cardHeightInRange,
 });
 
 export const STUDIO_PREFERENCE_DEFAULTS = Object.freeze({
   panelWidth: STUDIO_PANEL_WIDTH.initial,
   sceneShare: STUDIO_SCENE_SHARE.automatic,
+  sceneWidth: STUDIO_CARD_SIZE.automatic,
+  propertiesWidth: STUDIO_CARD_SIZE.automatic,
+  sceneHeight: STUDIO_CARD_SIZE.automatic,
+  propertiesHeight: STUDIO_CARD_SIZE.automatic,
   sceneMinimized: false,
   propertiesMinimized: false,
   propertyGroupsOpen: Object.freeze({}),

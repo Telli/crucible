@@ -2113,6 +2113,10 @@ test('Settings change the snap, the handles and what the viewport shows, and are
   assert.deepEqual(JSON.parse(saved.get('crucible-studio-preferences')), {
     panelWidth: 284,
     sceneShare: 0,
+    sceneWidth: 0,
+    propertiesWidth: 0,
+    sceneHeight: 0,
+    propertiesHeight: 0,
     sceneMinimized: false,
     propertiesMinimized: false,
     propertyGroupsOpen: {},
@@ -2369,6 +2373,223 @@ test('panels dock to the window edges by default and float over the scene from S
   const viewportRule = STUDIO_CSS.slice(STUDIO_CSS.indexOf(docked + ' .crucible-studio-viewport {'));
   assert.ok(viewportRule.startsWith(docked), 'the docked viewport has a rule of its own');
   assert.ok(viewportRule.slice(0, viewportRule.indexOf('}')).includes('inset: var(--studio-dock-bar) var(--studio-dock-side) 0 var(--studio-rail)'), 'the viewport is the room the panels leave, so the scene is drawn at that size');
+});
+
+function floatingPanelGrips(testContext, extraOptions = {}) {
+  const saved = new Map();
+  const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const ui = mountStudio(testContext, { preferenceStorage, preferences: { panelsFloating: true }, ...extraOptions });
+  const grips = {
+    sceneWidth: ui.label('Resize Scene width'),
+    sceneHeight: ui.label('Resize Scene height'),
+    propertiesWidth: ui.label('Resize Properties width'),
+    propertiesHeight: ui.label('Resize Properties height'),
+  };
+  const column = ui.root.querySelector('.crucible-studio-side');
+  column.box = { left: 0, top: 68, width: 284, height: 900, right: 284, bottom: 968 };
+  const savedPreferences = () => JSON.parse(saved.get('crucible-studio-preferences'));
+  const drag = (grip, { fromX = 0, toX = 0, fromY = 0, toY = 0, ctrlKey = false }) => {
+    dispatch(grip, 'pointerdown', { clientX: fromX, clientY: fromY });
+    dispatch(grip, 'pointermove', { clientX: toX, clientY: toY, ctrlKey });
+    dispatch(grip, 'pointerup', { clientX: toX, clientY: toY });
+  };
+  return { ui, grips, column, saved, savedPreferences, drag };
+}
+
+test('floating, each card resizes on its own: a left edge changes one width and a bottom edge one height', testContext => {
+  const { ui, grips, drag, savedPreferences } = floatingPanelGrips(testContext);
+  assert.equal(ui.root.dataset.floating, 'true');
+  const scene = ui.root.querySelector('.crucible-studio-outliner');
+  const properties = ui.root.querySelector('.crucible-studio-inspector');
+  assert.ok(scene.children.includes(grips.sceneWidth) && scene.children.includes(grips.sceneHeight), 'the Scene card carries its own grips');
+  assert.ok(properties.children.includes(grips.propertiesWidth) && properties.children.includes(grips.propertiesHeight), 'and so does the Properties card');
+  for (const grip of Object.values(grips)) {
+    assert.equal(grip.getAttribute('role'), 'separator');
+    assert.ok(Number(grip.getAttribute('aria-valuemin')) < Number(grip.getAttribute('aria-valuemax')));
+  }
+  assert.equal(grips.sceneWidth.getAttribute('aria-orientation'), 'vertical');
+  assert.equal(grips.propertiesHeight.getAttribute('aria-orientation'), 'horizontal');
+
+  // Opens like the docked column: the same width for both cards, the Scene card sized by its share, Properties to the margin.
+  assert.equal(ui.root.style['--studio-scene-width'], '284px');
+  assert.equal(ui.root.style['--studio-properties-width'], '284px');
+  assert.equal(ui.root.dataset.sceneHeightSized, 'false');
+  assert.equal(ui.root.dataset.propertiesHeightSized, 'false');
+
+  drag(grips.propertiesWidth, { fromX: 600, toX: 480 });
+  assert.equal(ui.studio.preferences.propertiesWidth, 404, 'the Properties card is wider');
+  assert.equal(ui.studio.preferences.sceneWidth, 0, 'and the Scene card is untouched');
+  assert.equal(ui.studio.preferences.panelWidth, 284, 'so is the docked column width');
+  assert.equal(ui.root.style['--studio-scene-width'], '284px');
+  assert.equal(ui.root.style['--studio-properties-width'], '404px');
+  assert.equal(grips.propertiesWidth.getAttribute('aria-valuenow'), '404');
+  assert.equal(savedPreferences().propertiesWidth, 404);
+
+  // Heights: the Properties card shortens and the Scene card keeps the height it came to.
+  drag(grips.propertiesHeight, { fromY: 900, toY: 700 });
+  assert.equal(ui.studio.preferences.propertiesHeight, 96, 'an unmeasured card starts from 240 and never goes below the least height');
+  assert.equal(ui.root.dataset.propertiesHeightSized, 'true');
+  assert.equal(ui.studio.preferences.sceneHeight, 0);
+
+  properties.box = { left: 0, top: 394, width: 404, height: 500, right: 404, bottom: 894 };
+  scene.box = { left: 0, top: 68, width: 284, height: 320, right: 284, bottom: 388 };
+  ui.studio.setPreference('propertiesHeight', 0);
+  drag(grips.propertiesHeight, { fromY: 900, toY: 700 });
+  assert.equal(ui.studio.preferences.propertiesHeight, 300, 'a laid out card starts from its measured height');
+  drag(grips.sceneHeight, { fromY: 388, toY: 548 });
+  assert.equal(ui.studio.preferences.sceneHeight, 480, 'the Scene card is taller');
+  assert.equal(ui.studio.preferences.propertiesHeight, 300, 'and the Properties card keeps its size');
+  assert.equal(ui.root.style['--studio-scene-height'], '480px');
+  assert.equal(ui.root.style['--studio-properties-height'], '300px');
+
+  // No room: the dragged card stops where the other card and the gap leave it.
+  scene.box = { left: 0, top: 68, width: 284, height: 480, right: 284, bottom: 548 };
+  drag(grips.propertiesHeight, { fromY: 800, toY: 5000 });
+  assert.equal(ui.studio.preferences.propertiesHeight, 900 - 480 - 6, 'Properties stops growing at the column bottom');
+  drag(grips.sceneHeight, { fromY: 548, toY: 348 });
+  assert.equal(ui.studio.preferences.sceneHeight, 280);
+  scene.box = { left: 0, top: 68, width: 284, height: 280, right: 284, bottom: 348 };
+  drag(grips.sceneHeight, { fromY: 348, toY: 5000 });
+  assert.equal(ui.studio.preferences.sceneHeight, 900 - 414 - 6, 'the Scene card leaves Properties its height');
+  assert.equal(ui.studio.preferences.propertiesHeight, 414, 'whose size did not change');
+});
+
+test('Ctrl on a width grip resizes both cards together and Ctrl on the Scene bottom edge is the docked split', testContext => {
+  const { ui, grips, drag } = floatingPanelGrips(testContext, { preferences: { panelsFloating: true, propertiesWidth: 380, propertiesHeight: 300 } });
+  assert.equal(ui.root.style['--studio-scene-width'], '284px');
+  assert.equal(ui.root.style['--studio-properties-width'], '380px');
+  drag(grips.sceneWidth, { fromX: 600, toX: 540, ctrlKey: true });
+  assert.equal(ui.studio.preferences.sceneWidth, 344, 'both cards grow by the same amount');
+  assert.equal(ui.studio.preferences.propertiesWidth, 440, 'and keep the difference between them');
+  drag(grips.propertiesWidth, { fromX: 600, toX: 700, ctrlKey: true });
+  assert.equal(ui.studio.preferences.sceneWidth, 244, 'either card grip works on both');
+  assert.equal(ui.studio.preferences.propertiesWidth, 340);
+  drag(grips.propertiesWidth, { fromX: 600, toX: 100, ctrlKey: true });
+  assert.deepEqual([ui.studio.preferences.sceneWidth, ui.studio.preferences.propertiesWidth], [520, 520], 'each card stops at the widest');
+  drag(grips.sceneWidth, { fromX: 600, toX: 640 });
+  assert.equal(ui.studio.preferences.sceneWidth, 480);
+  assert.equal(ui.studio.preferences.propertiesWidth, 520, 'without Ctrl the other card does not move');
+
+  // Meta does the same on a Mac.
+  dispatch(grips.sceneWidth, 'dblclick');
+  dispatch(grips.propertiesWidth, 'dblclick');
+  dispatch(grips.sceneWidth, 'pointerdown', { clientX: 600 });
+  dispatch(grips.sceneWidth, 'pointermove', { clientX: 580, metaKey: true });
+  dispatch(grips.sceneWidth, 'pointerup', { clientX: 580 });
+  assert.deepEqual([ui.studio.preferences.sceneWidth, ui.studio.preferences.propertiesWidth], [304, 304]);
+
+  // Ctrl on the bottom edge of the Scene card: it grows, Properties goes back to filling the rest.
+  drag(grips.sceneHeight, { fromY: 300, toY: 340, ctrlKey: true });
+  assert.equal(ui.studio.preferences.sceneHeight, 280);
+  assert.equal(ui.studio.preferences.propertiesHeight, 0, 'the other card takes what the Scene card leaves');
+  assert.equal(ui.root.dataset.propertiesHeightSized, 'false');
+});
+
+test('the card grips answer the arrow keys, with Ctrl for both cards, and a double click puts a card back to automatic', testContext => {
+  const { ui, grips, savedPreferences } = floatingPanelGrips(testContext);
+  const widen = dispatch(grips.sceneWidth, 'keydown', { key: 'ArrowLeft' });
+  assert.equal(widen.defaultPrevented, true);
+  assert.equal(ui.studio.preferences.sceneWidth, 300);
+  assert.equal(ui.studio.preferences.propertiesWidth, 0);
+  dispatch(grips.propertiesWidth, 'keydown', { key: 'ArrowLeft', ctrlKey: true });
+  assert.equal(ui.studio.preferences.sceneWidth, 316);
+  assert.equal(ui.studio.preferences.propertiesWidth, 300);
+  dispatch(grips.propertiesWidth, 'keydown', { key: 'ArrowRight', metaKey: true });
+  assert.deepEqual([ui.studio.preferences.sceneWidth, ui.studio.preferences.propertiesWidth], [300, 284]);
+  assert.equal(dispatch(grips.sceneWidth, 'keydown', { key: 'a' }).defaultPrevented, false);
+  assert.equal(dispatch(grips.sceneWidth, 'keydown', { key: 'ArrowDown' }).defaultPrevented, false, 'a vertical key does nothing on a width grip');
+
+  dispatch(grips.sceneHeight, 'keydown', { key: 'ArrowDown' });
+  assert.equal(ui.studio.preferences.sceneHeight, 264, 'an unmeasured card starts from 240 and a step is 24 pixels');
+  dispatch(grips.propertiesHeight, 'keydown', { key: 'ArrowUp' });
+  assert.equal(ui.studio.preferences.propertiesHeight, 216);
+  assert.equal(ui.studio.preferences.sceneHeight, 264, 'one card at a time');
+  dispatch(grips.sceneHeight, 'keydown', { key: 'ArrowDown', ctrlKey: true });
+  assert.equal(ui.studio.preferences.sceneHeight, 288);
+  assert.equal(ui.studio.preferences.propertiesHeight, 0, 'Ctrl on the Scene card height is the split');
+
+  dispatch(grips.sceneWidth, 'dblclick');
+  assert.equal(ui.studio.preferences.sceneWidth, 0);
+  assert.equal(ui.studio.preferences.propertiesWidth, 284, 'a double click resets only its own card');
+  dispatch(grips.sceneHeight, 'dblclick');
+  assert.equal(ui.studio.preferences.sceneHeight, 0);
+  assert.equal(ui.root.dataset.sceneHeightSized, 'false');
+  assert.equal(savedPreferences().sceneHeight, 0);
+});
+
+test('card sizes are saved, pulled back into their limits on load, and leave the docked column alone', testContext => {
+  const { ui, grips, saved, savedPreferences, drag } = floatingPanelGrips(testContext);
+  drag(grips.sceneWidth, { fromX: 600, toX: 540 });
+  drag(grips.sceneHeight, { fromY: 300, toY: 340 });
+  assert.equal(savedPreferences().sceneWidth, 344);
+  assert.equal(savedPreferences().sceneHeight, 280);
+  assert.equal(savedPreferences().panelWidth, 284, 'the docked width is not written by a floating drag');
+  assert.equal(savedPreferences().sceneShare, 0);
+
+  const next = mountStudio(testContext, { preferenceStorage: { getItem: key => saved.get(key) ?? null, setItem: () => {} }, sharedDom: ui.dom });
+  assert.equal(next.studio.preferences.sceneWidth, 344, 'the next visit keeps the card sizes');
+  assert.equal(next.studio.preferences.sceneHeight, 280);
+
+  const clamped = mountStudio(testContext, { sharedDom: ui.dom, preferences: { sceneWidth: 9000, propertiesWidth: 10, sceneHeight: 99999, propertiesHeight: 5 } });
+  assert.equal(clamped.studio.preferences.sceneWidth, 520);
+  assert.equal(clamped.studio.preferences.propertiesWidth, 240, 'a saved width below the least is pulled up, not read as automatic');
+  assert.equal(clamped.studio.preferences.sceneHeight, 1600);
+  assert.equal(clamped.studio.preferences.propertiesHeight, 96);
+  const broken = mountStudio(testContext, { sharedDom: ui.dom, preferences: { sceneWidth: Number.NaN, propertiesWidth: '300', sceneHeight: null, propertiesHeight: undefined } });
+  assert.deepEqual([broken.studio.preferences.sceneWidth, broken.studio.preferences.propertiesWidth, broken.studio.preferences.sceneHeight, broken.studio.preferences.propertiesHeight], [0, 0, 0, 0], 'bad values fall back to automatic');
+});
+
+test('docked keeps one column width and one split, whatever the floating cards were sized to', testContext => {
+  const { ui, grips } = floatingPanelGrips(testContext, { preferences: { panelsFloating: true, panelWidth: 300, sceneShare: 40, sceneWidth: 500, propertiesHeight: 300 } });
+  ui.studio.setPreference('panelsFloating', false);
+  assert.equal(ui.root.dataset.floating, 'false');
+  assert.equal(ui.studio.preferences.panelWidth, 300);
+  assert.equal(ui.studio.preferences.sceneShare, 40);
+  assert.equal(ui.studio.preferences.sceneWidth, 500, 'the floating sizes are kept for the way back');
+  assert.equal(ui.root.style['--studio-side-width'], '300px', 'the column is as wide as the docked width says');
+  const docked = '.crucible-studio[data-floating="false"]:not([data-compact="true"])';
+  assert.ok(STUDIO_CSS.includes(`${docked} .crucible-studio-side > .crucible-studio-dock {
+  inline-size: auto;`), 'docked cards fill the column, not their floating width');
+  const cardGripRule = STUDIO_CSS.slice(STUDIO_CSS.indexOf('.crucible-studio[data-floating="false"] .crucible-studio-grip-card-width'));
+  assert.ok(cardGripRule.slice(0, cardGripRule.indexOf('{')).includes('.crucible-studio[data-floating="true"] .crucible-studio-grip-width'), 'each layout hides the other layout\'s grips');
+  assert.ok(STUDIO_CSS.includes('.crucible-studio[data-floating="true"][data-scene-height-sized="true"]'), 'saved card heights apply only floating');
+
+  // Dragging the docked grips still writes the docked values only.
+  dispatch(ui.label('Panel width'), 'pointerdown', { clientX: 600 });
+  dispatch(ui.label('Panel width'), 'pointermove', { clientX: 580 });
+  dispatch(ui.label('Panel width'), 'pointerup', { clientX: 580 });
+  assert.equal(ui.studio.preferences.panelWidth, 320);
+  assert.equal(ui.studio.preferences.sceneWidth, 500);
+  assert.equal(grips.sceneWidth.getAttribute('aria-valuenow'), '500');
+});
+
+test('the axis widget stands at the top right of the viewport, beside the panel column, in both layouts', testContext => {
+  const rule = selector => {
+    const start = STUDIO_CSS.indexOf(`${selector} {`);
+    assert.ok(start >= 0, `a rule for ${selector}`);
+    return STUDIO_CSS.slice(start, STUDIO_CSS.indexOf('}', start));
+  };
+  const floating = rule('.crucible-studio-view-widget');
+  assert.ok(floating.includes('inset-block-start: var(--studio-top);'), 'level with the top of the Scene card');
+  assert.ok(floating.includes('inset-inline-end: calc(var(--studio-edge) + var(--studio-gizmo-clear, 0px));'), 'left of the cards, one edge gap from them');
+  assert.ok(!floating.includes('inset-block-end'), 'no longer in the bottom corner');
+  assert.ok(STUDIO_CSS.includes('.crucible-studio {\n  --studio-gizmo-clear: calc(var(--studio-scene-width, 284px) + var(--studio-edge));\n}'), 'it follows the Scene card width');
+  assert.ok(STUDIO_CSS.includes('[data-outliner-minimized="true"]:not([data-inspector-collapsed="true"]) {\n  --studio-gizmo-clear: calc(max(var(--studio-scene-width, 284px), var(--studio-properties-width, 284px))'), 'a short minimized Scene card leaves a wider Properties card the room under the widget');
+  assert.ok(rule('.crucible-studio[data-outliner-collapsed="true"][data-inspector-collapsed="true"]').includes('--studio-gizmo-clear: 0px;'), 'with both cards away it takes the corner');
+  const docked = rule('.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-view-widget');
+  assert.ok(docked.includes('inset-inline-end: var(--studio-edge);') && docked.includes('inset-block-start: var(--studio-edge);'), 'docked, the viewport already ends at the column, so the widget takes its corner');
+  assert.ok(rule('.crucible-studio[data-compact="true"] .crucible-studio-view-widget').includes('inset-inline-end: var(--studio-edge);'), 'a compact window keeps it in the corner under the bar, clear of the cards');
+
+  // The widget no longer needs a gap under the Properties card.
+  const column = rule('.crucible-studio-side');
+  assert.ok(column.includes('inset-block: var(--studio-top) var(--studio-edge);'), 'Properties runs down to the bottom margin');
+  assert.ok(!column.includes('100px'));
+  assert.ok(rule('.crucible-studio[data-workspace="animate"] .crucible-studio-readout,\n.crucible-studio[data-workspace="animate"] .crucible-studio-side').includes('inset-block-end: calc(var(--studio-edge) + var(--studio-bar-clear));'), 'the timeline bar still has its room in Animate');
+
+  const ui = mountStudio(testContext, { preferences: { panelsFloating: true } });
+  assert.ok(ui.viewport.children.includes(ui.root.querySelector('.crucible-studio-view-widget')), 'the widget lives in the viewport');
+  ui.studio.setPreference('viewWidgetVisible', false);
+  assert.equal(ui.root.dataset.viewWidget, 'off');
 });
 
 test('G picks the selected object up under the pointer; X locks an axis, Esc puts it back and a click places it', testContext => {

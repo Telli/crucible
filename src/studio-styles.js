@@ -228,10 +228,12 @@ export const STUDIO_CSS = `
   stroke-linejoin: round;
   pointer-events: none;
 }
+/* The axis widget stands at the top right of the viewport, beside the panel column. Floating, that is left of the
+   Scene card, level with its top and one edge gap from it; --studio-gizmo-clear is the room the cards take. */
 .crucible-studio-view-widget {
   position: absolute;
-  inset-inline-end: var(--studio-edge);
-  inset-block-end: var(--studio-edge);
+  inset-inline-end: calc(var(--studio-edge) + var(--studio-gizmo-clear, 0px));
+  inset-block-start: var(--studio-top);
   width: 76px;
   height: 76px;
   border-radius: 50%;
@@ -263,8 +265,9 @@ export const STUDIO_CSS = `
 .crucible-studio-readout-selection { color: var(--studio-text); }
 .crucible-studio-readout-selection:empty { display: none; }
 .crucible-studio[data-compact="true"] .crucible-studio-readout { display: none; }
+/* A compact window stacks the cards over the scene, so the widget keeps the top right corner under the bar. */
 .crucible-studio[data-compact="true"] .crucible-studio-view-widget {
-  inset-block: var(--studio-top) auto;
+  inset-inline-end: var(--studio-edge);
 }
 .crucible-studio-agent-outline {
   fill: none;
@@ -549,24 +552,31 @@ export const STUDIO_CSS = `
   overflow: hidden;
   z-index: 4;
 }
-/* Scene above, Properties below, in one column across from the tools. It stops above the view widget in the corner. */
+/* Scene above, Properties below, in one column across from the tools. Floating, each card is its own window with its own
+   width, kept to the right edge, so the column is as wide as the wider card. */
 .crucible-studio-side {
   position: absolute;
-  inset-block: var(--studio-top) 100px;
+  inset-block: var(--studio-top) var(--studio-edge);
   inset-inline-end: var(--studio-edge);
-  inline-size: var(--studio-side-width, 284px);
+  inline-size: max(var(--studio-scene-width, 284px), var(--studio-properties-width, 284px));
   max-inline-size: calc(100% - var(--studio-edge) * 3 - var(--studio-rail) - 160px);
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 6px;
   pointer-events: none;
   z-index: 4;
 }
 .crucible-studio-side > .crucible-studio-dock {
-  position: static;
+  position: relative;
   flex: 0 1 auto;
+  max-inline-size: 100%;
   pointer-events: auto;
 }
+/* The cards lie in the column, so the edge offsets that place them on their own in a compact window do not apply. */
+.crucible-studio:not([data-compact="true"]) .crucible-studio-side > .crucible-studio-dock { inset: auto; }
+.crucible-studio-side > .crucible-studio-outliner { inline-size: var(--studio-scene-width, 284px); }
+.crucible-studio-side > .crucible-studio-inspector { inline-size: var(--studio-properties-width, 284px); }
 /* The Scene card keeps one height whatever is selected, so the Properties card below it does not jump. */
 .crucible-studio-side > .crucible-studio-outliner { flex: 0 0 35%; }
 .crucible-studio[data-outliner-minimized="true"] .crucible-studio-side > .crucible-studio-outliner { flex: 0 0 auto; }
@@ -576,9 +586,30 @@ export const STUDIO_CSS = `
 .crucible-studio[data-scene-sized="true"]:not([data-outliner-minimized="true"]) .crucible-studio-side > .crucible-studio-outliner {
   flex-basis: var(--studio-scene-share);
 }
-.crucible-studio[data-outliner-minimized="true"] .crucible-studio-outliner > :not(.crucible-studio-dock-head),
-.crucible-studio[data-inspector-minimized="true"] .crucible-studio-inspector > :not(.crucible-studio-dock-head) {
+/* A card someone sized keeps that height, and the other card keeps its own. A minimized card ignores it. */
+.crucible-studio[data-floating="true"][data-scene-height-sized="true"]:not([data-outliner-minimized="true"]) .crucible-studio-side > .crucible-studio-outliner {
+  flex: 0 1 var(--studio-scene-height);
+}
+.crucible-studio[data-floating="true"][data-properties-height-sized="true"]:not([data-inspector-minimized="true"]) .crucible-studio-side > .crucible-studio-inspector {
+  flex: 0 1 var(--studio-properties-height);
+}
+.crucible-studio[data-outliner-minimized="true"] .crucible-studio-outliner > :not(.crucible-studio-dock-head):not(.crucible-studio-grip),
+.crucible-studio[data-inspector-minimized="true"] .crucible-studio-inspector > :not(.crucible-studio-dock-head):not(.crucible-studio-grip) {
   display: none;
+}
+/* The axis widget stands left of the cards. A minimized Scene card is short, so a wider Properties card shows under
+   the widget and the widget clears that one too. With both cards away it takes the corner. */
+.crucible-studio {
+  --studio-gizmo-clear: calc(var(--studio-scene-width, 284px) + var(--studio-edge));
+}
+.crucible-studio[data-outliner-minimized="true"]:not([data-inspector-collapsed="true"]) {
+  --studio-gizmo-clear: calc(max(var(--studio-scene-width, 284px), var(--studio-properties-width, 284px)) + var(--studio-edge));
+}
+.crucible-studio[data-outliner-collapsed="true"] {
+  --studio-gizmo-clear: calc(var(--studio-properties-width, 284px) + var(--studio-edge));
+}
+.crucible-studio[data-outliner-collapsed="true"][data-inspector-collapsed="true"] {
+  --studio-gizmo-clear: 0px;
 }
 .crucible-studio[data-outliner-minimized="true"] .crucible-studio-outliner > .crucible-studio-dock-head,
 .crucible-studio[data-inspector-minimized="true"] .crucible-studio-inspector > .crucible-studio-dock-head {
@@ -630,6 +661,40 @@ export const STUDIO_CSS = `
   inset-block-start: 2px;
   block-size: 2px;
 }
+/* Floating, a card's own grips sit on its inner left and bottom edges, which stay inside the rounded corners. */
+.crucible-studio-grip-card-width {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 8px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+.crucible-studio-grip-card-width::after {
+  inset-block: 14px;
+  inset-inline-start: 2px;
+  inline-size: 2px;
+}
+.crucible-studio-grip-card-height {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  block-size: 8px;
+  cursor: ns-resize;
+  z-index: 3;
+}
+.crucible-studio-grip-card-height::after {
+  inset-inline: 14px;
+  inset-block-end: 2px;
+  block-size: 2px;
+}
+/* Docked, the column's own two grips do this work and the cards' grips stay away; floating, the other way round. */
+.crucible-studio[data-floating="false"] .crucible-studio-grip-card-width,
+.crucible-studio[data-floating="false"] .crucible-studio-grip-card-height,
+.crucible-studio[data-floating="true"] .crucible-studio-grip-width,
+.crucible-studio[data-floating="true"] .crucible-studio-grip-split,
+.crucible-studio[data-outliner-minimized="true"] .crucible-studio-grip-scene-height,
+.crucible-studio[data-inspector-minimized="true"] .crucible-studio-grip-properties-height,
 .crucible-studio[data-outliner-minimized="true"] .crucible-studio-grip-split,
 .crucible-studio[data-inspector-minimized="true"] .crucible-studio-grip-split,
 .crucible-studio[data-outliner-collapsed="true"] .crucible-studio-grip,
@@ -1480,9 +1545,9 @@ export const STUDIO_CSS = `
 .crucible-studio:not([data-workspace="animate"]) .crucible-studio-bottombar {
   display: none;
 }
-/* The timeline bar is centred and stops short of the corner widget once the window is not compact, so only the readout and a compact window's widget step above it. */
+/* The timeline bar is centred along the bottom, so the readout steps above it and, floating, so does the panel column. */
 .crucible-studio[data-workspace="animate"] .crucible-studio-readout,
-.crucible-studio[data-workspace="animate"][data-compact="true"] .crucible-studio-view-widget {
+.crucible-studio[data-workspace="animate"] .crucible-studio-side {
   inset-block-end: calc(var(--studio-edge) + var(--studio-bar-clear));
 }
 /* Raised above the timeline, the readout would meet the tool rail in a short window, so there it stands beside it. */
@@ -1664,8 +1729,19 @@ export const STUDIO_CSS = `
   inline-size: var(--studio-dock-side);
   max-inline-size: none;
   gap: 0;
+  align-items: stretch;
   background: var(--studio-panel);
   pointer-events: auto;
+}
+/* One column width and one split: the cards fill the column whatever the floating cards were sized to. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-side > .crucible-studio-dock {
+  inline-size: auto;
+  max-inline-size: none;
+}
+/* The viewport already ends where the column starts, so the widget takes its top right corner. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-view-widget {
+  inset-inline-end: var(--studio-edge);
+  inset-block-start: var(--studio-edge);
 }
 .crucible-studio[data-floating="false"][data-outliner-collapsed="true"][data-inspector-collapsed="true"] .crucible-studio-side {
   display: none;
