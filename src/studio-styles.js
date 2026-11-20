@@ -377,13 +377,13 @@ export const STUDIO_CSS = `
 .crucible-studio-spacer { flex: 1 1 auto; }
 .crucible-studio button.crucible-studio-primary-btn {
   padding-inline: 12px 14px;
-  background: var(--studio-text);
-  color: var(--studio-bg);
+  background: transparent;
+  color: var(--studio-text);
   font-weight: 600;
 }
 @media (hover: hover) {
   .crucible-studio button.crucible-studio-primary-btn:not([aria-disabled="true"]):hover {
-    background: color-mix(in srgb, var(--studio-text) 86%, var(--studio-bg));
+    background: color-mix(in srgb, var(--studio-text) 7%, transparent);
   }
 }
 
@@ -499,7 +499,7 @@ export const STUDIO_CSS = `
 .crucible-studio-side {
   position: absolute;
   inset-block: var(--studio-top) 100px;
-  inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
+  inset-inline-end: var(--studio-edge);
   inline-size: 284px;
   display: flex;
   flex-direction: column;
