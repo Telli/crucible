@@ -100,6 +100,7 @@ test('crowd settings are validated and the clip must exist', async () => {
   await assert.rejects(crowdScene({ bogus: 1 }), /crowd\.bogus: got 1; expected a known field/);
   await assert.rejects(crowdScene({ farDistance: 5 }), /crowd\.farRate: got undefined; expected both farDistance and farRate, or neither/);
   await assert.rejects(crowdScene({ clip: 99 }), /nodes\.people\.asset\.crowd\.clip: got 99; expected a clip index from 0 to 13/);
+  await assert.rejects(crowdScene({ seed: 1.5 }), /crowd\.seed: got 1\.5; expected a whole number from -2147483648 to 2147483647/);
 });
 
 test('a crowd keeps its baked parts across an edit that does not touch it', async () => {

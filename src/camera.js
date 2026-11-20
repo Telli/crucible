@@ -130,20 +130,22 @@ export function cameraView(name = 'front', { target = [0, 1.5, 0], height = 3.8,
   return { eye, target: [...target], up: name === 'top' ? [0, 0, -1] : [0, 1, 0], projection: name === 'perspective' ? 'perspective' : 'orthographic', orthographicHeight: height, fov: 45 };
 }
 
-function requireNonDegenerateView(view) {
+/** Throws unless the eye, target and up of `view` are finite, the eye differs from the target and up is not parallel to the view; `subject` starts each message. */
+export function requireNonDegenerateView(view, subject = 'Fit') {
   const up = view?.up ?? [0, 1, 0];
   const isFiniteVector = vector => vector?.length === 3 && Array.from(vector).every(value => typeof value === 'number' && Number.isFinite(value));
   if (!isFiniteVector(view?.eye) || !isFiniteVector(view?.target) || !isFiniteVector(up)) {
-    throw new RangeError('Fit camera eye, target and up must be three finite numbers each.');
+    throw new RangeError(`${subject} camera eye, target and up must be three finite numbers each.`);
   }
-  const forward = vec3.subtract(vec3.create(), view.target, view.eye);
-  const upDirection = vec3.normalize(vec3.create(), up);
-  if (vec3.length(forward) === 0 || vec3.length(upDirection) === 0) {
-    throw new RangeError('Fit eye and target must differ and up must be nonzero.');
+  const forward = [0, 1, 2].map(axis => view.target[axis] - view.eye[axis]);
+  const forwardLength = Math.hypot(...forward);
+  const upLength = Math.hypot(...up);
+  if (forwardLength === 0 || upLength === 0) {
+    throw new RangeError(`${subject} eye and target must differ and up must be nonzero.`);
   }
-  vec3.normalize(forward, forward);
-  if (Math.abs(vec3.dot(forward, upDirection)) >= 1 - 1e-10) {
-    throw new RangeError('Fit up must not be parallel to the view direction; pass another up, such as [0, 0, -1] for a top view.');
+  const alignment = forward.reduce((sum, component, axis) => sum + component * up[axis], 0) / (forwardLength * upLength);
+  if (Math.abs(alignment) >= 1 - 1e-10) {
+    throw new RangeError(`${subject} up must not be parallel to the view direction; pass another up, such as [0, 0, -1] for a top view.`);
   }
 }
 

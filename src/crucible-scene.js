@@ -4,6 +4,7 @@
 import { decodePack } from './scene-pack-format.js';
 import { loadPackShaderModules } from './scene-pack-shaders.js';
 import { TriggerAnimator, applyViewToCamera, parseHoverTiltAttribute, parseScrollAttribute, parseViews, scrollProgress } from './scene-triggers.js';
+import { partsWithImageData } from './scene-pack-images.js';
 
 export const SCENE_STATES = Object.freeze(['loading', 'live', 'error']);
 
@@ -41,7 +42,8 @@ async function createLiveRenderer(canvas, scene) {
       showBackground: scene.environment.world,
     }),
   };
-  const renderer = new CrucibleRenderer(canvas, scene.parts, {
+  // Baked lightmaps arrive as plain bytes; the renderer uploads ImageData.
+  const renderer = new CrucibleRenderer(canvas, partsWithImageData(scene.parts), {
     ground: false,
     hdr: true,
     depth: true,

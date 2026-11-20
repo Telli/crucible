@@ -2,6 +2,8 @@
 
 A code addon is an npm package that extends Crucible through the extension points it already has. Crucible's own addons (`crucible/addons/*`) are first-party; this page is the contract for third-party ones.
 
+The [Marketplace page](https://crucible.codepawl.com/marketplace.html#addons) lists every first-party addon by area with its import line. Each one needs a row in `src/addon-catalog.js` (name, area, one-line summary); a test fails when an `./addons/*` export has none.
+
 ## Security
 
 A code addon runs with the full rights of your page or Node process: it can read files, use the network and change anything in the scene. The MCP server loads one only when its owner allowlists it at startup ([below](#the-mcp-server-and-addons)), never from a tool call. Install only addons you trust, and read what an addon does before you add it.
@@ -26,6 +28,8 @@ An addon package:
 `range` is the Crucible versions it was tested with (comparators such as `>=0.19.0 <1.0.0`, or `^0.19.0`). `extensionPoints` lists every point it uses. `bundleBytes` is the size of the entry file: the `"."` entry of `exports` (a string, or its `import` or `default` condition), else `main`. The MCP server runs the same check and skips an addon whose entry is missing or larger than `bundleBytes`.
 
 The manifest lives in `package.json` rather than a separate `crucible-addon.json` because the npm registry returns the whole `package.json` of each version, so a listing can read the range and points without unpacking the tarball, and there is no second file to forget to publish.
+
+The Marketplace addon list comes from the npm keyword search. An entry without a publishable package name is skipped, so one bad listing does not hide the rest.
 
 ## Extension points
 

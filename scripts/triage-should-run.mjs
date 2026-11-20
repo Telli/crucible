@@ -91,10 +91,17 @@ function sinceYesterday() {
   return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
 }
 
-// A failed count blocks the run: the limits fail closed.
+// The limits fail closed: anything but a whole number of zero or more blocks the run. A missing total_count prints
+// 'null', and NaN would compare false against every limit and skip it.
+export function parseCountOrBlock(apiOutput) {
+  const text = String(apiOutput ?? '').trim();
+  return /^\d+$/.test(text) ? Number(text) : Number.POSITIVE_INFINITY;
+}
+
+// A failed count blocks the run too.
 function countOrBlock(path, query) {
   try {
-    return Number(callApi([path, ...query, '--jq', '.total_count']).trim());
+    return parseCountOrBlock(callApi([path, ...query, '--jq', '.total_count']));
   } catch {
     return Number.POSITIVE_INFINITY;
   }

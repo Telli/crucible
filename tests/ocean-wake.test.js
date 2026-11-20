@@ -93,7 +93,7 @@ test('the ocean edit applies the wake to the foam group and the height, the same
 
 test('wake fields fail with the field name and what to pass', () => {
   assert.throws(() => normalizeWake({ points: Array.from({ length: 65 }, () => [0, 0, 1, 1]) }), /wake\.points must be an array of at most 64 points/);
-  assert.throws(() => normalizeWake({ points: [[0, 0, 2, 1]] }), /wake\.points\[0\] must be \[x, z, strength, width\] with strength from 0 to 1/);
+  assert.throws(() => normalizeWake({ points: [[0, 0, 2, 1]] }), /wake\.points\[0\] strength must be from 0 to 1, got 2/);
   assert.throws(() => normalizeWake({ height: 5 }), /wake\.height must be a number from 0 to 2/);
   assert.throws(() => normalizeWake({ speed: 1 }), /wake\.speed is unsupported; use points or height/);
 });
@@ -157,4 +157,18 @@ test('wakeTrail skips points whose strength is not a number', () => {
   const missingSpeed = wakeTrail({ sample: stern(undefined), time: 1, lifetime: 2, width: 1, strength: 1, count: 4 });
   for (const point of [...zeroLifetime, ...missingSpeed]) assert.ok(point.every(Number.isFinite), `point ${point}`);
   assert.equal(missingSpeed.length, 0);
+});
+
+test('a wake point names the field that failed and its limit', () => {
+  assert.throws(() => normalizeWake({ points: [[0, 0, 1, 2000]] }), /wake\.points\[0\] width must be above 0 and at most 1000 metres, got 2000/);
+  assert.throws(() => normalizeWake({ points: [[0, 0, 1, 0]] }), /width must be above 0 and at most 1000 metres, got 0/);
+});
+
+test('a wake point with a hole or a missing entry is refused', () => {
+  const holed = [0, 0, 1, 1];
+  delete holed[0];
+  assert.throws(() => normalizeWake({ points: [[0, 0, 1, 1], holed] }), /wake\.points\[1\] must be four finite numbers/);
+  const holedList = [[0, 0, 1, 1], [1, 1, 1, 1]];
+  delete holedList[1];
+  assert.throws(() => normalizeWake({ points: holedList }), /wake\.points\[1\] must be four finite numbers/);
 });

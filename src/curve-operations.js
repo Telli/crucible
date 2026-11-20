@@ -44,6 +44,13 @@ function segmentsOf(points, closed) {
   return segments;
 }
 
+// A zero-length segment has no direction of its own: it takes the next real segment's, or the last real one's at the end.
+function directionOfSegment(segments, index) {
+  const isReal = candidate => candidate.length >= MINIMUM_LENGTH;
+  const segment = segments.slice(index).find(isReal) ?? segments.findLast(isReal);
+  return unit(subtract(segment.to, segment.from));
+}
+
 /** Total length of a polyline. */
 export function curveLength(points, closed = false) {
   return segmentsOf(points, closed).reduce((total, segment) => total + segment.length, 0);
@@ -72,7 +79,7 @@ export function resampleCurve(points, count, closed = false) {
     const along = segment.length < MINIMUM_LENGTH ? 0 : Math.min(1, Math.max(0, (distance - segmentStart) / segment.length));
     samples.push({
       point: addScaled(segment.from, subtract(segment.to, segment.from), along),
-      direction: unit(subtract(segment.to, segment.from)),
+      direction: directionOfSegment(segments, segmentIndex),
     });
   }
   return samples;
@@ -81,6 +88,8 @@ export function resampleCurve(points, count, closed = false) {
 function filletCorner(previous, corner, next, radius, arcSegments) {
   const toPrevious = unit(subtract(previous, corner));
   const toNext = unit(subtract(next, corner));
+  // A repeated point has no arm to round: the corner stays one point instead of becoming a run of copies.
+  if (lengthOf(subtract(previous, corner)) < MINIMUM_LENGTH || lengthOf(subtract(next, corner)) < MINIMUM_LENGTH) return [corner];
   const cosine = dot(toPrevious, toNext);
   if (cosine <= -STRAIGHT_LIMIT || cosine >= STRAIGHT_LIMIT) return [corner];
   const halfAngle = Math.acos(cosine) / 2;
