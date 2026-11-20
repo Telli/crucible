@@ -32,6 +32,6 @@ for (const kernel of ['megakernel', 'wavefront']) {
       }, { helperPath: HELPER_PATH, parameters: { width: 48, height: 28, samples: 32, backend: 'webgpu', kernel, moduleBase: '' } });
       assert.ok(withoutBulb.meanLinear > 0.05, `the bare light lights the room: ${withoutBulb.meanLinear}`);
       assert.ok(withBulb.meanLinear >= BULB_KEEPS_AT_LEAST * withoutBulb.meanLinear, `with the bulb ${withBulb.meanLinear}, without ${withoutBulb.meanLinear}`);
-    });
+    }, { hardwareOnly: true });
   });
 }

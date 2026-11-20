@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { parseGltf } from '../src/gltf.js';
 import { createFileSceneClipPlayer, createFileSceneRenderAt } from '../src/file-scene-clip.js';
 import { box } from '../src/geometry.js';
+import { skinnedGeometry } from '../src/path-tracer-scene.js';
 import { applyWaterReflection } from '../src/water-reflection.js';
 
 async function loadRobot() {
@@ -80,6 +81,32 @@ test('renderer parts that do not match the scene parts one for one are refused b
     () => createFileSceneClipPlayer({ asset, posedParts: asset.parts, sceneParts: asset.parts, rendererParts: asset.parts.slice(1) }),
     /must match the scene parts/,
   );
+});
+
+// What the native tracer reads from a part: the skinned vertices at the part's current pose (src/path-tracer-scene.js).
+function tracedPositionsOf(parts) {
+  return parts.filter(part => part.skin).map(part => [...skinnedGeometry(part).positions]);
+}
+
+test('applyAt poses the parts handed to the native tracer: the traced vertices differ between t=0 and half the clip', async () => {
+  const { asset, player } = await playerForRobot();
+  player.applyAt(0);
+  const atStart = tracedPositionsOf(asset.parts);
+  player.applyAt(player.clip.duration / 2);
+  const atMiddle = tracedPositionsOf(asset.parts);
+  assert.ok(atStart.length > 0, 'the robot must have skinned parts, or this test does not cover the tracer input');
+  assert.notDeepEqual(atMiddle, atStart);
+  player.applyAt(player.clip.duration / 2 + 2 * player.clip.duration);
+  assert.deepEqual(tracedPositionsOf(asset.parts), atMiddle);
+});
+
+test('a scene without a clip has no player, so the traced parts stay as loaded', async () => {
+  const asset = await loadRobot();
+  asset.animations = [];
+  const before = tracedPositionsOf(asset.parts);
+  const player = createFileSceneClipPlayer({ asset, posedParts: asset.parts, sceneParts: asset.parts, rendererParts: rendererCopiesOf(asset.parts) });
+  assert.equal(player, null);
+  assert.deepEqual(tracedPositionsOf(asset.parts), before);
 });
 
 // A renderer that holds the parts it was built from and refuses any other identity, as CrucibleRenderer.updateParts does.

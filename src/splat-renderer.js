@@ -64,7 +64,13 @@ export function bindSplat(renderer, splat) {
   const context = renderer.context;
   const uniforms = renderer.uniforms;
   context.uniform1f(uniforms.splatEnabled, splat ? 1 : 0);
-  if (!splat) return;
+  if (!splat) {
+    // The weight mask of the batch before took the unit that holds the tinted shadow map; this batch reads the tint, so bind it again.
+    if (renderer.splatMaskOnTintUnit) renderer.bindTintedShadows();
+    renderer.splatMaskOnTintUnit = false;
+    return;
+  }
+  renderer.splatMaskOnTintUnit = true;
   const bindings = [
     [SPLAT_UNITS.splatColor, context.TEXTURE_2D_ARRAY, splat.color],
     [SPLAT_UNITS.splatNormal, context.TEXTURE_2D_ARRAY, splat.normal],

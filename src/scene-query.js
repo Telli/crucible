@@ -153,6 +153,9 @@ function readWalkOptions(options) {
   if (settings.cellSize <= 0 || settings.probeHeight <= 0) throw new RangeError('walkMap cellSize and probeHeight must be positive.');
   if (settings.max[0] < settings.min[0] || settings.max[1] < settings.min[1]) throw new RangeError('walkMap max must not be below min.');
   if (settings.lowerPass !== undefined) {
+    if (settings.lowerPass === null || typeof settings.lowerPass !== 'object' || Array.isArray(settings.lowerPass)) {
+      throw new TypeError(`walkMap lowerPass must be an object such as { fromY: 3, groundBelow: 0 }, got ${String(settings.lowerPass)}; leave it out to skip it.`);
+    }
     for (const name of Object.keys(settings.lowerPass)) {
       if (!LOWER_PASS_NAMES.has(name)) throw new TypeError(`Unsupported walkMap lowerPass option ${name}.`);
     }
@@ -327,6 +330,9 @@ export function createSceneQuery(parts, options = {}) {
  * is not open (an obstacle, a wall, a gap) stops being walkable.
  */
 export function walkableMask(map, { clearance = 2, groundRange, keepOut = 0 } = {}) {
+  if (!Number.isFinite(keepOut) || keepOut < 0) {
+    throw new RangeError(`walkableMask keepOut must be a finite number of metres, 0 or more, got ${keepOut}. Pass 0 to skip the keep-out step.`);
+  }
   const { columns, rows, cellSize, min } = map;
   const count = columns * rows;
   const open = new Uint8Array(count);
@@ -368,7 +374,8 @@ function spread(grid, columns, rows, value) {
 
 // Clears every open cell within `radius` cells of a closed cell. Only closed cells that touch an open one need to spread.
 function keepClear(free, columns, rows, radius) {
-  const reach = Math.ceil(radius);
+  // Nothing beyond the grid's own size can reach another cell, so a huge radius costs no more than the grid.
+  const reach = Math.min(Math.ceil(radius), Math.max(columns, rows));
   const offsets = [];
   for (let dx = -reach; dx <= reach; dx++) {
     for (let dz = -reach; dz <= reach; dz++) {

@@ -187,14 +187,22 @@ function callNameRecorder() {
 test('an upload whose data is shorter than width x height x 4 is refused before any GL call', async () => {
   const { context, calls } = callNameRecorder();
   const image = { width: 4, height: 4, data: new Uint8Array(10) };
-  await assert.rejects(() => uploadTextureInSlices(context, {}, 0, image), /width x height x 4 must be data bytes > 0: 4x4, 10/);
+  await assert.rejects(() => uploadTextureInSlices(context, {}, 0, image), /got 4x4 with 10 data bytes/);
   assert.deepEqual(calls, []);
 });
 
 test('an upload with a zero width or height shows the size and touches no GL state', async () => {
   for (const [width, height] of [[0, 4], [4, 0]]) {
     const { context, calls } = callNameRecorder();
-    await assert.rejects(() => uploadTextureInSlices(context, {}, 0, { width, height, data: new Uint8Array(0) }), new RegExp(`must be data bytes > 0: ${width}x${height}, 0`));
+    await assert.rejects(() => uploadTextureInSlices(context, {}, 0, { width, height, data: new Uint8Array(0) }), new RegExp(`got ${width}x${height} with 0 data bytes`));
+    assert.deepEqual(calls, []);
+  }
+});
+
+test('an upload with a fractional width or height is refused before any GL call (#2389)', async () => {
+  for (const [width, height] of [[1.5, 2], [2, 1.5], [Number.NaN, 2]]) {
+    const { context, calls } = callNameRecorder();
+    await assert.rejects(() => uploadTextureInSlices(context, {}, 0, { width, height, data: new Uint8Array(64) }), /whole numbers of 1 or more/);
     assert.deepEqual(calls, []);
   }
 });

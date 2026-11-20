@@ -41,6 +41,10 @@ export function meshBooleansLoaded() {
   return manifoldModule !== null;
 }
 
+function requireMeshArgument(label, value) {
+  if (!value?.faceOffsets) throw new TypeError(`meshBoolean: ${label} must be mesh data, got ${value}.`);
+}
+
 function requireModule() {
   if (!manifoldModule) throw new Error('Mesh booleans are not loaded yet. Await loadMeshBooleans() before running a boolean edit.');
   return manifoldModule;
@@ -155,6 +159,9 @@ function polygonsFromTriangles(weldedTriangles, propertyTriangles, triangleFaceI
  */
 export function meshBoolean(mesh, cutter, operation, { cutTag } = {}) {
   if (!BOOLEAN_OPERATIONS.includes(operation)) throw new RangeError(`Boolean operation must be one of ${BOOLEAN_OPERATIONS.join(', ')}.`);
+  requireMeshArgument('mesh', mesh);
+  requireMeshArgument('cutter', cutter);
+  if (cutTag !== undefined && !(typeof cutTag === 'string' && cutTag)) throw new TypeError(`meshBoolean: cutTag was ${JSON.stringify(cutTag)}; pass a non-empty string.`);
   const module = requireModule();
   for (const [label, input] of [['The mesh', mesh], ['The cutter', cutter]]) {
     const report = lintMesh(input);
@@ -182,6 +189,9 @@ export function meshBoolean(mesh, cutter, operation, { cutTag } = {}) {
     resources.push(output);
     if (!output.triVerts.length) throw new RangeError(`The ${operation} leaves nothing. Check the cutter's position and size against mesh_inspect bounds.`);
     return rebuildOutput(mesh, output, propertyCount, cutTag);
+  } catch (error) {
+    if (error?.constructor?.name !== 'ManifoldError') throw error;
+    throw new RangeError(`The ${operation} failed in the solver (${error.message}); rescale extremely small or large parts.`);
   } finally {
     for (const resource of resources.reverse()) resource.delete?.();
   }

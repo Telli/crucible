@@ -151,6 +151,10 @@ function uvIslands(mesh, uv) {
   return [...islands.values()];
 }
 
+function requireBoolean(name, value) {
+  if (typeof value !== 'boolean') throw new TypeError(`${name} must be true or false.`);
+}
+
 /**
  * Pack the uv islands of corner attribute `uv` into the unit square with one common scale, so texel density keeps its
  * ratio between islands. margin: gap between islands and around the square. rotate: lay tall islands on their side.
@@ -158,6 +162,7 @@ function uvIslands(mesh, uv) {
  */
 export function packUvIslands(mesh, { margin = 0.01, rotate = true } = {}) {
   requireUvMargin('packUvIslands', margin);
+  requireBoolean('rotate', rotate);
   const uv = mesh.attributes.corner.uv?.data;
   if (!uv) throw new RangeError('the mesh has no uv to pack. Put uv_unwrap, or uv_project with pack false, before uv_pack.');
   const islands = uvIslands(mesh, uv);
@@ -188,6 +193,8 @@ export function projectUv(mesh, { mode = 'cube', axis = 'y', pack = true, margin
   requireOneOf('mode', mode, UV_PROJECTION_MODES);
   requireOneOf('axis', axis, Object.keys(AXIS_INDEX));
   requireUvMargin('projectUv', margin);
+  requireBoolean('pack', pack);
+  requireBoolean('rotate', rotate);
   const projected = withCornerUv(mesh, projectCorners(mesh, mode, AXIS_INDEX[axis]));
   if (!pack) return { mesh: projected, islands: uvIslands(projected, projected.attributes.corner.uv.data).length };
   return packUvIslands(projected, { margin, rotate });

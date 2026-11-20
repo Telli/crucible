@@ -67,7 +67,7 @@ function requirePoint(value, label) {
 
 /** The path option of scene_inspect: checks the query, resolves the ground and avoided node IDs through `nodeGeometry` and finds the route. */
 export function resolvePathQuery(query, nodeGeometry, boundsFor) {
-  if (query === null || typeof query !== 'object' || Array.isArray(query)) throw invalidField('path', query, 'an object such as { "ground": "floor", "from": [0, 0, 0], "to": [5, 0, 5] }', TypeError);
+  if (query === null || typeof query !== 'object' || Array.isArray(query)) throw invalidField('path', query, 'an object such as { "ground": "floor", "from": [0, 0], "to": [5, 5] }', TypeError);
   for (const key of Object.keys(query)) {
     if (!NAVIGATION_FIELDS.includes(key)) throw invalidField(`path.${key}`, query[key], `a known field, one of ${NAVIGATION_FIELDS.join(', ')}`, TypeError);
   }

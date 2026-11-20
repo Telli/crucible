@@ -30,7 +30,7 @@ function positiveNumber(node, field, fallback, path) {
 
 function vectorOf(value, fallback, path, { positive = false } = {}) {
   const vector = value ?? fallback;
-  const valid = Array.isArray(vector) && vector.length === 3 && vector.every(component => Number.isFinite(component) && (!positive || component > 0));
+  const valid = Array.isArray(vector) && vector.length === 3 && [...vector].every(component => Number.isFinite(component) && (!positive || component > 0));
   if (!valid) throw fail(path, vector, positive ? 'three positive numbers, such as [1, 1, 1]' : 'three numbers, such as [0, 0, 0]');
   return vector;
 }
@@ -202,7 +202,7 @@ function compileNode(node, path, depth, counter) {
   if (!Array.isArray(children) || children.length < 2 || children.length > SDF_LIMITS.maxChildren) {
     throw fail(`${path}.children`, Array.isArray(children) ? `${children.length} children` : children, `2 to ${SDF_LIMITS.maxChildren} nodes`);
   }
-  const compiled = children.map((child, index) => compileNode(child, `${path}.children[${index}]`, depth + 1, counter));
+  const compiled = Array.from(children, (child, index) => compileNode(child, `${path}.children[${index}]`, depth + 1, counter));
   const join = combine(node.op, smooth);
   const distance = (x, y, z) => {
     let result = compiled[0].distance(x, y, z);
@@ -232,8 +232,15 @@ export function planSdf(value) {
   return planDistanceField(compileNode(value.root, 'sdf.root', 0, { count: 0 }), resolution);
 }
 
+// Bounds past Float32 range or NaN make positions NaN, so the grid is refused instead.
+function checkReach({ min, max }) {
+  const reach = Math.max(...[...min, ...max].map(Math.abs));
+  if (!(reach <= 1e38)) throw fail('sdf.root bounds', reach, 'values that keep the shape within 1e38');
+}
+
 /** The sampling grid of a compiled field { distance, bounds }: resolution cells along its longest side, plus padding. */
 export function planDistanceField(root, resolution) {
+  checkReach(root.bounds);
   const extent = root.bounds.max.map((high, axis) => high - root.bounds.min[axis]);
   const edge = Math.max(...extent) / resolution;
   const points = extent.map(length => Math.ceil(length / edge - 1e-9) + 1 + PADDING_VOXELS * 2);

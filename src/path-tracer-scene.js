@@ -3,7 +3,9 @@ import { createTracer } from './ray-query.js';
 import { SUN_BIT, POINT_FIRST_BIT, SPOT_FIRST_BIT, AREA_FIRST_BIT } from './light-link-bits.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
 import { boxProjectedGeometry, columnLengths } from './export-box-uv.js';
-import { resolveTraceVolume, prepareMeshVolume } from './path-tracer-volume.js';
+import { resolveTraceVolume, resolveTraceDistanceHaze, prepareMeshVolume } from './path-tracer-volume.js';
+import { waterTraceMaterial } from './path-tracer-water.js';
+import { thinWaterMedia, withWaterMedia } from './path-tracer-water-medium.js';
 import { resolveLocalVolumes } from './local-volumes.js';
 import { bindLocalVolumeParts } from './local-volume-parts.js';
 import { resolveTraceSubsurface } from './path-tracer-subsurface.js';
@@ -11,6 +13,7 @@ import { lightShapeSupport } from './shader-registry.js';
 import { flushOrderOf } from './depth-layer.js';
 import { liftRankedTriangles } from './flush-lift.js';
 import { RAY_VISIBILITY_BITS } from './ray-visibility.js';
+import { DEFAULT_BACKGROUND } from './clear-colour.js';
 import { lampLightMasks } from './lamp-mesh.js';
 
 // The scene a path trace reads: every part flattened into one world-space triangle soup with per-vertex normals, UVs
@@ -197,6 +200,11 @@ const ALL_LIGHTS = -1;
 function graphOpacityCutoff(material) {
   const graph = material.pattern?.type === 'graph' ? material.pattern.graph : null;
   return material.alphaMode === 'blend' && graph && Object.hasOwn(graph, 'opacity') ? 0.5 : 0;
+}
+
+// The part's own material as the trace reads it: a water material becomes the dielectric it stands for, any other is unchanged.
+function tracedMaterialOf(part) {
+  return waterTraceMaterial(part.material ?? {});
 }
 
 function resolveMaterial(material) {
@@ -480,6 +488,21 @@ function softFalloffOf(light, label) {
   return light.softFalloff ? { softFalloff: true } : {};
 }
 
+// The most bounces a light's own limit may name: Cook keeps it in 8 bits as the limit plus one.
+const MAXIMUM_LIGHT_BOUNCES = 254;
+
+/**
+ * A light's own bounce limit, as the `max_bounces` of a Cycles light: the light adds direct light only at path vertices 0 to the limit,
+ * on top of the scene's bounces. Left out, the light runs to the scene limit. Only the native cycles kernel reads it.
+ */
+function maxBouncesOf(value, label) {
+  if (value === undefined) return {};
+  if (!Number.isInteger(value) || value < 0 || value > MAXIMUM_LIGHT_BOUNCES) {
+    throw new RangeError(`${label} is a whole number of bounces from 0 to ${MAXIMUM_LIGHT_BOUNCES}, got ${JSON.stringify(value)}. Leave it out for no limit beyond the scene's bounces.`);
+  }
+  return { maxBounces: value };
+}
+
 // Missing colour and intensity default as in the rasterizer (lighting.js); a value that is given must be usable.
 function lightEmission(light, label) {
   const color = light.color ?? [1, 1, 1];
@@ -507,7 +530,7 @@ function resolveAreaLight(light, index) {
   }
   const across = rawAcrossLength < MINIMUM_ACROSS_LENGTH ? [1, 0, 0] : normalized(rawAcross);
   const along = [normal[1] * across[2] - normal[2] * across[1], normal[2] * across[0] - normal[0] * across[2], normal[0] * across[1] - normal[1] * across[0]];
-  return { bit: AREA_FIRST_BIT + index, position: light.position, ...lightEmission(light, label), width: light.width, height: light.height, normal, across, along, profile: traceProfile(light) };
+  return { bit: AREA_FIRST_BIT + index, position: light.position, ...lightEmission(light, label), width: light.width, height: light.height, normal, across, along, profile: traceProfile(light), ...maxBouncesOf(light.maxBounces, `${label}.maxBounces`) };
 }
 
 /**
@@ -566,10 +589,14 @@ function resolveLights(environment, limit = resolveLightLimit(), parts = []) {
     refuseLinkingBeyondMaskBits(environment, parts);
   }
   return {
-    sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: sunColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS } : null,
-    points: (environment.pointLights ?? []).map((light, index) => ({ bit: POINT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.pointLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`) })),
+    sun: sunPower > 0 ? { bit: SUN_BIT, direction: normalized(environment.lightDirection ?? [0, 1, 0]), color: sunColor, angularRadius: environment.sunAngularRadius ?? SUN_ANGULAR_RADIUS, ...maxBouncesOf(environment.sunMaxBounces, 'environment.sunMaxBounces') } : null,
+    points: (environment.pointLights ?? []).map((light, index) => ({
+      bit: POINT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.pointLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.pointLights[${index}]`),
+      ...maxBouncesOf(light.maxBounces, `environment.pointLights[${index}].maxBounces`),
+    })),
     spots: (environment.spotLights ?? []).map((light, index) => ({
       bit: SPOT_FIRST_BIT + index, position: light.position, ...lightEmission(light, `environment.spotLights[${index}]`), radius: light.radius ?? 0, range: light.range ?? 0, ...softFalloffOf(light, `environment.spotLights[${index}]`),
+      ...maxBouncesOf(light.maxBounces, `environment.spotLights[${index}].maxBounces`),
       direction: normalized(light.direction),
       cosineHalfAngle: Math.cos(light.angle),
       profile: traceProfile(light),
@@ -610,6 +637,18 @@ function resolveEnvironment(map, cameraIntensity) {
   return resolved;
 }
 
+/**
+ * The colour a camera ray sees where it escapes the scene. The rasterizer clears to its flat background colour unless
+ * `environment.world` is true, which draws the sky; a recipe states `world` as a boolean, so `world: false` gets the same
+ * colour here (#2016) and the map keeps lighting the scene. A bare environment that leaves `world` out keeps the map behind the picture.
+ * Returns null where the map is the picture.
+ */
+export function resolveCameraBackground(environment) {
+  if (environment.world !== false) return null;
+  const [red, green, blue] = DEFAULT_BACKGROUND;
+  return [red, green, blue];
+}
+
 /** `environment.cameraIntensity` is the sky strength a camera ray sees (through glass too), in the units of the map intensity. */
 function requireCameraIntensity(map, cameraIntensity) {
   if (cameraIntensity === undefined) return;
@@ -628,7 +667,8 @@ export function attachTracer(scene) {
 
 /** Local volumes are traced by the CPU path tracer and, for boxes and spheres, the WebGPU final tracer. Every other tracer entry point calls this so none drops them silently. */
 export function refuseLocalVolumes(scene, tracerName) {
-  if (!scene.localVolumes) return;
+  // The depth tint under thin water (#2294) is not an author's volume: a tracer that cannot draw it draws the water clear, as before.
+  if (!scene.localVolumes?.some(volume => volume.waterMedium !== true)) return;
   throw new RangeError(`environment.localVolumes is traced by the CPU path tracer only; ${tracerName} cannot draw them. Use backend "cpu" (backend "webgpu" draws box, sphere, mesh and grid volumes) or remove the volumes.`);
 }
 
@@ -842,24 +882,31 @@ function instanceFor(part, geometry, partIndex, material, views) {
   return instance;
 }
 
-// The largest coordinate any instance reaches, from the corners of each geometry's box, so it never reads a whole copy.
-function instancedExtent(instances) {
+// The box around every instance, from the corners of each geometry's box, so it never reads a whole copy.
+function instancedBounds(instances) {
   const boxes = new Map();
-  let extent = 1e-3;
+  const low = [Infinity, Infinity, Infinity];
+  const high = [-Infinity, -Infinity, -Infinity];
   for (const { geometry, matrix } of instances) {
     if (!boxes.has(geometry)) boxes.set(geometry, boundingBoxOf(geometry.positions));
-    const { low, high } = boxes.get(geometry);
+    const box = boxes.get(geometry);
     for (let corner = 0; corner < 8; corner++) {
-      const x = corner & 1 ? high[0] : low[0];
-      const y = corner & 2 ? high[1] : low[1];
-      const z = corner & 4 ? high[2] : low[2];
-      extent = Math.max(extent,
-        Math.abs(matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12]),
-        Math.abs(matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13]),
-        Math.abs(matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14]));
+      const x = corner & 1 ? box.high[0] : box.low[0];
+      const y = corner & 2 ? box.high[1] : box.low[1];
+      const z = corner & 4 ? box.high[2] : box.low[2];
+      for (let axis = 0; axis < 3; axis++) {
+        const world = matrix[axis] * x + matrix[4 + axis] * y + matrix[8 + axis] * z + matrix[12 + axis];
+        low[axis] = Math.min(low[axis], world);
+        high[axis] = Math.max(high[axis], world);
+      }
     }
   }
-  return extent;
+  return { low, high };
+}
+
+// The largest coordinate a box reaches.
+function extentOf({ low, high }) {
+  return Math.max(1e-3, ...low.map(Math.abs), ...high.map(Math.abs));
 }
 
 function boundingBoxOf(positions) {
@@ -882,11 +929,13 @@ function boundingBoxOf(positions) {
  */
 function buildInstancedTraceScene(parts, geometries, environment, localVolumes, limits) {
   requireInstancedCaps(parts, measureInstancedParts(parts, geometries), limits);
-  const traceMaterials = parts.map(part => resolveMaterial(part.material ?? {}));
-  const materials = parts.map((part, index) => ({ ...(part.material ?? {}), ...traceMaterials[index] }));
+  const tracedPartMaterials = parts.map(tracedMaterialOf);
+  const traceMaterials = tracedPartMaterials.map(resolveMaterial);
+  const materials = tracedPartMaterials.map((material, index) => ({ ...material, ...traceMaterials[index] }));
   const geometryViews = new Map();
   const instances = parts.map((part, index) => instanceFor(part, geometries[index], index, materials[index], geometryViews));
-  const extent = instancedExtent(instances);
+  const bounds = instancedBounds(instances);
+  const extent = extentOf(bounds);
   const lights = resolveLights(environment, limits.lights, parts);
   return {
     instances,
@@ -897,8 +946,9 @@ function buildInstancedTraceScene(parts, geometries, environment, localVolumes, 
     lights,
     lampLightMasks: ownLampMasks(parts, lights),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
-    volume: resolveTraceVolume(environment.volumeFog),
-    localVolumes,
+    cameraBackground: resolveCameraBackground(environment),
+    volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, bounds),
+    localVolumes: withWaterMedia(localVolumes, thinWaterMedia(parts, bounds)),
     surfaceOffset: extent * 1e-5,
     farDistance: extent * 1e4,
   };
@@ -967,23 +1017,25 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
   }
   const geometry = flattenParts(parts, geometries, limits);
   const bvh = buildTriangleBvh(geometry.positions, geometry.indices);
-  let extent = 1e-3;
-  for (let index = 0; index < geometry.positions.length; index++) extent = Math.max(extent, Math.abs(geometry.positions[index]));
+  const bounds = boundingBoxOf(geometry.positions);
+  const extent = extentOf(bounds);
+  const tracedPartMaterials = parts.map(tracedMaterialOf);
   const lights = resolveLights(environment, limits.lights, parts);
   return attachTracer({
     ...geometry,
     bvh,
-    materials: parts.map(part => resolveMaterial(part.material ?? {})),
+    materials: tracedPartMaterials.map(resolveMaterial),
     // The parts' own materials: the fields resolveMaterial leaves out, which the native "cycles" kernel shades.
-    partMaterials: parts.map(part => part.material ?? {}),
+    partMaterials: tracedPartMaterials,
     shadowOnlyParts: parts.some(part => part.shadowOnly === true) ? Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) : null,
     // Per part FORMAT-v2 visibility bits for the native "cycles" kernel; the "legacy" kernel and the other tracers do not read them.
     partRayVisibility: flattenedRayVisibility(parts),
     lights,
     lampLightMasks: ownLampMasks(parts, lights),
     environment: resolveEnvironment(environment.map, environment.cameraIntensity),
-    volume: resolveTraceVolume(environment.volumeFog),
-    localVolumes,
+    cameraBackground: resolveCameraBackground(environment),
+    volume: resolveTraceVolume(environment.volumeFog) ?? resolveTraceDistanceHaze(environment, bounds),
+    localVolumes: withWaterMedia(localVolumes, thinWaterMedia(parts, bounds)),
     surfaceOffset: extent * 1e-5,
     farDistance: extent * 1e4,
   });

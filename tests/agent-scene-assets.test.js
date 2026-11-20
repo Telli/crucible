@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { parseGltf } from '../src/gltf.js';
 import { createAgentScene, loadAllAgentSceneModules } from '../src/agent-scene.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { gameAssetIds } from '../src/game-assets.js';
 import { groupParts } from '../src/renderer.js';
 import { normalizeJobSettings } from '../scripts/agent-render-jobs.mjs';
 import { skinnedStripAsset } from './fixtures/skinned-strip.js';
@@ -72,6 +73,18 @@ test('material overrides name the source material and stay shared between placem
   assert.notEqual(material('red-a'), material('plain'));
   assert.throws(() => createAgentScene(recipe([{ id: 'bad', asset: { id: ASSET_ID, materials: [{ name: 'Nope', color: [1, 0, 0] }] } }]), {}, { assets: new Map([[assetCopyKey(ASSET_ID, 0), null]]) }), /not loaded/);
   await assert.rejects(async () => createAgentScene(recipe([{ id: 'bad', asset: { id: ASSET_ID, materials: [{ name: 'Nope', color: [1, 0, 0] }] } }]), {}, { assets: await loadedAssets() }), /^RangeError: nodes\[1\]\.asset\.materials\[0\]\.name: got "Nope"; expected one of "Skin"/);
+});
+
+test('recipeAssetNeeds skips a malformed node list, null node and non-list npcs (#2623)', () => {
+  const asset = { id: ASSET_ID };
+  assert.deepEqual(recipeAssetNeeds({ nodes: {} }), []);
+  assert.deepEqual(recipeAssetNeeds({ nodes: [null] }), []);
+  assert.deepEqual(recipeAssetNeeds({ game: { npcs: {} } }), []);
+  assert.deepEqual(recipeAssetNeeds({ nodes: { asset } }), []);
+  assert.deepEqual(recipeAssetNeeds({ game: { npcs: { asset } } }), []);
+  assert.deepEqual(recipeAssetNeeds({ nodes: [{ asset }], game: { npcs: { asset } } }), [{ id: ASSET_ID, copies: 1 }]);
+  assert.deepEqual(gameAssetIds({ game: { npcs: {} } }), []);
+  assert.deepEqual(gameAssetIds({ game: { npcs: [null] } }), []);
 });
 
 test('a placed clip plays on its own time offset and a seek gives the same frame', async () => {
@@ -160,6 +173,70 @@ test('a placed clip gives the scene a timeline: render settings play it with no 
   assert.throws(() => normalizeJobSettings({ ...settings, animation: { clip: 0 } }, [], sceneRecipe), /this scene has none/);
   assert.equal(normalizeJobSettings(settings, clips, sceneRecipe).duration, 1, 'a scene that plays no clip keeps the one second default');
   assert.deepEqual(createAgentScene(recipe([]), {}).placedClipEnds(), []);
+});
+
+// A file with one animation per object, as a Blender export of several objects writes it: Bend moves the Tip joint, Move the
+// Root joint, Slide the whole character, and Slide is the longest.
+async function onePerObjectAsset() {
+  return parseGltf(skinnedStripAsset((document, append) => {
+    const times = append(new Float32Array([0, 3]), 'SCALAR');
+    const translations = append(new Float32Array([1, 2, 0, 5, 2, 0]), 'VEC3');
+    document.animations.push({ name: 'Slide', samplers: [{ input: times, output: translations, interpolation: 'LINEAR' }], channels: [{ sampler: 0, target: { node: 0, path: 'translation' } }] });
+  }));
+}
+
+async function onePerObjectAssets(copies) {
+  const assets = new Map();
+  for (let copy = 0; copy < copies; copy++) assets.set(assetCopyKey(ASSET_ID, copy), await onePerObjectAsset());
+  return assets;
+}
+
+test('clip index "all" plays every animation of the asset together (#2281)', async () => {
+  const nodes = [
+    { id: 'first', asset: { id: ASSET_ID, clip: { index: 0 } } },
+    { id: 'every', asset: { id: ASSET_ID, clip: { index: 'all' } } },
+    { id: 'still', asset: { id: ASSET_ID } },
+  ];
+  const scene = createAgentScene(recipe(nodes), {}, { assets: await onePerObjectAssets(3) });
+  const joints = (id, joint) => Array.from(scene.parts.find(part => part.name === `${id}/0`).skin.jointMatrices.slice(joint * 16, joint * 16 + 16));
+  const partX = id => scene.parts.find(part => part.name === `${id}/0`).matrix[12];
+  const restRoot = joints('still', 0);
+  const restTip = joints('still', 1);
+  scene.sampleMotion(1.5);
+  assert.deepEqual(joints('first', 0), restRoot, 'index 0 leaves the Root joint where it was');
+  assert.equal(partX('first'), partX('still'), 'index 0 leaves the character where it was');
+  assert.notDeepEqual(joints('first', 1), restTip, 'index 0 bends the Tip');
+  assert.notDeepEqual(joints('every', 0), restRoot, 'all moves the Root joint');
+  assert.notDeepEqual(joints('every', 1), restTip, 'all bends the Tip');
+  assert.notDeepEqual(partX('every'), partX('still'), 'all slides the character');
+  assert.deepEqual(scene.placedClipEnds(), [2, 3], 'the timeline is as long as the longest animation');
+  const seeked = joints('every', 0);
+  scene.sampleMotion(2);
+  const bendEnd = joints('every', 1).slice(0, 12);
+  scene.sampleMotion(2.5);
+  assert.deepEqual(joints('every', 1).slice(0, 12), bendEnd, 'a clip shorter than the timeline holds its last frame');
+  scene.sampleMotion(0);
+  scene.sampleMotion(1.5);
+  assert.deepEqual(joints('every', 0), seeked, 'a seek gives the same frame');
+});
+
+test('clip index is "all" or a clip of the asset (#2281)', async () => {
+  const placed = index => recipe([{ id: 'walker', asset: { id: ASSET_ID, clip: { index } } }]);
+  const assets = await onePerObjectAssets(2);
+  assert.doesNotThrow(() => createAgentScene(placed('all'), {}, { assets }));
+  assert.throws(() => createAgentScene(placed('some'), {}, { assets }), /asset\.clip\.index: got "some"; expected a whole number of 0 or more, such as 0, or "all"/);
+  assert.throws(() => createAgentScene(placed(-1), {}, { assets }), /"all"/);
+  assert.throws(() => createAgentScene(placed(3), {}, { assets }), /from 0 to 2, or "all"/);
+});
+
+test('a single clip of a file whose other animations move other nodes warns (#2281)', async () => {
+  const one = async index => createAgentScene(recipe([{ id: 'walker', asset: { id: ASSET_ID, clip: { index } } }]), {}, { assets: new Map([[assetCopyKey(ASSET_ID, 1), await onePerObjectAsset()]]) });
+  const warned = (await one(0)).inspect().diagnostics.filter(entry => entry.kind === 'clip-leaves-other-animations');
+  assert.equal(warned.length, 1);
+  assert.equal(warned[0].target, 'walker');
+  assert.match(warned[0].message, /clips 1, 2 of this asset move other nodes/);
+  assert.match(warned[0].fix, /"all".*export_animation_mode='ACTIVE_ACTIONS'/);
+  assert.equal((await one('all')).inspect().diagnostics, undefined, 'all plays every clip, so nothing is left out');
 });
 
 test('an empty motion on a scene that places a clip says how to play the clip', async () => {

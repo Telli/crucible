@@ -14,6 +14,9 @@ import { textureDescriptorInfo } from './renderer.js';
 import { SKIN_POSE_BYTES_PER_JOINT, createSkinPose, matrixDeterminant, updateSkinPose, validateSkinGeometry, validateSkinPose } from './skinning.js';
 import { MAX_STORED_MORPH_TARGETS, createMorphPose, validateMorphGeometry, validateMorphPose, validateMorphTransform } from './morph.js';
 
+/** The `clip` of a pose animation that plays every clip of the asset together. */
+export const ALL_CLIPS = 'all';
+
 // The defaults fit one large exported scene (a 240 MB GLB of 8 million vertices with 8K textures) and still bound a hostile file.
 const DEFAULT_LIMITS = Object.freeze({
   maxBytes: 256 * 1024 * 1024,
@@ -431,9 +434,11 @@ function validateDocument(document, limits, allowedExtensions) {
   overLimit(overruns, 'skin joints', jointCount, 'maxJoints', limits.maxJoints);
   let poseBytes = 0;
   let declaredParts = 0;
-  for (const node of document.nodes ?? []) {
+  for (const [nodeIndex, node] of (document.nodes ?? []).entries()) {
     const mesh = document.meshes?.[node.mesh];
-    if (node.mesh !== undefined && (!Number.isInteger(node.mesh) || !mesh)) throw new Error('Invalid mesh node index.');
+    if (node.mesh !== undefined && (!Number.isInteger(node.mesh) || !mesh)) {
+      throw new Error(`Invalid glTF nodes[${nodeIndex}].mesh ${JSON.stringify(node.mesh)}: pass a mesh index from 0 to ${(document.meshes?.length ?? 1) - 1}.`);
+    }
     declaredParts += (mesh?.primitives?.length ?? 0) * nodeInstanceCount(document, node, limits, overruns);
     validateDefaultWeights(node.weights, morphCount(mesh));
     morphBytes += morphCount(mesh) * (mesh?.primitives?.length ?? 0) * 16;
@@ -496,8 +501,10 @@ function validateDocument(document, limits, allowedExtensions) {
   // Each skinned primitive keeps its own pose copy, so the pose memory shares this budget. maxJoints counts a skin once above.
   let decodedBytes = morphBytes + meshoptViewBytes + poseBytes;
   const components = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };
-  for (const accessor of document.accessors ?? []) {
-    if (!Number.isSafeInteger(accessor.count) || accessor.count < 0) throw new Error('Invalid glTF accessor count.');
+  for (const [accessorIndex, accessor] of (document.accessors ?? []).entries()) {
+    if (!Number.isSafeInteger(accessor.count) || accessor.count < 0) {
+      throw new Error(`Invalid glTF accessors[${accessorIndex}].count ${JSON.stringify(accessor.count)}: pass a non-negative integer.`);
+    }
     if (accessor.count > limits.maxVertices * 12) {
       throwOverruns(overLimit(overruns, 'accessor elements', accessor.count, 'maxVertices', limits.maxVertices, 12));
     }
@@ -569,7 +576,7 @@ function primitiveLabel(document, meshIndex, primitiveIndex) {
 /** Why a triangle primitive cannot be drawn judging by its accessors alone, or null. Index values and areas need the decoded data. */
 function accessorProblemOf(document, primitive) {
   const position = document.accessors?.[primitive.attributes?.POSITION];
-  if (!position || position.type !== 'VEC3' || !Number.isSafeInteger(position.count) || position.count < 3) {
+  if (!Number.isInteger(primitive.attributes?.POSITION) || !position || position.type !== 'VEC3' || !Number.isSafeInteger(position.count) || position.count < 3) {
     return 'its POSITION accessor is missing, is not VEC3 or has fewer than 3 vertices';
   }
   const index = primitive.indices === undefined ? null : document.accessors?.[primitive.indices];
@@ -598,9 +605,11 @@ function skipUnusablePrimitives(document) {
 
 function validateHierarchy(nodes) {
   const parents = new Set();
-  for (const node of nodes) {
-    for (const child of node.children ?? []) {
-      if (!Number.isInteger(child) || !nodes[child] || parents.has(child)) throw new Error('Invalid glTF hierarchy child or multiple parents.');
+  for (const [nodeIndex, node] of nodes.entries()) {
+    for (const [childSlot, child] of (node.children ?? []).entries()) {
+      const path = `nodes[${nodeIndex}].children[${childSlot}]`;
+      if (!Number.isInteger(child) || !nodes[child]) throw new Error(`Invalid glTF ${path} ${JSON.stringify(child)}: pass an existing node index.`);
+      if (parents.has(child)) throw new Error(`Invalid glTF ${path}: node ${child} has two parents; list it once.`);
       parents.add(child);
     }
   }
@@ -1536,6 +1545,10 @@ export async function parseGltf(data, options = {}) {
       if (animation === null) {
         return;
       }
+      if (animation.clip === ALL_CLIPS) {
+        for (const clip of gltf.animations) applyClip(clip, animation.time);
+        return;
+      }
       applyClip(gltf.animations[animation.clip], animation.time);
     }
 
@@ -1608,8 +1621,10 @@ export async function parseGltf(data, options = {}) {
       const animation = input.animation ?? null;
       if (animation !== null) {
         knownPoseFields(animation, ['clip', 'time'], 'pose animation');
-        const clip = gltf.animations[animation.clip];
-        if (!Number.isInteger(animation.clip) || !clip || !Number.isFinite(animation.time) || animation.time < 0 || animation.time > clip.duration) {
+        // 'all' plays every clip at once; its length is the longest clip, and a shorter clip holds its last frame.
+        const playsAll = animation.clip === ALL_CLIPS && gltf.animations.length > 0;
+        const clip = playsAll ? { duration: Math.max(...gltf.animations.map(candidate => candidate.duration)) } : gltf.animations[animation.clip];
+        if (!playsAll && !Number.isInteger(animation.clip) || !clip || !Number.isFinite(animation.time) || animation.time < 0 || animation.time > clip.duration) {
           throw new RangeError('Pose animation needs an existing clip and time within its duration.');
         }
       }
