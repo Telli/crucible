@@ -1990,7 +1990,21 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // Near-coplanar triangles are ranked at draw time (issue #751) unless environment.resolveCoplanar is false, once the
   // coplanar code is loaded. The ranks sit beside the parts, so the parts and their geometry stay as they are. The search
   // runs again only when the parts are new objects.
+  // Particle parts are left out (#2728): their specks move every frame, so a rank found for one frame is wrong for the next,
+  // and searching thousands of small coplanar boxes on every seek took minutes at the 2,000 particle limit.
   let flushCache = null;
+  function partsToRank(recipe, parts) {
+    const particleNodes = new Set(recipe.particles?.systems.map(system => system.node) ?? []);
+    if (particleNodes.size === 0) {
+      return parts;
+    }
+    return parts.filter(part => !particleNodes.has(part.name));
+  }
+
+  function sameParts(first, second) {
+    return first.length === second.length && first.every((part, index) => part === second[index]);
+  }
+
   function stageCoplanarOffsets(recipe, parts) {
     if (!agentSceneModuleActive('coplanar', requestedModules)) {
       return parts;
@@ -2004,10 +2018,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       return parts;
     }
     if (flushCache?.parts !== parts) {
-      const resolved = coplanar.resolveFlushParts(parts);
+      const rankedParts = partsToRank(recipe, parts);
+      // A seek that only swaps the particle parts keeps the ranks of the parts that did not change.
+      const resolved = flushCache && sameParts(flushCache.rankedParts, rankedParts) ? flushCache.resolved : coplanar.resolveFlushParts(rankedParts);
       // Ranked parts batch apart, so the list they are staged in is a new one: the renderer then regroups, also when the
       // ranking is switched on or off for parts that did not change.
-      flushCache = { parts, staged: resolved.ranked ? Object.freeze([...parts]) : parts, ...resolved };
+      flushCache = { parts, rankedParts, resolved, staged: resolved.ranked ? Object.freeze([...parts]) : parts, ...resolved };
     }
     return flushCache.staged;
   }
