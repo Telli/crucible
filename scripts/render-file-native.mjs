@@ -46,11 +46,13 @@ async function startViteServer(root) {
 }
 
 // Runs in the page: packs the loaded scene into the tables the native tracer reads, like the MCP render job does.
-async function exportTablesInPage({ width, height, bounces, seed, instancing, camera, listParts, hideParts, patchMaterials, maximumTriangles }) {
+async function exportTablesInPage({ width, height, bounces, seed, clipSeconds, instancing, camera, listParts, hideParts, patchMaterials, maximumTriangles }) {
   const [{ createCamera, describeIgnoredFeatures }, { buildTraceScene, resolveTexture }, pack, { buildNativeInput }, { buildJobNativeInput, buildFlattenedJobNativeInput }, { exportNativeSceneTables, splitExportForChunks }, gridVolumeInput] = await Promise.all([
     import('/src/path-tracer.js'), import('/src/path-tracer-scene.js'), import('/src/path-tracer-gpu-pack.js'),
     import('/node_modules/@codepawlhq/cook/pack-input.mjs'), import('/node_modules/@codepawlhq/cook/job-input.mjs'), import('/scripts/native-bake-page.js'), import('/node_modules/@codepawlhq/cook/grid-volume-input.mjs'),
   ]);
+  // The parts are packed as they stand, so pose the glTF clip first (a scene without a clip stays in its bind pose).
+  window.__scene.poseClipAt?.(clipSeconds);
   const { environment } = window.__scene;
   const describePart = part => ({
     name: part.name,
@@ -188,7 +190,7 @@ async function main() {
     const loadSeconds = (performance.now() - loadStarted) / 1000;
     const packStarted = performance.now();
     const capacityRead = readNativeCapacity(tracer);
-    const manifest = await page.evaluate(exportTablesInPage, { width: options.width, height: options.height, bounces: options.bounces, seed: options.seed, instancing: options.instancing, camera,
+    const manifest = await page.evaluate(exportTablesInPage, { width: options.width, height: options.height, bounces: options.bounces, seed: options.seed, clipSeconds: options.clipSeconds, instancing: options.instancing, camera,
       listParts: options.listParts ?? null, hideParts: options.hideParts ?? null, patchMaterials: options.patchMaterials, maximumTriangles: chunkedTriangleBound(capacityRead.capacity?.maxUniqueTriangles) });
     const exported = await readHeldNativeExport(page, manifest, { blobExpression: 'window.__nativeExportBlob()', release: () => { window.__nativeExportBlob = null; }, capacity: capacityRead.capacity });
     const packSeconds = (performance.now() - packStarted) / 1000;

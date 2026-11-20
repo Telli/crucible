@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
 import { loadAgentSceneModules } from '../src/agent-scene-modules.js';
-import { closedRoomShare, CLOSED_ROOM_SHARE, CLOSED_ROOM_MAXIMUM_TRIANGLES, skyGridSize, skyVisibilityGrid } from '../src/closed-room.js';
+import { closedRoomShare, CLOSED_ROOM_SHARE, CLOSED_ROOM_MAXIMUM_TRIANGLES, skyGridSize, skyOpenness, skyVisibilityGrid } from '../src/closed-room.js';
 import { fittedClosedRoomShare } from '../src/fitted-closed-room.js';
 
 const WALL = 0.2;
@@ -179,4 +179,17 @@ test('skyVisibilityGrid returns data that matches its size for a zero-size box',
   const grid = skyVisibilityGrid([part], [0, 0, 0], [0, 0, 0]);
   assert.deepEqual(grid.size, [2, 2, 2]);
   assert.equal(grid.data.length, 8);
+});
+
+test('skyOpenness names a point that is not three finite numbers (#2625)', () => {
+  const parts = createAgentScene(roomRecipe()).parts;
+  for (const point of [[NaN, 0, 0], [0, Infinity, 0], [0, 0], undefined]) {
+    assert.throws(() => skyOpenness(parts, point), /point: .*expected \[x, y, z\] as three finite numbers/);
+  }
+});
+
+test('skyOpenness reads a finite point as before (#2625)', () => {
+  const parts = createAgentScene(roomRecipe()).parts;
+  assert.equal(skyOpenness(parts, [0, 0, 0]), 0);
+  assert.equal(skyOpenness([parts[0]], [0, 0, 0]), 1);
 });

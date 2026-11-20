@@ -6,6 +6,7 @@ import {
   averageBuffers, createBandState, createTargets, drawOneSample, getContext, gpuTriangleLimit, getKernel, releaseResources, setSceneUniforms, uploadScene, withBlueNoiseTile,
 } from './path-tracer-gpu.js';
 import { sceneUsesSubsurface } from './path-tracer-gpu-pack.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 // A progressive view of the GPU path tracer (issue #623). `step()` draws one sample for every pixel and adds it to the
 // image; while the scene and camera rest the image gets cleaner with each step, and `update()` starts it over. Like the
@@ -13,6 +14,15 @@ import { sceneUsesSubsurface } from './path-tracer-gpu-pack.js';
 // appears at once, then draws at full size. It shares the WebGL2 context of `traceOnGpu`, so one render at a time owns it.
 
 const DEFAULT_RESOLUTION_DIVISORS = Object.freeze([4, 2, 1]);
+const MAXIMUM_RESOLUTION_DIVISOR = 64;
+
+// A level size is the output size over its divisor, so every divisor is a whole number from 1 and the last one, the full size, is 1.
+function requireResolutionDivisors(divisors) {
+  if (!Array.isArray(divisors) || divisors.length === 0 || divisors.at(-1) !== 1) {
+    throw new RangeError(`createProgressiveTracer: resolutionDivisors was ${JSON.stringify(divisors)}; pass a list of whole numbers that ends with 1, such as [4, 2, 1].`);
+  }
+  requireFiniteInRange('createProgressiveTracer', 'resolutionDivisors', divisors, 1, MAXIMUM_RESOLUTION_DIVISOR, true);
+}
 
 /**
  * `scene` is `{ parts, environment, camera }` as `renderPathTracedImage` takes them. `options` are the same options
@@ -20,6 +30,7 @@ const DEFAULT_RESOLUTION_DIVISORS = Object.freeze([4, 2, 1]);
  * `backend` are not used. `resolutionDivisors` lists the sizes drawn first, one sample each, ending with 1.
  */
 export async function createProgressiveTracer(scene, rawOptions = {}, { resolutionDivisors = DEFAULT_RESOLUTION_DIVISORS } = {}) {
+  requireResolutionDivisors(resolutionDivisors);
   const options = await withBlueNoiseTile(normalizePathTracerOptions({ ...rawOptions, backend: 'gpu', samples: 1, maxSeconds: rawOptions.maxSeconds ?? 3600 }));
   const { gl, gpu } = getContext();
   const { width, height } = options;

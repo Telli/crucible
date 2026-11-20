@@ -1,3 +1,4 @@
+import { clipDisplayName } from './clip-name.js';
 import { attributeFloats } from './gltf-accessors.js';
 
 export const INTERPOLATE_DISCRETE = 2300;
@@ -171,7 +172,9 @@ function tracksForChannel(channel, sampler, node, readAccessor) {
     targetByTrack.set(track, node);
     return [track];
   }
-  const meshes = [node, ...node.children].filter(candidate => candidate.morphTargetInfluences);
+  // Only the node's own primitives move. A child that carries a glTF node index is another node with its own weights.
+  const ownPrimitives = node.children.filter(child => child.association?.nodes === undefined);
+  const meshes = [node, ...ownPrimitives].filter(candidate => candidate.morphTargetInfluences);
   return meshes.map(mesh => {
     const track = createTrack(`${nodeTrackName(mesh)}.${property}`, times, values, interpolation);
     targetByTrack.set(track, mesh);
@@ -189,7 +192,7 @@ export function createClips(document, nodeAt, readAccessor) {
       tracks.push(...tracksForChannel(channel, sampler, nodeAt(channel.target.node), readAccessor));
     }
     const duration = Math.max(0, ...tracks.map(track => track.times[track.times.length - 1]));
-    return { name: definition.name ? definition.name : `animation_${animationIndex}`, duration, tracks };
+    return { name: clipDisplayName(definition, animationIndex), duration, tracks };
   });
 }
 

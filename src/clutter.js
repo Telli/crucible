@@ -10,6 +10,7 @@ import {
 } from './vegetation-geometry.js';
 import { createTileField, hashTile, tileMatrix } from './tile-field.js';
 import { requireSeed } from './seeded-random.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 // Rocks draw their keep key below this value and everything else above it, so the farthest level keeps only rocks.
 const ROCK_KEY_LIMIT = 0.04;
@@ -269,7 +270,7 @@ function addLeaf(builder, item, tileOrigin, settings, detail) {
 }
 
 function requireRange(value, name) {
-  if (!Array.isArray(value) || value.length !== 2 || !(value[0] > 0) || !(value[1] >= value[0])) throw new RangeError(`Clutter ${name} must be [minimum, maximum] in metres.`);
+  if (!Array.isArray(value) || value.length !== 2 || !(value[0] > 0) || !(value[1] >= value[0]) || !(value[1] < Infinity)) throw new RangeError(`Clutter ${name} must be finite [minimum, maximum] in metres, such as [0.01, 0.05].`);
 }
 
 function requireColor(value, name) {
@@ -291,7 +292,7 @@ function resolveSettings(options) {
   for (const name of ['moss', 'clumping']) {
     if (!(settings[name] >= 0 && settings[name] <= 1)) throw new RangeError(`Clutter ${name} must be between 0 and 1.`);
   }
-  if (!(settings.tileSize > 0)) throw new RangeError('Clutter tileSize must be positive.');
+  requireFiniteInRange('createClutter', 'tileSize', settings.tileSize, 1e-3, 1e6);
   requireSeed(settings.seed, 'Clutter seed');
   requireRange(settings.pebbleSize, 'pebbleSize');
   requireRange(settings.rockSize, 'rockSize');

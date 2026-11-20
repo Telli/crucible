@@ -20,5 +20,5 @@ export function onlyKeys(group, allowed, name) {
 export function triple(value, fallback, minimum, maximum, name) {
   const source = value ?? fallback;
   if (!Array.isArray(source) || source.length !== 3) throw new TypeError(`${name} must be three numbers.`);
-  return source.map((component, index) => numberInRange(component, fallback[index], minimum, maximum, `${name}[${index}]`));
+  return source.map((component, index) => numberInRange(component, undefined, minimum, maximum, `${name}[${index}]`));
 }

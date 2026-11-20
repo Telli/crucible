@@ -62,21 +62,22 @@ function validateGeometry(geometry, maxVertices, maxTriangles) {
     if (!Number.isFinite(length) || Math.abs(length - 1) > 0.001) throw new RangeError('Target normals must remain finite unit vectors.');
   }
   for (const index of indices) if (index >= vertexCount) throw new RangeError('Target triangle index exceeds the vertex count.');
-  for (let offset = 0; offset < indices.length; offset += 3) {
-    const first = indices[offset] * 3;
-    const second = indices[offset + 1] * 3;
-    const third = indices[offset + 2] * 3;
-    const edgeFirstX = positions[second] - positions[first];
-    const edgeFirstY = positions[second + 1] - positions[first + 1];
-    const edgeFirstZ = positions[second + 2] - positions[first + 2];
-    const edgeSecondX = positions[third] - positions[first];
-    const edgeSecondY = positions[third + 1] - positions[first + 1];
-    const edgeSecondZ = positions[third + 2] - positions[first + 2];
-    if (Math.hypot(edgeFirstY * edgeSecondZ - edgeFirstZ * edgeSecondY, edgeFirstZ * edgeSecondX - edgeFirstX * edgeSecondZ, edgeFirstX * edgeSecondY - edgeFirstY * edgeSecondX) === 0) {
-      throw new RangeError('Attachment target contains a degenerate triangle.');
-    }
-  }
   return { vertexCount, triangleCount };
+}
+
+function requireAreaTriangle(positions, indices, triangle) {
+  const first = indices[triangle * 3] * 3;
+  const second = indices[triangle * 3 + 1] * 3;
+  const third = indices[triangle * 3 + 2] * 3;
+  const edgeFirstX = positions[second] - positions[first];
+  const edgeFirstY = positions[second + 1] - positions[first + 1];
+  const edgeFirstZ = positions[second + 2] - positions[first + 2];
+  const edgeSecondX = positions[third] - positions[first];
+  const edgeSecondY = positions[third + 1] - positions[first + 1];
+  const edgeSecondZ = positions[third + 2] - positions[first + 2];
+  if (Math.hypot(edgeFirstY * edgeSecondZ - edgeFirstZ * edgeSecondY, edgeFirstZ * edgeSecondX - edgeFirstX * edgeSecondZ, edgeFirstX * edgeSecondY - edgeFirstY * edgeSecondX) === 0) {
+    throw new RangeError('Attachment triangle is degenerate; pass a triangle with nonzero area.');
+  }
 }
 
 function rounded(value) {
@@ -96,6 +97,7 @@ export function createSurfaceAttachment(target, options = {}) {
   const counts = validateGeometry(geometry, maxVertices, maxTriangles);
   const triangle = options.triangle;
   if (!Number.isSafeInteger(triangle) || triangle < 0 || triangle >= counts.triangleCount) throw new RangeError('Attachment triangle must reference an original target triangle.');
+  requireAreaTriangle(geometry.positions, geometry.indices, triangle);
   const inputWeights = options.barycentric;
   if ((!Array.isArray(inputWeights) && !ArrayBuffer.isView(inputWeights)) || inputWeights.length !== 3) throw new TypeError('Attachment barycentric coordinates require three components.');
   const barycentric = new Float64Array(3);

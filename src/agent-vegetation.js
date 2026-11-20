@@ -261,10 +261,16 @@ function grow(recipe, vegetation) {
   return { variants: Object.values(scattered.variants).flat(), instances: scattered.instances };
 }
 
+// Where a named exclusion stands in the ground's space, or null while the node or the ground is missing (growing reports that).
+function namedPlanePosition(recipe, scatter, nodeId) {
+  const hasNode = id => recipe.nodes.some(node => node.id === id);
+  return hasNode(nodeId) && hasNode(scatter.ground) ? planePositionInGround(recipe, scatter, nodeId) : null;
+}
+
 function cacheKey(recipe, node) {
   const { vegetation } = node;
   const ground = vegetation.scatter ? recipe.geometries.find(geometry => geometry.id === recipe.nodes.find(candidate => candidate.id === vegetation.scatter.ground)?.geometry) : null;
-  const named = vegetation.scatter?.exclude.filter(entry => entry.node).map(entry => recipe.nodes.find(candidate => candidate.id === entry.node)?.translation);
+  const named = vegetation.scatter?.exclude.filter(entry => entry.node).map(entry => namedPlanePosition(recipe, vegetation.scatter, entry.node));
   const { season, cullDistance, distanceScale, ...growth } = vegetation;
   return JSON.stringify([growth, ground, named]);
 }

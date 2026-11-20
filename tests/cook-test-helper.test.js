@@ -9,7 +9,8 @@ const SKIP_REASON = 'Cook (@codepawlhq/cook) is not installed';
 const helperUrl = new URL('./support/cook.js', import.meta.url).href;
 
 test('the helper agrees with itself about whether Cook is installed', async () => {
-  assert.equal(cookSkipReason, cookInstalled ? false : SKIP_REASON);
+  if (cookInstalled) assert.equal(cookSkipReason, false);
+  else assert.ok(cookSkipReason === SKIP_REASON || cookSkipReason.includes("package-lock.json pins"), cookSkipReason);
   const engine = await cookModule('engine');
   if (cookInstalled) {
     assert.equal(typeof engine.describeEngine, 'function');

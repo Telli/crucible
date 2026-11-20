@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_OPTIONS, parseArguments, shapeReport } from '../scripts/measure-explosion-render-time.mjs';
+import { resolve } from 'node:path';
+import { DEFAULT_OPTIONS, parseArguments, serverEnvironment, shapeReport } from '../scripts/measure-explosion-render-time.mjs';
 
 // The argument and report shaping of scripts/measure-explosion-render-time.mjs (#1050); the render itself needs a GPU and runs by hand.
 
@@ -44,4 +45,13 @@ test('a job report without phases leaves them out instead of inventing them', ()
   const shaped = shapeReport({ options: DEFAULT_OPTIONS, runIndex: 0, buildSeconds: 1, submitSeconds: 0, jobSeconds: 2, totalSeconds: 3, metrics: undefined });
   assert.deepEqual(shaped.phases, {});
   assert.equal(shaped.jobReportSeconds, undefined);
+});
+
+test('--bake-cache reaches the server as CRUCIBLE_BAKE_CACHE, and the default leaves the environment alone', () => {
+  const base = { PATH: 'x' };
+  assert.deepEqual(serverEnvironment(parseArguments([]), base), base);
+  assert.equal(serverEnvironment(parseArguments(['--bake-cache', 'off']), base).CRUCIBLE_BAKE_CACHE, 'off');
+  const folder = resolve('bakes');
+  assert.equal(serverEnvironment(parseArguments(['--bake-cache', folder]), base).CRUCIBLE_BAKE_CACHE, folder);
+  assert.throws(() => parseArguments(['--bake-cache', 'relative/folder']), /--bake-cache takes off or an absolute folder, got relative\/folder/);
 });
