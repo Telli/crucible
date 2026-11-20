@@ -22,7 +22,7 @@ import { MESH_EDIT_OPERATIONS, MODIFIER_OPERATIONS } from '../src/mesh-operation
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from '../src/view-transform-names.js';
 import { BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES, CATALOG_FILE_ID } from '../src/look-catalog.js';
 import { describeReceived } from '../src/field-error.js';
-import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES, RECIPE_ALPHA_MODES } from '../src/agent-scene-capabilities.js';
+import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS, LIGHTING_SETUP_NAMES, RENDER_PASS_NAMES, RENDER_OUTPUT_FORMATS, MAXIMUM_JOB_FPS, VIDEO_ENCODERS, MAXIMUM_JOB_SIDE, maximumMemoryMiB, memoryRangeError, MAXIMUM_STILLS_FRAMES, RECIPE_ALPHA_MODES, PHYSICS_BODY_SHAPES } from '../src/agent-scene-capabilities.js';
 import { MATERIAL_LAYER_SCALAR_RANGES, MATERIAL_LAYER_COLOR_RANGES, TOON_COLOR_MAXIMUM } from '../src/material-layers.js';
 import { SUBSURFACE_RANGES } from '../src/subsurface-limits.js';
 import { responseFormatField, chosenFormat, conciseReview, conciseJobStatus, conciseJobResult, conciseCapabilities } from './mcp-response-format.mjs';
@@ -732,10 +732,19 @@ const motion = z.strictObject({
     lookTrack,
   ], { error: motionTrackUnionMessage })).max(128).optional().describe('Keyframe tracks; leave out for a motion made only of drivers, ik or constraints.'),
 }).describe('One absolute-time procedural clip. Local node transforms propagate through parents. Cubic tangents are derivatives per second. Backend checks references, duplicate tracks, 2048 total keys and every sampled pose.');
+const physicsCompoundPart = z.strictObject({
+  shape: z.enum(['box', 'ball', 'capsule', 'cylinder', 'cone']),
+  translation: vector3.optional().describe('Part centre in body space.'),
+  rotation: quaternion.optional().describe('Part rotation in body space.'),
+  halfExtents: z.tuple([positive, positive, positive]).optional().describe('Box parts only.'),
+  radius: positive.optional().describe('Ball, capsule, cylinder and cone parts.'),
+  halfHeight: positive.optional().describe('Capsule, cylinder and cone parts, along local Y.'),
+});
 const physicsBody = z.strictObject({
   node: identifier.describe('Root node with a geometry; the collider is fitted to it and the body drives its pose.'),
   type: z.enum(['dynamic', 'fixed', 'kinematic']).optional().describe('Defaults to dynamic.'),
-  shape: z.enum(['box', 'ball', 'capsule', 'convex', 'trimesh']).optional().describe('Defaults: box for dynamic and sensors, trimesh for fixed. Trimesh (at most 20000 triangles) needs a fixed or kinematic body; convex takes at most 2048 distinct vertices.'),
+  shape: z.enum(PHYSICS_BODY_SHAPES).optional().describe('Defaults: box for dynamic and sensors, trimesh for fixed. Cylinder and cone fit the geometry bounds along local Y. Trimesh (at most 20000 triangles) needs a fixed or kinematic body; convex takes at most 2048 distinct vertices; compound needs shapes.'),
+  shapes: z.array(physicsCompoundPart).max(16).optional().describe('Only with shape compound: 1-16 sub-colliders, each { shape box|ball|capsule|cylinder|cone, translation, rotation, halfExtents or radius and halfHeight }.'),
   mass: positive.optional().describe('Kilograms; mass or density, not both.'),
   density: positive.optional().describe('Defaults to 1.'),
   friction: nonnegative.optional(),
