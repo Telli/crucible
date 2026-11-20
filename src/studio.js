@@ -23,7 +23,7 @@ import {
 } from './studio-preferences.js';
 import { studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
-import { cameraFocalLengthMillimetres } from './studio-properties.js';
+import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-properties.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
@@ -65,6 +65,25 @@ const AXIS_NAMES = Object.freeze(['x', 'y', 'z']);
 const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
 const LENS_CHIP_TOLERANCE_MILLIMETRES = 0.5;
+// A view chip is active while the camera looks along its direction, within about two degrees; a free orbit matches none.
+const VIEW_CHIP_DIRECTIONS = Object.freeze({ front: [0, 0, 1], right: [1, 0, 0], top: [0.002, 1, 0.002], isometric: [1, 0.72, 1] });
+const VIEW_CHIP_MINIMUM_COSINE = 0.9995;
+// A tree row is 28px high with a 1px gap; the Scene list stretches its rows a little so a whole number of them fills it.
+const TREE_ROW_GAP_PIXELS = 1;
+
+/** The view chip whose direction the camera looks along, or null when the camera is in a free orbit. */
+function matchingViewChip(camera) {
+  const offset = camera.eye.map((coordinate, axis) => coordinate - camera.target[axis]);
+  const offsetLength = Math.hypot(...offset);
+  if (offsetLength === 0) {
+    return null;
+  }
+  const match = Object.entries(VIEW_CHIP_DIRECTIONS).find(([, direction]) => {
+    const dot = offset.reduce((sum, coordinate, axis) => sum + coordinate * direction[axis], 0);
+    return dot / (offsetLength * Math.hypot(...direction)) >= VIEW_CHIP_MINIMUM_COSINE;
+  });
+  return match ? match[0] : null;
+}
 const STUDIO_STYLE_ID = 'crucible-studio-styles';
 const COMPACT_WIDTH = 820;
 const TIGHT_WIDTH = 920;
@@ -1467,7 +1486,7 @@ export function createStudio(container, {
     ),
     filterRow,
     outlinerTree,
-    createElement(documentReference, 'div', { className: 'crucible-studio-palette-section' }, swatchContainer),
+    createElement(documentReference, 'div', { className: 'crucible-studio-palette-section' }, swatchContainer, newMaterialQuickButton),
   );
   outlinerSearch.addEventListener('input', () => syncUi());
   // The filter box stays out of the way until its button is pressed; closing it clears the filter, so a closed box
@@ -1593,7 +1612,7 @@ export function createStudio(container, {
   // Viewport Top-Right 3D View Widget
   const viewPresetButtons = ['front', 'right', 'top', 'isometric'].map(preset => {
     const shortLabels = { front: 'Front', right: 'Right', top: 'Top', isometric: 'Iso' };
-    const button = createElement(documentReference, 'button', { type: 'button', textContent: shortLabels[preset] });
+    const button = createElement(documentReference, 'button', { type: 'button', textContent: shortLabels[preset], dataset: { view: preset } });
     button.addEventListener('click', () => {
       controller.setCameraViewPreset(preset);
       announce(`${shortLabels[preset]} view`);
@@ -1803,7 +1822,7 @@ export function createStudio(container, {
     documentReference,
     'select',
     { attributes: { 'aria-label': 'View transform' } },
-    ...VIEW_TRANSFORM_NAMES.map(name => createElement(documentReference, 'option', { value: name, textContent: name })),
+    ...VIEW_TRANSFORM_NAMES.map(name => createElement(documentReference, 'option', { value: name, textContent: choiceDisplayLabel(name) })),
   );
   viewTransformSelect.addEventListener('change', async () => {
     const viewTransform = viewTransformSelect.value;
@@ -1835,7 +1854,7 @@ export function createStudio(container, {
   const cameraPanel = createLookPanel(() => 'camera', { opensFirstGroup: true, leadingRows: { lens: lensChipRow } });
   const bookmarkNameInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Shot name', attributes: { 'aria-label': 'Shot name', maxlength: '24' } });
   const saveBookmarkButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save shot' });
-  const bookmarkListElement = createElement(documentReference, 'div', { className: 'crucible-studio-field' });
+  const bookmarkListElement = createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-list' });
   saveBookmarkButton.addEventListener('click', async () => {
     const name = bookmarkNameInput.value.trim().replace(/\s+/g, '-') || `shot-${controller.listBookmarks().length + 1}`;
     try {
@@ -1853,7 +1872,13 @@ export function createStudio(container, {
     { className: 'crucible-studio-panel-body crucible-studio-panel-rows' },
     viewCubeElement,
     cameraPanel.element,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Shots' }), createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, bookmarkNameInput, saveBookmarkButton), bookmarkListElement),
+    createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-property-section crucible-studio-shots-group' },
+      createElement(documentReference, 'div', { className: 'crucible-studio-property-heading', textContent: 'Shots' }),
+      createElement(documentReference, 'div', { className: 'crucible-studio-property-rows' }, createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, bookmarkNameInput, saveBookmarkButton), bookmarkListElement),
+    ),
   );
 
   const panelsByTab = {
@@ -2820,6 +2845,7 @@ export function createStudio(container, {
         eyeButton,
       );
     }));
+    fitTreeToWholeRows();
   }
 
   function renderPaletteSwatches(recipe, boundMaterialId) {
@@ -2848,7 +2874,43 @@ export function createStudio(container, {
         selectInspectorTab('material');
       });
       return swatch;
-    }), newMaterialQuickButton);
+    }));
+    scrollPressedSwatchIntoView();
+    fitTreeToWholeRows();
+  }
+
+  // The strip is one row that scrolls sideways; the swatch of the selected node stays inside it.
+  function scrollPressedSwatchIntoView() {
+    const pressedSwatch = [...swatchContainer.children].find(swatch => swatch.getAttribute('aria-pressed') === 'true');
+    if (!pressedSwatch || !Number.isFinite(pressedSwatch.offsetLeft)) {
+      return;
+    }
+    const swatchStart = pressedSwatch.offsetLeft;
+    const swatchEnd = swatchStart + pressedSwatch.offsetWidth;
+    if (swatchStart < swatchContainer.scrollLeft) {
+      swatchContainer.scrollLeft = swatchStart - 4;
+    } else if (swatchEnd > swatchContainer.scrollLeft + swatchContainer.clientWidth) {
+      swatchContainer.scrollLeft = swatchEnd - swatchContainer.clientWidth + 4;
+    }
+  }
+
+  // The Scene list shows whole rows only: when it scrolls, its rows grow by a pixel or two until a whole number of them fills it.
+  function fitTreeToWholeRows() {
+    const view = documentReference.defaultView;
+    if (!view?.getComputedStyle || !outlinerTree.style?.removeProperty) {
+      return;
+    }
+    outlinerTree.style.removeProperty('--studio-tree-row-size');
+    const firstRow = outlinerTree.firstElementChild;
+    if (!firstRow || !(outlinerTree.clientHeight > 0) || outlinerTree.scrollHeight <= outlinerTree.clientHeight) {
+      return;
+    }
+    const treeStyle = view.getComputedStyle(outlinerTree);
+    const rowSpace = outlinerTree.clientHeight - parseFloat(treeStyle.paddingTop) - parseFloat(treeStyle.paddingBottom);
+    const rowPitch = firstRow.offsetHeight + TREE_ROW_GAP_PIXELS;
+    const wholeRows = Math.max(1, Math.floor((rowSpace + TREE_ROW_GAP_PIXELS) / rowPitch));
+    const stretchedRowSize = (rowSpace + TREE_ROW_GAP_PIXELS) / wholeRows - TREE_ROW_GAP_PIXELS;
+    outlinerTree.style.setProperty('--studio-tree-row-size', `${stretchedRowSize}px`);
   }
 
   function syncUi() {
@@ -2928,7 +2990,10 @@ export function createStudio(container, {
     const camera = controller.scene.camera;
     const isOrthographic = camera.projection === 'orthographic';
     projectionPillButton.textContent = isOrthographic ? 'Orthographic' : 'Perspective';
-    projectionPillButton.setAttribute('aria-pressed', isOrthographic ? 'true' : 'false');
+    // The pill names the projection in use, so it is always the active chip of its row.
+    projectionPillButton.setAttribute('aria-pressed', 'true');
+    const activeViewChip = matchingViewChip(camera);
+    viewPresetButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.view === activeViewChip ? 'true' : 'false'));
     const lensFocalLength = cameraFocalLengthMillimetres(camera, { aspect: controller.viewportWidth / controller.viewportHeight });
     lensChips.forEach(chip => chip.setAttribute('aria-pressed', !isOrthographic && Math.abs(Number(chip.dataset.focal) - lensFocalLength) <= LENS_CHIP_TOLERANCE_MILLIMETRES ? 'true' : 'false'));
 
@@ -3500,9 +3565,11 @@ export function createStudio(container, {
   if (typeof ResizeObserver === 'function') {
     resizeObserver = new ResizeObserver(() => {
       syncCompactLayout();
+      fitTreeToWholeRows();
       requestFrame();
     });
     resizeObserver.observe(viewportElement);
+    resizeObserver.observe(outlinerTree);
   }
   if (typeof IntersectionObserver === 'function') {
     intersectionObserver = new IntersectionObserver(entries => {

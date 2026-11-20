@@ -9,11 +9,13 @@ import { tinyHdrBytes } from './helpers/tiny-hdr.js';
 import {
   PROPERTY_FIELDS,
   formatPropertyNumber,
+  choiceDisplayLabel,
   hdriChoiceLabel,
   motionPropertyOf,
   propertyDisplayRange,
   propertyDisplayValue,
   propertyFieldsFor,
+  propertyIsEnabled,
   propertyIsVisible,
   propertyNameOf,
   propertySectionsFor,
@@ -36,7 +38,7 @@ const EXPECTED_FIELDS = {
     'bloom.strength', 'bloom.threshold', 'bloom.radius', 'depthOfField.blur', 'depthOfField.focusDistance', 'motionBlur.shutter', 'motionBlur.objects',
   ],
   shadow: ['target', 'extent', 'distance', 'near', 'far'],
-  camera: ['projection', 'focalLength', 'sensorWidth', 'fov', 'orthoScale', 'near', 'far', 'shift', 'fStop', 'focusDistance', 'eye', 'target'],
+  camera: ['projection', 'focalLength', 'sensorWidth', 'fov', 'orthoScale', 'near', 'far', 'shift', 'depthOfFieldOn', 'fStop', 'focusDistance', 'eye', 'target'],
 };
 
 const CONTEXT = { aspect: 16 / 9 };
@@ -99,6 +101,7 @@ const SAMPLE_VALUES = {
   near: 0.3,
   far: 250,
   shift: [0.1, -0.2],
+  depthOfFieldOn: true,
   fStop: 4,
   focusDistance: 6,
   eye: [3, 2, 8],
@@ -281,6 +284,8 @@ test('the camera rows write the recipe camera in one undo step', () => {
     if (field.id === 'projection') {
       assert.equal(camera.projection, 'orthographic');
       assert.ok(camera.orthoScale > 0, 'the switch gives the orthographic view a size');
+    } else if (field.id === 'depthOfFieldOn') {
+      assert.equal(camera.fStop, 2.8, 'switching depth of field on writes the default f-stop');
     } else if (field.id === 'focalLength') {
       assert.equal(camera.focalLength, 85);
       assert.equal(camera.fov, undefined, 'a focal length replaces the field of view');
@@ -314,6 +319,44 @@ test('the projection row converts the lens, and a sensor width keeps the field o
   const camera = controller.exportRecipe().camera;
   assert.equal(camera.sensorWidth, 24);
   assert.ok(Math.abs(camera.focalLength - derived) < 1e-9);
+});
+
+test('the depth of field switch writes the default or last f-stop and clears it with the focus distance', () => {
+  const controller = makeController();
+  const switchRow = propertyFieldsFor('camera').find(field => field.id === 'depthOfFieldOn');
+  const source = () => controller.describeSceneObject('camera').source;
+  assert.equal(switchRow.read(source(), CONTEXT), false, 'off while the recipe has no f-stop');
+  controller.updateSceneCamera(switchRow.write(true, source(), CONTEXT));
+  assert.equal(controller.exportRecipe().camera.fStop, 2.8, 'on writes the default f-stop');
+  assert.equal(switchRow.read(source(), CONTEXT), true);
+  controller.updateSceneCamera({ focusDistance: 4 });
+  controller.updateSceneCamera(switchRow.write(false, source(), CONTEXT));
+  assert.equal(controller.exportRecipe().camera.fStop, undefined);
+  assert.equal(controller.exportRecipe().camera.focusDistance, undefined);
+  controller.updateSceneCamera(switchRow.write(true, source(), { ...CONTEXT, lastValueOf: id => (id === 'fStop' ? 5.6 : undefined) }));
+  assert.equal(controller.exportRecipe().camera.fStop, 5.6, 'on writes the last f-stop the panel showed');
+});
+
+test('the f-stop and focus distance rows stay on screen and lock while depth of field is off', () => {
+  const controller = makeController();
+  const rows = ['fStop', 'focusDistance'].map(id => propertyFieldsFor('camera').find(field => field.id === id));
+  for (const row of rows) {
+    assert.equal(propertyIsVisible(row, controller.describeSceneObject('camera').source), true, `${row.id} is visible`);
+    assert.equal(propertyIsEnabled(row, controller.describeSceneObject('camera').source), false, `${row.id} is locked while off`);
+  }
+  controller.updateSceneCamera({ fStop: 2.8 });
+  for (const row of rows) {
+    assert.equal(propertyIsEnabled(row, controller.describeSceneObject('camera').source), true, `${row.id} is editable once on`);
+  }
+});
+
+test('a choice shows its display label: known options keep their own spelling and others are capitalised', () => {
+  assert.equal(choiceDisplayLabel('aces'), 'ACES');
+  assert.equal(choiceDisplayLabel('agx'), 'AgX');
+  assert.equal(choiceDisplayLabel('neutral'), 'Neutral');
+  assert.equal(choiceDisplayLabel('standard'), 'Standard');
+  assert.equal(choiceDisplayLabel('sky-clouds'), 'Sky clouds');
+  assert.equal(choiceDisplayLabel('filmic'), 'Filmic');
 });
 
 test('clearing the f-stop removes it and its focus distance in one undo step', () => {

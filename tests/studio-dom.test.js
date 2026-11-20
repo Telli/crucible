@@ -649,6 +649,7 @@ test('the colour look select applies a view transform after loading its module',
   ui.tab('look').click();
   const select = ui.label('View transform');
   assert.deepEqual(select.children.map(option => option.value), [...VIEW_TRANSFORM_NAMES]);
+  assert.deepEqual(select.children.map(option => option.textContent), ['ACES', 'AgX', 'Neutral', 'Standard'], 'the options read as names while the recipe keeps its own values');
   const chosen = VIEW_TRANSFORM_NAMES.find(name => name !== select.value);
   select.value = chosen;
   dispatch(select, 'change');
@@ -664,8 +665,13 @@ test('Camera tab sets view presets, projection, lens, field of view and orthogra
   for (const [text, announcement] of [['Front', 'Front view'], ['Right', 'Right view'], ['Top', 'Top view'], ['Iso', 'Iso view']]) {
     byText(ui.root, text).click();
     assert.equal(ui.status(), announcement);
+    const activeViewChips = ['Front', 'Right', 'Top', 'Iso'].filter(name => byText(ui.root, name).getAttribute('aria-pressed') === 'true');
+    assert.deepEqual(activeViewChips, [text], 'the chip of the current view is active and the others are not');
   }
   assert.notDeepEqual(ui.controller.scene.camera.eye, eyeBefore);
+  ui.controller.orbitCamera({ deltaAzimuth: 0.5, deltaElevation: 0.3 });
+  assert.equal(['Front', 'Right', 'Top', 'Iso'].some(name => byText(ui.root, name).getAttribute('aria-pressed') === 'true'), false, 'a free orbit matches no view chip');
+  assert.equal(byText(ui.root, 'Perspective').getAttribute('aria-pressed'), 'true', 'the projection chip names the projection in use');
 
   const projectionPill = byText(ui.root, 'Perspective');
   projectionPill.click();
@@ -683,6 +689,12 @@ test('Camera tab sets view presets, projection, lens, field of view and orthogra
   lensButton.click();
   assert.equal(lensButton.getAttribute('aria-pressed'), 'true');
   assert.equal(byDataset(ui.root, 'focal', '35').getAttribute('aria-pressed'), 'false');
+  assert.equal(lensButton.textContent, '85 mm', 'a lens chip keeps its unit lower case');
+  assert.ok(STUDIO_CSS.includes('.crucible-studio-chips-row button[data-focal] { text-transform: none; }'), 'the stylesheet does not capitalise the unit of a lens chip');
+  ui.controller.setCameraLensMillimetres(85.4);
+  assert.equal(lensButton.getAttribute('aria-pressed'), 'true', 'within half a millimetre still counts');
+  ui.controller.setCameraLensMillimetres(70);
+  assert.equal(lensButton.getAttribute('aria-pressed'), 'false');
   ui.setSlider('Field of view', 70);
   assert.equal(ui.controller.scene.camera.fov, 70);
   assert.equal(ui.label('Field of view').parentNode.querySelector('output').textContent, '70');
@@ -2877,24 +2889,42 @@ test('the Camera tab edits focal length, sensor, clip planes, shift, depth of fi
   assert.equal(cameraOf().far, 300);
   editNumber(ui, 'Shift X', 0.2);
   assert.deepEqual(cameraOf().shift, [0.2, 0]);
-  assert.equal(ui.label('Focus distance').parentNode.hidden, true, 'no focus distance until an f-stop is set');
-  editNumber(ui, 'F-stop', 2.8);
-  assert.equal(cameraOf().fStop, 2.8);
-  assert.equal(ui.label('Focus distance').parentNode.hidden, false);
+  const depthSwitch = ui.label('Depth of field');
+  assert.equal(depthSwitch.getAttribute('aria-checked'), 'false');
+  assert.equal(ui.label('Focus distance').parentNode.hidden, false, 'the focus distance stays on screen while depth of field is off');
+  assert.equal(ui.label('Focus distance').parentNode.dataset.dimmed, 'true');
+  assert.equal(ui.label('Focus distance').disabled, true);
+  assert.equal(ui.label('F-stop').disabled, true);
+  assert.equal(ui.label('F-stop').value, '2.8', 'an off f-stop shows the default number, not the word Off');
+  assert.equal(ui.label('F-stop').placeholder, '');
+  depthSwitch.click();
+  assert.equal(cameraOf().fStop, 2.8, 'the switch writes the f-stop');
+  assert.equal(depthSwitch.getAttribute('aria-checked'), 'true');
+  assert.equal(ui.label('Focus distance').parentNode.dataset.dimmed, 'false');
+  assert.equal(ui.label('F-stop').disabled, false);
+  editNumber(ui, 'F-stop', 4);
+  assert.equal(cameraOf().fStop, 4);
   editNumber(ui, 'Focus distance', 5);
   assert.equal(cameraOf().focusDistance, 5);
   editNumber(ui, 'Eye X', 3);
   assert.equal(cameraOf().eye[0], 3);
   editNumber(ui, 'Target Y', 1);
   assert.equal(cameraOf().target[1], 1);
-  assert.equal(countUndoSteps(ui.controller), 9, 'each edit is one undo step');
+  assert.equal(countUndoSteps(ui.controller), 10, 'each edit is one undo step');
 
-  editNumber(ui, 'F-stop', '');
+  depthSwitch.click();
   assert.equal(cameraOf().fStop, undefined);
   assert.equal(cameraOf().focusDistance, undefined);
+  assert.equal(depthSwitch.getAttribute('aria-checked'), 'false');
+  assert.equal(ui.label('F-stop').value, '4', 'switched off, the f-stop keeps showing its last number');
+  depthSwitch.click();
+  assert.equal(cameraOf().fStop, 4, 'switched on again, it writes that last number');
+  assert.equal(ui.label('F-stop').value, '4');
+  editNumber(ui, 'F-stop', '');
+  assert.equal(cameraOf().fStop, undefined, 'an emptied f-stop field still clears the depth of field');
+  assert.equal(cameraOf().focusDistance, undefined);
   ui.controller.undo();
-  assert.equal(cameraOf().fStop, 2.8);
-  assert.equal(ui.label('F-stop').value, '2.8');
+  assert.equal(cameraOf().fStop, 4);
 
   ui.button('Ortho').click();
   assert.equal(cameraOf().projection, 'orthographic');
@@ -3197,7 +3227,10 @@ test('lengths, angles and lens values show a quiet unit beside the number and ke
   assert.equal(unitOf('focalLength'), 'mm');
   assert.equal(unitOf('near'), 'm');
   assert.equal(unitOf('fov'), '°', 'a slider shows its unit in the same slot as a number');
-  assert.equal(unitOf('fStop'), undefined, 'a ratio has no unit');
+  assert.equal(unitOf('fStop'), '', 'a ratio has no unit but keeps the slot, so its digits end where the others do');
+  const numericRows = [...ui.root.querySelectorAll('.crucible-studio-prop')].filter(row => ['number', 'slider'].includes(row.dataset.control));
+  assert.ok(numericRows.length > 5);
+  assert.ok(numericRows.every(row => row.querySelector('.crucible-studio-prop-unit')), 'every numeric row reserves the unit slot');
   editNumber(ui, 'Clip start', 0.123456);
   assert.equal(ui.label('Clip start').value, '0.123', 'at most three decimals are shown');
   assert.equal(ui.controller.scene.camera.near, 0.123456, 'what is stored is what was typed');
@@ -3259,4 +3292,12 @@ test('the Look tab shows the lighting presets on one row and the sun direction p
   const sunRow = byDataset(ui.root, 'property', 'direction');
   assert.equal(sunRow.querySelector('.crucible-studio-prop-label').textContent, 'Direction');
   assert.ok(sunRow.querySelector('.crucible-studio-sunpad'), 'the pad is in the direction row');
+});
+
+test('the stylesheet fades rows under a pinned group title and at the bottom of the panels, and keeps the label column wide enough', () => {
+  assert.ok(STUDIO_CSS.includes('container-type: scroll-state;'), 'a group title can tell when it is pinned');
+  assert.ok(STUDIO_CSS.includes('@container scroll-state(stuck: top)'), 'the fade under a title shows only while it is pinned');
+  assert.ok(STUDIO_CSS.includes('.crucible-studio-panels::after'), 'the panels fade at the bottom edge');
+  assert.ok(STUDIO_CSS.includes('grid-template-columns: minmax(min-content, 45%) minmax(0, 1fr);'), 'a label column grows to its label');
+  assert.ok(STUDIO_CSS.includes('scroll-snap-type: y mandatory;'), 'the Scene list scrolls a whole row at a time');
 });

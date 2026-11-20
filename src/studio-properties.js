@@ -21,6 +21,9 @@ import { DEFAULT_SPECULAR_ANTI_ALIASING, MAXIMUM_SPECULAR_ANTI_ALIASING } from '
 //   write          (value, source, context) => the patch for that object; undefined values remove a field
 //   motionProperty the name a motion track or driver uses for this field when it differs from id
 //   visibleWhen    (source) => false hides the row while it has no meaning (a focal length of an orthographic camera)
+//   enabledWhen    (source) => false dims the row and locks it while it stays on screen (the f-stop while depth of field is off)
+//   offValue       the number a clearable row shows while it is cleared and has shown none yet
+//   context        { aspect, lastValueOf(id) }: the shape of the viewport and the last number the panel showed for a row
 
 const POSITION_LIMIT = 1e6;
 const DEFAULT_SENSOR_WIDTH = 36;
@@ -48,7 +51,20 @@ export const PROPERTY_SECTIONS = Object.freeze({
 // The scene-level kinds read one record of the recipe: the environment (world, quality), the effects or the shadow.
 export const PROPERTY_SCENE_KINDS = Object.freeze(['world', 'quality', 'effects', 'shadow']);
 const DEFAULT_SUN_BOUNCE = 1;
-const HDRI_CHOICES = Object.freeze([{ value: null, label: 'None' }, ...BUNDLED_ENVIRONMENT_NAMES.map(name => ({ value: name, label: name }))]);
+// Recipe values stay as the recipe spells them; these are only the names a person reads.
+const CHOICE_DISPLAY_LABELS = Object.freeze({ aces: 'ACES', agx: 'AgX', neutral: 'Neutral', standard: 'Standard' });
+
+/** The name a choice shows: a known option's own spelling (aces is ACES), else the value with its first letter capitalised and dashes read as spaces. */
+export function choiceDisplayLabel(value) {
+  if (CHOICE_DISPLAY_LABELS[value]) {
+    return CHOICE_DISPLAY_LABELS[value];
+  }
+  const spaced = String(value).replace(/[-_]+/gu, ' ');
+  return `${spaced.charAt(0).toUpperCase()}${spaced.slice(1)}`;
+}
+
+const HDRI_CHOICES = Object.freeze([{ value: null, label: 'None' }, ...BUNDLED_ENVIRONMENT_NAMES.map(name => ({ value: name, label: choiceDisplayLabel(name) }))]);
+const DEFAULT_F_STOP = 2.8;
 const RADIANS_TO_DEGREES = 180 / Math.PI;
 const MAXIMUM_DISPLAYED_DECIMALS = 3;
 const HDRI_ID_PREFIX_LENGTH = 8;
@@ -266,14 +282,21 @@ const CAMERA_ROWS = [
     write: value => ({ shift: value }),
   },
   {
+    // Off clears the f-stop and the focus distance together, as an emptied f-stop field always did; on writes the last f-stop shown, else the default.
+    id: 'depthOfFieldOn', label: 'Depth of field', control: 'toggle', section: 'depthOfField', appliesTo: ['camera'],
+    read: camera => camera.fStop !== undefined,
+    write: (value, camera, context) => (value ? { fStop: context?.lastValueOf?.('fStop') ?? DEFAULT_F_STOP } : { fStop: undefined, focusDistance: undefined }),
+  },
+  {
     id: 'fStop', label: 'F-stop', control: 'number', section: 'depthOfField', appliesTo: ['camera'],
-    min: 0.7, max: 64, step: 0.1, clearable: true,
+    min: 0.7, max: 64, step: 0.1, clearable: true, offValue: DEFAULT_F_STOP,
+    enabledWhen: camera => camera.fStop !== undefined,
     read: camera => camera.fStop ?? null,
     write: value => (value === null ? { fStop: undefined, focusDistance: undefined } : { fStop: value }),
   },
   {
     id: 'focusDistance', label: 'Focus distance', control: 'number', section: 'depthOfField', appliesTo: ['camera'],
-    unit: 'm', min: 0.001, max: 1e6, step: 0.1, visibleWhen: camera => camera.fStop !== undefined,
+    unit: 'm', min: 0.001, max: 1e6, step: 0.1, enabledWhen: camera => camera.fStop !== undefined,
     read: camera => camera.focusDistance ?? distanceBetween(camera.eye, camera.target),
     write: value => ({ focusDistance: value }),
   },
@@ -426,6 +449,11 @@ export function propertySectionsFor(kind) {
 /** The name a motion track or driver gives this field. */
 export function motionPropertyOf(field) {
   return field.motionProperty ?? field.id;
+}
+
+/** Whether a row can be edited now: a row that names `enabledWhen` stays on screen, dimmed, while its condition fails. */
+export function propertyIsEnabled(field, source) {
+  return field.enabledWhen ? field.enabledWhen(source) : true;
 }
 
 export function propertyIsVisible(field, source) {

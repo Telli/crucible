@@ -5,6 +5,7 @@ import {
   motionPropertyOf,
   propertyDisplayRange,
   propertyDisplayValue,
+  propertyIsEnabled,
   propertyIsVisible,
   propertyNameOf,
   propertySectionsFor,
@@ -40,9 +41,11 @@ export function createPropertyPanel({ documentReference, controller, announce, b
   const element = createElement(documentReference, 'div', { className: 'crucible-studio-properties' });
   let shownKind = null;
   let controls = new Map();
+  // The last number each clearable row showed, so a cleared row can show it again and a switch can write it back.
+  let lastShownNumbers = new Map();
 
   function currentContext() {
-    return { aspect: controller.viewportWidth / controller.viewportHeight };
+    return { aspect: controller.viewportWidth / controller.viewportHeight, lastValueOf: id => lastShownNumbers.get(id) };
   }
 
   // Where the patch of each kind goes; every other kind is a light.
@@ -98,8 +101,9 @@ export function createPropertyPanel({ documentReference, controller, announce, b
     return container.querySelector('.crucible-studio-prop-head') ?? container.querySelector('.crucible-studio-field-head') ?? container;
   }
 
+  // Every numeric row has the slot, empty when it has no unit, so its digits end at the same place as the rows that do.
   function createUnitMark(field) {
-    return createElement(documentReference, 'span', { className: 'crucible-studio-prop-unit', textContent: field.unit, attributes: { 'aria-hidden': 'true' } });
+    return createElement(documentReference, 'span', { className: 'crucible-studio-prop-unit', textContent: field.unit ?? '', attributes: { 'aria-hidden': 'true' } });
   }
 
   function numberControl(field) {
@@ -109,7 +113,7 @@ export function createPropertyPanel({ documentReference, controller, announce, b
       min: String(range.min),
       max: String(range.max),
       step: String(range.step),
-      placeholder: field.clearable ? 'Off' : '',
+      placeholder: field.clearable && field.offValue === undefined ? 'Off' : '',
       attributes: { 'aria-label': propertyNameOf(field) },
     });
     input.addEventListener('change', () => {
@@ -122,11 +126,14 @@ export function createPropertyPanel({ documentReference, controller, announce, b
         commit(field, propertyStoredValue(field, typed));
       }
     });
-    const valueColumn = field.unit ? [input, createUnitMark(field)] : [input];
     return {
-      container: createPropertyLine(documentReference, createElement, field.label, ...valueColumn),
+      container: createPropertyLine(documentReference, createElement, field.label, input, createUnitMark(field)),
       setValue: value => {
-        input.value = value === null ? '' : propertyValueText(field, value);
+        if (value !== null) {
+          lastShownNumbers.set(field.id, value);
+        }
+        const shownValue = value ?? lastShownNumbers.get(field.id) ?? field.offValue ?? null;
+        input.value = shownValue === null ? '' : propertyValueText(field, shownValue);
       },
       setDisabled: disabled => {
         input.disabled = disabled;
@@ -152,7 +159,7 @@ export function createPropertyPanel({ documentReference, controller, announce, b
       commit(field, propertyStoredValue(field, shown));
     });
     return {
-      container: createPropertyLine(documentReference, createElement, field.label, input, output, ...(field.unit ? [createUnitMark(field)] : [])),
+      container: createPropertyLine(documentReference, createElement, field.label, input, output, createUnitMark(field)),
       setValue: value => {
         input.value = String(propertyDisplayValue(field, value));
         output.textContent = propertyValueText(field, value);
@@ -272,6 +279,7 @@ export function createPropertyPanel({ documentReference, controller, announce, b
   function rebuild(kind) {
     shownKind = kind;
     controls = new Map();
+    lastShownNumbers = new Map();
     element.replaceChildren(...propertySectionsFor(kind).map(buildSection));
   }
 
@@ -313,7 +321,9 @@ export function createPropertyPanel({ documentReference, controller, announce, b
       const driven = description.drivenProperties.has(motionPropertyOf(field));
       container.dataset.driven = driven ? 'true' : 'false';
       mark.hidden = !driven;
-      setDisabled(driven);
+      const enabled = propertyIsEnabled(field, description.source);
+      container.dataset.dimmed = enabled ? 'false' : 'true';
+      setDisabled(driven || !enabled);
       if (field.read) {
         setValue(field.read(description.source, context));
       }

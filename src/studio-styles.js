@@ -709,7 +709,10 @@ export const STUDIO_CSS = `
 .crucible-studio-tree {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 4px 6px 8px;
+  /* The list scrolls a whole row at a time, and studio.js sizes the rows so a whole number of them fills it. */
+  scroll-snap-type: y mandatory;
+  scroll-padding-block: 4px;
+  padding: 4px 6px 0;
   display: grid;
   align-content: start;
   gap: 1px;
@@ -717,6 +720,8 @@ export const STUDIO_CSS = `
 .crucible-studio-tree-row {
   display: flex;
   align-items: center;
+  min-block-size: var(--studio-tree-row-size, auto);
+  scroll-snap-align: start;
   gap: 2px;
   padding: 0 2px 0 6px;
   border-radius: 8px;
@@ -772,18 +777,27 @@ export const STUDIO_CSS = `
   .crucible-studio button.crucible-studio-tree-eye { opacity: 1; }
 }
 .crucible-studio-palette-section {
-  padding: 8px 12px 12px;
-}
-.crucible-studio-swatches {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  /* Two rows, then the swatches scroll: a scene with many materials must not squeeze the object list above it. */
-  max-block-size: 56px;
-  overflow-y: auto;
   flex-shrink: 0;
+  padding: 10px 12px 12px;
 }
+/* One row that scrolls sideways, so it never sits beside the list's own scrollbar. The padding keeps the ring of the chosen swatch inside the strip. */
+.crucible-studio-swatches {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+  padding: 4px;
+  margin: -4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.crucible-studio-swatches > button { flex: none; }
 .crucible-studio button.crucible-studio-swatch-btn,
 .crucible-studio button.crucible-studio-swatch-add {
   min-inline-size: 24px;
@@ -800,6 +814,7 @@ export const STUDIO_CSS = `
   box-shadow: 0 0 0 2px var(--studio-panel), 0 0 0 3.5px var(--studio-text);
 }
 .crucible-studio button.crucible-studio-swatch-add {
+  flex: none;
   color: var(--studio-muted);
   border: 1px dashed color-mix(in srgb, var(--studio-text) 30%, transparent);
 }
@@ -939,6 +954,18 @@ export const STUDIO_CSS = `
 .crucible-studio-panels {
   flex: 1 1 auto;
   overflow-y: auto;
+}
+/* Rows dissolve into the card at the bottom edge while more of the panel lies below, instead of being cut. */
+.crucible-studio-panels::after {
+  content: "";
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 3;
+  display: block;
+  block-size: 14px;
+  margin-block-start: -14px;
+  background: linear-gradient(to bottom, transparent, var(--studio-panel));
+  pointer-events: none;
 }
 .crucible-studio-panel-body {
   display: grid;
@@ -1121,6 +1148,21 @@ export const STUDIO_CSS = `
   color: var(--studio-text);
   text-align: start;
   cursor: pointer;
+  container-type: scroll-state;
+}
+/* While a title is pinned to the top, the rows scrolling under it dissolve over 12px instead of being sliced; the title itself stays opaque. */
+.crucible-studio button.crucible-studio-property-title::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 100%;
+  block-size: 12px;
+  background: linear-gradient(to bottom, var(--studio-panel), transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+@container scroll-state(stuck: top) {
+  .crucible-studio button.crucible-studio-property-title::after { opacity: 1; }
 }
 @media (hover: hover) {
   .crucible-studio button.crucible-studio-property-title:not([aria-disabled="true"]):not([aria-pressed="true"]):hover {
@@ -1146,13 +1188,14 @@ export const STUDIO_CSS = `
   --studio-value-edge: 8px;
   --studio-number-inset: calc(var(--studio-value-edge) + var(--studio-unit-slot) + 2px);
   display: grid;
-  grid-template-columns: minmax(0, 45%) minmax(0, 1fr);
+  /* A label is never cut: its column grows to the label when 45% is too narrow, and the head keeps a gap before the control. */
+  grid-template-columns: minmax(min-content, 45%) minmax(0, 1fr);
   column-gap: 8px;
   align-items: center;
   min-block-size: 28px;
 }
 .crucible-studio-prop[data-control="slider"] {
-  grid-template-columns: minmax(0, 45%) minmax(0, 1fr) 32px calc(var(--studio-unit-slot) + var(--studio-value-edge));
+  grid-template-columns: minmax(min-content, 45%) minmax(0, 1fr) 32px calc(var(--studio-unit-slot) + var(--studio-value-edge));
   column-gap: 6px;
 }
 .crucible-studio-prop[data-control="slider"] > output { margin-inline-end: -4px; }
@@ -1163,6 +1206,7 @@ export const STUDIO_CSS = `
   align-items: center;
   gap: 4px;
   min-inline-size: 0;
+  padding-inline-end: 6px;
   font-size: 11.5px;
   color: var(--studio-muted);
 }
@@ -1191,7 +1235,11 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-prop > input[type="number"]::-webkit-inner-spin-button,
 .crucible-studio-prop > input[type="number"]::-webkit-outer-spin-button { appearance: none; }
+/* A choice reads like a number: its text ends at the digits' edge and the arrow sits in the unit slot. */
 .crucible-studio-prop > select {
+  padding-inline-end: var(--studio-number-inset);
+  text-align: end;
+  text-align-last: end;
   background-position: calc(100% - 15px) 12px, calc(100% - 10px) 12px;
 }
 .crucible-studio-prop-unit {
@@ -1208,10 +1256,25 @@ export const STUDIO_CSS = `
   justify-self: start;
   margin-inline-end: 0;
 }
+/* A colour is a field like the number fields: same height, radius and soft fill, with its swatch ending at the digits' edge. */
 .crucible-studio-prop > input[type="color"] {
   inline-size: 100%;
-  block-size: 24px;
+  block-size: 28px;
+  padding: 4px var(--studio-number-inset) 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--studio-text) 7%, transparent);
 }
+.crucible-studio-prop > input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.crucible-studio-prop > input[type="color"]::-webkit-color-swatch {
+  flex: none;
+  inline-size: 44px;
+  margin-inline-start: auto;
+  border: 0;
+  border-radius: 5px;
+}
+/* A row whose condition fails (the f-stop while depth of field is off) stays readable but dimmed. */
+.crucible-studio-prop[data-dimmed="true"] > :not(.crucible-studio-prop-head) { opacity: 0.55; }
 .crucible-studio-prop > input[type="range"] { margin: 0; }
 .crucible-studio-prop > output {
   text-align: end;
@@ -1314,6 +1377,7 @@ export const STUDIO_CSS = `
   font-size: 11px;
   text-transform: capitalize;
 }
+.crucible-studio-chips-row button[data-focal] { text-transform: none; }
 .crucible-studio-driven-mark {
   display: inline-flex;
   align-items: center;
@@ -1356,6 +1420,21 @@ export const STUDIO_CSS = `
 }
 @media (prefers-reduced-motion: reduce) {
   .crucible-studio-switch-knob { transition: none; }
+}
+/* The Shots group is a plain heading in the type of a group title, indented to the titles' text, under the same group gap. */
+.crucible-studio-property-heading {
+  display: flex;
+  align-items: center;
+  min-block-size: 28px;
+  padding-inline-start: 18px;
+  font-family: var(--studio-font-heading);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--studio-text);
+}
+.crucible-studio-bookmark-list {
+  display: grid;
+  gap: 6px;
 }
 .crucible-studio-bookmark-row {
   display: flex;
