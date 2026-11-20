@@ -71,7 +71,7 @@ function mountStudio(testContext, { recipe = makeRecipe(), containerWidth = 0, d
     gizmo: viewport.querySelector('.crucible-studio-gizmo'),
     controller: studio.controller,
     label: label => byLabel(root, label),
-    button: text => root.querySelectorAll('button').find(candidate => candidate.textContent === text),
+    button: text => root.querySelectorAll('button').find(candidate => candidate.textContent === text || candidate.getAttribute('aria-label') === text),
     tool: tool => byDataset(root, 'tool', tool),
     tab: tab => byDataset(root, 'tab', tab),
     panel: tab => root.querySelector(`#crucible-studio-panel-${tab}`),
@@ -637,9 +637,9 @@ test('Look tab picks a lighting setup, drags the sun pad as one undo step and mo
   assert.equal(ui.studio.exportRecipe().effects.saturation, 0.6);
   ui.setSlider('Bloom', 0.5);
   assert.equal(ui.studio.exportRecipe().effects.bloom.strength, 0.5);
-  ui.setSlider('Fog', 0.02);
+  ui.setSlider('Fog density', 0.02);
   assert.equal(ui.studio.exportRecipe().environment.fogDensity, 0.02);
-  assert.equal(ui.label('Fog').parentNode.querySelector('output').textContent, '0.020');
+  assert.equal(ui.label('Fog density').parentNode.querySelector('output').textContent, '0.02', 'trailing zeros are trimmed');
   ui.dom.runAnimationFrames(10);
   assert.equal(ui.renderer.frames.at(-1).exposure, 1.4);
 });
@@ -2854,11 +2854,12 @@ test('the sun properties edit the key light, and the panel shows the sun when no
   dispatch(colour, 'input');
   dispatch(colour, 'change');
   assert.deepEqual(ui.studio.exportRecipe().environment.keyColor, hexToLinearRgb('#ff8000'));
-  editNumber(ui, 'Sun size', 0.03);
-  assert.equal(ui.studio.exportRecipe().environment.sunAngularRadius, 0.03);
+  editNumber(ui, 'Sun size', 1.5);
+  assert.ok(Math.abs(ui.studio.exportRecipe().environment.sunAngularRadius - (1.5 * Math.PI) / 180) < 1e-9, 'typed degrees are written as radians');
+  assert.equal(ui.label('Sun size').value, '1.5');
   ui.controller.undo();
   assert.equal(ui.studio.exportRecipe().environment.sunAngularRadius, undefined);
-  assert.equal(ui.label('Sun size').value, String(Math.round((Math.PI / 360) * 10000) / 10000), 'undo puts the control back');
+  assert.equal(ui.label('Sun size').value, '0.5', 'undo puts the control back, shown in degrees');
 });
 
 test('the Camera tab edits focal length, sensor, clip planes, shift, depth of field and the eye and target', testContext => {
@@ -2979,7 +2980,7 @@ test('the Look tab edits the world, fog, film, effects, shadow box and quality f
   const environmentOf = recipe => recipe.environment;
 
   expectOneUndoStep(ui, () => editNumber(ui, 'HDRI strength', 2), recipe => assert.equal(environmentOf(recipe).environmentIntensity, 2));
-  expectOneUndoStep(ui, () => editNumber(ui, 'HDRI rotation', 0.5), recipe => assert.equal(environmentOf(recipe).environmentRotation, 0.5));
+  expectOneUndoStep(ui, () => editNumber(ui, 'HDRI rotation', 90), recipe => assert.ok(Math.abs(environmentOf(recipe).environmentRotation - Math.PI / 2) < 1e-9, 'typed degrees are written as radians'));
   expectOneUndoStep(ui, () => editColour(ui, 'Sky top', '#ff0000'), recipe => assert.deepEqual(environmentOf(recipe).skyTop, [1, 0, 0]));
   expectOneUndoStep(ui, () => editColour(ui, 'Sky bottom', '#0000ff'), recipe => assert.deepEqual(environmentOf(recipe).skyBottom, [0, 0, 1]));
   expectOneUndoStep(ui, () => editNumber(ui, 'Daylight', 0.4), recipe => assert.equal(environmentOf(recipe).daylight, 0.4));
@@ -2988,7 +2989,7 @@ test('the Look tab edits the world, fog, film, effects, shadow box and quality f
   expectOneUndoStep(ui, () => ui.button('Show sky').click(), recipe => assert.equal(environmentOf(recipe).world, true));
   expectOneUndoStep(ui, () => ui.button('Ground').click(), recipe => assert.equal(environmentOf(recipe).ground, false));
 
-  expectOneUndoStep(ui, () => ui.setSlider('Fog', 0.02), recipe => assert.equal(environmentOf(recipe).fogDensity, 0.02));
+  expectOneUndoStep(ui, () => ui.setSlider('Fog density', 0.02), recipe => assert.equal(environmentOf(recipe).fogDensity, 0.02));
   expectOneUndoStep(ui, () => editColour(ui, 'Fog color', '#00ff00'), recipe => assert.deepEqual(environmentOf(recipe).fogColor, [0, 1, 0]));
   expectOneUndoStep(ui, () => editNumber(ui, 'Volume density', 0.3), recipe => assert.equal(environmentOf(recipe).volumeFog.density, 0.3));
   expectOneUndoStep(ui, () => editColour(ui, 'Volume color', '#ffffff'), recipe => assert.deepEqual(environmentOf(recipe).volumeFog.color, [1, 1, 1]));
@@ -3055,6 +3056,7 @@ test('a catalog HDRI the list lacks shows as the current value', async testConte
   assert.equal(shown.value, 'b'.repeat(64));
   assert.equal(shown.children.at(-1).disabled, true);
   assert.equal(shown.children.length, 4);
+  assert.equal(shown.children.at(-1).textContent, 'Custom bbbbbbbb', 'a raw hash is not shown');
 });
 
 test('a change an agent makes from outside shows in the world, effects, shadow and quality controls', async testContext => {
@@ -3070,23 +3072,23 @@ test('a change an agent makes from outside shows in the world, effects, shadow a
   agentRecipe.effects.bloom = { strength: 0.7, threshold: 3, radius: 2 };
   agentRecipe.shadow.extent = 9;
   await ui.studio.loadExternalTextFile(JSON.stringify(agentRecipe), { filePath: null, agent: true });
-  assert.equal(ui.label('Fog').value, '0.05');
+  assert.equal(ui.label('Fog density').value, '0.05');
   assert.equal(ui.label('Sky top').value, '#00ff00');
   assert.equal(ui.label('Volume density').value, '0.9');
   assert.equal(ui.label('Sun bounce').value, '3');
-  assert.equal(ui.button('Object reflections').getAttribute('aria-pressed'), 'false');
+  assert.equal(ui.button('Object reflections').getAttribute('aria-checked'), 'false');
   assert.equal(ui.label('Vignette').value, '0.4');
   assert.equal(ui.label('Bloom threshold').value, '3');
   assert.equal(ui.label('Shadow extent').value, '9');
 
   ui.controller.updateLook({ environment: { fogDensity: 0.01 }, effects: { vignette: 0.1 } });
-  assert.equal(ui.label('Fog').value, '0.01', 'a controller op shows too');
+  assert.equal(ui.label('Fog density').value, '0.01', 'a controller op shows too');
   assert.equal(ui.label('Vignette').value, '0.1');
   ui.controller.updateSceneShadow({ extent: 4 });
   assert.equal(ui.label('Shadow extent').value, '4');
 });
 
-test('property groups fold, start with Quality and Shadows closed, and stay as a person left them', testContext => {
+test('property groups fold, start with only the first group open, and stay as a person left them', testContext => {
   const saved = new Map();
   const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
   const ui = mountStudio(testContext, { preferenceStorage });
@@ -3094,26 +3096,24 @@ test('property groups fold, start with Quality and Shadows closed, and stay as a
   const section = (target, id) => byDataset(target.root, 'section', id);
   const rowsOf = (target, id) => section(target, id).querySelector('.crucible-studio-property-rows');
   const titleOf = (target, id) => section(target, id).querySelector('.crucible-studio-property-title');
-  for (const id of ['sun', 'world', 'atmosphere', 'film', 'effects']) {
-    assert.equal(rowsOf(ui, id).hidden, false, `${id} starts open`);
-    assert.equal(titleOf(ui, id).getAttribute('aria-expanded'), 'true');
-  }
-  for (const id of ['quality', 'sceneShadow']) {
+  assert.equal(rowsOf(ui, 'sun').hidden, false, 'the first group of the tab starts open');
+  assert.equal(titleOf(ui, 'sun').getAttribute('aria-expanded'), 'true');
+  for (const id of ['world', 'atmosphere', 'film', 'effects', 'quality', 'sceneShadow']) {
     assert.equal(rowsOf(ui, id).hidden, true, `${id} starts closed`);
     assert.equal(titleOf(ui, id).getAttribute('aria-expanded'), 'false');
   }
 
   titleOf(ui, 'quality').click();
-  titleOf(ui, 'world').click();
+  titleOf(ui, 'sun').click();
   assert.equal(rowsOf(ui, 'quality').hidden, false);
-  assert.equal(rowsOf(ui, 'world').hidden, true);
-  assert.deepEqual(JSON.parse(saved.get('crucible-studio-preferences')).propertyGroupsOpen, { quality: true, world: false });
-  assert.deepEqual(ui.studio.preferences.propertyGroupsOpen, { quality: true, world: false });
+  assert.equal(rowsOf(ui, 'sun').hidden, true);
+  assert.deepEqual(JSON.parse(saved.get('crucible-studio-preferences')).propertyGroupsOpen, { quality: true, sun: false });
+  assert.deepEqual(ui.studio.preferences.propertyGroupsOpen, { quality: true, sun: false });
 
   const returning = mountStudio(testContext, { sharedDom: ui.dom, preferenceStorage });
   returning.tab('look').click();
   assert.equal(rowsOf(returning, 'quality').hidden, false, 'the next visit keeps Quality open');
-  assert.equal(rowsOf(returning, 'world').hidden, true, 'and World folded');
+  assert.equal(rowsOf(returning, 'sun').hidden, true, 'and Sun folded');
   assert.equal(rowsOf(returning, 'sceneShadow').hidden, true);
 });
 
@@ -3146,7 +3146,7 @@ test('fields an environment or effects track drives are disabled with a mark in 
   };
   const ui = mountStudio(testContext, { recipe });
   ui.tab('look').click();
-  for (const label of ['Fog', 'Sky top', 'Volume density', 'Exposure', 'DoF focus']) {
+  for (const label of ['Fog density', 'Sky top', 'Volume density', 'Exposure', 'DoF focus']) {
     const control = ui.label(label);
     assert.equal(control.disabled, true, `${label} is disabled`);
     assert.equal(control.parentNode.dataset.driven, 'true');
@@ -3155,4 +3155,60 @@ test('fields an environment or effects track drives are disabled with a mark in 
   for (const label of ['Fog color', 'Contrast', 'DoF blur', 'Sky bottom']) {
     assert.equal(ui.label(label).disabled, false, `${label} stays editable`);
   }
+});
+
+test('the Camera tab opens on the Lens group alone, with the lens presets as its first row', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  const sectionOf = id => byDataset(ui.root, 'section', id);
+  const rowsOf = id => sectionOf(id).querySelector('.crucible-studio-property-rows');
+  assert.equal(rowsOf('lens').hidden, false);
+  assert.equal(rowsOf('depthOfField').hidden, true);
+  assert.equal(rowsOf('transform').hidden, true);
+  assert.equal(rowsOf('lens').children[0].getAttribute('aria-label'), 'Lens presets', 'the presets lead the group');
+  assert.deepEqual(rowsOf('lens').children[0].querySelectorAll('button').map(button => button.textContent), ['24 mm', '35 mm', '50 mm', '85 mm']);
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-field-head').filter(head => head.textContent === 'Lens').length, 0, 'no second Lens caption');
+});
+
+test('each property is one line: a label and its control in one row, and a switch for every toggle', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const rowOf = id => byDataset(ui.root, 'property', id);
+  const fogRow = rowOf('fogDensity');
+  assert.equal(fogRow.querySelector('.crucible-studio-prop-label').textContent, 'Density');
+  assert.equal(fogRow.querySelector('.crucible-studio-prop-label').title, 'Density', 'a label that is cut short still says what it is');
+  assert.equal(fogRow.querySelector('input').parentNode, fogRow, 'the control sits in the row beside its label');
+
+  const showSky = ui.button('Show sky');
+  assert.equal(showSky.getAttribute('role'), 'switch');
+  assert.equal(showSky.getAttribute('aria-checked'), 'false');
+  showSky.click();
+  assert.equal(ui.studio.exportRecipe().environment.world, true);
+  assert.equal(showSky.getAttribute('aria-checked'), 'true');
+  showSky.click();
+  assert.equal(showSky.getAttribute('aria-checked'), 'false');
+  assert.equal(rowOf('world').querySelector('.crucible-studio-prop-label').textContent, 'Show sky');
+});
+
+test('lengths, angles and lens values show a quiet unit beside the number and keep the label plain', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  const unitOf = id => byDataset(ui.root, 'property', id).querySelector('.crucible-studio-prop-unit')?.textContent;
+  assert.equal(unitOf('focalLength'), 'mm');
+  assert.equal(unitOf('near'), 'm');
+  assert.equal(byDataset(ui.root, 'property', 'fov').querySelector('output').dataset.unit, '°');
+  assert.equal(unitOf('fStop'), undefined, 'a ratio has no unit');
+  editNumber(ui, 'Clip start', 0.123456);
+  assert.equal(ui.label('Clip start').value, '0.123', 'at most three decimals are shown');
+  assert.equal(ui.controller.scene.camera.near, 0.123456, 'what is stored is what was typed');
+});
+
+test('the Look tab shows the lighting presets on one row and the sun direction pad beside its label', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const presets = ui.label('Lighting setup');
+  assert.equal(presets.querySelectorAll('button').length, LIGHTING_SETUP_NAMES.length);
+  const sunRow = byDataset(ui.root, 'property', 'direction');
+  assert.equal(sunRow.querySelector('.crucible-studio-prop-label').textContent, 'Direction');
+  assert.ok(sunRow.querySelector('.crucible-studio-sunpad'), 'the pad is in the direction row');
 });

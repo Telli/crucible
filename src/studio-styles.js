@@ -569,8 +569,11 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-side > .crucible-studio-outliner {
   flex-shrink: 0;
-  max-block-size: 42%;
+  max-block-size: 35%;
 }
+/* Properties takes the rest of the column, down to its bottom margin. */
+.crucible-studio-side > .crucible-studio-inspector { flex: 1 1 0; }
+.crucible-studio[data-inspector-minimized="true"] .crucible-studio-side > .crucible-studio-inspector { flex: 0 0 auto; }
 .crucible-studio[data-scene-sized="true"]:not([data-outliner-minimized="true"]) .crucible-studio-side > .crucible-studio-outliner {
   block-size: var(--studio-scene-share);
   max-block-size: none;
@@ -1066,35 +1069,47 @@ export const STUDIO_CSS = `
   block-size: 14px;
 }
 .crucible-studio-viewcube {
-  display: grid;
+  display: flex;
   gap: 4px;
 }
 .crucible-studio-viewcube-row {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
 }
 .crucible-studio-viewcube button {
   min-inline-size: 0;
-  padding: 3px 6px;
-  font-size: 11.5px;
+  min-block-size: 26px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+/* The property panels: one line per property, the label on the left and the control in a value column on the right. */
+.crucible-studio-panel-rows {
+  gap: 4px;
+  padding-block-end: 8px;
 }
 .crucible-studio-properties {
   display: grid;
-  gap: 16px;
 }
 .crucible-studio-property-section {
   display: grid;
-  gap: 10px;
+  align-content: start;
 }
 .crucible-studio-property-title {
-  display: flex;
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
-  gap: 6px;
   inline-size: 100%;
+  min-block-size: 28px;
+  margin-block-start: 10px;
   padding: 0;
   border: 0;
-  background: none;
+  border-radius: 0;
+  background: var(--studio-panel);
   font-family: var(--studio-font-heading);
   font-size: 12px;
   font-weight: 600;
@@ -1111,10 +1126,122 @@ export const STUDIO_CSS = `
 .crucible-studio-property-section[data-open="true"] .crucible-studio-property-title .crucible-studio-icon { transform: rotate(90deg); }
 .crucible-studio-property-rows {
   display: grid;
-  gap: 10px;
+  gap: 5px;
+  padding-block-end: 2px;
 }
 .crucible-studio-properties[hidden], .crucible-studio-properties [hidden] { display: none; }
-.crucible-studio-vector[data-axes="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.crucible-studio-prop {
+  display: grid;
+  grid-template-columns: minmax(0, 45%) minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: center;
+  min-block-size: 28px;
+}
+.crucible-studio-prop[data-control="slider"] { grid-template-columns: minmax(0, 45%) minmax(0, 1fr) 44px; }
+.crucible-studio-prop-head {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-inline-size: 0;
+  font-size: 11.5px;
+  color: var(--studio-muted);
+}
+.crucible-studio-prop-label {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crucible-studio-prop > :is(input, select, button, svg) { min-inline-size: 0; }
+.crucible-studio-prop > input[type="number"],
+.crucible-studio-prop > select,
+.crucible-studio-prop > input[type="color"],
+.crucible-studio-prop > .crucible-studio-switch,
+.crucible-studio-prop-unit { grid-column: 2; grid-row: 1; }
+.crucible-studio-prop > input[type="number"],
+.crucible-studio-prop > select {
+  min-block-size: 28px;
+  padding-block: 3px;
+}
+.crucible-studio-prop > input[type="number"] {
+  padding-inline-end: 8px;
+  text-align: end;
+  appearance: textfield;
+}
+.crucible-studio-prop:has(.crucible-studio-prop-unit) > input[type="number"] { padding-inline-end: 26px; }
+.crucible-studio-prop > input[type="number"]::-webkit-inner-spin-button,
+.crucible-studio-prop > input[type="number"]::-webkit-outer-spin-button { appearance: none; }
+.crucible-studio-prop > select {
+  background-position: calc(100% - 15px) 12px, calc(100% - 10px) 12px;
+}
+.crucible-studio-prop-unit {
+  justify-self: end;
+  margin-inline-end: 9px;
+  font-size: 11px;
+  color: var(--studio-muted);
+  pointer-events: none;
+}
+.crucible-studio-prop > input[type="color"] {
+  inline-size: 100%;
+  block-size: 24px;
+}
+.crucible-studio-prop > input[type="range"] { margin: 0; }
+.crucible-studio-prop > output {
+  text-align: end;
+  white-space: nowrap;
+}
+.crucible-studio-prop > output[data-unit]::after {
+  content: attr(data-unit);
+  margin-inline-start: 1px;
+  color: var(--studio-muted);
+}
+.crucible-studio-prop[data-control="sunpad"] .crucible-studio-prop-head {
+  align-self: start;
+  padding-block-start: 6px;
+}
+.crucible-studio-prop .crucible-studio-sunpad {
+  inline-size: 72px;
+  block-size: 72px;
+  justify-self: end;
+}
+.crucible-studio-prop > .crucible-studio-switch { justify-self: end; }
+.crucible-studio button.crucible-studio-switch {
+  justify-content: flex-start;
+  min-inline-size: 34px;
+  inline-size: 34px;
+  min-block-size: 20px;
+  block-size: 20px;
+  padding: 2px;
+  border: 1.5px solid var(--studio-muted);
+  border-radius: 999px;
+  background: transparent;
+}
+.crucible-studio-switch-knob {
+  inline-size: 13px;
+  block-size: 13px;
+  border-radius: 999px;
+  background: var(--studio-muted);
+  transition: transform 120ms ease-out;
+}
+.crucible-studio button.crucible-studio-switch[aria-checked="true"] {
+  border-color: var(--studio-text);
+  background: var(--studio-text);
+}
+.crucible-studio-switch[aria-checked="true"] .crucible-studio-switch-knob {
+  background: var(--studio-bg);
+  transform: translateX(13px);
+}
+.crucible-studio-properties .crucible-studio-field { gap: 4px; }
+.crucible-studio-chips-row { flex-wrap: nowrap; }
+.crucible-studio-chips-row button {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  min-block-size: 26px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
 .crucible-studio-driven-mark {
   display: inline-flex;
   align-items: center;
@@ -1135,6 +1262,14 @@ export const STUDIO_CSS = `
   border: 1px solid var(--studio-border);
   cursor: crosshair;
   touch-action: none;
+}
+/* The scroll areas of the panel column share one thin, arrowless scrollbar in the Studio colours. */
+.crucible-studio-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--studio-text) 30%, transparent) transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .crucible-studio-switch-knob { transition: none; }
 }
 .crucible-studio-bookmark-row {
   display: flex;

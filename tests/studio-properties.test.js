@@ -6,7 +6,20 @@ import { createStudioController } from '../src/studio.js';
 import { parseRadianceHdr } from '../src/hdri.js';
 import { registerCatalogEnvironment } from '../src/look-catalog.js';
 import { tinyHdrBytes } from './helpers/tiny-hdr.js';
-import { PROPERTY_FIELDS, PROPERTY_SECTIONS_CLOSED_BY_DEFAULT, motionPropertyOf, propertyFieldsFor, propertyIsVisible, propertySectionsFor } from '../src/studio-properties.js';
+import {
+  PROPERTY_FIELDS,
+  formatPropertyNumber,
+  hdriChoiceLabel,
+  motionPropertyOf,
+  propertyDisplayRange,
+  propertyDisplayValue,
+  propertyFieldsFor,
+  propertyIsVisible,
+  propertyNameOf,
+  propertySectionsFor,
+  propertyStoredValue,
+  propertyValueText,
+} from '../src/studio-properties.js';
 
 const EXPECTED_FIELDS = {
   point: ['color', 'intensity', 'radius', 'range', 'castShadow', 'softFalloff', 'position'],
@@ -112,7 +125,6 @@ test('the property table has a row for every light, sun and camera field a perso
   assert.deepEqual(propertySectionsFor('effects').map(section => section.title), ['Film', 'Effects']);
   assert.deepEqual(propertySectionsFor('quality').map(section => section.title), ['Quality']);
   assert.deepEqual(propertySectionsFor('shadow').map(section => section.title), ['Shadows']);
-  assert.deepEqual([...PROPERTY_SECTIONS_CLOSED_BY_DEFAULT], ['sceneShadow', 'quality']);
 });
 
 const SCENE_SAMPLE_VALUES = {
@@ -377,4 +389,76 @@ test('an outside change to the recipe shows in what a row reads', () => {
   controller.loadRecipe(outsideRecipe);
   assert.equal(intensityRow.read(controller.describeSceneObject('point:0').source, CONTEXT), 11);
   assert.equal(propertyFieldsFor('camera').find(field => field.id === 'fStop').read(controller.describeSceneObject('camera').source, CONTEXT), 5);
+});
+
+const fieldOf = (kind, id) => propertyFieldsFor(kind).find(field => field.id === id);
+
+test('numbers show three decimals at most with trailing zeros trimmed', () => {
+  assert.equal(formatPropertyNumber(46.3241), '46.324');
+  assert.equal(formatPropertyNumber(0.4), '0.4');
+  assert.equal(formatPropertyNumber(0.006), '0.006');
+  assert.equal(formatPropertyNumber(2.9), '2.9');
+  assert.equal(formatPropertyNumber(100), '100');
+  assert.equal(formatPropertyNumber(-0.0001), '0');
+  assert.equal(formatPropertyNumber(Number.NaN), '');
+});
+
+test('a radian field shows and edits in degrees and writes the recipe back in radians', () => {
+  for (const [kind, id] of [['world', 'environmentRotation'], ['sun', 'sunAngularRadius']]) {
+    const field = fieldOf(kind, id);
+    assert.equal(field.unit, '°', id);
+    const stored = 0.5;
+    const shown = propertyDisplayValue(field, stored);
+    assert.ok(Math.abs(shown - (stored * 180) / Math.PI) < 1e-12, id);
+    assert.ok(Math.abs(propertyStoredValue(field, shown) - stored) < 1e-12, `${id} round trip`);
+    assert.ok(Math.abs(propertyStoredValue(field, 90) - Math.PI / 2) < 1e-12, `${id} 90 degrees is a quarter turn`);
+  }
+  assert.equal(propertyValueText(fieldOf('sun', 'sunAngularRadius'), Math.PI / 360), '0.5');
+  assert.equal(propertyValueText(fieldOf('world', 'environmentRotation'), 2.9), '166.158');
+  assert.deepEqual(propertyDisplayRange(fieldOf('world', 'environmentRotation')).step, 1);
+});
+
+test('a row without a scale shows and stores the same number', () => {
+  const field = fieldOf('camera', 'focalLength');
+  assert.equal(propertyDisplayValue(field, 35), 35);
+  assert.equal(propertyStoredValue(field, 35), 35);
+  assert.deepEqual(propertyDisplayRange(field), { min: field.min, max: field.max, step: field.step });
+});
+
+test('units sit in the row, not in its label, and each length, angle and lens row names one', () => {
+  const expectedUnits = {
+    'camera:focalLength': 'mm', 'camera:sensorWidth': 'mm', 'camera:fov': '°', 'camera:near': 'm', 'camera:far': 'm', 'camera:focusDistance': 'm',
+    'sun:sunAngularRadius': '°', 'world:environmentRotation': '°', 'spot:angle': '°', 'point:radius': 'm', 'point:range': 'm', 'area:width': 'm',
+    'shadow:extent': 'm', 'shadow:distance': 'm', 'shadow:near': 'm', 'shadow:far': 'm',
+  };
+  for (const [key, unit] of Object.entries(expectedUnits)) {
+    const [kind, id] = key.split(':');
+    assert.equal(fieldOf(kind, id).unit, unit, key);
+  }
+  for (const field of PROPERTY_FIELDS) {
+    assert.ok(!/(?:mm|°)$/u.test(field.label), `${field.id} label "${field.label}" carries no unit`);
+  }
+});
+
+test('a short label keeps a full name for a screen reader, and the full names are unique', () => {
+  assert.equal(fieldOf('sun', 'keyIntensity').label, 'Strength');
+  assert.equal(propertyNameOf(fieldOf('sun', 'keyIntensity')), 'Sun strength');
+  assert.equal(propertyNameOf(fieldOf('world', 'fogDensity')), 'Fog density');
+  assert.equal(fieldOf('world', 'fogDensity').label, 'Density');
+  const names = PROPERTY_FIELDS.map(field => propertyNameOf(field));
+  assert.equal(new Set(names).size, names.length, 'no two rows share a name, so a label finds one control');
+});
+
+test('the rows the brief names carry the short labels', () => {
+  const labelsOf = (kind, section) => propertySectionsFor(kind).find(candidate => candidate.id === section).fields.map(field => field.label);
+  assert.deepEqual(labelsOf('sun', 'sun'), ['Direction', 'Strength', 'Color', 'Size']);
+  assert.deepEqual(labelsOf('world', 'world'), ['HDRI', 'Show sky', 'Ground', 'Strength', 'Rotation', 'Sky top', 'Sky bottom', 'Daylight', 'Fill', 'Ambient']);
+  assert.deepEqual(labelsOf('world', 'atmosphere'), ['Density', 'Color', 'Volume density', 'Volume color', 'Anisotropy', 'Steps', 'Noise amount', 'Noise scale', 'Volume distance']);
+});
+
+test('an HDRI shows its catalog name, else Custom and the first eight characters of its id', () => {
+  const id = 'c18aa403' + 'e'.repeat(56);
+  assert.equal(hdriChoiceLabel(id), 'Custom c18aa403');
+  assert.equal(hdriChoiceLabel(id, { [id]: 'Harbour dusk' }), 'Harbour dusk');
+  assert.equal(hdriChoiceLabel(id, { other: 'Harbour dusk' }), 'Custom c18aa403');
 });

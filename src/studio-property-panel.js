@@ -1,18 +1,40 @@
-import { directionToSunAngles, hexToLinearRgb, linearRgbToHex, roundValue } from './studio-controller.js';
-import { motionPropertyOf, PROPERTY_SECTIONS_CLOSED_BY_DEFAULT, propertyIsVisible, propertySectionsFor } from './studio-properties.js';
+import { directionToSunAngles, hexToLinearRgb, linearRgbToHex } from './studio-controller.js';
+import {
+  formatPropertyNumber,
+  hdriChoiceLabel,
+  motionPropertyOf,
+  propertyDisplayRange,
+  propertyDisplayValue,
+  propertyIsVisible,
+  propertyNameOf,
+  propertySectionsFor,
+  propertyStoredValue,
+  propertyValueText,
+} from './studio-properties.js';
 
-const DISPLAY_PRECISION = 10000;
 const DRIVEN_LABEL = 'Animated by a motion track';
+
+/**
+ * One line of a property panel: the label on the left and the control in the value column on the right.
+ * `controls` are the elements of the value column, in order; the line is a grid of the label and them.
+ */
+export function createPropertyLine(documentReference, createElement, label, ...controls) {
+  const head = createElement(documentReference, 'div', { className: 'crucible-studio-prop-head' }, createElement(documentReference, 'span', { className: 'crucible-studio-prop-label', textContent: label, title: label }));
+  return createElement(documentReference, 'div', { className: 'crucible-studio-prop' }, head, ...controls);
+}
 
 /**
  * Draws the property rows of one scene object from the table in studio-properties.js and keeps them in step with the recipe.
  * The panel shows whatever object `resolveKey` names; `sync` re-reads the recipe, so an edit an agent makes shows up there.
  * `builders` are the control builders of studio.js, handed in so both draw the same controls.
  * `groups` ({ isOpen(id, openByDefault), setOpen(id, open) }) remembers which section titles a person folded.
+ * `opensFirstGroup` starts the panel's first group open; every other group starts folded.
+ * `leadingRows` ({ [sectionId]: element }) puts an element as the first row of that section.
+ * `catalogNames` ({ [id]: name }) names the catalog HDRIs a scene may use.
  * `prepareRecipe` loads what a choice needs before it is written (the file of an HDRI), for a row that names a `preparation`.
  */
-export function createPropertyPanel({ documentReference, controller, announce, builders, resolveKey, groups, prepareRecipe }) {
-  const { createElement, createIcon, createSliderField, createVectorRow, createSunPad } = builders;
+export function createPropertyPanel({ documentReference, controller, announce, builders, resolveKey, groups, prepareRecipe, opensFirstGroup = false, leadingRows = {}, catalogNames = {} }) {
+  const { createElement, createIcon, createVectorRow, createSunPad } = builders;
   const element = createElement(documentReference, 'div', { className: 'crucible-studio-properties' });
   let shownKind = null;
   let controls = new Map();
@@ -71,33 +93,38 @@ export function createPropertyPanel({ documentReference, controller, announce, b
   }
 
   function headOf(container) {
-    return container.querySelector('.crucible-studio-field-head') ?? container;
+    return container.querySelector('.crucible-studio-prop-head') ?? container.querySelector('.crucible-studio-field-head') ?? container;
+  }
+
+  function createUnitMark(field) {
+    return createElement(documentReference, 'span', { className: 'crucible-studio-prop-unit', textContent: field.unit, attributes: { 'aria-hidden': 'true' } });
   }
 
   function numberControl(field) {
+    const range = propertyDisplayRange(field);
     const input = createElement(documentReference, 'input', {
       type: 'number',
-      min: String(field.min),
-      max: String(field.max),
-      step: String(field.step),
+      min: String(range.min),
+      max: String(range.max),
+      step: String(range.step),
       placeholder: field.clearable ? 'Off' : '',
-      attributes: { 'aria-label': field.label },
+      attributes: { 'aria-label': propertyNameOf(field) },
     });
     input.addEventListener('change', () => {
       if (input.value === '' && field.clearable) {
         commit(field, null);
         return;
       }
-      const numeric = Number(input.value);
-      if (input.value !== '' && Number.isFinite(numeric)) {
-        commit(field, numeric);
+      const typed = Number(input.value);
+      if (input.value !== '' && Number.isFinite(typed)) {
+        commit(field, propertyStoredValue(field, typed));
       }
     });
-    const container = createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'div', { className: 'crucible-studio-field-head' }, createElement(documentReference, 'span', { textContent: field.label })), input);
+    const valueColumn = field.unit ? [input, createUnitMark(field)] : [input];
     return {
-      container,
+      container: createPropertyLine(documentReference, createElement, field.label, ...valueColumn),
       setValue: value => {
-        input.value = value === null ? '' : String(roundValue(value, DISPLAY_PRECISION));
+        input.value = value === null ? '' : propertyValueText(field, value);
       },
       setDisabled: disabled => {
         input.disabled = disabled;
@@ -105,17 +132,40 @@ export function createPropertyPanel({ documentReference, controller, announce, b
     };
   }
 
+  // A bounded number: a slim slider with its value beside it on the same line.
   function sliderControl(field) {
-    const slider = createSliderField(documentReference, field.label, { min: field.min, max: field.max, step: field.step, value: field.min }, value => commit(field, value));
-    return { container: slider.container, setValue: slider.setValue, setDisabled: disabled => { slider.input.disabled = disabled; } };
+    const range = propertyDisplayRange(field);
+    const output = createElement(documentReference, 'output', { dataset: field.unit ? { unit: field.unit } : {} });
+    const input = createElement(documentReference, 'input', {
+      type: 'range',
+      min: String(range.min),
+      max: String(range.max),
+      step: String(range.step),
+      value: String(range.min),
+      attributes: { 'aria-label': propertyNameOf(field) },
+    });
+    input.addEventListener('input', () => {
+      const shown = Number(input.value);
+      output.textContent = formatPropertyNumber(shown);
+      commit(field, propertyStoredValue(field, shown));
+    });
+    return {
+      container: createPropertyLine(documentReference, createElement, field.label, input, output),
+      setValue: value => {
+        input.value = String(propertyDisplayValue(field, value));
+        output.textContent = propertyValueText(field, value);
+      },
+      setDisabled: disabled => {
+        input.disabled = disabled;
+      },
+    };
   }
 
   function colourControl(field) {
-    const input = createElement(documentReference, 'input', { type: 'color', value: '#ffffff', attributes: { 'aria-label': field.label } });
+    const input = createElement(documentReference, 'input', { type: 'color', value: '#ffffff', attributes: { 'aria-label': propertyNameOf(field) } });
     input.addEventListener('input', () => commit(field, hexToLinearRgb(input.value)));
-    const container = createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: field.label }), input);
     return {
-      container,
+      container: createPropertyLine(documentReference, createElement, field.label, input),
       setValue: value => {
         input.value = linearRgbToHex(value);
       },
@@ -125,13 +175,18 @@ export function createPropertyPanel({ documentReference, controller, announce, b
     };
   }
 
+  // A switch: its knob sits at the right and its track is filled when on, at the left and empty when off.
   function toggleControl(field) {
-    const button = createElement(documentReference, 'button', { type: 'button', textContent: field.label, attributes: { 'aria-pressed': 'false' } });
-    button.addEventListener('click', () => commit(field, button.getAttribute('aria-pressed') !== 'true'));
-    const container = createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, button);
+    const knob = createElement(documentReference, 'span', { className: 'crucible-studio-switch-knob', attributes: { 'aria-hidden': 'true' } });
+    const button = createElement(documentReference, 'button', {
+      type: 'button',
+      className: 'crucible-studio-switch',
+      attributes: { role: 'switch', 'aria-checked': 'false', 'aria-label': propertyNameOf(field) },
+    }, knob);
+    button.addEventListener('click', () => commit(field, button.getAttribute('aria-checked') !== 'true'));
     return {
-      container,
-      setValue: value => button.setAttribute('aria-pressed', value ? 'true' : 'false'),
+      container: createPropertyLine(documentReference, createElement, field.label, button),
+      setValue: value => button.setAttribute('aria-checked', value ? 'true' : 'false'),
       setDisabled: disabled => {
         button.disabled = disabled;
         button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
@@ -143,6 +198,7 @@ export function createPropertyPanel({ documentReference, controller, announce, b
     const axisNames = ['x', 'y', 'z'].slice(0, field.axes ?? 3);
     const row = createVectorRow(documentReference, field.label, values => commit(field, values), {
       axisNames,
+      accessibleTitle: propertyNameOf(field),
       onGestureStart: () => controller.beginUndoGroup(),
       onGestureEnd: () => controller.endUndoGroup(),
     });
@@ -151,19 +207,18 @@ export function createPropertyPanel({ documentReference, controller, announce, b
 
   // A choice from a short list. A value the list lacks (a catalog file the scene names) shows as a read-only current choice.
   function selectControl(field) {
-    const select = createElement(documentReference, 'select', { attributes: { 'aria-label': field.label } });
+    const select = createElement(documentReference, 'select', { attributes: { 'aria-label': propertyNameOf(field) } });
     const optionValue = value => (value === null ? '' : value);
     select.append(...field.choices.map(choice => createElement(documentReference, 'option', { value: optionValue(choice.value), textContent: choice.label })));
     select.addEventListener('change', () => commit(field, select.value === '' ? null : select.value));
     let unlistedOption = null;
-    const container = createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'div', { className: 'crucible-studio-field-head' }, createElement(documentReference, 'span', { textContent: field.label })), select);
     return {
-      container,
+      container: createPropertyLine(documentReference, createElement, field.label, select),
       setValue: value => {
         unlistedOption?.remove();
         unlistedOption = null;
         if (value !== null && !field.choices.some(choice => choice.value === value)) {
-          unlistedOption = createElement(documentReference, 'option', { value, textContent: `${value.slice(0, 8)}…`, disabled: true });
+          unlistedOption = createElement(documentReference, 'option', { value, textContent: hdriChoiceLabel(value, catalogNames), disabled: true });
           select.append(unlistedOption);
         }
         select.value = optionValue(value);
@@ -179,9 +234,8 @@ export function createPropertyPanel({ documentReference, controller, announce, b
       onDragStart: () => controller.beginUndoGroup(),
       onDragEnd: () => controller.endUndoGroup(),
     });
-    const container = createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: field.label }), pad.element);
     return {
-      container,
+      container: createPropertyLine(documentReference, createElement, field.label, pad.element),
       setValue: direction => {
         const angles = directionToSunAngles(direction);
         pad.setAngles(angles.azimuthDegrees, angles.elevationDegrees);
@@ -197,6 +251,7 @@ export function createPropertyPanel({ documentReference, controller, announce, b
     const mark = createDrivenMark();
     headOf(control.container).append(mark);
     control.container.dataset.property = field.id;
+    control.container.dataset.control = field.control;
     return { ...control, mark };
   }
 
@@ -206,8 +261,9 @@ export function createPropertyPanel({ documentReference, controller, announce, b
     element.replaceChildren(...propertySectionsFor(kind).map(buildSection));
   }
 
-  function buildSection(section) {
-    const rows = createElement(documentReference, 'div', { className: 'crucible-studio-property-rows' }, ...section.fields.map(field => {
+  function buildSection(section, index) {
+    const leadingRow = leadingRows[section.id] ? [leadingRows[section.id]] : [];
+    const rows = createElement(documentReference, 'div', { className: 'crucible-studio-property-rows' }, ...leadingRow, ...section.fields.map(field => {
       const row = buildRow(field);
       controls.set(field.id, { field, ...row });
       return row.container;
@@ -223,7 +279,7 @@ export function createPropertyPanel({ documentReference, controller, announce, b
       title.setAttribute('aria-expanded', open ? 'true' : 'false');
       rows.hidden = !open;
     };
-    showOpen(groups.isOpen(section.id, !PROPERTY_SECTIONS_CLOSED_BY_DEFAULT.includes(section.id)));
+    showOpen(groups.isOpen(section.id, opensFirstGroup && index === 0));
     title.addEventListener('click', () => {
       const open = container.dataset.open !== 'true';
       groups.setOpen(section.id, open);

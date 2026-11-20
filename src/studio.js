@@ -22,7 +22,7 @@ import {
   saveStudioPreferences,
 } from './studio-preferences.js';
 import { studioIconPath } from './studio-icons.js';
-import { createPropertyPanel } from './studio-property-panel.js';
+import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
@@ -196,14 +196,14 @@ function wireRovingFocusFallback(container, items, { vertical = false, followFoc
   });
 }
 
-function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02, minimumComponent = -Infinity, lockToggle = null, axisNames = AXIS_NAMES, onGestureStart, onGestureEnd } = {}) {
+function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02, minimumComponent = -Infinity, lockToggle = null, axisNames = AXIS_NAMES, accessibleTitle = title, onGestureStart, onGestureEnd } = {}) {
   let latestValues = axisNames.map(() => 0);
   let locked = false;
   let disabled = false;
   const inputs = axisNames.map(axis => createElement(documentReference, 'input', {
     type: 'number',
     step: '0.05',
-    attributes: { 'aria-label': `${title} ${axis.toUpperCase()}` },
+    attributes: { 'aria-label': `${accessibleTitle} ${axis.toUpperCase()}` },
   }));
 
   function emitEditedAxis(axisIndex, rawNumeric) {
@@ -1435,8 +1435,8 @@ export function createStudio(container, {
   const filterToggleButton = createIconButton(documentReference, 'search', 'Find an object in the scene', { attributes: { 'aria-pressed': 'false', 'aria-expanded': 'false' } });
   const sceneAddButton = createIconButton(documentReference, 'add', 'Add to the scene', { attributes: { popovertarget: 'crucible-studio-pop-add' } });
   sceneAddButton.addEventListener('click', () => { addMenuAnchor = sceneAddButton; });
-  const outlinerTree = createElement(documentReference, 'div', { className: 'crucible-studio-tree', attributes: { role: 'tree', 'aria-label': 'Scene hierarchy' } });
-  const swatchContainer = createElement(documentReference, 'div', { className: 'crucible-studio-swatches' });
+  const outlinerTree = createElement(documentReference, 'div', { className: 'crucible-studio-tree crucible-studio-scroll', attributes: { role: 'tree', 'aria-label': 'Scene hierarchy' } });
+  const swatchContainer = createElement(documentReference, 'div', { className: 'crucible-studio-swatches crucible-studio-scroll' });
   const newMaterialQuickButton = createIconButton(documentReference, 'add', 'New material', { className: 'crucible-studio-swatch-add' });
   newMaterialQuickButton.addEventListener('click', () => {
     const created = controller.createMaterial({ assignToNodeId: controller.selectedNodeId });
@@ -1782,15 +1782,16 @@ export function createStudio(container, {
     return button;
   });
   // The light the selection names, or the sun when no light is selected; the camera has its own panel in the Camera tab.
-  const propertyBuilders = { createElement, createIcon, createSliderField, createVectorRow, createSunPad };
+  const propertyBuilders = { createElement, createIcon, createVectorRow, createSunPad };
   // Which property groups are folded is a preference of the person, kept with the others and shared by every panel.
   const propertyGroups = {
     isOpen: (groupId, openByDefault) => preferences.propertyGroupsOpen[groupId] ?? openByDefault,
     setOpen: (groupId, open) => setPreference('propertyGroupsOpen', { ...preferences.propertyGroupsOpen, [groupId]: open }),
   };
-  const createLookPanel = resolveKey => createPropertyPanel({ documentReference, controller, announce, builders: propertyBuilders, resolveKey, groups: propertyGroups, prepareRecipe });
+  const createLookPanel = (resolveKey, panelOptions = {}) => createPropertyPanel({ documentReference, controller, announce, builders: propertyBuilders, resolveKey, groups: propertyGroups, prepareRecipe, ...panelOptions });
   const selectedLightKey = () => (/^(point|spot|area):/u.test(controller.selectedObjectKey ?? '') ? controller.selectedObjectKey : null);
-  const lightPanel = createLookPanel(() => selectedLightKey() ?? 'sun');
+  // Only the first group of a tab starts open, so the tab opens on one screen of rows.
+  const lightPanel = createLookPanel(() => selectedLightKey() ?? 'sun', { opensFirstGroup: true });
   const worldPanel = createLookPanel(() => 'world');
   const effectsPanel = createLookPanel(() => 'effects');
   const shadowPanel = createLookPanel(() => 'shadow');
@@ -1812,11 +1813,11 @@ export function createStudio(container, {
   const lookPanelBody = createElement(
     documentReference,
     'div',
-    { className: 'crucible-studio-panel-body' },
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lighting' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...setupButtons)),
+    { className: 'crucible-studio-panel-body crucible-studio-panel-rows' },
+    createElement(documentReference, 'div', { className: 'crucible-studio-chips crucible-studio-chips-row', attributes: { role: 'group', 'aria-label': 'Lighting setup' } }, ...setupButtons),
     lightPanel.element,
     worldPanel.element,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Color look' }), viewTransformSelect),
+    createPropertyLine(documentReference, createElement, 'Color look', viewTransformSelect),
     effectsPanel.element,
     shadowPanel.element,
     qualityPanel.element,
@@ -1824,11 +1825,12 @@ export function createStudio(container, {
 
   // Tab 4: Camera Panel
   const lensChips = STUDIO_LENS_PRESETS.map(millimetres => {
-    const button = createElement(documentReference, 'button', { type: 'button', textContent: `${millimetres}mm`, dataset: { focal: String(millimetres) }, attributes: { 'aria-pressed': 'false' } });
+    const button = createElement(documentReference, 'button', { type: 'button', textContent: `${millimetres} mm`, dataset: { focal: String(millimetres) }, attributes: { 'aria-pressed': 'false' } });
     button.addEventListener('click', () => controller.setCameraLensMillimetres(millimetres));
     return button;
   });
-  const cameraPanel = createLookPanel(() => 'camera');
+  const lensChipRow = createElement(documentReference, 'div', { className: 'crucible-studio-chips crucible-studio-chips-row', attributes: { role: 'group', 'aria-label': 'Lens presets' } }, ...lensChips);
+  const cameraPanel = createLookPanel(() => 'camera', { opensFirstGroup: true, leadingRows: { lens: lensChipRow } });
   const bookmarkNameInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Shot name', attributes: { 'aria-label': 'Shot name', maxlength: '24' } });
   const saveBookmarkButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save shot' });
   const bookmarkListElement = createElement(documentReference, 'div', { className: 'crucible-studio-field' });
@@ -1846,9 +1848,8 @@ export function createStudio(container, {
   const cameraPanelBody = createElement(
     documentReference,
     'div',
-    { className: 'crucible-studio-panel-body' },
+    { className: 'crucible-studio-panel-body crucible-studio-panel-rows' },
     viewCubeElement,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lens' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...lensChips)),
     cameraPanel.element,
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Shots' }), createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, bookmarkNameInput, saveBookmarkButton), bookmarkListElement),
   );
@@ -1926,7 +1927,7 @@ export function createStudio(container, {
       propertiesMinimizeButton,
     ),
     tabListElement,
-    createElement(documentReference, 'div', { className: 'crucible-studio-panels' }, panelsByTab.node, panelsByTab.material, panelsByTab.look, panelsByTab.camera),
+    createElement(documentReference, 'div', { className: 'crucible-studio-panels crucible-studio-scroll' }, panelsByTab.node, panelsByTab.material, panelsByTab.look, panelsByTab.camera),
   );
 
   // Bottom Timeline & Telemetry Bar

@@ -9,7 +9,11 @@ import { DEFAULT_SPECULAR_ANTI_ALIASING, MAXIMUM_SPECULAR_ANTI_ALIASING } from '
 //
 // A row says:
 //   id             the name of the field in the recipe (or of the group of fields it writes)
-//   label          the short title the panel shows
+//   label          the short title the panel shows; the group it sits in supplies the rest ("Strength" under Sun)
+//   name           the full name for a screen reader, when the label alone would repeat in another group ("Sun strength")
+//   unit           the unit the control shows beside its number: °, m or mm
+//   displayScale   what a recipe value is multiplied by to show it in its unit (180 / pi for a radian field)
+//   displayStep    the step of a number control in the shown unit, when it is not step times displayScale
 //   control        number, slider, colour, toggle, vector or sunpad
 //   appliesTo      the object kinds that show the row (camera, sun, point, spot, area)
 //   section        the group title the row sits under
@@ -41,13 +45,59 @@ export const PROPERTY_SECTIONS = Object.freeze({
   quality: 'Quality',
 });
 
-/** The groups a panel draws folded until a person opens them; every other group starts open. */
-export const PROPERTY_SECTIONS_CLOSED_BY_DEFAULT = Object.freeze(['sceneShadow', 'quality']);
-
 // The scene-level kinds read one record of the recipe: the environment (world, quality), the effects or the shadow.
 export const PROPERTY_SCENE_KINDS = Object.freeze(['world', 'quality', 'effects', 'shadow']);
 const DEFAULT_SUN_BOUNCE = 1;
 const HDRI_CHOICES = Object.freeze([{ value: null, label: 'None' }, ...BUNDLED_ENVIRONMENT_NAMES.map(name => ({ value: name, label: name }))]);
+const RADIANS_TO_DEGREES = 180 / Math.PI;
+const MAXIMUM_DISPLAYED_DECIMALS = 3;
+const HDRI_ID_PREFIX_LENGTH = 8;
+
+/** A number as a person reads it: at most three decimals, trailing zeros trimmed, so 0.400 shows as 0.4 and 46.3241 as 46.324. */
+export function formatPropertyNumber(value) {
+  if (!Number.isFinite(value)) {
+    return '';
+  }
+  const scale = 10 ** MAXIMUM_DISPLAYED_DECIMALS;
+  const rounded = Math.round(value * scale) / scale;
+  return rounded === 0 ? '0' : String(rounded);
+}
+
+/** The scale from the recipe's value to the shown one: 180 / pi for a field the recipe keeps in radians, else 1. */
+function displayScaleOf(field) {
+  return field.displayScale ?? 1;
+}
+
+/** The value a row shows for the recipe's value, in the unit the row names (degrees for a radian field). */
+export function propertyDisplayValue(field, storedValue) {
+  return storedValue * displayScaleOf(field);
+}
+
+/** The recipe's value for what a person typed in the row's unit; the inverse of propertyDisplayValue. */
+export function propertyStoredValue(field, displayedValue) {
+  return displayedValue / displayScaleOf(field);
+}
+
+/** The range and step a number control of this row takes, in the shown unit. */
+export function propertyDisplayRange(field) {
+  const scale = displayScaleOf(field);
+  return { min: field.min * scale, max: field.max * scale, step: field.displayStep ?? field.step * scale };
+}
+
+/** The text a row shows for its value: the number in its unit's scale, three decimals at most (the unit is drawn apart). */
+export function propertyValueText(field, storedValue) {
+  return formatPropertyNumber(propertyDisplayValue(field, storedValue));
+}
+
+/** The name a screen reader and a test finds a row by; it keeps the group word the short visible label drops. */
+export function propertyNameOf(field) {
+  return field.name ?? field.label;
+}
+
+/** What the HDRI choice shows for an id: the catalog's name when `catalogNames` knows it, else "Custom" and the id's first characters. */
+export function hdriChoiceLabel(id, catalogNames = {}) {
+  return catalogNames[id] ?? `Custom ${id.slice(0, HDRI_ID_PREFIX_LENGTH)}`;
+}
 
 function isPerspective(camera) {
   return camera.projection !== 'orthographic';
@@ -82,27 +132,27 @@ const LIGHT_ROWS = [
     write: value => ({ intensity: value }),
   }),
   lightRow('radius', 'Radius', 'number', 'light', LIGHT_KINDS_WITH_RADIUS, {
-    min: 0.001, max: 1e6, step: 0.01,
+    unit: 'm', min: 0.001, max: 1e6, step: 0.01,
     read: light => light.radius ?? 0.05,
     write: value => ({ radius: value }),
   }),
   lightRow('range', 'Range', 'number', 'light', LIGHT_KINDS_WITH_RADIUS, {
-    min: 0, max: 1e6, step: 0.5,
+    unit: 'm', min: 0, max: 1e6, step: 0.5,
     read: light => light.range ?? 0,
     write: value => ({ range: value }),
   }),
   lightRow('width', 'Width', 'number', 'shape', ['area'], {
-    min: 0.001, max: 1e4, step: 0.1,
+    unit: 'm', min: 0.001, max: 1e4, step: 0.1,
     read: light => light.width,
     write: value => ({ width: value }),
   }),
   lightRow('height', 'Height', 'number', 'shape', ['area'], {
-    min: 0.001, max: 1e4, step: 0.1,
+    unit: 'm', min: 0.001, max: 1e4, step: 0.1,
     read: light => light.height,
     write: value => ({ height: value }),
   }),
-  lightRow('angle', 'Angle °', 'slider', 'shape', ['spot'], {
-    min: 1, max: 89, step: 1,
+  lightRow('angle', 'Angle', 'slider', 'shape', ['spot'], {
+    name: 'Angle °', unit: '°', min: 1, max: 89, step: 1,
     read: light => Math.round(((light.angle ?? Math.PI / 4) * 180) / Math.PI),
     write: value => ({ angle: (value * Math.PI) / 180 }),
   }),
@@ -123,12 +173,14 @@ const LIGHT_ROWS = [
     read: light => light.portal === true,
     write: value => ({ portal: value }),
   }),
-  lightRow('position', 'Light position', 'vector', 'transform', LIGHT_KINDS, {
+  lightRow('position', 'Position', 'vector', 'transform', LIGHT_KINDS, {
+    name: 'Light position',
     min: -POSITION_LIMIT, max: POSITION_LIMIT, step: 0.05,
     read: light => light.position,
     write: value => ({ position: value }),
   }),
-  lightRow('direction', 'Light direction', 'vector', 'transform', LIGHT_KINDS_WITH_DIRECTION, {
+  lightRow('direction', 'Direction', 'vector', 'transform', LIGHT_KINDS_WITH_DIRECTION, {
+    name: 'Light direction',
     min: -POSITION_LIMIT, max: POSITION_LIMIT, step: 0.05,
     read: light => light.direction,
     write: value => ({ direction: value }),
@@ -137,24 +189,24 @@ const LIGHT_ROWS = [
 
 const SUN_ROWS = [
   {
-    id: 'direction', label: 'Sun direction', control: 'sunpad', section: 'sun', appliesTo: ['sun'],
+    id: 'direction', label: 'Direction', name: 'Sun direction', control: 'sunpad', section: 'sun', appliesTo: ['sun'],
     read: environment => environment.lightDirection ?? [0, 1, 0],
   },
   {
-    id: 'keyIntensity', label: 'Sun strength', control: 'slider', section: 'sun', appliesTo: ['sun'],
+    id: 'keyIntensity', label: 'Strength', name: 'Sun strength', control: 'slider', section: 'sun', appliesTo: ['sun'],
     min: 0, max: 8, step: 0.1, motionProperty: 'intensity',
     read: environment => environment.keyIntensity ?? 1.5,
     write: value => ({ keyIntensity: value }),
   },
   {
-    id: 'keyColor', label: 'Sun color', control: 'colour', section: 'sun', appliesTo: ['sun'],
+    id: 'keyColor', label: 'Color', name: 'Sun color', control: 'colour', section: 'sun', appliesTo: ['sun'],
     motionProperty: 'color',
     read: environment => environment.keyColor ?? DEFAULT_LIGHT_COLOR,
     write: value => ({ keyColor: value }),
   },
   {
-    id: 'sunAngularRadius', label: 'Sun size', control: 'number', section: 'sun', appliesTo: ['sun'],
-    min: 0.0005, max: 0.2, step: 0.0005,
+    id: 'sunAngularRadius', label: 'Size', name: 'Sun size', control: 'number', section: 'sun', appliesTo: ['sun'],
+    unit: '°', displayScale: RADIANS_TO_DEGREES, displayStep: 0.05, min: 0.0005, max: 0.2, step: 0.0005,
     read: environment => environment.sunAngularRadius ?? DEFAULT_SUN_ANGULAR_RADIUS,
     write: value => ({ sunAngularRadius: value }),
   },
@@ -162,43 +214,43 @@ const SUN_ROWS = [
 
 const CAMERA_ROWS = [
   {
-    id: 'projection', label: 'Ortho', control: 'toggle', section: 'lens', appliesTo: ['camera'],
+    id: 'projection', label: 'Orthographic', name: 'Ortho', control: 'toggle', section: 'lens', appliesTo: ['camera'],
     read: camera => camera.projection === 'orthographic',
     write: value => ({ projection: value ? 'orthographic' : 'perspective' }),
   },
   {
-    id: 'focalLength', label: 'Focal length mm', control: 'number', section: 'lens', appliesTo: ['camera'],
-    min: 1, max: 10000, step: 1, visibleWhen: isPerspective,
+    id: 'focalLength', label: 'Focal length', name: 'Focal length mm', control: 'number', section: 'lens', appliesTo: ['camera'],
+    unit: 'mm', min: 1, max: 10000, step: 1, visibleWhen: isPerspective,
     read: focalLengthOf,
     write: (value, camera) => ({ focalLength: value, sensorWidth: camera.sensorWidth ?? DEFAULT_SENSOR_WIDTH }),
   },
   {
-    id: 'sensorWidth', label: 'Sensor width mm', control: 'number', section: 'lens', appliesTo: ['camera'],
-    min: 1, max: 1000, step: 1, visibleWhen: isPerspective,
+    id: 'sensorWidth', label: 'Sensor width', name: 'Sensor width mm', control: 'number', section: 'lens', appliesTo: ['camera'],
+    unit: 'mm', min: 1, max: 1000, step: 1, visibleWhen: isPerspective,
     read: camera => camera.sensorWidth ?? DEFAULT_SENSOR_WIDTH,
     write: (value, camera, context) => ({ focalLength: focalLengthOf(camera, context), sensorWidth: value }),
   },
   {
     id: 'fov', label: 'Field of view', control: 'slider', section: 'lens', appliesTo: ['camera'],
-    min: 15, max: 110, step: 1, visibleWhen: isPerspective,
+    unit: '°', min: 15, max: 110, step: 1, visibleWhen: isPerspective,
     read: (camera, context) => Math.round(cameraFieldOfView(camera, context.aspect)),
     write: value => ({ fov: value }),
   },
   {
-    id: 'orthoScale', label: 'Orthographic size', control: 'slider', section: 'lens', appliesTo: ['camera'],
-    min: 1, max: 40, step: 0.5, visibleWhen: camera => !isPerspective(camera),
+    id: 'orthoScale', label: 'Size', name: 'Orthographic size', control: 'slider', section: 'lens', appliesTo: ['camera'],
+    unit: 'm', min: 1, max: 40, step: 0.5, visibleWhen: camera => !isPerspective(camera),
     read: camera => camera.orthoScale ?? 6,
     write: value => ({ projection: 'orthographic', orthoScale: value }),
   },
   {
     id: 'near', label: 'Clip start', control: 'number', section: 'lens', appliesTo: ['camera'],
-    min: 0.0001, max: 1e6, step: 0.01,
+    unit: 'm', min: 0.0001, max: 1e6, step: 0.01,
     read: camera => camera.near ?? 0.1,
     write: value => ({ near: value }),
   },
   {
     id: 'far', label: 'Clip end', control: 'number', section: 'lens', appliesTo: ['camera'],
-    min: 0.001, max: 1e7, step: 1,
+    unit: 'm', min: 0.001, max: 1e7, step: 1,
     read: camera => camera.far ?? 1000,
     write: value => ({ far: value }),
   },
@@ -216,7 +268,7 @@ const CAMERA_ROWS = [
   },
   {
     id: 'focusDistance', label: 'Focus distance', control: 'number', section: 'depthOfField', appliesTo: ['camera'],
-    min: 0.001, max: 1e6, step: 0.1, visibleWhen: camera => camera.fStop !== undefined,
+    unit: 'm', min: 0.001, max: 1e6, step: 0.1, visibleWhen: camera => camera.fStop !== undefined,
     read: camera => camera.focusDistance ?? distanceBetween(camera.eye, camera.target),
     write: value => ({ focusDistance: value }),
   },
@@ -257,28 +309,30 @@ const WORLD_ROWS = [
   }),
   environmentRow('world', 'Show sky', 'toggle', 'world', 'world', { read: environment => environment.world === true }),
   environmentRow('ground', 'Ground', 'toggle', 'world', 'world', { read: environment => environment.ground !== false }),
-  environmentRow('environmentIntensity', 'HDRI strength', 'number', 'world', 'world', {
-    min: 0, max: 100, step: 0.05, read: environment => environment.environmentIntensity ?? 1,
+  environmentRow('environmentIntensity', 'Strength', 'number', 'world', 'world', {
+    name: 'HDRI strength', min: 0, max: 100, step: 0.05, read: environment => environment.environmentIntensity ?? 1,
   }),
-  environmentRow('environmentRotation', 'HDRI rotation', 'number', 'world', 'world', {
-    min: -100, max: 100, step: 0.05, read: environment => environment.environmentRotation ?? 0,
+  environmentRow('environmentRotation', 'Rotation', 'number', 'world', 'world', {
+    name: 'HDRI rotation', unit: '°', displayScale: RADIANS_TO_DEGREES, displayStep: 1, min: -100, max: 100, step: 0.05, read: environment => environment.environmentRotation ?? 0,
   }),
   environmentRow('skyTop', 'Sky top', 'colour', 'world', 'world', { read: environment => environment.skyTop ?? DEFAULT_LIGHT_COLOR }),
   environmentRow('skyBottom', 'Sky bottom', 'colour', 'world', 'world', { read: environment => environment.skyBottom ?? DEFAULT_LIGHT_COLOR }),
   environmentRow('daylight', 'Daylight', 'number', 'world', 'world', { min: 0, max: 100, step: 0.05, read: environment => environment.daylight ?? 1 }),
-  environmentRow('fillIntensity', 'Fill strength', 'number', 'world', 'world', { min: 0, max: 100, step: 0.05, read: environment => environment.fillIntensity ?? 0 }),
-  environmentRow('ambientIntensity', 'Ambient strength', 'number', 'world', 'world', { min: 0, max: 100, step: 0.05, read: environment => environment.ambientIntensity ?? 0 }),
-  environmentRow('fogDensity', 'Fog', 'slider', 'world', 'atmosphere', { min: 0, max: 0.1, step: 0.002, read: environment => environment.fogDensity ?? 0 }),
-  environmentRow('fogColor', 'Fog color', 'colour', 'world', 'atmosphere', { read: environment => environment.fogColor ?? DEFAULT_LIGHT_COLOR }),
+  environmentRow('fillIntensity', 'Fill', 'number', 'world', 'world', { name: 'Fill strength', min: 0, max: 100, step: 0.05, read: environment => environment.fillIntensity ?? 0 }),
+  environmentRow('ambientIntensity', 'Ambient', 'number', 'world', 'world', { name: 'Ambient strength', min: 0, max: 100, step: 0.05, read: environment => environment.ambientIntensity ?? 0 }),
+  environmentRow('fogDensity', 'Density', 'slider', 'world', 'atmosphere', {
+    name: 'Fog density', min: 0, max: 0.1, step: 0.002, read: environment => environment.fogDensity ?? 0 }),
+  environmentRow('fogColor', 'Color', 'colour', 'world', 'atmosphere', {
+    name: 'Fog color', read: environment => environment.fogColor ?? DEFAULT_LIGHT_COLOR }),
   volumeFogRow('density', 'Volume density', 'number', {
     min: 0, max: 10, step: 0.01, motionProperty: 'volumeFogDensity', read: environment => volumeFogOf(environment).density ?? 0,
   }),
   volumeFogRow('color', 'Volume color', 'colour', { read: environment => volumeFogOf(environment).color ?? DEFAULT_LIGHT_COLOR }),
   volumeFogRow('anisotropy', 'Anisotropy', 'slider', { min: -0.9, max: 0.9, step: 0.05, read: environment => volumeFogOf(environment).anisotropy ?? 0.3 }),
-  volumeFogRow('steps', 'Volume steps', 'number', { min: 8, max: 48, step: 1, read: environment => volumeFogOf(environment).steps ?? 16 }),
+  volumeFogRow('steps', 'Steps', 'number', { name: 'Volume steps', min: 8, max: 48, step: 1, read: environment => volumeFogOf(environment).steps ?? 16 }),
   volumeFogRow('noiseAmount', 'Noise amount', 'slider', { min: 0, max: 1, step: 0.05, read: environment => volumeFogOf(environment).noiseAmount ?? 0.5 }),
-  volumeFogRow('noiseScale', 'Noise scale', 'number', { min: 0.001, max: 100, step: 0.05, read: environment => volumeFogOf(environment).noiseScale ?? 0.3 }),
-  volumeFogRow('maxDistance', 'Volume distance', 'number', { min: 0.01, max: 1e4, step: 1, read: environment => volumeFogOf(environment).maxDistance ?? 100 }),
+  volumeFogRow('noiseScale', 'Noise scale', 'number', { unit: 'm', min: 0.001, max: 100, step: 0.05, read: environment => volumeFogOf(environment).noiseScale ?? 0.3 }),
+  volumeFogRow('maxDistance', 'Volume distance', 'number', { unit: 'm', min: 0.01, max: 1e4, step: 1, read: environment => volumeFogOf(environment).maxDistance ?? 100 }),
 ];
 
 const QUALITY_ROWS = [
@@ -316,13 +370,13 @@ const EFFECT_ROWS = [
   effectRow('vignette', 'Vignette', 'slider', 'film', { min: 0, max: 1, step: 0.01, read: effects => effects.vignette ?? 0 }),
   effectRow('grain', 'Grain', 'slider', 'film', { min: 0, max: 0.1, step: 0.002, read: effects => effects.grain ?? 0 }),
   effectRow('ambientOcclusion', 'Ambient occlusion', 'slider', 'effects', { min: 0, max: 1, step: 0.02, read: effects => effects.ambientOcclusion ?? 0 }),
-  effectRow('ambientOcclusionRadius', 'AO radius', 'number', 'effects', { min: 0.01, max: 100, step: 0.05, read: effects => effects.ambientOcclusionRadius ?? 0.5 }),
+  effectRow('ambientOcclusionRadius', 'AO radius', 'number', 'effects', { unit: 'm', min: 0.01, max: 100, step: 0.05, read: effects => effects.ambientOcclusionRadius ?? 0.5 }),
   effectGroupRow('bloom', 'strength', 'Bloom', 'slider', { min: 0, max: 2, step: 0.02, read: effects => effects.bloom?.strength ?? 0 }),
   effectGroupRow('bloom', 'threshold', 'Bloom threshold', 'number', { min: 0, max: 10, step: 0.05, read: effects => effects.bloom?.threshold ?? 1 }),
   effectGroupRow('bloom', 'radius', 'Bloom radius', 'number', { min: 0.1, max: 4, step: 0.05, read: effects => effects.bloom?.radius ?? 1 }),
   effectGroupRow('depthOfField', 'blur', 'DoF blur', 'slider', { min: 0, max: 1, step: 0.02, read: effects => effects.depthOfField?.blur ?? 0 }),
   effectGroupRow('depthOfField', 'focusDistance', 'DoF focus', 'number', {
-    min: 0.01, max: 1e5, step: 0.1, motionProperty: 'focusDistance', read: effects => effects.depthOfField?.focusDistance ?? 5,
+    unit: 'm', min: 0.01, max: 1e5, step: 0.1, motionProperty: 'focusDistance', read: effects => effects.depthOfField?.focusDistance ?? 5,
   }),
   effectGroupRow('motionBlur', 'shutter', 'Shutter', 'slider', { min: 0, max: 0.5, step: 0.01, read: effects => effects.motionBlur?.shutter ?? 0 }),
   effectGroupRow('motionBlur', 'objects', 'Object blur', 'slider', { min: 0, max: 1, step: 0.02, read: effects => effects.motionBlur?.objects ?? 0 }),
@@ -333,11 +387,11 @@ function shadowRow(field, label, control, extra = {}) {
 }
 
 const SHADOW_ROWS = [
-  shadowRow('target', 'Shadow target', 'vector', { min: -POSITION_LIMIT, max: POSITION_LIMIT, step: 0.05, read: shadow => shadow.target ?? [0, 1, 0] }),
-  shadowRow('extent', 'Shadow extent', 'number', { min: 0.01, max: 1e5, step: 0.1, read: shadow => shadow.extent ?? 3.5 }),
-  shadowRow('distance', 'Shadow distance', 'number', { min: 0.01, max: 1e6, step: 0.1, read: shadow => shadow.distance ?? 8 }),
-  shadowRow('near', 'Shadow clip start', 'number', { min: 0.001, max: 1e6, step: 0.01, read: shadow => shadow.near ?? 0.1 }),
-  shadowRow('far', 'Shadow clip end', 'number', { min: 0.001, max: 1e6, step: 0.5, read: shadow => shadow.far ?? 15 }),
+  shadowRow('target', 'Target', 'vector', { name: 'Shadow target', min: -POSITION_LIMIT, max: POSITION_LIMIT, step: 0.05, read: shadow => shadow.target ?? [0, 1, 0] }),
+  shadowRow('extent', 'Extent', 'number', { name: 'Shadow extent', unit: 'm', min: 0.01, max: 1e5, step: 0.1, read: shadow => shadow.extent ?? 3.5 }),
+  shadowRow('distance', 'Distance', 'number', { name: 'Shadow distance', unit: 'm', min: 0.01, max: 1e6, step: 0.1, read: shadow => shadow.distance ?? 8 }),
+  shadowRow('near', 'Clip start', 'number', { name: 'Shadow clip start', unit: 'm', min: 0.001, max: 1e6, step: 0.01, read: shadow => shadow.near ?? 0.1 }),
+  shadowRow('far', 'Clip end', 'number', { name: 'Shadow clip end', unit: 'm', min: 0.001, max: 1e6, step: 0.5, read: shadow => shadow.far ?? 15 }),
 ];
 
 export const PROPERTY_FIELDS = Object.freeze([
