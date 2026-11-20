@@ -1042,6 +1042,15 @@ export function createStudio(container, {
     controller.updateNodeTransform(controller.selectedNodeId, { [part]: [...TRANSFORM_AT_REST[part]] });
     announce(`${TRANSFORM_PART_WORDS[part]} reset`);
   }
+  // Shown only while a motion track drives the camera: off means the viewport looks around on its own.
+  const sceneCameraToggle = createMenuToggle('Animated camera', '', () => {
+    if (controller.freeView) {
+      controller.lookThroughSceneCamera();
+      return;
+    }
+    const camera = controller.viewCamera;
+    controller.moveViewportCamera({ eye: [...camera.eye], target: [...camera.target] });
+  }, () => !controller.freeView, 'camera');
   const viewPopover = createMenuPopover(
     'crucible-studio-pop-view',
     createMenuItem('Front view', '1', () => showView('front')),
@@ -1050,12 +1059,16 @@ export function createStudio(container, {
     createMenuItem('Perspective / Orthographic', '5', () => controller.toggleCameraProjection(), 'camera'),
     createMenuItem('Frame the selection', 'F', () => flyToSelection(), 'frame'),
     createMenuToggle('Grid', '', () => gridButton.click(), () => gridVisible, 'grid'),
+    sceneCameraToggle,
     createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true', 'panels'),
     createMenuToggle('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true', 'settings'),
     createMenuToggle('Floating panels', '', () => setPreference('panelsFloating', !preferences.panelsFloating), () => preferences.panelsFloating, 'scene'),
   );
   // A row that switches something shows whether it is on each time its menu opens.
-  viewPopover.addEventListener('toggle', syncMenuToggles);
+  viewPopover.addEventListener('toggle', () => {
+    sceneCameraToggle.hidden = !controller.cameraDriven;
+    syncMenuToggles();
+  });
   syncMenuToggles();
   const helpPopover = createMenuPopover(
     'crucible-studio-pop-help',
@@ -2235,7 +2248,7 @@ export function createStudio(container, {
   }
 
   function syncViewportAids() {
-    const camera = controller.scene.camera;
+    const camera = controller.viewCamera;
     viewWidget.update(camera);
     const gridStep = gridLayout({ visibleHeight: cameraVisibleHeight(camera), viewportHeight: controller.viewportHeight, target: camera.target, eye: camera.projection === 'orthographic' ? undefined : camera.eye }).step;
     readoutCamera.textContent = gridVisible ? `${describeCamera(camera)} · Grid ${describeGridStep(gridStep)}` : describeCamera(camera);
@@ -2455,7 +2468,7 @@ export function createStudio(container, {
     }
     gridParts ??= buildGridParts();
     gridPartsByName ??= new Map(gridParts.map(part => [part.name, part]));
-    const camera = controller.scene.camera;
+    const camera = controller.viewCamera;
     placeGridParts(gridPartsByName, gridLayout({ visibleHeight: cameraVisibleHeight(camera), viewportHeight: controller.viewportHeight, target: camera.target, eye: camera.eye }));
     return [...controller.scene.parts, ...gridParts];
   }
@@ -2477,10 +2490,10 @@ export function createStudio(container, {
       controller.frameSelection();
       return;
     }
-    const camera = controller.scene.camera;
+    const camera = controller.viewCamera;
     const from = { eye: [...camera.eye], target: [...camera.target], orthoScale: camera.orthoScale ?? 4 };
     const flownScene = controller.scene;
-    const cameraSignature = () => `${controller.scene.camera.eye}|${controller.scene.camera.target}`;
+    const cameraSignature = () => `${controller.viewCamera.eye}|${controller.viewCamera.target}`;
     let lastSignature = cameraSignature();
     const to = controller.frameSelectionPose();
     const mix = (start, end, progress) => start.map((value, axis) => value + (end[axis] - value) * progress);
@@ -2537,9 +2550,11 @@ export function createStudio(container, {
       renderedShadowKey = shadowKey;
     }
     activeRenderer.world = environment.world;
+    // A still is the scene's own shot, so it keeps the animated camera even while the viewport looks around freely.
+    const frameCamera = capturingStill ? controller.scene.camera : controller.viewCamera;
     activeRenderer.render({
-      ...controller.scene.camera,
-      ...(capturingStill ? {} : viewportClipPlanes(controller.scene.camera)),
+      ...frameCamera,
+      ...(capturingStill ? {} : viewportClipPlanes(frameCamera)),
       environment: { ...environment, map: agentEnvironmentMap(environment) },
       effects,
       exposure: effects.exposure,
