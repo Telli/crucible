@@ -114,7 +114,12 @@ test('an edit to the sea stack builds the posed sea again', () => {
 test('an edit after a seek keeps the playhead, the posed sea part and the topology, and an edit to the sea poses it there', () => {
   const recipe = seaRecipe();
   recipe.geometries.push({ id: 'box', type: 'box', bevel: 0 });
-  recipe.nodes.push({ id: 'crate', geometry: 'box', material: 'water', translation: [8, 1, 8] });
+  recipe.nodes.push(
+    { id: 'crate', geometry: 'box', material: 'water', translation: [8, 1, 8] },
+    // A sign flush on a wall, so the rest parts carry ranks and ranking them again would stage a new list.
+    { id: 'wall', geometry: 'box', material: 'water', translation: [0, 5, 0], scale: [10, 4, 0.2] },
+    { id: 'sign', geometry: 'box', material: 'water', translation: [0, 5, 0], scale: [1, 0.5, 0.2] },
+  );
   const scene = createAgentScene(recipe);
   // Two seeks to new times rank two posed lists, which must not push out the ranks of the rest parts.
   scene.sampleMotion(0.5);
