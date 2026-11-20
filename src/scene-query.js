@@ -154,7 +154,7 @@ function readWalkOptions(options) {
   if (settings.max[0] < settings.min[0] || settings.max[1] < settings.min[1]) throw new RangeError('walkMap max must not be below min.');
   if (settings.lowerPass !== undefined) {
     if (settings.lowerPass === null || typeof settings.lowerPass !== 'object' || Array.isArray(settings.lowerPass)) {
-      throw new TypeError(`walkMap lowerPass must be an object such as { fromY: 3, groundBelow: 0 }, got ${Array.isArray(settings.lowerPass) ? 'an array' : String(settings.lowerPass)}. Leave it out to skip the lower pass.`);
+      throw new TypeError(`walkMap lowerPass must be an object such as { fromY: 3, groundBelow: 0 }, got ${String(settings.lowerPass)}; leave it out to skip it.`);
     }
     for (const name of Object.keys(settings.lowerPass)) {
       if (!LOWER_PASS_NAMES.has(name)) throw new TypeError(`Unsupported walkMap lowerPass option ${name}.`);
