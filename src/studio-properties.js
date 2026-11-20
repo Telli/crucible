@@ -117,6 +117,11 @@ function focalLengthOf(camera, context) {
   return sensorWidth / context.aspect / (2 * Math.tan((verticalFieldOfView * Math.PI) / 360));
 }
 
+/** The focal length in millimetres a camera shows, whether the recipe names it or names a field of view. */
+export function cameraFocalLengthMillimetres(camera, context) {
+  return focalLengthOf(camera, context);
+}
+
 function lightRow(id, label, control, section, appliesTo, extra = {}) {
   return { id, label, control, section, appliesTo, ...extra };
 }

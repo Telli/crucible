@@ -3196,11 +3196,50 @@ test('lengths, angles and lens values show a quiet unit beside the number and ke
   const unitOf = id => byDataset(ui.root, 'property', id).querySelector('.crucible-studio-prop-unit')?.textContent;
   assert.equal(unitOf('focalLength'), 'mm');
   assert.equal(unitOf('near'), 'm');
-  assert.equal(byDataset(ui.root, 'property', 'fov').querySelector('output').dataset.unit, '°');
+  assert.equal(unitOf('fov'), '°', 'a slider shows its unit in the same slot as a number');
   assert.equal(unitOf('fStop'), undefined, 'a ratio has no unit');
   editNumber(ui, 'Clip start', 0.123456);
   assert.equal(ui.label('Clip start').value, '0.123', 'at most three decimals are shown');
   assert.equal(ui.controller.scene.camera.near, 0.123456, 'what is stored is what was typed');
+});
+
+test('the sun row shows its azimuth and elevation in degrees beside the pad', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const readout = byDataset(ui.root, 'property', 'direction').querySelector('.crucible-studio-sun-readout');
+  assert.match(readout.textContent, /Az-?[0-9]+°/u);
+  assert.match(readout.textContent, /El[0-9]+°/u);
+});
+
+test('the Color look row is the first row of the Film group', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const filmRows = byDataset(ui.root, 'section', 'film').querySelector('.crucible-studio-property-rows');
+  assert.equal(filmRows.children[0].querySelector('.crucible-studio-prop-label').textContent, 'Color look');
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-prop-label').filter(label => label.textContent === 'Color look').length, 1);
+});
+
+test('a lens preset is active when the focal length is within half a millimetre of it, also for a camera set by field of view', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  const activeChips = () => ui.label('Lens presets').querySelectorAll('button').filter(chip => chip.getAttribute('aria-pressed') === 'true').map(chip => chip.textContent);
+  ui.controller.setCameraLensMillimetres(50);
+  assert.deepEqual(activeChips(), ['50 mm']);
+  editNumber(ui, 'Focal length mm', 50.4);
+  assert.deepEqual(activeChips(), ['50 mm'], 'half a millimetre off still counts');
+  editNumber(ui, 'Focal length mm', 52);
+  assert.deepEqual(activeChips(), []);
+});
+
+test('a driven row names its mark "Animated by a track" right after the label', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  const marks = ui.root.querySelectorAll('.crucible-studio-driven-mark');
+  assert.ok(marks.length > 0);
+  for (const driven of marks) {
+    assert.equal(driven.getAttribute('aria-label'), 'Animated by a track');
+    assert.equal(driven.title, 'Animated by a track');
+  }
 });
 
 test('the Look tab shows the lighting presets on one row and the sun direction pad beside its label', testContext => {

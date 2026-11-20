@@ -12,7 +12,9 @@ import {
   propertyValueText,
 } from './studio-properties.js';
 
-const DRIVEN_LABEL = 'Animated by a motion track';
+// Vector fields show three decimals at most, so a value such as 46.324 fits the field beside its axis letter.
+const VECTOR_DISPLAY_PRECISION = 1000;
+const DRIVEN_LABEL = 'Animated by a track';
 
 /**
  * One line of a property panel: the label on the left and the control in the value column on the right.
@@ -135,7 +137,7 @@ export function createPropertyPanel({ documentReference, controller, announce, b
   // A bounded number: a slim slider with its value beside it on the same line.
   function sliderControl(field) {
     const range = propertyDisplayRange(field);
-    const output = createElement(documentReference, 'output', { dataset: field.unit ? { unit: field.unit } : {} });
+    const output = createElement(documentReference, 'output');
     const input = createElement(documentReference, 'input', {
       type: 'range',
       min: String(range.min),
@@ -150,7 +152,7 @@ export function createPropertyPanel({ documentReference, controller, announce, b
       commit(field, propertyStoredValue(field, shown));
     });
     return {
-      container: createPropertyLine(documentReference, createElement, field.label, input, output),
+      container: createPropertyLine(documentReference, createElement, field.label, input, output, ...(field.unit ? [createUnitMark(field)] : [])),
       setValue: value => {
         input.value = String(propertyDisplayValue(field, value));
         output.textContent = propertyValueText(field, value);
@@ -202,7 +204,7 @@ export function createPropertyPanel({ documentReference, controller, announce, b
       onGestureStart: () => controller.beginUndoGroup(),
       onGestureEnd: () => controller.endUndoGroup(),
     });
-    return { container: row.container, setValue: row.setValues, setDisabled: row.setDisabled };
+    return { container: row.container, setValue: values => row.setValues(values, VECTOR_DISPLAY_PRECISION), setDisabled: row.setDisabled };
   }
 
   // A choice from a short list. A value the list lacks (a catalog file the scene names) shows as a read-only current choice.
@@ -234,11 +236,23 @@ export function createPropertyPanel({ documentReference, controller, announce, b
       onDragStart: () => controller.beginUndoGroup(),
       onDragEnd: () => controller.endUndoGroup(),
     });
+    const azimuthOutput = createElement(documentReference, 'output');
+    const elevationOutput = createElement(documentReference, 'output');
+    const readout = createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-sun-readout' },
+      createElement(documentReference, 'div', {}, createElement(documentReference, 'span', { textContent: 'Az', title: 'Azimuth' }), azimuthOutput),
+      createElement(documentReference, 'div', {}, createElement(documentReference, 'span', { textContent: 'El', title: 'Elevation' }), elevationOutput),
+    );
+    const control = createElement(documentReference, 'div', { className: 'crucible-studio-sun-control' }, pad.element, readout);
     return {
-      container: createPropertyLine(documentReference, createElement, field.label, pad.element),
+      container: createPropertyLine(documentReference, createElement, field.label, control),
       setValue: direction => {
         const angles = directionToSunAngles(direction);
         pad.setAngles(angles.azimuthDegrees, angles.elevationDegrees);
+        azimuthOutput.textContent = `${Math.round(angles.azimuthDegrees)}°`;
+        elevationOutput.textContent = `${Math.round(angles.elevationDegrees)}°`;
       },
       setDisabled: pad.setDisabled,
     };

@@ -23,6 +23,7 @@ import {
 } from './studio-preferences.js';
 import { studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
+import { cameraFocalLengthMillimetres } from './studio-properties.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
@@ -63,6 +64,7 @@ export {
 const AXIS_NAMES = Object.freeze(['x', 'y', 'z']);
 const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
+const LENS_CHIP_TOLERANCE_MILLIMETRES = 0.5;
 const STUDIO_STYLE_ID = 'crucible-studio-styles';
 const COMPACT_WIDTH = 820;
 const TIGHT_WIDTH = 920;
@@ -359,15 +361,15 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
     cy: '60',
     r: '52',
     fill: 'none',
-    stroke: 'color-mix(in srgb, var(--studio-text) 12%, transparent)',
-    'stroke-width': '1',
+    stroke: 'color-mix(in srgb, var(--studio-text) 55%, transparent)',
+    'stroke-width': '1.5',
   });
   const midRing = createSvgElement(documentReference, 'circle', {
     cx: '60',
     cy: '60',
     r: '28',
     fill: 'none',
-    stroke: 'color-mix(in srgb, var(--studio-text) 8%, transparent)',
+    stroke: 'color-mix(in srgb, var(--studio-text) 30%, transparent)',
     'stroke-dasharray': '3 3',
     'stroke-width': '1',
   });
@@ -376,15 +378,15 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
     y1: '60',
     x2: '40',
     y2: '34',
-    stroke: '#f0b34aaa',
+    stroke: 'color-mix(in srgb, var(--studio-text) 70%, transparent)',
     'stroke-width': '2',
   });
   const sunKnob = createSvgElement(documentReference, 'circle', {
     cx: '40',
     cy: '34',
     r: '7',
-    fill: '#f0b34a',
-    stroke: 'var(--studio-bg)',
+    fill: 'var(--studio-text)',
+    stroke: 'var(--studio-panel)',
     'stroke-width': '2',
   });
   padSvg.append(outerRing, midRing, sunRay, sunKnob);
@@ -1793,7 +1795,6 @@ export function createStudio(container, {
   // Only the first group of a tab starts open, so the tab opens on one screen of rows.
   const lightPanel = createLookPanel(() => selectedLightKey() ?? 'sun', { opensFirstGroup: true });
   const worldPanel = createLookPanel(() => 'world');
-  const effectsPanel = createLookPanel(() => 'effects');
   const shadowPanel = createLookPanel(() => 'shadow');
   const qualityPanel = createLookPanel(() => 'quality');
   // The world, shadow and quality groups describe the whole scene, so a selected light's panel takes the tab alone.
@@ -1810,6 +1811,8 @@ export function createStudio(container, {
     controller.updateLook({ environment: { viewTransform } });
   });
 
+  // The color look is the first row of the Film group.
+  const effectsPanel = createLookPanel(() => 'effects', { leadingRows: { film: createPropertyLine(documentReference, createElement, 'Color look', viewTransformSelect) } });
   const lookPanelBody = createElement(
     documentReference,
     'div',
@@ -1817,7 +1820,6 @@ export function createStudio(container, {
     createElement(documentReference, 'div', { className: 'crucible-studio-chips crucible-studio-chips-row', attributes: { role: 'group', 'aria-label': 'Lighting setup' } }, ...setupButtons),
     lightPanel.element,
     worldPanel.element,
-    createPropertyLine(documentReference, createElement, 'Color look', viewTransformSelect),
     effectsPanel.element,
     shadowPanel.element,
     qualityPanel.element,
@@ -2927,7 +2929,8 @@ export function createStudio(container, {
     const isOrthographic = camera.projection === 'orthographic';
     projectionPillButton.textContent = isOrthographic ? 'Orthographic' : 'Perspective';
     projectionPillButton.setAttribute('aria-pressed', isOrthographic ? 'true' : 'false');
-    lensChips.forEach(chip => chip.setAttribute('aria-pressed', !isOrthographic && Number(chip.dataset.focal) === Math.round(camera.focalLength ?? 0) ? 'true' : 'false'));
+    const lensFocalLength = cameraFocalLengthMillimetres(camera, { aspect: controller.viewportWidth / controller.viewportHeight });
+    lensChips.forEach(chip => chip.setAttribute('aria-pressed', !isOrthographic && Math.abs(Number(chip.dataset.focal) - lensFocalLength) <= LENS_CHIP_TOLERANCE_MILLIMETRES ? 'true' : 'false'));
 
     const bookmarks = controller.listBookmarks();
     const bookmarksKey = bookmarks.map(shot => shot.name).join('|');
