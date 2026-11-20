@@ -40,7 +40,7 @@ export const STUDIO_PREFERENCE_DEFAULTS = Object.freeze({
   sceneMinimized: false,
   propertiesMinimized: false,
   propertyGroupsOpen: Object.freeze({}),
-  panelsFloating: true,
+  panelsFloating: false,
   moveSnapStep: 0.25,
   rotateSnapDegrees: 15,
   gizmoSize: 'medium',

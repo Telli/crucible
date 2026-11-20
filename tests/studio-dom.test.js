@@ -2116,7 +2116,7 @@ test('Settings change the snap, the handles and what the viewport shows, and are
     sceneMinimized: false,
     propertiesMinimized: false,
     propertyGroupsOpen: {},
-    panelsFloating: true,
+    panelsFloating: false,
     moveSnapStep: 1,
     rotateSnapDegrees: 45,
     gizmoSize: 'large',
@@ -2347,24 +2347,23 @@ test('the panel column resizes by dragging its grips or with the arrow keys, ins
   assert.equal(next.studio.preferences.sceneShare, 15);
   assert.equal(mountStudio(testContext, { sharedDom: ui.dom, preferences: { panelWidth: Number.NaN } }).studio.preferences.panelWidth, 284);
 });
-test('panels float over the scene by default and dock to the window edges from the View menu or Settings', testContext => {
+test('panels dock to the window edges by default and float over the scene from Settings', testContext => {
   const saved = new Map();
   const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
   const ui = mountStudio(testContext, { preferenceStorage });
-  assert.equal(ui.root.dataset.floating, 'true');
+  assert.equal(ui.root.dataset.floating, 'false', 'a first visit opens docked');
   const viewMenu = ui.root.descendants().find(element => element.id === 'crucible-studio-pop-view');
-  byText(viewMenu, 'Floating panels').click();
-  assert.equal(ui.root.dataset.floating, 'false');
-  assert.equal(ui.studio.preferences.panelsFloating, false);
-  assert.equal(JSON.parse(saved.get('crucible-studio-preferences')).panelsFloating, false);
-
-  const next = mountStudio(testContext, { preferenceStorage, sharedDom: ui.dom });
-  assert.equal(next.root.dataset.floating, 'false', 'the next visit opens docked');
-  const control = next.root.querySelector('.crucible-studio-settings-dialog').descendants().find(element => element.dataset?.setting === 'panelsFloating');
+  assert.equal(viewMenu.descendants().some(element => element.textContent === 'Floating panels'), false, 'the switch lives in Settings only');
+  const control = ui.root.querySelector('.crucible-studio-settings-dialog').descendants().find(element => element.dataset?.setting === 'panelsFloating');
   assert.equal(control.checked, false);
   control.checked = true;
   dispatch(control, 'change');
-  assert.equal(next.root.dataset.floating, 'true');
+  assert.equal(ui.root.dataset.floating, 'true');
+  assert.equal(ui.studio.preferences.panelsFloating, true);
+  assert.equal(JSON.parse(saved.get('crucible-studio-preferences')).panelsFloating, true);
+
+  const next = mountStudio(testContext, { preferenceStorage, sharedDom: ui.dom });
+  assert.equal(next.root.dataset.floating, 'true', 'the next visit keeps the floating panels');
 
   const docked = '.crucible-studio[data-floating="false"]:not([data-compact="true"])';
   const viewportRule = STUDIO_CSS.slice(STUDIO_CSS.indexOf(docked + ' .crucible-studio-viewport {'));
