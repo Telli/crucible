@@ -3009,4 +3009,3 @@ export class CrucibleRenderer {
 // Glaze is the public name of the real-time renderer; CrucibleRenderer stays for existing code.
 export { CrucibleRenderer as Glaze };
 /** Deprecated: the old name of CrucibleRenderer, removed in the release after 0.20.0. */
-export { CrucibleRenderer as Renderer67 };
