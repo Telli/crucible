@@ -793,10 +793,12 @@ export const STUDIO_CSS = `
   gap: 6px;
   min-inline-size: 0;
   padding: 4px;
-  margin: -4px;
+  margin: -4px 0 -4px -4px;
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
 }
+.crucible-studio-swatches::-webkit-scrollbar { display: none; }
 .crucible-studio-swatches > button { flex: none; }
 .crucible-studio button.crucible-studio-swatch-btn,
 .crucible-studio button.crucible-studio-swatch-add {
@@ -954,6 +956,7 @@ export const STUDIO_CSS = `
 .crucible-studio-panels {
   flex: 1 1 auto;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 /* Rows dissolve into the card at the bottom edge while more of the panel lies below, instead of being cut. */
 .crucible-studio-panels::after {
@@ -1156,8 +1159,8 @@ export const STUDIO_CSS = `
   position: absolute;
   inset-inline: 0;
   inset-block-start: 100%;
-  block-size: 12px;
-  background: linear-gradient(to bottom, var(--studio-panel), transparent);
+  block-size: 16px;
+  background: linear-gradient(to bottom, var(--studio-panel) 35%, transparent);
   opacity: 0;
   pointer-events: none;
 }
