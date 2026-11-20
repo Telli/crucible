@@ -1,0 +1,1 @@
+- Studio has property panels for lights, the sun, the camera, the world, fog, film, effects, shadows and quality, laid out one line per row in groups that fold; its panels dock to the window edges by default, the axis widget sits at the top right, and floating cards resize one at a time (#2177)

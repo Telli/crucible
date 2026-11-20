@@ -1,0 +1,2 @@
+- entry:studio: Studio's own entry gains the property panels for lights, the sun, the camera, the world, fog, film, effects, shadows and quality, and the grips that resize each floating card; before this a person could only reach those scene values by editing the file. The core entry is unchanged.
+- entry:studio+lazy: the same panels and grips counted with Studio's lazy chunks; nothing new is loaded lazily in this step.
