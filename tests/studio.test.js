@@ -859,3 +859,51 @@ test('cancelling a drag puts the object back and leaves undo and redo as they we
   assert.equal(controller.axisFacingView(), 'y');
   controller.dispose();
 });
+
+test('on a scene whose camera a motion track drives, the viewport looks around on its own and leaves the recipe alone', () => {
+  const recipe = {
+    format: 'crucible.scene',
+    schemaVersion: 1,
+    geometries: [{ id: 'g_box', type: 'box' }],
+    materials: [{ id: 'm_box', color: [0.5, 0.5, 0.5] }],
+    nodes: [{ id: 'box', geometry: 'g_box', material: 'm_box' }],
+    camera: { eye: [0, 2, 10], target: [0, 0, 0] },
+    motion: {
+      duration: 4,
+      loop: false,
+      tracks: [{ kind: 'camera', property: 'eye', interpolation: 'LINEAR', keyframes: [{ time: 0, value: [0, 2, 10] }, { time: 4, value: [5, 2, 10] }] }],
+    },
+  };
+  const controller = createStudioController({ scene: createAgentScene(recipe) });
+  assert.equal(controller.cameraDriven, true);
+  assert.equal(controller.freeView, false);
+  const revisionBefore = controller.scene.revision;
+  const pointBefore = controller.projectWorldPoint([1, 0, 0]);
+
+  controller.orbitCamera({ deltaAzimuth: 0.5, zoomScale: 0.5 });
+  assert.equal(controller.freeView, true);
+  assert.ok(Math.abs(Math.hypot(...controller.viewCamera.eye) - Math.hypot(0, 2, 10) / 2) < 1e-3, 'the zoom halves the distance');
+  assert.deepEqual(Array.from(controller.scene.camera.eye), [0, 2, 10], 'the animated camera is untouched');
+  assert.deepEqual(controller.exportRecipe().camera.eye, [0, 2, 10], 'the recipe is untouched');
+  assert.equal(controller.scene.revision, revisionBefore);
+  assert.notDeepEqual(controller.projectWorldPoint([1, 0, 0]), pointBefore, 'picking and handles follow the free view');
+
+  const freeEye = [...controller.viewCamera.eye];
+  controller.setMotionTime(2);
+  assert.deepEqual([...controller.viewCamera.eye], freeEye, 'a scrub does not pull the view back');
+  controller.updateNodeTransform('box', { translation: [1, 0, 0] });
+  controller.undo();
+  assert.deepEqual([...controller.viewCamera.eye], freeEye, 'undo keeps the view');
+
+  controller.lookThroughSceneCamera();
+  assert.equal(controller.freeView, false);
+  assert.deepEqual(Array.from(controller.viewCamera.eye), [2.5, 2, 10]);
+
+  const { motion: droppedMotion, ...stillRecipe } = recipe;
+  assert.ok(droppedMotion);
+  const plain = createStudioController({ scene: createAgentScene(stillRecipe) });
+  plain.orbitCamera({ zoomScale: 0.5 });
+  assert.equal(plain.cameraDriven, false);
+  assert.equal(plain.freeView, false);
+  assert.deepEqual(plain.exportRecipe().camera.eye, [0, 1, 5], 'without a camera track an orbit still writes the recipe');
+});

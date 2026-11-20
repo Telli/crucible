@@ -79,6 +79,8 @@ The keys follow Blender where Studio has the same action. **Help ▸ Keyboard sh
 
 F keeps the direction you look from and stands back just far enough for the object to fill the view. The camera flies there in a third of a second, so you can follow where the view went; any other camera input takes over at once, and with reduced motion the view jumps. Like an orbit, it is not an undo step.
 
+When a motion track moves the camera, the track decides what the scene camera sees. So the first orbit, zoom, pan, F or view preset there starts a free view: the viewport looks around on its own, and the recipe, the animated camera and a still stay as they were. **View → Animated camera** takes you back to the animated camera, and a saved view keeps what the viewport shows.
+
 Keys do nothing while you type in a field or while a dialog is open.
 
 G, R and S work as in Blender. With an object selected and the pointer over the viewport, the key picks the object up: it follows the pointer with no handle to aim at, and a pill at the bottom of the viewport shows how far it has gone and the keys that act on it. X, Y or Z keeps the move to that axis of the object, a click or Enter places it, and Esc or a right click puts it back as if nothing happened. A placed move is one undo step. With nothing selected, or the pointer over a panel, the key only switches the tool, and the handles work as before. Typing a number while holding an object is not supported: type it in Properties instead.

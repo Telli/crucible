@@ -352,6 +352,9 @@ function buildTimelineShot(name, camera, recipe) {
   return shot;
 }
 
+// The camera fields an orbit, a zoom, a pan or a framing moves.
+const VIEW_POSE_FIELDS = Object.freeze(['eye', 'target', 'up', 'orthoScale']);
+
 export function hasAnimatedData(recipe) {
   return Boolean(
     recipe.motion ||
@@ -598,6 +601,49 @@ export function createStudioController({
     swapRecipe(nextRecipe);
   }
 
+  // A camera motion track wins over the recipe camera, so on such a scene an orbit written to the recipe could never show.
+  // There the viewport takes this pose of its own and the recipe stays as it is.
+  let freeViewPose = null;
+  let drivenCameraCache = { scene: null, revision: -1, driven: false };
+
+  function cameraIsDriven() {
+    if (drivenCameraCache.scene !== currentScene || drivenCameraCache.revision !== currentScene.revision) {
+      const tracks = currentScene.exportRecipe().motion?.tracks ?? [];
+      const driven = tracks.some(track => track.kind === 'camera' && VIEW_POSE_FIELDS.includes(track.property));
+      drivenCameraCache = { scene: currentScene, revision: currentScene.revision, driven };
+    }
+    return drivenCameraCache.driven;
+  }
+
+  /** The camera the viewport looks through: the scene camera, or the free view while a track drives the scene camera. */
+  function viewCamera() {
+    const sceneCamera = currentScene['camera'];
+    return freeViewPose && cameraIsDriven() ? { ...sceneCamera, ...freeViewPose } : sceneCamera;
+  }
+
+  function moveView(posePatch, { recordUndo = false } = {}) {
+    if (cameraIsDriven()) {
+      const nextPose = { ...(freeViewPose ?? {}) };
+      for (const field of VIEW_POSE_FIELDS) {
+        if (posePatch[field] !== undefined) {
+          nextPose[field] = structuredClone(posePatch[field]);
+        }
+      }
+      freeViewPose = nextPose;
+    } else {
+      applySceneOperations([{ type: 'set-camera', ...posePatch }], { recordUndo });
+    }
+    notify({ kind: 'camera' });
+    return viewCamera();
+  }
+
+  /** Leaves the free view, so the viewport looks through the animated camera again. */
+  function lookThroughSceneCamera() {
+    freeViewPose = null;
+    notify({ kind: 'camera' });
+    return viewCamera();
+  }
+
   function swapRecipe(recipeInput) {
     invalidateQuery();
     // A drag in progress belongs to the scene it began on.
@@ -613,6 +659,9 @@ export function createStudioController({
       currentScene.sampleMotion(motionTime);
     } else {
       motionTime = 0;
+    }
+    if (!cameraIsDriven()) {
+      freeViewPose = null;
     }
   }
 
@@ -637,7 +686,7 @@ export function createStudioController({
   }
 
   function worldLengthPerPixel(pivot) {
-    const camera = currentScene.camera;
+    const camera = viewCamera();
     const distance = pivot ? Math.max(0.5, vec3.distance(camera.eye, pivot)) : 5;
     if (camera.projection === 'orthographic') {
       return (camera.orthoScale ?? 4) / height;
@@ -648,7 +697,7 @@ export function createStudioController({
 
   function projectWorldPoint(worldPoint) {
     const coordinates = assertFiniteVector(worldPoint, 3, 'worldPoint');
-    const { viewProjection } = cameraMatrices(currentScene.camera, width / height, Boolean(currentScene.environment?.world));
+    const { viewProjection } = cameraMatrices(viewCamera(), width / height, Boolean(currentScene.environment?.world));
     return projectPointWithMatrix(viewProjection, coordinates, width, height);
   }
 
@@ -656,7 +705,7 @@ export function createStudioController({
     if (!Number.isFinite(pixelX) || !Number.isFinite(pixelY)) {
       throw new TypeError('screenRay requires finite pixelX and pixelY numbers.');
     }
-    const { viewProjection } = cameraMatrices(currentScene.camera, width / height, Boolean(currentScene.environment?.world));
+    const { viewProjection } = cameraMatrices(viewCamera(), width / height, Boolean(currentScene.environment?.world));
     const inverse = mat4.invert(mat4.create(), viewProjection);
     if (!inverse) {
       throw new Error('Cannot unproject ray from a singular camera matrix.');
@@ -895,7 +944,7 @@ export function createStudioController({
     if (!selectedNodeId) {
       return null;
     }
-    const camera = currentScene.camera;
+    const camera = viewCamera();
     const key = [currentScene.revision, selectedNodeId, width, height, camera.eye, camera.target, camera.fov, camera.focalLength, camera.orthoScale, camera.projection].join('|');
     if (silhouetteCache.scene !== currentScene || silhouetteCache.key !== key) {
       silhouetteCache = { scene: currentScene, key, triangles: computeSelectionSilhouette() };
@@ -1025,7 +1074,7 @@ export function createStudioController({
     const basePivot = handles?.pivot ?? Array.from(node.translation ?? [0, 0, 0]);
     const isPlanar = PLANE_AXES.includes(axis) || axis === 'screen';
     const basis = handles?.basis ?? WORLD_BASIS;
-    const planeNormal = isPlanar ? planeNormalForAxis(axis, currentScene.camera, basis) : null;
+    const planeNormal = isPlanar ? planeNormalForAxis(axis, viewCamera(), basis) : null;
     const startRay = screenRay(pixelX, pixelY);
     let planeStartPoint = basePivot;
     if (planeNormal) {
@@ -1157,7 +1206,7 @@ export function createStudioController({
         hitPoint[1] - dragState.planeStartPoint[1],
         hitPoint[2] - dragState.planeStartPoint[2],
       ];
-      const maxJump = Math.max(12, vec3.distance(currentScene.camera.eye, dragState.basePivot) * 4);
+      const maxJump = Math.max(12, vec3.distance(viewCamera().eye, dragState.basePivot) * 4);
       const deltaLength = Math.hypot(...rawWorldDelta);
       if (deltaLength > maxJump) {
         const factor = maxJump / deltaLength;
@@ -1182,7 +1231,7 @@ export function createStudioController({
       const axisParameter = dragState.axisStartParameter === null
         ? null
         : rayAxisParameter(screenRay(pixelX, pixelY), dragState.basePivot, dragState.axisWorld);
-      const maxTravel = Math.max(12, vec3.distance(currentScene.camera.eye, dragState.basePivot) * 4);
+      const maxTravel = Math.max(12, vec3.distance(viewCamera().eye, dragState.basePivot) * 4);
       const pixelTravel = (deltaX * dragState.axisScreen[0] + deltaY * dragState.axisScreen[1]) * dragState.worldPerPixel;
       const exactTravel = axisParameter === null ? pixelTravel : axisParameter - dragState.axisStartParameter;
       const steppedTravel = shiftKey ? Math.round(exactTravel / moveSnapStep) * moveSnapStep : exactTravel;
@@ -1293,7 +1342,7 @@ export function createStudioController({
   function axisFacingView() {
     const worldMatrix = selectedWorldMatrix();
     const basis = worldMatrix ? worldBasisOf(worldMatrix) : WORLD_BASIS;
-    const camera = currentScene.camera;
+    const camera = viewCamera();
     const viewDirection = vec3.normalize(vec3.create(), vec3.subtract(vec3.create(), camera.target, camera.eye));
     let facingAxis = 'y';
     let strongest = -1;
@@ -1610,7 +1659,7 @@ export function createStudioController({
   }
 
   function orbitCamera({ deltaAzimuth = 0, deltaElevation = 0, zoomScale = 1, panX = 0, panY = 0, recordUndo = false } = {}) {
-    const camera = currentScene.camera;
+    const camera = viewCamera();
     const offset = vec3.subtract(vec3.create(), camera.eye, camera.target);
     const radius = Math.max(MINIMUM_DISTANCE, Math.min(MAXIMUM_DISTANCE, vec3.length(offset) * zoomScale));
     const currentHorizontal = Math.hypot(offset[0], offset[2]);
@@ -1636,13 +1685,11 @@ export function createStudioController({
       nextTarget[1] + Math.sin(elevation) * radius,
       nextTarget[2] + Math.cos(azimuth) * horizontal,
     ];
-    const operation = { type: 'set-camera', eye: roundVector(nextEye), target: roundVector(nextTarget) };
+    const operation = { eye: roundVector(nextEye), target: roundVector(nextTarget) };
     if (camera.projection === 'orthographic' && zoomScale !== 1) {
       operation.orthoScale = roundValue(Math.max(0.25, Math.min(100, (camera.orthoScale ?? 4) * zoomScale)));
     }
-    applySceneOperations([operation], { recordUndo });
-    notify({ kind: 'camera' });
-    return currentScene.camera;
+    return moveView(operation, { recordUndo });
   }
 
   function updateCamera(patch) {
@@ -1651,14 +1698,14 @@ export function createStudioController({
     }
     applySceneOperations([{ type: 'set-camera', ...patch }]);
     notify({ kind: 'camera' });
-    return currentScene.camera;
+    return viewCamera();
   }
 
   function setCameraViewPreset(presetName) {
     if (!STUDIO_VIEW_PRESETS.includes(presetName)) {
       throw new RangeError(`Unknown camera view "${String(presetName)}". Use ${STUDIO_VIEW_PRESETS.join(', ')}.`);
     }
-    const camera = currentScene.camera;
+    const camera = viewCamera();
     const distance = Math.max(MINIMUM_DISTANCE, vec3.distance(camera.eye, camera.target));
     const unitDirections = {
       front: [0, 0, 1],
@@ -1674,11 +1721,11 @@ export function createStudioController({
       camera.target[1] + unit[1] * distance,
       camera.target[2] + unit[2] * distance,
     ]);
-    return updateCamera({ eye, up: [0, 1, 0] });
+    return moveView({ eye, up: [0, 1, 0] }, { recordUndo: true });
   }
 
   function toggleCameraProjection() {
-    const camera = currentScene.camera;
+    const camera = viewCamera();
     const aspect = width / height;
     const distance = Math.max(0.5, vec3.distance(camera.eye, camera.target));
     const currentFov = roundValue(cameraFieldOfView(camera, aspect), DEGREE_PRECISION);
@@ -1721,7 +1768,7 @@ export function createStudioController({
    * from and stands back just far enough for the object to fit the view. Returns a set-camera patch and changes nothing.
    */
   function frameSelectionPose() {
-    const camera = currentScene.camera;
+    const camera = viewCamera();
     const bounds = framedBounds();
     const target = bounds ? bounds.min.map((value, axis) => (value + bounds.max[axis]) / 2) : selectedPivotWorld() ?? [...camera.target];
     const radius = bounds ? Math.max(FRAME_MINIMUM_RADIUS, vec3.distance(bounds.min, bounds.max) / 2) : FRAME_MINIMUM_RADIUS;
@@ -1754,9 +1801,7 @@ export function createStudioController({
 
   // Moves the viewport camera without an undo step, as an orbit does. A flight to a framed object calls it once a frame.
   function moveViewportCamera(patch) {
-    applySceneOperations([{ type: 'set-camera', ...patch }], { recordUndo: false });
-    notify({ kind: 'camera' });
-    return currentScene.camera;
+    return moveView(patch);
   }
 
   function listBookmarks() {
@@ -1769,7 +1814,7 @@ export function createStudioController({
     }
     const recipe = currentScene.exportRecipe();
     const existingShots = recipe.timeline?.shots ?? [];
-    const shot = buildTimelineShot(name, currentScene.camera, recipe);
+    const shot = buildTimelineShot(name, viewCamera(), recipe);
     const nextShots = existingShots.some(candidate => candidate.name === name)
       ? existingShots.map(candidate => (candidate.name === name ? shot : candidate))
       : [...existingShots, shot];
@@ -1784,7 +1829,8 @@ export function createStudioController({
     if (!shot) {
       throw new RangeError(`Unknown camera bookmark "${String(name)}".`);
     }
-    return updateCamera(structuredClone(shot.camera ?? {}));
+    const camera = updateCamera(structuredClone(shot.camera ?? {}));
+    return cameraIsDriven() ? moveView(shot.camera ?? {}) : camera;
   }
 
   function removeBookmark(name) {
@@ -1861,6 +1907,7 @@ export function createStudioController({
   function loadRecipe(recipeInput, { recordUndo = true } = {}) {
     const before = recordUndo ? currentScene.exportRecipe() : null;
     endUndoGroup();
+    freeViewPose = null;
     swapRecipe(recipeInput);
     if (before) {
       pushUndoSnapshot(before, { restoresCamera: true });
@@ -1871,6 +1918,10 @@ export function createStudioController({
 
   return Object.freeze({
     get scene() { return currentScene; },
+    get viewCamera() { return viewCamera(); },
+    get cameraDriven() { return cameraIsDriven(); },
+    get freeView() { return Boolean(freeViewPose) && cameraIsDriven(); },
+    lookThroughSceneCamera,
     get selectedNodeId() { return selectedNodeId; },
     get tool() { return activeTool; },
     get activeTab() { return activeTab; },
