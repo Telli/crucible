@@ -8,7 +8,7 @@ import { loadHdri, parseRadianceHdr } from '../src/hdri.js';
 import { catalogEnvironmentSource, registerCatalogEnvironment } from '../src/look-catalog.js';
 import { environmentRadiance } from '../src/path-tracer-shading.js';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 
 const WIDTH = 32;
 const HEIGHT = 16;
@@ -87,7 +87,7 @@ test('the raster shows the spot toward -Z at rotation 0', async (context) => {
       return;
     }
     const page = await browser.newPage({ viewport: { width: 64, height: 64 } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const means = await page.evaluate(async (hdrBase64) => {
       const bytes = Uint8Array.from(atob(hdrBase64), character => character.charCodeAt(0));
       const { createAgentScene, loadAllAgentSceneModules } = await import('/src/agent-scene.js');

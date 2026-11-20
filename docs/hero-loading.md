@@ -1,5 +1,7 @@
 # How the home hero loads
 
+The home page no longer plays this loop. It runs the pour-to-cast scroll story (`src/landing.js`, `src/landing-scene.js`), which draws one small scene of its own and falls back to five still pictures for reduced motion, a light connection or a failed scene. This guide describes `src/hero-lab`, which the home page does not load.
+
 The hero on the home page plays a flight over the Port showcase world. The world is 9.7 MB, so on a slow link the page loads a small copy first and replaces it with the full world when that has arrived.
 
 ## Order of the files

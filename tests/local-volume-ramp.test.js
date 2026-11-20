@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { createAgentScene } from '../src/agent-scene.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { applyViewTransform } from '../src/view-transform.js';
@@ -309,7 +309,7 @@ test('the rasterizer and the CPU path tracer draw the same graded fireball, and 
       return;
     }
     const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
+    await openBlankPage(page, port);
     const switchedOff = { ...COMPARED_SPHERE, emissionRamp: { ...COMPARED_SPHERE.emissionRamp, exposure: 0 } };
     const { frames, glError } = await rasterFrames(page, [[COMPARED_SPHERE], [switchedOff], []]);
     assert.equal(glError, 0);
