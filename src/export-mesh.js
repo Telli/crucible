@@ -74,7 +74,17 @@ function checkParts(parts, format) {
   }
 }
 
-function worldTriangles(part) {
+// STL stores float32, so a world coordinate past that range would be written as Infinity; OBJ text needs only finite numbers.
+function checkWorldRange(world, format) {
+  const isStl = format === 'STL';
+  for (const value of world) {
+    if (!Number.isFinite(isStl ? Math.fround(value) : value)) {
+      throw new RangeError(`${format} export moves a vertex past the ${isStl ? 'float32' : 'finite'} range; scale part.matrix down.`);
+    }
+  }
+}
+
+function worldTriangles(part, format) {
   const matrix = part.matrix ?? IDENTITY;
   const { positions, indices } = part.geometry;
   const vertexCount = positions.length / 3;
@@ -87,6 +97,7 @@ function worldTriangles(part) {
       world[vertex * 3 + axis] = matrix[axis] * x + matrix[4 + axis] * y + matrix[8 + axis] * z + matrix[12 + axis];
     }
   }
+  checkWorldRange(world, format);
   const determinant = matrix[0] * (matrix[5] * matrix[10] - matrix[9] * matrix[6])
     - matrix[4] * (matrix[1] * matrix[10] - matrix[9] * matrix[2])
     + matrix[8] * (matrix[1] * matrix[6] - matrix[5] * matrix[2]);
@@ -114,7 +125,7 @@ function faceNormal(world, first, second, third) {
 /** Returns a binary STL `ArrayBuffer` of every part's triangles in world space. Y stays up, units stay as authored. */
 export function exportStl(parts) {
   checkParts(parts, 'STL');
-  const prepared = parts.map(worldTriangles);
+  const prepared = parts.map(part => worldTriangles(part, 'STL'));
   const triangleCount = prepared.reduce((total, entry) => total + entry.triangles.length / 3, 0);
   const buffer = new ArrayBuffer(84 + triangleCount * 50);
   const view = new DataView(buffer);
@@ -196,7 +207,7 @@ export function exportObj(parts, options = {}) {
   let uvBase = 1;
   let normalBase = 1;
   parts.forEach((part, partIndex) => {
-    const { world, triangles, matrix } = worldTriangles(part);
+    const { world, triangles, matrix } = worldTriangles(part, 'OBJ');
     const key = materialKey(part.material);
     if (!materialNames.has(key)) {
       const name = `material_${materialNames.size}`;

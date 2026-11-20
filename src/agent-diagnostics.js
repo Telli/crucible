@@ -61,11 +61,23 @@ function materialProblems(material) {
   return problems;
 }
 
+// A mesh geometry may cut with another recipe geometry that no node draws (`edits[].cutter.geometry`), and that one with a third.
+function geometryIdsInUse({ geometries, nodes }) {
+  const inUse = new Set();
+  const visit = id => {
+    if (id === undefined || inUse.has(id)) return;
+    inUse.add(id);
+    geometries.find(geometry => geometry.id === id)?.edits?.forEach(edit => visit(edit?.cutter?.geometry));
+  };
+  nodes.forEach(node => visit(node.geometry));
+  return inUse;
+}
+
 /** Material and resource diagnostics for a normalized procedural recipe. */
 export function recipeDiagnostics(recipe) {
   const problems = recipe.materials.flatMap(materialProblems);
   const usedMaterials = new Set(recipe.nodes.map(node => node.material).filter(Boolean));
-  const usedGeometries = new Set(recipe.nodes.map(node => node.geometry).filter(Boolean));
+  const usedGeometries = geometryIdsInUse(recipe);
   for (const material of recipe.materials.filter(candidate => !usedMaterials.has(candidate.id))) {
     problems.push(diagnostic('unused-material', 'info', material.id,
       `Material ${material.id} is used by no node.`,

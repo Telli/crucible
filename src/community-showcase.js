@@ -49,8 +49,9 @@ export function communityEntryProblems(entry) {
   if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return ['an entry must be an object'];
   const problems = REQUIRED_TEXT_FIELDS.flatMap((field) => textProblems(entry, field));
   if (!isHttpsUrl(entry.authorUrl)) problems.push('"authorUrl" must be an https link to the author');
-  if (typeof entry.discussion !== 'string' || !DISCUSSION_URL.test(entry.discussion)) {
-    problems.push('"discussion" must be the Show and tell link, https://github.com/codepawl/crucible/discussions/<number>');
+  const hasDiscussion = entry.discussion !== undefined;
+  if (hasDiscussion ? typeof entry.discussion !== 'string' || !DISCUSSION_URL.test(entry.discussion) : entry.link === undefined) {
+    problems.push('"discussion" must be the Show and tell link, https://github.com/codepawl/crucible/discussions/<number> (it may be left out only when "link" is set, for the studio own pieces)');
   }
   if (typeof entry.image !== 'string' || !IMAGE_PATH.test(entry.image)) {
     problems.push('"image" must be a local still such as /community/<lowercase-name>.webp');
@@ -81,17 +82,17 @@ function escapeHtml(value) {
 // The markup of one entry. The still links to the live page when there is one, otherwise to the discussion.
 export function communityFigureMarkup(entry) {
   const target = escapeHtml(entry.link ?? entry.discussion);
+  const discussionLink = entry.discussion ? ` · <a href="${escapeHtml(entry.discussion)}">Discussion</a>` : '';
   const image = `<img src="${escapeHtml(entry.image)}" alt="${escapeHtml(entry.alt)}" width="${entry.width}" height="${entry.height}" loading="lazy" />`;
   const author = `<a href="${escapeHtml(entry.authorUrl)}">${escapeHtml(entry.author)}</a>`;
-  const discussion = `<a href="${escapeHtml(entry.discussion)}">Discussion</a>`;
   return `<figure><a class="community-still" href="${target}">${image}</a>`
     + `<figcaption><strong>${escapeHtml(entry.title)}</strong><span>By ${author}</span>`
-    + `<small>${escapeHtml(entry.assets)} · ${discussion}</small></figcaption></figure>`;
+    + `<small>${escapeHtml(entry.assets)}${discussionLink}</small></figcaption></figure>`;
 }
 
-// Fills the Community grid from featured.json. The submit links stay visible whatever happens, so a failed fetch only
-// leaves the grid empty.
-export async function renderCommunity({ grid, emailLink, fetchJson = defaultFetchJson }) {
+// Fills the Community grid from featured.json. The submit links stay visible whatever happens, and a list that is empty
+// or fails to load shows the example card (emptyState) instead of a blank grid.
+export async function renderCommunity({ grid, emailLink, emptyState, fetchJson = defaultFetchJson }) {
   if (emailLink) emailLink.href = submitEmailUrl();
   let entries = [];
   try {
@@ -101,6 +102,7 @@ export async function renderCommunity({ grid, emailLink, fetchJson = defaultFetc
   }
   grid.innerHTML = entries.map(communityFigureMarkup).join('');
   grid.hidden = entries.length === 0;
+  if (emptyState) emptyState.hidden = entries.length > 0;
   return entries.length;
 }
 

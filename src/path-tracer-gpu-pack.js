@@ -182,6 +182,8 @@ export function packAtlas(materials) {
 
 // The float of a material record that holds the shadow-only flag: texel 5, second channel (its first channel is the emission map flag).
 export const SHADOW_ONLY_SLOT = 21;
+/** Slot of the material table that holds the point light bits whose own lamp mesh the part is (src/lamp-mesh.js); shadow rays of those lights pass through it. */
+export const LAMP_LIGHTS_SLOT = 23;
 
 // Bit 0 (value 1) is set when both axes repeat and the value 2 marks sRGB texels: Cook's reduceV1MaterialTable reads only those two bits
 // (`flags & 1`, `flags & 2`), so they keep their meaning. Values 4 to 12 hold the wrap code of U and 16 to 48 the wrap code of V
@@ -197,7 +199,7 @@ export function textureFlags(texture) {
  * Ten texels per material: surface values, texture flags, then one atlas rectangle per map. A material of a shadow-only part
  * (`shadowOnlyParts[index] === 1`) also gets 1 in SHADOW_ONLY_SLOT, which camera rays read to step through it.
  */
-export function packMaterials(materials, atlas, shadowOnlyParts = null) {
+export function packMaterials(materials, atlas, shadowOnlyParts = null, lampLightMasks = null) {
   const table = createTable(materials.length * MATERIAL_TEXELS);
   const { data } = table;
   const fields = ['texture', 'normalTexture', 'surfaceTexture', 'emissiveTexture'];
@@ -218,6 +220,7 @@ export function packMaterials(materials, atlas, shadowOnlyParts = null) {
     });
     data[base + UV_SET_SLOT] = materialUvSetMask(material);
     if (shadowOnlyParts?.[index] === 1) data[base + SHADOW_ONLY_SLOT] = 1;
+    if (lampLightMasks) data[base + LAMP_LIGHTS_SLOT] = lampLightMasks[index];
   });
   return table;
 }
@@ -246,9 +249,13 @@ export function packSubsurface(materials) {
 
 const LIGHT_TYPES = { point: 0, spot: 1, area: 2 };
 
+// The light's own bounce limit plus one (its `maxBounces`, already checked by buildTraceScene), or 0 for none.
+const bounceLimitCode = light => (light.maxBounces === undefined ? 0 : light.maxBounces + 1);
+
 /**
  * Six texels per point, spot or area light, in the order the tracer samples them. The third float of the last texel is 1 for a point or
- * spot light with `softFalloff` (an oriented disk, read by the `cycles` kernel only) and 0 for every other light.
+ * spot light with `softFalloff` (an oriented disk, read by the `cycles` kernel only) and 0 for every other light. The fourth float is
+ * the light's own bounce limit plus one (0 for none), also read by the `cycles` kernel only.
  */
 export function packLights(lights) {
   const entries = [
@@ -266,13 +273,13 @@ export function packLights(lights) {
       data.set([...light.normal, light.width], base + 8);
       data.set([...light.across, light.height], base + 12);
       data.set([...light.along, 0], base + 16);
-      data.set([light.intensity, 0, 0, 0], base + 20);
+      data.set([light.intensity, 0, 0, bounceLimitCode(light)], base + 20);
       return;
     }
     data.set([...(light.direction ?? [0, 0, 0]), light.radius], base + 8);
     data.set([0, 0, 0, light.cosineHalfAngle ?? 0], base + 12);
     data.set([0, 0, 0, light.blend ?? 0], base + 16);
-    data.set([light.intensity, light.range, light.softFalloff === true ? 1 : 0, 0], base + 20);
+    data.set([light.intensity, light.range, light.softFalloff === true ? 1 : 0, bounceLimitCode(light)], base + 20);
   });
   return { table, count: entries.length };
 }

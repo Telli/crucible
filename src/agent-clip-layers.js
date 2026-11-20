@@ -70,6 +70,9 @@ function normalizedMask(input, resolveNode, position) {
   if (input.exclude !== undefined) {
     denseArray(input.exclude, MAX_MASK_JOINTS, `${label} exclude`);
     mask.exclude = input.exclude.map(joint => resolveNode(joint, `${path}.exclude`));
+    if (mask.joints.every(joint => mask.exclude.includes(joint))) {
+      throw invalidField(`${path}.exclude`, input.exclude, 'a list that leaves at least one of the mask joints in; drop exclude or name other nodes');
+    }
   }
   return mask;
 }
