@@ -12,6 +12,14 @@ export const DEFAULT_LIMITS = Object.freeze({
   maximumMedianDifference: 25,
   maximumShadowDifference: 35,
   maximumHighlightDifference: 40,
+  // Each region of a 4 by 3 grid against the reference, compared at a quarter of the analysis size. Calibrated on the
+  // classroom hero camera: a Cook still against itself moved by one pixel scores at least 0.88 similarity and at most
+  // 10 patchiness per region; the realtime still that was rejected for a cold, flat ceiling and wall scores 0.12 to
+  // 0.42 similarity on its top row, up to 83 levels darker and 17 to 58 patchiness. Blotches of plus or minus 15
+  // percent laid over a Cook region raise its patchiness to 11 to 17.
+  minimumRegionSimilarity: 0.6,
+  maximumRegionDifference: 40,
+  maximumRegionPatchiness: 25,
   // Temporal stability.
   shimmerResidual: 10,
   maximumShimmerPercent: 1,
@@ -26,6 +34,9 @@ const BRIGHT_CLIP = 250;
 const SHIMMER_BLOCK = 8;
 const SHIMMER_SEARCH = 3;
 const GLOBAL_SEARCH = 24;
+// How far one block may move apart from the whole frame, as parallax does for a chair next to the lens while the
+// background drifts. Searched on a half-size copy, then used only through the motions the neighbouring blocks share.
+const LOCAL_SEARCH = 16;
 const FLAT_BLOCK = 16;
 
 /** Luma (Rec. 709 weights on the stored sRGB values) of RGBA or RGB bytes, as a plane of 0..255 values. */
@@ -194,32 +205,137 @@ export function estimateGlobalShift(current, previous) {
 }
 
 /**
+ * The motion of each block on its own: the best match within LOCAL_SEARCH pixels of the global shift, found on
+ * half-size copies of both frames. Returns one { x, y } per block in full-size pixels.
+ */
+export function coarseBlockMotion(current, previous, shift) {
+  const halfCurrent = resizePlane(current, Math.floor(current.width / 2), Math.floor(current.height / 2));
+  const halfPrevious = resizePlane(previous, halfCurrent.width, halfCurrent.height);
+  const halfBlock = SHIMMER_BLOCK / 2;
+  const columns = Math.floor(current.width / SHIMMER_BLOCK);
+  const rows = Math.floor(current.height / SHIMMER_BLOCK);
+  const search = LOCAL_SEARCH / 2;
+  const centreX = Math.round(shift.x / 2);
+  const centreY = Math.round(shift.y / 2);
+  const motion = new Array(columns * rows);
+  for (let blockRow = 0; blockRow < rows; blockRow++) {
+    for (let blockColumn = 0; blockColumn < columns; blockColumn++) {
+      const left = blockColumn * halfBlock;
+      const top = blockRow * halfBlock;
+      let best = { error: Infinity, x: centreX, y: centreY };
+      for (let offsetY = centreY - search; offsetY <= centreY + search; offsetY++) {
+        if (top + offsetY < 0 || top + offsetY + halfBlock > halfPrevious.height) continue;
+        for (let offsetX = centreX - search; offsetX <= centreX + search; offsetX++) {
+          if (left + offsetX < 0 || left + offsetX + halfBlock > halfPrevious.width) continue;
+          const error = meanAbsoluteDifference(halfCurrent, halfPrevious, left, top, halfBlock, offsetX, offsetY);
+          if (error < best.error) best = { error, x: offsetX, y: offsetY };
+        }
+      }
+      motion[blockRow * columns + blockColumn] = { x: best.x * 2, y: best.y * 2 };
+    }
+  }
+  return { columns, rows, motion };
+}
+
+function median(values) {
+  const sorted = [...values].sort((first, second) => first - second);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function motionDistance(first, second) {
+  return Math.max(Math.abs(first.x - second.x), Math.abs(first.y - second.y));
+}
+
+/**
+ * The motions the blocks around this one agree on, leaving the block out so a block whose texels change shape cannot
+ * vouch for itself. `dominant` is the median of the eight neighbours. `secondary` is the motion furthest from it that
+ * at least two neighbours share, the near object at a silhouette, or null. A surface that moves as one gives its true
+ * motion; texels that crawl give no consistent answer.
+ */
+function neighbourMotion(field, blockColumn, blockRow) {
+  const motions = [];
+  for (let row = blockRow - 1; row <= blockRow + 1; row++) {
+    for (let column = blockColumn - 1; column <= blockColumn + 1; column++) {
+      if ((row === blockRow && column === blockColumn) || row < 0 || column < 0 || row >= field.rows || column >= field.columns) continue;
+      motions.push(field.motion[row * field.columns + column]);
+    }
+  }
+  const dominant = { x: median(motions.map(motion => motion.x)), y: median(motions.map(motion => motion.y)) };
+  let secondary = null;
+  for (const motion of motions) {
+    const supporters = motions.filter(other => motionDistance(other, motion) <= 2).length;
+    if (supporters < 2) continue;
+    if (!secondary || motionDistance(motion, dominant) > motionDistance(secondary, dominant)) secondary = motion;
+  }
+  return { dominant, secondary };
+}
+
+function bestMatchNear(current, previous, left, top, centre) {
+  let best = { error: Infinity, x: 0, y: 0 };
+  for (let offsetY = centre.y - SHIMMER_SEARCH; offsetY <= centre.y + SHIMMER_SEARCH; offsetY++) {
+    if (top + offsetY < 0 || top + offsetY + SHIMMER_BLOCK > previous.height) continue;
+    for (let offsetX = centre.x - SHIMMER_SEARCH; offsetX <= centre.x + SHIMMER_SEARCH; offsetX++) {
+      if (left + offsetX < 0 || left + offsetX + SHIMMER_BLOCK > previous.width) continue;
+      const error = meanAbsoluteDifference(current, previous, left, top, SHIMMER_BLOCK, offsetX, offsetY);
+      if (error < best.error) best = { error, x: offsetX, y: offsetY };
+    }
+  }
+  return best;
+}
+
+/**
+ * A block on the silhouette of a near object holds two motions: part of it moves with the object and part with what
+ * lies behind. Each pixel may take whichever of the two matches lines it up better. Texels that change shape match
+ * neither.
+ */
+function twoLayerResidual(current, previous, left, top, first, second) {
+  let sum = 0;
+  for (let row = top; row < top + SHIMMER_BLOCK; row++) {
+    for (let column = left; column < left + SHIMMER_BLOCK; column++) {
+      const value = current.values[row * current.width + column];
+      const firstDifference = Math.abs(value - previous.values[(row + first.y) * previous.width + column + first.x]);
+      const secondDifference = Math.abs(value - previous.values[(row + second.y) * previous.width + column + second.x]);
+      sum += Math.min(firstDifference, secondDifference);
+    }
+  }
+  return sum / (SHIMMER_BLOCK * SHIMMER_BLOCK);
+}
+
+function searchCentres(shift, neighbours) {
+  const centres = [];
+  for (const candidate of [shift, { x: 0, y: 0 }, neighbours.dominant, neighbours.secondary]) {
+    if (candidate && !centres.some(centre => motionDistance(centre, candidate) === 0)) centres.push(candidate);
+  }
+  return centres;
+}
+
+/**
  * For each block of the current frame, the smallest mean difference to the previous frame over shifts near the
- * global motion. Moving surfaces find a match; texels that change shape from frame to frame do not.
+ * global motion, near no motion, and near the motions its neighbouring blocks agree on. Moving surfaces find a match,
+ * even when parallax moves them faster than the rest of the frame; texels that change shape from frame to frame do not.
  */
 export function blockResiduals(current, previous) {
   const shift = estimateGlobalShift(current, previous);
-  const columns = Math.floor(current.width / SHIMMER_BLOCK);
-  const rows = Math.floor(current.height / SHIMMER_BLOCK);
+  const field = coarseBlockMotion(current, previous, shift);
+  const { columns, rows } = field;
   const residuals = new Float32Array(columns * rows).fill(NaN);
   for (let blockRow = 0; blockRow < rows; blockRow++) {
     for (let blockColumn = 0; blockColumn < columns; blockColumn++) {
       const left = blockColumn * SHIMMER_BLOCK;
       const top = blockRow * SHIMMER_BLOCK;
-      let best = { error: Infinity, x: 0, y: 0 };
       // Search near the camera motion and near no motion, so a repeating pattern that fools the global estimate
-      // still finds its match for slow moves.
-      for (const centre of shift.x === 0 && shift.y === 0 ? [shift] : [shift, { x: 0, y: 0 }]) {
-        for (let offsetY = centre.y - SHIMMER_SEARCH; offsetY <= centre.y + SHIMMER_SEARCH; offsetY++) {
-          if (top + offsetY < 0 || top + offsetY + SHIMMER_BLOCK > previous.height) continue;
-          for (let offsetX = centre.x - SHIMMER_SEARCH; offsetX <= centre.x + SHIMMER_SEARCH; offsetX++) {
-            if (left + offsetX < 0 || left + offsetX + SHIMMER_BLOCK > previous.width) continue;
-            const error = meanAbsoluteDifference(current, previous, left, top, SHIMMER_BLOCK, offsetX, offsetY);
-            if (error < best.error) best = { error, x: offsetX, y: offsetY };
-          }
-        }
+      // still finds its match for slow moves, and near the neighbours' motions for parallax.
+      const matches = searchCentres(shift, neighbourMotion(field, blockColumn, blockRow))
+        .map(centre => bestMatchNear(current, previous, left, top, centre))
+        .filter(match => match.error !== Infinity);
+      if (!matches.length) continue;
+      const best = matches.reduce((first, second) => (second.error < first.error ? second : first));
+      let residual = Math.min(best.error, halfPixelResidual(current, previous, left, top, best));
+      for (const other of matches) {
+        // Two layers only where the motions really differ, so a still surface gets no second chance.
+        if (motionDistance(other, best) > 2 * SHIMMER_SEARCH) residual = Math.min(residual, twoLayerResidual(current, previous, left, top, best, other));
       }
-      if (best.error !== Infinity) residuals[blockRow * columns + blockColumn] = Math.min(best.error, halfPixelResidual(current, previous, left, top, best));
+      residuals[blockRow * columns + blockColumn] = residual;
     }
   }
   return { columns, rows, residuals, shift };
@@ -398,6 +514,91 @@ export function checkSimilarity(plane, reference, minimum = null) {
   return { name: 'similarity', pass: problems.length === 0, measured: { similarity: round(similarity, 3) }, problems };
 }
 
+function cropPlane(plane, left, top, width, height) {
+  const values = new Float32Array(width * height);
+  for (let row = 0; row < height; row++) {
+    values.set(plane.values.subarray((top + row) * plane.width + left, (top + row) * plane.width + left + width), row * width);
+  }
+  return { width, height, values };
+}
+
+/**
+ * The frame and its reference cut into a grid of regions, each compared at a quarter of the analysis size so that
+ * path-traced noise and anti-aliasing differences average out while blotches, smears and flat areas the size of a
+ * wall panel remain. Returns per region its name, structural similarity and mean brightness difference.
+ */
+export function regionComparison(plane, reference, { columns = 4, rows = 3, scale = 4 } = {}) {
+  const smallWidth = Math.max(columns * 8, Math.floor(plane.width / scale));
+  const smallHeight = Math.max(rows * 8, Math.floor(plane.height / scale));
+  const small = resizePlane(plane, smallWidth, smallHeight);
+  const smallReference = resizePlane(reference, smallWidth, smallHeight);
+  const regionWidth = Math.floor(smallWidth / columns);
+  const regionHeight = Math.floor(smallHeight / rows);
+  const regions = [];
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const left = column * regionWidth;
+      const top = row * regionHeight;
+      const candidate = cropPlane(small, left, top, regionWidth, regionHeight);
+      const expected = cropPlane(smallReference, left, top, regionWidth, regionHeight);
+      let difference = 0;
+      let squaredDifference = 0;
+      for (let index = 0; index < candidate.values.length; index++) {
+        const pixelDifference = candidate.values[index] - expected.values[index];
+        difference += pixelDifference;
+        squaredDifference += pixelDifference * pixelDifference;
+      }
+      const meanDifference = difference / candidate.values.length;
+      regions.push({
+        name: regionName((column + 0.5) / columns, (row + 0.5) / rows),
+        column,
+        row,
+        similarity: structuralSimilarity(candidate, expected),
+        meanDifference,
+        // The root mean square difference left once the region's own brightness offset is taken out: a wall that is
+        // evenly too dark scores low here, a wall broken into light and dark patches scores high.
+        patchiness: Math.sqrt(Math.max(0, squaredDifference / candidate.values.length - meanDifference * meanDifference)),
+      });
+    }
+  }
+  return regions;
+}
+
+/**
+ * Regions that differ from a reference of the same scene and camera: a wall whose stains break into blotches, a roof
+ * gone flat black, a texture smeared along one axis. Whole-frame exposure cannot see these when the rest of the
+ * frame is right.
+ */
+export function checkReferenceRegions(plane, reference, limits = DEFAULT_LIMITS) {
+  const regions = regionComparison(plane, reference);
+  const problems = [];
+  for (const region of regions) {
+    if (region.similarity < limits.minimumRegionSimilarity) {
+      problems.push(`${region.name} (column ${region.column + 1}, row ${region.row + 1}) has structural similarity ${round(region.similarity, 2)} to the reference (minimum ${limits.minimumRegionSimilarity}): look for blotchy or stretched textures, missing objects or aliasing there`);
+    }
+    if (region.patchiness > limits.maximumRegionPatchiness) {
+      problems.push(`${region.name} (column ${region.column + 1}, row ${region.row + 1}) differs from the reference in patches (${round(region.patchiness)} levels root mean square once its brightness offset is removed, limit ${limits.maximumRegionPatchiness}): look for stains or textures broken into blotches, smears or missing detail there`);
+    }
+    if (Math.abs(region.meanDifference) > limits.maximumRegionDifference) {
+      const direction = region.meanDifference > 0 ? 'brighter' : 'darker';
+      problems.push(`${region.name} (column ${region.column + 1}, row ${region.row + 1}) is ${round(Math.abs(region.meanDifference))} levels ${direction} than the reference (limit ${limits.maximumRegionDifference}): look at that area's lights, shadows and materials`);
+    }
+  }
+  const worst = regions.reduce((first, second) => (second.similarity < first.similarity ? second : first));
+  return {
+    name: 'regions',
+    pass: problems.length === 0,
+    measured: {
+      worstRegion: worst.name,
+      worstSimilarity: round(worst.similarity, 2),
+      largestDifference: round(Math.max(...regions.map(region => Math.abs(region.meanDifference)))),
+      largestPatchiness: round(Math.max(...regions.map(region => region.patchiness))),
+      grid: regions.map(region => [round(region.similarity, 2), round(region.meanDifference), round(region.patchiness)]),
+    },
+    problems,
+  };
+}
+
 /**
  * Every check for a candidate: frames is one plane for a still or several consecutive planes for a clip, all the
  * same size. The reference, when given, is compared with the frame at referenceFrame and resized to match it.
@@ -414,6 +615,9 @@ export function checkPreview({ frames, reference = null, referenceFrame = 0, min
   } else {
     results.push(checkNearPlane(frames, merged));
   }
-  if (sizedReference) results.push(checkSimilarity(compared, sizedReference, minimumSimilarity));
+  if (sizedReference) {
+    results.push(checkSimilarity(compared, sizedReference, minimumSimilarity));
+    results.push(checkReferenceRegions(compared, sizedReference, merged));
+  }
   return { pass: results.every(result => result.pass), results };
 }
