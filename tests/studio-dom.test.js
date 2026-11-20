@@ -2562,9 +2562,4 @@ test('menu rows start with their icon or an empty square, so the labels line up'
       assert.match(String(leadClass), /crucible-studio-icon|crucible-studio-menu-gap/, `${menuId}: ${row.textContent}`);
     }
   }
-  const editMenu = ui.root.descendants().find(element => element.id === 'crucible-studio-pop-edit');
-  const rowNamed = label => editMenu.children.find(element => element.textContent === label);
-  assert.equal(rowNamed('Reset rotation').children[0].getAttribute('data-motion'), 'spin');
-  assert.equal(rowNamed('Delete').children[0].getAttribute('data-motion'), 'shake');
-  assert.equal(rowNamed('Deselect').children[0].getAttribute('data-motion'), null);
 });

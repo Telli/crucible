@@ -20,7 +20,7 @@ import {
   normalizeStudioPreferences,
   saveStudioPreferences,
 } from './studio-preferences.js';
-import { STUDIO_ICON_MOTIONS, studioIconPath } from './studio-icons.js';
+import { studioIconPath } from './studio-icons.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
@@ -886,11 +886,7 @@ export function createStudio(container, {
       item.prepend(createElement(documentReference, 'span', { className: 'crucible-studio-menu-gap', attributes: { 'aria-hidden': 'true' } }));
       return item;
     }
-    const icon = createIcon(documentReference, iconName);
-    if (STUDIO_ICON_MOTIONS[iconName]) {
-      icon.setAttribute('data-motion', STUDIO_ICON_MOTIONS[iconName]);
-    }
-    item.prepend(icon);
+    item.prepend(createIcon(documentReference, iconName));
     return item;
   };
   // One row of a menu: its icon, what it does, and its key on the right.
