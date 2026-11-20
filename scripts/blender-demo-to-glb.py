@@ -23,6 +23,9 @@ coordinates) is dropped by the exporter, which writes only image textures. Such 
 colour attribute (Cycles, Diffuse colour only) and wired into the Base Color, so they reach the GLB as COLOR_0 (#2766). It prints
 one line per material: kept, approximated (a Cycles-only BSDF replaced), graded or baked.
 
+The exporter also skips hair particles that place objects or collections (the Lone Monk lawn and bushes). Their instances are
+made real objects first and joined into one mesh per emitter after the bake (#2761); it prints PARTICLES and JOINED lines.
+
 An image texture tinted on its way to the Base Color by constant nodes only (Hue Saturation Value, a Mix or Multiply toward a
 flat colour) is graded instead: the tint is applied to a copy of the image in linear light, as Cycles does, and that copy is
 wired in, so the texture keeps its full resolution (#2761). Baking those to vertex colours left blotches on large plaster walls.
@@ -271,7 +274,7 @@ def base_color_from_nodes(material):
 def mesh_users(material):
     return [
         candidate for candidate in bpy.context.view_layer.objects
-        if candidate.type == "MESH" and candidate.visible_get() and any(slot.material == material for slot in candidate.material_slots)
+        if candidate.type == "MESH" and candidate.visible_get() and not candidate.hide_render and any(slot.material == material for slot in candidate.material_slots)
     ]
 
 
@@ -318,10 +321,75 @@ def wire_baked_color(material):
     tree.links.new(attribute_node.outputs["Color"], principled.inputs["Base Color"])
 
 
+def realize_particle_instances():
+    """The glTF exporter skips hair particles that place objects or collections, so the Lone Monk lawn left as bare
+    mud and its bushes went missing (#2761). Each emitter's instances become real objects that share their mesh
+    for the bake, and an emitter Blender would not render is hidden. It runs before the bake,
+    which applies modifiers and so would drop a particle system whose emitter carries a baked material (the lawn)."""
+    emitters = [
+        candidate for candidate in bpy.context.view_layer.objects
+        if candidate.visible_get() and any(
+            modifier.type == "PARTICLE_SYSTEM" and modifier.show_render
+            and modifier.particle_system.settings.render_type in {"OBJECT", "COLLECTION"}
+            for modifier in candidate.modifiers
+        )
+    ]
+    for emitter in emitters:
+        for candidate in bpy.context.view_layer.objects:
+            candidate.select_set(False)
+        emitter.select_set(True)
+        bpy.context.view_layer.objects.active = emitter
+        # Making instances real reads the viewport counts; the lawn renders 20 children per hair but shows 1.
+        for modifier in emitter.modifiers:
+            if modifier.type == "PARTICLE_SYSTEM":
+                settings = modifier.particle_system.settings
+                settings.display_percentage = 100
+                settings.child_percent = settings.rendered_child_count
+        existing_names = set(bpy.data.objects.keys())
+        bpy.ops.object.duplicates_make_real(use_base_parent=False, use_hierarchy=False)
+        realized = [candidate for candidate in bpy.data.objects if candidate.name not in existing_names]
+        systems = [modifier for modifier in emitter.modifiers if modifier.type == "PARTICLE_SYSTEM"]
+        for modifier in systems:
+            emitter.modifiers.remove(modifier)
+        if not emitter.show_instancer_for_render:
+            emitter.hide_render = True
+        realized_instances.append(realized)
+        print("PARTICLES", emitter.name, len(realized), "instances")
+
+
+def join_realized_instances():
+    """The exporter writes each realized instance as its own node, and 87,000 nodes pass the loader's part limit, so
+    after the bake each emitter's instances become one mesh. The joined copies keep their baked vertex colours."""
+    for realized in realized_instances:
+        meshes = [candidate for candidate in realized if candidate.type == "MESH" and candidate.name in bpy.data.objects]
+        if len(meshes) < 2:
+            continue
+        for candidate in bpy.context.view_layer.objects:
+            candidate.select_set(False)
+        for candidate in meshes:
+            candidate.select_set(True)
+        bpy.context.view_layer.objects.active = meshes[0]
+        bpy.ops.object.join()
+        print("JOINED", len(meshes), "instances into", meshes[0].name)
+
+
+realized_instances = []
+realize_particle_instances()
+
+
+def one_object_per_mesh(objects):
+    """Vertex colours live on the mesh, so the copies of a realized particle that share one plain mesh need one bake."""
+    kept = {}
+    for candidate in objects:
+        key = ("object", candidate.name) if candidate.modifiers else ("mesh", candidate.data.name)
+        kept.setdefault(key, candidate)
+    return list(kept.values())
+
+
 to_bake = [material for material in bpy.data.materials if base_color_from_nodes(material) and mesh_users(material)]
 baked_objects = {candidate.name: candidate for material in to_bake for candidate in mesh_users(material)}
 if baked_objects:
-    bake_base_colors(list(baked_objects.values()))
+    bake_base_colors(one_object_per_mesh(baked_objects.values()))
     for material in to_bake:
         wire_baked_color(material)
 baked = {material.name for material in to_bake}
@@ -347,8 +415,11 @@ if sun_strength is not None:
                     node.inputs["Strength"].default_value = 1.0
         light.energy = sun_strength
         print("SUN", light.name, sun_strength)
+
+
+join_realized_instances()
 bpy.ops.export_scene.gltf(
-    filepath=output_directory + "/scene.glb", export_format="GLB", export_apply=True,
+    filepath=output_directory + "/scene.glb", export_format="GLB", export_apply=True, export_gpu_instances=True,
     export_image_format="JPEG", export_jpeg_quality=85, export_cameras=False, export_lights=True,
     export_import_convert_lighting_mode="COMPAT", export_vertex_color="MATERIAL",
     use_renderable=True, use_visible=True, export_yup=True, export_texcoords=True, export_normals=True,
