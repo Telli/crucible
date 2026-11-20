@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { applyViewTransform } from '../src/view-transform.js';
 import { encodePng } from '../src/export-png.js';
@@ -317,7 +317,7 @@ test('the rasterizer and the CPU path tracer light a smoke box alike, and the si
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const { frames: [clear, scatteringOff, scattering], glError } = await rasterFrames(page, [[], [{ ...SMOKE_BOX, scatter: 0 }], [SMOKE_BOX]]);
     assert.equal(glError, 0);
     const { scatter, ...withoutField } = SMOKE_BOX;
