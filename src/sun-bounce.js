@@ -192,9 +192,10 @@ function lightOfPatch(group, strength, tracer, probeOffset, sceneSize) {
 /**
  * The point lights that stand for the sunlit patches of a closed room: `[]` when the scene has no sun, is not a closed room,
  * is drawn with a bake or has no lit, enclosed surface. `strength` multiplies every light (`environment.sunBounce`).
- * `maximumLights` caps how many patches there are.
+ * `maximumLights` caps how many patches there are. A `report` object, when given, gets `reason` when the scene is past the
+ * light bake's triangle limit and no patch could be found.
  */
-export function findSunBounceLights(parts, environment, { strength = 1, maximumLights = SUN_BOUNCE_PATCH_LIGHTS } = {}) {
+export function findSunBounceLights(parts, environment, { strength = 1, maximumLights = SUN_BOUNCE_PATCH_LIGHTS, report = null } = {}) {
   requireFiniteInRange('findSunBounceLights', 'strength', strength, 0, MAXIMUM_STRENGTH);
   if (strength <= 0 || maximumLights <= 0 || !hasSun(environment) || parts.some(part => part.material?.lightMap || part.material?.irradianceGrid)) return [];
   const share = fittedClosedRoomShare(parts, partMatrixLookup(parts));
@@ -204,7 +205,10 @@ export function findSunBounceLights(parts, environment, { strength = 1, maximumL
   let sampled;
   try {
     sampled = sampleLitSurfaces(surfaces, sun);
-  } catch {
+  } catch (error) {
+    // Only a size limit is an expected miss; any other error is a bug and must surface.
+    if (!(error instanceof RangeError)) throw error;
+    if (report) report.reason = error.message;
     return [];
   }
   const { samples, tracer } = sampled;
@@ -227,7 +231,9 @@ export function withSunBounce(parts, environment) {
   const key = JSON.stringify([parts.length, environment.keyColor, environment.keyIntensity, environment.lightDirection, room]);
   let remembered = lightsOfParts.get(parts);
   if (remembered?.key !== key) {
-    remembered = { key, lights: findSunBounceLights(parts, environment, { strength: 1, maximumLights: room }), scaled: new Map() };
+    const report = {};
+    remembered = { key, lights: findSunBounceLights(parts, environment, { strength: 1, maximumLights: room, report }), scaled: new Map() };
+    if (report.reason) console.warn(`Sun bounce left out: ${report.reason}`);
     lightsOfParts.set(parts, remembered);
   }
   if (remembered.lights.length === 0) return environment;

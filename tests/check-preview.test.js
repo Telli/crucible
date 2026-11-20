@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { encodePng } from '../scripts/agent-icon-png.mjs';
 import {
-  checkExposure, checkNearPlane, checkPreview, checkSimilarity, checkTemporalStability, exposureStatistics,
-  flatShare, luminanceFromPixels, resizePlane, structuralSimilarity,
+  checkExposure, checkNearPlane, checkPreview, checkReferenceRegions, checkSimilarity, checkTemporalStability, exposureStatistics,
+  flatShare, luminanceFromPixels, regionComparison, resizePlane, structuralSimilarity,
 } from '../scripts/preview-checks.mjs';
 
 const WIDTH = 160;
@@ -97,6 +97,53 @@ test('texels that change from frame to frame in one corner fail and name that co
   assert.match(result.problems[0], /change shape between frames/);
 });
 
+// Smooth value noise on a five-pixel grid: detailed like a real surface but with no period, so a match found at the
+// wrong offset cannot hide behind a repeating pattern.
+function valueNoise(column, row, seed) {
+  const cell = 5;
+  const gridColumn = Math.floor(column / cell);
+  const gridRow = Math.floor(row / cell);
+  const fractionX = column / cell - gridColumn;
+  const fractionY = row / cell - gridRow;
+  const easeX = fractionX * fractionX * (3 - 2 * fractionX);
+  const easeY = fractionY * fractionY * (3 - 2 * fractionY);
+  const corner = (cornerColumn, cornerRow) => hash(cornerColumn + 1000, cornerRow + 1000, seed);
+  const upper = corner(gridColumn, gridRow) + (corner(gridColumn + 1, gridRow) - corner(gridColumn, gridRow)) * easeX;
+  const lower = corner(gridColumn, gridRow + 1) + (corner(gridColumn + 1, gridRow + 1) - corner(gridColumn, gridRow + 1)) * easeX;
+  // hash() is centred on zero, so this spans 40 to 200.
+  return 120 + 160 * (upper + (lower - upper) * easeY);
+}
+
+// A camera truck past a near object: the background drifts one pixel a frame while a box close to the lens slides
+// nine, more than the search around the camera motion reaches. `flicker` adds texels that change from frame to frame.
+function parallaxFrames(flicker = () => 0) {
+  return Array.from({ length: 8 }, (_, index) => plane(WIDTH, HEIGHT, (column, row) => {
+    const boxLeft = 20 + index * 9;
+    const inBox = column >= boxLeft && column < boxLeft + 48 && row >= 24 && row < 72;
+    const value = inBox ? valueNoise(column - boxLeft, row - 24, 7) : valueNoise(column + index, row, 3);
+    return value + flicker(column, row, index, inBox);
+  }));
+}
+
+test('a near object that moves faster than the background, as in a truck past a chair, does not count as shimmer', () => {
+  const result = checkTemporalStability(parallaxFrames());
+  assert.equal(result.pass, true, result.problems.join('; '));
+  assert.ok(result.measured.shimmerPercent < 0.5);
+});
+
+test('thin edges that blink between frames still fail when the clip also has parallax', () => {
+  // One-pixel bright lines in the lower left that show on every other frame, as aliased chair legs and blind slats do.
+  const blinkingLines = (column, row, index, inBox) => (!inBox && row >= HEIGHT * 0.6 && column < WIDTH * 0.4 && column % 4 === 0 && index % 2 === 0 ? 90 : 0);
+  const lines = checkTemporalStability(parallaxFrames(blinkingLines));
+  assert.equal(lines.pass, false);
+  assert.equal(lines.measured.hotspot, 'lower left');
+  // Specular glints that sparkle on the moving box itself: the box's own motion must not explain them away.
+  const glints = (column, row, index, inBox) => (inBox && hash(column, row, index) > 0.35 ? 120 : 0);
+  const box = checkTemporalStability(parallaxFrames(glints));
+  assert.equal(box.pass, false);
+  assert.equal(box.measured.hotspot, 'centre');
+});
+
 test('the stability check is skipped for fewer than three frames', () => {
   assert.equal(checkTemporalStability([gradientFrame(0, 200), gradientFrame(0, 200)]).skipped, 'needs at least three frames');
 });
@@ -139,12 +186,43 @@ test('structural similarity is one for the same frame and lower for different co
   assert.throws(() => structuralSimilarity(frame, plane(8, 8, () => 0)), /same size/);
 });
 
+// Region checks run on the analysis size, 640 pixels wide, so these frames use it too.
+test('a frame that matches its reference in every region passes the region check', () => {
+  const reference = plane(640, 384, (column, row) => valueNoise(column, row, 5));
+  const shifted = plane(640, 384, (column, row) => valueNoise(column + 1, row, 5));
+  const result = checkReferenceRegions(shifted, reference);
+  assert.equal(result.pass, true, result.problems.join('; '));
+  assert.equal(regionComparison(shifted, reference).length, 12);
+});
+
+test('stains broken into blotches in one region fail and name it, as the monk walls did', () => {
+  const reference = plane(640, 384, (column, row) => valueNoise(column, row, 5));
+  // Coarse multiplicative blotches over the upper left only, the camo pattern of a stain map baked per vertex.
+  const blotched = plane(640, 384, (column, row) => {
+    const value = valueNoise(column, row, 5);
+    if (column >= 160 || row >= 128) return value;
+    return value * (0.4 + 1.2 * (hash(Math.floor(column / 24), Math.floor(row / 24), 9) + 0.5));
+  });
+  const result = checkReferenceRegions(blotched, reference);
+  assert.equal(result.pass, false);
+  assert.equal(result.measured.worstRegion, 'upper left');
+  assert.match(result.problems.join(' '), /upper left \(column 1, row 1\) differs from the reference in patches/);
+});
+
+test('a region much darker than the reference fails even when its structure matches', () => {
+  const reference = plane(640, 384, (column, row) => valueNoise(column, row, 5));
+  const darkCorner = plane(640, 384, (column, row) => valueNoise(column, row, 5) - (column >= 480 && row < 128 ? 60 : 0));
+  const result = checkReferenceRegions(darkCorner, reference);
+  assert.equal(result.pass, false);
+  assert.match(result.problems.join(' '), /upper right .* darker than the reference/);
+});
+
 test('checkPreview resizes the reference to the frame and passes a good clip', () => {
   const frames = Array.from({ length: 6 }, (_, index) => plane(WIDTH, HEIGHT, (column, row) => smoothTexture(column + index * 0.5, row)));
   const reference = plane(WIDTH * 2, HEIGHT * 2, (column, row) => smoothTexture(column / 2, row / 2));
   const report = checkPreview({ frames, reference, referenceFrame: 0 });
   assert.equal(report.pass, true, JSON.stringify(report.results.flatMap(result => result.problems)));
-  assert.deepEqual(report.results.map(result => result.name), ['exposure', 'shimmer', 'near-plane', 'similarity']);
+  assert.deepEqual(report.results.map(result => result.name), ['exposure', 'shimmer', 'near-plane', 'similarity', 'regions']);
   assert.throws(() => checkPreview({ frames: [] }), /at least one frame/);
 });
 

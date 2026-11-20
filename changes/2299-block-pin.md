@@ -1,0 +1,1 @@
+- A test pins that a part of a baked closed room keeps its light when a bulb mesh surrounds the point lamp (#2299)

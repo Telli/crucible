@@ -36,7 +36,7 @@ export const DEMO_SOURCES = {
 };
 
 /** README pictures this script does not rebuild: the object studio tile stays the published file. */
-export const KEPT_README_PICTURES = ['wall-e'];
+export const KEPT_README_PICTURES = ['cook-pabellon'];
 
 export const PREVIEW_STILL_WIDTH = 640;
 export const STILL_SUPERSAMPLE = 2;

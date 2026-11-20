@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, localVolumeProfile, MAX_LOCAL_VOLUMES } from '../src/local-volumes.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { createPostFragment, POST_STEPS } from '../src/post.js';
@@ -133,7 +133,7 @@ test('absorption darkens, emission glows, and a scene without volumes draws the 
       return;
     }
     const page = await browser.newPage({ viewport: { width: 64, height: 64 } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const sphere = { shape: 'sphere', center: [0, 0, 1.5], radius: 1, falloff: 0.3, steps: 24 };
     const [plain, empty, smoke, glow, tinted, behindWall] = await drawScenarios(page, [
       undefined,

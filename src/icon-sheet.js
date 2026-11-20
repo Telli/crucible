@@ -239,7 +239,11 @@ export function iconRecipe({ assetId, style, view, size, sketch, seed = 0, stage
   const environment = lightRigEnvironment(view);
   if (style === 'toon') environment.lines = { width: toonLineWidth(size), toon: 3 };
   const recipe = { format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [{ id: 'icon', asset: { id: assetId } }], environment };
-  if (style === 'sketch') recipe.postPasses = [sketchPass({ settings: { sketch, seed }, size, stage })];
+  if (style === 'sketch') {
+    recipe.postPasses = [sketchPass({ settings: { sketch, seed }, size, stage })];
+    // The sketch band-limits its own lines and its ink and paper pixels are measured, so the default edge smoothing stays off.
+    recipe.postPassesAntialias = 'off';
+  }
   return recipe;
 }
 

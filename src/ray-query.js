@@ -121,7 +121,7 @@ export function createTracer(world) {
     }
     return state;
   }
-  return { trace };
+  return { trace, triangleOwner: world.triangleOwner };
 }
 
 /** Inverse-square falloff of a point or spot light, with the optional smooth range cutoff and a floor at its radius. */
