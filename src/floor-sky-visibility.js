@@ -23,6 +23,8 @@ export const FLOOR_SKY_MAXIMUM_RAYS = 6_000_000;
 // Both faces and the edges of every slab are traced when the whole room is, so its cut is coarser than a floor's: about a quarter of the vertices for the same area.
 const ROOM_SURFACE_EDGE_SCALE = 2.8;
 export const FLOOR_SKY_STRENGTH = 1;
+// How much of the sky the grid hides on every surface of an open scene (#2771).
+export const OPEN_SCENE_GRID_STRENGTH = 1;
 // With onlyClosedRooms the default is lower: a hall also gets light that comes back from its walls and sunlit floor, which a sky trace does not hold.
 export const FLOOR_SKY_ROOM_STRENGTH = 0.2;
 // A closed room's walls, ceiling and props are traced too (#1334): the raster gave every one of them the whole sky, so a sealed room came out bright.
@@ -391,10 +393,10 @@ function allVertices(count) {
  * size and not its triangle count. `report.method` is 'proxy' and `report.fallbackReason` says why the triangle trace was
  * left. Buried points and the sunlit test are not available here: every interior point takes the fill.
  */
-function applyProxySkyVisibility({ parts, occluders, floorIndices, everySurface, strength, roomShare, started }, fallbackReason) {
+function applyProxySkyVisibility({ parts, occluders, floorIndices, everySurface, everyPart = false, strength, roomShare, started }, fallbackReason) {
   const grid = buildOccupancyGrid(occluders);
   const proxy = createSkyProxy(grid);
-  const tracedIndices = everySurface ? parts.map((part, index) => index).filter(index => floorIndices.includes(index) || (isFloorMaterial(parts[index].material) && hasPlainMesh(parts[index]))) : floorIndices;
+  const tracedIndices = everyPart ? parts.map((part, index) => index).filter(index => isFloorMaterial(parts[index].material) && hasPlainMesh(parts[index])) : everySurface ? parts.map((part, index) => index).filter(index => floorIndices.includes(index) || (isFloorMaterial(parts[index].material) && hasPlainMesh(parts[index]))) : floorIndices;
   const nextParts = parts.slice();
   const floors = [];
   const tracedParts = [];
@@ -439,7 +441,8 @@ function applyProxySkyVisibility({ parts, occluders, floorIndices, everySurface,
  * through the occupancy grid instead (`report.method` 'proxy'). It reads no clock to decide anything else, and
  * the rays are a fixed set, so the same scene gives the same bytes.
  */
-export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors', sunDirection = null, largeScenes = 'skip' } = {}) {
+export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors', sunDirection = null, largeScenes = 'skip', openScenes = 'skip' } = {}) {
+  if (openScenes !== 'skip' && openScenes !== 'proxy') throw new RangeError(`openScenes must be 'skip' or 'proxy', got ${openScenes}`);
   if (largeScenes !== 'skip' && largeScenes !== 'proxy') throw new RangeError(`largeScenes must be 'skip' or 'proxy', got ${largeScenes}`);
   const started = performance.now();
   const unchanged = (reason, fallbackReason = null) => ({ parts, report: { floors: [], texels: 0, rays: 0, seconds: (performance.now() - started) / 1000, method: null, fallbackReason, reason } });
@@ -458,7 +461,10 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
   const closedRoom = roomShare !== null && roomShare >= CLOSED_ROOM_SHARE;
   if (closedRoom && !includeClosedRooms && !onlyClosedRooms) return unchanged('closed room');
   // Open ground gets light back from sunlit facades and streets that a sky trace does not hold, so it comes out too dark.
-  if (onlyClosedRooms && !closedRoom) return unchanged('open scene');
+  if (onlyClosedRooms && !closedRoom) {
+    if (openScenes === 'skip') return unchanged('open scene');
+    return applyProxySkyVisibility({ parts, occluders, floorIndices, everySurface: false, everyPart: true, strength: requestedStrength ?? OPEN_SCENE_GRID_STRENGTH, roomShare, started }, 'open scene');
+  }
   // The walls, ceiling and props are traced as well only in a room that has walls all round: a roof on columns reads as closed to the ray test above, but its floor keeps the light it had.
   const everySurface = surfaces === 'all' && closedRoom && fittedRoomHasWalls(parts, partMatrixLookup(parts));
   const strength = requestedStrength ?? (onlyClosedRooms ? (everySurface ? ROOM_SURFACE_SKY_STRENGTH : FLOOR_SKY_ROOM_STRENGTH) : FLOOR_SKY_STRENGTH);

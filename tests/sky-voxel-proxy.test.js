@@ -97,3 +97,20 @@ test('the proxy writes sky visibility to every level of a part with lods, level 
 test('largeScenes takes only skip or proxy', () => {
   assert.throws(() => applyFloorSkyVisibility([gridSquare('floor', 20, 0, 2)], { largeScenes: 'grid' }), /largeScenes must be 'skip' or 'proxy', got grid/);
 });
+
+test('openScenes proxy traces an open scene through the grid that onlyClosedRooms would otherwise skip', () => {
+  const parts = [gridSquare('floor', 20, 0, 10), gridSquare('roof', 6, 2, 2, -1)];
+  const skipped = applyFloorSkyVisibility(parts, { onlyClosedRooms: true });
+  assert.equal(skipped.parts, parts);
+  assert.equal(skipped.report.reason, 'open scene');
+  const traced = applyFloorSkyVisibility(parts, { onlyClosedRooms: true, openScenes: 'proxy' });
+  assert.equal(traced.report.method, 'proxy');
+  assert.equal(traced.report.fallbackReason, 'open scene');
+  const floor = traced.parts[0];
+  assert.ok(visibilityNear(floor, 0, 0) < visibilityNear(floor, 9, 9), 'under the roof sees less sky than the open corner');
+  assert.ok(traced.parts.every(part => part.geometry.skyVisibility?.length === part.geometry.positions.length / 3), 'every part gets visibility');
+});
+
+test('openScenes takes only skip or proxy', () => {
+  assert.throws(() => applyFloorSkyVisibility([gridSquare('floor', 20, 0, 2)], { openScenes: 'grid' }), /openScenes must be 'skip' or 'proxy', got grid/);
+});

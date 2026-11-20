@@ -116,11 +116,10 @@ function denseProp(triangles) {
   return { name: 'dense-prop', geometry: { positions, normals, indices }, matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], material: { color: [0.5, 0.5, 0.5] } };
 }
 
-test('a room with a prop past the bake limit still gets its patches from the lightest surfaces', () => {
+test('a room past the bake limit gets no patches and its report says why instead of failing silently', () => {
   const { parts, environment } = createAgentScene(roomWithOpening());
   const report = {};
   const lights = findSunBounceLights([...parts, denseProp(210_000)], environment, { report });
-  assert.ok(lights.length > 0, 'the walls and floor still bounce the sun');
-  assert.equal(report.reason, undefined);
-  assert.ok(report.surfaces.kept < report.surfaces.of, `kept ${report.surfaces.kept} of ${report.surfaces.of}`);
+  assert.deepEqual(lights, []);
+  assert.match(report.reason, /triangle/i);
 });

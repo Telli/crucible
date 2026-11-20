@@ -1,7 +1,7 @@
-import { MAX_BAKE_TRIANGLES, buildWorld, cosineDirection, hashUnit, radicalInverse, sceneScale } from './light-bake.js';
+import { buildWorld, cosineDirection, hashUnit, radicalInverse, sceneScale } from './light-bake.js';
 import { createTracer } from './ray-query.js';
 import { CLOSED_ROOM_SHARE, partMatrixLookup } from './closed-room.js';
-import { fittedClosedRoomShare, lightestParts } from './fitted-closed-room.js';
+import { fittedClosedRoomShare } from './fitted-closed-room.js';
 import { partDiffuseAlbedo } from './ground-bounce.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
 import { requireFiniteInRange } from './modeling-limits.js';
@@ -192,19 +192,15 @@ function lightOfPatch(group, strength, tracer, probeOffset, sceneSize) {
 /**
  * The point lights that stand for the sunlit patches of a closed room: `[]` when the scene has no sun, is not a closed room,
  * is drawn with a bake or has no lit, enclosed surface. `strength` multiplies every light (`environment.sunBounce`).
- * `maximumLights` caps how many patches there are. A `report` object, when given, gets `surfaces` ({ kept, of }: the
- * lightest surfaces that fit the bake's triangle limit) and `reason` when the patches could not be found.
+ * `maximumLights` caps how many patches there are. A `report` object, when given, gets `reason` when the scene is past the
+ * light bake's triangle limit and no patch could be found.
  */
 export function findSunBounceLights(parts, environment, { strength = 1, maximumLights = SUN_BOUNCE_PATCH_LIGHTS, report = null } = {}) {
   requireFiniteInRange('findSunBounceLights', 'strength', strength, 0, MAXIMUM_STRENGTH);
   if (strength <= 0 || maximumLights <= 0 || !hasSun(environment) || parts.some(part => part.material?.lightMap || part.material?.irradianceGrid)) return [];
   const share = fittedClosedRoomShare(parts, partMatrixLookup(parts));
   if (share === null || share < CLOSED_ROOM_SHARE) return [];
-  // A scene past the bake's triangle limit (a scanned or sculpted file scene) keeps its lightest surfaces: the walls, floor and
-  // ceiling that bounce the sun are a few triangles each, the dense props are left out (#2771).
-  const allSurfaces = parts.filter(isBounceSurface);
-  const surfaces = lightestParts(allSurfaces, MAX_BAKE_TRIANGLES);
-  if (report) report.surfaces = { kept: surfaces.length, of: allSurfaces.length };
+  const surfaces = parts.filter(isBounceSurface);
   const sun = sunOf(environment);
   let sampled;
   try {
