@@ -223,7 +223,11 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
     .replaceAll('import.meta.url', JSON.stringify(import.meta.url))
     .replace("import('playwright-core')", 'Promise.resolve({ chromium: globalThis.chromium })');
   if (closeTimeoutMs) source = source.replace('const BROWSER_CLOSE_TIMEOUT_MS = 5000;', `const BROWSER_CLOSE_TIMEOUT_MS = ${closeTimeoutMs};`);
-  if (deadlineMs) source = source.replace('const EVALUATION_TIMEOUT_MS = 30000;', `const EVALUATION_TIMEOUT_MS = ${deadlineMs};`);
+  const deadlineLine = 'const EVALUATION_TIMEOUT_MS = previewDeadlineMilliseconds();';
+  if (deadlineMs) {
+    assert.ok(source.includes(deadlineLine), `the harness shortens the deadline by rewriting "${deadlineLine}"; update it to match agent-runtime.mjs`);
+    source = source.replace(deadlineLine, `const EVALUATION_TIMEOUT_MS = ${deadlineMs};`);
+  }
   const context = createContext({ ...(await importedBindings(originalSource)),
     packageMetadata: { version: 'test' }, existsSync: () => true, readFile: async () => '',
     createRequire: () => ({ resolve: () => { throw new Error('no peer in tests'); } }),
@@ -522,6 +526,16 @@ runTest('submitJob refuses a scene of plain nodes whose exact count is over the 
   const underCap = { ...inspection, nodes: exactNodes.map(node => ({ ...node, triangles: 90000 })) };
   const accepted = await submitWithInspection(underCap, { kind: 'image', width: 64, height: 64, renderer: { type: 'pathTracer' } });
   assert.equal(accepted.attempt, undefined);
+});
+
+runTest('submitJob refuses stills estimated over the combined output byte budget before rendering (#2199)', async () => {
+  const rejected = await submitWithInspection(NON_INDEXED_INSPECTION(100), {
+    kind: 'stills', width: 1280, height: 720, fps: 24, stillCount: 288, quality: 'realtime-high',
+  });
+  assert.match(rejected.attempt?.message ?? '', /combined output byte budget/);
+  assert.match(rejected.attempt?.message ?? '', /224 frames/);
+  assert.equal(rejected.submitted.length, 0);
+  assert.equal(rejected.phase, 'ready');
 });
 
 runTest('a slow suspend at job start does not fail the runtime (#1256)', async () => {
@@ -1140,6 +1154,14 @@ runTest('scene_apply add-node places a catalog GLB by file name (#1843)', async 
   await runtime.apply({ sessionId, operations: [{ type: 'add-node', node: { id: 'sheep1-body', asset: { name: 'sheep_body.glb' } } }] });
   const applyCall = sourceCalls.filter(call => call.method === 'apply').at(-1);
   assert.deepEqual(applyCall.input.operations[0].node.asset, { id: sheepId });
+});
+
+runTest('scene_apply with a branch sends the bytes of the catalog GLB it places (#2267)', async context => {
+  const { runtime, sessionId, sourceCalls, sheepId } = await namedAssetHarness(context);
+  await runtime.apply({ sessionId, branch: 'flock', operations: [{ type: 'add-node', node: { id: 'sheep1-body', asset: { name: 'sheep_body.glb' } } }] });
+  const branchCall = sourceCalls.filter(call => call.method === 'branchApply').at(-1);
+  assert.deepEqual(branchCall.input.operations[0].node.asset, { id: sheepId });
+  assert.deepEqual(Object.keys(branchCall.input.assetData), [sheepId]);
 });
 
 runTest('an unknown asset name is refused with near names and the catalog tool to run (#1843)', async context => {

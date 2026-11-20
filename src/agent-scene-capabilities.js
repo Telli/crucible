@@ -48,6 +48,8 @@ const MATERIAL_LAYER_NOTES = Object.freeze({
   toon: 'Light steps (toon); 0 off. Add toonColors, one linear [r,g,b] (0-4) per step from darkest to lightest and as many as toon, to give each step its own colour; the side facing away from the light shows ambient.',
 });
 
+// Recipe physics body shapes, the one list the validator, the MCP schema and scene_capabilities share.
+export const PHYSICS_BODY_SHAPES = Object.freeze(['box', 'ball', 'capsule', 'cylinder', 'cone', 'convex', 'trimesh', 'compound']);
 export const MATERIAL_PATTERN_TYPES =Object.freeze(['noise', 'wood', 'planks', 'bricks', 'tiles', 'marble', 'stone', 'concrete', 'metal', 'rust', 'fabric']);
 export const MAX_MATERIAL_PATTERNS = 16;
 // A material graph bakes to textures on the CPU and never becomes shader text. Its node and depth limits are the field
@@ -177,6 +179,12 @@ export function memoryRangeError(memory, maximumMiB) {
   return new RangeError(`memory must be an integer from 32 to ${maximumMiB} MiB on this machine (half of its RAM, at most ${MEMORY_CEILING_MIB}), got ${memory}.`);
 }
 export const AUDIO_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(wav|mp3|ogg|flac)$/;
+
+/** The error for an audio file name AUDIO_FILE_PATTERN refuses: names the value received, the rule and the fix. */
+export function audioFileNameError(file) {
+  const received = typeof file === 'string' ? JSON.stringify(file) : `a ${file === null ? 'null' : typeof file} value`;
+  return new TypeError(`Audio file ${received} is not allowed: use a plain file name of letters, digits, ".", "_" or "-" (starting with a letter or digit, up to 64 characters) with a lower-case extension .wav, .mp3, .ogg or .flac. Rename the file in the audio folder and pass that name as settings.audio.file.`);
+}
 // Metres that depth pass values 0 to 65535 span, measured from the camera.
 export const RENDER_PASS_DEPTH_RANGE = 100;
 
@@ -348,7 +356,8 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   // Recipe physics: Rapier (an optional peer) bakes bodies on nodes offline; playback is a seek into the bake.
   physics: Object.freeze({
     bodyTypes: Object.freeze(['dynamic', 'fixed', 'kinematic']),
-    shapes: Object.freeze(['box', 'ball', 'capsule', 'convex', 'trimesh']),
+    shapes: PHYSICS_BODY_SHAPES,
+    compound: 'shapes (1-16, with shape compound): { shape, translation, rotation, halfExtents, radius, halfHeight }',
     jointTypes: Object.freeze(['spherical', 'revolute', 'prismatic', 'fixed', 'spring']),
     jointFields: 'type, bodyA, bodyB, anchorA, anchorB, axis, limits, name (what jointMotor events refer to), contactsEnabled, motor {mode position|velocity, target, stiffness (position only), damping, maxForce}, breakImpulse (fixed only), restLength and stiffness and damping (spring only)',
     sensors: true, collisionLayers: 16,
@@ -391,9 +400,9 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
     note: 'Same keyframes and easing as other tracks. After sampleMotion, scene.environment and scene.effects hold the sampled values.',
   }),
   motionModifiers: 'Track extrapolation constant|linear; modifiers [{type: cycles|stepped|noise|generator|limits|envelope, ...}], 8 at most; cycles and stepped remap time first.',
-  motionLimits: Object.freeze({ maxTracks: 128, maxKeyframesPerTrack: 64, maxKeyframes: 2048, maxDuration: 30 }),
+  motionLimits: Object.freeze({ maxTracks: 128, maxKeyframesPerTrack: 256, maxKeyframes: 2048, maxDuration: 30 }),
   motionRemoveTracks: 'scene_apply set-motion { removeTracks: [{ kind?, id?, property? }] } (64 at most, instead of motion) drops the tracks whose fields equal the selector, a field left out matching any: { kind: "camera" } drops the camera track, { kind: "node", id: "cube" } every track of that node. Other motion fields stay; a selector that matches nothing is an error listing the tracks; no motion left becomes null.',
-  motionBake: 'scene_apply bake-motion { nodes (32 at most), start 0, end (motion or physics duration), step 1/30 (512 samples), tolerance { position m, angle deg, scale } }: samples tracks, IK, constraints, drivers and physics into LINEAR tracks and removes those sources (an IK solver or the physics world only when all its nodes are baked). tolerance drops keys within it; without it a track keeps every sample, 64 keys at most. Procedural scenes only.',
+  motionBake: 'scene_apply bake-motion { nodes (32 at most), start 0, end (motion or physics duration), step 1/30 (512 samples), tolerance { position m, angle deg, scale } }: samples tracks, IK, constraints, drivers and physics into LINEAR tracks and removes those sources (an IK solver or the physics world only when all its nodes are baked). tolerance drops keys within it; without it a track keeps every sample, 256 keys at most. Procedural scenes only.',
   springBones: 'motion.springs { chains: [{ bones: [node IDs root to tip, each the child of the one before, 16 per chain, 64 in all], stiffness 0-4 (1), dragForce 0-1 (0.4), gravityPower 0-2 (0), gravityDir [0,-1,0], hitRadius (0.02), tipLength (0.07), colliders: [ids] }] (16 at most), colliders: [{ id, bone, type sphere|capsule, offset, radius, tail }] }: VRM spring bones for hair and tails; fixed 1/60 s steps, sample times in increasing order; bake-motion bakes whole chains; needs loadAgentSceneModules.',
 });
 
