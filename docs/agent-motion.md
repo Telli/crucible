@@ -464,7 +464,7 @@ A body node takes its pose from the recording. A node cannot have a body and a m
 
 The controller accepts durations between 0.1 and 30 seconds.
 A motion requires at least one track or driver (or an IK solver, constraint, layer, spring or drive); `tracks` can be left out of a motion made of drivers alone. An empty `tracks` array is refused. A placed `asset.clip` does not need a motion: it plays on scene time when a render job sets `settings.motion` (see agent-render-jobs).
-It can contain at most 128 tracks, 64 keys per track, and 2048 keys in total.
+It can contain at most 128 tracks, 256 keys per track, and 2048 keys in total.
 Values and tangents must remain finite at Float32 precision.
 The scene integration must also enforce its total recipe byte budget.
 

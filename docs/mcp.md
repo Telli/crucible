@@ -336,13 +336,13 @@ The [scene contract](agent-scene.md) defines the geometry fields, transforms, ma
 - **What is sent:** one `GET https://registry.npmjs.org/@codepawlhq/crucible/latest`, the same request `npm view` makes. It has no body and no identifier of ours. The registry sees what any HTTP request shows.
 - **When:** in the background, so startup is never slower. The answer is cached in `<user cache folder>/crucible/update-check.json` (`$XDG_CACHE_HOME`, else `%LOCALAPPDATA%` on Windows, else `~/.cache`), and the registry is asked at most once a day. A timeout of 2 seconds ends a slow request. Offline or a registry error is silent.
 - **What the agent sees:** when a newer stable version exists, the server `instructions` gain a short notice and the first `scene_capabilities` result carries `updateAvailable` with `current`, `latest`, `releaseNotes`, and the `update` command for each install route (`plugin`, `npx`, `project`). The first start after a new release may show the notice only in `scene_capabilities`, because `instructions` are read once and the answer can arrive after that. The agent tells the user and updates only after a yes.
-- **Turn it off:** set `CRUCIBLE_NO_UPDATE_CHECK=1` (the old name `SIXTYSEVENJS_NO_UPDATE_CHECK` works too) or `NO_UPDATE_NOTIFIER=1`, or run with `CI` set. Nothing is requested or written then.
+- **Turn it off:** set `CRUCIBLE_NO_UPDATE_CHECK=1` or `NO_UPDATE_NOTIFIER=1`, or run with `CI` set. Nothing is requested or written then.
 - **Ask by hand:** `crucible-mcp --version` prints the running version. `crucible-mcp --check-update` asks the registry now, prints the current and latest versions and exits.
 - **Update:** plugin, `/plugin marketplace update Crucible` then `/plugin update crucible@crucible`; `npx`, run `npx -y -p @codepawlhq/crucible@latest crucible-mcp --version` once; project, `npm install @codepawlhq/crucible@latest`. Restart the client afterwards. The library itself makes no network request, and the plugin keeps its pinned start command.
 
 ## Call log
 
-To see which tools agents use, set `CRUCIBLE_MCP_LOG=<file path>` (the old name `SIXTYSEVENJS_MCP_LOG` works too) before starting the server. It appends one JSON line per tool call: `time`, `tool`, `durationMs`, `ok`, `error` (`tool_error` or `thrown`, only on failure) and `resultBytes`. It never writes arguments, scene content or paths. With the variable unset nothing is written.
+To see which tools agents use, set `CRUCIBLE_MCP_LOG=<file path>` before starting the server. It appends one JSON line per tool call: `time`, `tool`, `durationMs`, `ok`, `error` (`tool_error` or `thrown`, only on failure) and `resultBytes`. It never writes arguments, scene content or paths. With the variable unset nothing is written.
 
 ```sh
 CRUCIBLE_MCP_LOG=calls.jsonl npx crucible-mcp
@@ -377,7 +377,7 @@ Render targets can shrink to fit the configured memory budget.
 Image metadata reports actual dimensions alongside requested dimensions and estimated render bytes.
 
 An oversized PNG response returns an error. Request a smaller preview rather than treating the failure as an empty image.
-Browser evaluations have a 30-second deadline. A timeout closes the preview browser and makes the runtime unavailable.
+Browser evaluations have a 30-second deadline. A timeout closes the preview browser and makes the runtime unavailable. A test harness that starts the server can raise it with `CRUCIBLE_TEST_PREVIEW_DEADLINE_SECONDS` (whole seconds from 30 to 180); the live smokes that render on SwiftShader set it so a loaded CI runner does not fail them. No tool call can set it.
 Camera matrices must remain finite at every supported preview aspect ratio, from 1:16 to 16:1.
 
 Geometry resources remain immutable. Remove an unused definition and add its replacement in one batch, or add a new resource ID and rebind its nodes.
