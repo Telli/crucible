@@ -192,6 +192,7 @@ on:
       - 'src/local-volume-resolve.js'
       - 'src/local-volumes.js'
       - 'src/look-catalog.js'
+      - 'src/look-views.js'
       - 'src/material-graph.js'
       - 'src/material-wear.js'
       - 'src/material-layer-shaders.js'
