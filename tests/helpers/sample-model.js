@@ -12,7 +12,7 @@ export async function loadSampleParts() {
   return assembleSampleModel(asset.parts);
 }
 
-const TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
+const TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap', 'layerMaps'];
 
 /** The same parts with their texture maps removed, for tests that read an export back with a loader that has no image decoder. */
 export function withoutTextures(parts) {

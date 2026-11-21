@@ -80,7 +80,7 @@ THE SOFTWARE.
 
 ## Microscope (sample model, not in the npm package)
 
-`public/sample-model.glb` is the Sketchfab model "Microscope" (https://sketchfab.com/3d-models/microscope-dd9e73d51edb43198bd40d0bbd2dd54e) by lionclaw0612, a modern binocular laboratory microscope, under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). It was changed: the 15 meshes were renamed, moved to rest on y = 0 and given one material each; the body, head and prism housing are beige-white enamel, the objectives, nosepiece, rack post and stage clips metal, the focus knobs knurled rubber, and the two glass parts alpha-blended materials. Crucible added UV coordinates (a few vertices are copied where a texture wraps around a part) and generated the textures in code (`scripts/texture-sample-model.mjs`): a paint grain, brushed metal, a knurl normal map, a millimetre scale on the stage and the engraved objective labels. The shape of the meshes is otherwise unchanged.
+`public/sample-model.glb` is the Sketchfab model "Microscope" (https://sketchfab.com/3d-models/microscope-9562226299a045bab13c3d66f8593208) by Eugen Vahrushin (https://sketchfab.com/eugen_vahrushin), a laboratory student microscope, under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). It was changed: the one mesh was split into 14 named parts (`scripts/build-sample-model.py`), the node transforms and a uniform scale were baked in so it rests on y = 0, the four PBR textures were re-encoded as smaller JPEG files and normals and UVs were stored as normalized integers. The shape of the geometry and the textures are otherwise unchanged.
 
 ## Built files
 

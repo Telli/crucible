@@ -25,8 +25,19 @@ function worldBounds(list, amount) {
   return { minimum, maximum };
 }
 
-test('the sample model has eighteen named parts in both layers, each with a section and an offset', () => {
-  assert.equal(parts.length, 18);
+/** The gap between two boxes: the largest separation along any axis, so a positive value means they do not touch. */
+function boxClearance(first, second) {
+  return Math.max(...[0, 1, 2].map(axis => Math.max(first.minimum[axis] - second.maximum[axis], second.minimum[axis] - first.maximum[axis])));
+}
+
+function partNamed(name) {
+  return parts.find(part => part.name === name);
+}
+
+const OBJECTIVE_NAMES = ['Objective left', 'Objective centre', 'Objective right'];
+
+test('the sample model has fourteen named parts in both layers, each with a section and an offset', () => {
+  assert.equal(parts.length, 14);
   assert.deepEqual(parts.map(part => part.name).sort(), [...SAMPLE_PART_NAMES].sort());
   for (const part of parts) {
     assert.ok(['exterior', 'interior'].includes(part.assembly.layer), part.name);
@@ -36,8 +47,8 @@ test('the sample model has eighteen named parts in both layers, each with a sect
     assert.ok(part.matrix instanceof Float32Array && Array.from(part.matrix).every(Number.isFinite));
     assert.ok(part.geometry.indices.length > 0 && part.geometry.indices.length % 3 === 0);
   }
-  assert.equal(parts.filter(part => part.assembly.layer === 'exterior').length, 8);
-  assert.equal(parts.filter(part => part.assembly.layer === 'interior').length, 10);
+  assert.equal(parts.filter(part => part.assembly.layer === 'exterior').length, 9);
+  assert.equal(parts.filter(part => part.assembly.layer === 'interior').length, 5);
   assert.equal(new Set(parts.map(part => part.assembly.section)).size, 6);
 });
 
@@ -47,7 +58,7 @@ test('the sample model stands about 3.7 tall on the ground, and its exploded pos
   assert.ok(assembled.maximum[1] > 3.4 && assembled.maximum[1] < 3.8, `height ${assembled.maximum[1]}`);
   const exploded = worldBounds(parts, 1);
   assert.ok(exploded.minimum[1] >= -0.01 && exploded.maximum[1] < 7, `exploded height ${exploded.minimum[1]} to ${exploded.maximum[1]}`);
-  assert.ok([0, 2].every(axis => exploded.maximum[axis] < 3.5 && exploded.minimum[axis] > -3.5), "exploded width and depth stay within 3.5 of the axis");
+  assert.ok([0, 2].every(axis => exploded.maximum[axis] < 3.5 && exploded.minimum[axis] > -3.5), 'exploded width and depth stay within 3.5 of the axis');
 });
 
 test('the sample model snapshot stays stable', () => {
@@ -58,7 +69,7 @@ test('the sample model snapshot stays stable', () => {
       hash.update(new Uint8Array(field.buffer, field.byteOffset, field.byteLength));
     }
   }
-  assert.equal(hash.digest('hex'), 'cd216ddb9529ba0be42f0586f53a1dd99b7193209d9a9f83fb7abf11075a9442');
+  assert.equal(hash.digest('hex'), '9aa8f63b2ef659f39f8602cb2dcafd4471d88c6b0a48d431453029218997503b');
 });
 
 test('an unknown part or an empty list is refused with the fix', () => {
@@ -80,72 +91,23 @@ test('the sample GLB stays small and the old wall-e URL still has a redirect for
   assert.match(redirects, /^\/wall-e\.glb \/sample-model\.glb 301$/m);
 });
 
-const OBJECTIVE_NAMES = ['Objective 4x', 'Objective 10x', 'Objective 40x', 'Objective 100x'];
-
-function partNamed(name) {
-  return parts.find(part => part.name === name);
-}
-
-test('the enamel body, metal parts, rubber knobs, stage scale and objective labels are textured with UVs on every vertex', () => {
-  const enamelNames = ['Base and arm', 'Head', 'Prism housing'];
-  for (const name of enamelNames) {
-    const { material } = partNamed(name);
-    assert.ok(material.metallicRoughnessMap, `${name} has a roughness grain`);
-    assert.ok(material.color[0] > 0.55 && material.color[0] > material.color[2] + 0.3, `${name} is warm beige-white: ${material.color}`);
-    assert.ok(material.metallic === 0, `${name} is paint, not metal`);
-    assert.ok(material.clearcoat > 0 && material.clearcoat <= 0.8, `${name} has a thin lacquer over the enamel: ${material.clearcoat}`);
-  }
-  for (const name of ['Nosepiece', 'Stage clips', 'Rack post']) {
-    assert.ok(partNamed(name).material.metallic >= 0.9, `${name} is metal`);
-  }
-  // The objectives are half metal so the white label ink shows instead of reflecting the dark floor.
-  for (const name of OBJECTIVE_NAMES) {
-    assert.ok(partNamed(name).material.metallic >= 0.4 && partNamed(name).material.metallic <= 0.6, `${name} keeps a printed label over a satin barrel`);
-    assert.ok(partNamed(name).material.map, `${name} carries its label`);
-  }
-  // A dielectric reflects the studio's teal fill untinted, so the dark plastic parts are warm dark metal that reflects it through its own colour.
-  for (const name of ['Eyepiece tubes', 'Eyepiece mounts', 'Focus knobs', 'Stage']) {
-    assert.ok(partNamed(name).material.metallic >= 0.9, `${name} reflects through a warm colour, not as a dielectric`);
-  }
-  assert.ok(partNamed('Focus knobs').material.normalMap, 'the focus knobs carry a knurl normal map');
-  assert.ok(partNamed('Stage').material.map, 'the stage carries the scale');
-  for (const name of ['Base and arm', 'Head', 'Focus knobs', ...OBJECTIVE_NAMES, 'Stage', 'Nosepiece']) {
-    const { geometry } = partNamed(name);
-    assert.equal(geometry.uvs.length, (geometry.positions.length / 3) * 2, `${name} has one UV pair per vertex`);
-    assert.ok(Array.from(geometry.uvs).every(Number.isFinite));
-  }
-});
-
-/** The shortest span the three u values can have on a circle of the given period, found by trying each as the lowest. */
-function shortestCircularSpan(us, period) {
-  return Math.min(...us.map(lowest => {
-    const arranged = us.map(value => (value < lowest ? value + period : value));
-    return Math.max(...arranged) - Math.min(...arranged);
-  }));
-}
-
-test('no triangle of a wrapped part stretches its texture across a seam it could have avoided', () => {
-  for (const [name, period] of [...OBJECTIVE_NAMES.map(objective => [objective, 1]), ['Focus knobs', 9]]) {
-    const { geometry } = partNamed(name);
-    for (let corner = 0; corner < geometry.indices.length; corner += 3) {
-      const us = [0, 1, 2].map(offset => geometry.uvs[geometry.indices[corner + offset] * 2]);
-      const span = Math.max(...us) - Math.min(...us);
-      assert.ok(span <= shortestCircularSpan(us, period) + 1e-6, `${name} triangle ${corner / 3} spans u ${us}`);
+test('every part carries the shared lacquered PBR material with its four textures and one UV pair per vertex', () => {
+  for (const part of parts) {
+    const { material, geometry } = part;
+    for (const field of ['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap']) assert.ok(material[field], `${part.name} has ${field}`);
+    assert.ok(material.clearcoat > 0, `${part.name} keeps the clearcoat of the source`);
+    assert.equal(geometry.uvs.length, (geometry.positions.length / 3) * 2, `${part.name} has one UV pair per vertex`);
+    assert.ok(Array.from(geometry.uvs).every(value => Number.isFinite(value) && value >= 0 && value <= 1), `${part.name} UVs stay inside the atlas`);
+    for (let vertex = 0; vertex < geometry.normals.length; vertex += 3) {
+      const length = Math.hypot(geometry.normals[vertex], geometry.normals[vertex + 1], geometry.normals[vertex + 2]);
+      assert.ok(Math.abs(length - 1) < 0.02, `${part.name} normal ${vertex / 3} has length ${length}`);
     }
   }
 });
 
-test('each objective carries its own label row and the stage keeps the scale off its sides', () => {
-  OBJECTIVE_NAMES.forEach((name, row) => {
-    const { geometry } = partNamed(name);
-    const rowsUsed = new Set();
-    for (let vertex = 0; vertex < geometry.uvs.length; vertex += 2) rowsUsed.add(Math.floor(geometry.uvs[vertex + 1] * 4));
-    assert.deepEqual([...rowsUsed], [row], `${name} reads only row ${row} of the label atlas`);
-  });
-  const stage = partNamed('Stage').geometry;
-  for (let vertex = 0; vertex < stage.positions.length / 3; vertex++) {
-    if (stage.normals[vertex * 3 + 1] < 0.7) assert.deepEqual([stage.uvs[vertex * 2], stage.uvs[vertex * 2 + 1]].map(value => Math.round(value * 100) / 100), [0.5, 0.35]);
-  }
+test('the parts add up to the source model: 11,643 triangles, none lost or doubled', () => {
+  const triangles = parts.reduce((sum, part) => sum + part.geometry.indices.length / 3, 0);
+  assert.equal(triangles, 11643);
 });
 
 test('the exploded view keeps the parts as a set: every part stays within 3 of its assembled spot and no two parts overlap', () => {
@@ -162,37 +124,34 @@ test('the exploded view keeps the parts as a set: every part stays within 3 of i
   }
 });
 
-test('the exploded focus knobs stay in one group right beside the arm, along their own axis', () => {
-  const knobs = worldBounds([partNamed('Focus knobs')], 1);
-  const arm = worldBounds([partNamed('Base and arm')], 1);
-  const gap = arm.minimum[0] - knobs.maximum[0];
-  assert.ok(gap > 0 && gap < 0.3, `the knobs sit ${gap.toFixed(2)} left of the arm`);
-  const assembledKnobs = worldBounds([partNamed('Focus knobs')], 0);
-  const lift = (knobs.minimum[1] + knobs.maximum[1]) / 2 - (assembledKnobs.minimum[1] + assembledKnobs.maximum[1]) / 2;
-  assert.ok(Math.abs(lift) < 0.3, `the knobs rise only ${lift.toFixed(2)}`);
-  assert.ok(knobs.minimum[2] > arm.minimum[2] && knobs.maximum[2] < arm.maximum[2], 'the knobs stay within the arm depth');
-});
-
-/** The gap between two boxes: the largest separation along any axis, so a positive value means they do not touch. */
-function boxClearance(first, second) {
-  return Math.max(...[0, 1, 2].map(axis => Math.max(first.minimum[axis] - second.maximum[axis], second.minimum[axis] - first.maximum[axis])));
-}
-
-test('the exploded focus knobs clear every other part, the illuminator beside them included', () => {
-  const knobs = worldBounds([partNamed('Focus knobs')], 1);
-  for (const other of parts.filter(part => part.name !== 'Focus knobs')) {
-    const clearance = boxClearance(knobs, worldBounds([other], 1));
-    assert.ok(clearance > 0.1, `the knobs clear ${other.name} by ${clearance.toFixed(2)}`);
+test('every exploded part clears every other part by at least 0.08, so a gap shows between them', () => {
+  for (let first = 0; first < parts.length; first++) {
+    for (let second = first + 1; second < parts.length; second++) {
+      const clearance = boxClearance(worldBounds([parts[first]], 1), worldBounds([parts[second]], 1));
+      assert.ok(clearance > 0.08, `${parts[first].name} and ${parts[second].name} are ${clearance.toFixed(2)} apart`);
+    }
   }
 });
 
-test('the four objectives hang in a row with their tops level, each clear of the others and of the nosepiece', () => {
+test('the exploded focus knobs stand either side of the arm, level with each other and mirrored', () => {
+  const left = worldBounds([partNamed('Focus knob left')], 1);
+  const right = worldBounds([partNamed('Focus knob right')], 1);
+  const arm = worldBounds([partNamed('Arm and head')], 1);
+  const leftGap = arm.minimum[0] - left.maximum[0];
+  const rightGap = right.minimum[0] - arm.maximum[0];
+  assert.ok(leftGap > 0 && leftGap < 0.6, `the left knob sits ${leftGap.toFixed(2)} from the arm`);
+  assert.ok(Math.abs(leftGap - rightGap) < 0.05, `the knobs sit ${leftGap.toFixed(2)} and ${rightGap.toFixed(2)} from the arm`);
+  assert.ok(Math.abs(left.minimum[1] - right.minimum[1]) < 0.01, 'the knobs are level');
+});
+
+test('the three objectives hang in a row under the nosepiece, each clear of the others and of the nosepiece', () => {
   const barrels = OBJECTIVE_NAMES.map(name => ({ name, ...worldBounds([partNamed(name)], 1) }));
-  const tops = barrels.map(barrel => barrel.maximum[1]);
-  assert.ok(Math.max(...tops) - Math.min(...tops) < 0.05, `the barrel tops differ by ${Math.max(...tops) - Math.min(...tops)}`);
   for (let index = 1; index < barrels.length; index++) {
     assert.ok(barrels[index].minimum[0] - barrels[index - 1].maximum[0] > 0.15, `${barrels[index].name} stands clear of ${barrels[index - 1].name}`);
   }
   const nosepiece = worldBounds([partNamed('Nosepiece')], 1);
-  for (const barrel of barrels) assert.ok(boxClearance(barrel, nosepiece) > 0.1, `${barrel.name} hangs clear of the nosepiece`);
+  for (const barrel of barrels) {
+    assert.ok(barrel.maximum[1] < nosepiece.minimum[1], `${barrel.name} hangs below the nosepiece`);
+    assert.ok(boxClearance(barrel, nosepiece) > 0.1, `${barrel.name} hangs clear of the nosepiece`);
+  }
 });
