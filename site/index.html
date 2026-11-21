@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-theme="crucible">
   <head>
-    <meta charset="UTF-8" /><script>try{var c=localStorage.getItem("crucible-color");if(c==="light"||c==="dark")document.documentElement.dataset.color=c}catch(e){}</script>
+    <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f8f7f1" />
     <meta name="description" content="Crucible is a 3D engine that AI agents drive: the Glaze rasterizer on WebGL2, the Cook path tracer on CPU and WebGL2 (Vulkan with the optional Cook package), GLB, PNG and MP4 export, and an MCP server. Install with npm i @codepawlhq/crucible." />
@@ -19,8 +19,9 @@
     <title>Crucible · 3D engine that AI agents drive</title>
     <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" /><link rel="icon" href="/favicon.ico?v=2" sizes="48x48" /><link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
-  <body class="landing" id="page">
+  <body class="landing themed" id="page">
 <a class="skip-link" href="#content">Skip to content</a>
+<!-- site-chrome:header -->
 <header class="nav">
   <a class="brand" href="/" aria-label="Crucible home"><img src="/brand/crucible-mark.svg" alt="">Crucible</a>
   <span class="version" data-release-version>Loading release</span>
@@ -34,6 +35,7 @@
     <a class="button" href="#install">Install</a>
   </nav>
 </header>
+<!-- /site-chrome:header -->
 
 <main id="content">
   <section class="story" id="story" aria-label="Crucible introduction">
@@ -86,7 +88,7 @@
         </div>
       </div>
       <div class="scene">
-        <div class="frame"><canvas id="foundry" role="img" aria-label="A crucible pours molten metal into an icosahedron mould as the page scrolls, rendered live by Crucible"></canvas><div class="callouts"><svg class="leader" id="leader" aria-hidden="true"><polyline points="0,0"></polyline><rect width="6" height="6"></rect></svg><div class="callout" data-anchor="pour" data-from="0.12" data-to="0.31"><h2>Pour</h2><p>An agent gets a live scene to edit.</p><p class="tools">scene_create · scene_apply</p></div><div class="callout" data-anchor="fill" data-from="0.39" data-to="0.59"><h2>Fill</h2><p>It draws the scene with Glaze or Cook.</p><p class="tools">scene_look · scene_render_submit</p></div><div class="callout" data-anchor="cool" data-from="0.61" data-to="0.78"><h2>Cool</h2><p>It reviews the result from several angles.</p><p class="tools">scene_review · scene_inspect</p></div><div class="callout" data-anchor="cast" data-from="0.9" data-to="1"><h2>Cast</h2><p>Out comes a PNG or an MP4.</p></div></div></div>
+        <div class="frame"><img class="poster" src="/previews/foundry-splats-0.png" alt="" aria-hidden="true" fetchpriority="high" decoding="async"><canvas id="foundry" role="img" aria-label="A crucible pours molten metal into an icosahedron mould as the page scrolls, rendered live by Crucible"></canvas><div class="callouts"><svg class="leader" id="leader" aria-hidden="true"><polyline points="0,0"></polyline><rect width="6" height="6"></rect></svg><div class="callout" data-anchor="pour" data-aside data-from="0.12" data-to="0.31"><h2>Pour</h2><p>An agent gets a live scene to edit.</p><p class="tools">scene_create · scene_apply</p></div><div class="callout" data-anchor="fill" data-from="0.39" data-to="0.59"><h2>Fill</h2><p>It draws the scene with Glaze or Cook.</p><p class="tools">scene_look · scene_render_submit</p></div><div class="callout" data-anchor="cool" data-from="0.61" data-to="0.78"><h2>Cool</h2><p>It reviews the result from several angles.</p><p class="tools">scene_review · scene_inspect</p></div><div class="callout" data-anchor="cast" data-from="0.9" data-to="1"><h2>Cast</h2><p>Out comes a PNG or an MP4.</p></div></div></div>
         <div class="hud">
           <div class="ladder" id="ladder" role="group" aria-label="Story steps"><button type="button" class="on" data-jump="0">Pot</button><button type="button" data-jump="0.24">Pour</button><button type="button" data-jump="0.48">Fill</button><button type="button" data-jump="0.7">Cool</button><button type="button" data-jump="0.95">Cast</button></div>
           <span><b id="hud-fill">0%</b>fill</span>
@@ -277,21 +279,30 @@ renderer.render({ eye: [58, 31, 84], target: [-8, 3, -18] });</pre><button class
   </section>
 </main>
 
+<!-- site-chrome:footer -->
 <footer class="footer">
   <div class="inner">
     <p><a class="brand" href="/" aria-label="Crucible home"><img src="/brand/crucible-mark.svg" alt="">Crucible</a></p>
     <p>by <a href="https://codepawl.com">CodePawl</a>, formerly 67js</p>
+    <nav aria-label="Site pages">
+      <a href="/docs.html">Docs</a>
+      <a href="/recipes.html">Recipes</a>
+      <a href="/showcase.html">Showcase</a>
+      <a href="/marketplace.html">Marketplace</a>
+      <a href="/tiers.html">Tiers</a>
+      <a href="/changelog.html">Changelog</a>
+    </nav>
     <nav aria-label="Project links">
       <a href="https://github.com/codepawl/crucible"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 0h4v1h-4zM4 1h8v1h-8zM2 2h12v1h-12zM1 3h14v1h-14zM1 4h3v1h-3zM12 4h3v1h-3zM0 5h4v1h-4zM12 5h4v1h-4zM0 6h3v1h-3zM13 6h3v1h-3zM0 7h3v1h-3zM13 7h3v1h-3zM0 8h3v1h-3zM13 8h3v1h-3zM0 9h3v1h-3zM13 9h3v1h-3zM0 10h4v1h-4zM12 10h4v1h-4zM1 11h5v1h-5zM10 11h5v1h-5zM1 12h2v1h-2zM4 12h2v1h-2zM10 12h5v1h-5zM2 13h2v1h-2zM10 13h4v1h-4zM3 14h3v1h-3zM10 14h3v1h-3zM5 15h1v1h-1zM10 15h1v1h-1z"/></svg>GitHub</a>
       <a href="https://www.npmjs.com/package/@codepawlhq/crucible"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M0 0h16v1h-16zM0 1h16v1h-16zM0 2h16v1h-16zM0 3h16v1h-16zM0 4h3v1h-3zM13 4h3v1h-3zM0 5h3v1h-3zM13 5h3v1h-3zM0 6h3v1h-3zM8 6h2v1h-2zM13 6h3v1h-3zM0 7h3v1h-3zM8 7h2v1h-2zM13 7h3v1h-3zM0 8h3v1h-3zM8 8h2v1h-2zM13 8h3v1h-3zM0 9h3v1h-3zM8 9h2v1h-2zM13 9h3v1h-3zM0 10h3v1h-3zM8 10h2v1h-2zM13 10h3v1h-3zM0 11h3v1h-3zM8 11h2v1h-2zM13 11h3v1h-3zM0 12h4v1h-4zM8 12h3v1h-3zM12 12h4v1h-4zM0 13h16v1h-16zM0 14h16v1h-16zM0 15h16v1h-16z"/></svg>npm</a>
       <a data-release-commit href="https://github.com/codepawl/crucible">Release commit</a>
-      <a href="/changelog.html">Changelog</a>
       <a href="/license.txt">MIT license</a>
       <a href="/logo.svg" download>Logo SVG</a>
       <a href="https://github.com/sponsors/codepawl">Sponsor</a>
     </nav>
   </div>
 </footer>
+<!-- /site-chrome:footer -->
     <script type="module" src="/src/landing.js"></script>
   </body>
 </html>

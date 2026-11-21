@@ -17,12 +17,12 @@ An agent picks tools from your words. You do not name tools. These prompts show 
 | "Try the top in red, blue and green and keep the best." | `scene_apply` with a `branch` for each, one `scene_review`, then `scene_restore` with the winning `branch` |
 | "Show the front, the side and the top." | `scene_review` |
 | "The legs look bent. Check the mesh." | `mesh_inspect`, then `mesh_edit` |
-| "Use the robot from my models folder." | `scene_asset_catalog`, then `scene_create_asset` |
+| "Use the microscope from my models folder." | `scene_asset_catalog`, then `scene_create_asset` |
 | "Render a 1920 by 1080 PNG." | `scene_render_submit`, `scene_render_status`, `scene_render_result` |
 | "Give me a GLB file." | `scene_export_glb` |
 | "Save the recipe so I can reuse it." | `scene_export_recipe` |
 
-`--assets` must be set for the robot prompt, and `--jobs` for the render prompt. [Connect the MCP server](#connect-mcp) has both options.
+`--assets` must be set for the models-folder prompt, and `--jobs` for the render prompt. [Connect the MCP server](#connect-mcp) has both options.
 
 ## A first session
 

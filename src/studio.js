@@ -94,7 +94,7 @@ const TIGHT_WIDTH = 920;
 const STUDIO_WORKSPACES = Object.freeze([
   Object.freeze({ id: 'build', label: 'Build', icon: 'node', tabs: Object.freeze(['node']) }),
   Object.freeze({ id: 'look', label: 'Look', icon: 'material', tabs: Object.freeze(['material', 'look']) }),
-  Object.freeze({ id: 'animate', label: 'Animate', icon: 'play', tabs: Object.freeze(['camera']) }),
+  Object.freeze({ id: 'animate', label: 'Animate', icon: 'play', tabs: Object.freeze(['camera', 'node']) }),
 ]);
 const DEFAULT_CLEARCOAT_ROUGHNESS = 0.08;
 const PRIMITIVE_LABELS =Object.freeze({ icoSphere: 'Icosphere' });
@@ -1245,34 +1245,21 @@ export function createStudio(container, {
   ));
   const addPointLightButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Point light' });
   const addSpotLightButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Spot light' });
-  addPointLightButton.addEventListener('click', () => {
-    addPopover.hidePopover?.();
-    try {
-      const count = controller.addSceneLight('point');
-      announce(`Point lights: ${count}`);
-    } catch (error) {
-      announce(error.message);
-    }
-  });
-  addSpotLightButton.addEventListener('click', () => {
-    addPopover.hidePopover?.();
-    try {
-      const count = controller.addSceneLight('spot');
-      announce(`Spot lights: ${count}`);
-    } catch (error) {
-      announce(error.message);
-    }
-  });
   const addAreaLightButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Area light' });
-  addAreaLightButton.addEventListener('click', () => {
+  // The new light is selected, so its panel opens with it, as a new mesh's does.
+  const addLightFromMenu = (lightType, countLabel) => {
     addPopover.hidePopover?.();
     try {
-      const count = controller.addSceneLight('area');
-      announce(`Area lights: ${count}`);
+      const count = controller.addSceneLight(lightType);
+      selectInspectorTab('look');
+      announce(`${countLabel}: ${count}`);
     } catch (error) {
       announce(error.message);
     }
-  });
+  };
+  addPointLightButton.addEventListener('click', () => addLightFromMenu('point', 'Point lights'));
+  addSpotLightButton.addEventListener('click', () => addLightFromMenu('spot', 'Spot lights'));
+  addAreaLightButton.addEventListener('click', () => addLightFromMenu('area', 'Area lights'));
   const lightGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid', attributes: { role: 'group', 'aria-label': 'Lights' } }, addPointLightButton, addSpotLightButton, addAreaLightButton);
   addPopover.append(...primitiveGrids, lightGrid);
 
@@ -1918,9 +1905,11 @@ export function createStudio(container, {
     camera: createElement(documentReference, 'div', { id: 'crucible-studio-panel-camera', attributes: { role: 'tabpanel', 'aria-labelledby': 'crucible-studio-tab-camera', hidden: 'until-found' } }, cameraPanelBody),
   };
 
-  // Opening a panel brings its workspace forward, so nothing changes off screen.
+  // Opening a panel brings its workspace forward, so nothing changes off screen. The open workspace keeps the panel when it holds it.
   function selectInspectorTab(nextTab) {
-    const owner = STUDIO_WORKSPACES.find(workspace => workspace.tabs.includes(nextTab)) ?? STUDIO_WORKSPACES[0];
+    const holdsTab = workspace => workspace.tabs.includes(nextTab);
+    const openWorkspace = STUDIO_WORKSPACES.find(workspace => workspace.id === root.dataset.workspace);
+    const owner = openWorkspace && holdsTab(openWorkspace) ? openWorkspace : STUDIO_WORKSPACES.find(holdsTab) ?? STUDIO_WORKSPACES[0];
     selectWorkspace(owner.id, nextTab);
   }
 
@@ -1930,6 +1919,7 @@ export function createStudio(container, {
     if (!workspace) {
       throw new RangeError(`Unknown Studio workspace "${String(nextWorkspace)}". Use one of ${STUDIO_WORKSPACES.map(candidate => candidate.id).join(', ')}.`);
     }
+    const workspaceWasOpen = root.dataset.workspace === workspace.id;
     root.dataset.workspace = workspace.id;
     for (const button of workspaceButtons) {
       button.setAttribute('aria-selected', button.dataset.workspace === workspace.id ? 'true' : 'false');
@@ -1938,7 +1928,8 @@ export function createStudio(container, {
       button.toggleAttribute('hidden', !workspace.tabs.includes(button.dataset.tab));
     }
     tabListElement.toggleAttribute('hidden', workspace.tabs.length < 2);
-    const keptTab = workspace.tabs.includes(controller.activeTab) ? controller.activeTab : workspace.tabs[0];
+    // A workspace opens on its first panel; only a call for the workspace already open keeps the panel in view.
+    const keptTab = workspaceWasOpen && workspace.tabs.includes(controller.activeTab) ? controller.activeTab : workspace.tabs[0];
     showInspectorTab(preferredTab ?? keptTab);
   }
 
@@ -2763,14 +2754,15 @@ export function createStudio(container, {
   }
 
   // The Look and Camera tabs show the camera, the sun or a light while one is selected. A mesh picked after that
-  // gets its own tab, so the Properties card never keeps describing the object that was left.
+  // gets its own tab, so the Properties card never keeps describing the object that was left. The Camera tab has
+  // nothing to say about a mesh, so a pick made from it always opens the mesh.
   function selectNodeAndShowItsPanel(select) {
     const leftSceneObject = controller.selectedObjectKey !== null;
     const tabBefore = controller.activeTab;
     select();
-    if (!leftSceneObject || !controller.selectedNodeId) return;
-    if (tabBefore === 'look') selectInspectorTab('material');
-    else if (tabBefore === 'camera') selectInspectorTab('node');
+    if (!controller.selectedNodeId) return;
+    if (tabBefore === 'camera') selectInspectorTab('node');
+    else if (leftSceneObject && tabBefore === 'look') selectInspectorTab('material');
   }
 
   function selectSceneObjectAndShowItsPanel(key) {

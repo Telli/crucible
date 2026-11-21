@@ -5,6 +5,7 @@ import { DENSE_TRIANGLES_PER_PIXEL, partTakesLods } from './renderer.js';
 import { splitHdriSun } from './hdri.js';
 import { fitWorldShadowView } from './shadow-light.js';
 import { sceneBoundsOfParts } from './near-plane-fit.js';
+import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS } from './light-limits.js';
 
 // Parts for a scene with more than one triangle per pixel (a scan, a sculpt), given `lods` so that each draws with the
 // fewest triangles whose error stays under `lodPixelError` pixels (#1163). On such a scene every pixel is shaded about
@@ -30,6 +31,32 @@ export function withSceneFileLights(fileLights = {}, sceneEnvironment = {}) {
 }
 
 /**
+ * The lights of every part of a staged world as one partial environment: point and spot lights of all parts in part
+ * order up to the renderer's limits, and the key light of the first part that has a directional light (#2666).
+ * Parts without lights contribute nothing, and a world with no lights at all gives `{}`.
+ */
+export function mergePartLights(lightsPerPart) {
+  const merged = {};
+  const pointLights = lightsPerPart.flatMap(lights => lights.pointLights ?? []).slice(0, MAX_POINT_LIGHTS);
+  const spotLights = lightsPerPart.flatMap(lights => lights.spotLights ?? []).slice(0, MAX_SPOT_LIGHTS);
+  if (pointLights.length) merged.pointLights = pointLights;
+  if (spotLights.length) merged.spotLights = spotLights;
+  const keyed = lightsPerPart.find(lights => lights.lightDirection);
+  if (keyed) {
+    Object.assign(merged, { keyColor: keyed.keyColor, lightDirection: keyed.lightDirection, keyIntensity: keyed.keyIntensity });
+  } else if (pointLights.length || spotLights.length) {
+    merged.keyIntensity = 0;
+  }
+  if (Object.keys(merged).length) merged.fillIntensity = 0;
+  return merged;
+}
+
+/** The environment a showcase page draws with: the GLB's own lights under the scene's `renderer.environment`, plus the sky `map` (#2666). */
+export function showcaseEnvironment(fileLights, sceneEnvironment, map) {
+  return { ...withSceneFileLights(fileLights, sceneEnvironment), map };
+}
+
+/**
  * The environment and map a scene file lights with. A file without a directional light of its own, whose scene file
  * names no key light, is lit by the HDRI's sun as a shadowed key with no fill, and the sun leaves the map, so it no
  * longer reaches shaded points through the unshadowed sky term (#2761). `hdriSun: false` in the scene file keeps the
@@ -42,6 +69,19 @@ export function sceneFileLighting(map, fileLights = {}, sceneEnvironment = {}, {
   const split = hdriSun && map && !namesKey ? splitHdriSun(map) : null;
   if (!split) return { environment, map, sunSplit: false };
   return { environment: { ...split.environment, fillIntensity: 0, ...environment }, map: split.map, sunSplit: true };
+}
+
+// A closed room a sun lights gets the sky each surface sees and the light its sunlit patches bounce, as recipe scenes do
+// (#2761). Both steps decide for themselves whether the parts make a closed room, so open scenes come back unchanged;
+// `renderer.environment.floorSkyTrace: false` and `sunBounce: 0` turn them off. The module loads only for a scene with a sun.
+// `floorSkyOptions` go to the trace (its texel and ray budgets); `skyReport` says what the trace did, or why it did not run.
+export async function withFileSceneInteriorLight(parts, environment, floorSkyOptions = {}) {
+  const { applyDefaultFloorSky, environmentHasSun, withSunBounce } = await import('./floor-sky-visibility.js');
+  if (!environmentHasSun(environment)) return { parts, environment, skyReport: null };
+  const traced = applyDefaultFloorSky(parts, environment, floorSkyOptions);
+  // A scene past the trace's limits keeps the light it had; say so instead of dropping the reason (#2771).
+  if (traced.report?.fallbackReason && traced.report.method !== 'proxy') console.warn(`Sky trace left out (${traced.report.reason}): ${traced.report.fallbackReason}`);
+  return { parts: traced.parts, environment: withSunBounce(traced.parts, environment), skyReport: traced.report };
 }
 
 /** Triangles over pixels for these parts on a canvas of `pixels` pixels (the canvas size times the pixel ratio squared). */

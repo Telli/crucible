@@ -447,7 +447,8 @@ export function studioFloorHeight(parts) {
   return 0.019 - bottom > height * 0.1 ? bottom + height * 0.02 : 0.019;
 }
 
-function groundPart(height = 0.019) {
+/** The studio floor as a part: a 200 by 200 plane at `height` with the floor shader. */
+export function groundPart(height = 0.019) {
   return {
     name: 'Studio floor',
     geometry: {
@@ -2782,7 +2783,7 @@ export class CrucibleRenderer {
     // The shadow view follows the sun, so a moved sun redraws the map.
     const lightChanged = String(this.activeLightDirection) !== String(environment.lightDirection);
     this.activeLightDirection = environment.lightDirection;
-    this.diagnostics = frameDiagnostics({ world: this.world, depth: this.depth, effects, lightDirection: environment.lightDirection, shadowBounds: this.shadowBounds, coplanarProblems: this.coplanarDiagnostics?.(this.batches), skinProblems: deformationSupport.reflectedSkinDiagnostics?.(this.partLocations) });
+    this.diagnostics = frameDiagnostics({ world: this.world, depth: this.depth, effects, requestedEffects: frame.effects, requestedExposure: frame.exposure, lightDirection: environment.lightDirection, shadowBounds: this.shadowBounds, coplanarProblems: this.coplanarDiagnostics?.(this.batches), skinProblems: deformationSupport.reflectedSkinDiagnostics?.(this.partLocations) });
     const start = performance.now();
     const context = this.context;
     this.beginGpuTiming();

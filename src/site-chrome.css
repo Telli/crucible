@@ -1,0 +1,78 @@
+/* The look every site page shares: the home page's tokens wiring, fonts, top bar, footer, button, focus and links. The home page and the
+   content pages (docs, changelog, recipes, marketplace, showcase, tiers) carry the .themed class on <body>; the top bar and footer markup
+   comes from scripts/site-chrome.mjs. Colours come from src/site-tokens.css (paper and charcoal, Molten as the one accent) and follow the
+   system light or dark setting. Page-only rules stay in the page's own stylesheet. */
+@font-face { font-family: 'Pixelify Sans'; font-style: normal; font-weight: 400 700; font-display: swap; src: url('/fonts/pixelify-sans-latin-600.woff2') format('woff2'); }
+
+.themed {
+  --fg: var(--site-text);
+  --card: var(--site-surface);
+  --edge: var(--site-text);
+  --soft: var(--site-muted);
+  --accent: var(--site-focus);
+  --button-bg: var(--site-text);
+  --button-fg: var(--site-bg);
+  --code-bg: var(--site-text);
+  --code-fg: var(--site-bg);
+  --display: 'Pixelify Sans', 'JetBrains Mono', monospace;
+  --data: 'Pixelify Sans', 'JetBrains Mono', monospace;
+  --body: 'Inter', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  --round: 0px;
+  --edge-width: 2px;
+  --heading-weight: 600;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --side-left: max(16px, env(safe-area-inset-left, 0px));
+  --side-right: max(16px, env(safe-area-inset-right, 0px));
+  --nav-height: 56px;
+  margin: 0;
+  background: var(--site-bg);
+  color: var(--fg);
+  font: 400 16px/1.5 var(--body);
+  -webkit-font-smoothing: antialiased;
+  min-width: 320px;
+}
+.themed *, .themed *::before, .themed *::after { box-sizing: border-box; }
+.themed a { color: inherit; }
+.themed button { font: inherit; color: inherit; }
+.themed :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.themed [hidden] { display: none !important; }
+.themed .skip-link { position: fixed; left: 16px; top: 12px; z-index: 40; padding: 12px; background: var(--button-bg); color: var(--button-fg); transform: translateY(-160%); }
+.themed .skip-link:focus { transform: none; }
+.themed .pixel-icon { width: 16px; height: 16px; flex: none; fill: currentColor; }
+
+.themed .nav { position: sticky; top: 0; z-index: 30; height: var(--nav-height); display: flex; align-items: center; gap: 18px; padding: 0 var(--side-right) 0 var(--side-left); background: var(--site-bg); }
+.themed .brand { display: flex; align-items: center; gap: 8px; font: var(--heading-weight) 20px/1 var(--display); text-decoration: none; }
+.themed .brand img { width: 30px; height: 30px; display: block; }
+@media (prefers-color-scheme: dark) {
+  .themed .brand img { content: url('/brand/crucible-mark-dark.svg'); }
+}
+.themed .version { font: 500 12px/1 var(--mono); color: var(--soft); }
+.themed .nav-links { margin-left: auto; display: flex; align-items: center; gap: 20px; font-size: 14px; }
+.themed .nav-links a { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.themed .nav-links a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.themed .nav-links a[aria-current] { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; text-decoration-color: var(--accent); }
+.themed .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 16px; border: var(--edge-width) solid var(--button-bg); border-radius: var(--round); background: var(--button-bg); color: var(--button-fg); font: 600 14px/1 var(--body); text-decoration: none; cursor: pointer; transition: transform 140ms var(--ease-out); }
+.themed a.button { color: var(--button-fg); }
+.themed a.button:hover { text-decoration: none; }
+.themed .button:active { transform: scale(0.97); }
+.themed .button.quiet { background: transparent; color: var(--fg); border-color: var(--edge); }
+.themed a.button.quiet { color: var(--fg); }
+
+.themed .footer { margin-top: clamp(56px, 8vw, 112px); padding: 28px var(--side-right) 36px var(--side-left); background: var(--card); }
+.themed .footer p { margin: 0; }
+.themed .footer .inner { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 14px 28px; flex-wrap: wrap; font-size: 14px; }
+.themed .footer nav { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.themed .footer a { display: inline-flex; align-items: center; gap: 6px; text-underline-offset: 4px; }
+
+@media (max-width: 820px) {
+  .themed .nav { gap: 10px; }
+  .themed .nav-links { gap: 14px; }
+  .themed .nav-links .wide { display: none; }
+}
+@media (max-width: 520px) {
+  .themed .version { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .themed *, .themed *::before, .themed *::after { animation: none !important; transition: none !important; }
+}

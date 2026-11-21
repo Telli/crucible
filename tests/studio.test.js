@@ -309,6 +309,9 @@ test('pro studio operations add objects, drag planar gizmos, edit materials, len
   assert.equal(controller.selectedNodeId, addedTorus.id);
   const pointCount = controller.addSceneLight('point');
   assert.equal(pointCount, 1);
+  assert.equal(controller.selectedObjectKey, 'point:0', 'a new light is selected');
+  assert.equal(controller.selectedNodeId, null);
+  controller.selectNode(addedTorus.id);
 
   const duplicate = controller.duplicateSelected();
   assert.equal(controller.selectedNodeId, duplicate.id);

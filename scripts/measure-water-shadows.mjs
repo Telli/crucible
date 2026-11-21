@@ -1,5 +1,5 @@
 // Measures the water shadow scene (scripts/water-shadow-scene.js) in Chrome and can draw a before and after picture.
-//   bash ~/.agents/tools/gpu-lock.sh node scripts/measure-water-shadows.mjs [--preview out/349-preview.png --before <folder with src and scripts>]
+//   node scripts/measure-water-shadows.mjs [--preview out/349-preview.png --before <folder with src and scripts>]
 // Without --preview it prints the shadow contrast of the bed at 0.2, 1 and 4 m for each preset, against exp(-absorption * depth).
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';

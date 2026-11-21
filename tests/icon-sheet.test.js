@@ -146,6 +146,7 @@ test('the sketch recipe carries a user pass the user-pass checker accepts, and t
   const recipe = iconRecipe({ assetId: 'ab'.repeat(32), style: 'sketch', view, size: 64, sketch: settings.sketch, seed: settings.seed });
   const [pass] = normalizeUserPasses(recipe.postPasses);
   assert.equal(pass.name, 'icon-sketch');
+  assert.equal(recipe.postPassesAntialias, 'off', 'the sketch keeps its measured ink and paper pixels, so the default edge smoothing stays off');
   assert.equal(pass.uniforms.seed.value, 5);
   assert.equal(pass.uniforms.stage.value, 0);
   assert.equal(pass.uniforms.hatchPeriod.value, 3, 'a 64 px icon hatches in whole 3 px steps so the lines do not beat against the pixels');

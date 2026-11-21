@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createModel } from '../src/model.js';
+import { mat4 } from 'gl-matrix';
+import { box } from '../src/geometry.js';
 import { exportGlb } from '../src/export.js';
 import { keyLightFromHdri, parseRadianceHdr } from '../src/hdri.js';
 
@@ -34,7 +35,7 @@ test('keyLightFromHdri says what bounds to pass instead of a raw TypeError', () 
 });
 
 test('GLB export refuses an oversized texture by its size before reading its pixels', () => {
-  const part = createModel()[0];
+  const part = { name: 'Plate', geometry: box(), matrix: mat4.create(), material: { color: [1, 1, 1], metallic: 0, roughness: 1 } };
   const uvs = new Float32Array(part.geometry.positions.length / 3 * 2);
   const image = { width: 100000, height: 100000, data: new Uint8Array(4) };
   const textured = { ...part, geometry: { ...part.geometry, uvs }, material: { ...part.material, map: { image } } };

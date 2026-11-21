@@ -415,7 +415,7 @@ test('toolbar buttons undo, redo, duplicate, delete and frame the selection', te
   deleteButton.click();
   assert.equal(ui.status(), 'Deleted node');
   assert.equal(ui.studio.exportRecipe().nodes.some(node => node.id === 'hero'), false);
-  assert.equal(ui.controller.selectedNodeId, 'ground');
+  assert.equal(ui.controller.selectedNodeId, null, 'a delete leaves nothing selected');
   assert.equal(ui.dom.pendingTimerCount > 0, true);
   ui.dom.runTimers();
   assert.equal(ui.status(), '');
@@ -2140,8 +2140,8 @@ test('workspaces run Build, Look, Animate and each shows only the panels its ste
   assert.equal(ui.controller.activeTab, 'look');
 
   workspaceTab('animate').click();
-  assert.deepEqual(shownTabs(), ['camera']);
-  assert.equal(ui.controller.activeTab, 'camera');
+  assert.deepEqual(shownTabs(), ['node', 'camera'], 'Animate keeps the object panel one tab away, for the object being keyed');
+  assert.equal(ui.controller.activeTab, 'camera', 'a workspace opens on its first panel');
   workspaceTab('look').click();
   assert.equal(ui.controller.activeTab, 'material');
   assert.equal(JSON.stringify(ui.studio.exportRecipe()), recipeBefore, 'a workspace is not part of the scene');
@@ -3859,4 +3859,56 @@ test('choosing a new scene on purpose clears the draft and its notice', async te
   await ui.dom.settle();
   assert.equal(storage.entries.has(DRAFT_KEY), false);
   assert.equal(ui.root.querySelector('.crucible-studio-draft').hidden, true);
+});
+
+test('a delete leaves nothing selected, so a second Delete removes nothing, and its undo brings the object back in hand (#2817)', testContext => {
+  const ui = mountStudio(testContext);
+  const deleteRow = byText(ui.root.querySelector('#crucible-studio-pop-edit'), 'Delete');
+  const countBefore = ui.studio.exportRecipe().nodes.length;
+  ui.selectRow('hero');
+  deleteRow.click();
+  assert.equal(ui.controller.selectedNodeId, null);
+  assert.equal(ui.studio.exportRecipe().nodes.length, countBefore - 1);
+  assert.throws(() => ui.controller.deleteSelected(), /Select a node before deleting it/);
+  assert.equal(ui.studio.exportRecipe().nodes.length, countBefore - 1, 'the second Delete removed no object');
+
+  ui.controller.undo();
+  assert.equal(ui.studio.exportRecipe().nodes.length, countBefore);
+  assert.equal(ui.controller.selectedNodeId, 'hero', 'undo selects the object it brought back');
+  ui.controller.redo();
+  assert.equal(ui.controller.selectedNodeId, null, 'redo of the delete leaves nothing selected again');
+});
+
+test('undo of an added object selects what was selected before it, never another object (#2817)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.selectNode(null);
+  const added = ui.controller.addPrimitive('box');
+  assert.equal(ui.controller.selectedNodeId, added.id);
+  ui.controller.undo();
+  assert.equal(ui.controller.selectedNodeId, null, 'nothing was selected before the add');
+  ui.controller.redo();
+  assert.equal(ui.controller.selectedNodeId, added.id, 'redo selects the object it added again');
+});
+
+test('a light added from the menu is selected and its panel opens (#2817)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  byText(ui.root.querySelector('#crucible-studio-pop-add'), 'Spot light').click();
+  assert.equal(ui.controller.selectedObjectKey, 'spot:0');
+  assert.equal(ui.controller.selectedNodeId, null);
+  assert.equal(ui.controller.activeTab, 'look');
+  assert.equal(ui.root.dataset.workspace, 'look');
+});
+
+test('picking an object in Animate opens its panel without leaving the workspace (#2817)', testContext => {
+  const ui = mountStudio(testContext);
+  byDataset(ui.root, 'workspace', 'animate').click();
+  assert.equal(ui.controller.activeTab, 'camera');
+  ui.selectRow('hero');
+  assert.equal(ui.controller.selectedNodeId, 'hero');
+  assert.equal(ui.controller.activeTab, 'node', 'the Properties card shows the picked object');
+  assert.equal(ui.root.dataset.workspace, 'animate');
+  byDataset(ui.root, 'workspace', 'build').click();
+  byDataset(ui.root, 'workspace', 'animate').click();
+  assert.equal(ui.controller.activeTab, 'camera', 'Animate still opens on the camera');
 });

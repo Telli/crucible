@@ -597,11 +597,15 @@ export function createStudioController({
       }
       undoGroupRecorded = true;
     }
-    undoStack.push({ recipe, restoresCamera });
+    undoStack.push({ recipe, restoresCamera, selection: currentSelection() });
     while (undoStack.length > maxHistory) {
       undoStack.shift();
     }
     redoStack.length = 0;
+  }
+
+  function currentSelection() {
+    return { nodeId: selectedNodeId, objectKey: selectedObjectKey };
   }
 
   function beginUndoGroup() {
@@ -629,7 +633,11 @@ export function createStudioController({
     endUndoGroup();
     const entry = sourceStack.pop();
     const currentRecipe = currentScene.exportRecipe();
-    targetStack.push({ recipe: currentRecipe, restoresCamera: entry.restoresCamera });
+    targetStack.push({ recipe: currentRecipe, restoresCamera: entry.restoresCamera, selection: currentSelection() });
+    // The step brings back what was selected with it, so an object that returns is the one in hand again;
+    // settleSelectionAndMotion drops a selection the restored recipe no longer holds.
+    selectedNodeId = entry.selection.nodeId;
+    selectedObjectKey = entry.selection.objectKey;
     const nextRecipe = entry.restoresCamera || currentRecipe.camera === undefined
       ? entry.recipe
       : { ...entry.recipe, camera: currentRecipe.camera };
@@ -717,8 +725,9 @@ export function createStudioController({
   // Keeps the selection, the motion time and the free view valid for whichever recipe the scene now holds.
   function settleSelectionAndMotion() {
     const recipe = currentScene.exportRecipe();
+    // A node that is gone leaves nothing selected: falling back to another node would aim the next Delete at an object nobody picked.
     if (selectedNodeId && !recipe.nodes.some(node => node.id === selectedNodeId)) {
-      selectedNodeId = recipe.nodes[0]?.id ?? null;
+      selectedNodeId = null;
     }
     if (selectedObjectKey && !lightKeysOf(recipe.environment).concat('camera', 'sun').includes(selectedObjectKey)) {
       selectedObjectKey = null;
@@ -1554,6 +1563,14 @@ export function createStudioController({
     return nodeRecord;
   }
 
+  // A new light becomes the selection, as a new mesh does, so its panel and its handle are there to edit at once.
+  function selectAddedLight(lightType, count) {
+    selectedObjectKey = `${lightType}:${count - 1}`;
+    selectedNodeId = null;
+    notify({ kind: 'selection' });
+    return count;
+  }
+
   function addSceneLight(lightType = 'point') {
     const environment = currentScene.exportRecipe().environment ?? {};
     if (lightType === 'point') {
@@ -1563,7 +1580,7 @@ export function createStudioController({
       }
       const nextLights = [...existing, { position: [2.2, 3.0, 2.2], color: [1, 0.96, 0.9], intensity: 2.5, radius: 0.14, range: 14, castShadow: true }];
       updateLook({ environment: { pointLights: nextLights } });
-      return nextLights.length;
+      return selectAddedLight('point', nextLights.length);
     }
     if (lightType === 'spot') {
       const existing = environment.spotLights ?? [];
@@ -1572,7 +1589,7 @@ export function createStudioController({
       }
       const nextLights = [...existing, { position: [2.8, 3.8, 2.8], direction: [-2.8, -3.2, -2.8], angle: 0.65, penumbra: 0.25, color: [1, 0.96, 0.9], intensity: 4, radius: 0.12, range: 16, castShadow: true }];
       updateLook({ environment: { spotLights: nextLights } });
-      return nextLights.length;
+      return selectAddedLight('spot', nextLights.length);
     }
     if (lightType === 'area') {
       const existing = environment.areaLights ?? [];
@@ -1581,7 +1598,7 @@ export function createStudioController({
       }
       const nextLights = [...existing, { position: [0, 3.2, 0], direction: [0, -1, 0], up: [0, 0, 1], width: 2, height: 2, color: [1, 0.96, 0.9], intensity: 4 }];
       updateLook({ environment: { areaLights: nextLights } });
-      return nextLights.length;
+      return selectAddedLight('area', nextLights.length);
     }
     throw new RangeError(`Unsupported light type "${String(lightType)}". Use point, spot or area.`);
   }
@@ -1868,10 +1885,10 @@ export function createStudioController({
     }
     operations.push({ type: 'remove-node', id: selectedNodeId, recursive: true });
     applySceneOperations(operations);
-    const nextRecipe = currentScene.exportRecipe();
-    selectedNodeId = nextRecipe.nodes.find(node => node.geometry !== undefined)?.id ?? nextRecipe.nodes[0]?.id ?? null;
-    notify({ kind: 'topology', nodeId: selectedNodeId });
-    return selectedNodeId;
+    // Nothing is selected afterwards, so a second Delete cannot remove an object nobody picked.
+    selectedNodeId = null;
+    notify({ kind: 'topology', nodeId: null });
+    return null;
   }
 
   function updateMaterial(materialId, patch) {
