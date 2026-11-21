@@ -17,6 +17,10 @@ import { box } from './src/geometry.js';
 import { exportGlb } from './src/export.js';
 
 const { CONSUMER: consumer, CASE: scenario } = process.env;
+const accepted = scenario === 'unchanged' || scenario === 'windows-device-zero';
+const faked = scenario === 'windows-device-zero' || scenario === 'posix-device-zero';
+// Pin the platform rule on any machine: the real platform and the real path device decide nothing here.
+if (faked) Object.defineProperty(process, 'platform', { value: scenario === 'windows-device-zero' ? 'win32' : 'linux' });
 const directory = await mkdtemp(join(tmpdir(), 'crucible-identity-consumer-'));
 const promises = fs.promises;
 const originalLstat = promises.lstat;
@@ -29,6 +33,8 @@ promises.lstat = async function(path, ...options) {
   const details = await originalLstat.call(promises, path, ...options);
   if (String(path) !== target) return details;
   intercepted = true;
+  // Node 22 on Windows reports path device 0 while the open handle reports the volume. Keep the inode, drop the device.
+  if (faked) return new Proxy(details, { get(object, key) { return key === 'dev' ? 0 : Reflect.get(object, key, object); } });
   if (scenario === 'device' || scenario === 'inode') {
     const field = scenario === 'device' ? 'dev' : 'ino';
     // Preserve Stats methods while representing a different reported identity.
@@ -57,7 +63,7 @@ try {
     const bytes = Buffer.from(exportGlb([{ name: 'Cube', geometry: box(0), matrix: mat4.create(), material: { color: [0.2, 0.5, 0.7], roughness: 0.5, metallic: 0 } }]));
     if (scenario === 'directory') await mkdir(target);
     else await writeFile(target, bytes);
-    if (scenario === 'unchanged') {
+    if (accepted) {
       assert.deepEqual((await readCatalogFile(directory, 'cube.glb')).bytes, bytes);
     } else {
       const expected = scenario === 'directory' ? /regular files, without links/ : /changed during opening/;
@@ -79,8 +85,8 @@ try {
       await new Promise(resolve => setTimeout(resolve, 5));
       status = controller.status(jobId);
     }
-    assert.equal(status.state, scenario === 'unchanged' ? 'completed' : 'failed', JSON.stringify(status));
-    if (scenario !== 'unchanged') {
+    assert.equal(status.state, accepted ? 'completed' : 'failed', JSON.stringify(status));
+    if (!accepted) {
       const expected = ['directory', 'hardlink'].includes(scenario) ? /regular files without links or aliases/ : /changed while opening/;
       assert.match(status.reason, expected);
     }
@@ -96,7 +102,7 @@ try {
 `;
 
 for (const consumer of ['catalog', 'render job']) {
-  const scenarios = ['unchanged', 'replacement', 'device', 'inode', 'directory'];
+  const scenarios = ['unchanged', 'windows-device-zero', 'posix-device-zero', 'replacement', 'device', 'inode', 'directory'];
   if (consumer === 'render job') scenarios.push('hardlink');
   for (const scenario of scenarios) {
     test(`${consumer}: ${scenario} preserves the file identity boundary`, () => {
