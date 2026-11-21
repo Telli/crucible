@@ -8,7 +8,7 @@ import { denoiseRadiance, estimateRelativeNoise } from './path-tracer-denoise.js
 import { acesChannel, displayColor } from './view-transform.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
 import {
-  buildFrame, createSurface, environmentPdf, environmentRadiance, evaluateSurface, luminance, mirrorWeight, prepareSurface,
+  buildFrame, createSurface, dielectricFresnel, environmentPdf, environmentRadiance, evaluateSurface, luminance, mirrorWeight, prepareSurface,
   roughnessToAlpha, sampleEnvironment, sampleGlass, sampleSurface, setWhiteDiffuse, splitSubsurface, writeEscapedAlbedo, writeFirstHitAlbedo,
 } from './path-tracer-shading.js';
 import { buildLightTree, chooseLightFromTree, LIGHT_TREE_FIRST_HIT_LIGHTS, resolveLightSelection } from './path-tracer-light-tree.js';
@@ -35,6 +35,8 @@ export const PATH_TRACER_LIMITS = Object.freeze({
 export const MAX_TRACE_PIXELS = 2_073_600;
 export const MAX_TRACE_RAY_WORK = 4_000_000_000;
 const ALPHA_STEP_LIMIT = 64;
+// A shadow ray that has lost this much light to glass and water is blocked: the rest is below what a pixel can show.
+const MINIMUM_SHADOW_TRANSMITTANCE = 1e-4;
 const WORKER_BAND_ROWS = 8;
 // Held in a constant so the bundler leaves the URL alone: the worker is its own package entry, built beside this file.
 const WORKER_FILE = './path-tracer-worker.js';
@@ -479,11 +481,51 @@ function isOwnLampMesh(scene, materialIndex, lightBit) {
   return lightBit >= 0 && ((scene.lampLightMasks?.[materialIndex] ?? 0) >> lightBit & 1) === 1;
 }
 
-function occluded(scene, originX, originY, originZ, directionX, directionY, directionZ, limit, hit, lightBit = -1) {
+const TRANSMISSIVE_FLAGS = new WeakMap();
+
+/** One byte per material: 1 when a path may refract through it (a transmission factor or map), so a shadow ray must not stop at it. */
+function transmissiveMaterialFlags(scene) {
+  let flags = TRANSMISSIVE_FLAGS.get(scene);
+  if (!flags) {
+    flags = Uint8Array.from(scene.materials, material => (material.transmission > 0 || material.transmissionTexture ? 1 : 0));
+    TRANSMISSIVE_FLAGS.set(scene, flags);
+  }
+  return flags;
+}
+
+/**
+ * Lets a shadow ray through one face of a transmissive part, as far as a straight ray can: the share of light that is not
+ * reflected there (Fresnel of the dielectric the tracer's glass lobe uses), the part's transmission and colour, and, when it
+ * leaves a part it was inside, Beer-Lambert absorption over the length it travelled. The ray does not bend, so light that
+ * refracts around the part (caustics) is not counted. Returns the absorbing part the ray is inside afterwards, or null.
+ */
+function crossGlassFace(hit, material, directionX, directionY, directionZ, segmentLength, insideMaterial, transmittance) {
+  const facing = hit.normal[0] * directionX + hit.normal[1] * directionY + hit.normal[2] * directionZ;
+  const entering = facing < 0;
+  if (!entering && insideMaterial) absorbOverDistance(insideMaterial, segmentLength, transmittance);
+  // The straight ray stands for the one the light would bend into: its angle is the one on the air side of both faces, so no
+  // direction meets the glass past the critical angle, and Fresnel is the same entering and leaving.
+  const passes = (1 - dielectricFresnel(Math.abs(facing), 1 / material.ior)) * hit.transmission;
+  for (let channel = 0; channel < 3; channel++) transmittance[channel] *= passes * hit.color[channel];
+  return entering && Number.isFinite(material.attenuationDistance) ? material : null;
+}
+
+/**
+ * True when the ray is blocked before `limit`. Otherwise `transmittance` holds the share of light per channel that gets
+ * through the glass and water on the way (1 when there is none). An opaque part blocks fully; a transmissive part is stepped
+ * through with `crossGlassFace`, within ALPHA_STEP_LIMIT surfaces, unless `glassBlocks` says it stops the ray. `insideMaterial` is
+ * the absorbing part the ray starts inside.
+ */
+function occluded(scene, originX, originY, originZ, directionX, directionY, directionZ, limit, hit, transmittance, insideMaterial = null, glassBlocks = false, lightBit = -1) {
+  transmittance[0] = 1;
+  transmittance[1] = 1;
+  transmittance[2] = 1;
+  const transmissiveFlags = glassBlocks ? null : transmissiveMaterialFlags(scene);
   let startX = originX;
   let startY = originY;
   let startZ = originZ;
   let remaining = limit;
+  let inside = insideMaterial;
   // An any-hit trace returns the first hit traversal meets, not the nearest. A solid one shadows the point wherever it lies;
   // a transparent one says nothing about what sits before it, so the walk then retraces for nearest hits and steps through.
   let anyHit = true;
@@ -492,15 +534,22 @@ function occluded(scene, originX, originY, originZ, directionX, directionY, dire
     if (found.nearestTriangle < 0) return false;
     const materialIndex = scene.triangleMaterial[found.nearestTriangle];
     const ownLamp = isOwnLampMesh(scene, materialIndex, lightBit);
-    // Only a cutout material needs its texture read to know whether the ray passes through: skip the interpolation for the rest.
+    const transmissive = !ownLamp && !glassBlocks && transmissiveFlags[materialIndex] === 1;
+    let covered = false;
     if (!ownLamp) {
-      if (scene.materials[materialIndex].alphaCutoff === 0) return true;
+      // Only a cutout material needs its texture read to know whether the ray passes through: skip the interpolation for the rest.
+      if (!transmissive && scene.materials[materialIndex].alphaCutoff === 0) return true;
       const alpha = fillHit(scene, found.nearestTriangle, startX, startY, startZ, directionX, directionY, directionZ, found.nearestDistance, hit);
-      if (alpha >= hit.material.alphaCutoff) return true;
+      covered = alpha >= hit.material.alphaCutoff;
+      if (covered && !transmissive) return true;
     }
     if (anyHit) {
       anyHit = false;
       continue;
+    }
+    if (covered) {
+      inside = crossGlassFace(hit, hit.material, directionX, directionY, directionZ, found.nearestDistance, inside, transmittance);
+      if (Math.max(transmittance[0], transmittance[1], transmittance[2]) < MINIMUM_SHADOW_TRANSMITTANCE) return true;
     }
     const advance = found.nearestDistance + scene.surfaceOffset;
     remaining -= advance;
@@ -522,6 +571,7 @@ function createPathTracer(scene, options) {
   const surface = createSurface();
   const hit = createHit();
   const shadowHit = createHit();
+  const shadowTransmittance = new Float64Array(3);
   const throughput = new Float64Array(3);
   const radiance = new Float64Array(3);
   const direction = new Float64Array(3);
@@ -560,6 +610,9 @@ function createPathTracer(scene, options) {
     radiance[2] += clampedBlue;
   }
 
+  // The material of the transmissive part the path is inside, when it absorbs; null outside and inside parts that do not absorb.
+  let absorbingMaterial = null;
+
   // True while a light is sampled from a scattering event in the fog instead of from a surface.
   let inMedium = false;
   const phaseCandidate = { pdf: 0 };
@@ -581,14 +634,14 @@ function createPathTracer(scene, options) {
     const cosine = lightDirection[0] * direction[0] + lightDirection[1] * direction[1] + lightDirection[2] * direction[2];
     const phase = henyeyGreensteinPhase(volume.anisotropy, cosine);
     const [originX, originY, originZ] = hit.point;
-    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, sampleLightBit)) return;
+    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, shadowTransmittance, absorbingMaterial, lightIsEnvironment, sampleLightBit)) return;
     phaseCandidate.pdf = phase;
     const scale = phase * fogTransmittance(originX, originY, originZ, distance) * weight(phaseCandidate);
     addRadiance(
       depth + 1,
-      throughput[0] * lightRadiance[0] * scale,
-      throughput[1] * lightRadiance[1] * scale,
-      throughput[2] * lightRadiance[2] * scale,
+      throughput[0] * lightRadiance[0] * scale * shadowTransmittance[0],
+      throughput[1] * lightRadiance[1] * scale * shadowTransmittance[1],
+      throughput[2] * lightRadiance[2] * scale * shadowTransmittance[2],
     );
   }
 
@@ -606,15 +659,15 @@ function createPathTracer(scene, options) {
     const originX = hit.point[0] + normal[0] * scene.surfaceOffset;
     const originY = hit.point[1] + normal[1] * scene.surfaceOffset;
     const originZ = hit.point[2] + normal[2] * scene.surfaceOffset;
-    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, sampleLightBit)) return;
+    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, shadowTransmittance, absorbingMaterial, lightIsEnvironment, sampleLightBit)) return;
     const scale = cosine * weight(surface) * fogTransmittance(originX, originY, originZ, distance);
     if (lightIsSun && writeSunShadow) writeSunShadow(originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], sunShadow);
     else sunShadow.fill(1);
     addRadiance(
       depth,
-      throughput[0] * value[0] * lightRadiance[0] * scale * sunShadow[0],
-      throughput[1] * value[1] * lightRadiance[1] * scale * sunShadow[1],
-      throughput[2] * value[2] * lightRadiance[2] * scale * sunShadow[2],
+      throughput[0] * value[0] * lightRadiance[0] * scale * sunShadow[0] * shadowTransmittance[0],
+      throughput[1] * value[1] * lightRadiance[1] * scale * sunShadow[1] * shadowTransmittance[1],
+      throughput[2] * value[2] * lightRadiance[2] * scale * sunShadow[2] * shadowTransmittance[2],
     );
   }
 
@@ -720,7 +773,11 @@ function createPathTracer(scene, options) {
       : sampleEnvironment(environment, random.next(), random.next(), random.next(), random.next(), lightDirection);
     if (!(environmentSampledPdf > 0)) return;
     environmentRadiance(environment, lightDirection[0], lightDirection[1], lightDirection[2], lightRadiance);
+    // A path that bends through glass and reaches the sky is already counted in full (addEscape after a mirror or glass bounce), so
+    // the sky's shadow ray stops at glass: letting it through as well would count that light twice.
+    lightIsEnvironment = true;
     addDirect(depth, normal, scene.farDistance, environmentWeight);
+    lightIsEnvironment = false;
   }
 
   const emitterCount = (lights.sun ? 1 : 0) + lights.points.length + lights.spots.length + lights.areas.length + (environment ? 1 : 0);
@@ -892,7 +949,7 @@ function createPathTracer(scene, options) {
     ? {
       sun: lights.sun,
       ambient: meanEnvironmentRadiance(environment),
-      sunVisibility: (pointX, pointY, pointZ) => (occluded(scene, pointX, pointY, pointZ, lights.sun.direction[0], lights.sun.direction[1], lights.sun.direction[2], scene.farDistance, shadowHit) ? 0 : 1),
+      sunVisibility: (pointX, pointY, pointZ) => (occluded(scene, pointX, pointY, pointZ, lights.sun.direction[0], lights.sun.direction[1], lights.sun.direction[2], scene.farDistance, shadowHit, shadowTransmittance) ? 0 : (shadowTransmittance[0] + shadowTransmittance[1] + shadowTransmittance[2]) / 3),
     }
     : null;
   const crossLocalVolumes = scene.localVolumes ? createLocalVolumeCrossing(scene.localVolumes, localVolumeLighting) : null;
@@ -900,6 +957,7 @@ function createPathTracer(scene, options) {
   const writeSunShadow = scene.localVolumes ? createLocalVolumeSurfaceShadow(scene.localVolumes) : null;
   const sunShadow = new Float64Array(3);
   let lightIsSun = false;
+  let lightIsEnvironment = false;
   const localEmitted = new Float64Array(3);
 
   const walkSubsurface = createRandomWalk(scene, random, intersect);
@@ -957,8 +1015,7 @@ function createPathTracer(scene, options) {
     let positionZ = originZ;
     let previousPdf = 0;
     let afterMirror = true;
-    // The material of the transmissive part the path is inside, when it absorbs; null outside and inside parts that do not absorb.
-    let absorbingMaterial = null;
+    absorbingMaterial = null;
     let isCameraRay = true;
     for (let depth = 0; depth <= options.bounces; depth++) {
       const found = intersect(scene, positionX, positionY, positionZ, direction[0], direction[1], direction[2], hit, depth === 0);
@@ -1096,7 +1153,7 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
   if (environment?.fillIntensity > 0) notes.add('fillIntensity is ignored: the two fixed fill lights are rasterizer only. Add a point or area light, or raise environmentIntensity, to light the shadow side of a trace.');
   if (environment?.world === true) notes.add('world: true is ignored: the outdoor haze shading is rasterizer only, and a trace draws the environment map behind the picture and lights with it.');
-  if (environment?.world === false && (kernelMaterials || backend !== 'cpu')) notes.add('world: false draws the flat background colour behind the picture only in the CPU tracer: this tracer draws the environment map there, as it lights with it.');
+  if (environment?.world === false && kernelMaterials) notes.add('world: false draws the flat background colour behind the picture in the CPU, "gpu" (WebGL) and "webgpu" tracers only: the native cycles kernel draws the environment map there, as it lights with it.');
   if (environment?.cameraIntensity !== undefined && !kernelMaterials) notes.add('cameraIntensity is ignored: only the native cycles kernel draws the sky a camera ray sees at its own strength, the other tracers use the map intensity.');
   for (const part of parts) {
     const material = part.material ?? {};

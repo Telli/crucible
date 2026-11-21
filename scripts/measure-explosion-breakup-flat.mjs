@@ -3,7 +3,7 @@
 // how much the cloud breaks up (silhouette roughness), how fast it fades at its edge, how far its luminance distribution is from the reference's, and an RMSE
 // of the two after both are centred and scaled to the same cloud size (scripts/explosion-breakup-metrics.mjs explains the reduction).
 //
-//   GPU_LOCK_WEIGHT=heavy bash ~/.agents/tools/gpu-lock.sh node scripts/measure-explosion-breakup.mjs --out artifacts/explosion-breakup/before
+//   node scripts/measure-explosion-breakup.mjs --out artifacts/explosion-breakup/before
 //
 // The Cycles frame (scripts/explosion-cycles-reference.mjs, Blender 5.3 at below normal priority) shows the grid frame the recipe plays at the first time, so it
 // moves with the bake: the numbers say how well Glaze matches Cycles on that gas, and the Cycles row of the report says how ragged that gas is in truth.
