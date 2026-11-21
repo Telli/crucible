@@ -7,6 +7,8 @@
 // thousand small faces on it meet without the wall being listed in a thousand cells. Nothing is cut short silently: parts
 // past the triangle budget come back in `unchecked`, and `truncated` says the pair budget ran out.
 
+import { entryStarts, partSignature, rememberSearch, reusableSearch, subTableOf, triangleIdsNearChanged } from './flush-search-reuse.js';
+
 /** Shared area under this share of the smaller triangle is edge contact or rounding, not a fight. */
 export const FLUSH_MINIMUM_AREA_SHARE = 1e-4;
 const FLUSH_MINIMUM_AREA = 1e-8;
@@ -542,7 +544,7 @@ function testCell(cell, table, reach, testPair) {
 export function findFlushPairs(parts, { triangleBudget = DEFAULT_TRIANGLE_BUDGET, pairBudget = DEFAULT_PAIR_BUDGET, testedPairLimit = MAXIMUM_TESTED_PAIRS } = {}) {
   const { entries, unchecked } = withinTriangleBudget(searchableParts(parts), triangleBudget);
   const table = readTriangles(entries);
-  const result = { parts: entries.map(entry => entry.part), count: table.count, owner: table.owner, local: table.local, areas: table.areas, corners: table.corners, pairs: [], unchecked, truncated: false };
+  const result = { parts: entries.map(entry => entry.part), count: table.count, owner: table.owner, local: table.local, areas: table.areas, corners: table.corners, pairs: [], unchecked, truncated: false, searched: 0 };
   if (table.count < 2) return result;
   const sceneBounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   for (const { bounds } of entries) {
@@ -553,8 +555,43 @@ export function findFlushPairs(parts, { triangleBudget = DEFAULT_TRIANGLE_BUDGET
   }
   // No pair of parts spans more than the scene, so this is the widest gap any pair is tested with.
   const reach = nearTolerance(boundsDiagonal(sceneBounds));
+  const signatures = entries.map(entry => partSignature(entry.part));
+  const starts = entryStarts(table, entries.length);
+  const reused = unchecked.length === 0 ? reusableSearch(signatures, starts, reach) : null;
+  const limits = { pairBudget, testedPairLimit };
+  if (!(reused && searchChangedParts(table, entries, reused, reach, limits, result))) {
+    result.pairs = [];
+    result.truncated = false;
+    delete result.truncatedAt;
+    searchAllParts(table, entries, reach, limits, result);
+  }
+  result.pairs.sort((first, second) => first.first - second.first || first.second - second.second);
+  rememberSearch({ signatures, starts, pairs: result.pairs, reach, complete: !result.truncated && unchecked.length === 0 });
+  return result;
+}
+
+function searchAllParts(table, entries, reach, { pairBudget, testedPairLimit }, result) {
   const testPair = createPairTest(table, entries, reach, pairBudget, testedPairLimit, result);
   for (const cell of buildCoarsenedCells(table, reach)) testCell(cell, table, reach, testPair);
-  result.pairs.sort((first, second) => first.first - second.first || first.second - second.second);
-  return result;
+  result.searched = table.count;
+}
+
+// Keeps the pairs between parts that did not change and searches only the triangles near a part that did. Returns false
+// when a budget ran out, so the caller searches everything and the result never depends on what was searched before.
+function searchChangedParts(table, entries, reused, reach, { pairBudget, testedPairLimit }, result) {
+  const nearIds = triangleIdsNearChanged(table, entries, reused.changed, reach);
+  const near = subTableOf(table, nearIds);
+  const fresh = { pairs: [], truncated: false };
+  const testPair = createPairTest(near, entries, reach, pairBudget - reused.pairs.length, testedPairLimit, fresh);
+  const testChangedPair = (one, other) => {
+    if (reused.changed[near.owner[one]] || reused.changed[near.owner[other]]) testPair(one, other);
+  };
+  if (near.count > 1) {
+    for (const cell of buildCoarsenedCells(near, reach)) testCell(cell, near, reach, testChangedPair);
+  }
+  if (fresh.truncated || reused.pairs.length + fresh.pairs.length > pairBudget) return false;
+  for (const pair of fresh.pairs) result.pairs.push({ ...pair, first: nearIds[pair.first], second: nearIds[pair.second] });
+  result.pairs.push(...reused.pairs);
+  result.searched = near.count;
+  return true;
 }

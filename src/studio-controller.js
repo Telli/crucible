@@ -714,12 +714,26 @@ export function createStudioController({
   }
 
   function swapRecipe(recipeInput) {
+    // `assets` is the host's pool of decoded catalog assets. It outlives each scene, so undo and redo rebuild from it.
+    installScene(createAgentScene(recipeInput, {}, assets ? { assets } : {}));
+  }
+
+  function installScene(scene) {
     invalidateQuery();
     // A drag in progress belongs to the scene it began on.
     dragState = null;
-    // `assets` is the host's pool of decoded catalog assets. It outlives each scene, so undo and redo rebuild from it.
-    currentScene = createAgentScene(recipeInput, {}, assets ? { assets } : {});
+    currentScene = scene;
     settleSelectionAndMotion();
+  }
+
+  // A recipe from a file or an agent leaves out the fields the scene fills in, so it is built once on the side to learn the
+  // recipe it stands for. When the scene on screen differs from that only by what scene operations can set, they are applied
+  // there and the parts, and the textures the renderer holds for them, stay (#2842). Otherwise the built scene is the new one.
+  function loadRecipeKeepingScene(recipeInput) {
+    const candidate = createAgentScene(recipeInput, {}, assets ? { assets } : {});
+    if (!restoreRecipeInPlace(currentScene.exportRecipe(), candidate.exportRecipe())) {
+      installScene(candidate);
+    }
   }
 
   // Keeps the selection, the motion time and the free view valid for whichever recipe the scene now holds.
@@ -2290,7 +2304,7 @@ export function createStudioController({
     const before = recordUndo ? currentScene.exportRecipe() : null;
     endUndoGroup();
     freeViewPose = null;
-    swapRecipe(recipeInput);
+    loadRecipeKeepingScene(recipeInput);
     if (before) {
       pushUndoSnapshot(before, { restoresCamera: true });
     }
