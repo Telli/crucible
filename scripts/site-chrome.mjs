@@ -39,7 +39,17 @@ const NAV_LINKS = [
   { name: 'changelog', href: '/changelog.html', label: 'Changelog', wide: true },
 ];
 
-const BRAND = '<a class="brand" href="/" aria-label="Crucible home"><img src="/brand/crucible-mark.svg" alt="">Crucible</a>';
+// The footer lists every page, because the top bar keeps only Docs, GitHub and Install on a phone.
+const FOOTER_PAGE_LINKS = [
+  { href: '/docs.html', label: 'Docs' },
+  { href: '/recipes.html', label: 'Recipes' },
+  { href: '/showcase.html', label: 'Showcase' },
+  { href: '/marketplace.html', label: 'Marketplace' },
+  { href: '/tiers.html', label: 'Tiers' },
+  { href: '/changelog.html', label: 'Changelog' },
+];
+
+const BRAND ='<a class="brand" href="/" aria-label="Crucible home"><img src="/brand/crucible-mark.svg" alt="">Crucible</a>';
 
 export function renderHeader(pageName) {
   const current = CURRENT_LINK[pageName];
@@ -68,11 +78,13 @@ export function renderFooter() {
     '  <div class="inner">',
     `    <p>${BRAND}</p>`,
     '    <p>by <a href="https://codepawl.com">CodePawl</a>, formerly 67js</p>',
+    '    <nav aria-label="Site pages">',
+    ...FOOTER_PAGE_LINKS.map((link) => `      <a href="${link.href}">${link.label}</a>`),
+    '    </nav>',
     '    <nav aria-label="Project links">',
     `      <a href="https://github.com/codepawl/crucible">${icon('github')}GitHub</a>`,
     `      <a href="https://www.npmjs.com/package/@codepawlhq/crucible">${icon('npm')}npm</a>`,
     '      <a data-release-commit href="https://github.com/codepawl/crucible">Release commit</a>',
-    '      <a href="/changelog.html">Changelog</a>',
     '      <a href="/license.txt">MIT license</a>',
     '      <a href="/logo.svg" download>Logo SVG</a>',
     '      <a href="https://github.com/sponsors/codepawl">Sponsor</a>',

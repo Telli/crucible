@@ -22,8 +22,9 @@ body.recipes > main { gap: 32px; width: var(--page); margin-inline: auto; paddin
 .recipe-code pre { margin: 0; padding: 16px 20px; max-height: 480px; overflow: auto; border-radius: var(--panel-radius); background: var(--bg); font-size: 13px; line-height: 1.7; tab-size: 2; user-select: text; }
 .recipe-code pre code { display: block; width: max-content; min-width: 100%; color: var(--text); }
 
-.recipe-file { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; color: var(--muted); font-size: 15px; }
-.recipe-file a { color: var(--text); text-decoration: underline; }
+.recipe-file { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; color: var(--muted); font-size: 15px; }
+.recipe-file a { display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border: var(--edge-width) solid var(--edge); color: var(--text); font-weight: 600; font-size: 14px; text-decoration: none; }
+.recipe-file a:hover { background: var(--tint-strong); }
 .recipe-file code { color: var(--text); font-size: 13px; }
 
 .recipe-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 20px; }

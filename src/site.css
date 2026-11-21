@@ -149,3 +149,12 @@ body.site > main > section { scroll-margin-top: calc(var(--nav-height) + 24px); 
 @media (max-width: 760px) {
   body.site > main { gap: 48px; }
 }
+
+/* One Copy button everywhere: the same size on the marketplace's command rows, checksum row and install steps. */
+.site :is(.market-copy, [data-copy]) { min-height: 36px; padding: 4px 14px; font-size: 13px; }
+/* The "Run example" chip sits on the dark demo canvas in both schemes, so it keeps light text. */
+.site .live-example .live-start { background: #17161ad9; color: #fefefd; border-color: #fefefd66; }
+.site .section-heading { gap: 12px 28px; }
+@media (max-width: 640px) {
+  .site .section-heading { flex-direction: column; align-items: flex-start; }
+}

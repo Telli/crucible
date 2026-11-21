@@ -26,6 +26,17 @@ test('the top bar has the same links in the same order on every page', () => {
   for (const links of linkLists) assert.deepEqual(links, linkLists[0]);
 });
 
+test('the footer lists every page, since the phone top bar keeps only Docs, GitHub and Install', () => {
+  const footer = renderFooter();
+  for (const href of ['/docs.html', '/recipes.html', '/showcase.html', '/marketplace.html', '/tiers.html', '/changelog.html']) {
+    assert.ok(footer.includes(`<a href="${href}">`), `${href} is missing from the footer`);
+  }
+});
+
+test('no page head still carries the unused color script', () => {
+  for (const pageName of CHROME_PAGES) assert.ok(!readPage(pageName).includes('crucible-color'), pageName);
+});
+
 test('each page marks its own place in the top bar with aria-current', () => {
   const expected = { index: null, docs: '/docs.html', changelog: '/changelog.html', recipes: '/recipes.html', 'recipe-dolly-zoom': '/recipes.html', marketplace: '/marketplace.html', showcase: '/showcase.html', tiers: null };
   for (const [pageName, href] of Object.entries(expected)) {

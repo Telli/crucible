@@ -5,7 +5,7 @@ body.tiers-page > main { gap: 28px; width: var(--page); margin-inline: auto; pad
 .tiers-conditions { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
 
 .tiers-switch { display: flex; flex-wrap: wrap; gap: 8px; }
-.tiers-tab { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 16px; border: 0; border-radius: 0; background: var(--bg); color: var(--text); font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; transition: background-color var(--site-motion-quick) var(--site-ease-out), color var(--site-motion-quick) var(--site-ease-out); }
+.tiers-tab { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 16px; border: var(--edge-width) solid var(--edge); border-radius: 0; background: var(--bg); color: var(--text); font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; transition: background-color var(--site-motion-quick) var(--site-ease-out), color var(--site-motion-quick) var(--site-ease-out); }
 .tiers-tab:hover { background: var(--tint-strong); }
 .tiers-tab[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
 .tiers-tab:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -32,10 +32,8 @@ body.tiers-page > main { gap: 28px; width: var(--page); margin-inline: auto; pad
 @media (max-width: 640px) {
   .tiers-metric { padding: 18px 16px; }
   .tiers-bar-label strong { font-size: 22px; }
-  /* One row on a phone: no icons, tighter tabs, and a sideways scroll if a narrower screen still runs out of room. */
-  .tiers-switch { flex-wrap: nowrap; gap: 6px; overflow-x: auto; scrollbar-width: none; }
-  .tiers-switch::-webkit-scrollbar { display: none; }
+  /* A phone: no icons, tighter tabs, wrapping onto a second row. */
+  .tiers-switch { flex-wrap: wrap; gap: 6px; }
   .tiers-tab { flex: none; min-height: 40px; padding: 8px 12px; font-size: 14px; }
   .tiers-tab-icon { display: none; }
-  .tiers-tab.is-planned { box-shadow: inset 0 0 0 1px var(--muted); }
 }

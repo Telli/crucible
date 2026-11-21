@@ -22,7 +22,7 @@ function pageShell({ title, description, path, body }) {
   const page = `<!doctype html>
 <html lang="en" data-theme="crucible">
   <head>
-    <meta charset="UTF-8" /><script>try{var saved=localStorage.getItem("crucible-color");if(saved==="light"||saved==="dark")document.documentElement.dataset.color=saved}catch(error){}</script>
+    <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="${escapeHtml(description)}" />
     <link rel="canonical" href="${ORIGIN}${path}" />
