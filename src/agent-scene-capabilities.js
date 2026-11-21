@@ -1,6 +1,7 @@
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from './view-transform-names.js';
 import { BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES } from './look-catalog.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
+import { BVH_LIMITS } from './bvh-limits.js';
 import {
   MESH_EDIT_OPERATIONS, MAX_MESH_EDITS, STACK_OPERATIONS, MAX_STACK_NODES,
   FIELD_OPERATOR_NAMES, FIELD_ATTRIBUTES, MAX_FIELD_NODES, MAX_FIELD_DEPTH, MAX_FIELD_ELEMENTS, INSTANCE_SOURCES, MAX_INSTANCE_CANDIDATES,
@@ -315,6 +316,14 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   gltfImport: 'Optional extensions and line primitives load with a warning; unlit and punctual lights are read.',
   authoredLook: true, maxPointLights: MAX_POINT_LIGHTS,
   catalogLooks: Object.freeze({ hdri: 'environment.hdri', hdris: BUNDLED_ENVIRONMENT_NAMES, cubeLooks: BUNDLED_CUBE_LOOK_NAMES, look: 'environment.look', catalogId: '64-hex ID of a .hdr or .cube in scene_asset_catalog', note: 'environmentIntensity and environmentRotation apply; keyIntensity 0 if the HDRI has a sun' }),
+  bvhMotion: Object.freeze({
+    catalog: 'A .bvh file in --assets is listed by scene_asset_catalog as a skeleton-only GLB (meshes 0, skins 1, one clip named after the file; End Sites become joints named <parent>_End).',
+    use: 'Pass its assetId as motion.layers[].from.asset with clip 0 on a rigged humanoid asset: the clip is retargeted by the humanoid bone map (see motion.layers from, and retargets in scene_inspect hierarchy). layer.scale multiplies the hips travel; rootMotion false keeps the walk in place.',
+    units: 'Auto: rest height up to 4 is metres, below 40 the CMU unit (0.45 inch), else centimetres; the file is stored in metres. The retarget scales hips travel by the rest hip heights, so units do not change the result on a target.',
+    channels: 'Any rotation order (first listed is outermost); a position channel gives its axis outright. Frame Time sets the clip times.',
+    limits: Object.freeze({ maxJoints: BVH_LIMITS.maxJoints, maxFrames: BVH_LIMITS.maxFrames, maxFileBytes: BVH_LIMITS.maxBytes, maxChannelValues: BVH_LIMITS.maxChannelValues }),
+    note: 'Both skeletons face the same way with +Y up. A syntax error stops the catalog and names the file and line; a file over a limit is skipped with its reason. docs/retarget.md.',
+  }),
   physicalSky: 'environment.sky {type:physical, preset: golden-hour|sunset|blue-hour, sunElevation, sunRotation, turbidity, groundAlbedo, aerialPerspective} drives key, sky, fog; a low sun warms them; type:gradient {stops:[{at,color}], horizonGlow:{color,width,intensity}} only picks colours',
   lightingSetups: LIGHTING_SETUP_NAMES,defaultLightingSetup: DEFAULT_LIGHTING_SETUP,
   ambientOcclusion: Object.freeze({ default: DEFAULT_AMBIENT_OCCLUSION, defaultRadius: 0.5, off: 0 }),

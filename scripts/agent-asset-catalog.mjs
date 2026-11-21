@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { open, readdir, realpath, lstat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
+import { bvhToGlb } from '../src/bvh-gltf.js';
 import { clipDisplayName } from '../src/clip-name.js';
 import { AGENT_ASSET_LIMITS, assetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { MAXIMUM_CATALOG_ENVIRONMENT_BYTES, MAXIMUM_CATALOG_LOOK_BYTES } from '../src/look-catalog.js';
@@ -237,6 +238,21 @@ async function transcodedKtx2(bytes, filename) {
   return result.bytes;
 }
 
+/**
+ * A .bvh motion capture file as the bytes of a skeleton-only GLB (src/bvh-gltf.js), so the catalog stores, hashes and serves it like
+ * any GLB: the clip is the file's motion and the joints are its skeleton. A syntax error stops the catalog with the line it names;
+ * a file over a BVH limit is skipped with the reason.
+ */
+function bvhFileAsGlb(bytes, filename) {
+  const clipName = filename.replace(/^.*[\\/]/, '').replace(/\.bvh$/i, '');
+  try {
+    return bvhToGlb(bytes.toString('utf8'), { name: clipName }).glb;
+  } catch (error) {
+    if (error instanceof RangeError) throw new SkippableCatalogFileError(`${filename}: ${error.message}`);
+    throw new error.constructor(`${filename}: ${error.message}`);
+  }
+}
+
 export async function readCatalogFile(directory, filename, { enforceImageLimits = true } = {}) {
   const path = join(directory, filename);
   const original = await lstat(path);
@@ -274,9 +290,10 @@ export async function readCatalogFile(directory, filename, { enforceImageLimits 
     // The header gives the size, so an oversized frame is refused here, before the preview page decodes its pixels.
     const imageProblem = imageFormat && enforceImageLimits ? imageLimitProblem(bytes, filename, TEXTURE_SEQUENCE_LIMITS, 'Resize it before adding it to the --assets or --packs folder.') : null;
     if (imageProblem) throw new SkippableCatalogFileError(imageProblem);
-    if (!imageFormat && !lookKind && !/\.glb$/i.test(filename)) throw new Error('Catalog files must be GLB, PNG, JPEG, WebP, HDR or CUBE, with a matching extension.');
+    if (!imageFormat && !lookKind && !/\.(glb|bvh)$/i.test(filename)) throw new Error('Catalog files must be GLB, BVH, PNG, JPEG, WebP, HDR or CUBE, with a matching extension.');
     let document = null;
     if (!imageFormat && !lookKind) {
+      if (/\.bvh$/i.test(filename)) bytes = bvhFileAsGlb(bytes, filename);
       const parsed = selfContainedGlb(bytes);
       document = parsed.document;
       if (document.images?.some(image => Object.hasOwn(image, 'uri'))) {
@@ -371,7 +388,7 @@ export async function fingerprintAssetDirectory(root) {
     // An unreadable folder has no fingerprint; building the catalog reports the real error with its own advice.
     return 'unreadable';
   }
-  const names = listing.filter(entry => /\.(glb|png|jpe?g|webp|hdr|cube)$/i.test(entry.name)).map(entry => entry.name).sort();
+  const names = listing.filter(entry => /\.(glb|bvh|png|jpe?g|webp|hdr|cube)$/i.test(entry.name)).map(entry => entry.name).sort();
   const parts = [`${names.length}`];
   for (const name of names.slice(0, MAXIMUM_ASSETS + TEXTURE_SEQUENCE_LIMITS.maxFrames + 1)) {
     const status = await lstat(join(directory, name)).catch(() => null);
@@ -398,7 +415,7 @@ export async function createAgentAssetCatalog(root, packFiles = []) {
       throw new TypeError('Asset root must be a directory.');
     }
     const files = (await readdir(directory, { withFileTypes: true }))
-      .filter(entry => /\.(glb|png|jpe?g|webp|hdr|cube)$/i.test(entry.name)).sort((left, right) => left.name.localeCompare(right.name));
+      .filter(entry => /\.(glb|bvh|png|jpe?g|webp|hdr|cube)$/i.test(entry.name)).sort((left, right) => left.name.localeCompare(right.name));
     // Image files are sequence frames, so they have their own cap: a film that changes a texture over time needs thousands.
     const imageFileCount = files.filter(entry => IMAGE_FILE_PATTERN.test(entry.name)).length;
     const otherFileCount = files.length - imageFileCount;
