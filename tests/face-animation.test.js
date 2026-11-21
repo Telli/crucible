@@ -65,6 +65,19 @@ test('with no jitter blinks are one interval apart and peak mid blink', () => {
   assert.ok(Math.abs(weightAt(track, 1 + 0.065) - blinkClosure(0.065)) < 1e-9);
 });
 
+test('blink spacing stays inside interval plus or minus jitter and is not constant', () => {
+  const interval = 1.4;
+  const jitter = 0.3;
+  const [track] = faceTracks({ blink: { interval, jitter, seed: 5, start: 0.5, keys: ['jawOpen'] } }, { morphTargets: FACE_CAP_KEYS, duration: 30 });
+  const peaks = track.keyframes.filter(key => key.value === 1).map(key => key.time);
+  const gaps = peaks.slice(1).map((time, index) => time - peaks[index]);
+  assert.ok(gaps.length > 15);
+  for (const gap of gaps) {
+    assert.ok(gap >= interval * (1 - jitter) - 1e-4 && gap <= interval * (1 + jitter) + 1e-4, `gap ${gap} is outside ${interval} +/- ${jitter * 100}%`);
+  }
+  assert.ok(new Set(gaps.map(gap => gap.toFixed(3))).size > gaps.length / 2, 'the gaps differ from each other');
+});
+
 test('visemes ramp in and out on the Oculus key of each phoneme', () => {
   const tracks = faceTracks({ visemes: { blend: 0.05, coarticulation: 0, phonemes: [{ time: 0.2, phoneme: 'PP' }, { time: 0.5, phoneme: 'AA' }, { time: 0.8, phoneme: 'sil' }] } }, { morphTargets: OCULUS_KEYS, duration: 1 });
   assert.deepEqual(tracks.map(track => track.id), ['viseme_PP', 'viseme_aa']);
