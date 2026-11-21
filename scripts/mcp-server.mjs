@@ -1007,7 +1007,7 @@ const destroy = { readOnlyHint: false, destructiveHint: true, idempotentHint: fa
 const TOOL_TITLES = {
   scene_capabilities: 'Scene capabilities', scene_create: 'Create scene', scene_asset_catalog: 'Asset catalog', scene_create_asset: 'Create scene from asset',
   scene_inspect: 'Inspect scene', scene_walkmap: 'Walkable map', mesh_inspect: 'Inspect meshes', mesh_edit: 'Edit mesh', mesh_stack: 'Set mesh modifiers',
-  scene_apply: 'Apply scene edits', scene_look: 'Look at scene', scene_ask_user: 'Ask the user to mark the scene', scene_ask_user_submit: 'Send marks from the inline view', scene_review: 'Review camera samples', scene_wedge: 'Compare one field at several values', scene_checkpoint: 'Save checkpoint',
+  scene_apply: 'Apply scene edits', scene_look: 'Look at scene', scene_ask_user: 'Ask the user to mark the scene', scene_ask_user_submit: 'Send marks from the inline view', scene_review: 'Review camera samples', scene_checkpoint: 'Save checkpoint',
   scene_restore: 'Restore checkpoint', scene_release_checkpoint: 'Release checkpoint', scene_export_recipe: 'Export recipe', scene_export_glb: 'Export GLB', scene_export_web: 'Export web game',
   scene_dispose: 'Dispose scene', scene_render_submit: 'Submit render job', scene_render_status: 'Render job status', scene_render_cancel: 'Cancel render job',
   scene_render_result: 'Render job result', scene_render_release: 'Release render job',
@@ -1196,10 +1196,10 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     submitAskUserTool.enable();
     askUserTool.update({ _meta: { ui: { resourceUri: ANNOTATE_VIEW_URI } } });
   };
-  register('scene_review', 'Compare one to four independent camera or motion samples in one labeled PNG grid. Preserves source revision, transient pose, viewport and checkpoints. Omitted motionTime restores authored base pose; omitted animation uses the authored asset clip pose; rendererTime defaults to the shot motionTime (or animation time), else zero. No render job store is required.', z.strictObject({
+  register('scene_review', 'Compare one to four independent camera or motion samples in one labeled PNG grid. Preserves source revision, transient pose, viewport and checkpoints. Omitted motionTime restores authored base pose; omitted animation uses the authored asset clip pose; rendererTime defaults to the shot motionTime (or animation time), else zero. No render job store is required. wedge replaces shots: one picture per value of a parameter (target environment, effects, shadow or a material ID; topic wedge).', z.strictObject({
     ...sessionFields, expectedRevision,
-    width: z.number().int().min(64).max(480).default(384),
-    height: z.number().int().min(64).max(480).default(384),
+    width: z.number().int().min(64).max(480).optional(),
+    height: z.number().int().min(64).max(480).optional(),
     labels: labelsFlag,
     response_format: responseFormatField,
     shots: z.array(z.strictObject({
@@ -1209,23 +1209,12 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
       animation: z.strictObject({ clip: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), time: z.number().min(0).max(3600) }).optional(),
       motionTime: z.number().min(0).max(3600).nullable().optional(),
       rendererTime: z.number().min(0).max(3600).optional(),
-    })).min(1).max(4),
+    })).min(1).max(4).optional(),
+    wedge: z.strictObject({ target: z.string().max(128), parameter: z.string().max(64), values: z.array(z.unknown()).min(2).max(8) }).optional(),
   }), readOnly, async ({ response_format, ...reviewInput }) => {
     const { data, mimeType, metadata } = await runtime.review(reviewInput);
     const shown = chosenFormat('scene_review', response_format) === 'concise' ? conciseReview(metadata) : metadata;
     return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(shown) }], structuredContent: shown };
-  });
-  register('scene_wedge', 'Compare one field at 2 to 8 values in one labeled PNG grid; the scene stays unchanged. target: environment, effects, shadow or a material ID. parameter: a field such as roughness, lightDirection or pointLights.0.intensity.', z.strictObject({
-    ...sessionFields, expectedRevision,
-    target: z.string().min(1).max(128),
-    parameter: z.string().min(1).max(64),
-    values: z.array(z.unknown()).min(2).max(8).describe('One value per picture, as scene_apply takes it.'),
-    shot: z.strictObject({ camera: z.record(z.string(), z.unknown()).optional().describe('eye, target, up, fov: as a scene_review shot takes them.'), motionTime: z.number().min(0).max(3600).nullable().optional() }).optional().describe('Shared by every picture.'),
-    width: z.number().int().min(64).max(480).optional().describe('Per picture. Default 320.'),
-    height: z.number().int().min(64).max(480).optional(),
-  }), readOnly, async argumentsValue => {
-    const { data, mimeType, metadata } = await runtime.wedge(argumentsValue);
-    return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(metadata) }], structuredContent: metadata };
   });
   register('scene_checkpoint', 'Save a private recipe snapshot. Up to 16 are kept per scene; past that the oldest is evicted.', z.strictObject(sessionFields), { ...edit, destructiveHint: false }, async argumentsValue => jsonResult(await runtime.checkpoint(argumentsValue)));
   register('scene_restore', 'Restore a checkpoint atomically using the current revision. The checkpoint remains available and revision increments. Pass exactly one of checkpointId, revision or branch. With revision (last 4 kept), undo with no checkpoint. With branch, keep that branch (one revision) and drop all branches.', z.strictObject({ ...sessionFields, checkpointId: restoreCheckpointId, revision: z.number().int().min(0).optional(), ...restoreBranchField, expectedRevision }), edit, async argumentsValue => jsonResult(await runtime.restore(argumentsValue)));

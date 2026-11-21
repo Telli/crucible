@@ -7,7 +7,7 @@ import { PatientStdioClientTransport } from './patient-stdio-transport.mjs';
 import { createAgentPreviewFixture } from './agent-preview-fixture.mjs';
 import { createScratchDirectory } from './scratch-directory.mjs';
 
-// Drives the installed MCP server on SwiftShader: scene_wedge draws a grid for a material, a sun, an effect and a lamp field
+// Drives the installed MCP server on SwiftShader: scene_review with wedge draws a grid for a material, a sun, an effect and a lamp field
 // and leaves the recipe, revision, branches and checkpoints as they were. Pass an output folder to keep the grids as PNG files.
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 const directory = await createScratchDirectory('crucible-wedge-proof-');
@@ -23,9 +23,14 @@ async function call(name, argumentsValue) {
   return result;
 }
 
+// The wedge tests read like a call: target, parameter and values sit beside the review fields and move into the wedge option here.
+function asReview({ target, parameter, values, ...reviewFields }) {
+  return { ...reviewFields, wedge: { target, parameter, values } };
+}
+
 async function rejected(argumentsValue, pattern) {
-  const result = await client.callTool({ name: 'scene_wedge', arguments: argumentsValue }, { timeout: 120000 });
-  assert.equal(result.isError, true, `scene_wedge must reject ${JSON.stringify(argumentsValue).slice(0, 100)}`);
+  const result = await client.callTool({ name: 'scene_review', arguments: asReview(argumentsValue) }, { timeout: 120000 });
+  assert.equal(result.isError, true, `scene_review wedge must reject ${JSON.stringify(argumentsValue).slice(0, 100)}`);
   assert.match(result.content.find(item => item.type === 'text').text, pattern);
 }
 
@@ -35,7 +40,7 @@ function pngSize(result) {
 }
 
 async function wedge(label, argumentsValue, expectedGrid) {
-  const result = await call('scene_wedge', argumentsValue);
+  const result = await call('scene_review', asReview(argumentsValue));
   const { bytes, width, height } = pngSize(result);
   assert.deepEqual([width, height], expectedGrid, `${label} grid size`);
   assert.equal(result.structuredContent.shots.length, argumentsValue.values.length, `${label} shots`);
@@ -55,6 +60,8 @@ try {
   await call('scene_apply', { ...settings, branch: 'keep-me', operations: [{ type: 'set-material', id: 'brass', roughness: 0.9 }] });
   const recipeBefore = (await call('scene_export_recipe', { sessionId })).structuredContent;
   const inspectBefore = (await call('scene_inspect', { sessionId })).structuredContent;
+  // kernels holds build timings, which change from one inspect to the next; everything else must be equal.
+  delete inspectBefore.kernels;
 
   await wedge('roughness', { ...settings, target: 'brass', parameter: 'roughness', values: [0.1, 0.3, 0.6, 0.9] }, [640, 688]);
   await wedge('sun-angle', { ...settings, target: 'environment', parameter: 'lightDirection',
@@ -71,6 +78,7 @@ try {
 
   const recipeAfter = (await call('scene_export_recipe', { sessionId })).structuredContent;
   const inspectAfter = (await call('scene_inspect', { sessionId })).structuredContent;
+  delete inspectAfter.kernels;
   assert.equal(JSON.stringify(recipeAfter), JSON.stringify(recipeBefore), 'recipe is byte for byte the same after wedges');
   assert.equal(JSON.stringify(inspectAfter), JSON.stringify(inspectBefore), 'revision and nodes are the same after wedges');
   const keep = await call('scene_look', { sessionId, width: 64, height: 64 });

@@ -71,7 +71,7 @@ async function connect(context) {
       return { data: png, mimeType: 'image/png', metadata: { sessionId, revision: scene.revision,
         motionTime: scene.motionTime, width, height, backend: 'fake' } };
     },
-    async review({ expectedRevision, width, height, shots }) {
+    async review({ expectedRevision, width = 384, height = 384, shots }) {
       calls++;
       assert.equal(expectedRevision, scene.revision);
       return { data: png, mimeType: 'image/png', metadata: { sessionId,
@@ -143,7 +143,7 @@ test('SDK advertises the complete strict JSON contract and truthful annotations'
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map(tool => tool.name).sort(), [
     'mesh_edit', 'mesh_inspect', 'mesh_stack', 'scene_apply', 'scene_ask_user', 'scene_asset_catalog', 'scene_capabilities', 'scene_checkpoint', 'scene_create', 'scene_create_asset', 'scene_dispose',
-    'scene_export_glb', 'scene_export_recipe', 'scene_export_web', 'scene_inspect', 'scene_look', 'scene_review', 'scene_wedge', 'scene_release_checkpoint', 'scene_restore',
+    'scene_export_glb', 'scene_export_recipe', 'scene_export_web', 'scene_inspect', 'scene_look', 'scene_review', 'scene_release_checkpoint', 'scene_restore',
     'scene_render_cancel', 'scene_render_release', 'scene_render_result', 'scene_render_status', 'scene_render_submit', 'scene_walkmap',
   ].sort());
   for (const tool of tools) {
@@ -206,9 +206,11 @@ test('review SDK exposes one image and rejects unknown or unbounded shot fields 
   await client.callTool({ name: 'scene_create', arguments: { recipe: recipe() } });
   const { tools } = await client.listTools();
   const tool = tools.find(tool => tool.name === 'scene_review');
-  assert.equal(tools.length, 26);
+  assert.equal(tools.length, 25);
   assert.equal(tool.annotations.readOnlyHint, true);
   assert.equal(tool.inputSchema.properties.shots.maxItems, 4);
+  assert.equal(tool.inputSchema.properties.wedge.properties.values.maxItems, 8);
+  assert.equal(tool.inputSchema.properties.wedge.properties.values.minItems, 2);
   assert.equal(tool.inputSchema.properties.shots.items.additionalProperties, false);
   assert.equal(tool.inputSchema.properties.shots.items.properties.camera.additionalProperties, false);
   const input = { sessionId, expectedRevision: 0, shots: [{ label: 'Front', camera: { eye: [4, 2, 1] } }, {}] };
@@ -233,7 +235,7 @@ test('branch names and labels are bounded in every tool schema and rejected befo
   await client.callTool({ name: 'scene_create', arguments: { recipe: recipe() } });
   const { tools } = await client.listTools();
   const schema = name => tools.find(tool => tool.name === name).inputSchema;
-  assert.equal(tools.length, 26, 'branches add fields, not tools');
+  assert.equal(tools.length, 25, 'branches add fields, not tools');
   const pattern = '^[a-z][a-z0-9_-]{0,23}$';
   assert.equal(schema('scene_apply').properties.branch.pattern, pattern);
   assert.equal(schema('scene_restore').properties.branch.pattern, pattern);

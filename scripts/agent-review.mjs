@@ -38,7 +38,7 @@ function clock(value, name) {
   return value;
 }
 
-export const REVIEW_CAMERA_FIELDS = ['eye', 'target', 'up', 'fov', 'near', 'far', 'projection', 'orthoScale'];
+const REVIEW_CAMERA_FIELDS = ['eye', 'target', 'up', 'fov', 'near', 'far', 'projection', 'orthoScale'];
 const REVIEW_VECTOR_FIELDS = ['eye', 'target', 'up'];
 const REVIEW_PROJECTIONS = ['perspective', 'orthographic'];
 
@@ -47,7 +47,7 @@ function isFloat32Number(value) {
 }
 
 /** Eye, target and up are three finite numbers, the other fields one; projection is a name and orthoScale a positive size. */
-export function validateReviewCamera(camera) {
+function validateReviewCamera(camera) {
   for (const [field, value] of Object.entries(camera)) {
     if (field === 'projection') {
       if (!REVIEW_PROJECTIONS.includes(value)) {

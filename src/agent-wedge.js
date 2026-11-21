@@ -1,4 +1,4 @@
-// scene_wedge renders one field of a scene at several values in one labelled grid. This leaf module holds the plain data
+// The scene_review wedge option renders one field of a scene at several values in one labelled grid. This leaf module holds the plain data
 // the MCP server, the runtime and the preview page share: the limits, the target sections and the operation that sets one value.
 
 import { invalidField } from './field-error.js';

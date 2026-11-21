@@ -1435,10 +1435,10 @@ window.__agentPreview = {
         branches: record.branches.names(), snapshots: record.branches.snapshotCount() };
     });
   },
-  /** One scratch recipe per value of a field (scene_wedge). Each copy is built from the scene's own recipe and dropped after export; the scene, its revision and its branches stay as they are. */
+  /** One scratch recipe per value of a field (scene_review wedge). Each copy is built from the scene's own recipe and dropped after export; the scene, its revision and its branches stay as they are. */
   wedgeRecipes({ sessionId, expectedRevision, target, field, values }) {
     const record = requireSession(sessionId);
-    if (record.asset) throw new TypeError('scene_wedge supports procedural recipe scenes, not an imported asset scene.');
+    if (record.asset) throw new TypeError('scene_review wedge supports procedural recipe scenes, not an imported asset scene.');
     const operations = [];
     return afterMeshBooleans(operations, () => {
       if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('wedge', expectedRevision, record.scene.revision));
