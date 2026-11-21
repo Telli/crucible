@@ -298,3 +298,37 @@ test('R and a tap do nothing while the game is playing, on a held key, on anothe
     restore();
   }
 });
+
+test('touchControls draws the stick over a touch game only when asked, and removes it on dispose', async () => {
+  const restore = withAnimationFrameStubs();
+  const previous = { document: globalThis.document, add: globalThis.addEventListener, remove: globalThis.removeEventListener };
+  globalThis.addEventListener = () => {};
+  globalThis.removeEventListener = () => {};
+  const documentOwner = { addEventListener() {}, removeEventListener() {}, createElement: () => fakeStickElement() };
+  function fakeStickElement() {
+    const element = { ownerDocument: documentOwner, style: {}, children: [], removed: false, setAttribute() {}, appendChild: child => element.children.push(child), remove() { element.removed = true; }, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+    return element;
+  }
+  globalThis.document = documentOwner;
+  const parent = fakeStickElement();
+  const canvas = { parentNode: parent, addEventListener() {}, removeEventListener() {} };
+  const touchRecipe = playerRecipe({ rules: [] });
+  touchRecipe.game.input = 'touch';
+  try {
+    const plain = await startGame(canvas, touchRecipe, { showStatus: false, createRenderer: () => standInRenderer() });
+    assert.equal(parent.children.length, 0, 'off by default');
+    plain.dispose();
+    const drawn = await startGame(canvas, touchRecipe, { showStatus: false, touchControls: true, createRenderer: () => standInRenderer() });
+    assert.equal(parent.children.length, 1, 'one overlay container');
+    drawn.dispose();
+    assert.equal(parent.children[0].removed, true);
+    const keyboardRecipe = playerRecipe({ rules: [] });
+    const keyboard = await startGame(canvas, keyboardRecipe, { showStatus: false, touchControls: true, createRenderer: () => standInRenderer() });
+    assert.equal(parent.children.length, 1, 'a keyboard game draws no stick');
+    keyboard.dispose();
+    await assert.rejects(startGame(canvas, touchRecipe, { showStatus: false, touchControls: 'yes', createRenderer: () => standInRenderer() }), /touchControls must be true or false, got string/);
+  } finally {
+    Object.assign(globalThis, { document: previous.document, addEventListener: previous.add, removeEventListener: previous.remove });
+    restore();
+  }
+});

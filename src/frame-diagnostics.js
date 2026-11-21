@@ -1,4 +1,6 @@
 import { resolveShadowLight } from './shadow-light.js';
+import { resolveEffects } from './effects.js';
+import { postStepSupport } from './shader-registry.js';
 
 /**
  * Diagnostics for a frame that renders without error but not as asked. They use the shape of `agent-diagnostics.js`
@@ -28,8 +30,30 @@ function shadowDirectionProblem(world, lightDirection, shadowBounds) {
     'Drop shadowBounds.eye, or point lightDirection from shadowBounds.target to it.');
 }
 
-export function frameDiagnostics({ world, depth, effects, lightDirection, shadowBounds, coplanarProblems = null, skinProblems = null }) {
+const DRAWN_EFFECTS = resolveEffects({ motionBlur: { objects: 1 } });
+const DRAWN_NAMES = Object.keys(DRAWN_EFFECTS).join(', ');
+
+/** One warning per effect key, or group field, that renderer.render reads nothing from, so the frame never shows it. */
+function unsupportedEffectProblems(requestedEffects, frameExposure) {
   const problems = [];
+  const postStepsLoaded = postStepSupport.fields.length > 0;
+  const notDrawn = (target, fix) => problems.push(warning('effect-not-drawn', target, `${target} is not drawn by renderer.render, so the frame ignores it.`, fix));
+  for (const [key, value] of Object.entries(requestedEffects ?? {})) {
+    // A scene recipe repeats effects.exposure as the frame's exposure and loads the post steps that draw the rest.
+    if (key === 'exposure' && value === frameExposure) continue;
+    if (postStepsLoaded && postStepSupport.fields.includes(key)) continue;
+    const drawn = DRAWN_EFFECTS[key];
+    if (drawn === undefined) {
+      notDrawn(`effects.${key}`, key === 'exposure' ? 'Pass exposure on the frame: render({ exposure }).' : `Remove it, or render a scene recipe, which runs the post steps. Drawn here: ${DRAWN_NAMES}.`);
+    } else if (value && typeof value === 'object' && typeof drawn === 'object') {
+      for (const field of Object.keys(value).filter(name => !(name in drawn))) notDrawn(`effects.${key}.${field}`, `Use only ${Object.keys(drawn).join(', ')} in effects.${key}.`);
+    }
+  }
+  return problems;
+}
+
+export function frameDiagnostics({ world, depth, effects, requestedEffects = null, requestedExposure, lightDirection, shadowBounds, coplanarProblems = null, skinProblems = null }) {
+  const problems = unsupportedEffectProblems(requestedEffects, requestedExposure);
   if (effects.ambientOcclusion > 0 && !depth) {
     problems.push(warning('ambient-occlusion-without-depth', 'effects.ambientOcclusion',
       `ambientOcclusion is ${effects.ambientOcclusion} but the renderer has no depth, so the pass is skipped.`,

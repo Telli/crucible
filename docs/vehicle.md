@@ -83,7 +83,7 @@ Speed is arc-length based. Give exactly one of:
 | `speed` | Constant metres per second, no ramp |
 | `cruiseSpeed` | Profile with `acceleration` (3), `braking` (4), `startSpeed` (0), `endSpeed` (0) and `maxLateralAcceleration` (unlimited) |
 
-Other options: `startTime`, `groundHeight(x, z)`, `maxSteerAngle`, `rollGain` (0.012 rad per m/s2), `pitchGain` (0.012), `bounceFrequency` (1.6 Hz), `dampingRatio` (0.45), `suspensionTravel` (0.2 m), `pathSamples` (400, for camera paths).
+Other options: `startTime`, `groundHeight(x, z)`, `maxSteerAngle`, `rollGain` (0.012 rad per m/s2), `pitchGain` (0.012), `bounceFrequency` (1.6 Hz), `dampingRatio` (0.45), `suspensionTravel` (0.2 m), `pathSamples` (400, for camera paths). `rollGain` and `pitchGain` must be finite, `suspensionTravel` 0 or more, and a drive may last at most 3600 seconds including pauses and `startTime`; anything else throws an error naming the field.
 
 `sample(seconds)` returns `{ time, distance, speed, direction, position, heading, pitch, roll, steerAngle, wheels: [{ id, spinAngle, steerAngle, suspensionOffset }], lights }`.
 

@@ -5,6 +5,8 @@ import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
 import { walkerRecipe } from '../bench/agent-modeling/walker.mjs';
+import { MOTION_TRACK_KINDS } from '../src/agent-motion.js';
+import { MOTION_TRACK_KIND_NAMES } from '../src/motion-track-kinds.js';
 import { createAgentScene, loadPhysicsEngine, AGENT_SCENE_CAPABILITIES } from '../src/agent-scene.js';
 
 await loadPhysicsEngine();
@@ -51,7 +53,7 @@ async function withRoundTripClient(use) {
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   try {
-    return await use(client);
+    return await use(client, () => scene);
   } finally {
     await client.close();
     await server.close();
@@ -188,11 +190,44 @@ test('scene_create names the valid kinds and properties for a motion track with 
     const keyframes = [{ time: 0, value: [0, 0, 0] }];
     const createdWith = track => call(client, 'scene_create', { recipe: oneBoxRecipe({ motion: { duration: 1, tracks: [track] } }) });
     const missingKind = await createdWith({ id: 'a', property: 'translation', keyframes });
-    assert.match(missingKind.text, /needs kind \(node, material, camera, geometry, light, sun, environment, effects\)/);
+    assert.match(missingKind.text, /needs kind \(node, material, camera, morph, geometry, light, sun, environment, effects\)/);
     const wrongKind = await createdWith({ kind: 'sky', id: 'a', property: 'translation', keyframes });
     assert.match(wrongKind.text, /Unknown motion track kind: "sky"\. Kinds: node, material/);
     const wrongProperty = await createdWith({ kind: 'node', id: 'a', property: 'bogus', keyframes });
     assert.match(wrongProperty.text, /Unknown node track property: "bogus"\. node properties: translation, rotation, scale\./);
+  });
+});
+
+function morphTrackRecipe() {
+  return {
+    format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'face', type: 'mesh', base: { type: 'box', bevel: 0, subdivisions: 2 }, shapeKeys: [{ name: 'lift', offsets: [{ select: { tag: 'top' }, offset: [0, 0.5, 0] }] }] }],
+    materials: [{ id: 'skin' }],
+    nodes: [{ id: 'head', geometry: 'face', material: 'skin' }],
+    camera: { eye: [3, 2, 4], target: [0, 0.5, 0], fov: 45 },
+    motion: { duration: 2, tracks: [{ kind: 'morph', id: 'lift', property: 'weight', keyframes: [{ time: 0, value: 0 }, { time: 1, value: 1 }] }] },
+  };
+}
+
+test('scene_create accepts a morph motion track and the shape key weight animates', async () => {
+  await withRoundTripClient(async (client, currentScene) => {
+    const created = await call(client, 'scene_create', { recipe: morphTrackRecipe() });
+    assert.notEqual(created.isError, true, created.text);
+    const weightAt = time => {
+      currentScene().sampleMotion(time);
+      return Array.from(currentScene().parts.find(part => part.morph).morph.weights)[0];
+    };
+    assert.equal(weightAt(0), 0);
+    assert.equal(weightAt(1), 1);
+  });
+});
+
+test('scene_create takes every motion track kind the backend lists', async () => {
+  assert.deepEqual([...MOTION_TRACK_KIND_NAMES], [...MOTION_TRACK_KINDS], 'the MCP leaf list matches the motion backend');
+  assert.deepEqual([...MOTION_TRACK_KINDS], ['node', 'material', 'camera', 'morph', 'geometry', 'light', 'sun', 'environment', 'effects']);
+  await withRoundTripClient(async client => {
+    const wrongKind = await call(client, 'scene_create', { recipe: oneBoxRecipe({ motion: { duration: 1, tracks: [{ kind: 'sky', id: 'a', property: 'x', keyframes: [{ time: 0, value: 0 }] }] } }) });
+    assert.match(wrongKind.text, new RegExp(`Kinds: ${MOTION_TRACK_KINDS.join(', ')}\.`));
   });
 });
 
@@ -290,5 +325,48 @@ test('more than 8 modifiers and a spring joint without stiffness are refused', a
     const refusedSpring = await call(client, 'scene_create', { recipe: noStiffness });
     assert.equal(refusedSpring.isError, true);
     assert.match(refusedSpring.text, /stiffness/);
+  });
+});
+
+function shapeDropRecipe(bodyFields) {
+  return oneBoxRecipe({
+    nodes: [
+      { id: 'floor', geometry: 'cube', material: 'red', scale: [10, 0.2, 10], translation: [0, -0.1, 0] },
+      { id: 'piece', geometry: 'cube', material: 'red', translation: [0, 2, 0] },
+    ],
+    physics: { duration: 2, bodies: [{ node: 'floor', type: 'fixed', shape: 'box' }, { node: 'piece', ...bodyFields }] },
+  });
+}
+
+const BODY_SHAPE_CASES = [
+  ['cylinder', { shape: 'cylinder' }],
+  ['cone', { shape: 'cone' }],
+  ['compound', { shape: 'compound', shapes: [{ shape: 'box', halfExtents: [0.5, 0.5, 0.5] }, { shape: 'cone', radius: 0.2, halfHeight: 0.2, translation: [0, 0.7, 0] }] }],
+];
+
+for (const [label, bodyFields] of BODY_SHAPE_CASES) {
+  test(`scene_create accepts a ${label} physics body and it falls and rests on the floor`, async () => {
+    await withRoundTripClient(async client => {
+      const recipe = shapeDropRecipe(bodyFields);
+      await assertAccepted(client, recipe);
+      const exported = await exportedRecipe(client);
+      assert.equal(exported.physics.bodies[1].shape, label);
+      await assertAccepted(client, exported);
+    });
+    const scene = createAgentScene(shapeDropRecipe(bodyFields));
+    scene.sampleMotion(2);
+    const piece = scene.inspect({}).physics.bodies.find(body => body.node === 'piece');
+    assert.ok(Math.abs(piece.finalPosition[1] - 0.5) < 0.03, `${label} rests on the floor, got ${piece.finalPosition[1]}`);
+  });
+}
+
+test('the physics body schema error and scene_capabilities list every accepted shape', async () => {
+  await withRoundTripClient(async client => {
+    const refused = await call(client, 'scene_create', { recipe: shapeDropRecipe({ shape: 'torus' }) });
+    assert.equal(refused.isError, true);
+    for (const shape of AGENT_SCENE_CAPABILITIES.physics.shapes) assert.match(refused.text, new RegExp(`"${shape}"`));
+    const capabilities = await call(client, 'scene_capabilities', { topic: 'physics' });
+    for (const shape of ['cylinder', 'cone', 'compound']) assert.match(capabilities.text, new RegExp(shape));
+    assert.match(capabilities.text, /shapes/);
   });
 });

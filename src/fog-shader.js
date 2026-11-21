@@ -60,6 +60,7 @@ function bindDetail(context, post, volume) {
   context.uniform1f(locate('volumeMultiAnisotropy'), detail.multiAnisotropy);
   context.uniform1f(locate('volumeKeyTransmittance'), detail.keyTransmittance);
   context.uniform1f(locate('volumeSurfaceTransmittance'), detail.surfaceTransmittance);
+  context.uniform1f(locate('volumeBeamRadius'), detail.beamRadius);
 }
 
 // The fog's field texture and light buffers; a program without those steps has no such uniforms, and a null location is ignored.
@@ -115,7 +116,8 @@ function compositeLocalVolumes(renderer, frame, environment, sourceTexture) {
   const motion = renderer.localVolumeBuffers.gridShutter > 0;
   const kind = renderer.localVolumeBuffers.kind;
   const noiseOctaves = renderer.localVolumeBuffers.noiseOctaves;
-  if (composite.program && (composite.motion !== motion || composite.kind !== kind || composite.noiseOctaves !== noiseOctaves)) {
+  const gridDetail = renderer.localVolumeBuffers.gridDetail;
+  if (composite.program && (composite.motion !== motion || composite.kind !== kind || composite.noiseOctaves !== noiseOctaves || composite.gridDetail !== gridDetail)) {
     context.deleteProgram(composite.program);
     composite.program = null;
     composite.uniforms = {};
@@ -124,7 +126,8 @@ function compositeLocalVolumes(renderer, frame, environment, sourceTexture) {
     composite.motion = motion;
     composite.kind = kind;
     composite.noiseOctaves = noiseOctaves;
-    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment(motion, kind, noiseOctaves));
+    composite.gridDetail = gridDetail;
+    composite.program = compileProgram(context, fullscreenVertex, createLocalVolumeCompositeFragment(motion, kind, noiseOctaves, gridDetail));
     for (const name of ['frameTexture', 'sceneDepth', 'resolution', 'inverseViewProjection', 'eye']) composite.uniforms[name] = context.getUniformLocation(composite.program, name);
   }
   if (!composite.target) composite.target = createCompositeTarget(renderer);
@@ -225,6 +228,45 @@ function bindLocalVolumes(renderer, post, frame, environment) {
     context.bindTexture(context.TEXTURE_3D, localGridVelocityTexture(renderer, buffers.gridVolume));
     context.uniform1i(locate('localGridVelocityTexture'), 10);
   }
+  // The emission of the glowing surfaces, when the frame drew it (drawEmissionMask): the surface shadow leaves it alone.
+  const maskReady = renderer.localEmissionMaskReady === true;
+  context.activeTexture(context.TEXTURE11);
+  context.bindTexture(context.TEXTURE_2D, maskReady ? renderer.passSupport.texture : renderer.whiteTexture);
+  context.uniform1i(locate('localEmissionMask'), 11);
+  context.uniform1f(locate('localEmissionMaskReady'), maskReady ? 1 : 0);
+}
+
+let emissionMaskDrawer = null;
+let emissionMaskLoad = null;
+
+/** volume-emission-mask.js calls this on import with the function that draws the mask. */
+export function registerEmissionMaskDrawer(drawer) {
+  emissionMaskDrawer = drawer;
+}
+
+/** Loads the mask code (the render pass code rides with it) and resolves once it is registered; a host that renders a shadowing volume awaits it before its first frame. */
+export function loadEmissionMask() {
+  emissionMaskLoad ??= import('./volume-emission-mask.js');
+  return emissionMaskLoad;
+}
+
+/**
+ * Draws the emission of the opaque surfaces as a float pass into the render pass target, before the frame itself, when a volume with `castShadow` sits over glowing parts,
+ * so the post pass can leave their emission out of the light it dims (#1360). Returns whether it drew the mask; a frame with nothing to mask costs nothing.
+ * The drawing code is a lazy chunk: until it has loaded (loadEmissionMask, or the `volumeEmissionMask` agent scene module) a frame dims the glow as before.
+ */
+function drawEmissionMask(renderer, frame) {
+  const environment = { ...renderer.environment, ...frame.environment };
+  const volumes = environment.localVolumes;
+  if (!Array.isArray(volumes) || !renderer.depth || !renderer.hdr || !((environment.keyIntensity ?? 1) > 0)) return false;
+  const shadowing = volumes.some(volume => volume?.shape !== 'mesh' && volume?.castShadow === true && (volume?.density ?? 1) > 0);
+  if (!shadowing || !renderer.sceneParts.some(part => (part.material?.emission ?? 0) > 0)) return false;
+  if (!emissionMaskDrawer) {
+    loadEmissionMask().catch(() => {});
+    return false;
+  }
+  emissionMaskDrawer(renderer, frame);
+  return true;
 }
 
 // The two 3D textures of a grid volume, RGBA16F, linear and clamped, uploaded once per grid (and per temperature scale for the emission): `localGridTexture` holds
@@ -232,8 +274,8 @@ function bindLocalVolumes(renderer, post, frame, environment) {
 // temperature, baked on the CPU (bakedGridEmission) so the march reads it with one linear tap and the interpolation happens after the blackbody, as Cycles does
 // (#1752). Both carry GRID_BORDER_VOXELS empty voxels on every face. A frame with no grid volume gets 1 x 1 x 1 textures, so the samplers are always valid.
 function localGridTexture(renderer, grid) {
+  const { density, temperature, flame } = grid?.channels ?? {};
   return uploadGridTexture(renderer, 'localGridTextureCache', grid, null, (texels, voxel, texel) => {
-    const { density, temperature, flame } = grid.channels;
     texels[texel] = density[voxel];
     texels[texel + 1] = temperature ? temperature[voxel] : 0;
     texels[texel + 2] = (flame ?? density)[voxel];
@@ -243,8 +285,9 @@ function localGridTexture(renderer, grid) {
 function localGridEmissionTexture(renderer, volume) {
   const grid = volume?.gridData ?? null;
   // A grid without a temperature channel bakes to zeros: its texture is the zero fill, with no pass over the voxels.
-  const baked = grid?.channels.temperature ? bakedGridEmission(grid, volume.temperatureScale) : null;
-  return uploadGridTexture(renderer, 'localGridEmissionCache', grid, volume?.temperatureScale ?? 0, baked && ((texels, voxel, texel) => {
+  const baked = grid?.channels.temperature ? bakedGridEmission(grid, volume.temperatureScale, volume.flameTemperature) : null;
+  const cacheKey = `${volume?.temperatureScale ?? 0}|${volume?.flameTemperature?.ignition}|${volume?.flameTemperature?.maximum}`;
+  return uploadGridTexture(renderer, 'localGridEmissionCache', grid, cacheKey, baked && ((texels, voxel, texel) => {
     texels[texel] = floatToHalf(Math.min(baked.red[voxel], HALF_FLOAT_MAXIMUM));
     texels[texel + 1] = floatToHalf(Math.min(baked.green[voxel], HALF_FLOAT_MAXIMUM));
     texels[texel + 2] = floatToHalf(Math.min(baked.blue[voxel], HALF_FLOAT_MAXIMUM));
@@ -284,7 +327,11 @@ function uploadGridTexture(renderer, cacheName, grid, scale, writeVoxel) {
     for (const wrap of [context.TEXTURE_WRAP_S, context.TEXTURE_WRAP_T, context.TEXTURE_WRAP_R]) context.texParameteri(context.TEXTURE_3D, wrap, context.CLAMP_TO_EDGE);
   }
   const padded = resolution.map(count => count + 2 * GRID_BORDER_VOXELS);
-  const texels = new Uint16Array(padded[0] * padded[1] * padded[2] * 4);
+  // The padded buffer is kept with the texture: its border is never written, and a frame with the same resolution overwrites every interior voxel, so a
+  // sequence allocates it once instead of once per frame (#1045).
+  const texelCount = padded[0] * padded[1] * padded[2] * 4;
+  const texels = reuse && cached.texels ? cached.texels : new Uint16Array(texelCount);
+  if (!filled) texels.fill(0);
   if (filled) {
     for (let z = 0; z < resolution[2]; z++) {
       for (let y = 0; y < resolution[1]; y++) {
@@ -302,7 +349,7 @@ function uploadGridTexture(renderer, cacheName, grid, scale, writeVoxel) {
   } else {
     context.texImage3D(context.TEXTURE_3D, 0, context.RGBA16F, padded[0], padded[1], padded[2], 0, context.RGBA, context.HALF_FLOAT, texels);
   }
-  renderer[cacheName] = { grid, scale, texture, resolution, filled };
+  renderer[cacheName] = { grid, scale, texture, resolution, filled, texels };
   return texture;
 }
 
@@ -408,6 +455,8 @@ uniform vec4 localVolumeGrid[8];
 uniform vec4 localVolumeRampSetup[8];
 uniform vec4 localVolumeRamp[${MAX_LOCAL_VOLUMES * LOCAL_VOLUME_RAMP_STOPS}];
 uniform highp sampler3D localGridTexture;
+uniform highp sampler2D localEmissionMask;
+uniform float localEmissionMaskReady;
 uniform highp sampler3D localGridEmissionTexture;
 `;
 
@@ -442,9 +491,13 @@ const LOCAL_MOTION_SHADOW_PROFILE = `vec3 tapPosition = position + towardSun * (
 // Each volume is marched on its own between its entry and exit (cut at the first surface) and composited nearest first: the colour
 // behind it is dimmed by exp(-absorption * profile * step) and its emission is added, both per colour channel.
 // With `motion` the grid march reads the point its shutter time selects; without it the source is exactly what it was before the blur existed.
-const localVolumeFunctions = (motion, kind = 'both', noiseOctaves = false) => {
+// The fractal noise of a grid volume sits in a narrow band around 0.5; stretching it by this much before a smoothstep gives the clumps crisp edges (#2289).
+const GRID_DETAIL_CONTRAST = 1.1;
+const localVolumeFunctions =(motion, kind = 'both', noiseOctaves = false, gridDetail = false) => {
   const withGrid = kind !== 'shape';
   const withShape = kind !== 'grid';
+  // A frame whose grid volume asks for fine detail (#2289) compiles the noise into the grid march; every other grid program keeps the source it had.
+  const withGridDetail = gridDetail && withGrid;
   const profileSelection = withGrid && withShape
     ? 'return localVolumeGrid[index].x > 0.5 ? localVolumeGridProfile(index, position) : localVolumeShapeProfile(index, position, withNoise);'
     : (withGrid ? 'return localVolumeGridProfile(index, position);' : 'return localVolumeShapeProfile(index, position, withNoise);');
@@ -454,7 +507,7 @@ const localVolumeFunctions = (motion, kind = 'both', noiseOctaves = false) => {
 float localVolumeJitter() {
   return fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
 }
-${withShape ? `// Value noise on a hash of plain multiplies, adds and fract, which rounds the same way on SwiftShader, where it was measured, and is unchecked on hardware GPUs (a sine hash does not: its error
+${withShape || withGridDetail ? `// Value noise on a hash of plain multiplies, adds and fract, which rounds the same way on SwiftShader, where it was measured, and is unchecked on hardware GPUs (a sine hash does not: its error
 // grows with the argument). local-volume-noise.js repeats it for the CPU path tracer, so keep the two in step.
 float localVolumeCellHash(vec3 cell) {
   vec3 scrambled = fract(cell * 0.1031);
@@ -522,17 +575,39 @@ float localVolumeWarpedFade(float position, float noiseAmount, float noise) {
 }
 ` : ''}${withGrid ? `// A grid volume (#1045) reads its box as a 3D texture: x density, y temperature, z flame. localVolumeGrid holds, per volume, x 1 for a grid, y the temperature
 // scale, z the blackbody intensity times the emission strength and w the anisotropy. volume-grid.js (blackbodyRadiance) repeats the blackbody.
-// A grid cell at a world point: x density, y temperature, z flame, all linear taps of the padded texture (a texel centre is at i + 0.5).
+${withGridDetail ? `// The fine detail a grid volume with noiseAmount adds to its density and flame (#2289): the grid's cells are the coarsest structure of the smoke, and the noise (the
+// one of the box and sphere volumes, in world metres) breaks them into the small clumps a close camera expects. It averages 1, so the far look keeps its optical depth.
+// A march step reads the density and the blackbody at one point, so the second read takes the detail the first one computed (#2301: the
+// fractal noise ran twice per step and doubled the CPU preview look). The result is the same number either way.
+vec3 localGridDetailPosition = vec3(1e30);
+int localGridDetailIndex = -1;
+float localGridDetailValue = 1.0;
+float localGridDetail(int index, vec3 position) {
+  float noiseAmount = localVolumeAbsorption[index].w;
+  if (noiseAmount <= 0.0) return 1.0;
+  if (index == localGridDetailIndex && position == localGridDetailPosition) return localGridDetailValue;
+  float noise = ${noiseOctaves ? 'localVolumeFractalNoise(position * localVolumeEmission[index].w, 1 + int(localVolumeAxes[index * 3 + 1].w + 0.5))' : 'localVolumeNoise(position * localVolumeEmission[index].w)'};
+  float stretched = clamp((noise - 0.5) * ${GRID_DETAIL_CONTRAST.toFixed(1)} + 0.5, 0.0, 1.0);
+  localGridDetailIndex = index;
+  localGridDetailPosition = position;
+  localGridDetailValue = 1.0 + (2.0 * (stretched * stretched * (3.0 - 2.0 * stretched)) - 1.0) * noiseAmount;
+  return localGridDetailValue;
+}
+` : ''}// A grid cell at a world point: x density, y temperature, z flame, all linear taps of the padded texture (a texel centre is at i + 0.5).
 vec3 localGridSample(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   vec3 paddedSize = vec3(textureSize(localGridTexture, 0));
-  return textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+  ${withGridDetail ? `vec3 cell = textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+  if (cell.x == 0.0 && cell.z == 0.0) return cell;
+  float detail = localGridDetail(index, position);
+  return vec3(cell.x * detail, cell.y, cell.z * detail);` : `return textureLod(localGridTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;`}
 }
 ` : ''}${withGrid ? `// The baked blackbody radiance at a world point (volume-grid.js bakedGridEmission), before the blackbody intensity and the emission strength.
 vec3 localGridBlackbody(int index, vec3 position) {
   vec3 unit = (position - localVolumeCenters[index].xyz) / (localVolumeExtents[index].xyz * 2.0) + 0.5;
   vec3 paddedSize = vec3(textureSize(localGridEmissionTexture, 0));
-  return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+  ${withGridDetail ? `vec3 radiance = textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;
+  return radiance == vec3(0.0) ? radiance : radiance * localGridDetail(index, position);` : `return textureLod(localGridEmissionTexture, (unit * (paddedSize - ${2 * GRID_BORDER_VOXELS}.0) + ${GRID_BORDER_VOXELS}.0) / paddedSize, 0.0).rgb;`}
 }
 ` : ''}${motion ? LOCAL_MOTION_POSITION_FUNCTION : ''}${STEP_INTEGRAL_GLSL}// The emission ramp of a volume (#1046): the light per unit length at a source value, 0 where the volume has no ramp. localVolumeRampSetup holds x the source
 // code (0 none, 1 density, 2 temperature, 3 flame), y the stop count and z, w the source range; the stops are baked in local-volume-ramp.js with the exposure and
@@ -674,6 +749,8 @@ vec3 localVolumes(vec3 background) {
       exits[index] = exitDistance;
     }
   }
+  // The bloom was added to the frame before this step. It is the light of a glowing part spreading over its neighbours, so the volume's blur and the surface shadow leave it alone and only the volume's transmittance dims it (#1360).
+  vec3 bloomLight = POST_BLOOM ? texture(bloomTexture, textureCoordinate).rgb * bloomStrength : vec3(0.0);
   vec3 transmittance = vec3(1.0);
   vec3 radiance = vec3(0.0);
   float blurDepth = 0.0;
@@ -764,10 +841,12 @@ ${withGrid ? `    if (localVolumeGrid[nearest].x > 0.5) {
     if (segmentEnd < exitDistance) entries[nearest] = segmentEnd;
     if (partner >= 0) entries[partner] = segmentEnd < exits[partner] ? segmentEnd : 1e30;
 ` : ''}  }
-  if (blurDepth > 0.0) background = localVolumeBlurred(background, blurDepth, blurEntry, origin, direction);
+  if (blurDepth > 0.0) background = localVolumeBlurred(background - bloomLight, blurDepth, blurEntry, origin, direction) + bloomLight;
   if (depth < 1.0 && surfacePoint.w > 0.0 && max(volumeLightColor.r, max(volumeLightColor.g, volumeLightColor.b)) > 0.0) {
     vec3 surfaceWorld = surfacePoint.xyz / surfacePoint.w;
-    background *= mix(vec3(1.0), localVolumeSurfaceShadow(surfaceWorld, normalize(volumeLightDirection)), keyVisibility(surfaceWorld));
+    vec3 shade = mix(vec3(1.0), localVolumeSurfaceShadow(surfaceWorld, normalize(volumeLightDirection)), keyVisibility(surfaceWorld));
+    vec3 glow = bloomLight + (localEmissionMaskReady > 0.5 ? texelFetch(localEmissionMask, ivec2(gl_FragCoord.xy), 0).rgb : vec3(0.0));
+    background = glow + max(background - glow, vec3(0.0)) * shade;
   }
   return background * transmittance + radiance;
 }
@@ -805,7 +884,7 @@ function packLights(renderer) {
 
 registerShaderFeatureCode('volumeFog', {
   // The JavaScript half, which the renderer calls for a frame that draws a volume fog.
-  support: { packLights, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights, compositeLocalVolumes, releaseLocalVolumeComposite },
+  support: { packLights, localGridTexture, bindUniforms, usesDetail: fogUsesDetail, prepareLocalVolumes, bindLocalVolumes, withVolumeFireLights, drawEmissionMask, compositeLocalVolumes, releaseLocalVolumeComposite },
   keyDeclarations: KEY_LIGHT_DECLARATIONS,
   keyFunctions: KEY_LIGHT_FUNCTIONS,
   localDeclarations: LOCAL_VOLUME_DECLARATIONS,
@@ -842,6 +921,7 @@ uniform float volumeMultiExtinction;
 uniform float volumeMultiAnisotropy;
 uniform float volumeKeyTransmittance;
 uniform float volumeSurfaceTransmittance;
+uniform float volumeBeamRadius;
 uniform int volumeLightCount;
 uniform vec4 volumeLightPositions[8];
 uniform vec4 volumeLightColors[8];
@@ -946,7 +1026,15 @@ float sunOpticalDepth(vec3 position, vec3 towardSun) {
 }
 // The sun's in-scatter at a point. The octave sum approximates multiple scattering (Wrenninge et al. 2015, "Oz: the great and
 // volumetric"): octave n scatters multiScatter^n as much, sees half^n of the extinction and has half^n of the anisotropy.
-float keyInScatter(float cosine, float opticalDepth) {
+// With beamRadius above 0 the octaves beyond the first count only as far as the sun reaches around the point: multiple scattering
+// of a narrow shaft leaves it sideways, so its glow stays narrow, and a wide beam keeps all of it. beamShare is the lit share of four taps that far
+// off the point across the sun's direction.
+float beamShare(vec3 position, vec3 towardSun) {
+  vec3 across = normalize(cross(towardSun, abs(towardSun.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0)));
+  vec3 upward = cross(towardSun, across);
+  return 0.25 * (keyVisibility(position + across * volumeBeamRadius) + keyVisibility(position - across * volumeBeamRadius) + keyVisibility(position + upward * volumeBeamRadius) + keyVisibility(position - upward * volumeBeamRadius));
+}
+float keyInScatter(float cosine, float opticalDepth, float octaveShare) {
   float total = 0.0;
   float weight = 1.0;
   float extinction = 1.0;
@@ -954,7 +1042,7 @@ float keyInScatter(float cosine, float opticalDepth) {
   for (int octave = 0; octave < 4; octave++) {
     if (octave >= volumeScatterOctaves) break;
     total += weight * henyeyGreenstein(cosine, anisotropy) * exp(-opticalDepth * volumeKeyTransmittance * extinction);
-    weight *= volumeMultiScatter;
+    weight *= volumeMultiScatter * octaveShare;
     extinction *= volumeMultiExtinction;
     anisotropy *= volumeMultiAnisotropy;
   }
@@ -1006,7 +1094,9 @@ vec3 volumeFog(vec3 background) {
     if (volumeGridFog > 0.5) ambientShare = min(1.0, 30.0 * skyCell.r);
     float opticalDepth = 0.0;
     if (sunTransmittance && visibility > 0.001) opticalDepth = sunOpticalDepth(position, towardSun);
-    float phase = keyInScatter(cosine, opticalDepth);
+    float octaveShare = 1.0;
+    if (volumeBeamRadius > 0.0 && volumeScatterOctaves > 1 && visibility > 0.001) octaveShare = beamShare(position, towardSun);
+    float phase = keyInScatter(cosine, opticalDepth, octaveShare);
     vec3 scattering = volumeColor * (volumeAmbient * ambientShare + 0.6 * skyCell.gba + volumeLightColor * (phase * visibility * volumeKeyScattering));
     if (POST_LIGHTS) scattering += volumeColor * fogLightScattering(position, direction);
     accumulated += transmittance * opacity * scattering;

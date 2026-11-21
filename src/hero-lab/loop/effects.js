@@ -23,11 +23,6 @@ const EFFECTS = {
     blink: [{ materials: /status_green|status_blue/, period: 1.7, low: 0.1, high: 1.4 }],
     haze: { minimum: [-16, 0.2, -14], maximum: [16, 5.5, 12], density: 0.012, color: [0.45, 0.62, 0.9], ambient: [0.012, 0.02, 0.04], steps: 16, maxDistance: 70, drift: [0.15, 0, 0.05], noiseScale: 0.18, noiseAmount: 0.85, keyScattering: 0.6 },
   },
-  warehouse: {
-    blink: [{ names: /^doorLamp/, period: 2.2, low: 0.3, high: 1 }],
-    drive: [{ materials: /forklift/, axis: 2, amplitude: 2.2, period: 14 }],
-    haze: { minimum: [-27, 0.3, -22], maximum: [34, 11, 21], density: 0.006, color: [0.95, 0.88, 0.75], ambient: [0.02, 0.02, 0.02], steps: 16, maxDistance: 80, drift: [0.06, 0.01, 0.03], noiseScale: 0.25, noiseAmount: 0.9, keyScattering: 1.2 },
-  },
   darkstore: {
     blink: [{ materials: /emissive_/, period: 2.6, low: 0.15, high: 1, flicker: true }],
     drive: [{ materials: /robot/, axis: 2, amplitude: 3.2, period: 12 }],

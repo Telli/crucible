@@ -19,18 +19,25 @@ export function edgeSplitSize(mesh, edgeMask, cuts) {
 
 export function subdivideEdges(mesh, edgeMask, { cuts = 1, name = 'subdivide' } = {}) {
   const extraPositions = [];
+  const extraSources = [];
   const base = mesh.vertexCount;
   const vertexPoint = vertex => [mesh.positions[vertex * 3], mesh.positions[vertex * 3 + 1], mesh.positions[vertex * 3 + 2]];
-  const addPoint = point => {
+  const addPoint = (point, source = -1) => {
     extraPositions.push(point);
+    extraSources.push(source);
     return base + extraPositions.length - 1;
   };
   const edgePoints = new Map();
   for (let edge = 0; edge < mesh.edgeCount; edge++) {
     if (!edgeMask[edge]) continue;
-    const start = vertexPoint(mesh.edgeVertices[edge * 2]);
-    const end = vertexPoint(mesh.edgeVertices[edge * 2 + 1]);
-    edgePoints.set(edge, Array.from({ length: cuts }, (_, index) => addPoint(lerp(start, end, (index + 1) / (cuts + 1)))));
+    const from = mesh.edgeVertices[edge * 2];
+    const to = mesh.edgeVertices[edge * 2 + 1];
+    const start = vertexPoint(from);
+    const end = vertexPoint(to);
+    edgePoints.set(edge, Array.from({ length: cuts }, (_, index) => {
+      const fraction = (index + 1) / (cuts + 1);
+      return addPoint(lerp(start, end, fraction), { from, to, t: fraction });
+    }));
   }
   const pointPosition = vertex => (vertex >= base ? extraPositions[vertex - base] : vertexPoint(vertex));
   const fractions = Array.from({ length: cuts }, (_, index) => (index + 1) / (cuts + 1));
@@ -56,7 +63,7 @@ export function subdivideEdges(mesh, edgeMask, { cuts = 1, name = 'subdivide' } 
     const pieces = size === 4 ? splitQuad(polygon, splitSides, pointsAfter, pointPosition, addPoint, cuts) : null;
     output.push(...(pieces ?? insertPoints(polygon, pointsAfter)).map(piece => ({ ...piece, tags: [...polygon.tags, `${name}.split`] })));
   }
-  return { mesh: buildPolygonMesh(mesh, output, extraPositions), splitEdges: edgePoints.size, splitFaces };
+  return { mesh: buildPolygonMesh(mesh, output, extraPositions, extraSources), splitEdges: edgePoints.size, splitFaces };
 }
 
 function insertPoints(polygon, pointsAfter) {
@@ -138,7 +145,8 @@ function gridFaces(quad, bottom, top, along, pointPosition, addPoint, cuts) {
     for (let row = 1; row < rows - 1; row++) {
       const columnFraction = column / (rows - 1);
       const t = row / (rows - 1);
-      grid[column][row] = addPoint(lerp(lerp(pa, pb, columnFraction), lerp(pd, pc, columnFraction), t));
+      const weights = [[vertexA, (1 - columnFraction) * (1 - t)], [vertexB, columnFraction * (1 - t)], [vertexC, columnFraction * t], [vertexD, (1 - columnFraction) * t]];
+      grid[column][row] = addPoint(lerp(lerp(pa, pb, columnFraction), lerp(pd, pc, columnFraction), t), { weights });
     }
   }
   const cells = [];

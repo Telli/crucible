@@ -13,9 +13,9 @@
 .showcase-frame {
   position: relative;
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 0 0 1px var(--line, transparent);
+ 
 }
 #showcase-viewport { display: block; width: 100%; height: clamp(360px, 62vh, 760px); touch-action: none; cursor: grab; transition: opacity .25s; }
 #showcase-viewport:active { cursor: grabbing; }
@@ -28,7 +28,7 @@
   min-height: 34px;
   padding: 6px 14px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: #17161aa6;
   color: #fefefd;
   font-size: 13px;
@@ -51,7 +51,7 @@
   margin: 0;
   padding: 10px 16px;
   transform: translate(-50%, -50%);
-  border-radius: 8px;
+  border-radius: 0;
   background: #17161ab8;
   color: #fefefd;
   font-size: 14px;
@@ -61,7 +61,31 @@
   -webkit-backdrop-filter: blur(14px) saturate(1.4);
   backdrop-filter: blur(14px) saturate(1.4);
 }
-#showcase-status[data-kind=error] { border-radius: 16px; color: var(--error); }
+#showcase-status[data-kind=error] { border-radius: 0; color: var(--error); }
+/* Stays after the scene loads; sits at the top so it covers neither the loading chip nor the reset button. */
+#showcase-notice {
+  position: absolute;
+  left: 50%;
+  top: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  padding: 10px 16px;
+  transform: translateX(-50%);
+  border-radius: 0;
+  background: #17161ad9;
+  color: #fefefd;
+  font-size: 14px;
+  font-weight: 500;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(14px) saturate(1.4);
+}
+#showcase-notice[hidden] { display: none; }
+#showcase-notice .status-icon { flex: none; margin-top: 1px; color: #f0b429; }
 #showcase-status .status-icon { flex: none; }
 #showcase-status .spinner { animation: showcase-spin .9s linear infinite; }
 @keyframes showcase-spin { to { transform: rotate(360deg); } }
@@ -77,17 +101,18 @@ body.site.showcase > main { grid-template-columns: minmax(0, 1fr); }
 .showcase-cook { display: grid; gap: 20px; }
 .showcase-cook-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: start; }
 .showcase-cook figure { margin: 0; display: grid; gap: 12px; }
-.showcase-cook img { display: block; width: 100%; height: auto; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line, transparent); }
+.showcase-cook img { display: block; width: 100%; height: auto; border-radius: 0; background: var(--surface); }
 .showcase-cook figcaption { display: grid; gap: 4px; color: var(--muted); font-size: 14px; }
 .showcase-cook figcaption strong { color: var(--text); font-weight: 600; }
 .showcase-cook figcaption small { font-size: 13px; }
 .showcase-cook figcaption a { color: var(--text); text-decoration: underline; }
 /* Community: work other people made, picked from Show and tell (src/community-showcase.js). */
 .showcase-community { display: grid; gap: 20px; }
-.community-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.community-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
 .community-grid[hidden] { display: none; }
+.community-empty figure { opacity: .92; }
 .community-grid figure { margin: 0; display: grid; gap: 12px; }
-.community-grid img { display: block; width: 100%; height: auto; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line, transparent); }
+.community-grid img { display: block; width: 100%; height: auto; border-radius: 0; background: var(--surface); }
 .community-grid figcaption { display: grid; gap: 4px; color: var(--muted); font-size: 14px; }
 .community-grid figcaption strong { color: var(--text); font-weight: 600; }
 .community-grid figcaption small { font-size: 13px; }
@@ -97,12 +122,12 @@ body.site.showcase > main { grid-template-columns: minmax(0, 1fr); }
 .site .community-submit-primary:hover { opacity: .88; }
 .community-submit a:not(.community-submit-primary) { color: var(--muted); font-size: 15px; }
 .community-submit a:not(.community-submit-primary):hover { color: var(--text); text-decoration: underline; }
-@media (max-width: 900px) {
+@media (max-width: 600px) {
   .community-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 900px) {
   .showcase-cook-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {
-  .showcase-frame { border-radius: 12px; }
+  .showcase-frame { border-radius: 0; }
 }

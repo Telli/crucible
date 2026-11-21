@@ -46,10 +46,11 @@ const { bakeLightmapsAsync } = await import('../src/light-bake-gpu.js');
 
 const cube = box(0, 1);
 
-function cubeParts(count) {
+// The real-time tracer flattens, so its cubes may share one mesh; the light bake keeps copies of one mesh as instances (#2239), so it needs a mesh per cube to reach the bound.
+function cubeParts(count, geometryOf = () => cube) {
   return Array.from({ length: count }, (_, index) => ({
     name: `cube-${index}`,
-    geometry: cube,
+    geometry: geometryOf(),
     matrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, index * 2, 0, 0, 1]),
     material: { tag: 'surface', color: [0.7, 0.7, 0.7], metallic: 0, roughness: 0.8, emission: 0 },
   }));
@@ -76,8 +77,13 @@ test('the WebGPU real-time tracer takes a scene inside the device bound as far a
 });
 
 test('the GPU light bake refuses a scene past the device bound with its count', async () => {
-  const parts = cubeParts(cubesOverLimit);
-  await assert.rejects(bakeLightmapsAsync(parts, lamp, bakeOptions), refusal(tripleCount(cubesOverLimit)));
+  const ownCubes = cubeParts(cubesOverLimit, () => box(0, 1));
+  await assert.rejects(bakeLightmapsAsync(ownCubes, lamp, bakeOptions), refusal(tripleCount(cubesOverLimit)));
+});
+
+test('the GPU light bake counts copies of one shared cube once, so they pass a bound their flattened triangles exceed', async () => {
+  assert.ok(tripleCount(cubesOverLimit) > DEVICE_TRIANGLE_LIMIT);
+  await assert.rejects(bakeLightmapsAsync(cubeParts(cubesOverLimit), lamp, bakeOptions), { message: KERNEL_REACHED });
 });
 
 test('the GPU light bake takes a scene inside the device bound as far as the kernel', async () => {

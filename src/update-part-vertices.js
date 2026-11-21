@@ -8,6 +8,9 @@ function checkVertices(name, values, expectedLength, label) {
   if (!(values instanceof Float32Array) || values.length !== expectedLength) {
     throw new TypeError(`updatePartVertices ${name} must be a Float32Array of ${expectedLength} numbers (3 per vertex, the vertex count of ${label}).`);
   }
+  for (let index = 0; index < values.length; index++) {
+    if (!Number.isFinite(values[index])) throw new RangeError(`updatePartVertices ${name}[${index}] is ${values[index]}; pass finite numbers.`);
+  }
 }
 
 // The sphere around the box of the new positions: culling and shadow fitting read it, so a sheet that swings out of its

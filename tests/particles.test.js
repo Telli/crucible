@@ -209,7 +209,7 @@ test('total particles and total vertices are bounded across systems', () => {
   const heavy = sparkRecipe({ systems: [{ node: 'sparks', count: 10 }] });
   heavy.nodes[0].geometry = 'ball';
   heavy.particles.systems[0].count = 40;
-  assert.throws(() => createAgentScene(heavy), /particles\.systems: got "\d+ vertices on node sparks"; expected shape vertices times count of at most 100000/);
+  assert.throws(() => createAgentScene(heavy), /particles\.systems: got "\d+ vertices"; expected at most 100000 vertices drawn in total; node sparks draws \d+ vertices per particle times count/);
 });
 
 test('a particle node cannot carry motion or physics, or be a cloth sheet', () => {
@@ -224,11 +224,13 @@ test('a particle node cannot carry motion or physics, or be a cloth sheet', () =
   assert.throws(() => createAgentScene(child), /root node/);
 });
 
-test('a large burst seeks statelessly in fixed buffers, and a huge time is only a dead system', () => {
+test('a burst seeks statelessly in fixed buffers, and a huge time is only a dead system', () => {
   const nodes = ['b'].map(id => ({ id, geometry: 'speck', material: 'glow' }));
+  // 100 particles a system keep the test in a second. At the 2,000 limit the scene's coplanar ranking takes minutes
+  // over the particle boxes (#2728), and the statelessness checked here does not depend on the count.
   const scene = createAgentScene(sparkRecipe({ wind: [2, 0, 0], systems: [
-    { node: 'sparks', count: 2000, floor: 0, drag: 0.3, lifetime: [1, 3], speed: [1, 8], spread: 180 },
-    { node: 'b', count: 2000, rate: 400, lifetime: 3, drag: 0.3, emitter: { shape: 'box' } },
+    { node: 'sparks', count: 100, floor: 0, drag: 0.3, lifetime: [1, 3], speed: [1, 8], spread: 180 },
+    { node: 'b', count: 100, rate: 20, lifetime: 3, drag: 0.3, emitter: { shape: 'box' } },
   ] }, nodes));
   // A seek computes each particle from its launch and the time alone, so its work is the particle count and never
   // grows with the seeks before it: the same time gives the same result after any history, in buffers of one size.
@@ -359,7 +361,7 @@ test('hair limits the vertices it draws, and an empty surface is refused', () =>
   const crowded = hairRecipe({ count: 2000, segments: 8 });
   crowded.particles.systems.push({ type: 'hair', node: 'extra', surface: 'head', count: 2000, segments: 8 });
   crowded.nodes.push({ id: 'extra', geometry: 'strands', material: 'fur' });
-  assert.throws(() => createAgentScene(crowded), /particles\.systems: got "\d+ vertices on node extra"; expected shape vertices times count of at most 100000/);
+  assert.throws(() => createAgentScene(crowded), /particles\.systems: got "\d+ vertices"; expected at most 100000 vertices drawn in total; node extra draws \d+ vertices per particle times count/);
   const flat = hairRecipe({});
   flat.nodes[0].scale = [0, 0, 0];
   assert.throws(() => createAgentScene(flat), /no triangle with area|scale/);

@@ -226,6 +226,25 @@ function tagFacesOfMaterial(mesh, materialTag) {
   return withFaceAttributes(mesh, { [`${TAG_PREFIX}${materialTag}`]: { data: new Uint8Array(mesh.faceCount).fill(1), size: 1 } });
 }
 
+function requireLength(field, array, expectedLength) {
+  if (array?.length !== expectedLength) {
+    throw new RangeError(`Geometry ${field} must hold ${expectedLength} values, not ${array?.length ?? typeof array}; fix the array or remove it.`);
+  }
+}
+
+/** Skin and morph arrays are read per vertex while transferring; a short one would turn into NaN weights. */
+function checkTransferArrays(source) {
+  const vertexCount = source.positions.length / 3;
+  if (source.skinIndices || source.skinWeights) {
+    requireLength('skinIndices', source.skinIndices, vertexCount * MAX_INFLUENCES);
+    requireLength('skinWeights', source.skinWeights, vertexCount * MAX_INFLUENCES);
+  }
+  (source.morphTargets ?? []).forEach((target, index) => {
+    if (target.positions) requireLength(`morphTargets[${index}].positions`, target.positions, vertexCount * 3);
+    if (target.normals) requireLength(`morphTargets[${index}].normals`, target.normals, vertexCount * 3);
+  });
+}
+
 /**
  * Apply mesh edits to imported renderer geometry. `materialTag` names a face tag on every face (an imported part
  * has one material). Returns the edited geometry, its polygon mesh, the per-edit results and what was transferred.
@@ -233,6 +252,7 @@ function tagFacesOfMaterial(mesh, materialTag) {
  */
 export function editImportedGeometry(source, edits, { maxVertices, smoothAngle, resolveCutter, materialTag }) {
   const base = tagFacesOfMaterial(meshFromGeometry(source), materialTag);
+  checkTransferArrays(source);
   const outcome = applyMeshEdits(base, edits, {
     maxVertices, maxFaces: maxVertices,
     resolveCutter: resolveCutter && (cutter => meshFromGeometry(resolveCutter(cutter))),

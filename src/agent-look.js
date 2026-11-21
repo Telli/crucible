@@ -1,5 +1,6 @@
 import { lightLimitAdvice } from './light-limit-advice.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
+import { MINIMUM_SPOT_ANGLE, MAXIMUM_SPOT_ANGLE, spotAngleExpectation } from './spot-angle-advice.js';
 import { mat4 } from 'gl-matrix';
 import { sceneBoundsOfParts } from './near-plane-fit.js';
 import { createLightingState, updateLightingState, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS, MAXIMUM_SPECULAR_ANTI_ALIASING } from './lighting.js';
@@ -8,7 +9,7 @@ import { resolveVolumeFog } from './volumetric.js';
 import { resolveFogDetail } from './fog-field.js';
 import { resolveLocalVolumesWith } from './local-volume-resolve.js';
 import { LIQUID_OPTICS, resolveLiquidOptics } from './liquid-optics.js';
-import { createLightingSetupMap, createCatalogEnvironmentMap, lightingSetupFields } from './lighting-setups.js';
+import { createLightingSetupMap, createCatalogEnvironmentMap, lightingSetupFields, setupMapShowsBackground } from './lighting-setups.js';
 import { agentSceneModule } from './agent-scene-modules.js';
 import { lightShapeSupport, postStepSupport } from './shader-registry.js';
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from './view-transform-names.js';
@@ -38,7 +39,7 @@ const POINT_LIGHT_FIELDS = ['position', 'color', 'intensity', 'radius', 'range',
 const SPOT_LIGHT_FIELDS = ['position', 'direction', 'angle', 'penumbra', 'color', 'intensity', 'radius', 'range', 'castShadow', 'softFalloff', 'ies', 'affects'];
 const AREA_LIGHT_FIELDS = ['position', 'direction', 'up', 'width', 'height', 'color', 'intensity', 'castShadow', 'ies', 'portal', 'affects'];
 const VOLUME_VECTOR_FIELDS = ['minimum', 'maximum', 'color', 'ambient', 'drift'];
-const VOLUME_NUMBER_FIELDS = ['density', 'steps', 'anisotropy', 'noiseAmount', 'noiseScale', 'maxDistance', 'shadowAmbient', 'heightFalloff', 'detailOctaves', 'detailAmount', 'warp', 'contrast', 'profileSoftness', 'keyScattering', 'scatterOctaves', 'multiScatter', 'multiExtinction', 'multiAnisotropy', 'keyTransmittance', 'surfaceTransmittance'];
+const VOLUME_NUMBER_FIELDS = ['density', 'steps', 'anisotropy', 'noiseAmount', 'noiseScale', 'maxDistance', 'shadowAmbient', 'heightFalloff', 'detailOctaves', 'detailAmount', 'warp', 'contrast', 'profileSoftness', 'keyScattering', 'scatterOctaves', 'multiScatter', 'multiExtinction', 'multiAnisotropy', 'keyTransmittance', 'surfaceTransmittance', 'beamRadius'];
 export const VOLUME_FOG_FIELDS = Object.freeze([...VOLUME_VECTOR_FIELDS, ...VOLUME_NUMBER_FIELDS]);
 const BLOOM_FIELDS = ['strength', 'threshold', 'radius'];
 const DEPTH_OF_FIELD_FIELDS = ['blur', 'focusDistance'];
@@ -227,12 +228,21 @@ function pointLightFrom(light) {
   };
 }
 
+// The cone angle is in radians, so a range error names the unit instead of a bare range an agent reads as degrees.
+function spotAngleFrom(value) {
+  try {
+    return numberInRange(value, MINIMUM_SPOT_ANGLE, MAXIMUM_SPOT_ANGLE, 'angle');
+  } catch {
+    throw invalidField('angle', value, spotAngleExpectation(value));
+  }
+}
+
 function spotLightFrom(light) {
   knownKeys(light, SPOT_LIGHT_FIELDS, 'spot light');
   return {
     position: vectorInRange(light.position, -1e6, 1e6, 'position'),
     direction: directionFrom(light.direction, 'direction').direction,
-    angle: numberInRange(fallback(light.angle, Math.PI / 4), 0.01, Math.PI / 2 - 0.01, 'angle'),
+    angle: spotAngleFrom(fallback(light.angle, Math.PI / 4)),
     penumbra: numberInRange(fallback(light.penumbra, 0.15), 0, 1, 'penumbra'),
     color: vectorInRange(fallback(light.color, [1, 1, 1]), 0, 1, 'color'),
     intensity: numberInRange(fallback(light.intensity, 1), 0, 1e5, 'intensity'),
@@ -274,6 +284,9 @@ function volumeFogFrom(input = {}) {
   resolveFogDetail(resolved);
   return copiedJson(resolved);
 }
+
+/** The fields a physical sky fills from its sun and haze that a recipe may still set itself: its own value wins over the sky's. */
+export const SKY_OVERRIDABLE_FIELDS = Object.freeze(['keyColor', 'fogColor', 'fogDensity']);
 
 function environmentFrom(input = {}) {
   knownKeys(input, ENVIRONMENT_FIELDS, 'environment');
@@ -386,7 +399,10 @@ function environmentFrom(input = {}) {
     environment.liquid = copiedJson(resolveLiquidOptics(copiedJson(input.liquid)));
   }
   if (input.sky !== undefined && input.sky !== null) {
+    // The sky derives these from its sun; a value written beside the sky is a choice and stays.
+    const explicit = Object.fromEntries(SKY_OVERRIDABLE_FIELDS.filter(field => input[field] !== undefined && input[field] !== null).map(field => [field, environment[field]]));
     agentSceneModule('physicalSky').applyPhysicalSky(input.sky, environment, invalidField);
+    Object.assign(environment, explicit);
   }
   lightShapeSupport.normalize?.(input, environment);
   updateLightingState(createLightingState(), environment, { world });
@@ -415,7 +431,7 @@ export function agentEnvironmentMap(environment) {
   return createLightingSetupMap(environment.setup, {
     intensity: environment.environmentIntensity,
     rotation: environment.environmentRotation,
-    showBackground: environment.world,
+    showBackground: setupMapShowsBackground(environment),
   });
 }
 

@@ -14,7 +14,7 @@ try {
     await page.emulateMedia({ colorScheme });
     for (const route of ['/', '/downloads.html', '/docs.html', '/getting-started.html']) {
       await page.goto(origin + route);
-      if (route === '/downloads.html') await page.waitForURL(origin + '/#downloads');
+      if (route === '/downloads.html') await page.waitForURL(origin + '/#install');
       if (route === '/getting-started.html') await page.waitForURL(origin + '/docs.html#install');
       await page.locator('.navigation nav a .nav-label').first().waitFor();
       for (const width of [320, 390, 580, 1440]) {

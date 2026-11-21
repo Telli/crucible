@@ -1,6 +1,7 @@
 import { createSlicer } from './cooperative.js';
 import { createEnvironmentMap, MAXIMUM_ENVIRONMENT_SIZE } from './environment.js';
 import { alignEnvironmentRows } from './environment-orientation.js';
+import { DEFAULT_SUN_ANGULAR_RADIUS } from './environment-shading.js';
 
 const MAXIMUM_FILE_BYTES = 256 * 1024 ** 2;
 const MINIMUM_RUN_LENGTH_WIDTH = 8;
@@ -95,12 +96,28 @@ function startsRunLengthScanline(bytes, position, width) {
     && ((bytes[position + 2] << 8) | bytes[position + 3]) === width;
 }
 
+// Old-format rows are the smallest: one pixel and at most two repeat pixels (255 and 65280 pixels each), and a
+// run-length row never costs less than that, so this bound holds for both.
+function allocatePixels(availableBytes, width, height) {
+  const repeatPixels = Math.min(2, Math.ceil(Math.log(width) / Math.log(256)));
+  if (availableBytes < height * 4 * (1 + repeatPixels)) {
+    throw new RangeError(`Radiance HDR pixel data is truncated: the header says ${width}x${height} but the file holds ${availableBytes} bytes; pass the whole file.`);
+  }
+  return new Float32Array(width * height * 3);
+}
+
+function requireBytes(buffer) {
+  if (buffer instanceof Uint8Array) return buffer;
+  if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer);
+  throw new TypeError('parseRadianceHdr needs an ArrayBuffer or Uint8Array.');
+}
+
 // Decodes one scanline per step, so a caller can run it to the end at once or hand the thread back between rows.
 function* decodeRadianceRows(buffer) {
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const bytes = requireBytes(buffer);
   if (bytes.length > MAXIMUM_FILE_BYTES) throw new RangeError('Radiance HDR file is larger than 256 MiB.');
   const { width, height, dataStart } = parseHeader(bytes);
-  const data = new Float32Array(width * height * 3);
+  let data;
   const scanline = new Uint8Array(width * 4);
   let position = dataStart;
   for (let row = 0; row < height; row++) {
@@ -109,6 +126,7 @@ function* decodeRadianceRows(buffer) {
     } else {
       position = readFlatScanline(bytes, position, width, scanline);
     }
+    data ??= allocatePixels(bytes.length - dataStart, width, height);
     for (let column = 0; column < width; column++) {
       const exponent = scanline[column * 4 + 3];
       const target = (row * width + column) * 3;
@@ -244,6 +262,16 @@ export function sunFromEnvironmentMap(map) {
   };
 }
 
+function isPoint(point) {
+  return Array.isArray(point) && point.length === 3 && point.every(Number.isFinite);
+}
+
+function requireBounds(bounds) {
+  if (!isPoint(bounds?.min) || !isPoint(bounds?.max)) {
+    throw new TypeError('keyLightFromHdri bounds must be { min, max } of three finite numbers each.');
+  }
+}
+
 /**
  * Lights a scene from the HDRI sun. Spread the result into the renderer's `environment` and pass its `shadowBounds`:
  * `{ environment: { lightDirection, keyColor, keyIntensity }, shadowBounds }`. The shadow view looks at the middle of
@@ -251,6 +279,7 @@ export function sunFromEnvironmentMap(map) {
  * so the caller keeps its defaults.
  */
 export function keyLightFromHdri(map, bounds) {
+  requireBounds(bounds);
   const sun = sunFromEnvironmentMap(map);
   if (!sun) return null;
   const target = bounds.min.map((minimum, axis) => (minimum + bounds.max[axis]) / 2);
@@ -258,4 +287,80 @@ export function keyLightFromHdri(map, bounds) {
   const eye = target.map((component, axis) => component + sun.lightDirection[axis] * extent * 2);
   const { lightDirection, keyColor, keyIntensity } = sun;
   return { environment: { lightDirection, keyColor, keyIntensity }, shadowBounds: { target, eye, extent, near: extent * 0.5, far: extent * 3.5 } };
+}
+
+// A pixel near the sun counts as part of it when it is this many times brighter than the sky ring around it.
+const SUN_OVER_RING_RATIO = 2;
+// The ring that stands for the sky behind the sun reaches this far past the search radius.
+const SUN_RING_WIDTH = Math.PI / 36;
+
+function ringColor(map, centre) {
+  const { width, height, channels, data } = map;
+  const inner = Math.cos(SUN_SEARCH_RADIUS);
+  const outer = Math.cos(SUN_SEARCH_RADIUS + SUN_RING_WIDTH);
+  const sum = [0, 0, 0];
+  let weight = 0;
+  for (let row = 0; row < height; row++) {
+    const rowWeight = Math.sin(((row + 0.5) / height) * Math.PI);
+    for (let column = 0; column < width; column++) {
+      const direction = mapDirection(column, row, width, height);
+      const cosine = direction[0] * centre[0] + direction[1] * centre[1] + direction[2] * centre[2];
+      if (cosine >= inner || cosine <= outer) continue;
+      const offset = (row * width + column) * channels;
+      for (let axis = 0; axis < 3; axis++) sum[axis] += data[offset + axis] * rowWeight;
+      weight += rowWeight;
+    }
+  }
+  return weight > 0 ? sum.map(component => component / weight) : [0, 0, 0];
+}
+
+/**
+ * Takes the sun out of an HDR environment map so it can light the scene as a shadowed key light instead of reaching
+ * every point through the unshadowed sky term (#2761). Pixels within 10 degrees of the sun that are more than twice as
+ * bright as the sky ring around it are set to that ring's colour. The energy taken out comes back as `environment`
+ * (`{ lightDirection, keyColor, keyIntensity }`, the same convention as sunFromEnvironmentMap), and as the map's
+ * `sunDisc`, so the background still shows the sun. Returns `{ map, environment }`, or `null` when the sky has no
+ * distinct sun. The map passed in is not changed.
+ */
+export function splitHdriSun(map) {
+  const sun = sunFromEnvironmentMap(map);
+  if (!sun) return null;
+  const { width, height, channels } = map;
+  const centre = worldFromMapDirection(sun.lightDirection, -map.rotation);
+  const ring = ringColor(map, centre);
+  const ringLuminance = luminanceAt(ring, 0);
+  const data = Float32Array.from(map.data);
+  const minimumCosine = Math.cos(SUN_SEARCH_RADIUS);
+  const pixelSolidAngle = ((2 * Math.PI) / width) * (Math.PI / height);
+  const removed = [0, 0, 0];
+  let irradiance = 0;
+  for (let row = 0; row < height; row++) {
+    const rowSolidAngle = Math.sin(((row + 0.5) / height) * Math.PI) * pixelSolidAngle;
+    for (let column = 0; column < width; column++) {
+      const direction = mapDirection(column, row, width, height);
+      const cosine = direction[0] * centre[0] + direction[1] * centre[1] + direction[2] * centre[2];
+      if (cosine < minimumCosine) continue;
+      const offset = (row * width + column) * channels;
+      const value = luminanceAt(data, offset);
+      if (!(value > SUN_OVER_RING_RATIO * ringLuminance)) continue;
+      for (let axis = 0; axis < 3; axis++) {
+        removed[axis] += Math.max(data[offset + axis] - ring[axis], 0) * rowSolidAngle;
+        data[offset + axis] = ring[axis];
+      }
+      irradiance += (value - ringLuminance) * rowSolidAngle * cosine;
+    }
+  }
+  const brightest = Math.max(...removed);
+  if (!(brightest > 0)) return null;
+  const discSolidAngle = Math.PI * DEFAULT_SUN_ANGULAR_RADIUS ** 2;
+  const sunDisc = { direction: centre, radiance: removed.map(component => component / discSolidAngle) };
+  const { intensity, rotation, showBackground, backgroundBlur } = map;
+  return {
+    map: createEnvironmentMap({ width, height, data, intensity, rotation, showBackground, backgroundBlur, sunDisc }),
+    environment: {
+      lightDirection: sun.lightDirection,
+      keyColor: removed.map(component => component / brightest),
+      keyIntensity: (irradiance * intensity) / Math.PI,
+    },
+  };
 }
