@@ -1,4 +1,5 @@
-import './home.js';
+import './site-chrome.js';
+import './site.css';
 import './documentation.css';
 import guide from '../docs/guide.md?raw';
 import { highlightCode } from './code-highlight.js';
