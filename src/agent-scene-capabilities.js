@@ -294,8 +294,9 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   // Recipe timeline (src/film-timeline.js), rendered with settings.timeline; the rest is in docs/agent-render-jobs.md.
   filmTimeline: Object.freeze({
     maxShots: 64, maxTotalSeconds: 60, maxShotSeconds: 30,
-    shot: 'name (unique), duration, motionStart (default: the shot start, so non-looping motion must cover it), camera (partial: eye target up fov near far), focusDistance (m) and blur (0 to 1) for the depth of field of the shot, dip (s; fades through black at the cut into this shot).',
-    notSupported: 'layers, overlaps, crossfades, markers, events, imported assets',
+    shot: 'name (unique), duration or endAt (a marker name: the shot ends at that cue), motionStart (default: the shot start, so non-looping motion must cover it), camera (partial: eye target up fov near far), focusDistance (m) and blur (0 to 1) for the depth of field of the shot, dip (s; fades through black at the cut into this shot).',
+    markers: 'timeline.markers [{ name, time }] and timeline.beatGrid { bpm, offset, count } (markers beat-0, beat-1 ...) name cue times in timeline seconds; no audio analysis.',
+    notSupported: 'layers, overlaps, crossfades, events, imported assets',
   }),
   curveText: Object.freeze({
     maxCurvePoints: CURVE_TEXT_LIMITS.maxCurvePoints, maxProfilePoints: CURVE_TEXT_LIMITS.maxProfilePoints,
