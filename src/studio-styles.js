@@ -327,12 +327,13 @@ export const STUDIO_CSS = `
 }
 
 /* Shown while the picture is paused (a lost graphics context or a frame that failed). It sits over the viewport, under the menu bar. */
-.crucible-studio-paused {
+.crucible-studio-paused,
+.crucible-studio-draft {
   position: absolute;
   inset-block-start: var(--studio-top);
-  inset-inline: var(--studio-edge);
+  inset-inline: calc(var(--studio-rail) + 2 * var(--studio-edge)) calc(var(--studio-side-width, 284px) + 2 * var(--studio-edge));
   inline-size: fit-content;
-  max-inline-size: min(520px, calc(100% - 2 * var(--studio-edge)));
+  max-inline-size: 520px;
   margin-inline: auto;
   gap: 10px;
   padding: 10px 12px;
@@ -341,9 +342,18 @@ export const STUDIO_CSS = `
   font-size: 13px;
   z-index: 9;
 }
-.crucible-studio-paused[hidden] { display: none; }
-.crucible-studio-paused p { margin: 0; }
-.crucible-studio-paused .crucible-studio-icon { flex: none; color: var(--studio-accent); }
+.crucible-studio[data-compact="true"] .crucible-studio-draft { inset-inline: var(--studio-edge); }
+/* Docked, the viewport is already the room between the rail and the column, so the notice only keeps the edge gap. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-draft {
+  inset-block-start: var(--studio-edge);
+  inset-inline: var(--studio-edge);
+}
+.crucible-studio-paused[hidden],
+.crucible-studio-draft[hidden] { display: none; }
+.crucible-studio-paused p,
+.crucible-studio-draft p { margin: 0; }
+.crucible-studio-paused .crucible-studio-icon,
+.crucible-studio-draft .crucible-studio-icon { flex: none; color: var(--studio-accent); }
 
 .crucible-studio-menubar {
   position: absolute;
@@ -1732,10 +1742,14 @@ export const STUDIO_CSS = `
   pointer-events: auto;
 }
 .crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-menubar .crucible-studio-island,
-.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-toolbar,
-.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-side > .crucible-studio-dock {
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-toolbar {
   border-color: transparent;
   border-radius: 0;
+  box-shadow: none;
+}
+/* The Scene list and Properties keep their outline and a gap in the docked column, so they read as two cards. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-side > .crucible-studio-dock {
+  border-radius: 8px;
   box-shadow: none;
 }
 .crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-toolbar {
@@ -1749,7 +1763,9 @@ export const STUDIO_CSS = `
   inset-inline-end: 0;
   inline-size: var(--studio-dock-side);
   max-inline-size: none;
-  gap: 0;
+  box-sizing: border-box;
+  padding: 6px;
+  gap: 6px;
   align-items: stretch;
   background: var(--studio-panel);
   pointer-events: auto;

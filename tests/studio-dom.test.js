@@ -558,6 +558,32 @@ test('Material tab edits colours and sliders as single undo steps', testContext 
   assert.equal(ui.label('Roughness').disabled, false);
 });
 
+test('Material tab edits clearcoat roughness and double sided, each as one undo step', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  ui.tab('material').click();
+  assert.equal(ui.label('Clearcoat roughness').value, '0');
+  assert.equal(ui.button('Double sided').getAttribute('aria-pressed'), 'false');
+
+  ui.setSlider('Clearcoat', 0.5);
+  assert.equal(ui.material('paint').clearcoatRoughness, 0.08);
+  ui.setSlider('Clearcoat roughness', 0.4);
+  assert.equal(ui.material('paint').clearcoatRoughness, 0.4);
+  assert.equal(ui.label('Clearcoat roughness').parentNode.querySelector('output').textContent, '0.40');
+  ui.setSlider('Clearcoat', 0.9);
+  assert.equal(ui.material('paint').clearcoatRoughness, 0.4, 'moving the coat keeps the chosen roughness');
+  ui.controller.undo();
+  ui.controller.undo();
+  assert.equal(ui.material('paint').clearcoatRoughness, 0.08);
+
+  ui.button('Double sided').click();
+  assert.equal(ui.material('paint').doubleSided, true);
+  assert.equal(ui.button('Double sided').getAttribute('aria-pressed'), 'true');
+  ui.controller.undo();
+  assert.equal(ui.material('paint').doubleSided, false);
+  assert.equal(ui.button('Double sided').getAttribute('aria-pressed'), 'false');
+});
+
 test('material presets, the material list and new materials work from the Material tab', testContext => {
   const ui = mountStudio(testContext);
   ui.selectRow('orb');
@@ -1110,6 +1136,59 @@ test('keyboard shortcuts still work while a slider or a switch holds the focus',
   const roughness = ui.label('Roughness');
   dispatch(roughness, 'keydown', { key: 's' });
   assert.equal(ui.controller.tool, 'scale');
+});
+
+test('Ctrl+C and Ctrl+V copy and paste the selected object as one undo step, even after it is deleted', testContext => {
+  const ui = mountStudio(testContext);
+  const press = (key, properties = {}) => dispatch(ui.canvas, 'keydown', { key, ...properties });
+  ui.selectRow('hero');
+  assert.equal(press('c', { ctrlKey: true }).defaultPrevented, true);
+  assert.equal(ui.status(), 'Copied');
+  assert.equal(ui.studio.exportRecipe().nodes.length, 3, 'copying changes nothing');
+  assert.equal(ui.studio.dirty, false);
+
+  ui.selectRow('orb');
+  assert.equal(press('v', { metaKey: true }).defaultPrevented, true);
+  assert.match(ui.status(), /^Pasted hero copy/);
+  assert.equal(ui.studio.exportRecipe().nodes.length, 4);
+  const firstCopy = ui.controller.selectedNodeId;
+  assert.equal(ui.node(firstCopy).material, 'paint');
+  assert.equal(ui.studio.dirty, true);
+  ui.controller.undo();
+  assert.equal(ui.studio.exportRecipe().nodes.length, 3, 'one undo removes the paste');
+
+  press('v', { ctrlKey: true });
+  press('v', { ctrlKey: true });
+  const [firstPaste, secondPaste] = ui.studio.exportRecipe().nodes.slice(3);
+  assert.notDeepEqual(firstPaste.translation, secondPaste.translation, 'each paste lands beside the last');
+
+  ui.selectRow('hero');
+  press('Delete');
+  assert.equal(ui.node('hero'), undefined);
+  press('v', { ctrlKey: true });
+  assert.equal(ui.studio.exportRecipe().nodes.length, 4 + 1, 'a paste still works after the original is deleted');
+
+  const editMenu = ui.root.querySelector('#crucible-studio-pop-edit');
+  assert.ok(byText(editMenu, 'Copy'));
+  assert.ok(byText(editMenu, 'Paste'));
+  const labels = ui.root.querySelector('.crucible-studio-shortcuts-dialog').querySelectorAll('.crucible-studio-shortcut-item').map(item => item.textContent);
+  assert.ok(labels.some(label => label.includes('Ctrl+C / Ctrl+V')));
+});
+
+test('Ctrl+C and Ctrl+V are left to the browser while typing or while text is selected', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  const nameInput = ui.label('Node label');
+  assert.equal(dispatch(nameInput, 'keydown', { key: 'c', ctrlKey: true }).defaultPrevented, false);
+  assert.equal(dispatch(nameInput, 'keydown', { key: 'v', ctrlKey: true }).defaultPrevented, false);
+  assert.equal(ui.controller.canPaste, false);
+
+  ui.dom.document.defaultView.getSelection = () => ({ isCollapsed: false, toString: () => 'some words' });
+  assert.equal(dispatch(ui.canvas, 'keydown', { key: 'c', ctrlKey: true }).defaultPrevented, false);
+  assert.equal(ui.controller.canPaste, false);
+  ui.dom.document.defaultView.getSelection = () => ({ isCollapsed: true, toString: () => '' });
+  assert.equal(dispatch(ui.canvas, 'keydown', { key: 'c', ctrlKey: true }).defaultPrevented, true);
+  assert.equal(ui.controller.canPaste, true);
 });
 
 test('keyboard shortcuts are ignored while typing and after the Studio left the page', testContext => {
@@ -2286,7 +2365,7 @@ test('the top bar has File, Edit, View, Agent and Help menus that do what their 
   assert.equal(byText(popover('new'), 'Save').dataset.shortcut, 'Ctrl+S');
 
   menuButton('Edit').click();
-  assert.deepEqual(rows('edit'), ['Undo', 'Redo', 'Duplicate', 'Delete', 'Deselect', 'Hide', 'Show all', 'Reset position', 'Reset rotation', 'Reset scale', 'Settings…']);
+  assert.deepEqual(rows('edit'), ['Undo', 'Redo', 'Copy', 'Paste', 'Duplicate', 'Delete', 'Deselect', 'Hide', 'Show all', 'Reset position', 'Reset rotation', 'Reset scale', 'Settings…']);
   ui.selectRow('hero');
   const countBefore = ui.studio.exportRecipe().nodes.length;
   byText(popover('edit'), 'Duplicate').click();
@@ -3692,6 +3771,96 @@ test('in a compact window both cards start right of the tool rail and share the 
   assert.ok(outliner.includes(`max-block-size: min(300px, ${room});`), 'the Scene card takes the other half, less the gap');
 });
 
+function draftStorage() {
+  const entries = new Map();
+  return {
+    entries,
+    getItem: key => entries.get(key) ?? null,
+    setItem: (key, value) => entries.set(key, value),
+    removeItem: key => entries.delete(key),
+  };
+}
+
+const DRAFT_KEY = 'crucible.studio.draft';
+
+test('edits are kept as a draft after a pause, and Save clears it', async testContext => {
+  const storage = draftStorage();
+  const ui = mountStudio(testContext, { preferenceStorage: storage });
+  assert.equal(storage.entries.has(DRAFT_KEY), false, 'nothing is kept before an edit');
+  ui.selectRow('hero');
+  ui.controller.updateNodeTransform('hero', { translation: [3, 0.5, 0] });
+  assert.equal(storage.entries.has(DRAFT_KEY), false, 'the write waits for the edits to pause');
+  ui.dom.runTimers();
+  const draft = JSON.parse(storage.entries.get(DRAFT_KEY));
+  assert.deepEqual(draft.recipe.nodes.find(node => node.id === 'hero').translation, [3, 0.5, 0]);
+
+  ui.controller.updateNodeTransform('hero', { translation: [4, 0.5, 0] });
+  ui.button('Save').click();
+  await ui.dom.settle();
+  ui.dom.runTimers();
+  assert.equal(storage.entries.has(DRAFT_KEY), false, 'a saved scene needs no draft, and the pending write is cancelled');
+});
+
+test('a draft that differs from the opened scene is offered, and Restore brings it back as one undo step', async testContext => {
+  const storage = draftStorage();
+  const first = mountStudio(testContext, { preferenceStorage: storage });
+  first.controller.updateNodeTransform('hero', { translation: [3, 0.5, 0] });
+  first.dom.runTimers();
+  first.studio.dispose();
+
+  const second = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
+  await second.studio.ready;
+  const notice = second.root.querySelector('.crucible-studio-draft');
+  assert.equal(notice.hidden, false);
+  assert.equal(second.node('hero').translation[0], 0, 'the opened scene is untouched until the person chooses');
+  assert.equal(second.studio.dirty, false);
+
+  second.button('Restore').click();
+  await second.dom.settle();
+  assert.equal(notice.hidden, true);
+  assert.deepEqual(second.node('hero').translation, [3, 0.5, 0]);
+  assert.equal(second.studio.dirty, true);
+  second.controller.undo();
+  assert.equal(second.node('hero').translation[0], 0);
+  assert.equal(storage.entries.has(DRAFT_KEY), true, 'the restored scene is still unsaved, so its draft stays');
+});
+
+test('Discard drops the draft, and a draft equal to the opened scene is not offered', async testContext => {
+  const storage = draftStorage();
+  const first = mountStudio(testContext, { preferenceStorage: storage });
+  const openedRecipe = first.studio.exportRecipe();
+  first.controller.updateNodeTransform('hero', { translation: [3, 0.5, 0] });
+  first.dom.runTimers();
+  first.studio.dispose();
+
+  const second = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
+  await second.studio.ready;
+  second.controller.updateNodeTransform('hero', { translation: [9, 0.5, 0] });
+  second.dom.runTimers();
+  assert.equal(JSON.parse(storage.entries.get(DRAFT_KEY)).recipe.nodes.find(node => node.id === 'hero').translation[0], 3, 'edits do not overwrite a draft that is still on offer');
+  second.button('Discard').click();
+  assert.equal(second.root.querySelector('.crucible-studio-draft').hidden, true);
+  assert.equal(storage.entries.has(DRAFT_KEY), false);
+  second.studio.dispose();
+
+  storage.setItem(DRAFT_KEY, JSON.stringify({ fileName: 'untitled.scene.json', recipe: openedRecipe }));
+  const third = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
+  await third.studio.ready;
+  assert.equal(third.root.querySelector('.crucible-studio-draft').hidden, true);
+});
+
+test('choosing a new scene on purpose clears the draft and its notice', async testContext => {
+  const storage = draftStorage();
+  storage.setItem(DRAFT_KEY, JSON.stringify({ fileName: 'old.scene.json', recipe: { ...makeRecipe(), nodes: [] } }));
+  const ui = mountStudio(testContext, { preferenceStorage: storage });
+  await ui.studio.ready;
+  assert.equal(ui.root.querySelector('.crucible-studio-draft').hidden, false);
+  byText(ui.root, 'Clean stage').click();
+  await ui.dom.settle();
+  assert.equal(storage.entries.has(DRAFT_KEY), false);
+  assert.equal(ui.root.querySelector('.crucible-studio-draft').hidden, true);
+});
+
 test('a delete leaves nothing selected, so a second Delete removes nothing, and its undo brings the object back in hand (#2817)', testContext => {
   const ui = mountStudio(testContext);
   const deleteRow = byText(ui.root.querySelector('#crucible-studio-pop-edit'), 'Delete');
@@ -3742,4 +3911,21 @@ test('picking an object in Animate opens its panel without leaving the workspace
   byDataset(ui.root, 'workspace', 'build').click();
   byDataset(ui.root, 'workspace', 'animate').click();
   assert.equal(ui.controller.activeTab, 'camera', 'Animate still opens on the camera');
+});
+
+test('an edit still waiting to be kept is written when the window goes to the background or closes', testContext => {
+  const storage = draftStorage();
+  const ui = mountStudio(testContext, { preferenceStorage: storage });
+  ui.selectRow('hero');
+  ui.controller.updateNodeTransform('hero', { translation: [3, 0.5, 0] });
+  assert.equal(storage.entries.has(DRAFT_KEY), false);
+  ui.dom.document.hidden = true;
+  dispatch(ui.dom.document, 'visibilitychange');
+  const draft = JSON.parse(storage.entries.get(DRAFT_KEY));
+  assert.deepEqual(draft.recipe.nodes.find(node => node.id === 'hero').translation, [3, 0.5, 0], 'no timer had to run');
+
+  storage.entries.clear();
+  ui.dom.document.hidden = false;
+  dispatch(ui.dom.document, 'visibilitychange');
+  assert.equal(storage.entries.has(DRAFT_KEY), false, 'nothing is written when no edit waits');
 });

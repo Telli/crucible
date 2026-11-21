@@ -566,6 +566,8 @@ test('the Studio controller says what to pass when a scene, a callback or a poin
   controller.selectNode(null);
   assert.throws(() => controller.insertNodeKeyframe(), /Select a node before inserting a keyframe/);
   assert.throws(() => controller.duplicateSelected(), /Select a node before duplicating it/);
+  assert.throws(() => controller.copySelected(), /Select a node before copying it/);
+  assert.throws(() => controller.pasteCopy(), /Copy a node before pasting/);
   assert.throws(() => controller.deleteSelected(), /Select a node before deleting it/);
   assert.throws(() => controller.snapSelectedToAt(10, 10), /Select a node before snapping it to a surface/);
   assert.equal(controller.undo(), false);
@@ -1073,4 +1075,24 @@ test('the sun and the camera report a track that drives them', () => {
   };
   const objects = createStudioController({ scene: createAgentScene(recipe) }).listSceneObjects();
   assert.deepEqual(objects.slice(0, 2).map(object => object.driven), [true, true]);
+});
+
+test('pasteCopy adds the copied node as one undo step and drops a parent that is gone', () => {
+  const controller = createStudioController({ scene: createAgentScene(makeStudioRecipe()), viewportWidth: 960, viewportHeight: 600 });
+  controller.selectNode('orb');
+  controller.updateNodeTransform('orb', { parent: 'hero' });
+  controller.copySelected();
+  assert.equal(controller.canPaste, true);
+  controller.selectNode('hero');
+  controller.deleteSelected();
+
+  const undoDepthBefore = controller.exportRecipe().nodes.length;
+  const pasted = controller.pasteCopy();
+  assert.equal(pasted.parent, undefined, 'the deleted parent is not kept');
+  assert.equal(controller.selectedNodeId, pasted.id);
+  assert.equal(controller.exportRecipe().nodes.length, undoDepthBefore + 1);
+  controller.undo();
+  assert.equal(controller.exportRecipe().nodes.length, undoDepthBefore);
+  assert.equal(controller.canPaste, true, 'undo does not empty the clipboard');
+  controller.dispose();
 });

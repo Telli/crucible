@@ -27,6 +27,7 @@ import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-prope
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
+import { clearStudioDraft, createDraftNotice, DRAFT_SAVE_DELAY_MILLISECONDS, draftDiffersFrom, loadStudioDraft, saveStudioDraft } from './studio-draft.js';
 import { CONTEXT_LOST_MESSAGE, createPausedPictureNotice, describeFrameFailure, watchContextLoss } from './studio-context-loss.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
 import {
@@ -95,7 +96,8 @@ const STUDIO_WORKSPACES = Object.freeze([
   Object.freeze({ id: 'look', label: 'Look', icon: 'material', tabs: Object.freeze(['material', 'look']) }),
   Object.freeze({ id: 'animate', label: 'Animate', icon: 'play', tabs: Object.freeze(['camera', 'node']) }),
 ]);
-const PRIMITIVE_LABELS = Object.freeze({ icoSphere: 'Icosphere' });
+const DEFAULT_CLEARCOAT_ROUGHNESS = 0.08;
+const PRIMITIVE_LABELS =Object.freeze({ icoSphere: 'Icosphere' });
 const primitiveLabel = primitiveType => PRIMITIVE_LABELS[primitiveType] ?? primitiveType[0].toUpperCase() + primitiveType.slice(1);
 const TREE_ICON_BY_GEOMETRY = Object.freeze({
   circle: 'plane',
@@ -1095,6 +1097,8 @@ export function createStudio(container, {
     'crucible-studio-pop-edit',
     createMenuItem('Undo', 'Ctrl+Z', () => undoButton.click(), 'undo'),
     createMenuItem('Redo', 'Ctrl+Shift+Z', () => redoButton.click(), 'redo'),
+    createMenuItem('Copy', 'Ctrl+C', () => copySelection(), 'duplicate'),
+    createMenuItem('Paste', 'Ctrl+V', () => pasteCopy(), 'duplicate'),
     createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection(), 'duplicate'),
     createMenuItem('Delete', 'X', () => deleteButton.click(), 'remove'),
     createMenuItem('Deselect', 'Esc', () => controller.selectNode(null)),
@@ -1206,6 +1210,7 @@ export function createStudio(container, {
       activeFilePath = null;
       activeFileName = `${templateKey}.scene.json`;
       isDirty = false;
+      discardDraft();
       syncFileBanner();
       announce(`New ${spec.label}`);
     });
@@ -1630,8 +1635,14 @@ export function createStudio(container, {
     createIcon: iconName => createIcon(documentReference, iconName),
     reload: () => documentReference.defaultView?.location?.reload?.(),
   });
+  const draftNotice = createDraftNotice({
+    documentReference,
+    createIcon: iconName => createIcon(documentReference, iconName),
+    onRestore: () => restoreDraft(),
+    onDiscard: () => discardDraft(),
+  });
   const stopWatchingContextLoss = watchContextLoss(canvas, { onLost: pauseForContextLoss, onRestored: recoverFromContextLoss });
-  viewportElement.append(canvas, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element);
+  viewportElement.append(canvas, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element, draftNotice.element);
 
   // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
   const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
@@ -1760,7 +1771,22 @@ export function createStudio(container, {
   });
   const clearcoatField = createSliderField(documentReference, 'Clearcoat', { min: 0, max: 1, step: 0.02, value: 0 }, value => {
     const materialId = activeMaterialId();
-    if (materialId) controller.updateMaterial(materialId, { clearcoat: value, clearcoatRoughness: 0.08 });
+    if (!materialId) return;
+    const material = controller.exportRecipe().materials.find(candidate => candidate.id === materialId);
+    // A coat starts glossy, but a roughness the person already chose stays.
+    const coatPatch = material?.clearcoatRoughness === undefined ? { clearcoat: value, clearcoatRoughness: DEFAULT_CLEARCOAT_ROUGHNESS } : { clearcoat: value };
+    controller.updateMaterial(materialId, coatPatch);
+  });
+  const clearcoatRoughnessField = createSliderField(documentReference, 'Clearcoat roughness', { min: 0, max: 1, step: 0.02, value: 0 }, value => {
+    const materialId = activeMaterialId();
+    if (materialId) controller.updateMaterial(materialId, { clearcoatRoughness: value });
+  });
+  const doubleSidedToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Double sided', attributes: { 'aria-pressed': 'false' } });
+  doubleSidedToggle.addEventListener('click', () => {
+    const materialId = activeMaterialId();
+    if (!materialId) return;
+    const material = controller.exportRecipe().materials.find(candidate => candidate.id === materialId);
+    controller.updateMaterial(materialId, { doubleSided: !(material?.doubleSided ?? false) });
   });
   const opacityField = createSliderField(documentReference, 'Opacity', { min: 0.05, max: 1, step: 0.02, value: 1 }, value => {
     const materialId = activeMaterialId();
@@ -1780,9 +1806,11 @@ export function createStudio(container, {
     roughnessField.container,
     metallicField.container,
     clearcoatField.container,
+    clearcoatRoughnessField.container,
     opacityField.container,
     emissionField.container,
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Glow color' }), emissiveColorInput),
+    createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, doubleSidedToggle),
   );
 
   // Tab 3: Look Panel
@@ -2043,6 +2071,7 @@ export function createStudio(container, {
     ['T', 'Snap to a surface'],
     ['Shift + drag', 'Snap to a step or an angle'],
     ['Shift+A', 'Add an object or a light'],
+    ['Ctrl+C / Ctrl+V', 'Copy / Paste'],
     ['Shift+D / Ctrl+D', 'Duplicate'],
     ['X / Delete', 'Delete'],
     ['Esc', 'Deselect'],
@@ -2326,6 +2355,7 @@ export function createStudio(container, {
       if (!picked || picked.canceled) return;
       try {
         await loadExternalTextFile(picked.text, { filePath: picked.filePath, fileName: picked.fileName });
+        discardDraft();
         announce(`Opened ${picked.fileName}`);
       } catch (error) {
         announce(error.message);
@@ -2345,12 +2375,14 @@ export function createStudio(container, {
       activeFilePath = response.filePath;
       activeFileName = response.fileName;
       isDirty = false;
+      discardDraft();
       syncFileBanner();
       announce(`Saved ${activeFileName}`);
       return;
     }
     triggerBlobDownload(recipeText, activeFileName, 'application/json');
     isDirty = false;
+    discardDraft();
     syncFileBanner();
     announce(`Downloaded ${activeFileName}`);
   }
@@ -2365,6 +2397,7 @@ export function createStudio(container, {
     if (!file) return;
     try {
       await loadExternalTextFile(await file.text(), { filePath: null, fileName: file.name });
+      discardDraft();
       announce(`Loaded ${file.name}`);
     } catch (error) {
       announce(error.message);
@@ -2920,6 +2953,8 @@ export function createStudio(container, {
     roughnessField.input.disabled = !hasMaterial;
     metallicField.input.disabled = !hasMaterial;
     clearcoatField.input.disabled = !hasMaterial;
+    clearcoatRoughnessField.input.disabled = !hasMaterial;
+    doubleSidedToggle.disabled = !hasMaterial;
     opacityField.input.disabled = !hasMaterial;
     emissionField.input.disabled = !hasMaterial;
     if (activeMaterial) {
@@ -2929,6 +2964,8 @@ export function createStudio(container, {
       roughnessField.setValue(activeMaterial.roughness ?? 0.5);
       metallicField.setValue(activeMaterial.metallic ?? 0);
       clearcoatField.setValue(activeMaterial.clearcoat ?? 0);
+      clearcoatRoughnessField.setValue(activeMaterial.clearcoatRoughness ?? 0);
+      doubleSidedToggle.setAttribute('aria-pressed', activeMaterial.doubleSided === true ? 'true' : 'false');
       opacityField.setValue(activeMaterial.opacity ?? 1);
       emissionField.setValue(activeMaterial.emission ?? 0);
     }
@@ -3391,6 +3428,28 @@ export function createStudio(container, {
     }
   }
 
+  function copySelection() {
+    if (!controller.selectedNodeId) return;
+    controller.copySelected();
+    announce('Copied');
+  }
+
+  function pasteCopy() {
+    if (!controller.canPaste) return;
+    try {
+      const pasted = controller.pasteCopy();
+      announce(`Pasted ${pasted.label}`);
+    } catch (error) {
+      announce(error.message);
+    }
+  }
+
+  // Text the person selected on the page belongs to the browser's own copy.
+  function pageTextIsSelected() {
+    const selection = documentReference.defaultView?.getSelection?.();
+    return Boolean(selection && !selection.isCollapsed && selection.toString() !== '');
+  }
+
   const onWindowKeyDown = async event => {
     if (!root.isConnected) {
       return;
@@ -3415,6 +3474,13 @@ export function createStudio(container, {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd') {
       event.preventDefault();
       duplicateSelection();
+      return;
+    }
+    const copyOrPasteKey = event.key.toLowerCase();
+    if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && (copyOrPasteKey === 'c' || copyOrPasteKey === 'v') && !pageTextIsSelected()) {
+      event.preventDefault();
+      if (copyOrPasteKey === 'c') copySelection();
+      else pasteCopy();
       return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
@@ -3492,6 +3558,62 @@ export function createStudio(container, {
     requestFrame();
   }
 
+  // The draft follows the edits a moment after they stop. While the notice offers the older draft, nothing overwrites it.
+  let draftTimer = 0;
+
+  function writeDraftNow() {
+    draftTimer = 0;
+    saveStudioDraft(preferenceStorage, controller.exportRecipe(), activeFileName);
+  }
+
+  function scheduleDraftSave() {
+    if (draftNotice.visible || draftTimer) return;
+    draftTimer = setTimeout(writeDraftNow, DRAFT_SAVE_DELAY_MILLISECONDS);
+  }
+
+  // A window that closes or goes to the background may never run the timer, so the edit still waiting is written at once.
+  function flushDraftSave() {
+    if (!draftTimer) return;
+    clearTimeout(draftTimer);
+    writeDraftNow();
+  }
+  const flushDraftWhenHidden = () => {
+    if (documentReference.hidden) flushDraftSave();
+  };
+  documentReference.addEventListener('visibilitychange', flushDraftWhenHidden);
+  documentReference.defaultView?.addEventListener?.('pagehide', flushDraftSave);
+
+  // Forgets the draft: the scene was saved, or the person chose another scene on purpose.
+  function discardDraft() {
+    clearTimeout(draftTimer);
+    draftTimer = 0;
+    clearStudioDraft(preferenceStorage);
+    draftNotice.hide();
+  }
+
+  async function restoreDraft() {
+    const draft = loadStudioDraft(preferenceStorage);
+    draftNotice.hide();
+    if (!draft) return;
+    try {
+      await prepareRecipe(draft.recipe);
+      controller.loadRecipe(draft.recipe);
+      isDirty = true;
+      syncFileBanner();
+      announce('Restored the unsaved changes');
+    } catch (error) {
+      clearStudioDraft(preferenceStorage);
+      announce(`The saved draft could not be restored: ${error.message}`);
+    }
+  }
+
+  function offerDraft() {
+    const draft = loadStudioDraft(preferenceStorage);
+    if (draft && draftDiffersFrom(draft, controller.exportRecipe())) {
+      draftNotice.show(draft.fileName);
+    }
+  }
+
   handleChange = detail => {
     selectionReadoutStale = true;
     // The object a key is holding is gone or no longer the selection: let go without touching the new scene.
@@ -3503,6 +3625,7 @@ export function createStudio(container, {
     }
     if (['topology', 'transform', 'transformCommit', 'material', 'look', 'undo', 'redo'].includes(detail.kind) || (detail.kind === 'camera' && detail.edited)) {
       isDirty = true;
+      scheduleDraftSave();
     }
     syncUi();
     if (detail.kind === 'tab' || insideDraw) return;
@@ -3557,6 +3680,7 @@ export function createStudio(container, {
     : Promise.resolve();
   // A host that does not await `ready` still sees the reason in the status line.
   ready.catch(() => {});
+  ready.then(offerDraft, () => {});
 
   return {
     get controller() { return controller; },
@@ -3600,6 +3724,7 @@ export function createStudio(container, {
       renderPass();
     },
     dispose() {
+      clearTimeout(draftTimer);
       clearTimeout(statusTimer);
       agentPresence.dispose();
       if (frameHandle) cancelAnimationFrame(frameHandle);
@@ -3610,6 +3735,8 @@ export function createStudio(container, {
       documentReference.removeEventListener('pointerdown', onAnyPointerDown, true);
       documentReference.removeEventListener('keydown', onWindowKeyDown);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
+      documentReference.removeEventListener('visibilitychange', flushDraftWhenHidden);
+      documentReference.defaultView?.removeEventListener?.('pagehide', flushDraftSave);
       stopWatchingContextLoss();
       pausedNotice.hide();
       resizeObserver?.disconnect();

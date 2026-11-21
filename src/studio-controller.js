@@ -49,6 +49,7 @@ const TRANSLATION_SNAP_STEP = 0.25;
 const MINIMUM_SCALE = 0.05;
 const MAXIMUM_SCALE = 100;
 const MINIMUM_DISTANCE = 0.25;
+const COPY_OFFSET = Object.freeze([0.45, 0, 0.45]);
 const MAXIMUM_DISTANCE = 400;
 // A framed object fills the view with this much room around it; a point or a tiny object counts as this big.
 const FRAME_MARGIN = 1.15;
@@ -543,6 +544,8 @@ export function createStudioController({
     ?? currentScene.exportRecipe().nodes[0]?.id
     ?? null;
   let selectedObjectKey = null;
+  let copiedNode = null;
+  let pasteCount = 0;
   let activeTool = 'translate';
   let activeTab = 'node';
   let motionTime = currentScene.motionTime ?? 0;
@@ -1806,31 +1809,59 @@ export function createStudioController({
     return key;
   }
 
-  function duplicateSelected() {
+  function selectedSourceNode(action) {
     if (!selectedNodeId) {
-      throw new RangeError('Select a node before duplicating it.');
+      throw new RangeError(`Select a node before ${action} it.`);
     }
-    const recipe = currentScene.exportRecipe();
-    const source = recipe.nodes.find(node => node.id === selectedNodeId);
+    const source = currentScene.exportRecipe().nodes.find(node => node.id === selectedNodeId);
     if (!source) {
       throw new RangeError(`Unknown node "${selectedNodeId}".`);
     }
+    return source;
+  }
+
+  // One undo step that adds a copy of `source`, shifted aside by `offsetSteps` offsets, and selects it.
+  function addNodeCopy(source, offsetSteps) {
+    const recipe = currentScene.exportRecipe();
     const existingIds = new Set(recipe.nodes.map(node => node.id));
     const copyId = uniqueIdentifier(existingIds, `${source.id}-copy`);
-    const offset = [0.45, 0, 0.45];
     const cloned = structuredClone(source);
     cloned.id = copyId;
     cloned.label = `${source.label ?? source.id} copy`;
     cloned.translation = roundVector([
-      (source.translation?.[0] ?? 0) + offset[0],
+      (source.translation?.[0] ?? 0) + COPY_OFFSET[0] * offsetSteps,
       source.translation?.[1] ?? 0,
-      (source.translation?.[2] ?? 0) + offset[2],
+      (source.translation?.[2] ?? 0) + COPY_OFFSET[2] * offsetSteps,
     ]);
+    // The parent may be gone by the time a copy is pasted.
+    if (cloned.parent !== undefined && !existingIds.has(cloned.parent)) {
+      delete cloned.parent;
+    }
     applySceneOperations([{ type: 'add-node', node: cloned }]);
     selectedNodeId = copyId;
     selectedObjectKey = null;
     notify({ kind: 'topology', nodeId: copyId });
     return cloned;
+  }
+
+  function duplicateSelected() {
+    return addNodeCopy(selectedSourceNode('duplicating'), 1);
+  }
+
+  /** Remembers the selected node, as it is now, for pasteCopy. The scene is not touched. */
+  function copySelected() {
+    copiedNode = structuredClone(selectedSourceNode('copying'));
+    pasteCount = 0;
+    return structuredClone(copiedNode);
+  }
+
+  /** Adds a copy of the node copySelected remembered; it still works after the original is deleted or the selection moved. */
+  function pasteCopy() {
+    if (!copiedNode) {
+      throw new RangeError('Copy a node before pasting: select one and use copySelected().');
+    }
+    pasteCount += 1;
+    return addNodeCopy(copiedNode, pasteCount);
   }
 
   function deleteSelected() {
@@ -2319,6 +2350,9 @@ export function createStudioController({
     addPrimitive,
     addSceneLight,
     duplicateSelected,
+    copySelected,
+    pasteCopy,
+    get canPaste() { return copiedNode !== null; },
     deleteSelected,
     updateMaterial,
     createMaterial,
