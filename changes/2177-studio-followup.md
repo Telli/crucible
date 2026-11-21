@@ -1,0 +1,1 @@
+- Studio's Material tab has a Clearcoat roughness slider and a Double sided switch, and moving Clearcoat no longer resets a coat roughness already chosen (#2177)

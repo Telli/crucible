@@ -95,7 +95,8 @@ const STUDIO_WORKSPACES = Object.freeze([
   Object.freeze({ id: 'look', label: 'Look', icon: 'material', tabs: Object.freeze(['material', 'look']) }),
   Object.freeze({ id: 'animate', label: 'Animate', icon: 'play', tabs: Object.freeze(['camera']) }),
 ]);
-const PRIMITIVE_LABELS = Object.freeze({ icoSphere: 'Icosphere' });
+const DEFAULT_CLEARCOAT_ROUGHNESS = 0.08;
+const PRIMITIVE_LABELS =Object.freeze({ icoSphere: 'Icosphere' });
 const primitiveLabel = primitiveType => PRIMITIVE_LABELS[primitiveType] ?? primitiveType[0].toUpperCase() + primitiveType.slice(1);
 const TREE_ICON_BY_GEOMETRY = Object.freeze({
   circle: 'plane',
@@ -1773,7 +1774,22 @@ export function createStudio(container, {
   });
   const clearcoatField = createSliderField(documentReference, 'Clearcoat', { min: 0, max: 1, step: 0.02, value: 0 }, value => {
     const materialId = activeMaterialId();
-    if (materialId) controller.updateMaterial(materialId, { clearcoat: value, clearcoatRoughness: 0.08 });
+    if (!materialId) return;
+    const material = controller.exportRecipe().materials.find(candidate => candidate.id === materialId);
+    // A coat starts glossy, but a roughness the person already chose stays.
+    const coatPatch = material?.clearcoatRoughness === undefined ? { clearcoat: value, clearcoatRoughness: DEFAULT_CLEARCOAT_ROUGHNESS } : { clearcoat: value };
+    controller.updateMaterial(materialId, coatPatch);
+  });
+  const clearcoatRoughnessField = createSliderField(documentReference, 'Clearcoat roughness', { min: 0, max: 1, step: 0.02, value: 0 }, value => {
+    const materialId = activeMaterialId();
+    if (materialId) controller.updateMaterial(materialId, { clearcoatRoughness: value });
+  });
+  const doubleSidedToggle = createElement(documentReference, 'button', { type: 'button', textContent: 'Double sided', attributes: { 'aria-pressed': 'false' } });
+  doubleSidedToggle.addEventListener('click', () => {
+    const materialId = activeMaterialId();
+    if (!materialId) return;
+    const material = controller.exportRecipe().materials.find(candidate => candidate.id === materialId);
+    controller.updateMaterial(materialId, { doubleSided: !(material?.doubleSided ?? false) });
   });
   const opacityField = createSliderField(documentReference, 'Opacity', { min: 0.05, max: 1, step: 0.02, value: 1 }, value => {
     const materialId = activeMaterialId();
@@ -1793,9 +1809,11 @@ export function createStudio(container, {
     roughnessField.container,
     metallicField.container,
     clearcoatField.container,
+    clearcoatRoughnessField.container,
     opacityField.container,
     emissionField.container,
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Glow color' }), emissiveColorInput),
+    createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, doubleSidedToggle),
   );
 
   // Tab 3: Look Panel
@@ -2928,6 +2946,8 @@ export function createStudio(container, {
     roughnessField.input.disabled = !hasMaterial;
     metallicField.input.disabled = !hasMaterial;
     clearcoatField.input.disabled = !hasMaterial;
+    clearcoatRoughnessField.input.disabled = !hasMaterial;
+    doubleSidedToggle.disabled = !hasMaterial;
     opacityField.input.disabled = !hasMaterial;
     emissionField.input.disabled = !hasMaterial;
     if (activeMaterial) {
@@ -2937,6 +2957,8 @@ export function createStudio(container, {
       roughnessField.setValue(activeMaterial.roughness ?? 0.5);
       metallicField.setValue(activeMaterial.metallic ?? 0);
       clearcoatField.setValue(activeMaterial.clearcoat ?? 0);
+      clearcoatRoughnessField.setValue(activeMaterial.clearcoatRoughness ?? 0);
+      doubleSidedToggle.setAttribute('aria-pressed', activeMaterial.doubleSided === true ? 'true' : 'false');
       opacityField.setValue(activeMaterial.opacity ?? 1);
       emissionField.setValue(activeMaterial.emission ?? 0);
     }

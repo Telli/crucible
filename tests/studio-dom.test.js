@@ -558,6 +558,32 @@ test('Material tab edits colours and sliders as single undo steps', testContext 
   assert.equal(ui.label('Roughness').disabled, false);
 });
 
+test('Material tab edits clearcoat roughness and double sided, each as one undo step', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  ui.tab('material').click();
+  assert.equal(ui.label('Clearcoat roughness').value, '0');
+  assert.equal(ui.button('Double sided').getAttribute('aria-pressed'), 'false');
+
+  ui.setSlider('Clearcoat', 0.5);
+  assert.equal(ui.material('paint').clearcoatRoughness, 0.08);
+  ui.setSlider('Clearcoat roughness', 0.4);
+  assert.equal(ui.material('paint').clearcoatRoughness, 0.4);
+  assert.equal(ui.label('Clearcoat roughness').parentNode.querySelector('output').textContent, '0.40');
+  ui.setSlider('Clearcoat', 0.9);
+  assert.equal(ui.material('paint').clearcoatRoughness, 0.4, 'moving the coat keeps the chosen roughness');
+  ui.controller.undo();
+  ui.controller.undo();
+  assert.equal(ui.material('paint').clearcoatRoughness, 0.08);
+
+  ui.button('Double sided').click();
+  assert.equal(ui.material('paint').doubleSided, true);
+  assert.equal(ui.button('Double sided').getAttribute('aria-pressed'), 'true');
+  ui.controller.undo();
+  assert.equal(ui.material('paint').doubleSided, false);
+  assert.equal(ui.button('Double sided').getAttribute('aria-pressed'), 'false');
+});
+
 test('material presets, the material list and new materials work from the Material tab', testContext => {
   const ui = mountStudio(testContext);
   ui.selectRow('orb');

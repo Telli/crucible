@@ -194,6 +194,6 @@ controller.setSunAngles({ azimuthDegrees: -40, elevationDegrees: 52 });
 
 1. Viewport clicks and gizmo drags emit deterministic `set-node` updates on `translation`, `rotation` and `scale`, measured along the object's own axes.
 2. Surface snap (`Snap` mode or Alt-click) raycasts against other scene parts and offsets the node along the surface normal.
-3. Material and look controls update the active material, `environment` and `effects` sections directly.
+3. Material and look controls update the active material, `environment` and `effects` sections directly. The Material tab has colour, roughness, metallic, clearcoat, clearcoat roughness, opacity, emission, glow colour and a Double sided switch.
 4. Saved camera bookmarks read and write named shots in `recipe.timeline.shots`.
 5. Every change exports cleanly with `exportRecipe()` so AI agents can continue from the same scene revision.
