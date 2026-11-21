@@ -323,6 +323,10 @@ A node with an `asset` field places a GLB from the `--assets` catalog inside the
 - `scene_inspect` adds `assets`: per placement the asset id, part count, world bounds, clips (index, name, duration), material names and the playing clip.
 - `scene_apply` places a catalog asset with `add-node` even when the scene had none: the first `add-node` with an `asset` loads it, a second node with the same asset id shares its geometry. An id the catalog does not list fails with an error that names it and points at `scene_asset_catalog`, and the placement and asset bounds below still hold. A session made by `scene_create_asset` holds one imported asset and cannot place others. Render jobs draw placed assets and play their clips on scene time (`settings.motion.start`).
 
+### Clutter
+
+A node with a `clutter` field is a group that scatters pebbles, rocks, twigs and fallen leaves from the addon in [Ground clutter](https://crucible.codepawl.com/clutter.md): a list of one to four layers `{ "preset", "terrain" or "area", "density", "seed", "slopeLimit", "mask", "exclude", "cullDistance" }`. Its parts become generated child nodes like placed assets, and `scene_inspect` adds `clutter`. Fields, limits and an example are in [Recipes and MCP](https://crucible.codepawl.com/clutter.md#recipes-and-mcp).
+
 ### Vegetation
 
 A node with a `vegetation` field is a group that grows trees from the addon in [Vegetation](https://crucible.codepawl.com/vegetation.md). Its parts become generated child nodes like placed assets (`<node>/<instance>/<bark|foliage>`), left out of `scene_inspect` nodes and `scene_export_recipe`.
