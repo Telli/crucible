@@ -1539,7 +1539,7 @@ function blendedView(material) {
 function fadeMaterial(material, nodeId) {
   const alphaMode = material.alphaMode ?? 'opaque';
   if (alphaMode === 'blend' || alphaMode === 'add') return material;
-  if (alphaMode === 'mask') throw new RangeError(`Node "${nodeId}" has an opacity track, but its material uses alphaMode "mask", whose cutout is fixed per batch: use alphaMode "opaque" or "blend" on that material, or animate scale or visible instead.`);
+  if (alphaMode === 'mask') throw invalidField(`materials.${material.id}.alphaMode`, alphaMode, `opaque or blend, because node "${nodeId}" has an opacity track and a mask cutout is fixed per batch (or animate scale or visible instead)`);
   if (!blendedViews.has(material)) blendedViews.set(material, blendedView(material));
   return blendedViews.get(material);
 }
