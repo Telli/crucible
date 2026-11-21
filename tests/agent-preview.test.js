@@ -48,6 +48,25 @@ test('private review samples reset independently and camera overrides do not pub
   assert.equal(preview.reviewResult({ sessionId }).data, 'cG5n');
 });
 
+// Issue 2206: a review shot with fov failed on a scene camera that uses focalLength ("expected only one of fov or focalLength").
+test('a review shot with fov or no camera works on a scene camera that uses focalLength', () => {
+  const { preview } = previewHarness();
+  const input = recipe();
+  input.camera = { eye: [3, 2, 5], target: [0, 0, 0], focalLength: 30, sensorWidth: 36 };
+  const sessionId = 'review-focal-length';
+  preview.create({ recipe: input, sessionId, backend: 'cpu', memoryBudgetMiB: 64 });
+  const before = preview.exportRecipe({ sessionId });
+  preview.reviewBegin({ sessionId, width: 768, height: 408 });
+  const wide = preview.reviewShot({ sessionId, index: 0, width: 384, height: 384, columns: 2,
+    shot: { label: 'Wide', motionTime: null, rendererTime: 0, camera: { fov: 80 } } });
+  const same = preview.reviewShot({ sessionId, index: 1, width: 384, height: 384, columns: 2,
+    shot: { label: 'Authored', motionTime: null, rendererTime: 0, camera: { eye: [4, 2, 5] } } });
+  assert.equal(wide.camera.fov, 80);
+  assert.equal(wide.camera.focalLength, undefined);
+  assert.equal(same.camera.focalLength, 30);
+  assert.deepEqual(preview.exportRecipe({ sessionId }), before);
+});
+
 test('source suspend and resume preserve transient motion pose and checkpoints', () => {
   const harness = previewHarness();
   const input = recipe();
