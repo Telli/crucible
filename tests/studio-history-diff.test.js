@@ -96,6 +96,21 @@ test('an undo of an in-place edit keeps the same scene object', () => {
   assert.equal(controller.exportRecipe().nodes.find(node => node.id === 'hero').translation[0], 4);
 });
 
+test('redo of a lens change on a field-of-view camera runs in place, and its undo still restores the recipe', () => {
+  const controller = makeController();
+  const before = controller.exportRecipe();
+  controller.setCameraLensMillimetres(85);
+  const edited = controller.exportRecipe();
+  assert.equal(edited.camera.focalLength, 85);
+  assert.equal(Object.hasOwn(edited.camera, 'fov'), false);
+  controller.undo();
+  assert.deepEqual(controller.exportRecipe(), before, 'undo restores the field of view');
+  const sceneAfterUndo = controller.scene;
+  controller.redo();
+  assert.deepEqual(controller.exportRecipe(), edited, 'redo restores the focal length');
+  assert.equal(controller.scene, sceneAfterUndo, 'redo applied the camera in place');
+});
+
 test('undo of add, duplicate and delete rebuilds the scene and still restores the recipe', () => {
   const controller = makeController();
   const before = controller.exportRecipe();
