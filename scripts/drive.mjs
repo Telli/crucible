@@ -24,7 +24,7 @@ const GPU_ARGUMENTS = ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blockl
 const GIT_BASH_PATH = 'C:/Program Files/Git/bin/bash.exe';
 // Forward slashes: gpu-lock.sh finds its Rust binary by splitting its own path on /.
 // Optional GPU job queue on the maintainer's machine; set GPU_LOCK_SCRIPT to use another one. Skipped when absent.
-const GPU_LOCK_SCRIPT = process.env.GPU_LOCK_SCRIPT || `${homedir().replaceAll('\\', '/')}/.agents/tools/gpu-lock.sh`;
+const GPU_LOCK_SCRIPT = process.env.GPU_LOCK_SCRIPT || [homedir().replaceAll('\\', '/'), '.agents', 'tools', 'gpu-lock.sh'].join('/');
 const ALREADY_LOCKED_VARIABLE = 'DRIVE_GPU_LOCK_ACTIVE';
 const SERVER_START_TIMEOUT_MS = 60000;
 
