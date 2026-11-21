@@ -3561,13 +3561,27 @@ export function createStudio(container, {
   // The draft follows the edits a moment after they stop. While the notice offers the older draft, nothing overwrites it.
   let draftTimer = 0;
 
+  function writeDraftNow() {
+    draftTimer = 0;
+    saveStudioDraft(preferenceStorage, controller.exportRecipe(), activeFileName);
+  }
+
   function scheduleDraftSave() {
     if (draftNotice.visible || draftTimer) return;
-    draftTimer = setTimeout(() => {
-      draftTimer = 0;
-      saveStudioDraft(preferenceStorage, controller.exportRecipe(), activeFileName);
-    }, DRAFT_SAVE_DELAY_MILLISECONDS);
+    draftTimer = setTimeout(writeDraftNow, DRAFT_SAVE_DELAY_MILLISECONDS);
   }
+
+  // A window that closes or goes to the background may never run the timer, so the edit still waiting is written at once.
+  function flushDraftSave() {
+    if (!draftTimer) return;
+    clearTimeout(draftTimer);
+    writeDraftNow();
+  }
+  const flushDraftWhenHidden = () => {
+    if (documentReference.hidden) flushDraftSave();
+  };
+  documentReference.addEventListener('visibilitychange', flushDraftWhenHidden);
+  documentReference.defaultView?.addEventListener?.('pagehide', flushDraftSave);
 
   // Forgets the draft: the scene was saved, or the person chose another scene on purpose.
   function discardDraft() {
@@ -3721,6 +3735,8 @@ export function createStudio(container, {
       documentReference.removeEventListener('pointerdown', onAnyPointerDown, true);
       documentReference.removeEventListener('keydown', onWindowKeyDown);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
+      documentReference.removeEventListener('visibilitychange', flushDraftWhenHidden);
+      documentReference.defaultView?.removeEventListener?.('pagehide', flushDraftSave);
       stopWatchingContextLoss();
       pausedNotice.hide();
       resizeObserver?.disconnect();

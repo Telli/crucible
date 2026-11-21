@@ -3912,3 +3912,20 @@ test('picking an object in Animate opens its panel without leaving the workspace
   byDataset(ui.root, 'workspace', 'animate').click();
   assert.equal(ui.controller.activeTab, 'camera', 'Animate still opens on the camera');
 });
+
+test('an edit still waiting to be kept is written when the window goes to the background or closes', testContext => {
+  const storage = draftStorage();
+  const ui = mountStudio(testContext, { preferenceStorage: storage });
+  ui.selectRow('hero');
+  ui.controller.updateNodeTransform('hero', { translation: [3, 0.5, 0] });
+  assert.equal(storage.entries.has(DRAFT_KEY), false);
+  ui.dom.document.hidden = true;
+  dispatch(ui.dom.document, 'visibilitychange');
+  const draft = JSON.parse(storage.entries.get(DRAFT_KEY));
+  assert.deepEqual(draft.recipe.nodes.find(node => node.id === 'hero').translation, [3, 0.5, 0], 'no timer had to run');
+
+  storage.entries.clear();
+  ui.dom.document.hidden = false;
+  dispatch(ui.dom.document, 'visibilitychange');
+  assert.equal(storage.entries.has(DRAFT_KEY), false, 'nothing is written when no edit waits');
+});
