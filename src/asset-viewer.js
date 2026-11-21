@@ -35,7 +35,7 @@ const DEMO_SETTING = {
   yaw: 0,
   pitch: 1.15,
   focus: { minimum: [-0.34, 1.16, -0.3], maximum: [0.34, 1.3, 0.3] },
-  portraitFocus: { minimum: [-0.325, 1.16, -0.395], maximum: [0.325, 1.3, 0.345] },
+  portraitFocus: { minimum: [-0.3575, 1.16, -0.5], maximum: [0.4775, 1.3, 0.45] },
 };
 const FLOOR_COLOR = [0.34, 0.22, 0.13];
 const FRAME_MARGIN = 1.08;
@@ -183,7 +183,7 @@ async function showAsset(loaded, title, nextSetting = DEFAULT_SETTING) {
   asset = null;
   let nextRenderer;
   try {
-    nextRenderer = new CrucibleRenderer(canvas, loaded.parts, { ground: floorUnder(nextBounds, extent), hdr: true, environment: { ...lighting.environment, map: lighting.map }, samples: readQueryNumber(parameters, 'samples', 4, { minimum: 1, integer: true }), pixelRatio: parameters.get('export') === '1' ? 1 : Math.min(devicePixelRatio, 1.5), memoryBudgetMiB: readQueryNumber(parameters, 'memory', 256, { minimum: 1 }), shadowBounds: sunShadow ?? { target: center, eye: [center[0] - extent, center[1] + extent * 2, center[2] + extent], extent: extent * 1.5, near: extent * 0.01, far: extent * 8 } });
+    nextRenderer = new CrucibleRenderer(canvas, loaded.parts, { ground: floorUnder(nextBounds, extent), hdr: true, environment: { ...lighting.environment, map: lighting.map }, samples: readQueryNumber(parameters, 'samples', 4, { minimum: 1, integer: true }), pixelRatio: parameters.get('export') === '1' ? 1 : Math.min(devicePixelRatio, 2), memoryBudgetMiB: readQueryNumber(parameters, 'memory', 256, { minimum: 1 }), shadowBounds: sunShadow ?? { target: center, eye: [center[0] - extent, center[1] + extent * 2, center[2] + extent], extent: extent * 1.5, near: extent * 0.01, far: extent * 8 } });
   } catch (error) {
     loaded.dispose();
     throw error;

@@ -2,7 +2,7 @@
 // One driver for every page in FEATURES.md, so nobody writes a throwaway browser script.
 //
 //   node scripts/drive.mjs list [--surface Site|Bench|MCP|CLI]
-//   node scripts/drive.mjs shot <id> [--out file.png] [--origin url] [--width 1440] [--height 900] [--settle ms] [--full-page]
+//   node scripts/drive.mjs shot <id> [--out file.png] [--origin url] [--width 1440] [--height 900] [--scale 1] [--settle ms] [--full-page]
 //   node scripts/drive.mjs console <id> [--origin url] [--settle ms]       prints console errors, exits 1 when there are any
 //
 // Without --origin it uses a Vite dev server already answering on 127.0.0.1:5173, or starts one on a free port and stops it
@@ -116,7 +116,7 @@ async function openFeature(feature, flags, origin) {
   try {
     const width = Number(flags.width ?? 1440);
     const height = Number(flags.height ?? 900);
-    const page = await browser.newPage({ viewport: { width, height } });
+    const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: Number(flags.scale ?? 1) });
     await page.addInitScript(FAKE_POINTER_LOCK_SCRIPT);
     const problems = [];
     page.on('console', message => {
@@ -183,7 +183,7 @@ function requireId(positional, command) {
   return positional[0];
 }
 
-const USAGE = 'Usage: node scripts/drive.mjs list [--surface Site] | shot <id> [--out file.png] | console <id>   (flags: --origin --width --height --settle --full-page --no-gpu-lock)';
+const USAGE = 'Usage: node scripts/drive.mjs list [--surface Site] | shot <id> [--out file.png] | console <id>   (flags: --origin --width --height --scale --settle --full-page --no-gpu-lock)';
 
 async function main(argv) {
   const { command, positional, flags } = parseCommandLine(argv);
