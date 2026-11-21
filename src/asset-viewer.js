@@ -19,13 +19,28 @@ if (parameters.get('export') === '1') {
     document.querySelector('.workspace').style.height = `${height}px`;
   }
 }
-const SKY_URL = new URL('hdri/kloofendal_48d_partly_cloudy_puresky_1k.hdr', document.baseURI).href;
-const DEMO_URL = new URL('treasure-chest.glb', document.baseURI).href;
-const DEMO_TITLE = 'Treasure chest';
+// An asset opened from disk gets this sky, a warm floor and the sky's own sun.
+const DEFAULT_SETTING = { skyUrl: new URL('hdri/kloofendal_48d_partly_cloudy_puresky_1k.hdr', document.baseURI).href, skyRotation: 1.32, skyIntensity: undefined, environment: {}, exposure: 1, yaw: 0.65, pitch: 0.3, focus: null };
+// The demo is a flat lay: a camera on a walnut table in soft overcast window light, seen from high up, with the sun
+// shining through a window out of frame. `focus` is the box in metres (x, y up, z) the view fits instead of the whole table.
+const DEMO_URL = new URL('desk-flat-lay.glb', document.baseURI).href;
+const DEMO_TITLE = 'Camera on a desk';
+const DEMO_SETTING = {
+  skyUrl: new URL('hdri/kloofendal_28d_misty_puresky_1k.hdr', document.baseURI).href,
+  skyRotation: 0,
+  skyIntensity: 0.7,
+  environment: { lightDirection: [-0.25, 0.7, -0.66], keyColor: [1.3, 1.15, 1], sunAngularRadius: 0.09, pointLights: [{ position: [-0.4, 1.8, 0.7], color: [1, 0.82, 0.62], intensity: 4 }] },
+  exposure: 0.85,
+  yaw: 0,
+  pitch: 1.15,
+  focus: { minimum: [-0.62, 1.36, -0.32], maximum: [0.62, 1.5, 0.32] },
+};
 const FLOOR_COLOR = [0.34, 0.22, 0.13];
-const SKY_ROTATION = 1.32;
 const FRAME_MARGIN = 1.08;
-const state = { view: 'perspective', yaw: 0.65, pitch: 0.3, zoom: 1, time: 0, clip: 0, playing: false };
+// Distance, in picture heights, at which the lens shows that height of the table; measured on the desk at pitch 1.15.
+const FOCUS_DISTANCE_FACTOR = 0.86;
+const state = { view: 'perspective', yaw: DEFAULT_SETTING.yaw, pitch: DEFAULT_SETTING.pitch, zoom: 1, time: 0, clip: 0, playing: false };
+let setting = DEFAULT_SETTING;
 let asset;
 let renderer;
 let bounds;
@@ -33,15 +48,17 @@ let scheduledFrame = 0;
 let lastTime = 0;
 let pointer;
 let loadingRequest = 0;
-let skyRequest;
+const skyRequests = new Map();
 
-// The sky is fetched once and shared by every asset; a page that cannot fetch it still shows the asset, lit by the default sky.
-function loadSky() {
-  skyRequest ??= loadHdri(SKY_URL, { showBackground: true, rotation: SKY_ROTATION }).catch(error => {
-    notice(`Sky unavailable: ${error.message}`, true);
-    return null;
-  });
-  return skyRequest;
+// Each sky is fetched once; a page that cannot fetch it still shows the asset, lit by the default sky.
+function loadSky({ skyUrl, skyRotation, skyIntensity }) {
+  if (!skyRequests.has(skyUrl)) {
+    skyRequests.set(skyUrl, loadHdri(skyUrl, { showBackground: true, rotation: skyRotation, intensity: skyIntensity }).catch(error => {
+      notice(`Sky unavailable: ${error.message}`, true);
+      return null;
+    }));
+  }
+  return skyRequests.get(skyUrl);
 }
 
 // A warm floor under the asset, wide enough to reach the horizon, so the asset sits on something that takes its shadow.
@@ -86,18 +103,34 @@ function duration() {
   return asset?.animations[state.clip]?.duration ?? 0;
 }
 
+// The height of the picture that holds a focus box seen from above: the box side that runs up the picture, or the side that
+// runs across it divided by the canvas shape. A `turned` view looks along x instead of z, so the sides swap.
+function focusHeight(box, aspect, turned) {
+  const widthOnX = box.maximum[0] - box.minimum[0];
+  const depthOnZ = box.maximum[2] - box.minimum[2];
+  const across = turned ? depthOnZ : widthOnX;
+  const up = turned ? widthOnX : depthOnZ;
+  return Math.max(up, across / aspect) * FRAME_MARGIN;
+}
+
 function frame() {
   const aspect = canvas.width / canvas.height;
-  const target = bounds.minimum.map((value, axis) => (value + bounds.maximum[axis]) / 2);
+  const framed = setting.focus ? setting.focus : bounds;
+  const target = framed.minimum.map((value, axis) => (value + framed.maximum[axis]) / 2);
   const extent = Math.max(...bounds.maximum.map((value, axis) => value - bounds.minimum[axis]), 0.01);
-  const view = cameraView(state.view, { target, distance: extent * 2.5 });
-  const height = Math.max(extent * 0.01, fitOrthographicHeight(bounds, view, aspect, FRAME_MARGIN)) * state.zoom;
+  const focusExtent = Math.max(...framed.maximum.map((value, axis) => value - framed.minimum[axis]), 0.01);
+  const view = cameraView(state.view, { target, distance: focusExtent * 2.5 });
+  // A tall canvas turns the desk a quarter turn, so the long row of things runs up the picture.
+  const turned = Boolean(setting.focus) && aspect < 1;
+  const fitted = setting.focus && state.view === 'perspective' ? focusHeight(framed, aspect, turned) : fitOrthographicHeight(framed, view, aspect, FRAME_MARGIN);
+  const height = Math.max(focusExtent * 0.01, fitted) * state.zoom;
   view.orthographicHeight = height;
   view.near = Math.max(0.0001, extent / 1000);
   view.far = extent * 100;
   if (state.view === 'perspective') {
-    const distance = height * 1.7;
-    view.eye = [target[0] + Math.sin(state.yaw) * Math.cos(state.pitch) * distance, target[1] + Math.sin(state.pitch) * distance, target[2] + Math.cos(state.yaw) * Math.cos(state.pitch) * distance];
+    const distance = height * (setting.focus ? FOCUS_DISTANCE_FACTOR : 1.7);
+    const yaw = state.yaw + (turned ? Math.PI / 2 : 0);
+    view.eye = [target[0] + Math.sin(yaw) * Math.cos(state.pitch) * distance, target[1] + Math.sin(state.pitch) * distance, target[2] + Math.cos(yaw) * Math.cos(state.pitch) * distance];
   }
   return { ...view, time: state.time, exposure: Number(document.querySelector('#exposure').value), effects: { bloom: { strength: Number(document.querySelector('#bloom').value), threshold: 0.8 } } };
 }
@@ -140,12 +173,12 @@ function syncAnimation() {
   document.querySelector('#play').disabled = !duration();
 }
 
-async function showAsset(loaded, title) {
+async function showAsset(loaded, title, nextSetting = DEFAULT_SETTING) {
   const nextBounds = measureBounds(loaded.parts);
   const center = nextBounds.minimum.map((value, axis) => (value + nextBounds.maximum[axis]) / 2);
   const extent = Math.max(...nextBounds.maximum.map((value, axis) => value - nextBounds.minimum[axis]), 0.01);
-  const sky = await loadSky();
-  const lighting = sceneFileLighting(sky, loaded.lights);
+  const sky = await loadSky(nextSetting);
+  const lighting = sceneFileLighting(sky, loaded.lights, nextSetting.environment);
   const sunShadow = lighting.sunSplit ? sunShadowBounds(loaded.parts, lighting.environment.lightDirection) : null;
   renderer?.dispose();
   renderer = null;
@@ -161,6 +194,10 @@ async function showAsset(loaded, title) {
   renderer = nextRenderer;
   asset = loaded;
   bounds = nextBounds;
+  setting = nextSetting;
+  state.yaw = nextSetting.yaw;
+  state.pitch = nextSetting.pitch;
+  document.querySelector('#exposure').value = String(nextSetting.exposure);
   state.zoom = 1;
   state.time = 0;
   state.clip = 0;
@@ -255,7 +292,7 @@ document.querySelector('#save').addEventListener('click', async () => {
 window.__assetViewer = { state, openFile, showAsset, get renderer() { return renderer; }, get asset() { return asset; }, renderAt };
 window.__scene = { get renderer() { return renderer; }, get duration() { return duration(); }, pause, renderAt };
 try {
-  await showAsset(await loadGltf(DEMO_URL, { maxBytes: 8 * 1024 * 1024 }), DEMO_TITLE);
+  await showAsset(await loadGltf(DEMO_URL, { maxBytes: 8 * 1024 * 1024 }), DEMO_TITLE, DEMO_SETTING);
 } catch (error) {
   notice(error.message, true);
 }

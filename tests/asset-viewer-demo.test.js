@@ -2,31 +2,46 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const CHEST_PATH = new URL('../public/treasure-chest.glb', import.meta.url);
-const ONE_MEGABYTE = 1024 * 1024;
+const DESK_PATH = new URL('../public/desk-flat-lay.glb', import.meta.url);
+const SKY_PATH = new URL('../public/hdri/kloofendal_28d_misty_puresky_1k.hdr', import.meta.url);
+const VIEWER_PATH = new URL('../src/asset-viewer.js', import.meta.url);
+const FIVE_MEGABYTES = 5 * 1000 * 1000;
 const GLB_HEADER_BYTES = 12;
 const CHUNK_HEADER_BYTES = 8;
 
 function readGlbDocument(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  assert.equal(view.getUint32(0, true), 0x46546c67, 'treasure-chest.glb is a binary glTF');
+  assert.equal(view.getUint32(0, true), 0x46546c67, 'desk-flat-lay.glb is a binary glTF');
   const jsonLength = view.getUint32(GLB_HEADER_BYTES, true);
   const jsonStart = GLB_HEADER_BYTES + CHUNK_HEADER_BYTES;
   return JSON.parse(new TextDecoder().decode(bytes.subarray(jsonStart, jsonStart + jsonLength)));
 }
 
-test('the asset viewer demo chest is a small textured GLB', async () => {
-  const bytes = await readFile(CHEST_PATH);
-  assert.ok(bytes.length < ONE_MEGABYTE, `treasure-chest.glb is ${bytes.length} bytes; keep the demo under 1 MiB so the page opens fast`);
+test('the asset viewer demo desk is a textured GLB that stays under 5 MB', async () => {
+  const bytes = await readFile(DESK_PATH);
+  assert.ok(bytes.length < FIVE_MEGABYTES, `desk-flat-lay.glb is ${bytes.length} bytes; keep the demo under 5 MB so the page opens fast`);
   const document = readGlbDocument(bytes);
-  assert.equal(document.meshes.length, 5);
-  assert.ok(document.materials.some(material => material.pbrMetallicRoughness?.baseColorTexture), 'the chest keeps its base color texture');
-  assert.ok(document.materials.some(material => material.normalTexture), 'the chest keeps its normal map');
-  for (const image of document.images) assert.equal(image.mimeType, 'image/jpeg');
+  assert.ok(document.materials.some(material => material.pbrMetallicRoughness?.baseColorTexture), 'the desk keeps its base color textures');
+  assert.ok(document.materials.some(material => material.normalTexture), 'the desk keeps its normal maps');
+  assert.ok(document.nodes.length >= 5, 'the desk keeps the table, the camera and the props as separate nodes');
+  // The spectacles' base color keeps its alpha for the lenses, so it stays a PNG; every other texture is a JPEG.
+  const pngImages = document.images.filter(image => image.mimeType === 'image/png');
+  assert.ok(pngImages.length <= 1, `${pngImages.length} PNG textures; only the spectacles' alpha texture may stay PNG`);
+  for (const image of document.images) assert.match(image.mimeType, /^image\/(jpeg|png)$/);
 });
 
-test('the demo chest is credited as a CC0 Poly Haven model', async () => {
+test('the viewer opens on the desk lit by the shipped misty sky', async () => {
+  const viewer = await readFile(VIEWER_PATH, 'utf8');
+  assert.match(viewer, /desk-flat-lay\.glb/);
+  assert.match(viewer, /kloofendal_28d_misty_puresky_1k\.hdr/);
+  const sky = await readFile(SKY_PATH);
+  assert.equal(sky.subarray(0, 10).toString('latin1'), '#?RADIANCE', 'the sky is a Radiance HDR file');
+});
+
+test('the demo desk and its sky are credited as CC0 Poly Haven assets', async () => {
   const credits = await readFile(new URL('../public/textures/CREDITS.md', import.meta.url), 'utf8');
-  assert.match(credits, /polyhaven\.com\/a\/treasure_chest/);
+  for (const name of ['Camera_01', 'wooden_table_02', 'binder_notebook', 'round_spectacles', 'stationery_supplies', 'kloofendal_28d_misty_puresky']) {
+    assert.match(credits, new RegExp(`polyhaven\.com/a/${name}`), `${name} is credited`);
+  }
   assert.match(credits, /CC0/);
 });
