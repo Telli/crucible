@@ -1058,6 +1058,47 @@ test('keyboard shortcuts edit, undo, redo, duplicate and delete from anywhere in
   assert.equal(ui.status(), 'Add a keyframe first (K)');
 });
 
+test('editing the scene camera marks the file as unsaved, but orbiting does not', testContext => {
+  const ui = mountStudio(testContext);
+  assert.equal(ui.studio.dirty, false);
+  ui.controller.orbitCamera({ deltaAzimuth: 0.4 });
+  assert.equal(ui.studio.dirty, false, 'orbiting is navigation, not an edit');
+
+  ui.tab('camera').click();
+  byDataset(ui.root, 'focal', '85').click();
+  assert.equal(ui.studio.dirty, true, 'a lens chip is an edit');
+  assert.equal(ui.root.querySelector('.crucible-studio-filepill').dataset.dirty, 'true');
+});
+
+test('the Field of view row marks the file as unsaved', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  ui.setSlider('Field of view', 70);
+  assert.equal(ui.studio.dirty, true);
+});
+
+test('a camera view chip marks the file as unsaved', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  byText(ui.root, 'Top').click();
+  assert.equal(ui.studio.dirty, true);
+});
+
+test('selecting a mesh row after the Sun row leaves the Look tab for the object', testContext => {
+  const ui = mountStudio(testContext);
+  ui.objectRows().find(row => row.dataset.sceneObject === 'sun').querySelector('.crucible-studio-tree-select').click();
+  assert.equal(ui.controller.activeTab, 'look');
+  ui.selectRow('hero');
+  assert.notEqual(ui.controller.activeTab, 'look');
+  assert.equal(ui.panel(ui.controller.activeTab).hasAttribute('hidden'), false);
+  assert.equal(ui.tab(ui.controller.activeTab).getAttribute('aria-selected'), 'true');
+  assert.equal(ui.label('Assigned material').value, 'paint', 'the Properties card shows the selected object');
+
+  ui.tab('look').click();
+  ui.selectRow('orb');
+  assert.equal(ui.controller.activeTab, 'look', 'a Look tab opened by hand stays open when a mesh is picked');
+});
+
 test('keyboard shortcuts are ignored while typing and after the Studio left the page', testContext => {
   const ui = mountStudio(testContext);
   const nameInput = ui.label('Node label');

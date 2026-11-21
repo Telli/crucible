@@ -665,7 +665,8 @@ export function createStudioController({
     } else {
       applySceneOperations([{ type: 'set-camera', ...posePatch }], { recordUndo });
     }
-    notify({ kind: 'camera' });
+    // Only a move that went into undo changed the scene; a free orbit or the free view of a driven camera is navigation.
+    notify({ kind: 'camera', edited: recordUndo && !cameraIsDriven() });
     return viewCamera();
   }
 
@@ -1971,7 +1972,7 @@ export function createStudioController({
       throw new TypeError('updateCamera expects a camera patch object.');
     }
     applySceneOperations([{ type: 'set-camera', ...patch }]);
-    notify({ kind: 'camera' });
+    notify({ kind: 'camera', edited: true });
     return viewCamera();
   }
 
@@ -2000,6 +2001,7 @@ export function createStudioController({
       }
     }
     loadRecipe(recipe);
+    notify({ kind: 'camera', edited: true });
     return viewCamera();
   }
 

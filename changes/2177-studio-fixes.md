@@ -1,0 +1,1 @@
+- Studio marks the file as unsaved after a camera, lens or view edit (orbiting still does not), and picking a mesh after the Sun, a light or the camera leaves the Look or Camera tab instead of leaving the Properties card on the old object (#2177)

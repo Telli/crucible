@@ -155,6 +155,7 @@ await studio.ready;
 - Each function takes the id the recipe names and returns the file: a GLB and a Radiance `.hdr` as an `ArrayBuffer` or a `Uint8Array`, a `.cube` look as text. Pass only the ones your scenes use. An asset id is the SHA-256 of the file, which is how the MCP catalog names it.
 - Studio asks for a file once and keeps the decoded result until `studio.dispose()`, so a reload of the watched file, undo and redo do not fetch again.
 - `createStudio` still returns at once. When the recipe needs catalog files, Studio opens on the starting scene and swaps the recipe in when they have loaded; `studio.ready` settles then. Opening the scene is not an edit: nothing to undo, no unsaved mark.
+- The unsaved mark follows every edit of the scene, camera rows, lens chips and view chips included. Orbiting, zooming and panning are navigation and do not set it. Picking a mesh while the Sun, a light or the camera is selected leaves the Look or Camera tab for the mesh's own tab (Material, or Object from the camera).
 - `studio.loadExternalTextFile(text)`, the Open dialog and the recipe JSON dialog load catalog files the same way. `studio.openRecipe(recipe)` does it for a recipe object; `studio.loadRecipe(recipe)` stays synchronous and expects the files to be loaded already.
 - Without the function a scene needs, the scene on screen stays as it was and the status line says which file is missing and which function to pass.
 - Studio loads no Draco or KTX2 decoder. Serve a GLB that uses neither.

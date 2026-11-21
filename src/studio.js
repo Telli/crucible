@@ -2729,6 +2729,17 @@ export function createStudio(container, {
     );
   }
 
+  // The Look and Camera tabs show the camera, the sun or a light while one is selected. A mesh picked after that
+  // gets its own tab, so the Properties card never keeps describing the object that was left.
+  function selectNodeAndShowItsPanel(select) {
+    const leftSceneObject = controller.selectedObjectKey !== null;
+    const tabBefore = controller.activeTab;
+    select();
+    if (!leftSceneObject || !controller.selectedNodeId) return;
+    if (tabBefore === 'look') selectInspectorTab('material');
+    else if (tabBefore === 'camera') selectInspectorTab('node');
+  }
+
   function selectSceneObjectAndShowItsPanel(key) {
     controller.selectSceneObject(key);
     selectInspectorTab(key === 'camera' ? 'camera' : 'look');
@@ -2767,10 +2778,10 @@ export function createStudio(container, {
         createElement(documentReference, 'span', { className: 'crucible-studio-tree-label', textContent: node.label ?? node.id }),
       );
       selectButton.style.paddingLeft = `${4 + depth * 12}px`;
-      selectButton.addEventListener('click', () => controller.selectNode(node.id));
+      selectButton.addEventListener('click', () => selectNodeAndShowItsPanel(() => controller.selectNode(node.id)));
       selectButton.addEventListener('contextmenu', event => {
         event.preventDefault();
-        controller.selectNode(node.id);
+        selectNodeAndShowItsPanel(() => controller.selectNode(node.id));
         openObjectMenu(event.clientX, event.clientY);
       });
       selectButton.addEventListener('dblclick', () => {
@@ -3302,7 +3313,7 @@ export function createStudio(container, {
       if (controller.tool === 'snap' && controller.selectedNodeId && event.altKey) {
         controller.snapSelectedToAt(coordinates.x, coordinates.y);
       } else {
-        controller.pickAt(coordinates.x, coordinates.y);
+        selectNodeAndShowItsPanel(() => controller.pickAt(coordinates.x, coordinates.y));
         // A right press that did not drag picked what is under it: an object there gets its menu. It opens after
         // this release has been handled, because the release itself closes any open menu.
         if (event.button === 2 && controller.selectedNodeId) {
@@ -3487,7 +3498,7 @@ export function createStudio(container, {
     if (detail.deltaLabel !== undefined) {
       liveDeltaLabel = detail.deltaLabel;
     }
-    if (['topology', 'transform', 'transformCommit', 'material', 'look', 'undo', 'redo'].includes(detail.kind)) {
+    if (['topology', 'transform', 'transformCommit', 'material', 'look', 'undo', 'redo'].includes(detail.kind) || (detail.kind === 'camera' && detail.edited)) {
       isDirty = true;
     }
     syncUi();
