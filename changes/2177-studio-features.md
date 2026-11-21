@@ -1,2 +1,3 @@
 - Studio's Material tab has a Clearcoat roughness slider and a Double sided switch, and moving Clearcoat no longer resets a coat roughness already chosen (#2177)
 - Studio copies the selected object with Ctrl+C and pastes a copy with Ctrl+V (Edit menu and Help list too), as one undo step that still works after the original is deleted; the keys stay with the browser while typing or while text is selected (#2177)
+- Studio keeps unsaved work as a draft in localStorage and, on the next start, offers Restore or Discard when it differs from the scene that opened (skipped above about 2 MB, cleared by Save, New and Open) (#2177)

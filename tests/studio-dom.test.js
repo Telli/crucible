@@ -3770,3 +3770,93 @@ test('in a compact window both cards start right of the tool rail and share the 
   const outliner = rule('.crucible-studio[data-compact="true"] .crucible-studio-outliner');
   assert.ok(outliner.includes(`max-block-size: min(300px, ${room});`), 'the Scene card takes the other half, less the gap');
 });
+
+function draftStorage() {
+  const entries = new Map();
+  return {
+    entries,
+    getItem: key => entries.get(key) ?? null,
+    setItem: (key, value) => entries.set(key, value),
+    removeItem: key => entries.delete(key),
+  };
+}
+
+const DRAFT_KEY = 'crucible.studio.draft';
+
+test('edits are kept as a draft after a pause, and Save clears it', async testContext => {
+  const storage = draftStorage();
+  const ui = mountStudio(testContext, { preferenceStorage: storage });
+  assert.equal(storage.entries.has(DRAFT_KEY), false, 'nothing is kept before an edit');
+  ui.selectRow('hero');
+  ui.controller.updateNodeTransform('hero', { translation: [3, 0.5, 0] });
+  assert.equal(storage.entries.has(DRAFT_KEY), false, 'the write waits for the edits to pause');
+  ui.dom.runTimers();
+  const draft = JSON.parse(storage.entries.get(DRAFT_KEY));
+  assert.deepEqual(draft.recipe.nodes.find(node => node.id === 'hero').translation, [3, 0.5, 0]);
+
+  ui.controller.updateNodeTransform('hero', { translation: [4, 0.5, 0] });
+  ui.button('Save').click();
+  await ui.dom.settle();
+  ui.dom.runTimers();
+  assert.equal(storage.entries.has(DRAFT_KEY), false, 'a saved scene needs no draft, and the pending write is cancelled');
+});
+
+test('a draft that differs from the opened scene is offered, and Restore brings it back as one undo step', async testContext => {
+  const storage = draftStorage();
+  const first = mountStudio(testContext, { preferenceStorage: storage });
+  first.controller.updateNodeTransform('hero', { translation: [3, 0.5, 0] });
+  first.dom.runTimers();
+  first.studio.dispose();
+
+  const second = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
+  await second.studio.ready;
+  const notice = second.root.querySelector('.crucible-studio-draft');
+  assert.equal(notice.hidden, false);
+  assert.equal(second.node('hero').translation[0], 0, 'the opened scene is untouched until the person chooses');
+  assert.equal(second.studio.dirty, false);
+
+  second.button('Restore').click();
+  await second.dom.settle();
+  assert.equal(notice.hidden, true);
+  assert.deepEqual(second.node('hero').translation, [3, 0.5, 0]);
+  assert.equal(second.studio.dirty, true);
+  second.controller.undo();
+  assert.equal(second.node('hero').translation[0], 0);
+  assert.equal(storage.entries.has(DRAFT_KEY), true, 'the restored scene is still unsaved, so its draft stays');
+});
+
+test('Discard drops the draft, and a draft equal to the opened scene is not offered', async testContext => {
+  const storage = draftStorage();
+  const first = mountStudio(testContext, { preferenceStorage: storage });
+  const openedRecipe = first.studio.exportRecipe();
+  first.controller.updateNodeTransform('hero', { translation: [3, 0.5, 0] });
+  first.dom.runTimers();
+  first.studio.dispose();
+
+  const second = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
+  await second.studio.ready;
+  second.controller.updateNodeTransform('hero', { translation: [9, 0.5, 0] });
+  second.dom.runTimers();
+  assert.equal(JSON.parse(storage.entries.get(DRAFT_KEY)).recipe.nodes.find(node => node.id === 'hero').translation[0], 3, 'edits do not overwrite a draft that is still on offer');
+  second.button('Discard').click();
+  assert.equal(second.root.querySelector('.crucible-studio-draft').hidden, true);
+  assert.equal(storage.entries.has(DRAFT_KEY), false);
+  second.studio.dispose();
+
+  storage.setItem(DRAFT_KEY, JSON.stringify({ fileName: 'untitled.scene.json', recipe: openedRecipe }));
+  const third = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
+  await third.studio.ready;
+  assert.equal(third.root.querySelector('.crucible-studio-draft').hidden, true);
+});
+
+test('choosing a new scene on purpose clears the draft and its notice', async testContext => {
+  const storage = draftStorage();
+  storage.setItem(DRAFT_KEY, JSON.stringify({ fileName: 'old.scene.json', recipe: { ...makeRecipe(), nodes: [] } }));
+  const ui = mountStudio(testContext, { preferenceStorage: storage });
+  await ui.studio.ready;
+  assert.equal(ui.root.querySelector('.crucible-studio-draft').hidden, false);
+  byText(ui.root, 'Clean stage').click();
+  await ui.dom.settle();
+  assert.equal(storage.entries.has(DRAFT_KEY), false);
+  assert.equal(ui.root.querySelector('.crucible-studio-draft').hidden, true);
+});

@@ -27,6 +27,7 @@ import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-prope
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
+import { clearStudioDraft, createDraftNotice, DRAFT_SAVE_DELAY_MILLISECONDS, draftDiffersFrom, loadStudioDraft, saveStudioDraft } from './studio-draft.js';
 import { CONTEXT_LOST_MESSAGE, createPausedPictureNotice, describeFrameFailure, watchContextLoss } from './studio-context-loss.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
 import {
@@ -1209,6 +1210,7 @@ export function createStudio(container, {
       activeFilePath = null;
       activeFileName = `${templateKey}.scene.json`;
       isDirty = false;
+      discardDraft();
       syncFileBanner();
       announce(`New ${spec.label}`);
     });
@@ -1646,8 +1648,14 @@ export function createStudio(container, {
     createIcon: iconName => createIcon(documentReference, iconName),
     reload: () => documentReference.defaultView?.location?.reload?.(),
   });
+  const draftNotice = createDraftNotice({
+    documentReference,
+    createIcon: iconName => createIcon(documentReference, iconName),
+    onRestore: () => restoreDraft(),
+    onDiscard: () => discardDraft(),
+  });
   const stopWatchingContextLoss = watchContextLoss(canvas, { onLost: pauseForContextLoss, onRestored: recoverFromContextLoss });
-  viewportElement.append(canvas, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element);
+  viewportElement.append(canvas, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element, draftNotice.element);
 
   // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
   const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
@@ -2356,6 +2364,7 @@ export function createStudio(container, {
       if (!picked || picked.canceled) return;
       try {
         await loadExternalTextFile(picked.text, { filePath: picked.filePath, fileName: picked.fileName });
+        discardDraft();
         announce(`Opened ${picked.fileName}`);
       } catch (error) {
         announce(error.message);
@@ -2375,12 +2384,14 @@ export function createStudio(container, {
       activeFilePath = response.filePath;
       activeFileName = response.fileName;
       isDirty = false;
+      discardDraft();
       syncFileBanner();
       announce(`Saved ${activeFileName}`);
       return;
     }
     triggerBlobDownload(recipeText, activeFileName, 'application/json');
     isDirty = false;
+    discardDraft();
     syncFileBanner();
     announce(`Downloaded ${activeFileName}`);
   }
@@ -2395,6 +2406,7 @@ export function createStudio(container, {
     if (!file) return;
     try {
       await loadExternalTextFile(await file.text(), { filePath: null, fileName: file.name });
+      discardDraft();
       announce(`Loaded ${file.name}`);
     } catch (error) {
       announce(error.message);
@@ -3554,6 +3566,48 @@ export function createStudio(container, {
     requestFrame();
   }
 
+  // The draft follows the edits a moment after they stop. While the notice offers the older draft, nothing overwrites it.
+  let draftTimer = 0;
+
+  function scheduleDraftSave() {
+    if (draftNotice.visible || draftTimer) return;
+    draftTimer = setTimeout(() => {
+      draftTimer = 0;
+      saveStudioDraft(preferenceStorage, controller.exportRecipe(), activeFileName);
+    }, DRAFT_SAVE_DELAY_MILLISECONDS);
+  }
+
+  // Forgets the draft: the scene was saved, or the person chose another scene on purpose.
+  function discardDraft() {
+    clearTimeout(draftTimer);
+    draftTimer = 0;
+    clearStudioDraft(preferenceStorage);
+    draftNotice.hide();
+  }
+
+  async function restoreDraft() {
+    const draft = loadStudioDraft(preferenceStorage);
+    draftNotice.hide();
+    if (!draft) return;
+    try {
+      await prepareRecipe(draft.recipe);
+      controller.loadRecipe(draft.recipe);
+      isDirty = true;
+      syncFileBanner();
+      announce('Restored the unsaved changes');
+    } catch (error) {
+      clearStudioDraft(preferenceStorage);
+      announce(`The saved draft could not be restored: ${error.message}`);
+    }
+  }
+
+  function offerDraft() {
+    const draft = loadStudioDraft(preferenceStorage);
+    if (draft && draftDiffersFrom(draft, controller.exportRecipe())) {
+      draftNotice.show(draft.fileName);
+    }
+  }
+
   handleChange = detail => {
     selectionReadoutStale = true;
     // The object a key is holding is gone or no longer the selection: let go without touching the new scene.
@@ -3565,6 +3619,7 @@ export function createStudio(container, {
     }
     if (['topology', 'transform', 'transformCommit', 'material', 'look', 'undo', 'redo'].includes(detail.kind) || (detail.kind === 'camera' && detail.edited)) {
       isDirty = true;
+      scheduleDraftSave();
     }
     syncUi();
     if (detail.kind === 'tab' || insideDraw) return;
@@ -3619,6 +3674,7 @@ export function createStudio(container, {
     : Promise.resolve();
   // A host that does not await `ready` still sees the reason in the status line.
   ready.catch(() => {});
+  ready.then(offerDraft, () => {});
 
   return {
     get controller() { return controller; },
@@ -3662,6 +3718,7 @@ export function createStudio(container, {
       renderPass();
     },
     dispose() {
+      clearTimeout(draftTimer);
       clearTimeout(statusTimer);
       agentPresence.dispose();
       if (frameHandle) cancelAnimationFrame(frameHandle);
