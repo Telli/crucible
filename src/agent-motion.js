@@ -10,7 +10,6 @@ import { IK_SOLVER_TYPE_NAMES } from './motion-ik-solver-types.js';
 import { normalizeClipLayers } from './agent-clip-layers.js';
 import { normalizeKeyframeEasing } from './easing.js';
 import { normalizeFootLock } from './foot-lock.js';
-import { faceTracks } from './face-animation.js';
 import { bounded, denseArray, finite, knownKeys, valueFrom, MAX_KEYS_PER_TRACK } from './motion-validation.js';
 import { agentSceneModule } from './agent-scene-modules.js';
 
@@ -545,7 +544,7 @@ export function normalizeAgentMotion(input, recipe) {
   const oceanGeometries = new Set((recipe.geometries ?? []).filter(geometry => geometry.type === 'mesh' && (geometry.stack ?? []).some(node => node?.op === 'ocean')).map(geometry => geometry.id));
   const morphTargets = new Set(recipe.morphTargets ?? (recipe.geometries ?? []).flatMap(geometry => geometry.grow ? [geometry.grow.name] : (geometry.shapeKeys ?? []).map(key => key.name)));
   // motion.face is shorthand for morph tracks on those shape keys; the stored motion holds the tracks, not the shorthand.
-  const expandedFace = input.face === undefined ? [] : faceTracks(input.face, { morphTargets: [...morphTargets], duration });
+  const expandedFace = input.face === undefined ? [] : agentSceneModule('face').faceTracks(input.face, { morphTargets: [...morphTargets], duration });
   const identities = new Set();
   let keyframeCount = 0;
   const tracks = [...inputTracks, ...expandedFace].map((track, index) => {

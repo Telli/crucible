@@ -1,7 +1,7 @@
 import { mat4, quat } from 'gl-matrix';
 import { createAnimationClip, compileAnimationSampler } from './animation.js';
 import { createSceneGraph } from './scene-graph.js';
-import { blinkClosure } from './face-animation.js';
+import { blinkClosure } from './blink-curve.js';
 
 // Times are relative to the set's first shot, matching sampleFilm(). Repeated
 // values hold a thought; movements happen between those holds, never on a loop.

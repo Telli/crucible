@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseGltf } from '../src/gltf.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
-import { MAX_EXPRESSIONS, MAX_PHONEMES, blinkClosure, canonicalKeyName, detectRig, faceTracks } from '../src/face-animation.js';
+import { MAX_EXPRESSIONS, MAX_PHONEMES, canonicalKeyName, detectRig, faceTracks } from '../src/face-animation.js';
+import { blinkClosure } from '../src/blink-curve.js';
+import { loadAgentSceneModules } from '../src/agent-scene-modules.js';
 import { FACE_TARGETS, MIXAMO_LIKE, humanoidGlb, humanoidJoints } from './fixtures/humanoid-glb.js';
 
 const OCULUS_KEYS = ['sil', 'PP', 'FF', 'TH', 'DD', 'kk', 'CH', 'SS', 'nn', 'RR', 'aa', 'E', 'I', 'O', 'U'].map(name => `viseme_${name}`);
@@ -157,6 +159,7 @@ test('a motion carries face as the morph tracks it expands to, and seeking repea
   const asset = await parseGltf(humanoidGlb({ names: MIXAMO_LIKE, joints, face: true }), { maxVertices: 500000 });
   const face = { blink: { interval: 1, jitter: 0, seed: 3, start: 0.5 }, visemes: { map: { aa: { jawOpen: 1 } }, phonemes: [{ time: 0.2, phoneme: 'AA' }, { time: 1.2, phoneme: 'sil' }] } };
   const recipe = { format: 'crucible.asset', schemaVersion: 1, assetId: 'ef'.repeat(32), motion: { duration: 2, face } };
+  await loadAgentSceneModules(recipe);
   const scene = createAgentAssetScene(asset, recipe);
   const faceIndex = asset.parts.findIndex(part => part.name === 'Face');
   const weights = time => {

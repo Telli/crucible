@@ -9,9 +9,10 @@
 // The result is plain { kind: 'morph', id, property: 'weight', keyframes } tracks, so everything downstream (sampling,
 // render jobs, GLB export) is the morph track path that already exists. Same input and seed give the same keyframes.
 
+import { BLINK_HALF_DURATION, blinkClosure } from './blink-curve.js';
+
 export const MAX_PHONEMES = 4096;
 export const MAX_EXPRESSIONS = 64;
-export const BLINK_HALF_DURATION = 0.13;
 
 const DEFAULT_LAST_PHONEME_SECONDS = 0.12;
 const MINIMUM_BLINK_INTERVAL = 0.5;
@@ -20,12 +21,6 @@ const BLINK_FIELDS = ['interval', 'jitter', 'seed', 'start', 'keys'];
 const EXPRESSION_FIELDS = ['time', 'name', 'weight', 'blend'];
 const VISEME_FIELDS = ['phonemes', 'blend', 'coarticulation', 'map'];
 const RIGS = ['auto', 'arkit', 'oculus'];
-
-/** Eyelid closure of a blink `offset` seconds from its middle: 1 shut, 0 open. The film path uses the same curve. */
-export function blinkClosure(offset, halfDuration = BLINK_HALF_DURATION) {
-  const phase = Math.abs(offset) / halfDuration;
-  return phase < 1 ? Math.cos(phase * Math.PI / 2) ** 2 : 0;
-}
 
 // The fifteen Oculus visemes, and the ARPAbet phonemes (and a few spelled-out rests) that drive them.
 const VISEME_FOR_PHONEME = {
