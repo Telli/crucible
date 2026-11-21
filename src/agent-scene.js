@@ -2065,12 +2065,68 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return first.length === second.length && first.every((part, index) => part === second[index]);
   }
 
+  // An edit of a scene that holds this many triangles to rank does not wait for the search (#2905): it returns with the parts
+  // unranked and the search runs right after, on the next turn of the event loop. A new scene and a scene whose parts move
+  // are still ranked inside the call, so a render job built from a recipe never misses an offset.
+  const DEFERRED_FLUSH_TRIANGLES = 100_000;
+  let pendingFlush = null;
+
+  function triangleCountOf(parts) {
+    return parts.reduce((total, part) => total + (part.geometry?.indices?.length ?? 0) / 3, 0);
+  }
+
+  function cancelPendingFlush() {
+    if (pendingFlush) {
+      clearTimeout(pendingFlush.timer);
+      pendingFlush = null;
+    }
+  }
+
+  function shouldDeferFlush(recipe, parts) {
+    return state !== null && partsToRank(recipe, parts) === parts && triangleCountOf(parts) >= (options.deferFlushTriangles ?? DEFERRED_FLUSH_TRIANGLES)
+      && !rankedLists().some(candidate => sameParts(candidate.rankedParts, parts));
+  }
+
+  function rankAndStage(coplanar, recipe, parts, rest) {
+    const list = rankedList(coplanar, partsToRank(recipe, parts), rest);
+    // Ranked parts batch apart, so the list they are staged in is a new one: the renderer then regroups, also when the
+    // ranking is switched on or off for parts that did not change. The same parts, or their staged list, get it back.
+    // The rest and posed parts of a moving sea share one ranking (#2730), so each keeps its own staged list.
+    let staged = stagedByParts.get(parts);
+    if (!staged) {
+      staged = list.resolved.ranked ? Object.freeze([...parts]) : parts;
+      stagedByParts.set(parts, staged);
+      stagedByParts.set(staged, staged);
+    }
+    flushCache = { parts, staged, list, ...list.resolved };
+    return staged;
+  }
+
+  // Runs the deferred search now, whether the timer fired or a caller needs the ranks first. It is the same search a cold edit
+  // runs, so the result is byte for byte the same; the drawn parts are swapped for the ranked list as a topology change.
+  function settleFlush() {
+    const pending = pendingFlush;
+    if (!pending) {
+      return false;
+    }
+    cancelPendingFlush();
+    const staged = rankAndStage(agentSceneModule('coplanar'), pending.recipe, pending.parts, pending.rest);
+    if (staged !== pending.parts) {
+      const drawnChanged = state.parts === pending.parts;
+      state.restParts = state.restParts === pending.parts ? staged : state.restParts;
+      state.parts = drawnChanged ? staged : state.parts;
+      topologyRevision++;
+    }
+    return true;
+  }
+
   function stageCoplanarOffsets(recipe, parts, { rest = false } = {}) {
     if (!agentSceneModuleActive('coplanar', requestedModules)) {
       return parts;
     }
     const coplanar = agentSceneModule('coplanar');
     if (recipe.environment.resolveCoplanar === false) {
+      cancelPendingFlush();
       for (const list of rankedLists()) {
         coplanar.clearFlushParts(list.rankedParts);
       }
@@ -2080,18 +2136,17 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       flushCache = null;
       return parts;
     }
+    if (pendingFlush?.parts === parts) {
+      return parts;
+    }
     if (flushCache?.parts !== parts && flushCache?.staged !== parts) {
-      const list = rankedList(coplanar, partsToRank(recipe, parts), rest);
-      // Ranked parts batch apart, so the list they are staged in is a new one: the renderer then regroups, also when the
-      // ranking is switched on or off for parts that did not change. The same parts, or their staged list, get it back.
-      // The rest and posed parts of a moving sea share one ranking (#2730), so each keeps its own staged list.
-      let staged = stagedByParts.get(parts);
-      if (!staged) {
-        staged = list.resolved.ranked ? Object.freeze([...parts]) : parts;
-        stagedByParts.set(parts, staged);
-        stagedByParts.set(staged, staged);
+      cancelPendingFlush();
+      if (shouldDeferFlush(recipe, parts)) {
+        flushCache = { parts, staged: parts, list: null, ranked: 0, leftovers: [] };
+        pendingFlush = { parts, rest, recipe, timer: setTimeout(settleFlush, 0) };
+        return parts;
       }
-      flushCache = { parts, staged, list, ...list.resolved };
+      rankAndStage(coplanar, recipe, parts, rest);
     }
     return flushCache.staged;
   }
@@ -2127,6 +2182,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       return [];
     }
     if (state.recipe.environment.resolveCoplanar !== false) {
+      settleFlush();
       return agentSceneModule('coplanar').flushLeftoverDiagnostics(flushCache?.leftovers ?? []);
     }
     if (coplanarReportCache?.revision !== revision) {
@@ -2244,6 +2300,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     get topologyRevision() {
       return topologyRevision;
     },
+    /** True while an edit of a heavy scene has not ranked its near-coplanar triangles yet (#2905); it finishes on its own right after the edit. */
+    get flushPending() {
+      return pendingFlush !== null;
+    },
+    /** Ranks the near-coplanar triangles of a pending edit now, so a render or an export never misses an offset. Returns whether it had to. */
+    settleFlush,
     get camera() {
       return structuredClone(state.renderCamera);
     },

@@ -380,6 +380,8 @@ function syncShadowCascades(record) {
 }
 
 function draw(record, time = 0, camera = record.scene.camera, frameOptions = {}) {
+  // A heavy edit ranks its coplanar triangles right after it returns (#2905); a frame never draws them unranked.
+  record.scene.settleFlush?.();
   if (!record.renderer) throw new Error('The scene renderer is leased to a render job.');
   if (record.renderer.context.isContextLost()) {
     throw new Error('The render context was lost. Export the recipe and dispose this session.');
