@@ -16,8 +16,12 @@ function decodeBlob(blob) {
   return createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
 }
 
+// A query or hash on the folder (a signed or versioned CDN URL) stays after the file name instead of swallowing it (#2403).
 function joinUrl(baseUrl, fileName) {
-  return `${baseUrl.replace(/\/+$/, '')}/${fileName}`;
+  const suffixStart = baseUrl.search(/[?#]/);
+  const folder = suffixStart === -1 ? baseUrl : baseUrl.slice(0, suffixStart);
+  const suffix = suffixStart === -1 ? '' : baseUrl.slice(suffixStart);
+  return `${folder.replace(/\/+$/, '')}/${fileName}${suffix}`;
 }
 
 function validateChannels(channels) {

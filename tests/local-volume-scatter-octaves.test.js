@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { encodePng } from '../src/export-png.js';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { applyViewTransform } from '../src/view-transform.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_MAXIMUM_SCATTER_OCTAVES } from '../src/local-volumes.js';
@@ -158,7 +158,7 @@ test('the rasterizer and the CPU path tracer add about the same light for three 
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const { frames: [single, triple, omitted], glError } = await rasterFrames(page, [[SMOKE], [{ ...SMOKE, scatterOctaves: 3 }], [{ ...SMOKE, scatterOctaves: 1 }]]);
     assert.equal(glError, 0);
     assert.deepEqual(omitted, single, 'one octave must draw exactly as a volume with no scatterOctaves field');

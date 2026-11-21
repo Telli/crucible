@@ -1,4 +1,5 @@
 import { invalidField } from './field-error.js';
+import { emittingAreaLights } from './area-light-portal.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
 import { buildTriangleBvh } from './triangle-bvh.js';
 import { readTriangle } from './triangle-math.js';
@@ -153,7 +154,32 @@ export function withReach(lights, parts) {
     return Uint8Array.from(parts, part => (names.has(part.name) ? 1 : 0));
   };
   const linked = light => ({ ...light, reach: reachOf(light) });
-  return { pointLights: lights.pointLights.map(linked), spotLights: lights.spotLights.map(linked), areaLights: lights.areaLights.map(linked), sun: lights.sun && linked(lights.sun) };
+  const linkedPoint = light => ({ ...linked(light), ownEmitters: emittersAroundPoint(light.position, parts) });
+  return { pointLights: lights.pointLights.map(linkedPoint), spotLights: lights.spotLights.map(linked), areaLights: lights.areaLights.map(linked), sun: lights.sun && linked(lights.sun) };
+}
+
+/**
+ * One byte per part: 1 for an emissive part whose bounds hold `position`. A lamp mesh drawn around its own point light is the
+ * lamp, not an obstacle to it, so shadow rays of that light pass through such a part (#2299). A part that does not glow
+ * (a shade, a wall) still blocks the light. Null when no part is such a lamp.
+ */
+function emittersAroundPoint(position, parts) {
+  const surrounds = parts.map(part => emittedRadiance(part.material).some(channel => channel > 0) && boundsHoldPoint(part, position));
+  return surrounds.some(Boolean) ? Uint8Array.from(surrounds, flag => (flag ? 1 : 0)) : null;
+}
+
+function boundsHoldPoint({ geometry, matrix }, point) {
+  const minimum = [Infinity, Infinity, Infinity];
+  const maximum = [-Infinity, -Infinity, -Infinity];
+  const source = geometry.positions;
+  for (let vertex = 0; vertex < source.length; vertex += 3) {
+    for (let axis = 0; axis < 3; axis++) {
+      const transformed = matrix[axis] * source[vertex] + matrix[4 + axis] * source[vertex + 1] + matrix[8 + axis] * source[vertex + 2] + matrix[12 + axis];
+      minimum[axis] = Math.min(minimum[axis], transformed);
+      maximum[axis] = Math.max(maximum[axis], transformed);
+    }
+  }
+  return [0, 1, 2].every(axis => point[axis] >= minimum[axis] && point[axis] <= maximum[axis]);
 }
 
 function lightReaches(light, owner) {
@@ -174,7 +200,7 @@ export function normalizeLights(lighting) {
     return { position: Array.from(light.position), color: Array.from(light.color ?? [1, 1, 1]), intensity: light.intensity, range, radius };
   });
   const spotSources = lighting.spotLights ?? [];
-  const areaSources = lighting.areaLights ?? [];
+  const areaSources = emittingAreaLights(lighting.areaLights);
   const spotLights = withAffects(normalizeSpotLights(spotSources), spotSources);
   const areaLights = withAffects(normalizeAreaLights(areaSources), areaSources);
   const keyColor = lighting.keyColor ?? [0, 0, 0];
@@ -351,14 +377,28 @@ export function cosineDirection(normal, firstUnit, secondUnit, out) {
 export function createDirectIrradiance(tracer, lights, offset, scale, sunReaching = null) {
   const result = [0, 0, 0];
   const shadowReach = scale * 1e6;
-  function addLight(point, normal, toLight, distance, power) {
+  // Whether a part other than the light's own lamp mesh (`ownEmitters`, see emittersAroundPoint) stands between the point and the light.
+  function shadowed(point, normal, toLight, distance, ownEmitters) {
+    let originX = point[0] + normal[0] * offset;
+    let originY = point[1] + normal[1] * offset;
+    let originZ = point[2] + normal[2] * offset;
+    let remaining = distance;
+    while (remaining > 0) {
+      const hit = tracer.trace(originX, originY, originZ, toLight[0], toLight[1], toLight[2], remaining, ownEmitters === null);
+      if (hit.nearestTriangle < 0) return false;
+      if (ownEmitters === null || ownEmitters[tracer.triangleOwner[hit.nearestTriangle]] !== 1) return true;
+      const travelled = hit.nearestDistance + offset;
+      originX += toLight[0] * travelled;
+      originY += toLight[1] * travelled;
+      originZ += toLight[2] * travelled;
+      remaining -= travelled;
+    }
+    return false;
+  }
+  function addLight(point, normal, toLight, distance, power, ownEmitters = null) {
     const cosine = normal[0] * toLight[0] + normal[1] * toLight[1] + normal[2] * toLight[2];
     if (cosine <= 0) return;
-    const blocked = tracer.trace(
-      point[0] + normal[0] * offset, point[1] + normal[1] * offset, point[2] + normal[2] * offset,
-      toLight[0], toLight[1], toLight[2], distance, true,
-    ).nearestTriangle >= 0;
-    if (blocked) return;
+    if (shadowed(point, normal, toLight, distance, ownEmitters)) return;
     for (let channel = 0; channel < 3; channel++) result[channel] += power[channel] * cosine;
   }
   const toLight = [0, 0, 0];
@@ -426,7 +466,7 @@ export function createDirectIrradiance(tracer, lights, offset, scale, sunReachin
       toLight[2] = deltaZ / distance;
       const strength = light.intensity * pointLightFalloff(distanceSquared, light);
       for (let channel = 0; channel < 3; channel++) power[channel] = light.color[channel] * strength;
-      addLight(point, normal, toLight, distance - offset, power);
+      addLight(point, normal, toLight, distance - offset, power, light.ownEmitters ?? null);
     }
     for (const light of lights.spotLights) {
       if (lightReaches(light, owner)) addSpotLight(point, normal, light);

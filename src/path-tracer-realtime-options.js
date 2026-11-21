@@ -10,10 +10,11 @@ const CACHE_LEVEL_CELLS = 64;
 const SCENE_EXTENT_SCALE = 1e4;
 const MAX_FILTER_ITERATIONS = 16;
 
-function requirePositiveNumber(value, name) {
+// The history blend is 1 over the history length, capped by historyLimit: below 1 the new sample would weigh more than 1.
+function requirePositiveNumber(value, name, minimum = 0) {
   if (value === undefined) return;
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    throw new RangeError(`The real-time path tracer option ${name} must be a finite number above 0, got ${value}. Pass a positive value or leave it out for the default.`);
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value < minimum) {
+    throw new RangeError(`The real-time path tracer option ${name} must be a finite number ${minimum > 0 ? `of at least ${minimum}` : 'above 0'}, got ${value}. Pass a larger value or leave it out for the default.`);
   }
 }
 
@@ -42,7 +43,7 @@ function requireTraceSizeInRange(traceSize, outputSize, name) {
 /** The output and tracing sizes and the normalized tracer options of `createRealtimeTracer`'s raw options. */
 export function resolveRealtimeOptions(rawOptions) {
   requirePositiveNumber(rawOptions.resolutionDivisor, 'resolutionDivisor');
-  requirePositiveNumber(rawOptions.historyLimit, 'historyLimit');
+  requirePositiveNumber(rawOptions.historyLimit, 'historyLimit', 1);
   requirePositiveNumber(rawOptions.cacheCellSize, 'cacheCellSize');
   requireFilterIterations(rawOptions.filterIterations);
   requireOutputSize(rawOptions.width, 'width');

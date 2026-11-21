@@ -26,13 +26,19 @@ highlight.registerLanguage('xml', xml);
 highlight.registerLanguage('shell', shell);
 highlight.registerAliases(['bash', 'sh'], { languageName: 'shell' });
 
-/** Return highlighted HTML for source in a registered language. */
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+}
+
+/** Return highlighted HTML for source in a registered language; any other language gives the escaped source. */
 export function highlightCode(source, language) {
+  if (!highlight.getLanguage(language)) return escapeHtml(String(source));
   return highlight.highlight(source, { language }).value;
 }
 
 /** Colour a code element's own text in place. */
 export function highlightElement(element, language) {
   element.innerHTML = highlightCode(element.textContent, language);
-  element.classList.add('hljs', `language-${language}`);
+  element.classList.add('hljs');
+  if (highlight.getLanguage(language)) element.classList.add(`language-${language}`);
 }

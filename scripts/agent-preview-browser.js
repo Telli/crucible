@@ -30,6 +30,7 @@ import { parseGltf } from '../src/gltf.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { clipDisplayName, resolveClipIndex } from '../src/clip-name.js';
 import { exportGlb } from '../src/export.js';
+import { omittedFromGlb } from '../src/glb-export-omissions.js';
 import { matrixFrame } from '../src/export-skeleton.js';
 import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
@@ -439,6 +440,7 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   syncMeshBlend(record);
   const postPasses = record.scene.postPasses ?? [];
   record.renderer.userPasses?.set(postPasses);
+  record.renderer.userPasses?.setAntialias(record.scene.postPassesAntialias);
   applyRecipeWindHeading(record.renderer, environment);
   const { objectMotion, ...renderOptions } = frameOptions;
   const frame = { ...camera, environment: litEnvironment(record.scene.parts, environment, Boolean(record.renderer.groundPart)), effects, exposure: effects.exposure, time, lines: environment.lines, ...windFrame(environment), ...renderOptions, effects: effectsWithFStop(renderOptions.effects ?? effects, camera) };
@@ -688,6 +690,19 @@ async function loadPlacedAssets(pool, value, assetData) {
       pool.set(key, await parseCatalogAsset(bytesFromBase64(assetData[id]).buffer));
     }
   }
+}
+
+// A scene created without placed assets gets its pool the first time an edit places one; later edits reuse what is decoded.
+async function loadPlacedAssetsIntoSession(record, value, assetData) {
+  if (!record.placedAssets) {
+    if (typeof record.scene.provideAssets !== 'function') {
+      throw new Error('This session holds an imported asset, which cannot place other assets. Create a scene with scene_create, then add the asset node with scene_apply.');
+    }
+    record.placedAssets = new Map();
+    record.scene.provideAssets(record.placedAssets);
+  }
+  await loadAllAgentSceneModules();
+  await loadPlacedAssets(record.placedAssets, value, assetData);
 }
 
 function afterMeshBooleans(value, run) {
@@ -971,12 +986,15 @@ window.__agentPreview = {
       record.scene.sampleFrame({ animation, motionTime: shot.motionTime });
     } else {
       if (shot.animation !== undefined) throw new RangeError('Imported animation requires an asset scene.');
-      record.scene.sampleMotion(shot.motionTime);
+      // The same sampling a look and a render job use, so a camera track gives the same pose here as there.
+      if (shot.motionTime === null) record.scene.sampleMotion(null);
+      else sampleMotionTime(record.scene, shot.motionTime);
     }
-    const camera = createAgentScene({ format: 'crucible.scene', schemaVersion: 1,
-      geometries: [], materials: [], nodes: [], camera: { ...record.scene.camera, ...shot.camera } }).camera;
-    validatePreviewCamera(camera);
-    draw(record, shot.rendererTime, camera);
+    const camera = withCameraOverrides(record.scene.camera, shot.camera);
+    // The post pass clock is the pose's motion time, as in a look and a render job frame, so a pass anchored to a moving
+    // part stays on it.
+    const poseTime = record.scene.motionTime ?? undefined;
+    draw(record, shot.rendererTime, camera, poseTime === undefined ? {} : { passTime: poseTime });
     const render = renderInfo(record.renderer, viewProblems(record, camera, record.scene.effects.exposure));
     if (render.width < 64 || render.height < 64) throw new Error('Render budget reduced review below its minimum output size.');
     const context = reviewGrid.getContext('2d');
@@ -1001,6 +1019,11 @@ window.__agentPreview = {
     if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('render snapshot', expectedRevision, record.scene.revision));
     return { sourceRevision: record.scene.revision, recipe: record.scene.exportRecipe(),
       clips: record.asset ? record.asset.animations.map(clip => ({ duration: clip.duration })) : record.scene.placedClipEnds().map(duration => ({ duration })) };
+  },
+  // The part and material names an ID matte can name, read from the loaded scene so a job submit can refuse a name no frame will contain.
+  matteTargets({ sessionId }) {
+    const { passSupport } = requireSession(sessionId).renderer;
+    return { objectNames: passSupport.objectNames(), materialNames: Object.keys(passSupport.cryptomatteManifest().materials) };
   },
   suspend({ sessionId }) {
     const record = lookupSession(sessionId);
@@ -1282,15 +1305,7 @@ window.__agentPreview = {
   },
   async applyWithAssets(input) {
     const record = requireSession(input.sessionId);
-    if (!record.placedAssets) {
-      if (typeof record.scene.provideAssets !== 'function') {
-        throw new Error('This session holds an imported asset, which cannot place other assets. Create a scene with scene_create, then add the asset node with scene_apply.');
-      }
-      record.placedAssets = new Map();
-      record.scene.provideAssets(record.placedAssets);
-    }
-    await loadAllAgentSceneModules();
-    await loadPlacedAssets(record.placedAssets, input.assetNeeds ?? input.operations, input.assetData);
+    await loadPlacedAssetsIntoSession(record, input.assetNeeds ?? input.operations, input.assetData);
     return afterMeshBooleans(input.operations, () => this.applyLoaded(input));
   },
   applyLoaded({ sessionId, operations, expectedRevision }) {
@@ -1419,13 +1434,15 @@ window.__agentPreview = {
     return { sessionId, checkpointId, released: true };
   },
   /** Apply operations to a scratch copy and store the result as a branch. The source scene and its revision stay as they are. */
-  branchApply({ sessionId, name, operations, expectedRevision }) {
+  async branchApply({ sessionId, name, operations, expectedRevision, assetData }) {
+    const record = requireSession(sessionId);
+    if (record.asset) throw new TypeError('Branches support procedural recipe scenes.');
+    // The scratch copy places the same catalog assets as the scene, so it shares the scene's decoded pool.
+    if (recipeAssetNeeds(operations).length) await loadPlacedAssetsIntoSession(record, operations, assetData);
     return afterMeshBooleans(operations, () => {
-      const record = requireSession(sessionId);
-      if (record.asset) throw new TypeError('Branches support procedural recipe scenes.');
       if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('branch', expectedRevision, record.scene.revision));
       const baseRecipe = record.scene.exportRecipe();
-      const scratch = createAgentScene(baseRecipe);
+      const scratch = createAgentScene(baseRecipe, {}, { assets: record.placedAssets, sequenceFrames: record.sequenceFrames });
       validatePreviewCamera(candidateCamera(record, operations));
       scratch.apply(operations, { expectedRevision: scratch.revision });
       const { shared } = record.branches.fork(name, { recipe: scratch.exportRecipe(), baseRecipe, operations, baseRevision: expectedRevision });
@@ -1462,7 +1479,8 @@ window.__agentPreview = {
       throw new RangeError(`The GLB is ${binary.byteLength} bytes, above the ${maximumBytes} byte limit. Lower maxTextureSize or simplify the scene.`);
     }
     return { sessionId, revision: record.scene.revision, bytes: binary.byteLength,
-      parts: parts.length, clips: options.clips?.length ?? 0, data: bytesToBase64(new Uint8Array(binary)) };
+      parts: parts.length, clips: options.clips?.length ?? 0,
+      omitted: omittedFromGlb(record.scene.exportRecipe(), options.clips?.length ? (options.nodes ?? []).map(node => node.id) : []), data: bytesToBase64(new Uint8Array(binary)) };
   },
   dispose({ sessionId }) {
     releaseRecord(lookupSession(sessionId));

@@ -4,6 +4,7 @@ import { CLOSED_ROOM_SHARE, partMatrixLookup } from './closed-room.js';
 import { fittedClosedRoomShare } from './fitted-closed-room.js';
 import { partDiffuseAlbedo } from './ground-bounce.js';
 import { MAX_POINT_LIGHTS } from './light-limits.js';
+import { requireFiniteInRange } from './modeling-limits.js';
 
 // Light a sunlit patch sends on to the rest of a closed room. The patches are found once, when the scene is prepared: surfaces
 // of the room are sampled, the samples the sun reaches (a shadow ray) and that sit inside the room (most of a short cosine ray
@@ -31,6 +32,8 @@ export const DEFAULT_SUN_BOUNCE = 1;
 // A light closer than this share of the scene to a surface blows up as 1/d^2 into a hard speck, so a patch with less free space in front is left out.
 const MINIMUM_LIFT_SHARE = 0.03;
 const KEY_THRESHOLD = 1e-3;
+// A light's intensity is capped at this, so a larger strength only blows the frame out.
+const MAXIMUM_STRENGTH = 1e5;
 const EXCLUDED_TAGS = new Set(['liquid', 'foam', 'unlit', 'fire', 'smoke']);
 
 function isBounceSurface(part) {
@@ -189,9 +192,11 @@ function lightOfPatch(group, strength, tracer, probeOffset, sceneSize) {
 /**
  * The point lights that stand for the sunlit patches of a closed room: `[]` when the scene has no sun, is not a closed room,
  * is drawn with a bake or has no lit, enclosed surface. `strength` multiplies every light (`environment.sunBounce`).
- * `maximumLights` caps how many patches there are.
+ * `maximumLights` caps how many patches there are. A `report` object, when given, gets `reason` when the scene is past the
+ * light bake's triangle limit and no patch could be found.
  */
-export function findSunBounceLights(parts, environment, { strength = 1, maximumLights = SUN_BOUNCE_PATCH_LIGHTS } = {}) {
+export function findSunBounceLights(parts, environment, { strength = 1, maximumLights = SUN_BOUNCE_PATCH_LIGHTS, report = null } = {}) {
+  requireFiniteInRange('findSunBounceLights', 'strength', strength, 0, MAXIMUM_STRENGTH);
   if (strength <= 0 || maximumLights <= 0 || !hasSun(environment) || parts.some(part => part.material?.lightMap || part.material?.irradianceGrid)) return [];
   const share = fittedClosedRoomShare(parts, partMatrixLookup(parts));
   if (share === null || share < CLOSED_ROOM_SHARE) return [];
@@ -200,7 +205,10 @@ export function findSunBounceLights(parts, environment, { strength = 1, maximumL
   let sampled;
   try {
     sampled = sampleLitSurfaces(surfaces, sun);
-  } catch {
+  } catch (error) {
+    // Only a size limit is an expected miss; any other error is a bug and must surface.
+    if (!(error instanceof RangeError)) throw error;
+    if (report) report.reason = error.message;
     return [];
   }
   const { samples, tracer } = sampled;
@@ -216,14 +224,16 @@ const lightsOfParts = new WeakMap();
  * them; 0 returns the environment itself. The patches are found once for these parts and this sun and kept.
  */
 export function withSunBounce(parts, environment) {
-  const strength = environment.sunBounce ?? DEFAULT_SUN_BOUNCE;
+  const strength = requireFiniteInRange('withSunBounce', 'environment.sunBounce', environment.sunBounce ?? DEFAULT_SUN_BOUNCE, 0, MAXIMUM_STRENGTH);
   if (strength <= 0 || !hasSun(environment)) return environment;
   const existing = environment.pointLights ?? [];
   const room = Math.min(SUN_BOUNCE_PATCH_LIGHTS, MAX_POINT_LIGHTS - existing.length);
   const key = JSON.stringify([parts.length, environment.keyColor, environment.keyIntensity, environment.lightDirection, room]);
   let remembered = lightsOfParts.get(parts);
   if (remembered?.key !== key) {
-    remembered = { key, lights: findSunBounceLights(parts, environment, { strength: 1, maximumLights: room }), scaled: new Map() };
+    const report = {};
+    remembered = { key, lights: findSunBounceLights(parts, environment, { strength: 1, maximumLights: room, report }), scaled: new Map() };
+    if (report.reason) console.warn(`Sun bounce left out: ${report.reason}`);
     lightsOfParts.set(parts, remembered);
   }
   if (remembered.lights.length === 0) return environment;
