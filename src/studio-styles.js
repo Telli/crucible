@@ -331,9 +331,9 @@ export const STUDIO_CSS = `
 .crucible-studio-draft {
   position: absolute;
   inset-block-start: var(--studio-top);
-  inset-inline: var(--studio-edge);
+  inset-inline: calc(var(--studio-rail) + 2 * var(--studio-edge)) calc(var(--studio-side-width, 284px) + 2 * var(--studio-edge));
   inline-size: fit-content;
-  max-inline-size: min(520px, calc(100% - 2 * var(--studio-edge)));
+  max-inline-size: 520px;
   margin-inline: auto;
   gap: 10px;
   padding: 10px 12px;
@@ -342,6 +342,7 @@ export const STUDIO_CSS = `
   font-size: 13px;
   z-index: 9;
 }
+.crucible-studio[data-compact="true"] .crucible-studio-draft { inset-inline: var(--studio-edge); }
 .crucible-studio-paused[hidden],
 .crucible-studio-draft[hidden] { display: none; }
 .crucible-studio-paused p,
