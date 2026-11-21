@@ -140,7 +140,7 @@ test('lighting ranges include zero intensity and unlimited point range while rej
     { pointLights: [{ position: [0, 0, 0], intensity: 100001 }] },
     { pointLights: [{ position: [0, 0, 0], color: [1, -0.01, 0] }] },
     { keyIntensity: 101 }, { fillIntensity: -1 }, { ambientIntensity: null }, { daylight: 101 },
-    { keyColor: [1001, 0, 0] }, { fogDensity: 11 }, { skyTop: [0, 1001, 0] }, { fogColor: [0, -1, 0] },
+    { keyColor: [1001, 0, 0] }, { fogDensity: 11 }, { skyTop: [0, 2, 0] }, { fogColor: [0, -1, 0] },
     { lightDirection: [0, 0, 0] }, { lightDirection: [0, 1e-7, 0] }, { lightDirection: [0, 1000001, 0] },
   ];
   for (const environment of invalid) {

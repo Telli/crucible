@@ -288,10 +288,6 @@ function volumeFogFrom(input = {}) {
 /** The fields a physical sky fills from its sun and haze that a recipe may still set itself: its own value wins over the sky's. */
 export const SKY_OVERRIDABLE_FIELDS = Object.freeze(['keyColor', 'fogColor', 'fogDensity']);
 
-// skyTop, skyBottom and fogColor are radiance, not display colours: a gradient sky with a bright stop writes values above 1
-// (#d8f3f7 gives 2.35 under aces), and a render job normalizes that snapshot again. keyColor has the same ceiling.
-const SKY_RADIANCE_MAXIMUM = 1000;
-
 function environmentFrom(input = {}) {
   knownKeys(input, ENVIRONMENT_FIELDS, 'environment');
   const world = fallback(input.world, false);
@@ -315,9 +311,9 @@ function environmentFrom(input = {}) {
     ambientIntensity: numberInRange(fallback(input.ambientIntensity, defaults.ambientIntensity), 0, 100, 'environment.ambientIntensity'),
     daylight: numberInRange(fallback(input.daylight, 1), 0, 100, 'environment.daylight'),
     pointLights: lightListFrom(input.pointLights, MAX_POINT_LIGHTS, 'environment.pointLights').map((light, index) => withFieldPrefix(`environment.pointLights[${index}]`, () => pointLightFrom(light))),
-    skyTop: vectorInRange(fallback(input.skyTop, defaults.skyTop), 0, SKY_RADIANCE_MAXIMUM, 'environment.skyTop'),
-    skyBottom: vectorInRange(fallback(input.skyBottom, defaults.skyBottom), 0, SKY_RADIANCE_MAXIMUM, 'environment.skyBottom'),
-    fogColor: vectorInRange(fallback(input.fogColor, [0.35, 0.43, 0.43]), 0, SKY_RADIANCE_MAXIMUM, 'environment.fogColor'),
+    skyTop: vectorInRange(fallback(input.skyTop, defaults.skyTop), 0, 1, 'environment.skyTop'),
+    skyBottom: vectorInRange(fallback(input.skyBottom, defaults.skyBottom), 0, 1, 'environment.skyBottom'),
+    fogColor: vectorInRange(fallback(input.fogColor, [0.35, 0.43, 0.43]), 0, 1, 'environment.fogColor'),
     fogDensity: input.fogDensity === undefined || input.fogDensity === null ? null : numberInRange(input.fogDensity, 0, 10, 'environment.fogDensity'),
     volumeFog: volumeFogFrom(input.volumeFog),
   };

@@ -138,9 +138,9 @@ Sky colors use display RGB, matching the renderer's existing environment contrac
 | `ambientIntensity` | `1` | `0` to `100`. Scales the sky ambient and also the diffuse light and reflections of the setup environment map or HDRI, so `0` renders an HDRI-lit scene black whatever `environmentIntensity` is. For an HDRI-only scene keep it above `0` and set `keyIntensity` and `fillIntensity` to `0` |
 | `daylight` | `1` | `0` to `100` |
 | `pointLights` | `[]` | At most 16 point light records |
-| `skyTop` | `[0.2, 0.38, 0.52]` | Radiance components from `0` to `1000` (a gradient sky with a bright stop writes values above `1`) |
-| `skyBottom` | `[0.62, 0.7, 0.67]` | Radiance components from `0` to `1000` (a gradient sky with a bright stop writes values above `1`) |
-| `fogColor` | `[0.35, 0.43, 0.43]` | Radiance components from `0` to `1000` (a gradient sky with a bright stop writes values above `1`) |
+| `skyTop` | `[0.2, 0.38, 0.52]` | Components from `0` to `1` |
+| `skyBottom` | `[0.62, 0.7, 0.67]` | Components from `0` to `1` |
+| `fogColor` | `[0.35, 0.43, 0.43]` | Components from `0` to `1` |
 | `fogDensity` | `null` | `0` to `10`. `null` fits the density to the scene: `0.006`, or `1.2` divided by the scene diagonal in metres when that is smaller, so a 900 m scene keeps 30 percent of its contrast at the far side. Set `0` for no fog |
 | `volumeFog` | Complete defaults below | One bounded world volume |
 | `localVolumes` | Absent | Up to 8 box, sphere or mesh (a part) volumes that absorb and emit light; see [volume fog](https://crucible.codepawl.com/volumetric.md#local-volumes) |
