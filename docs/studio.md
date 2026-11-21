@@ -111,9 +111,36 @@ G, R and S work as in Blender. With an object selected and the pointer over the 
 
 A right click on an object, in the viewport or in the Scene list, selects it and opens its menu at the pointer: Frame, Duplicate, Hide, the three resets and Delete. They are the same rows as in **Edit**, with the same keys. A menu row starts with its icon when one fits and with an empty square when none does, so the labels line up. Dragging with the right button still pans. Alt takes back what the plain key does: G, R and S change a transform and Alt+G, Alt+R and Alt+S reset it, H hides the selection and Alt+H shows everything again, as one undo step.
 
+## Keymaps
+
+**Settings ▸ Keys** (or the **Keys** step of the setup) switches the keys to those of another program: **Blender** (the table above, the default), **Maya** or **Cinema 4D**. The change is live: key presses, the keys beside menu rows, tooltips, the pill at the bottom of the viewport and the shortcuts dialog all follow it at once, with no reload. Only the keys the vendors list are set; every other action keeps its Blender key. The sources are Autodesk, [All Maya Hotkeys](https://help.autodesk.com/cloudhelp/2025/ENU/Maya-KeyboardShortcuts/files/GUID-30CACC9D-8FBE-4B85-8A8F-C5ADF32DDD4E.htm), and Maxon, [Keyboard Shortcuts](https://help.maxon.net/c4d/en-us/Content/html/Shortcuts.html).
+
+| Action | Blender | Maya | Cinema 4D |
+| --- | --- | --- | --- |
+| Select | Q | Q | 9 |
+| Move | G | W | E |
+| Rotate | R | E | R |
+| Scale | S | R | T |
+| Snap to a surface | T | J | Shift+S |
+| Duplicate | Shift+D, Ctrl+D | Ctrl+D | Shift+D, Ctrl+D |
+| Delete | X, Delete, Backspace | Delete, Backspace | Backspace, Delete |
+| Undo | Ctrl+Z | Ctrl+Z | Ctrl+Z |
+| Redo | Ctrl+Shift+Z | Ctrl+Y, Ctrl+Shift+Z | Ctrl+Shift+Z |
+| Hide the selection | H | Ctrl+H | H |
+| Show all | Alt+H | Ctrl+Shift+H | Alt+H |
+| Deselect | Esc | Esc | Ctrl+Shift+A, Esc |
+| Frame the selection | F, . | F | O, S |
+| Show or hide Properties | N | Ctrl+A | Shift+F5 |
+| Insert a keyframe | I, K | S | F9 |
+| Play | Space | Alt+V | F8 |
+
+In Maya and Cinema 4D a tool key only selects the tool and its handles appear; it does not pick the object up under the pointer the way G, R and S do in Blender, so the shortcuts dialog has no "while holding" rows there. Studio's **Show all** shows everything that is hidden; Maya's own Ctrl+Shift+H is "Show Last Hidden", the nearest key it lists. The keys of the Holding-an-object context (X, Y and Z for an axis, Enter, Esc) do not change, and the keys that switch between Move, Rotate and Scale while holding follow the preset.
+
+Maya and Cinema 4D also take **Alt** with a mouse button on the viewport: Alt and the left button orbit, Alt and the middle button pan, Alt and the right button zoom (drag right or up to come closer). It works over the objects and the handles, and it never selects or drags a handle. Plain left drag orbits, Shift, middle or right drag pan and the wheel keep working in every preset.
+
 ## Settings
 
-**Edit ▸ Settings** (Ctrl+,) opens Settings: the step and the angle a Shift drag snaps to, the size of the handles, the workspace Studio opens in, the theme (System, Light or Dark), the performance tier, and whether the grid, the readout, the axis widget and the agent cursor show. They are kept in the browser (`localStorage`, key `crucible-studio-preferences`), not in the scene recipe, so a scene looks the same for everyone and each person keeps their own setup. **Reset** brings back the defaults. An app can pass `preferences` to `createStudio` to start from other values, `preferenceStorage: null` to keep nothing, and call `studio.setPreference(name, value)`.
+**Edit ▸ Settings** (Ctrl+,) opens Settings: the step and the angle a Shift drag snaps to, the size of the handles, the workspace Studio opens in, the theme (System, Light or Dark), the performance tier, the keys (Blender, Maya or Cinema 4D), and whether the grid, the readout, the axis widget and the agent cursor show. They are kept in the browser (`localStorage`, key `crucible-studio-preferences`), not in the scene recipe, so a scene looks the same for everyone and each person keeps their own setup. **Reset** brings back the defaults. An app can pass `preferences` to `createStudio` to start from other values, `preferenceStorage: null` to keep nothing, and call `studio.setPreference(name, value)`.
 
 **Theme** forces the Studio light or dark whatever the system says; System follows the system. The dialogs and menus follow it too. An app that wants to theme its own frame passes `onThemeChange(theme)` to `createStudio`; it is called with `'light'` or `'dark'` at the start and on each change.
 
@@ -121,14 +148,15 @@ A right click on an object, in the viewport or in the Scene list, selects it and
 
 ## Set up Studio
 
-The setup is four steps, one page each, named in a row at the top with an icon apiece (each is a button that jumps to it; the step you are on shows its text and icon at full strength, the others muted): **Theme**, **Performance**, **Modelling** and **AI agent**. Every choice carries an icon that shows what it does.
+The setup is five steps, one page each, named in a row at the top with an icon apiece (each is a button that jumps to it; the step you are on shows its text and icon at full strength, the others muted): **Theme**, **Performance**, **Modelling**, **Keys** and **AI agent**. Every choice carries an icon that shows what it does.
 
 - **Theme.** Each card is a miniature of the real Studio in that theme, and a choice changes the Studio behind the dialog at once. The miniature is built from Studio's own classes, so the real stylesheet draws it: the top bar, the tool rail with its real icons, the two panel cards as empty surfaces and the viewport as a plain block, with every label, row and field left out. It is a Studio root of its own with `data-theme` set, so the theme's tokens resolve again on that element and it shows its theme whatever theme Studio is in; **System** shows the light and the dark one side by side. It is laid out at the window's own proportions and scaled to the card, inert and hidden from assistive technology, and built once, the first time the dialog opens.
 - **Performance.** One row of four cards with an icon that reads as a pixel grid getting finer (Light, Balanced, Sharp) and a loop for Automatic. Each tier shows its pixel ratio and anti-aliasing on this screen; Automatic names the tier it took and the graphics card and cores it found.
 - **Modelling.** Move snap, rotate snap, handle size and start workspace, each row led by an icon and the workspace chips by the workspace's own icon.
+- **Keys.** Three cards, Blender, Maya and Cinema 4D, each with the program's logo and four of its real keys (Move, Rotate, Scale, Frame) read from the keymap, so the difference is shown.
 - **AI agent.** The prompt the **Agent** menu copies, beside a chat mark, and a button that copies it.
 
-Finishing, skipping or pressing Esc marks it done. Choices are the Settings preferences, so nothing is stored twice. All four steps share one grid cell, so the dialog is as tall as the tallest step (capped at the window height minus 48 pixels, then it scrolls inside) and never changes size between steps; a step with one block fills the cell.
+Finishing, skipping or pressing Esc marks it done. Choices are the Settings preferences, so nothing is stored twice. All five steps share one grid cell, so the dialog is as tall as the tallest step (capped at the window height minus 48 pixels, then it scrolls inside) and never changes size between steps; a step with one block fills the cell.
 
 Studio never opens the setup by itself, so tests, capture scripts and embedders get no modal. A host calls `studio.openSetup()`, usually when `studio.setupDone` is false. **Help ▸ Set up Studio…** opens it again. The development page opens it on a first visit, and `?setup=off` turns that off.
 
