@@ -95,7 +95,7 @@ The generators also enforce their existing numeric and modeling constraints.
 | `curve` | `points` or `shape` or `splines`, `closed`, `kind`, `weights`, `trim`, `grow`, `radius`, `taper`, `profile`, `resolution`, `radialSegments` | One of points, shape or splines, `false`, `bezier`, 1, none, none, `0.05`, none, round, `12`, `8` |
 | `text` | `text`, `size`, `depth`, `font`, `align`, `curveSegments` | Required string, `1`, `0.2`, `default`, `left`, `4` |
 | `terrain` | `size`, `resolution`, `seed`, `amplitude`, `holes` | `40` m, `64` cells, `1`, `1` m, none |
-| `floorPlan` | `walls`, `openings`, `height`, `thickness`, `part` | Required walls, none, `2.7` m, `0.2` m, `all` (see [floor-plan.md](floor-plan.md)) |
+| `floorPlan` | `walls`, `openings`, `height`, `thickness`, `part` | Required walls, none, `2.7` m, `0.2` m, `all` (see [floor-plan.md](https://crucible.codepawl.com/floor-plan.md)) |
 
 `seed` is a whole number from 0 to 2147483647 (anything else is refused, not rounded or wrapped). `terrain` is one seeded ground mesh from `-size / 2` to `size / 2` on X and Z with hills about y = 0 and up to 16 round `holes` (`{ center: [x, z], radius }`) that leave no surface; it loads on demand. Details are in `scene_capabilities` under `terrain`.
 
