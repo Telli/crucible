@@ -1,5 +1,5 @@
 // Measures KTX2 upload (issue #304) with Khronos's AnisotropyBarnLamp, in the PNG and the KHR_texture_basisu variant.
-//   gpu-lock: bash ~/.agents/tools/gpu-lock.sh node bench/ktx2/measure.mjs
+//   node bench/ktx2/measure.mjs (run it when no other job holds the GPU)
 // Downloads the glTF files (CC BY 4.0, Analytical Graphics, Inc. and Wayfair, LLC) into the gitignored artifacts/ktx2/, never committed.
 // Per backend (the RTX GPU, then SwiftShader) it loads each variant three times and records the formats, the texture bytes the
 // engine accounts for and the load time. On the GPU it also draws both variants through the Khronos framing of the reference

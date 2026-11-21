@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Times the add-explosion recipe from scene build to the encoded MP4 (#1050 Done-when: 8 s of 1080p video in under 30 s on an RTX 3060, raster).
 //
-//   bash ~/.agents/tools/gpu-lock.sh node scripts/measure-explosion-render-time.mjs --runs 3 --out artifacts/1050/timing
+//   node scripts/measure-explosion-render-time.mjs --runs 3 --out artifacts/1050/timing
 //
 // Each run starts a fresh MCP server (a cold bake: the grid bake is cached per process), builds the scene with scene_create and scene_apply add-explosion,
 // submits a video job and waits for it. The wall clock is split into the phases the job report names (bake, first draw, frames, encode) and the rest.

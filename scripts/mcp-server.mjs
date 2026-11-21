@@ -111,7 +111,7 @@ const materialPattern = z.strictObject({
   type: z.enum([...MATERIAL_PATTERN_TYPES, 'graph']).describe('Surface look: a preset, or graph for your own node graph (give graph). Directional presets (wood, planks, metal) run along axis.'),
   graph: materialGraph.optional().describe('Only with type graph.'),
   mapping: z.enum(MATERIAL_MAPPINGS).optional().describe('box (default) or uv, which needs UVs; see scene_capabilities.'),
-  colors: z.array(color).min(2).max(3).optional().describe('Linear RGB colours to mix, darker first. Bricks take a third for the mortar. Each type has good defaults.'),
+  colors: z.array(color).min(2).max(3).optional().describe('Two linear RGB colours to mix, darker first. Only bricks accepts a third, the mortar; any other type rejects three. Each type has good defaults.'),
   size: z.number().min(0.01).max(100).optional().describe('Metres per repeat of the texture, so it keeps its real size on any object and node scale.'),
   count: z.number().int().min(1).max(64).optional().describe('Features per repeat: planks, bricks across, tiles across, wood rings or noise cells.'),
   bump: z.number().min(0).max(4).optional().describe('Relief strength. 0 is flat.'),
@@ -162,8 +162,27 @@ const waterFields = {
   waterPreset: z.enum(['lake', 'sea', 'river']).optional().describe('Water tag.'),
   absorption: z.array(z.number().min(0).max(20)).length(3).optional().describe('Water tag: RGB per metre.'),
   turbidity: unit.optional().describe('Water tag: 0 clear to 1 murky.'),
+  foamVeins: z.strictObject({
+    amount: unit.optional().describe('0 off to 1, 0.6 default.'),
+    scale: z.number().min(0.25).max(4).optional().describe('Larger is finer veins, 1 default.'),
+  }).optional().describe('Water tag: foam veins spreading from the crests.'),
+  foamEdge: z.enum(['soft', 'hard']).optional().describe('Water tag: soft lace (default) or a hard painted edge.'),
+  foamWidth: z.number().min(0.25).max(4).optional().describe('Water tag: foam spread, 1 default.'),
+  contactFoam: z.strictObject({
+    width: z.number().min(1).max(64).optional().describe('Line width in screen pixels, 6 default.'),
+    hardness: unit.optional().describe('0 soft edge to 1 one pixel edge, 1 default.'),
+    noise: unit.optional().describe('How much the edge breaks up, 0.3 default.'),
+    drift: unit.optional().describe('0 static rim (default); above 0 the rim tears into segments that slide with time.'),
+    rim: z.boolean().optional().describe('false draws no contact line (default true).'),
+    color: z.array(z.number().min(0).max(1)).length(3).optional().describe('RGB, white default.'),
+  }).optional().describe('Water tag with alphaMode blend: foam line where the water meets other surfaces.'),
   caustics: z.record(z.string(), z.unknown()).nullable().optional().describe('Water tag: sun caustics on the bed, {scale, speed, intensity, depthFade}; scene_capabilities water.'),
   waterRamp: z.record(z.string(), z.unknown()).optional().describe('Water tag: flat colour ramp, see scene_capabilities water.'),
+  ripples: z.strictObject({
+    strength: unit.optional().describe('0 calm to 1 (default).'),
+    speed: z.number().min(0).max(2).optional().describe('1 default; 0 holds them still.'),
+    windDirection: z.number().min(-360).max(360).optional().describe('Degrees the small ripples run along.'),
+  }).optional().describe('Water tag: the small ripples; lower strength or speed to stop shimmer.'),
 };
 const subsurfaceTriple = ([minimum, maximum]) => z.tuple([0, 1, 2].map(() => z.number().min(minimum).max(maximum)));
 const subsurface = z.strictObject({
@@ -199,7 +218,7 @@ const materialFields = {
 };
 const materialTag = z.enum(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']).optional().describe('Surface kind; liquid, foam, foliage, grass and water change how it renders: see scene_capabilities materialTags and water.');
 const materialCore = coreOf(materialFields, ['color', 'metallic', 'roughness', 'emission', 'opacity']);
-const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
+const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics, foamEdge, foamWidth, foamVeins, contactFoam, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
 const materialListed = (strictSchema, description, extraCore) => listed('materialFields', strictSchema, `${description} ${materialMore}`, { ...extraCore, ...materialCore });
 const liquidOptics = z.strictObject({
   thickness: z.number().min(0).max(100).optional().describe('Metres of liquid where it faces the camera.'),

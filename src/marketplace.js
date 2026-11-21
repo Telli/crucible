@@ -1,5 +1,5 @@
+import './site-chrome.js';
 import './site.css';
-import './brand.js';
 import './marketplace.css';
 import { ADDON_AREAS, ADDON_CATALOG, addonImportLine } from './addon-catalog.js';
 import { addonPackages, firstPartyPackages, npmManifestPath } from './marketplace-npm.js';

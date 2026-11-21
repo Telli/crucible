@@ -598,9 +598,10 @@ function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = fal
 }
 
 // Camera fields from a timeline shot on top of the sampled camera, checked with the scene's own camera rules.
+// A fov override replaces the lens of a focalLength camera (applyCameraFields drops focalLength and sensorWidth), as scene_apply does.
 function withCameraOverrides(camera, overrides) {
   const merged = createAgentScene({ format: 'crucible.scene', schemaVersion: 1,
-    geometries: [], materials: [], nodes: [], camera: { ...camera, ...overrides } }).camera;
+    geometries: [], materials: [], nodes: [], camera: applyCameraFields({ ...camera }, overrides) }).camera;
   validatePreviewCamera(merged);
   return merged;
 }
@@ -990,7 +991,7 @@ window.__agentPreview = {
       if (shot.motionTime === null) record.scene.sampleMotion(null);
       else sampleMotionTime(record.scene, shot.motionTime);
     }
-    const camera = withCameraOverrides(record.scene.camera, shot.camera);
+    const camera = withCameraOverrides(record.scene.camera, shot.camera ?? {});
     // The post pass clock is the pose's motion time, as in a look and a render job frame, so a pass anchored to a moving
     // part stays on it.
     const poseTime = record.scene.motionTime ?? undefined;

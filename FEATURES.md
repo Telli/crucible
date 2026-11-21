@@ -124,10 +124,10 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: `node scripts/drive.mjs shot film`
 
 ### `modeling`
-- Name: Aster lantern (modeling player)
+- Name: Modeling (redirects to docs.html#procedural-modeling)
 - Surface: Site
 - Reach: `/modeling.html`
-- Source: `site/modeling.html`, `src/modeling-player.js`
+- Source: `site/modeling.html`
 - Drive: `node scripts/drive.mjs shot modeling`
 
 ### `view2d`
@@ -145,6 +145,14 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: none: start it through `npm run render -- --scene file`
 
 ## Bench and sample pages
+
+### `studio`
+- Name: Scene studio (development page; Studio is not published on the site)
+- Surface: Bench
+- Reach: `/bench/studio/index.html`
+- Source: `bench/studio/index.html`, `bench/studio/main.js`, `src/studio.js`
+- Ready: `Boolean(window.__studioPage?.renderer)`
+- Drive: `node scripts/drive.mjs shot studio`
 
 ### `bench-agent-modeling-look-harness`
 - Name: agent-modeling look-harness
