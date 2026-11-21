@@ -61,7 +61,7 @@ Scenes are plain data with stable IDs, so an agent can edit by ID and check each
 - `scene_look`: Render the active scene as a bounded PNG, optionally with part labels.
 - `scene_ask_user`: Open the view in the browser so the person pins points with notes; waits for Send.
 - `scene_review`: Compare one to four independent camera or motion samples in one labeled PNG grid.
-- `scene_wedge`: Render one field at 2 to 8 values side by side in one labeled PNG grid, to compare a look.
+- `scene_wedge`: Compare one field at 2 to 8 values in one labeled PNG grid; the scene stays unchanged.
 - `scene_checkpoint`: Save a private recipe snapshot.
 - `scene_restore`: Restore a checkpoint atomically using the current revision.
 - `scene_release_checkpoint`: Release one checkpoint slot.
