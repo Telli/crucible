@@ -672,15 +672,15 @@ export function createStudioController({
     const nextRecipe = entry.restoresCamera || currentRecipe.camera === undefined
       ? entry.recipe
       : { ...entry.recipe, camera: currentRecipe.camera };
-    if (!restoreRecipeInPlace(currentRecipe, nextRecipe)) {
+    if (!restoreRecipeInPlace(currentRecipe, nextRecipe, { allowRecordChanges: true })) {
       swapRecipe(nextRecipe);
     }
   }
 
   // Applies the difference as scene operations on the scene already built, which takes milliseconds where a rebuild
   // freezes a large scene. The exported recipe must match the target exactly, or the caller rebuilds from it.
-  function restoreRecipeInPlace(currentRecipe, targetRecipe) {
-    const operations = operationsBetweenRecipes(currentRecipe, targetRecipe);
+  function restoreRecipeInPlace(currentRecipe, targetRecipe, { allowRecordChanges = false } = {}) {
+    const operations = operationsBetweenRecipes(currentRecipe, targetRecipe, { allowRecordChanges });
     if (operations === null) {
       return false;
     }

@@ -38,7 +38,7 @@ Each tool has its own handle shape, so the shape says what a drag will do: arrow
 - **Rotate** turns the object by the angle the pointer sweeps on the ring. Hold Shift to turn in steps (15 degrees unless you change it in Settings). While you drag, the other two rings leave, a dashed spoke stays where the drag began, a solid spoke follows the object, and a faint wedge between them fills the angle turned so far. A turn can go past half a circle and keeps counting.
 - **Scale** on an axis handle scales by how far you pull it: twice the distance doubles that axis. The centre handle scales all three.
 
-One drag is one undo step, and undo leaves the viewport camera where you put it.
+One drag is one undo step, and undo leaves the viewport camera where you put it. Undo and redo of an edit, of adding or duplicating an object, and of deleting one change the scene already built instead of building it again, so a large scene stays responsive; putting a deleted object back into the middle of the list is the one step that still rebuilds it.
 
 ## Add an object or a light
 
