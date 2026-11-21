@@ -7,7 +7,7 @@ export const publishedDocuments = [
   'retarget.md',
   'skeleton-pose.md',
   'vehicle.md',
-  'vegetation.md', 'terrain.md', 'grass.md', 'clutter.md', 'light-bake.md', 'path-tracer.md', 'gaussian-splats.md',
+  'vegetation.md', 'terrain.md', 'floor-plan.md', 'grass.md', 'clutter.md', 'light-bake.md', 'path-tracer.md', 'gaussian-splats.md',
   'camera-path.md', 'lighting.md', 'volumetric.md', 'film-physics.md',
   'runtime.md',
   'streaming.md',
