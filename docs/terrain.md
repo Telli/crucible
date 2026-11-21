@@ -88,7 +88,7 @@ Memory: three `TEXTURE_2D_ARRAY`s on units 11, 12 and 14 (sRGB colour, normal, r
 
 `createTerrain({ holes: [{ center: [x, z], radius }] })` (up to 64 circles, radius in metres) leaves no surface where a cell centre falls inside a circle, so a cave mouth or a shaft opens through the ground. `terrain.isHole(x, z)` tells whether a point is inside one. `heightAt` and `normalAt` ignore holes and still return the surface that would be there, so check `isHole` before standing something on it. A coarser level of detail cuts a coarser hole (its cells are bigger), so give a hole a radius of a few finest cells at least. A hole that covers a whole chunk gives that chunk empty geometry. Without `holes` the meshes are byte-identical to before (a test keeps a digest).
 
-In a recipe, the same ground is the `terrain` geometry (`size`, `resolution`, `seed`, `amplitude`, `holes`): see [agent-scene](agent-scene.md). There, holes that remove every cell are refused with an error on `geometries[i].holes` (lower a radius or move a center), and a hole that removes no cell, because it does not reach a cell centre, returns a `terrain-hole-removes-no-cell` warning with the cell size (`size / resolution`) and the smallest radius that removes one. `scene_export_glb` names the node whose mesh has no triangles.
+In a recipe, the same ground is the `terrain` geometry: see [Recipe terrain](#recipe-terrain) and [agent-scene](agent-scene.md). There, holes that remove every cell are refused with an error on `geometries[i].holes` (lower a radius or move a center), and a hole that removes no cell, because it does not reach a cell centre, returns a `terrain-hole-removes-no-cell` warning with the cell size (`size / resolution`) and the smallest radius that removes one. `scene_export_glb` names the node whose mesh has no triangles.
 
 ## Terrain near water
 
@@ -143,6 +143,27 @@ const { points, length, searchNodes } = navmesh.findPath([-15, -15], [15, 15], {
 - **Measured** (40 m rolling ground at 64 cells, one 3 m hole, agent radius 0.3, corner to corner, Node on the Windows PC): 17,956 cells built in 13 ms, a path of 43.04 m (straight line 42.43 m) in 35 ms with 4,245 search nodes and 30 points.
 
 In an agent scene, `scene_inspect` takes `path: { ground, from: [x, z], to: [x, z], avoid, radius, maxSlope, cellSize, seconds, speed, lift, spacing }` and returns keyframes for a node translation track (`LINEAR`). `ground` is a node ID, `avoid` lists node IDs whose box footprints block. It reads the authored pose and changes nothing. Details are in `scene_capabilities` under `navigation`.
+
+## Recipe terrain
+
+The `terrain` geometry of a recipe calls `createTerrain` with these fields. A field you leave out keeps today's value, so an older recipe draws the same heights.
+
+| Field | Meaning | Range (default) |
+| --- | --- | --- |
+| `size`, `seed`, `amplitude` | ground width in metres, noise seed, hill height | 1 to 2000 (40), whole 0 to 2147483647 (1), 0 to 200 (1) |
+| `featureSize` | width of one hill in metres | 0.01 to 10000 (`size / 4`) |
+| `octaves` | noise layers; fewer is smoother | whole 1 to 8 (6) |
+| `warp` | metres a slow noise pushes the ground sideways, which bends valleys | 0 to 1000 (0) |
+| `ridged` | `true` grows ridged mountains in the patches the library picks | true or false (false) |
+| `mountainMask` | one share of ridged mountains over the whole ground; not together with `ridged` | 0 to 1 (0) |
+| `mountainAmplitude` | height of the ridged mountains in metres | 0 to 500 (46) |
+| `chunks`, `levels` | chunks per side, levels of detail | whole 1 to 64 (1), whole 1 to 6 (1) |
+| `resolution` | cells per chunk (the whole ground when `chunks` is 1) | whole 2 to 499 (64) |
+
+- A scene allows 250000 vertices by default and every chunk is its own mesh, so `chunks * chunks * (resolution + 1) ** 2` must stay under it. 499 cells is the largest single ground (250000 vertices, about 15 MB of geometry, under the 32 MB cap). The error names the vertex count and the cap.
+- `resolution` must divide by `2 ** (levels - 1)`, and `chunks * resolution` is at most 4096 cells per side, as in `createTerrain`.
+- A record with `chunks` or `levels` above 1 is built at its finest level, and the scene swaps in the level each chunk needs for the camera at every pose: each frame of a render job and each time of a camera track. The mesh is the same object while no chunk changes level. `heightAt`, vegetation and navigation read the finest grid, so heights do not depend on `chunks` or `levels`. A moved or scaled ground sees the camera in its own space.
+- `holes` cut cells of the whole ground (`chunks * resolution` across).
 
 ## Measured
 

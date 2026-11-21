@@ -576,7 +576,7 @@ const GEOMETRY_FIELDS = {
   curve: ['points', 'shape', 'splines', 'closed', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'radius', 'taper', 'profile', 'resolution', 'radialSegments'],
   text: ['text', 'size', 'depth', 'font', 'align', 'curveSegments'],
   mesh: ['base', 'edits', 'stack', 'smoothAngle', 'shapeKeys'],
-  terrain: ['size', 'resolution', 'seed', 'amplitude', 'holes'],
+  terrain: ['size', 'resolution', 'seed', 'amplitude', 'holes', 'featureSize', 'octaves', 'warp', 'ridged', 'mountainAmplitude', 'mountainMask', 'chunks', 'levels'],
   cloud: ['seed', 'puffs', 'width', 'height', 'flatBase', 'resolution', 'levels', 'upBias', 'unionSoftness'],
   fragment: ['source', 'seed', 'cells', 'index', 'impact', 'impactRadius'],
   dented: ['source', 'impacts', 'stiffness', 'maxDepth', 'radius'],
@@ -615,8 +615,8 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     return input.length;
   }
   for (const field of GEOMETRY_FIELDS[value.type]) {
-    // Terrain checks its own numbers (a whole resolution from 2 to 256), so its message names the real range; null is not absent there, so it still fails below.
-    if (value.type === 'terrain' && ['size', 'resolution', 'amplitude'].includes(field) && value[field] !== null) continue;
+    // Terrain checks its own numbers (a whole resolution from 2 to 499), so its message names the real range; null is not absent there, so it still fails below.
+    if (value.type === 'terrain' && ['size', 'resolution', 'amplitude', 'featureSize', 'octaves', 'warp', 'ridged', 'mountainAmplitude', 'mountainMask', 'chunks', 'levels'].includes(field) && value[field] !== null) continue;
     if (value.type === 'cloud' && value[field] !== null) continue;
     if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact', 'impacts'].includes(field)) {
       finite(value[field], field);
@@ -1385,7 +1385,7 @@ function stagePose(stagedState, time) {
   }
   const camera = sampled?.camera ? cameraPoseFrom(sampled.camera) : stagedState.recipe.camera;
   retainedMatrices(stagedState.parts);
-  const clothGeometries = sampledGeometries(stagedState, time, sampled);
+  const clothGeometries = withTerrainLod(sampledGeometries(stagedState, time, sampled), stagedState, graph, camera);
   // Staged last: a pose pending on a decoded asset must be committed or discarded, so nothing above may throw after it.
   const assetClips = stagedState.assetRuntime.animators.length ? agentSceneModule('assets').stageAssetClips(stagedState.assetRuntime, graph, time) : null;
   const movedLook = stagedState.motionSampler && agentSceneModule('motion').motionMovesLook(sampled) ? sampled : null;
@@ -1484,6 +1484,13 @@ function hiddenNodeIds(recipe, sampled) {
 
 // Cloth keeps one geometry per sheet that every sample rewrites, so the parts of a later seek are the previous ones and the
 // renderer sees no topology change. Particles still bring a new geometry per time, so those parts are replaced.
+function withTerrainLod(geometries, stagedState, graph, camera) {
+  if (!stagedState.terrainLodNodes?.length) return geometries;
+  const wearOf = materialId => stagedState.materialHandles.get(materialId)?.output.wear;
+  const drawn = agentSceneModule('terrain').terrainLodGeometries(stagedState.terrainLodNodes, graph, camera.eye, wearOf, geometryWithSurfaceMasks);
+  return geometries ? new Map([...geometries, ...drawn]) : drawn;
+}
+
 function partsWithCloth(restParts, clothGeometries, previousParts) {
   if (!clothGeometries) {
     return restParts;
@@ -1901,6 +1908,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     stagedState.physicsSampler = stagePhysics(recipe, geometryRecords);
     stagedState.clothSampler = stageCloth(recipe, geometryRecords, stagedState.motionSampler);
     stagedState.particleSampler = stageParticles(recipe, geometryRecords, stagedState);
+    stagedState.terrainLodNodes = recipe.geometries.some(geometry => geometry.type === 'terrain') ? agentSceneModule('terrain').terrainLodNodesOf(recipe) : [];
     const animated = Boolean(stagedState.motionSampler || stagedState.physicsSampler || stagedState.clothSampler || stagedState.particleSampler || assetRuntime.animators.length);
     stagedState.poseGraph = animated ? compile(recipe, geometries, localBounds, limits) : null;
     stagedState.initialPose = animated ? poseAtPlayhead(stagedState) : stagePose(stagedState, null);
