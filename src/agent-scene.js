@@ -2066,8 +2066,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   }
 
   // An edit of a scene that holds this many triangles to rank does not wait for the search (#2905): it returns with the parts
-  // unranked and the search runs right after, on the next turn of the event loop. A new scene and a scene whose parts move
-  // are still ranked inside the call, so a render job built from a recipe never misses an offset.
+  // unranked and the search runs right after, on the next turn of the event loop. A new scene is still ranked inside the call,
+  // so a render job built from a recipe never misses an offset. A scene whose parts move (#2787) searches its still parts the
+  // same way; the rest parts and the posed parts of that edit share the one search (see joinPendingFlush).
   const DEFERRED_FLUSH_TRIANGLES = 100_000;
   let pendingFlush = null;
 
@@ -2082,9 +2083,17 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     }
   }
 
-  function shouldDeferFlush(recipe, parts) {
-    return state !== null && partsToRank(recipe, parts) === parts && triangleCountOf(parts) >= (options.deferFlushTriangles ?? DEFERRED_FLUSH_TRIANGLES)
-      && !rankedLists().some(candidate => sameParts(candidate.rankedParts, parts));
+  function shouldDeferFlush(rankedParts) {
+    return state !== null && triangleCountOf(rankedParts) >= (options.deferFlushTriangles ?? DEFERRED_FLUSH_TRIANGLES)
+      && !rankedLists().some(candidate => sameParts(candidate.rankedParts, rankedParts));
+  }
+
+  // A pose of a moving sea or of particles stages new parts around the same still parts, so every set of parts staged while the
+  // search runs waits for it. At most the rest parts and the latest posed parts are kept, rest first, which is the order a cold
+  // edit ranks them in.
+  function joinPendingFlush(parts, rest) {
+    const kept = pendingFlush.targets.filter(target => target.rest !== rest);
+    pendingFlush.targets = [...kept, { parts, rest }].sort((first, second) => Number(second.rest) - Number(first.rest));
   }
 
   function rankAndStage(coplanar, recipe, parts, rest, searched = null) {
@@ -2115,11 +2124,17 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // The drawn parts are swapped for the ranked list as a topology change.
   function finishFlush(pending, searched) {
     pendingFlush = null;
-    const staged = rankAndStage(agentSceneModule('coplanar'), pending.recipe, pending.parts, pending.rest, searched);
-    if (staged !== pending.parts) {
-      const drawnChanged = state.parts === pending.parts;
-      state.restParts = state.restParts === pending.parts ? staged : state.restParts;
-      state.parts = drawnChanged ? staged : state.parts;
+    let regrouped = false;
+    for (const { parts, rest } of pending.targets) {
+      const staged = rankAndStage(agentSceneModule('coplanar'), pending.recipe, parts, rest, searched);
+      if (staged !== parts) {
+        const drawnChanged = state.parts === parts;
+        state.restParts = state.restParts === parts ? staged : state.restParts;
+        state.parts = drawnChanged ? staged : state.parts;
+        regrouped = true;
+      }
+    }
+    if (regrouped) {
       topologyRevision++;
     }
   }
@@ -2140,16 +2155,20 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       flushCache = null;
       return parts;
     }
-    if (pendingFlush?.parts === parts) {
+    const rankedParts = partsToRank(recipe, parts);
+    if (pendingFlush && sameParts(pendingFlush.rankedParts, rankedParts)) {
+      if (!pendingFlush.targets.some(target => target.parts === parts)) {
+        joinPendingFlush(parts, rest);
+      }
       return parts;
     }
     if (flushCache?.parts !== parts && flushCache?.staged !== parts) {
       cancelPendingFlush();
-      if (shouldDeferFlush(recipe, parts)) {
+      if (shouldDeferFlush(rankedParts)) {
         flushCache = { parts, staged: parts, list: null, ranked: 0, leftovers: [] };
-        const pending = { parts, rest, recipe, runner: null };
+        const pending = { targets: [{ parts, rest }], rankedParts, recipe, runner: null };
         const onFailure = () => { pendingFlush = null; };
-        pending.runner = coplanar.startFlushParts(parts, { onDone: searched => finishFlush(pending, searched), onFailure });
+        pending.runner = coplanar.startFlushParts(rankedParts, { onDone: searched => finishFlush(pending, searched), onFailure });
         pendingFlush = pending;
         return parts;
       }
