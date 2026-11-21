@@ -1,3 +1,5 @@
+import { invalidField } from './field-error.js';
+
 const FULL_TURN = Math.PI * 2;
 const MAX_PRIMITIVE_VERTICES = 1_000_000;
 
@@ -210,14 +212,22 @@ export function circle(segments = 64, innerRadius = 0) {
   return { ...geometry(positions, normals, indices), uvs: new Float32Array(uvs) };
 }
 
-// The torus lies in XY, facing +Z. Partial arcs are useful for interrupted armor rings.
-export function torus(tubeRadius = 0.08, segments = 96, sides = 24, arc = FULL_TURN, start = 0) {
+// The torus checks that name the field, so a scene recipe reports them as geometries[i].tubeRadius or geometries[i].arc.
+export function checkTorusShape(tubeRadius = 0.08, arc = FULL_TURN) {
   finiteFloat(tubeRadius, 'tubeRadius');
   finiteFloat(arc, 'arc');
-  finiteFloat(start, 'start');
-  if (Math.fround(tubeRadius) <= 0 || Math.fround(arc) <= 0 || arc > FULL_TURN) {
-    throw new RangeError('tubeRadius must remain positive at Float32 precision and arc must be within (0, 2PI].');
+  if (Math.fround(tubeRadius) <= 0) {
+    throw invalidField('tubeRadius', tubeRadius, 'a positive number that is still above 0 as a Float32, such as 0.08');
   }
+  if (Math.fround(arc) <= 0 || arc > FULL_TURN) {
+    throw invalidField('arc', arc, `a number above 0 and at most ${FULL_TURN} (2 * Math.PI, a full turn), such as ${Math.PI}`);
+  }
+}
+
+// The torus lies in XY, facing +Z. Partial arcs are useful for interrupted armor rings.
+export function torus(tubeRadius = 0.08, segments = 96, sides = 24, arc = FULL_TURN, start = 0) {
+  checkTorusShape(tubeRadius, arc);
+  finiteFloat(start, 'start');
   integer(segments, 3, 2048, 'segments');
   integer(sides, 3, 128, 'sides');
   primitiveBudget((segments + 1) * (sides + 1) + (arc === FULL_TURN ? 0 : 2 * (sides + 2)));
@@ -304,21 +314,23 @@ export function cylinder(segments = 80, bevel = 0.025, bevelSegments = 6) {
   return geometry(positions, normals, indices);
 }
 
-export function box(bevel = 0.08, subdivisions = 6) {
+/** `splitFlatFaces` cuts a sharp box (bevel 0) into an n by n grid per face, so a mesh built on it has vertices to edit (#2201). */
+export function box(bevel = 0.08, subdivisions = 6, splitFlatFaces = false) {
   finiteFloat(bevel, 'bevel');
   // A bevel below about 3e-17 leaves the core at exactly 0.5, so every face normal would divide by zero; 1e-16 is the round floor.
   if (bevel < 0 || bevel > 0.5 || bevel > 0 && bevel < 1e-16) {
     throw new RangeError('Box bevel must be 0 or from 1e-16 to 0.5: a smaller bevel underflows and gives NaN normals.');
   }
   integer(subdivisions, 1, 128, 'subdivisions');
-  primitiveBudget(bevel === 0 ? 24 : 6 * (2 * subdivisions + 2) ** 2);
+  primitiveBudget(bevel === 0 ? (splitFlatFaces ? 6 * (subdivisions + 1) ** 2 : 24) : 6 * (2 * subdivisions + 2) ** 2);
   const positions = [];
   const normals = [];
   const indices = [];
   const coreExtent = 0.5 - bevel;
   const coordinates = [];
   if (bevel === 0) {
-    coordinates.push(-0.5, 0.5);
+    const spans = splitFlatFaces ? subdivisions : 1;
+    for (let index = 0; index <= spans; index++) coordinates.push(index / spans - 0.5);
   } else {
     // Sample the curved border in angular steps, leaving the planar center as one span.
     // Uniform grids miss narrow fillets and interpolate across the whole face instead.

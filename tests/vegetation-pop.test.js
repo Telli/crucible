@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 
 // A pop is a single-frame change of the mean RGB value (0 to 1) above this, or above this share of the change a hard switch
 // makes in one frame. Measured 2026-11-04 on SwiftShader: the fade's largest step is 0.083, a hard switch is 0.30, and plain
@@ -103,7 +103,7 @@ test('a slow dolly across the impostor boundary shows no pop in a frame differen
       return;
     }
     const page = await browser.newPage({ viewport: { width: 320, height: 180 } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     // One tree fills the view. With the switch distances scaled by 0.05 its card begins at 7.5 m, so the dolly from 6 to 9.5 m crosses the whole fade band.
     const crossing = { start: 6, end: 9.5, steps: 40, fade: 0.06, distanceScale: 0.05 };
     const withFade = await frameChanges(page, crossing);

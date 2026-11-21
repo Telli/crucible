@@ -1093,6 +1093,8 @@ The bridge is not exact. Cycles on the exported JSON has a mean radiance of 0.17
 
 The gap is now the other way round: the export is 1.6 times brighter, not 10 times dimmer, so the sun fix is in and the sun-only gate against the original as it stands is not met. The cause is shown, not only inferred: the original has per-light bounce limits (`cyclesSettings.max_bounces`: sun 2, corridor ceiling light 2, blackboard light 1, one point light 1) that the JSON format cannot carry, so the original's sun stops at two bounces and the export's runs to eight. Clearing those limits in the original (`classroom_bridge.py reference --variant sun-only-unlimited-bounces`, same 960x540, 256 spp, seed 1, 8 bounces) raises its sun-only mean from 0.3762 / 0.3310 / 0.3113 to 0.6371 / 0.5605 / 0.5272, and the export is then 0.91 / 0.97 / 0.92 of it, 3 to 9 percent dimmer. So the 1.6 times is the bounce limit, and a bridge that cannot carry the limit differs from the file by that limit; the 3 to 9 percent left, a little more in red and blue than in green, is not explained. Capping the whole export at 2 bounces lands within 4 to 9 percent of the original only because it applies the limit to every path. Cook was not measured: its native addon is not built on this machine. This does not affect the Cook against Cycles comparison above, which reads one file on both sides; it means the scene Cook was tested on is a faithful reading of the Classroom only in its camera, the 886 instances it exports, the sun and the world.
 
+Since #2015 the format carries it: the exporter writes `environment.sunMaxBounces` (and `maxBounces` on point, spot and area lights) for every light whose own limit is below the scene's, and the native `cycles` kernel stops that light after its bounces ([lighting guide](lighting.md#a-lights-own-bounce-limit)). A light without the field runs as before, so no scene changes unless it names a limit. Not measured yet: the Classroom sun-only run against the original needs the GPU, so the "within 10 percent mean RGB" gate stays open until it is rendered.
+
 ### Commands
 
 On a machine with Blender 5.3, Node, `uv` and the built Cook addon (a GPU):
@@ -1766,7 +1768,7 @@ A fog or fire sphere is judged by how soft its edge is, not only by its mean bri
 It reads headerless little-endian float32 files in linear light, row 0 at the top. To make them from Crucible's rasterizer, run these from the repository root (the capture is a light GPU job):
 
 ```sh
-bash ~/.agents/tools/gpu-lock.sh node bench/cycles-parity/capture-volume-edge.mjs --label after --output-folder artifacts/volume-edge
+node bench/cycles-parity/capture-volume-edge.mjs --label after --output-folder artifacts/volume-edge
 node bench/cycles-parity/linearize-display-floats.mjs --width 960 --height 540 artifacts/volume-edge/after-1.f32 artifacts/volume-edge/after-4.f32
 uv run --no-project --with numpy python bench/cycles-parity/edge-width.py --width 960 --height 540 --channels 3 --radius 174.79775107469544 artifacts/volume-edge/after-1-linear.f32 artifacts/volume-edge/after-4-linear.f32
 ```

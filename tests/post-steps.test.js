@@ -148,7 +148,7 @@ test('a stage binds the part numbers of a masked step and refuses an unknown par
   const bound = calls.find(call => call[0] === 'uniform1iv');
   assert.deepEqual([...bound[2]].slice(0, 3), [2, 4, 0]);
   assert.throws(() => stage.apply(renderer, frame({ objects: ['ghost'] }), effects, 'source'), /"ghost" is not a part in the frame\. Fix: use a part name such as "floor"/);
-  const afterDraw = calls.slice(calls.findLastIndex(call => call[0] === 'drawArrays') + 1);
+  const afterDraw = calls.slice(calls.findIndex(call => call[0] === 'drawArrays') + 1);
   const unbind = afterDraw.findIndex(call => call[0] === 'bindTexture' && call[2] === null);
   assert.ok(unbind > 0 && afterDraw[unbind - 1][0] === 'activeTexture', 'the object ID texture is unbound from its unit after the draw');
   renderer.passSupport = null;
@@ -212,7 +212,7 @@ test('a user pass binds the object ID pass for its parts and unbinds it after th
   const uploaded = calls.find(call => call[0] === 'uniform1iv');
   assert.deepEqual(Array.from(uploaded[2]).slice(0, 2), [2, 0], 'the hero part has object ID 2, and the rest of the list is padded');
   assert.ok(calls.some(call => call[0] === 'bindTexture' && call[2] === 'ids'));
-  const afterDraw = calls.slice(calls.findLastIndex(call => call[0] === 'drawArrays') + 1);
+  const afterDraw = calls.slice(calls.findIndex(call => call[0] === 'drawArrays') + 1);
   assert.ok(afterDraw.some(call => call[0] === 'bindTexture' && call[2] === null), 'the object ID texture is unbound after the draw');
   renderer.userPasses.set([{ name: 'tint', fragment: PASS_FRAGMENT, objects: ['missing'] }]);
   assert.throws(() => renderer.resolveFrame({ time: 0 }), /Mask object "missing" is not a part in the frame/);
@@ -290,4 +290,19 @@ test('each named step changes the picture and the default still keeps its hash',
   assert.deepEqual(summary['user-pass-hero'].regions.floor, summary.default.regions.floor);
   // Hash of the default still as origin/main drew it before the named steps (bench/post/post-steps.mjs --root=<origin/main checkout>).
   assert.equal(summary.default.hash, '8741ffc3aaace9a8');
+});
+
+test('a user pass reads the camera eye of the frame it draws, so a camera track moves it', () => {
+  const calls = [];
+  const renderer = { context: recordingContext(calls), canvas: { width: 16, height: 9 }, postStages: [], depthTexture: 'depth', whiteTexture: 'white',
+    inverseViewProjection: mat4.create(), resolveFrame() {}, benchmark: false };
+  installUserPasses(renderer);
+  renderer.userPasses.set([{ name: 'shafts', fragment: 'vec4 userPass(vec2 uv) { return vec4(cameraEye, 1.0); }' }]);
+  assert.match(buildPassFragment(normalizeUserPasses([{ name: 'shafts', fragment: 'vec4 userPass(vec2 uv) { return vec4(cameraEye, 1.0); }' }])[0]).source, /uniform vec3 cameraEye;/);
+  const uploads = [[0, 1, 5], [4, 2, -3]].map(eye => {
+    calls.length = 0;
+    renderer.resolveFrame({ time: 0, eye });
+    return calls.filter(call => call[0] === 'uniform3fv').at(-1)[2];
+  });
+  assert.deepEqual(uploads, [[0, 1, 5], [4, 2, -3]]);
 });

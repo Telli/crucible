@@ -7,7 +7,7 @@ The checks used Windows Chrome 154 through Playwright, an RTX 3060 through ANGLE
 | Check | Result |
 | --- | --- |
 | Node tests | Tests for geometry, bounds, scene budgets, timeline sampling and GLB loading passed. |
-| GLB | The independent Three.js GLTFLoader loaded all 574 WALL·E nodes. The assembled file contains 635,752 bytes. |
+| GLB | The sample model file contains 436,856 bytes in 14 named nodes. |
 | Explosion | The GPU pixel checksum returned to its original value after a 0 → 50 → 100 → 0 slider round trip. |
 | Allocation reuse | The shadow texture remained identical while the slider moved. |
 | Layers and export | Shell, interior and combined views worked. Exploded GLB translations matched the authored offsets. |
@@ -29,8 +29,8 @@ The current studio enables four MSAA samples, FXAA and specular filtering.
 
 | Export | Output | Elapsed time | Estimated render memory | Observed Node RSS |
 | --- | --- | ---: | ---: | ---: |
-| GPU WALL·E image | 1920 × 1080 PNG | 1.68 s | 119.4 MiB | 124.0 MiB |
-| CPU WALL·E image | 640 × 360 PNG | 4.02 s | 22.7 MiB | 124.5 MiB |
+| GPU object studio image | 1920 × 1080 PNG | 1.68 s | 119.4 MiB | 124.0 MiB |
+| CPU object studio image | 640 × 360 PNG | 4.02 s | 22.7 MiB | 124.5 MiB |
 | GPU film, NVENC | 1280 × 720, 32 s, 24 FPS | 256.68 s | 61.9 MiB | 214.8 MiB |
 | CPU film trial, libx264 | 640 × 360, 2 s, 12 FPS | 7.33 s | 22.3 MiB | 157.5 MiB |
 
@@ -41,14 +41,13 @@ Both video runs held a maximum of one pending frame.
 The full GPU film sampled a maximum JavaScript heap of 6.9 MiB.
 
 FFprobe verified 768 H.264 frames, 32.000 seconds, 24 FPS, BT.709 metadata and 48 kHz stereo AAC.
-The MP4 contains 13,759,581 bytes. Representative encoded frames were inspected in `film-contact.png`.
+The MP4 contains 13,759,581 bytes. Representative encoded frames were inspected by eye.
 
 FFmpeg measured the encoded score at -21.0 dB mean volume and -4.5 dB peak volume.
 The score uses original synthesized tones and seeded noise. No human listening check was performed.
 
 The JSON reports contain the exact measurements.
 
-- `wall-e-gpu.json` and `wall-e-cpu.json` record the image runs.
 - `film-cpu-trial.json` records the software rendering and encoding trial.
 - `../public/media/critical.mp4.json` records the full hardware export.
 - `benchmark.json` records the comparison with Three.js.

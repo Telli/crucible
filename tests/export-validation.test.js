@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createModel } from '../src/model.js';
+import { loadSampleParts, withoutTextures } from './helpers/sample-model.js';
 import { exportGlb } from '../src/export.js';
 
+const samplePart = withoutTextures(await loadSampleParts())[0];
+
 function firstPart() {
-  return createModel()[0];
+  return { ...samplePart };
 }
 
 function readJson(binary) {

@@ -66,6 +66,7 @@ function conciseRenderReport(report) {
   const concise = { seconds: report.measured?.seconds };
   if (report.secondsRatio !== undefined) concise.secondsRatio = report.secondsRatio;
   if (report.fallbacks?.length) concise.fallbacks = report.fallbacks;
+  if (report.kernelCompile) concise.kernelCompile = report.kernelCompile.note;
   if (report.noise?.relative != null) concise.noise = report.noise;
   return concise;
 }
@@ -77,6 +78,8 @@ export function conciseJobResult(result) {
     sourceRevision: result.sourceRevision,
     artifacts: result.artifacts.map(artifact => without(artifact, ['sha256'])),
   };
+  if (result.state !== undefined) concise.state = result.state;
+  if (result.reason !== undefined) concise.reason = result.reason;
   if (result.metrics !== undefined) {
     concise.metrics = without(result.metrics, [...METRIC_DIAGNOSTICS, 'report']);
     if (result.metrics.report) concise.metrics.report = conciseRenderReport(result.metrics.report);

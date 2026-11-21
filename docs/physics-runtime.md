@@ -32,7 +32,7 @@ The definition is the one `createPhysicsScene` takes, without `events` (a live g
 | --- | --- | --- |
 | `adapter` | `rapierAdapter` | The engine, see below |
 | `timestep` | `1/60` | Seconds per step. The runtime's `fixedStepSeconds` must equal it; a mismatch throws and says which value to pass. |
-| `bindings` | `[]` | `[{ body, part }]`, same as `physics.bind` |
+| `bindings` | `[]` | `[{ body, part }]`, an array, same as `physics.bind` |
 | `name` | `'physics'` | The runtime system name |
 | `solverIterations`, `maxBodies`, `maxColliders`, `maxJoints` | as in physics.md | Bounds and solver quality |
 
@@ -57,7 +57,7 @@ Put the system after input and before animation and game code in `systems`.
 
 ## Queries
 
-They read the world as the last step left it. Every query takes optional `{ mask, excludeBody, includeSensors }`: `mask` is a collision-group mask (0 to 65535), `excludeBody` skips one body (for example the player), and sensors are skipped unless `includeSensors` is `true`.
+They read the world as the last step left it, or as it starts before the first step. Every query takes optional `{ mask, excludeBody, includeSensors }`: `mask` is a collision-group mask (0 to 65535), `excludeBody` skips one body (for example the player), and sensors are skipped unless `includeSensors` is `true`.
 
 - `raycast(origin, direction, { maxDistance = 1000 })` returns the first hit or `null`: `{ body, collider, distance, point, normal }`. The direction need not be a unit vector.
 - `shapeCast(shape, translation, direction, { maxDistance, rotation })` sweeps a shape and returns the first hit in the same form; `distance` is how far the shape's centre travelled.
@@ -90,7 +90,7 @@ import { joltAdapter } from 'crucible/addons/physics-jolt';
 const physics = await createPhysicsSystem(definition, { adapter: joltAdapter });
 ```
 
-`jolt-physics` (JoltPhysics built to wasm, MIT, install it with `npm install jolt-physics`) is an optional peer dependency of the `physics-jolt` addon; the core and the other addons never import it. The adapter covers bodies, sensors, collision groups and masks, kinematic control, force fields, ray, shape-cast and overlap queries, and contact and sensor events. What it does not cover yet throws an error that names the fix: joints, `cone` and `trimesh` colliders, and more than one collider per body. It also limits a scene to 256 distinct group and mask pairs. Engines differ in friction and restitution combining and in solver details, so a settled pose can differ between engines: a box that falls straight down settles within a few centimetres, but an offset cuboid rested at y 0.5 on one engine and 0.48 on the other, and a cylinder came to rest in different poses (Rapier tips and rolls it). Events are shown to match only for a dynamic box falling through a fixed sensor. For a kinematic body moving through a fixed sensor, Rapier gave no sensor events and Jolt did, so do not rely on kinematic-versus-fixed sensor events being the same on both engines. Jolt reports a contact as ended when a body falls asleep; the adapter hides that, so a sleeping box keeps its contact.
+`jolt-physics` (JoltPhysics built to wasm, MIT, install it with `npm install jolt-physics`) is an optional peer dependency of the `physics-jolt` addon; the core and the other addons never import it. The adapter covers bodies, sensors, collision groups and masks, kinematic control, force fields, ray, shape-cast and overlap queries, and contact and sensor events. What it does not cover yet throws an error that names the fix: joints and `trimesh` colliders. A body takes up to 16 colliders (a compound), and `cone` is built as a tapered cylinder; events and queries name the first collider of a compound body. It also limits a scene to 256 distinct group and mask pairs. Engines differ in friction and restitution combining and in solver details, so a settled pose can differ between engines: a box that falls straight down settles within a few centimetres, but an offset cuboid rested at y 0.5 on one engine and 0.48 on the other, and a cylinder came to rest in different poses (Rapier tips and rolls it). Events are shown to match only for a dynamic box falling through a fixed sensor. For a kinematic body moving through a fixed sensor, Rapier gave no sensor events and Jolt did, so do not rely on kinematic-versus-fixed sensor events being the same on both engines. Jolt reports a contact as ended when a body falls asleep; the adapter hides that, so a sleeping box keeps its contact.
 
 ## Limits
 

@@ -1,10 +1,11 @@
+import './site-chrome.js';
 import './view2d.css';
-import './brand.js';
 import './asset-viewer.css';
 import { vec3 } from 'gl-matrix';
 import { CrucibleRenderer, exportGlb, cameraView, fitOrthographicHeight } from './index.js';
 import { loadGltf, parseGltf } from './gltf.js';
 import { createMotionScene } from './motion.js';
+import { readQueryNumber } from './query-number.js';
 
 const canvas = document.querySelector('#viewport');
 const parameters = new URLSearchParams(location.search);
@@ -116,7 +117,7 @@ function showAsset(loaded, title) {
   asset = null;
   let nextRenderer;
   try {
-    nextRenderer = new CrucibleRenderer(canvas, loaded.parts, { ground: false, hdr: true, samples: Number(parameters.get('samples') ?? 4), pixelRatio: parameters.get('export') === '1' ? 1 : Math.min(devicePixelRatio, 1.5), memoryBudgetMiB: Number(parameters.get('memory') ?? 256), shadowBounds: { target: center, eye: [center[0] - extent, center[1] + extent * 2, center[2] + extent], extent: extent * 1.5, near: extent * 0.01, far: extent * 8 } });
+    nextRenderer = new CrucibleRenderer(canvas, loaded.parts, { ground: false, hdr: true, samples: readQueryNumber(parameters, 'samples', 4, { minimum: 1, integer: true }), pixelRatio: parameters.get('export') === '1' ? 1 : Math.min(devicePixelRatio, 1.5), memoryBudgetMiB: readQueryNumber(parameters, 'memory', 256, { minimum: 1 }), shadowBounds: { target: center, eye: [center[0] - extent, center[1] + extent * 2, center[2] + extent], extent: extent * 1.5, near: extent * 0.01, far: extent * 8 } });
   } catch (error) {
     loaded.dispose();
     throw error;

@@ -26,3 +26,18 @@ test('createCameraSampler rejects frames whose eye equals the target and an fps 
   assert.throws(() => createCameraSampler({ frames: sameEyeAndTarget }), /frames\[1\] eye and target are the same point/);
   assert.throws(() => createCameraSampler({ fps: 1e-320, frames: twoFrames }), /too small for 2 frames to have a finite duration/);
 });
+
+test('createCameraSampler rejects a sparse frames array naming the empty index (#2359)', () => {
+  const sparse = [, [[0, 0, 1], [0, 0, 0]]];
+  assert.throws(() => createCameraSampler({ frames: sparse }), /frames\[0\] must be \[eye, target\]/);
+});
+
+test('both sampler forms reject a sample time that is not a finite number (#2360)', () => {
+  const pathKeys = { duration: 2, eye: [0, 0, 5], target: [0, 0, 0] };
+  for (const sampler of [createCameraSampler(pathKeys), createCameraSampler({ frames: twoFrames })]) {
+    for (const bad of [null, '1', undefined, Infinity, -Infinity, NaN]) {
+      assert.throws(() => sampler.sample(bad), /finite number of seconds/, `time ${String(bad)}`);
+    }
+    assert.doesNotThrow(() => sampler.sample(1));
+  }
+});

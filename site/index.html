@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en" data-theme="crucible">
   <head>
-    <meta charset="UTF-8" /><script>try{var c=localStorage.getItem("crucible-color");if(c==="light"||c==="dark")document.documentElement.dataset.color=c}catch(e){}</script>
+    <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f8f7f1" />
     <meta name="description" content="Crucible is a 3D engine that AI agents drive: the Glaze rasterizer on WebGL2, the Cook path tracer on CPU and WebGL2 (Vulkan with the optional Cook package), GLB, PNG and MP4 export, and an MCP server. Install with npm i @codepawlhq/crucible." />
@@ -16,105 +16,132 @@
     <meta property="og:image:alt" content="The Crucible mark over a container port rendered by Crucible" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="canonical" href="https://crucible.codepawl.com/" />
-    <script id="hero-mode">
-      // Decides how the home hero loads before the page body parses, so a visitor's first world starts downloading with the page, in
-      // parallel with the poster and before the scripts are ready, and a visitor on a light connection downloads no 3D at all. hero-loop.js reads window.__heroMode: 'live', 'deferred' (a phone,
-      // starts after the poster and an idle moment) or 'poster' (no 3D until the visitor presses Play live 3D).
-      (function () {
-        var connection = navigator.connection || {};
-        var slowTypes = ['slow-2g', '2g', '3g'];
-        var lightPath = connection.saveData === true || slowTypes.indexOf(connection.effectiveType) !== -1 || (navigator.deviceMemory !== undefined && navigator.deviceMemory <= 4);
-        var phone = matchMedia('(max-width: 700px)').matches;
-        var query = new URLSearchParams(location.search);
-        var forcedLive = query.has('capture') || query.has('measure') || query.has('scout');
-        var mode = forcedLive ? 'live' : lightPath ? 'poster' : phone ? 'deferred' : 'live';
-        window.__heroMode = mode;
-        document.documentElement.dataset.heroMode = mode;
-        // ?scout=1 builds one world on request and never runs the loop, so nothing is prefetched for it.
-        if (mode !== 'live' || query.has('scout')) return;
-        // Plain fetches, not <link rel=preload>: a preload that fetch() should have reused failed now and then, with no error to read.
-        // They start with the page, beside the poster (49 KB, 15 KB on a phone): only the 2 MB first view starts now and the 9.7 MB full
-        // world waits for it, so the poster is not starved the way 12 MB of world files started at once once starved it.
-        // hero-lab/loop/world.js waits for window.__heroPrefetchReady, takes these promises by URL and falls back to its own request when
-        // one is missing or failed.
-        var prefetched = window.__heroPrefetch = {};
-        var releaseReady;
-        window.__heroPrefetchReady = new Promise(function (resolve) { releaseReady = resolve; });
-        function startPrefetch() {
-          // The first view (a small copy of the whole world) goes first and the full world's files start when those have settled, so
-          // the first 3D frame does not wait for the full 9 MB. The promises exist at once; world.js takes them by URL.
-          var firstViewFiles = ['/showcase/port/scene.json', '/showcase/port/scene.first.glb', '/showcase/port/sky.preview.hdr'];
-          var fullWorldFiles = ['/showcase/port/scene.glb', '/showcase/port/scene.rest.glb', '/showcase/port/sky.hdr'];
-          function download(href, startAfter) {
-            var request = startAfter ? startAfter.then(function () { return fetch(href); }) : fetch(href);
-            return request.then(function (response) {
-              if (!response.ok) throw new Error(href + ' is not available (' + response.status + ')');
-              return response.blob();
-            });
-          }
-          firstViewFiles.forEach(function (href) { prefetched[href] = download(href, null); });
-          var firstViewSettled = Promise.all(firstViewFiles.map(function (href) { return prefetched[href].catch(function () {}); }));
-          fullWorldFiles.forEach(function (href) { prefetched[href] = download(href, firstViewSettled); });
-          firstViewFiles.concat(fullWorldFiles).forEach(function (href) { prefetched[href].catch(function () {}); });
-          releaseReady();
-        }
-        startPrefetch();
-      })();
-    </script>
     <title>Crucible · 3D engine that AI agents drive</title>
     <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" /><link rel="icon" href="/favicon.ico?v=2" sizes="48x48" /><link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
-  <body class="site">
-    <a class="skip-link" href="#content">Skip to content</a>
-    <header class="navigation">
-      <a class="brand" href="/" aria-label="Crucible home">Crucible</a>
-      <span class="version" data-release-version>Loading release</span>
-      <nav aria-label="Library">
-        <a href="/docs.html">Docs</a><a href="/recipes.html">Recipes</a><a href="/marketplace.html">Marketplace</a><a href="/changelog.html">Changelog</a>
-      </nav>
-      <a class="site-nav-cta" href="https://github.com/codepawl/crucible" aria-label="GitHub"><span class="package-logo package-logo-github" aria-hidden="true"></span><span class="site-nav-cta-label">GitHub</span></a>
-    </header>
-    <section id="hero" class="hero-loop" data-scene="port" aria-label="Crucible introduction and live preview">
-      <div class="stage" id="stage" tabindex="-1" role="img" aria-label="A live 3D scene: Container port">
-        <picture><source media="(max-width: 700px)" srcset="/hero-lab/poster-b-port-mobile.webp" /><img class="poster" id="poster" src="/hero-lab/poster-b-port.webp" alt="" width="1440" height="900" fetchpriority="high" /></picture>
-      </div>
-      <div class="copy">
-        <h1>3D engine that<br />AI agents drive</h1>
-        <p class="lede">Glaze draws real-time frames. Cook path traces stills. 25 MCP tools drive them.</p>
-        <div class="hero-actions">
-          <a href="/docs.html#getting-started" data-icon="book">Get started</a>
-          <a href="https://www.npmjs.com/package/@codepawlhq/crucible"><span class="package-logo package-logo-npm brand-npm" aria-hidden="true"></span>npm</a>
-        </div>
-        <p class="rename-note"><a href="/changelog.html">67js is now Crucible: install <code>@codepawlhq/crucible</code></a></p>
-      </div>
-      <div class="scene-bar">
-        <div class="attribution" id="attribution" hidden></div>
-        <button class="play-live" id="play-live" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path class="play-icon" d="M8 5.5v13l10-6.5-10-6.5Z"/><circle class="play-wait" cx="12" cy="12" r="8"/></svg><span class="play-label">Play live 3D</span></button>
-        <nav class="scene-tabs" id="scene-tabs" aria-label="Scenes"></nav>
-      </div>
-    </section>
-    <main id="content">
-      <section id="downloads" class="home-install" aria-label="Install Crucible">
-        <div class="package-install">
-          <div class="package-managers" role="group" aria-label="Package manager">
-            <button data-package-manager="npm" aria-pressed="true"><span class="package-logo package-logo-npm" aria-hidden="true"></span><span>npm</span></button>
-            <button data-package-manager="pnpm" aria-pressed="false"><span class="package-logo package-logo-pnpm" aria-hidden="true"></span><span>pnpm</span></button>
-            <button data-package-manager="yarn" aria-pressed="false"><span class="package-logo package-logo-yarn" aria-hidden="true"></span><span>Yarn</span></button>
-            <button data-package-manager="bun" aria-pressed="false"><span class="package-logo package-logo-bun" aria-hidden="true"></span><span>Bun</span></button>
-          </div>
-          <div class="command-row"><code data-install-command>Loading the release command…</code><button data-copy-install disabled>Copy command</button></div>
-          <div class="release-feedback" hidden><p data-release-status role="status">Loading release information</p><button data-release-retry hidden>Retry</button></div>
-        </div>
-      </section>
+  <body class="landing themed" id="page">
+<a class="skip-link" href="#content">Skip to content</a>
+<!-- site-chrome:header -->
+<header class="nav">
+  <a class="brand" href="/" aria-label="Crucible home"><img src="/brand/crucible-mark.svg" alt="">Crucible</a>
+  <span class="version" data-release-version>Loading release</span>
+  <nav class="nav-links" aria-label="Site">
+    <a href="/docs.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 1h11v1h-11zM2 2h12v1h-12zM2 3h2v1h-2zM12 3h2v1h-2zM2 4h2v1h-2zM5 4h6v1h-6zM12 4h2v1h-2zM2 5h2v1h-2zM5 5h6v1h-6zM12 5h2v1h-2zM2 6h2v1h-2zM12 6h2v1h-2zM2 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM12 10h2v1h-2zM2 11h2v1h-2zM11 11h3v1h-3zM2 12h12v1h-12zM2 13h11v1h-11zM2 14h2v1h-2z"/></svg>Docs</a>
+    <a class="wide" href="/recipes.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M7 1h2v1h-2zM5 2h6v1h-6zM3 3h4v1h-4zM9 3h4v1h-4zM1 4h5v1h-5zM10 4h5v1h-5zM0 5h5v1h-5zM11 5h5v1h-5zM2 6h4v1h-4zM10 6h4v1h-4zM1 7h2v1h-2zM4 7h8v1h-8zM13 7h2v1h-2zM1 8h3v1h-3zM6 8h4v1h-4zM12 8h3v1h-3zM2 9h4v1h-4zM7 9h2v1h-2zM10 9h4v1h-4zM1 10h2v1h-2zM4 10h8v1h-8zM13 10h2v1h-2zM1 11h3v1h-3zM6 11h4v1h-4zM12 11h3v1h-3zM2 12h4v1h-4zM7 12h2v1h-2zM10 12h4v1h-4zM4 13h8v1h-8zM6 14h4v1h-4zM7 15h2v1h-2z"/></svg>Recipes</a>
+    <a class="wide" href="/showcase.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M1 2h14v1h-14zM1 3h14v1h-14zM1 4h2v1h-2zM13 4h2v1h-2zM1 5h2v1h-2zM13 5h2v1h-2zM1 6h2v1h-2zM13 6h2v1h-2zM1 7h2v1h-2zM4 7h2v1h-2zM13 7h2v1h-2zM1 8h6v1h-6zM9 8h2v1h-2zM13 8h2v1h-2zM1 9h11v1h-11zM13 9h2v1h-2zM1 10h3v1h-3zM6 10h9v1h-9zM1 11h3v1h-3zM7 11h2v1h-2zM11 11h4v1h-4zM1 12h14v1h-14zM1 13h14v1h-14z"/></svg>Showcase</a>
+    <a class="wide" href="/marketplace.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M2 2h12v1h-12zM2 3h12v1h-12zM2 4h2v1h-2zM6 4h4v1h-4zM12 4h2v1h-2zM2 5h2v1h-2zM5 5h6v1h-6zM12 5h2v1h-2zM2 6h12v1h-12zM2 7h5v1h-5zM9 7h5v1h-5zM2 8h5v1h-5zM9 8h5v1h-5zM2 9h12v1h-12zM2 10h2v1h-2zM5 10h6v1h-6zM12 10h2v1h-2zM2 11h2v1h-2zM6 11h4v1h-4zM12 11h2v1h-2zM2 12h12v1h-12zM2 13h12v1h-12z"/></svg>Marketplace</a>
+    <a class="wide" href="/changelog.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M2 3h12v1h-12zM2 4h12v1h-12zM2 7h12v1h-12zM2 8h12v1h-12zM2 11h12v1h-12zM2 12h12v1h-12z"/></svg>Changelog</a>
+    <a href="https://github.com/codepawl/crucible" aria-label="GitHub"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 0h4v1h-4zM4 1h8v1h-8zM2 2h12v1h-12zM1 3h14v1h-14zM1 4h3v1h-3zM12 4h3v1h-3zM0 5h4v1h-4zM12 5h4v1h-4zM0 6h3v1h-3zM13 6h3v1h-3zM0 7h3v1h-3zM13 7h3v1h-3zM0 8h3v1h-3zM13 8h3v1h-3zM0 9h3v1h-3zM13 9h3v1h-3zM0 10h4v1h-4zM12 10h4v1h-4zM1 11h5v1h-5zM10 11h5v1h-5zM1 12h2v1h-2zM4 12h2v1h-2zM10 12h5v1h-5zM2 13h2v1h-2zM10 13h4v1h-4zM3 14h3v1h-3zM10 14h3v1h-3zM5 15h1v1h-1zM10 15h1v1h-1z"/></svg><span class="wide">GitHub</span></a>
+    <a class="button" href="#install">Install</a>
+  </nav>
+</header>
+<!-- /site-chrome:header -->
 
-      <section id="code" class="code-section" aria-labelledby="code-title">
-        <div class="code-copy">
-          <h2 id="code-title">A scene in a few lines</h2>
-          <div class="code-block">
-            <pre><code id="home-code" data-language="javascript">import { Glaze } from 'crucible';
+<main id="content">
+  <section class="story" id="story" aria-label="Crucible introduction">
+    <div class="pin">
+      <div class="words">
+        <div class="beat on" data-beat="0">
+          <h1>3D engine that AI agents drive</h1>
+          <p>Glaze draws real-time frames. Cook path traces stills. 25 MCP tools drive them.</p>
+          <p class="explain">Crucible is a free, MIT licensed 3D engine on npm. An AI agent builds the scene through MCP tools, and you keep the creative choices.</p>
+          <div class="command"><code>npm i @codepawlhq/crucible</code><button class="copy" type="button" aria-label="Copy the npm command"><svg class="pixel-icon copy-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 2h8v1h-8zM2 3h9v1h-9zM2 4h3v1h-3zM2 5h2v1h-2zM5 5h9v1h-9zM2 6h2v1h-2zM5 6h9v1h-9zM2 7h2v1h-2zM5 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM5 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM5 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM5 10h2v1h-2zM12 10h2v1h-2zM5 11h2v1h-2zM12 11h2v1h-2zM5 12h9v1h-9zM5 13h9v1h-9z"/></svg><svg class="pixel-icon done-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M12 3h1v1h-1zM11 4h3v1h-3zM11 5h2v1h-2zM10 6h2v1h-2zM2 7h2v1h-2zM9 7h3v1h-3zM2 8h3v1h-3zM8 8h3v1h-3zM3 9h3v1h-3zM7 9h3v1h-3zM4 10h5v1h-5zM5 11h3v1h-3zM6 12h1v1h-1z"/></svg></button></div>
+          <div class="command"><code>npx crucible-mcp</code><button class="copy" type="button" aria-label="Copy the MCP server command"><svg class="pixel-icon copy-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 2h8v1h-8zM2 3h9v1h-9zM2 4h3v1h-3zM2 5h2v1h-2zM5 5h9v1h-9zM2 6h2v1h-2zM5 6h9v1h-9zM2 7h2v1h-2zM5 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM5 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM5 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM5 10h2v1h-2zM12 10h2v1h-2zM5 11h2v1h-2zM12 11h2v1h-2zM5 12h9v1h-9zM5 13h9v1h-9z"/></svg><svg class="pixel-icon done-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M12 3h1v1h-1zM11 4h3v1h-3zM11 5h2v1h-2zM10 6h2v1h-2zM2 7h2v1h-2zM9 7h3v1h-3zM2 8h3v1h-3zM8 8h3v1h-3zM3 9h3v1h-3zM7 9h3v1h-3zM4 10h5v1h-5zM5 11h3v1h-3zM6 12h1v1h-1z"/></svg></button></div>
+          <div class="actions">
+            <a class="button" href="#install">Install</a>
+            <a class="button quiet" href="/docs.html#getting-started">Docs</a>
+            <a class="button quiet" href="#showcase">Showcase</a>
+            <a class="button quiet" href="https://www.npmjs.com/package/@codepawlhq/crucible"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M0 0h16v1h-16zM0 1h16v1h-16zM0 2h16v1h-16zM0 3h16v1h-16zM0 4h3v1h-3zM13 4h3v1h-3zM0 5h3v1h-3zM13 5h3v1h-3zM0 6h3v1h-3zM8 6h2v1h-2zM13 6h3v1h-3zM0 7h3v1h-3zM8 7h2v1h-2zM13 7h3v1h-3zM0 8h3v1h-3zM8 8h2v1h-2zM13 8h3v1h-3zM0 9h3v1h-3zM8 9h2v1h-2zM13 9h3v1h-3zM0 10h3v1h-3zM8 10h2v1h-2zM13 10h3v1h-3zM0 11h3v1h-3zM8 11h2v1h-2zM13 11h3v1h-3zM0 12h4v1h-4zM8 12h3v1h-3zM12 12h4v1h-4zM0 13h16v1h-16zM0 14h16v1h-16zM0 15h16v1h-16z"/></svg>npm</a>
+          </div>
+          <p class="rename-note"><a href="/changelog.html">67js is now Crucible: install <code>@codepawlhq/crucible</code></a></p>
+          <a class="cue" id="cue" href="#story"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 1h4v1h-4zM5 2h6v1h-6zM4 3h3v1h-3zM9 3h3v1h-3zM4 4h2v1h-2zM7 4h2v1h-2zM10 4h2v1h-2zM4 5h2v1h-2zM7 5h2v1h-2zM10 5h2v1h-2zM4 6h2v1h-2zM7 6h2v1h-2zM10 6h2v1h-2zM4 7h2v1h-2zM7 7h2v1h-2zM10 7h2v1h-2zM4 8h2v1h-2zM10 8h2v1h-2zM4 9h2v1h-2zM10 9h2v1h-2zM4 10h2v1h-2zM10 10h2v1h-2zM4 11h2v1h-2zM10 11h2v1h-2zM4 12h3v1h-3zM9 12h3v1h-3zM5 13h6v1h-6zM6 14h4v1h-4z"/></svg>Scroll to pour<svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M7 2h2v1h-2zM7 3h2v1h-2zM7 4h2v1h-2zM7 5h2v1h-2zM7 6h2v1h-2zM7 7h2v1h-2zM3 8h2v1h-2zM7 8h2v1h-2zM11 8h2v1h-2zM3 9h3v1h-3zM7 9h2v1h-2zM10 9h3v1h-3zM4 10h8v1h-8zM5 11h6v1h-6zM6 12h4v1h-4zM7 13h2v1h-2z"/></svg></a>
+          <img class="still" src="/previews/foundry-splats-0.png" alt="A crucible with a pour spout, full of molten metal" loading="lazy">
+        </div>
+        <div class="beat" data-beat="1">
+          <h2>Pour</h2>
+          <p>An agent gets a live scene to edit.</p>
+          <p class="explain">It starts from a recipe, one JSON file of geometries, materials and nodes, and changes it in small batches.</p>
+          <ul class="calls" aria-label="MCP tools"><li>scene_create</li><li>scene_apply</li></ul>
+          <img class="still" src="/previews/foundry-splats-1.png" alt="The crucible tilts and molten metal leaves the spout" loading="lazy">
+        </div>
+        <div class="beat" data-beat="2">
+          <h2>Fill</h2>
+          <p>It draws the scene with Glaze or Cook.</p>
+          <p class="explain">scene_look returns a PNG, so the agent sees what it built. Render jobs export stills and video.</p>
+          <ul class="calls" aria-label="MCP tools"><li>scene_look</li><li>scene_render_submit</li></ul>
+          <img class="still" src="/previews/foundry-splats-2.png" alt="The stream fills an icosahedron mould" loading="lazy">
+        </div>
+        <div class="beat" data-beat="3">
+          <h2>Cool</h2>
+          <p>It reviews the result.</p>
+          <p class="explain">scene_review shows several angles at once, and scene_inspect reports bounds and diagnostics.</p>
+          <ul class="calls" aria-label="MCP tools"><li>scene_review</li><li>scene_inspect</li></ul>
+          <img class="still" src="/previews/foundry-splats-3.png" alt="The cast cools from orange to dark metal" loading="lazy">
+        </div>
+        <div class="beat" data-beat="4">
+          <h2>Cast</h2>
+          <p>Out comes a PNG or an MP4. Install it and pour your own.</p>
+          <p class="explain">The scene stays a recipe you can export and edit again.</p>
+          <div class="command"><code>npm i @codepawlhq/crucible</code><button class="copy" type="button" aria-label="Copy the npm command"><svg class="pixel-icon copy-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 2h8v1h-8zM2 3h9v1h-9zM2 4h3v1h-3zM2 5h2v1h-2zM5 5h9v1h-9zM2 6h2v1h-2zM5 6h9v1h-9zM2 7h2v1h-2zM5 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM5 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM5 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM5 10h2v1h-2zM12 10h2v1h-2zM5 11h2v1h-2zM12 11h2v1h-2zM5 12h9v1h-9zM5 13h9v1h-9z"/></svg><svg class="pixel-icon done-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M12 3h1v1h-1zM11 4h3v1h-3zM11 5h2v1h-2zM10 6h2v1h-2zM2 7h2v1h-2zM9 7h3v1h-3zM2 8h3v1h-3zM8 8h3v1h-3zM3 9h3v1h-3zM7 9h3v1h-3zM4 10h5v1h-5zM5 11h3v1h-3zM6 12h1v1h-1z"/></svg></button></div>
+          <div class="actions"><a class="button" href="#install">Install</a></div>
+          <img class="still" src="/previews/foundry-splats-4.png" alt="The mould opens and the cast icosahedron turns" loading="lazy">
+        </div>
+      </div>
+      <div class="scene">
+        <div class="frame"><img class="poster" src="/previews/foundry-splats-0.png" alt="" aria-hidden="true" fetchpriority="high" decoding="async"><canvas id="foundry" role="img" aria-label="A crucible pours molten metal into an icosahedron mould as the page scrolls, rendered live by Crucible"></canvas><div class="callouts"><svg class="leader" id="leader" aria-hidden="true"><polyline points="0,0"></polyline><rect width="6" height="6"></rect></svg><div class="callout" data-anchor="pour" data-aside data-from="0.12" data-to="0.31"><h2>Pour</h2><p>An agent gets a live scene to edit.</p><p class="tools">scene_create · scene_apply</p></div><div class="callout" data-anchor="fill" data-from="0.39" data-to="0.59"><h2>Fill</h2><p>It draws the scene with Glaze or Cook.</p><p class="tools">scene_look · scene_render_submit</p></div><div class="callout" data-anchor="cool" data-from="0.61" data-to="0.78"><h2>Cool</h2><p>It reviews the result from several angles.</p><p class="tools">scene_review · scene_inspect</p></div><div class="callout" data-anchor="cast" data-from="0.9" data-to="1"><h2>Cast</h2><p>Out comes a PNG or an MP4.</p></div></div></div>
+        <div class="hud">
+          <div class="ladder" id="ladder" role="group" aria-label="Story steps"><button type="button" class="on" data-jump="0">Pot</button><button type="button" data-jump="0.24">Pour</button><button type="button" data-jump="0.48">Fill</button><button type="button" data-jump="0.7">Cool</button><button type="button" data-jump="0.95">Cast</button></div>
+          <span><b id="hud-fill">0%</b>fill</span>
+          <span><b id="hud-heat">1400°C</b>cast</span>
+          <a class="skip" href="#install">Skip the story<svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M7 2h2v1h-2zM7 3h2v1h-2zM7 4h2v1h-2zM7 5h2v1h-2zM7 6h2v1h-2zM7 7h2v1h-2zM3 8h2v1h-2zM7 8h2v1h-2zM11 8h2v1h-2zM3 9h3v1h-3zM7 9h2v1h-2zM10 9h3v1h-3zM4 10h8v1h-8zM5 11h6v1h-6zM6 12h4v1h-4zM7 13h2v1h-2z"/></svg></a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="install" aria-labelledby="install-title">
+    <div class="inner">
+      <h2 id="install-title">Install</h2>
+      <p class="lede">One npm package holds the engine and the MCP server.</p>
+      <div class="split">
+        <div class="stack">
+          <div class="managers" role="group" aria-label="Package manager">
+            <button type="button" data-package-manager="npm" aria-pressed="true"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M0 0h16v1h-16zM0 1h16v1h-16zM0 2h16v1h-16zM0 3h16v1h-16zM0 4h3v1h-3zM13 4h3v1h-3zM0 5h3v1h-3zM13 5h3v1h-3zM0 6h3v1h-3zM8 6h2v1h-2zM13 6h3v1h-3zM0 7h3v1h-3zM8 7h2v1h-2zM13 7h3v1h-3zM0 8h3v1h-3zM8 8h2v1h-2zM13 8h3v1h-3zM0 9h3v1h-3zM8 9h2v1h-2zM13 9h3v1h-3zM0 10h3v1h-3zM8 10h2v1h-2zM13 10h3v1h-3zM0 11h3v1h-3zM8 11h2v1h-2zM13 11h3v1h-3zM0 12h4v1h-4zM8 12h3v1h-3zM12 12h4v1h-4zM0 13h16v1h-16zM0 14h16v1h-16zM0 15h16v1h-16z"/></svg>npm</button>
+            <button type="button" data-package-manager="pnpm" aria-pressed="false"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M0 0h16v1h-16zM0 1h16v1h-16zM0 2h16v1h-16zM0 3h16v1h-16zM0 4h16v1h-16zM6 5h4v1h-4zM11 5h5v1h-5zM5 6h11v1h-11zM5 7h11v1h-11zM5 8h11v1h-11zM5 9h11v1h-11zM6 10h4v1h-4zM11 10h5v1h-5zM0 11h16v1h-16zM0 12h16v1h-16zM0 13h16v1h-16zM0 14h16v1h-16zM0 15h16v1h-16z"/></svg>pnpm</button>
+            <button type="button" data-package-manager="yarn" aria-pressed="false"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M5 0h6v1h-6zM3 1h10v1h-10zM2 2h12v1h-12zM1 3h14v1h-14zM1 4h14v1h-14zM0 5h16v1h-16zM0 6h16v1h-16zM0 7h16v1h-16zM0 8h16v1h-16zM0 9h16v1h-16zM0 10h10v1h-10zM11 10h5v1h-5zM1 11h14v1h-14zM1 12h3v1h-3zM5 12h10v1h-10zM2 13h12v1h-12zM3 14h10v1h-10zM5 15h6v1h-6z"/></svg>Yarn</button>
+            <button type="button" data-package-manager="bun" aria-pressed="false"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 1h3v1h-3zM5 2h6v1h-6zM3 3h10v1h-10zM2 4h12v1h-12zM1 5h14v1h-14zM0 6h16v1h-16zM0 7h4v1h-4zM6 7h4v1h-4zM12 7h4v1h-4zM0 8h4v1h-4zM6 8h4v1h-4zM12 8h4v1h-4zM0 9h16v1h-16zM0 10h7v1h-7zM9 10h7v1h-7zM1 11h6v1h-6zM9 11h6v1h-6zM2 12h12v1h-12zM3 13h10v1h-10zM5 14h6v1h-6z"/></svg>Bun</button>
+          </div>
+          <div class="command"><code id="package-command" data-install-command>npm i @codepawlhq/crucible</code><button class="copy" type="button" aria-label="Copy the install command"><svg class="pixel-icon copy-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 2h8v1h-8zM2 3h9v1h-9zM2 4h3v1h-3zM2 5h2v1h-2zM5 5h9v1h-9zM2 6h2v1h-2zM5 6h9v1h-9zM2 7h2v1h-2zM5 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM5 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM5 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM5 10h2v1h-2zM12 10h2v1h-2zM5 11h2v1h-2zM12 11h2v1h-2zM5 12h9v1h-9zM5 13h9v1h-9z"/></svg><svg class="pixel-icon done-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M12 3h1v1h-1zM11 4h3v1h-3zM11 5h2v1h-2zM10 6h2v1h-2zM2 7h2v1h-2zM9 7h3v1h-3zM2 8h3v1h-3zM8 8h3v1h-3zM3 9h3v1h-3zM7 9h3v1h-3zM4 10h5v1h-5zM5 11h3v1h-3zM6 12h1v1h-1z"/></svg></button></div>
+          <div class="release-feedback" hidden><p data-release-status role="status">Loading release information</p><button type="button" data-release-retry hidden>Retry</button></div>
+          <span class="named"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M8 0h3v1h-3zM7 1h1v1h-1zM10 1h2v1h-2zM6 2h1v1h-1zM9 2h1v1h-1zM11 2h1v1h-1zM5 3h1v1h-1zM8 3h1v1h-1zM11 3h3v1h-3zM4 4h1v1h-1zM7 4h1v1h-1zM10 4h2v1h-2zM13 4h2v1h-2zM3 5h1v1h-1zM6 5h1v1h-1zM9 5h2v1h-2zM12 5h1v1h-1zM14 5h1v1h-1zM2 6h1v1h-1zM5 6h1v1h-1zM8 6h2v1h-2zM11 6h2v1h-2zM14 6h1v1h-1zM1 7h1v1h-1zM4 7h1v1h-1zM7 7h2v1h-2zM10 7h2v1h-2zM13 7h2v1h-2zM3 8h2v1h-2zM6 8h2v1h-2zM9 8h2v1h-2zM12 8h2v1h-2zM3 9h2v1h-2zM8 9h2v1h-2zM11 9h2v1h-2zM4 10h2v1h-2zM7 10h2v1h-2zM10 10h2v1h-2zM5 11h2v1h-2zM9 11h2v1h-2zM8 12h2v1h-2zM8 13h1v1h-1zM8 14h1v1h-1zM9 15h1v1h-1z"/></svg>MCP server</span>
+          <div class="command"><code>npx crucible-mcp --backend gpu --memory 192</code><button class="copy" type="button" aria-label="Copy the MCP server command"><svg class="pixel-icon copy-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 2h8v1h-8zM2 3h9v1h-9zM2 4h3v1h-3zM2 5h2v1h-2zM5 5h9v1h-9zM2 6h2v1h-2zM5 6h9v1h-9zM2 7h2v1h-2zM5 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM5 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM5 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM5 10h2v1h-2zM12 10h2v1h-2zM5 11h2v1h-2zM12 11h2v1h-2zM5 12h9v1h-9zM5 13h9v1h-9z"/></svg><svg class="pixel-icon done-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M12 3h1v1h-1zM11 4h3v1h-3zM11 5h2v1h-2zM10 6h2v1h-2zM2 7h2v1h-2zM9 7h3v1h-3zM2 8h3v1h-3zM8 8h3v1h-3zM3 9h3v1h-3zM7 9h3v1h-3zM4 10h5v1h-5zM5 11h3v1h-3zM6 12h1v1h-1z"/></svg></button></div>
+        </div>
+        <div class="stack">
+          <span class="named"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M4 0h1v1h-1zM9 0h1v1h-1zM4 1h2v1h-2zM9 1h1v1h-1zM4 2h2v1h-2zM8 2h2v1h-2zM12 2h2v1h-2zM1 3h2v1h-2zM5 3h2v1h-2zM8 3h2v1h-2zM11 3h3v1h-3zM2 4h2v1h-2zM5 4h2v1h-2zM8 4h1v1h-1zM10 4h3v1h-3zM3 5h9v1h-9zM4 6h7v1h-7zM14 6h2v1h-2zM0 7h2v1h-2zM6 7h9v1h-9zM1 8h11v1h-11zM5 9h11v1h-11zM3 10h9v1h-9zM2 11h2v1h-2zM6 11h1v1h-1zM8 11h5v1h-5zM5 12h1v1h-1zM7 12h2v1h-2zM10 12h2v1h-2zM13 12h1v1h-1zM4 13h1v1h-1zM7 13h2v1h-2zM11 13h1v1h-1zM4 14h1v1h-1zM7 14h1v1h-1zM11 14h1v1h-1zM7 15h1v1h-1z"/></svg>Claude Code</span>
+          <div class="command"><code>claude mcp add --transport stdio crucible-scene -- npx -y --package @codepawlhq/crucible crucible-mcp --backend gpu --memory 192</code><button class="copy" type="button" aria-label="Copy the Claude Code command"><svg class="pixel-icon copy-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 2h8v1h-8zM2 3h9v1h-9zM2 4h3v1h-3zM2 5h2v1h-2zM5 5h9v1h-9zM2 6h2v1h-2zM5 6h9v1h-9zM2 7h2v1h-2zM5 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM5 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM5 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM5 10h2v1h-2zM12 10h2v1h-2zM5 11h2v1h-2zM12 11h2v1h-2zM5 12h9v1h-9zM5 13h9v1h-9z"/></svg><svg class="pixel-icon done-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M12 3h1v1h-1zM11 4h3v1h-3zM11 5h2v1h-2zM10 6h2v1h-2zM2 7h2v1h-2zM9 7h3v1h-3zM2 8h3v1h-3zM8 8h3v1h-3zM3 9h3v1h-3zM7 9h3v1h-3zM4 10h5v1h-5zM5 11h3v1h-3zM6 12h1v1h-1z"/></svg></button></div>
+          <span class="named"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 2h3v1h-3zM10 2h3v1h-3zM2 3h4v1h-4zM10 3h4v1h-4zM2 4h2v1h-2zM12 4h2v1h-2zM2 5h2v1h-2zM12 5h2v1h-2zM2 6h2v1h-2zM12 6h2v1h-2zM2 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM12 10h2v1h-2zM2 11h2v1h-2zM12 11h2v1h-2zM2 12h4v1h-4zM10 12h4v1h-4zM3 13h3v1h-3zM10 13h3v1h-3z"/></svg>Any MCP client</span>
+          <div class="code-wrap"><pre class="code-block" id="client-config">{
+  "mcpServers": {
+    "crucible-scene": {
+      "command": "npx",
+      "args": ["-y", "--package", "@codepawlhq/crucible",
+               "crucible-mcp", "--backend", "gpu", "--memory", "192"]
+    }
+  }
+}</pre><button class="copy" type="button" aria-label="Copy the MCP client configuration"><svg class="pixel-icon copy-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 2h8v1h-8zM2 3h9v1h-9zM2 4h3v1h-3zM2 5h2v1h-2zM5 5h9v1h-9zM2 6h2v1h-2zM5 6h9v1h-9zM2 7h2v1h-2zM5 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM5 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM5 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM5 10h2v1h-2zM12 10h2v1h-2zM5 11h2v1h-2zM12 11h2v1h-2zM5 12h9v1h-9zM5 13h9v1h-9z"/></svg><svg class="pixel-icon done-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M12 3h1v1h-1zM11 4h3v1h-3zM11 5h2v1h-2zM10 6h2v1h-2zM2 7h2v1h-2zM9 7h3v1h-3zM2 8h3v1h-3zM8 8h3v1h-3zM3 9h3v1h-3zM7 9h3v1h-3zM4 10h5v1h-5zM5 11h3v1h-3zM6 12h1v1h-1z"/></svg></button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="code" aria-labelledby="code-title">
+    <div class="inner">
+      <h2 id="code-title">A scene in a few lines</h2>
+      <p class="lede">Load a glTF model and an HDRI, then render.</p>
+      <div class="split">
+        <div class="code-wrap"><pre class="code-block">import { Glaze } from 'crucible';
 import { loadGltf } from 'crucible/addons/gltf';
 import { loadHdri } from 'crucible/addons/hdri';
-
 const { parts } = await loadGltf('/airport.glb');
 const map = await loadHdri('/sky.hdr');
 const renderer = new Glaze(canvas, parts, {
@@ -122,139 +149,160 @@ const renderer = new Glaze(canvas, parts, {
   ground: false,
   environment: { map },
 });
+renderer.render({ eye: [58, 31, 84], target: [-8, 3, -18] });</pre><button class="copy" type="button" aria-label="Copy the code example"><svg class="pixel-icon copy-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 2h8v1h-8zM2 3h9v1h-9zM2 4h3v1h-3zM2 5h2v1h-2zM5 5h9v1h-9zM2 6h2v1h-2zM5 6h9v1h-9zM2 7h2v1h-2zM5 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM5 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM5 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM5 10h2v1h-2zM12 10h2v1h-2zM5 11h2v1h-2zM12 11h2v1h-2zM5 12h9v1h-9zM5 13h9v1h-9z"/></svg><svg class="pixel-icon done-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M12 3h1v1h-1zM11 4h3v1h-3zM11 5h2v1h-2zM10 6h2v1h-2zM2 7h2v1h-2zM9 7h3v1h-3zM2 8h3v1h-3zM8 8h3v1h-3zM3 9h3v1h-3zM7 9h3v1h-3zM4 10h5v1h-5zM5 11h3v1h-3zM6 12h1v1h-1z"/></svg></button></div>
+        <figure class="shot"><img data-dither src="/previews/showcase-datacenter.webp" alt="A cutaway AI data center hall rendered by Crucible from a GLB and an HDRI" loading="lazy"></figure>
+      </div>
+    </div>
+  </section>
 
-renderer.render({ eye: [58, 31, 84], target: [-8, 3, -18] });</code></pre>
-            <button data-copy-code="home-code" aria-label="Copy the code example">Copy</button>
-          </div>
-        </div>
-        <img class="code-result" src="./previews/showcase-datacenter.webp" alt="A cutaway AI data center hall rendered by Crucible from a GLB and an HDRI" width="1280" height="720" loading="lazy" />
-      </section>
+  <section class="section" id="showcase" aria-labelledby="showcase-title">
+    <div class="inner">
+      <div class="heading-row">
+        <h2 id="showcase-title">Showcase</h2>
+        <nav aria-label="Showcase links"><a href="/showcase.html#community">Submit your work</a><a href="/showcase.html">Open the live scenes</a></nav>
+      </div>
+      <div class="gallery">
+        <a class="work" href="/showcase.html?scene=airport"><span class="shot"><img data-dither src="/previews/showcase-airport.webp" alt="Airport ramp, rendered by Crucible" loading="lazy"></span><span><b>Airport ramp</b>A widebody at the stand with its service trucks</span></a>
+        <a class="work" href="/showcase.html?scene=datacenter"><span class="shot"><img data-dither src="/previews/showcase-datacenter.webp" alt="AI data center, rendered by Crucible" loading="lazy"></span><span><b>AI data center</b>Rows of racks, power and cooling, cut open</span></a>
+        <a class="work" href="/showcase.html?scene=port"><span class="shot"><img data-dither src="/previews/showcase-port.webp" alt="Container port, rendered by Crucible" loading="lazy"></span><span><b>Container port</b>A ship at berth under the quay cranes</span></a>
+      </div>
+      <ul class="chips" aria-label="Engine capabilities">
+        <li>PBR materials</li><li>Shadows</li><li>HDR and bloom</li><li>MSAA</li><li>Mesh blend</li><li>Live cloth</li><li>Volumetric fog</li><li>Skinning and morphs</li><li>Physics</li><li>Spume liquid</li><li>Glass and leaf cutouts</li><li>HDRI lighting</li><li>Textured terrain</li><li>Trees and grass</li><li>Vehicles</li><li>GLB import and export</li><li>Cook path tracer</li>
+      </ul>
+    </div>
+  </section>
 
-      <section id="examples" class="examples" aria-labelledby="examples-title">
-        <div class="section-heading"><h2 id="examples-title">Showcase</h2><span class="section-heading-links"><a href="./showcase.html#community">Submit your work</a><a href="./showcase.html">Open the live scenes</a></span></div>
-        <ul class="capability-list" aria-label="Engine capabilities">
-          <li>PBR materials</li><li>Shadows</li><li>HDR and bloom</li><li>MSAA</li><li>Mesh blend</li><li>Live cloth</li><li>Volumetric fog</li><li>Skinning and morphs</li><li>Physics</li><li>Spume liquid</li><li>Glass and leaf cutouts</li><li>HDRI lighting</li><li>Textured terrain</li><li>Trees and grass</li><li>Vehicles</li><li>GLB import and export</li><li>Cook path tracer</li>
-        </ul>
-        <div class="gallery">
-          <a class="example is-lead" href="./showcase.html?scene=airport"><span class="work-media"><img src="./previews/showcase-airport.webp" alt="Airport ramp, rendered by Crucible" width="1280" height="720" loading="lazy" /></span><span class="work-title"><span class="work-name">Airport ramp</span><span class="work-date">A widebody at the stand with its service trucks</span></span></a>
-          <a class="example" href="./showcase.html?scene=datacenter"><span class="work-media"><img src="./previews/showcase-datacenter.webp" alt="AI data center, rendered by Crucible" width="1280" height="720" loading="lazy" /></span><span class="work-title"><span class="work-name">AI data center</span><span class="work-date">Rows of racks, power and cooling, cut open</span></span></a>
-          <a class="example" href="./showcase.html?scene=port"><span class="work-media"><img src="./previews/showcase-port.webp" alt="Container port, rendered by Crucible" width="1280" height="720" loading="lazy" /></span><span class="work-title"><span class="work-name">Container port</span><span class="work-date">A ship at berth under the quay cranes</span></span></a>
-        </div>
-      </section>
-
-      <section id="agents" class="agents" aria-labelledby="agents-title">
-        <div class="agents-intro">
-          <h2 id="agents-title">Built for agents</h2>
+  <section class="section" id="agents" aria-labelledby="agents-title">
+    <div class="inner">
+      <h2 id="agents-title">Built for agents</h2>
+      <div class="split">
+        <div class="stack">
           <p>An agent gets a live scene to edit, draws it with Glaze or Cook, and reviews the result.</p>
-          <div class="code-block">
-            <pre><code id="home-mcp" data-language="shell">npx crucible-mcp --backend gpu --memory 192</code></pre>
-            <button data-copy-code="home-mcp" aria-label="Copy the MCP server command">Copy</button>
-          </div>
-          <div class="agent-size-bars" aria-label="Measured gzip bundle size on lit-box">
-            <div class="size-bar-row">
-              <div class="size-bar-label"><span><strong>Crucible</strong> (lit-box)</span><span>58.8 kB gzip · 2.28× smaller</span></div>
-              <div class="size-bar-track"><span class="size-bar-fill is-crucible" style="width: 44%"></span></div>
-            </div>
-            <div class="size-bar-row">
-              <div class="size-bar-label"><span>three.js (lit-box)</span><span>133.8 kB gzip</span></div>
-              <div class="size-bar-track"><span class="size-bar-fill is-other" style="width: 100%"></span></div>
-            </div>
+          <div class="command"><code>npx crucible-mcp --backend gpu --memory 192</code><button class="copy" type="button" aria-label="Copy the MCP server command"><svg class="pixel-icon copy-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 2h8v1h-8zM2 3h9v1h-9zM2 4h3v1h-3zM2 5h2v1h-2zM5 5h9v1h-9zM2 6h2v1h-2zM5 6h9v1h-9zM2 7h2v1h-2zM5 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM5 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM5 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM5 10h2v1h-2zM12 10h2v1h-2zM5 11h2v1h-2zM12 11h2v1h-2zM5 12h9v1h-9zM5 13h9v1h-9z"/></svg><svg class="pixel-icon done-mark" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M12 3h1v1h-1zM11 4h3v1h-3zM11 5h2v1h-2zM10 6h2v1h-2zM2 7h2v1h-2zM9 7h3v1h-3zM2 8h3v1h-3zM8 8h3v1h-3zM3 9h3v1h-3zM7 9h3v1h-3zM4 10h5v1h-5zM5 11h3v1h-3zM6 12h1v1h-1z"/></svg></button></div>
+          <div class="meter" role="img" aria-label="Measured gzip bundle size on lit-box: Crucible 58.8 kB, three.js 133.8 kB">
+            <span><span>Crucible (lit-box)</span><span>58.8 kB gzip · 2.28× smaller</span></span><i class="ours" style="--share: 44%"></i>
+            <span><span>three.js (lit-box)</span><span>133.8 kB gzip</span></span><i style="--share: 100%"></i>
           </div>
         </div>
-        <div class="agent-cards">
-          <a href="/mcp.md" data-icon="cube"><h3>25 MCP tools</h3><p>Create, edit, explode, blend and render over stdio.</p></a>
-          <a href="/path-tracer.md" data-icon="code"><h3>Glaze + Cook</h3><p>Real-time frames, or path-traced stills.</p></a>
-          <a href="/agent-review.md" data-icon="image"><h3>Visual review</h3><p>Compare labeled views and normals from one snapshot.</p></a>
-        </div>
-      </section>
+        <figure class="shot"><img data-dither src="/previews/cook-monk.webp" alt="A monk statue path traced by Cook" loading="lazy"></figure>
+      </div>
+      <div class="cards">
+        <a class="card" href="/mcp.md"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M7 1h2v1h-2zM5 2h6v1h-6zM3 3h4v1h-4zM9 3h4v1h-4zM2 4h4v1h-4zM10 4h4v1h-4zM1 5h5v1h-5zM10 5h5v1h-5zM2 6h5v1h-5zM9 6h5v1h-5zM2 7h2v1h-2zM5 7h6v1h-6zM12 7h2v1h-2zM2 8h2v1h-2zM7 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM7 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM7 10h2v1h-2zM12 10h2v1h-2zM2 11h4v1h-4zM7 11h2v1h-2zM10 11h4v1h-4zM3 12h10v1h-10zM5 13h6v1h-6zM7 14h2v1h-2z"/></svg><h3>25 MCP tools</h3><p>Create, edit, explode, blend and render over stdio.</p></a>
+        <a class="card" href="/path-tracer.md"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M7 1h2v1h-2zM5 2h6v1h-6zM3 3h4v1h-4zM9 3h4v1h-4zM1 4h5v1h-5zM10 4h5v1h-5zM0 5h5v1h-5zM11 5h5v1h-5zM2 6h4v1h-4zM10 6h4v1h-4zM1 7h2v1h-2zM4 7h8v1h-8zM13 7h2v1h-2zM1 8h3v1h-3zM6 8h4v1h-4zM12 8h3v1h-3zM2 9h4v1h-4zM7 9h2v1h-2zM10 9h4v1h-4zM1 10h2v1h-2zM4 10h8v1h-8zM13 10h2v1h-2zM1 11h3v1h-3zM6 11h4v1h-4zM12 11h3v1h-3zM2 12h4v1h-4zM7 12h2v1h-2zM10 12h4v1h-4zM4 13h8v1h-8zM6 14h4v1h-4zM7 15h2v1h-2z"/></svg><h3>Glaze + Cook</h3><p>Real-time frames, or path-traced stills.</p></a>
+        <a class="card" href="/agent-review.md"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 2h4v1h-4zM4 3h8v1h-8zM3 4h4v1h-4zM9 4h4v1h-4zM2 5h3v1h-3zM6 5h4v1h-4zM11 5h3v1h-3zM1 6h3v1h-3zM5 6h6v1h-6zM12 6h3v1h-3zM0 7h3v1h-3zM5 7h2v1h-2zM9 7h2v1h-2zM13 7h3v1h-3zM0 8h3v1h-3zM5 8h2v1h-2zM9 8h2v1h-2zM13 8h3v1h-3zM1 9h3v1h-3zM5 9h6v1h-6zM12 9h3v1h-3zM2 10h3v1h-3zM6 10h4v1h-4zM11 10h3v1h-3zM3 11h4v1h-4zM9 11h4v1h-4zM4 12h8v1h-8zM6 13h4v1h-4z"/></svg><h3>Visual review</h3><p>Compare labeled views and normals from one snapshot.</p></a>
+      </div>
+    </div>
+  </section>
 
-      <section id="tiers" class="tiers" aria-labelledby="tiers-title">
-        <h2 id="tiers-title">Quality tiers, measured</h2>
-        <p class="tiers-caption">Six scenes, 960×540, RTX 3060. Time bars show the slowest scene.</p>
-        <div id="tiers-table">
-          <div class="tier-rail" aria-hidden="true"><span class="tier-line"></span><span class="tier-end is-start">Cheapest</span><span class="tier-end is-finish">Best looking</span></div>
-          <ol class="tier-cards">
-          <li class="tier-card" data-tier="draft" data-glaze-ms="0.54-1.04" data-eevee-ms="56-59" data-flip-glaze="0.045-0.188" data-flip-eevee="0.041-0.562">
-            <div class="tier-top"><svg class="tier-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></svg><h3>draft</h3></div>
-            <p class="tier-for">A quick look while editing</p>
-            <p class="tier-big"><strong>0.54–1.04</strong> <span>ms a frame</span></p>
-            <div class="tier-bars" role="img" aria-label="Glaze 0.54 to 1.04 ms a frame; EEVEE 1 sample 56 to 59 ms a render call">
-              <div class="tier-row-bar is-crucible"><span class="tier-bar-label"><span>Crucible Glaze</span><span>0.54–1.04 ms</span></span><span class="tier-track"><span class="tier-fill" style="--w:1.8%"></span></span></div>
-              <div class="tier-row-bar is-other"><span class="tier-bar-label"><span>EEVEE 1 sample</span><span>56–59 ms</span></span><span class="tier-track"><span class="tier-fill" style="--w:100%"></span></span></div>
-            </div>
-            <div class="tier-bars is-quality" role="img" aria-label="Error vs Cycles, lower is better: Glaze 0.045 to 0.188, EEVEE 0.041 to 0.562">
-              <p class="tier-bars-title">Error vs Cycles, lower is better</p>
-              <div class="tier-row-bar is-crucible"><span class="tier-bar-label"><span>Error, Glaze</span><span>0.045–0.188</span></span><span class="tier-track"><span class="tier-fill is-range" style="--l:7.5%;--w:23.8%"></span></span></div>
-              <div class="tier-row-bar is-other"><span class="tier-bar-label"><span>Error, EEVEE</span><span>0.041–0.562</span></span><span class="tier-track"><span class="tier-fill is-range" style="--l:6.8%;--w:86.8%"></span></span></div>
-            </div>
-          </li>
-          <li class="tier-card" data-tier="realtime" data-glaze-ms="0.77-0.98" data-eevee-ms="288-363" data-flip-glaze="0.03-0.197" data-flip-eevee="0.042-0.562">
-            <div class="tier-top"><svg class="tier-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg><h3>realtime</h3></div>
-            <p class="tier-for">Interactive use</p>
-            <p class="tier-big"><strong>0.77–0.98</strong> <span>ms a frame</span></p>
-            <div class="tier-bars" role="img" aria-label="Glaze 0.77 to 0.98 ms a frame; EEVEE 64 samples 288 to 363 ms a render call">
-              <div class="tier-row-bar is-crucible"><span class="tier-bar-label"><span>Crucible Glaze</span><span>0.77–0.98 ms</span></span><span class="tier-track"><span class="tier-fill" style="--w:0.3%"></span></span></div>
-              <div class="tier-row-bar is-other"><span class="tier-bar-label"><span>EEVEE 64 samples</span><span>288–363 ms</span></span><span class="tier-track"><span class="tier-fill" style="--w:100%"></span></span></div>
-            </div>
-            <div class="tier-bars is-quality" role="img" aria-label="Error vs Cycles, lower is better: Glaze 0.03 to 0.197, EEVEE 0.042 to 0.562">
-              <p class="tier-bars-title">Error vs Cycles, lower is better</p>
-              <div class="tier-row-bar is-crucible"><span class="tier-bar-label"><span>Error, Glaze</span><span>0.03–0.197</span></span><span class="tier-track"><span class="tier-fill is-range" style="--l:5%;--w:27.8%"></span></span></div>
-              <div class="tier-row-bar is-other"><span class="tier-bar-label"><span>Error, EEVEE</span><span>0.042–0.562</span></span><span class="tier-track"><span class="tier-fill is-range" style="--l:7%;--w:86.7%"></span></span></div>
-            </div>
-          </li>
-          <li class="tier-card is-planned" data-tier="realtime-high" data-status="planned">
-            <div class="tier-top"><svg class="tier-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c.6 4.6 2.4 6.4 7 7-4.6.6-6.4 2.4-7 7-.6-4.6-2.4-6.4-7-7 4.6-.6 6.4-2.4 7-7z"/></svg><h3>realtime-high</h3></div>
-            <p class="tier-for">Better live frames</p>
-            <p class="tier-big"><strong>Planned</strong> <span>not measured</span></p>
-            <div class="tier-bars" aria-hidden="true">
-              <div class="tier-row-bar is-crucible"><span class="tier-bar-label"><span>Crucible Glaze</span><span>?</span></span><span class="tier-track"><span class="tier-fill" style="--w:0%"></span></span></div>
-              <div class="tier-row-bar is-other"><span class="tier-bar-label"><span>Blender</span><span>?</span></span><span class="tier-track"><span class="tier-fill" style="--w:0%"></span></span></div>
-            </div>
-            <p class="tier-plan">WebGPU, GI cache, upscaling. Issues <a href="https://github.com/codepawl/crucible/issues/901">901</a> and <a href="https://github.com/codepawl/crucible/issues/902">902</a>.</p>
-          </li>
-          <li class="tier-card" data-tier="final" data-cook-ms="1.73-4.24" data-cycles-ms="6.81-26.41" data-noise-time-x="1.05-4.02">
-            <div class="tier-top"><svg class="tier-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 4h11l3.5 5-9 11L3 9z"/><path d="M3 9h18M9.5 9 12 20l2.5-11"/></svg><h3>final</h3></div>
-            <p class="tier-for">Finished stills</p>
-            <p class="tier-big"><strong>1.73–4.24</strong> <span>ms per sample</span></p>
-            <div class="tier-bars" role="img" aria-label="Per sample: Cook native 1.73 to 4.24 ms, Cycles OptiX 6.81 to 26.41 ms">
-              <div class="tier-row-bar is-crucible"><span class="tier-bar-label"><span>Cook native</span><span>1.73–4.24 ms</span></span><span class="tier-track"><span class="tier-fill" style="--w:16.1%"></span></span></div>
-              <div class="tier-row-bar is-other"><span class="tier-bar-label"><span>Cycles OptiX</span><span>6.81–26.41 ms</span></span><span class="tier-track"><span class="tier-fill" style="--w:100%"></span></span></div>
-            </div>
-            <div class="tier-bars is-quality" role="img" aria-label="Time to the same noise, Cycles is 1 times: Cook needs 1.05 to 4.02 times, on three of six scenes">
-              <p class="tier-bars-title">Time to same noise, lower is better</p>
-              <div class="tier-row-bar is-other"><span class="tier-bar-label"><span>Same noise, Cycles</span><span>1×</span></span><span class="tier-track"><span class="tier-fill" style="--w:22.2%"></span></span></div>
-              <div class="tier-row-bar is-crucible"><span class="tier-bar-label"><span>Same noise, Cook</span><span>1.05–4.02×</span></span><span class="tier-track"><span class="tier-fill is-range" style="--l:23.3%;--w:66%"></span></span></div>
-            </div>
-            <p class="tier-plan">Slower to the same noise. Not reached on metal, glass, outdoor-hdri. Vulkan needs the optional Cook package.</p>
-          </li>
-          </ol>
-        </div>
-        <p class="tiers-note">Blender times are one whole EEVEE render call (scene sync, ray tracing off, no GI), not a frame rate. Details: <a href="https://github.com/codepawl/crucible/blob/main/bench/tiers/results/matrix-960.table.md">bench/tiers</a>.</p>
-      </section>
+  <section class="section" id="tiers" aria-labelledby="tiers-title">
+    <div class="inner">
+      <h2 id="tiers-title">Quality tiers, measured</h2>
+      <p class="lede">Pick a tier by how long a frame may take.</p>
+      <p class="fine">Six scenes, 960×540, RTX 3060. Time bars show the slowest scene.</p>
+      <ol class="tiers">
+        <!-- tier-cards:start (written by bench/tiers/make-home-tiers.mjs) -->
+        <li class="tier" data-tier="draft" data-glaze-ms="0.54-1.04" data-eevee-ms="56-59" data-flip-glaze="0.045-0.188" data-flip-eevee="0.041-0.562">
+          <h3><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M10 1h1v1h-1zM9 2h3v1h-3zM8 3h5v1h-5zM7 4h7v1h-7zM6 5h9v1h-9zM5 6h3v1h-3zM10 6h4v1h-4zM4 7h3v1h-3zM10 7h3v1h-3zM3 8h3v1h-3zM9 8h3v1h-3zM2 9h3v1h-3zM8 9h3v1h-3zM2 10h2v1h-2zM7 10h3v1h-3zM2 11h2v1h-2zM6 11h3v1h-3zM2 12h6v1h-6zM2 13h5v1h-5z"/></svg>draft</h3><p>A quick look while editing</p>
+          <p class="big">0.54–1.04 <span>ms a frame</span></p>
+          <div class="meter" role="img" aria-label="Glaze 0.54 to 1.04 ms a frame; EEVEE 1 sample 56 to 59 ms a render call">
+            <span><span>Crucible Glaze</span><span>0.54–1.04 ms</span></span><i class="ours" style="--share: 1.8%"></i>
+            <span><span>EEVEE 1 sample</span><span>56–59 ms</span></span><i style="--share: 100%"></i>
+          </div>
+          <div class="meter" role="img" aria-label="Error vs Cycles, lower is better: Glaze 0.045 to 0.188, EEVEE 0.041 to 0.562">
+            <span><span>Error, Glaze</span><span>0.045–0.188</span></span><i class="ours range" style="--from: 7.5%; --share: 23.8%"></i>
+            <span><span>Error, EEVEE</span><span>0.041–0.562</span></span><i class="range" style="--from: 6.8%; --share: 86.8%"></i>
+          </div>
+        </li>
+        <li class="tier" data-tier="realtime" data-glaze-ms="0.77-0.98" data-eevee-ms="288-363" data-flip-glaze="0.03-0.197" data-flip-eevee="0.042-0.562">
+          <h3><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 4h4v1h-4zM4 5h8v1h-8zM3 6h4v1h-4zM9 6h4v1h-4zM2 7h3v1h-3zM9 7h5v1h-5zM2 8h2v1h-2zM8 8h3v1h-3zM12 8h2v1h-2zM2 9h2v1h-2zM8 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM7 10h2v1h-2zM12 10h2v1h-2zM2 11h1v1h-1zM7 11h2v1h-2zM13 11h1v1h-1z"/></svg>realtime</h3><p>Interactive use</p>
+          <p class="big">0.77–0.98 <span>ms a frame</span></p>
+          <div class="meter" role="img" aria-label="Glaze 0.77 to 0.98 ms a frame; EEVEE 64 samples 288 to 363 ms a render call">
+            <span><span>Crucible Glaze</span><span>0.77–0.98 ms</span></span><i class="ours" style="--share: 0.3%"></i>
+            <span><span>EEVEE 64 samples</span><span>288–363 ms</span></span><i style="--share: 100%"></i>
+          </div>
+          <div class="meter" role="img" aria-label="Error vs Cycles, lower is better: Glaze 0.03 to 0.197, EEVEE 0.042 to 0.562">
+            <span><span>Error, Glaze</span><span>0.03–0.197</span></span><i class="ours range" style="--from: 5%; --share: 27.8%"></i>
+            <span><span>Error, EEVEE</span><span>0.042–0.562</span></span><i class="range" style="--from: 7%; --share: 86.7%"></i>
+          </div>
+        </li>
+        <li class="tier" data-tier="realtime-high" data-status="planned">
+          <h3><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M7 1h2v1h-2zM5 2h6v1h-6zM3 3h4v1h-4zM9 3h4v1h-4zM1 4h5v1h-5zM10 4h5v1h-5zM0 5h5v1h-5zM11 5h5v1h-5zM2 6h4v1h-4zM10 6h4v1h-4zM1 7h2v1h-2zM4 7h8v1h-8zM13 7h2v1h-2zM1 8h3v1h-3zM6 8h4v1h-4zM12 8h3v1h-3zM2 9h4v1h-4zM7 9h2v1h-2zM10 9h4v1h-4zM1 10h2v1h-2zM4 10h8v1h-8zM13 10h2v1h-2zM1 11h3v1h-3zM6 11h4v1h-4zM12 11h3v1h-3zM2 12h4v1h-4zM7 12h2v1h-2zM10 12h4v1h-4zM4 13h8v1h-8zM6 14h4v1h-4zM7 15h2v1h-2z"/></svg>realtime-high</h3><p>Better live frames</p>
+          <p class="big">Planned <span>not measured</span></p>
+          <p>WebGPU, GI cache, upscaling. Issues <a href="https://github.com/codepawl/crucible/issues/901">901</a> and <a href="https://github.com/codepawl/crucible/issues/902">902</a>.</p>
+        </li>
+        <li class="tier" data-tier="final" data-cook-ms="1.73-4.24" data-cycles-ms="6.81-26.41" data-noise-time-x="1.05-4.02">
+          <h3><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M7 1h2v1h-2zM7 2h2v1h-2zM6 3h4v1h-4zM6 4h4v1h-4zM0 5h16v1h-16zM1 6h6v1h-6zM9 6h6v1h-6zM2 7h3v1h-3zM11 7h3v1h-3zM3 8h3v1h-3zM10 8h3v1h-3zM4 9h2v1h-2zM10 9h2v1h-2zM4 10h2v1h-2zM7 10h2v1h-2zM10 10h2v1h-2zM4 11h8v1h-8zM3 12h10v1h-10zM3 13h3v1h-3zM10 13h3v1h-3zM3 14h2v1h-2zM11 14h2v1h-2z"/></svg>final</h3><p>Finished stills</p>
+          <p class="big">1.73–4.24 <span>ms per sample</span></p>
+          <div class="meter" role="img" aria-label="Per sample: Cook native 1.73 to 4.24 ms, Cycles OptiX 6.81 to 26.41 ms">
+            <span><span>Cook native</span><span>1.73–4.24 ms</span></span><i class="ours" style="--share: 16.1%"></i>
+            <span><span>Cycles OptiX</span><span>6.81–26.41 ms</span></span><i style="--share: 100%"></i>
+          </div>
+          <div class="meter" role="img" aria-label="Time to the same noise, Cycles is 1 times: Cook needs 1.05 to 4.02 times, on three of six scenes">
+            <span><span>Same noise, Cycles</span><span>1×</span></span><i style="--share: 22.2%"></i>
+            <span><span>Same noise, Cook</span><span>1.05–4.02×</span></span><i class="ours range" style="--from: 23.3%; --share: 66%"></i>
+          </div>
+          <p>Slower to the same noise. Not reached on metal, glass, outdoor-hdri. Vulkan needs the optional Cook package.</p>
+        </li>
+        <!-- tier-cards:end -->
+      </ol>
+      <p class="fine">Blender times are one whole EEVEE render call (scene sync, ray tracing off, no GI), not a frame rate. Details: <a href="https://github.com/codepawl/crucible/blob/main/bench/tiers/results/matrix-960.table.md">bench/tiers</a>.</p>
+    </div>
+  </section>
 
-      <section id="documentation" class="documentation-links" aria-labelledby="documentation-title">
-        <h2 id="documentation-title">Documentation</h2>
-        <div class="doc-links">
-          <a href="/docs.html#getting-started" data-icon="book">Getting started</a>
-          <a href="/docs.html#models-and-ai-agents" data-icon="cube">Models and agents</a>
-          <a href="/docs.html#performance-and-memory" data-icon="code">Performance and memory</a>
-          <a href="/changelog.md" data-icon="package">Changelog</a>
-        </div>
-      </section>
-
-      <section id="sponsors" class="documentation-links sponsors" aria-labelledby="sponsors-title">
-        <h2 id="sponsors-title">Sponsors</h2>
+  <section class="section" aria-label="Documentation, help and sponsors">
+    <div class="inner trio">
+      <div class="stack" id="documentation">
+        <h2>Documentation</h2>
+        <p class="lede">Guides for the engine, the MCP server and the addons.</p>
+        <nav class="links" aria-label="Documentation">
+          <a href="/docs.html#getting-started"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 1h11v1h-11zM2 2h12v1h-12zM2 3h2v1h-2zM12 3h2v1h-2zM2 4h2v1h-2zM5 4h6v1h-6zM12 4h2v1h-2zM2 5h2v1h-2zM5 5h6v1h-6zM12 5h2v1h-2zM2 6h2v1h-2zM12 6h2v1h-2zM2 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM12 10h2v1h-2zM2 11h2v1h-2zM11 11h3v1h-3zM2 12h12v1h-12zM2 13h11v1h-11zM2 14h2v1h-2z"/></svg>Getting started</a>
+          <a href="/docs.html#models-and-ai-agents"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M7 1h2v1h-2zM5 2h6v1h-6zM3 3h4v1h-4zM9 3h4v1h-4zM2 4h4v1h-4zM10 4h4v1h-4zM1 5h5v1h-5zM10 5h5v1h-5zM2 6h5v1h-5zM9 6h5v1h-5zM2 7h2v1h-2zM5 7h6v1h-6zM12 7h2v1h-2zM2 8h2v1h-2zM7 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM7 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM7 10h2v1h-2zM12 10h2v1h-2zM2 11h4v1h-4zM7 11h2v1h-2zM10 11h4v1h-4zM3 12h10v1h-10zM5 13h6v1h-6zM7 14h2v1h-2z"/></svg>Models and agents</a>
+          <a href="/docs.html#performance-and-memory"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 4h4v1h-4zM4 5h8v1h-8zM3 6h4v1h-4zM9 6h4v1h-4zM2 7h3v1h-3zM9 7h5v1h-5zM2 8h2v1h-2zM8 8h3v1h-3zM12 8h2v1h-2zM2 9h2v1h-2zM8 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM7 10h2v1h-2zM12 10h2v1h-2zM2 11h1v1h-1zM7 11h2v1h-2zM13 11h1v1h-1z"/></svg>Performance and memory</a>
+          <a href="/changelog.md"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M2 3h12v1h-12zM2 4h12v1h-12zM2 7h12v1h-12zM2 8h12v1h-12zM2 11h12v1h-12zM2 12h12v1h-12z"/></svg>Changelog</a>
+        </nav>
+      </div>
+      <div class="stack" id="help">
+        <h2>Help</h2>
+        <p class="lede">Report a bug or ask a question on GitHub.</p>
+        <nav class="links" aria-label="Help">
+          <a href="https://github.com/codepawl/crucible/issues"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 0h4v1h-4zM4 1h8v1h-8zM2 2h12v1h-12zM1 3h14v1h-14zM1 4h3v1h-3zM12 4h3v1h-3zM0 5h4v1h-4zM12 5h4v1h-4zM0 6h3v1h-3zM13 6h3v1h-3zM0 7h3v1h-3zM13 7h3v1h-3zM0 8h3v1h-3zM13 8h3v1h-3zM0 9h3v1h-3zM13 9h3v1h-3zM0 10h4v1h-4zM12 10h4v1h-4zM1 11h5v1h-5zM10 11h5v1h-5zM1 12h2v1h-2zM4 12h2v1h-2zM10 12h5v1h-5zM2 13h2v1h-2zM10 13h4v1h-4zM3 14h3v1h-3zM10 14h3v1h-3zM5 15h1v1h-1zM10 15h1v1h-1z"/></svg>GitHub issues</a>
+          <a href="/docs.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 1h11v1h-11zM2 2h12v1h-12zM2 3h2v1h-2zM12 3h2v1h-2zM2 4h2v1h-2zM5 4h6v1h-6zM12 4h2v1h-2zM2 5h2v1h-2zM5 5h6v1h-6zM12 5h2v1h-2zM2 6h2v1h-2zM12 6h2v1h-2zM2 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM12 10h2v1h-2zM2 11h2v1h-2zM11 11h3v1h-3zM2 12h12v1h-12zM2 13h11v1h-11zM2 14h2v1h-2z"/></svg>Docs</a>
+          <a href="/recipes.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M7 1h2v1h-2zM5 2h6v1h-6zM3 3h4v1h-4zM9 3h4v1h-4zM1 4h5v1h-5zM10 4h5v1h-5zM0 5h5v1h-5zM11 5h5v1h-5zM2 6h4v1h-4zM10 6h4v1h-4zM1 7h2v1h-2zM4 7h8v1h-8zM13 7h2v1h-2zM1 8h3v1h-3zM6 8h4v1h-4zM12 8h3v1h-3zM2 9h4v1h-4zM7 9h2v1h-2zM10 9h4v1h-4zM1 10h2v1h-2zM4 10h8v1h-8zM13 10h2v1h-2zM1 11h3v1h-3zM6 11h4v1h-4zM12 11h3v1h-3zM2 12h4v1h-4zM7 12h2v1h-2zM10 12h4v1h-4zM4 13h8v1h-8zM6 14h4v1h-4zM7 15h2v1h-2z"/></svg>Recipes</a>
+        </nav>
+      </div>
+      <div class="stack" id="sponsors">
+        <h2>Sponsors</h2>
         <p>Crucible is free and MIT licensed. Sponsors pay for GPU time, test hardware and the hours that go into it. Company sponsors get their logo here from $100 a month.</p>
-        <div class="doc-links">
-          <a href="https://github.com/sponsors/codepawl" data-icon="heart">Sponsor on GitHub</a>
-        </div>
-      </section>
-    </main>
-    <footer class="site-footer" aria-label="Site footer">
-      <p><a class="brand" href="/" aria-label="Crucible home">Crucible</a> by <a href="https://codepawl.com">CodePawl</a>, formerly 67js</p>
-      <nav class="footer-links" aria-label="Project links"><a href="https://github.com/codepawl/crucible"><span class="package-logo package-logo-github" aria-hidden="true"></span>GitHub</a><a href="https://www.npmjs.com/package/@codepawlhq/crucible"><span class="package-logo package-logo-npm" aria-hidden="true"></span>npm</a><a data-release-commit href="https://github.com/codepawl/crucible">Release commit</a><a href="/changelog.html">Changelog</a><a href="/license.txt">MIT license</a><a href="/logo.svg" download>Logo SVG</a><a href="https://github.com/sponsors/codepawl">Sponsor</a></nav>
-    </footer>
-    <script type="module" src="/src/home.js"></script>
-    <script type="module" src="/src/hero-lab/hero-loop.js"></script>
+        <a class="button" href="https://github.com/sponsors/codepawl"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M2 1h4v1h-4zM10 1h4v1h-4zM1 2h14v1h-14zM0 3h2v1h-2zM6 3h4v1h-4zM14 3h2v1h-2zM0 4h2v1h-2zM7 4h2v1h-2zM14 4h2v1h-2zM0 5h2v1h-2zM14 5h2v1h-2zM0 6h2v1h-2zM14 6h2v1h-2zM0 7h2v1h-2zM14 7h2v1h-2zM1 8h2v1h-2zM13 8h2v1h-2zM1 9h2v1h-2zM13 9h2v1h-2zM2 10h2v1h-2zM12 10h2v1h-2zM3 11h2v1h-2zM11 11h2v1h-2zM4 12h3v1h-3zM9 12h3v1h-3zM5 13h6v1h-6zM7 14h2v1h-2z"/></svg>Sponsor on GitHub</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- site-chrome:footer -->
+<footer class="footer">
+  <div class="inner">
+    <p><a class="brand" href="/" aria-label="Crucible home"><img src="/brand/crucible-mark.svg" alt="">Crucible</a></p>
+    <p>by <a href="https://codepawl.com">CodePawl</a>, formerly 67js</p>
+    <nav aria-label="Site pages">
+      <a href="/docs.html">Docs</a>
+      <a href="/recipes.html">Recipes</a>
+      <a href="/showcase.html">Showcase</a>
+      <a href="/marketplace.html">Marketplace</a>
+      <a href="/tiers.html">Tiers</a>
+      <a href="/changelog.html">Changelog</a>
+    </nav>
+    <nav aria-label="Project links">
+      <a href="https://github.com/codepawl/crucible"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 0h4v1h-4zM4 1h8v1h-8zM2 2h12v1h-12zM1 3h14v1h-14zM1 4h3v1h-3zM12 4h3v1h-3zM0 5h4v1h-4zM12 5h4v1h-4zM0 6h3v1h-3zM13 6h3v1h-3zM0 7h3v1h-3zM13 7h3v1h-3zM0 8h3v1h-3zM13 8h3v1h-3zM0 9h3v1h-3zM13 9h3v1h-3zM0 10h4v1h-4zM12 10h4v1h-4zM1 11h5v1h-5zM10 11h5v1h-5zM1 12h2v1h-2zM4 12h2v1h-2zM10 12h5v1h-5zM2 13h2v1h-2zM10 13h4v1h-4zM3 14h3v1h-3zM10 14h3v1h-3zM5 15h1v1h-1zM10 15h1v1h-1z"/></svg>GitHub</a>
+      <a href="https://www.npmjs.com/package/@codepawlhq/crucible"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M0 0h16v1h-16zM0 1h16v1h-16zM0 2h16v1h-16zM0 3h16v1h-16zM0 4h3v1h-3zM13 4h3v1h-3zM0 5h3v1h-3zM13 5h3v1h-3zM0 6h3v1h-3zM8 6h2v1h-2zM13 6h3v1h-3zM0 7h3v1h-3zM8 7h2v1h-2zM13 7h3v1h-3zM0 8h3v1h-3zM8 8h2v1h-2zM13 8h3v1h-3zM0 9h3v1h-3zM8 9h2v1h-2zM13 9h3v1h-3zM0 10h3v1h-3zM8 10h2v1h-2zM13 10h3v1h-3zM0 11h3v1h-3zM8 11h2v1h-2zM13 11h3v1h-3zM0 12h4v1h-4zM8 12h3v1h-3zM12 12h4v1h-4zM0 13h16v1h-16zM0 14h16v1h-16zM0 15h16v1h-16z"/></svg>npm</a>
+      <a data-release-commit href="https://github.com/codepawl/crucible">Release commit</a>
+      <a href="/license.txt">MIT license</a>
+      <a href="/logo.svg" download>Logo SVG</a>
+      <a href="https://github.com/sponsors/codepawl">Sponsor</a>
+    </nav>
+  </div>
+</footer>
+<!-- /site-chrome:footer -->
+    <script type="module" src="/src/landing.js"></script>
   </body>
 </html>

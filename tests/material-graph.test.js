@@ -178,7 +178,7 @@ test('graph and preset fields do not mix', () => {
 test('every capability operator compiles, and no other operator does', () => {
   const samples = {
     uv: { uv: 'u' }, image: { image: { asset: 'a'.repeat(64) } }, coord: { coord: 'object' }, mapping: { mapping: {} }, whiteNoise: { whiteNoise: {} }, brick: { brick: {} }, vec: { vec: [1, 2, 3] }, ramp: { ramp: { value: 0.5, stops: [[0, 0], [1, 1]] } },
-    fresnel: { fresnel: {} }, noise: { noise: {} }, voronoi: { voronoi: {} }, wave: { wave: {} }, checker: { checker: {} }, gradient: { gradient: {} },
+    fresnel: { fresnel: {} }, vertexGroup: { vertexGroup: { name: 'edge' } }, noise: { noise: {} }, voronoi: { voronoi: {} }, wave: { wave: {} }, checker: { checker: {} }, gradient: { gradient: {} },
     layer: { layer: { base: [0, 0, 0], top: [1, 1, 1], mask: 0.5 } }, hue: { hue: { color: [1, 0, 0], shift: 0.1 } }, curve: { curve: { value: 0.5, points: [[0, 0], [1, 1]] } },
   };
   for (const name of MATERIAL_GRAPH_OPERATORS) {
@@ -298,9 +298,33 @@ test('graph errors name the valid options, and scene_capabilities lists the node
   }
 });
 
-test('scene_capabilities says fresnel exists only as an emission factor and lists what is missing', () => {
+test('scene_capabilities says fresnel exists only as an emission factor and lists what is missing, vertexGroup no longer among it', () => {
   const coordinates = AGENT_SCENE_CAPABILITIES.materialGraph.nodes.coordinates;
   assert.match(coordinates, /In graphs: fresnel, only as an emission factor/);
-  assert.match(coordinates, /Not in graphs: vertexGroup, AO, bevel, curvature/);
+  assert.match(coordinates, /Not in graphs: AO, bevel, curvature/);
   assert.doesNotMatch(coordinates, /Not in graphs yet: AO, bevel, curvature, fresnel/);
+});
+
+test('a graph refuses a bake resolution that is missing, fractional or below 1 (#2388)', async () => {
+  const { bakeMaterialGraph, normalizeMaterialGraph } = await import('../src/material-graph.js');
+  for (const resolution of [undefined, Number.NaN, 0, -4, 1.5]) {
+    assert.throws(() => normalizeMaterialGraph({ roughness: 0.5 }, resolution), /resolution must be a whole number from 1 to 16384/);
+    assert.throws(() => bakeMaterialGraph({ roughness: 0.5 }, { resolution, bump: 1 }), /resolution must be a whole number from 1 to 16384/);
+  }
+  assert.equal(bakeMaterialGraph({ roughness: 0.5 }, { resolution: 2, bump: 1 }).metallicRoughnessMap.image.data.length, 16);
+});
+
+// #2403: a missing or wrong input names the field, and a one-argument operator given three numbers says how to pass a vector.
+test('a missing graph input names its field, and a unary operator on three numbers explains the vector form', () => {
+  const missing = [
+    [{ color: { hue: { shift: 0.1 } } }, /hue "color" must be a number, a vector of three numbers or an object with one operator, got nothing \(the field is missing\)\./],
+    [{ roughness: { curve: { points: [[0, 0], [1, 1]] } } }, /curve "value" must be .*, got nothing/],
+    [{ color: { ramp: { stops: [[0, [0, 0, 0]], [1, [1, 1, 1]]] } } }, /ramp "value" must be .*, got nothing/],
+    [{ roughness: { add: [1, null] } }, /add argument 2 must be .*, got null\./],
+    [{ roughness: null }, /output "roughness" must be .*, got null\./],
+    [{ color: { vec: [1, 'red', 0] } }, /vec part 2 must be .*, got "red"\./],
+  ];
+  for (const [graph, message] of missing) assert.throws(() => compileMaterialGraph(graph), message);
+  assert.throws(() => compileMaterialGraph({ color: { abs: [1, 2, 3] } }), /abs needs 1 argument, got a list of 3\. A list is read as the arguments; to pass a vector, wrap it: \{"abs": \[\[x, y, z\]\]\}/);
+  assert.deepEqual(Object.keys(compileMaterialGraph({ color: { abs: [[1, -2, 3]] } }).outputs), ['color']);
 });

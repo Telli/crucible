@@ -53,3 +53,13 @@ test('the object stage replaces camera blur on a frame that carries object motio
   assert.equal(objectStage.apply({ depthTexture: null }, { previousCamera: {} }, effects, null), null, 'Without object motion the stage passes through.');
   assert.equal(installObjectMotionBlur(renderer).postStages.length, 3, 'Installing twice adds nothing.');
 });
+
+test('packObjectMotion names a matrix set that is not the Map it reads (#2632)', () => {
+  const renderer = fakeRenderer(['prop']);
+  const matrices = new Map();
+  for (const [name, value] of [['current', {}], ['current', []], ['previous', {}], ['previous', []]]) {
+    const [current, previous] = name === 'current' ? [value, matrices] : [matrices, value];
+    assert.throws(() => packObjectMotion(renderer, current, previous), new RegExp(`${name}: .*expected the Map from sampleWorldMatrices\\(parts\\)`));
+  }
+  assert.throws(() => packObjectMotion(fakeRenderer([]), {}, {}), /current: /, 'An empty scene reaches the check too.');
+});

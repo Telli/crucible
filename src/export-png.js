@@ -73,6 +73,8 @@ function hasTransparentPixel(pixels) {
  * Pixels with full alpha everywhere are written as RGB, a quarter smaller.
  */
 export function encodePng(pixels, width, height, { flipRows = false } = {}) {
+  const needed = width * height * 4;
+  if (!(width >= 1 && height >= 1 && Number.isInteger(width) && Number.isInteger(height) && pixels?.length >= needed)) throw new RangeError(`PNG needs whole width and height >= 1 and ${needed} pixel values.`);
   const withAlpha = hasTransparentPixel(pixels);
   const channels = withAlpha ? 4 : 3;
   const rowBytes = width * channels;

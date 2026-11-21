@@ -27,6 +27,38 @@ export function resolveTraceVolume(volumeFog) {
   };
 }
 
+// The rasterizer's distance haze (`environment.fogDensity`, `environment.fogColor`, only with `world: true`) mixes a pixel toward
+// the fog colour by 1 - exp(-distance * fogDensity): the transmittance of a uniform medium whose extinction is fogDensity per
+// metre. The trace gets that medium, so a surface at distance d keeps exp(-fogDensity * d) of its light, and the medium scatters
+// the fog colour (isotropic, no noise), lit by the traced lights and sky. The medium fills the scene's bounding box plus a
+// margin and no more: the rasterizer's haze never dims the light itself, but a traced medium does, and a box that took in the
+// sky above the scene stopped the sun (a 630 m cube at density 0.04 rendered black). A camera outside the box sees haze only
+// from where its ray enters the box.
+const HAZE_MARGIN_FRACTION = 0.02;
+const HAZE_MINIMUM_MARGIN = 0.5;
+const HAZE_MAXIMUM_DISTANCE = 1e4;
+const HAZE_DEFAULT_COLOR = [0.35, 0.43, 0.43];
+
+/**
+ * The medium for the rasterizer's distance haze, or null when the environment has none. The caller takes `volumeFog` first: a
+ * scene that sets both keeps only its volumeFog (a recipe always carries a volumeFog, with density 0 when it sets none).
+ * `bounds` is the scene's world box, `{ low, high }`.
+ */
+export function resolveTraceDistanceHaze(environment, bounds) {
+  if (environment?.world !== true || !(environment.fogDensity > 0)) return null;
+  const largestSide = Math.max(...bounds.high.map((high, axis) => high - bounds.low[axis]));
+  const margin = Math.max(HAZE_MINIMUM_MARGIN, largestSide * HAZE_MARGIN_FRACTION);
+  return resolveTraceVolume({
+    density: environment.fogDensity,
+    color: environment.fogColor ?? HAZE_DEFAULT_COLOR,
+    minimum: bounds.low.map(low => low - margin),
+    maximum: bounds.high.map(high => high + margin),
+    maxDistance: HAZE_MAXIMUM_DISTANCE,
+    anisotropy: 0,
+    noiseAmount: 0,
+  });
+}
+
 /**
  * Where the ray is inside the box, as distances along it: writes `[entry, exit]` into `out`
  * clipped to `[0, limit]` and returns true, or returns false when the ray misses the box in that range.
@@ -95,7 +127,7 @@ export function prepareMeshVolume(volume, label) {
   const openEdges = countOpenEdges(positions, geometry.indices, diagonal * 1e-6);
   if (openEdges > 0) throw new RangeError(`${label}.part "${volume.part.name}" is not a closed mesh (${openEdges} open edges), so it has no inside; close it or use fit "bounds"`);
   const bvh = buildTriangleBvh(positions, geometry.indices);
-  return { ...volume, mesh: { tracer: createTracer({ positions, indices: geometry.indices, bvh }), stepOffset: diagonal * 1e-6 } };
+  return { ...volume, mesh: { tracer: createTracer({ positions, indices: geometry.indices, bvh }), stepOffset: diagonal * 1e-6, positions, indices: geometry.indices, bvh } };
 }
 
 /**

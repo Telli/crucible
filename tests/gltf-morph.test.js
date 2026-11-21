@@ -318,3 +318,18 @@ test('malformed deltas, defaults, accessor shapes and all animation channels rej
   ];
   for (const edit of cases) await assert.rejects(parseGltf(morphAsset(edit)));
 });
+
+test('a weights animation moves only its own node, not a child node that has its own morph mesh', async () => {
+  const asset = await parseGltf(morphAsset((document, append) => {
+    addWeightsClip(document, append);
+    document.nodes[0].children = [2];
+    document.nodes.push({ name: 'Child', mesh: 0, translation: [0, 5, 0] });
+    document.nodes[2].weights = [0.25, 0.5];
+  }));
+  const child = asset.parts.find(part => part.matrix[13] === 5);
+  const parent = asset.parts.find(part => part.matrix[12] === 0 && part.matrix[13] === 0);
+  asset.applyAnimation(1);
+  assert.deepEqual(Array.from(parent.morph.weights), [0.5, -0.5]);
+  assert.deepEqual(Array.from(child.morph.weights), [0.25, 0.5]);
+  asset.dispose();
+});

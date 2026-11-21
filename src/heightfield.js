@@ -51,6 +51,17 @@ function axisTaps({ count, coordinateAt, boxLow, boxHigh, pixels, reversed, cell
   return { firstPixel, tapCount, tapOffset, weights };
 }
 
+function checkSamplingInputs({ values, width, height, box }, options) {
+  const problems = [
+    [values?.length === width * height, `raster.values must hold width * height = ${width * height} values`],
+    [box.x_max > box.x_min && box.y_max > box.y_min && Number.isFinite(box.x_max - box.x_min + box.y_max - box.y_min), 'raster.box needs finite x_min below x_max and y_min below y_max'],
+    ...['columns', 'rows', 'samplesPerSide'].map(name => [Number.isInteger(options[name]) && options[name] >= 1, `${name} must be a whole number of at least 1, got ${options[name]}`]),
+    [Number.isFinite(options.cellSize) && options.cellSize >= 0, `cellSize must be a finite number of 0 or more, got ${options.cellSize}`],
+  ];
+  const failed = problems.find(([passes]) => !passes);
+  if (failed) throw new RangeError(`${failed[1]}.`);
+}
+
 /**
  * The mean of a raster over a square cell centred on every vertex of a regular grid, from a samplesPerSide by
  * samplesPerSide pattern of bilinear samples; `cellSize` 0 with one sample reads the raster at the vertex.
@@ -60,6 +71,7 @@ function axisTaps({ count, coordinateAt, boxLow, boxHigh, pixels, reversed, cell
 export function sampleRasterGrid(raster, { columns, rows, eastAt, northAt, cellSize = 0, samplesPerSide = 1, scale = 1 }) {
   const { values, width, height, box } = raster;
   if (width < 2 || height < 2) throw new RangeError('A raster needs at least 2 by 2 pixels.');
+  checkSamplingInputs(raster, { columns, rows, cellSize, samplesPerSide });
   const east = axisTaps({ count: columns, coordinateAt: eastAt, boxLow: box.x_min, boxHigh: box.x_max, pixels: width, reversed: false, cellSize, samplesPerSide });
   const north = axisTaps({ count: rows, coordinateAt: northAt, boxLow: box.y_min, boxHigh: box.y_max, pixels: height, reversed: true, cellSize, samplesPerSide });
   let firstRow = height;
@@ -93,6 +105,11 @@ export function sampleRasterGrid(raster, { columns, rows, eastAt, northAt, cellS
   return output;
 }
 
+// A grid one vertex wide has no span along that axis: it has no slope there either, not NaN.
+function slopeAcross(heightDifference, span) {
+  return span === 0 ? 0 : heightDifference / span;
+}
+
 function gridNormals(positions, columns, rows) {
   const normals = new Float32Array(positions.length);
   for (let row = 0; row < rows; row += 1) {
@@ -104,8 +121,8 @@ function gridNormals(positions, columns, rows) {
       const right = row * columns + Math.min(columns - 1, column + 1);
       const up = upRow + column;
       const down = downRow + column;
-      const normalX = -(positions[right * 3 + 1] - positions[left * 3 + 1]) / (positions[right * 3] - positions[left * 3]);
-      const normalZ = -(positions[down * 3 + 1] - positions[up * 3 + 1]) / (positions[down * 3 + 2] - positions[up * 3 + 2]);
+      const normalX = -slopeAcross(positions[right * 3 + 1] - positions[left * 3 + 1], positions[right * 3] - positions[left * 3]);
+      const normalZ = -slopeAcross(positions[down * 3 + 1] - positions[up * 3 + 1], positions[down * 3 + 2] - positions[up * 3 + 2]);
       const length = Math.hypot(normalX, 1, normalZ);
       normals[vertex * 3] = normalX / length;
       normals[vertex * 3 + 1] = 1 / length;

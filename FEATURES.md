@@ -14,10 +14,10 @@ optional `Ready` expression the driver waits for, and `Drive`.
 ## Site pages
 
 ### `home`
-- Name: Home (hero world loop, install, downloads section)
+- Name: Home (pour-to-cast scroll story, install, showcase, agent and tier sections)
 - Surface: Site
 - Reach: `/`
-- Source: `site/index.html`, `src/home.js`, `src/hero-lab/hero-loop.js`
+- Source: `site/index.html`, `src/landing.js`, `src/landing-scene.js`, `src/landing-story.js`, `src/landing.css`
 - Drive: `node scripts/drive.mjs shot home`
 
 ### `downloads`
@@ -69,6 +69,13 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `site/recipes.html`, `site/recipe-*.html`, `public/recipes/`, `scripts/recipe-catalog.mjs`, `scripts/make-recipe-pages.mjs`, `src/recipes.js`
 - Drive: `node scripts/drive.mjs shot recipes`
 
+### `tiers`
+- Name: Render tiers (draft, realtime, final: time, card memory and error beside Blender, from the tier matrix)
+- Surface: Site
+- Reach: `/tiers.html`
+- Source: `site/tiers.html`, `src/tiers.js`, `src/tiers-model.js`, `src/tiers.css`, `bench/tiers/results/tier-page-lit-interior.json`, `bench/tiers/make-tier-page-data.mjs`
+- Drive: `node scripts/drive.mjs shot tiers`
+
 ### `recipe-dolly-zoom`
 - Name: Recipe page, dolly zoom
 - Surface: Site
@@ -117,10 +124,10 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: `node scripts/drive.mjs shot film`
 
 ### `modeling`
-- Name: Aster lantern (modeling player)
+- Name: Modeling (redirects to docs.html#procedural-modeling)
 - Surface: Site
 - Reach: `/modeling.html`
-- Source: `site/modeling.html`, `src/modeling-player.js`
+- Source: `site/modeling.html`
 - Drive: `node scripts/drive.mjs shot modeling`
 
 ### `view2d`
@@ -138,6 +145,14 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: none: start it through `npm run render -- --scene file`
 
 ## Bench and sample pages
+
+### `studio`
+- Name: Scene studio (development page; Studio is not published on the site)
+- Surface: Bench
+- Reach: `/bench/studio/index.html`
+- Source: `bench/studio/index.html`, `bench/studio/main.js`, `src/studio.js`
+- Ready: `Boolean(window.__studioPage?.renderer)`
+- Drive: `node scripts/drive.mjs shot studio`
 
 ### `bench-agent-modeling-look-harness`
 - Name: agent-modeling look-harness
@@ -472,25 +487,18 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `bin/crucible-mcp.mjs`
 - Drive: none: not a page
 
+### `crucible-pack`
+- Name: Compiles a recipe into a runtime-only web bundle with a `<crucible-scene>` element (docs/pack.md)
+- Surface: CLI
+- Reach: command `npx crucible pack <scene.json> --out <dir>`
+- Source: `bin/crucible.mjs`, `src/scene-pack.js`, `src/crucible-scene.js`
+- Drive: none: not a page
+
 ### `crucible-addon-check`
 - Name: Checks an addon folder against the addon contract (docs/addons.md)
 - Surface: CLI
 - Reach: command `npx crucible-addon-check`
 - Source: `bin/crucible-addon-check.mjs`
-- Drive: none: not a page
-
-### `67js-mcp`
-- Name: Old name of crucible-mcp, kept as an alias
-- Surface: CLI
-- Reach: command `npx 67js-mcp`
-- Source: `bin/67js-mcp.mjs`
-- Drive: none: not a page
-
-### `67js-addon-check`
-- Name: Old name of crucible-addon-check, kept as an alias
-- Surface: CLI
-- Reach: command `npx 67js-addon-check`
-- Source: `bin/67js-addon-check.mjs`
 - Drive: none: not a page
 
 ### `npm-dev`
@@ -571,7 +579,7 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: none: not a page
 
 ### `npm-test-mutation-check`
-- Name: Reverts your src, bin and packages changes, runs a test file and fails when it still passes
+- Name: Reverts your src, bin, packages and scripts changes, runs a test file and fails when it still passes
 - Surface: CLI
 - Reach: command `npm run test:mutation-check`
 - Source: `scripts/test-mutation-check.mjs`

@@ -4,16 +4,17 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
+import { viteChildEnvironment, viteOutputMentionsAddress } from './vite-output.mjs';
 
 const artifactDirectory = new URL('../artifacts/', import.meta.url);
 await mkdir(artifactDirectory, { recursive: true });
-const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5178', '--strictPort'], { cwd: new URL('..', import.meta.url), windowsHide: true, stdio: 'pipe' });
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5178', '--strictPort'], { cwd: new URL('..', import.meta.url), windowsHide: true, stdio: 'pipe', env: viteChildEnvironment() });
 let browser;
 try {
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Vite did not start.')), 15000);
     server.stdout.on('data', (data) => {
-      if (data.toString().includes('127.0.0.1:5178')) { clearTimeout(timeout); resolve(); }
+      if (viteOutputMentionsAddress(data, '127.0.0.1:5178')) { clearTimeout(timeout); resolve(); }
     });
     server.on('error', reject);
     server.on('exit', (code) => { clearTimeout(timeout); reject(new Error(`Vite exited ${code}`)); });
@@ -66,8 +67,8 @@ try {
   assert.ok(await page.evaluate(() => window.__studio.renderer.shadowTexture === window.__shadowBefore));
   const explodedDownloadReady = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export GLB' }).click();
-  await (await explodedDownloadReady).saveAs(fileURLToPath(new URL('wall-e-exploded.glb', artifactDirectory)));
-  const exportedBinary = await readFile(new URL('wall-e-exploded.glb', artifactDirectory));
+  await (await explodedDownloadReady).saveAs(fileURLToPath(new URL('sample-model-exploded.glb', artifactDirectory)));
+  const exportedBinary = await readFile(new URL('sample-model-exploded.glb', artifactDirectory));
   const exportedScene = JSON.parse(exportedBinary.subarray(20, 20 + exportedBinary.readUInt32LE(12)).toString());
   const expectedPanel = await page.evaluate(() => {
     const part = window.__studio.parts.find((part) => Math.abs(part.assembly.offset[2]) > 1);
@@ -95,7 +96,7 @@ try {
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export GLB' }).click();
   const download = await downloadPromise;
-  await download.saveAs(fileURLToPath(new URL('wall-e.glb', artifactDirectory)));
+  await download.saveAs(fileURLToPath(new URL('sample-model.glb', artifactDirectory)));
   await page.getByRole('button', { name: 'Measure performance' }).click();
   await page.waitForFunction(() => window.__benchmarkReport || document.querySelector('#benchmark-summary').textContent.startsWith('⚠'), null, { timeout: 90000 });
   assert.ok(await page.evaluate(() => Boolean(window.__benchmarkReport)), await page.locator('#benchmark-summary').textContent());

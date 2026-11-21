@@ -31,8 +31,11 @@ function collectBuffers(value, buffers) {
  * Answers one worker request: `{ response, transfer }`. A kernel that throws answers with the error's class name and
  * message, so the page raises the same error the inline path would.
  */
-export function answerKernelRequest({ name, args }) {
+export function answerKernelRequest(request) {
   try {
+    if (request === null || typeof request !== 'object') throw new TypeError('a kernel request must be an object { name, args }');
+    const { name, args } = request;
+    if (!Array.isArray(args)) throw new TypeError(`kernel request field "args" must be an array of arguments, got ${typeof args}. Pass { name, args: [...] }.`);
     if (!KERNELS[name]) throw new RangeError(`unknown kernel "${String(name)}": use one of ${Object.keys(KERNELS).join(', ')}`);
     const value = KERNELS[name](...args);
     const buffers = new Set();

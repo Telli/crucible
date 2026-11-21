@@ -3,16 +3,17 @@ import { cameraFieldOfView, resolveThinLens } from './camera.js';
 import { fresnelSchlick } from './material-layers.js';
 import { pointLightFalloff } from './ray-query.js';
 import { profileGain } from './light-profile.js';
-import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS } from './path-tracer-scene.js';
+import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS, uniqueTriangleCount } from './path-tracer-scene.js';
 import { denoiseRadiance, estimateRelativeNoise } from './path-tracer-denoise.js';
 import { acesChannel, displayColor } from './view-transform.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
 import {
-  buildFrame, createSurface, environmentPdf, environmentRadiance, evaluateSurface, luminance, mirrorWeight, prepareSurface,
-  roughnessToAlpha, sampleEnvironment, sampleGlass, sampleSurface, setWhiteDiffuse, splitSubsurface,
+  buildFrame, createSurface, dielectricFresnel, environmentPdf, environmentRadiance, evaluateSurface, luminance, mirrorWeight, prepareSurface,
+  roughnessToAlpha, sampleEnvironment, sampleGlass, sampleSurface, setWhiteDiffuse, splitSubsurface, writeEscapedAlbedo, writeFirstHitAlbedo,
 } from './path-tracer-shading.js';
 import { buildLightTree, chooseLightFromTree, LIGHT_TREE_FIRST_HIT_LIGHTS, resolveLightSelection } from './path-tracer-light-tree.js';
 import { createRandomWalk, WALK_OUTCOME } from './path-tracer-subsurface.js';
+import { describeUntracedWater } from './path-tracer-water.js';
 import { henyeyGreensteinPhase, sampleHenyeyGreensteinCosine, volumeInterval, createLocalVolumeCrossing, createLocalVolumeSurfaceShadow, meanEnvironmentRadiance } from './path-tracer-volume.js';
 
 // Offline still renderer: unidirectional path tracing on the CPU with next-event estimation for every light, the
@@ -34,6 +35,8 @@ export const PATH_TRACER_LIMITS = Object.freeze({
 export const MAX_TRACE_PIXELS = 2_073_600;
 export const MAX_TRACE_RAY_WORK = 4_000_000_000;
 const ALPHA_STEP_LIMIT = 64;
+// A shadow ray that has lost this much light to glass and water is blocked: the rest is below what a pixel can show.
+const MINIMUM_SHADOW_TRANSMITTANCE = 1e-4;
 const WORKER_BAND_ROWS = 8;
 // Held in a constant so the bundler leaves the URL alone: the worker is its own package entry, built beside this file.
 const WORKER_FILE = './path-tracer-worker.js';
@@ -473,24 +476,80 @@ function intersect(scene, originX, originY, originZ, directionX, directionY, dir
   return false;
 }
 
-function occluded(scene, originX, originY, originZ, directionX, directionY, directionZ, limit, hit) {
+/** True when the part is the glowing lamp mesh of the point light `lightBit` (src/lamp-mesh.js), which its own shadow rays pass through. */
+function isOwnLampMesh(scene, materialIndex, lightBit) {
+  return lightBit >= 0 && ((scene.lampLightMasks?.[materialIndex] ?? 0) >> lightBit & 1) === 1;
+}
+
+const TRANSMISSIVE_FLAGS = new WeakMap();
+
+/** One byte per material: 1 when a path may refract through it (a transmission factor or map), so a shadow ray must not stop at it. */
+function transmissiveMaterialFlags(scene) {
+  let flags = TRANSMISSIVE_FLAGS.get(scene);
+  if (!flags) {
+    flags = Uint8Array.from(scene.materials, material => (material.transmission > 0 || material.transmissionTexture ? 1 : 0));
+    TRANSMISSIVE_FLAGS.set(scene, flags);
+  }
+  return flags;
+}
+
+/**
+ * Lets a shadow ray through one face of a transmissive part, as far as a straight ray can: the share of light that is not
+ * reflected there (Fresnel of the dielectric the tracer's glass lobe uses), the part's transmission and colour, and, when it
+ * leaves a part it was inside, Beer-Lambert absorption over the length it travelled. The ray does not bend, so light that
+ * refracts around the part (caustics) is not counted. Returns the absorbing part the ray is inside afterwards, or null.
+ */
+function crossGlassFace(hit, material, directionX, directionY, directionZ, segmentLength, insideMaterial, transmittance) {
+  const facing = hit.normal[0] * directionX + hit.normal[1] * directionY + hit.normal[2] * directionZ;
+  const entering = facing < 0;
+  if (!entering && insideMaterial) absorbOverDistance(insideMaterial, segmentLength, transmittance);
+  // The straight ray stands for the one the light would bend into: its angle is the one on the air side of both faces, so no
+  // direction meets the glass past the critical angle, and Fresnel is the same entering and leaving.
+  const passes = (1 - dielectricFresnel(Math.abs(facing), 1 / material.ior)) * hit.transmission;
+  for (let channel = 0; channel < 3; channel++) transmittance[channel] *= passes * hit.color[channel];
+  return entering && Number.isFinite(material.attenuationDistance) ? material : null;
+}
+
+/**
+ * True when the ray is blocked before `limit`. Otherwise `transmittance` holds the share of light per channel that gets
+ * through the glass and water on the way (1 when there is none). An opaque part blocks fully; a transmissive part is stepped
+ * through with `crossGlassFace`, within ALPHA_STEP_LIMIT surfaces, unless `glassBlocks` says it stops the ray. `insideMaterial` is
+ * the absorbing part the ray starts inside.
+ */
+function occluded(scene, originX, originY, originZ, directionX, directionY, directionZ, limit, hit, transmittance, insideMaterial = null, glassBlocks = false, lightBit = -1) {
+  transmittance[0] = 1;
+  transmittance[1] = 1;
+  transmittance[2] = 1;
+  const transmissiveFlags = glassBlocks ? null : transmissiveMaterialFlags(scene);
   let startX = originX;
   let startY = originY;
   let startZ = originZ;
   let remaining = limit;
+  let inside = insideMaterial;
   // An any-hit trace returns the first hit traversal meets, not the nearest. A solid one shadows the point wherever it lies;
   // a transparent one says nothing about what sits before it, so the walk then retraces for nearest hits and steps through.
   let anyHit = true;
   for (let attempt = 0; attempt < ALPHA_STEP_LIMIT; attempt++) {
     const found = scene.tracer.trace(startX, startY, startZ, directionX, directionY, directionZ, remaining, anyHit);
     if (found.nearestTriangle < 0) return false;
-    // Only a cutout material needs its texture read to know whether the ray passes through: skip the interpolation for the rest.
-    if (scene.materials[scene.triangleMaterial[found.nearestTriangle]].alphaCutoff === 0) return true;
-    const alpha = fillHit(scene, found.nearestTriangle, startX, startY, startZ, directionX, directionY, directionZ, found.nearestDistance, hit);
-    if (alpha >= hit.material.alphaCutoff) return true;
+    const materialIndex = scene.triangleMaterial[found.nearestTriangle];
+    const ownLamp = isOwnLampMesh(scene, materialIndex, lightBit);
+    const transmissive = !ownLamp && !glassBlocks && transmissiveFlags[materialIndex] === 1;
+    let covered = false;
+    if (!ownLamp) {
+      // Only a cutout material needs its texture read to know whether the ray passes through: skip the interpolation for the rest.
+      if (!transmissive && scene.materials[materialIndex].alphaCutoff === 0) return true;
+      const alpha = fillHit(scene, found.nearestTriangle, startX, startY, startZ, directionX, directionY, directionZ, found.nearestDistance, hit);
+      covered = alpha >= hit.material.alphaCutoff;
+      if (covered && !transmissive) return true;
+    }
     if (anyHit) {
       anyHit = false;
       continue;
+    }
+    if (covered) {
+      inside = crossGlassFace(hit, hit.material, directionX, directionY, directionZ, found.nearestDistance, inside, transmittance);
+      if (Math.max(transmittance[0], transmittance[1], transmittance[2]) < MINIMUM_SHADOW_TRANSMITTANCE) return true;
     }
     const advance = found.nearestDistance + scene.surfaceOffset;
     remaining -= advance;
@@ -512,6 +571,7 @@ function createPathTracer(scene, options) {
   const surface = createSurface();
   const hit = createHit();
   const shadowHit = createHit();
+  const shadowTransmittance = new Float64Array(3);
   const throughput = new Float64Array(3);
   const radiance = new Float64Array(3);
   const direction = new Float64Array(3);
@@ -526,6 +586,7 @@ function createPathTracer(scene, options) {
   // The denoiser's features come from the first surface a camera ray meets, not from fog in front of it.
   let featuresRecorded = false;
   const { lights, environment } = scene;
+  const cameraBackground = scene.cameraBackground ?? null;
   // With portals the sky is drawn through them (#1144); a scene with none samples the whole map as before.
   const portals = environment ? lights.portals ?? [] : [];
   if (lights.sun) buildFrame(lights.sun.direction, sunFrame);
@@ -549,6 +610,9 @@ function createPathTracer(scene, options) {
     radiance[2] += clampedBlue;
   }
 
+  // The material of the transmissive part the path is inside, when it absorbs; null outside and inside parts that do not absorb.
+  let absorbingMaterial = null;
+
   // True while a light is sampled from a scattering event in the fog instead of from a surface.
   let inMedium = false;
   const phaseCandidate = { pdf: 0 };
@@ -570,14 +634,14 @@ function createPathTracer(scene, options) {
     const cosine = lightDirection[0] * direction[0] + lightDirection[1] * direction[1] + lightDirection[2] * direction[2];
     const phase = henyeyGreensteinPhase(volume.anisotropy, cosine);
     const [originX, originY, originZ] = hit.point;
-    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit)) return;
+    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, shadowTransmittance, absorbingMaterial, lightIsEnvironment, sampleLightBit)) return;
     phaseCandidate.pdf = phase;
     const scale = phase * fogTransmittance(originX, originY, originZ, distance) * weight(phaseCandidate);
     addRadiance(
       depth + 1,
-      throughput[0] * lightRadiance[0] * scale,
-      throughput[1] * lightRadiance[1] * scale,
-      throughput[2] * lightRadiance[2] * scale,
+      throughput[0] * lightRadiance[0] * scale * shadowTransmittance[0],
+      throughput[1] * lightRadiance[1] * scale * shadowTransmittance[1],
+      throughput[2] * lightRadiance[2] * scale * shadowTransmittance[2],
     );
   }
 
@@ -595,21 +659,23 @@ function createPathTracer(scene, options) {
     const originX = hit.point[0] + normal[0] * scene.surfaceOffset;
     const originY = hit.point[1] + normal[1] * scene.surfaceOffset;
     const originZ = hit.point[2] + normal[2] * scene.surfaceOffset;
-    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit)) return;
+    if (occluded(scene, originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], distance, shadowHit, shadowTransmittance, absorbingMaterial, lightIsEnvironment, sampleLightBit)) return;
     const scale = cosine * weight(surface) * fogTransmittance(originX, originY, originZ, distance);
     if (lightIsSun && writeSunShadow) writeSunShadow(originX, originY, originZ, lightDirection[0], lightDirection[1], lightDirection[2], sunShadow);
     else sunShadow.fill(1);
     addRadiance(
       depth,
-      throughput[0] * value[0] * lightRadiance[0] * scale * sunShadow[0],
-      throughput[1] * value[1] * lightRadiance[1] * scale * sunShadow[1],
-      throughput[2] * value[2] * lightRadiance[2] * scale * sunShadow[2],
+      throughput[0] * value[0] * lightRadiance[0] * scale * sunShadow[0] * shadowTransmittance[0],
+      throughput[1] * value[1] * lightRadiance[1] * scale * sunShadow[1] * shadowTransmittance[1],
+      throughput[2] * value[2] * lightRadiance[2] * scale * sunShadow[2] * shadowTransmittance[2],
     );
   }
 
   // Past the first hit one light is drawn at random instead of all of them, so a scene with many lights costs one shadow
   // ray per bounce. `selectionProbability` is the chance that this light was the one drawn; dividing by it keeps the sum unbiased.
   let selectionProbability = 1;
+  // The point light whose shadow ray is being traced, or -1: that light's own lamp mesh does not block it.
+  let sampleLightBit = -1;
   const fullWeight = () => 1 / selectionProbability;
 
   // A light skips a part whose mask has its bit clear, at every bounce, so it is no bounce source there either.
@@ -659,7 +725,9 @@ function createPathTracer(scene, options) {
     if (distance < 1e-6) return;
     const strength = light.intensity * pointLightFalloff(distanceSquared, light);
     for (let channel = 0; channel < 3; channel++) lightRadiance[channel] = light.color[channel] * strength;
+    sampleLightBit = light.bit;
     addDirect(depth, normal, distance - scene.surfaceOffset, fullWeight);
+    sampleLightBit = -1;
   }
 
   function sampleSpotLight(depth, normal, light) {
@@ -705,7 +773,11 @@ function createPathTracer(scene, options) {
       : sampleEnvironment(environment, random.next(), random.next(), random.next(), random.next(), lightDirection);
     if (!(environmentSampledPdf > 0)) return;
     environmentRadiance(environment, lightDirection[0], lightDirection[1], lightDirection[2], lightRadiance);
+    // A path that bends through glass and reaches the sky is already counted in full (addEscape after a mirror or glass bounce), so
+    // the sky's shadow ray stops at glass: letting it through as well would count that light twice.
+    lightIsEnvironment = true;
     addDirect(depth, normal, scene.farDistance, environmentWeight);
+    lightIsEnvironment = false;
   }
 
   const emitterCount = (lights.sun ? 1 : 0) + lights.points.length + lights.spots.length + lights.areas.length + (environment ? 1 : 0);
@@ -802,7 +874,13 @@ function createPathTracer(scene, options) {
     else addOneLight(depth, normal);
   }
 
-  function addEscape(depth, previousPdf, afterMirror, originX, originY, originZ) {
+  // A ray that has only gone straight on or through glass is a camera ray: with world false it sees the flat background the
+  // rasterizer clears to, not the map (the map still lights the scene through the escapes of every other ray, #2016).
+  function addEscape(depth, previousPdf, afterMirror, originX, originY, originZ, isCameraRay) {
+    if (isCameraRay && cameraBackground) {
+      addRadiance(depth, throughput[0] * cameraBackground[0], throughput[1] * cameraBackground[1], throughput[2] * cameraBackground[2]);
+      return;
+    }
     if (!environment) return;
     environmentRadiance(environment, direction[0], direction[1], direction[2], sky);
     let weight = 1;
@@ -811,12 +889,13 @@ function createPathTracer(scene, options) {
       weight = previousPdf * previousPdf / (previousPdf * previousPdf + environmentSide * environmentSide);
     }
     addRadiance(depth, throughput[0] * sky[0] * weight, throughput[1] * sky[1] * weight, throughput[2] * sky[2] * weight);
+    if (!featuresRecorded) writeEscapedAlbedo(features.albedo);
   }
 
-  function recordFeatures(normal, isGlass) {
-    features.albedo[0] = isGlass ? 1 : hit.color[0];
-    features.albedo[1] = isGlass ? 1 : hit.color[1];
-    features.albedo[2] = isGlass ? 1 : hit.color[2];
+  function recordFeatures(normal, viewX, viewY, viewZ) {
+    const { transmission } = hit;
+    if (transmission < 1) prepareSurface(surface, hit.material, hit.metallic, hit.roughness, hit.color, normal, viewX, viewY, viewZ, hit.clearcoat);
+    writeFirstHitAlbedo(features.albedo, surface, hit.material, hit.color, transmission, normal[0] * viewX + normal[1] * viewY + normal[2] * viewZ);
     features.normal[0] = normal[0];
     features.normal[1] = normal[1];
     features.normal[2] = normal[2];
@@ -870,7 +949,7 @@ function createPathTracer(scene, options) {
     ? {
       sun: lights.sun,
       ambient: meanEnvironmentRadiance(environment),
-      sunVisibility: (pointX, pointY, pointZ) => (occluded(scene, pointX, pointY, pointZ, lights.sun.direction[0], lights.sun.direction[1], lights.sun.direction[2], scene.farDistance, shadowHit) ? 0 : 1),
+      sunVisibility: (pointX, pointY, pointZ) => (occluded(scene, pointX, pointY, pointZ, lights.sun.direction[0], lights.sun.direction[1], lights.sun.direction[2], scene.farDistance, shadowHit, shadowTransmittance) ? 0 : (shadowTransmittance[0] + shadowTransmittance[1] + shadowTransmittance[2]) / 3),
     }
     : null;
   const crossLocalVolumes = scene.localVolumes ? createLocalVolumeCrossing(scene.localVolumes, localVolumeLighting) : null;
@@ -878,6 +957,7 @@ function createPathTracer(scene, options) {
   const writeSunShadow = scene.localVolumes ? createLocalVolumeSurfaceShadow(scene.localVolumes) : null;
   const sunShadow = new Float64Array(3);
   let lightIsSun = false;
+  let lightIsEnvironment = false;
   const localEmitted = new Float64Array(3);
 
   const walkSubsurface = createRandomWalk(scene, random, intersect);
@@ -920,7 +1000,7 @@ function createPathTracer(scene, options) {
     throughput[0] = 1;
     throughput[1] = 1;
     throughput[2] = 1;
-    features.albedo.fill(1);
+    features.albedo.fill(0);
     featuresRecorded = false;
     // A ray that finds nothing has the sky as its feature: one fixed normal and depth, so the filter treats sky as one surface.
     features.normal[0] = 0;
@@ -935,8 +1015,11 @@ function createPathTracer(scene, options) {
     let positionZ = originZ;
     let previousPdf = 0;
     let afterMirror = true;
+    absorbingMaterial = null;
+    let isCameraRay = true;
     for (let depth = 0; depth <= options.bounces; depth++) {
       const found = intersect(scene, positionX, positionY, positionZ, direction[0], direction[1], direction[2], hit, depth === 0);
+      if (absorbingMaterial && found) absorbOverDistance(absorbingMaterial, hit.distance, throughput);
       const scattersInFog = scene.volume && scatterInFog(positionX, positionY, positionZ, found ? hit.distance : scene.farDistance);
       if (crossLocalVolumes) {
         const segmentLength = scattersInFog ? Math.hypot(hit.point[0] - positionX, hit.point[1] - positionY, hit.point[2] - positionZ) : (found ? hit.distance : scene.farDistance);
@@ -946,6 +1029,7 @@ function createPathTracer(scene, options) {
       if (scattersInFog) {
         previousPdf = scatterInMedium(depth);
         afterMirror = false;
+        isCameraRay = false;
         positionX = hit.point[0];
         positionY = hit.point[1];
         positionZ = hit.point[2];
@@ -953,7 +1037,7 @@ function createPathTracer(scene, options) {
         continue;
       }
       if (!found) {
-        addEscape(depth, previousPdf, afterMirror, positionX, positionY, positionZ);
+        addEscape(depth, previousPdf, afterMirror, positionX, positionY, positionZ, isCameraRay);
         break;
       }
       const material = hit.material;
@@ -963,28 +1047,31 @@ function createPathTracer(scene, options) {
       normal[1] = hit.normal[1] * facing;
       normal[2] = hit.normal[2] * facing;
       const isGlass = hit.transmission > 0 && random.next() < hit.transmission;
+      const viewX = -direction[0];
+      const viewY = -direction[1];
+      const viewZ = -direction[2];
       if (!featuresRecorded) {
-        recordFeatures(normal, isGlass);
+        recordFeatures(normal, viewX, viewY, viewZ);
         featuresRecorded = true;
       }
       const emissionScale = hit.material.emissionFresnel > 0
         ? fresnelSchlick(-(direction[0] * normal[0] + direction[1] * normal[1] + direction[2] * normal[2]), hit.material.emissionFresnel)
         : 1;
       addRadiance(depth, throughput[0] * hit.emission[0] * emissionScale, throughput[1] * hit.emission[1] * emissionScale, throughput[2] * hit.emission[2] * emissionScale);
-      const viewX = -direction[0];
-      const viewY = -direction[1];
-      const viewZ = -direction[2];
       if (isGlass) {
         const alpha = roughnessToAlpha(hit.roughness);
         if (!sampleGlass(normal, viewX, viewY, viewZ, entering, material.ior, alpha, random.next(), random.next(), random.next(), direction)) break;
         const refracted = direction[0] * normal[0] + direction[1] * normal[1] + direction[2] * normal[2] < 0;
+        if (!refracted) isCameraRay = false;
         if (refracted) {
           throughput[0] *= hit.color[0];
           throughput[1] *= hit.color[1];
           throughput[2] *= hit.color[2];
+          absorbingMaterial = entering && Number.isFinite(material.attenuationDistance) ? material : null;
         }
         afterMirror = true;
       } else {
+        isCameraRay = false;
         prepareSurface(surface, material, hit.metallic, hit.roughness, hit.color, normal, viewX, viewY, viewZ, hit.clearcoat);
         const subsurface = material.subsurface;
         if (subsurface) splitSubsurface(surface, subsurface.weight);
@@ -1023,6 +1110,12 @@ function createPathTracer(scene, options) {
   return { trace, radiance, features };
 }
 
+/** Beer-Lambert: the colour `attenuationColor` is what `attenuationDistance` metres of the part let through, so a path of `distance` metres keeps colour^(distance / attenuationDistance). */
+function absorbOverDistance(material, distance, throughput) {
+  const metres = distance / material.attenuationDistance;
+  for (let channel = 0; channel < 3; channel++) throughput[channel] *= material.attenuationColor[channel] ** metres;
+}
+
 // ---- Image ----
 
 /** The display transform of the rasterizer's post pass (exposure, view transform, gamma 2.2, optional look) applied to linear pixels. */
@@ -1046,20 +1139,28 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   const fog = environment?.volumeFog;
   if (fog?.density > 0 && (fog.noiseAmount ?? 0.5) > 0) notes.add('volumeFog is traced as a uniform medium: noiseAmount, noiseScale and drift are ignored.');
   if (fog?.density > 0 && fog.ambient) notes.add('volumeFog.ambient is not added: the fog is lit by the traced lights and sky.');
+  if (environment?.world === true && environment.fogDensity > 0 && !(fog?.density > 0)) notes.add('fogDensity is traced as a uniform medium with extinction fogDensity per metre and fogColor as its scatter colour, lit by the traced lights and sky; the sky and ground haze shading of the rasterizer is not.');
   const hasSoftFalloff = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? [])].some(light => light.softFalloff === true);
   if (hasSoftFalloff && !kernelMaterials) notes.add('softFalloff is ignored: only the native cycles kernel draws a light as an oriented disk, the other tracers draw a sphere.');
+  const lightsWithOwnLimit = [...(environment?.pointLights ?? []), ...(environment?.spotLights ?? []), ...(environment?.areaLights ?? [])];
+  const hasBounceLimit = environment?.sunMaxBounces !== undefined || lightsWithOwnLimit.some(light => light.maxBounces !== undefined);
+  if (hasBounceLimit && !kernelMaterials) notes.add('A light maxBounces (sunMaxBounces for the sun) is ignored: only the native cycles kernel stops a light after its own bounces, the other tracers run every light to the scene bounces.');
   const hasPortal = (environment?.areaLights ?? []).some(light => light.portal === true);
   if (hasPortal && !kernelMaterials && backend === 'gpu') notes.add('Light portals (areaLights with portal: true) are ignored: only the native cycles kernel, the CPU tracer and the WebGPU tracer sample the environment through them, the other tracers draw no light from a portal.');
   const hasGridVolume = (environment?.localVolumes ?? []).some(volume => volume?.shape === 'grid');
   if (hasGridVolume && kernelMaterials && environment.volumeShutter > 0) notes.add('environment.volumeShutter is ignored for a grid volume: Cook draws the grid as it is at the frame time, with no motion blur from its velocity channel. Use backend "cpu" or "webgpu" for a blurred blast.');
+  if ((environment?.localVolumes ?? []).some(volume => volume?.shape === 'grid' && volume.noiseAmount > 0)) notes.add('noiseAmount, noiseScale and noiseOctaves of a grid volume are ignored: only the rasterizer adds that fine detail on top of the grid, a trace reads the grid as it is.');
   if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
   if (environment?.fillIntensity > 0) notes.add('fillIntensity is ignored: the two fixed fill lights are rasterizer only. Add a point or area light, or raise environmentIntensity, to light the shadow side of a trace.');
-  if (environment?.world === true) notes.add('world: true is ignored: the outdoor haze shading is rasterizer only, and a trace draws the environment map behind the picture and lights with it whatever world says.');
+  if (environment?.world === true) notes.add('world: true is ignored: the outdoor haze shading is rasterizer only, and a trace draws the environment map behind the picture and lights with it.');
+  if (environment?.world === false && kernelMaterials) notes.add('world: false draws the flat background colour behind the picture in the CPU, "gpu" (WebGL) and "webgpu" tracers only: the native cycles kernel draws the environment map there, as it lights with it.');
   if (environment?.cameraIntensity !== undefined && !kernelMaterials) notes.add('cameraIntensity is ignored: only the native cycles kernel draws the sky a camera ray sees at its own strength, the other tracers use the map intensity.');
   for (const part of parts) {
     const material = part.material ?? {};
+    for (const note of describeUntracedWater(part)) notes.add(note);
+    if (material.tag === 'water' && backend === 'gpu') notes.add('The depth tint under a thin water sheet is not drawn: the CPU, WebGPU and native cycles tracers add an absorbing medium under it, the WebGL tracer draws the water clear.');
     for (const field of IGNORED_MAP_FIELDS) if (material[field]) notes.add(`${field} is ignored.`);
-    if (material.tag && material.tag !== 'surface') notes.add(`${material.tag} materials are traced as plain surfaces.`);
+    if (material.tag && material.tag !== 'surface' && material.tag !== 'water') notes.add(`${material.tag} materials are traced as plain surfaces.`);
     if (material.alphaMode === 'blend' && hasGraphOpacity(material)) notes.add('A graph opacity output is traced as a cutout at 0.5.');
     else if (material.alphaMode === 'blend' && !kernelMaterials) notes.add('Blended transparency is traced as opaque.');
     if (!kernelMaterials && (material.layerMaps?.clearcoatTexture || material.transmissionMap)) notes.add('Graph clearcoat and transmission masks are read by the CPU tracer; the GPU tracers use the factors.');
@@ -1286,7 +1387,7 @@ export async function renderPathTracedImage({ parts, environment = {}, camera },
       denoiser: options.denoiser, threads,
       backend: options.backend, ...(gpuName ? { gpu: gpuName, gpuCompileSeconds, gpuKernelCompiles } : {}),
       averageSamples, noiseThreshold: options.noiseThreshold, ...(estimatedNoise === null ? {} : { estimatedNoise }),
-      triangles: scene.indices.length / 3, tracedSeconds, seconds: (performance.now() - started) / 1000,
+      triangles: uniqueTriangleCount(scene), tracedSeconds, seconds: (performance.now() - started) / 1000,
       ignored: describeIgnoredFeatures(parts, environment, options.backend, { clipStart: view.clipStart }),
     },
   };

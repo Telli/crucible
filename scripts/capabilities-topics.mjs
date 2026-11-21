@@ -4,8 +4,9 @@
 import * as z from 'zod/v4';
 import { compactType, outlineSchema, unionBranches } from './schema-outline.mjs';
 import { AGENT_TOOL_EXAMPLES } from './tool-examples.mjs';
+import { MODIFIER_OPERATIONS } from '../src/mesh-operations.js';
 
-const RUNTIME_SECTIONS = ['sceneLimits', 'preview', 'review', 'assets', 'packs', 'jobs', 'addons', 'unsupported'];
+const RUNTIME_SECTIONS = ['sceneLimits', 'preview', 'review', 'assets', 'packs', 'jobs', 'export', 'addons', 'unsupported'];
 const SUMMARY_LENGTH = 110;
 // Scalars (booleans and numbers) of the scene capabilities share one topic instead of one each.
 const FLAGS_TOPIC = 'flags';
@@ -80,11 +81,21 @@ function unionIndex(topic, branches, definitions = {}) {
   };
 }
 
+// The mesh_edit and mesh_stack ops that take whole-mesh modifier fields (wave, ocean, ...) have no branch of their own: meshModifiers.<op> serves them.
+const MODIFIER_TOPICS = new Set(['meshEdit', 'meshStack']);
+
+function modifierPointer(topic) {
+  return { modifierOps: Object.keys(MODIFIER_OPERATIONS), modifierUse: `${topic} also takes every op in modifierOps (such as wave and ocean); topic meshModifiers.<op> gives its fields` };
+}
+
 function outlineAnswer(topic, branchName, schema) {
   const jsonSchema = inputJsonSchema(schema);
   const branches = unionBranches(jsonSchema);
   const withDefinitions = part => ({ ...part, ...(jsonSchema.$defs ? { $defs: jsonSchema.$defs } : {}) });
-  if (!branchName) return branches ? unionIndex(topic, branches, jsonSchema.$defs) : outlineSchema(jsonSchema);
+  if (!branchName) {
+    if (!branches) return outlineSchema(jsonSchema);
+    return { ...unionIndex(topic, branches, jsonSchema.$defs), ...(MODIFIER_TOPICS.has(topic) ? modifierPointer(topic) : {}) };
+  }
   if (branches?.has(branchName)) return outlineSchema(withDefinitions(branches.get(branchName)));
   // A short name such as inset or extrude stands for every branch that starts with it: inset_region and inset_individual.
   const prefixed = branches ? [...branches].filter(([name]) => name.startsWith(`${branchName}_`)) : [];
@@ -96,6 +107,9 @@ function outlineAnswer(topic, branchName, schema) {
   const known = branches ? [...branches.keys()] : Object.keys(ownProperties);
   const sharedField = branches && [...branches.values()].some(branch => Object.hasOwn(branch.properties ?? {}, branchName));
   const fieldNote = sharedField ? ` ${branchName} is a field of those branches, not a branch: open one branch to see it.` : '';
+  if (MODIFIER_TOPICS.has(topic) && Object.hasOwn(MODIFIER_OPERATIONS, branchName)) {
+    throw new TopicEntryError(`${branchName} is a modifier op that ${topic} accepts, so it has no branch here: read topic meshModifiers.${branchName} for its fields.`);
+  }
   throw new TopicEntryError(`Topic ${topic} has no ${branches ? 'branch' : 'field'} ${branchName}. ${branches ? 'Branches' : 'Fields'}: ${known.join(', ') || 'none'}.${fieldNote}`);
 }
 
@@ -180,20 +194,26 @@ class UnknownTopicError extends TopicEntryError {
   }
 }
 
+const GROUP_NAMES = ['scene', 'runtime', 'schemas'];
+
 function indexAnswer(capabilities, names) {
   return {
     format: capabilities.scene.format, schemaVersion: capabilities.scene.schemaVersion,
     phase: capabilities.phase, availableIn: capabilities.availableIn,
-    how: `Call scene_capabilities with topic set to a name below, or to a list of up to ${MAX_TOPICS_PER_CALL} names to read several at once. Tools list common fields; schemas names the full field list of a recipe part (meshEdit and meshStack also take <name>.<op>, geometries takes geometries.<type>). examples.<tool> is one complete call.`,
+    how: `Call scene_capabilities with topic set to a name below, or to a list of up to ${MAX_TOPICS_PER_CALL} names to read several at once. Tools list common fields; each name in topics.schemas gives the full field list of a recipe part, and the group names scene, runtime and schemas list their topics (meshEdit and meshStack also take <name>.<op>, geometries takes geometries.<type>). examples.<tool> is one complete call.`,
     topics: names,
   };
 }
 
 function answerOneTopic(capabilities, topic, names, outlineSources) {
   const allNames = [...names.scene, ...names.runtime, ...names.schemas];
+  // A group name is not a topic, but an agent that read the index asks for it: answer with the topics it holds.
+  if (GROUP_NAMES.includes(topic) && !allNames.includes(topic)) {
+    return { topic, value: { topics: names[topic], use: `${topic} is a group of topics; ask for one of its names, or ${topic}.<name>.` } };
+  }
   const parts = topic.split('.');
   // The index groups topics under scene, runtime and schemas; a caller may repeat the group as a prefix (schemas.geometries).
-  if (['scene', 'runtime', 'schemas'].includes(parts[0]) && parts.length > 1) parts.shift();
+  if (GROUP_NAMES.includes(parts[0]) && parts.length > 1) parts.shift();
   const [requestedName, branchName] = parts;
   const aliased = TOPIC_ALIASES[requestedName.toLowerCase()];
   const name = closestTopic(requestedName, allNames) ?? (allNames.includes(aliased) ? aliased : requestedName);

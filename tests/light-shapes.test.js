@@ -140,3 +140,21 @@ test('scene_capabilities localShadows lists area lights and their tile cost (#20
   assert.deepEqual(localShadows.lights, ['pointLights', 'spotLights', 'areaLights']);
   assert.equal(localShadows.areaLightTiles, 1);
 });
+
+test('an IES profile with a hole in angles or candela is refused and names the index', () => {
+  const holedCandela = [1, 1, 1];
+  delete holedCandela[1];
+  assert.throws(() => resolveIesProfile({ angles: [0, 10, 20], candela: holedCandela }), /no value at index 1/);
+  const holedAngles = [0, 10, 20];
+  delete holedAngles[2];
+  assert.throws(() => resolveIesProfile({ angles: holedAngles, candela: [1, 1, 1] }), /no value at index 2/);
+});
+
+test('an IES profile that is zero from 0 to 90 degrees is refused, one that emits there is kept', () => {
+  assert.throws(() => resolveIesProfile({ angles: [0, 100, 120], candela: [0, 0, 5] }), /zero from 0 to 90 degrees/);
+  assert.throws(() => resolveIesProfile({ angles: [95, 120], candela: [0, 5] }), /zero from 0 to 90 degrees/, 'a profile that starts past 90 reads its first value');
+  assert.doesNotThrow(() => resolveIesProfile({ angles: [95, 120], candela: [3, 5] }));
+  assert.doesNotThrow(() => resolveIesProfile({ angles: [0, 120], candela: [0, 5] }), 'it rises above zero before 90');
+  assert.doesNotThrow(() => resolveIesProfile({ angles: [0, 60, 120], candela: [0, 2, 0] }));
+  for (const name of IES_PROFILE_NAMES) assert.ok(profileSamples(resolveIesProfile(name)).some(sample => sample > 0), name);
+});
