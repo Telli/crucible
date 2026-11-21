@@ -3,6 +3,7 @@ import { applyProjection, cameraFieldOfView } from './camera.js';
 import { viewportClipPlanes } from './studio-viewport-aids.js';
 import { createAgentScene } from './agent-scene.js';
 import { createSceneQuery } from './scene-query.js';
+import { operationsBetweenRecipes, sameRecipeValue } from './studio-history-diff.js';
 import { MAX_POINT_LIGHTS, MAX_AREA_LIGHTS, MAX_SPOT_LIGHTS } from './light-limits.js';
 import {
   STUDIO_MATERIAL_PRESETS,
@@ -629,9 +630,33 @@ export function createStudioController({
     const nextRecipe = entry.restoresCamera || currentRecipe.camera === undefined
       ? entry.recipe
       : { ...entry.recipe, camera: currentRecipe.camera };
-    swapRecipe(nextRecipe);
+    if (!restoreRecipeInPlace(currentRecipe, nextRecipe)) {
+      swapRecipe(nextRecipe);
+    }
   }
 
+  // Applies the difference as scene operations on the scene already built, which takes milliseconds where a rebuild
+  // freezes a large scene. The exported recipe must match the target exactly, or the caller rebuilds from it.
+  function restoreRecipeInPlace(currentRecipe, targetRecipe) {
+    const operations = operationsBetweenRecipes(currentRecipe, targetRecipe);
+    if (operations === null) {
+      return false;
+    }
+    try {
+      if (operations.length > 0) {
+        invalidateQuery();
+        dragState = null;
+        currentScene.apply(operations, { expectedRevision: currentScene.revision });
+      }
+    } catch {
+      return false;
+    }
+    if (!sameRecipeValue(currentScene.exportRecipe(), targetRecipe)) {
+      return false;
+    }
+    settleSelectionAndMotion();
+    return true;
+  }
   // A camera motion track wins over the recipe camera, so on such a scene an orbit written to the recipe could never show.
   // There the viewport takes this pose of its own and the recipe stays as it is.
   let freeViewPose = null;
@@ -665,7 +690,8 @@ export function createStudioController({
     } else {
       applySceneOperations([{ type: 'set-camera', ...posePatch }], { recordUndo });
     }
-    notify({ kind: 'camera' });
+    // Only a move that went into undo changed the scene; a free orbit or the free view of a driven camera is navigation.
+    notify({ kind: 'camera', edited: recordUndo && !cameraIsDriven() });
     return viewCamera();
   }
 
@@ -682,6 +708,11 @@ export function createStudioController({
     dragState = null;
     // `assets` is the host's pool of decoded catalog assets. It outlives each scene, so undo and redo rebuild from it.
     currentScene = createAgentScene(recipeInput, {}, assets ? { assets } : {});
+    settleSelectionAndMotion();
+  }
+
+  // Keeps the selection, the motion time and the free view valid for whichever recipe the scene now holds.
+  function settleSelectionAndMotion() {
     const recipe = currentScene.exportRecipe();
     if (selectedNodeId && !recipe.nodes.some(node => node.id === selectedNodeId)) {
       selectedNodeId = recipe.nodes[0]?.id ?? null;
@@ -1971,7 +2002,7 @@ export function createStudioController({
       throw new TypeError('updateCamera expects a camera patch object.');
     }
     applySceneOperations([{ type: 'set-camera', ...patch }]);
-    notify({ kind: 'camera' });
+    notify({ kind: 'camera', edited: true });
     return viewCamera();
   }
 
@@ -2000,6 +2031,7 @@ export function createStudioController({
       }
     }
     loadRecipe(recipe);
+    notify({ kind: 'camera', edited: true });
     return viewCamera();
   }
 
