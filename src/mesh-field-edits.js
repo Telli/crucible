@@ -2,7 +2,6 @@ import { createMeshData, vertexGroupWeights } from './mesh-data.js';
 import { evaluateField, meshFieldContext } from './mesh-fields.js';
 import { displacementOffsets } from './mesh-displace-directions.js';
 import { selectFaces } from './mesh-select.js';
-import { sourceHeightsAtVertices } from './mesh-displace-source.js';
 
 // Edits driven by field expressions (see mesh-fields.js). Every expression is evaluated on the input positions
 // before anything moves, so the result does not depend on vertex order.
@@ -57,7 +56,7 @@ export function setPosition(mesh, { select, position, offset }, loadSurface) {
 // The height of a material graph or an image at each vertex. The resolver comes from the scene, which holds the materials and decoded images.
 function displaceSourceValues(mesh, source, resolveHeight) {
   if (!resolveHeight) throw new TypeError('displace source needs the scene materials and images, so it works on a recipe mesh geometry. Use "field" for a mesh outside a recipe.');
-  return sourceHeightsAtVertices(mesh, resolveHeight(source, mesh.vertexCount));
+  return resolveHeight(source, mesh);
 }
 
 /**

@@ -49,15 +49,16 @@ function graphHeightSampler(pattern, id, images, vertexCount) {
 }
 
 /**
- * A resolver for mesh edits: `resolve(source, vertexCount)` returns `height(u, v)`. `materials` maps a recipe material
+ * A resolver for mesh edits: `resolve(source, mesh)` returns the height at each vertex of the mesh. `materials` maps a recipe material
  * ID to the material, `images` maps a catalog image ID to its decoded frame ({ width, height, data } RGBA bytes).
  */
 export function createHeightSourceResolver({ materials, images } = {}) {
-  return (source, vertexCount) => {
-    if (source.image) return imageHeightSampler(images?.get(source.image), source.image);
+  return (source, mesh) => {
+    const vertexCount = mesh.vertexCount;
+    if (source.image) return sourceHeightsAtVertices(mesh, imageHeightSampler(images?.get(source.image), source.image));
     const material = materials?.get(source.material);
     if (!material) throw sourceFailure(`material ${source.material} is not in the recipe. Use one of ${[...(materials?.keys() ?? [])].join(', ') || 'none yet; add the material first'}.`);
-    return graphHeightSampler(heightPatternOf(material, source.material), source.material, images, vertexCount);
+    return sourceHeightsAtVertices(mesh, graphHeightSampler(heightPatternOf(material, source.material), source.material, images, vertexCount));
   };
 }
 
