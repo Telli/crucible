@@ -251,7 +251,28 @@ A track `{ "kind": "morph", "id": "eyeBlinkLeft", "property": "weight", "keyfram
 morph target of that name, with the interpolations and `easing` of any other track. It replaces what a layer or the file
 gives that target; targets without a track keep theirs. Names come from the file (`extras.targetNames`, the glTF convention
 that Blender and face rigs with ARKit names such as `eyeBlinkLeft` and `jawOpen` export); `scene_inspect` returns them as
-`morphTargetNames`, and an unknown name fails with the first ones. Tracks can address morph targets only on an imported asset.
+`morphTargetNames`, and an unknown name fails with the first ones. Tracks address the morph targets of an imported asset and the `shapeKeys` of a recipe mesh.
+
+### Facial animation
+
+`motion.face` writes the morph tracks of a talking head for you: blinks, named expressions and lip sync from a timed phoneme list. It works on any character whose shape keys (or imported morph targets) include the keys it needs, and the stored motion holds the resulting tracks, so seeking, render jobs and GLB export use the path above. The same `face` and `seed` give the same keyframes.
+
+```json
+{ "duration": 4, "face": {
+  "blink": { "interval": 3.5, "jitter": 0.3, "seed": 7 },
+  "expressions": [{ "time": 0, "name": "smile", "weight": 0.4, "blend": 0.3 }],
+  "visemes": { "blend": 0.05, "coarticulation": 0.5, "phonemes": [
+    { "time": 0.3, "phoneme": "HH" }, { "time": 0.44, "phoneme": "AH" }, { "time": 0.58, "phoneme": "L" }, { "time": 0.72, "phoneme": "OW" }, { "time": 0.9, "phoneme": "sil" }
+  ] }
+} }
+```
+
+- `blink` takes `interval` (0.5 to 30 s, default 3.5), `jitter` (0 to 1, the fraction an interval may vary, default 0.3), `seed` (a whole number, default 1), `start` (first blink, default half an interval) and `keys` to name the lid keys. Without `keys` it looks for `eyeBlinkLeft` and `eyeBlinkRight`, then `blinkLeft` and `blinkRight`, `eyesClosed` and `blink`. The closure is the curve the film path uses for its blinks.
+- `expressions` is up to 64 `{ time, name, weight, blend }` entries. An expression fades in over `blend` seconds (default 0.2) and fades out as the next one arrives; the last holds to the end. Built-in names are `neutral`, `smile`, `frown`, `sad`, `angry` and `surprised` (ARKit keys); `definitions` adds or replaces names with `{ "smirk": { "mouthSmileRight": 0.7 } }`.
+- `visemes.phonemes` is up to 4096 `{ time, phoneme }` entries in time order. A phoneme lasts until the next one (0.12 s for the last). Phonemes are ARPAbet (`AA`, `HH`, `SH`, ...) or the Oculus visemes (`sil`, `PP`, `FF`, `TH`, `DD`, `kk`, `CH`, `SS`, `nn`, `RR`, `aa`, `E`, `I`, `O`, `U`); `sil` closes the mouth. Each shape ramps in and out over `blend` seconds (default 0.06) and a phoneme shorter than twice that peaks lower instead of overshooting. `coarticulation` (0 to 1, default 0.5) starts each shape early and ends it late by that fraction of `blend`, so neighbours overlap and the mouth glides instead of snapping; overlapping shapes on one key take the larger weight.
+- `rig` is `auto` (default), `oculus` or `arkit`. An Oculus head (keys such as `viseme_PP`, as in Ready Player Me) gets one key per viseme; an ARKit head (`jawOpen`, `mouthFunnel`, ...) gets a mix of ARKit keys per viseme. `visemes.map` overrides a viseme with `{ "aa": { "MouthOpen": 1 } }` for any other rig.
+
+Key names match without case, separators or the `viseme_` prefix, and a `_L` or `_R` ending reads as Left or Right, so `eyeBlink_L` (the three.js face cap) and `eyeBlinkLeft` are one key. When a key is missing the error names it and lists the keys the character has. `face` plus an authored track on the same key is refused: merge them into one track. The tracks count toward the 2048 keyframes of a motion and 256 per track.
 
 ### Ocean time tracks
 
