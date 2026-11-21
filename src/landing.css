@@ -219,6 +219,8 @@
   .landing .callout h2 { font-size: 20px; }
   .landing .callout p { font-size: 12.5px; }
   .landing .callout p.tools { font-size: 11px; }
+  .landing .callout.aside { top: 250px; bottom: auto; width: min(162px, 42%); }
+  .landing .callout.aside p.tools { font-size: 10px; white-space: nowrap; }
 }
 @media (max-height: 620px) and (min-width: 821px) {
   .landing .beat { gap: 10px; }
