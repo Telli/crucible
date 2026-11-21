@@ -1,5 +1,5 @@
+import './site-chrome.js';
 import './view2d.css';
-import './brand.js';
 import { vec3 } from 'gl-matrix';
 import { CrucibleRenderer } from './renderer.js';
 import { createModel } from './model.js';

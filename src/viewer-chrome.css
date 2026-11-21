@@ -1,0 +1,41 @@
+/* The look the viewer pages (film, motion, modeling, nature, object, view2d, assets) share on top of src/site-chrome.css: square 2px-edge
+   buttons, selects and panels in the brand tokens, the display font for titles and one set of notices. A page's own stylesheet only places
+   things. The 3D content is drawn by Crucible and is not styled here. Full-screen pages add .viewer-screen so the canvas fills the space
+   below the top bar. */
+.viewer { --panel-gap: 16px; }
+.viewer-screen { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+.viewer-main { position: relative; flex: 1; min-height: 0; }
+
+.viewer h1, .viewer h2 { margin: 0; font-family: var(--display); font-weight: var(--heading-weight); line-height: 1.1; }
+.viewer h1 { font-size: clamp(24px, 2.4vw, 34px); }
+.viewer h2 { font-size: 20px; }
+.viewer p { margin: 0; }
+.viewer label { color: var(--soft); font-size: 13px; }
+.viewer output, .viewer .metrics, .viewer .hint { font: 500 12px/1.4 var(--mono); color: var(--soft); font-variant-numeric: tabular-nums; }
+.viewer .hint a { color: var(--fg); text-underline-offset: 4px; }
+.viewer button, .viewer select, .viewer .button { user-select: none; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+.viewer button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 0 14px; border: var(--edge-width) solid var(--edge); border-radius: var(--round); background: var(--site-bg); color: var(--fg); font: 600 14px/1 var(--body); white-space: nowrap; cursor: pointer; transition: transform 140ms var(--ease-out); }
+.viewer button:hover:not(:disabled) { background: var(--card); }
+.viewer button:active:not(:disabled) { transform: scale(0.97); }
+.viewer button[aria-pressed='true'], .viewer button.primary { border-color: var(--button-bg); background: var(--button-bg); color: var(--button-fg); }
+.viewer button:disabled { opacity: 0.5; cursor: default; }
+.viewer select { min-height: 40px; padding: 0 10px; border: var(--edge-width) solid var(--edge); border-radius: var(--round); background: var(--site-bg); color: var(--fg); font: 500 14px/1 var(--body); cursor: pointer; }
+.viewer select:disabled { opacity: 0.5; cursor: default; }
+.viewer option { background: var(--site-bg); color: var(--fg); }
+.viewer input[type='range'] { accent-color: var(--accent); cursor: pointer; margin: 0; }
+.viewer input[type='range']:disabled { cursor: default; }
+.viewer canvas { display: block; touch-action: none; }
+.viewer canvas:focus-visible { outline-offset: -5px; }
+
+.viewer .panel { padding: 16px; border: var(--edge-width) solid var(--edge); border-radius: var(--round); background: var(--card); }
+.viewer .group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.viewer .tools { position: absolute; top: var(--panel-gap); right: var(--panel-gap); z-index: 2; display: flex; gap: 8px; }
+.viewer .dock { position: absolute; left: var(--panel-gap); right: var(--panel-gap); bottom: var(--panel-gap); z-index: 2; }
+
+.viewer .notice, .viewer #notice, .viewer #modeling-notice, .viewer .film-error, .viewer .motion-error { padding: 12px 16px; border: var(--edge-width) solid var(--edge); border-radius: var(--round); background: var(--card); color: var(--fg); font-size: 14px; line-height: 1.5; }
+.viewer .film-error::before, .viewer .motion-error::before { content: '!'; display: inline-grid; place-items: center; width: 20px; height: 20px; margin-right: 10px; background: var(--accent); color: var(--site-bg); font: 700 14px/1 var(--display); }
+
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.export-mode .nav, .export-view .nav, .modeling-export .nav, .modeling-export .footer { display: none; }
+.export-mode, .export-view { display: block; height: auto; overflow: visible; }

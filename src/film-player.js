@@ -1,5 +1,5 @@
+import './site-chrome.js';
 import './film-style.css';
-import './brand.js';
 import { CrucibleRenderer } from './renderer.js';
 import './explosion-shader.js';
 import { readWholeNumberOption } from './query-number-option.js';

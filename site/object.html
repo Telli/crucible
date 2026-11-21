@@ -3,28 +3,39 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#25292d" />
     <meta name="description" content="Explore WALL·E inside and out. An explodable procedural 3D study rendered with Crucible." />
     <title>Crucible · Object studio</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" /><link rel="icon" href="/favicon.ico?v=2" sizes="48x48" /><link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
-  <body>
-    <main>
-      <header class="toolbar">
-        <a class="brand" href="./" aria-label="Crucible home">Crucible</a>
-        <nav class="studio-nav" aria-label="Scenes"><a href="./object.html" aria-current="page">Object</a><a href="./nature.html">Nature</a><a href="./film.html">Film</a><a href="./motion.html">Motion</a><a href="./docs.html">Docs</a><a href="./showcase.html">Showcase</a></nav>
-        <div class="toolbar-actions">
-          <button id="reset" title="Reset camera (R)">Reset view</button>
-          <button id="export" class="primary">Export GLB <span aria-hidden="true">↗</span></button>
-        </div>
-      </header>
-      <section class="object-info" aria-labelledby="object-title">
+  <body class="themed viewer viewer-screen object">
+    <a class="skip-link" href="#content">Skip to content</a>
+<!-- site-chrome:header -->
+<header class="nav">
+  <a class="brand" href="/" aria-label="Crucible home"><img src="/brand/crucible-mark.svg" alt="">Crucible</a>
+  <span class="version" data-release-version>Loading release</span>
+  <nav class="nav-links" aria-label="Site">
+    <a href="/docs.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M3 1h11v1h-11zM2 2h12v1h-12zM2 3h2v1h-2zM12 3h2v1h-2zM2 4h2v1h-2zM5 4h6v1h-6zM12 4h2v1h-2zM2 5h2v1h-2zM5 5h6v1h-6zM12 5h2v1h-2zM2 6h2v1h-2zM12 6h2v1h-2zM2 7h2v1h-2zM12 7h2v1h-2zM2 8h2v1h-2zM12 8h2v1h-2zM2 9h2v1h-2zM12 9h2v1h-2zM2 10h2v1h-2zM12 10h2v1h-2zM2 11h2v1h-2zM11 11h3v1h-3zM2 12h12v1h-12zM2 13h11v1h-11zM2 14h2v1h-2z"/></svg>Docs</a>
+    <a class="wide" href="/recipes.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M7 1h2v1h-2zM5 2h6v1h-6zM3 3h4v1h-4zM9 3h4v1h-4zM1 4h5v1h-5zM10 4h5v1h-5zM0 5h5v1h-5zM11 5h5v1h-5zM2 6h4v1h-4zM10 6h4v1h-4zM1 7h2v1h-2zM4 7h8v1h-8zM13 7h2v1h-2zM1 8h3v1h-3zM6 8h4v1h-4zM12 8h3v1h-3zM2 9h4v1h-4zM7 9h2v1h-2zM10 9h4v1h-4zM1 10h2v1h-2zM4 10h8v1h-8zM13 10h2v1h-2zM1 11h3v1h-3zM6 11h4v1h-4zM12 11h3v1h-3zM2 12h4v1h-4zM7 12h2v1h-2zM10 12h4v1h-4zM4 13h8v1h-8zM6 14h4v1h-4zM7 15h2v1h-2z"/></svg>Recipes</a>
+    <a class="wide" href="/showcase.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M1 2h14v1h-14zM1 3h14v1h-14zM1 4h2v1h-2zM13 4h2v1h-2zM1 5h2v1h-2zM13 5h2v1h-2zM1 6h2v1h-2zM13 6h2v1h-2zM1 7h2v1h-2zM4 7h2v1h-2zM13 7h2v1h-2zM1 8h6v1h-6zM9 8h2v1h-2zM13 8h2v1h-2zM1 9h11v1h-11zM13 9h2v1h-2zM1 10h3v1h-3zM6 10h9v1h-9zM1 11h3v1h-3zM7 11h2v1h-2zM11 11h4v1h-4zM1 12h14v1h-14zM1 13h14v1h-14z"/></svg>Showcase</a>
+    <a class="wide" href="/marketplace.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M2 2h12v1h-12zM2 3h12v1h-12zM2 4h2v1h-2zM6 4h4v1h-4zM12 4h2v1h-2zM2 5h2v1h-2zM5 5h6v1h-6zM12 5h2v1h-2zM2 6h12v1h-12zM2 7h5v1h-5zM9 7h5v1h-5zM2 8h5v1h-5zM9 8h5v1h-5zM2 9h12v1h-12zM2 10h2v1h-2zM5 10h6v1h-6zM12 10h2v1h-2zM2 11h2v1h-2zM6 11h4v1h-4zM12 11h2v1h-2zM2 12h12v1h-12zM2 13h12v1h-12z"/></svg>Marketplace</a>
+    <a class="wide" href="/changelog.html"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M2 3h12v1h-12zM2 4h12v1h-12zM2 7h12v1h-12zM2 8h12v1h-12zM2 11h12v1h-12zM2 12h12v1h-12z"/></svg>Changelog</a>
+    <a href="https://github.com/codepawl/crucible" aria-label="GitHub"><svg class="pixel-icon" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true"><path d="M6 0h4v1h-4zM4 1h8v1h-8zM2 2h12v1h-12zM1 3h14v1h-14zM1 4h3v1h-3zM12 4h3v1h-3zM0 5h4v1h-4zM12 5h4v1h-4zM0 6h3v1h-3zM13 6h3v1h-3zM0 7h3v1h-3zM13 7h3v1h-3zM0 8h3v1h-3zM13 8h3v1h-3zM0 9h3v1h-3zM13 9h3v1h-3zM0 10h4v1h-4zM12 10h4v1h-4zM1 11h5v1h-5zM10 11h5v1h-5zM1 12h2v1h-2zM4 12h2v1h-2zM10 12h5v1h-5zM2 13h2v1h-2zM10 13h4v1h-4zM3 14h3v1h-3zM10 14h3v1h-3zM5 15h1v1h-1zM10 15h1v1h-1z"/></svg><span class="wide">GitHub</span></a>
+    <a class="button" href="/#install">Install</a>
+  </nav>
+</header>
+<!-- /site-chrome:header -->
+    <main id="content" class="viewer-main">
+      <div class="tools toolbar-actions">
+        <button id="reset" title="Reset camera (R)">Reset view</button>
+        <button id="export" class="primary">Export GLB <span aria-hidden="true">↗</span></button>
+      </div>
+      <section class="object-info panel" aria-labelledby="object-title">
         <h1 id="object-title">WALL·E, <br />inside out.</h1>
         <p id="model-description">Pull apart the shell. Explore the machinery. <br />Slide back to bring him together.</p>
         <div class="object-caption"><span class="status-dot" aria-hidden="true">●</span> <span id="model-name">WALL·E study</span><span class="caption-separator">/</span><span>Procedural geometry</span></div>
       </section>
       <canvas id="viewport" tabindex="0" aria-label="3D model. Drag or use arrow keys to orbit. Scroll or use plus and minus to zoom."></canvas>
-      <aside class="controls" aria-label="Model appearance">
+      <aside class="controls panel" aria-label="Model appearance">
         <div class="assembly-control">
           <label for="assembly">Explode model <output id="assembly-value">0%</output></label>
           <input id="assembly" type="range" min="0" max="100" step="1" value="0" aria-valuetext="Assembled" />
@@ -49,12 +60,12 @@
           <select id="quality"><option value="1">Performance</option><option value="1.5" selected>Balanced</option><option value="2">High</option></select>
         </label>
       </aside>
-      <footer>
+      <div class="dock panel status-row">
         <p class="hint">Drag to orbit <span>·</span> Scroll to zoom</p>
         <div class="metrics" aria-label="Renderer statistics"><span id="parts">Loading geometry…</span><span id="calls"></span><span id="cpu"></span></div>
         <button id="rotate" aria-pressed="false">↻ Auto orbit</button>
         <button id="benchmark">Measure performance ↗</button>
-      </footer>
+      </div>
       <section id="benchmark-result" class="benchmark-result" hidden aria-label="Performance results">
         <h2>CPU draw submission</h2>
         <p id="benchmark-summary" role="status"></p>
