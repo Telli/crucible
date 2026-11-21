@@ -343,6 +343,11 @@ export const STUDIO_CSS = `
   z-index: 9;
 }
 .crucible-studio[data-compact="true"] .crucible-studio-draft { inset-inline: var(--studio-edge); }
+/* Docked, the viewport is already the room between the rail and the column, so the notice only keeps the edge gap. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-draft {
+  inset-block-start: var(--studio-edge);
+  inset-inline: var(--studio-edge);
+}
 .crucible-studio-paused[hidden],
 .crucible-studio-draft[hidden] { display: none; }
 .crucible-studio-paused p,
