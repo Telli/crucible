@@ -24,9 +24,9 @@ test('the asset viewer demo desk is a textured GLB that stays under 5 MB', async
   assert.ok(document.materials.some(material => material.pbrMetallicRoughness?.baseColorTexture), 'the desk keeps its base color textures');
   assert.ok(document.materials.some(material => material.normalTexture), 'the desk keeps its normal maps');
   assert.ok(document.nodes.length >= 5, 'the desk keeps the table, the camera and the props as separate nodes');
-  // The spectacles' base color keeps its alpha for the lenses, so it stays a PNG; every other texture is a JPEG.
+  // Two textures keep an alpha channel and stay PNG: the spectacles' lenses and the soft contact shadows under the props; every other texture is a JPEG.
   const pngImages = document.images.filter(image => image.mimeType === 'image/png');
-  assert.ok(pngImages.length <= 1, `${pngImages.length} PNG textures; only the spectacles' alpha texture may stay PNG`);
+  assert.ok(pngImages.length <= 2, `${pngImages.length} PNG textures; only the spectacles' and the contact shadow's alpha textures may stay PNG`);
   for (const image of document.images) assert.match(image.mimeType, /^image\/(jpeg|png)$/);
 });
 
@@ -36,6 +36,12 @@ test('the viewer opens on the desk lit by the shipped misty sky', async () => {
   assert.match(viewer, /kloofendal_28d_misty_puresky_1k\.hdr/);
   const sky = await readFile(SKY_PATH);
   assert.equal(sky.subarray(0, 10).toString('latin1'), '#?RADIANCE', 'the sky is a Radiance HDR file');
+});
+
+test('a narrow canvas frames the demo desk with its own tighter focus box', async () => {
+  const viewer = await readFile(VIEWER_PATH, 'utf8');
+  assert.match(viewer, /portraitFocus: \{ minimum: \[/, 'the demo declares a portrait focus box for phones');
+  assert.match(viewer, /aspect < 1 && setting\.portraitFocus/, 'frame() picks the portrait box on a canvas taller than wide');
 });
 
 test('the demo desk and its sky are credited as CC0 Poly Haven assets', async () => {

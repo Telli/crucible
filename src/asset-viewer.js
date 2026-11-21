@@ -35,6 +35,7 @@ const DEMO_SETTING = {
   yaw: 0,
   pitch: 1.15,
   focus: { minimum: [-0.34, 1.16, -0.3], maximum: [0.34, 1.3, 0.3] },
+  portraitFocus: { minimum: [-0.325, 1.16, -0.305], maximum: [0.325, 1.3, 0.435] },
 };
 const FLOOR_COLOR = [0.34, 0.22, 0.13];
 const FRAME_MARGIN = 1.08;
@@ -113,7 +114,8 @@ function focusHeight(box, aspect) {
 
 function frame() {
   const aspect = canvas.width / canvas.height;
-  const framed = setting.focus ? setting.focus : bounds;
+  // A narrow canvas (a phone) fits a tighter box, so the subject keeps most of the width instead of a third.
+  const framed = (aspect < 1 && setting.portraitFocus) || setting.focus || bounds;
   const target = framed.minimum.map((value, axis) => (value + framed.maximum[axis]) / 2);
   const extent = Math.max(...bounds.maximum.map((value, axis) => value - bounds.minimum[axis]), 0.01);
   const focusExtent = Math.max(...framed.maximum.map((value, axis) => value - framed.minimum[axis]), 0.01);
