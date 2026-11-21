@@ -156,6 +156,22 @@ test('spray options that would build no or broken droplets are refused by name',
   }
 });
 
+test('a spray index entry that is not two whole numbers from 0 is refused by frame (#2627)', async () => {
+  for (const [frame, entry] of [[0, ['a', 2]], [1, [-1, 2]], [1, [0, 1.5]], [0, [0]]]) {
+    const read = syntheticCache();
+    const source = async name => {
+      if (name !== 'meta.json') return read(name);
+      const meta = JSON.parse(new TextDecoder().decode(await read(name)));
+      meta.spray.index[frame] = entry;
+      return new TextEncoder().encode(JSON.stringify(meta)).buffer;
+    };
+    await assert.rejects(loadSpumeCache(source), new RegExp(`spray\\.index\\[${frame}\\]`), `entry ${JSON.stringify(entry)}`);
+  }
+  const cache = await loadSpumeCache(syntheticCache());
+  assert.equal(cache.spray.index.length, 2, 'a valid cache still loads');
+  assert.equal(buildSprayGeometry(cache, 1).indices.length, 2 * 24, 'and builds the same droplets');
+});
+
 function cacheWithSpray(points) {
   const read = syntheticCache();
   const encode = value => (Number.isFinite(value) ? float16Bits(value) : value === Infinity ? 0x7c00 : 0x7e00);

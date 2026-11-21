@@ -32,7 +32,7 @@ The definition is the one `createPhysicsScene` takes, without `events` (a live g
 | --- | --- | --- |
 | `adapter` | `rapierAdapter` | The engine, see below |
 | `timestep` | `1/60` | Seconds per step. The runtime's `fixedStepSeconds` must equal it; a mismatch throws and says which value to pass. |
-| `bindings` | `[]` | `[{ body, part }]`, same as `physics.bind` |
+| `bindings` | `[]` | `[{ body, part }]`, an array, same as `physics.bind` |
 | `name` | `'physics'` | The runtime system name |
 | `solverIterations`, `maxBodies`, `maxColliders`, `maxJoints` | as in physics.md | Bounds and solver quality |
 
@@ -57,7 +57,7 @@ Put the system after input and before animation and game code in `systems`.
 
 ## Queries
 
-They read the world as the last step left it. Every query takes optional `{ mask, excludeBody, includeSensors }`: `mask` is a collision-group mask (0 to 65535), `excludeBody` skips one body (for example the player), and sensors are skipped unless `includeSensors` is `true`.
+They read the world as the last step left it, or as it starts before the first step. Every query takes optional `{ mask, excludeBody, includeSensors }`: `mask` is a collision-group mask (0 to 65535), `excludeBody` skips one body (for example the player), and sensors are skipped unless `includeSensors` is `true`.
 
 - `raycast(origin, direction, { maxDistance = 1000 })` returns the first hit or `null`: `{ body, collider, distance, point, normal }`. The direction need not be a unit vector.
 - `shapeCast(shape, translation, direction, { maxDistance, rotation })` sweeps a shape and returns the first hit in the same form; `distance` is how far the shape's centre travelled.

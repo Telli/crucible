@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import test from 'node:test';
 import { freePort } from './helpers/free-port.js';
-import { skipOrThrow } from './helpers/dev-server-browser.js';
+import { skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 
 const WEBGPU_ARGUMENTS = [process.platform === 'win32' ? '--use-angle=d3d11' : '--use-angle=swiftshader', '--enable-unsafe-webgpu', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-features=Vulkan'];
 
@@ -104,7 +104,7 @@ test('on a WebGPU adapter a portal keeps the mean of a room lit through a window
       return;
     }
     const page = await browser.newPage({ viewport: { width: 128, height: 128 } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const adapter = await page.evaluate(async () => {
       const found = navigator.gpu ? await navigator.gpu.requestAdapter() : null;
       if (!found) return null;

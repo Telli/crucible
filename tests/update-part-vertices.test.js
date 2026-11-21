@@ -71,3 +71,18 @@ test('worldBounds follows vertices moved by updatePartVertices after bounds were
   assert.equal(after.minimum[2], 50, 'bounds must not stay stale after an in-place vertex rewrite');
   assert.equal(after.maximum[2], 50);
 });
+
+test('updatePartVertices refuses non-finite positions and normals before it writes anything', () => {
+  for (const bad of [NaN, Infinity, -Infinity]) {
+    const { renderer, part, geometry, batch, calls } = fakeRenderer();
+    const positionsBefore = Array.from(geometry.positions);
+    const boundsBefore = batch.bounds;
+    const badPositions = new Float32Array([0, 0, 0, 1, bad, 0, 0, 1, 0]);
+    assert.throws(() => updatePartVertices(renderer, part, badPositions), /positions\[4\] is .*pass finite numbers/);
+    const badNormals = new Float32Array([0, 0, 1, 0, 0, bad, 0, 0, 1]);
+    assert.throws(() => updatePartVertices(renderer, part, geometry.positions.slice(), badNormals), /normals\[5\] is .*pass finite numbers/);
+    assert.deepEqual(Array.from(geometry.positions), positionsBefore, 'the shared geometry is untouched');
+    assert.equal(batch.bounds, boundsBefore, 'the culling bounds are untouched');
+    assert.deepEqual(calls, [], 'no buffer was written');
+  }
+});

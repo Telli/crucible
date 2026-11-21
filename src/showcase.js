@@ -1,11 +1,12 @@
+import './site-chrome.js';
 import './site.css';
-import './brand.js';
 import './showcase.css';
 import './pointer-light.js';
 import { CrucibleRenderer } from './renderer.js';
 import { createSharedTextures, loadGltf } from './gltf.js';
 import { loadHdri } from './hdri.js';
 import { createCascadedShadows } from './cascaded-shadows.js';
+import { mergePartLights, showcaseEnvironment, withSceneFileLights } from './dense-lods.js';
 import { applyWaterReflection, attachWaterReflection } from './water-reflection.js';
 
 // The mirror redraws every second lit frame while the camera moves: about 1.3 ms off the orbiting port frame
@@ -257,10 +258,12 @@ async function finishWorld(world) {
     const [remainingModels, fullMap] = await remainingDownloads;
     if (!isCurrent()) return;
     const files = [{ parts: asset.parts, ranks: world.ranks }];
+    const lightsPerPart = [asset.lights ?? {}];
     for (const [index, model] of remainingModels.entries()) {
       const baseUrl = new URL('.', new URL(description.glbRest[index], location.href)).href;
       const remaining = await loadGltf(model, { baseUrl, sharedTextures, ...(description.gltfOptions ?? {}) });
       files.push({ parts: remaining.parts, ranks: await readPartRanks(model) });
+      lightsPerPart.push(remaining.lights ?? {});
     }
     if (!isCurrent()) return;
     // The renderer adds textured parts through this opt-in addon, which stays out of the core bundle.
@@ -273,7 +276,10 @@ async function finishWorld(world) {
     detachReflection();
     attachWaterReflection(renderer, reflection.surface, WATER_REFLECTION_OPTIONS);
     applyLimits(description, allParts, homeView);
-    if (fullMap) scene.frame = { ...scene.frame, environment: { map: fullMap } };
+    // The renderer was built with the first part's lights; the lights of every part replace them here, under the scene file's own.
+    const environment = withSceneFileLights(mergePartLights(lightsPerPart), description.renderer?.environment);
+    if (fullMap) environment.map = fullMap;
+    scene.frame = { ...scene.frame, environment };
     window.__showcase.complete = true;
     status.hidden = true;
     requestDraw();
@@ -337,7 +343,7 @@ async function selectScene(id) {
       ground: false, hdr: true, samples: 4, memoryBudgetMiB: 384,
       ...rendererOptions,
       shadowCascades,
-      environment: { ...(rendererOptions.environment ?? {}), map },
+      environment: showcaseEnvironment(asset.lights, rendererOptions.environment, map),
     });
     const detachReflection = attachWaterReflection(renderer, reflection.surface, WATER_REFLECTION_OPTIONS);
     scene = { frame: { exposure: description.exposure ?? 1, ...(description.frame ?? {}) } };
@@ -440,4 +446,4 @@ const requestedScene = resolveRequestedScene(new URLSearchParams(location.search
 if (requestedScene.notice) showNotice(requestedScene.notice);
 selectScene(requestedScene.id);
 
-renderCommunity({ grid: document.querySelector('#community-grid'), emailLink: document.querySelector('#community-email') });
+renderCommunity({ grid: document.querySelector('#community-grid'), emailLink: document.querySelector('#community-email'), emptyState: document.querySelector('#community-empty') });

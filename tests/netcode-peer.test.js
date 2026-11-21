@@ -98,6 +98,24 @@ test('an entity of a peer that left is dropped, and bad messages and options are
   assert.deepEqual(alice.netcode.entityIds, ['bob']);
 });
 
+test('a peer entity without variables or with a null variable is read as no variables (#2606)', () => {
+  const network = createLoopbackNetwork({ seed: 12, latencyMilliseconds: 10 });
+  const observer = createPeer(network, 'observer');
+  const sender = network.createTransport('sender');
+  run(network, [observer], 1);
+  const message = (variables, tick) => ({
+    type: 'peer-state',
+    session: 'a',
+    tick,
+    entities: { crate: { p: [100, 0, 0], r: [0, 0, 0, 1000], v: [0, 0, 0], ...(variables && { x: variables }), m: 0 } },
+  });
+  sender.send('observer', message(undefined, 1));
+  sender.send('observer', message({ door: null }, 2));
+  run(network, [observer], 3);
+  assert.equal(observer.netcode.getEntityOwner('crate'), 'sender');
+  assert.deepEqual(observer.netcode.getEntityState('crate').variables, {});
+});
+
 test('an older run of a peer is stale and a restart on the same id is followed', () => {
   const network = createLoopbackNetwork({ seed: 9, latencyMilliseconds: 10 });
   const observer = createPeer(network, 'observer');
@@ -113,4 +131,27 @@ test('an older run of a peer is stale and a restart on the same id is followed',
   sender.send('observer', { type: 'peer-state', session: 'c', tick: 0, entities: { ball: entity(5, 0) } });
   run(network, [observer], 20);
   assert.ok(Math.abs(observer.netcode.getEntityState('ball').position[0] - 5) < 0.01);
+});
+
+test('a peer that left frees its sender slot, so the table does not stay full (#2607)', () => {
+  const network = createLoopbackNetwork({ seed: 14 });
+  const observer = createPeer(network, 'observer');
+  run(network, [observer], 1);
+  const emptyState = tick => ({ type: 'peer-state', session: 'a', tick, entities: {} });
+  const past = Array.from({ length: 32 }, (_, index) => network.createTransport(`past-${index}`));
+  past.forEach((sender, index) => sender.send('observer', emptyState(index + 1)));
+  network.advance(FRAME_MILLISECONDS);
+  assert.equal(observer.netcode.stats.rejectedMessages, 0);
+  const refused = network.createTransport('refused');
+  refused.send('observer', emptyState(1));
+  network.advance(FRAME_MILLISECONDS);
+  assert.equal(observer.netcode.stats.rejectedMessages, 1, 'the 33rd sender is refused while 32 slots are held');
+
+  past.forEach(sender => sender.close());
+  run(network, [observer], 1);
+  const late = network.createTransport('late');
+  late.send('observer', emptyState(1));
+  network.advance(FRAME_MILLISECONDS);
+  assert.equal(observer.netcode.stats.rejectedMessages, 1, 'a peer that left should have freed its slot');
+  assert.equal(observer.netcode.stats.snapshotsReceived, 33);
 });

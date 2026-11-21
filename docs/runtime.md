@@ -49,6 +49,8 @@ Two guards stop a slow frame from spiralling. A frame longer than `maximumFrameS
 | `idleSleep` | `true` | `false` keeps drawing every frame even when `isIdle` says idle |
 | `scheduler`, `clock`, `visibility`, `observe` | browser | `{ request(callback), cancel(handle) }`, `() => milliseconds`, `{ hidden, subscribe(callback) }` and `(element, callback(onscreen)) => stop`, injected by tests and headless runs |
 
+`clock` must be a function returning milliseconds; leave it out to use `performance.now()`. A non-function is rejected when the runtime is created, rather than failing on the first frame.
+
 The first argument is any object with `render(frame)`, such as `CrucibleRenderer`.
 
 ## Runtime methods

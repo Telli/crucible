@@ -16,6 +16,8 @@ export const INPUT_LIMITS = Object.freeze({
   defaultDeadZone: 0.15,
 });
 
+const AXIS_FIELDS = ['bindings', 'deadZone', 'smoothing'];
+
 function describe(value) {
   return value === null ? 'null' : typeof value;
 }
@@ -188,6 +190,10 @@ export function createInput(options = {}) {
   function bindAxis(name, definition) {
     assertAlive();
     requireName(name, 'bindAxis name');
+    if (definition !== null && typeof definition === 'object' && !Array.isArray(definition)) {
+      const unknown = Object.keys(definition).find(field => !AXIS_FIELDS.includes(field));
+      if (unknown !== undefined) throw new RangeError(`Axis "${name}" has the unknown field "${unknown}". Use one of: ${AXIS_FIELDS.join(', ')}.`);
+    }
     const bindings = Array.isArray(definition) ? definition : definition?.bindings;
     const deadZone = (Array.isArray(definition) ? undefined : definition?.deadZone) ?? INPUT_LIMITS.defaultDeadZone;
     const smoothing = (Array.isArray(definition) ? undefined : definition?.smoothing) ?? 0;
@@ -225,6 +231,8 @@ export function createInput(options = {}) {
       for (const { control: controlName, scale } of axis.bindings) {
         total += (controls.get(controlName)?.value ?? 0) * scale;
       }
+      // Huge scales on a control past 1 can make Infinity minus Infinity; NaN would stay in the smoothed value for good (#2403).
+      if (Number.isNaN(total)) total = 0;
       const target = applyDeadZone(Math.max(-1, Math.min(1, total)), axis.deadZone);
       axis.smoothed = axis.smoothing === 0 ? target : axis.smoothed + (target - axis.smoothed) * (1 - axis.smoothing);
       axes.set(name, axis.smoothed);
@@ -278,8 +286,14 @@ export function createInput(options = {}) {
     unregisterSource,
     bindAction,
     bindAxis,
-    unbindAction: name => actionBindings.delete(name),
-    unbindAxis: name => axisBindings.delete(name),
+    unbindAction(name) {
+      snapshot.actions.delete(name);
+      return actionBindings.delete(name);
+    },
+    unbindAxis(name) {
+      snapshot.axes.delete(name);
+      return axisBindings.delete(name);
+    },
     setControl,
     press: controlName => setControl(controlName, 1),
     release: controlName => setControl(controlName, 0),

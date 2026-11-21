@@ -58,23 +58,22 @@
     "docs/user-passes.md",
     "docs/addons.md",
     "docs/skeleton-pose.md",
+    "docs/studio.md",
     "docs/verification.md"
   ],
-  "main": "./build/67.module.js",
-  "module": "./build/67.module.js",
+  "main": "./build/crucible.module.js",
+  "module": "./build/crucible.module.js",
   "bin": {
     "crucible-mcp": "./bin/crucible-mcp.mjs",
     "crucible": "./bin/crucible.mjs",
-    "crucible-addon-check": "./bin/crucible-addon-check.mjs",
-    "67js-mcp": "./bin/67js-mcp.mjs",
-    "67js-addon-check": "./bin/67js-addon-check.mjs"
+    "crucible-addon-check": "./bin/crucible-addon-check.mjs"
   },
   "engines": {
     "node": ">=20.19.0"
   },
   "exports": {
-    ".": "./build/67.module.js",
-    "./standalone": "./build/67.standalone.js",
+    ".": "./build/crucible.module.js",
+    "./standalone": "./build/crucible.standalone.js",
     "./addons/model": "./build/model.js",
     "./addons/nature": "./build/nature.js",
     "./addons/motion": "./build/motion.js",
@@ -157,6 +156,7 @@
     "./addons/fracture": "./build/fracture.js",
     "./addons/morph": "./build/morph.js",
     "./addons/skinning": "./build/skinning.js",
+    "./addons/studio": "./build/studio.js",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -180,6 +180,8 @@
     "test:coverage": "node --test --import ./scripts/test-hang-guard.mjs --test-timeout=300000 --experimental-test-coverage --test-coverage-exclude=\"tests/**\" --test-coverage-exclude=\"scripts/**\" --test-coverage-exclude=\"build/**\"",
     "coverage:gate": "node scripts/coverage-gate.mjs",
     "cook:build": "node node_modules/@codepawlhq/cook/build.mjs",
+    "cook:check": "node scripts/cook-install-check.mjs",
+    "cook:fetch": "node node_modules/@codepawlhq/cook/fetch-addon.mjs",
     "preflight": "node scripts/preflight.mjs",
     "render:file-cook": "node scripts/render-file-native.mjs",
     "smoke": "node scripts/smoke.mjs",
@@ -293,7 +295,7 @@
   },
   "devDependencies": {
     "@codepawlhq/crucible-denoise-oidn": "file:packages/denoise-oidn",
-    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#55f2448dbb5121d82a5b125c3564403b64798d03",
+    "@codepawlhq/cook": "git+https://github.com/codepawl/cook.git#e95e91daf84010ce8d6a0df48d823fc77444ad3e",
     "@dimforge/rapier3d-compat": "0.21.0",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",

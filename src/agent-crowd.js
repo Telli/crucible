@@ -42,6 +42,12 @@ function numberWithin(value, minimum, maximum, label) {
   return value;
 }
 
+
+// createCrowd refuses a fractional seed, so the recipe check names the field first.
+function wholeSeed(value) {
+  if (!Number.isInteger(value) || value < -2147483648 || value > 2147483647) throw invalidField('crowd.seed', value, 'a whole number from -2147483648 to 2147483647, such as 1');
+  return value;
+}
 /** Validate the `crowd` field of an asset placement. Returns the canonical form kept in the recipe. */
 export function normalizeCrowd(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidField('crowd', value, 'an object such as { "count": 50, "layout": "grid" }', TypeError);
@@ -58,7 +64,7 @@ export function normalizeCrowd(value) {
   const result = {
     clip,
     count: value.count,
-    seed: numberWithin(value.seed ?? 1, -2147483648, 2147483647, 'seed'),
+    seed: wholeSeed(value.seed ?? 1),
     layout,
     spacing: numberWithin(value.spacing ?? 1.5, 0.05, 1000, 'spacing'),
     rateJitter: numberWithin(value.rateJitter ?? 0.15, 0, 0.9, 'rateJitter'),

@@ -29,6 +29,13 @@ const SPARK_MODES = Object.freeze(['streaks', 'specks', 'none']);
 export const EXPLOSION_SPARKS_DEFAULT = 'streaks';
 /** The shutter in seconds of the fireball blur when the scene's camera has none: one frame at 24 frames per second, as in the approved preview. */
 export const EXPLOSION_DEFAULT_SHUTTER = 0.0417;
+
+// How much of the floor shows through a dust puff; puffs overlap, so the cloud still reads as dust (#2304).
+export const DUST_OPACITY = 0.25;
+// Fade of each puff toward its silhouette (softEdge), so overlapping puffs blend into one cloud with no outlines.
+export const DUST_SOFT_EDGE = 2;
+// Unlit, so no specular or Fresnel rim outlines a puff; a warm brown-tan that stays brown after the tone map.
+export const DUST_COLOR = Object.freeze([0.5, 0.38, 0.27]);
 const POSITION_LIMIT = 10000;
 const SHAKE_SECONDS = 1;
 const SHAKE_KEYS_PER_SECOND = 32;
@@ -180,12 +187,17 @@ function addAirSteps(candidate, plan) {
 // background; at 9.5 (on top of the exact step integral, #1894) the edge falloff is 0.79 of the Cycles one and the RMSE drops from 0.030 to 0.020.
 // steps 32 is one step per voxel of the 32 cubed grid: against 96 steps the picture differs by an RMSE of 0.003 (linear, 0 to 1), and a CPU preview
 // look costs a third (SwiftShader, 768 x 432: first look 11.7 s to 4.9 s, later looks 4.2 s to 1.7 s), which keeps scene_look well under its 30 s limit.
-// flameTemperature is Blender's fire remap (#1735): every voxel with flame emits at 1500 K up to 3000 K by its flame value, whatever its smoke density, which
+// The grid has 32 cells a side, so a cell is 0.4 m at size 4 and the smoke seen from a few metres is a soft blob with no structure finer than that (#2289: more steps, a
+// smoother filter and the jitter were already there and changed the picture by an RMSE of 0.001 to 0.004; the cells themselves are the limit, and a 64 cubed bake would
+// cost 8 times the files and a cold bake of minutes). So the volume carries fractal noise that scales with the box: NOISE_CELLS_PER_BOX noise cells across it, 2.5 per grid cell, three octaves,
+// modulating the density and flame around their mean, so the far look and the optical depth stay and only the small clumps are new.
+// flameTemperature is the fire remap of Blender (#1735, 1500 K to 3000 K there), cooled to 1300 K to 1900 K and a redder flame colour (#2289, the owner asked for a softer fire a little more orange, like Cycles: close-up flame hue 22 to 13.5 degrees against 12.2 in Cycles, p99 luminance 0.65 to 0.56 against 0.59): every voxel with flame emits by its flame value, whatever its smoke density, which
 // is the orange rim Cycles draws along the smoke edge (the temperature channel alone cools to nothing there).
 const BLAST_VOLUME = Object.freeze({
-  flameTemperature: Object.freeze({ ignition: 1.5, maximum: 3 }),
-  density: 3, emission: [1, 0.45, 0.12], emissionStrength: 9.5, blackbodyIntensity: 0.3, absorption: [1, 1, 1], steps: 32,
+  flameTemperature: Object.freeze({ ignition: 1.3, maximum: 1.9 }),
+  noiseAmount: 0.9, noiseOctaves: 3, density: 3, emission: [1, 0.3, 0.08], emissionStrength: 9.5, blackbodyIntensity: 0.3, absorption: [1, 1, 1], steps: 32,
 });
+const NOISE_CELLS_PER_BOX = 80;
 const OILY_DENSITY_GAIN = 1.5;
 const HOLD_SECONDS = 1;
 
@@ -242,6 +254,9 @@ function addBlastVolume(candidate, plan) {
     flameTemperature: { ...BLAST_VOLUME.flameTemperature },
     blackbodyIntensity: BLAST_VOLUME.blackbodyIntensity,
     steps: BLAST_VOLUME.steps,
+    noiseAmount: BLAST_VOLUME.noiseAmount,
+    noiseScale: round(NOISE_CELLS_PER_BOX / box),
+    noiseOctaves: BLAST_VOLUME.noiseOctaves,
     castShadow: true,
     lightsScene: true,
   });
@@ -284,19 +299,21 @@ function particleSystems(candidate, plan, random) {
   const reach = Math.sqrt(size);
   const piece = `${id}-speck`;
   candidate.geometries.push({ id: piece, type: 'box', bevel: 0 });
+  // Dust is a soft round puff, never a box: the renderer has no per-vertex alpha, so a fading box ended its life as an opaque dark cube (#2304).
+  candidate.geometries.push({ id: `${id}-puff`, type: 'sphere', segments: 8, rings: 5 });
   // A spark streak writes its blackbody radiance as the vertex colour, so its material is unlit white (src/particle-sparks.js).
   if (plan.sparks.mode === 'streaks') addMaterial(candidate, `${id}-spark-glow`, { tag: 'unlit', color: [1, 1, 1], emission: 0 });
   if (plan.sparks.mode === 'specks') addMaterial(candidate, `${id}-spark-glow`, { color: [1, 0.5, 0.1], emission: 8, emissiveColor: [1, 0.5, 0.1], roughness: 1 });
-  addMaterial(candidate, `${id}-dust-grey`, { color: [0.45, 0.4, 0.34], roughness: 1 });
+  addMaterial(candidate, `${id}-dust-grey`, { tag: 'unlit', color: [...DUST_COLOR], opacity: DUST_OPACITY, softEdge: DUST_SOFT_EDGE });
   addMaterial(candidate, `${id}-rubble-grey`, { color: [0.12, 0.11, 0.1], roughness: 0.9 });
   const specification = [
     plan.sparks.mode === 'streaks' ? sparkStreakSpecification(plan) : { name: 'sparks', material: 'spark-glow', count: oily ? 900 : 700, lifetime: [0.6, 2], speed: [round(size * 1.5 + 3), round(size * 4 + 8)], size: round(0.012 * reach), spread: 85, drag: 0.5, scale: 'shrink', emitter: { shape: 'sphere', position: [...center], radius: round(size * 0.15) }, color: [[1, 0.9, 0.5], [0.8, 0.2, 0.05]] },
-    { name: 'dust', material: 'dust-grey', count: 360, lifetime: [1.5, 3.2], speed: [round(size * 0.8), round(size * 2.2)], size: [round(0.08 * reach), round(0.22 * reach)], spread: 88, drag: 1.8, scale: 'grow', emitter: { shape: 'disc', position: [center[0], ground, center[2]], radius: round(size * 0.3) }, alpha: [0.8, 0] },
+    { name: 'dust', material: 'dust-grey', geometry: 'puff', count: 600, lifetime: [1.5, 3.2], speed: [round(size * 0.8), round(size * 2.2)], size: [round(0.3 * reach), round(0.65 * reach)], spread: 88, drag: 1.8, scale: 'grow', emitter: { shape: 'disc', position: [center[0], round(ground + 0.12 * reach), center[2]], radius: round(size * 0.3) } },
     { name: 'rubble', material: 'rubble-grey', count: 60, lifetime: [1.5, 3], speed: [round(size * 0.8 + 2), round(size * 2.4 + 5)], size: [0.04, round(0.1 + 0.03 * size)], spread: 70, drag: 0.1, floor: ground, bounce: 0.3, scale: 'constant', emitter: { shape: 'sphere', position: [...center], radius: round(size * 0.1) } },
   ];
   if (plan.sparks.mode === 'none') specification.shift();
-  return specification.map(({ name, material, ...settings }, index) => {
-    candidate.nodes.push({ id: `${id}-${name}`, geometry: piece, material: `${id}-${material}`, castShadow: false });
+  return specification.map(({ name, material, geometry, ...settings }, index) => {
+    candidate.nodes.push({ id: `${id}-${name}`, geometry: geometry ? `${id}-${geometry}` : piece, material: `${id}-${material}`, castShadow: false });
     return { node: `${id}-${name}`, seed: Math.floor(random() * 1e9) + index, delay: start, direction: [0, 1, 0], floor: ground, ...settings };
   });
 }

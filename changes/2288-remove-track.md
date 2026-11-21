@@ -1,0 +1,1 @@
+- `scene_apply` `set-motion` takes `removeTracks` selectors, so one camera or node track is dropped without sending the whole scene again (#2288)
