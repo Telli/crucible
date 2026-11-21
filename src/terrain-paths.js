@@ -207,7 +207,7 @@ function carvedHeight(path, distance, currentHeight, footHeight) {
   const halfWidth = path.width / 2;
   const bed = footHeight - path.depth;
   const crown = path.crown * Math.max(0, 1 - (distance / halfWidth) ** 2);
-  const rut = path.ruts * gaussian(distance, halfWidth * 0.5, halfWidth * 0.12);
+  const rut = path.ruts * gaussian(distance, halfWidth * 0.5, halfWidth * 0.15);
   const surface = bed + crown - rut;
   const blend = path.falloff > 0 ? smoothstep(halfWidth, halfWidth + path.falloff, distance) : (distance > halfWidth ? 1 : 0);
   const blended = surface * (1 - blend) + currentHeight * blend;
