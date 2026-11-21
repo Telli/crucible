@@ -87,7 +87,7 @@ test('the inputs are read from a WebGL context and the browser, and a missing on
 test('each tier gives its pixel ratio and anti-aliasing samples on screens of ratio 1, 1.5, 2 and 3', () => {
   const table = {
     light: { 1: [0.75, 2], 1.5: [1, 2], 2: [1, 2], 3: [1, 2] },
-    balanced: { 1: [1, 4], 1.5: [1.5, 4], 2: [1.5, 4], 3: [1.5, 4] },
+    balanced: { 1: [1, 2], 1.5: [1.5, 2], 2: [1.5, 2], 3: [1.5, 2] },
     sharp: { 1: [1, 4], 1.5: [1.5, 4], 2: [2, 4], 3: [2, 4] },
   };
   for (const [tier, byRatio] of Object.entries(table)) {
@@ -96,6 +96,10 @@ test('each tier gives its pixel ratio and anti-aliasing samples on screens of ra
     }
   }
   assert.deepEqual(studioViewportSettingsFor('sharp', undefined), { pixelRatio: 1, samples: 4 });
+  for (const screenRatio of [1, 1.5, 2, 3]) {
+    const [light, balanced, sharp] = ['light', 'balanced', 'sharp'].map(tier => JSON.stringify(studioViewportSettingsFor(tier, screenRatio)));
+    assert.equal(new Set([light, balanced, sharp]).size, 3, `the three tiers differ on a ${screenRatio}x screen`);
+  }
   assert.equal(resolveStudioPerformanceTier('automatic', 'light'), 'light');
   assert.equal(resolveStudioPerformanceTier('sharp', 'light'), 'sharp');
 });
@@ -103,8 +107,8 @@ test('each tier gives its pixel ratio and anti-aliasing samples on screens of ra
 test('a renderer is recreated only when the sample count changes', () => {
   const sharp = studioViewportSettingsFor('sharp', 1);
   assert.equal(rendererChangeFor(sharp, sharp), 'none');
-  assert.equal(rendererChangeFor(sharp, studioViewportSettingsFor('balanced', 1.5)), 'resize');
-  assert.equal(rendererChangeFor(studioViewportSettingsFor('balanced', 2), studioViewportSettingsFor('sharp', 2)), 'resize');
+  assert.equal(rendererChangeFor(sharp, studioViewportSettingsFor('balanced', 1.5)), 'recreate');
+  assert.equal(rendererChangeFor(studioViewportSettingsFor('balanced', 2), studioViewportSettingsFor('light', 2)), 'resize');
   assert.equal(rendererChangeFor(sharp, studioViewportSettingsFor('light', 1)), 'recreate');
   assert.equal(rendererChangeFor(studioViewportSettingsFor('light', 2), studioViewportSettingsFor('light', 3)), 'none');
 });

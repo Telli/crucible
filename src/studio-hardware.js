@@ -7,7 +7,7 @@ export const STUDIO_PERFORMANCE_TIERS = Object.freeze(['light', 'balanced', 'sha
 // and `samples` is the multisample anti-aliasing count. Sharp is what Studio always drew.
 export const STUDIO_TIER_SETTINGS = Object.freeze({
   light: Object.freeze({ ratioShare: 0.75, ratioCap: 1, samples: 2 }),
-  balanced: Object.freeze({ ratioShare: 1, ratioCap: 1.5, samples: 4 }),
+  balanced: Object.freeze({ ratioShare: 1, ratioCap: 1.5, samples: 2 }),
   sharp: Object.freeze({ ratioShare: 1, ratioCap: 2, samples: 4 }),
 });
 

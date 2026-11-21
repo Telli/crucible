@@ -40,12 +40,13 @@ function formatRatio(pixelRatio) {
 
 /** A miniature of Studio in one theme: top bar, tool rail, a viewport with a ground line and a solid, and two cards. */
 function createThemeSketch(documentReference, createElement, theme, half = null) {
-  const sketch = createElement(
+  const frame = createElement(
     documentReference,
     'span',
-    { className: 'crucible-studio-setup-sketch', dataset: { theme } },
+    { className: 'crucible-studio-setup-sketch-frame' },
     ...SKETCH_PARTS.map(part => createElement(documentReference, 'span', { className: 'crucible-studio-setup-sketch-part', dataset: { part } })),
   );
+  const sketch = createElement(documentReference, 'span', { className: 'crucible-studio-setup-sketch', dataset: { theme } }, frame);
   if (half) {
     sketch.dataset.half = half;
   }
@@ -132,8 +133,11 @@ export function createStudioSetup({
     performanceFacts.push({ tier, ratio, antiAliasing });
     return createElement(documentReference, 'span', { className: 'crucible-studio-setup-facts' }, ratio, antiAliasing);
   }
-  const automaticTierName = createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-tier' });
   const hardwareLine = createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-detail' });
+  // A small Molten dot on the tier card that Automatic resolves to.
+  function createPickMark() {
+    return createElement(documentReference, 'span', { className: 'crucible-studio-setup-pick', title: 'Automatic picks this', attributes: { role: 'img', 'aria-label': 'Automatic picks this' } });
+  }
   const performanceCards = PERFORMANCE_CHOICES.map(({ value, label }) => {
     const automatic = value === 'automatic';
     return createChoiceCard({
@@ -141,7 +145,7 @@ export function createStudioSetup({
       preferenceName: 'performance',
       value,
       label,
-      labelSuffix: automatic ? automaticTierName : null,
+      labelSuffix: automatic ? null : createPickMark(),
       details: automatic ? [createFacts(null), hardwareLine] : [createFacts(value)],
     });
   });
@@ -183,7 +187,7 @@ export function createStudioSetup({
   });
 
   const groups = [
-    { title: 'Theme', stepName: 'Theme', content: [createCardGroup('Theme', themeCards)] },
+    { title: 'Theme', stepName: 'Theme', content: [createCardGroup('Theme', themeCards, 'crucible-studio-setup-cards-theme')] },
     { title: 'Performance', stepName: 'Performance', content: [createCardGroup('Performance', performanceCards, 'crucible-studio-setup-cards-wide')] },
     { title: 'Modelling', stepName: 'Modelling', content: modellingRows },
     { title: 'Work with an AI agent', stepName: 'AI agent', content: [createElement(documentReference, 'div', { className: 'crucible-studio-setup-agent' }, promptBlock, copyPromptButton)] },
@@ -201,6 +205,7 @@ export function createStudioSetup({
     button.addEventListener('click', () => {
       stepIndex = index;
       showStep();
+      focusDialog();
     });
     return button;
   });
@@ -213,7 +218,7 @@ export function createStudioSetup({
   const dialog = createElement(
     documentReference,
     'dialog',
-    { className: 'crucible-studio-setup-dialog', attributes: { 'aria-labelledby': `crucible-studio-setup-${instanceId}-heading` } },
+    { className: 'crucible-studio-setup-dialog', tabIndex: -1, attributes: { 'aria-labelledby': `crucible-studio-setup-${instanceId}-heading` } },
     createElement(documentReference, 'h2', { id: `crucible-studio-setup-${instanceId}-heading`, textContent: 'Set up Studio' }),
     stepRow,
     createElement(documentReference, 'div', { className: 'crucible-studio-setup-body' }, ...sections),
@@ -229,7 +234,8 @@ export function createStudioSetup({
     const lastStep = stepIndex === groups.length - 1;
     dialog.dataset.layout = layout;
     sections.forEach((section, index) => {
-      section.hidden = stepped && index !== stepIndex;
+      // Every step sits in one grid cell, so the dialog is as tall as the tallest and never jumps; a step that is not shown is invisible and inert.
+      section.inert = stepped && index !== stepIndex;
     });
     stepButtons.forEach((button, index) => {
       button.dataset.current = String(index === stepIndex);
@@ -245,9 +251,9 @@ export function createStudioSetup({
     doneButton.hidden = stepped && !lastStep;
   }
 
-  // Focus rests on the button that moves on, so no card starts with a focus ring.
-  function focusPrimary() {
-    (nextButton.hidden ? doneButton : nextButton).focus();
+  // Focus rests on the dialog itself, so no control opens with a focus ring and the first Tab lands on the first control.
+  function focusDialog() {
+    dialog.focus();
   }
 
   skipButton.addEventListener('click', () => dialog.close());
@@ -255,12 +261,12 @@ export function createStudioSetup({
   backButton.addEventListener('click', () => {
     stepIndex = Math.max(0, stepIndex - 1);
     showStep();
-    focusPrimary();
+    focusDialog();
   });
   nextButton.addEventListener('click', () => {
     stepIndex = Math.min(groups.length - 1, stepIndex + 1);
     showStep();
-    focusPrimary();
+    focusDialog();
   });
 
   /** Shows the chosen preferences in the cards, what each tier gives on this screen and the hardware found. */
@@ -277,7 +283,9 @@ export function createStudioSetup({
       ratio.textContent = formatRatio(pixelRatio);
       antiAliasing.textContent = `AA ${samples}x`;
     }
-    automaticTierName.textContent = capitalize(detectedTier);
+    for (const card of performanceCards.slice(1)) {
+      card.dataset.picked = String(card.querySelector('input').value === detectedTier);
+    }
     hardwareLine.textContent = summary;
     hardwareLine.title = summary;
     promptBlock.value = agentPromptText();
@@ -295,7 +303,7 @@ export function createStudioSetup({
     if (!dialog.open) {
       dialog.showModal();
     }
-    focusPrimary();
+    focusDialog();
   }
 
   return { dialog, open, refresh };

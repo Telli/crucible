@@ -4020,7 +4020,7 @@ test('Studio does not open the setup on its own, and Skip and Done both mark it 
 test('the setup shows one group a page in steps and every group on one sheet (#2847)', testContext => {
   const ui = mountStudio(testContext);
   const groups = ui.root.querySelectorAll('.crucible-studio-setup-group');
-  const visibleTitles = () => groups.filter(group => !group.hidden).map(group => group.children[0].textContent);
+  const visibleTitles = () => groups.filter(group => !group.inert).map(group => group.children[0].textContent);
   ui.studio.openSetup();
   assert.deepEqual(visibleTitles(), ['Theme']);
   assert.equal(setupButton(ui, 'Back').hidden, true);
@@ -4089,11 +4089,11 @@ test('the setup names its steps in a row, jumps between them and rests focus on 
   const stepNames = () => ui.root.querySelectorAll('.crucible-studio-setup-step').map(button => button.textContent);
   ui.studio.openSetup();
   assert.deepEqual(stepNames(), ['Theme', 'Performance', 'Modelling', 'AI agent']);
-  assert.equal(ui.dom.document.activeElement, setupButton(ui, 'Next'), 'no card starts with the focus');
+  assert.equal(ui.dom.document.activeElement, ui.root.querySelector('.crucible-studio-setup-dialog'), 'the dialog holds the focus, so no control starts with a ring');
   const performanceStep = ui.root.querySelectorAll('.crucible-studio-setup-step')[1];
   performanceStep.click();
   assert.equal(performanceStep.getAttribute('aria-current'), 'step');
-  assert.equal(ui.root.querySelectorAll('.crucible-studio-setup-group').filter(group => !group.hidden).length, 1);
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-setup-group').filter(group => !group.inert).length, 1);
   ui.root.querySelectorAll('.crucible-studio-setup-step')[3].click();
   assert.equal(setupButton(ui, 'Done').hidden, false);
   ui.studio.openSetup({ layout: 'sheet' });
@@ -4107,9 +4107,11 @@ test('each tier card shows its pixel ratio and anti-aliasing on this screen, and
   const facts = card => card.querySelectorAll('.crucible-studio-setup-fact').map(fact => fact.textContent);
   const cardOf = value => setupCard(ui, 'performance', value).parentNode;
   assert.deepEqual(facts(cardOf('light')), ['0.75x', 'AA 2x']);
-  assert.deepEqual(facts(cardOf('balanced')), ['1x', 'AA 4x']);
+  assert.deepEqual(facts(cardOf('balanced')), ['1x', 'AA 2x']);
   assert.deepEqual(facts(cardOf('sharp')), ['1x', 'AA 4x']);
-  assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-card-tier').textContent, 'Balanced');
+  assert.deepEqual(facts(cardOf('automatic')), ['1x', 'AA 2x'], 'Automatic shows the facts of the tier it took');
+  assert.deepEqual(['light', 'balanced', 'sharp'].map(tier => cardOf(tier).dataset.picked), ['false', 'true', 'false'], 'the tier Automatic took is marked');
+  assert.equal(cardOf('balanced').querySelector('.crucible-studio-setup-pick').getAttribute('aria-label'), 'Automatic picks this');
   assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-card-detail').textContent, 'Hardware not reported');
   assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-card-detail').title, 'Hardware not reported');
 });
