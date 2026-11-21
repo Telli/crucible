@@ -427,7 +427,7 @@ Run `node scripts/smoke-agent-topology.mjs` to inspect native GPU allocations du
 Its staging-budget failure must allocate no buffers and retain the previous rendered frame.
 Use `node scripts/smoke-agent-topology.mjs cpu` for software rendering. Both modes also verify recovery through a smaller CPU preview under a 32 MiB budget.
 
-Run `node scripts/smoke-agent-assets.mjs` for actual imported WALL-E and textured rig previews through CPU stdio tools.
+Run `node scripts/smoke-agent-assets.mjs` for actual imported microscope and textured rig previews through CPU stdio tools.
 The script checks content IDs, root edits, retained texture decoding, reverse animation sampling and exact checkpoint restoration.
 
 Run `node scripts/smoke-agent-motion.mjs` for procedural motion through actual CPU MCP previews and jobs.
