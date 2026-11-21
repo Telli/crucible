@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { assembleSampleModel, loadSampleModel, SAMPLE_PART_NAMES } from '../src/model.js';
 import { assemblyOffset } from '../src/assembly.js';
 import { loadSampleParts } from './helpers/sample-model.js';
@@ -84,11 +83,9 @@ test('loadSampleModel asks for a source', async () => {
   await assert.rejects(() => loadSampleModel(), /URL, File or Blob/);
 });
 
-test('the sample GLB stays small and the old wall-e URL still has a redirect for one release', async () => {
+test('the sample GLB stays small', async () => {
   const { size } = await import('node:fs').then(fs => fs.promises.stat(new URL('../public/sample-model.glb', import.meta.url)));
   assert.ok(size < 450 * 1024, `sample-model.glb is ${size} bytes`);
-  const redirects = await readFile(new URL('../public/_redirects', import.meta.url), 'utf8');
-  assert.match(redirects, /^\/wall-e\.glb \/sample-model\.glb 301$/m);
 });
 
 test('every part carries the shared lacquered PBR material with its four textures and one UV pair per vertex', () => {
