@@ -113,7 +113,24 @@ A right click on an object, in the viewport or in the Scene list, selects it and
 
 ## Settings
 
-**Edit ▸ Settings** (Ctrl+,) opens Settings: the step and the angle a Shift drag snaps to, the size of the handles, the workspace Studio opens in, and whether the grid, the readout, the axis widget and the agent cursor show. They are kept in the browser (`localStorage`, key `crucible-studio-preferences`), not in the scene recipe, so a scene looks the same for everyone and each person keeps their own setup. **Reset** brings back the defaults. An app can pass `preferences` to `createStudio` to start from other values, `preferenceStorage: null` to keep nothing, and call `studio.setPreference(name, value)`.
+**Edit ▸ Settings** (Ctrl+,) opens Settings: the step and the angle a Shift drag snaps to, the size of the handles, the workspace Studio opens in, the theme (System, Light or Dark), the performance tier, and whether the grid, the readout, the axis widget and the agent cursor show. They are kept in the browser (`localStorage`, key `crucible-studio-preferences`), not in the scene recipe, so a scene looks the same for everyone and each person keeps their own setup. **Reset** brings back the defaults. An app can pass `preferences` to `createStudio` to start from other values, `preferenceStorage: null` to keep nothing, and call `studio.setPreference(name, value)`.
+
+**Theme** forces the Studio light or dark whatever the system says; System follows the system. The dialogs and menus follow it too. An app that wants to theme its own frame passes `onThemeChange(theme)` to `createStudio`; it is called with `'light'` or `'dark'` at the start and on each change.
+
+**Performance** sets what the viewport draws with, by the tier. Light draws at 0.75 of the screen's pixel ratio (never above 1) with 2x anti-aliasing, Balanced at the screen's ratio up to 1.5 with 2x, and Sharp at the screen's ratio up to 2 with 4x, which is what Studio always drew. Automatic picks a tier from the graphics card the browser reports and the cores: software renderers and small integrated chips go Light, other integrated chips Balanced, dedicated cards and Apple M-series Sharp, and a card the browser hides Balanced. A new pixel ratio is set on the live renderer; a new anti-aliasing count makes Studio build a new renderer. The tier changes only the viewport; it is never written into the scene recipe, so renders and exports look the same on every machine. A `pixelRatio` or `samples` passed in `rendererOptions` stays as given.
+
+## Set up Studio
+
+The setup is four steps, one page each, named in a row at the top with an icon apiece (each is a button that jumps to it; the step you are on shows its text and icon at full strength, the others muted): **Theme**, **Performance**, **Modelling** and **AI agent**. Every choice carries an icon that shows what it does.
+
+- **Theme.** Each card is a miniature of the real Studio in that theme, and a choice changes the Studio behind the dialog at once. The miniature is built from Studio's own classes, so the real stylesheet draws it: the top bar, the tool rail with its real icons, the two panel cards as empty surfaces and the viewport as a plain block, with every label, row and field left out. It is a Studio root of its own with `data-theme` set, so the theme's tokens resolve again on that element and it shows its theme whatever theme Studio is in; **System** shows the light and the dark one side by side. It is laid out at the window's own proportions and scaled to the card, inert and hidden from assistive technology, and built once, the first time the dialog opens.
+- **Performance.** One row of four cards with an icon that reads as a pixel grid getting finer (Light, Balanced, Sharp) and a loop for Automatic. Each tier shows its pixel ratio and anti-aliasing on this screen; Automatic names the tier it took and the graphics card and cores it found.
+- **Modelling.** Move snap, rotate snap, handle size and start workspace, each row led by an icon and the workspace chips by the workspace's own icon.
+- **AI agent.** The prompt the **Agent** menu copies, beside a chat mark, and a button that copies it.
+
+Finishing, skipping or pressing Esc marks it done. Choices are the Settings preferences, so nothing is stored twice. All four steps share one grid cell, so the dialog is as tall as the tallest step (capped at the window height minus 48 pixels, then it scrolls inside) and never changes size between steps; a step with one block fills the cell.
+
+Studio never opens the setup by itself, so tests, capture scripts and embedders get no modal. A host calls `studio.openSetup()`, usually when `studio.setupDone` is false. **Help ▸ Set up Studio…** opens it again. The development page opens it on a first visit, and `?setup=off` turns that off.
 
 ## Mount the Studio in an app
 
