@@ -1,5 +1,5 @@
 // Terrain paths: spline roads, trails and riverbeds that carve the ground and emit a named mask.
-// A path is a polyline of [x, z] points. The ground across its width is cut to the height of the centre line minus `depth`,
+// A path is a curve through [x, z] points (Catmull-Rom, or straight segments with smooth: false). The ground across its width is cut to the height of the centre line minus `depth`,
 // the sides blend back into the hills over `falloff`, and each path answers a 0 to 1 mask that splat rules, clutter and vegetation can read.
 import { invalidField } from './field-error.js';
 
@@ -18,7 +18,7 @@ export const TERRAIN_PATH_LIMITS = Object.freeze({
   defaultMaskResolution: 256,
 });
 
-const PATH_FIELDS = ['name', 'points', 'width', 'depth', 'falloff', 'ruts', 'crown', 'shoulder'];
+const PATH_FIELDS = ['name', 'points', 'width', 'depth', 'falloff', 'ruts', 'crown', 'shoulder', 'smooth'];
 const EXAMPLE_PATH = '{ "points": [[-20, 0], [0, 5], [20, 0]], "width": 3, "depth": 0.2 }';
 
 function pathNumber(value, fallback, [minimum, maximum], label) {
@@ -40,6 +40,11 @@ function checkPoints(points, label) {
     }
   });
   return points.map(point => [point[0], point[1]]);
+}
+
+function checkSmooth(value, label) {
+  if (value !== undefined && typeof value !== 'boolean') throw invalidField(`${label}.smooth`, value, 'true or false, such as true; false keeps straight segments between the points');
+  return value !== false;
 }
 
 function checkPath(path, index) {
@@ -65,6 +70,7 @@ function checkPath(path, index) {
     ruts: pathNumber(path.ruts, 0, TERRAIN_PATH_LIMITS.ruts, `${label}.ruts`),
     crown: pathNumber(path.crown, 0, TERRAIN_PATH_LIMITS.crown, `${label}.crown`),
     shoulder: pathNumber(path.shoulder, 0, TERRAIN_PATH_LIMITS.shoulder, `${label}.shoulder`),
+    smooth: checkSmooth(path.smooth, label),
   };
 }
 
@@ -94,16 +100,46 @@ function gaussian(distance, centre, spread) {
   return Math.exp(-0.5 * scaled * scaled);
 }
 
-/** One path prepared for queries: its segments with their bounding boxes, and how far its influence reaches. */
+const SMOOTH_STEP_DIVISOR = 4;
+const MAXIMUM_CENTRE_SEGMENTS = 8192;
+const GRID_CELLS_PER_SIDE = 64;
+
+/** Catmull-Rom through the points, sampled every width / 4 metres (and bounded), so bends read as curves and not as kinks. */
+function smoothedCentreLine(path) {
+  const points = path.points;
+  if (!path.smooth || points.length < 3) return points;
+  const step = Math.max(path.width / SMOOTH_STEP_DIVISOR, 0.05);
+  const budgetPerSegment = Math.max(1, Math.floor(MAXIMUM_CENTRE_SEGMENTS / (points.length - 1)));
+  const result = [points[0]];
+  for (let index = 0; index + 1 < points.length; index++) {
+    const before = points[Math.max(0, index - 1)];
+    const start = points[index];
+    const end = points[index + 1];
+    const after = points[Math.min(points.length - 1, index + 2)];
+    const pieces = Math.min(budgetPerSegment, Math.max(1, Math.ceil(Math.hypot(end[0] - start[0], end[1] - start[1]) / step)));
+    for (let piece = 1; piece <= pieces; piece++) {
+      const fraction = piece / pieces;
+      const squared = fraction * fraction;
+      const cubed = squared * fraction;
+      result.push([0, 1].map(axis => 0.5 * (2 * start[axis] + (end[axis] - before[axis]) * fraction
+        + (2 * before[axis] - 5 * start[axis] + 4 * end[axis] - after[axis]) * squared
+        + (3 * start[axis] - before[axis] - 3 * end[axis] + after[axis]) * cubed)));
+    }
+  }
+  return result;
+}
+
+/** One path prepared for queries: its segments with their bounding boxes in a uniform grid, so a sample reads only the segments near it. */
 function prepareSegments(path, reach) {
+  const centreLine = smoothedCentreLine(path);
   const segments = [];
   let minimumX = Infinity;
   let minimumZ = Infinity;
   let maximumX = -Infinity;
   let maximumZ = -Infinity;
-  for (let index = 0; index + 1 < path.points.length; index++) {
-    const [startX, startZ] = path.points[index];
-    const [endX, endZ] = path.points[index + 1];
+  for (let index = 0; index + 1 < centreLine.length; index++) {
+    const [startX, startZ] = centreLine[index];
+    const [endX, endZ] = centreLine[index + 1];
     const segment = {
       startX, startZ, deltaX: endX - startX, deltaZ: endZ - startZ,
       lowX: Math.min(startX, endX) - reach, highX: Math.max(startX, endX) + reach,
@@ -116,15 +152,30 @@ function prepareSegments(path, reach) {
     maximumZ = Math.max(maximumZ, segment.highZ);
     segments.push(segment);
   }
-  return { segments, minimumX, minimumZ, maximumX, maximumZ };
+  const cellSize = Math.max(reach, (maximumX - minimumX) / GRID_CELLS_PER_SIDE, (maximumZ - minimumZ) / GRID_CELLS_PER_SIDE);
+  const columns = Math.floor((maximumX - minimumX) / cellSize) + 1;
+  const rows = Math.floor((maximumZ - minimumZ) / cellSize) + 1;
+  const cells = Array.from({ length: columns * rows }, () => []);
+  for (const segment of segments) {
+    const firstColumn = Math.floor((segment.lowX - minimumX) / cellSize);
+    const lastColumn = Math.floor((segment.highX - minimumX) / cellSize);
+    const firstRow = Math.floor((segment.lowZ - minimumZ) / cellSize);
+    const lastRow = Math.floor((segment.highZ - minimumZ) / cellSize);
+    for (let row = firstRow; row <= lastRow; row++) {
+      for (let column = firstColumn; column <= lastColumn; column++) cells[row * columns + column].push(segment);
+    }
+  }
+  return { cells, columns, rows, cellSize, minimumX, minimumZ, maximumX, maximumZ };
 }
 
 /** The nearest point of the centre line to (x, z): { distance, footX, footZ }, or null when no segment is within reach. */
 function nearestOnPath(prepared, reach, pointX, pointZ) {
   if (pointX < prepared.minimumX || pointX > prepared.maximumX || pointZ < prepared.minimumZ || pointZ > prepared.maximumZ) return null;
+  const column = Math.min(prepared.columns - 1, Math.floor((pointX - prepared.minimumX) / prepared.cellSize));
+  const row = Math.min(prepared.rows - 1, Math.floor((pointZ - prepared.minimumZ) / prepared.cellSize));
   let bestSquared = reach * reach;
   let found = null;
-  for (const segment of prepared.segments) {
+  for (const segment of prepared.cells[row * prepared.columns + column]) {
     if (pointX < segment.lowX || pointX > segment.highX || pointZ < segment.lowZ || pointZ > segment.highZ) continue;
     const along = segment.lengthSquared === 0 ? 0
       : Math.min(1, Math.max(0, ((pointX - segment.startX) * segment.deltaX + (pointZ - segment.startZ) * segment.deltaZ) / segment.lengthSquared));

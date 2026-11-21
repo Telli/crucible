@@ -10,7 +10,7 @@ await loadAllAgentSceneModules();
 
 const MAX_VERTICES = 250_000;
 const hillHeight = (x, z) => 3 * Math.sin(x * 0.11) + 2 * Math.cos(z * 0.07);
-const ROAD = { name: 'road', points: [[-40, -10], [0, 10], [40, -10]], width: 6, depth: 0.5, falloff: 4 };
+const ROAD = { name: 'road', points: [[-40, -10], [0, 10], [40, -10]], width: 6, depth: 0.5, falloff: 4, smooth: false };
 // Unit vector across the first segment of ROAD, which runs from (-40, -10) to (0, 10).
 const ACROSS = [10 / Math.hypot(20, 10), -20 / Math.hypot(20, 10)];
 
@@ -175,4 +175,30 @@ test('scene_create accepts terrain paths through the tool schema', async () => {
     await mcp.close();
     await runtime.close();
   }
+});
+
+test('smoothing bends the centre line through the points, and smooth false keeps straight segments', () => {
+  const corner = [[-30, 0], [0, 0], [0, 30]];
+  const smooth = createTerrainPaths([{ points: corner, width: 4 }], () => 0);
+  const straight = createTerrainPaths([{ points: corner, width: 4, smooth: false }], () => 0);
+  assert.equal(smooth.maskAt(undefined, -30, 0), 1);
+  assert.equal(smooth.maskAt(undefined, 0, 0), 1, 'the curve passes through a point');
+  assert.notDeepEqual(
+    Array.from({ length: 20 }, (_, index) => smooth.maskAt(undefined, -8 + index * 0.4, 1.7)),
+    Array.from({ length: 20 }, (_, index) => straight.maskAt(undefined, -8 + index * 0.4, 1.7)),
+    'the smoothed bend differs from the polyline',
+  );
+  assert.throws(() => normalizeTerrainPaths([{ points: corner, smooth: 'yes' }]), /smooth.*true or false/s);
+});
+
+test('a long smoothed path samples quickly through the segment grid', () => {
+  const points = Array.from({ length: 256 }, (_, index) => [-900 + index * 7, 200 * Math.sin(index / 9)]);
+  const carved = createTerrainPaths([{ points, width: 6, falloff: 4 }], () => 0);
+  const started = performance.now();
+  let covered = 0;
+  for (let row = 0; row < 200; row++) {
+    for (let column = 0; column < 200; column++) covered += carved.maskAt(undefined, -900 + column * 9, -250 + row * 2.5) > 0 ? 1 : 0;
+  }
+  assert.ok(covered > 100);
+  assert.ok(performance.now() - started < 3000, `took ${performance.now() - started} ms for 40000 samples`);
 });
