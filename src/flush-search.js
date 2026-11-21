@@ -557,7 +557,8 @@ export function findFlushPairs(parts, { triangleBudget = DEFAULT_TRIANGLE_BUDGET
   const reach = nearTolerance(boundsDiagonal(sceneBounds));
   const signatures = entries.map(entry => partSignature(entry.part));
   const starts = entryStarts(table, entries.length);
-  const reused = unchecked.length === 0 ? reusableSearch(signatures, starts, reach) : null;
+  const limitsKey = `${triangleBudget}|${pairBudget}|${testedPairLimit}`;
+  const reused = unchecked.length === 0 ? reusableSearch(signatures, starts, reach, limitsKey) : null;
   const limits = { pairBudget, testedPairLimit };
   if (!(reused && searchChangedParts(table, entries, reused, reach, limits, result))) {
     result.pairs = [];
@@ -566,7 +567,7 @@ export function findFlushPairs(parts, { triangleBudget = DEFAULT_TRIANGLE_BUDGET
     searchAllParts(table, entries, reach, limits, result);
   }
   result.pairs.sort((first, second) => first.first - second.first || first.second - second.second);
-  rememberSearch({ signatures, starts, pairs: result.pairs, reach, complete: !result.truncated && unchecked.length === 0 });
+  rememberSearch({ signatures, starts, pairs: result.pairs, reach, complete: !result.truncated && unchecked.length === 0, limitsKey });
   return result;
 }
 

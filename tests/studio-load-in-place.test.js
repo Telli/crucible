@@ -37,6 +37,17 @@ test('loading a file that only turns one node keeps the scene and the parts of t
   assert.deepEqual(controller.exportRecipe().nodes.find(node => node.id === 'hero').translation, [0, 0.5, 0]);
 });
 
+test('an in-place apply that throws leaves the built scene on screen, never a half-applied one', () => {
+  const guarded = Object.create(createAgentScene(fileRecipe(0)), {
+    apply: { value: () => { throw new RangeError('simulated failure inside apply'); } },
+  });
+  const guardedController = createStudioController({ scene: guarded, viewportWidth: 800, viewportHeight: 600 });
+  guardedController.loadRecipe(fileRecipe(3));
+  assert.notEqual(guardedController.scene, guarded, 'the built scene replaced it');
+  assert.deepEqual(guardedController.exportRecipe().nodes.find(node => node.id === 'hero').translation, [3, 0.5, 0]);
+  assert.ok(sameRecipeValue(guardedController.exportRecipe(), createAgentScene(fileRecipe(3)).exportRecipe()));
+});
+
 test('loading a file with another set of nodes builds a new scene', () => {
   const controller = controllerOn(fileRecipe(0));
   const sceneBefore = controller.scene;

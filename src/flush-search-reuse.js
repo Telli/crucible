@@ -5,11 +5,14 @@
 // stayed are still the pairs a cold search would find, and only the pairs that involve a new part need searching. The memory
 // holds numbers and pair records, never parts, geometries or triangle tables, so a scene that is dropped can be collected.
 
+import { isLiveGeometry } from './live-geometry.js';
+
 const REMEMBERED_PAIR_LIMIT = 200_000;
 const CHANGED_PART_LIMIT = 256;
 
 let remembered = null;
 let nextGeometryNumber = 1;
+let nextLiveStamp = 1;
 const geometryNumbers = new WeakMap();
 
 function geometryNumber(geometry) {
@@ -21,8 +24,13 @@ function geometryNumber(geometry) {
   return number;
 }
 
-/** What decides the pairs of one searched part: its geometry, its matrix and whether it shows both sides. */
+/**
+ * What decides the pairs of one searched part: its geometry, its matrix and whether it shows both sides. A live geometry
+ * (cloth, updatePartVertices) has its positions rewritten in place, so its object says nothing about its data: every
+ * signature of one is new and the part always counts as changed.
+ */
 export function partSignature(part) {
+  if (isLiveGeometry(part.geometry)) return `live|${nextLiveStamp++}`;
   const doubleSided = part.material?.doubleSided === true ? 1 : 0;
   return `${geometryNumber(part.geometry)}|${doubleSided}|${Array.prototype.join.call(part.matrix, ',')}`;
 }
@@ -36,8 +44,8 @@ export function entryStarts(table, entryCount) {
 }
 
 /** Stores a finished search for the next one to build on; a search that hit a budget, or a very large one, is not kept. */
-export function rememberSearch({ signatures, starts, pairs, reach, complete }) {
-  remembered = complete && pairs.length <= REMEMBERED_PAIR_LIMIT ? { signatures, starts, pairs, reach } : null;
+export function rememberSearch({ signatures, starts, pairs, reach, complete, limitsKey }) {
+  remembered = complete && pairs.length <= REMEMBERED_PAIR_LIMIT ? { signatures, starts, pairs, reach, limitsKey } : null;
 }
 
 /** Drops the stored search, so the next one is cold. */
@@ -96,10 +104,10 @@ function remapPairs(previous, matches, starts) {
 /**
  * What the last search still settles for these entries: `{ pairs, changed }` with the pairs between entries that stayed, in
  * this search's triangle ids, and a flag per entry that is new or moved. Null when nothing can be reused: no earlier search,
- * a different `reach` (which decides how far apart boxes are still tested), or too many new parts to be worth it.
+ * a different `reach` (which decides how far apart boxes are still tested) or set of budgets, or too many new parts to be worth it.
  */
-export function reusableSearch(signatures, starts, reach) {
-  if (!remembered || remembered.reach !== reach) return null;
+export function reusableSearch(signatures, starts, reach, limitsKey) {
+  if (!remembered || remembered.reach !== reach || remembered.limitsKey !== limitsKey) return null;
   const matches = matchEntries(remembered.signatures, signatures);
   const changed = new Uint8Array(signatures.length);
   let changedCount = 0;

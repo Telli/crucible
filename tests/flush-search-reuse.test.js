@@ -5,6 +5,7 @@ import { createAgentScene } from '../src/agent-scene.js';
 import { flushOrderOf } from '../src/depth-layer.js';
 import { findFlushPairs } from '../src/flush-search.js';
 import { forgetSearch } from '../src/flush-search-reuse.js';
+import { markLiveGeometry } from '../src/live-geometry.js';
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const GRID_SIZE = 40;
@@ -93,6 +94,37 @@ test('removing and moving parts match a cold search', () => {
   const moved = [base, lower, sheetPart('extra', movedTo(3, 0.0009, 4))];
   const incremental = findFlushPairs(moved);
   assert.deepEqual(pairsOf(incremental), pairsOf(coldSearch(moved)));
+});
+
+test('a live geometry rewritten in place is searched again, not remembered by its object', () => {
+  const base = sheetPart('base', IDENTITY);
+  const liveGeometry = markLiveGeometry({ positions: Float32Array.from(patch.positions), indices: patch.indices });
+  const cloth = sheetPart('cloth', movedTo(1, 0.002, 1), liveGeometry);
+  forgetSearch();
+  const before = findFlushPairs([base, cloth]);
+  for (let offset = 1; offset < liveGeometry.positions.length; offset += 3) liveGeometry.positions[offset] = 0.0007;
+  const warm = findFlushPairs([base, cloth]);
+  assert.notEqual(pairsOf(warm).join(), pairsOf(before).join(), 'the pairs follow the new positions');
+  assert.deepEqual(pairsOf(warm), pairsOf(coldSearch([base, cloth])));
+});
+
+test('two scenes searched in turn each match a cold search', () => {
+  const sceneA = [sheetPart('base', IDENTITY), sheetPart('lower', movedTo(0, 0.001, 0))];
+  const sceneB = [sheetPart('base', IDENTITY), sheetPart('lower', movedTo(0, 0.002, 0)), sheetPart('patch', movedTo(2, 0.0003, 2), patch)];
+  forgetSearch();
+  findFlushPairs(sceneA);
+  assert.deepEqual(pairsOf(findFlushPairs(sceneB)), pairsOf(coldSearch(sceneB)));
+  findFlushPairs(sceneB);
+  assert.deepEqual(pairsOf(findFlushPairs(sceneA)), pairsOf(coldSearch(sceneA)));
+});
+
+test('a search with other budgets does not build on a remembered one', () => {
+  const parts = [sheetPart('base', IDENTITY), sheetPart('lower', movedTo(0, 0.001, 0))];
+  forgetSearch();
+  findFlushPairs(parts);
+  const tight = findFlushPairs(parts, { pairBudget: 10 });
+  assert.equal(tight.truncated, true);
+  assert.equal(tight.pairs.length, 10);
 });
 
 test('an unchanged scene is not searched again', () => {
