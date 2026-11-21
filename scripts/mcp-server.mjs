@@ -178,6 +178,11 @@ const waterFields = {
   }).optional().describe('Water tag with alphaMode blend: foam line where the water meets other surfaces.'),
   caustics: z.record(z.string(), z.unknown()).nullable().optional().describe('Water tag: sun caustics on the bed, {scale, speed, intensity, depthFade}; scene_capabilities water.'),
   waterRamp: z.record(z.string(), z.unknown()).optional().describe('Water tag: flat colour ramp, see scene_capabilities water.'),
+  ripples: z.strictObject({
+    strength: unit.optional().describe('0 calm to 1 (default).'),
+    speed: z.number().min(0).max(2).optional().describe('1 default; 0 holds them still.'),
+    windDirection: z.number().min(-360).max(360).optional().describe('Degrees the small ripples run along.'),
+  }).optional().describe('Water tag: the small ripples; lower strength or speed to stop shimmer.'),
 };
 const subsurfaceTriple = ([minimum, maximum]) => z.tuple([0, 1, 2].map(() => z.number().min(minimum).max(maximum)));
 const subsurface = z.strictObject({
