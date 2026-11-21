@@ -1742,10 +1742,14 @@ export const STUDIO_CSS = `
   pointer-events: auto;
 }
 .crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-menubar .crucible-studio-island,
-.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-toolbar,
-.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-side > .crucible-studio-dock {
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-toolbar {
   border-color: transparent;
   border-radius: 0;
+  box-shadow: none;
+}
+/* The Scene list and Properties keep their outline and a gap in the docked column, so they read as two cards. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-side > .crucible-studio-dock {
+  border-radius: 8px;
   box-shadow: none;
 }
 .crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-toolbar {
@@ -1759,7 +1763,9 @@ export const STUDIO_CSS = `
   inset-inline-end: 0;
   inline-size: var(--studio-dock-side);
   max-inline-size: none;
-  gap: 0;
+  box-sizing: border-box;
+  padding: 6px;
+  gap: 6px;
   align-items: stretch;
   background: var(--studio-panel);
   pointer-events: auto;
