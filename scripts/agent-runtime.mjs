@@ -10,6 +10,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import packageMetadata from '../package.json' with { type: 'json' };
+import { resolveLookView } from '../src/look-views.js';
 import { VEGETATION_CAPABILITY_NOTE } from '../src/agent-vegetation-notes.js';
 import { CROWD_CAPABILITY_NOTE } from '../src/agent-crowd-notes.js';
 import { SETTLE_CAPABILITY_NOTE } from '../src/settle-notes.js';
@@ -1447,7 +1448,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         }
         const lookRequest = { sessionId: input.sessionId,
           ...(input.motionTime !== undefined ? { motionTime: input.motionTime } : {}),
-          ...(input.labels ? { labels: true } : {}) };
+          ...(input.labels ? { labels: true } : {}),
+          ...(input.view !== undefined ? { view: resolveLookView(input.view) } : {}) };
         // A busy picture can encode past the response budget. Render again a step smaller (same aspect, PNG kept) until it fits.
         let result;
         let stepWidth = width;
