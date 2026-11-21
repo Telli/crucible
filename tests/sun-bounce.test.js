@@ -91,3 +91,35 @@ test('environment.sunBounce that is not a number of 0 or more is refused', () =>
   }
   assert.equal(createAgentScene(roomWithOpening({ sunBounce: 2 })).environment.sunBounce, 2);
 });
+
+test('a sun bounce strength that is not a finite number refuses instead of making NaN lights', () => {
+  const { parts, environment } = createAgentScene(roomWithOpening());
+  for (const sunBounce of [NaN, Infinity, 'strong']) {
+    assert.throws(() => withSunBounce(parts, { ...environment, sunBounce }), /environment\.sunBounce was .*pass a number from 0 to 100000/);
+  }
+  assert.throws(() => findSunBounceLights(parts, environment, { strength: NaN }), /strength was NaN/);
+  const lights = withSunBounce(parts, { ...environment, sunBounce: 2 }).pointLights;
+  assert.ok(lights.length > 0 && lights.every(light => Number.isFinite(light.intensity)));
+});
+
+// A prop of `triangles` tiny triangles, enough to take the scene past the light bake's limit.
+function denseProp(triangles) {
+  const positions = new Float32Array(triangles * 9);
+  for (let triangle = 0; triangle < triangles; triangle++) {
+    const x = -1 + (triangle % 500) * 0.004;
+    const z = -1 + Math.floor(triangle / 500) * 0.004;
+    positions.set([x, 0.5, z, x + 0.003, 0.5, z, x, 0.5, z + 0.003], triangle * 9);
+  }
+  const normals = new Float32Array(triangles * 9);
+  for (let vertex = 0; vertex < triangles * 3; vertex++) normals[vertex * 3 + 1] = 1;
+  const indices = Uint32Array.from({ length: triangles * 3 }, (unused, index) => index);
+  return { name: 'dense-prop', geometry: { positions, normals, indices }, matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], material: { color: [0.5, 0.5, 0.5] } };
+}
+
+test('a room past the bake limit gets no patches and its report says why instead of failing silently', () => {
+  const { parts, environment } = createAgentScene(roomWithOpening());
+  const report = {};
+  const lights = findSunBounceLights([...parts, denseProp(210_000)], environment, { report });
+  assert.deepEqual(lights, []);
+  assert.match(report.reason, /triangle/i);
+});

@@ -11,10 +11,19 @@ Then render the GLB with a scene.json (glb, hdri, eye [2.5764, 1.0945, 4.4658], 
 
   node scripts/render-media.mjs --kind image --scene file --config <outputDirectory>/scene.json --width 1600 --height 900 --output hero.png
 
+The Lone Monk and Barbershop exports have flat Blender cameras; their eye and target are committed in bench/scene-frames/camera-overrides.json
+and written into scene.json by `npm run bench:scene-frames -- <outputDirectory>` (#2158).
+
 Old demo scenes shade with Cycles-only Diffuse, Glossy and Glass nodes, which the glTF exporter skips. This script puts a
 Principled BSDF in their place first (base colour or the first image texture upstream of the Diffuse colour, roughness, metal for
 a lone Glossy, a soft alpha for Glass), so colours and textures survive. It is an approximation, not a Cycles match.
+
+A base colour built from nodes with no image texture upstream (a ColorRamp on Random Per Island, a Noise texture on Object
+coordinates) is dropped by the exporter, which writes only image textures. Such colours are baked per object to a face-corner
+colour attribute (Cycles, Diffuse colour only) and wired into the Base Color, so they reach the GLB as COLOR_0 (#2766). It prints
+one line per material: kept, approximated (a Cycles-only BSDF replaced) or baked.
 """
+import os
 import sys
 
 import bpy
@@ -47,7 +56,7 @@ def first_node(material, node_type):
     return None
 
 
-replaced = 0
+approximated = set()
 for material in bpy.data.materials:
     if not material.use_nodes or material.node_tree is None:
         continue
@@ -85,12 +94,91 @@ for material in bpy.data.materials:
         principled.inputs["Alpha"].default_value = 0.25
         material.surface_render_method = "BLENDED"
     tree.links.new(principled.outputs["BSDF"], output.inputs["Surface"])
-    replaced += 1
-print("REPLACED", replaced, "of", len(bpy.data.materials))
+    approximated.add(material.name)
+
+BAKED_ATTRIBUTE = "baked_base_color"
+
+
+def base_color_from_nodes(material):
+    """True when the Base Color is wired to nodes with no image texture upstream: the exporter drops such a colour."""
+    if not material.use_nodes or material.node_tree is None:
+        return False
+    principled = first_node(material, "BSDF_PRINCIPLED")
+    if principled is None:
+        return False
+    base_color = principled.inputs["Base Color"]
+    return base_color.is_linked and find_image_node(base_color) is None
+
+
+def mesh_users(material):
+    return [
+        candidate for candidate in bpy.context.view_layer.objects
+        if candidate.type == "MESH" and candidate.visible_get() and any(slot.material == material for slot in candidate.material_slots)
+    ]
+
+
+def bake_base_colors(objects):
+    scene = bpy.context.scene
+    scene.render.engine = "CYCLES"
+    scene.cycles.device = "CPU"
+    scene.cycles.samples = 1
+    bake = scene.render.bake
+    bake.target = "VERTEX_COLORS"
+    bake.use_pass_direct = False
+    bake.use_pass_indirect = False
+    bake.use_pass_color = True
+    for candidate in bpy.context.view_layer.objects:
+        candidate.select_set(False)
+    for candidate in objects:
+        attributes = candidate.data.color_attributes
+        attribute = attributes.get(BAKED_ATTRIBUTE) or attributes.new(BAKED_ATTRIBUTE, "BYTE_COLOR", "CORNER")
+        attributes.active_color = attribute
+        candidate.select_set(True)
+    bpy.context.view_layer.objects.active = objects[0]
+    bpy.ops.object.bake(type="DIFFUSE", target="VERTEX_COLORS")
+
+
+def wire_baked_color(material):
+    tree = material.node_tree
+    principled = first_node(material, "BSDF_PRINCIPLED")
+    attribute_node = tree.nodes.new("ShaderNodeVertexColor")
+    attribute_node.layer_name = BAKED_ATTRIBUTE
+    tree.links.new(attribute_node.outputs["Color"], principled.inputs["Base Color"])
+
+
+to_bake = [material for material in bpy.data.materials if base_color_from_nodes(material) and mesh_users(material)]
+baked_objects = {candidate.name: candidate for material in to_bake for candidate in mesh_users(material)}
+if baked_objects:
+    bake_base_colors(list(baked_objects.values()))
+    for material in to_bake:
+        wire_baked_color(material)
+baked = {material.name for material in to_bake}
+for material in bpy.data.materials:
+    if material.users == 0:
+        continue
+    state = "baked" if material.name in baked else "approximated" if material.name in approximated else "kept"
+    print("MATERIAL", state, material.name)
+print("APPROXIMATED", len(approximated), "BAKED", len(baked), "materials on", len(baked_objects), "objects, of", len(bpy.data.materials))
+
+# The published Classroom render lit the sun at strength 40, which the owner picked from previews at 15, 40 and 100 (#1083).
+# The .blend ships it at 15 (energy 1 times an Emission strength of 15 in the light's node tree), and the glTF exporter
+# writes their product, so the export sets energy 40 and Emission 1 to keep the README picture at its published brightness.
+SUN_STRENGTH_BY_DEMO = {"classroom.blend": 40.0}
+sun_strength = SUN_STRENGTH_BY_DEMO.get(os.path.basename(bpy.data.filepath))
+if sun_strength is not None:
+    for light in bpy.data.lights:
+        if light.type != "SUN":
+            continue
+        if light.use_nodes and light.node_tree is not None:
+            for node in light.node_tree.nodes:
+                if node.type == "EMISSION":
+                    node.inputs["Strength"].default_value = 1.0
+        light.energy = sun_strength
+        print("SUN", light.name, sun_strength)
 bpy.ops.export_scene.gltf(
     filepath=output_directory + "/scene.glb", export_format="GLB", export_apply=True,
     export_image_format="JPEG", export_jpeg_quality=85, export_cameras=False, export_lights=True,
-    export_import_convert_lighting_mode="COMPAT",
+    export_import_convert_lighting_mode="COMPAT", export_vertex_color="MATERIAL",
     use_renderable=True, use_visible=True, export_yup=True, export_texcoords=True, export_normals=True,
 )
 print("EXPORTED")

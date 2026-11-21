@@ -22,7 +22,7 @@ submit call fails: tell the user which launch option is missing.
    durable frame progress. Never loop tightly. Status and result answer in a short `concise` form by default; pass
    `response_format: "detailed"` for the full record.
 5. `scene_render_result`: output paths, sizes and metrics. Report the actual `width` and `height`, the backend
-   and the seconds; memory limits can lower the size. `detailed` adds SHA-256 hashes and resource counters.
+   and the seconds; memory limits can lower the size. `detailed` adds SHA-256 hashes and resource counters. The answer attaches the PNGs of a job of up to 8 files; pass `images: false` when the paths are enough, or `images: [0, 95]` (artifact indexes) to see chosen frames of a larger job.
    `metrics.report.fallbacks` lists everything that ran differently from the request: read it.
 6. Keep what you need, then `scene_render_release` to remove the job's files.
 7. `scene_render_cancel` stops a job; poll `scene_render_status` until it is `cancelled` before editing again.
@@ -47,8 +47,8 @@ submit call fails: tell the user which launch option is missing.
   job holds the first pose, which is the usual reason a video is a still frame. A recipe with a `timeline` uses
   `settings.timeline` and rejects `motion` and `animation`.
 - A recipe whose only motion is `physics` (or `cloth`, `particles`), a grid volume sequence or a texture sequence is
-  filmed with the same `motion: { "start": 0 }`; the job plays the bake on the scene clock, so do not `bake-motion`
-  first. Video `duration` defaults to the bake length.
+  filmed with `motion: { "start": 0 }`; the job plays the bake on the scene clock, so do not `bake-motion` first. Physics,
+  cloth and particles start at 0 when `motion` is left out; sequences need it set. Video `duration` defaults to the bake length.
 - Imported clips use `settings.animation`; the two clocks are independent.
 - For compositing, `settings.transparent`, `settings.format` (`png16`, `exr`) and `settings.region` are off by default; a
   transparent frame sequence is one `stills` job with `stillCount`; video runs up to 60 fps (`references/jobs.md`).

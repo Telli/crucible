@@ -163,3 +163,21 @@ test('a failed start shows the error and puts the button back, and the next pres
   assert.equal(button.hidden, true);
   assert.equal(events.at(-1), 'focus {"preventScroll":true}');
 });
+
+test('a second press while the world loads joins the first and starts nothing again (#2635)', async () => {
+  let attempts = 0;
+  let finish;
+  const { events, handoffs, play } = playHarness(() => {
+    attempts++;
+    return new Promise(resolve => { finish = resolve; });
+  });
+  const first = play();
+  const second = play();
+  assert.equal(attempts, 1, 'beginLive runs once');
+  assert.equal(first, second, 'both presses get the same promise');
+  finish();
+  assert.equal(await first, true);
+  assert.equal(await second, true);
+  assert.equal(events.filter(event => event.startsWith('focus')).length, 1);
+  assert.equal(handoffs.length, 1, 'the live layout is scheduled once');
+});

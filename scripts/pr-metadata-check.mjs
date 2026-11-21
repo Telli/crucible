@@ -27,7 +27,7 @@ const lightPathPattern = /^(docs\/|\.github\/|tests\/|changes\/)|\.md$/;
 const lookNamePattern = /(^|[-_/.])(shaders?|glsl|lights?|lighting|materials?|environment|shadows?|tone|tonemap|fog|sky|post|bloom|ssao|taa|exposure)(?=$|[-_/.])/i;
 const lookRootPattern = /^(src|packages)\//;
 
-const linkedIssuePattern = /\b(?:closes|close|closed|fixes|fix|fixed|resolves|resolve|resolved|part of)\s+(?:#\d+|https:\/\/github\.com\/codepawl\/crucible\/issues\/\d+)/i;
+const linkedIssuePattern = /\b(?:closes|close|closed|fixes|fix|fixed|resolves|resolve|resolved|part of):?\s+(?:#\d+|https:\/\/github\.com\/codepawl\/crucible\/issues\/\d+)/i;
 const localPathPatterns = [
   /[A-Za-z]:\\+(?:Users|Documents and Settings)\\/i,
   /(?:^|[\s`"'(=])\/home\/[A-Za-z0-9._-]+/,
@@ -177,7 +177,7 @@ function contributorFixesFor(pr, files, light) {
   }
 
   const touchesLook = paths.some(isLookPath);
-  if (touchesLook && !pr.lookApproved && !imagePattern.test(body)) {
+  if (touchesLook && !pr.lookApproved && !imagePattern.test(visibleBody)) {
     fixes.push(fix(
       'look-without-image',
       'This changes how a scene looks, so add a before and an after picture to the description.',

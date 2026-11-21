@@ -1,5 +1,6 @@
 import { CACHE_DECLARATIONS, CACHE_OUTPUT, CACHE_RECORD, CACHE_TERMINAL } from './path-tracer-radiance-cache.js';
 import { LIGHT_TREE_FIRST_HIT_LIGHTS, LIGHT_TREE_MINIMUM_SHARE, LIGHT_TREE_NODE_TEXELS } from './path-tracer-light-tree.js';
+import { FLAT_HIT_STATE, INSTANCED_TRACE_RAY, INSTANCE_HIT_STATE, INSTANCE_UNIFORMS } from './path-tracer-gpu-instancing.js';
 import { SUBSURFACE_FUNCTIONS, SUBSURFACE_LOBE, SUBSURFACE_SPLIT, SUBSURFACE_UNIFORM } from './path-tracer-gpu-subsurface.js';
 
 // The GPU path tracer kernel: a WebGL2 fragment shader that follows the same paths as the CPU tracer in
@@ -147,7 +148,39 @@ int chooseEmitterByTree(vec3 normal, out float probability) {
 }
 `;
 
-const buildSource = (hasSubsurface, texelBake, blueNoise, lightImportance, radianceCache, lightTree) => `#version 300 es
+// The ray query of a scene with one triangle table and one BVH: the default, and the only one before instancing.
+const FLAT_TRACE_RAY = `void traceRay(vec3 origin, vec3 direction, float limit, bool anyHit) {
+  nearestDistance = limit;
+  nearestSlot = -1;
+  vec3 inverse = safeInverse(direction);
+  int nodeStack[STACK_SIZE];
+  float entryStack[STACK_SIZE];
+  int stackSize = 1;
+  nodeStack[0] = 0;
+  entryStack[0] = 0.0;
+  while (stackSize > 0) {
+    stackSize--;
+    int node = nodeStack[stackSize];
+    if (!(entryStack[stackSize] < nearestDistance)) continue;
+    vec4 header = fetchData(uNodes, node * 2);
+    if (header.w < 0.0) {
+      if (visitLeaf(node, origin, direction, anyHit)) return;
+      continue;
+    }
+    int left = node + 1;
+    int right = int(header.w);
+    float leftEntry = boxEntry(left, origin, inverse);
+    float rightEntry = boxEntry(right, origin, inverse);
+    bool nearFirst = leftEntry <= rightEntry;
+    nodeStack[stackSize] = nearFirst ? right : left;
+    entryStack[stackSize] = nearFirst ? rightEntry : leftEntry;
+    nodeStack[stackSize + 1] = nearFirst ? left : right;
+    entryStack[stackSize + 1] = nearFirst ? leftEntry : rightEntry;
+    stackSize += 2;
+  }
+}`;
+
+const buildSource = (hasSubsurface, texelBake, blueNoise, lightImportance, radianceCache, lightTree, instanced) => `#version 300 es
 precision highp float;
 precision highp int;
 precision highp sampler2D;
@@ -174,7 +207,7 @@ const float MIRROR_ALPHA = 2e-3;
 const float DIELECTRIC_COAT_REFLECTANCE = 0.04;
 
 uniform sampler2D uNodes;
-uniform sampler2D uTriangles;
+${instanced ? INSTANCE_UNIFORMS : ''}uniform sampler2D uTriangles;
 uniform sampler2D uMaterials;
 uniform sampler2D uLights;
 ${lightTree ? 'uniform sampler2D uLightTree;' : ''}
@@ -277,6 +310,7 @@ float nearestDistance;
 int nearestSlot;
 float nearestU;
 float nearestV;
+${instanced ? INSTANCE_HIT_STATE : FLAT_HIT_STATE}
 
 float safeInverseComponent(float component) {
   if (abs(component) > 1e-20) return 1.0 / component;
@@ -329,36 +363,7 @@ bool visitLeaf(int node, vec3 origin, vec3 direction, bool anyHit) {
   return false;
 }
 
-void traceRay(vec3 origin, vec3 direction, float limit, bool anyHit) {
-  nearestDistance = limit;
-  nearestSlot = -1;
-  vec3 inverse = safeInverse(direction);
-  int nodeStack[STACK_SIZE];
-  float entryStack[STACK_SIZE];
-  int stackSize = 1;
-  nodeStack[0] = 0;
-  entryStack[0] = 0.0;
-  while (stackSize > 0) {
-    stackSize--;
-    int node = nodeStack[stackSize];
-    if (!(entryStack[stackSize] < nearestDistance)) continue;
-    vec4 header = fetchData(uNodes, node * 2);
-    if (header.w < 0.0) {
-      if (visitLeaf(node, origin, direction, anyHit)) return;
-      continue;
-    }
-    int left = node + 1;
-    int right = int(header.w);
-    float leftEntry = boxEntry(left, origin, inverse);
-    float rightEntry = boxEntry(right, origin, inverse);
-    bool nearFirst = leftEntry <= rightEntry;
-    nodeStack[stackSize] = nearFirst ? right : left;
-    entryStack[stackSize] = nearFirst ? rightEntry : leftEntry;
-    nodeStack[stackSize + 1] = nearFirst ? left : right;
-    entryStack[stackSize + 1] = nearFirst ? leftEntry : rightEntry;
-    stackSize += 2;
-  }
-}
+${instanced ? INSTANCED_TRACE_RAY : FLAT_TRACE_RAY}
 
 // ---- Hits ----
 
@@ -450,9 +455,8 @@ bool mapReadsSecondUvSet(float mask, int bit) {
 /** Fills the hit globals from the triangle in \`nearestSlot\`; returns the alpha of the colour map. */
 float fillHit(vec3 origin, vec3 direction, float distance) {
   int base = nearestSlot * TRIANGLE_TEXELS;
-  vec4 cornerData = fetchData(uTriangles, base);
-  vec3 edgeOne = fetchData(uTriangles, base + 1).xyz;
-  vec3 edgeTwo = fetchData(uTriangles, base + 2).xyz;
+  vec3 edgeOne = surfaceVectorToWorld(fetchData(uTriangles, base + 1).xyz);
+  vec3 edgeTwo = surfaceVectorToWorld(fetchData(uTriangles, base + 2).xyz);
   vec4 normalOneData = fetchData(uTriangles, base + 3);
   vec4 normalTwoData = fetchData(uTriangles, base + 4);
   vec4 normalThreeData = fetchData(uTriangles, base + 5);
@@ -466,13 +470,13 @@ float fillHit(vec3 origin, vec3 direction, float distance) {
   float firstWeight = 1.0 - secondWeight - thirdWeight;
   hitDistance = distance;
   hitPoint = origin + direction * distance;
-  vec3 normal = firstWeight * normalOneData.xyz + secondWeight * normalTwoData.xyz + thirdWeight * normalThreeData.xyz;
+  vec3 normal = firstWeight * normalToWorld(normalOneData.xyz) + secondWeight * normalToWorld(normalTwoData.xyz) + thirdWeight * normalToWorld(normalThreeData.xyz);
   float normalLength = length(normal);
   hitNormal = normal / (normalLength == 0.0 ? 1.0 : normalLength);
   vec3 vertexColor = firstWeight * colorOneData.xyz + secondWeight * colorTwoData.xyz + thirdWeight * colorThreeData.xyz;
   vec2 uv = firstWeight * vec2(normalOneData.w, colorOneData.w) + secondWeight * vec2(normalTwoData.w, colorTwoData.w) + thirdWeight * vec2(normalThreeData.w, colorThreeData.w);
   vec2 secondUv = firstWeight * secondSetCorners.xy + secondWeight * secondSetCorners.zw + thirdWeight * secondSetThird;
-  hitMaterialIndex = int(cornerData.w);
+  hitMaterialIndex = nearestMaterialIndex();
   int material = hitMaterialIndex * MATERIAL_TEXELS;
   vec4 colorMetallic = fetchData(uMaterials, material);
   vec4 emissionRoughness = fetchData(uMaterials, material + 1);
@@ -517,8 +521,8 @@ float fillHit(vec3 origin, vec3 direction, float distance) {
 
 /** True when the nearest hit belongs to a shadow-only part (the flag sits in texel 5 of the material); camera rays step through it. */
 bool nearestHitIsShadowOnly() {
-  vec4 cornerData = fetchData(uTriangles, nearestSlot * TRIANGLE_TEXELS);
-  vec4 flags = fetchData(uMaterials, int(cornerData.w) * MATERIAL_TEXELS + 5);
+  int materialIndex = nearestMaterialIndex();
+  vec4 flags = fetchData(uMaterials, materialIndex * MATERIAL_TEXELS + 5);
   return flags.y > 0.0;
 }
 
@@ -554,7 +558,7 @@ float alphaAtNearestHit() {
   vec4 second = fetchData(uTriangles, base + 4);
   vec4 third = fetchData(uTriangles, base + 5);
   vec2 uv = firstWeight * vec2(first.w, fetchData(uTriangles, base + 6).w) + secondWeight * vec2(second.w, fetchData(uTriangles, base + 7).w) + thirdWeight * vec2(third.w, fetchData(uTriangles, base + 8).w);
-  int material = int(fetchData(uTriangles, base).w) * MATERIAL_TEXELS;
+  int material = nearestMaterialIndex() * MATERIAL_TEXELS;
   vec4 mapRectangle = fetchData(uMaterials, material + 6);
   if (mapRectangle.z <= 0.0) return 1.0;
   if (mapReadsSecondUvSet(fetchData(uMaterials, material + 5).z, 1)) {
@@ -565,7 +569,7 @@ float alphaAtNearestHit() {
   return sampleAtlas(mapRectangle, fetchData(uMaterials, material + 4).y, uv).a;
 }
 
-bool occluded(vec3 origin, vec3 direction, float limit) {
+bool occluded(vec3 origin, vec3 direction, float limit, int lightBit) {
   vec3 start = origin;
   float remaining = limit;
   // A solid any-hit shadows the point wherever it lies; a transparent one hides what sits before it, so retrace for nearest hits.
@@ -573,10 +577,10 @@ bool occluded(vec3 origin, vec3 direction, float limit) {
   for (int attempt = 0; attempt < ALPHA_STEP_LIMIT; attempt++) {
     traceRay(start, direction, remaining, anyHit);
     if (nearestSlot < 0) return false;
-    int material = int(fetchData(uTriangles, nearestSlot * TRIANGLE_TEXELS).w) * MATERIAL_TEXELS;
+    int material = nearestMaterialIndex() * MATERIAL_TEXELS;
+    bool ownLamp = lightBit >= 0 && ((int(fetchData(uMaterials, material + 5).w) >> lightBit) & 1) == 1;
     float cutoff = fetchData(uMaterials, material + 3).z;
-    if (cutoff == 0.0) return true;
-    if (alphaAtNearestHit() >= cutoff) return true;
+    if (!ownLamp && (cutoff == 0.0 || alphaAtNearestHit() >= cutoff)) return true;
     if (anyHit) {
       anyHit = false;
       continue;
@@ -955,6 +959,7 @@ float shadowLimit;
 vec3 shadowAmount;
 int shadowDepth;
 bool shadowPending = false;
+int sampleLightBit = -1;
 
 void addDirect(int depth, vec3 normal, float distance, int weightMode) {
   if (inMedium) {
@@ -983,7 +988,7 @@ void addDirect(int depth, vec3 normal, float distance, int weightMode) {
 void flushShadowRay() {
   if (!shadowPending) return;
   shadowPending = false;
-  if (!occluded(shadowOrigin, shadowDirection, shadowLimit)) addRadiance(shadowDepth, shadowAmount);
+  if (!occluded(shadowOrigin, shadowDirection, shadowLimit, sampleLightBit)) addRadiance(shadowDepth, shadowAmount);
 }
 
 bool reaches(int bit) {
@@ -1019,6 +1024,7 @@ float pointLightFalloff(float distanceSquared, float range, float radius) {
 void sampleEmitter(int depth, vec3 normal, int emitter) {
   float distance = 0.0;
   int weightMode = 0;
+  sampleLightBit = -1;
   if (uHasSun && emitter == 0) {
     if (!reaches(0)) return;
     float cosineTheta = 1.0 - nextRandom() * (1.0 - uSunCosineMax);
@@ -1049,6 +1055,7 @@ void sampleEmitter(int depth, vec3 normal, int emitter) {
         if (distance < 1e-6 || emitCosine <= 0.0) return;
         lightRadiance = colorBit.rgb * (intensityRange.x * emitCosine / distanceSquared);
       } else {
+        if (type == 0) sampleLightBit = int(colorBit.w);
         vec3 jitter = randomOnSphere(directionRadius.w);
         distance = aimAt(positionType.xyz + jitter, distanceSquared);
         if (distance < 1e-6) return;
@@ -1327,8 +1334,8 @@ ${radianceCache ? CACHE_OUTPUT : ''}
  * The kernel; `hasSubsurface` compiles in the random walk, which only scenes with a subsurface part need. `texelBake`
  * starts every path at a lightmap texel instead of the camera (see light-bake-gpu.js).
  */
-export function buildFragmentSource({ hasSubsurface = false, texelBake = false, blueNoise = false, lightImportance = false, radianceCache = false, lightTree = false } = {}) {
-  return buildSource(hasSubsurface, texelBake, blueNoise, lightImportance, radianceCache, lightTree);
+export function buildFragmentSource({ hasSubsurface = false, texelBake = false, blueNoise = false, lightImportance = false, radianceCache = false, lightTree = false, instanced = false } = {}) {
+  return buildSource(hasSubsurface, texelBake, blueNoise, lightImportance, radianceCache, lightTree, instanced);
 }
 
 export const FRAGMENT_SOURCE = buildFragmentSource();

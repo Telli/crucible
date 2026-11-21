@@ -7,7 +7,7 @@ import { normalizeForceFields } from './force-fields.js';
 import { normalizeFloat } from './physics-buoyancy.js';
 import { rotateByQuaternion } from './physics-values.js';
 import { MAX_WAKE_POINTS, wakeTrail } from './ocean-wake.js';
-import { AGENT_SCENE_CAPABILITIES } from './agent-scene-capabilities.js';
+import { AGENT_SCENE_CAPABILITIES, PHYSICS_BODY_SHAPES } from './agent-scene-capabilities.js';
 
 export { loadPhysicsEngine, physicsEngineLoaded, setPhysicsModuleLoader };
 export { needsPhysics } from './agent-scene-modules.js';
@@ -24,8 +24,8 @@ const MAX_REPORTED_SENSOR_EVENTS = 128;
 const MAX_EVENTS = 128;
 const MAX_COMPOUND_SHAPES = 16;
 const BODY_TYPES = ['dynamic', 'fixed', 'kinematic'];
-const SHAPES = ['box', 'ball', 'capsule', 'cylinder', 'cone', 'convex', 'trimesh', 'compound'];
-const COMPOUND_PART_SHAPES = ['box', 'ball', 'capsule', 'cylinder', 'cone'];
+const SHAPES = PHYSICS_BODY_SHAPES;
+export const COMPOUND_PART_SHAPES = ['box', 'ball', 'capsule', 'cylinder', 'cone'];
 const JOINT_TYPES = ['spherical', 'revolute', 'prismatic', 'fixed', 'spring'];
 const BODY_FIELDS = ['node', 'type', 'shape', 'shapes', 'mass', 'density', 'friction', 'restitution', 'sensor', 'velocity', 'angularVelocity', 'layer', 'collidesWith', 'float'];
 const COMPOUND_PART_FIELDS = ['shape', 'translation', 'rotation', 'halfExtents', 'radius', 'halfHeight'];
@@ -57,6 +57,9 @@ function finiteNumber(value, path, minimum = -Infinity, maximum = Infinity) {
   }
   return value;
 }
+
+// How far a joint axis may be from length 1; the physics engine allows the same.
+const UNIT_AXIS_TOLERANCE = 1e-4;
 
 function numberList(value, size, path) {
   if (!Array.isArray(value) || value.length !== size) {
@@ -112,7 +115,7 @@ function normalizeBody(input, recipeNodes, motionNodeIds, claimedNodes, path) {
     throw invalidField(`${path}.shape`, shape, `one of ${SHAPES.join(', ')}`);
   }
   if (shape === 'trimesh' && type === 'dynamic') {
-    throw invalidField(`${path}.shape`, shape, 'one of convex, box, ball or capsule for a dynamic body; trimesh is for fixed or kinematic bodies');
+    throw invalidField(`${path}.shape`, shape, 'one of convex, box, ball, capsule, cylinder, cone or compound for a dynamic body; trimesh is for fixed or kinematic bodies');
   }
   if (type !== 'dynamic' && (input.velocity !== undefined || input.angularVelocity !== undefined)) {
     const field = input.velocity !== undefined ? 'velocity' : 'angularVelocity';
@@ -201,6 +204,10 @@ function normalizeJoint(input, bodyNodeIds, jointNames, path) {
       throw invalidField(`${path}.${field}`, input[field], `the node of a physics body, one of ${[...bodyNodeIds].slice(0, 5).join(', ') || 'none yet'}`);
     }
   }
+  if (input.bodyA === input.bodyB) {
+    const otherBody = [...bodyNodeIds].find(id => id !== input.bodyA) ?? 'other-body';
+    throw invalidField(`${path}.bodyB`, input.bodyB, `a body other than bodyA (${JSON.stringify(input.bodyA)}), such as ${JSON.stringify(otherBody)}`, TypeError);
+  }
   const joint = { type: input.type, bodyA: input.bodyA, bodyB: input.bodyB };
   if (input.name !== undefined) {
     const name = nodeIdentifier(input.name, `${path}.name`);
@@ -212,6 +219,9 @@ function normalizeJoint(input, bodyNodeIds, jointNames, path) {
   }
   for (const field of ['anchorA', 'anchorB', 'axis']) {
     if (input[field] !== undefined) joint[field] = numberList(input[field], 3, `${path}.${field}`);
+  }
+  if (joint.axis && Math.abs(Math.hypot(...joint.axis) - 1) > UNIT_AXIS_TOLERANCE) {
+    throw invalidField(`${path}.axis`, joint.axis, 'a unit vector of length 1, such as [0, 1, 0] or [1, 0, 0]');
   }
   if (input.contactsEnabled !== undefined) {
     if (typeof input.contactsEnabled !== 'boolean') {
@@ -225,7 +235,12 @@ function normalizeJoint(input, bodyNodeIds, jointNames, path) {
     }
     joint.breakImpulse = finiteNumber(input.breakImpulse, `${path}.breakImpulse`, 1e-6, 1e9);
   }
-  if (input.limits !== undefined) joint.limits = numberList(input.limits, 2, `${path}.limits`);
+  if (input.limits !== undefined) {
+    joint.limits = numberList(input.limits, 2, `${path}.limits`);
+    if (Math.fround(joint.limits[0]) >= Math.fround(joint.limits[1])) {
+      throw invalidField(`${path}.limits`, joint.limits, 'two numbers, the lower limit first and a gap a 32-bit float can store, such as [-1, 1]');
+    }
+  }
   if (input.motor !== undefined) joint.motor = normalizeMotor(input.motor, `${path}.motor`);
   if (input.type === 'spring') {
     joint.restLength = finiteNumber(input.restLength ?? 0, `${path}.restLength`, 0, 1e6);

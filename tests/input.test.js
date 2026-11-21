@@ -213,3 +213,16 @@ test('counts are bounded', () => {
   for (let index = 0; index < INPUT_LIMITS.maximumActions; index += 1) actions.bindAction(`a${index}`, ['s/x']);
   assert.throws(() => actions.bindAction('extra', ['s/x']), /already has 128 actions/);
 });
+
+// A control past 1 (a mouse position in pixels) times a huge scale is Infinity; two of opposite sign must not leave the axis NaN for good (#2403).
+test('an axis whose bindings sum to Infinity minus Infinity reads 0, not NaN', () => {
+  const input = startedInput();
+  input.bindAxis('push', { bindings: [{ control: 'script/a', scale: 1e308 }, { control: 'script/b', scale: -1e308 }], smoothing: 0.5 });
+  input.setControl('script/a', 2);
+  input.setControl('script/b', 2);
+  input.sample();
+  assert.equal(input.getAxis('push'), 0);
+  input.release('script/b');
+  input.sample();
+  assert.equal(input.getAxis('push'), 0.5, 'the axis eases toward 1 once the sum is no longer Infinity minus Infinity');
+});

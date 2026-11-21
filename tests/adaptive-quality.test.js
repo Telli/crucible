@@ -79,3 +79,9 @@ test('a raise threshold that can never be met is refused instead of pinning the 
     assert.throws(() => new AdaptiveResolution({ raiseBelow }), /raiseBelow/, `raiseBelow ${raiseBelow}`);
   }
 });
+
+test('a non-finite target is refused instead of freezing the scale', async () => {
+  for (const targetMilliseconds of [Infinity, Number.NaN]) {
+    assert.throws(() => new AdaptiveResolution({ targetMilliseconds }), /targetMilliseconds/);
+  }
+});

@@ -55,3 +55,23 @@ test('the coverage gate expects as many shards as the workflow matrix has', () =
   const expected = Number(workflow.match(/coverage-gate\.mjs [^\n]*--expect-shards (\d+)/)[1]);
   assert.equal(expected, matrix.length);
 });
+
+test('merging no timings files refuses instead of wiping the timings', async () => {
+  const { mergeTimings } = await import('../scripts/shard-test-files.mjs');
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const folder = mkdtempSync(join(tmpdir(), 'crucible-timings-'));
+  try {
+    const destination = join(folder, 'test-timings.json');
+    writeFileSync(destination, '{"tests/a.test.js":5}\n');
+    assert.throws(() => mergeTimings([], destination), /needs at least one timings file/);
+    assert.equal(readFileSync(destination, 'utf8'), '{"tests/a.test.js":5}\n');
+    const first = join(folder, 'one.json');
+    writeFileSync(first, '{"tests/a.test.js":7,"tests/b.test.js":3}');
+    mergeTimings([first], destination);
+    assert.deepEqual(JSON.parse(readFileSync(destination, 'utf8')), { 'tests/a.test.js': 7, 'tests/b.test.js': 3 });
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

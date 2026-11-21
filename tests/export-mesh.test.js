@@ -207,3 +207,11 @@ test('OBJ rejects uvs and normals whose length does not match the vertex count',
   const shortNormals = new Float32Array(vertexCount * 3 - 3);
   assert.throws(() => exportObj([{ ...part, geometry: { ...part.geometry, normals: shortNormals } }]), /geometry\.normals/);
 });
+
+test('exports refuse a matrix that pushes a vertex past the number range of the file', () => {
+  const triangle = { positions: new Float32Array([0, 0, 0, 100, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) };
+  const scaledBy = factor => [{ geometry: triangle, matrix: [factor, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }];
+  assert.throws(() => exportStl(scaledBy(1e39)), /STL export moves a vertex past the float32 range/);
+  assert.throws(() => exportObj(scaledBy(1e308)), /OBJ export moves a vertex past the finite range/);
+  assert.match(exportObj(scaledBy(1e39)).obj, /v 1e\+41 0 0/);
+});

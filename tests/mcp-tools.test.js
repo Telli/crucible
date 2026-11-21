@@ -163,7 +163,7 @@ test('SDK advertises the complete strict JSON contract and truthful annotations'
   assert.equal(recipeSchema.properties.materials.maxItems, 256);
   assert.equal(recipeSchema.properties.geometries.maxItems, 256);
   // The tool lists the common fields; the strict schema still validates and scene_capabilities serves the full outline.
-  assert.deepEqual(recipeSchema.properties.geometries.items.properties.type.enum, ['box', 'cylinder', 'sphere', 'torus', 'lathe', 'extrude', 'tube', 'curve', 'sdf', 'text', 'terrain', 'grid', 'plane', 'cone', 'icoSphere', 'circle', 'line', 'fragment', 'dented', 'mesh']);
+  assert.deepEqual(recipeSchema.properties.geometries.items.properties.type.enum, ['box', 'cylinder', 'sphere', 'torus', 'lathe', 'extrude', 'tube', 'curve', 'sdf', 'text', 'cloud', 'terrain', 'grid', 'plane', 'cone', 'icoSphere', 'circle', 'line', 'fragment', 'dented', 'mesh']);
   assert.ok(recipeSchema.properties.environment.properties.setup);
   assert.equal(recipeSchema.properties.shadow.additionalProperties, false);
   for (const topic of ['geometries', 'environment', 'effects', 'motion', 'physics', 'cloth', 'armatures', 'materialFields', 'meshEdit', 'meshStack']) {
@@ -381,9 +381,16 @@ test('real SDK round trip authors motion, seeks without revisions and rejects un
   assert.equal(exported.structuredContent.recipe.motion.tracks[0].property, 'translation');
   await rejected(client, 'scene_apply', { sessionId, expectedRevision: 0, operations: [{ type: 'set-motion',
     motion: { ...motion, tracks: [{ ...motion.tracks[0], javascript: 'run()' }] } }] });
-  const cleared = await client.callTool({ name: 'scene_apply', arguments: { sessionId, expectedRevision: 0,
+  await rejected(client, 'scene_apply', { sessionId, expectedRevision: 0, operations: [{ type: 'set-motion', motion: null, removeTracks: [{ kind: 'node' }] }] });
+  const trimmed = await client.callTool({ name: 'scene_apply', arguments: { sessionId, expectedRevision: 0,
+    operations: [{ type: 'set-motion', removeTracks: [{ kind: 'node', id: 'mesh' }] }] } });
+  assert.equal(trimmed.isError, undefined);
+  assert.equal(trimmed.structuredContent.revision, 1);
+  const withoutTracks = await client.callTool({ name: 'scene_export_recipe', arguments: { sessionId } });
+  assert.equal(withoutTracks.structuredContent.recipe.motion ?? null, null);
+  const cleared = await client.callTool({ name: 'scene_apply', arguments: { sessionId, expectedRevision: 1,
     operations: [{ type: 'set-motion', motion: null }] } });
-  assert.equal(cleared.structuredContent.revision, 1);
+  assert.equal(cleared.structuredContent.revision, 2);
 });
 
 test('real SDK calls preserve atomic revisions, checkpoints, recipe snapshots and PNG content', async context => {
@@ -590,4 +597,17 @@ test('scene_create accepts a dented geometry and rejects bad impacts before disp
   await rejected(client, 'scene_create', { recipe: dentedRecipe([]) });
   await rejected(client, 'scene_create', { recipe: dentedRecipe([{ ...impact, speed: 3 }]) });
   assert.equal(calls(), before);
+});
+
+test('a spot light angle sent in degrees is refused with the unit and the radians value', async context => {
+  const { client } = await connect(context);
+  const operations = [{ type: 'set-environment', environment: { spotLights: [{ position: [0, 3, 0], direction: [0, -1, 0], angle: 90 }] } }];
+  let message;
+  try {
+    const result = await client.callTool({ name: 'scene_apply', arguments: { sessionId: randomUUID(), expectedRevision: 0, operations } });
+    message = JSON.stringify(result.content);
+  } catch (error) {
+    message = error.message;
+  }
+  assert.match(message, /angle.*outer half angle of the cone in radians.*90 looks like degrees, and 90 degrees is 1\.57 radians/);
 });

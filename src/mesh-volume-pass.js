@@ -118,8 +118,9 @@ function allocateTarget(renderer, state, layers) {
   const width = renderer.canvas.width;
   const height = renderer.canvas.height * layers;
   if (state.target?.width === width && state.target.height === height) return;
-  if (height > context.getParameter(context.MAX_TEXTURE_SIZE)) {
-    throw new RangeError(`${layers} mesh volumes at ${width}x${renderer.canvas.height} need a ${height} pixel tall buffer, past this device's limit of ${context.getParameter(context.MAX_TEXTURE_SIZE)}; use fewer volumes with fit "mesh", a smaller canvas or fit "bounds"`);
+  const limit = context.getParameter(context.MAX_TEXTURE_SIZE);
+  if (width > limit || height > limit) {
+    throw new RangeError(`${layers} mesh volumes at ${width}x${renderer.canvas.height} need a ${width}x${height} buffer, past this device's limit of ${limit}; use fewer volumes with fit "mesh", a smaller canvas or fit "bounds"`);
   }
   releaseTarget(renderer, state);
   const texture = context.createTexture();
@@ -132,7 +133,11 @@ function allocateTarget(renderer, state, layers) {
   const framebuffer = context.createFramebuffer();
   context.bindFramebuffer(context.FRAMEBUFFER, framebuffer);
   context.framebufferTexture2D(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, texture, 0);
-  if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('The mesh volume buffer could not be allocated; use fit "bounds" or a smaller canvas');
+  if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) {
+    context.deleteFramebuffer(framebuffer);
+    context.deleteTexture(texture);
+    throw new Error('The mesh volume buffer could not be allocated; use fit "bounds" or a smaller canvas');
+  }
   state.target = { texture, framebuffer, width, height };
   renderer.renderTargets.record('meshVolumes', { width, height, format: 'RG32F' });
 }

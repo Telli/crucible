@@ -10,13 +10,51 @@
 import { LIGHT_TREE_FIRST_HIT_LIGHTS, LIGHT_TREE_MINIMUM_SHARE } from './path-tracer-light-tree.js';
 import { PHASE_FUNCTIONS, SUBSURFACE_FUNCTIONS, VOLUME_FUNCTIONS } from './path-tracer-webgpu-medium.js';
 import { buildLocalVolumeFunctions } from './path-tracer-webgpu-local-volumes.js';
+import { INSTANCED_TRACE_RAY, INSTANCE_STATE } from './path-tracer-webgpu-instancing.js';
 
 export const WORKGROUP_SIZE = 8;
 export const WAVEFRONT_WORKGROUP_SIZE = 64;
 /** vec4 slots of path state per path; the wavefront section below names each one. */
 export const PATH_STATE_VECTORS = 9;
 
-const buildCommonSource = ({ hasVolume = false, hasLocalVolumes = false, hasGridVolume = false, hasNoiseOctaves = false, hasEmissionRamp = false } = {}) => /* wgsl */ `
+const NEAREST_MATERIAL = 'nearestMaterial';
+const FLAT_NEAREST_MATERIAL = 'i32(triangles[nearestSlot * TRIANGLE_TEXELS].w)';
+
+// The ray query of a scene with one triangle table and one BVH: the default, and the only one before instancing.
+const FLAT_TRACE_RAY = `fn traceRay(origin: vec3<f32>, direction: vec3<f32>, limit: f32, anyHit: bool) {
+  nearestDistance = limit;
+  nearestSlot = -1;
+  let inverse = safeInverse(direction);
+  var stackSize = 1;
+  nodeStack[0] = 0;
+  entryStack[0] = 0.0;
+  while (stackSize > 0) {
+    stackSize--;
+    let node = nodeStack[stackSize];
+    if (!(entryStack[stackSize] < nearestDistance)) { continue; }
+    let header = nodes[node * 2];
+    if (header.w < 0.0) {
+      if (visitLeaf(node, origin, direction, anyHit)) { return; }
+      continue;
+    }
+    let left = node + 1;
+    let right = i32(header.w);
+    let leftEntry = boxEntry(left, origin, inverse);
+    let rightEntry = boxEntry(right, origin, inverse);
+    let nearFirst = leftEntry <= rightEntry;
+    nodeStack[stackSize] = select(left, right, nearFirst);
+    entryStack[stackSize] = select(leftEntry, rightEntry, nearFirst);
+    nodeStack[stackSize + 1] = select(right, left, nearFirst);
+    entryStack[stackSize + 1] = select(rightEntry, leftEntry, nearFirst);
+    stackSize += 2;
+  }
+}`;
+
+// An instanced scene (path-tracer-webgpu-instancing.js) moves the edges and normals of the hit triangle from mesh space to the world.
+const buildCommonSource = ({ hasVolume = false, hasLocalVolumes = false, hasGridVolume = false, hasNoiseOctaves = false, hasEmissionRamp = false, hasMeshVolume = false, instanced = false } = {}) => {
+  const worldVector = expression => (instanced ? `surfaceVectorToWorld(${expression})` : expression);
+  const worldNormal = expression => (instanced ? `normalToWorld(${expression})` : expression);
+  return /* wgsl */ `
 const PI: f32 = 3.14159265358979;
 const TWO_PI: f32 = 6.28318530717959;
 const TRIANGLE_TEXELS: i32 = 10;
@@ -98,7 +136,7 @@ var<private> nearestSlot: i32;
 var<private> nearestU: f32;
 var<private> nearestV: f32;
 var<private> nodeStack: array<i32, 128>;
-var<private> entryStack: array<f32, 128>;
+var<private> entryStack: array<f32, 128>;${instanced ? INSTANCE_STATE : ''}
 
 fn safeInverseComponent(component: f32) -> f32 {
   if (abs(component) > 1e-20) { return 1.0 / component; }
@@ -151,34 +189,7 @@ fn visitLeaf(node: i32, origin: vec3<f32>, direction: vec3<f32>, anyHit: bool) -
   return false;
 }
 
-fn traceRay(origin: vec3<f32>, direction: vec3<f32>, limit: f32, anyHit: bool) {
-  nearestDistance = limit;
-  nearestSlot = -1;
-  let inverse = safeInverse(direction);
-  var stackSize = 1;
-  nodeStack[0] = 0;
-  entryStack[0] = 0.0;
-  while (stackSize > 0) {
-    stackSize--;
-    let node = nodeStack[stackSize];
-    if (!(entryStack[stackSize] < nearestDistance)) { continue; }
-    let header = nodes[node * 2];
-    if (header.w < 0.0) {
-      if (visitLeaf(node, origin, direction, anyHit)) { return; }
-      continue;
-    }
-    let left = node + 1;
-    let right = i32(header.w);
-    let leftEntry = boxEntry(left, origin, inverse);
-    let rightEntry = boxEntry(right, origin, inverse);
-    let nearFirst = leftEntry <= rightEntry;
-    nodeStack[stackSize] = select(left, right, nearFirst);
-    entryStack[stackSize] = select(leftEntry, rightEntry, nearFirst);
-    nodeStack[stackSize + 1] = select(right, left, nearFirst);
-    entryStack[stackSize + 1] = select(rightEntry, leftEntry, nearFirst);
-    stackSize += 2;
-  }
-}
+${instanced ? INSTANCED_TRACE_RAY : FLAT_TRACE_RAY}
 
 // ---- Hits ----
 
@@ -275,8 +286,8 @@ fn mapReadsSecondUvSet(mask: f32, bit: i32) -> bool {
 fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   let base = nearestSlot * TRIANGLE_TEXELS;
   let cornerData = triangles[base];
-  let edgeOne = triangles[base + 1].xyz;
-  let edgeTwo = triangles[base + 2].xyz;
+  let edgeOne = ${worldVector('triangles[base + 1].xyz')};
+  let edgeTwo = ${worldVector('triangles[base + 2].xyz')};
   let normalOneData = triangles[base + 3];
   let normalTwoData = triangles[base + 4];
   let normalThreeData = triangles[base + 5];
@@ -290,13 +301,13 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   let firstWeight = 1.0 - secondWeight - thirdWeight;
   hitDistance = distance;
   hitPoint = origin + direction * distance;
-  let normal = firstWeight * normalOneData.xyz + secondWeight * normalTwoData.xyz + thirdWeight * normalThreeData.xyz;
+  let normal = firstWeight * ${worldNormal('normalOneData.xyz')} + secondWeight * ${worldNormal('normalTwoData.xyz')} + thirdWeight * ${worldNormal('normalThreeData.xyz')};
   let normalLength = length(normal);
   hitNormal = normal / select(normalLength, 1.0, normalLength == 0.0);
   let vertexColor = firstWeight * colorOneData.xyz + secondWeight * colorTwoData.xyz + thirdWeight * colorThreeData.xyz;
   let uv = firstWeight * vec2<f32>(normalOneData.w, colorOneData.w) + secondWeight * vec2<f32>(normalTwoData.w, colorTwoData.w) + thirdWeight * vec2<f32>(normalThreeData.w, colorThreeData.w);
   let secondUv = firstWeight * secondSetCorners.xy + secondWeight * secondSetCorners.zw + thirdWeight * secondSetThird;
-  hitMaterialIndex = i32(cornerData.w);
+  hitMaterialIndex = ${instanced ? NEAREST_MATERIAL : 'i32(cornerData.w)'};
   let material = hitMaterialIndex * MATERIAL_TEXELS;
   let colorMetallic = materials[material];
   let emissionRoughness = materials[material + 1];
@@ -341,7 +352,7 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
 
 // True when the nearest hit belongs to a shadow-only part (the flag sits in texel 5 of the material); camera rays step through it.
 fn nearestHitIsShadowOnly() -> bool {
-  return materials[i32(triangles[nearestSlot * TRIANGLE_TEXELS].w) * MATERIAL_TEXELS + 5].y > 0.0;
+  return materials[${instanced ? NEAREST_MATERIAL : FLAT_NEAREST_MATERIAL} * MATERIAL_TEXELS + 5].y > 0.0;
 }
 
 // The nearest solid hit, stepping through the transparent texels of cutout materials and, for a camera ray, shadow-only parts.
@@ -378,7 +389,7 @@ fn alphaAtNearestHit() -> f32 {
   let second = triangles[base + 4];
   let third = triangles[base + 5];
   var uv = firstWeight * vec2<f32>(first.w, triangles[base + 6].w) + secondWeight * vec2<f32>(second.w, triangles[base + 7].w) + thirdWeight * vec2<f32>(third.w, triangles[base + 8].w);
-  let material = i32(triangles[base].w) * MATERIAL_TEXELS;
+  let material = ${instanced ? NEAREST_MATERIAL : 'i32(triangles[base].w)'} * MATERIAL_TEXELS;
   let mapRectangle = materials[material + 6];
   if (mapRectangle.z <= 0.0) { return 1.0; }
   if (mapReadsSecondUvSet(materials[material + 5].z, 1)) {
@@ -389,7 +400,8 @@ fn alphaAtNearestHit() -> f32 {
   return sampleAtlas(mapRectangle, materials[material + 4].y, uv).a;
 }
 
-fn occluded(origin: vec3<f32>, direction: vec3<f32>, limit: f32) -> bool {
+// lightBit is the point light whose shadow ray this is (-1 for the sun and other rays): the glowing bulb around that light does not block it.
+fn occluded(origin: vec3<f32>, direction: vec3<f32>, limit: f32, lightBit: i32) -> bool {
   var start = origin;
   var remaining = limit;
   let surfaceOffset = params.environmentRotationAndRays.z;
@@ -398,10 +410,10 @@ fn occluded(origin: vec3<f32>, direction: vec3<f32>, limit: f32) -> bool {
   for (var attempt = 0; attempt < ALPHA_STEP_LIMIT; attempt++) {
     traceRay(start, direction, remaining, anyHit);
     if (nearestSlot < 0) { return false; }
-    let material = i32(triangles[nearestSlot * TRIANGLE_TEXELS].w) * MATERIAL_TEXELS;
+    let material = ${instanced ? NEAREST_MATERIAL : FLAT_NEAREST_MATERIAL} * MATERIAL_TEXELS;
+    let ownLamp = lightBit >= 0 && ((i32(materials[material + 5].w) >> u32(lightBit)) & 1) == 1;
     let cutoff = materials[material + 3].z;
-    if (cutoff == 0.0) { return true; }
-    if (alphaAtNearestHit() >= cutoff) { return true; }
+    if (!ownLamp && (cutoff == 0.0 || alphaAtNearestHit() >= cutoff)) { return true; }
     if (anyHit) {
       anyHit = false;
       continue;
@@ -855,6 +867,7 @@ fn directWeight(mode: i32, candidatePdf: f32) -> f32 {
 var<private> shadowOrigin: vec3<f32>;
 var<private> shadowDirection: vec3<f32>;
 var<private> shadowLimit: f32;
+var<private> shadowLightBit: i32 = -1;
 var<private> shadowAmount: vec3<f32>;
 var<private> shadowDepth: i32;
 var<private> shadowPending: bool = false;
@@ -884,11 +897,11 @@ fn addDirect(depth: i32, normal: vec3<f32>, distance: f32, weightMode: i32) {
 }
 
 ${hasVolume ? VOLUME_FUNCTIONS : hasLocalVolumes ? PHASE_FUNCTIONS : ''}
-${hasLocalVolumes ? buildLocalVolumeFunctions({ hasGrid: hasGridVolume, hasNoiseOctaves, hasEmissionRamp }) : ''}
+${hasLocalVolumes ? buildLocalVolumeFunctions({ hasGrid: hasGridVolume, hasNoiseOctaves, hasEmissionRamp, hasMesh: hasMeshVolume }) : ''}
 fn flushShadowRay() {
   if (!shadowPending) { return; }
   shadowPending = false;
-  if (!occluded(shadowOrigin, shadowDirection, shadowLimit)) { addRadiance(shadowDepth, shadowAmount); }
+  if (!occluded(shadowOrigin, shadowDirection, shadowLimit, shadowLightBit)) { addRadiance(shadowDepth, shadowAmount); }
 }
 
 fn reaches(bit: i32) -> bool {
@@ -1030,6 +1043,7 @@ fn lightsFromEveryEmitter(depth: i32, emitterCount: i32) -> bool {
 fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
   var distance = 0.0;
   var weightMode = 0;
+  shadowLightBit = -1;
   let hasSun = params.emittersFlagsSample.y != 0;
   let lightCount = params.sizeBouncesLights.w;
   if (hasSun && emitter == 0) {
@@ -1065,6 +1079,7 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
         distance = aimAt(positionType.xyz + jitter);
         if (distance < 1e-6) { return; }
         var mask = 1.0;
+        if (lightType == 0) { shadowLightBit = i32(colorBit.w); }
         if (lightType == 1) {
           let inside = -dot(directionRadius.xyz, lightDirection) - acrossCone.w;
           if (inside <= 0.0) { return; }
@@ -1124,6 +1139,7 @@ fn survivesRoulette(depth: i32) -> bool {
   return true;
 }
 `;
+};
 const COMMON_SOURCE = buildCommonSource();
 
 // One invocation per pixel of the image.
@@ -1187,7 +1203,7 @@ fn bakeTexels(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgro
 `;
 
 // `realtime` is the set of WGSL pieces of path-tracer-realtime-webgpu-kernel.js (REALTIME_KERNEL_PIECES); the real-time tracer passes them in, so other bundles do not carry them.
-export const buildMegakernelSource = ({ hasVolume = false, hasLocalVolumes = false, hasGridVolume = false, hasNoiseOctaves = false, hasEmissionRamp = false, hasSubsurface = false, texelBake = false, realtime = null } = {}) => buildCommonSource({ hasVolume, hasLocalVolumes, hasGridVolume, hasNoiseOctaves, hasEmissionRamp }) + /* wgsl */ `
+export const buildMegakernelSource = ({ hasVolume = false, hasLocalVolumes = false, hasGridVolume = false, hasNoiseOctaves = false, hasEmissionRamp = false, hasMeshVolume = false, hasSubsurface = false, texelBake = false, realtime = null, instanced = false } = {}) => buildCommonSource({ hasVolume, hasLocalVolumes, hasGridVolume, hasNoiseOctaves, hasEmissionRamp, hasMeshVolume, instanced }) + /* wgsl */ `
 ${realtime ? realtime.declarations + realtime.addLights : `// The first hit lights from every emitter; later hits draw one, and divide by the chance of drawing it.
 fn addLights(depth: i32, normal: vec3<f32>) {
   let emitterCount = params.emittersFlagsSample.x;
@@ -1385,7 +1401,7 @@ fn storeShadowRecord(path: u32, slot: u32) {
   let base = shadowRecordBase(path, slot);
   if (shadowPending) {
     storeVector(base, vec4<f32>(shadowOrigin, shadowLimit));
-    storeVector(base + 1u, vec4<f32>(shadowDirection, 0.0));
+    storeVector(base + 1u, vec4<f32>(shadowDirection, f32(shadowLightBit)));
     storeVector(base + 2u, vec4<f32>(shadowAmount, 1.0));
   } else {
     storeVector(base + 2u, vec4<f32>(0.0));
@@ -1655,7 +1671,8 @@ fn shadowPaths(@builtin(global_invocation_id) id: vec3<u32>) {
     if (amount.w == 0.0) { continue; }
     let origin = loadVector(recordBase);
     let rayDirection = loadVector(recordBase + 1u).xyz;
-    if (!occluded(origin.xyz, rayDirection, origin.w)) { addRadiance(depth, amount.xyz); }
+    let recordLightBit = i32(loadVector(recordBase + 1u).w);
+    if (!occluded(origin.xyz, rayDirection, origin.w, recordLightBit)) { addRadiance(depth, amount.xyz); }
   }
   storeVector(base + 3u, vec4<f32>(radiance, radianceData.w));
 }

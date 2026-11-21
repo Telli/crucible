@@ -2,6 +2,8 @@
 // and a compact diff of the node, material and geometry IDs the batch added, removed and changed. Pure recipe data in,
 // plain JSON out, so a library user gets the same answer as an MCP client.
 
+import { motionAfterRemoval } from './motion-track-selector.js';
+
 export const APPLY_REPORT_LIMITS = Object.freeze({ maxEntries: 20, maxDiffIds: 8, maxText: 48 });
 
 const COLLECTIONS = Object.freeze({ node: 'nodes', material: 'materials', geometry: 'geometries' });
@@ -46,6 +48,15 @@ function mergePatch(current, patch) {
   return merged;
 }
 
+// A null fStop clears depth of field (and its focusDistance); a null focusDistance clears itself.
+function clearNullLensFields(camera, patch) {
+  if (patch.fStop === null) {
+    delete camera.fStop;
+    delete camera.focusDistance;
+  }
+  if (patch.focusDistance === null) delete camera.focusDistance;
+}
+
 function fieldNames(operation, skipped) {
   return Object.keys(operation).filter(key => !skipped.includes(key));
 }
@@ -88,6 +99,7 @@ function describeOperation(working, operation, maxText) {
     if (patchHolds(working[section], patch)) return { warning: 'no change, values already set' };
     const names = Object.keys(patch).filter(key => !patchHolds(working[section]?.[key], patch[key]));
     working[section] = mergePatch(working[section] ?? {}, patch);
+    if (type === 'set-camera') clearNullLensFields(working.camera, patch);
     return { changed: shortList(names, maxText) };
   }
   if (type === 'set-node' || type === 'set-material') {
@@ -99,6 +111,12 @@ function describeOperation(working, operation, maxText) {
     if (differing.length === 0) return { warning: 'no change, values already set' };
     for (const name of differing) target[name] = structuredClone(operation[name]);
     return { changed: shortList(differing, maxText) };
+  }
+  if (type === 'set-motion' && Object.hasOwn(operation, 'removeTracks')) {
+    const { motion, removed } = motionAfterRemoval(working.motion, operation.removeTracks);
+    if (motion) working.motion = motion;
+    else delete working.motion;
+    return { changed: `removed ${removed} motion tracks` };
   }
   if (Object.hasOwn(OWN_SECTIONS, type)) {
     const name = OWN_SECTIONS[type];

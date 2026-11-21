@@ -67,7 +67,8 @@ function listTestFiles() {
     .sort();
 }
 
-function mergeTimings(paths) {
+export function mergeTimings(paths, destination = timingsPath) {
+  if (paths.length === 0) throw new Error('--merge-timings needs at least one timings file: node scripts/shard-test-files.mjs --merge-timings <files>');
   const measurements = new Map();
   for (const path of paths) {
     for (const [name, milliseconds] of Object.entries(JSON.parse(readFileSync(path, 'utf8')))) {
@@ -77,11 +78,12 @@ function mergeTimings(paths) {
   const sorted = Object.fromEntries(
     [...measurements.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, values]) => [name, Math.round(medianOf(values))])
   );
-  writeFileSync(timingsPath, `${JSON.stringify(sorted, null, 2)}\n`);
+  writeFileSync(destination, `${JSON.stringify(sorted, null, 2)}\n`);
   console.log(`Wrote ${Object.keys(sorted).length} timings to test-timings.json`);
 }
 
 function mergeTimingsFromRun(runId) {
+  if (!runId) throw new Error('--from-run needs a run id: node scripts/shard-test-files.mjs --from-run <run id>');
   const downloadDirectory = mkdtempSync(join(tmpdir(), 'test-timings-'));
   try {
     execFileSync('gh', ['run', 'download', runId, '--pattern', 'lcov-shard-*', '-D', downloadDirectory], { stdio: 'inherit' });
