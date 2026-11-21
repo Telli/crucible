@@ -35,7 +35,7 @@ const DEMO_SETTING = {
   yaw: 0,
   pitch: 1.15,
   focus: { minimum: [-0.34, 1.16, -0.3], maximum: [0.34, 1.3, 0.3] },
-  portraitFocus: { minimum: [-0.3575, 1.16, -0.5], maximum: [0.4775, 1.3, 0.45] },
+  portraitFocus: { minimum: [-0.218, 1.16, -0.29], maximum: [0.372, 1.3, 0.41] },
 };
 const FLOOR_COLOR = [0.34, 0.22, 0.13];
 const FRAME_MARGIN = 1.08;
