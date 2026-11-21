@@ -1907,7 +1907,6 @@ export const STUDIO_CSS = `
 .crucible-studio-setup-sketch-part[data-part="card-bottom"] { inset-block: 52% 6%; }
 .crucible-studio-setup-cards-wide {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
 }
 .crucible-studio-setup-row {
   display: grid;
@@ -1921,7 +1920,7 @@ export const STUDIO_CSS = `
 }
 /* One chip grid for every row: six equal columns, each row starting at the first, so a row is one line and the
    columns line up from row to row. The tick has a box of its own after the label in every chip, selected or not and
-   only hidden when not, so a chip never changes width and the label and tick keep one even gap. */
+   only transparent when not (visibility would show through a hidden step), so a chip never changes width and the label and tick keep one even gap. */
 .crucible-studio-setup-chips {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -1943,9 +1942,11 @@ export const STUDIO_CSS = `
   flex: none;
   inline-size: 12px;
   block-size: 12px;
-  visibility: hidden;
+  opacity: 0;
 }
-.crucible-studio-setup-chips .crucible-studio-setup-card[data-selected="true"] .crucible-studio-setup-check { visibility: visible; }
+.crucible-studio-setup-chips .crucible-studio-setup-card[data-selected="true"] .crucible-studio-setup-check { opacity: 1; }
+/* A handle chip carries a dot, a name and the tick, which one column cannot hold, so it takes two. */
+.crucible-studio-setup-chips .crucible-studio-setup-card:has(.crucible-studio-setup-handle) { grid-column: span 2; }
 .crucible-studio-setup-chips .crucible-studio-setup-check .crucible-studio-icon {
   inline-size: 9px;
   block-size: 9px;
