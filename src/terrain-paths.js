@@ -100,6 +100,9 @@ function gaussian(distance, centre, spread) {
   return Math.exp(-0.5 * scaled * scaled);
 }
 
+// Each rut sits at RUT_CENTRE of the half width from the centre line and is RUT_SPREAD wide (one sigma); the two are chosen so the strip left between the ruts is about as wide as one rut.
+const RUT_CENTRE = 0.45;
+const RUT_SPREAD = 0.18;
 const SMOOTH_STEP_DIVISOR = 4;
 const MAXIMUM_CENTRE_SEGMENTS = 8192;
 const GRID_CELLS_PER_SIDE = 64;
@@ -207,7 +210,7 @@ function carvedHeight(path, distance, currentHeight, footHeight) {
   const halfWidth = path.width / 2;
   const bed = footHeight - path.depth;
   const crown = path.crown * Math.max(0, 1 - (distance / halfWidth) ** 2);
-  const rut = path.ruts * gaussian(distance, halfWidth * 0.5, halfWidth * 0.15);
+  const rut = path.ruts * gaussian(distance, halfWidth * RUT_CENTRE, halfWidth * RUT_SPREAD);
   const surface = bed + crown - rut;
   const blend = path.falloff > 0 ? smoothstep(halfWidth, halfWidth + path.falloff, distance) : (distance > halfWidth ? 1 : 0);
   const blended = surface * (1 - blend) + currentHeight * blend;

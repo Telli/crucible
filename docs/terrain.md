@@ -100,7 +100,7 @@ In a recipe, the same ground is the `terrain` geometry: see [Recipe terrain](#re
 | `width` | metres across the carved bed | 0.1 to 200 (3) |
 | `depth` | metres the bed sits below the ground at the centre line | 0 to 20 (0.2) |
 | `falloff` | metres on each side where the bed blends back into the hills | 0 to 200 (`width`) |
-| `ruts` | depth in metres of two wheel grooves at a quarter of the width from the centre | 0 to 2 (0) |
+| `ruts` | depth in metres of two wheel grooves at 0.225 of the width from the centre, so the strip between them is about as wide as one groove | 0 to 2 (0) |
 | `crown` | metres the middle of the bed rises above its sides | 0 to 2 (0) |
 | `shoulder` | metres of a lip raised beside the road, in the middle of the falloff | 0 to 2 (0) |
 | `smooth` | `true` runs a Catmull-Rom curve through the points, sampled every `width / 4` metres; `false` keeps straight segments | true or false (true) |

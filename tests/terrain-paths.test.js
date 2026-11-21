@@ -44,11 +44,28 @@ test('crown raises the middle, ruts cut two grooves and the shoulder raises a li
   const shouldered = createTerrainPaths([{ ...base, shoulder: 0.3 }], flat);
   assert.ok(Math.abs(crowned.height(0, 0) - plain.height(0, 0) - 0.2) < 1e-9);
   assert.equal(crowned.height(0, 4), plain.height(0, 4));
-  assert.ok(Math.abs(plain.height(0, 2) - rutted.height(0, 2) - 0.1) < 1e-9, 'a rut sits at a quarter of the width on each side');
-  assert.ok(Math.abs(plain.height(0, -2) - rutted.height(0, -2) - 0.1) < 1e-9);
-  assert.ok(plain.height(0, 0) - rutted.height(0, 0) < 0.001, 'no rut on the centre line');
+  assert.ok(Math.abs(plain.height(0, 1.8) - rutted.height(0, 1.8) - 0.1) < 1e-9, 'a rut sits at 0.225 of the width on each side');
+  assert.ok(Math.abs(plain.height(0, -1.8) - rutted.height(0, -1.8) - 0.1) < 1e-9);
+  assert.ok(plain.height(0, 0) - rutted.height(0, 0) < 0.02, 'the centre line holds only the tail of the two ruts');
   assert.ok(shouldered.height(0, 7) > plain.height(0, 7) + 0.1, 'a lip beside the road');
   assert.equal(shouldered.height(0, 20), 0);
+});
+
+test('with crown 0 the strip between two ruts is no higher than the bed and no wider than a rut', () => {
+  const flat = () => 0;
+  const road = createTerrainPaths([{ points: [[-30, 0], [30, 0]], width: 2.4, depth: 0.3, falloff: 1.2, ruts: 0.35 }], flat);
+  const bed = -0.3;
+  assert.ok(road.height(0, 0) <= bed + 1e-9, 'the centre is no higher than the bed');
+  const halfDepth = bed - 0.35 / 2;
+  const widthBelow = (from, to) => {
+    let width = 0;
+    for (let offset = from; offset < to; offset += 0.005) width += road.height(0, offset) < halfDepth ? 0.005 : 0;
+    return width;
+  };
+  const rutWidth = widthBelow(0.2, 1.2);
+  const ridgeWidth = 1.08 - rutWidth;
+  assert.ok(rutWidth > 0.3, `rut width ${rutWidth}`);
+  assert.ok(ridgeWidth <= rutWidth * 1.25, `the ridge between the ruts is ${ridgeWidth} m against a ${rutWidth} m rut`);
 });
 
 test('the mask is 1 across the width, fades beside it and is 0 far away; a name picks one path', () => {
