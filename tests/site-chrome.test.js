@@ -81,7 +81,13 @@ function navEntries(source) {
   const navMatch = source.match(/<nav class="nav-links" aria-label="Site">([\s\S]*?)<\/nav>/);
   assert.ok(navMatch, 'the Site nav is missing');
   const anchors = [...navMatch[1].matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)];
-  return anchors.map((anchor) => ({ href: anchor[1], label: anchor[2].replace(/<[^>]*>/g, '').trim() }));
+  return anchors.map((anchor) => ({ href: anchor[1], label: textOutsideTags(anchor[2]) }));
+}
+
+// The label is compared with a fixed word and never written back into a page, so this only drops the icon markup around it.
+function textOutsideTags(markup) {
+  const pieces = markup.split(/<[^>]*>/);
+  return pieces.join('').trim();
 }
 
 test('every site page shows Docs, Recipes, Showcase, Marketplace and Changelog in that order, with no Studio', () => {
