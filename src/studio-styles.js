@@ -1902,25 +1902,33 @@ export const STUDIO_CSS = `
 }
 /* The key caps of a keymap card: each tool's icon over its key, the same four in every card so the rows compare. */
 .crucible-studio-setup-keycaps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 10px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  justify-self: stretch;
+  margin-block-start: 6px;
 }
 .crucible-studio-setup-keycap {
   display: grid;
   justify-items: center;
-  gap: 4px;
-  color: var(--studio-muted);
+  gap: 6px;
+  color: var(--studio-text);
 }
-.crucible-studio-setup-keycap kbd {
-  min-inline-size: 28px;
-  padding: 3px 6px;
+.crucible-studio-setup-keycap > .crucible-studio-icon {
+  inline-size: 18px;
+  block-size: 18px;
+}
+.crucible-studio .crucible-studio-setup-keycap kbd {
+  box-sizing: border-box;
+  inline-size: 100%;
+  padding: 12px 0;
   border: 1px solid var(--studio-border);
   border-radius: 6px;
   background: var(--studio-bg);
   color: var(--studio-text);
-  font-family: var(--studio-font-mono);
-  font-size: 12px;
+  font-family: var(--studio-font);
+  font-size: 16px;
+  font-weight: 600;
   line-height: 1.2;
   text-align: center;
 }
