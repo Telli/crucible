@@ -1096,6 +1096,8 @@ export function createStudio(container, {
     'crucible-studio-pop-edit',
     createMenuItem('Undo', 'Ctrl+Z', () => undoButton.click(), 'undo'),
     createMenuItem('Redo', 'Ctrl+Shift+Z', () => redoButton.click(), 'redo'),
+    createMenuItem('Copy', 'Ctrl+C', () => copySelection(), 'duplicate'),
+    createMenuItem('Paste', 'Ctrl+V', () => pasteCopy(), 'duplicate'),
     createMenuItem('Duplicate', 'Shift+D', () => duplicateSelection(), 'duplicate'),
     createMenuItem('Delete', 'X', () => deleteButton.click(), 'remove'),
     createMenuItem('Deselect', 'Esc', () => controller.selectNode(null)),
@@ -2070,6 +2072,7 @@ export function createStudio(container, {
     ['T', 'Snap to a surface'],
     ['Shift + drag', 'Snap to a step or an angle'],
     ['Shift+A', 'Add an object or a light'],
+    ['Ctrl+C / Ctrl+V', 'Copy / Paste'],
     ['Shift+D / Ctrl+D', 'Duplicate'],
     ['X / Delete', 'Delete'],
     ['Esc', 'Deselect'],
@@ -3421,6 +3424,28 @@ export function createStudio(container, {
     }
   }
 
+  function copySelection() {
+    if (!controller.selectedNodeId) return;
+    controller.copySelected();
+    announce('Copied');
+  }
+
+  function pasteCopy() {
+    if (!controller.canPaste) return;
+    try {
+      const pasted = controller.pasteCopy();
+      announce(`Pasted ${pasted.label}`);
+    } catch (error) {
+      announce(error.message);
+    }
+  }
+
+  // Text the person selected on the page belongs to the browser's own copy.
+  function pageTextIsSelected() {
+    const selection = documentReference.defaultView?.getSelection?.();
+    return Boolean(selection && !selection.isCollapsed && selection.toString() !== '');
+  }
+
   const onWindowKeyDown = async event => {
     if (!root.isConnected) {
       return;
@@ -3445,6 +3470,13 @@ export function createStudio(container, {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd') {
       event.preventDefault();
       duplicateSelection();
+      return;
+    }
+    const copyOrPasteKey = event.key.toLowerCase();
+    if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && (copyOrPasteKey === 'c' || copyOrPasteKey === 'v') && !pageTextIsSelected()) {
+      event.preventDefault();
+      if (copyOrPasteKey === 'c') copySelection();
+      else pasteCopy();
       return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {

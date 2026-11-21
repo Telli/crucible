@@ -1138,6 +1138,59 @@ test('keyboard shortcuts still work while a slider or a switch holds the focus',
   assert.equal(ui.controller.tool, 'scale');
 });
 
+test('Ctrl+C and Ctrl+V copy and paste the selected object as one undo step, even after it is deleted', testContext => {
+  const ui = mountStudio(testContext);
+  const press = (key, properties = {}) => dispatch(ui.canvas, 'keydown', { key, ...properties });
+  ui.selectRow('hero');
+  assert.equal(press('c', { ctrlKey: true }).defaultPrevented, true);
+  assert.equal(ui.status(), 'Copied');
+  assert.equal(ui.studio.exportRecipe().nodes.length, 3, 'copying changes nothing');
+  assert.equal(ui.studio.dirty, false);
+
+  ui.selectRow('orb');
+  assert.equal(press('v', { metaKey: true }).defaultPrevented, true);
+  assert.match(ui.status(), /^Pasted hero copy/);
+  assert.equal(ui.studio.exportRecipe().nodes.length, 4);
+  const firstCopy = ui.controller.selectedNodeId;
+  assert.equal(ui.node(firstCopy).material, 'paint');
+  assert.equal(ui.studio.dirty, true);
+  ui.controller.undo();
+  assert.equal(ui.studio.exportRecipe().nodes.length, 3, 'one undo removes the paste');
+
+  press('v', { ctrlKey: true });
+  press('v', { ctrlKey: true });
+  const [firstPaste, secondPaste] = ui.studio.exportRecipe().nodes.slice(3);
+  assert.notDeepEqual(firstPaste.translation, secondPaste.translation, 'each paste lands beside the last');
+
+  ui.selectRow('hero');
+  press('Delete');
+  assert.equal(ui.node('hero'), undefined);
+  press('v', { ctrlKey: true });
+  assert.equal(ui.studio.exportRecipe().nodes.length, 4 + 1, 'a paste still works after the original is deleted');
+
+  const editMenu = ui.root.querySelector('#crucible-studio-pop-edit');
+  assert.ok(byText(editMenu, 'Copy'));
+  assert.ok(byText(editMenu, 'Paste'));
+  const labels = ui.root.querySelector('.crucible-studio-shortcuts-dialog').querySelectorAll('.crucible-studio-shortcut-item').map(item => item.textContent);
+  assert.ok(labels.some(label => label.includes('Ctrl+C / Ctrl+V')));
+});
+
+test('Ctrl+C and Ctrl+V are left to the browser while typing or while text is selected', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  const nameInput = ui.label('Node label');
+  assert.equal(dispatch(nameInput, 'keydown', { key: 'c', ctrlKey: true }).defaultPrevented, false);
+  assert.equal(dispatch(nameInput, 'keydown', { key: 'v', ctrlKey: true }).defaultPrevented, false);
+  assert.equal(ui.controller.canPaste, false);
+
+  ui.dom.document.defaultView.getSelection = () => ({ isCollapsed: false, toString: () => 'some words' });
+  assert.equal(dispatch(ui.canvas, 'keydown', { key: 'c', ctrlKey: true }).defaultPrevented, false);
+  assert.equal(ui.controller.canPaste, false);
+  ui.dom.document.defaultView.getSelection = () => ({ isCollapsed: true, toString: () => '' });
+  assert.equal(dispatch(ui.canvas, 'keydown', { key: 'c', ctrlKey: true }).defaultPrevented, true);
+  assert.equal(ui.controller.canPaste, true);
+});
+
 test('keyboard shortcuts are ignored while typing and after the Studio left the page', testContext => {
   const ui = mountStudio(testContext);
   const nameInput = ui.label('Node label');
@@ -2312,7 +2365,7 @@ test('the top bar has File, Edit, View, Agent and Help menus that do what their 
   assert.equal(byText(popover('new'), 'Save').dataset.shortcut, 'Ctrl+S');
 
   menuButton('Edit').click();
-  assert.deepEqual(rows('edit'), ['Undo', 'Redo', 'Duplicate', 'Delete', 'Deselect', 'Hide', 'Show all', 'Reset position', 'Reset rotation', 'Reset scale', 'Settings…']);
+  assert.deepEqual(rows('edit'), ['Undo', 'Redo', 'Copy', 'Paste', 'Duplicate', 'Delete', 'Deselect', 'Hide', 'Show all', 'Reset position', 'Reset rotation', 'Reset scale', 'Settings…']);
   ui.selectRow('hero');
   const countBefore = ui.studio.exportRecipe().nodes.length;
   byText(popover('edit'), 'Duplicate').click();

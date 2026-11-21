@@ -12,7 +12,7 @@ The scene fills the window and the controls float on top of it.
 
 | Where | What it does |
 | --- | --- |
-| Top left | The menus. **File**: open, save, the recipe JSON, the three exports and the starting scenes. **Edit**: undo, redo, duplicate, delete, deselect and Settings. **View**: front, right and top view, perspective or orthographic, frame the selection, the grid and the panels. **Agent**: copy a prompt for an AI agent and reload when it edits the file. **Help**: the keyboard shortcuts. Each row shows its key. |
+| Top left | The menus. **File**: open, save, the recipe JSON, the three exports and the starting scenes. **Edit**: undo, redo, copy, paste, duplicate, delete, deselect and Settings. **View**: front, right and top view, perspective or orthographic, frame the selection, the grid and the panels. **Agent**: copy a prompt for an AI agent and reload when it edits the file. **Help**: the keyboard shortcuts. Each row shows its key. |
 | Top centre | The workspaces, in the order the work runs: **Build** (objects and their place), **Look** (materials, lighting, sun, exposure, fog) and **Animate** (camera, lens, shots and the timeline). Each one shows only the panels its step needs. Opening a panel from anywhere, or adding a keyframe, brings its workspace forward. A workspace is a way of looking at the scene: it is not saved in the recipe and undo does not touch it. |
 | Top right | The file name, which opens the File menu, and **Export** (PNG image, GLB model, web pack). A green dot beside the name means Studio reloads the file when an agent edits it. |
 | Left rail | The tools that change the scene come first: select, move, rotate, scale, snap to a surface, then add an object or a light, undo and redo. Under one line sit the switches that only change what you see: show or hide the grid, show or hide the panels. |
@@ -83,6 +83,7 @@ The keys follow Blender where Studio has the same action. **Help ▸ Keyboard sh
 | X, Y, Z | While holding an object: keep it to that axis; the same key again frees it |
 | Click or Enter, Esc or right click | While holding an object: place it, put it back |
 | Shift+A | Add an object or a light |
+| Ctrl+C, Ctrl+V | Copy the selected object, paste a copy of it (one undo step, still works after the original is deleted) |
 | Shift+D or Ctrl+D | Duplicate |
 | X or Delete | Delete |
 | Esc | Deselect |
