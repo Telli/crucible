@@ -5,7 +5,7 @@ import { measureWaterShadows } from '../scripts/measure-water-shadows.mjs';
 import { WATER_PRESETS } from '../src/world-material-shader.js';
 
 // Draws the pool in Chrome, so it runs only when asked:
-//   RENDER_TESTS=1 bash ~/.agents/tools/gpu-lock.sh node --test tests/water-shadows-render.test.js
+//   RENDER_TESTS=1 node --test tests/water-shadows-render.test.js
 const chromePath = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const enabled = process.env.RENDER_TESTS === '1' && existsSync(chromePath);
 

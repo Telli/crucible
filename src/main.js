@@ -1,5 +1,5 @@
+import './site-chrome.js';
 import './style.css';
-import './brand.js';
 import { CrucibleRenderer, groundPart, studioFloorHeight } from './renderer.js';
 import { createAdaptiveResolution, createGpuTimer } from './adaptive-quality.js';
 import { loadSampleModel } from './model.js';

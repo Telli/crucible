@@ -1,6 +1,5 @@
+import './site-chrome.js';
 import './modeling-style.css';
-import './brand.js';
-import './site-theme.css';
 import { CrucibleRenderer } from './renderer.js';
 import { createLanternScene } from './modeling-scene.js';
 import { mountButton } from './site-controls.js';
