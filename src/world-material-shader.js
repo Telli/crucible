@@ -13,7 +13,7 @@ const WATER_MAXIMUM_THICKNESS_RATIO = 0.02;
 
 /** Copies a recipe material's water fields: a water material always carries the resolved absorption, turbidity and preset. */
 export function copyWaterFields(value, result, toVector) {
-  const given = ['waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamVeins', 'contactFoam', 'caustics'].filter(field => value[field] !== undefined);
+  const given = ['waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamVeins', 'contactFoam', 'caustics', 'ripples'].filter(field => value[field] !== undefined);
   if (result.tag !== 'water') {
     if (given.length > 0) {
       throw new RangeError(`${given.join(', ')} need the water tag.`);
@@ -26,6 +26,50 @@ export function copyWaterFields(value, result, toVector) {
   if (caustics) {
     result.caustics = caustics;
   }
+  if (value.ripples !== undefined) {
+    result.ripples = resolveWaterRipples(value.ripples);
+  }
+}
+
+export const WATER_RIPPLE_RANGES = Object.freeze({ strength: [0, 1], speed: [0, 2], windDirection: [-360, 360] });
+export const WATER_RIPPLE_DEFAULTS = Object.freeze({ strength: 1, speed: 1 });
+
+/**
+ * The detail ripples of a water material, the 0.15 to 3 m wind ripples that break the surface and the sun glint into facets.
+ * `strength` 0 to 1 (1 default) scales their height, `speed` 0 to 2 (1 default) scales how fast they travel, and `windDirection` (degrees,
+ * as the `ocean` edit's `direction`; unset by default) runs them downwind within about 40 degrees of that direction instead of in all
+ * directions. With nothing given the ripples are the ones every water material has always had. A calm, wind-aligned sea does not boil
+ * in a film at 24 fps, where fast ripples cross a pixel in a frame.
+ */
+export function resolveWaterRipples(ripples) {
+  if (ripples === null || typeof ripples !== 'object' || Array.isArray(ripples)) {
+    throw new TypeError('ripples must be an object such as { "strength": 0.3, "speed": 0.6, "windDirection": 0 }.');
+  }
+  const unknown = Object.keys(ripples).filter(key => !(key in WATER_RIPPLE_RANGES));
+  if (unknown.length > 0) {
+    throw new TypeError(`ripples has no field ${unknown.join(', ')}; pass strength, speed or windDirection.`);
+  }
+  const resolved = { ...WATER_RIPPLE_DEFAULTS, ...ripples };
+  for (const [field, [minimum, maximum]] of Object.entries(WATER_RIPPLE_RANGES)) {
+    const value = resolved[field];
+    if (value === undefined && field === 'windDirection') {
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+      throw new RangeError(`ripples.${field} must be a number from ${minimum} to ${maximum}, such as ${WATER_RIPPLE_DEFAULTS[field] ?? 0}.`);
+    }
+  }
+  return Object.freeze(resolved);
+}
+
+/** The `waterRipples` uniform: strength, speed, 1 when the ripples follow the wind, and the direction they travel in radians. No `ripples` sends the defaults, which is the unchanged look. */
+export function waterRipplesUniform(ripples) {
+  const strength = ripples?.strength ?? WATER_RIPPLE_DEFAULTS.strength;
+  const speed = ripples?.speed ?? WATER_RIPPLE_DEFAULTS.speed;
+  if (ripples?.windDirection === undefined) {
+    return [strength, speed, 0, 0];
+  }
+  return [strength, speed, 1, ripples.windDirection * Math.PI / 180];
 }
 
 export const WATER_FOAM_EDGES = Object.freeze(['soft', 'hard']);
@@ -326,6 +370,21 @@ export function contactFoamUniform(contact) {
   return [contact.width, contact.hardness, contact.noise, 1];
 }
 
+const rippleLocations = new WeakMap();
+
+/** Sends the detail ripple controls of a water batch. A batch without `ripples` sends strength 1, speed 1 and no wind alignment. */
+function bindWaterRipples(renderer, batch) {
+  if (!renderer.shaderFeatures?.has('water')) {
+    return;
+  }
+  let location = rippleLocations.get(renderer);
+  if (location?.program !== renderer.program) {
+    location = { program: renderer.program, ripples: renderer.context.getUniformLocation(renderer.program, 'waterRipples') };
+    rippleLocations.set(renderer, location);
+  }
+  renderer.context.uniform4f(location.ripples, ...waterRipplesUniform(batch.parts[0].material.ripples));
+}
+
 const foamStyleLocations = new WeakMap();
 
 /** Sends the foam style of a water batch: 1 for a hard edge, and the width factor. Other batches get the soft default. */
@@ -353,6 +412,7 @@ layerTextureSupport.bind = (renderer, mapState, layerState, batch) => {
   bindWaterBody(renderer);
   bindWaterFoamStyle(renderer, batch);
   bindWaterFoamVeins(renderer, batch);
+  bindWaterRipples(renderer, batch);
 };
 
 // Wind for the foliage (4) and grass (7) tags, shared by the colour and shadow vertex shaders so both
@@ -550,7 +610,9 @@ vec3 windOffset(vec3 localPosition, vec3 worldPoint, vec2 leafUv, float surfaceT
   return vec3(push.x, 0.0, push.y);
 }
 `,
-  worldFunctions: `float terrainHash(vec2 position) {
+  worldFunctions: `// Declared with the function that reads it: programs that carry the functions but no water declarations compile it too.
+uniform vec4 waterRipples;
+float terrainHash(vec2 position) {
   vec3 seed = fract(vec3(position.xyx) * 0.1031);
   seed += dot(seed, seed.yzx + 33.33);
   return fract((seed.x + seed.y) * seed.z);
@@ -594,13 +656,17 @@ vec2 waterDetailSlope(vec2 position, vec2 positionDx, vec2 positionDy, out float
   float wavenumber = 2.1;
   float angle = 0.4;
   for (int index = 0; index < 8; index++) {
+    if (waterRipples.z > 0.5) {
+      // Downwind: a wave travels against its direction vector (the phase grows with time), so turn it half a circle to the wind.
+      angle = waterRipples.w + 3.14159265 + (fract(float(index) * 0.618034) - 0.5) * 1.4;
+    }
     vec2 direction = vec2(cos(angle), sin(angle));
     float footprint = abs(dot(positionDx, direction)) + abs(dot(positionDy, direction));
     float visible = waterWaveVisibility(footprint, wavenumber);
     float drift = terrainNoise(position * wavenumber * 0.09 + float(index) * 9.17).x - 0.5;
     float strength = 0.15 + 1.7 * terrainNoise(position * wavenumber * 0.06 + float(index) * 23.9 + 4.0).x;
-    float phase = dot(position, direction) * wavenumber + time * sqrt(9.81 * wavenumber) + float(index) * 1.7 + drift * 5.0;
-    float amplitude = 0.085 * pow(wavenumber / 2.1, -0.3) * strength;
+    float phase = dot(position, direction) * wavenumber + time * waterRipples.y * sqrt(9.81 * wavenumber) + float(index) * 1.7 + drift * 5.0;
+    float amplitude = 0.085 * pow(wavenumber / 2.1, -0.3) * strength * waterRipples.x;
     slope += direction * cos(phase) * amplitude * visible;
     lostVariance += 0.5 * amplitude * amplitude * (1.0 - visible * visible);
     wavenumber *= 1.7320508;
