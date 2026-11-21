@@ -394,6 +394,13 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `scripts/mcp-server.mjs:980`
 - Drive: none: needs an MCP client (`npm run mcp`)
 
+### `scene_wedge`
+- Name: Compare one field at several values
+- Surface: MCP
+- Reach: MCP tool `scene_wedge`
+- Source: `scripts/mcp-server.mjs:1218`
+- Drive: none: needs an MCP client (`npm run mcp`)
+
 ### `scene_checkpoint`
 - Name: Save a private recipe snapshot
 - Surface: MCP

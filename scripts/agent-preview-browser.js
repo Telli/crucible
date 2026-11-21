@@ -52,6 +52,7 @@ import { AGENT_SCENE_DEFAULT_LIMITS, MEMORY_CEILING_MIB } from '../src/agent-sce
 import { describeApplication } from '../src/agent-apply-report.js';
 import { framingProblems, placementProblems, textureProblems, exposureProblems, lumaShares } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, createBranchStore, printableLabel } from '../src/agent-branches.js';
+import { wedgeOperation } from '../src/agent-wedge.js';
 import { agentAssetDecodeOptions, withCatalogLimitAdvice } from '../src/agent-asset-limits.js';
 import { describeMarks, validateMarks } from '../src/agent-annotate.js';
 import { sceneQueryFor, partMaterialsFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache } from './agent-walkmap.js';
@@ -1432,6 +1433,28 @@ window.__agentPreview = {
       const { shared } = record.branches.fork(name, { recipe: scratch.exportRecipe(), baseRecipe, operations, baseRevision: expectedRevision });
       return { sessionId, branch: name, sourceRevision: record.scene.revision, shared,
         branches: record.branches.names(), snapshots: record.branches.snapshotCount() };
+    });
+  },
+  /** One scratch recipe per value of a field (scene_wedge). Each copy is built from the scene's own recipe and dropped after export; the scene, its revision and its branches stay as they are. */
+  wedgeRecipes({ sessionId, expectedRevision, target, field, values }) {
+    const record = requireSession(sessionId);
+    if (record.asset) throw new TypeError('scene_wedge supports procedural recipe scenes, not an imported asset scene.');
+    const operations = [];
+    return afterMeshBooleans(operations, () => {
+      if (record.scene.revision !== expectedRevision) throw new Error(staleRevisionMessage('wedge', expectedRevision, record.scene.revision));
+      const baseRecipe = record.scene.exportRecipe();
+      const recipes = values.map((value, index) => {
+        const operation = wedgeOperation({ target, field, value }, baseRecipe);
+        const scratch = createAgentScene(baseRecipe, {}, { assets: record.placedAssets, sequenceFrames: record.sequenceFrames });
+        try {
+          scratch.apply([operation], { expectedRevision: scratch.revision });
+        } catch (error) {
+          error.message = `values[${index}] (${JSON.stringify(value).slice(0, 80)}) was refused: ${error.message}`;
+          throw error;
+        }
+        return scratch.exportRecipe();
+      });
+      return { sessionId, sourceRevision: record.scene.revision, recipes };
     });
   },
   branchRecipe({ sessionId, name }) {

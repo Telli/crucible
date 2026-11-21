@@ -1007,7 +1007,7 @@ const destroy = { readOnlyHint: false, destructiveHint: true, idempotentHint: fa
 const TOOL_TITLES = {
   scene_capabilities: 'Scene capabilities', scene_create: 'Create scene', scene_asset_catalog: 'Asset catalog', scene_create_asset: 'Create scene from asset',
   scene_inspect: 'Inspect scene', scene_walkmap: 'Walkable map', mesh_inspect: 'Inspect meshes', mesh_edit: 'Edit mesh', mesh_stack: 'Set mesh modifiers',
-  scene_apply: 'Apply scene edits', scene_look: 'Look at scene', scene_ask_user: 'Ask the user to mark the scene', scene_ask_user_submit: 'Send marks from the inline view', scene_review: 'Review camera samples', scene_checkpoint: 'Save checkpoint',
+  scene_apply: 'Apply scene edits', scene_look: 'Look at scene', scene_ask_user: 'Ask the user to mark the scene', scene_ask_user_submit: 'Send marks from the inline view', scene_review: 'Review camera samples', scene_wedge: 'Compare one field at several values', scene_checkpoint: 'Save checkpoint',
   scene_restore: 'Restore checkpoint', scene_release_checkpoint: 'Release checkpoint', scene_export_recipe: 'Export recipe', scene_export_glb: 'Export GLB', scene_export_web: 'Export web game',
   scene_dispose: 'Dispose scene', scene_render_submit: 'Submit render job', scene_render_status: 'Render job status', scene_render_cancel: 'Cancel render job',
   scene_render_result: 'Render job result', scene_render_release: 'Release render job',
@@ -1214,6 +1214,18 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     const { data, mimeType, metadata } = await runtime.review(reviewInput);
     const shown = chosenFormat('scene_review', response_format) === 'concise' ? conciseReview(metadata) : metadata;
     return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(shown) }], structuredContent: shown };
+  });
+  register('scene_wedge', 'Render one field at 2 to 8 values side by side in one labeled PNG grid, to compare a look. target: environment, effects, shadow or a material ID; field: a name or a path such as roughness, lightDirection, keyIntensity, fogDensity or pointLights.0.intensity. The scene, its revision and its branches stay unchanged.', z.strictObject({
+    ...sessionFields, expectedRevision,
+    target: z.string().min(1).max(128),
+    field: z.string().min(1).max(64),
+    values: z.array(z.unknown()).min(2).max(8).describe('One JSON value per picture, as scene_apply takes it.'),
+    shot: z.strictObject({ camera: z.strictObject(cameraFields).optional(), motionTime: z.number().min(0).max(3600).nullable().optional() }).optional().describe('Camera and pose shared by every picture.'),
+    width: z.number().int().min(64).max(480).optional().describe('Picture width. Defaults to 320, or 240 for 7 or 8 values.'),
+    height: z.number().int().min(64).max(480).optional(),
+  }), readOnly, async argumentsValue => {
+    const { data, mimeType, metadata } = await runtime.wedge(argumentsValue);
+    return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(metadata) }], structuredContent: metadata };
   });
   register('scene_checkpoint', 'Save a private recipe snapshot. Up to 16 are kept per scene; past that the oldest is evicted.', z.strictObject(sessionFields), { ...edit, destructiveHint: false }, async argumentsValue => jsonResult(await runtime.checkpoint(argumentsValue)));
   register('scene_restore', 'Restore a checkpoint atomically using the current revision. The checkpoint remains available and revision increments. Pass exactly one of checkpointId, revision or branch. With revision (last 4 kept), undo with no checkpoint. With branch, keep that branch (one revision) and drop all branches.', z.strictObject({ ...sessionFields, checkpointId: restoreCheckpointId, revision: z.number().int().min(0).optional(), ...restoreBranchField, expectedRevision }), edit, async argumentsValue => jsonResult(await runtime.restore(argumentsValue)));

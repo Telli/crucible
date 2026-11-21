@@ -61,6 +61,8 @@ import { ANNOTATE_LIMITS, validateMarks, isBoundedPng } from '../src/agent-annot
 import { REVIEW_LINK_LIMITS, newReviewId, parseReviewFile, validateReviewMarks } from '../src/review-link.js';
 import { writeReviewBuild } from './review-page.mjs';
 import { normalizeReview, reviewDeadlineMessage, REVIEW_LIMITS } from './agent-review.mjs';
+import { normalizeWedge } from './agent-wedge.mjs';
+import { WEDGE_LIMITS } from '../src/agent-wedge.js';
 import { mergeFrameDiagnostics, pathTracerFindingsLimit, pathTracerSkippedPassesWarning } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { createSharedGpuCard } from './agent-gpu-queue.mjs';
@@ -1317,6 +1319,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         review: { ...REVIEW_LIMITS, backend, memoryBudgetMiB: memory, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS,
           totalTimeoutMs: EVALUATION_TIMEOUT_MS,
           sourcePreserved: true, defaultMotionTime: null, defaultRendererTime: 0, branches: BRANCH_LIMITS },
+        wedge: { ...WEDGE_LIMITS, backend, memoryBudgetMiB: memory },
         phase: closing && phase !== 'closed' ? 'closing' : phase,
         availableIn: packageMetadata.version,
         assets: {
@@ -1552,15 +1555,35 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       let settings;
       try { settings = normalizeReview(input); }
       catch (error) { return Promise.reject(error); }
+      const loadBranchRecipes = async () => {
+        const recipes = new Map();
+        for (const name of settings.branchNames) {
+          recipes.set(name, withSnapshotSkyColors(await invoke('branchRecipe', { sessionId: settings.sessionId, name })));
+        }
+        return recipes;
+      };
+      return this.renderReview(settings, loadBranchRecipes);
+    },
+    // scene_wedge: one field at several values, each value a scratch copy of the scene that is drawn into the review grid and dropped.
+    async wedge(input) {
+      const settings = normalizeWedge(input);
+      const loadVariantRecipes = async () => {
+        const { recipes } = await invoke('wedgeRecipes', { sessionId: settings.sessionId, expectedRevision: settings.expectedRevision,
+          target: settings.wedge.target, field: settings.wedge.field, values: settings.wedge.values });
+        return new Map(recipes.map((recipe, index) => [settings.branchNames[index], { recipe: withSnapshotSkyColors({ recipe }).recipe, stale: false }]));
+      };
+      const output = await this.renderReview(settings, loadVariantRecipes);
+      const { shots, ...rest } = output.metadata;
+      const wedgeShots = shots.map(({ branch: _branch, branchStale: _stale, ...shot }, index) => ({ ...shot, value: settings.wedge.values[index] }));
+      return { ...output, metadata: { ...rest, wedge: { target: settings.wedge.target, field: settings.wedge.field }, shots: wedgeShots } };
+    },
+    renderReview(settings, loadBranchRecipes) {
       return gpuUnit('light', () => enqueue(async () => {
         await requirePreviewRenderer();
         requireSession(settings.sessionId);
         const snapshot = withSnapshotSkyColors(await invoke('snapshot', settings));
         await assertSceneFitsBeforeJob(snapshot.recipe);
-        const branchRecipes = new Map();
-        for (const name of settings.branchNames) {
-          branchRecipes.set(name, withSnapshotSkyColors(await invoke('branchRecipe', { sessionId: settings.sessionId, name })));
-        }
+        const branchRecipes = await loadBranchRecipes();
         const assetBytes = snapshot.recipe.format === 'crucible.asset' ? await (await catalog()).read(snapshot.recipe.assetId) : undefined;
         let privateSessionId;
         const started = performance.now();
