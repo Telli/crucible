@@ -4083,3 +4083,47 @@ test('Reset in Settings keeps the setup marked done (#2847)', testContext => {
   assert.equal(ui.studio.preferences.theme, 'system');
   assert.equal(ui.studio.setupDone, true);
 });
+
+test('the setup names its steps in a row, jumps between them and rests focus on the primary button (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  const stepNames = () => ui.root.querySelectorAll('.crucible-studio-setup-step').map(button => button.textContent);
+  ui.studio.openSetup();
+  assert.deepEqual(stepNames(), ['Theme', 'Performance', 'Modelling', 'AI agent']);
+  assert.equal(ui.dom.document.activeElement, setupButton(ui, 'Next'), 'no card starts with the focus');
+  const performanceStep = ui.root.querySelectorAll('.crucible-studio-setup-step')[1];
+  performanceStep.click();
+  assert.equal(performanceStep.getAttribute('aria-current'), 'step');
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-setup-group').filter(group => !group.hidden).length, 1);
+  ui.root.querySelectorAll('.crucible-studio-setup-step')[3].click();
+  assert.equal(setupButton(ui, 'Done').hidden, false);
+  ui.studio.openSetup({ layout: 'sheet' });
+  assert.equal(ui.root.querySelector('.crucible-studio-setup-steps').hidden, true, 'the sheet has no step row');
+});
+
+test('each tier card shows its pixel ratio and anti-aliasing on this screen, and Automatic names the tier it took (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.dom.document.defaultView.devicePixelRatio = 1;
+  ui.studio.openSetup();
+  const facts = card => card.querySelectorAll('.crucible-studio-setup-fact').map(fact => fact.textContent);
+  const cardOf = value => setupCard(ui, 'performance', value).parentNode;
+  assert.deepEqual(facts(cardOf('light')), ['0.75x', 'AA 2x']);
+  assert.deepEqual(facts(cardOf('balanced')), ['1x', 'AA 4x']);
+  assert.deepEqual(facts(cardOf('sharp')), ['1x', 'AA 4x']);
+  assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-card-tier').textContent, 'Balanced');
+  assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-card-detail').textContent, 'Hardware not reported');
+  assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-card-detail').title, 'Hardware not reported');
+});
+
+test('the agent step shows the prompt and the button says Copied once it is on the clipboard (#2847)', async testContext => {
+  const ui = mountStudio(testContext);
+  ui.studio.openSetup();
+  const prompt = ui.root.querySelector('.crucible-studio-setup-prompt');
+  assert.equal(prompt.readOnly, true);
+  assert.match(prompt.value, /Edit Crucible scene/);
+  setupButton(ui, 'Copy an agent prompt').click();
+  await ui.dom.settle();
+  const copied = setupButton(ui, 'Copied');
+  assert.ok(copied, 'the button shows Copied');
+  assert.ok(copied.querySelector('svg') ?? copied.children[0], 'with the check icon');
+  assert.equal(ui.dom.clipboardTexts[0], prompt.value);
+});

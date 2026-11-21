@@ -1,7 +1,6 @@
 // The first-run setup dialog: four groups of choice cards (theme, performance, modelling, working with an agent) that
 // change the live Studio behind it. It is built from the preferences Studio already keeps, so nothing here is saved
 // anywhere new. `open({ layout })` shows the groups one page at a time ('steps') or all on one sheet ('sheet').
-import { STUDIO_PIXEL_RATIO_CAPS } from './studio-hardware.js';
 import { STUDIO_PREFERENCE_CHOICES } from './studio-preferences.js';
 
 export const STUDIO_SETUP_LAYOUTS = Object.freeze(['steps', 'sheet']);
@@ -26,36 +25,52 @@ const MODELLING_ROWS = Object.freeze([
   { name: 'startWorkspace', label: 'Open in', describe: capitalize },
 ]);
 
+// The sketch's parts, drawn in the tokens of the theme the sketch shows.
+const SKETCH_PARTS = Object.freeze(['bar', 'rail', 'viewport', 'ground', 'solid', 'card-top', 'card-bottom']);
+
 let setupInstanceCount = 0;
 
 function capitalize(word) {
   return word[0].toUpperCase() + word.slice(1);
 }
 
-function formatPixelRatio(tier) {
-  return `${STUDIO_PIXEL_RATIO_CAPS[tier]}x`;
+function formatRatio(pixelRatio) {
+  return `${Number(pixelRatio.toFixed(2))}x`;
 }
 
-/** A few rectangles in one theme's tokens: the bar, the rail, the viewport and the side panel. */
-function createThemeSketch(documentReference, createElement, theme) {
-  return createElement(
+/** A miniature of Studio in one theme: top bar, tool rail, a viewport with a ground line and a solid, and two cards. */
+function createThemeSketch(documentReference, createElement, theme, half = null) {
+  const sketch = createElement(
     documentReference,
     'span',
     { className: 'crucible-studio-setup-sketch', dataset: { theme } },
-    ...['bar', 'rail', 'viewport', 'side'].map(part => createElement(documentReference, 'span', { className: 'crucible-studio-setup-sketch-part', dataset: { part } })),
+    ...SKETCH_PARTS.map(part => createElement(documentReference, 'span', { className: 'crucible-studio-setup-sketch-part', dataset: { part } })),
   );
+  if (half) {
+    sketch.dataset.half = half;
+  }
+  return sketch;
 }
 
 function createThemePreview(documentReference, createElement, theme) {
-  if (theme !== 'system') {
-    return createElement(documentReference, 'span', { className: 'crucible-studio-setup-preview' }, createThemeSketch(documentReference, createElement, theme));
-  }
-  const darkHalf = createThemeSketch(documentReference, createElement, 'dark');
-  darkHalf.dataset.half = 'true';
-  return createElement(documentReference, 'span', { className: 'crucible-studio-setup-preview' }, createThemeSketch(documentReference, createElement, 'light'), darkHalf);
+  const sketches = theme === 'system'
+    ? [createThemeSketch(documentReference, createElement, 'light', 'left'), createThemeSketch(documentReference, createElement, 'dark', 'right')]
+    : [createThemeSketch(documentReference, createElement, theme)];
+  return createElement(documentReference, 'span', { className: 'crucible-studio-setup-preview' }, ...sketches);
 }
 
-export function createStudioSetup({ documentReference, createElement, createIcon, readPreferences, changePreferences, describeHardware, copyAgentPrompt, onClose }) {
+export function createStudioSetup({
+  documentReference,
+  createElement,
+  createIcon,
+  readPreferences,
+  changePreferences,
+  describeHardware,
+  viewportSettingsForTier,
+  agentPromptText,
+  copyAgentPrompt,
+  onClose,
+}) {
   setupInstanceCount += 1;
   const instanceId = setupInstanceCount;
   const radios = [];
@@ -64,7 +79,7 @@ export function createStudioSetup({ documentReference, createElement, createIcon
 
   // One radio per card, so the arrow keys, Tab and a screen reader work without any script. The radio sits invisibly
   // over the card; the card shows a check mark when chosen, so the choice is never shown by colour alone.
-  function createChoiceCard({ groupName, preferenceName, value, preview, label, detail }) {
+  function createChoiceCard({ groupName, preferenceName, value, preview, label, labelSuffix, details = [] }) {
     const radio = createElement(documentReference, 'input', { type: 'radio', name: `crucible-studio-setup-${instanceId}-${groupName}`, value: String(value) });
     radio.dataset.setup = preferenceName;
     radio.addEventListener('change', () => {
@@ -73,17 +88,23 @@ export function createStudioSetup({ documentReference, createElement, createIcon
       }
     });
     radios.push(radio);
-    const card = createElement(
+    const labelRow = createElement(
+      documentReference,
+      'span',
+      { className: 'crucible-studio-setup-card-name' },
+      createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-label', textContent: label }),
+      ...(labelSuffix ? [labelSuffix] : []),
+    );
+    return createElement(
       documentReference,
       'label',
       { className: 'crucible-studio-setup-card' },
       radio,
       ...(preview ? [preview] : []),
-      createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-label', textContent: label }),
-      ...(detail ? [detail] : []),
+      labelRow,
+      ...details,
       createElement(documentReference, 'span', { className: 'crucible-studio-setup-check' }, createIcon(documentReference, 'check')),
     );
-    return card;
   }
 
   function createCardGroup(groupLabel, cards, className = '') {
@@ -103,8 +124,16 @@ export function createStudioSetup({ documentReference, createElement, createIcon
     preview: createThemePreview(documentReference, createElement, value),
   }));
 
-  const hardwareDetail = createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-detail' });
-  const automaticRatio = createElement(documentReference, 'span', { className: 'crucible-studio-setup-ratio' });
+  // Each tier card shows what the tier gives on this screen: the pixel ratio and the anti-aliasing samples.
+  const performanceFacts = [];
+  function createFacts(tier) {
+    const ratio = createElement(documentReference, 'span', { className: 'crucible-studio-setup-fact' });
+    const antiAliasing = createElement(documentReference, 'span', { className: 'crucible-studio-setup-fact' });
+    performanceFacts.push({ tier, ratio, antiAliasing });
+    return createElement(documentReference, 'span', { className: 'crucible-studio-setup-facts' }, ratio, antiAliasing);
+  }
+  const automaticTierName = createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-tier' });
+  const hardwareLine = createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-detail' });
   const performanceCards = PERFORMANCE_CHOICES.map(({ value, label }) => {
     const automatic = value === 'automatic';
     return createChoiceCard({
@@ -112,8 +141,8 @@ export function createStudioSetup({ documentReference, createElement, createIcon
       preferenceName: 'performance',
       value,
       label,
-      preview: automatic ? automaticRatio : createElement(documentReference, 'span', { className: 'crucible-studio-setup-ratio', textContent: formatPixelRatio(value) }),
-      detail: automatic ? hardwareDetail : null,
+      labelSuffix: automatic ? automaticTierName : null,
+      details: automatic ? [createFacts(null), hardwareLine] : [createFacts(value)],
     });
   });
 
@@ -130,24 +159,34 @@ export function createStudioSetup({ documentReference, createElement, createIcon
       'div',
       { className: 'crucible-studio-setup-row' },
       createElement(documentReference, 'span', { className: 'crucible-studio-setup-row-label', textContent: label }),
-      createCardGroup(label, cards, 'crucible-studio-setup-cards-compact'),
+      createCardGroup(label, cards, 'crucible-studio-setup-chips'),
     );
   });
 
-  const copyPromptButton = createElement(
-    documentReference,
-    'button',
-    { type: 'button', className: 'crucible-studio-setup-action' },
-    createIcon(documentReference, 'agent'),
-    createElement(documentReference, 'span', { textContent: 'Copy an agent prompt' }),
-  );
-  copyPromptButton.addEventListener('click', () => copyAgentPrompt());
+  // The agent step shows the prompt itself, and the button copies it.
+  const promptBlock = createElement(documentReference, 'textarea', {
+    className: 'crucible-studio-setup-prompt',
+    readOnly: true,
+    rows: 5,
+    attributes: { 'aria-label': 'Prompt for the agent' },
+  });
+  const copyPromptButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-action' });
+  function showCopied(copied) {
+    copyPromptButton.replaceChildren(
+      createIcon(documentReference, copied ? 'check' : 'agent'),
+      createElement(documentReference, 'span', { textContent: copied ? 'Copied' : 'Copy an agent prompt' }),
+    );
+  }
+  showCopied(false);
+  copyPromptButton.addEventListener('click', async () => {
+    showCopied(await copyAgentPrompt());
+  });
 
   const groups = [
-    { title: 'Theme', content: [createCardGroup('Theme', themeCards)] },
-    { title: 'Performance', content: [createCardGroup('Performance', performanceCards)] },
-    { title: 'Modelling', content: modellingRows },
-    { title: 'Work with an AI agent', content: [copyPromptButton] },
+    { title: 'Theme', stepName: 'Theme', content: [createCardGroup('Theme', themeCards)] },
+    { title: 'Performance', stepName: 'Performance', content: [createCardGroup('Performance', performanceCards, 'crucible-studio-setup-cards-wide')] },
+    { title: 'Modelling', stepName: 'Modelling', content: modellingRows },
+    { title: 'Work with an AI agent', stepName: 'AI agent', content: [createElement(documentReference, 'div', { className: 'crucible-studio-setup-agent' }, promptBlock, copyPromptButton)] },
   ];
   const sections = groups.map(({ title, content }, index) => createElement(
     documentReference,
@@ -157,9 +196,16 @@ export function createStudioSetup({ documentReference, createElement, createIcon
     ...content,
   ));
 
-  const stepMarks = groups.map(() => createElement(documentReference, 'span', { className: 'crucible-studio-setup-step-mark' }));
-  const stepIndicator = createElement(documentReference, 'div', { className: 'crucible-studio-setup-steps' }, ...stepMarks);
-  const skipButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Skip' });
+  const stepButtons = groups.map(({ stepName }, index) => {
+    const button = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-step', textContent: stepName });
+    button.addEventListener('click', () => {
+      stepIndex = index;
+      showStep();
+    });
+    return button;
+  });
+  const stepRow = createElement(documentReference, 'div', { className: 'crucible-studio-setup-steps' }, ...stepButtons);
+  const skipButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-skip', textContent: 'Skip' });
   const backButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Back' });
   const nextButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-primary', textContent: 'Next' });
   const doneButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-primary', textContent: 'Done' });
@@ -169,17 +215,9 @@ export function createStudioSetup({ documentReference, createElement, createIcon
     'dialog',
     { className: 'crucible-studio-setup-dialog', attributes: { 'aria-labelledby': `crucible-studio-setup-${instanceId}-heading` } },
     createElement(documentReference, 'h2', { id: `crucible-studio-setup-${instanceId}-heading`, textContent: 'Set up Studio' }),
+    stepRow,
     createElement(documentReference, 'div', { className: 'crucible-studio-setup-body' }, ...sections),
-    createElement(
-      documentReference,
-      'div',
-      { className: 'crucible-studio-dialog-actions crucible-studio-setup-actions' },
-      stepIndicator,
-      skipButton,
-      backButton,
-      nextButton,
-      doneButton,
-    ),
+    createElement(documentReference, 'div', { className: 'crucible-studio-dialog-actions crucible-studio-setup-actions' }, skipButton, backButton, nextButton, doneButton),
   );
   dialog.addEventListener('close', () => {
     dialog.returnValue = '';
@@ -193,14 +231,23 @@ export function createStudioSetup({ documentReference, createElement, createIcon
     sections.forEach((section, index) => {
       section.hidden = stepped && index !== stepIndex;
     });
-    stepMarks.forEach((mark, index) => {
-      mark.dataset.current = String(index === stepIndex);
+    stepButtons.forEach((button, index) => {
+      button.dataset.current = String(index === stepIndex);
+      if (index === stepIndex) {
+        button.setAttribute('aria-current', 'step');
+      } else {
+        button.removeAttribute('aria-current');
+      }
     });
-    stepIndicator.hidden = !stepped;
-    stepIndicator.setAttribute('aria-label', `Step ${stepIndex + 1} of ${groups.length}`);
+    stepRow.hidden = !stepped;
     backButton.hidden = !stepped || stepIndex === 0;
     nextButton.hidden = !stepped || lastStep;
     doneButton.hidden = stepped && !lastStep;
+  }
+
+  // Focus rests on the button that moves on, so no card starts with a focus ring.
+  function focusPrimary() {
+    (nextButton.hidden ? doneButton : nextButton).focus();
   }
 
   skipButton.addEventListener('click', () => dialog.close());
@@ -208,13 +255,15 @@ export function createStudioSetup({ documentReference, createElement, createIcon
   backButton.addEventListener('click', () => {
     stepIndex = Math.max(0, stepIndex - 1);
     showStep();
+    focusPrimary();
   });
   nextButton.addEventListener('click', () => {
     stepIndex = Math.min(groups.length - 1, stepIndex + 1);
     showStep();
+    focusPrimary();
   });
 
-  /** Shows the chosen preferences in the cards and the detected hardware in the Automatic card. */
+  /** Shows the chosen preferences in the cards, what each tier gives on this screen and the hardware found. */
   function refresh() {
     const preferences = readPreferences();
     for (const radio of radios) {
@@ -222,10 +271,17 @@ export function createStudioSetup({ documentReference, createElement, createIcon
       radio.checked = chosen;
       radio.parentNode.dataset.selected = String(chosen);
     }
-    const { tier, summary } = describeHardware();
-    hardwareDetail.textContent = summary;
-    automaticRatio.textContent = formatPixelRatio(tier);
-    automaticRatio.title = `Picks ${capitalize(tier)}`;
+    const { tier: detectedTier, summary } = describeHardware();
+    for (const { tier, ratio, antiAliasing } of performanceFacts) {
+      const { pixelRatio, samples } = viewportSettingsForTier(tier ?? detectedTier);
+      ratio.textContent = formatRatio(pixelRatio);
+      antiAliasing.textContent = `AA ${samples}x`;
+    }
+    automaticTierName.textContent = capitalize(detectedTier);
+    hardwareLine.textContent = summary;
+    hardwareLine.title = summary;
+    promptBlock.value = agentPromptText();
+    showCopied(false);
   }
 
   function open({ layout: requestedLayout = 'steps' } = {}) {
@@ -239,6 +295,7 @@ export function createStudioSetup({ documentReference, createElement, createIcon
     if (!dialog.open) {
       dialog.showModal();
     }
+    focusPrimary();
   }
 
   return { dialog, open, refresh };

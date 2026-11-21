@@ -13,7 +13,7 @@ import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shad
 import { STUDIO_CSS } from './studio-styles.js';
 import { createStudioCatalog } from './studio-catalog.js';
 import { createStudioSetup } from './studio-setup.js';
-import { detectStudioHardware, gatherStudioHardwareInputs, resolveStudioPerformanceTier, studioPixelRatioFor } from './studio-hardware.js';
+import { detectStudioHardware, gatherStudioHardwareInputs, rendererChangeFor, resolveStudioPerformanceTier, studioViewportSettingsFor } from './studio-hardware.js';
 import {
   STUDIO_GIZMO_PIXELS,
   STUDIO_PREFERENCE_CHOICES,
@@ -1285,14 +1285,21 @@ export function createStudio(container, {
     announce(autoReloadWatch ? 'Auto-reload enabled' : 'Auto-reload paused');
   });
   const copyPromptButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Copy a prompt for the agent' });
-  async function copyAgentPrompt() {
+  function agentPromptText() {
     const target = activeFilePath ?? activeFileName;
-    const promptText = `Edit Crucible scene "${target}" (format crucible.scene v1, currently at revision ${controller.scene.revision}, selected node: ${controller.selectedNodeId ?? 'none'}). Save JSON updates directly back to this path.`;
+    return `Edit Crucible scene "${target}" (format crucible.scene v1, currently at revision ${controller.scene.revision}, selected node: ${controller.selectedNodeId ?? 'none'}). Save JSON updates directly back to this path.`;
+  }
+
+  /** Copies the prompt; when the browser refuses, shows it in the recipe dialog instead. Resolves true only when it was copied. */
+  async function copyAgentPrompt() {
+    const promptText = agentPromptText();
     try {
       await navigator.clipboard.writeText(promptText);
       announce('Copied AI prompt to clipboard');
+      return true;
     } catch {
       openImportDialog(promptText);
+      return false;
     }
   }
   copyPromptButton.addEventListener('click', () => {
@@ -2169,7 +2176,9 @@ export function createStudio(container, {
     readPreferences: () => preferences,
     changePreferences: changes => setPreferences(changes),
     describeHardware: detectedHardware,
-    copyAgentPrompt: () => copyAgentPrompt(),
+    viewportSettingsForTier,
+    agentPromptText,
+    copyAgentPrompt,
     onClose: () => {
       if (!preferences.setupDone) setPreference('setupDone', true);
     },
@@ -2244,19 +2253,32 @@ export function createStudio(container, {
     return detectedHardwareResult;
   }
 
-  // The viewport's pixel ratio for the chosen tier. Only the viewport changes: the scene recipe never hears of it.
-  function viewportPixelRatio() {
-    const detectedTier = preferences.performance === 'automatic' ? detectedHardware().tier : null;
-    const tier = resolveStudioPerformanceTier(preferences.performance, detectedTier);
-    return studioPixelRatioFor(tier, window.devicePixelRatio);
+  // What the viewport draws with on this screen for a tier. Only the viewport changes: the scene recipe never hears of it.
+  // A `pixelRatio` or `samples` in rendererOptions wins over the tier.
+  function viewportSettingsForTier(tier) {
+    const settings = studioViewportSettingsFor(tier, window.devicePixelRatio);
+    return { pixelRatio: rendererOptions.pixelRatio ?? settings.pixelRatio, samples: rendererOptions.samples ?? settings.samples };
   }
 
-  // A renderer made with its own `pixelRatio` option keeps it. Otherwise a tier change is set on the live renderer.
+  function chosenTier() {
+    const detectedTier = preferences.performance === 'automatic' ? detectedHardware().tier : null;
+    return resolveStudioPerformanceTier(preferences.performance, detectedTier);
+  }
+
+  // A new pixel ratio is set on the live renderer. A new sample count is fixed when a renderer is built, so the renderer
+  // is dropped and ensureRenderer makes the next one, as it does when a scene first needs depth.
+  let rendererSamples = null;
   function applyPerformance() {
-    if (!renderer || rendererOptions.pixelRatio !== undefined || !Number.isFinite(renderer.pixelRatio)) return;
-    const pixelRatio = viewportPixelRatio();
-    if (renderer.pixelRatio !== pixelRatio) {
-      renderer.pixelRatio = pixelRatio;
+    if (!renderer || !Number.isFinite(renderer.pixelRatio)) return;
+    const wanted = viewportSettingsForTier(chosenTier());
+    const current = { pixelRatio: renderer.pixelRatio, samples: suppliedRenderer ? wanted.samples : rendererSamples };
+    const change = rendererChangeFor(current, wanted);
+    if (change === 'recreate') {
+      renderer.dispose();
+      renderer = null;
+      requestFrame();
+    } else if (change === 'resize') {
+      renderer.pixelRatio = wanted.pixelRatio;
       renderer.resize();
     }
   }
@@ -2554,13 +2576,16 @@ export function createStudio(container, {
     }
     const environment = controller.scene.environment;
     rendererHasDepth = sceneNeedsDepth();
+    const viewportSettings = viewportSettingsForTier(chosenTier());
+    rendererSamples = viewportSettings.samples;
     renderer = new CrucibleRenderer(canvas, controller.scene.parts, {
       hdr: true,
       depth: rendererHasDepth,
       world: environment.world,
       environment: { ...environment, map: agentEnvironmentMap(environment) },
       shadowBounds: resolveAgentShadow(fitAgentShadow(controller.scene.shadow, controller.scene.parts), environment.lightDirection),
-      pixelRatio: viewportPixelRatio(),
+      pixelRatio: viewportSettings.pixelRatio,
+      samples: viewportSettings.samples,
       ground: viewportFloorPart(studioFloorHeight(controller.scene.parts)),
       ...rendererOptions,
     });

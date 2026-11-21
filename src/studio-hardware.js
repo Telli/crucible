@@ -3,8 +3,13 @@
 
 export const STUDIO_PERFORMANCE_TIERS = Object.freeze(['light', 'balanced', 'sharp']);
 
-// The most device pixels the viewport draws for each CSS pixel, per tier. Sharp is what Studio always did.
-export const STUDIO_PIXEL_RATIO_CAPS = Object.freeze({ light: 1, balanced: 1.5, sharp: 2 });
+// What each tier asks of the viewport's renderer. The pixel ratio is a share of the screen's own ratio held under a cap,
+// and `samples` is the multisample anti-aliasing count. Sharp is what Studio always drew.
+export const STUDIO_TIER_SETTINGS = Object.freeze({
+  light: Object.freeze({ ratioShare: 0.75, ratioCap: 1, samples: 2 }),
+  balanced: Object.freeze({ ratioShare: 1, ratioCap: 1.5, samples: 4 }),
+  sharp: Object.freeze({ ratioShare: 1, ratioCap: 2, samples: 4 }),
+});
 
 // Software rasterisers draw on the processor: every pixel is expensive.
 const SOFTWARE_RENDERER = /swiftshader|llvmpipe|softpipe|basic render|software/i;
@@ -38,16 +43,16 @@ export function readableRendererName(rendererName) {
     .trim();
 }
 
-function summaryOf({ gpuName, cores, memoryGigabytes, devicePixelRatio }) {
+// The graphics card and the cores. Memory is left out: the browser caps what it reports, so it would understate a big machine.
+function summaryOf({ gpuName, cores }) {
   const found = [];
   if (gpuName) found.push(gpuName);
   if (Number.isFinite(cores) && cores > 0) found.push(`${cores} cores`);
-  if (Number.isFinite(memoryGigabytes) && memoryGigabytes > 0) found.push(`${memoryGigabytes} GB`);
-  if (Number.isFinite(devicePixelRatio) && devicePixelRatio > 1) found.push(`${devicePixelRatio}x screen`);
   return found.length > 0 ? found.join(', ') : 'Hardware not reported';
 }
 
-// Few cores or little memory mean the processor also has the scene's other work to do.
+// Few cores or little memory mean the processor also has the scene's other work to do. A browser reports memory in
+// steps and never above 8, so a small value is real and 8 only means "at least 8": the rule reads small values only.
 function isModest({ cores, memoryGigabytes }) {
   return (Number.isFinite(cores) && cores <= FEW_CORES) || (Number.isFinite(memoryGigabytes) && memoryGigabytes <= LITTLE_MEMORY_GIGABYTES);
 }
@@ -71,12 +76,12 @@ function tierOf({ rendererName, cores, memoryGigabytes, screenPixels }) {
  * Picks a performance tier from what the browser reports. Pure: the inputs are numbers and a string, so a table of
  * real renderer strings tests every rule. `summary` says what was found, for the setup screen.
  */
-export function detectStudioHardware({ rendererName = '', cores, memoryGigabytes, devicePixelRatio, screenPixels } = {}) {
+export function detectStudioHardware({ rendererName = '', cores, memoryGigabytes, screenPixels } = {}) {
   const name = typeof rendererName === 'string' ? rendererName : '';
   const gpuName = readableRendererName(name);
   return {
     tier: tierOf({ rendererName: name, cores, memoryGigabytes, screenPixels }),
-    summary: summaryOf({ gpuName, cores, memoryGigabytes, devicePixelRatio }),
+    summary: summaryOf({ gpuName, cores }),
   };
 }
 
@@ -110,7 +115,20 @@ export function resolveStudioPerformanceTier(performancePreference, detectedTier
   return performancePreference === 'automatic' ? detectedTier : performancePreference;
 }
 
-/** The pixel ratio the viewport draws at: the screen's own ratio, held down to the tier's cap. */
-export function studioPixelRatioFor(tier, devicePixelRatio) {
-  return Math.min(devicePixelRatio || 1, STUDIO_PIXEL_RATIO_CAPS[tier]);
+/** The pixel ratio and the anti-aliasing samples the viewport draws with on a screen of this ratio. */
+export function studioViewportSettingsFor(tier, devicePixelRatio) {
+  const { ratioShare, ratioCap, samples } = STUDIO_TIER_SETTINGS[tier];
+  const screenRatio = devicePixelRatio || 1;
+  return { pixelRatio: Math.min(screenRatio * ratioShare, ratioCap), samples };
+}
+
+/**
+ * What a live renderer needs to go from its settings to the wanted ones: nothing, a new pixel ratio (its `pixelRatio` is
+ * set and it resizes) or a new renderer, because the sample count is fixed when it is built.
+ */
+export function rendererChangeFor(current, wanted) {
+  if (current.samples !== wanted.samples) {
+    return 'recreate';
+  }
+  return current.pixelRatio === wanted.pixelRatio ? 'none' : 'resize';
 }

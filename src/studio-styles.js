@@ -1702,17 +1702,45 @@ export const STUDIO_CSS = `
   accent-color: var(--studio-text);
 }
 .crucible-studio dialog.crucible-studio-setup-dialog {
-  width: min(640px, calc(100vw - 32px));
-  max-block-size: calc(100vh - 32px);
-  overflow: auto;
+  width: min(680px, calc(100vw - 32px));
+  max-block-size: calc(100vh - 48px);
+  border: 1px solid var(--studio-border);
+}
+.crucible-studio dialog.crucible-studio-setup-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* One size on every step, so the dialog does not move; the sheet takes the height it needs up to the window. */
+.crucible-studio dialog.crucible-studio-setup-dialog[data-layout="steps"] {
+  block-size: min(560px, calc(100vh - 48px));
+}
+.crucible-studio dialog.crucible-studio-setup-dialog h2 { margin: 0; }
+.crucible-studio-setup-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-inline-start: -8px;
+}
+.crucible-studio-setup-steps[hidden] { display: none; }
+.crucible-studio dialog button.crucible-studio-setup-step {
+  padding-inline: 8px;
+  background: transparent;
+  color: var(--studio-muted);
+  font-weight: 500;
+}
+.crucible-studio dialog button.crucible-studio-setup-step[data-current="true"] {
+  color: var(--studio-text);
+  font-weight: 700;
 }
 .crucible-studio-setup-body {
+  flex: 1 1 auto;
+  min-block-size: 0;
   display: grid;
   gap: 18px;
-}
-.crucible-studio-setup-dialog[data-layout="steps"] .crucible-studio-setup-body {
-  min-block-size: 232px;
   align-content: start;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 .crucible-studio-setup-group {
   display: grid;
@@ -1724,21 +1752,12 @@ export const STUDIO_CSS = `
   font-family: var(--studio-font-heading);
   font-size: 13px;
 }
+/* The step row names the step, so a heading would say it twice. */
+.crucible-studio dialog[data-layout="steps"] .crucible-studio-setup-group h3 { display: none; }
 .crucible-studio-setup-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
-}
-.crucible-studio-setup-cards-compact {
-  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
-  gap: 6px;
-}
-.crucible-studio-setup-row {
-  display: grid;
-  gap: 6px;
-}
-.crucible-studio-setup-row-label {
-  color: var(--studio-muted);
 }
 .crucible-studio-setup-card {
   position: relative;
@@ -1746,10 +1765,11 @@ export const STUDIO_CSS = `
   align-content: start;
   justify-items: start;
   gap: 6px;
+  min-inline-size: 0;
   padding: 8px;
   border: 1px solid var(--studio-border);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--studio-text) 4%, transparent);
+  background: color-mix(in srgb, var(--studio-text) 6%, transparent);
   cursor: pointer;
 }
 .crucible-studio-setup-card input {
@@ -1765,16 +1785,35 @@ export const STUDIO_CSS = `
   border-color: var(--studio-text);
   box-shadow: inset 0 0 0 1px var(--studio-text);
 }
+/* Keyboard focus is one ring that takes the selected border's place, never a second ring beside it. */
 .crucible-studio-setup-card:has(input:focus-visible) {
-  outline: 2px solid var(--studio-accent);
-  outline-offset: 2px;
+  border-color: var(--studio-accent);
+  box-shadow: inset 0 0 0 1px var(--studio-accent);
 }
-.crucible-studio-setup-card-label {
-  font-weight: 600;
+.crucible-studio-setup-card-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-inline-size: 100%;
+  padding-inline-end: 24px;
 }
+.crucible-studio-setup-card-label { font-weight: 600; }
+.crucible-studio-setup-card-tier { color: var(--studio-muted); }
 .crucible-studio-setup-card-detail {
+  inline-size: 100%;
+  overflow: hidden;
   color: var(--studio-muted);
   font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crucible-studio-setup-facts {
+  display: flex;
+  gap: 12px;
+  font-family: var(--studio-font-heading);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .crucible-studio-setup-check {
   position: absolute;
@@ -1798,65 +1837,127 @@ export const STUDIO_CSS = `
   position: relative;
   display: block;
   inline-size: 100%;
-  aspect-ratio: 8 / 5;
-  overflow: hidden;
-  border-radius: 6px;
+  aspect-ratio: 5 / 4;
 }
-/* The sketch takes its colours from the site tokens of the theme it shows, whatever theme Studio is in. */
+/* A miniature of Studio in the tokens of the theme it shows, whatever theme Studio is in. Its own border keeps Light
+   visible on a light dialog and Dark on a dark one. */
 .crucible-studio-setup-sketch {
   position: absolute;
   inset: 0;
   display: block;
+  overflow: hidden;
+  border: 1px solid var(--site-border);
+  border-radius: 6px;
   background: var(--site-bg);
 }
-.crucible-studio-setup-sketch[data-half="true"] { clip-path: polygon(100% 0, 100% 100%, 0 100%); }
+.crucible-studio-setup-sketch[data-half="left"] { clip-path: inset(0 50% 0 0); }
+.crucible-studio-setup-sketch[data-half="right"] { clip-path: inset(0 0 0 50%); }
 .crucible-studio-setup-sketch-part {
   position: absolute;
   display: block;
-  border-radius: 2px;
   background: var(--site-sidebar);
 }
-.crucible-studio-setup-sketch-part[data-part="bar"] { inset: 0 0 auto; block-size: 14%; border-radius: 0; }
-.crucible-studio-setup-sketch-part[data-part="rail"] { inset: 14% auto 0 0; inline-size: 10%; border-radius: 0; }
-.crucible-studio-setup-sketch-part[data-part="viewport"] { inset: 22% 34% 8% 14%; background: var(--site-surface); }
-.crucible-studio-setup-sketch-part[data-part="side"] { inset: 22% 6% 8% 70%; }
-.crucible-studio-setup-ratio {
-  font-family: var(--studio-font-heading);
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 1.1;
+.crucible-studio-setup-sketch-part[data-part="bar"] { inset: 0 0 auto; block-size: 12%; }
+.crucible-studio-setup-sketch-part[data-part="rail"] { inset: 12% auto 0 0; inline-size: 9%; }
+.crucible-studio-setup-sketch-part[data-part="viewport"] { inset: 12% 32% 0 9%; background: var(--site-surface); }
+.crucible-studio-setup-sketch-part[data-part="ground"] { inset: auto 32% 28% 9%; block-size: 1px; background: var(--site-muted); }
+.crucible-studio-setup-sketch-part[data-part="solid"] {
+  inset: auto auto calc(28% + 1px) 26%;
+  inline-size: 18%;
+  block-size: 28%;
+  border-radius: 2px;
+  background: var(--site-muted);
 }
-.crucible-studio-setup-handle {
-  display: block;
-  border-radius: 999px;
-  background: var(--studio-text);
+.crucible-studio-setup-sketch-part[data-part="card-top"],
+.crucible-studio-setup-sketch-part[data-part="card-bottom"] {
+  inset-inline: 71% 4%;
+  border: 1px solid var(--site-border);
+  border-radius: 3px;
 }
-.crucible-studio-setup-handle[data-size="small"] { inline-size: 12px; block-size: 12px; }
-.crucible-studio-setup-handle[data-size="medium"] { inline-size: 18px; block-size: 18px; }
-.crucible-studio-setup-handle[data-size="large"] { inline-size: 24px; block-size: 24px; }
-.crucible-studio-setup-action { justify-self: start; }
-.crucible-studio-setup-actions { align-items: center; }
-.crucible-studio-setup-steps {
+.crucible-studio-setup-sketch-part[data-part="card-top"] { inset-block: 18% 52%; }
+.crucible-studio-setup-sketch-part[data-part="card-bottom"] { inset-block: 52% 6%; }
+.crucible-studio-setup-cards-wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.crucible-studio-setup-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+.crucible-studio-setup-row-label {
+  min-block-size: 36px;
+  line-height: 36px;
+}
+.crucible-studio-setup-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.crucible-studio-setup-chips .crucible-studio-setup-card {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  margin-inline-end: auto;
+  inline-size: 104px;
+  block-size: 36px;
+  padding: 0 24px 0 8px;
 }
-.crucible-studio-setup-steps[hidden] { display: none; }
-.crucible-studio-setup-step-mark {
-  display: block;
-  inline-size: 6px;
-  block-size: 6px;
+.crucible-studio-setup-chips .crucible-studio-setup-card-name { padding-inline-end: 0; }
+.crucible-studio-setup-chips .crucible-studio-setup-card-label { font-weight: 500; }
+.crucible-studio-setup-chips .crucible-studio-setup-check {
+  inset-block-start: 50%;
+  inset-inline-end: 6px;
+  inline-size: 14px;
+  block-size: 14px;
+  transform: translateY(-50%);
+}
+.crucible-studio-setup-chips .crucible-studio-setup-check .crucible-studio-icon {
+  inline-size: 10px;
+  block-size: 10px;
+}
+/* The dot sits in a box of one size, so the labels of the three sizes share a baseline. */
+.crucible-studio-setup-handle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 24px;
+  block-size: 24px;
+}
+.crucible-studio-setup-handle::before {
+  content: "";
   border-radius: 999px;
-  background: var(--studio-muted);
-  opacity: 0.5;
-}
-.crucible-studio-setup-step-mark[data-current="true"] {
-  inline-size: 18px;
-  opacity: 1;
   background: var(--studio-text);
 }
+.crucible-studio-setup-handle[data-size="small"]::before { inline-size: 10px; block-size: 10px; }
+.crucible-studio-setup-handle[data-size="medium"]::before { inline-size: 16px; block-size: 16px; }
+.crucible-studio-setup-handle[data-size="large"]::before { inline-size: 22px; block-size: 22px; }
+.crucible-studio-setup-agent {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+.crucible-studio textarea.crucible-studio-setup-prompt {
+  inline-size: 100%;
+  padding: 10px;
+  border: 1px solid var(--studio-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--studio-text) 6%, transparent);
+  color: var(--studio-text);
+  font-family: var(--studio-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+  resize: none;
+  user-select: text;
+}
+.crucible-studio-setup-actions { align-items: center; margin-top: 0; }
+.crucible-studio dialog button.crucible-studio-setup-skip {
+  margin-inline-end: auto;
+  background: transparent;
+  color: var(--studio-muted);
+}
 .crucible-studio dialog button.crucible-studio-setup-primary {
+  min-inline-size: 88px;
   background: var(--studio-text);
   color: var(--studio-bg);
   font-weight: 600;
@@ -1864,7 +1965,6 @@ export const STUDIO_CSS = `
 .crucible-studio dialog button[hidden] { display: none; }
 @media (prefers-reduced-motion: no-preference) {
   .crucible-studio-setup-card { transition: border-color 120ms ease, box-shadow 120ms ease; }
-  .crucible-studio-setup-step-mark { transition: inline-size 160ms ease, opacity 160ms ease; }
 }
 .crucible-studio-shortcuts {
   display: grid;

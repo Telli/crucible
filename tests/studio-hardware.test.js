@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  STUDIO_PIXEL_RATIO_CAPS,
   detectStudioHardware,
   gatherStudioHardwareInputs,
   readableRendererName,
+  rendererChangeFor,
   resolveStudioPerformanceTier,
-  studioPixelRatioFor,
+  studioViewportSettingsFor,
 } from '../src/studio-hardware.js';
 import { STUDIO_PREFERENCE_DEFAULTS, normalizeStudioPreferences } from '../src/studio-preferences.js';
 
@@ -51,14 +51,13 @@ test('an integrated chip on a very large screen draws too many pixels and goes l
   assert.equal(detectStudioHardware({ rendererName: discrete, cores: 2, memoryGigabytes: 2, screenPixels: 8_294_400 }).tier, 'sharp', 'a discrete card stays sharp on any screen');
 });
 
-test('the summary names what was found and says so when nothing was reported', () => {
+test('the summary names the card and the cores, never the capped memory, and says so when nothing was reported', () => {
   const found = detectStudioHardware({
     rendererName: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)',
     cores: 20,
     memoryGigabytes: 8,
-    devicePixelRatio: 2,
   });
-  assert.equal(found.summary, 'NVIDIA GeForce RTX 3060, 20 cores, 8 GB, 2x screen');
+  assert.equal(found.summary, 'NVIDIA GeForce RTX 3060, 20 cores');
   assert.deepEqual(detectStudioHardware(), { tier: 'balanced', summary: 'Hardware not reported' });
 });
 
@@ -85,15 +84,36 @@ test('the inputs are read from a WebGL context and the browser, and a missing on
   assert.equal(gatherStudioHardwareInputs({ glContext: blocked, navigatorReference: {}, windowReference: {} }).rendererName, '');
 });
 
-test('a tier caps the pixel ratio and Automatic stands for the detected tier', () => {
-  assert.deepEqual(STUDIO_PIXEL_RATIO_CAPS, { light: 1, balanced: 1.5, sharp: 2 });
-  assert.equal(studioPixelRatioFor('light', 3), 1);
-  assert.equal(studioPixelRatioFor('balanced', 3), 1.5);
-  assert.equal(studioPixelRatioFor('sharp', 3), 2);
-  assert.equal(studioPixelRatioFor('sharp', 1), 1, 'a screen below the cap keeps its own ratio');
-  assert.equal(studioPixelRatioFor('sharp', undefined), 1);
+test('each tier gives its pixel ratio and anti-aliasing samples on screens of ratio 1, 1.5, 2 and 3', () => {
+  const table = {
+    light: { 1: [0.75, 2], 1.5: [1, 2], 2: [1, 2], 3: [1, 2] },
+    balanced: { 1: [1, 4], 1.5: [1.5, 4], 2: [1.5, 4], 3: [1.5, 4] },
+    sharp: { 1: [1, 4], 1.5: [1.5, 4], 2: [2, 4], 3: [2, 4] },
+  };
+  for (const [tier, byRatio] of Object.entries(table)) {
+    for (const [screenRatio, [pixelRatio, samples]] of Object.entries(byRatio)) {
+      assert.deepEqual(studioViewportSettingsFor(tier, Number(screenRatio)), { pixelRatio, samples }, `${tier} on a ${screenRatio}x screen`);
+    }
+  }
+  assert.deepEqual(studioViewportSettingsFor('sharp', undefined), { pixelRatio: 1, samples: 4 });
   assert.equal(resolveStudioPerformanceTier('automatic', 'light'), 'light');
   assert.equal(resolveStudioPerformanceTier('sharp', 'light'), 'sharp');
+});
+
+test('a renderer is recreated only when the sample count changes', () => {
+  const sharp = studioViewportSettingsFor('sharp', 1);
+  assert.equal(rendererChangeFor(sharp, sharp), 'none');
+  assert.equal(rendererChangeFor(sharp, studioViewportSettingsFor('balanced', 1.5)), 'resize');
+  assert.equal(rendererChangeFor(studioViewportSettingsFor('balanced', 2), studioViewportSettingsFor('sharp', 2)), 'resize');
+  assert.equal(rendererChangeFor(sharp, studioViewportSettingsFor('light', 1)), 'recreate');
+  assert.equal(rendererChangeFor(studioViewportSettingsFor('light', 2), studioViewportSettingsFor('light', 3)), 'none');
+});
+
+test('a small memory report counts and the browser cap of 8 is read as at least 8', () => {
+  const integrated = 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)';
+  assert.equal(detectStudioHardware({ rendererName: integrated, cores: 12, memoryGigabytes: 4 }).tier, 'light');
+  assert.equal(detectStudioHardware({ rendererName: integrated, cores: 12, memoryGigabytes: 8 }).tier, 'balanced');
+  assert.equal(detectStudioHardware({ rendererName: integrated, cores: 12 }).tier, 'balanced');
 });
 
 test('the theme, performance and setup preferences are kept when valid and defaulted when not', () => {
