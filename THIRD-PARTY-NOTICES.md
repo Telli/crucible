@@ -167,3 +167,8 @@ Source: https://dejavu-fonts.github.io/ (version 2.37).
 ## Website fonts in public/fonts
 
 The site serves Plus Jakarta Sans, Inter and JetBrains Mono, subset by Google Fonts (latin, latin-ext and vietnamese). All three are under the SIL Open Font License 1.1 (https://openfontlicense.org): Plus Jakarta Sans by Tokotype, Inter by Rasmus Andersson, JetBrains Mono by JetBrains. Sources: https://fonts.google.com/specimen/Plus+Jakarta+Sans, https://fonts.google.com/specimen/Inter, https://fonts.google.com/specimen/JetBrains+Mono.
+
+
+## Treasure chest in public/treasure-chest.glb
+
+The asset viewer opens on the Poly Haven model `treasure_chest` by Rico Cilliers (https://polyhaven.com/a/treasure_chest), published under CC0 1.0 (https://polyhaven.com/license). Crucible decimated its meshes and reduced its textures to keep the file under 1 MB.

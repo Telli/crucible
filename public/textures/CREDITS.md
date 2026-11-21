@@ -29,3 +29,9 @@ atlases (1K PNG, downloaded 2026-10-29), all CC0 1.0 by Lennart Demes / ambientC
 | `broadleaf`, `birch` | [LeafSet024](https://ambientcg.com/view?id=LeafSet024) |
 | `bush` | [LeafSet022](https://ambientcg.com/view?id=LeafSet022) |
 | `conifer` | [LeafSet019](https://ambientcg.com/view?id=LeafSet019) |
+
+## Treasure chest (`../treasure-chest.glb`)
+
+The asset viewer opens on [Treasure Chest](https://polyhaven.com/a/treasure_chest) by Rico Cilliers, CC0 1.0 from Poly Haven. The
+2K model was decimated to about a sixth of its triangles, its base color kept at 1024 px and its normal and ORM maps cut to
+512 px as JPEG in Blender 5.2, which takes it from 13 MB to under 1 MB.
