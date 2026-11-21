@@ -51,12 +51,18 @@ function notify(message, failure = false) {
   notice.hidden = false;
 }
 
+// On a tall screen the scene caption covers the bottom of the canvas, so the model gets a wider margin there.
+function fitPadding(aspect) {
+  if (state.scene === 'poster') return 1.14;
+  return aspect < 1 ? 1.45 : 1.2;
+}
+
 function camera() {
   const aspect = Math.max(1, canvas.clientWidth) / Math.max(1, canvas.clientHeight);
   const target = state.scene === 'poster' ? [0, 0, 0] : [0, 1.8, 0];
   const view = cameraView(state.scene === 'poster' ? 'front' : state.view, { target, distance: 7.8 });
   const bounds = state.scene === 'poster' ? poster.bounds : modelBounds;
-  const fitted = fitOrthographicHeight(bounds, view, aspect, state.scene === 'poster' ? 1.14 : 1.2);
+  const fitted = fitOrthographicHeight(bounds, view, aspect, fitPadding(aspect));
   view.orthographicHeight = fitted * state.zoom;
   const forward = vec3.normalize(vec3.create(), vec3.subtract(vec3.create(), view.target, view.eye));
   const right = vec3.normalize(vec3.create(), vec3.cross(vec3.create(), forward, view.up));
