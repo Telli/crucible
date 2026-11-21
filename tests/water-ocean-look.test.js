@@ -6,6 +6,7 @@ import { defaultSmoothAngle, OCEAN_SMOOTH_ANGLE_DEFAULT } from '../src/agent-mes
 import { MESH_SMOOTH_ANGLE_DEFAULT } from '../src/agent-scene-capabilities.js';
 import { createFragmentShader } from '../src/shaders.js';
 import '../src/world-material-shader.js';
+import { layerTextureSupport } from '../src/shader-registry.js';
 
 function seaRecipe({ tag, smoothAngle, inStack = false }) {
   const edits = [
@@ -14,7 +15,7 @@ function seaRecipe({ tag, smoothAngle, inStack = false }) {
     { op: 'subdivide', levels: 2 },
     { op: 'set_position', position: { mul: [{ attr: 'position' }, [100, 1, 100]] } },
   ];
-  const ocean = { op: 'ocean', windSpeed: 16, choppiness: 1.5, size: 50, seed: 3, resolution: 3 };
+  const ocean = { op: 'ocean', windSpeed: 16, choppiness: 1.5, size: 50, seed: 3, resolution: 3, foamMemory: 2 };
   return {
     format: 'crucible.scene', schemaVersion: 1,
     geometries: [{ id: 'sea', type: 'mesh', base: { type: 'box', bevel: 0 }, edits: inStack ? edits : [...edits, ocean], stack: inStack ? [ocean] : [], ...(smoothAngle === undefined ? {} : { smoothAngle }) }],
@@ -67,7 +68,7 @@ test('the ocean foam of a rough sea reaches the water material as 1 - foam', () 
 test('wind ripples break the glint into facets and the foam into streaks', () => {
   const shader = createFragmentShader(['water', 'vertexColors']);
   assert.match(shader, /vec2 waterDetailSlope\(/);
-  assert.match(shader, /float foamBand = 0\.13 \+ 1\.5 \* fwidth\(foamDensity\)/);
+  assert.ok(shader.includes("float foamBand = mix(0.13, 0.0, foamHard) + 1.5 * fwidth(foamDensity)"));
   assert.match(shader, /rippleTilt\.xz \+= detailSlope/);
   assert.match(shader, /terrainNoise\(position \* wavenumber \* 0\.09/);
   assert.match(shader, /1\.0 \/ \(1\.0 \/ 500\.0 \+ 0\.35 \* waterLostVariance\)/);
@@ -105,4 +106,89 @@ test('each detail wave is filtered by the pixel size along its own direction, an
   assert.match(shader, /lostVariance \+= 0\.5 \* amplitude \* amplitude \* \(1\.0 - visible \* visible\)/);
   assert.match(shader, /float swellVisibleX = waterWaveVisibility\(abs\(positionDx\.x\) \+ abs\(positionDy\.x\), 1\.4\)/);
   assert.match(shader, /float swellVisibleZ = waterWaveVisibility\(abs\(positionDx\.y\) \+ abs\(positionDy\.y\), 1\.8\)/);
+});
+
+test('a hard foam edge is a flat shape with a one pixel edge, and the soft default keeps its lace', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  assert.match(shader, /uniform vec2 waterFoamStyle/);
+  assert.match(shader, /float foamHard = waterFoamStyle.x/);
+  assert.ok(shader.includes("waterFoam = mix(max(foamBody"));
+});
+
+function waterRecipe(fields) {
+  const recipe = seaRecipe({ tag: 'water' });
+  Object.assign(recipe.materials[0], fields);
+  return recipe;
+}
+
+test('a water material takes foamEdge and foamWidth, and other materials refuse them', () => {
+  const material = createAgentScene(waterRecipe({ foamEdge: 'hard', foamWidth: 2 })).parts[0].material;
+  assert.equal(material.foamEdge, 'hard');
+  assert.equal(material.foamWidth, 2);
+  assert.equal(createAgentScene(waterRecipe({})).parts[0].material.foamEdge, undefined);
+  for (const bad of [{ foamEdge: 'sharp' }, { foamWidth: 0 }, { foamWidth: 5 }, { foamWidth: 'wide' }]) {
+    assert.throws(() => createAgentScene(waterRecipe(bad)), /foamEdge|foamWidth/, JSON.stringify(bad));
+  }
+  const plain = seaRecipe({});
+  plain.materials[0].foamEdge = 'hard';
+  assert.throws(() => createAgentScene(plain), /need the water tag/);
+});
+
+test('a water material takes foamVeins with defaults, and refuses bad values with what to pass', () => {
+  const defaults = createAgentScene(waterRecipe({ foamVeins: {} })).parts[0].material.foamVeins;
+  assert.deepEqual({ ...defaults }, { amount: 0.6, scale: 1 });
+  const given = createAgentScene(waterRecipe({ foamVeins: { amount: 1, scale: 2 } })).parts[0].material.foamVeins;
+  assert.deepEqual({ ...given }, { amount: 1, scale: 2 });
+  assert.equal(createAgentScene(waterRecipe({})).parts[0].material.foamVeins, undefined);
+  const refusals = [
+    [{ foamVeins: 0.5 }, /foamVeins must be an object such as/],
+    [{ foamVeins: { strength: 1 } }, /no field strength; pass amount or scale/],
+    [{ foamVeins: { amount: 2 } }, /foamVeins\.amount must be a number from 0 to 1, such as 0\.6/],
+    [{ foamVeins: { scale: 0.1 } }, /foamVeins\.scale must be a number from 0\.25 to 4/],
+    [{ foamVeins: { stretch: 3 } }, /no field stretch; pass amount or scale/],
+    [{ foamVeins: { scale: 'fine' } }, /foamVeins\.scale/],
+  ];
+  for (const [bad, message] of refusals) {
+    assert.throws(() => createAgentScene(waterRecipe(bad)), message, JSON.stringify(bad));
+  }
+  const plain = seaRecipe({});
+  plain.materials[0].foamVeins = {};
+  assert.throws(() => createAgentScene(plain), /foamVeins need the water tag/);
+});
+
+test('foam veins are a ridged, warped streak mask gated on amount and the foam mask, so off draws nothing', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  assert.match(shader, /uniform vec2 waterFoamVeins/);
+  assert.ok(shader.includes('if (waterFoamVeins.x > 0.0) {'), 'amount 0 skips the veins');
+  assert.ok(shader.includes('float veinRidge = 1.0 - abs(2.0 * terrainNoise('), 'ridged noise makes the lines');
+  assert.ok(shader.includes('veinWarp'), 'a second noise warps them');
+  assert.ok(shader.includes('float veinTrail = smoothstep(0.0, 0.8, clamp(1.0 - vertexSkyVisibility, 0.0, 1.0))'), 'the reach reads the whole foam group, not only the crest cap mask, so lace trails out');
+  assert.ok(/float veinFade = smoothstep\(0\.0, 0\.6, veinTrail[^;]*veinPatch/.test(shader), 'a slow noise breaks the trail into patches as the foam weight falls');
+  assert.ok(shader.includes('waterFoam = max(waterFoam, veinLine * veinFade * waterFoamVeins.x)'), 'veins only add foam');
+  assert.ok(!/float veinReach/.test(shader), 'the reach is no longer gated by the crest cap mask');
+  const veinPosition = shader.match(/vec2 veinPosition = ([^;]+);/)[1];
+  assert.equal(veinPosition, 'worldPosition.xz * 4.0 * waterFoamVeins.y', 'one scalar step on the world position, the same in every direction');
+  assert.ok(!veinPosition.includes('crestPosition'), 'no frame that turns with the surface normal, which smears the veins');
+  assert.ok(!/vec2\(/.test(veinPosition), 'no per axis factor: veins are not stretched along one axis');
+  assert.ok(!/veinPosition \* vec2\(|veinPosition\.[xy] \*|vec2\([^)]*\) \* veinPosition/.test(shader), 'the ridge noise is not scaled per axis either');
+});
+
+test('a water batch sends its veins, and a batch without foamVeins sends amount 0', () => {
+  const sent = [];
+  const renderer = {
+    shaderFeatures: new Set(['water']),
+    program: {},
+    batches: [],
+    context: new Proxy({}, {
+      get: (_target, name) => {
+        if (name === 'getUniformLocation') return (_program, uniform) => uniform;
+        if (name === 'uniform2f') return (uniform, ...values) => uniform === 'waterFoamVeins' && sent.push(values);
+        return () => null;
+      },
+    }),
+  };
+  const bind = (material) => layerTextureSupport.bind(renderer, {}, {}, { parts: [{ material }] });
+  bind({ tag: 'water', foamVeins: { amount: 0.9, scale: 2 } });
+  bind({ tag: 'water' });
+  assert.deepEqual(sent, [[0.9, 2], [0, 1]]);
 });
