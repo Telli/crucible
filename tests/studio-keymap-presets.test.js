@@ -150,8 +150,8 @@ test('the shortcuts dialog follows the preset: no holding rows where tools do no
 test('docs/studio.md names both sources and every key that differs in a preset', () => {
   const doc = readFileSync(new URL('../docs/studio.md', import.meta.url), 'utf8');
   const section = doc.split(/^## Keymaps$/m)[1].split(/^## /m)[0];
-  assert.match(section, /help\.autodesk\.com\/cloudhelp\/2025\/ENU\/Maya-KeyboardShortcuts/);
-  assert.match(section, /help\.maxon\.net\/c4d\/en-us\/Content\/html\/Shortcuts\.html/);
+  assert.ok(section.includes('(https://help.autodesk.com/cloudhelp/2025/ENU/Maya-KeyboardShortcuts/'), 'the Maya source link is in the section');
+  assert.ok(section.includes('(https://help.maxon.net/c4d/en-us/Content/html/Shortcuts.html)'), 'the Cinema 4D source link is in the section');
   const rows = section.split('\n').filter(line => line.startsWith('|')).slice(2);
   for (const [presetId, expected] of Object.entries(EXPECTED_PRESET_KEYS)) {
     for (const [actionId, labels] of Object.entries(expected)) {
