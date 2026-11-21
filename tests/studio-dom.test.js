@@ -2258,6 +2258,9 @@ test('Settings change the snap, the handles and what the viewport shows, and are
     rotateSnapDegrees: 45,
     gizmoSize: 'large',
     startWorkspace: 'animate',
+    theme: 'system',
+    performance: 'automatic',
+    setupDone: false,
     gridVisible: false,
     readoutVisible: false,
     viewWidgetVisible: false,
@@ -2276,7 +2279,7 @@ test('Settings change the snap, the handles and what the viewport shows, and are
   assert.deepEqual(next.controller.interactionSettings, { moveSnapStep: 0.25, rotateSnapDegrees: 15, gizmoPixels: 74 });
   assert.equal(next.root.dataset.readout, 'on');
   assert.equal(JSON.parse(saved.get('crucible-studio-preferences')).startWorkspace, 'build');
-  assert.throws(() => next.studio.setPreference('theme', 'pink'), /Unknown Studio preference/);
+  assert.throws(() => next.studio.setPreference('colour', 'pink'), /Unknown Studio preference/);
 });
 
 test('a Shift drag snaps a move to the step chosen in Settings', testContext => {
@@ -3928,4 +3931,155 @@ test('an edit still waiting to be kept is written when the window goes to the ba
   ui.dom.document.hidden = false;
   dispatch(ui.dom.document, 'visibilitychange');
   assert.equal(storage.entries.has(DRAFT_KEY), false, 'nothing is written when no edit waits');
+});
+
+function chooseSetting(ui, name, value) {
+  const control = ui.root.querySelector('.crucible-studio-settings-dialog').descendants().find(element => element.dataset?.setting === name);
+  control.value = String(value);
+  dispatch(control, 'change');
+}
+
+function setupButton(ui, text) {
+  return ui.root.querySelector('.crucible-studio-setup-dialog').descendants().find(element => element.tagName === 'BUTTON' && element.textContent === text);
+}
+
+function setupCard(ui, preferenceName, value) {
+  const dialog = ui.root.querySelector('.crucible-studio-setup-dialog');
+  return dialog.descendants().find(element => element.tagName === 'INPUT' && element.dataset.setup === preferenceName && element.value === String(value));
+}
+
+test('Theme forces light or dark on the Studio root, and System leaves the page to decide (#2847)', testContext => {
+  const themes = [];
+  const ui = mountStudio(testContext, { onThemeChange: theme => themes.push(theme) });
+  assert.equal(ui.root.dataset.theme, undefined, 'System sets nothing on the root');
+  chooseSetting(ui, 'theme', 'dark');
+  assert.equal(ui.root.dataset.theme, 'dark');
+  chooseSetting(ui, 'theme', 'light');
+  assert.equal(ui.root.dataset.theme, 'light');
+  chooseSetting(ui, 'theme', 'system');
+  assert.equal(ui.root.dataset.theme, undefined);
+  assert.deepEqual(themes, ['light', 'dark', 'light', 'light'], 'the host hears the effective theme at the start and on each change');
+  assert.ok(ui.root.querySelector('.crucible-studio-settings-dialog'), 'the dialogs sit inside the root and follow its theme');
+});
+
+test('Performance sets the viewport pixel ratio cap and never touches the recipe (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.dom.document.defaultView.devicePixelRatio = 3;
+  ui.renderer.pixelRatio = 3;
+  const recipeBefore = JSON.stringify(ui.studio.exportRecipe());
+  chooseSetting(ui, 'performance', 'light');
+  assert.equal(ui.renderer.pixelRatio, 1);
+  chooseSetting(ui, 'performance', 'balanced');
+  assert.equal(ui.renderer.pixelRatio, 1.5);
+  chooseSetting(ui, 'performance', 'sharp');
+  assert.equal(ui.renderer.pixelRatio, 2);
+  assert.ok(ui.renderer.calls.includes('resize'), 'the renderer is told to resize at the new ratio');
+  assert.equal(JSON.stringify(ui.studio.exportRecipe()), recipeBefore);
+  const resizesBefore = ui.renderer.calls.filter(call => call === 'resize').length;
+  chooseSetting(ui, 'moveSnapStep', 1);
+  assert.equal(ui.renderer.calls.filter(call => call === 'resize').length, resizesBefore, 'a preference that is not a tier leaves the renderer alone');
+});
+
+test('Automatic performance takes the detected tier and a screen below the cap keeps its own ratio (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.dom.document.defaultView.devicePixelRatio = 1.25;
+  ui.renderer.pixelRatio = 3;
+  chooseSetting(ui, 'performance', 'sharp');
+  assert.equal(ui.renderer.pixelRatio, 1.25);
+  ui.dom.document.defaultView.devicePixelRatio = 2;
+  chooseSetting(ui, 'performance', 'automatic');
+  assert.equal(ui.renderer.pixelRatio, 1.5, 'hardware the browser does not report is the balanced tier');
+});
+
+test('Studio does not open the setup on its own, and Skip and Done both mark it done (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  const dialog = ui.root.querySelector('.crucible-studio-setup-dialog');
+  assert.notEqual(dialog.open, true, 'no modal until the host asks');
+  assert.equal(ui.studio.setupDone, false);
+
+  ui.studio.openSetup();
+  assert.equal(dialog.open, true);
+  assert.equal(dialog.dataset.layout, 'steps');
+  setupButton(ui, 'Skip').click();
+  assert.equal(dialog.open, false);
+  assert.equal(ui.studio.setupDone, true);
+
+  ui.studio.setPreference('setupDone', false);
+  ui.studio.openSetup({ layout: 'sheet' });
+  assert.equal(dialog.dataset.layout, 'sheet');
+  setupButton(ui, 'Done').click();
+  assert.equal(ui.studio.setupDone, true);
+
+  ui.studio.setPreference('setupDone', false);
+  ui.studio.openSetup();
+  dialog.close();
+  assert.equal(ui.studio.setupDone, true, 'Esc closes the dialog the same way');
+  assert.throws(() => ui.studio.openSetup({ layout: 'grid' }), /Unknown setup layout "grid"\. Use one of steps, sheet/);
+});
+
+test('the setup shows one group a page in steps and every group on one sheet (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  const groups = ui.root.querySelectorAll('.crucible-studio-setup-group');
+  const visibleTitles = () => groups.filter(group => !group.hidden).map(group => group.children[0].textContent);
+  ui.studio.openSetup();
+  assert.deepEqual(visibleTitles(), ['Theme']);
+  assert.equal(setupButton(ui, 'Back').hidden, true);
+  assert.equal(setupButton(ui, 'Done').hidden, true);
+  setupButton(ui, 'Next').click();
+  assert.deepEqual(visibleTitles(), ['Performance']);
+  setupButton(ui, 'Next').click();
+  setupButton(ui, 'Next').click();
+  assert.deepEqual(visibleTitles(), ['Work with an AI agent']);
+  assert.equal(setupButton(ui, 'Next').hidden, true);
+  assert.equal(setupButton(ui, 'Done').hidden, false);
+  setupButton(ui, 'Back').click();
+  assert.deepEqual(visibleTitles(), ['Modelling']);
+  setupButton(ui, 'Skip').click();
+
+  ui.studio.openSetup({ layout: 'sheet' });
+  assert.deepEqual(visibleTitles(), ['Theme', 'Performance', 'Modelling', 'Work with an AI agent']);
+  assert.equal(setupButton(ui, 'Next').hidden, true);
+  assert.equal(setupButton(ui, 'Back').hidden, true);
+  assert.equal(setupButton(ui, 'Done').hidden, false);
+});
+
+test('choosing a card in the setup applies at once and the cards show the current choice (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.studio.openSetup();
+  assert.equal(setupCard(ui, 'theme', 'system').checked, true);
+  const dark = setupCard(ui, 'theme', 'dark');
+  dark.checked = true;
+  dispatch(dark, 'change');
+  assert.equal(ui.root.dataset.theme, 'dark', 'the live Studio behind the dialog changes');
+  assert.equal(setupCard(ui, 'theme', 'dark').parentNode.dataset.selected, 'true');
+  assert.equal(setupCard(ui, 'theme', 'system').parentNode.dataset.selected, 'false');
+
+  const snap = setupCard(ui, 'moveSnapStep', 1);
+  snap.checked = true;
+  dispatch(snap, 'change');
+  assert.equal(ui.controller.interactionSettings.moveSnapStep, 1);
+  const sharp = setupCard(ui, 'performance', 'sharp');
+  sharp.checked = true;
+  dispatch(sharp, 'change');
+  assert.equal(ui.studio.preferences.performance, 'sharp');
+  assert.ok(setupCard(ui, 'performance', 'automatic'), 'Automatic is a card of its own');
+});
+
+test('the Help menu reopens the setup and the Agent group copies the same prompt as the Agent menu (#2847)', async testContext => {
+  const ui = mountStudio(testContext);
+  byText(ui.root.querySelector('#crucible-studio-pop-help'), 'Set up Studio…').click();
+  assert.equal(ui.root.querySelector('.crucible-studio-setup-dialog').open, true);
+  setupButton(ui, 'Copy an agent prompt').click();
+  await ui.dom.settle();
+  assert.equal(ui.dom.clipboardTexts.length, 1);
+  assert.match(ui.dom.clipboardTexts[0], /Edit Crucible scene/);
+});
+
+test('Reset in Settings keeps the setup marked done (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.studio.setPreference('setupDone', true);
+  ui.studio.setPreference('theme', 'dark');
+  ui.button('Reset').click();
+  assert.equal(ui.studio.preferences.theme, 'system');
+  assert.equal(ui.studio.setupDone, true);
 });

@@ -10,6 +10,8 @@ export const STUDIO_PREFERENCE_CHOICES = Object.freeze({
   rotateSnapDegrees: Object.freeze([5, 10, 15, 30, 45, 90]),
   gizmoSize: Object.freeze(Object.keys(STUDIO_GIZMO_PIXELS)),
   startWorkspace: Object.freeze(['build', 'look', 'animate']),
+  theme: Object.freeze(['system', 'light', 'dark']),
+  performance: Object.freeze(['automatic', 'light', 'balanced', 'sharp']),
 });
 
 export const STUDIO_PANEL_WIDTH = Object.freeze({ least: 240, most: 520, initial: 284 });
@@ -71,6 +73,9 @@ export const STUDIO_PREFERENCE_DEFAULTS = Object.freeze({
   rotateSnapDegrees: 15,
   gizmoSize: 'medium',
   startWorkspace: 'build',
+  theme: 'system',
+  performance: 'automatic',
+  setupDone: false,
   gridVisible: true,
   readoutVisible: true,
   viewWidgetVisible: true,

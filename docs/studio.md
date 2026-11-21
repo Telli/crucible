@@ -112,7 +112,17 @@ A right click on an object, in the viewport or in the Scene list, selects it and
 
 ## Settings
 
-**Edit ▸ Settings** (Ctrl+,) opens Settings: the step and the angle a Shift drag snaps to, the size of the handles, the workspace Studio opens in, and whether the grid, the readout, the axis widget and the agent cursor show. They are kept in the browser (`localStorage`, key `crucible-studio-preferences`), not in the scene recipe, so a scene looks the same for everyone and each person keeps their own setup. **Reset** brings back the defaults. An app can pass `preferences` to `createStudio` to start from other values, `preferenceStorage: null` to keep nothing, and call `studio.setPreference(name, value)`.
+**Edit ▸ Settings** (Ctrl+,) opens Settings: the step and the angle a Shift drag snaps to, the size of the handles, the workspace Studio opens in, the theme (System, Light or Dark), the performance tier, and whether the grid, the readout, the axis widget and the agent cursor show. They are kept in the browser (`localStorage`, key `crucible-studio-preferences`), not in the scene recipe, so a scene looks the same for everyone and each person keeps their own setup. **Reset** brings back the defaults. An app can pass `preferences` to `createStudio` to start from other values, `preferenceStorage: null` to keep nothing, and call `studio.setPreference(name, value)`.
+
+**Theme** forces the Studio light or dark whatever the system says; System follows the system. The dialogs and menus follow it too. An app that wants to theme its own frame passes `onThemeChange(theme)` to `createStudio`; it is called with `'light'` or `'dark'` at the start and on each change.
+
+**Performance** sets how many device pixels the viewport draws for each screen pixel: Light 1x, Balanced 1.5x, Sharp 2x (what Studio always drew), at most the screen's own ratio. Automatic picks a tier from the graphics card the browser reports, the cores and the memory: software renderers and small integrated chips go Light, other integrated chips Balanced, dedicated cards and Apple M-series Sharp, and a card the browser hides Balanced. The tier changes only the viewport; it is never written into the scene recipe, so renders and exports look the same on every machine. A `pixelRatio` passed in `rendererOptions` stays as given.
+
+## Set up Studio
+
+The setup is four groups of cards: the theme (each card sketches the Studio in that theme, and a choice changes the Studio behind the dialog at once), the performance tier (Automatic shows the hardware it found and the ratio it picked), the modelling defaults (move snap, rotate snap, handle size, start workspace) and **Copy an agent prompt**, the same action as in the **Agent** menu. Finishing it, skipping it or pressing Esc marks it done. Choices are the Settings preferences, so nothing is stored twice.
+
+Studio never opens the setup by itself, so tests, capture scripts and embedders get no modal. A host opens it with `studio.openSetup({ layout })`, usually when `studio.setupDone` is false: `'steps'` (the default) shows one group a page with Back, Next and Done, `'sheet'` shows all four on one page. **Help ▸ Set up Studio…** opens it again. The development page opens it on a first visit, and `?setup=off`, `?setup=steps` and `?setup=sheet` turn it off or force a layout.
 
 ## Mount the Studio in an app
 

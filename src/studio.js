@@ -12,6 +12,8 @@ import { encodePackOrRefuse } from './studio-pack-refusal.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
 import { createStudioCatalog } from './studio-catalog.js';
+import { createStudioSetup } from './studio-setup.js';
+import { detectStudioHardware, gatherStudioHardwareInputs, resolveStudioPerformanceTier, studioPixelRatioFor } from './studio-hardware.js';
 import {
   STUDIO_GIZMO_PIXELS,
   STUDIO_PREFERENCE_CHOICES,
@@ -929,6 +931,8 @@ const STUDIO_SETTING_ROWS = Object.freeze([
   ['rotateSnapDegrees', 'Rotate snap angle', value => `${value}°`],
   ['gizmoSize', 'Handle size', value => value[0].toUpperCase() + value.slice(1)],
   ['startWorkspace', 'Open in', value => value[0].toUpperCase() + value.slice(1)],
+  ['theme', 'Theme', value => value[0].toUpperCase() + value.slice(1)],
+  ['performance', 'Performance', value => value[0].toUpperCase() + value.slice(1)],
   ['gridVisible', 'Grid'],
   ['readoutVisible', 'Camera and size readout'],
   ['viewWidgetVisible', 'Axis widget'],
@@ -963,6 +967,7 @@ export function createStudio(container, {
   preferenceStorage = browserPreferenceStorage(),
   catalog: catalogHooks = {},
   onDirtyChange,
+  onThemeChange,
 } = {}) {
   const catalog = createStudioCatalog(catalogHooks);
   let preferences = normalizeStudioPreferences({ ...loadStudioPreferences(preferenceStorage), ...suppliedPreferences });
@@ -1186,6 +1191,7 @@ export function createStudio(container, {
   const helpPopover = createMenuPopover(
     'crucible-studio-pop-help',
     createMenuItem('Keyboard shortcuts', '?', () => shortcutsDialog.showModal(), 'keyboard'),
+    createMenuItem('Set up Studio…', '', () => openSetup(), 'settings'),
   );
   const exportMenuButton = createElement(
     documentReference,
@@ -1279,8 +1285,7 @@ export function createStudio(container, {
     announce(autoReloadWatch ? 'Auto-reload enabled' : 'Auto-reload paused');
   });
   const copyPromptButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Copy a prompt for the agent' });
-  copyPromptButton.addEventListener('click', async () => {
-    aiSyncPopover.hidePopover?.();
+  async function copyAgentPrompt() {
     const target = activeFilePath ?? activeFileName;
     const promptText = `Edit Crucible scene "${target}" (format crucible.scene v1, currently at revision ${controller.scene.revision}, selected node: ${controller.selectedNodeId ?? 'none'}). Save JSON updates directly back to this path.`;
     try {
@@ -1289,6 +1294,10 @@ export function createStudio(container, {
     } catch {
       openImportDialog(promptText);
     }
+  }
+  copyPromptButton.addEventListener('click', () => {
+    aiSyncPopover.hidePopover?.();
+    copyAgentPrompt();
   });
   giveMenuIcon(autoReloadButton);
   giveMenuIcon(copyPromptButton, 'duplicate');
@@ -2130,7 +2139,7 @@ export function createStudio(container, {
   });
   const settingsResetButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Reset' });
   settingsResetButton.addEventListener('click', () => {
-    preferences = normalizeStudioPreferences(null);
+    preferences = normalizeStudioPreferences({ setupDone: preferences.setupDone });
     storePreferences();
     applyPreferences();
     announce('Settings reset');
@@ -2153,6 +2162,22 @@ export function createStudio(container, {
     settingsDialog.returnValue = '';
   });
 
+  const setup = createStudioSetup({
+    documentReference,
+    createElement,
+    createIcon,
+    readPreferences: () => preferences,
+    changePreferences: changes => setPreferences(changes),
+    describeHardware: detectedHardware,
+    copyAgentPrompt: () => copyAgentPrompt(),
+    onClose: () => {
+      if (!preferences.setupDone) setPreference('setupDone', true);
+    },
+  });
+  function openSetup({ layout } = {}) {
+    setup.open({ layout });
+  }
+
   function storePreferences() {
     if (preferenceStorage) {
       saveStudioPreferences(preferenceStorage, preferences);
@@ -2166,6 +2191,9 @@ export function createStudio(container, {
       rotateSnapDegrees: preferences.rotateSnapDegrees,
       gizmoPixels: STUDIO_GIZMO_PIXELS[preferences.gizmoSize],
     });
+    applyTheme();
+    applyPerformance();
+    if (setup.dialog.open) setup.refresh();
     root.dataset.readout = preferences.readoutVisible ? 'on' : 'off';
     root.dataset.viewWidget = preferences.viewWidgetVisible ? 'on' : 'off';
     // Floating panels lie over a scene that fills the window. Docked ones take the window's edges and the viewport
@@ -2181,6 +2209,55 @@ export function createStudio(container, {
     for (const [name, control] of settingControls) {
       if (STUDIO_PREFERENCE_CHOICES[name]) control.value = String(preferences[name]);
       else control.checked = preferences[name];
+    }
+  }
+
+  // A forced theme is a data-theme on the root, which the tokens and the dialogs inside it follow. System leaves it off,
+  // so the page's own colour scheme decides, as it always did.
+  let appliedTheme = null;
+  function applyTheme() {
+    if (preferences.theme === 'system') {
+      delete root.dataset.theme;
+    } else {
+      root.dataset.theme = preferences.theme;
+    }
+    if (preferences.theme !== appliedTheme) {
+      appliedTheme = preferences.theme;
+      const systemIsDark = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      onThemeChange?.(preferences.theme === 'system' ? (systemIsDark ? 'dark' : 'light') : preferences.theme);
+    }
+  }
+
+  // What the browser says about this computer, read once. A live renderer's context is asked first so no second
+  // WebGL context is made; otherwise a short-lived one is.
+  let detectedHardwareResult = null;
+  function detectedHardware() {
+    if (detectedHardwareResult) return detectedHardwareResult;
+    let glContext = renderer?.context ?? null;
+    let probeCanvas = null;
+    if (!glContext) {
+      probeCanvas = documentReference.createElement('canvas');
+      glContext = typeof probeCanvas.getContext === 'function' ? probeCanvas.getContext('webgl2') ?? probeCanvas.getContext('webgl') : null;
+    }
+    detectedHardwareResult = detectStudioHardware(gatherStudioHardwareInputs({ glContext, windowReference: documentReference.defaultView ?? window }));
+    if (probeCanvas) glContext?.getExtension?.('WEBGL_lose_context')?.loseContext();
+    return detectedHardwareResult;
+  }
+
+  // The viewport's pixel ratio for the chosen tier. Only the viewport changes: the scene recipe never hears of it.
+  function viewportPixelRatio() {
+    const detectedTier = preferences.performance === 'automatic' ? detectedHardware().tier : null;
+    const tier = resolveStudioPerformanceTier(preferences.performance, detectedTier);
+    return studioPixelRatioFor(tier, window.devicePixelRatio);
+  }
+
+  // A renderer made with its own `pixelRatio` option keeps it. Otherwise a tier change is set on the live renderer.
+  function applyPerformance() {
+    if (!renderer || rendererOptions.pixelRatio !== undefined || !Number.isFinite(renderer.pixelRatio)) return;
+    const pixelRatio = viewportPixelRatio();
+    if (renderer.pixelRatio !== pixelRatio) {
+      renderer.pixelRatio = pixelRatio;
+      renderer.resize();
     }
   }
 
@@ -2223,7 +2300,7 @@ export function createStudio(container, {
   }
 
   applyPreferences();
-  root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, recipeDialog, shortcutsDialog, settingsDialog);
+  root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, recipeDialog, shortcutsDialog, settingsDialog, setup.dialog);
   container.append(root);
 
   function syncWatchNote() {
@@ -2483,7 +2560,7 @@ export function createStudio(container, {
       world: environment.world,
       environment: { ...environment, map: agentEnvironmentMap(environment) },
       shadowBounds: resolveAgentShadow(fitAgentShadow(controller.scene.shadow, controller.scene.parts), environment.lightDirection),
-      pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      pixelRatio: viewportPixelRatio(),
       ground: viewportFloorPart(studioFloorHeight(controller.scene.parts)),
       ...rendererOptions,
     });
@@ -3702,6 +3779,9 @@ export function createStudio(container, {
     get gridVisible() { return gridVisible; },
     setPreference,
     get preferences() { return { ...preferences }; },
+    /** Opens the first-run setup. `layout` is 'steps' (one group a page, the default) or 'sheet' (all groups on one page). Studio never opens it on its own. */
+    openSetup,
+    get setupDone() { return preferences.setupDone; },
     selectNode: nodeId => controller.selectNode(nodeId),
     setTool: tool => controller.setTool(tool),
     setActiveTab: tab => selectInspectorTab(tab),

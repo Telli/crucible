@@ -16,8 +16,10 @@
   --site-ease-out: cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* An element may force a theme with data-theme="light" or "dark"; the system decides everywhere else. The page's own
+   data-theme (the site uses "crucible") is neither, so it is left alone. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --site-bg: #17161a;
     --site-surface: #2a282d;
@@ -29,6 +31,32 @@
     --site-row-active: #2a282d;
     --site-focus: #fc9132;
   }
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --site-bg: #17161a;
+  --site-surface: #2a282d;
+  --site-sidebar: #201f24;
+  --site-text: #f1f0ec;
+  --site-muted: #a09ea6;
+  --site-border: #fefefd1f;
+  --site-row-hover: #201f24;
+  --site-row-active: #2a282d;
+  --site-focus: #fc9132;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --site-bg: #f8f7f1;
+  --site-surface: #efede4;
+  --site-sidebar: #ffffff;
+  --site-text: #2a282d;
+  --site-muted: #6e6c73;
+  --site-border: #2a282d1f;
+  --site-row-hover: #efede4;
+  --site-row-active: #2a282d17;
+  --site-focus: #df5829;
 }
 
 @media (prefers-reduced-motion: reduce) {
