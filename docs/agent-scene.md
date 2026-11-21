@@ -186,7 +186,7 @@ texture images, so no text from a recipe ever reaches the shader. The language s
 | `clearcoat` | A per-pixel mask of the clear coat (the red channel of `layerMaps.clearcoatTexture`). The material `clearcoat` defaults to 1. The rasterizer and the CPU path tracer read it |
 | `transmission` | A per-pixel mask of transmission (`transmissionMap`). The material `transmission` defaults to 1. Only the CPU path tracer reads the mask; the rasterizer and GPU tracers use the factor |
 
-Nodes: `uv` (`"u"`, `"v"` or `"both"`), `noise`, `voronoi` (`output`: `distance`, `edge` or `cell`, a random value per cell),
+Nodes: `uv` (`"u"`, `"v"` or `"both"`), `noise`, `voronoi` (`output`: `distance`, `edge`, `cell`, `f2`, `f2MinusF1` or `smoothF1`, see below),
 `wave` (`sine`, `saw` or `triangle` along `u`, `v` or `diagonal`), `checker`, `gradient` (`u`, `v` or `radial`), `ramp`
 (2 to 8 stops of numbers or colours), `vec`, and the maths nodes `add`, `sub`, `mul`, `div`, `min`, `max`, `pow`, `abs`, `floor`,
 `fract`, `sqrt`, `invert`, `clamp`, `smoothstep` and `mix`. Mixing nodes: `layer` (`base`, `top`, `mask`, `edge` 0.5, `softness` 0.1) puts `top` over `base` where the mask passes the edge, so `{ "layer": { "base": [0.45, 0.18, 0.06], "top": [0.1, 0.35, 0.7], "mask": chipMask } }` is paint over rust; `hue` (`color`, `shift` in turns, `saturation`, `value`) and `curve` (`value`, 2 to 8 `points` `[x, y]` with rising x, straight segments). Maths nodes work on each component of a vector. Every texture
@@ -194,6 +194,16 @@ node takes `at`, a vector expression such as `{ "add": [{ "uv": "both" }, { "mul
 it. Scales and counts are whole numbers (1 to 64, even for `checker`), so every texture node tiles. `noise` is Blender's Noise Texture
 (2D, detail `octaves - 1`, roughness 0.5, lacunarity 2, normalized; `seed` moves the lattice by whole cells) with the lattice
 wrapped so it repeats. `"tile": false` matches Blender's Noise Texture exactly, does not repeat.
+
+`voronoi` has one feature point in each of `scale` by `scale` cells, and its `output` picks what to read from them (#2857), each from 0 to 1:
+
+- `distance` (default) is F1, the distance to the nearest point: a dome in every cell.
+- `edge` and `f2MinusF1` (the same value) are F2 minus F1, the gap between the nearest and second nearest point. It is 0 on the line between two cells, so it draws cracks, cobble joints, dry mud and leather.
+- `f2` is the distance to the second nearest point: layered cells that overlap their neighbours.
+- `smoothF1` is F1 with the hard minimum replaced by a smooth one over the 5 by 5 cells around the pixel, as Blender's Smooth F1: no crease between cells, so organic blobs and scales. `smoothness` (0 to 1, default 1) sets the blend and only applies to this output; 0 gives F1. It costs 22 work units, the other outputs 8.
+- `cell` is one random value per cell.
+
+`jitter` (0 to 1, default 1) is how far each point strays from the middle of its cell: 1 is the look the node always had, 0 puts every point at the centre so the cells form a regular grid. Every output tiles.
 
 Placement and pattern nodes:
 

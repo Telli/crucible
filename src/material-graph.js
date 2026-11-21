@@ -1,6 +1,6 @@
 import { MATERIAL_GRAPH_LIMITS, MATERIAL_GRAPH_OUTPUTS, MATERIAL_GRAPH_OPERATORS } from './agent-scene-capabilities.js';
 import { EMISSION_FRESNEL_IOR_RANGE } from './material-layers.js';
-import { clampUnit, smoothStep, wrapCell, hashCell, cellularNoise, linearToSrgbByte, createImage, normalMapFromHeightFunction } from './material-texture-kit.js';
+import { clampUnit, smoothStep, wrapCell, hashCell, cellularNoise, smoothCellularDistance, linearToSrgbByte, createImage, normalMapFromHeightFunction } from './material-texture-kit.js';
 
 // A bounded material node graph. Like a field expression (src/mesh-fields.js), a graph is data and never code: it is
 // walked as plain objects against a fixed table of operators, checked against its limits before any pixel is
@@ -63,6 +63,11 @@ function onlyKeys(node, allowed, label) {
 
 function integerInRange(value, minimum, maximum, label) {
   if (!Number.isInteger(value) || value < minimum || value > maximum) throw graphError(`${label} must be a whole number from ${minimum} to ${maximum}.`);
+  return value;
+}
+
+function numberInRange(value, minimum, maximum, label) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) throw graphError(`${label} must be a number from ${minimum} to ${maximum}, got ${describeValue(value)}.`);
   return value;
 }
 
@@ -236,19 +241,28 @@ function compileNoise(node, state, depth) {
   return scalarValue((u, v) => blenderNoise(positionU(u, v) * scale + shiftX, positionV(u, v) * scale + shiftY, octaves, tileCells));
 }
 
-const VORONOI_OUTPUTS = ['distance', 'edge', 'cell'];
+// distance is F1, the distance to the nearest point; edge and f2MinusF1 are F2 - F1, which is 0 on the line between two
+// cells, so the cracks of mud, cobbles and leather; f2 is the distance to the second nearest point; smoothF1 is F1 with
+// the hard minimum smoothed (Blender's Smooth F1), so cells melt into organic blobs; cell is one random value per cell.
+const VORONOI_OUTPUTS = ['distance', 'edge', 'cell', 'f2', 'f2MinusF1', 'smoothF1'];
+const VORONOI_SMOOTH_COST = 22;
 
 function compileVoronoi(node, state, depth) {
-  const settings = textureSettings(node, 'voronoi', ['scale', 'seed', 'output', 'at']);
+  const settings = textureSettings(node, 'voronoi', ['scale', 'seed', 'output', 'jitter', 'smoothness', 'at']);
   const scale = integerInRange(settings.scale ?? 4, 1, NOISE_SCALE_LIMIT, 'voronoi scale');
   const seed = integerInRange(settings.seed ?? 0, 0, MAX_SEED, 'voronoi seed');
   const output = oneOf(settings.output ?? 'distance', VORONOI_OUTPUTS, 'voronoi output');
-  state.cost += VORONOI_COST;
+  const jitter = numberInRange(settings.jitter ?? 1, 0, 1, 'voronoi jitter');
+  if (settings.smoothness !== undefined && output !== 'smoothF1') throw graphError('voronoi smoothness only applies to output "smoothF1"; remove it or set output to "smoothF1".');
+  const smoothness = numberInRange(settings.smoothness ?? 1, 0, 1, 'voronoi smoothness');
+  state.cost += output === 'smoothF1' ? VORONOI_SMOOTH_COST : VORONOI_COST;
   const [positionU, positionV] = compilePosition(settings, state, depth);
   return scalarValue((u, v) => {
-    const { nearest, second, cell } = cellularNoise(positionU(u, v), positionV(u, v), scale, seed);
+    if (output === 'smoothF1') return clampUnit(smoothCellularDistance(positionU(u, v), positionV(u, v), scale, seed, jitter, smoothness));
+    const { nearest, second, cell } = cellularNoise(positionU(u, v), positionV(u, v), scale, seed, jitter);
     if (output === 'cell') return cell / 4294967296;
-    return clampUnit(output === 'edge' ? second - nearest : nearest);
+    if (output === 'f2') return clampUnit(second);
+    return clampUnit(output === 'distance' ? nearest : second - nearest);
   });
 }
 
