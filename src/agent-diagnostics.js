@@ -35,6 +35,11 @@ function materialProblems(material) {
         `Remove ${field}, or set the material tag to surface with scene_apply set-material.`));
     }
   }
+  if (material.heightMap !== undefined) {
+    problems.push(diagnostic('ignored-material-field', 'warning', material.id,
+      'heightMap is ignored: no renderer displaces or parallax-maps a surface from it yet, so it has no effect on the picture.',
+      'Remove heightMap, or rely on normalMap for the surface relief.'));
+  }
   if (transmitting) {
     for (const field of FIELDS_IGNORED_BY_TRANSMISSION.filter(layer => hasValue(material, layer))) {
       problems.push(diagnostic('ignored-material-field', 'warning', material.id,

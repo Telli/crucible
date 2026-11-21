@@ -7,6 +7,7 @@ import { IK_SOLVER_TYPE_NAMES } from '../src/motion-ik-solver-types.js';
 import { MOTION_PROPERTY_KIND_NAMES } from '../src/motion-property-kinds.js';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
+import { NORMAL_CONVENTIONS, TEXTURE_MAP_FIELDS } from '../src/texture-set-fields.js';
 import { readEnvironmentVariable } from '../src/environment-variable.js';
 import { McpServer } from '@modelcontextprotocol/server';
 import { resolveJobRoot } from './agent-job-root.mjs';
@@ -193,6 +194,8 @@ const subsurface = z.strictObject({
   color: subsurfaceTriple(SUBSURFACE_RANGES.color).optional(),
 }).describe('Subsurface scattering (skin, wax, leaves) as Blender Principled BSDF; details in scene_capabilities materialSubsurface.');
 
+const catalogImageId = z.string().regex(/^[a-f0-9]{64}$/i).describe('Catalog image asset ID from scene_asset_catalog.');
+
 const materialFields = {
   ...waterFields,
   ...materialLayerFields,
@@ -207,6 +210,9 @@ const materialFields = {
     fps: z.number().positive().max(60),
     loop: z.boolean().optional(),
   }) }).optional().describe('Image sequence colour map of catalog images; scene_capabilities textureSequence.'),
+  textureSet: z.string().max(256).optional().describe('Name of a catalog texture set (scene_asset_catalog textureSets): fills colorMap, normalMap, roughnessMap, metallicMap, occlusionMap and heightMap; scene_capabilities textureSet.'),
+  ...Object.fromEntries(TEXTURE_MAP_FIELDS.map(field => [field, catalogImageId.optional()])),
+  normalConvention: z.enum(NORMAL_CONVENTIONS).optional().describe('opengl (default) or directx normal map; directx has its green channel flipped on load.'),
   color: color.optional().describe('Linear RGB base color, each component between zero and one.'),
   metallic: unit.optional(),
   roughness: unit.optional(),
