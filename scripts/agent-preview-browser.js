@@ -56,6 +56,7 @@ import { agentAssetDecodeOptions, withCatalogLimitAdvice } from '../src/agent-as
 import { describeMarks, validateMarks } from '../src/agent-annotate.js';
 import { sceneQueryFor, partMaterialsFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache } from './agent-walkmap.js';
 import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
+import { profileFrameCount, profileFrames, heaviestNodes } from '../src/render-profile.js';
 
 // Open scenes by sessionId, least recently used first. One canvas serves them all, so at most one record owns a renderer;
 // a call on another scene hands the canvas over (the scene data stays, the renderer is rebuilt).
@@ -462,6 +463,23 @@ function syncMeshBlend(record) {
     if (node.blend !== undefined) radii.set(node.id, normalizeBlend(node.blend).radius);
   }
   record.renderer.meshBlend.radii = radii;
+}
+
+const PROFILE_FRAME_SECONDS = 1 / 60;
+
+// What the scene costs to draw as it stands: frame time over real frames at the preview size, the draw calls and triangles
+// the GPU receives in one frame, the texture memory the renderer holds and the nodes with the most triangles.
+function profileScene(record, frames) {
+  const { renderer } = record;
+  const measured = profileFrames({ context: renderer.context, frames, drawFrame: index => draw(record, index * PROFILE_FRAME_SECONDS) });
+  return {
+    ...measured,
+    textureBytes: renderer.textureBytes ?? 0,
+    splatBytes: renderer.splatBytes ?? 0,
+    width: canvas.width,
+    height: canvas.height,
+    heaviestNodes: heaviestNodes(record.scene.parts),
+  };
 }
 
 function renderStatus(record) {
@@ -1246,8 +1264,11 @@ window.__agentPreview = {
       throw error;
     }
   },
-  inspect({ sessionId, ...options }) {
-    return { sessionId, ...requireSession(sessionId).scene.inspect(options), kernels: kernelReport() };
+  inspect({ sessionId, profile, profileFrames: requestedFrames, ...options }) {
+    const frames = profileFrameCount({ profile, profileFrames: requestedFrames });
+    const record = requireSession(sessionId);
+    const inspection = { sessionId, ...record.scene.inspect(options), kernels: kernelReport() };
+    return profile ? { ...inspection, profile: profileScene(record, frames) } : inspection;
   },
   inspectMeshes({ sessionId, ...options }) {
     const scene = requireSession(sessionId).scene;

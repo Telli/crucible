@@ -575,7 +575,23 @@ Global counts include nodes, render parts, unique geometries, materials, and uni
 
 Those fields describe active resources, including unused resources.
 `residentGeometryBytes` and `residentGeometryVertices` include unique active and checkpoint allocations.
-Inspection does not report GPU timing or renderer allocation.
+The scene's own `inspect` does not report GPU timing or renderer allocation; the MCP tool adds them on request, below.
+
+### Cost profile
+
+`scene_inspect` with `profile: true` adds `profile`, what the scene costs to draw as it stands:
+
+```json
+{ "profile": { "frames": 30, "millisecondsPerFrame": 4.1, "millisecondsMinimum": 3.8, "millisecondsMaximum": 6.2,
+  "drawCalls": 41, "triangles": 182340, "textureBytes": 12582912, "splatBytes": 0, "width": 768, "height": 512,
+  "heaviestNodes": [{ "id": "hull", "triangles": 90112, "parts": 1 }] } }
+```
+
+- It draws `profileFrames` frames (1 to 120, default 30, the same size as the preview) after one unmeasured frame. `millisecondsPerFrame` is the median; each frame includes the wait for the GPU. Other work on the machine moves it, so read it as a range.
+- `drawCalls` and `triangles` are per frame and count every pass the frame draws, shadows and post effects included, the way `bench/runtime` counts them.
+- `textureBytes` is the texture memory the renderer holds (material maps, skin and morph data, the sky map and splat layers); `splatBytes` is the splat share of it.
+- `heaviestNodes` are the five nodes with the most triangles; parts that share a node add up.
+- It needs the GPU preview, takes a GPU slot like `scene_look`, and without `profile` the answer is exactly what it was.
 
 With `includeBounds: true`, each mesh record includes `{ min, max }` from every transformed geometry vertex.
 Group bounds are `null`.
