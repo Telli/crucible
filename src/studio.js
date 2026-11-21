@@ -3361,8 +3361,19 @@ export function createStudio(container, {
     }
   });
 
-  function isEditableTarget(target) {
+  // A slider or a switch keeps the focus after a click, but nothing is typed into it, so only the keys it moves with stay its own.
+  const SLIDER_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+  const SWITCH_KEYS = new Set([...SLIDER_KEYS, 'Enter', ' ']);
+  const SWITCH_INPUT_TYPES = new Set(['checkbox', 'radio', 'button', 'color']);
+
+  function isEditableTarget(target, key) {
     const tag = target?.tagName?.toLowerCase?.();
+    if (tag === 'input' && target.type === 'range') {
+      return SLIDER_KEYS.has(key);
+    }
+    if (tag === 'input' && SWITCH_INPUT_TYPES.has(target.type)) {
+      return SWITCH_KEYS.has(key);
+    }
     return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(target?.isContentEditable);
   }
 
@@ -3396,7 +3407,7 @@ export function createStudio(container, {
       handleModalKey(event);
       return;
     }
-    if (isEditableTarget(event.target)) {
+    if (isEditableTarget(event.target, event.key)) {
       return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {

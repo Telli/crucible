@@ -1099,6 +1099,19 @@ test('selecting a mesh row after the Sun row leaves the Look tab for the object'
   assert.equal(ui.controller.activeTab, 'look', 'a Look tab opened by hand stays open when a mesh is picked');
 });
 
+test('keyboard shortcuts still work while a slider or a switch holds the focus', testContext => {
+  const ui = mountStudio(testContext);
+  const scrub = ui.label('Timeline scrub');
+  dispatch(scrub, 'keydown', { key: 'r' });
+  assert.equal(ui.controller.tool, 'rotate', 'a letter is not typed into a slider, so it reaches the tools');
+  dispatch(scrub, 'keydown', { key: 'ArrowRight' });
+  dispatch(scrub, 'keydown', { key: 'Home' });
+  assert.equal(ui.controller.tool, 'rotate', 'the keys that move a slider stay with it');
+  const roughness = ui.label('Roughness');
+  dispatch(roughness, 'keydown', { key: 's' });
+  assert.equal(ui.controller.tool, 'scale');
+});
+
 test('keyboard shortcuts are ignored while typing and after the Studio left the page', testContext => {
   const ui = mountStudio(testContext);
   const nameInput = ui.label('Node label');
