@@ -100,6 +100,37 @@ export function isLookPath(path) {
   return lookRootPattern.test(normalized) && lookNamePattern.test(normalized);
 }
 
+// A changed line that cannot alter what renders: blank, a comment, a throw, an error constructor, braces, the head of an if
+// or for that guards input, or a plain JS `const` local. GLSL declarations (`const float`) and assignments are not on the list.
+const guardLinePatterns = [
+  /^$/,
+  /^(\/\/|\/?\*)/,
+  /\bthrow\b/,
+  /\bnew\s+\w*Error\b/,
+  /^[{}()\]);,]+$/,
+  /^(\}\s*)?(else\s+)?if\s*\(.*\)\s*\{?$/,
+  /^for\s*\(.*\)\s*\{?$/,
+  /^const\s+(?!(?:float|int|vec\d|mat\d|bool|uint)\b)[\w$]+\s*=\s*[^`]*;$/,
+];
+const throwLinePattern = /\bthrow\b|\bnew\s+\w*Error\b/;
+
+// True when the patch only adds a thrown message or input validation: every changed line is on the guard list and at least one
+// added line throws. No patch (GitHub omits it for very large diffs) is never guard only, so the file stays a look change.
+export function isGuardOnlyPatch(patch) {
+  if (typeof patch !== 'string' || patch.length === 0) return false;
+  const changed = patch.split(/\r?\n/).filter(line => /^[+-]/.test(line) && !/^(\+\+\+|---)/.test(line));
+  if (changed.length === 0) return false;
+  const bodies = changed.map(line => ({ added: line[0] === '+', text: line.slice(1).trim() }));
+  const allGuards = bodies.every(({ text }) => guardLinePatterns.some(pattern => pattern.test(text)));
+  const addsThrow = bodies.some(({ added, text }) => added && throwLinePattern.test(text));
+  return allGuards && addsThrow;
+}
+
+// A look file is one whose name says look and whose changes are not just a message or an input check.
+export function isLookFile(file) {
+  return isLookPath(file.filename) && !isGuardOnlyPatch(file.patch);
+}
+
 // Docs, CI and test only pull requests skip every rule except the local path one.
 export function isLightPullRequest(files) {
   return files.length > 0 && files.every(file => {
@@ -176,7 +207,7 @@ function contributorFixesFor(pr, files, light) {
     ));
   }
 
-  const touchesLook = paths.some(isLookPath);
+  const touchesLook = files.some(isLookFile);
   if (touchesLook && !pr.lookApproved && !imagePattern.test(visibleBody)) {
     fixes.push(fix(
       'look-without-image',
@@ -200,7 +231,7 @@ function maintainerTodosFor(pr, files, contributorFixes) {
   if (!labels.some(label => ['bug', 'enhancement', 'documentation'].includes(label))) todos.push('Set a type label (bug, enhancement or documentation).');
   if (!pr.milestone) todos.push('Set a milestone.');
   const paths = files.map(file => normalizePath(file.filename));
-  if (!pr.lookApproved && paths.some(isLookPath)) todos.push('Look change: only the owner removes hold:look-approval after seeing the pictures.');
+  if (!pr.lookApproved && files.some(isLookFile)) todos.push('Look change: only the owner removes hold:look-approval after seeing the pictures.');
   const needsToolBench = paths.some(path => toolOrSkillPathPattern.test(path));
   if (needsToolBench && contributorFixes.length === 0 && benchOptOutPattern.test(pr.body ?? '')) {
     todos.push('Run the agent bench for this pull request (bench/agent-modeling).');
@@ -220,7 +251,7 @@ export function checkPullRequest({ pr, files }) {
   if (classificationMissing && !labels.includes(NEEDS_TRIAGE_LABEL)) addLabels.push(NEEDS_TRIAGE_LABEL);
   if (!classificationMissing && labels.includes(NEEDS_TRIAGE_LABEL)) removeLabels.push(NEEDS_TRIAGE_LABEL);
 
-  const needsHold = !pr.lookApproved && files.some(file => isLookPath(file.filename));
+  const needsHold = !pr.lookApproved && files.some(isLookFile);
   if (needsHold && !labels.includes(LOOK_HOLD_LABEL)) addLabels.push(LOOK_HOLD_LABEL);
 
   if (!isAutoCloseExempt(pr)) {
