@@ -208,6 +208,7 @@ function rotationKeyLabel(track, keyframe, index) {
 function normalizedRotationKeyframes(track) {
   if (track.property !== 'rotation') return track.keyframes;
   let keyframes = track.keyframes;
+  if (!Array.isArray(keyframes) || keyframes.length === 0) return keyframes;
   keyframes.forEach((keyframe, index) => {
     const value = Array.isArray(keyframe.value) ? keyframe.value : Array.from(keyframe.value);
     if (value.length !== 4 || !value.every(Number.isFinite)) return;

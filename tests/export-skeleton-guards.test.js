@@ -41,6 +41,11 @@ test('a rotation keyframe needs four components', () => {
   assert.throws(() => exportGlb([rodPart()], { clips: [clip] }), /rotation track on Rod.*4 values/i);
 });
 
+test('a rotation track with no keyframes is refused with the track named', () => {
+  const clip = clipOf('rotation', []);
+  assert.throws(() => exportGlb([rodPart()], { clips: [clip] }), /rotation track on Rod.*needs keyframes/i);
+});
+
 test('a zero rotation key is refused with the track and key named', () => {
   const clip = clipOf('rotation', [
     { time: 0, value: [0, 0, 0, 1] },
