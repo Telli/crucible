@@ -19,9 +19,9 @@
 .viewer button:hover:not(:disabled) { background: var(--card); }
 .viewer button:active:not(:disabled) { transform: scale(0.97); }
 .viewer button[aria-pressed='true'], .viewer button.primary { border-color: var(--button-bg); background: var(--button-bg); color: var(--button-fg); }
-.viewer button:disabled { opacity: 0.5; cursor: default; }
+
 .viewer select { min-height: 40px; padding: 0 10px; border: var(--edge-width) solid var(--edge); border-radius: var(--round); background: var(--site-bg); color: var(--fg); font: 500 14px/1 var(--body); cursor: pointer; }
-.viewer select:disabled { opacity: 0.5; cursor: default; }
+
 .viewer option { background: var(--site-bg); color: var(--fg); }
 .viewer input[type='range'] { accent-color: var(--accent); cursor: pointer; margin: 0; }
 .viewer input[type='range']:disabled { cursor: default; }
@@ -39,3 +39,11 @@
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .export-mode .nav, .export-view .nav, .modeling-export .nav, .modeling-export .footer { display: none; }
 .export-mode, .export-view { display: block; height: auto; overflow: visible; }
+
+/* Selects draw a pixel chevron in the text colour instead of the browser's own arrow. */
+.viewer select { appearance: none; padding-right: 30px; background-repeat: no-repeat; background-position: right 10px center; background-size: 10px 5px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 5' shape-rendering='crispEdges'%3E%3Cpath fill='%232a282d' d='M0 0h2v1H0zM8 0h2v1H8zM1 1h2v1H1zM7 1h2v1H7zM2 2h2v1H2zM6 2h2v1H6zM3 3h4v1H3zM4 4h2v1H4z'/%3E%3C/svg%3E"); }
+@media (prefers-color-scheme: dark) {
+  .viewer select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 5' shape-rendering='crispEdges'%3E%3Cpath fill='%23f1f0ec' d='M0 0h2v1H0zM8 0h2v1H8zM1 1h2v1H1zM7 1h2v1H7zM2 2h2v1H2zM6 2h2v1H6zM3 3h4v1H3zM4 4h2v1H4z'/%3E%3C/svg%3E"); }
+}
+/* A disabled control keeps its shape, drops to the muted token and gets a dashed edge. */
+.viewer button:disabled, .viewer select:disabled { opacity: 1; border-style: dashed; border-color: var(--soft); background-color: transparent; color: var(--soft); cursor: default; }
