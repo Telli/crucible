@@ -194,3 +194,12 @@ test('Studio keeps the template and reports why when a recipe needs catalog file
   assert.equal(plainStudio.exportRecipe().nodes.length, 1, 'a recipe without catalog files still opens at once');
   await plainStudio.ready;
 });
+
+test('a recipe whose nodes are not a list loads nothing and is left to the normal validation', async () => {
+  const catalog = createStudioCatalog({});
+  for (const nodes of ['zzz', 7, {}, null]) {
+    const recipe = { nodes };
+    assert.equal(catalog.needsLoading(recipe), false);
+    await catalog.prepare(recipe);
+  }
+});

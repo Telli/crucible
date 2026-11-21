@@ -8,23 +8,26 @@ import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
 import { CrucibleRenderer, studioFloorHeight } from './renderer.js';
 import { exportGlb } from './export.js';
 import { encodePack } from './scene-pack-format.js';
+import { encodePackOrRefuse } from './studio-pack-refusal.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
 import { createStudioCatalog } from './studio-catalog.js';
 import {
   STUDIO_GIZMO_PIXELS,
-  STUDIO_PANEL_WIDTH,
   STUDIO_PREFERENCE_CHOICES,
   STUDIO_PREFERENCE_DEFAULTS,
-  STUDIO_SCENE_SHARE,
   loadStudioPreferences,
   normalizeStudioPreferences,
   saveStudioPreferences,
 } from './studio-preferences.js';
+import { createPanelGrips } from './studio-panel-grips.js';
 import { studioIconPath } from './studio-icons.js';
+import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
+import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-properties.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
+import { CONTEXT_LOST_MESSAGE, createPausedPictureNotice, describeFrameFailure, watchContextLoss } from './studio-context-loss.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
 import {
   STUDIO_LENS_PRESETS,
@@ -40,7 +43,6 @@ import {
 } from './studio-templates.js';
 import {
   createStudioController,
-  directionToSunAngles,
   hasAnimatedData,
   linearRgbToHex,
   quaternionToEulerDegrees,
@@ -63,6 +65,26 @@ export {
 const AXIS_NAMES = Object.freeze(['x', 'y', 'z']);
 const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
+const LENS_CHIP_TOLERANCE_MILLIMETRES = 0.5;
+// A view chip is active while the camera looks along its direction, within about two degrees; a free orbit matches none.
+const VIEW_CHIP_DIRECTIONS = Object.freeze({ front: [0, 0, 1], right: [1, 0, 0], top: [0.002, 1, 0.002], isometric: [1, 0.72, 1] });
+const VIEW_CHIP_MINIMUM_COSINE = 0.9995;
+// A tree row is 28px high with a 1px gap; the Scene list stretches its rows a little so a whole number of them fills it.
+const TREE_ROW_GAP_PIXELS = 1;
+
+/** The view chip whose direction the camera looks along, or null when the camera is in a free orbit. */
+function matchingViewChip(camera) {
+  const offset = camera.eye.map((coordinate, axis) => coordinate - camera.target[axis]);
+  const offsetLength = Math.hypot(...offset);
+  if (offsetLength === 0) {
+    return null;
+  }
+  const match = Object.entries(VIEW_CHIP_DIRECTIONS).find(([, direction]) => {
+    const dot = offset.reduce((sum, coordinate, axis) => sum + coordinate * direction[axis], 0);
+    return dot / (offsetLength * Math.hypot(...direction)) >= VIEW_CHIP_MINIMUM_COSINE;
+  });
+  return match ? match[0] : null;
+}
 const STUDIO_STYLE_ID = 'crucible-studio-styles';
 const COMPACT_WIDTH = 820;
 const TIGHT_WIDTH = 920;
@@ -196,13 +218,14 @@ function wireRovingFocusFallback(container, items, { vertical = false, followFoc
   });
 }
 
-function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02, minimumComponent = -Infinity, lockToggle = null } = {}) {
-  let latestValues = [0, 0, 0];
+function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02, minimumComponent = -Infinity, lockToggle = null, axisNames = AXIS_NAMES, accessibleTitle = title, onGestureStart, onGestureEnd } = {}) {
+  let latestValues = axisNames.map(() => 0);
   let locked = false;
-  const inputs = AXIS_NAMES.map(axis => createElement(documentReference, 'input', {
+  let disabled = false;
+  const inputs = axisNames.map(axis => createElement(documentReference, 'input', {
     type: 'number',
     step: '0.05',
-    attributes: { 'aria-label': `${title} ${axis.toUpperCase()}` },
+    attributes: { 'aria-label': `${accessibleTitle} ${axis.toUpperCase()}` },
   }));
 
   function emitEditedAxis(axisIndex, rawNumeric) {
@@ -228,7 +251,7 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
     });
   });
 
-  const axisLabels = AXIS_NAMES.map((axis, axisIndex) => {
+  const axisLabels = axisNames.map((axis, axisIndex) => {
     const badge = createElement(documentReference, 'span', {
       className: 'crucible-studio-axis-scrub',
       textContent: axis.toUpperCase(),
@@ -238,6 +261,8 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
     let scrubState = null;
     badge.addEventListener('pointerdown', event => {
       event.preventDefault();
+      if (disabled) return;
+      onGestureStart?.();
       scrubState = { startX: event.clientX, startValue: Number(inputs[axisIndex].value) || 0 };
       badge.setPointerCapture?.(event.pointerId);
     });
@@ -248,6 +273,7 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
       emitEditedAxis(axisIndex, nextValue);
     });
     const finishScrub = () => {
+      if (scrubState) onGestureEnd?.();
       scrubState = null;
     };
     badge.addEventListener('pointerup', finishScrub);
@@ -281,7 +307,7 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
     createElement(
       documentReference,
       'div',
-      { className: 'crucible-studio-vector' },
+      { className: 'crucible-studio-vector', dataset: { axes: String(axisNames.length) } },
       ...inputs.map((input, axisIndex) => createElement(
         documentReference,
         'label',
@@ -294,6 +320,12 @@ function createVectorRow(documentReference, title, onInput, { sensitivity = 0.02
   return {
     container,
     inputs,
+    setDisabled(nextDisabled) {
+      disabled = nextDisabled;
+      inputs.forEach(input => {
+        input.disabled = nextDisabled;
+      });
+    },
     setValues(values, precision = ROUND_PRECISION) {
       latestValues = Array.from(values, component => Number(component) || 0);
       inputs.forEach((input, index) => {
@@ -349,15 +381,15 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
     cy: '60',
     r: '52',
     fill: 'none',
-    stroke: 'color-mix(in srgb, var(--studio-text) 12%, transparent)',
-    'stroke-width': '1',
+    stroke: 'color-mix(in srgb, var(--studio-text) 55%, transparent)',
+    'stroke-width': '1.5',
   });
   const midRing = createSvgElement(documentReference, 'circle', {
     cx: '60',
     cy: '60',
     r: '28',
     fill: 'none',
-    stroke: 'color-mix(in srgb, var(--studio-text) 8%, transparent)',
+    stroke: 'color-mix(in srgb, var(--studio-text) 30%, transparent)',
     'stroke-dasharray': '3 3',
     'stroke-width': '1',
   });
@@ -366,20 +398,21 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
     y1: '60',
     x2: '40',
     y2: '34',
-    stroke: '#f0b34aaa',
+    stroke: 'color-mix(in srgb, var(--studio-text) 70%, transparent)',
     'stroke-width': '2',
   });
   const sunKnob = createSvgElement(documentReference, 'circle', {
     cx: '40',
     cy: '34',
     r: '7',
-    fill: '#f0b34a',
-    stroke: 'var(--studio-bg)',
+    fill: 'var(--studio-text)',
+    stroke: 'var(--studio-panel)',
     'stroke-width': '2',
   });
   padSvg.append(outerRing, midRing, sunRay, sunKnob);
 
   let dragging = false;
+  let disabled = false;
   function updateFromPointer(event) {
     const bounds = padSvg.getBoundingClientRect();
     const normalizedX = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
@@ -390,6 +423,7 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
     onSunChange({ azimuthDegrees, elevationDegrees });
   }
   padSvg.addEventListener('pointerdown', event => {
+    if (disabled) return;
     dragging = true;
     onDragStart?.();
     padSvg.setPointerCapture?.(event.pointerId);
@@ -407,6 +441,10 @@ function createSunPad(documentReference, onSunChange, { onDragStart, onDragEnd }
 
   return {
     element: padSvg,
+    setDisabled(nextDisabled) {
+      disabled = nextDisabled;
+      padSvg.setAttribute('aria-disabled', nextDisabled ? 'true' : 'false');
+    },
     setAngles(azimuthDegrees, elevationDegrees) {
       const radial = Math.max(0.05, Math.min(1, (88 - elevationDegrees) / (88 * 0.88))) * 50;
       const radians = (azimuthDegrees * Math.PI) / 180;
@@ -896,11 +934,6 @@ const STUDIO_SETTING_ROWS = Object.freeze([
   ['panelsFloating', 'Floating panels'],
 ]);
 
-// What the Scene card takes of the column while nothing was measured yet, and the arrow key steps of the two grips.
-const DEFAULT_SCENE_SHARE = 42;
-const PANEL_WIDTH_KEY_STEP = 16;
-const SCENE_SHARE_KEY_STEP = 5;
-
 function browserPreferenceStorage() {
   try {
     return globalThis.localStorage ?? null;
@@ -966,6 +999,7 @@ export function createStudio(container, {
   let capturingStill = false;
   let selectionReadoutStale = true;
   let renderedShadowKey = null;
+  let contextLost = false;
   let resizeObserver = null;
   let intersectionObserver = null;
   let frameHandle = 0;
@@ -1138,7 +1172,6 @@ export function createStudio(container, {
     sceneCameraToggle,
     createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true', 'panels'),
     createMenuToggle('Properties', 'N', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true', 'settings'),
-    createMenuToggle('Floating panels', '', () => setPreference('panelsFloating', !preferences.panelsFloating), () => preferences.panelsFloating, 'scene'),
   );
   // A row that switches something shows whether it is on each time its menu opens.
   viewPopover.addEventListener('toggle', () => {
@@ -1419,8 +1452,8 @@ export function createStudio(container, {
   const filterToggleButton = createIconButton(documentReference, 'search', 'Find an object in the scene', { attributes: { 'aria-pressed': 'false', 'aria-expanded': 'false' } });
   const sceneAddButton = createIconButton(documentReference, 'add', 'Add to the scene', { attributes: { popovertarget: 'crucible-studio-pop-add' } });
   sceneAddButton.addEventListener('click', () => { addMenuAnchor = sceneAddButton; });
-  const outlinerTree = createElement(documentReference, 'div', { className: 'crucible-studio-tree', attributes: { role: 'tree', 'aria-label': 'Scene hierarchy' } });
-  const swatchContainer = createElement(documentReference, 'div', { className: 'crucible-studio-swatches' });
+  const outlinerTree = createElement(documentReference, 'div', { className: 'crucible-studio-tree crucible-studio-scroll', attributes: { role: 'tree', 'aria-label': 'Scene hierarchy' } });
+  const swatchContainer = createElement(documentReference, 'div', { className: 'crucible-studio-swatches crucible-studio-scroll' });
   const newMaterialQuickButton = createIconButton(documentReference, 'add', 'New material', { className: 'crucible-studio-swatch-add' });
   newMaterialQuickButton.addEventListener('click', () => {
     const created = controller.createMaterial({ assignToNodeId: controller.selectedNodeId });
@@ -1449,7 +1482,7 @@ export function createStudio(container, {
     ),
     filterRow,
     outlinerTree,
-    createElement(documentReference, 'div', { className: 'crucible-studio-palette-section' }, swatchContainer),
+    createElement(documentReference, 'div', { className: 'crucible-studio-palette-section' }, swatchContainer, newMaterialQuickButton),
   );
   outlinerSearch.addEventListener('input', () => syncUi());
   // The filter box stays out of the way until its button is pressed; closing it clears the filter, so a closed box
@@ -1575,7 +1608,7 @@ export function createStudio(container, {
   // Viewport Top-Right 3D View Widget
   const viewPresetButtons = ['front', 'right', 'top', 'isometric'].map(preset => {
     const shortLabels = { front: 'Front', right: 'Right', top: 'Top', isometric: 'Iso' };
-    const button = createElement(documentReference, 'button', { type: 'button', textContent: shortLabels[preset] });
+    const button = createElement(documentReference, 'button', { type: 'button', textContent: shortLabels[preset], dataset: { view: preset } });
     button.addEventListener('click', () => {
       controller.setCameraViewPreset(preset);
       announce(`${shortLabels[preset]} view`);
@@ -1605,7 +1638,13 @@ export function createStudio(container, {
   const readoutSelection = createElement(documentReference, 'span', { className: 'crucible-studio-readout-selection' });
   const readout = createElement(documentReference, 'div', { className: 'crucible-studio-readout', attributes: { 'aria-hidden': 'true' } }, readoutCamera, readoutSelection);
   const agentPresence = createAgentPresence(documentReference, { controller, requestDraw: () => requestFrame() });
-  viewportElement.append(canvas, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay);
+  const pausedNotice = createPausedPictureNotice({
+    documentReference,
+    createIcon: iconName => createIcon(documentReference, iconName),
+    reload: () => documentReference.defaultView?.location?.reload?.(),
+  });
+  const stopWatchingContextLoss = watchContextLoss(canvas, { onLost: pauseForContextLoss, onRestored: recoverFromContextLoss });
+  viewportElement.append(canvas, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element);
 
   // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
   const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
@@ -1765,54 +1804,59 @@ export function createStudio(container, {
     button.addEventListener('click', () => controller.updateLook({ environment: { setup } }));
     return button;
   });
-  const sunPad = createSunPad(documentReference, angles => controller.setSunAngles(angles), {
-    onDragStart: () => controller.beginUndoGroup(),
-    onDragEnd: () => controller.endUndoGroup(),
-  });
-  const keyIntensityField = createSliderField(documentReference, 'Sun strength', { min: 0, max: 8, step: 0.1, value: 1.7 }, value => controller.updateLook({ environment: { keyIntensity: value } }));
-  const exposureField = createSliderField(documentReference, 'Exposure', { min: 0.2, max: 3, step: 0.05, value: 1 }, value => controller.updateLook({ effects: { exposure: value } }));
-  const contrastField = createSliderField(documentReference, 'Contrast', { min: 0.4, max: 1.8, step: 0.02, value: 1 }, value => controller.updateLook({ effects: { contrast: value } }));
-  const saturationField = createSliderField(documentReference, 'Saturation', { min: 0, max: 2, step: 0.02, value: 1 }, value => controller.updateLook({ effects: { saturation: value } }));
+  // The light the selection names, or the sun when no light is selected; the camera has its own panel in the Camera tab.
+  const propertyBuilders = { createElement, createIcon, createVectorRow, createSunPad };
+  // Which property groups are folded is a preference of the person, kept with the others and shared by every panel.
+  const propertyGroups = {
+    isOpen: (groupId, openByDefault) => preferences.propertyGroupsOpen[groupId] ?? openByDefault,
+    setOpen: (groupId, open) => setPreference('propertyGroupsOpen', { ...preferences.propertyGroupsOpen, [groupId]: open }),
+  };
+  const createLookPanel = (resolveKey, panelOptions = {}) => createPropertyPanel({ documentReference, controller, announce, builders: propertyBuilders, resolveKey, groups: propertyGroups, prepareRecipe, ...panelOptions });
+  const selectedLightKey = () => (/^(point|spot|area):/u.test(controller.selectedObjectKey ?? '') ? controller.selectedObjectKey : null);
+  // Only the first group of a tab starts open, so the tab opens on one screen of rows.
+  const lightPanel = createLookPanel(() => selectedLightKey() ?? 'sun', { opensFirstGroup: true });
+  const worldPanel = createLookPanel(() => 'world');
+  const shadowPanel = createLookPanel(() => 'shadow');
+  const qualityPanel = createLookPanel(() => 'quality');
+  // The world, shadow and quality groups describe the whole scene, so a selected light's panel takes the tab alone.
+  const scenePanels = [worldPanel, shadowPanel, qualityPanel];
   const viewTransformSelect = createElement(
     documentReference,
     'select',
     { attributes: { 'aria-label': 'View transform' } },
-    ...VIEW_TRANSFORM_NAMES.map(name => createElement(documentReference, 'option', { value: name, textContent: name })),
+    ...VIEW_TRANSFORM_NAMES.map(name => createElement(documentReference, 'option', { value: name, textContent: choiceDisplayLabel(name) })),
   );
   viewTransformSelect.addEventListener('change', async () => {
     const viewTransform = viewTransformSelect.value;
     await loadAgentSceneModules({ environment: { viewTransform } });
     controller.updateLook({ environment: { viewTransform } });
   });
-  const bloomField = createSliderField(documentReference, 'Bloom', { min: 0, max: 1, step: 0.02, value: 0.1 }, value => controller.updateLook({ effects: { bloom: { strength: value } } }));
-  const fogField = createSliderField(documentReference, 'Fog', { min: 0, max: 0.1, step: 0.002, value: 0 }, value => controller.updateLook({ environment: { fogDensity: value } }));
 
+  // The color look is the first row of the Film group.
+  const effectsPanel = createLookPanel(() => 'effects', { leadingRows: { film: createPropertyLine(documentReference, createElement, 'Color look', viewTransformSelect) } });
   const lookPanelBody = createElement(
     documentReference,
     'div',
-    { className: 'crucible-studio-panel-body' },
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lighting' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...setupButtons)),
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Sun' }), sunPad.element),
-    keyIntensityField.container,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Color look' }), viewTransformSelect),
-    exposureField.container,
-    contrastField.container,
-    saturationField.container,
-    bloomField.container,
-    fogField.container,
+    { className: 'crucible-studio-panel-body crucible-studio-panel-rows' },
+    createElement(documentReference, 'div', { className: 'crucible-studio-chips crucible-studio-chips-row', attributes: { role: 'group', 'aria-label': 'Lighting setup' } }, ...setupButtons),
+    lightPanel.element,
+    worldPanel.element,
+    effectsPanel.element,
+    shadowPanel.element,
+    qualityPanel.element,
   );
 
   // Tab 4: Camera Panel
   const lensChips = STUDIO_LENS_PRESETS.map(millimetres => {
-    const button = createElement(documentReference, 'button', { type: 'button', textContent: `${millimetres}mm`, dataset: { focal: String(millimetres) }, attributes: { 'aria-pressed': 'false' } });
+    const button = createElement(documentReference, 'button', { type: 'button', textContent: `${millimetres} mm`, dataset: { focal: String(millimetres) }, attributes: { 'aria-pressed': 'false' } });
     button.addEventListener('click', () => controller.setCameraLensMillimetres(millimetres));
     return button;
   });
-  const fovField = createSliderField(documentReference, 'Field of view', { min: 15, max: 110, step: 1, value: 45 }, value => controller.updateCamera({ fov: value }));
-  const orthoScaleField = createSliderField(documentReference, 'Orthographic size', { min: 1, max: 40, step: 0.5, value: 6 }, value => controller.updateCamera({ projection: 'orthographic', orthoScale: value }));
+  const lensChipRow = createElement(documentReference, 'div', { className: 'crucible-studio-chips crucible-studio-chips-row', attributes: { role: 'group', 'aria-label': 'Lens presets' } }, ...lensChips);
+  const cameraPanel = createLookPanel(() => 'camera', { opensFirstGroup: true, leadingRows: { lens: lensChipRow } });
   const bookmarkNameInput = createElement(documentReference, 'input', { type: 'text', placeholder: 'Shot name', attributes: { 'aria-label': 'Shot name', maxlength: '24' } });
   const saveBookmarkButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save shot' });
-  const bookmarkListElement = createElement(documentReference, 'div', { className: 'crucible-studio-field' });
+  const bookmarkListElement = createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-list' });
   saveBookmarkButton.addEventListener('click', async () => {
     const name = bookmarkNameInput.value.trim().replace(/\s+/g, '-') || `shot-${controller.listBookmarks().length + 1}`;
     try {
@@ -1827,12 +1871,16 @@ export function createStudio(container, {
   const cameraPanelBody = createElement(
     documentReference,
     'div',
-    { className: 'crucible-studio-panel-body' },
+    { className: 'crucible-studio-panel-body crucible-studio-panel-rows' },
     viewCubeElement,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Lens' }), createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, ...lensChips)),
-    fovField.container,
-    orthoScaleField.container,
-    createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Shots' }), createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, bookmarkNameInput, saveBookmarkButton), bookmarkListElement),
+    cameraPanel.element,
+    createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-property-section crucible-studio-shots-group' },
+      createElement(documentReference, 'div', { className: 'crucible-studio-property-heading', textContent: 'Shots' }),
+      createElement(documentReference, 'div', { className: 'crucible-studio-property-rows' }, createElement(documentReference, 'div', { className: 'crucible-studio-bookmark-row' }, bookmarkNameInput, saveBookmarkButton), bookmarkListElement),
+    ),
   );
 
   const panelsByTab = {
@@ -1868,6 +1916,7 @@ export function createStudio(container, {
 
   function showInspectorTab(nextTab) {
     controller.setActiveTab(nextTab);
+    syncPropertyPanels();
     for (const button of tabButtons) {
       const selected = button.dataset.tab === nextTab;
       button.setAttribute('aria-selected', selected ? 'true' : 'false');
@@ -1907,7 +1956,7 @@ export function createStudio(container, {
       propertiesMinimizeButton,
     ),
     tabListElement,
-    createElement(documentReference, 'div', { className: 'crucible-studio-panels' }, panelsByTab.node, panelsByTab.material, panelsByTab.look, panelsByTab.camera),
+    createElement(documentReference, 'div', { className: 'crucible-studio-panels crucible-studio-scroll' }, panelsByTab.node, panelsByTab.material, panelsByTab.look, panelsByTab.camera),
   );
 
   // Bottom Timeline & Telemetry Bar
@@ -2106,7 +2155,7 @@ export function createStudio(container, {
       agentPresence.hide();
     }
     setGridVisible(preferences.gridVisible);
-    showPanelSizes(preferences.panelWidth, preferences.sceneShare);
+    showPanelSizes(preferences);
     showPanelMinimized(sceneMinimizeButton, 'outlinerMinimized', 'Scene', preferences.sceneMinimized);
     showPanelMinimized(propertiesMinimizeButton, 'inspectorMinimized', 'Properties', preferences.propertiesMinimized);
     for (const [name, control] of settingControls) {
@@ -2115,13 +2164,20 @@ export function createStudio(container, {
     }
   }
 
-  function setPreference(name, value) {
-    if (!(name in STUDIO_PREFERENCE_DEFAULTS)) {
-      throw new RangeError(`Unknown Studio preference "${String(name)}". Use one of ${Object.keys(STUDIO_PREFERENCE_DEFAULTS).join(', ')}.`);
+  // Saves several preferences as one change, so a drag that resizes two cards is one write.
+  function setPreferences(changes) {
+    for (const name of Object.keys(changes)) {
+      if (!(name in STUDIO_PREFERENCE_DEFAULTS)) {
+        throw new RangeError(`Unknown Studio preference "${String(name)}". Use one of ${Object.keys(STUDIO_PREFERENCE_DEFAULTS).join(', ')}.`);
+      }
     }
-    preferences = normalizeStudioPreferences({ ...preferences, [name]: value });
+    preferences = normalizeStudioPreferences({ ...preferences, ...changes });
     storePreferences();
     applyPreferences();
+  }
+
+  function setPreference(name, value) {
+    setPreferences({ [name]: value });
     return preferences[name];
   }
 
@@ -2129,48 +2185,16 @@ export function createStudio(container, {
   if (preferences.startWorkspace !== 'build') {
     selectWorkspace(preferences.startWorkspace);
   }
-  // The panel column is resized from two grips: its inner edge sets the width, the gap between the cards sets how
-  // much of the column the Scene card takes. A drag previews the size and letting go saves it. Arrow keys do the
-  // same in steps, and a double click goes back to the size Studio opens with.
-  const widthGrip = createElement(documentReference, 'div', {
-    className: 'crucible-studio-grip crucible-studio-grip-width',
-    tabIndex: 0,
-    attributes: {
-      role: 'separator',
-      'aria-orientation': 'vertical',
-      'aria-label': 'Panel width',
-      'aria-valuemin': String(STUDIO_PANEL_WIDTH.least),
-      'aria-valuemax': String(STUDIO_PANEL_WIDTH.most),
-    },
+  // The panel column and its grips live in their own module; Studio gives it the saved preferences and a way to save changes.
+  const { sideColumn, showPanelSizes } = createPanelGrips({
+    documentReference,
+    createElement,
+    root,
+    outlinerDock,
+    inspectorElement,
+    readPreferences: () => preferences,
+    changePreferences: setPreferences,
   });
-  const splitGrip = createElement(documentReference, 'div', {
-    className: 'crucible-studio-grip crucible-studio-grip-split',
-    tabIndex: 0,
-    attributes: {
-      role: 'separator',
-      'aria-orientation': 'horizontal',
-      'aria-label': 'Scene card height',
-      'aria-valuemin': String(STUDIO_SCENE_SHARE.least),
-      'aria-valuemax': String(STUDIO_SCENE_SHARE.most),
-    },
-  });
-  const sideColumn = createElement(documentReference, 'div', { className: 'crucible-studio-side' }, widthGrip, outlinerDock, splitGrip, inspectorElement);
-
-  function setRootVariable(name, value) {
-    if (typeof root.style?.setProperty === 'function') {
-      root.style.setProperty(name, value);
-    } else if (root.style) {
-      root.style[name] = value;
-    }
-  }
-
-  function showPanelSizes(panelWidth, sceneShare) {
-    setRootVariable('--studio-side-width', `${panelWidth}px`);
-    setRootVariable('--studio-scene-share', `${sceneShare}%`);
-    root.dataset.sceneSized = sceneShare > STUDIO_SCENE_SHARE.automatic ? 'true' : 'false';
-    widthGrip.setAttribute('aria-valuenow', String(panelWidth));
-    splitGrip.setAttribute('aria-valuenow', String(sceneShare));
-  }
 
   function showPanelMinimized(button, datasetName, panelName, minimized) {
     root.dataset[datasetName] = minimized ? 'true' : 'false';
@@ -2178,90 +2202,6 @@ export function createStudio(container, {
     button.setAttribute('aria-expanded', minimized ? 'false' : 'true');
   }
 
-  // The share the Scene card takes now: the saved one, or what its rows came to while it sizes itself.
-  function currentSceneShare() {
-    if (preferences.sceneShare > STUDIO_SCENE_SHARE.automatic) {
-      return preferences.sceneShare;
-    }
-    const columnHeight = sideColumn.getBoundingClientRect?.().height;
-    const sceneHeight = outlinerDock.getBoundingClientRect?.().height;
-    if (!(columnHeight > 0) || !(sceneHeight > 0)) {
-      return DEFAULT_SCENE_SHARE;
-    }
-    return (sceneHeight / columnHeight) * 100;
-  }
-
-  function wirePanelGrip(grip, { preference, currentValue, valueAfterDrag, keyStep, decreaseKey, increaseKey }) {
-    let drag = null;
-    grip.addEventListener('pointerdown', event => {
-      if (event.button !== 0) {
-        return;
-      }
-      drag = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, startValue: currentValue(), latestValue: null };
-      grip.setPointerCapture?.(event.pointerId);
-      grip.dataset.dragging = 'true';
-      event.preventDefault();
-    });
-    grip.addEventListener('pointermove', event => {
-      if (!drag || event.pointerId !== drag.pointerId) {
-        return;
-      }
-      drag.latestValue = valueAfterDrag(drag, event);
-      const previewed = normalizeStudioPreferences({ ...preferences, [preference]: drag.latestValue });
-      showPanelSizes(previewed.panelWidth, previewed.sceneShare);
-    });
-    const finishDrag = event => {
-      if (!drag || event.pointerId !== drag.pointerId) {
-        return;
-      }
-      const latestValue = drag.latestValue;
-      drag = null;
-      delete grip.dataset.dragging;
-      if (latestValue !== null) {
-        setPreference(preference, latestValue);
-      }
-    };
-    grip.addEventListener('pointerup', finishDrag);
-    grip.addEventListener('pointercancel', finishDrag);
-    grip.addEventListener('keydown', event => {
-      let direction = 0;
-      if (event.key === increaseKey) {
-        direction = 1;
-      } else if (event.key === decreaseKey) {
-        direction = -1;
-      }
-      if (direction === 0) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      setPreference(preference, currentValue() + direction * keyStep);
-    });
-    grip.addEventListener('dblclick', () => setPreference(preference, STUDIO_PREFERENCE_DEFAULTS[preference]));
-  }
-  // The column is on the right, so its inner edge moving left makes it wider.
-  wirePanelGrip(widthGrip, {
-    preference: 'panelWidth',
-    currentValue: () => preferences.panelWidth,
-    valueAfterDrag: (drag, event) => drag.startValue + (drag.clientX - event.clientX),
-    keyStep: PANEL_WIDTH_KEY_STEP,
-    decreaseKey: 'ArrowRight',
-    increaseKey: 'ArrowLeft',
-  });
-  wirePanelGrip(splitGrip, {
-    preference: 'sceneShare',
-    currentValue: currentSceneShare,
-    valueAfterDrag: (drag, event) => {
-      const columnHeight = sideColumn.getBoundingClientRect?.().height;
-      if (!(columnHeight > 0)) {
-        return drag.startValue;
-      }
-      return drag.startValue + ((event.clientY - drag.clientY) / columnHeight) * 100;
-    },
-    keyStep: SCENE_SHARE_KEY_STEP,
-    decreaseKey: 'ArrowUp',
-    increaseKey: 'ArrowDown',
-  });
   applyPreferences();
   root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, recipeDialog, shortcutsDialog, settingsDialog);
   container.append(root);
@@ -2292,6 +2232,10 @@ export function createStudio(container, {
   }
 
   function capturePngDataUrl() {
+    // Nothing draws while the context is gone, so a still taken then would be a blank picture.
+    if (contextLost) {
+      throw new Error(CONTEXT_LOST_MESSAGE);
+    }
     capturingStill = true;
     try {
       renderPass();
@@ -2348,7 +2292,7 @@ export function createStudio(container, {
         stripped.push(PACK_UNSUPPORTED_MODULES[moduleName]);
       }
     }
-    const packBytes = encodePack({
+    const packBytes = encodePackOrRefuse(encodePack, {
       shaderModules,
       camera: stillScene.camera,
       environment,
@@ -2659,6 +2603,9 @@ export function createStudio(container, {
   }
 
   function renderPass() {
+    if (contextLost) {
+      return;
+    }
     insideDraw = true;
     try {
       syncViewportDimensions();
@@ -2674,13 +2621,61 @@ export function createStudio(container, {
     }
   }
 
+  // A frame that fails pauses the picture with a notice instead of ending the loop in silence; the next requested frame tries again.
+  function renderScheduledPass() {
+    try {
+      renderPass();
+      if (!contextLost) {
+        pausedNotice.hide();
+      }
+      return true;
+    } catch (error) {
+      pausedNotice.show(describeFrameFailure(error));
+      return false;
+    }
+  }
+
+  // The scene, selection and camera stay in the controller. Only what the renderer holds is rebuilt, from the current scene.
+  function recoverFromContextLoss() {
+    contextLost = false;
+    renderedScene = null;
+    renderedTopology = null;
+    renderedShadowKey = null;
+    pausedNotice.hide();
+    requestFrame();
+  }
+
+  function pauseForContextLoss() {
+    contextLost = true;
+    if (frameHandle) {
+      cancelAnimationFrame(frameHandle);
+      frameHandle = 0;
+    }
+    releaseRendererOfLostContext();
+    pausedNotice.show(CONTEXT_LOST_MESSAGE);
+  }
+
+  // A renderer is released while its context is gone, when the browser ignores every delete. Releasing it after the
+  // context is back would delete objects of the old context, and that error would fail the first upload of the new one.
+  function releaseRendererOfLostContext() {
+    if (suppliedRenderer || !renderer) {
+      return;
+    }
+    try {
+      renderer.dispose();
+    } catch {
+      // The lost context has nothing left to free, so a failed dispose changes nothing.
+    }
+    renderer = null;
+  }
+
   function requestFrame() {
-    if (frameHandle || !isVisible || documentReference.hidden) {
+    if (frameHandle || contextLost || !isVisible || documentReference.hidden) {
       return;
     }
     frameHandle = requestAnimationFrame(timestamp => {
       frameHandle = 0;
-      if (!isVisible || documentReference.hidden) {
+      if (contextLost || !isVisible || documentReference.hidden) {
         return;
       }
       if (playing) {
@@ -2698,8 +2693,8 @@ export function createStudio(container, {
       } else {
         lastFrameTime = timestamp;
       }
-      renderPass();
-      if (playing && !frameHandle) {
+      const drawn = renderScheduledPass();
+      if (drawn && playing && !frameHandle) {
         requestFrame();
       }
     });
@@ -2798,6 +2793,7 @@ export function createStudio(container, {
         eyeButton,
       );
     }));
+    fitTreeToWholeRows();
   }
 
   function renderPaletteSwatches(recipe, boundMaterialId) {
@@ -2826,7 +2822,43 @@ export function createStudio(container, {
         selectInspectorTab('material');
       });
       return swatch;
-    }), newMaterialQuickButton);
+    }));
+    scrollPressedSwatchIntoView();
+    fitTreeToWholeRows();
+  }
+
+  // The strip is one row that scrolls sideways; the swatch of the selected node stays inside it.
+  function scrollPressedSwatchIntoView() {
+    const pressedSwatch = [...swatchContainer.children].find(swatch => swatch.getAttribute('aria-pressed') === 'true');
+    if (!pressedSwatch || !Number.isFinite(pressedSwatch.offsetLeft)) {
+      return;
+    }
+    const swatchStart = pressedSwatch.offsetLeft;
+    const swatchEnd = swatchStart + pressedSwatch.offsetWidth;
+    if (swatchStart < swatchContainer.scrollLeft) {
+      swatchContainer.scrollLeft = swatchStart - 4;
+    } else if (swatchEnd > swatchContainer.scrollLeft + swatchContainer.clientWidth) {
+      swatchContainer.scrollLeft = swatchEnd - swatchContainer.clientWidth + 4;
+    }
+  }
+
+  // The Scene list shows whole rows only: when it scrolls, its rows grow by a pixel or two until a whole number of them fills it.
+  function fitTreeToWholeRows() {
+    const view = documentReference.defaultView;
+    if (!view?.getComputedStyle || !outlinerTree.style?.removeProperty) {
+      return;
+    }
+    outlinerTree.style.removeProperty('--studio-tree-row-size');
+    const firstRow = outlinerTree.firstElementChild;
+    if (!firstRow || !(outlinerTree.clientHeight > 0) || outlinerTree.scrollHeight <= outlinerTree.clientHeight) {
+      return;
+    }
+    const treeStyle = view.getComputedStyle(outlinerTree);
+    const rowSpace = outlinerTree.clientHeight - parseFloat(treeStyle.paddingTop) - parseFloat(treeStyle.paddingBottom);
+    const rowPitch = firstRow.offsetHeight + TREE_ROW_GAP_PIXELS;
+    const wholeRows = Math.max(1, Math.floor((rowSpace + TREE_ROW_GAP_PIXELS) / rowPitch));
+    const stretchedRowSize = (rowSpace + TREE_ROW_GAP_PIXELS) / wholeRows - TREE_ROW_GAP_PIXELS;
+    outlinerTree.style.setProperty('--studio-tree-row-size', `${stretchedRowSize}px`);
   }
 
   function syncUi() {
@@ -2899,26 +2931,19 @@ export function createStudio(container, {
     }
 
     const environment = recipe.environment ?? {};
-    const effects = recipe.effects ?? {};
     const activeSetup = environment.setup ?? 'daylight';
     setupButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.setup === activeSetup ? 'true' : 'false'));
-    const sunAngles = directionToSunAngles(environment.lightDirection);
-    sunPad.setAngles(sunAngles.azimuthDegrees, sunAngles.elevationDegrees);
-    keyIntensityField.setValue(environment.keyIntensity ?? 1.5);
     viewTransformSelect.value = environment.viewTransform ?? 'aces';
-    exposureField.setValue(effects.exposure ?? 1);
-    contrastField.setValue(effects.contrast ?? 1);
-    saturationField.setValue(effects.saturation ?? 1);
-    bloomField.setValue(effects.bloom?.strength ?? 0);
-    fogField.setValue(environment.fogDensity ?? 0);
 
     const camera = controller.scene.camera;
     const isOrthographic = camera.projection === 'orthographic';
     projectionPillButton.textContent = isOrthographic ? 'Orthographic' : 'Perspective';
-    projectionPillButton.setAttribute('aria-pressed', isOrthographic ? 'true' : 'false');
-    fovField.setValue(Math.round(camera.fov ?? 45));
-    orthoScaleField.setValue(roundValue(camera.orthoScale ?? 6, 10));
-    lensChips.forEach(chip => chip.setAttribute('aria-pressed', !isOrthographic && Number(chip.dataset.focal) === Math.round(camera.focalLength ?? 0) ? 'true' : 'false'));
+    // The pill names the projection in use, so it is always the active chip of its row.
+    projectionPillButton.setAttribute('aria-pressed', 'true');
+    const activeViewChip = matchingViewChip(camera);
+    viewPresetButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.view === activeViewChip ? 'true' : 'false'));
+    const lensFocalLength = cameraFocalLengthMillimetres(camera, { aspect: controller.viewportWidth / controller.viewportHeight });
+    lensChips.forEach(chip => chip.setAttribute('aria-pressed', !isOrthographic && Math.abs(Number(chip.dataset.focal) - lensFocalLength) <= LENS_CHIP_TOLERANCE_MILLIMETRES ? 'true' : 'false'));
 
     const bookmarks = controller.listBookmarks();
     const bookmarksKey = bookmarks.map(shot => shot.name).join('|');
@@ -2947,8 +2972,25 @@ export function createStudio(container, {
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
     setButtonIcon(playButton, playing ? 'pause' : 'play', playing ? 'Pause (Space)' : 'Play (Space)');
     timeOutput.textContent = `${controller.motionTime.toFixed(1)} / ${duration.toFixed(1)} s`;
+    syncPropertyPanels();
     syncHintBar();
     syncFileBanner();
+  }
+
+  // Only the panel in view is redrawn: orbiting the viewport notifies a change many times a second.
+  function syncPropertyPanels() {
+    if (controller.activeTab === 'look') syncLookPanels();
+    if (controller.activeTab === 'camera') cameraPanel.sync();
+  }
+
+  function syncLookPanels() {
+    lightPanel.sync();
+    effectsPanel.sync();
+    const lightSelected = selectedLightKey() !== null;
+    for (const panel of scenePanels) {
+      panel.element.hidden = lightSelected;
+      if (!lightSelected) panel.sync();
+    }
   }
 
   // While a key holds the object, the bar names the keys that act on it; a handle drag shows only how far it has gone.
@@ -3471,9 +3513,11 @@ export function createStudio(container, {
   if (typeof ResizeObserver === 'function') {
     resizeObserver = new ResizeObserver(() => {
       syncCompactLayout();
+      fitTreeToWholeRows();
       requestFrame();
     });
     resizeObserver.observe(viewportElement);
+    resizeObserver.observe(outlinerTree);
   }
   if (typeof IntersectionObserver === 'function') {
     intersectionObserver = new IntersectionObserver(entries => {
@@ -3552,6 +3596,8 @@ export function createStudio(container, {
       documentReference.removeEventListener('pointerdown', onAnyPointerDown, true);
       documentReference.removeEventListener('keydown', onWindowKeyDown);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
+      stopWatchingContextLoss();
+      pausedNotice.hide();
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
       controller.dispose();

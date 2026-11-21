@@ -5,9 +5,10 @@ import { readFileSync } from 'node:fs';
 import { STUDIO_CSS } from '../src/studio-styles.js';
 import { createStudio, createStudioController, STUDIO_PRIMITIVES, STUDIO_TABS, STUDIO_TEMPLATES, STUDIO_TOOLS } from '../src/studio.js';
 import { LIGHTING_SETUP_NAMES } from '../src/agent-scene-capabilities.js';
-import { directionToSunAngles } from '../src/studio-controller.js';
+import { directionToSunAngles, hexToLinearRgb } from '../src/studio-controller.js';
 import { buildGridParts } from '../src/studio-viewport-aids.js';
 import { VIEW_TRANSFORM_NAMES } from '../src/view-transform-names.js';
+import { tinyHdrBytes } from './helpers/tiny-hdr.js';
 import {
   byDataset,
   byLabel,
@@ -70,7 +71,7 @@ function mountStudio(testContext, { recipe = makeRecipe(), containerWidth = 0, d
     gizmo: viewport.querySelector('.crucible-studio-gizmo'),
     controller: studio.controller,
     label: label => byLabel(root, label),
-    button: text => root.querySelectorAll('button').find(candidate => candidate.textContent === text),
+    button: text => root.querySelectorAll('button').find(candidate => candidate.textContent === text || candidate.getAttribute('aria-label') === text),
     tool: tool => byDataset(root, 'tool', tool),
     tab: tab => byDataset(root, 'tab', tab),
     panel: tab => root.querySelector(`#crucible-studio-panel-${tab}`),
@@ -636,9 +637,9 @@ test('Look tab picks a lighting setup, drags the sun pad as one undo step and mo
   assert.equal(ui.studio.exportRecipe().effects.saturation, 0.6);
   ui.setSlider('Bloom', 0.5);
   assert.equal(ui.studio.exportRecipe().effects.bloom.strength, 0.5);
-  ui.setSlider('Fog', 0.02);
+  ui.setSlider('Fog density', 0.02);
   assert.equal(ui.studio.exportRecipe().environment.fogDensity, 0.02);
-  assert.equal(ui.label('Fog').parentNode.querySelector('output').textContent, '0.020');
+  assert.equal(ui.label('Fog density').parentNode.querySelector('output').textContent, '0.02', 'trailing zeros are trimmed');
   ui.dom.runAnimationFrames(10);
   assert.equal(ui.renderer.frames.at(-1).exposure, 1.4);
 });
@@ -648,6 +649,7 @@ test('the colour look select applies a view transform after loading its module',
   ui.tab('look').click();
   const select = ui.label('View transform');
   assert.deepEqual(select.children.map(option => option.value), [...VIEW_TRANSFORM_NAMES]);
+  assert.deepEqual(select.children.map(option => option.textContent), ['ACES', 'AgX', 'Neutral', 'Standard'], 'the options read as names while the recipe keeps its own values');
   const chosen = VIEW_TRANSFORM_NAMES.find(name => name !== select.value);
   select.value = chosen;
   dispatch(select, 'change');
@@ -663,8 +665,13 @@ test('Camera tab sets view presets, projection, lens, field of view and orthogra
   for (const [text, announcement] of [['Front', 'Front view'], ['Right', 'Right view'], ['Top', 'Top view'], ['Iso', 'Iso view']]) {
     byText(ui.root, text).click();
     assert.equal(ui.status(), announcement);
+    const activeViewChips = ['Front', 'Right', 'Top', 'Iso'].filter(name => byText(ui.root, name).getAttribute('aria-pressed') === 'true');
+    assert.deepEqual(activeViewChips, [text], 'the chip of the current view is active and the others are not');
   }
   assert.notDeepEqual(ui.controller.scene.camera.eye, eyeBefore);
+  ui.controller.orbitCamera({ deltaAzimuth: 0.5, deltaElevation: 0.3 });
+  assert.equal(['Front', 'Right', 'Top', 'Iso'].some(name => byText(ui.root, name).getAttribute('aria-pressed') === 'true'), false, 'a free orbit matches no view chip');
+  assert.equal(byText(ui.root, 'Perspective').getAttribute('aria-pressed'), 'true', 'the projection chip names the projection in use');
 
   const projectionPill = byText(ui.root, 'Perspective');
   projectionPill.click();
@@ -682,6 +689,12 @@ test('Camera tab sets view presets, projection, lens, field of view and orthogra
   lensButton.click();
   assert.equal(lensButton.getAttribute('aria-pressed'), 'true');
   assert.equal(byDataset(ui.root, 'focal', '35').getAttribute('aria-pressed'), 'false');
+  assert.equal(lensButton.textContent, '85 mm', 'a lens chip keeps its unit lower case');
+  assert.ok(STUDIO_CSS.includes('.crucible-studio-chips-row button[data-focal] { text-transform: none; }'), 'the stylesheet does not capitalise the unit of a lens chip');
+  ui.controller.setCameraLensMillimetres(85.4);
+  assert.equal(lensButton.getAttribute('aria-pressed'), 'true', 'within half a millimetre still counts');
+  ui.controller.setCameraLensMillimetres(70);
+  assert.equal(lensButton.getAttribute('aria-pressed'), 'false');
   ui.setSlider('Field of view', 70);
   assert.equal(ui.controller.scene.camera.fov, 70);
   assert.equal(ui.label('Field of view').parentNode.querySelector('output').textContent, '70');
@@ -2100,9 +2113,14 @@ test('Settings change the snap, the handles and what the viewport shows, and are
   assert.deepEqual(JSON.parse(saved.get('crucible-studio-preferences')), {
     panelWidth: 284,
     sceneShare: 0,
+    sceneWidth: 0,
+    propertiesWidth: 0,
+    sceneHeight: 0,
+    propertiesHeight: 0,
     sceneMinimized: false,
     propertiesMinimized: false,
-    panelsFloating: true,
+    propertyGroupsOpen: {},
+    panelsFloating: false,
     moveSnapStep: 1,
     rotateSnapDegrees: 45,
     gizmoSize: 'large',
@@ -2333,29 +2351,260 @@ test('the panel column resizes by dragging its grips or with the arrow keys, ins
   assert.equal(next.studio.preferences.sceneShare, 15);
   assert.equal(mountStudio(testContext, { sharedDom: ui.dom, preferences: { panelWidth: Number.NaN } }).studio.preferences.panelWidth, 284);
 });
-test('panels float over the scene by default and dock to the window edges from the View menu or Settings', testContext => {
+test('panels dock to the window edges by default and float over the scene from Settings', testContext => {
   const saved = new Map();
   const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
   const ui = mountStudio(testContext, { preferenceStorage });
-  assert.equal(ui.root.dataset.floating, 'true');
+  assert.equal(ui.root.dataset.floating, 'false', 'a first visit opens docked');
   const viewMenu = ui.root.descendants().find(element => element.id === 'crucible-studio-pop-view');
-  byText(viewMenu, 'Floating panels').click();
-  assert.equal(ui.root.dataset.floating, 'false');
-  assert.equal(ui.studio.preferences.panelsFloating, false);
-  assert.equal(JSON.parse(saved.get('crucible-studio-preferences')).panelsFloating, false);
-
-  const next = mountStudio(testContext, { preferenceStorage, sharedDom: ui.dom });
-  assert.equal(next.root.dataset.floating, 'false', 'the next visit opens docked');
-  const control = next.root.querySelector('.crucible-studio-settings-dialog').descendants().find(element => element.dataset?.setting === 'panelsFloating');
+  assert.equal(viewMenu.descendants().some(element => element.textContent === 'Floating panels'), false, 'the switch lives in Settings only');
+  const control = ui.root.querySelector('.crucible-studio-settings-dialog').descendants().find(element => element.dataset?.setting === 'panelsFloating');
   assert.equal(control.checked, false);
   control.checked = true;
   dispatch(control, 'change');
-  assert.equal(next.root.dataset.floating, 'true');
+  assert.equal(ui.root.dataset.floating, 'true');
+  assert.equal(ui.studio.preferences.panelsFloating, true);
+  assert.equal(JSON.parse(saved.get('crucible-studio-preferences')).panelsFloating, true);
+
+  const next = mountStudio(testContext, { preferenceStorage, sharedDom: ui.dom });
+  assert.equal(next.root.dataset.floating, 'true', 'the next visit keeps the floating panels');
 
   const docked = '.crucible-studio[data-floating="false"]:not([data-compact="true"])';
   const viewportRule = STUDIO_CSS.slice(STUDIO_CSS.indexOf(docked + ' .crucible-studio-viewport {'));
   assert.ok(viewportRule.startsWith(docked), 'the docked viewport has a rule of its own');
   assert.ok(viewportRule.slice(0, viewportRule.indexOf('}')).includes('inset: var(--studio-dock-bar) var(--studio-dock-side) 0 var(--studio-rail)'), 'the viewport is the room the panels leave, so the scene is drawn at that size');
+});
+
+function floatingPanelGrips(testContext, extraOptions = {}) {
+  const saved = new Map();
+  const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const ui = mountStudio(testContext, { preferenceStorage, preferences: { panelsFloating: true }, ...extraOptions });
+  const grips = {
+    sceneWidth: ui.label('Resize Scene width'),
+    sceneHeight: ui.label('Resize Scene height'),
+    propertiesWidth: ui.label('Resize Properties width'),
+    propertiesHeight: ui.label('Resize Properties height'),
+  };
+  const column = ui.root.querySelector('.crucible-studio-side');
+  column.box = { left: 0, top: 68, width: 284, height: 900, right: 284, bottom: 968 };
+  const savedPreferences = () => JSON.parse(saved.get('crucible-studio-preferences'));
+  const drag = (grip, { fromX = 0, toX = 0, fromY = 0, toY = 0, ctrlKey = false }) => {
+    dispatch(grip, 'pointerdown', { clientX: fromX, clientY: fromY });
+    dispatch(grip, 'pointermove', { clientX: toX, clientY: toY, ctrlKey });
+    dispatch(grip, 'pointerup', { clientX: toX, clientY: toY });
+  };
+  return { ui, grips, column, saved, savedPreferences, drag };
+}
+
+test('floating, each card resizes on its own: a left edge changes one width and a bottom edge one height', testContext => {
+  const { ui, grips, drag, savedPreferences } = floatingPanelGrips(testContext);
+  assert.equal(ui.root.dataset.floating, 'true');
+  const scene = ui.root.querySelector('.crucible-studio-outliner');
+  const properties = ui.root.querySelector('.crucible-studio-inspector');
+  assert.ok(scene.children.includes(grips.sceneWidth) && scene.children.includes(grips.sceneHeight), 'the Scene card carries its own grips');
+  assert.ok(properties.children.includes(grips.propertiesWidth) && properties.children.includes(grips.propertiesHeight), 'and so does the Properties card');
+  for (const grip of Object.values(grips)) {
+    assert.equal(grip.getAttribute('role'), 'separator');
+    assert.ok(Number(grip.getAttribute('aria-valuemin')) < Number(grip.getAttribute('aria-valuemax')));
+  }
+  assert.equal(grips.sceneWidth.getAttribute('aria-orientation'), 'vertical');
+  assert.equal(grips.propertiesHeight.getAttribute('aria-orientation'), 'horizontal');
+
+  // Opens like the docked column: the same width for both cards, the Scene card sized by its share, Properties to the margin.
+  assert.equal(ui.root.style['--studio-scene-width'], '284px');
+  assert.equal(ui.root.style['--studio-properties-width'], '284px');
+  assert.equal(ui.root.dataset.sceneHeightSized, 'false');
+  assert.equal(ui.root.dataset.propertiesHeightSized, 'false');
+
+  drag(grips.propertiesWidth, { fromX: 600, toX: 480 });
+  assert.equal(ui.studio.preferences.propertiesWidth, 404, 'the Properties card is wider');
+  assert.equal(ui.studio.preferences.sceneWidth, 0, 'and the Scene card is untouched');
+  assert.equal(ui.studio.preferences.panelWidth, 284, 'so is the docked column width');
+  assert.equal(ui.root.style['--studio-scene-width'], '284px');
+  assert.equal(ui.root.style['--studio-properties-width'], '404px');
+  assert.equal(grips.propertiesWidth.getAttribute('aria-valuenow'), '404');
+  assert.equal(savedPreferences().propertiesWidth, 404);
+
+  // Heights: the Properties card shortens and the Scene card keeps the height it came to.
+  drag(grips.propertiesHeight, { fromY: 900, toY: 700 });
+  assert.equal(ui.studio.preferences.propertiesHeight, 96, 'an unmeasured card starts from 240 and never goes below the least height');
+  assert.equal(ui.root.dataset.propertiesHeightSized, 'true');
+  assert.equal(ui.studio.preferences.sceneHeight, 0);
+
+  properties.box = { left: 0, top: 394, width: 404, height: 500, right: 404, bottom: 894 };
+  scene.box = { left: 0, top: 68, width: 284, height: 320, right: 284, bottom: 388 };
+  ui.studio.setPreference('propertiesHeight', 0);
+  drag(grips.propertiesHeight, { fromY: 900, toY: 700 });
+  assert.equal(ui.studio.preferences.propertiesHeight, 300, 'a laid out card starts from its measured height');
+  drag(grips.sceneHeight, { fromY: 388, toY: 548 });
+  assert.equal(ui.studio.preferences.sceneHeight, 480, 'the Scene card is taller');
+  assert.equal(ui.studio.preferences.propertiesHeight, 300, 'and the Properties card keeps its size');
+  assert.equal(ui.root.style['--studio-scene-height'], '480px');
+  assert.equal(ui.root.style['--studio-properties-height'], '300px');
+
+  // No room: the dragged card stops where the other card and the gap leave it.
+  scene.box = { left: 0, top: 68, width: 284, height: 480, right: 284, bottom: 548 };
+  drag(grips.propertiesHeight, { fromY: 800, toY: 5000 });
+  assert.equal(ui.studio.preferences.propertiesHeight, 900 - 480 - 6, 'Properties stops growing at the column bottom');
+  drag(grips.sceneHeight, { fromY: 548, toY: 348 });
+  assert.equal(ui.studio.preferences.sceneHeight, 280);
+  scene.box = { left: 0, top: 68, width: 284, height: 280, right: 284, bottom: 348 };
+  drag(grips.sceneHeight, { fromY: 348, toY: 5000 });
+  assert.equal(ui.studio.preferences.sceneHeight, 900 - 414 - 6, 'the Scene card leaves Properties its height');
+  assert.equal(ui.studio.preferences.propertiesHeight, 414, 'whose size did not change');
+});
+
+test('Ctrl on a width grip resizes both cards together and Ctrl on the Scene bottom edge is the docked split', testContext => {
+  const { ui, grips, drag } = floatingPanelGrips(testContext, { preferences: { panelsFloating: true, propertiesWidth: 380, propertiesHeight: 300 } });
+  assert.equal(ui.root.style['--studio-scene-width'], '284px');
+  assert.equal(ui.root.style['--studio-properties-width'], '380px');
+  drag(grips.sceneWidth, { fromX: 600, toX: 540, ctrlKey: true });
+  assert.equal(ui.studio.preferences.sceneWidth, 344, 'both cards grow by the same amount');
+  assert.equal(ui.studio.preferences.propertiesWidth, 440, 'and keep the difference between them');
+  drag(grips.propertiesWidth, { fromX: 600, toX: 700, ctrlKey: true });
+  assert.equal(ui.studio.preferences.sceneWidth, 244, 'either card grip works on both');
+  assert.equal(ui.studio.preferences.propertiesWidth, 340);
+  drag(grips.propertiesWidth, { fromX: 600, toX: 100, ctrlKey: true });
+  assert.deepEqual([ui.studio.preferences.sceneWidth, ui.studio.preferences.propertiesWidth], [520, 520], 'each card stops at the widest');
+  drag(grips.sceneWidth, { fromX: 600, toX: 640 });
+  assert.equal(ui.studio.preferences.sceneWidth, 480);
+  assert.equal(ui.studio.preferences.propertiesWidth, 520, 'without Ctrl the other card does not move');
+
+  // Meta does the same on a Mac.
+  dispatch(grips.sceneWidth, 'dblclick');
+  dispatch(grips.propertiesWidth, 'dblclick');
+  dispatch(grips.sceneWidth, 'pointerdown', { clientX: 600 });
+  dispatch(grips.sceneWidth, 'pointermove', { clientX: 580, metaKey: true });
+  dispatch(grips.sceneWidth, 'pointerup', { clientX: 580 });
+  assert.deepEqual([ui.studio.preferences.sceneWidth, ui.studio.preferences.propertiesWidth], [304, 304]);
+
+  // Ctrl on the bottom edge of the Scene card: it grows, Properties goes back to filling the rest.
+  drag(grips.sceneHeight, { fromY: 300, toY: 340, ctrlKey: true });
+  assert.equal(ui.studio.preferences.sceneHeight, 280);
+  assert.equal(ui.studio.preferences.propertiesHeight, 0, 'the other card takes what the Scene card leaves');
+  assert.equal(ui.root.dataset.propertiesHeightSized, 'false');
+});
+
+test('the card grips answer the arrow keys, with Ctrl for both cards, and a double click puts a card back to automatic', testContext => {
+  const { ui, grips, savedPreferences } = floatingPanelGrips(testContext);
+  const widen = dispatch(grips.sceneWidth, 'keydown', { key: 'ArrowLeft' });
+  assert.equal(widen.defaultPrevented, true);
+  assert.equal(ui.studio.preferences.sceneWidth, 300);
+  assert.equal(ui.studio.preferences.propertiesWidth, 0);
+  dispatch(grips.propertiesWidth, 'keydown', { key: 'ArrowLeft', ctrlKey: true });
+  assert.equal(ui.studio.preferences.sceneWidth, 316);
+  assert.equal(ui.studio.preferences.propertiesWidth, 300);
+  dispatch(grips.propertiesWidth, 'keydown', { key: 'ArrowRight', metaKey: true });
+  assert.deepEqual([ui.studio.preferences.sceneWidth, ui.studio.preferences.propertiesWidth], [300, 284]);
+  assert.equal(dispatch(grips.sceneWidth, 'keydown', { key: 'a' }).defaultPrevented, false);
+  assert.equal(dispatch(grips.sceneWidth, 'keydown', { key: 'ArrowDown' }).defaultPrevented, false, 'a vertical key does nothing on a width grip');
+
+  dispatch(grips.sceneHeight, 'keydown', { key: 'ArrowDown' });
+  assert.equal(ui.studio.preferences.sceneHeight, 264, 'an unmeasured card starts from 240 and a step is 24 pixels');
+  dispatch(grips.propertiesHeight, 'keydown', { key: 'ArrowUp' });
+  assert.equal(ui.studio.preferences.propertiesHeight, 216);
+  assert.equal(ui.studio.preferences.sceneHeight, 264, 'one card at a time');
+  dispatch(grips.sceneHeight, 'keydown', { key: 'ArrowDown', ctrlKey: true });
+  assert.equal(ui.studio.preferences.sceneHeight, 288);
+  assert.equal(ui.studio.preferences.propertiesHeight, 0, 'Ctrl on the Scene card height is the split');
+
+  dispatch(grips.sceneWidth, 'dblclick');
+  assert.equal(ui.studio.preferences.sceneWidth, 0);
+  assert.equal(ui.studio.preferences.propertiesWidth, 284, 'a double click resets only its own card');
+  dispatch(grips.sceneHeight, 'dblclick');
+  assert.equal(ui.studio.preferences.sceneHeight, 0);
+  assert.equal(ui.root.dataset.sceneHeightSized, 'false');
+  assert.equal(savedPreferences().sceneHeight, 0);
+});
+
+test('Ctrl or Meta with a double click on a card grip puts both cards back to automatic in that dimension', testContext => {
+  const { ui, grips } = floatingPanelGrips(testContext, { preferences: { panelsFloating: true, sceneWidth: 400, propertiesWidth: 360, sceneHeight: 300, propertiesHeight: 280 } });
+  dispatch(grips.sceneWidth, 'dblclick', { ctrlKey: true });
+  assert.deepEqual([ui.studio.preferences.sceneWidth, ui.studio.preferences.propertiesWidth], [0, 0], 'both widths');
+  assert.deepEqual([ui.studio.preferences.sceneHeight, ui.studio.preferences.propertiesHeight], [300, 280], 'the heights stay');
+  dispatch(grips.propertiesHeight, 'dblclick', { metaKey: true });
+  assert.deepEqual([ui.studio.preferences.sceneHeight, ui.studio.preferences.propertiesHeight], [0, 0], 'both heights');
+
+  dispatch(grips.sceneWidth, 'keydown', { key: 'ArrowLeft' });
+  dispatch(grips.propertiesWidth, 'keydown', { key: 'ArrowLeft' });
+  dispatch(grips.propertiesWidth, 'dblclick');
+  assert.equal(ui.studio.preferences.propertiesWidth, 0);
+  assert.equal(ui.studio.preferences.sceneWidth, 300, 'a plain double click still resets one card');
+});
+
+test('card sizes are saved, pulled back into their limits on load, and leave the docked column alone', testContext => {
+  const { ui, grips, saved, savedPreferences, drag } = floatingPanelGrips(testContext);
+  drag(grips.sceneWidth, { fromX: 600, toX: 540 });
+  drag(grips.sceneHeight, { fromY: 300, toY: 340 });
+  assert.equal(savedPreferences().sceneWidth, 344);
+  assert.equal(savedPreferences().sceneHeight, 280);
+  assert.equal(savedPreferences().panelWidth, 284, 'the docked width is not written by a floating drag');
+  assert.equal(savedPreferences().sceneShare, 0);
+
+  const next = mountStudio(testContext, { preferenceStorage: { getItem: key => saved.get(key) ?? null, setItem: () => {} }, sharedDom: ui.dom });
+  assert.equal(next.studio.preferences.sceneWidth, 344, 'the next visit keeps the card sizes');
+  assert.equal(next.studio.preferences.sceneHeight, 280);
+
+  const clamped = mountStudio(testContext, { sharedDom: ui.dom, preferences: { sceneWidth: 9000, propertiesWidth: 10, sceneHeight: 99999, propertiesHeight: 5 } });
+  assert.equal(clamped.studio.preferences.sceneWidth, 520);
+  assert.equal(clamped.studio.preferences.propertiesWidth, 240, 'a saved width below the least is pulled up, not read as automatic');
+  assert.equal(clamped.studio.preferences.sceneHeight, 1600);
+  assert.equal(clamped.studio.preferences.propertiesHeight, 96);
+  const broken = mountStudio(testContext, { sharedDom: ui.dom, preferences: { sceneWidth: Number.NaN, propertiesWidth: '300', sceneHeight: null, propertiesHeight: undefined } });
+  assert.deepEqual([broken.studio.preferences.sceneWidth, broken.studio.preferences.propertiesWidth, broken.studio.preferences.sceneHeight, broken.studio.preferences.propertiesHeight], [0, 0, 0, 0], 'bad values fall back to automatic');
+});
+
+test('docked keeps one column width and one split, whatever the floating cards were sized to', testContext => {
+  const { ui, grips } = floatingPanelGrips(testContext, { preferences: { panelsFloating: true, panelWidth: 300, sceneShare: 40, sceneWidth: 500, propertiesHeight: 300 } });
+  ui.studio.setPreference('panelsFloating', false);
+  assert.equal(ui.root.dataset.floating, 'false');
+  assert.equal(ui.studio.preferences.panelWidth, 300);
+  assert.equal(ui.studio.preferences.sceneShare, 40);
+  assert.equal(ui.studio.preferences.sceneWidth, 500, 'the floating sizes are kept for the way back');
+  assert.equal(ui.root.style['--studio-side-width'], '300px', 'the column is as wide as the docked width says');
+  const docked = '.crucible-studio[data-floating="false"]:not([data-compact="true"])';
+  assert.ok(STUDIO_CSS.includes(`${docked} .crucible-studio-side > .crucible-studio-dock {
+  inline-size: auto;`), 'docked cards fill the column, not their floating width');
+  const cardGripRule = STUDIO_CSS.slice(STUDIO_CSS.indexOf('.crucible-studio[data-floating="false"] .crucible-studio-grip-card-width'));
+  assert.ok(cardGripRule.slice(0, cardGripRule.indexOf('{')).includes('.crucible-studio[data-floating="true"] .crucible-studio-grip-width'), 'each layout hides the other layout\'s grips');
+  assert.ok(STUDIO_CSS.includes('.crucible-studio[data-floating="true"][data-scene-height-sized="true"]'), 'saved card heights apply only floating');
+
+  // Dragging the docked grips still writes the docked values only.
+  dispatch(ui.label('Panel width'), 'pointerdown', { clientX: 600 });
+  dispatch(ui.label('Panel width'), 'pointermove', { clientX: 580 });
+  dispatch(ui.label('Panel width'), 'pointerup', { clientX: 580 });
+  assert.equal(ui.studio.preferences.panelWidth, 320);
+  assert.equal(ui.studio.preferences.sceneWidth, 500);
+  assert.equal(grips.sceneWidth.getAttribute('aria-valuenow'), '500');
+});
+
+test('the axis widget stands at the top right of the viewport, beside the panel column, in both layouts', testContext => {
+  const rule = selector => {
+    const start = STUDIO_CSS.indexOf(`${selector} {`);
+    assert.ok(start >= 0, `a rule for ${selector}`);
+    return STUDIO_CSS.slice(start, STUDIO_CSS.indexOf('}', start));
+  };
+  const floating = rule('.crucible-studio-view-widget');
+  assert.ok(floating.includes('inset-block-start: var(--studio-top);'), 'level with the top of the Scene card');
+  assert.ok(floating.includes('inset-inline-end: calc(var(--studio-edge) + var(--studio-gizmo-clear, 0px));'), 'left of the cards, one edge gap from them');
+  assert.ok(!floating.includes('inset-block-end'), 'no longer in the bottom corner');
+  assert.ok(STUDIO_CSS.includes('.crucible-studio {\n  --studio-gizmo-clear: calc(var(--studio-scene-width, 284px) + var(--studio-edge));\n}'), 'it follows the Scene card width');
+  assert.ok(STUDIO_CSS.includes('[data-outliner-minimized="true"]:not([data-inspector-collapsed="true"]) {\n  --studio-gizmo-clear: calc(max(var(--studio-scene-width, 284px), var(--studio-properties-width, 284px))'), 'a short minimized Scene card leaves a wider Properties card the room under the widget');
+  assert.ok(rule('.crucible-studio[data-outliner-collapsed="true"][data-inspector-collapsed="true"]').includes('--studio-gizmo-clear: 0px;'), 'with both cards away it takes the corner');
+  const docked = rule('.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-view-widget');
+  assert.ok(docked.includes('inset-inline-end: var(--studio-edge);') && docked.includes('inset-block-start: var(--studio-edge);'), 'docked, the viewport already ends at the column, so the widget takes its corner');
+  assert.ok(rule('.crucible-studio[data-compact="true"] .crucible-studio-view-widget').includes('inset-inline-end: var(--studio-edge);'), 'a compact window keeps it in the corner under the bar, clear of the cards');
+
+  // The widget no longer needs a gap under the Properties card.
+  const column = rule('.crucible-studio-side');
+  assert.ok(column.includes('inset-block: var(--studio-top) var(--studio-edge);'), 'Properties runs down to the bottom margin');
+  assert.ok(!column.includes('100px'));
+  assert.ok(rule('.crucible-studio[data-workspace="animate"] .crucible-studio-readout,\n.crucible-studio[data-workspace="animate"] .crucible-studio-side').includes('inset-block-end: calc(var(--studio-edge) + var(--studio-bar-clear));'), 'the timeline bar still has its room in Animate');
+
+  const ui = mountStudio(testContext, { preferences: { panelsFloating: true } });
+  assert.ok(ui.viewport.children.includes(ui.root.querySelector('.crucible-studio-view-widget')), 'the widget lives in the viewport');
+  ui.studio.setPreference('viewWidgetVisible', false);
+  assert.equal(ui.root.dataset.viewWidget, 'off');
 });
 
 test('G picks the selected object up under the pointer; X locks an axis, Esc puts it back and a click places it', testContext => {
@@ -2769,4 +3018,622 @@ test('Delete removes the selected light, and the camera and sun stay', testConte
   assert.equal(ui.controller.selectedObjectKey, null);
   ui.controller.undo();
   assert.deepEqual(ui.objectLabels(), ['Camera', 'Sun', 'Spot light']);
+});
+
+function selectSceneObjectRow(ui, key) {
+  const row = ui.objectRows().find(candidate => candidate.dataset.sceneObject === key);
+  row.querySelector('.crucible-studio-tree-select').click();
+}
+
+function editNumber(ui, label, value) {
+  const input = ui.label(label);
+  input.value = String(value);
+  dispatch(input, 'change');
+}
+
+function countUndoSteps(controller) {
+  let steps = 0;
+  while (controller.undo()) steps += 1;
+  while (controller.redo());
+  return steps;
+}
+
+test('selecting a light opens its properties, and each control writes its field as one undo step', testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.addSceneLight('point');
+  ui.controller.addSceneLight('spot');
+  ui.controller.addSceneLight('area');
+  assert.equal(countUndoSteps(ui.controller), 3);
+
+  selectSceneObjectRow(ui, 'point:0');
+  assert.equal(ui.controller.activeTab, 'look');
+  const lightOf = key => {
+    const [kind, index] = key.split(':');
+    return ui.studio.exportRecipe().environment[`${kind}Lights`][Number(index)];
+  };
+  const expectOneStep = (key, edit, check) => {
+    const before = ui.studio.exportRecipe();
+    edit();
+    check(lightOf(key));
+    assert.equal(ui.controller.undo(), true);
+    assert.deepEqual(ui.studio.exportRecipe(), before, 'one undo reverts the edit');
+    ui.controller.redo();
+    check(lightOf(key));
+  };
+
+  expectOneStep('point:0', () => editNumber(ui, 'Intensity', 6), light => assert.equal(light.intensity, 6));
+  expectOneStep('point:0', () => editNumber(ui, 'Radius', 0.3), light => assert.equal(light.radius, 0.3));
+  expectOneStep('point:0', () => editNumber(ui, 'Range', 20), light => assert.equal(light.range, 20));
+  expectOneStep('point:0', () => editNumber(ui, 'Light position Y', 4.5), light => assert.equal(light.position[1], 4.5));
+  expectOneStep('point:0', () => ui.button('Soft falloff').click(), light => assert.equal(light.softFalloff, true));
+  expectOneStep('point:0', () => ui.button('Shadow').click(), light => assert.equal(light.castShadow, undefined));
+  const colour = ui.label('Color');
+  expectOneStep('point:0', () => {
+    colour.value = '#ff0000';
+    dispatch(colour, 'input');
+    colour.value = '#00ff00';
+    dispatch(colour, 'input');
+    dispatch(colour, 'change');
+  }, light => assert.deepEqual(light.color, [0, 1, 0]));
+  assert.equal(ui.label('Color').value, '#00ff00');
+
+  selectSceneObjectRow(ui, 'spot:0');
+  expectOneStep('spot:0', () => ui.setSlider('Angle °', 40), light => assert.ok(Math.abs(light.angle - (40 * Math.PI) / 180) < 1e-3));
+  expectOneStep('spot:0', () => ui.setSlider('Penumbra', 0.6), light => assert.equal(light.penumbra, 0.6));
+  expectOneStep('spot:0', () => editNumber(ui, 'Light direction X', 1), light => assert.equal(light.direction[0], 1));
+  assert.equal(ui.button('Portal'), undefined, 'a spot light has no portal');
+
+  selectSceneObjectRow(ui, 'area:0');
+  expectOneStep('area:0', () => editNumber(ui, 'Width', 5), light => assert.equal(light.width, 5));
+  expectOneStep('area:0', () => editNumber(ui, 'Height', 1.5), light => assert.equal(light.height, 1.5));
+  expectOneStep('area:0', () => ui.button('Portal').click(), light => assert.equal(light.portal, true));
+  expectOneStep('area:0', () => ui.button('Shadow').click(), light => assert.equal(light.castShadow, true));
+  assert.equal(ui.button('Soft falloff'), undefined, 'an area light has no soft falloff');
+});
+
+test('the sun properties edit the key light, and the panel shows the sun when no light is selected', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  ui.setSlider('Sun strength', 3.5);
+  assert.equal(ui.studio.exportRecipe().environment.keyIntensity, 3.5);
+  const colour = ui.label('Sun color');
+  colour.value = '#ff8000';
+  dispatch(colour, 'input');
+  dispatch(colour, 'change');
+  assert.deepEqual(ui.studio.exportRecipe().environment.keyColor, hexToLinearRgb('#ff8000'));
+  editNumber(ui, 'Sun size', 1.5);
+  assert.ok(Math.abs(ui.studio.exportRecipe().environment.sunAngularRadius - (1.5 * Math.PI) / 180) < 1e-9, 'typed degrees are written as radians');
+  assert.equal(ui.label('Sun size').value, '1.5');
+  ui.controller.undo();
+  assert.equal(ui.studio.exportRecipe().environment.sunAngularRadius, undefined);
+  assert.equal(ui.label('Sun size').value, '0.5', 'undo puts the control back, shown in degrees');
+});
+
+test('a scene file an agent rewrote shows its new sun values in the open Look panel', async testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const edited = ui.studio.exportRecipe();
+  edited.environment = { ...edited.environment, keyIntensity: 4.25, sunAngularRadius: (2 * Math.PI) / 180 };
+  await ui.studio.loadExternalTextFile(JSON.stringify(edited), { filePath: 'C:/agent/live.scene.json', fileName: 'live.scene.json', recordUndo: false });
+  assert.equal(Number(ui.label('Sun strength').value), 4.25, 'the slider follows the file the agent wrote');
+  assert.equal(ui.label('Sun size').value, '2', 'the size is shown in degrees');
+});
+
+test('the Camera tab edits focal length, sensor, clip planes, shift, depth of field and the eye and target', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  const cameraOf = () => ui.studio.exportRecipe().camera;
+  editNumber(ui, 'Focal length mm', 85);
+  assert.equal(cameraOf().focalLength, 85);
+  assert.equal(cameraOf().fov, undefined);
+  editNumber(ui, 'Sensor width mm', 24);
+  assert.equal(cameraOf().sensorWidth, 24);
+  editNumber(ui, 'Clip start', 0.25);
+  assert.equal(cameraOf().near, 0.25);
+  editNumber(ui, 'Clip end', 300);
+  assert.equal(cameraOf().far, 300);
+  editNumber(ui, 'Shift X', 0.2);
+  assert.deepEqual(cameraOf().shift, [0.2, 0]);
+  const depthSwitch = ui.label('Depth of field');
+  assert.equal(depthSwitch.getAttribute('aria-checked'), 'false');
+  assert.equal(ui.label('Focus distance').parentNode.hidden, false, 'the focus distance stays on screen while depth of field is off');
+  assert.equal(ui.label('Focus distance').parentNode.dataset.dimmed, 'true');
+  assert.equal(ui.label('Focus distance').disabled, true);
+  assert.equal(ui.label('F-stop').disabled, true);
+  assert.equal(ui.label('F-stop').value, '2.8', 'an off f-stop shows the default number, not the word Off');
+  assert.equal(ui.label('F-stop').placeholder, '');
+  depthSwitch.click();
+  assert.equal(cameraOf().fStop, 2.8, 'the switch writes the f-stop');
+  assert.equal(depthSwitch.getAttribute('aria-checked'), 'true');
+  assert.equal(ui.label('Focus distance').parentNode.dataset.dimmed, 'false');
+  assert.equal(ui.label('F-stop').disabled, false);
+  editNumber(ui, 'F-stop', 4);
+  assert.equal(cameraOf().fStop, 4);
+  editNumber(ui, 'Focus distance', 5);
+  assert.equal(cameraOf().focusDistance, 5);
+  editNumber(ui, 'Eye X', 3);
+  assert.equal(cameraOf().eye[0], 3);
+  editNumber(ui, 'Target Y', 1);
+  assert.equal(cameraOf().target[1], 1);
+  assert.equal(countUndoSteps(ui.controller), 10, 'each edit is one undo step');
+
+  depthSwitch.click();
+  assert.equal(cameraOf().fStop, undefined);
+  assert.equal(cameraOf().focusDistance, undefined);
+  assert.equal(depthSwitch.getAttribute('aria-checked'), 'false');
+  assert.equal(ui.label('F-stop').value, '4', 'switched off, the f-stop keeps showing its last number');
+  depthSwitch.click();
+  assert.equal(cameraOf().fStop, 4, 'switched on again, it writes that last number');
+  assert.equal(ui.label('F-stop').value, '4');
+  editNumber(ui, 'F-stop', '');
+  assert.equal(cameraOf().fStop, undefined, 'an emptied f-stop field still clears the depth of field');
+  assert.equal(cameraOf().focusDistance, undefined);
+  ui.controller.undo();
+  assert.equal(cameraOf().fStop, 4);
+
+  ui.button('Ortho').click();
+  assert.equal(cameraOf().projection, 'orthographic');
+  assert.equal(ui.label('Focal length mm').parentNode.hidden, true);
+  assert.equal(ui.label('Orthographic size').parentNode.hidden, false);
+  editNumber(ui, 'Clip end', 0.01);
+  assert.match(ui.status(), /near/, 'a far plane in front of the near plane is told to the person');
+  assert.equal(cameraOf().far, 300);
+  assert.equal(ui.label('Clip end').value, '300', 'the control goes back to the recipe');
+});
+
+test('a change an agent makes from outside shows in the light and camera controls', async testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.addSceneLight('point');
+  selectSceneObjectRow(ui, 'point:0');
+  assert.equal(ui.label('Intensity').value, '2.5');
+
+  const agentRecipe = ui.studio.exportRecipe();
+  agentRecipe.environment.pointLights[0].intensity = 9;
+  agentRecipe.environment.keyIntensity = 2.2;
+  agentRecipe.camera.focalLength = 50;
+  delete agentRecipe.camera.fov;
+  await ui.studio.loadExternalTextFile(JSON.stringify(agentRecipe), { filePath: null, agent: true });
+  assert.equal(ui.label('Intensity').value, '9');
+
+  ui.controller.selectSceneObject('sun');
+  ui.tab('look').click();
+  assert.equal(ui.label('Sun strength').value, '2.2');
+  ui.tab('camera').click();
+  assert.equal(ui.label('Focal length mm').value, '50');
+
+  ui.studio.loadRecipe({ ...agentRecipe, camera: { ...agentRecipe.camera, focalLength: 135 } }, { recordUndo: false });
+  assert.equal(ui.label('Focal length mm').value, '135');
+});
+
+test('fields a motion track drives are disabled with a mark, in the light and camera panels', testContext => {
+  const recipe = makeRecipe();
+  recipe.environment.pointLights = [{ position: [1, 3, 1], intensity: 2 }];
+  recipe.motion = {
+    duration: 2,
+    loop: false,
+    tracks: [
+      { kind: 'light', id: 'point:0', property: 'intensity', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 1 }, { time: 2, value: 3 }] },
+      { kind: 'camera', property: 'fov', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 40 }, { time: 2, value: 60 }] },
+    ],
+  };
+  const ui = mountStudio(testContext, { recipe });
+  selectSceneObjectRow(ui, 'point:0');
+  const intensity = ui.label('Intensity');
+  const row = intensity.parentNode;
+  assert.equal(intensity.disabled, true);
+  assert.equal(row.dataset.driven, 'true');
+  assert.equal(row.querySelector('.crucible-studio-driven-mark').hidden, false);
+  assert.equal(ui.label('Radius').disabled, false, 'a field the track leaves alone stays editable');
+  assert.equal(ui.label('Radius').parentNode.querySelector('.crucible-studio-driven-mark').hidden, true);
+
+  ui.tab('camera').click();
+  assert.equal(ui.label('Field of view').disabled, true);
+  assert.equal(ui.label('Eye X').disabled, true, 'a camera track drives the eye whichever field it animates');
+  assert.equal(ui.label('Clip end').disabled, false);
+});
+
+function editColour(ui, label, hex) {
+  const input = ui.label(label);
+  input.value = hex;
+  dispatch(input, 'input');
+  dispatch(input, 'change');
+}
+
+function expectOneUndoStep(ui, edit, check) {
+  const before = ui.studio.exportRecipe();
+  edit();
+  check(ui.studio.exportRecipe());
+  assert.equal(ui.controller.undo(), true);
+  assert.deepEqual(ui.studio.exportRecipe(), before, 'one undo reverts the edit');
+  ui.controller.redo();
+  check(ui.studio.exportRecipe());
+}
+
+test('the Look tab edits the world, fog, film, effects, shadow box and quality fields, each as one undo step', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const environmentOf = recipe => recipe.environment;
+
+  expectOneUndoStep(ui, () => editNumber(ui, 'HDRI strength', 2), recipe => assert.equal(environmentOf(recipe).environmentIntensity, 2));
+  expectOneUndoStep(ui, () => editNumber(ui, 'HDRI rotation', 90), recipe => assert.ok(Math.abs(environmentOf(recipe).environmentRotation - Math.PI / 2) < 1e-9, 'typed degrees are written as radians'));
+  expectOneUndoStep(ui, () => editColour(ui, 'Sky top', '#ff0000'), recipe => assert.deepEqual(environmentOf(recipe).skyTop, [1, 0, 0]));
+  expectOneUndoStep(ui, () => editColour(ui, 'Sky bottom', '#0000ff'), recipe => assert.deepEqual(environmentOf(recipe).skyBottom, [0, 0, 1]));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Daylight', 0.4), recipe => assert.equal(environmentOf(recipe).daylight, 0.4));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Fill strength', 0.9), recipe => assert.equal(environmentOf(recipe).fillIntensity, 0.9));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Ambient strength', 0.2), recipe => assert.equal(environmentOf(recipe).ambientIntensity, 0.2));
+  expectOneUndoStep(ui, () => ui.button('Show sky').click(), recipe => assert.equal(environmentOf(recipe).world, true));
+  expectOneUndoStep(ui, () => ui.button('Ground').click(), recipe => assert.equal(environmentOf(recipe).ground, false));
+
+  expectOneUndoStep(ui, () => ui.setSlider('Fog density', 0.02), recipe => assert.equal(environmentOf(recipe).fogDensity, 0.02));
+  expectOneUndoStep(ui, () => editColour(ui, 'Fog color', '#00ff00'), recipe => assert.deepEqual(environmentOf(recipe).fogColor, [0, 1, 0]));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Volume density', 0.3), recipe => assert.equal(environmentOf(recipe).volumeFog.density, 0.3));
+  expectOneUndoStep(ui, () => editColour(ui, 'Volume color', '#ffffff'), recipe => assert.deepEqual(environmentOf(recipe).volumeFog.color, [1, 1, 1]));
+  expectOneUndoStep(ui, () => ui.setSlider('Anisotropy', 0.5), recipe => assert.equal(environmentOf(recipe).volumeFog.anisotropy, 0.5));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Volume steps', 20), recipe => assert.equal(environmentOf(recipe).volumeFog.steps, 20));
+  expectOneUndoStep(ui, () => ui.setSlider('Noise amount', 0.8), recipe => assert.equal(environmentOf(recipe).volumeFog.noiseAmount, 0.8));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Noise scale', 0.6), recipe => assert.equal(environmentOf(recipe).volumeFog.noiseScale, 0.6));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Volume distance', 60), recipe => assert.equal(environmentOf(recipe).volumeFog.maxDistance, 60));
+
+  expectOneUndoStep(ui, () => ui.setSlider('Exposure', 1.3), recipe => assert.equal(recipe.effects.exposure, 1.3));
+  expectOneUndoStep(ui, () => ui.setSlider('Temperature', 0.3), recipe => assert.equal(recipe.effects.temperature, 0.3));
+  expectOneUndoStep(ui, () => ui.setSlider('Vignette', 0.2), recipe => assert.equal(recipe.effects.vignette, 0.2));
+  expectOneUndoStep(ui, () => ui.setSlider('Grain', 0.04), recipe => assert.equal(recipe.effects.grain, 0.04));
+  expectOneUndoStep(ui, () => ui.setSlider('Ambient occlusion', 0.6), recipe => assert.equal(recipe.effects.ambientOcclusion, 0.6));
+  expectOneUndoStep(ui, () => editNumber(ui, 'AO radius', 1.5), recipe => assert.equal(recipe.effects.ambientOcclusionRadius, 1.5));
+  expectOneUndoStep(ui, () => ui.setSlider('Bloom', 0.4), recipe => assert.equal(recipe.effects.bloom.strength, 0.4));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Bloom threshold', 2), recipe => assert.equal(recipe.effects.bloom.threshold, 2));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Bloom radius', 1.5), recipe => assert.equal(recipe.effects.bloom.radius, 1.5));
+  expectOneUndoStep(ui, () => ui.setSlider('DoF blur', 0.4), recipe => assert.equal(recipe.effects.depthOfField.blur, 0.4));
+  expectOneUndoStep(ui, () => editNumber(ui, 'DoF focus', 6), recipe => assert.equal(recipe.effects.depthOfField.focusDistance, 6));
+  expectOneUndoStep(ui, () => ui.setSlider('Shutter', 0.2), recipe => assert.equal(recipe.effects.motionBlur.shutter, 0.2));
+  expectOneUndoStep(ui, () => ui.setSlider('Object blur', 0.5), recipe => assert.equal(recipe.effects.motionBlur.objects, 0.5));
+
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow extent', 5), recipe => assert.equal(recipe.shadow.extent, 5));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow distance', 12), recipe => assert.equal(recipe.shadow.distance, 12));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow clip start', 0.2), recipe => assert.equal(recipe.shadow.near, 0.2));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow clip end', 40), recipe => assert.equal(recipe.shadow.far, 40));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow target Y', 2), recipe => assert.equal(recipe.shadow.target[1], 2));
+
+  expectOneUndoStep(ui, () => ui.button('Object reflections').click(), recipe => assert.equal(environmentOf(recipe).objectReflections, false));
+  expectOneUndoStep(ui, () => ui.button('Floor sky trace').click(), recipe => assert.equal(environmentOf(recipe).floorSkyTrace, false));
+  expectOneUndoStep(ui, () => ui.button('Resolve coplanar').click(), recipe => assert.equal(environmentOf(recipe).resolveCoplanar, false));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Shadow cascades', 2), recipe => assert.equal(environmentOf(recipe).shadowCascades, 2));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Sun bounce', 0.5), recipe => assert.equal(environmentOf(recipe).sunBounce, 0.5));
+  expectOneUndoStep(ui, () => editNumber(ui, 'Specular AA', 2), recipe => assert.equal(environmentOf(recipe).specularAntiAliasing, 2));
+});
+
+test('the HDRI select loads the file before it writes the choice, and None clears it', async testContext => {
+  const requested = [];
+  const catalog = { environment: async reference => { requested.push(reference); return tinyHdrBytes(); } };
+  const ui = mountStudio(testContext, { catalog });
+  ui.tab('look').click();
+  const select = ui.label('HDRI');
+  assert.deepEqual(select.children.map(option => option.value), ['', 'sky-clouds', 'studio-softbox']);
+  select.value = 'sky-clouds';
+  dispatch(select, 'change');
+  await ui.dom.settle();
+  assert.equal(ui.studio.exportRecipe().environment.hdri, 'sky-clouds');
+  assert.deepEqual(requested, ['sky-clouds']);
+  select.value = '';
+  dispatch(select, 'change');
+  assert.equal(ui.studio.exportRecipe().environment.hdri, undefined);
+  assert.equal(ui.controller.undo(), true);
+  assert.equal(ui.label('HDRI').value, 'sky-clouds', 'undo puts the choice back');
+});
+
+test('a catalog HDRI the list lacks shows as the current value', async testContext => {
+  const ui = mountStudio(testContext, { catalog: { environment: async () => tinyHdrBytes() } });
+  ui.tab('look').click();
+  const agentRecipe = ui.studio.exportRecipe();
+  agentRecipe.environment.hdri = 'b'.repeat(64);
+  await ui.studio.loadExternalTextFile(JSON.stringify(agentRecipe), { filePath: null, agent: true });
+  const shown = ui.label('HDRI');
+  assert.equal(shown.value, 'b'.repeat(64));
+  assert.equal(shown.children.at(-1).disabled, true);
+  assert.equal(shown.children.length, 4);
+  assert.equal(shown.children.at(-1).textContent, 'Custom bbbbbbbb', 'a raw hash is not shown');
+});
+
+test('a change an agent makes from outside shows in the world, effects, shadow and quality controls', async testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const agentRecipe = ui.studio.exportRecipe();
+  agentRecipe.environment.fogDensity = 0.05;
+  agentRecipe.environment.skyTop = [0, 1, 0];
+  agentRecipe.environment.volumeFog = { density: 0.9 };
+  agentRecipe.environment.sunBounce = 3;
+  agentRecipe.environment.objectReflections = false;
+  agentRecipe.effects.vignette = 0.4;
+  agentRecipe.effects.bloom = { strength: 0.7, threshold: 3, radius: 2 };
+  agentRecipe.shadow.extent = 9;
+  await ui.studio.loadExternalTextFile(JSON.stringify(agentRecipe), { filePath: null, agent: true });
+  assert.equal(ui.label('Fog density').value, '0.05');
+  assert.equal(ui.label('Sky top').value, '#00ff00');
+  assert.equal(ui.label('Volume density').value, '0.9');
+  assert.equal(ui.label('Sun bounce').value, '3');
+  assert.equal(ui.button('Object reflections').getAttribute('aria-checked'), 'false');
+  assert.equal(ui.label('Vignette').value, '0.4');
+  assert.equal(ui.label('Bloom threshold').value, '3');
+  assert.equal(ui.label('Shadow extent').value, '9');
+
+  ui.controller.updateLook({ environment: { fogDensity: 0.01 }, effects: { vignette: 0.1 } });
+  assert.equal(ui.label('Fog density').value, '0.01', 'a controller op shows too');
+  assert.equal(ui.label('Vignette').value, '0.1');
+  ui.controller.updateSceneShadow({ extent: 4 });
+  assert.equal(ui.label('Shadow extent').value, '4');
+});
+
+test('property groups fold, start with only the first group open, and stay as a person left them', testContext => {
+  const saved = new Map();
+  const preferenceStorage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const ui = mountStudio(testContext, { preferenceStorage });
+  ui.tab('look').click();
+  const section = (target, id) => byDataset(target.root, 'section', id);
+  const rowsOf = (target, id) => section(target, id).querySelector('.crucible-studio-property-rows');
+  const titleOf = (target, id) => section(target, id).querySelector('.crucible-studio-property-title');
+  assert.equal(rowsOf(ui, 'sun').hidden, false, 'the first group of the tab starts open');
+  assert.equal(titleOf(ui, 'sun').getAttribute('aria-expanded'), 'true');
+  for (const id of ['world', 'atmosphere', 'film', 'effects', 'quality', 'sceneShadow']) {
+    assert.equal(rowsOf(ui, id).hidden, true, `${id} starts closed`);
+    assert.equal(titleOf(ui, id).getAttribute('aria-expanded'), 'false');
+  }
+
+  titleOf(ui, 'quality').click();
+  titleOf(ui, 'sun').click();
+  assert.equal(rowsOf(ui, 'quality').hidden, false);
+  assert.equal(rowsOf(ui, 'sun').hidden, true);
+  assert.deepEqual(JSON.parse(saved.get('crucible-studio-preferences')).propertyGroupsOpen, { quality: true, sun: false });
+  assert.deepEqual(ui.studio.preferences.propertyGroupsOpen, { quality: true, sun: false });
+
+  const returning = mountStudio(testContext, { sharedDom: ui.dom, preferenceStorage });
+  returning.tab('look').click();
+  assert.equal(rowsOf(returning, 'quality').hidden, false, 'the next visit keeps Quality open');
+  assert.equal(rowsOf(returning, 'sun').hidden, true, 'and Sun folded');
+  assert.equal(rowsOf(returning, 'sceneShadow').hidden, true);
+});
+
+test('a selected light takes the Look tab alone, and the scene groups return with the sun selected', testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.addSceneLight('point');
+  ui.tab('look').click();
+  const panels = () => ui.root.querySelectorAll('.crucible-studio-properties').slice(0, 5).map(panel => panel.hidden === true);
+  ui.controller.selectSceneObject('sun');
+  assert.deepEqual(panels(), [false, false, false, false, false]);
+  selectSceneObjectRow(ui, 'point:0');
+  assert.deepEqual(panels(), [false, true, false, true, true], 'the world, shadow and quality groups leave; the film and effects stay');
+  ui.controller.selectSceneObject('sun');
+  assert.deepEqual(panels(), [false, false, false, false, false]);
+});
+
+test('fields an environment or effects track drives are disabled with a mark in the Look tab', testContext => {
+  const recipe = makeRecipe();
+  recipe.effects = { depthOfField: { blur: 0.5, focusDistance: 5 } };
+  recipe.motion = {
+    duration: 2,
+    loop: false,
+    tracks: [
+      { kind: 'environment', property: 'fogDensity', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 0 }, { time: 2, value: 0.05 }] },
+      { kind: 'environment', property: 'skyTop', interpolation: 'LINEAR', keyframes: [{ time: 0, value: [0.1, 0.2, 0.3] }, { time: 2, value: [0.3, 0.2, 0.1] }] },
+      { kind: 'environment', property: 'volumeFogDensity', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 0 }, { time: 2, value: 0.5 }] },
+      { kind: 'effects', property: 'exposure', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 1 }, { time: 2, value: 2 }] },
+      { kind: 'effects', property: 'focusDistance', interpolation: 'LINEAR', keyframes: [{ time: 0, value: 2 }, { time: 2, value: 8 }] },
+    ],
+  };
+  const ui = mountStudio(testContext, { recipe });
+  ui.tab('look').click();
+  for (const label of ['Fog density', 'Sky top', 'Volume density', 'Exposure', 'DoF focus']) {
+    const control = ui.label(label);
+    assert.equal(control.disabled, true, `${label} is disabled`);
+    assert.equal(control.parentNode.dataset.driven, 'true');
+    assert.equal(control.parentNode.querySelector('.crucible-studio-driven-mark').hidden, false);
+  }
+  for (const label of ['Fog color', 'Contrast', 'DoF blur', 'Sky bottom']) {
+    assert.equal(ui.label(label).disabled, false, `${label} stays editable`);
+  }
+});
+
+test('the Camera tab opens on the Lens group alone, with the lens presets as its first row', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  const sectionOf = id => byDataset(ui.root, 'section', id);
+  const rowsOf = id => sectionOf(id).querySelector('.crucible-studio-property-rows');
+  assert.equal(rowsOf('lens').hidden, false);
+  assert.equal(rowsOf('depthOfField').hidden, true);
+  assert.equal(rowsOf('transform').hidden, true);
+  assert.equal(rowsOf('lens').children[0].getAttribute('aria-label'), 'Lens presets', 'the presets lead the group');
+  assert.deepEqual(rowsOf('lens').children[0].querySelectorAll('button').map(button => button.textContent), ['24 mm', '35 mm', '50 mm', '85 mm']);
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-field-head').filter(head => head.textContent === 'Lens').length, 0, 'no second Lens caption');
+});
+
+test('each property is one line: a label and its control in one row, and a switch for every toggle', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const rowOf = id => byDataset(ui.root, 'property', id);
+  const fogRow = rowOf('fogDensity');
+  assert.equal(fogRow.querySelector('.crucible-studio-prop-label').textContent, 'Density');
+  assert.equal(fogRow.querySelector('.crucible-studio-prop-label').title, 'Density', 'a label that is cut short still says what it is');
+  assert.equal(fogRow.querySelector('input').parentNode, fogRow, 'the control sits in the row beside its label');
+
+  const showSky = ui.button('Show sky');
+  assert.equal(showSky.getAttribute('role'), 'switch');
+  assert.equal(showSky.getAttribute('aria-checked'), 'false');
+  showSky.click();
+  assert.equal(ui.studio.exportRecipe().environment.world, true);
+  assert.equal(showSky.getAttribute('aria-checked'), 'true');
+  showSky.click();
+  assert.equal(showSky.getAttribute('aria-checked'), 'false');
+  assert.equal(rowOf('world').querySelector('.crucible-studio-prop-label').textContent, 'Show sky');
+});
+
+test('lengths, angles and lens values show a quiet unit beside the number and keep the label plain', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  const unitOf = id => byDataset(ui.root, 'property', id).querySelector('.crucible-studio-prop-unit')?.textContent;
+  assert.equal(unitOf('focalLength'), 'mm');
+  assert.equal(unitOf('near'), 'm');
+  assert.equal(unitOf('fov'), '°', 'a slider shows its unit in the same slot as a number');
+  assert.equal(unitOf('fStop'), '', 'a ratio has no unit but keeps the slot, so its digits end where the others do');
+  const numericRows = [...ui.root.querySelectorAll('.crucible-studio-prop')].filter(row => ['number', 'slider'].includes(row.dataset.control));
+  assert.ok(numericRows.length > 5);
+  assert.ok(numericRows.every(row => row.querySelector('.crucible-studio-prop-unit')), 'every numeric row reserves the unit slot');
+  editNumber(ui, 'Clip start', 0.123456);
+  assert.equal(ui.label('Clip start').value, '0.123', 'at most three decimals are shown');
+  assert.equal(ui.controller.scene.camera.near, 0.123456, 'what is stored is what was typed');
+});
+
+test('the group title button keeps its own look over the generic button rule, so it stays opaque and left aligned', () => {
+  const rule = STUDIO_CSS.slice(STUDIO_CSS.indexOf('.crucible-studio button.crucible-studio-property-title {'));
+  const body = rule.slice(0, rule.indexOf('}'));
+  assert.match(body, /position: sticky/u);
+  assert.match(body, /inset-block-start: 0/u);
+  assert.ok(body.includes('background: var(--studio-panel)'));
+  assert.match(body, /justify-items: start/u);
+});
+
+test('the sun row shows its azimuth and elevation in degrees beside the pad', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const readout = byDataset(ui.root, 'property', 'direction').querySelector('.crucible-studio-sun-readout');
+  assert.match(readout.textContent, /Az-?[0-9]+°/u);
+  assert.match(readout.textContent, /El[0-9]+°/u);
+});
+
+test('the Color look row is the first row of the Film group', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const filmRows = byDataset(ui.root, 'section', 'film').querySelector('.crucible-studio-property-rows');
+  assert.equal(filmRows.children[0].querySelector('.crucible-studio-prop-label').textContent, 'Color look');
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-prop-label').filter(label => label.textContent === 'Color look').length, 1);
+});
+
+test('a lens preset is active when the focal length is within half a millimetre of it, also for a camera set by field of view', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  const activeChips = () => ui.label('Lens presets').querySelectorAll('button').filter(chip => chip.getAttribute('aria-pressed') === 'true').map(chip => chip.textContent);
+  ui.controller.setCameraLensMillimetres(50);
+  assert.deepEqual(activeChips(), ['50 mm']);
+  editNumber(ui, 'Focal length mm', 50.4);
+  assert.deepEqual(activeChips(), ['50 mm'], 'half a millimetre off still counts');
+  editNumber(ui, 'Focal length mm', 52);
+  assert.deepEqual(activeChips(), []);
+});
+
+test('a driven row names its mark "Animated by a track" right after the label', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('camera').click();
+  const marks = ui.root.querySelectorAll('.crucible-studio-driven-mark');
+  assert.ok(marks.length > 0);
+  for (const driven of marks) {
+    assert.equal(driven.getAttribute('aria-label'), 'Animated by a track');
+    assert.equal(driven.title, 'Animated by a track');
+  }
+});
+
+test('the Look tab shows the lighting presets on one row and the sun direction pad beside its label', testContext => {
+  const ui = mountStudio(testContext);
+  ui.tab('look').click();
+  const presets = ui.label('Lighting setup');
+  assert.equal(presets.querySelectorAll('button').length, LIGHTING_SETUP_NAMES.length);
+  const sunRow = byDataset(ui.root, 'property', 'direction');
+  assert.equal(sunRow.querySelector('.crucible-studio-prop-label').textContent, 'Direction');
+  assert.ok(sunRow.querySelector('.crucible-studio-sunpad'), 'the pad is in the direction row');
+});
+
+test('the stylesheet fades rows under a pinned group title and at the bottom of the panels, and keeps the label column wide enough', () => {
+  assert.ok(STUDIO_CSS.includes('container-type: scroll-state;'), 'a group title can tell when it is pinned');
+  assert.ok(STUDIO_CSS.includes('@container scroll-state(stuck: top)'), 'the fade under a title shows only while it is pinned');
+  assert.ok(STUDIO_CSS.includes('.crucible-studio-panels::after'), 'the panels fade at the bottom edge');
+  assert.ok(STUDIO_CSS.includes('grid-template-columns: minmax(min-content, 45%) minmax(0, 1fr);'), 'a label column grows to its label');
+  assert.ok(STUDIO_CSS.includes('scroll-snap-type: y mandatory;'), 'the Scene list scrolls a whole row at a time');
+});
+
+function pausedNotice(ui) {
+  return ui.root.querySelector('.crucible-studio-paused');
+}
+
+test('a lost graphics context pauses the picture with a notice, and restoring it draws the same scene again', testContext => {
+  const ui = mountStudio(testContext);
+  ui.selectRow('hero');
+  ui.controller.orbitCamera({ zoomScale: 2 });
+  const eyeBefore = ui.controller.viewCamera.eye.slice();
+  const selectionBefore = ui.controller.selectedNodeId;
+  assert.equal(pausedNotice(ui).hidden, true);
+
+  const lostEvent = dispatch(ui.canvas, 'webglcontextlost');
+  assert.equal(lostEvent.defaultPrevented, true, 'cancelling the event lets the browser restore the context');
+  const notice = pausedNotice(ui);
+  assert.equal(notice.hidden, false);
+  assert.equal(notice.getAttribute('role'), 'status');
+  assert.equal(notice.getAttribute('aria-live'), 'polite');
+  assert.match(notice.textContent, /graphics context was lost/);
+  assert.ok(notice.querySelector('svg'), 'the notice leads with an icon');
+  const reloadButton = notice.querySelector('button');
+  assert.equal(reloadButton.hidden, true, 'Reload is offered only after a few seconds');
+  ui.dom.runTimers();
+  assert.equal(reloadButton.hidden, false);
+
+  const renderCallsWhileLost = ui.renderer.calls.length;
+  ui.controller.selectNode('orb');
+  ui.dom.runAnimationFrames(100);
+  ui.studio.renderNow();
+  assert.equal(ui.renderer.calls.length, renderCallsWhileLost, 'nothing is drawn while the context is lost');
+  assert.equal(ui.dom.pendingAnimationFrameCount, 0, 'the frame loop stays quiet until the context returns');
+  assert.throws(() => ui.studio.capturePngDataUrl(), /graphics context was lost/, 'a still is refused instead of returning a blank picture');
+  assert.equal(ui.dom.pendingAnimationFrameCount, 0);
+
+  ui.controller.selectNode(selectionBefore);
+  const framesBefore = ui.renderer.frames.length;
+  dispatch(ui.canvas, 'webglcontextrestored');
+  assert.equal(pausedNotice(ui).hidden, true);
+  assert.equal(ui.dom.pendingAnimationFrameCount, 1, 'restoring asks for a frame');
+  ui.dom.runAnimationFrames(200);
+  assert.equal(ui.renderer.frames.length, framesBefore + 1);
+  assert.ok(ui.renderer.calls.slice(renderCallsWhileLost).includes('replaceParts'), 'the parts are uploaded again');
+  assert.equal(ui.controller.selectedNodeId, selectionBefore);
+  assert.deepEqual(ui.controller.viewCamera.eye, eyeBefore);
+});
+
+test('a frame that throws once shows the notice, and the next requested frame draws again', testContext => {
+  const ui = mountStudio(testContext);
+  ui.renderer.updateFailure = new Error('WebGL replacement allocation failed with error 37442');
+  ui.selectRow('hero');
+  assert.equal(ui.dom.pendingAnimationFrameCount, 1);
+  assert.doesNotThrow(() => ui.dom.runAnimationFrames(100));
+  const notice = pausedNotice(ui);
+  assert.equal(notice.hidden, false);
+  assert.match(notice.textContent, /37442/);
+  assert.equal(ui.dom.pendingAnimationFrameCount, 0, 'a failed frame does not retry on its own');
+
+  ui.renderer.updateFailure = null;
+  const framesBefore = ui.renderer.frames.length;
+  ui.selectRow('orb');
+  ui.dom.runAnimationFrames(200);
+  assert.equal(ui.renderer.frames.length, framesBefore + 1);
+  assert.equal(pausedNotice(ui).hidden, true);
+});
+
+test('disposing Studio removes the context loss listeners from the canvas', testContext => {
+  const ui = mountStudio(testContext);
+  const listenerTypes = () => ui.canvas.listeners.map(entry => entry.type);
+  assert.ok(listenerTypes().includes('webglcontextlost'));
+  assert.ok(listenerTypes().includes('webglcontextrestored'));
+  ui.studio.dispose();
+  assert.ok(!listenerTypes().includes('webglcontextlost'));
+  assert.ok(!listenerTypes().includes('webglcontextrestored'));
+});
+
+test('in a compact window both cards start right of the tool rail and share the height without overlapping', () => {
+  const rule = selector => {
+    const start = STUDIO_CSS.indexOf(`${selector} {`);
+    assert.ok(start >= 0, `a rule for ${selector}`);
+    return STUDIO_CSS.slice(start, STUDIO_CSS.indexOf('}', start));
+  };
+  const room = 'calc((100% - var(--studio-top) - 72px - 6px) / 2)';
+  const inspector = rule('.crucible-studio[data-compact="true"] .crucible-studio-inspector');
+  assert.ok(inspector.includes('inset-inline: calc(var(--studio-edge) * 2 + var(--studio-rail)) var(--studio-edge);'), 'Properties starts where the Scene card does, right of the rail');
+  assert.ok(!inspector.includes('inset-inline: var(--studio-edge);'), 'not under the rail');
+  assert.ok(inspector.includes('inset-block-end: 72px;'));
+  assert.ok(inspector.includes(`max-block-size: min(320px, ${room});`), 'at most half of the room between the bar and the bottom bar');
+  const outliner = rule('.crucible-studio[data-compact="true"] .crucible-studio-outliner');
+  assert.ok(outliner.includes(`max-block-size: min(300px, ${room});`), 'the Scene card takes the other half, less the gap');
 });

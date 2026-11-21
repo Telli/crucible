@@ -228,10 +228,12 @@ export const STUDIO_CSS = `
   stroke-linejoin: round;
   pointer-events: none;
 }
+/* The axis widget stands at the top right of the viewport, beside the panel column. Floating, that is left of the
+   Scene card, level with its top and one edge gap from it; --studio-gizmo-clear is the room the cards take. */
 .crucible-studio-view-widget {
   position: absolute;
-  inset-inline-end: var(--studio-edge);
-  inset-block-end: var(--studio-edge);
+  inset-inline-end: calc(var(--studio-edge) + var(--studio-gizmo-clear, 0px));
+  inset-block-start: var(--studio-top);
   width: 76px;
   height: 76px;
   border-radius: 50%;
@@ -263,8 +265,9 @@ export const STUDIO_CSS = `
 .crucible-studio-readout-selection { color: var(--studio-text); }
 .crucible-studio-readout-selection:empty { display: none; }
 .crucible-studio[data-compact="true"] .crucible-studio-readout { display: none; }
+/* A compact window stacks the cards over the scene, so the widget keeps the top right corner under the bar. */
 .crucible-studio[data-compact="true"] .crucible-studio-view-widget {
-  inset-block: var(--studio-top) auto;
+  inset-inline-end: var(--studio-edge);
 }
 .crucible-studio-agent-outline {
   fill: none;
@@ -322,6 +325,25 @@ export const STUDIO_CSS = `
 .crucible-studio-viewport[data-drop-active="true"] .crucible-studio-drop-overlay {
   display: grid;
 }
+
+/* Shown while the picture is paused (a lost graphics context or a frame that failed). It sits over the viewport, under the menu bar. */
+.crucible-studio-paused {
+  position: absolute;
+  inset-block-start: var(--studio-top);
+  inset-inline: var(--studio-edge);
+  inline-size: fit-content;
+  max-inline-size: min(520px, calc(100% - 2 * var(--studio-edge)));
+  margin-inline: auto;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--studio-text);
+  font-family: var(--studio-font);
+  font-size: 13px;
+  z-index: 9;
+}
+.crucible-studio-paused[hidden] { display: none; }
+.crucible-studio-paused p { margin: 0; }
+.crucible-studio-paused .crucible-studio-icon { flex: none; color: var(--studio-accent); }
 
 .crucible-studio-menubar {
   position: absolute;
@@ -549,35 +571,64 @@ export const STUDIO_CSS = `
   overflow: hidden;
   z-index: 4;
 }
-/* Scene above, Properties below, in one column across from the tools. It stops above the view widget in the corner. */
+/* Scene above, Properties below, in one column across from the tools. Floating, each card is its own window with its own
+   width, kept to the right edge, so the column is as wide as the wider card. */
 .crucible-studio-side {
   position: absolute;
-  inset-block: var(--studio-top) 100px;
+  inset-block: var(--studio-top) var(--studio-edge);
   inset-inline-end: var(--studio-edge);
-  inline-size: var(--studio-side-width, 284px);
+  inline-size: max(var(--studio-scene-width, 284px), var(--studio-properties-width, 284px));
   max-inline-size: calc(100% - var(--studio-edge) * 3 - var(--studio-rail) - 160px);
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 6px;
   pointer-events: none;
   z-index: 4;
 }
 .crucible-studio-side > .crucible-studio-dock {
-  position: static;
+  position: relative;
   flex: 0 1 auto;
+  max-inline-size: 100%;
   pointer-events: auto;
 }
-.crucible-studio-side > .crucible-studio-outliner {
-  flex-shrink: 0;
-  max-block-size: 42%;
-}
+/* The cards lie in the column, so the edge offsets that place them on their own in a compact window do not apply. */
+.crucible-studio:not([data-compact="true"]) .crucible-studio-side > .crucible-studio-dock { inset: auto; }
+.crucible-studio-side > .crucible-studio-outliner { inline-size: var(--studio-scene-width, 284px); }
+.crucible-studio-side > .crucible-studio-inspector { inline-size: var(--studio-properties-width, 284px); }
+/* The Scene card keeps one height whatever is selected, so the Properties card below it does not jump. */
+.crucible-studio-side > .crucible-studio-outliner { flex: 0 0 35%; }
+.crucible-studio[data-outliner-minimized="true"] .crucible-studio-side > .crucible-studio-outliner { flex: 0 0 auto; }
+/* Properties takes the rest of the column, down to its bottom margin. */
+.crucible-studio-side > .crucible-studio-inspector { flex: 1 1 0; }
+.crucible-studio[data-inspector-minimized="true"] .crucible-studio-side > .crucible-studio-inspector { flex: 0 0 auto; }
 .crucible-studio[data-scene-sized="true"]:not([data-outliner-minimized="true"]) .crucible-studio-side > .crucible-studio-outliner {
-  block-size: var(--studio-scene-share);
-  max-block-size: none;
+  flex-basis: var(--studio-scene-share);
 }
-.crucible-studio[data-outliner-minimized="true"] .crucible-studio-outliner > :not(.crucible-studio-dock-head),
-.crucible-studio[data-inspector-minimized="true"] .crucible-studio-inspector > :not(.crucible-studio-dock-head) {
+/* A card someone sized keeps that height, and the other card keeps its own. A minimized card ignores it. */
+.crucible-studio[data-floating="true"][data-scene-height-sized="true"]:not([data-outliner-minimized="true"]) .crucible-studio-side > .crucible-studio-outliner {
+  flex: 0 1 var(--studio-scene-height);
+}
+.crucible-studio[data-floating="true"][data-properties-height-sized="true"]:not([data-inspector-minimized="true"]) .crucible-studio-side > .crucible-studio-inspector {
+  flex: 0 1 var(--studio-properties-height);
+}
+.crucible-studio[data-outliner-minimized="true"] .crucible-studio-outliner > :not(.crucible-studio-dock-head):not(.crucible-studio-grip),
+.crucible-studio[data-inspector-minimized="true"] .crucible-studio-inspector > :not(.crucible-studio-dock-head):not(.crucible-studio-grip) {
   display: none;
+}
+/* The axis widget stands left of the cards. A minimized Scene card is short, so a wider Properties card shows under
+   the widget and the widget clears that one too. With both cards away it takes the corner. */
+.crucible-studio {
+  --studio-gizmo-clear: calc(var(--studio-scene-width, 284px) + var(--studio-edge));
+}
+.crucible-studio[data-outliner-minimized="true"]:not([data-inspector-collapsed="true"]) {
+  --studio-gizmo-clear: calc(max(var(--studio-scene-width, 284px), var(--studio-properties-width, 284px)) + var(--studio-edge));
+}
+.crucible-studio[data-outliner-collapsed="true"] {
+  --studio-gizmo-clear: calc(var(--studio-properties-width, 284px) + var(--studio-edge));
+}
+.crucible-studio[data-outliner-collapsed="true"][data-inspector-collapsed="true"] {
+  --studio-gizmo-clear: 0px;
 }
 .crucible-studio[data-outliner-minimized="true"] .crucible-studio-outliner > .crucible-studio-dock-head,
 .crucible-studio[data-inspector-minimized="true"] .crucible-studio-inspector > .crucible-studio-dock-head {
@@ -629,6 +680,40 @@ export const STUDIO_CSS = `
   inset-block-start: 2px;
   block-size: 2px;
 }
+/* Floating, a card's own grips sit on its inner left and bottom edges, which stay inside the rounded corners. */
+.crucible-studio-grip-card-width {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 8px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+.crucible-studio-grip-card-width::after {
+  inset-block: 14px;
+  inset-inline-start: 2px;
+  inline-size: 2px;
+}
+.crucible-studio-grip-card-height {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  block-size: 8px;
+  cursor: ns-resize;
+  z-index: 3;
+}
+.crucible-studio-grip-card-height::after {
+  inset-inline: 14px;
+  inset-block-end: 2px;
+  block-size: 2px;
+}
+/* Docked, the column's own two grips do this work and the cards' grips stay away; floating, the other way round. */
+.crucible-studio[data-floating="false"] .crucible-studio-grip-card-width,
+.crucible-studio[data-floating="false"] .crucible-studio-grip-card-height,
+.crucible-studio[data-floating="true"] .crucible-studio-grip-width,
+.crucible-studio[data-floating="true"] .crucible-studio-grip-split,
+.crucible-studio[data-outliner-minimized="true"] .crucible-studio-grip-scene-height,
+.crucible-studio[data-inspector-minimized="true"] .crucible-studio-grip-properties-height,
 .crucible-studio[data-outliner-minimized="true"] .crucible-studio-grip-split,
 .crucible-studio[data-inspector-minimized="true"] .crucible-studio-grip-split,
 .crucible-studio[data-outliner-collapsed="true"] .crucible-studio-grip,
@@ -708,7 +793,10 @@ export const STUDIO_CSS = `
 .crucible-studio-tree {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 4px 6px 8px;
+  /* The list scrolls a whole row at a time, and studio.js sizes the rows so a whole number of them fills it. */
+  scroll-snap-type: y mandatory;
+  scroll-padding-block: 4px;
+  padding: 4px 6px 0;
   display: grid;
   align-content: start;
   gap: 1px;
@@ -716,6 +804,8 @@ export const STUDIO_CSS = `
 .crucible-studio-tree-row {
   display: flex;
   align-items: center;
+  min-block-size: var(--studio-tree-row-size, auto);
+  scroll-snap-align: start;
   gap: 2px;
   padding: 0 2px 0 6px;
   border-radius: 8px;
@@ -771,18 +861,47 @@ export const STUDIO_CSS = `
   .crucible-studio button.crucible-studio-tree-eye { opacity: 1; }
 }
 .crucible-studio-palette-section {
-  padding: 8px 12px 12px;
-}
-.crucible-studio-swatches {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  /* Two rows, then the swatches scroll: a scene with many materials must not squeeze the object list above it. */
-  max-block-size: 56px;
-  overflow-y: auto;
   flex-shrink: 0;
+  /* The right inset matches the fields below: the panel padding plus the room its scrollbar keeps. */
+  padding: 10px 20px 12px 12px;
 }
+/* One row that scrolls sideways, so it never sits beside the list's own scrollbar. The padding keeps the ring of the chosen swatch inside the strip. */
+.crucible-studio-swatches {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+  padding: 4px;
+  margin: -4px 0 -4px -4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  container-type: scroll-state;
+}
+.crucible-studio-swatches::-webkit-scrollbar { display: none; }
+/* While more swatches lie to the right, the last one in view dissolves into the panel instead of being sliced. */
+.crucible-studio-swatches::after {
+  content: "";
+  position: sticky;
+  inset-inline-end: -4px;
+  flex: none;
+  inline-size: 28px;
+  block-size: 24px;
+  margin-inline-start: -28px;
+  background: linear-gradient(to right, transparent, var(--studio-panel) 85%);
+  opacity: 0;
+  pointer-events: none;
+}
+@container scroll-state(scrollable: right) {
+  .crucible-studio-swatches::after { opacity: 1; }
+}
+.crucible-studio-swatches > button { flex: none; }
 .crucible-studio button.crucible-studio-swatch-btn,
 .crucible-studio button.crucible-studio-swatch-add {
   min-inline-size: 24px;
@@ -799,6 +918,7 @@ export const STUDIO_CSS = `
   box-shadow: 0 0 0 2px var(--studio-panel), 0 0 0 3.5px var(--studio-text);
 }
 .crucible-studio button.crucible-studio-swatch-add {
+  flex: none;
   color: var(--studio-muted);
   border: 1px dashed color-mix(in srgb, var(--studio-text) 30%, transparent);
 }
@@ -938,6 +1058,19 @@ export const STUDIO_CSS = `
 .crucible-studio-panels {
   flex: 1 1 auto;
   overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+/* Rows dissolve into the card at the bottom edge while more of the panel lies below, instead of being cut. */
+.crucible-studio-panels::after {
+  content: "";
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 3;
+  display: block;
+  block-size: 14px;
+  margin-block-start: -14px;
+  background: linear-gradient(to bottom, transparent, var(--studio-panel));
+  pointer-events: none;
 }
 .crucible-studio-panel-body {
   display: grid;
@@ -1066,28 +1199,347 @@ export const STUDIO_CSS = `
   block-size: 14px;
 }
 .crucible-studio-viewcube {
-  display: grid;
+  display: flex;
   gap: 4px;
 }
 .crucible-studio-viewcube-row {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
 }
 .crucible-studio-viewcube button {
   min-inline-size: 0;
-  padding: 3px 6px;
-  font-size: 11.5px;
+  min-block-size: 26px;
+  padding: 2px 6px;
+  font-size: 11px;
 }
+/* The property panels: one line per property, the label on the left and the control in a value column on the right. */
+.crucible-studio-panel-rows {
+  gap: 0;
+  padding-block-end: 8px;
+}
+.crucible-studio-panel-rows > .crucible-studio-field { margin-block-start: 10px; }
+.crucible-studio-properties {
+  display: grid;
+}
+/* One uniform gap above every group title lives on the group, so the title can stick to the very top of the scroll area. */
+.crucible-studio-property-section {
+  display: grid;
+  align-content: start;
+  padding-block-start: 10px;
+}
+.crucible-studio button.crucible-studio-property-title {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  justify-content: stretch;
+  justify-items: start;
+  align-items: center;
+  column-gap: 4px;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--studio-panel);
+  font-family: var(--studio-font-heading);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--studio-text);
+  text-align: start;
+  cursor: pointer;
+  container-type: scroll-state;
+}
+/* While a title is pinned to the top, the rows scrolling under it dissolve over 16px instead of being sliced; the title itself stays opaque. */
+.crucible-studio button.crucible-studio-property-title::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 100%;
+  block-size: 16px;
+  background: linear-gradient(to bottom, var(--studio-panel) 35%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+@container scroll-state(stuck: top) {
+  .crucible-studio button.crucible-studio-property-title::after { opacity: 1; }
+}
+@media (hover: hover) {
+  .crucible-studio button.crucible-studio-property-title:not([aria-disabled="true"]):not([aria-pressed="true"]):hover {
+    background: var(--studio-panel);
+    box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--studio-text) 6%, transparent);
+  }
+}
+.crucible-studio-property-title .crucible-studio-icon {
+  inline-size: 14px;
+  block-size: 14px;
+  transition: transform 120ms ease-out;
+}
+.crucible-studio-property-section[data-open="true"] .crucible-studio-property-title .crucible-studio-icon { transform: rotate(90deg); }
+.crucible-studio-property-rows {
+  display: grid;
+  gap: 5px;
+  padding-block-end: 2px;
+}
+.crucible-studio-properties[hidden], .crucible-studio-properties [hidden] { display: none; }
+/* One value column: numbers end at the same edge with or without a unit, and the unit sits in a fixed slot after them. */
+.crucible-studio-prop {
+  --studio-unit-slot: 20px;
+  --studio-value-edge: 8px;
+  --studio-number-inset: calc(var(--studio-value-edge) + var(--studio-unit-slot) + 2px);
+  display: grid;
+  /* A label is never cut: its column grows to the label when 45% is too narrow, and the head keeps a gap before the control. */
+  grid-template-columns: minmax(min-content, 45%) minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: center;
+  min-block-size: 28px;
+}
+.crucible-studio-prop[data-control="slider"] {
+  grid-template-columns: minmax(min-content, 45%) minmax(0, 1fr) 32px calc(var(--studio-unit-slot) + var(--studio-value-edge));
+  column-gap: 6px;
+}
+.crucible-studio-prop[data-control="slider"] > output { margin-inline-end: -4px; }
+.crucible-studio-prop-head {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-inline-size: 0;
+  padding-inline-end: 6px;
+  font-size: 11.5px;
+  color: var(--studio-muted);
+}
+.crucible-studio-prop-label {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crucible-studio-prop > :is(input, select, button, svg) { min-inline-size: 0; }
+.crucible-studio-prop > input[type="number"],
+.crucible-studio-prop > select,
+.crucible-studio-prop > input[type="color"],
+.crucible-studio-prop > .crucible-studio-switch,
+.crucible-studio-prop > .crucible-studio-sun-control,
+.crucible-studio-prop-unit { grid-column: 2; grid-row: 1; }
+.crucible-studio-prop > input[type="number"],
+.crucible-studio-prop > select {
+  min-block-size: 28px;
+  padding-block: 3px;
+}
+.crucible-studio-prop > input[type="number"] {
+  padding-inline-end: var(--studio-number-inset);
+  text-align: end;
+  appearance: textfield;
+}
+.crucible-studio-prop > input[type="number"]::-webkit-inner-spin-button,
+.crucible-studio-prop > input[type="number"]::-webkit-outer-spin-button { appearance: none; }
+/* A choice reads like a number: its text ends at the digits' edge and the arrow sits in the unit slot. */
+.crucible-studio-prop > select {
+  padding-inline-end: var(--studio-number-inset);
+  text-align: end;
+  text-align-last: end;
+  background-position: calc(100% - 15px) 12px, calc(100% - 10px) 12px;
+}
+.crucible-studio-prop-unit {
+  justify-self: end;
+  inline-size: var(--studio-unit-slot);
+  margin-inline-end: var(--studio-value-edge);
+  font-size: 11px;
+  text-align: start;
+  color: var(--studio-muted);
+  pointer-events: none;
+}
+.crucible-studio-prop[data-control="slider"] > .crucible-studio-prop-unit {
+  grid-column: 4;
+  justify-self: start;
+  margin-inline-end: 0;
+}
+/* A colour is a field like the number fields: same height, radius and soft fill, with its swatch ending at the digits' edge. */
+.crucible-studio-prop > input[type="color"] {
+  inline-size: 100%;
+  block-size: 28px;
+  padding: 4px var(--studio-number-inset) 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--studio-text) 7%, transparent);
+}
+.crucible-studio-prop > input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.crucible-studio-prop > input[type="color"]::-webkit-color-swatch {
+  flex: none;
+  inline-size: 44px;
+  margin-inline-start: auto;
+  border: 0;
+  border-radius: 5px;
+}
+/* A row whose condition fails (the f-stop while depth of field is off) stays readable but dimmed. */
+.crucible-studio-prop[data-dimmed="true"] > :not(.crucible-studio-prop-head) { opacity: 0.55; }
+.crucible-studio-prop > input[type="range"] { margin: 0; }
+.crucible-studio-prop > output {
+  text-align: end;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.crucible-studio-prop[data-control="sunpad"] .crucible-studio-prop-head {
+  align-self: start;
+  padding-block-start: 6px;
+}
+.crucible-studio-sun-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-inline-size: 0;
+}
+.crucible-studio-sun-readout {
+  display: grid;
+  gap: 2px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--studio-text);
+}
+.crucible-studio-sun-readout span {
+  margin-inline-end: 5px;
+  color: var(--studio-muted);
+}
+.crucible-studio-prop .crucible-studio-sunpad {
+  inline-size: 72px;
+  block-size: 72px;
+  flex: none;
+}
+.crucible-studio-prop > .crucible-studio-switch { justify-self: end; }
+.crucible-studio button.crucible-studio-switch {
+  justify-content: flex-start;
+  min-inline-size: 34px;
+  inline-size: 34px;
+  min-block-size: 20px;
+  block-size: 20px;
+  padding: 2px;
+  border: 1.5px solid color-mix(in srgb, var(--studio-text) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-text) 10%, transparent);
+}
+.crucible-studio-switch-knob {
+  inline-size: 13px;
+  block-size: 13px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-text) 70%, transparent);
+  transition: transform 120ms ease-out;
+}
+.crucible-studio button.crucible-studio-switch[aria-checked="true"] {
+  border-color: var(--studio-text);
+  background: var(--studio-text);
+}
+.crucible-studio-switch[aria-checked="true"] .crucible-studio-switch-knob {
+  background: var(--studio-bg);
+  transform: translateX(13px);
+}
+.crucible-studio-properties .crucible-studio-field { gap: 4px; }
+.crucible-studio-properties .crucible-studio-field-head {
+  justify-content: flex-start;
+  gap: 4px;
+  min-block-size: 20px;
+}
+/* A vector is its label above one line of fields; the axis letter sits inside each field. */
+.crucible-studio-properties .crucible-studio-vector {
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+.crucible-studio-properties .crucible-studio-vector label {
+  position: relative;
+  display: block;
+}
+.crucible-studio-properties .crucible-studio-axis-scrub {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 8px;
+  z-index: 1;
+  font-size: 11px;
+}
+.crucible-studio-properties .crucible-studio-vector input {
+  min-block-size: 28px;
+  padding-block: 3px;
+  padding-inline: 22px 8px;
+  text-align: end;
+  appearance: textfield;
+}
+.crucible-studio-properties .crucible-studio-vector input::-webkit-inner-spin-button,
+.crucible-studio-properties .crucible-studio-vector input::-webkit-outer-spin-button { appearance: none; }
+.crucible-studio-chips-row { flex-wrap: nowrap; }
+.crucible-studio-chips-row button {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  min-block-size: 26px;
+  padding: 2px 4px;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.crucible-studio-chips-row button[data-focal] { text-transform: none; }
+.crucible-studio-driven-mark {
+  display: inline-flex;
+  align-items: center;
+  color: var(--studio-text);
+}
+.crucible-studio-driven-mark .crucible-studio-icon {
+  inline-size: 14px;
+  block-size: 14px;
+}
+/* A driven row is read-only: its text stays at the muted colour instead of fading, so it keeps its contrast. */
+.crucible-studio-properties [data-driven="true"] input { color: var(--studio-muted); }
+.crucible-studio-properties [data-driven="true"] :is(button, svg.crucible-studio-sunpad) { opacity: 0.6; }
+.crucible-studio-properties [data-driven="true"] .crucible-studio-driven-mark { opacity: 1; }
 .crucible-studio-sunpad {
   width: 120px;
   height: 120px;
-  justify-self: center;
   border-radius: 999px;
   background: radial-gradient(circle at 50% 50%, var(--studio-surface), var(--studio-bg));
   border: 1px solid var(--studio-border);
   cursor: crosshair;
   touch-action: none;
+}
+/* The scroll areas of the panel column share one thin, arrowless scrollbar in the Studio colours. */
+.crucible-studio-scroll::-webkit-scrollbar {
+  inline-size: 8px;
+  block-size: 8px;
+}
+.crucible-studio-scroll::-webkit-scrollbar-button { display: none; }
+.crucible-studio-scroll::-webkit-scrollbar-track,
+.crucible-studio-scroll::-webkit-scrollbar-corner { background: transparent; }
+.crucible-studio-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-text) 30%, transparent);
+}
+@supports not selector(::-webkit-scrollbar) {
+  .crucible-studio-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--studio-text) 30%, transparent) transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crucible-studio-switch-knob { transition: none; }
+}
+/* The Shots group is a plain heading in the type of a group title, indented to the titles' text, under the same group gap. */
+.crucible-studio-property-heading {
+  display: flex;
+  align-items: center;
+  min-block-size: 28px;
+  padding-inline-start: 18px;
+  font-family: var(--studio-font-heading);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--studio-text);
+}
+.crucible-studio-bookmark-list {
+  display: grid;
+  gap: 6px;
 }
 .crucible-studio-bookmark-row {
   display: flex;
@@ -1112,16 +1564,14 @@ export const STUDIO_CSS = `
 .crucible-studio:not([data-workspace="animate"]) .crucible-studio-bottombar {
   display: none;
 }
+/* The timeline bar is centred along the bottom, so the readout steps above it and, floating, so does the panel column. */
 .crucible-studio[data-workspace="animate"] .crucible-studio-readout,
-.crucible-studio[data-workspace="animate"]:not([data-compact="true"]) .crucible-studio-view-widget {
+.crucible-studio[data-workspace="animate"] .crucible-studio-side {
   inset-block-end: calc(var(--studio-edge) + var(--studio-bar-clear));
 }
 /* Raised above the timeline, the readout would meet the tool rail in a short window, so there it stands beside it. */
 .crucible-studio[data-workspace="animate"] .crucible-studio-readout {
   inset-inline-start: calc(var(--studio-edge) * 2 + var(--studio-rail));
-}
-.crucible-studio[data-workspace="animate"]:not([data-compact="true"]) .crucible-studio-side {
-  inset-block-end: calc(100px + var(--studio-bar-clear));
 }
 .crucible-studio-scrub {
   display: flex;
@@ -1161,17 +1611,19 @@ export const STUDIO_CSS = `
 
 .crucible-studio[data-compact="true"] .crucible-studio-side { display: contents; }
 .crucible-studio[data-compact="true"] .crucible-studio-side > .crucible-studio-dock { position: absolute; }
+/* Both cards start right of the tool rail and share the room between the bar and the bottom bar, so neither covers the rail and
+   the two never overlap: each takes at most half of that room, less the gap between them. */
 .crucible-studio[data-compact="true"] .crucible-studio-outliner {
   inline-size: min(228px, calc(100% - var(--studio-edge) * 3 - var(--studio-rail)));
-  max-block-size: min(300px, calc(100% - var(--studio-top) - 84px));
+  max-block-size: min(300px, calc((100% - var(--studio-top) - 72px - 6px) / 2));
   z-index: 5;
 }
 .crucible-studio[data-compact="true"] .crucible-studio-inspector {
   inset-block-start: auto;
   inset-block-end: 72px;
-  inset-inline: var(--studio-edge);
+  inset-inline: calc(var(--studio-edge) * 2 + var(--studio-rail)) var(--studio-edge);
   inline-size: auto;
-  max-block-size: min(40%, 320px);
+  max-block-size: min(320px, calc((100% - var(--studio-top) - 72px - 6px) / 2));
 }
 .crucible-studio[data-compact="true"] .crucible-studio-shots { display: none; }
 .crucible-studio[data-compact="true"] .crucible-studio-status {
@@ -1298,11 +1750,26 @@ export const STUDIO_CSS = `
   inline-size: var(--studio-dock-side);
   max-inline-size: none;
   gap: 0;
+  align-items: stretch;
   background: var(--studio-panel);
   pointer-events: auto;
 }
+/* One column width and one split: the cards fill the column whatever the floating cards were sized to. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-side > .crucible-studio-dock {
+  inline-size: auto;
+  max-inline-size: none;
+}
+/* The viewport already ends where the column starts, so the widget takes its top right corner. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-view-widget {
+  inset-inline-end: var(--studio-edge);
+  inset-block-start: var(--studio-edge);
+}
 .crucible-studio[data-floating="false"][data-outliner-collapsed="true"][data-inspector-collapsed="true"] .crucible-studio-side {
   display: none;
+}
+/* A docked column runs the whole window height, so the Scene list takes more of it and less is left empty under a short Properties panel. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]):not([data-scene-sized="true"]):not([data-outliner-minimized="true"]) .crucible-studio-side > .crucible-studio-outliner {
+  flex-basis: 45%;
 }
 /* Inside the docked viewport nothing has to step around the rail or the bar. */
 .crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-readout {
