@@ -3,7 +3,10 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-export const CHROME_PAGES = ['index', 'docs', 'changelog', 'recipes', 'recipe-dolly-zoom', 'recipe-hdri-lighting', 'recipe-view-transform', 'marketplace', 'showcase', 'tiers'];
+export const CHROME_PAGES = ['index', 'docs', 'changelog', 'recipes', 'recipe-dolly-zoom', 'recipe-hdri-lighting', 'recipe-view-transform', 'marketplace', 'showcase', 'tiers', 'film', 'motion', 'modeling', 'nature', 'object', 'view2d', 'assets'];
+
+// Full-screen viewer pages have no scroll area to end in, so they carry the top bar and no footer. Modeling scrolls and keeps its footer.
+export const FOOTERLESS_PAGES = new Set(['film', 'motion', 'nature', 'object', 'view2d', 'assets']);
 
 // The nav link a page marks as current. The home page marks none; a recipe page marks Recipes.
 const CURRENT_LINK = {
@@ -103,6 +106,10 @@ const REGIONS = {
 export function applyChrome(source, pageName) {
   let result = source;
   for (const [part, { pattern, render }] of Object.entries(REGIONS)) {
+    if (part === 'footer' && FOOTERLESS_PAGES.has(pageName)) {
+      if (pattern.test(result)) throw new Error(`${pageName}.html is a full-screen viewer and carries no footer. Remove its site-chrome:footer markers.`);
+      continue;
+    }
     if (!pattern.test(result)) {
       throw new Error(`${pageName}.html has no site-chrome:${part} markers. Wrap its ${part} in <!-- site-chrome:${part} --> and <!-- /site-chrome:${part} -->.`);
     }

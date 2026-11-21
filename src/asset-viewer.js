@@ -1,5 +1,5 @@
+import './site-chrome.js';
 import './view2d.css';
-import './brand.js';
 import './asset-viewer.css';
 import { vec3 } from 'gl-matrix';
 import { CrucibleRenderer, exportGlb, cameraView, fitOrthographicHeight } from './index.js';
