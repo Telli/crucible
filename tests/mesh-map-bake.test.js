@@ -101,6 +101,30 @@ test('a bevel reads as one band: the middle of the strip is at least as convex a
   assert.ok(flatTop < Math.min(...profile), `the flat face beyond the bevel stays lower: ${flatTop}`);
 });
 
+// A crate whose edges are cut into 4 segments: the band edge of a wear mask must not scallop at the period of the cuts or of
+// any grid the bake uses. The top face's island starts at column 150 of a 1024 map; walking down a column from its first
+// row, the band ends where the value falls below 150.
+test('the band edge along a straight bevel stays straight (within 1 px), not scalloped', () => {
+  const recipe = {
+    format: 'crucible.scene',
+    schemaVersion: 1,
+    geometries: [{ id: 'crate', type: 'mesh', base: { type: 'box', bevel: 0.06, subdivisions: 1 }, edits: [{ op: 'subdivide_edges', edges: { all: true }, cuts: 3 }, { op: 'uv_project', mode: 'cube' }] }],
+    materials: [{ id: 'paint', color: [0.5, 0.5, 0.5] }],
+    nodes: [{ id: 'crate', geometry: 'crate', material: 'paint' }],
+  };
+  const resolution = 1024;
+  const map = bakeMeshMap(createAgentScene(recipe).parts[0].geometry, 'curvature', { resolution });
+  const bandEndRows = [];
+  for (let column = 175; column < 290; column++) {
+    let row = 20;
+    while (row < 100 && map.data[(row * resolution + column) * 4] >= 150) row++;
+    bandEndRows.push(row);
+  }
+  const spread = Math.max(...bandEndRows) - Math.min(...bandEndRows);
+  assert.ok(spread <= 1, `the band edge wanders ${spread} px along a straight bevel: ${bandEndRows}`);
+  assert.ok(Math.min(...bandEndRows) > 30, 'the band covers the bevel strip');
+});
+
 test('curvature sees a fold on a seam between islands, and a larger radius widens the band', () => {
   const seamed = redChannel(bakeMeshMap(boxGeometry(1, 1, 1), 'curvature', { resolution: 128 }));
   assert.ok(share(seamed, value => value > 140) > 0.02, 'each face of this box is its own island, and its edges are still convex');
