@@ -9,6 +9,7 @@ import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, 
 import { postStepSupport } from './shader-registry.js';
 import { agentSceneModule, agentSceneModuleActive, agentSceneModuleLoaded, defaultStageModulesNamed } from './agent-scene-modules.js';
 import { CURVE_TEXT_LIMITS, AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, MAX_MATERIAL_PATTERNS, RECIPE_ALPHA_MODES } from './agent-scene-capabilities.js';
+import { TEXTURE_SET_RECIPE_FIELDS, TEXTURE_MAP_FIELDS } from './texture-set-fields.js';
 import { normalizeMaterialWear, geometryWithSurfaceMasks } from './material-wear.js';
 import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from './material-layers.js';
 import { recipeDiagnostics, closedRoomDiagnostic } from './agent-diagnostics.js';
@@ -303,19 +304,20 @@ function copyMaterialLayers(value, result) {
 }
 
 function materialFrom(value) {
-  knownKeys(value, ['id', 'tag', ...MATERIAL_FIELDS], 'material');
-  // A pattern brings its own colours, so the color field tints it and leaves it unchanged by default.
-  const defaultColor = value.pattern === undefined ? [0.5, 0.5, 0.5] : [1, 1, 1];
+  knownKeys(value, ['id', 'tag', ...MATERIAL_FIELDS, ...TEXTURE_SET_RECIPE_FIELDS], 'material');
+  // A pattern or a catalog colour map brings its own colours, so the color field tints it and leaves it unchanged by default.
+  const defaultColor = value.pattern === undefined && value.colorMap === undefined ? [0.5, 0.5, 0.5] : [1, 1, 1];
   const graph = value.pattern?.type === 'graph' ? value.pattern.graph : {};
   // A graph that makes roughness, metallic or emission passes it through as written, so the factors default to 1.
   const graphFactor = (output, fallback) => (Object.hasOwn(graph ?? {}, output) ? 1 : fallback);
   const result = { id: value.id, tag: defaultValue(value.tag, 'surface'), color: vector(defaultValue(value.color, defaultColor), 3, 'color'),
     ...(graphFactor('clearcoat', 0) && { clearcoat: 1 }), ...(graphFactor('transmission', 0) && { transmission: 1 }),
-    metallic: defaultValue(value.metallic, graphFactor('metallic', 0)), roughness: defaultValue(value.roughness, graphFactor('roughness', 0.5)), emission: defaultValue(value.emission, graphFactor('emission', 0)) };
+    metallic: defaultValue(value.metallic, graphFactor('metallic', value.metallicMap === undefined ? 0 : 1)), roughness: defaultValue(value.roughness, graphFactor('roughness', value.roughnessMap === undefined ? 0.5 : 1)), emission: defaultValue(value.emission, graphFactor('emission', 0)) };
   if (!AGENT_SCENE_CAPABILITIES.materialTags.includes(result.tag)) {
     throw invalidField('tag', result.tag, `one of ${AGENT_SCENE_CAPABILITIES.materialTags.join(', ')}`);
   }
   if (value.map !== undefined) agentSceneModule('assets').applyMapSequence(value, result);
+  if (TEXTURE_SET_RECIPE_FIELDS.some(field => value[field] !== undefined)) agentSceneModule('assets').applyTextureMaps(value, result);
   if (value.pattern !== undefined) {
     if (result.tag !== 'surface') throw invalidField('pattern', value.pattern?.type, 'a material with the surface tag; remove pattern or set tag to surface');
     result.pattern = agentSceneModule('patterns').normalizeMaterialPattern(value.pattern);
@@ -1219,11 +1221,18 @@ function geometryStats(records) {
 function batchSignature(material) {
   // Textures are fixed per renderer, so a changed pattern rebuilds it like a changed tag does.
   // Transmission moves a material to the pass that sees the opaque scene, which is fixed per renderer.
-  return `${material.tag}|${material.alphaMode}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${JSON.stringify(material.snippet)}`;
+  return `${material.tag}|${material.alphaMode}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${JSON.stringify(material.snippet)}${textureMapSignature(material)}`;
+}
+
+// The catalog maps of a material are textures fixed per renderer like a pattern, so another map or convention builds a new handle. Empty for a material without them.
+function textureMapSignature(material) {
+  const maps = TEXTURE_MAP_FIELDS.filter(field => material[field] !== undefined).map(field => `${field}:${material[field]}`);
+  return maps.length ? `|${maps.join(',')}|${material.normalConvention ?? ''}` : '';
 }
 
 function materialHandle(snapshot, sequence, images) {
   const holder = { snapshot, sequence, images };
+  holder.catalogTextures = catalogTexturesOf(holder);
   const output = {};
   for (const field of ['id', 'tag', ...MATERIAL_FIELDS]) {
     Object.defineProperty(output, field, {
@@ -1240,11 +1249,32 @@ function materialHandle(snapshot, sequence, images) {
       // Baked on first read, so validating or inspecting a recipe never pays for it.
       get() {
         if (field === 'map' && holder.sequence) return holder.sequence.descriptor;
+        if (holder.catalogTextures) return holder.catalogTextures()[field];
         return holder.snapshot.pattern ? agentSceneModule('patterns').materialPatternTextures(holder.snapshot.pattern, holder.images)[field] : undefined;
       },
     });
   }
+  defineCatalogOnlyTextureFields(output, holder);
   return { holder, output: Object.freeze(output) };
+}
+
+// Catalog maps (colorMap, normalMap and the rest) become texture descriptors on first read, like a baked pattern, from the decoded images of the pool.
+// Null for a material without them, so its handle is built exactly as before.
+function catalogTexturesOf(holder) {
+  if (!TEXTURE_MAP_FIELDS.some(field => holder.snapshot[field] !== undefined)) return null;
+  let textures;
+  return () => {
+    textures ??= agentSceneModule('assets').createTextureMaps(holder.snapshot.id, holder.snapshot, holder.images);
+    return textures;
+  };
+}
+
+// The two catalog map fields that no pattern bakes: they exist on the handle only for a material that names them.
+function defineCatalogOnlyTextureFields(output, holder) {
+  if (!holder.catalogTextures) return;
+  for (const field of ['occlusionMap', 'heightMap']) {
+    Object.defineProperty(output, field, { enumerable: true, configurable: true, get: () => holder.catalogTextures()[field] });
+  }
 }
 
 function immutableMaterial(snapshot) {
@@ -2042,12 +2072,87 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return first.length === second.length && first.every((part, index) => part === second[index]);
   }
 
+  // An edit of a scene that holds this many triangles to rank does not wait for the search (#2905): it returns with the parts
+  // unranked and the search runs right after, on the next turn of the event loop. A new scene is still ranked inside the call,
+  // so a render job built from a recipe never misses an offset. A scene whose parts move (#2787) searches its still parts the
+  // same way; the rest parts and the posed parts of that edit share the one search (see joinPendingFlush).
+  const DEFERRED_FLUSH_TRIANGLES = 100_000;
+  let pendingFlush = null;
+
+  function triangleCountOf(parts) {
+    return parts.reduce((total, part) => total + (part.geometry?.indices?.length ?? 0) / 3, 0);
+  }
+
+  function cancelPendingFlush() {
+    if (pendingFlush) {
+      pendingFlush.runner.cancel();
+      pendingFlush = null;
+    }
+  }
+
+  function shouldDeferFlush(rankedParts) {
+    return state !== null && triangleCountOf(rankedParts) >= (options.deferFlushTriangles ?? DEFERRED_FLUSH_TRIANGLES)
+      && !rankedLists().some(candidate => sameParts(candidate.rankedParts, rankedParts));
+  }
+
+  // A pose of a moving sea or of particles stages new parts around the same still parts, so every set of parts staged while the
+  // search runs waits for it. At most the rest parts and the latest posed parts are kept, rest first, which is the order a cold
+  // edit ranks them in.
+  function joinPendingFlush(parts, rest) {
+    const kept = pendingFlush.targets.filter(target => target.rest !== rest);
+    pendingFlush.targets = [...kept, { parts, rest }].sort((first, second) => Number(second.rest) - Number(first.rest));
+  }
+
+  function rankAndStage(coplanar, recipe, parts, rest, searched = null) {
+    const list = rankedList(coplanar, partsToRank(recipe, parts), rest, searched);
+    // Ranked parts batch apart, so the list they are staged in is a new one: the renderer then regroups, also when the
+    // ranking is switched on or off for parts that did not change. The same parts, or their staged list, get it back.
+    // The rest and posed parts of a moving sea share one ranking (#2730), so each keeps its own staged list.
+    let staged = stagedByParts.get(parts);
+    if (!staged) {
+      staged = list.resolved.ranked ? Object.freeze([...parts]) : parts;
+      stagedByParts.set(parts, staged);
+      stagedByParts.set(staged, staged);
+    }
+    flushCache = { parts, staged, list, ...list.resolved };
+    return staged;
+  }
+
+  // Finishes the deferred search now, whether the slices ran out or a caller needs the ranks first. It is the same search a cold
+  // edit runs, so the result is byte for byte the same.
+  function settleFlush() {
+    if (!pendingFlush) {
+      return false;
+    }
+    pendingFlush.runner.drain();
+    return true;
+  }
+
+  // The drawn parts are swapped for the ranked list as a topology change.
+  function finishFlush(pending, searched) {
+    pendingFlush = null;
+    let regrouped = false;
+    for (const { parts, rest } of pending.targets) {
+      const staged = rankAndStage(agentSceneModule('coplanar'), pending.recipe, parts, rest, searched);
+      if (staged !== parts) {
+        const drawnChanged = state.parts === parts;
+        state.restParts = state.restParts === parts ? staged : state.restParts;
+        state.parts = drawnChanged ? staged : state.parts;
+        regrouped = true;
+      }
+    }
+    if (regrouped) {
+      topologyRevision++;
+    }
+  }
+
   function stageCoplanarOffsets(recipe, parts, { rest = false } = {}) {
     if (!agentSceneModuleActive('coplanar', requestedModules)) {
       return parts;
     }
     const coplanar = agentSceneModule('coplanar');
     if (recipe.environment.resolveCoplanar === false) {
+      cancelPendingFlush();
       for (const list of rankedLists()) {
         coplanar.clearFlushParts(list.rankedParts);
       }
@@ -2057,18 +2162,24 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       flushCache = null;
       return parts;
     }
-    if (flushCache?.parts !== parts && flushCache?.staged !== parts) {
-      const list = rankedList(coplanar, partsToRank(recipe, parts), rest);
-      // Ranked parts batch apart, so the list they are staged in is a new one: the renderer then regroups, also when the
-      // ranking is switched on or off for parts that did not change. The same parts, or their staged list, get it back.
-      // The rest and posed parts of a moving sea share one ranking (#2730), so each keeps its own staged list.
-      let staged = stagedByParts.get(parts);
-      if (!staged) {
-        staged = list.resolved.ranked ? Object.freeze([...parts]) : parts;
-        stagedByParts.set(parts, staged);
-        stagedByParts.set(staged, staged);
+    const rankedParts = partsToRank(recipe, parts);
+    if (pendingFlush && sameParts(pendingFlush.rankedParts, rankedParts)) {
+      if (!pendingFlush.targets.some(target => target.parts === parts)) {
+        joinPendingFlush(parts, rest);
       }
-      flushCache = { parts, staged, list, ...list.resolved };
+      return parts;
+    }
+    if (flushCache?.parts !== parts && flushCache?.staged !== parts) {
+      cancelPendingFlush();
+      if (shouldDeferFlush(rankedParts)) {
+        flushCache = { parts, staged: parts, list: null, ranked: 0, leftovers: [] };
+        const pending = { targets: [{ parts, rest }], rankedParts, recipe, runner: null };
+        const onFailure = () => { pendingFlush = null; };
+        pending.runner = coplanar.startFlushParts(rankedParts, { onDone: searched => finishFlush(pending, searched), onFailure });
+        pendingFlush = pending;
+        return parts;
+      }
+      rankAndStage(coplanar, recipe, parts, rest);
     }
     return flushCache.staged;
   }
@@ -2083,10 +2194,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   function rankedLists() {
     return restRankedList ? [restRankedList, ...posedRankedLists] : posedRankedLists;
   }
-  function rankedList(coplanar, rankedParts, rest) {
+  function rankedList(coplanar, rankedParts, rest, searched = null) {
     let list = rankedLists().find(candidate => sameParts(candidate.rankedParts, rankedParts));
     if (!list) {
-      const resolved = coplanar.resolveFlushParts(rankedParts);
+      const resolved = searched ?? coplanar.resolveFlushParts(rankedParts);
       list = { rankedParts, resolved, orders: rankedParts.map(flushOrderOf) };
       if (rest) restRankedList = list;
       else posedRankedLists = [list, ...posedRankedLists].slice(0, 2);
@@ -2104,6 +2215,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       return [];
     }
     if (state.recipe.environment.resolveCoplanar !== false) {
+      settleFlush();
       return agentSceneModule('coplanar').flushLeftoverDiagnostics(flushCache?.leftovers ?? []);
     }
     if (coplanarReportCache?.revision !== revision) {
@@ -2221,6 +2333,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     get topologyRevision() {
       return topologyRevision;
     },
+    /** True while an edit of a heavy scene has not ranked its near-coplanar triangles yet (#2905); it finishes on its own right after the edit. */
+    get flushPending() {
+      return pendingFlush !== null;
+    },
+    /** Ranks the near-coplanar triangles of a pending edit now, so a render or an export never misses an offset. Returns whether it had to. */
+    settleFlush,
     get camera() {
       return structuredClone(state.renderCamera);
     },
@@ -2464,7 +2582,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           fields = NODE_FIELDS;
           target = candidate.nodes.find(node => node.id === operation.id);
         } else if (operation.type === 'set-material') {
-          fields = [...MATERIAL_FIELDS, 'map'];
+          fields = [...MATERIAL_FIELDS, 'map', ...TEXTURE_SET_RECIPE_FIELDS];
           target = candidate.materials.find(material => material.id === operation.id);
         } else if (operation.type === 'set-camera') {
           fields = CAMERA_FIELDS;

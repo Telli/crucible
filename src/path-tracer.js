@@ -46,7 +46,7 @@ const ADAPTIVE_MINIMUM_SAMPLES = 16;
 const ADAPTIVE_BATCH_SAMPLES = 8;
 // Mean luminance added to the standard error's reference, so very dark pixels are not held to a relative error.
 const CONVERGENCE_LUMINANCE_FLOOR = 0.05;
-const IGNORED_MAP_FIELDS = ['occlusionMap'];
+const IGNORED_MAP_FIELDS = ['occlusionMap', 'heightMap'];
 // Shading layers of the rasterizer that the tracer's surface model has no term for.
 const IGNORED_LAYERS = [
   ['anisotropy', material => material.anisotropy > 0, true],
@@ -431,6 +431,8 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
     hit.roughness *= hit.mapTexel[1];
     hit.metallic *= hit.mapTexel[2];
   }
+  // A metal does not transmit: only the dielectric share of the surface lets light through (glTF KHR_materials_transmission, #2827).
+  hit.transmission *= 1 - hit.metallic;
   if (material.normalTexture) {
     TANGENT_EDGES[0] = edgeOneX;
     TANGENT_EDGES[1] = edgeOneY;

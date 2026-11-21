@@ -65,6 +65,8 @@ Call `loadAgentSceneModules(operations)` before `apply` when the operations add 
 
 The default stages that need a lazy module (flush-face ranking, the floor sky trace) run for a scene when the host called `loadAllAgentSceneModules()` or the scene's own recipe or operations name them. A module that another scene loaded earlier in the process does not turn them on, so one recipe builds the same parts in any order.
 
+An edit of a scene that holds 100,000 or more triangles to rank (a large scan) does not wait for the near-coplanar search of those default stages: `apply` returns with the new parts unranked, `scene.flushPending` is `true`, and the search runs after it, then publishes the ranked parts as a topology change (`topologyRevision` goes up, so a renderer regroups). The search runs in slices of about 8 ms across turns of the event loop, so no single task of the page is long; no part has a rank until the last slice. It is the same search a synchronous edit runs, so the ranks are identical. `scene.settleFlush()` runs it at once and returns whether it had to; `inspect` and the MCP preview frame call it first, so a look or a render never shows a scan unranked. A new scene and any scene under the limit rank inside the call. A scene whose parts move (particles, a moving sea) defers the search of its still parts the same way: the moving parts are never ranked, and the rest parts and the posed parts of the edit wait for the one search.
+
 ## Recipe contract
 
 The recipe must contain `format`, `schemaVersion`, `geometries`, `materials`, and `nodes`.
@@ -127,7 +129,7 @@ Base color, metallic, and roughness range from zero to one.
 Emission and independent emissive color must be nonnegative finite Float32 numbers.
 Their component products must also remain finite at Float32 precision.
 Unlit emissive radiance is capped at 65500 per component to fit the half-float HDR target.
-Image textures and the other procedural material tags are outside this version.
+Image textures come from catalog images (a colour map sequence, and scanned texture sets under "Scanned texture sets" below); the other procedural material tags are outside this version.
 
 ### Material patterns
 
@@ -239,6 +241,21 @@ and the geometry UVs.
 - A folder of more than 256 consecutively numbered images (`frame_0001.png` to `frame_2700.png`, one prefix, one digit width, no gap) is not listed per frame. `scene_asset_catalog` lists it once under `sequences`: `{ kind: "sequence", name: "frame_####.png", first, last, frames, width, height }`. Write `map: { sequence: { catalog: "frame_####.png", fps } }` instead of `frames`; pass exactly one of the two. The server swaps in the frame IDs when the call arrives, so the scene, its checkpoints and its render jobs stay pinned to the hashes. The catalog reads only the first frame at startup and hashes the rest on the first recipe that names the sequence (or the first frame ID it does not know yet, such as one from an earlier run). An unknown pattern is refused with the nearest ones; a frame over the limits above is refused with its name. Shorter folders keep one entry per frame.
 - `set-material` and `add-material` take `map`; the frames must be catalog images, which the host decodes before the edit.
 
+### Scanned texture sets
+
+A `surface` material takes the maps of a scanned set (Poly Haven, ambientCG) from catalog images. Put the files of one material in a sub-folder of `--assets`, with at least two standard map names, and `scene_asset_catalog` lists the folder once under `textureSets` (`kind: "textureSet"`, its `name` and the maps it found with asset ID, size and file name) instead of one image per file:
+
+```json
+{ "id": "rock", "textureSet": "rock_boulder_dry" }
+```
+
+- Names it knows (case does not matter, `_`, `-` and camel case separate words): colour is `color`, `albedo`, `diffuse` or `diff`; normal is `normal`, `nor`, `nrm` with `gl` or `dx` (`NormalGL`, `nor_dx`), and OpenGL wins when a folder holds both; `roughness` or `rough`; `metallic`, `metalness` or `metal`; `ao` or `occlusion`; `height`, `displacement` or `disp`. A folder with two files for one map is skipped and listed under `skipped`. PNG, JPEG and WebP only, at most 2048 pixels a side (a 1k set fits; a larger image is skipped with its reason), so a `.exr` displacement map is not found.
+- `textureSet` fills `colorMap`, `normalMap`, `roughnessMap`, `metallicMap`, `occlusionMap` and `heightMap`. Each of those fields also takes one catalog image asset ID on its own and wins over the set. The server swaps `textureSet` for the IDs before the scene is built, so a saved recipe holds only the pinned IDs; a library caller passes the IDs. An ID that is not a catalog image, or a set name that does not exist, fails with the field, the IDs that would fit and the sets the catalog has.
+- `normalConvention` is `opengl` (default) or `directx`. A DirectX normal map has its green channel flipped when it is loaded; a set whose only normal map is a DirectX file sets it for you.
+- The roughness and metallic images are repacked into one glTF metallicRoughness texture: roughness in green, metallic in blue, the other channel 255, so `roughness` and `metallic` (default 1 when their map is set) still scale it. Their sizes must match.
+- `colorMap` is the base colour, `color` tints it (white by default). It cannot be combined with `map` or `pattern`, nor can any other map field with `pattern`. The material needs UVs.
+- `occlusionMap` is drawn by the rasterizer; the path tracers ignore it and say so. `heightMap` is kept and exported in the recipe, but no renderer displaces or parallax-maps from it yet: `scene_inspect` reports it as ignored, and a path traced render lists it under `ignored`.
+
 Nodes contain `id`, optional `label`, `parent`, `translation`, `rotation`, and `scale`.
 Mesh nodes also require both `geometry` and `material` resource IDs.
 Group nodes have neither resource reference.
@@ -319,7 +336,7 @@ A node with an `asset` field places a GLB from the `--assets` catalog inside the
 - Placements of the same asset share geometry and materials, so they draw as one instanced batch per material (`drawBatches` in the render status stays flat as copies are added). Skins and morphs keep working.
 - `clip.index` is a clip number or `"all"`. A GLB that holds one animation per object plays only the object of the clip you name, so `"all"` plays every clip of the asset together on one timeline as long as the longest clip; a shorter clip holds its last frame. `scene_inspect` warns (`clip-leaves-other-animations`) when a number leaves out clips that move other nodes; a Blender export keeps one animation per object only with `export_animation_mode='ACTIVE_ACTIONS'`.
 - `clip` plays that clip, held at its first frame until scene time `start`, then at `speed`, looping unless `loop` is false. Each placement that plays a clip gets a decoded copy of its own (its geometry is not shared), because a pose is state of one decoded asset. A seek gives the same frame as playing to that time. `set-motion` tracks still move the node itself, so a walking figure is a clip plus a motion track on the same node.
-- Bounds: 512 placements, 16 different assets, 16 placements playing a clip, and `maxNodes` for the generated parts. Placed geometry does not count against `maxVertices`; each asset keeps the decoder limits of the catalog.
+- Bounds: 512 placements, 32 different assets (and 64 MiB of asset files in all), 16 placements playing a clip, and `maxNodes` for the generated parts. Placed geometry does not count against `maxVertices`; each asset keeps the decoder limits of the catalog.
 - `scene_inspect` adds `assets`: per placement the asset id, part count, world bounds, clips (index, name, duration), material names and the playing clip.
 - `scene_apply` places a catalog asset with `add-node` even when the scene had none: the first `add-node` with an `asset` loads it, a second node with the same asset id shares its geometry. An id the catalog does not list fails with an error that names it and points at `scene_asset_catalog`, and the placement and asset bounds below still hold. A session made by `scene_create_asset` holds one imported asset and cannot place others. Render jobs draw placed assets and play their clips on scene time (`settings.motion.start`).
 
