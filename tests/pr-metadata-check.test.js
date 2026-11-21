@@ -228,6 +228,16 @@ test('a look file with a shader math change, a missing patch or math beside a gu
   assert.ok(!isLookFile({ filename: 'src/scene.js', patch: shaderMathPatch }));
 });
 
+test('a number tuned or added on a const line beside a throw is still a look change', () => {
+  const throwLine = '+  if (!Number.isFinite(gain)) throw new RangeError("Pass a finite gain.");';
+  const tuned = ['@@ -1,3 +1,4 @@', throwLine, '-const EXPOSURE = 1.2;', '+const EXPOSURE = 1.5;'].join('\n');
+  const fresh = ['@@ -1,3 +1,4 @@', throwLine, '+const brightness = 0.8;'].join('\n');
+  const unchangedNumber = ['@@ -1,3 +1,4 @@', throwLine, '-const EXPOSURE = 1.2;', '+const exposure = 1.2;'].join('\n');
+  assert.ok(isLookFile({ filename: 'src/shaders.js', patch: tuned }));
+  assert.ok(isLookFile({ filename: 'src/shaders.js', patch: fresh }));
+  assert.ok(!isLookFile({ filename: 'src/shaders.js', patch: unchangedNumber }));
+});
+
 test('a message-only or validation-only change to a look file gets no hold label and asks for no picture', () => {
   const files = [{ ...file('src/shader-registry.js'), patch: messageOnlyPatch }, { ...file('src/tree-sky.js'), patch: validationOnlyPatch }, file('changes/12.md')];
   const result = checkPullRequest({ pr: pullRequest(), files });

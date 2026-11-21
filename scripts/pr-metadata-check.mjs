@@ -123,7 +123,21 @@ export function isGuardOnlyPatch(patch) {
   const bodies = changed.map(line => ({ added: line[0] === '+', text: line.slice(1).trim() }));
   const allGuards = bodies.every(({ text }) => guardLinePatterns.some(pattern => pattern.test(text)));
   const addsThrow = bodies.some(({ added, text }) => added && throwLinePattern.test(text));
-  return allGuards && addsThrow;
+  return allGuards && addsThrow && constNumbersAreKnown(bodies);
+}
+
+const numberPattern = /\b\d+(?:\.\d+)?\b/g;
+
+function numbersIn(text) {
+  return (text.match(numberPattern) ?? []).map(Number);
+}
+
+// A number on an added `const` line must be 0, 1 or already on a removed line, so tuning a value (1.2 to 1.5) is not hidden
+// beside a throw. Renaming an identifier (warmColor to coolColor) still slips through: only numbers are compared.
+function constNumbersAreKnown(bodies) {
+  const removedNumbers = new Set(bodies.filter(({ added }) => !added).flatMap(({ text }) => numbersIn(text)));
+  const addedConstLines = bodies.filter(({ added, text }) => added && /^const\s/.test(text) && !throwLinePattern.test(text));
+  return addedConstLines.every(({ text }) => numbersIn(text).every(value => value === 0 || value === 1 || removedNumbers.has(value)));
 }
 
 // A look file is one whose name says look and whose changes are not just a message or an input check.
