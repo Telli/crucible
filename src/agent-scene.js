@@ -10,6 +10,7 @@ import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, 
 import { postStepSupport } from './shader-registry.js';
 import { agentSceneModule, agentSceneModuleActive, agentSceneModuleLoaded, defaultStageModulesNamed } from './agent-scene-modules.js';
 import { CURVE_TEXT_LIMITS, AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, MAX_MATERIAL_PATTERNS, RECIPE_ALPHA_MODES } from './agent-scene-capabilities.js';
+import { TEXTURE_SET_RECIPE_FIELDS, TEXTURE_MAP_FIELDS } from './texture-set-fields.js';
 import { normalizeMaterialWear, geometryWithSurfaceMasks } from './material-wear.js';
 import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from './material-layers.js';
 import { recipeDiagnostics, closedRoomDiagnostic } from './agent-diagnostics.js';
@@ -304,19 +305,20 @@ function copyMaterialLayers(value, result) {
 }
 
 function materialFrom(value) {
-  knownKeys(value, ['id', 'tag', ...MATERIAL_FIELDS], 'material');
-  // A pattern brings its own colours, so the color field tints it and leaves it unchanged by default.
-  const defaultColor = value.pattern === undefined ? [0.5, 0.5, 0.5] : [1, 1, 1];
+  knownKeys(value, ['id', 'tag', ...MATERIAL_FIELDS, ...TEXTURE_SET_RECIPE_FIELDS], 'material');
+  // A pattern or a catalog colour map brings its own colours, so the color field tints it and leaves it unchanged by default.
+  const defaultColor = value.pattern === undefined && value.colorMap === undefined ? [0.5, 0.5, 0.5] : [1, 1, 1];
   const graph = value.pattern?.type === 'graph' ? value.pattern.graph : {};
   // A graph that makes roughness, metallic or emission passes it through as written, so the factors default to 1.
   const graphFactor = (output, fallback) => (Object.hasOwn(graph ?? {}, output) ? 1 : fallback);
   const result = { id: value.id, tag: defaultValue(value.tag, 'surface'), color: vector(defaultValue(value.color, defaultColor), 3, 'color'),
     ...(graphFactor('clearcoat', 0) && { clearcoat: 1 }), ...(graphFactor('transmission', 0) && { transmission: 1 }),
-    metallic: defaultValue(value.metallic, graphFactor('metallic', 0)), roughness: defaultValue(value.roughness, graphFactor('roughness', 0.5)), emission: defaultValue(value.emission, graphFactor('emission', 0)) };
+    metallic: defaultValue(value.metallic, graphFactor('metallic', value.metallicMap === undefined ? 0 : 1)), roughness: defaultValue(value.roughness, graphFactor('roughness', value.roughnessMap === undefined ? 0.5 : 1)), emission: defaultValue(value.emission, graphFactor('emission', 0)) };
   if (!AGENT_SCENE_CAPABILITIES.materialTags.includes(result.tag)) {
     throw invalidField('tag', result.tag, `one of ${AGENT_SCENE_CAPABILITIES.materialTags.join(', ')}`);
   }
   if (value.map !== undefined) agentSceneModule('assets').applyMapSequence(value, result);
+  if (TEXTURE_SET_RECIPE_FIELDS.some(field => value[field] !== undefined)) agentSceneModule('assets').applyTextureMaps(value, result);
   if (value.pattern !== undefined) {
     if (result.tag !== 'surface') throw invalidField('pattern', value.pattern?.type, 'a material with the surface tag; remove pattern or set tag to surface');
     result.pattern = agentSceneModule('patterns').normalizeMaterialPattern(value.pattern);
@@ -1235,11 +1237,18 @@ function geometryStats(records) {
 function batchSignature(material) {
   // Textures are fixed per renderer, so a changed pattern rebuilds it like a changed tag does.
   // Transmission moves a material to the pass that sees the opaque scene, which is fixed per renderer.
-  return `${material.tag}|${material.alphaMode}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${JSON.stringify(material.snippet)}`;
+  return `${material.tag}|${material.alphaMode}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${JSON.stringify(material.snippet)}${textureMapSignature(material)}`;
+}
+
+// The catalog maps of a material are textures fixed per renderer like a pattern, so another map or convention builds a new handle. Empty for a material without them.
+function textureMapSignature(material) {
+  const maps = TEXTURE_MAP_FIELDS.filter(field => material[field] !== undefined).map(field => `${field}:${material[field]}`);
+  return maps.length ? `|${maps.join(',')}|${material.normalConvention ?? ''}` : '';
 }
 
 function materialHandle(snapshot, sequence, images) {
   const holder = { snapshot, sequence, images };
+  holder.catalogTextures = catalogTexturesOf(holder);
   const output = {};
   for (const field of ['id', 'tag', ...MATERIAL_FIELDS]) {
     Object.defineProperty(output, field, {
@@ -1256,11 +1265,32 @@ function materialHandle(snapshot, sequence, images) {
       // Baked on first read, so validating or inspecting a recipe never pays for it.
       get() {
         if (field === 'map' && holder.sequence) return holder.sequence.descriptor;
+        if (holder.catalogTextures) return holder.catalogTextures()[field];
         return holder.snapshot.pattern ? agentSceneModule('patterns').materialPatternTextures(holder.snapshot.pattern, holder.images)[field] : undefined;
       },
     });
   }
+  defineCatalogOnlyTextureFields(output, holder);
   return { holder, output: Object.freeze(output) };
+}
+
+// Catalog maps (colorMap, normalMap and the rest) become texture descriptors on first read, like a baked pattern, from the decoded images of the pool.
+// Null for a material without them, so its handle is built exactly as before.
+function catalogTexturesOf(holder) {
+  if (!TEXTURE_MAP_FIELDS.some(field => holder.snapshot[field] !== undefined)) return null;
+  let textures;
+  return () => {
+    textures ??= agentSceneModule('assets').createTextureMaps(holder.snapshot.id, holder.snapshot, holder.images);
+    return textures;
+  };
+}
+
+// The two catalog map fields that no pattern bakes: they exist on the handle only for a material that names them.
+function defineCatalogOnlyTextureFields(output, holder) {
+  if (!holder.catalogTextures) return;
+  for (const field of ['occlusionMap', 'heightMap']) {
+    Object.defineProperty(output, field, { enumerable: true, configurable: true, get: () => holder.catalogTextures()[field] });
+  }
 }
 
 function immutableMaterial(snapshot) {
@@ -2475,7 +2505,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           fields = NODE_FIELDS;
           target = candidate.nodes.find(node => node.id === operation.id);
         } else if (operation.type === 'set-material') {
-          fields = [...MATERIAL_FIELDS, 'map'];
+          fields = [...MATERIAL_FIELDS, 'map', ...TEXTURE_SET_RECIPE_FIELDS];
           target = candidate.materials.find(material => material.id === operation.id);
         } else if (operation.type === 'set-camera') {
           fields = CAMERA_FIELDS;

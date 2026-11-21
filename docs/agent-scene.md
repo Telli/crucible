@@ -127,7 +127,7 @@ Base color, metallic, and roughness range from zero to one.
 Emission and independent emissive color must be nonnegative finite Float32 numbers.
 Their component products must also remain finite at Float32 precision.
 Unlit emissive radiance is capped at 65500 per component to fit the half-float HDR target.
-Image textures and the other procedural material tags are outside this version.
+Image textures come from catalog images (a colour map sequence, and scanned texture sets under "Scanned texture sets" below); the other procedural material tags are outside this version.
 
 ### Material patterns
 
@@ -238,6 +238,21 @@ and the geometry UVs.
 - A sequence of up to 64 frames loads whole with the scene. A longer one streams: the scene starts with its first frame, and the host reads and decodes the frame of each requested time from the catalog, keeping that frame and the one before it (two decoded frames per sequence, 32 MiB at 2048 pixels). A video job walks the frames in order and decodes each once, so the limit is per frame and for the frames kept at once, not for the list; the same frame gives the same pixels whole or streamed. The catalog takes up to 4096 image files besides its 64 other files. Streaming serves `scene_look` with `motionTime` and raster still and video jobs. `scene_review` (every shot in one call) and path traced or native jobs (`settings.renderer`, which a streamed sequence refuses with an error that says so) need a sequence of at most 64 frames; a frame that was not decoded is an error, never a silent stale frame.
 - A folder of more than 256 consecutively numbered images (`frame_0001.png` to `frame_2700.png`, one prefix, one digit width, no gap) is not listed per frame. `scene_asset_catalog` lists it once under `sequences`: `{ kind: "sequence", name: "frame_####.png", first, last, frames, width, height }`. Write `map: { sequence: { catalog: "frame_####.png", fps } }` instead of `frames`; pass exactly one of the two. The server swaps in the frame IDs when the call arrives, so the scene, its checkpoints and its render jobs stay pinned to the hashes. The catalog reads only the first frame at startup and hashes the rest on the first recipe that names the sequence (or the first frame ID it does not know yet, such as one from an earlier run). An unknown pattern is refused with the nearest ones; a frame over the limits above is refused with its name. Shorter folders keep one entry per frame.
 - `set-material` and `add-material` take `map`; the frames must be catalog images, which the host decodes before the edit.
+
+### Scanned texture sets
+
+A `surface` material takes the maps of a scanned set (Poly Haven, ambientCG) from catalog images. Put the files of one material in a sub-folder of `--assets`, with at least two standard map names, and `scene_asset_catalog` lists the folder once under `textureSets` (`kind: "textureSet"`, its `name` and the maps it found with asset ID, size and file name) instead of one image per file:
+
+```json
+{ "id": "rock", "textureSet": "rock_boulder_dry" }
+```
+
+- Names it knows (case does not matter, `_`, `-` and camel case separate words): colour is `color`, `albedo`, `diffuse` or `diff`; normal is `normal`, `nor`, `nrm` with `gl` or `dx` (`NormalGL`, `nor_dx`), and OpenGL wins when a folder holds both; `roughness` or `rough`; `metallic`, `metalness` or `metal`; `ao` or `occlusion`; `height`, `displacement` or `disp`. A folder with two files for one map is skipped and listed under `skipped`. PNG, JPEG and WebP only, at most 2048 pixels a side (a 1k set fits; a larger image is skipped with its reason), so a `.exr` displacement map is not found.
+- `textureSet` fills `colorMap`, `normalMap`, `roughnessMap`, `metallicMap`, `occlusionMap` and `heightMap`. Each of those fields also takes one catalog image asset ID on its own and wins over the set. The server swaps `textureSet` for the IDs before the scene is built, so a saved recipe holds only the pinned IDs; a library caller passes the IDs. An ID that is not a catalog image, or a set name that does not exist, fails with the field, the IDs that would fit and the sets the catalog has.
+- `normalConvention` is `opengl` (default) or `directx`. A DirectX normal map has its green channel flipped when it is loaded; a set whose only normal map is a DirectX file sets it for you.
+- The roughness and metallic images are repacked into one glTF metallicRoughness texture: roughness in green, metallic in blue, the other channel 255, so `roughness` and `metallic` (default 1 when their map is set) still scale it. Their sizes must match.
+- `colorMap` is the base colour, `color` tints it (white by default). It cannot be combined with `map` or `pattern`, nor can any other map field with `pattern`. The material needs UVs.
+- `occlusionMap` is drawn by the rasterizer; the path tracers ignore it and say so. `heightMap` is kept and exported in the recipe, but no renderer displaces or parallax-maps from it yet: `scene_inspect` reports it as ignored, and a path traced render lists it under `ignored`.
 
 Nodes contain `id`, optional `label`, `parent`, `translation`, `rotation`, and `scale`.
 Mesh nodes also require both `geometry` and `material` resource IDs.
