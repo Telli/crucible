@@ -2,6 +2,7 @@ import { createImage } from './material-texture-kit.js';
 import { TEXTURE_SEQUENCE_LIMITS } from './texture-sequence-limits.js';
 import { invalidField } from './field-error.js';
 import { graphImageAssets } from './material-graph.js';
+import { displaceSourceImages } from './mesh-displace-keys.js';
 
 // An image sequence as the colour map of a recipe material: `map: { sequence: { frames, fps, loop } }`. The frames are
 // catalog image assets that the host decodes before createAgentScene. The scene picks a frame from its motion time, so a
@@ -83,6 +84,8 @@ export function sequenceFrameIds(value) {
         if (ASSET_ID.test(asset.toLowerCase())) ids.add(asset.toLowerCase());
       }
     }
+    for (const asset of displaceSourceImages(node.edits)) ids.add(asset);
+    for (const asset of displaceSourceImages(node.stack)) ids.add(asset);
     const frames = node.map?.sequence?.frames;
     if (Array.isArray(frames)) {
       const shippedFrames = isStreamedSequence(frames) ? frames.slice(0, 1) : frames;

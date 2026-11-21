@@ -1,5 +1,6 @@
 import { mat4, mat3 } from 'gl-matrix';
 import { roomJoinedBoxNodeIds } from './room-box-joins.js';
+import { checkDisplaceMaterials, displaceDependencySignature } from './mesh-displace-keys.js';
 import { box, checkTorusShape, circle, cone, cylinder, grid, icoSphere, sphere, torus } from './geometry.js';
 import { createSceneGraph } from './scene-graph.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
@@ -762,7 +763,7 @@ function isCutterReference(cutter) {
 }
 
 function meshCutterScope(meshDefinition, scope) {
-  return scope && { definitions: scope.definitions, chain: scope.chain.length ? scope.chain : [meshDefinition.id] };
+  return scope && { ...scope, chain: scope.chain.length ? scope.chain : [meshDefinition.id] };
 }
 
 function cutterEstimate(cutter, scope) {
@@ -819,26 +820,37 @@ function checkedCutterDependencies(meshDefinition, definitions) {
 }
 
 /** Cache identity of a geometry record: its own fields plus the cutter geometries it depends on. */
-function geometrySignature(definition, definitions) {
+function geometrySignature(definition, definitions, heightSources) {
   if (definition.type === 'fragment') {
     // The pieces depend on the source record, so editing the source changes the key. Estimating first rejects a missing or fragment source.
     geometryEstimate(definition, { definitions, chain: [] });
-    return `${JSON.stringify(definition)}|source|${geometrySignature(definitions.get(definition.source), definitions)}`;
+    return `${JSON.stringify(definition)}|source|${geometrySignature(definitions.get(definition.source), definitions, heightSources)}`;
   }
   if (definition.type === 'dented') {
     geometryEstimate(definition, { definitions, chain: [] });
-    return `${JSON.stringify(definition)}|source|${geometrySignature(definitions.get(definition.source), definitions)}`;
+    return `${JSON.stringify(definition)}|source|${geometrySignature(definitions.get(definition.source), definitions, heightSources)}`;
   }
   const dependencies = definition.type === 'mesh' ? checkedCutterDependencies(definition, definitions) : '';
-  return dependencies ? `${JSON.stringify(definition)}|cutters|${dependencies}` : JSON.stringify(definition);
+  const heights = definition.type === 'mesh' ? heightDependencies(definition, heightSources) : '';
+  return `${JSON.stringify(definition)}${dependencies ? `|cutters|${dependencies}` : ''}${heights ? `|heights|${heights}` : ''}`;
+}
+
+// The materials a displace source reads, so editing a graph height rebuilds the mesh that follows it.
+function heightDependencies(meshDefinition, heightSources) {
+  return displaceDependencySignature([...(meshDefinition.edits ?? []), ...(meshDefinition.stack ?? [])], heightSources?.materials);
+}
+
+/** The materials and decoded images a mesh displace edit reads its height from. */
+function heightSourcesOf(recipe, images) {
+  return { materials: new Map(recipe.materials.map(material => [material.id, material])), images };
 }
 
 function geometryDefinitions(geometries) {
   return new Map(geometries.map(definition => [definition.id, definition]));
 }
 
-function cutterScopeOf(geometries) {
-  return { definitions: geometryDefinitions(geometries), chain: [] };
+function cutterScopeOf(geometries, heightSources) {
+  return { definitions: geometryDefinitions(geometries), chain: [], heightSources };
 }
 
 /** Render geometry of a boolean cutter record, checked like the cutters of recipe meshes. Used by imported-part edits. */
@@ -895,26 +907,28 @@ function generateGeometry(value, maxVertices, scope) {
       if (!scope) throw invalidField('type', 'fragment', 'a geometry inside a recipe, where its source geometry is found by ID');
       const source = scope.definitions.get(value.source);
       return agentSceneModule('fracture').fragmentGeometry(value, geometrySignature(source, scope.definitions),
-        () => generateGeometry(source, maxVertices, { definitions: scope.definitions, chain: [] }));
+        () => generateGeometry(source, maxVertices, { ...scope, chain: [] }));
     }
     case 'dented': {
       if (!scope) throw invalidField('type', 'dented', 'a geometry inside a recipe, where its source geometry is found by ID');
       const { source, id, type, ...dent } = value;
-      return agentSceneModule('vehicleDamage').dentGeometry(generateGeometry(scope.definitions.get(source), maxVertices, { definitions: scope.definitions, chain: [] }), dent);
+      return agentSceneModule('vehicleDamage').dentGeometry(generateGeometry(scope.definitions.get(source), maxVertices, { ...scope, chain: [] }), dent);
     }
     case 'mesh': {
       const cutterScope = meshCutterScope(value, scope);
       const dependencies = scope ? checkedCutterDependencies(value, scope.definitions) : '';
+      const heights = heightDependencies(value, scope?.heightSources);
       return agentSceneModule('mesh').generateMeshGeometry(() => meshBaseSplitsBox(value.base) ? box(0, value.base.subdivisions, true) : generateGeometry(value.base, maxVertices), value.edits ?? [], {
         maxVertices, smoothAngle: value.smoothAngle,
         stack: value.stack ?? [], shapeKeys: value.shapeKeys ?? [],
         // The edits only name a cutter geometry, so that geometry's own record joins the key: editing it changes the key.
-        cacheKey: dependencies ? `${JSON.stringify(value.base)}|cutters|${dependencies}` : JSON.stringify(value.base),
+        cacheKey: `${JSON.stringify(value.base)}${dependencies ? `|cutters|${dependencies}` : ''}${heights ? `|heights|${heights}` : ''}`,
+        heightSources: scope?.heightSources,
         resolveCutter: cutter => {
           cutterEstimate(cutter, cutterScope);
           if (!isCutterReference(cutter)) return generateGeometry(cutter, maxVertices);
           const chain = [...cutterScope.chain, cutter.geometry];
-          return generateGeometry(scope.definitions.get(cutter.geometry), maxVertices, { definitions: scope.definitions, chain });
+          return generateGeometry(scope.definitions.get(cutter.geometry), maxVertices, { ...scope, chain });
         },
       });
     }
@@ -1004,7 +1018,7 @@ function addArmatures(recipe, limits) {
       throw invalidField(`armatures.${armature.id}.fit`, nodeId, 'the ID of a mesh node with a geometry, such as one scene_inspect lists');
     }
     const definition = recipe.geometries.find(geometry => geometry.id === node.geometry);
-    const bounds = boundsFor(generateGeometry(definition, Math.min(limits.maxVertices, 1_000_000), cutterScopeOf(recipe.geometries)), mat4.create());
+    const bounds = boundsFor(generateGeometry(definition, Math.min(limits.maxVertices, 1_000_000), cutterScopeOf(recipe.geometries, heightSourcesOf(recipe))), mat4.create());
     const toArmature = mat4.invert(mat4.create(), restWorldMatrix(armature.id, userNodes, [armature]));
     const toWorld = restWorldMatrix(node.id, userNodes);
     return transformedBounds(bounds, mat4.multiply(mat4.create(), toArmature, toWorld));
@@ -1128,6 +1142,9 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
     if (definition.type === 'mesh') withFieldPrefix(`geometries[${index}]`, () => checkedCutterDependencies(definition, definitionsById));
   });
   recipe.materials = resources(withDefaultMaterial(recipe), limits.maxMaterials, 'materials', materialFrom);
+  recipe.geometries.forEach((definition, index) => {
+    if (definition.type === 'mesh') withFieldPrefix(`geometries[${index}]`, () => checkDisplaceMaterials(definition, heightSourcesOf(recipe).materials));
+  });
   const distinctPatterns = new Set(recipe.materials.filter(material => material.pattern).map(material => JSON.stringify(material.pattern)));
   if (distinctPatterns.size > MAX_MATERIAL_PATTERNS) {
     throw invalidField('materials', `${distinctPatterns.size} different patterns`, `at most ${MAX_MATERIAL_PATTERNS} different material patterns; reuse one and tint it with color`);
@@ -1138,7 +1155,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
     resolveSurface: id => {
       const definition = recipe.geometries.find(geometry => geometry.id === id);
       if (!definition) throw invalidField('instances.surface', id, `the ID of a geometry in geometries, such as ${recipe.geometries[0]?.id ?? 'ground'}`);
-      return generateGeometry(definition, Math.min(limits.maxVertices, 1_000_000), cutterScopeOf(recipe.geometries));
+      return generateGeometry(definition, Math.min(limits.maxVertices, 1_000_000), cutterScopeOf(recipe.geometries, heightSourcesOf(recipe)));
     },
   }, recipe.geometries);
   recipe.nodes = resources(recipe.nodes, limits.maxNodes, 'nodes', nodeFrom, { alreadyNormalized: NORMALIZED_NODES, isShareable: node => NODE_KEYS_NEEDING_OWN_COPY.every(key => node[key] === undefined) });
@@ -1396,7 +1413,7 @@ function stagePose(stagedState, time) {
 function oceanTimeGeometry(recipe, maxGeometryVertices, geometryId, oceanTime, wakeField) {
   const definition = recipe.geometries.find(candidate => candidate.id === geometryId);
   const stack = definition.stack.map(node => (node.op === 'ocean' ? { ...node, ...wakeField, time: oceanTime } : node));
-  return Object.freeze(generateGeometry({ ...definition, stack }, maxGeometryVertices, cutterScopeOf(recipe.geometries)));
+  return Object.freeze(generateGeometry({ ...definition, stack }, maxGeometryVertices, cutterScopeOf(recipe.geometries, heightSourcesOf(recipe))));
 }
 
 /**
@@ -1732,6 +1749,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       retainedMatrices(state.parts);
     }
     const definitionsById = geometryDefinitions(recipe.geometries);
+    const buildHeightSources = heightSourcesOf(recipe, options.sequenceFrames);
     const planGeometry = () => {
       const ownedRecords = ownedGeometryRecords();
       const availableRecords = new Map();
@@ -1739,7 +1757,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         availableRecords.set(record.signature, record);
       }
       const plans = recipe.geometries.map(definition => {
-        const signature = geometrySignature(definition, definitionsById);
+        const signature = geometrySignature(definition, definitionsById, buildHeightSources);
         const preferredRecord = preferred?.geometryRecords.get(definition.id);
         const activeRecord = state?.geometryRecords.get(definition.id);
         const existing = [preferredRecord, activeRecord, availableRecords.get(signature)]
@@ -1787,7 +1805,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         const geometry = assetRuntime.geometryParts.get(plan.definition.id);
         record = Object.freeze({ signature: plan.signature, geometry, bounds: boundsFor(geometry, mat4.create()), vertices: 0, geometryBytes: 0, estimatedVertices: 0 });
       } else if (!record) {
-        const geometry = Object.freeze(generateGeometry(plan.definition, Math.min(limits.maxVertices, 1_000_000), { definitions: definitionsById, chain: [] }));
+        const geometry = Object.freeze(generateGeometry(plan.definition, Math.min(limits.maxVertices, 1_000_000), { definitions: definitionsById, chain: [], heightSources: buildHeightSources }));
         const geometryBytes = Object.values(geometry).reduce((total, array) => total + array.byteLength, 0);
         const vertices = geometry.positions.length / 3;
         if (plan.definition.type === 'mesh' || plan.definition.type === 'fragment') {
