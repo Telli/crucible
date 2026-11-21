@@ -31,7 +31,7 @@ import { launchWithShaderCache, shaderCacheDirectory } from './agent-shader-cach
 import { createPackRegistry } from './agent-packs.mjs';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
-import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
+import { AGENT_ASSET_LIMITS, configureAssetByteLimit, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { namesCatalogFiles, resolveAssetPlacementNames, namesCatalogSequences, resolveCatalogSequenceNames } from '../src/agent-asset-names.js';
 import { sequenceFrameIds, hasStreamedSequence } from '../src/agent-texture-sequence.js';
@@ -146,7 +146,8 @@ export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg',
 
 export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', browser: browserPath, memory = 192, assets: assetRoot, packs: packsRoot,
   jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, gpuQueue, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
-  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem(), askUserFixture } = {}) {
+  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem(), askUserFixture, maxAssetBytes } = {}) {
+  if (maxAssetBytes !== undefined) configureAssetByteLimit(maxAssetBytes);
   if (!['gpu', 'cpu'].includes(backend)) {
     throw new RangeError('backend must be gpu or cpu.');
   }
@@ -439,11 +440,16 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (sceneValue) for (const id of catalogIdsOf(sceneValue)) catalogIds.add(id);
     // With a scene, its grid files count too, once per name even when the edit names the same file.
     let total = volumeGridFileBytes(sceneValue ? [value, sceneValue] : value);
+    const namedAssets = [];
     if (catalogIds.size || motionSourceIds.length) {
       const readyCatalog = await catalog();
-      for (const id of [...catalogIds, ...motionSourceIds]) total += await readyCatalog.size(id);
+      for (const id of [...catalogIds, ...motionSourceIds]) {
+        const described = await readyCatalog.describeSize(id);
+        namedAssets.push(described);
+        total += described.bytes;
+      }
     }
-    assertCombinedByteTotal(total, sceneValue ? sceneAssetBytesLimitMessage : undefined);
+    assertCombinedByteTotal(total, sceneValue ? sceneAssetBytesLimitMessage : undefined, namedAssets);
   }
 
   /** Refuses an edit that adds catalog assets to a scene whose unique assets would then pass the combined limit, before the preview page loads them. */
