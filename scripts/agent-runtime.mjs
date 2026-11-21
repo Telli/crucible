@@ -1575,7 +1575,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       const output = await this.renderReview(settings, loadVariantRecipes);
       const { shots, ...rest } = output.metadata;
       const wedgeShots = shots.map(({ branch: _branch, branchStale: _stale, ...shot }, index) => ({ ...shot, value: settings.wedge.values[index] }));
-      return { ...output, metadata: { ...rest, wedge: { target: settings.wedge.target, field: settings.wedge.field }, shots: wedgeShots } };
+      return { ...output, metadata: { ...rest, wedge: { target: settings.wedge.target, parameter: settings.wedge.field }, shots: wedgeShots } };
     },
     renderReview(settings, loadBranchRecipes) {
       return gpuUnit('light', () => enqueue(async () => {

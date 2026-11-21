@@ -159,7 +159,7 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 | `scene_look` | `sessionId`, optional `width`, `height`, `motionTime`, `labels` | PNG image and metadata |
 | `scene_ask_user` | `sessionId`, optional `prompt`, `maxMarks`, `timeoutSeconds`, `motionTime`, `reviewFile` | Opens the view in the browser, waits for Send, returns numbered marks with `partId`, `point`, `normal`, `note`, the camera and the marked PNG. With `reviewFile` it reads the marks a [review page](#review-link) saved instead (no browser, no image) |
 | `scene_review` | `sessionId`, `expectedRevision`, `shots` (each with an optional `branch`), optional `width`, `height`, `labels`, `response_format` | Labeled PNG grid and metadata from an isolated snapshot |
-| `scene_wedge` | `sessionId`, `expectedRevision`, `target`, `field`, `values` (2 to 8), optional `shot`, `width`, `height` | Labeled PNG grid of one field at each value from scratch copies; the scene is unchanged. See [agent-review.md](agent-review.md) |
+| `scene_wedge` {since 0.23.0} | `sessionId`, `expectedRevision`, `target`, `parameter`, `values` (2 to 8), optional `shot`, `width`, `height` | Labeled PNG grid of one field at each value from scratch copies; the scene is unchanged. See [agent-review.md](agent-review.md) |
 | `scene_checkpoint` | `sessionId` | Checkpoint ID, session ID, and revision |
 | `scene_restore` | `sessionId`, `expectedRevision`, and a `checkpointId`, a `revision` or a `branch` | Updated revision and render status |
 | `scene_release_checkpoint` | `sessionId`, `checkpointId` | Release confirmation |

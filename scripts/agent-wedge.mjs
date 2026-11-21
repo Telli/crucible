@@ -1,7 +1,7 @@
 import { WEDGE_LIMITS, parseWedgeField, wedgeColumns, wedgeLabel } from '../src/agent-wedge.js';
 import { invalidField } from '../src/field-error.js';
 
-const ALLOWED_INPUT = ['sessionId', 'expectedRevision', 'target', 'field', 'values', 'shot', 'width', 'height'];
+const ALLOWED_INPUT = ['sessionId', 'expectedRevision', 'target', 'parameter', 'values', 'shot', 'width', 'height'];
 const ALLOWED_SHOT = ['camera', 'motionTime'];
 
 function requireKnownKeys(value, allowed, subject) {
@@ -51,7 +51,7 @@ export function normalizeWedge(input) {
   if (typeof input.target !== 'string' || input.target.length === 0 || input.target.length > 128) {
     throw invalidField('target', input.target, 'environment, effects, shadow or a material ID', TypeError);
   }
-  parseWedgeField(input.field);
+  parseWedgeField(input.parameter);
   requireValues(input.values);
   const shot = input.shot ?? {};
   requireShot(shot);
@@ -65,13 +65,13 @@ export function normalizeWedge(input) {
   const motionTime = shot.motionTime ?? null;
   const variantNames = values.map((_, index) => `wedge-${index}`);
   const shots = values.map((value, index) => ({
-    label: wedgeLabel(input.field, value), branch: variantNames[index], motionTime, rendererTime: motionTime ?? 0,
+    label: wedgeLabel(input.parameter, value), branch: variantNames[index], motionTime, rendererTime: motionTime ?? 0,
     ...(shot.camera === undefined ? {} : { camera: structuredClone(shot.camera) }),
   }));
   const groups = shots.map((entry, index) => ({ branch: entry.branch, shotIndexes: [index] }));
   return {
     sessionId: input.sessionId, expectedRevision: input.expectedRevision, width, height, shots, groups, branchNames: variantNames,
     labels: false, columns, gridWidth: width * columns, gridHeight: (height + WEDGE_LIMITS.labelHeight) * rows,
-    wedge: { target: input.target, field: input.field, values: structuredClone(values) },
+    wedge: { target: input.target, field: input.parameter, values: structuredClone(values) },
   };
 }

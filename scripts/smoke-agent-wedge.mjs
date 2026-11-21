@@ -56,18 +56,18 @@ try {
   const recipeBefore = (await call('scene_export_recipe', { sessionId })).structuredContent;
   const inspectBefore = (await call('scene_inspect', { sessionId })).structuredContent;
 
-  await wedge('roughness', { ...settings, target: 'brass', field: 'roughness', values: [0.1, 0.3, 0.6, 0.9] }, [640, 688]);
-  await wedge('sun-angle', { ...settings, target: 'environment', field: 'lightDirection',
+  await wedge('roughness', { ...settings, target: 'brass', parameter: 'roughness', values: [0.1, 0.3, 0.6, 0.9] }, [640, 688]);
+  await wedge('sun-angle', { ...settings, target: 'environment', parameter: 'lightDirection',
     values: [[-1, -0.3, -0.5], [-0.5, -0.8, -0.5], [0, -1, -0.2], [0.6, -0.7, 0.3]] }, [640, 688]);
-  await wedge('exposure', { ...settings, target: 'effects', field: 'exposure', values: [0.5, 1, 2], width: 160, height: 160 }, [320, 368]);
-  await wedge('lamp', { ...settings, target: 'environment', field: 'pointLights', values: [
+  await wedge('exposure', { ...settings, target: 'effects', parameter: 'exposure', values: [0.5, 1, 2], width: 160, height: 160 }, [320, 368]);
+  await wedge('lamp', { ...settings, target: 'environment', parameter: 'pointLights', values: [
     [{ position: [1, 2, 1], intensity: 2 }], [{ position: [1, 2, 1], intensity: 8 }]] , width: 160, height: 160 }, [320, 184]);
 
-  await rejected({ ...settings, target: 'brass', field: 'roughness', values: [0.5] }, /values/);
-  await rejected({ ...settings, target: 'brass', field: 'roughness', values: [1, 2, 3, 4, 5, 6, 7, 8, 9] }, /values/);
-  await rejected({ ...settings, target: 'no-such-material', field: 'roughness', values: [0.2, 0.4] }, /existing material ID/);
-  await rejected({ ...settings, target: 'brass', field: 'roughness', values: [0.2, 5] }, /values\[1\]/);
-  await rejected({ ...settings, expectedRevision: 9, target: 'brass', field: 'roughness', values: [0.2, 0.4] }, /revision/i);
+  await rejected({ ...settings, target: 'brass', parameter: 'roughness', values: [0.5] }, /values/);
+  await rejected({ ...settings, target: 'brass', parameter: 'roughness', values: [1, 2, 3, 4, 5, 6, 7, 8, 9] }, /values/);
+  await rejected({ ...settings, target: 'no-such-material', parameter: 'roughness', values: [0.2, 0.4] }, /existing material ID/);
+  await rejected({ ...settings, target: 'brass', parameter: 'roughness', values: [0.2, 5] }, /values\[1\]/);
+  await rejected({ ...settings, expectedRevision: 9, target: 'brass', parameter: 'roughness', values: [0.2, 0.4] }, /revision/i);
 
   const recipeAfter = (await call('scene_export_recipe', { sessionId })).structuredContent;
   const inspectAfter = (await call('scene_inspect', { sessionId })).structuredContent;

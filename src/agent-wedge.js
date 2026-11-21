@@ -14,7 +14,7 @@ const FIELD_PATH_PATTERN = /^[A-Za-z][A-Za-z0-9]*(\.([A-Za-z][A-Za-z0-9]*|\d{1,2
 /** A field path such as "roughness", "lightDirection" or "pointLights.0.intensity", split into names and list indexes. */
 export function parseWedgeField(field) {
   if (typeof field !== 'string' || !FIELD_PATH_PATTERN.test(field) || field.length > 64) {
-    throw invalidField('field', field, 'a field name, optionally followed by .name or .index steps, such as "roughness", "lightDirection" or "pointLights.0.intensity"', TypeError);
+    throw invalidField('parameter', field, 'a field name, optionally followed by .name or .index steps, such as "roughness", "lightDirection" or "pointLights.0.intensity"', TypeError);
   }
   return field.split('.').map(step => (/^\d+$/.test(step) ? Number(step) : step));
 }
@@ -30,7 +30,7 @@ function setAtPath(root, steps, value, field) {
   for (const step of steps.slice(0, -1)) {
     const next = cursor?.[step];
     if (next === null || typeof next !== 'object') {
-      throw invalidField('field', field, `a path that exists in the scene: "${step}" is not set here, so set it first with scene_apply`, TypeError);
+      throw invalidField('parameter', field, `a path that exists in the scene: "${step}" is not set here, so set it first with scene_apply`, TypeError);
     }
     cursor = next;
   }
@@ -49,13 +49,13 @@ function sectionOrMaterial(target, recipe) {
 export function wedgeOperation({ target, field, value }, recipe) {
   const steps = parseWedgeField(field);
   const top = steps[0];
-  if (typeof top !== 'string') throw invalidField('field', field, 'a field name that starts with a letter', TypeError);
+  if (typeof top !== 'string') throw invalidField('parameter', field, 'a field name that starts with a letter', TypeError);
   const base = sectionOrMaterial(target, recipe);
   let patched = value;
   if (steps.length > 1) {
     patched = structuredClone(base[top]);
     if (patched === null || typeof patched !== 'object') {
-      throw invalidField('field', field, `a field that is already a list or an object in ${target}; "${top}" is not, so name "${top}" alone and pass the whole value in each of values`, TypeError);
+      throw invalidField('parameter', field, `a field that is already a list or an object in ${target}; "${top}" is not, so name "${top}" alone and pass the whole value in each of values`, TypeError);
     }
     setAtPath({ [top]: patched }, steps, value, field);
   }

@@ -1215,10 +1215,10 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     const shown = chosenFormat('scene_review', response_format) === 'concise' ? conciseReview(metadata) : metadata;
     return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(shown) }], structuredContent: shown };
   });
-  register('scene_wedge', 'Render one field at 2 to 8 values side by side in one labeled PNG grid, to compare a look. target: environment, effects, shadow or a material ID; field: a name or a path such as roughness, lightDirection, keyIntensity, fogDensity or pointLights.0.intensity. The scene, its revision and its branches stay unchanged.', z.strictObject({
+  register('scene_wedge', 'Render one field at 2 to 8 values side by side in one labeled PNG grid, to compare a look. target: environment, effects, shadow or a material ID; parameter: a field name or a path such as roughness, lightDirection, keyIntensity, fogDensity or pointLights.0.intensity. The scene, its revision and its branches stay unchanged.', z.strictObject({
     ...sessionFields, expectedRevision,
     target: z.string().min(1).max(128),
-    field: z.string().min(1).max(64),
+    parameter: z.string().min(1).max(64),
     values: z.array(z.unknown()).min(2).max(8).describe('One JSON value per picture, as scene_apply takes it.'),
     shot: z.strictObject({ camera: z.strictObject(cameraFields).optional(), motionTime: z.number().min(0).max(3600).nullable().optional() }).optional().describe('Camera and pose shared by every picture.'),
     width: z.number().int().min(64).max(480).optional().describe('Picture width. Defaults to 320, or 240 for 7 or 8 values.'),

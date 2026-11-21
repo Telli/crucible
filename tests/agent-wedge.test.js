@@ -17,7 +17,7 @@ const recipe = deepFreeze({
   environment: { keyIntensity: 2, pointLights: [{ position: [0, 2, 0], intensity: 1 }] },
   effects: { exposure: 1 },
 });
-const validInput = { sessionId: 'scene-1', expectedRevision: 3, target: 'brass', field: 'roughness', values: [0.1, 0.5, 0.9] };
+const validInput = { sessionId: 'scene-1', expectedRevision: 3, target: 'brass', parameter: "roughness", values: [0.1, 0.5, 0.9] };
 
 test('a material field becomes one set-material operation and the recipe is not changed', () => {
   assert.deepEqual(wedgeOperation({ target: 'brass', field: 'roughness', value: 0.7 }, recipe), { type: 'set-material', id: 'brass', roughness: 0.7 });
@@ -39,7 +39,7 @@ test('errors name what failed and what to pass', () => {
   assert.throws(() => wedgeOperation({ target: 'gold', field: 'roughness', value: 1 }, recipe), /target: got "gold"; expected environment, effects, shadow or an existing material ID \(brass\)/);
   assert.throws(() => wedgeOperation({ target: 'environment', field: 'fogColor.0', value: 1 }, recipe), /already a list or an object.*"fogColor" alone/);
   assert.throws(() => wedgeOperation({ target: 'environment', field: 'pointLights.4.intensity', value: 1 }, recipe), /"4" is not set here/);
-  assert.throws(() => parseWedgeField('rough ness'), /field: got "rough ness"; expected a field name/);
+  assert.throws(() => parseWedgeField('rough ness'), /parameter: got "rough ness"; expected a field name/);
   assert.throws(() => parseWedgeField('0.roughness'), /expected a field name/);
 });
 

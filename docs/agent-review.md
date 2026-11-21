@@ -110,13 +110,13 @@ Mesh inspection bounds describe authored geometry. Skinning and morphs can move 
   "sessionId": "<scene UUID>",
   "expectedRevision": 0,
   "target": "brass",
-  "field": "roughness",
+  "parameter": "roughness",
   "values": [0.1, 0.3, 0.6, 0.9]
 }
 ```
 
 - `target` is `environment`, `effects`, `shadow` or the ID of a material. Sun and lamps are environment fields: `lightDirection`, `keyIntensity` and `keyColor` for the sun, `pointLights.0.intensity` for the first point light.
-- `field` is the name `scene_apply` takes for that target, or a path into a list or an object that is already set, such as `pointLights.0.intensity`. The scene must already hold that list or object.
+- `parameter` is the name `scene_apply` takes for that target, or a path into a list or an object that is already set, such as `pointLights.0.intensity`. The scene must already hold that list or object.
 - `values` holds one JSON value per picture, in the shape `scene_apply` takes, each at most 2048 bytes. A value the scene refuses fails the whole call and the message names which one (`values[2]`).
 - `shot` (optional) holds a `camera` and a `motionTime` shared by every picture. Without it each picture uses the scene's camera and pose.
 - Up to four values draw in two columns, five or six in three and seven or eight in four. `width` and `height` set one picture (64 to 480, at most 960 by 1008 for the grid; the default is 320, or 240 for seven or eight values).
