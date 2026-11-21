@@ -210,10 +210,21 @@ function pickCallout(progress) {
   for (const note of calloutNotes) {
     if (!plainView && progress >= Number(note.dataset.from) && progress <= Number(note.dataset.to)) shown = note;
   }
+  for (const note of calloutNotes) note.classList.remove('aside');
   if (!shown) return null;
-  const noteBox = shown.getBoundingClientRect();
-  const covered = foundry.subjectBoxes().some((box) => !box.name.startsWith('Spark') && box.left < noteBox.right + 4 && box.right > noteBox.left - 4 && box.top < noteBox.bottom + 4 && box.bottom > noteBox.top - 4);
-  return covered ? null : shown;
+  if (!isCoveredBySubject(shown)) return shown;
+  // On a phone the rising mould reaches the bottom edge before the beat ends: the note moves to the free column beside the stream.
+  if (compactScreen.matches && shown.hasAttribute('data-aside')) {
+    shown.classList.add('aside');
+    if (!isCoveredBySubject(shown)) return shown;
+    shown.classList.remove('aside');
+  }
+  return null;
+}
+
+function isCoveredBySubject(note) {
+  const noteBox = note.getBoundingClientRect();
+  return foundry.subjectBoxes().some((box) => !box.name.startsWith('Spark') && box.left < noteBox.right + 4 && box.right > noteBox.left - 4 && box.top < noteBox.bottom + 4 && box.bottom > noteBox.top - 4);
 }
 
 function drawLeader(points, endX, endY) {
@@ -227,7 +238,7 @@ function drawLeader(points, endX, endY) {
 function placeCallout(progress) {
   const shown = pickCallout(progress);
   for (const note of calloutNotes) note.classList.toggle('on', note === shown);
-  const fromBelow = compactScreen.matches;
+  const fromBelow = compactScreen.matches && !(shown && shown.classList.contains('aside'));
   const anchor = shown ? foundry.anchor(shown.dataset.anchor, fromBelow) : null;
   if (!anchor) {
     leader.style.visibility = 'hidden';
