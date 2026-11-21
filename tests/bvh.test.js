@@ -124,7 +124,7 @@ test('scale: a tall skeleton reads as centimetres, a given scale wins, a short o
   assert.deepEqual([metres.unit, metres.scale], ['metres', 1]);
   const cmu = parseBvh(smallBvh().replace('OFFSET 0 1 0', 'OFFSET 0 25 0'));
   assert.equal(cmu.unit, 'cmu');
-  assert.ok(Math.abs(cmu.scale - 0.01143) < 1e-6, 'one CMU unit is 0.45 inch');
+  assert.ok(Math.abs(cmu.scale - 0.056444) < 1e-6, 'one CMU unit is 1 / 0.45 inch');
   const given = parseBvh(sampleText, { scale: 0.0254 });
   assert.deepEqual([given.unit, given.scale], ['given', 0.0254]);
   assert.equal(parseBvh(sampleText, { scale: 'auto' }).scale, 0.01);

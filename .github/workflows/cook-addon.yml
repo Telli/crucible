@@ -101,6 +101,7 @@ on:
       - 'src/animation.js'
       - 'src/area-light-portal.js'
       - 'src/blend-output.js'
+      - 'src/bvh-limits.js'
       - 'src/camera-effects.js'
       - 'src/camera-path.js'
       - 'src/camera.js'

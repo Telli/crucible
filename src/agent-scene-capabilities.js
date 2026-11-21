@@ -319,7 +319,7 @@ export const AGENT_SCENE_CAPABILITIES = Object.freeze({
   bvhMotion: Object.freeze({
     catalog: 'A .bvh file in --assets is listed by scene_asset_catalog as a skeleton-only GLB (meshes 0, skins 1, one clip named after the file; End Sites become joints named <parent>_End).',
     use: 'Pass its assetId as motion.layers[].from.asset with clip 0 on a rigged humanoid asset: the clip is retargeted by the humanoid bone map (see motion.layers from, and retargets in scene_inspect hierarchy). layer.scale multiplies the hips travel; rootMotion false keeps the walk in place.',
-    units: 'Auto: rest height up to 4 is metres, below 40 the CMU unit (0.45 inch), else centimetres; the file is stored in metres. The retarget scales hips travel by the rest hip heights, so units do not change the result on a target.',
+    units: 'Auto: rest height up to 4 is metres, below 40 the CMU unit (1 / 0.45 inch), else centimetres; the file is stored in metres. The retarget scales hips travel by the rest hip heights, so units do not change the result on a target.',
     channels: 'Any rotation order (first listed is outermost); a position channel gives its axis outright. Frame Time sets the clip times. Rest pose: a first frame that is a straight T-pose (common in CMU files) becomes the rest pose and is not played, so the zero pose splay is not copied onto the character.',
     limits: Object.freeze({ maxJoints: BVH_LIMITS.maxJoints, maxFrames: BVH_LIMITS.maxFrames, maxFileBytes: BVH_LIMITS.maxBytes, maxChannelValues: BVH_LIMITS.maxChannelValues }),
     note: 'Both skeletons face the same way with +Y up. A syntax error stops the catalog and names the file and line; a file over a limit is skipped with its reason. docs/retarget.md.',

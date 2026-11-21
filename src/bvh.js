@@ -19,11 +19,11 @@ const CHANNEL_NAMES = ['Xposition', 'Yposition', 'Zposition', 'Xrotation', 'Yrot
 
 /**
  * Units are not written in a BVH file, so the rest height of the skeleton (highest joint minus lowest, from the OFFSETs) says which
- * a file uses: up to 4 is metres, 4 to 40 is the CMU mocap unit (0.45 inch, so a person is about 30 units), more is centimetres.
+ * a file uses: up to 4 is metres, 4 to 40 is the CMU mocap unit (1 / 0.45 inch, 5.64 cm, so a person is about 30 units), more is centimetres.
  */
 const METRES_HEIGHT_LIMIT = 4;
 const CMU_HEIGHT_LIMIT = 40;
-const CMU_UNITS_TO_METRES = 0.45 * 0.0254;
+const CMU_UNITS_TO_METRES = 0.0254 / 0.45;
 const CENTIMETRES_TO_METRES = 0.01;
 
 /** Words per line, with the 1-based line number kept for errors. */
