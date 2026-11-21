@@ -14,15 +14,13 @@ const GROUND_TOKENS = new Set(['ground', 'rock', 'rocks', 'rocky', 'grass', 'woo
 const METAL_TOKENS = new Set(['metal', 'metallic', 'steel', 'iron', 'brass', 'copper', 'gold', 'silver', 'chrome', 'aluminium', 'aluminum', 'bronze']);
 // Tags whose colour is the surface albedo. The others tint light (water, liquid, foam) or are drawn as given (unlit).
 const ALBEDO_TAGS = new Set(['surface', 'grass', 'foliage']);
-const REALISM_CHECK_ORDER = ['albedo-out-of-range', 'metallic-on-dielectric', 'visible-tiling'];
 
-const FIX_BY_CHECK = Object.freeze({
-  'albedo-out-of-range': `Keep the base colour between ${ALBEDO_RANGE.minimum} and ${ALBEDO_RANGE.maximum} in linear light (darkest charcoal to fresh snow), and raise or lower the light instead.`,
+export const FIX_BY_CHECK = Object.freeze({
+  'albedo-out-of-range': `Keep the base colour between ${ALBEDO_RANGE.minimum} and ${ALBEDO_RANGE.maximum} in linear light (charcoal to fresh snow), and change the light instead.`,
   'metallic-on-dielectric': 'Set metallic to 0 on ground, rock, grass and wood; metallic is for bare metal.',
-  'visible-tiling': 'Break the repeat: scale the texture so one tile covers more of the surface, add a second pattern at another scale, or vary the colour with a noise mask.',
 });
 
-function finding(kind, target, message, fix) {
+export function finding(kind, target, message, fix) {
   return { kind, severity: 'warning', target, message, fix };
 }
 
@@ -89,29 +87,4 @@ export function metallicOnDielectricDiagnostics(recipe) {
 /** Both material checks, for `recipeDiagnostics`. */
 export function realismDiagnostics(recipe) {
   return [...albedoDiagnostics(recipe), ...metallicOnDielectricDiagnostics(recipe)];
-}
-
-/** A tiling warning for one shot, in the same shape. `tiling` is the result of detectTiling. */
-export function tilingDiagnostic(shotLabel, tiling) {
-  return finding('visible-tiling', shotLabel,
-    `The picture of ${shotLabel} repeats every ${tiling.periodX} by ${tiling.periodY} pixels (autocorrelation ${tiling.strength.toFixed(2)}), which reads as a texture tiled in a grid.`,
-    FIX_BY_CHECK['visible-tiling']);
-}
-
-/**
- * The pass or fail list of scene_review `checks: "realism"`. `tilingFindings` are the warnings the shots produced; the
- * tiling check only ever warns, so it reads "warn" and never "fail". Every check is listed, with its fix.
- */
-export function realismReport(recipe, tilingFindings = []) {
-  const findingsByCheck = {
-    'albedo-out-of-range': albedoDiagnostics(recipe),
-    'metallic-on-dielectric': metallicOnDielectricDiagnostics(recipe),
-    'visible-tiling': tilingFindings,
-  };
-  const checks = REALISM_CHECK_ORDER.map(check => {
-    const findings = findingsByCheck[check];
-    const status = findings.length === 0 ? 'pass' : check === 'visible-tiling' ? 'warn' : 'fail';
-    return { check, status, fix: FIX_BY_CHECK[check], ...(findings.length ? { findings: findings.map(({ target, message }) => ({ target, message })) } : {}) };
-  });
-  return { passed: checks.every(entry => entry.status !== 'fail'), checks };
 }

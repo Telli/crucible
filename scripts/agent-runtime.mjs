@@ -69,8 +69,7 @@ import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
 import { GLB_EXPORT_NOTES } from '../src/glb-export-omissions.js';
 import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 import { previewDeadlineMilliseconds } from './preview-deadline.mjs';
-import { realismReport } from '../src/realism-checks.js';
-import { reviewTilingFindings } from './review-realism.mjs';
+import { realismReport, reviewTilingFindings } from './review-realism.mjs';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
