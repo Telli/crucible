@@ -6,7 +6,8 @@
 .object-info { position: absolute; top: var(--panel-gap); left: var(--panel-gap); z-index: 2; max-width: 340px; pointer-events: none; }
 .object-info h1 { margin-bottom: 12px; }
 .object-info p { color: var(--soft); font-size: 14px; line-height: 1.6; }
-.object-caption { display: flex; align-items: center; gap: 10px; margin-top: 16px; font: 500 12px/1.4 var(--mono); color: var(--soft); }
+.object-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 16px; font: 500 12px/1.4 var(--mono); color: var(--soft); }
+.object-caption span { white-space: nowrap; }
 .status-dot { width: 8px; height: 8px; flex: none; background: var(--accent); font-size: 0; }
 .controls { position: absolute; top: calc(var(--panel-gap) + 56px); right: var(--panel-gap); z-index: 2; width: 240px; max-height: calc(100% - 56px - 98px - var(--panel-gap)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; display: grid; gap: 12px; font-size: 13px; }
 .controls label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
