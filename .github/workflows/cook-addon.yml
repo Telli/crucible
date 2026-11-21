@@ -146,6 +146,7 @@ on:
       - 'src/flush-resolve.js'
       - 'src/flush-search.js'
       - 'src/flush-search-reuse.js'
+      - 'src/flush-search-runner.js'
       - 'src/fog-field.js'
       - 'src/fog-shader.js'
       - 'src/font-default.js'

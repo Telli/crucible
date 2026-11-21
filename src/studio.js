@@ -3653,6 +3653,11 @@ export function createStudio(container, {
   }
 
   handleChange = detail => {
+    // The deferred near-coplanar search settled (#2905): the parts to draw changed with no edit, so the idle viewport redraws once.
+    if (detail.kind === 'flush') {
+      requestFrame();
+      return;
+    }
     selectionReadoutStale = true;
     // The object a key is holding is gone or no longer the selection: let go without touching the new scene.
     if (modalTransform && modalTransform.axis && !controller.dragging) {

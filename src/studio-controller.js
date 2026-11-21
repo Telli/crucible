@@ -28,6 +28,7 @@ const SCENE_RECORD_PANELS = Object.freeze({
 });
 const SHOT_NAME_PATTERN =/^[A-Za-z0-9_-]{1,24}$/;
 const GIZMO_SCREEN_PIXELS = 74;
+const FLUSH_WATCH_MILLISECONDS = 32;
 const ROTATION_RING_SEGMENTS = 32;
 const WORLD_BASIS = Object.freeze({ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] });
 const AXIS_PARALLEL_LIMIT = 0.002;
@@ -572,6 +573,31 @@ export function createStudioController({
         ...detail,
       });
     }
+    watchPendingFlush();
+  }
+
+  // An edit of a heavy scene returns before its near-coplanar search is done, and the search then ends with no edit to say so
+  // (#2905). While the scene says one is pending, one short timer waits for it; when it is done the viewport is told once, so a
+  // viewport that draws on demand shows the ranked result. An idle controller has no timer.
+  let flushTimer = null;
+
+  function watchPendingFlush() {
+    if (flushTimer !== null || !currentScene.flushPending) {
+      return;
+    }
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      if (currentScene.flushPending) {
+        watchPendingFlush();
+      } else {
+        notify({ kind: 'flush' });
+      }
+    }, FLUSH_WATCH_MILLISECONDS);
+  }
+
+  function stopWatchingFlush() {
+    clearTimeout(flushTimer);
+    flushTimer = null;
   }
 
   function invalidateQuery() {
@@ -725,6 +751,7 @@ export function createStudioController({
 
   function installScene(scene) {
     invalidateQuery();
+    stopWatchingFlush();
     // A drag in progress belongs to the scene it began on.
     dragState = null;
     currentScene = scene;
@@ -2404,6 +2431,7 @@ export function createStudioController({
       return currentScene.exportRecipe();
     },
     dispose() {
+      stopWatchingFlush();
       invalidateQuery();
     },
   });
