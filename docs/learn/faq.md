@@ -8,7 +8,7 @@ No. You can use them side by side. three.js is a general 3D library that you pro
 
 ## Is there a visual editor?
 
-Yes, Studio, an optional addon that edits the same scene recipe as the MCP tools. It is not a page of the public site. The [Studio guide](#studio) says how to use it.
+Yes, Studio, an optional addon that edits the same scene recipe as the MCP tools. It is not a page of the public site. The [Studio guide](https://github.com/codepawl/crucible/blob/main/docs/studio.md) says how to use it.
 
 ## Is it faster or smaller than three.js?
 
