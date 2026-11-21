@@ -18,8 +18,8 @@ const PERFORMANCE_CHOICES = Object.freeze([
 ]);
 
 const MODELLING_ROWS = Object.freeze([
-  { name: 'moveSnapStep', label: 'Move snap step', icon: 'translate', describe: value => `${value} m` },
-  { name: 'rotateSnapDegrees', label: 'Rotate snap angle', icon: 'rotate', describe: value => `${value}°` },
+  { name: 'moveSnapStep', label: 'Move snap', icon: 'translate', describe: value => `${value} m` },
+  { name: 'rotateSnapDegrees', label: 'Rotate snap', icon: 'rotate', describe: value => `${value}°` },
   { name: 'gizmoSize', label: 'Handle size', icon: 'handle', describe: capitalize },
   { name: 'startWorkspace', label: 'Open in', icon: 'panels', describe: capitalize },
 ]);

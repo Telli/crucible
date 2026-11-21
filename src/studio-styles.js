@@ -1725,13 +1725,11 @@ export const STUDIO_CSS = `
   color: var(--studio-muted);
   font-weight: 600;
 }
-.crucible-studio-setup-step .crucible-studio-icon { opacity: 0.7; }
-/* The step you are on is told apart by its text colour, its icon at full strength and a soft fill, not by weight, so no label changes width. */
+/* The step you are on is told apart by its text colour and a soft fill, not by weight, so no label changes width. */
 .crucible-studio dialog button.crucible-studio-setup-step[data-current="true"] {
   background: color-mix(in srgb, var(--studio-text) 8%, transparent);
   color: var(--studio-text);
 }
-.crucible-studio-setup-step[data-current="true"] .crucible-studio-icon { opacity: 1; }
 .crucible-studio-setup-body {
   flex: 1 1 auto;
   min-block-size: 0;
@@ -1805,10 +1803,18 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-setup-card-label { font-weight: 600; }
 .crucible-studio-setup-card-name > .crucible-studio-icon { align-self: center; }
-.crucible-studio-setup-cards-wide .crucible-studio-setup-card-name > .crucible-studio-icon {
-  inline-size: 24px;
-  block-size: 24px;
+/* A tier card is tall, so its icon is the picture of the tier: large, above the name. */
+.crucible-studio-setup-cards-wide .crucible-studio-setup-card-name {
+  flex-direction: column;
+  align-items: start;
+  gap: 10px;
 }
+.crucible-studio-setup-cards-wide .crucible-studio-setup-card-name > .crucible-studio-icon {
+  align-self: start;
+  inline-size: 44px;
+  block-size: 44px;
+}
+.crucible-studio-setup-cards-wide .crucible-studio-setup-card-detail { white-space: normal; }
 .crucible-studio-setup-card-detail {
   inline-size: 100%;
   overflow: hidden;
@@ -1947,11 +1953,11 @@ export const STUDIO_CSS = `
 .crucible-studio-setup-handle[data-size="small"]::before { inline-size: 8px; block-size: 8px; }
 .crucible-studio-setup-handle[data-size="medium"]::before { inline-size: 12px; block-size: 12px; }
 .crucible-studio-setup-handle[data-size="large"]::before { inline-size: 18px; block-size: 18px; }
-/* The chat mark stands beside the prompt box, which takes all the height the step has, and the button sits under it. */
+/* The chat mark stands beside the prompt box, which is as tall as its text; the block rests in the middle of the step. */
 .crucible-studio-setup-agent {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
+  align-content: center;
   align-items: start;
   gap: 12px;
 }
@@ -1971,8 +1977,8 @@ export const STUDIO_CSS = `
 }
 .crucible-studio textarea.crucible-studio-setup-prompt {
   inline-size: 100%;
-  block-size: 100%;
-  min-block-size: 120px;
+  field-sizing: content;
+  max-block-size: 160px;
   padding: 10px;
   border: 1px solid var(--studio-border);
   border-radius: 10px;
