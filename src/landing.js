@@ -238,20 +238,30 @@ function drawLeader(points, endX, endY) {
 function placeCallout(progress) {
   const shown = pickCallout(progress);
   for (const note of calloutNotes) note.classList.toggle('on', note === shown);
-  const fromBelow = compactScreen.matches && !(shown && shown.classList.contains('aside'));
+  const fromBelow = compactScreen.matches;
   const anchor = shown ? foundry.anchor(shown.dataset.anchor, fromBelow) : null;
   if (!anchor) {
     leader.style.visibility = 'hidden';
     return;
   }
   const endX = Math.round(anchor[0]);
-  if (fromBelow) {
+  if (fromBelow && !shown.classList.contains('aside')) {
     const riseX = Math.round(Math.max(shown.offsetLeft + 10, Math.min(shown.offsetLeft + shown.offsetWidth - 10, anchor[0])));
     const topY = Math.round(Math.min(shown.offsetTop - 16, anchor[1]));
     drawLeader(`${riseX},${shown.offsetTop - 6} ${riseX},${topY} ${endX},${topY}`, endX, topY);
     return;
   }
   const noteBottom = shown.offsetTop + shown.offsetHeight;
+  if (shown.classList.contains('aside')) {
+    // Beside the stream the pointer ends exactly on the anchor: straight across when it is level with the note, else down or up first.
+    const anchorY = Math.round(anchor[1]);
+    const noteRight = shown.offsetLeft + shown.offsetWidth;
+    const leaveX = Math.round(Math.max(shown.offsetLeft + 10, Math.min(noteRight - 10, endX)));
+    if (anchorY >= shown.offsetTop && anchorY <= noteBottom) drawLeader(`${noteRight + 6},${anchorY} ${endX},${anchorY}`, endX, anchorY);
+    else if (anchorY > noteBottom) drawLeader(`${leaveX},${noteBottom + 6} ${leaveX},${anchorY} ${endX},${anchorY}`, endX, anchorY);
+    else drawLeader(`${leaveX},${shown.offsetTop - 6} ${leaveX},${anchorY} ${endX},${anchorY}`, endX, anchorY);
+    return;
+  }
   const dropX = Math.round(Math.max(shown.offsetLeft + 10, Math.min(shown.offsetLeft + shown.offsetWidth - 10, anchor[0] + 24)));
   const endY = Math.round(Math.max(noteBottom + 16, anchor[1]));
   drawLeader(`${dropX},${noteBottom + 6} ${dropX},${endY} ${endX},${endY}`, endX, endY);
