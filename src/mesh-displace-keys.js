@@ -1,6 +1,6 @@
 // The recipe side of a mesh `displace` edit that reads its height from a material graph or a catalog image (#2863):
-// validation of the `source` field, the images to decode and the cache identity. No imports, so the scene builder can
-// use it before the mesh module loads. Sampling is in mesh-displace-source.js.
+// validation of the `source` field and the cache identity. It loads with the lazy mesh module, like the sampling in
+// mesh-displace-source.js; the core scene builder reaches it through agentSceneModule('mesh').
 
 const ASSET_ID_PATTERN = /^[a-f0-9]{64}$/;
 const MATERIAL_ID_PATTERN = /^[A-Za-z0-9._-]{1,48}$/;
@@ -30,15 +30,6 @@ export function normalizeDisplaceSource(source) {
   return { image };
 }
 
-/** The catalog image IDs the displace edits of a list read, so the host decodes them with the scene. */
-export function displaceSourceImages(edits) {
-  const assets = new Set();
-  for (const edit of Array.isArray(edits) ? edits : []) {
-    if (edit?.op === 'displace' && typeof edit.source?.image === 'string') assets.add(edit.source.image.toLowerCase());
-  }
-  return [...assets];
-}
-
 /** The graph pattern of a material that can give a displacement height, or an error that says what to change. */
 export function heightPatternOf(material, id) {
   const pattern = material?.pattern;
@@ -65,9 +56,9 @@ function displaceSourceDependency(source, materials) {
   return `material:${source.material}:${JSON.stringify(pattern?.graph?.height ?? null)}:${pattern?.size ?? ''}:${pattern?.mapping ?? ''}`;
 }
 
-/** One string for every height source the edits name, for the cache key of the geometry that holds them. */
-export function displaceDependencySignature(edits, materials) {
-  return (Array.isArray(edits) ? edits : [])
+/** One string for every height source the edits and stack of a mesh geometry name, for the cache key of the geometry that holds them. */
+export function displaceHeightSignature(meshDefinition, materials) {
+  return [...(meshDefinition.edits ?? []), ...(meshDefinition.stack ?? [])]
     .filter(edit => edit?.op === 'displace' && edit.source)
     .map(edit => displaceSourceDependency(edit.source, materials))
     .join('|');

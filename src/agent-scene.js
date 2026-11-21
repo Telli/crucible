@@ -1,6 +1,5 @@
 import { mat4, mat3 } from 'gl-matrix';
 import { roomJoinedBoxNodeIds } from './room-box-joins.js';
-import { checkDisplaceMaterials, displaceDependencySignature } from './mesh-displace-keys.js';
 import { box, checkTorusShape, circle, cone, cylinder, grid, icoSphere, sphere, torus } from './geometry.js';
 import { createSceneGraph } from './scene-graph.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
@@ -839,7 +838,7 @@ function geometrySignature(definition, definitions, heightSources) {
 
 // The materials a displace source reads, so editing a graph height rebuilds the mesh that follows it.
 function heightDependencies(meshDefinition, heightSources) {
-  return displaceDependencySignature([...(meshDefinition.edits ?? []), ...(meshDefinition.stack ?? [])], heightSources?.materials);
+  return agentSceneModule('mesh').displaceHeightSignature(meshDefinition, heightSources?.materials);
 }
 
 /** The materials and decoded images a mesh displace edit reads its height from. */
@@ -1145,7 +1144,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
   });
   recipe.materials = resources(withDefaultMaterial(recipe), limits.maxMaterials, 'materials', materialFrom);
   recipe.geometries.forEach((definition, index) => {
-    if (definition.type === 'mesh') withFieldPrefix(`geometries[${index}]`, () => checkDisplaceMaterials(definition, heightSourcesOf(recipe).materials));
+    if (definition.type === 'mesh') withFieldPrefix(`geometries[${index}]`, () => agentSceneModule('mesh').checkDisplaceMaterials(definition, heightSourcesOf(recipe).materials));
   });
   const distinctPatterns = new Set(recipe.materials.filter(material => material.pattern).map(material => JSON.stringify(material.pattern)));
   if (distinctPatterns.size > MAX_MATERIAL_PATTERNS) {

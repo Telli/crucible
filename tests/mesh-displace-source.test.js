@@ -67,6 +67,19 @@ test('a catalog image displaces a subdivided plane, with u running left to right
   assert.ok(right > 1.9, `right edge rose to ${right}`);
 });
 
+test('an image height is read with bilinear filtering, so a vertex between two texels gets their mean', () => {
+  // The black and white halves meet at u = 0.5, between texel centres 0.375 and 0.625: nearest sampling would give 0 or 2, bilinear gives 1.
+  const edits = [{ op: 'displace', source: { image: IMAGE_ASSET }, strength: 2, midlevel: 0, direction: 'z' }];
+  const scene = createAgentScene(recipeWith([{ id: 'plain', tag: 'surface' }], edits), {}, { sequenceFrames: halfImage() });
+  const geometry = scene.parts[0].geometry;
+  const middle = [];
+  for (let vertex = 0; vertex < geometry.positions.length / 3; vertex++) {
+    if (Math.abs(geometry.uvs[vertex * 2] - 0.5) < 1e-6) middle.push(geometry.positions[vertex * 3 + 2]);
+  }
+  assert.ok(middle.length > 0);
+  for (const height of middle) assert.ok(Math.abs(height - 1) < 1e-5, `height ${height} at u 0.5`);
+});
+
 test('the same recipe gives the same bytes twice, and editing the graph height rebuilds the mesh', () => {
   const edits = [...subdivided, { op: 'displace', source: { material: 'ramp' }, midlevel: 0, direction: 'z' }];
   const first = heightsOf(createAgentScene(recipeWith([rampMaterial()], edits), {}));

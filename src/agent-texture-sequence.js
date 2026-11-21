@@ -2,7 +2,6 @@ import { createImage } from './material-texture-kit.js';
 import { TEXTURE_SEQUENCE_LIMITS } from './texture-sequence-limits.js';
 import { invalidField } from './field-error.js';
 import { graphImageAssets } from './material-graph.js';
-import { displaceSourceImages } from './mesh-displace-keys.js';
 import { textureMapIds } from './agent-texture-set.js';
 
 // An image sequence as the colour map of a recipe material: `map: { sequence: { frames, fps, loop } }`. The frames are
@@ -85,8 +84,7 @@ export function sequenceFrameIds(value) {
         if (ASSET_ID.test(asset.toLowerCase())) ids.add(asset.toLowerCase());
       }
     }
-    for (const asset of displaceSourceImages(node.edits)) ids.add(asset);
-    for (const asset of displaceSourceImages(node.stack)) ids.add(asset);
+    if (node.op === 'displace' && typeof node.source?.image === 'string' && ASSET_ID.test(node.source.image.toLowerCase())) ids.add(node.source.image.toLowerCase());
     for (const id of textureMapIds(node)) ids.add(id);
     const frames = node.map?.sequence?.frames;
     if (Array.isArray(frames)) {
