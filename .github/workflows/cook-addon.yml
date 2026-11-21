@@ -230,6 +230,7 @@ on:
       - 'src/mesh-lint.js'
       - 'src/mesh-lod.js'
       - 'src/mesh-loopcut.js'
+      - 'src/mesh-map-bake.js'
       - 'src/mesh-masks.js'
       - 'src/mesh-modifiers.js'
       - 'src/mesh-normal-modifiers.js'
