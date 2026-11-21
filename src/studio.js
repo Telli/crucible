@@ -3558,7 +3558,8 @@ export function createStudio(container, {
     requestFrame();
   }
 
-  // The draft follows the edits a moment after they stop. While the notice offers the older draft, nothing overwrites it.
+  // The draft follows the edits a moment after they stop. The first edit made while the notice offers the older draft
+  // answers it: the person carries on with the current scene, so the notice closes and the draft follows the new work.
   let draftTimer = 0;
 
   function writeDraftNow() {
@@ -3567,7 +3568,11 @@ export function createStudio(container, {
   }
 
   function scheduleDraftSave() {
-    if (draftNotice.visible || draftTimer) return;
+    if (draftNotice.visible) {
+      draftNotice.hide();
+      announce('Kept your current scene; the older draft was replaced by your new edits');
+    }
+    if (draftTimer) return;
     draftTimer = setTimeout(writeDraftNow, DRAFT_SAVE_DELAY_MILLISECONDS);
   }
 
