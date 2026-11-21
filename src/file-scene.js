@@ -6,7 +6,8 @@ import { applyWaterReflection, attachWaterReflection } from './water-reflection.
 import { createCameraSampler } from './camera-track.js';
 import { inWholeWorldOrder, readPartRanks } from './showcase-download.js';
 import { withinDrawnLightLimits } from './drawn-light-lists.js';
-import { partsForRendererOptions, withSceneFileRendererDefaults } from './dense-lods.js';
+import { createFileSceneRenderAt } from './file-scene-clip.js';
+import { partsForRendererOptions, sceneFileLighting, sunShadowBounds, withFileSceneInteriorLight, withSceneFileLights, withSceneFileRendererDefaults } from './dense-lods.js';
 
 // Headless twin of the showcase page for scripts/render-media.mjs (--scene file). The export script serves the scene.json
 // at /__file/config.json with every asset path already pointing at a file it can read, and an optional camera track at
@@ -54,25 +55,32 @@ async function start() {
   const sharedTextures = createSharedTextures();
   const gltfOptions = description.gltfOptions ?? {};
   const asset = await loadGltf(model, { baseUrl: new URL('.', new URL(description.glb, location.href)).href, sharedTextures, ...gltfOptions });
+  const assetOwnParts = asset.parts;
   asset.parts = await loadStagedParts(description, asset, model, sharedTextures);
   const rendererOptions = withSceneFileRendererDefaults(description.renderer);
   const shadowCascades = rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined;
   const reflection = description.waterReflection ? applyWaterReflection(asset.parts) : { parts: asset.parts, surface: null };
+  // The GLB's punctual lights light the scene, for the drawn frame and the native trace alike (#2664).
+  const sceneEnvironment = withSceneFileLights(asset.lights, rendererOptions.environment);
+  // The drawn frame takes the HDRI's sun as its shadowed key light, with the sun's shadow view fitted to the scene (#2761).
+  // A scene with lights of its own is drawn as before, and the native trace keeps the whole map.
+  const drawn = sceneFileLighting(map, asset.lights, rendererOptions.environment, { hdriSun: description.hdriSun !== false });
   const viewport = document.querySelector('#file-viewport');
-  const renderer = new CrucibleRenderer(viewport, partsForRendererOptions(reflection.parts, viewport, rendererOptions), {
+  const interior = await withFileSceneInteriorLight(partsForRendererOptions(reflection.parts, viewport, rendererOptions), drawn.environment);
+  const rendererParts = interior.parts;
+  const renderer = new CrucibleRenderer(viewport, rendererParts, {
     ground: false, hdr: true, samples: 4, memoryBudgetMiB: 384,
+    shadowBounds: drawn.sunSplit ? sunShadowBounds(reflection.parts, drawn.environment.lightDirection) : {},
     ...rendererOptions,
     shadowCascades,
-    environment: { ...environmentForRenderer(rendererOptions.environment ?? {}), map },
+    environment: { ...environmentForRenderer(interior.environment), map: drawn.map },
   });
   attachWaterReflection(renderer, reflection.surface, { updateEvery: 1 });
   const frame = { exposure: description.exposure ?? 1, ...(description.frame ?? {}) };
-  const renderAt = seconds => {
-    const pose = camera ? camera.sample(seconds) : { eye: description.eye, target: description.target };
-    renderer.render({ ...frame, ...pose });
-  };
+  // A GLB with an animation clip plays its first clip on a loop, as the showcase page does; one without a clip is drawn as before.
+  const renderAt = createFileSceneRenderAt({ asset, posedParts: assetOwnParts, sceneParts: asset.parts, rendererParts, renderer, camera, description, frame });
   // `parts` and `environment` let scripts/render-file-native.mjs pack the same scene for the native path tracer.
-  window.__scene = { renderer, duration: camera?.duration, renderAt, pause() {}, parts: reflection.parts, environment: { ...(rendererOptions.environment ?? {}), map } };
+  window.__scene = { renderer, duration: camera?.duration, renderAt, poseClipAt: seconds => renderAt.clipPlayer?.applyAt(seconds), pause() {}, parts: reflection.parts, environment: { ...sceneEnvironment, map } };
 }
 
 start().catch(error => {

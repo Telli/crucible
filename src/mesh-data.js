@@ -128,14 +128,27 @@ export function deriveEdges(vertexCount, faceOffsets, cornerVertices) {
  * attributes: { point: { name: { data, size } }, edge: {...}, face: {...}, corner: {...} }.
  * Edge attributes are only accepted together with edgeVertices and cornerEdges, because derived edge order is internal.
  */
-export function createMeshData({ positions, faceOffsets, cornerVertices, edgeVertices, cornerEdges, attributes = {} }) {
+export function createMeshData(options) {
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('createMeshData needs an object like { positions, faceOffsets, cornerVertices }.');
+  }
+  const { positions, faceOffsets, cornerVertices, edgeVertices, cornerEdges, attributes = {} } = options;
+  if (attributes === null || typeof attributes !== 'object' || Array.isArray(attributes)) {
+    throw new TypeError('createMeshData attributes must be an object like { point, edge, face, corner }, or left out.');
+  }
   if (!(positions instanceof Float32Array) || positions.length % 3 !== 0 || positions.length === 0) {
     throw new TypeError('positions must be a nonempty Float32Array of XYZ triples.');
   }
   const vertexCount = positions.length / 3;
+  const unknownDomains = Object.keys(attributes).filter(domain => !DOMAINS.includes(domain));
+  if (unknownDomains.length) throw new TypeError(`Unknown attribute domain ${unknownDomains.join(', ')}. Pass ${DOMAINS.join(', ')}.`);
   if (vertexCount > MAX_MESH_VERTICES) throw new RangeError(`Meshes support at most ${MAX_MESH_VERTICES} vertices.`);
   if (!allFinite(positions)) throw new RangeError('positions must be finite.');
   validateFaces(vertexCount, faceOffsets, cornerVertices);
+  if (Boolean(edgeVertices) !== Boolean(cornerEdges)) {
+    const missing = edgeVertices ? 'cornerEdges' : 'edgeVertices';
+    throw new TypeError(`Pass both edgeVertices and cornerEdges together; ${missing} is missing.`);
+  }
   let edges;
   if (edgeVertices && cornerEdges) {
     validateExplicitEdges(vertexCount, faceOffsets, cornerVertices, edgeVertices, cornerEdges);

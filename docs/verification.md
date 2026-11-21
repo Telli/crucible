@@ -41,7 +41,7 @@ Both video runs held a maximum of one pending frame.
 The full GPU film sampled a maximum JavaScript heap of 6.9 MiB.
 
 FFprobe verified 768 H.264 frames, 32.000 seconds, 24 FPS, BT.709 metadata and 48 kHz stereo AAC.
-The MP4 contains 13,759,581 bytes. Representative encoded frames were inspected in `film-contact.png`.
+The MP4 contains 13,759,581 bytes. Representative encoded frames were inspected by eye.
 
 FFmpeg measured the encoded score at -21.0 dB mean volume and -4.5 dB peak volume.
 The score uses original synthesized tones and seeded noise. No human listening check was performed.

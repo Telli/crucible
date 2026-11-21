@@ -116,3 +116,21 @@ test('a GPU light bake of a spot cone too narrow to change its cosine keeps a fi
   await bakeLightmapsAsync([floor], { spotLights: [spot], keyColor: [0, 0, 0] }, { samples: 2, bounces: 1, texelsPerUnit: 2, maxResolution: 8, backend: 'native', texelTracer });
   assert.ok(Number.isFinite(spotBlend), `blend ${spotBlend}`);
 });
+
+test('an IES profile with a hole in angles or candela is refused and names the index', () => {
+  const holedCandela = [1, 1, 1];
+  delete holedCandela[1];
+  assert.throws(() => resolveIesProfile({ angles: [0, 10, 20], candela: holedCandela }), /no value at index 1/);
+  const holedAngles = [0, 10, 20];
+  delete holedAngles[2];
+  assert.throws(() => resolveIesProfile({ angles: holedAngles, candela: [1, 1, 1] }), /no value at index 2/);
+});
+
+test('an IES profile that is zero from 0 to 90 degrees is refused, one that emits there is kept', () => {
+  assert.throws(() => resolveIesProfile({ angles: [0, 100, 120], candela: [0, 0, 5] }), /zero from 0 to 90 degrees/);
+  assert.throws(() => resolveIesProfile({ angles: [95, 120], candela: [0, 5] }), /zero from 0 to 90 degrees/, 'a profile that starts past 90 reads its first value');
+  assert.doesNotThrow(() => resolveIesProfile({ angles: [95, 120], candela: [3, 5] }));
+  assert.doesNotThrow(() => resolveIesProfile({ angles: [0, 120], candela: [0, 5] }), 'it rises above zero before 90');
+  assert.doesNotThrow(() => resolveIesProfile({ angles: [0, 60, 120], candela: [0, 2, 0] }));
+  for (const name of IES_PROFILE_NAMES) assert.ok(profileSamples(resolveIesProfile(name)).some(sample => sample > 0), name);
+});

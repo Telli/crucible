@@ -115,7 +115,8 @@ export function selectFaces(mesh, rule) {
         return mask;
       }
       case 'faces': {
-        if (keys.length !== 1 || !Array.isArray(node.faces) || node.faces.length > mesh.faceCount) throw ruleError('"faces" needs an array of face indices.');
+        if (keys.length !== 1 || !Array.isArray(node.faces)) throw ruleError('"faces" needs an array of face indices.');
+        if (node.faces.length > mesh.faceCount) throw ruleError(`"faces" lists ${node.faces.length} indices but the mesh has ${mesh.faceCount} faces; list each face once.`);
         for (const face of node.faces) {
           if (!Number.isInteger(face) || face < 0 || face >= mesh.faceCount) throw new RangeError(`Face index ${face} is outside 0..${mesh.faceCount - 1}.`);
           mask[face] = 1;

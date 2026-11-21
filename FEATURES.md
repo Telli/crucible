@@ -14,10 +14,10 @@ optional `Ready` expression the driver waits for, and `Drive`.
 ## Site pages
 
 ### `home`
-- Name: Home (hero world loop, install, downloads section)
+- Name: Home (pour-to-cast scroll story, install, showcase, agent and tier sections)
 - Surface: Site
 - Reach: `/`
-- Source: `site/index.html`, `src/home.js`, `src/hero-lab/hero-loop.js`
+- Source: `site/index.html`, `src/landing.js`, `src/landing-scene.js`, `src/landing-story.js`, `src/landing.css`
 - Drive: `node scripts/drive.mjs shot home`
 
 ### `downloads`
@@ -82,6 +82,14 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Reach: `/recipe-dolly-zoom.html`
 - Source: `site/recipe-dolly-zoom.html`, `public/recipes/dolly-zoom.json`
 - Drive: `node scripts/drive.mjs shot recipe-dolly-zoom`
+
+### `studio`
+- Name: Scene studio
+- Surface: Site
+- Reach: `/studio.html`
+- Source: `site/studio.html`, `src/studio-page.js`, `src/studio.js`
+- Ready: `Boolean(window.__studioPage?.renderer)`
+- Drive: `node scripts/drive.mjs shot studio`
 
 ### `object`
 - Name: Object studio
@@ -493,20 +501,6 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `bin/crucible-addon-check.mjs`
 - Drive: none: not a page
 
-### `67js-mcp`
-- Name: Old name of crucible-mcp, kept as an alias
-- Surface: CLI
-- Reach: command `npx 67js-mcp`
-- Source: `bin/67js-mcp.mjs`
-- Drive: none: not a page
-
-### `67js-addon-check`
-- Name: Old name of crucible-addon-check, kept as an alias
-- Surface: CLI
-- Reach: command `npx 67js-addon-check`
-- Source: `bin/67js-addon-check.mjs`
-- Drive: none: not a page
-
 ### `npm-dev`
 - Name: Vite dev server on 127.0.0.1:5173 that serves every page above
 - Surface: CLI
@@ -585,7 +579,7 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: none: not a page
 
 ### `npm-test-mutation-check`
-- Name: Reverts your src, bin and packages changes, runs a test file and fails when it still passes
+- Name: Reverts your src, bin, packages and scripts changes, runs a test file and fails when it still passes
 - Surface: CLI
 - Reach: command `npm run test:mutation-check`
 - Source: `scripts/test-mutation-check.mjs`

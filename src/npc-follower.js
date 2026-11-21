@@ -14,6 +14,7 @@ const DEFAULTS = Object.freeze({
   cornerRadius: 0.2,
   cornerSlowDistance: 1.5,
   minimumSpeed: 0.3,
+  stuckSeconds: 2,
 });
 const BLOCKED_PROBE_EPSILON = 1e-9;
 
@@ -57,7 +58,7 @@ function clamp(value, minimum, maximum) {
  * Options: `graph` (an animation graph made with the `rootMotion` option), `parameter` ('speed', a number parameter of the graph),
  * `position` ([x, y, z]), `yaw` (radians, the player's convention: 0 faces -Z), `cruiseSpeed` (in parameter units, 2.2),
  * `acceleration` (6 per second), `turnRate` (6 rad/s), `arrivalRadius` (0.1 m), `slowRadius` (1 m, where it eases in to the goal),
- * `cornerRadius` (0.2 m, how close a corner counts as reached), `cornerSlowDistance` (1.5 m), `minimumSpeed` (0.3), `navmesh`
+ * `cornerRadius` (0.2 m, how close a corner counts as reached), `cornerSlowDistance` (1.5 m), `minimumSpeed` (0.3), `stuckSeconds` (2 s without moving before it gives up), `navmesh`
  * (keeps the NPC on walkable ground, gives its height and enables `goTo`).
  */
 export function createPathFollower(options = {}) {
@@ -83,6 +84,7 @@ export function createPathFollower(options = {}) {
     cornerRadius: positive(options.cornerRadius, DEFAULTS.cornerRadius, 'cornerRadius'),
     cornerSlowDistance: positive(options.cornerSlowDistance, DEFAULTS.cornerSlowDistance, 'cornerSlowDistance'),
     minimumSpeed: positive(options.minimumSpeed, DEFAULTS.minimumSpeed, 'minimumSpeed'),
+    stuckSeconds: positive(options.stuckSeconds, DEFAULTS.stuckSeconds, 'stuckSeconds'),
   };
   if (settings.minimumSpeed > settings.cruiseSpeed) throw new RangeError('createPathFollower minimumSpeed must not exceed cruiseSpeed.');
   graph.rootMotion; // Throws and says how to enable it when the graph has no rootMotion option.
@@ -92,9 +94,10 @@ export function createPathFollower(options = {}) {
     position: [...position],
     yaw: options.yaw ?? 0,
     speed: 0,
-    status: 'idle', // 'idle' | 'moving' | 'arrived'
+    status: 'idle', // 'idle' | 'moving' | 'arrived' | 'stuck'
     waypointIndex: 0,
     blockedSteps: 0,
+    stuckSeconds: 0, // Seconds in a row that the root motion asked to move and the navmesh let it move nowhere.
     lastMove: 0, // Metres moved in the last step.
   };
   let waypoints = [];
@@ -201,6 +204,17 @@ export function createPathFollower(options = {}) {
     if (Math.hypot(moveX, moveZ) >= BLOCKED_PROBE_EPSILON) state.blockedSteps += 1;
   }
 
+  // Blocked on every side for stuckSeconds: stop and say so, instead of walking in place for ever (#2403).
+  function giveUpWhenStuck(stepSeconds) {
+    const wantedToMove = Math.hypot(graph.rootMotion.delta[0], graph.rootMotion.delta[1]) >= BLOCKED_PROBE_EPSILON;
+    state.stuckSeconds = wantedToMove && state.lastMove === 0 ? state.stuckSeconds + stepSeconds : 0;
+    if (state.stuckSeconds < settings.stuckSeconds) return false;
+    state.status = 'stuck';
+    state.speed = 0;
+    graph.set(settings.parameter, 0);
+    return true;
+  }
+
   const follower = {
     state,
 
@@ -208,10 +222,17 @@ export function createPathFollower(options = {}) {
     follow(path) {
       // The route starts where the NPC stands, so every waypoint after it has a segment behind it.
       const points = readPath(path).map(point => [point[0], point[1] ?? state.position[1], point[2]]);
-      waypoints = [[...state.position], ...points];
+      // A point on the spot of the one before it has no direction, so it would read as a corner of any angle (#2403).
+      waypoints = [[...state.position]];
+      for (const point of points) {
+        const previous = waypoints[waypoints.length - 1];
+        if (point[0] !== previous[0] || point[2] !== previous[2]) waypoints.push(point);
+      }
+      if (waypoints.length === 1) waypoints.push(points[points.length - 1]);
       state.waypointIndex = 1;
       state.status = 'moving';
       state.blockedSteps = 0;
+      state.stuckSeconds = 0;
       return follower;
     },
 
@@ -238,6 +259,7 @@ export function createPathFollower(options = {}) {
       state.lastMove = 0;
       if (state.status !== 'moving') return follower;
       moveByRootMotion();
+      if (giveUpWhenStuck(stepSeconds)) return follower;
       if (advanceWaypoint()) steer(stepSeconds);
       return follower;
     },

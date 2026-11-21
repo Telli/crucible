@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createAgentScene } from '../src/agent-scene.js';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 
 function sceneRecipe(tracks, extra = {}) {
   return {
@@ -119,7 +119,7 @@ test('a sunset changes the sun and sky between two frames of a render', async (c
       return;
     }
     const page = await browser.newPage({ viewport: { width: 64, height: 64 } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const recipe = sceneRecipe([
       { kind: 'sun', property: 'direction', keyframes: keys([-1, 4, 1], [-4, 0.3, 1]) },
       { kind: 'environment', property: 'environmentRotation', keyframes: keys(0, 2) },

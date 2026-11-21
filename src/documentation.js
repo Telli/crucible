@@ -1,10 +1,13 @@
-import './home.js';
+import './site-chrome.js';
+import './site.css';
 import './documentation.css';
 import guide from '../docs/guide.md?raw';
 import { highlightCode } from './code-highlight.js';
 import { createLiveExample, autoRunVisibleExamples } from './docs-live.js';
 import { createApiReference } from './docs-api.js';
 import { topicAliases, topicSlug, guideTopics, learnTopics, orderTopics } from './documentation-topics.js';
+import { figureMatch } from './documentation-figure.js';
+import { parseDocumentationHash } from './documentation-hash.js';
 
 const learnSources = import.meta.glob('../docs/learn/*.md', { query: '?raw', import: 'default', eager: true });
 
@@ -224,7 +227,8 @@ function renderFence(block, section) {
 }
 
 function figure(paragraph) {
-  const match = paragraph.match(/^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)$/);
+  const match = figureMatch(paragraph);
+  if (!match) return null;
   const [, alt, source, caption] = match;
   const element = document.createElement('figure');
   element.className = 'doc-figure';
@@ -287,7 +291,7 @@ function renderParagraph(paragraph, section) {
     scroll.className = 'table-scroll';
     scroll.append(table);
     section.append(scroll);
-  } else if (/^!\[[^\]]*\]\([^)]+\)$/.test(paragraph)) {
+  } else if (figureMatch(paragraph)) {
     section.append(figure(paragraph));
   } else if (paragraph.startsWith('>')) {
     section.append(callout(paragraph));
@@ -348,7 +352,7 @@ function renderOutline(section) {
 }
 
 function parseHash() {
-  const [requestedTopic = '', requestedSection = ''] = decodeURIComponent(location.hash.slice(1)).split('/');
+  const { topic: requestedTopic, section: requestedSection } = parseDocumentationHash(location.hash);
   return { hashTopic: requestedTopic, requestedTopic: topicAliases[requestedTopic] ?? requestedTopic, requestedSection };
 }
 
@@ -424,4 +428,8 @@ search.addEventListener('input', () => {
   renderNavigation();
 });
 window.addEventListener('hashchange', () => openTopic(true));
+const openedWithoutAnchor = !location.hash;
 openTopic();
+// openTopic writes #introduction into the address, and the browser then scrolls to that section when the page finishes loading, past the
+// sidebar on a phone. A visit with no anchor starts at the top.
+if (openedWithoutAnchor) addEventListener('load', () => scrollTo({ top: 0 }), { once: true });

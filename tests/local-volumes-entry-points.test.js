@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { buildTraceScene, refuseLocalVolumes } from '../src/path-tracer-scene.js';
 
 const GROUND = [{
@@ -113,7 +113,7 @@ test('the renderer rejects a bad localVolumes value before it binds a post progr
       return;
     }
     const page = await browser.newPage({ viewport: { width: 32, height: 32 } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const outcome = await page.evaluate(probeInPage);
     assert.match(outcome.objectWithoutLength.message, /environment\.localVolumes must be an array of volumes/);
     assert.equal(outcome.objectWithoutLength.choseProgram, false, 'the throw comes before the post program is chosen');

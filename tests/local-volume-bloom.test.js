@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { encodePng } from '../src/export-png.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes } from '../src/local-volumes.js';
 
@@ -135,7 +135,7 @@ test('a glowing volume blooms: the ring around it is brighter with bloom on, and
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const noBloom = { strength: 0 };
     const { frames: [glowOff, glowOn, darkOn, darkOff], peaks: [, , , , hotPeak], glError } = await rasterFrames(page, [
       { localVolumes: [GLOW], bloom: noBloom },

@@ -7,6 +7,19 @@ export function describeBackendFallback({ requestedBackend, usedBackend, fallbac
 }
 
 /**
+ * The fallback a traced frame reports, or undefined when the frame ran where it was asked to. A native frame traces with
+ * the gpu kernel option, so the used backend alone cannot tell a native frame from a fallen back one: pass whether the
+ * native tracer drew it.
+ */
+export function backendFallbackForFrame({ requestedBackend, tracedNatively, usedBackend, fallbackReason }) {
+  if (requestedBackend !== 'native' || tracedNatively) return undefined;
+  const reason = typeof fallbackReason === 'string' && fallbackReason.length > 0
+    ? fallbackReason
+    : 'the native tracer did not draw this frame.';
+  return describeBackendFallback({ requestedBackend, usedBackend, fallbackReason: reason });
+}
+
+/**
  * The error a fallen back job fails with, now naming the fallback. The original message stays first, so its own advice
  * (such as the triangle limit) still reads the same; the added sentence says why native was not used and what to pass.
  */

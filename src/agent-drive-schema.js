@@ -16,6 +16,7 @@ const LIGHT_FIELDS = ['headlights', 'tailLights'];
 const HEADLIGHT_FIELDS = ['id', 'position', 'direction'];
 const TAIL_LIGHT_FIELDS = ['id', 'material', 'signal', 'off', 'on'];
 const CAMERA_PATH_FIELDS = ['duration', 'loop', 'eye'];
+const PATH_EXPECTED = 'an array of [x, y, z] points, such as [[0, 0, 0], [0, 0, 10]], or a camera path such as { "duration": 5, "eye": { "keyframes": [] } }';
 
 function knownKeys(value, allowed, path) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidField(path, value, 'an object, such as {}', TypeError);
@@ -43,9 +44,10 @@ function normalizePath(path, label) {
     }
     return path.map((point, index) => vector(point, `${label}[${index}]`));
   }
+  if (!path || typeof path !== 'object') throw invalidField(label, path, PATH_EXPECTED, TypeError);
   knownKeys(path, CAMERA_PATH_FIELDS, label);
   if (!path.eye || !Array.isArray(path.eye.keyframes) || path.eye.keyframes.length > DRIVE_LIMITS.maxPathPoints) {
-    throw invalidField(label, path, 'an array of [x, y, z] points, such as [[0, 0, 0], [0, 0, 10]], or a camera path such as { "duration": 5, "eye": { "keyframes": [] } }', TypeError);
+    throw invalidField(label, path, PATH_EXPECTED, TypeError);
   }
   return structuredClone(path);
 }

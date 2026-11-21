@@ -1,5 +1,6 @@
 import { lightLimitAdvice } from './light-limit-advice.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
+import { MINIMUM_SPOT_ANGLE, MAXIMUM_SPOT_ANGLE, spotAngleExpectation } from './spot-angle-advice.js';
 import { mat4 } from 'gl-matrix';
 import { sceneBoundsOfParts } from './near-plane-fit.js';
 import { createLightingState, updateLightingState, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS, MAXIMUM_SPECULAR_ANTI_ALIASING } from './lighting.js';
@@ -8,7 +9,7 @@ import { resolveVolumeFog } from './volumetric.js';
 import { resolveFogDetail } from './fog-field.js';
 import { resolveLocalVolumesWith } from './local-volume-resolve.js';
 import { LIQUID_OPTICS, resolveLiquidOptics } from './liquid-optics.js';
-import { createLightingSetupMap, createCatalogEnvironmentMap, lightingSetupFields } from './lighting-setups.js';
+import { createLightingSetupMap, createCatalogEnvironmentMap, lightingSetupFields, setupMapShowsBackground } from './lighting-setups.js';
 import { agentSceneModule } from './agent-scene-modules.js';
 import { lightShapeSupport, postStepSupport } from './shader-registry.js';
 import { VIEW_TRANSFORM_NAMES, LOOK_NAMES } from './view-transform-names.js';
@@ -227,12 +228,21 @@ function pointLightFrom(light) {
   };
 }
 
+// The cone angle is in radians, so a range error names the unit instead of a bare range an agent reads as degrees.
+function spotAngleFrom(value) {
+  try {
+    return numberInRange(value, MINIMUM_SPOT_ANGLE, MAXIMUM_SPOT_ANGLE, 'angle');
+  } catch {
+    throw invalidField('angle', value, spotAngleExpectation(value));
+  }
+}
+
 function spotLightFrom(light) {
   knownKeys(light, SPOT_LIGHT_FIELDS, 'spot light');
   return {
     position: vectorInRange(light.position, -1e6, 1e6, 'position'),
     direction: directionFrom(light.direction, 'direction').direction,
-    angle: numberInRange(fallback(light.angle, Math.PI / 4), 0.01, Math.PI / 2 - 0.01, 'angle'),
+    angle: spotAngleFrom(fallback(light.angle, Math.PI / 4)),
     penumbra: numberInRange(fallback(light.penumbra, 0.15), 0, 1, 'penumbra'),
     color: vectorInRange(fallback(light.color, [1, 1, 1]), 0, 1, 'color'),
     intensity: numberInRange(fallback(light.intensity, 1), 0, 1e5, 'intensity'),
@@ -421,7 +431,7 @@ export function agentEnvironmentMap(environment) {
   return createLightingSetupMap(environment.setup, {
     intensity: environment.environmentIntensity,
     rotation: environment.environmentRotation,
-    showBackground: environment.world,
+    showBackground: setupMapShowsBackground(environment),
   });
 }
 

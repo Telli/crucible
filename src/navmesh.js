@@ -50,8 +50,8 @@ function assertUsableGeometry(positions, indices, bounds) {
   }
   const vertexCount = Math.floor(positions.length / 3);
   for (let offset = 0; offset < indices.length; offset++) {
-    if (!(indices[offset] >= 0 && indices[offset] < vertexCount)) {
-      throw new RangeError(`navmesh index ${offset} is ${indices[offset]}; use 0 to ${vertexCount - 1}.`);
+    if (!(Number.isInteger(indices[offset]) && indices[offset] >= 0 && indices[offset] < vertexCount)) {
+      throw new RangeError(`navmesh index ${offset} is ${indices[offset]}; use a whole number from 0 to ${vertexCount - 1}.`);
     }
   }
 }
@@ -246,6 +246,10 @@ export function createNavmesh({ positions, indices, agentRadius, maxSlopeDegrees
     const cellRoute = searchCells(startCell, goalCell, budget);
     const corners = [from, ...cellRoute.cells.slice(1, -1).map(centerOf), to];
     const pulled = pullString(corners);
+    // Every corner stays in the route, so more corners than the point limit cannot be resampled under it (#2403).
+    if (pulled.length > NAVMESH_LIMITS.maximumPathPoints) {
+      throw new RangeError(`navmesh route has ${pulled.length} corners, more than the ${NAVMESH_LIMITS.maximumPathPoints} points a path may hold. Split the trip into legs.`);
+    }
     const points = resample(pulled, positiveNumber(spacing, Math.max(1.5, size * 2), 'spacing'));
     let length = 0;
     for (let index = 1; index < pulled.length; index++) {
@@ -394,7 +398,8 @@ function blockFootprint(obstacle, bounds, size, columns, rows, blocked) {
 // Marks a cell walkable only when no blocked cell lies within the agent radius.
 function growBlockedAreas(blocked, columns, rows, radiusInCells, radiusInCellUnits) {
   const walkable = new Uint8Array(blocked.length).fill(1);
-  const reach = Math.max(radiusInCells, 1);
+  // A reach past the grid touches nothing more, so a huge radius over a small cell size stays bounded by the grid.
+  const reach = Math.min(Math.max(radiusInCells, 1), Math.max(columns, rows));
   const limit = Math.max(radiusInCellUnits, 0.75);
   for (let row = 0; row < rows; row++) {
     for (let column = 0; column < columns; column++) {

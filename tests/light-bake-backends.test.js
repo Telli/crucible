@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 
 // Measured 2026-11-04 on an RTX 3060, a closed 8 m room with one lamp, 512 samples, 3 bounces: diffuse-only surfaces (ior 1)
 // gave a GPU to CPU light ratio of 1.0034 on the floor, 1.0014 on the ceiling and 1.008 to 1.011 on the walls (0.6 percent over
@@ -92,7 +92,7 @@ async function withPage(context, run) {
     }
     const page = await browser.newPage({ viewport: { width: 320, height: 180 } });
     page.setDefaultTimeout(0);
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     await run(material => page.evaluate(bakeRoomOnBothBackends, material));
   } finally {
     await browser?.close();

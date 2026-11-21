@@ -1,5 +1,5 @@
+import './site-chrome.js';
 import './site.css';
-import './brand.js';
 import './recipes.css';
 
 const COPIED_LABEL_MILLISECONDS = 2000;

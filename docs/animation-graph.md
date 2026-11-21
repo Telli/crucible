@@ -79,7 +79,7 @@ An agent builds the same graph without code: a scene recipe carries it in `game.
 
 ## States and blend spaces
 
-A state is `{ name, clip }` or `{ name, blend }`, plus optional `speed` (play rate, default 1), `speedParameter` (a number parameter that multiplies it, for example to match walking pace to ground speed) and `loop` (default: the clip's `loop`, true for a blend space). A clip that does not loop holds its last frame.
+A state is `{ name, clip }` or `{ name, blend }`, plus optional `speed` (play rate, default 1), `speedParameter` (a number parameter that multiplies it, for example to match walking pace to ground speed; the multiplier is held between 0 and 100) and `loop` (default: the clip's `loop`, true for a blend space). A clip that does not loop holds its last frame.
 
 - 1D: `blend: { parameter, motions: [{ clip, threshold }] }`. Weights interpolate linearly between the two nearest thresholds and clamp outside them.
 - 2D: `blend: { parameters: [x, y], motions: [{ clip, position: [x, y] }] }`. Weights use gradient band interpolation: each motion is 1 at its own position, falls to 0 at every other motion, and stays local. Positions must differ.
@@ -175,7 +175,7 @@ follower.goTo([16, 0]); // a navmesh route; follower.follow(points) takes any li
 // systems: [follower.system(), graph.system()]; follower.state has position, yaw, speed and status
 ```
 
-Each step it moves by the root motion of the last graph step, turned by its yaw as the [player](player.md) does, then steers to the next waypoint at `turnRate` and picks the speed for the next step: `cruiseSpeed` on a straight, lower toward a sharp corner (`cornerSlowDistance`), and in proportion to the distance inside `slowRadius` of the goal, never below `minimumSpeed`. A large heading error cuts the speed, so a sharp turn happens nearly in place. A corner counts as reached within `cornerRadius` or once passed, so the NPC rounds it on the outside. With a `navmesh`, a step into unwalkable ground slides along its edge (counted in `state.blockedSteps`). `status` becomes `"arrived"` within `arrivalRadius` of the last point and the parameter drops to 0; `stop()` returns to idle. `state.yaw` follows the player convention (0 faces -Z), so a glTF model needs `yaw + PI` about Y.
+Each step it moves by the root motion of the last graph step, turned by its yaw as the [player](player.md) does, then steers to the next waypoint at `turnRate` and picks the speed for the next step: `cruiseSpeed` on a straight, lower toward a sharp corner (`cornerSlowDistance`), and in proportion to the distance inside `slowRadius` of the goal, never below `minimumSpeed`. A large heading error cuts the speed, so a sharp turn happens nearly in place. A corner counts as reached within `cornerRadius` or once passed, so the NPC rounds it on the outside. With a `navmesh`, a step into unwalkable ground slides along its edge (counted in `state.blockedSteps`). `status` becomes `"arrived"` within `arrivalRadius` of the last point and the parameter drops to 0. If the navmesh lets it move nowhere for `stuckSeconds` (2) in a row, `status` becomes `"stuck"` and the parameter drops to 0, so game code can pick a new goal; `stop()` returns to idle. `state.yaw` follows the player convention (0 faces -Z), so a glTF model needs `yaw + PI` about Y.
 
 At most 256 waypoints and speeds up to 100. Errors name the option or point and what to pass. `bench/animation-graph/npc.html` shows the RobotExpressive walking a route around a wall.
 

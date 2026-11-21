@@ -195,3 +195,43 @@ test('option mistakes name the option and the fix', () => {
   const withoutRootMotion = createAnimationGraph({ clips: { idle: stillClip('Root', 1) }, parameters: { speed: { type: 'number' } }, layers: [{ name: 'base', states: [{ name: 'a', clip: 'idle' }] }] });
   assert.throws(() => createPathFollower({ graph: withoutRootMotion }), /rootMotion option/);
 });
+
+// A point repeated in a path has no direction of its own; it must not read as a corner and slow the NPC down (#2403).
+test('a repeated point on a straight path does not slow the NPC as if it were a corner', () => {
+  const slowestNearMiddle = path => {
+    const graph = humanGraph();
+    const follower = createPathFollower({ graph, position: [0, 0, 0], cruiseSpeed: CRUISE });
+    follower.follow(path);
+    let slowest = Infinity;
+    for (let steps = 0; follower.state.status === 'moving' && steps < MAXIMUM_STEPS; steps++) {
+      follower.step(STEP);
+      graph.advance(STEP);
+      const x = follower.state.position[0];
+      if (x > 8 && x < 12) slowest = Math.min(slowest, follower.state.speed);
+    }
+    assert.equal(follower.state.status, 'arrived');
+    return slowest;
+  };
+  const plain = slowestNearMiddle([[0, 0], [10, 0], [20, 0]]);
+  const repeated = slowestNearMiddle([[0, 0], [10, 0], [10, 0], [20, 0]]);
+  assert.ok(plain >= CRUISE * 0.95, `the plain path passes the middle at ${plain}`);
+  assert.equal(repeated, plain);
+});
+
+// A path drawn straight through a wall, with no navmesh route around it, must not leave the NPC walking in place for ever (#2403).
+test('an NPC pushed into a wall it cannot pass gives up as stuck and drops the speed parameter', () => {
+  const graph = humanGraph();
+  const follower = createPathFollower({ graph, navmesh: wallNavmesh(), position: [-9, 0, 0], yaw: Math.PI / 2, cruiseSpeed: CRUISE });
+  follower.follow([[-9, 0], [9, 0]]);
+  let steps = 0;
+  while (follower.state.status === 'moving' && steps < MAXIMUM_STEPS) {
+    follower.step(STEP);
+    graph.advance(STEP);
+    steps += 1;
+  }
+  assert.equal(follower.state.status, 'stuck');
+  assert.ok(follower.state.position[0] < -1, `stopped at x ${follower.state.position[0]}, before the wall`);
+  assert.equal(follower.state.speed, 0);
+  assert.equal(graph.get('speed'), 0);
+  assert.ok(steps * STEP < 10, `gave up after ${steps * STEP} s`);
+});
