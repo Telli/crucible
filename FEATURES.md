@@ -83,14 +83,6 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `site/recipe-dolly-zoom.html`, `public/recipes/dolly-zoom.json`
 - Drive: `node scripts/drive.mjs shot recipe-dolly-zoom`
 
-### `studio`
-- Name: Scene studio
-- Surface: Site
-- Reach: `/studio.html`
-- Source: `site/studio.html`, `src/studio-page.js`, `src/studio.js`
-- Ready: `Boolean(window.__studioPage?.renderer)`
-- Drive: `node scripts/drive.mjs shot studio`
-
 ### `object`
 - Name: Object studio
 - Surface: Site
@@ -153,6 +145,14 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: none: start it through `npm run render -- --scene file`
 
 ## Bench and sample pages
+
+### `studio`
+- Name: Scene studio (development page; Studio is not published on the site)
+- Surface: Bench
+- Reach: `/bench/studio/index.html`
+- Source: `bench/studio/index.html`, `bench/studio/main.js`, `src/studio.js`
+- Ready: `Boolean(window.__studioPage?.renderer)`
+- Drive: `node scripts/drive.mjs shot studio`
 
 ### `bench-agent-modeling-look-harness`
 - Name: agent-modeling look-harness
