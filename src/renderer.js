@@ -7,7 +7,7 @@ import { postFragment, createPostFragment, GRID_MOTION_STEP, GRID_DETAIL_STEP, N
 import { createGlazeBackend } from './glaze-backend.js';
 import { fullscreenVertex, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
-import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError } from './budget.js';
+import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError, automaticBudgetCeilingMiB } from './budget.js';
 import { applyProjection } from './camera.js';
 import { fittedNearPlane, sceneBoundsOfParts } from './near-plane-fit.js';
 import { installReversedDepth, prepareCameraRelativeProgram } from './reversed-depth.js';
@@ -409,6 +409,9 @@ function packInstance(data, index, part, normalMatrix) {
 
 // The objectId mode of RENDER_PASS_MODES in render-passes.js.
 const OBJECT_ID_PASS_MODE = 5;
+const CRYPTOMATTE_PASS_MODE = 17;
+/** Alpha at or above which a blended texel counts as part of its object in the ID passes. */
+const ID_PASS_BLEND_CUTOFF = 0.5;
 
 function isCullable(parts) {
   const first = parts[0];
@@ -903,6 +906,8 @@ export class CrucibleRenderer {
     const expectedGeometryBytes = groups.reduce((total, group) => total + geometryBufferBytes(group[0].geometry) + group.length * INSTANCE_STRIDE * 4, 0);
     this.memoryBudgetMiB = planRenderSize({ width: Math.max(1, canvas.clientWidth), height: Math.max(1, canvas.clientHeight), pixelRatio, samples: this.samples, memoryBudgetMiB, geometryBytes: expectedGeometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !benchmark, depth: this.depth, maximumSize: textureLimit, maximumMemoryBudgetMiB }).memoryBudgetMiB;
     this.maximumMemoryBudgetMiB = maximumMemoryBudgetMiB;
+    // A budget the caller did not set was sized for the first scene; it follows later scene changes up to its ceiling instead of freezing the page (#2828).
+    this.memoryBudgetFollowsScene = memoryBudgetMiB === undefined;
     this.view = mat4.create();
     this.projection = mat4.create();
     this.viewProjection = mat4.create();
@@ -1467,6 +1472,19 @@ export class CrucibleRenderer {
     return batch;
   }
 
+  /**
+   * Raises a budget the caller did not set so it holds `neededBytes`, when that fits under the automatic ceiling and the runtime's
+   * own ceiling. Returns whether the budget now holds it; a budget the caller set is never changed.
+   */
+  growAutomaticBudgetTo(neededBytes) {
+    if (!this.memoryBudgetFollowsScene) return false;
+    const neededMiB = Math.ceil(neededBytes / (1024 * 1024));
+    const ceilingMiB = Math.min(automaticBudgetCeilingMiB(), this.maximumMemoryBudgetMiB ?? Infinity);
+    if (neededMiB > ceilingMiB) return false;
+    this.memoryBudgetMiB = neededMiB;
+    return true;
+  }
+
   /** Reconcile immutable rigid, untextured geometry without rebuilding programs or render targets. `retainedUnchanged` skips the re-sync of parts in kept batches, for a world that grows in slices. */
   replaceParts(parts, { regroupOnly = false, retainedUnchanged = false } = {}) {
     if (!Array.isArray(parts) || new Set(parts).size !== parts.length) {
@@ -1529,7 +1547,7 @@ export class CrucibleRenderer {
     const newInstanceBytes = replacements.filter(item => !item.batch).reduce((total, item) => total + item.group.length * INSTANCE_STRIDE * 4, 0);
     const frameBytes = estimateFrameBytes(this.canvas.width, this.canvas.height, this.samples, 2048, { hdr: this.hdr, bloom: !this.benchmark, depth: this.depth });
     const peakBytes = frameBytes + this.textureBytes + this.geometryBytes + newGeometryBytes + newInstanceBytes;
-    if (peakBytes > this.memoryBudgetMiB * 1024 * 1024) {
+    if (peakBytes > this.memoryBudgetMiB * 1024 * 1024 && !this.growAutomaticBudgetTo(peakBytes)) {
       throw memoryBudgetError(this.geometryBytes + newGeometryBytes + newInstanceBytes, this.textureBytes, frameBytes, this.memoryBudgetMiB, { maximumMemoryBudgetMiB: this.maximumMemoryBudgetMiB });
     }
     const previousLocations = this.partLocations;
@@ -2110,9 +2128,22 @@ export class CrucibleRenderer {
     this.occlusionTarget = null;
   }
 
-  /** Whether a batch is drawn by the opaque loop, and so by render passes. Its parts take object IDs in this order. */
+  /** Whether a batch is drawn by the opaque loop, and so by render passes. */
   drawsInOpaqueLoop(batch) {
     return batchPass(batch) === 'opaque' && !isTranslucentMode(batch.alphaMode);
+  }
+
+  /**
+   * Whether a batch's parts take object IDs, in draw order. A blended batch (tree leaves exported as BLEND) takes them too:
+   * the object ID and Cryptomatte passes draw it as a cutout, so a matte covers its texels instead of leaving them black.
+   */
+  takesObjectIds(batch) {
+    return this.drawsInOpaqueLoop(batch) || (batchPass(batch) === 'opaque' && batch.alphaMode === 'blend');
+  }
+
+  /** The batch an ID pass draws: a blended batch becomes a cutout at half alpha, so see-through texels write nothing and hide nothing. */
+  idPassBatch(batch) {
+    return batch.alphaMode === 'blend' ? { ...batch, alphaMode: 'mask', alphaCutoff: ID_PASS_BLEND_CUTOFF } : batch;
   }
 
   // Compiled and allocated on first use, so scenes without occlusion pay nothing.
@@ -2894,16 +2925,22 @@ export class CrucibleRenderer {
     context.uniform1f(this.uniforms.renderPassDepthRange, frame.passDepthRange ?? 100);
     if (passMode > 5) this.passSupport.bindFrame(frame, environment, volume);
     let objectBase = 0;
+    const idPass = passMode === OBJECT_ID_PASS_MODE || passMode === CRYPTOMATTE_PASS_MODE;
     for (const batch of this.batches) {
       if (this.benchmark) {
         this.drawBatch(batch, true);
-      } else if ((passMode > 5 ? this.passSupport.drawsInPass(batch, passMode) : this.drawsInOpaqueLoop(batch)) && !(mirrorTarget && batch.mapState[20])) {
-        context.uniform1f(this.uniforms.renderPassObjectBase, objectBase);
-        objectBase += batch.instanceCount;
-        // Object IDs are the instance ordinal, which culling and level selection renumber, so that pass draws every instance.
-        if (passMode > 5) this.passSupport.drawBatch(batch, passMode, frame, objectBase - batch.instanceCount);
-        else this.drawAlphaBatch(batch, true, passMode !== OBJECT_ID_PASS_MODE);
+        continue;
       }
+      const drawn = idPass ? this.takesObjectIds(batch) : (passMode > 5 ? this.passSupport.drawsInPass(batch, passMode) : this.drawsInOpaqueLoop(batch));
+      const firstObject = objectBase;
+      // A batch that takes object IDs keeps its numbers even when this pass does not draw it, so IDs agree across passes.
+      if (drawn || this.takesObjectIds(batch)) objectBase += batch.instanceCount;
+      if (!drawn || (mirrorTarget && batch.mapState[20])) continue;
+      context.uniform1f(this.uniforms.renderPassObjectBase, firstObject);
+      const drawnBatch = idPass ? this.idPassBatch(batch) : batch;
+      // Object IDs are the instance ordinal, which culling and level selection renumber, so that pass draws every instance.
+      if (passMode > 5) this.passSupport.drawBatch(drawnBatch, passMode, frame, firstObject);
+      else this.drawAlphaBatch(drawnBatch, true, passMode !== OBJECT_ID_PASS_MODE);
     }
     this.applyDepthRank(0);
     context.disable(context.SAMPLE_ALPHA_TO_COVERAGE);

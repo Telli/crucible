@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { withSnapshotSkyColors } from './snapshot-sky-colors.mjs';
 import { previewCallTimeoutMs, recipeHasGridVolume, operationsAddGridVolume } from './agent-evaluation-timeout.mjs';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -30,7 +31,7 @@ import { launchWithShaderCache, shaderCacheDirectory } from './agent-shader-cach
 import { createPackRegistry } from './agent-packs.mjs';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
-import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
+import { AGENT_ASSET_LIMITS, configureAssetByteLimit, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { namesCatalogFiles, resolveAssetPlacementNames, namesCatalogSequences, resolveCatalogSequenceNames } from '../src/agent-asset-names.js';
 import { sequenceFrameIds, hasStreamedSequence } from '../src/agent-texture-sequence.js';
@@ -38,7 +39,7 @@ import { readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grid
 import { catalogLookReferences, BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES } from '../src/look-catalog.js';
 import { TEXTURE_SEQUENCE_CAPABILITIES, TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { writeWebBuild } from './web-export.mjs';
-import { gameAssetIds } from '../src/game-assets.js';
+import { gameAssetIds, gameImageIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
 import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, MAXIMUM_JOB_FRAME_BYTES, MAXIMUM_JOB_OUTPUT_BYTES, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError, requireTracerBackendAvailable } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
@@ -145,7 +146,8 @@ export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg',
 
 export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', browser: browserPath, memory = 192, assets: assetRoot, packs: packsRoot,
   jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, gpuQueue, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
-  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem(), askUserFixture } = {}) {
+  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem(), askUserFixture, maxAssetBytes } = {}) {
+  if (maxAssetBytes !== undefined) configureAssetByteLimit(maxAssetBytes);
   if (!['gpu', 'cpu'].includes(backend)) {
     throw new RangeError('backend must be gpu or cpu.');
   }
@@ -438,11 +440,16 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (sceneValue) for (const id of catalogIdsOf(sceneValue)) catalogIds.add(id);
     // With a scene, its grid files count too, once per name even when the edit names the same file.
     let total = volumeGridFileBytes(sceneValue ? [value, sceneValue] : value);
+    const namedAssets = [];
     if (catalogIds.size || motionSourceIds.length) {
       const readyCatalog = await catalog();
-      for (const id of [...catalogIds, ...motionSourceIds]) total += await readyCatalog.size(id);
+      for (const id of [...catalogIds, ...motionSourceIds]) {
+        const described = await readyCatalog.describeSize(id);
+        namedAssets.push(described);
+        total += described.bytes;
+      }
     }
-    assertCombinedByteTotal(total, sceneValue ? sceneAssetBytesLimitMessage : undefined);
+    assertCombinedByteTotal(total, sceneValue ? sceneAssetBytesLimitMessage : undefined, namedAssets);
   }
 
   /** Refuses an edit that adds catalog assets to a scene whose unique assets would then pass the combined limit, before the preview page loads them. */
@@ -1548,11 +1555,11 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       return gpuUnit('light', () => enqueue(async () => {
         await requirePreviewRenderer();
         requireSession(settings.sessionId);
-        const snapshot = await invoke('snapshot', settings);
+        const snapshot = withSnapshotSkyColors(await invoke('snapshot', settings));
         await assertSceneFitsBeforeJob(snapshot.recipe);
         const branchRecipes = new Map();
         for (const name of settings.branchNames) {
-          branchRecipes.set(name, await invoke('branchRecipe', { sessionId: settings.sessionId, name }));
+          branchRecipes.set(name, withSnapshotSkyColors(await invoke('branchRecipe', { sessionId: settings.sessionId, name })));
         }
         const assetBytes = snapshot.recipe.format === 'crucible.asset' ? await (await catalog()).read(snapshot.recipe.assetId) : undefined;
         let privateSessionId;
@@ -1737,7 +1744,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         try {
           const assets = new Map();
           for (const id of gameAssetIds(recipe)) assets.set(id, await (await catalog()).read(id));
-          summary = await writeWebBuild({ recipe, buildDirectory: fileURLToPath(new URL('../', previewUrl)), outputDirectory, title, assets });
+          // The catalog images the materials read (graph image nodes, map sequences) travel with the page, which decodes them before the scene is created.
+          const images = new Map();
+          for (const id of gameImageIds(recipe)) images.set(id, await (await catalog()).read(id));
+          summary = await writeWebBuild({ recipe, buildDirectory: fileURLToPath(new URL('../', previewUrl)), outputDirectory, title, assets, images });
         } catch (error) {
           // A refused or half-written build never uses up a retention slot or evicts a good one.
           await rm(outputDirectory, { recursive: true, force: true });
@@ -1757,7 +1767,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           if (!audioLibrary) throw new Error('Configure --audio with an absolute folder before submitting a job with audio.');
           await audioLibrary.resolve(settings.audio.file);
         }
-        const snapshot = await invoke('snapshot', { sessionId, expectedRevision });
+        const snapshot = withSnapshotSkyColors(await invoke('snapshot', { sessionId, expectedRevision }));
         const assetBytes = snapshot.recipe.format === 'crucible.asset' ? await (await catalog()).read(snapshot.recipe.assetId) : undefined;
         phase = 'rendering';
         try {

@@ -203,7 +203,7 @@ await studio.ready;
 - Studio asks for a file once and keeps the decoded result until `studio.dispose()`, so a reload of the watched file, undo and redo do not fetch again.
 - `createStudio` still returns at once. When the recipe needs catalog files, Studio opens on the starting scene and swaps the recipe in when they have loaded; `studio.ready` settles then. Opening the scene is not an edit: nothing to undo, no unsaved mark.
 - The unsaved mark follows every edit of the scene, camera rows, lens chips and view chips included. Orbiting, zooming and panning are navigation and do not set it. Picking a mesh while the Sun, a light or the camera is selected leaves the Look or Camera tab for the mesh's own tab (Material, or Object from the camera).
-- Studio keeps the scene you are editing as a draft in the browser's `localStorage` (a moment after the edits pause; skipped when the recipe is above about 2 MB, which also drops the older draft). Save, New and Open clear it. When Studio starts and a draft differs from the scene that opened, a notice offers **Restore** (the draft comes back as one undo step) or **Discard**; edits made while it is on offer do not overwrite the draft. A host with no storage gets no draft.
+- Studio keeps the scene you are editing as a draft in the browser's `localStorage` (a moment after the edits pause; skipped when the recipe is above about 2 MB, which also drops the older draft). Save, New and Open clear it. When Studio starts and a draft differs from the scene that opened, a notice offers **Restore** (the draft comes back as one undo step) or **Discard**; the first edit made while it is on offer counts as carrying on with the current scene, so the notice closes and the draft follows the new work. A host with no storage gets no draft.
 - `studio.loadExternalTextFile(text)`, the Open dialog and the recipe JSON dialog load catalog files the same way. `studio.openRecipe(recipe)` does it for a recipe object; `studio.loadRecipe(recipe)` stays synchronous and expects the files to be loaded already.
 - Without the function a scene needs, the scene on screen stays as it was and the status line says which file is missing and which function to pass.
 - Studio loads no Draco or KTX2 decoder. Serve a GLB that uses neither.
@@ -219,6 +219,33 @@ When an agent edits the scene, Studio shows a pointer with the agent's name, the
 - `studio.showAgentEdit({ name, nodeIds })` points at objects directly, for a host that hears about each agent step as it happens.
 
 Each agent gets its own colour, picked from its name out of five brand colours, so two agents are easy to tell apart; the pointer, the name tag and the outline share it. The pointer keeps to its object while you orbit, visits at most eight objects for one edit, and with reduced motion it steps from object to object without gliding.
+
+## Diagnostics
+
+Studio keeps a short list of what went wrong or ran slow, so a bug report can come with facts. The list lives in memory (the last 200 entries) and goes nowhere on its own: Studio makes no network call and does no work for it while the scene is idle.
+
+Recorded:
+
+- `error` and `rejection`: an uncaught error or an unhandled promise rejection on the page, with its name, message and stack.
+- `contextLost` and `contextRestored`: the graphics context going away and coming back.
+- `longTask`: a stretch of 50 ms or more that blocked the page, where the browser reports it.
+- `slowOperation`: an add, duplicate, paste, delete, undo, redo, recipe load or change that took 100 ms or longer, with its name, duration and the scene's size.
+
+Never recorded: the recipe, node, material or file names, paths and keys. A scene is described by numbers only (`nodes`, `triangles`). Messages are cut to 300 characters, stacks to 2,000, and a URL or path in either keeps only its last segment. An error message from validation can still name an id, so read a report before you share it.
+
+To save the report, open **Help** and choose **Save diagnostics report**. It downloads `crucible-studio-diagnostics.json`: the Crucible version, the browser, the graphics vendor and renderer when the browser exposes them, the viewport size and pixel ratio, the scene size, a count per kind and the entries, oldest first.
+
+```js
+const studio = createStudio(container, {
+  diagnostics: { limit: 200, slowOperationMilliseconds: 100 }, // both optional
+  onDiagnostic: entry => hostLog.write(entry), // each entry as it is recorded; a throwing hook is ignored
+});
+
+studio.diagnostics.report(); // the same object the menu saves
+studio.diagnostics.entries(); // a copy of the entries
+```
+
+Entries are recorded only while the Studio exists: `dispose()` removes every listener.
 
 ## Headless controller for tools and tests
 
