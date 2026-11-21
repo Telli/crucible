@@ -171,5 +171,5 @@ The site serves Plus Jakarta Sans, Inter and JetBrains Mono, subset by Google Fo
 
 ## Desk with a camera in public/desk-flat-lay.glb
 
-The asset viewer opens on Poly Haven models `Camera_01` by Rajil Jose Macatangay, `wooden_table_02`, `binder_notebook`, `round_spectacles` and `stationery_supplies` (https://polyhaven.com/a/<name>), composed in Blender with their textures reduced, and lit by the 1K HDRI `kloofendal_28d_misty_puresky` in public/hdri (https://polyhaven.com/a/kloofendal_28d_misty_puresky). All are published under CC0 1.0 (https://polyhaven.com/license).
+The asset viewer opens on Poly Haven models `Camera_01` by Rajil Jose Macatangay, `wooden_table_02`, `binder_notebook`, `postcard_set_01`, `round_spectacles` and `stationery_supplies` (https://polyhaven.com/a/<name>), composed in Blender with their textures reduced, and lit by the 1K HDRI `kloofendal_28d_misty_puresky` in public/hdri (https://polyhaven.com/a/kloofendal_28d_misty_puresky). All are published under CC0 1.0 (https://polyhaven.com/license).
 

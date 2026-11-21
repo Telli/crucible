@@ -40,8 +40,8 @@ test('the viewer opens on the desk lit by the shipped misty sky', async () => {
 
 test('the demo desk and its sky are credited as CC0 Poly Haven assets', async () => {
   const credits = await readFile(new URL('../public/textures/CREDITS.md', import.meta.url), 'utf8');
-  for (const name of ['Camera_01', 'wooden_table_02', 'binder_notebook', 'round_spectacles', 'stationery_supplies', 'kloofendal_28d_misty_puresky']) {
-    assert.match(credits, new RegExp(`polyhaven\.com/a/${name}`), `${name} is credited`);
+  for (const name of ['Camera_01', 'wooden_table_02', 'binder_notebook', 'postcard_set_01', 'round_spectacles', 'stationery_supplies', 'kloofendal_28d_misty_puresky']) {
+    assert.ok(credits.includes(`polyhaven.com/a/${name}`), `${name} is credited`);
   }
   assert.match(credits, /CC0/);
 });

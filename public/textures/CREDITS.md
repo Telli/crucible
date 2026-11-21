@@ -33,9 +33,9 @@ atlases (1K PNG, downloaded 2026-10-29), all CC0 1.0 by Lennart Demes / ambientC
 ## Desk with a camera (`../desk-flat-lay.glb`)
 
 The asset viewer opens on a flat lay: [Camera 01](https://polyhaven.com/a/Camera_01) by Rajil Jose Macatangay on a
-[wooden table](https://polyhaven.com/a/wooden_table_02), with a [binder notebook](https://polyhaven.com/a/binder_notebook),
+[wooden table](https://polyhaven.com/a/wooden_table_02), with a [binder notebook](https://polyhaven.com/a/binder_notebook), three [postcards](https://polyhaven.com/a/postcard_set_01) (darkened),
 [round spectacles](https://polyhaven.com/a/round_spectacles) and two pens from
 [stationery supplies](https://polyhaven.com/a/stationery_supplies). All CC0 1.0 from Poly Haven. They were composed in Blender 5.2
-(table scaled to fill the frame, camera scaled up, nothing else added), with the table and camera textures cut to 1024 px, the
+(table scaled 1.45x and darkened, camera scaled up with its strap tucked in), with the table and camera textures cut to 1024 px, the
 props to 512 px and everything saved as JPEG at quality 72, which brings the scene to 3.8 MB. The light is the CC0 Poly Haven sky
 [kloofendal_28d_misty_puresky](https://polyhaven.com/a/kloofendal_28d_misty_puresky) (`../hdri/kloofendal_28d_misty_puresky_1k.hdr`, 1K).
