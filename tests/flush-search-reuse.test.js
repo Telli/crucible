@@ -127,6 +127,76 @@ test('a search with other budgets does not build on a remembered one', () => {
   assert.equal(tight.pairs.length, 10);
 });
 
+function summaryOf(result) {
+  return JSON.stringify([pairsOf(result), result.truncated, result.truncatedAt ?? null, result.unchecked.map(part => part.name)]);
+}
+
+test('a small testedPairLimit truncates a warm search exactly where a cold one truncates', () => {
+  const base = sheetPart('base', IDENTITY, patch);
+  const lower = sheetPart('lower', movedTo(0, 0.001, 0), patch);
+  forgetSearch();
+  const probe = findFlushPairs([base, lower]);
+  const limit = probe.testedPairs + 2;
+  const options = { testedPairLimit: limit };
+  forgetSearch();
+  findFlushPairs([base, lower], options);
+  const edited = [base, lower, sheetPart('third', movedTo(0, 0.0005, 0), sheetGeometry(1))];
+  const warm = findFlushPairs(edited, options);
+  forgetSearch();
+  const cold = findFlushPairs(edited, options);
+  assert.equal(cold.truncated, true, 'the limit is small enough that the cold search stops');
+  assert.equal(summaryOf(warm), summaryOf(cold));
+});
+
+test('flipping doubleSided between searches matches a cold search for a pair that faces opposite ways', () => {
+  const faceDown = [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  const top = sheetPart('top', IDENTITY, patch);
+  const under = sheetPart('under', faceDown, patch);
+  forgetSearch();
+  const single = findFlushPairs([top, under]);
+  assert.equal(single.pairs.length, 0, 'a back-to-back pair of single sided faces is culled');
+  under.material.doubleSided = true;
+  const warm = findFlushPairs([top, under]);
+  assert.ok(warm.pairs.length > 0);
+  assert.equal(summaryOf(warm), summaryOf(coldSearch([top, under])));
+  under.material.doubleSided = false;
+  assert.equal(summaryOf(findFlushPairs([top, under])), summaryOf(coldSearch([top, under])));
+});
+
+test('random edits of a few parts always match a cold search', () => {
+  let seed = 20261121;
+  const random = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 2 ** 32;
+  };
+  const faceDown = [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  const makePart = index => {
+    const matrix = random() < 0.3 ? faceDown : IDENTITY;
+    const placed = [...matrix];
+    placed[12] = Math.floor(random() * 3);
+    placed[13] = Math.floor(random() * 3) * 0.001;
+    placed[14] = Math.floor(random() * 3);
+    return sheetPart(`part-${index}`, placed, patch);
+  };
+  let parts = [makePart(0), makePart(1), makePart(2)];
+  const scenes = [];
+  const warmResults = [];
+  forgetSearch();
+  for (let step = 0; step < 24; step++) {
+    const choice = Math.floor(random() * 5);
+    if (choice === 0 || parts.length < 2) parts = [...parts, makePart(100 + step)];
+    else if (choice === 1) parts = parts.filter((part, index) => index !== Math.floor(random() * parts.length));
+    else if (choice === 2) parts = parts.map((part, index) => (index === 0 ? makePart(200 + step) : part));
+    else if (choice === 3) parts = [...parts].reverse();
+    else parts[Math.floor(random() * parts.length)].material.doubleSided = random() < 0.5;
+    scenes.push(parts.map(part => ({ ...part, material: { ...part.material } })));
+    warmResults.push(summaryOf(findFlushPairs(parts)));
+  }
+  scenes.forEach((scene, step) => {
+    assert.equal(warmResults[step], summaryOf(coldSearch(scene)), `step ${step}`);
+  });
+});
+
 test('an unchanged scene is not searched again', () => {
   const parts = [sheetPart('base', IDENTITY), sheetPart('lower', movedTo(0, 0.001, 0))];
   forgetSearch();

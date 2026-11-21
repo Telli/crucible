@@ -25,7 +25,8 @@ function geometryNumber(geometry) {
 }
 
 /**
- * What decides the pairs of one searched part: its geometry, its matrix and whether it shows both sides. A live geometry
+ * What decides the pairs of one searched part (a rule for every writer of geometry: an edit in place of a geometry's
+ * positions or indices must call markLiveGeometry, because this key is the geometry object): its geometry, its matrix and whether it shows both sides. A live geometry
  * (cloth, updatePartVertices) has its positions rewritten in place, so its object says nothing about its data: every
  * signature of one is new and the part always counts as changed.
  */
@@ -44,8 +45,8 @@ export function entryStarts(table, entryCount) {
 }
 
 /** Stores a finished search for the next one to build on; a search that hit a budget, or a very large one, is not kept. */
-export function rememberSearch({ signatures, starts, pairs, reach, complete, limitsKey }) {
-  remembered = complete && pairs.length <= REMEMBERED_PAIR_LIMIT ? { signatures, starts, pairs, reach, limitsKey } : null;
+export function rememberSearch({ signatures, starts, pairs, testedPairs, reach, complete, limitsKey }) {
+  remembered = complete && pairs.length <= REMEMBERED_PAIR_LIMIT ? { signatures, starts, pairs, testedPairs, reach, limitsKey } : null;
 }
 
 /** Drops the stored search, so the next one is cold. */
@@ -118,7 +119,7 @@ export function reusableSearch(signatures, starts, reach, limitsKey) {
     }
   });
   if (changedCount > CHANGED_PART_LIMIT) return null;
-  return { pairs: remapPairs(remembered, matches, starts), changed, changedCount };
+  return { pairs: remapPairs(remembered, matches, starts), testedPairs: remembered.testedPairs, changed, changedCount };
 }
 
 /**
