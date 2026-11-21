@@ -1,5 +1,5 @@
+import './site-chrome.js';
 import './site.css';
-import './brand.js';
 import './showcase.css';
 import './pointer-light.js';
 import { CrucibleRenderer } from './renderer.js';

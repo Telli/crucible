@@ -1,7 +1,7 @@
 /* The marketplace page: packs and addons as quiet surfaces, separated by spacing. No rules between rows. */
 body.marketplace > main { gap: 40px; }
 .marketplace main > section { display: grid; gap: 16px; }
-.marketplace main > h1 { font-size: clamp(32px, 4.4vw, 48px); letter-spacing: -1.4px; }
+.marketplace main > h1 { font-size: clamp(32px, 4.4vw, 48px); }
 .market-list { display: grid; gap: 12px; }
 .market-icon { flex: none; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -11,7 +11,7 @@ body.marketplace > main { gap: 40px; }
 .market-version { color: var(--muted); font-family: var(--mono); font-size: 13px; font-weight: 400; }
 .market-description { color: var(--muted); font-size: 15px; }
 .market-facts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.market-facts li { padding: 3px 10px; border-radius: 6px; background: var(--tint); color: var(--muted); font-size: 13px; }
+.market-facts li { padding: 3px 10px; border-radius: 0; background: var(--tint); color: var(--muted); font-size: 13px; }
 
 .pack-card { grid-template-columns: 168px minmax(0, 1fr); align-items: start; }
 .pack-preview { width: 168px; aspect-ratio: 1; object-fit: cover; border-radius: var(--radius); background: var(--window); }
@@ -28,11 +28,11 @@ body.marketplace > main { gap: 40px; }
 .market-button-icon { width: 17px; height: 17px; }
 .marketplace .market-button-quiet { background: var(--tint); color: var(--text); }
 .marketplace .market-button-quiet:hover { opacity: 1; background: var(--tint-strong); }
-.market-copy { min-height: 30px; padding: 4px 12px; font-size: 13px; }
+.market-copy { font-size: 13px; }
 
 .market-card .market-card-title { display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; gap: 12px; }
 .market-card-name { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
-.market-npm-link { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 6px; background: var(--tint); color: var(--text); font-size: 13px; font-weight: 500; }
+.market-npm-link { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 0; background: var(--tint); color: var(--text); font-size: 13px; font-weight: 500; }
 .marketplace .market-npm-link:hover { background: var(--tint-strong); }
 .market-npm-link .package-logo { width: 14px; height: 14px; }
 
@@ -84,4 +84,6 @@ body.marketplace > main { gap: 40px; }
   .builtin-row .command-row { grid-column: auto; flex-wrap: nowrap; align-items: flex-start; }
   .market-filter { flex-basis: 100%; }
   .pack-actions { align-items: flex-start; }
+  .pack-checksum { flex-wrap: wrap; }
+  .pack-checksum code { flex-basis: 100%; order: 3; }
 }
