@@ -67,17 +67,45 @@ function share(values, test) {
 
 test('curvature of a bevelled cube is flat on the faces, high on the bevels and never strongly concave', () => {
   const values = redChannel(bakeMeshMap(bevelledCube(), 'curvature', { resolution: 256 }));
-  assert.ok(share(values, value => value >= 126 && value <= 129) > 0.4, 'the faces sit at 0.5');
+  assert.ok(share(values, value => value >= 126 && value <= 129) > 0.15, 'the middle of each face sits at 0.5');
   assert.ok(share(values, value => value > 160) > 0.02, 'the bevels are convex');
   assert.equal(share(values, value => value > 0 && value < 100), 0, 'a convex solid has no concave texel');
   assert.ok(Math.max(...values) <= 255);
 });
 
-test('curvature reads folds inside a UV island, not folds that fall on a seam between islands', () => {
+// The profile of a box corner with a chamfer, extruded along z: the side, the chamfer and the top, each its own UV island,
+// so the middle of the chamfer sits on a seam between the two halves of a bevel in a cube projection.
+function chamferGeometry() {
+  const profile = [[0.06, -1.06], [0.06, -0.06], [0, 0], [-1, 0]];
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+  for (let segment = 0; segment < 3; segment++) {
+    const [from, to] = [profile[segment], profile[segment + 1]];
+    const first = positions.length / 3;
+    positions.push(from[0], from[1], 0, to[0], to[1], 0, to[0], to[1], 1, from[0], from[1], 1);
+    uvs.push(segment / 3, 0, (segment + 1) / 3, 0, (segment + 1) / 3, 1, segment / 3, 1);
+    indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
+  }
+  return { positions: Float32Array.from(positions), uvs: Float32Array.from(uvs), indices: Uint32Array.from(indices) };
+}
+
+test('a bevel reads as one band: the middle of the strip is at least as convex as its borders', () => {
+  const resolution = 192;
+  const map = bakeMeshMap(chamferGeometry(), 'curvature', { resolution });
+  const at = (fractionAcrossChamfer) => map.data[(Math.floor(resolution / 2) * resolution + Math.floor((1 + fractionAcrossChamfer) * resolution / 3)) * 4];
+  const profile = [0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95].map(at);
+  assert.ok(profile[3] >= profile[0] && profile[3] >= profile[6], `middle ${profile[3]} against borders ${profile[0]} and ${profile[6]}: ${profile}`);
+  assert.ok(Math.min(...profile) > 150, `no unworn gap across the strip: ${profile}`);
+  const flatTop = map.data[(Math.floor(resolution / 2) * resolution + Math.floor(2.1 * resolution / 3)) * 4];
+  assert.ok(flatTop < Math.min(...profile), `the flat face beyond the bevel stays lower: ${flatTop}`);
+});
+
+test('curvature sees a fold on a seam between islands, and a larger radius widens the band', () => {
   const seamed = redChannel(bakeMeshMap(boxGeometry(1, 1, 1), 'curvature', { resolution: 128 }));
-  assert.equal(share(seamed, value => value > 140), 0, 'each face of this box is its own island, so its edges are seams');
-  const wide = redChannel(bakeMeshMap(bevelledCube(), 'curvature', { resolution: 256, radius: 4 }));
-  const narrow = redChannel(bakeMeshMap(bevelledCube(), 'curvature', { resolution: 256, radius: 1 }));
+  assert.ok(share(seamed, value => value > 140) > 0.02, 'each face of this box is its own island, and its edges are still convex');
+  const wide = redChannel(bakeMeshMap(bevelledCube(), 'curvature', { resolution: 256, radius: 0.12 }));
+  const narrow = redChannel(bakeMeshMap(bevelledCube(), 'curvature', { resolution: 256, radius: 0.03 }));
   assert.ok(share(wide, value => value > 140) > share(narrow, value => value > 140), 'a larger radius widens the band');
 });
 
@@ -129,7 +157,7 @@ test('bad input is refused with what to pass instead', () => {
   assert.throws(() => bakeMeshMap(cornerGeometry(), 'normal'), /one of curvature, ao, thickness.*bakeHighToLowNormalMap/);
   assert.throws(() => bakeMeshMap(cornerGeometry(), 'ao', { resolution: 4096 }), /resolution.*from 1 to 2048/);
   assert.throws(() => bakeMeshMap(cornerGeometry(), 'ao', { rays: 0 }), /rays.*from 1 to 64/);
-  assert.throws(() => bakeMeshMap(cornerGeometry(), 'ao', { radius: 1.5 }), /radius.*whole number/);
+  assert.throws(() => bakeMeshMap(cornerGeometry(), 'ao', { radius: -1 }), /radius.*positive number of metres/);
   assert.throws(() => bakeMeshMap({ positions: new Float32Array(3) }, 'ao'), /geometry.*at least one triangle/);
   assert.throws(() => bakeMeshMap(boxGeometry(1, 1, 1), 'ao', { resolution: 2048, rays: 64 }), /would cast.*limit is 16000000.*smaller resolution or fewer rays/);
   assert.throws(() => bakeHighToLowNormalMap(cornerGeometry(), cornerGeometry(), { cage: -1 }), /cage/);

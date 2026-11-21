@@ -2,14 +2,15 @@ import { invalidField } from './field-error.js';
 import { MESH_MAP_NAMES } from './agent-scene-capabilities.js';
 import { createMeshQueryIndex, withoutDegenerateTriangles } from './mesh-query.js';
 import { dilateTexels } from './material-vertex-group-map.js';
+import { CURVATURE_GRID_CELLS_PER_AXIS, surfaceCurvature } from './mesh-map-curvature.js';
 
 // Mesh maps: ambient occlusion, curvature and thickness of a mesh written per texel in its UV space, and optionally the
 // normals of a second, high mesh seen from the low one. A material graph reads them with {"meshMap":{"name":"curvature"}},
 // so edge wear, cavity dirt and translucency follow the surface at texture density instead of vertex density.
 //
-//   curvature  0.5 on a flat surface, up to 1 on a convex edge and down to 0 in a concave one. It compares the face
-//              normal of a texel with the normals of the texels `radius` texels away, so a fold shows as a band of
-//              about 2 * radius texels no matter how few vertices the fold has.
+//   curvature  0.5 on a flat surface, up to 1 on a convex edge and down to 0 in a concave one. It turns the face normals
+//              of the texels within `radius` metres into one number (see mesh-map-curvature.js), measured in 3D so a
+//              fold on a UV seam shows too, and a bevel reads as one band when `radius` covers half its width.
 //   ao         the share of `rays` cosine-weighted rays above the surface that hit the mesh within `distance`.
 //   thickness  the mean distance of `rays` cosine-weighted rays below the surface to the mesh behind it, as a share
 //              of `distance`; a ray that leaves the mesh counts as the whole distance.
@@ -22,18 +23,17 @@ export { MESH_MAP_NAMES };
 export const MESH_MAP_LIMITS = Object.freeze({
   resolution: Object.freeze([1, 2048]),
   rays: Object.freeze([1, 64]),
-  radius: Object.freeze([1, 8]),
   gain: Object.freeze([0.1, 16]),
   maxRayCasts: 16_000_000,
 });
-export const MESH_MAP_DEFAULTS = Object.freeze({ rays: 16, radius: 2, gain: 2, seed: 0 });
+export const MESH_MAP_DEFAULTS = Object.freeze({ rays: 16, gain: 1, seed: 0 });
+// The curvature reach when none is passed: a share of the bounding box diagonal.
+const CURVATURE_RADIUS_SHARE = 0.04;
 
 const AMBIENT_DISTANCE_SHARE = 0.25;
 const RAY_START_OFFSET = 1e-4;
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887498949;
-const NEIGHBOUR_REACH = 2;
 const INSIDE_TOLERANCE = 1e-6;
-const NEIGHBOUR_OFFSETS = Object.freeze([[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]);
 
 function numberInRange(value, [low, high], label) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < low || value > high) {
@@ -60,14 +60,16 @@ function triangleCorners(geometry) {
 function checkedSettings(options) {
   const resolution = integerInRange(options.resolution ?? 512, MESH_MAP_LIMITS.resolution, 'resolution');
   const rays = integerInRange(options.rays ?? MESH_MAP_DEFAULTS.rays, MESH_MAP_LIMITS.rays, 'rays');
-  const radius = integerInRange(options.radius ?? MESH_MAP_DEFAULTS.radius, MESH_MAP_LIMITS.radius, 'radius');
   const gain = numberInRange(options.gain ?? MESH_MAP_DEFAULTS.gain, MESH_MAP_LIMITS.gain, 'gain');
   const seed = integerInRange(options.seed ?? MESH_MAP_DEFAULTS.seed, [0, 2147483647], 'seed');
   if (options.distance !== undefined) numberInRange(options.distance, [1e-9, 1e9], 'distance');
-  return { resolution, rays, radius, gain, seed, distance: options.distance };
+  if (options.radius !== undefined && (typeof options.radius !== 'number' || !Number.isFinite(options.radius) || options.radius <= 0)) {
+    throw invalidField('radius', options.radius, 'a positive number of metres (curvature reach); leave it out for 4 percent of the bounding box diagonal');
+  }
+  return { resolution, rays, radius: options.radius, gain, seed, distance: options.distance };
 }
 
-function meshExtent(positions) {
+function meshBox(positions) {
   const low = [Infinity, Infinity, Infinity];
   const high = [-Infinity, -Infinity, -Infinity];
   for (let offset = 0; offset < positions.length; offset += 3) {
@@ -76,7 +78,11 @@ function meshExtent(positions) {
       high[axis] = Math.max(high[axis], positions[offset + axis]);
     }
   }
-  return Math.hypot(high[0] - low[0], high[1] - low[1], high[2] - low[2]);
+  return { low, diagonal: Math.hypot(high[0] - low[0], high[1] - low[1], high[2] - low[2]) };
+}
+
+function meshExtent(positions) {
+  return meshBox(positions).diagonal;
 }
 
 function faceNormalDirection(positions, corners, triangle) {
@@ -101,11 +107,6 @@ function faceNormal(positions, corners, triangle) {
   return length === 0 ? [0, 0, 0] : [x / length, y / length, z / length];
 }
 
-function surfaceArea(positions, corners, triangle) {
-  const [x, y, z] = faceNormalDirection(positions, corners, triangle);
-  return 0.5 * Math.hypot(x, y, z);
-}
-
 /**
  * The texels each triangle covers: for every texel the triangle it sits in (-1 for none) and its position on the
  * surface. A texel is covered by the triangle that contains its centre; where UV islands overlap, the later one wins.
@@ -113,14 +114,12 @@ function surfaceArea(positions, corners, triangle) {
 function rasterizeSurface(geometry, corners, resolution) {
   const { positions, uvs } = geometry;
   const triangleOf = new Int32Array(resolution * resolution).fill(-1);
-  const texelSizes = new Float32Array(Math.floor(corners.length / 3));
   const points = new Float32Array(resolution * resolution * 3);
   for (let triangle = 0; triangle * 3 + 2 < corners.length; triangle++) {
     const vertices = [corners[triangle * 3], corners[triangle * 3 + 1], corners[triangle * 3 + 2]];
     const [[ax, ay], [bx, by], [cx, cy]] = vertices.map(vertex => [uvs[vertex * 2] * resolution, uvs[vertex * 2 + 1] * resolution]);
     const area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
     if (Math.abs(area) < INSIDE_TOLERANCE) continue;
-    texelSizes[triangle] = Math.sqrt(surfaceArea(positions, corners, triangle) / Math.abs(area));
     const firstColumn = Math.max(0, Math.floor(Math.min(ax, bx, cx) - 1));
     const lastColumn = Math.min(resolution - 1, Math.ceil(Math.max(ax, bx, cx)));
     const firstRow = Math.max(0, Math.floor(Math.min(ay, by, cy) - 1));
@@ -141,7 +140,7 @@ function rasterizeSurface(geometry, corners, resolution) {
       }
     }
   }
-  return { triangleOf, points, texelSizes };
+  return { triangleOf, points };
 }
 
 function triangleNormals(positions, corners) {
@@ -151,32 +150,15 @@ function triangleNormals(positions, corners) {
   return normals;
 }
 
-function curvatureAt(surface, normals, texel, resolution, radius, gain) {
-  const { triangleOf, points, texelSizes } = surface;
-  const column = texel % resolution;
-  const row = (texel - column) / resolution;
-  const own = triangleOf[texel] * 3;
-  let sum = 0;
-  let count = 0;
-  for (const [columnStep, rowStep] of NEIGHBOUR_OFFSETS) {
-    const neighbourColumn = column + columnStep * radius;
-    const neighbourRow = row + rowStep * radius;
-    if (neighbourColumn < 0 || neighbourRow < 0 || neighbourColumn >= resolution || neighbourRow >= resolution) continue;
-    const neighbour = neighbourRow * resolution + neighbourColumn;
-    if (triangleOf[neighbour] < 0) continue;
-    const deltaX = points[neighbour * 3] - points[texel * 3];
-    const deltaY = points[neighbour * 3 + 1] - points[texel * 3 + 1];
-    const deltaZ = points[neighbour * 3 + 2] - points[texel * 3 + 2];
-    const distance = Math.hypot(deltaX, deltaY, deltaZ);
-    // Texels of another UV island that only sit beside this one in the atlas are not neighbours on the surface.
-    if (distance < 1e-12 || distance > NEIGHBOUR_REACH * radius * Math.max(texelSizes[triangleOf[texel]], texelSizes[triangleOf[neighbour]])) continue;
-    const other = triangleOf[neighbour] * 3;
-    // How far the normal turns toward the direction of travel: positive over a convex fold, negative over a concave one.
-    sum += ((normals[other] - normals[own]) * deltaX + (normals[other + 1] - normals[own + 1]) * deltaY + (normals[other + 2] - normals[own + 2]) * deltaZ) / distance;
-    count++;
+// The reach of the curvature in metres, checked against the grid it needs: not under 1/1024 of the diagonal.
+function curvatureReach(requested, positions) {
+  const { low, diagonal } = meshBox(positions);
+  const smallest = diagonal / CURVATURE_GRID_CELLS_PER_AXIS;
+  if (requested === undefined) return { low, radius: Math.max(diagonal * CURVATURE_RADIUS_SHARE, smallest) };
+  if (requested < smallest || requested > diagonal) {
+    throw invalidField('radius', requested, `a number of metres from ${smallest} to ${diagonal} for this mesh (curvature reach)`);
   }
-  if (count === 0) return 0.5;
-  return 0.5 + 0.5 * Math.min(1, Math.max(-1, (gain * sum) / count));
+  return { low, radius: requested };
 }
 
 function hemisphereDirection(normal, ringShare, turnShare, sign) {
@@ -263,11 +245,8 @@ function scalarMapValues(name, context, settings) {
   const { surface, normals, resolution } = context;
   const texelCount = resolution * resolution;
   if (name === 'curvature') {
-    const values = new Float32Array(texelCount);
-    for (let texel = 0; texel < texelCount; texel++) {
-      if (surface.triangleOf[texel] >= 0) values[texel] = curvatureAt(surface, normals, texel, resolution, settings.radius, settings.gain);
-    }
-    return values;
+    const { low, radius } = curvatureReach(settings.radius, surface.geometry.positions);
+    return surfaceCurvature(surface, normals, { lowCorner: low, radius, gain: settings.gain });
   }
   const extent = meshExtent(surface.geometry.positions);
   const cast = { surface, normals, texelCount, resolution, rays: settings.rays, seed: settings.seed };
@@ -313,17 +292,17 @@ function checkUvs(geometry, corners, name) {
 function prepareSurface(geometry, name, settings) {
   const corners = triangleCorners(geometry);
   checkUvs(geometry, corners, name);
-  const { triangleOf, points, texelSizes } = rasterizeSurface(geometry, corners, settings.resolution);
+  const { triangleOf, points } = rasterizeSurface(geometry, corners, settings.resolution);
   const covered = triangleOf.reduce((count, triangle) => count + (triangle >= 0 ? 1 : 0), 0);
   if (name === 'ao' || name === 'thickness') checkRayWork(covered, settings.rays);
-  return { geometry, corners, triangleOf, points, texelSizes };
+  return { geometry, corners, triangleOf, points };
 }
 
 /**
  * One scalar mesh map of `geometry` as `{ width, height, data }` RGBA bytes with the value (0 to 255) in the red
  * channel, row 0 at v = 0, like a baked graph. `name` is curvature, ao or thickness. `geometry` is `{ positions,
- * indices?, uvs }`. Options: resolution (1 to 2048, 512), rays (1 to 64, 16; ao and thickness), radius (texels, 1 to 8, 2;
- * curvature), gain (0.1 to 16, 2; curvature), distance (metres; a quarter of the bounding box diagonal for ao, the whole
+ * indices?, uvs }`. Options: resolution (1 to 2048, 512), rays (1 to 64, 16; ao and thickness), radius (metres, 1/1024 to 1 of the bounding box diagonal, 4 percent of it;
+ * curvature), gain (0.1 to 16, 1; curvature), distance (metres; a quarter of the bounding box diagonal for ao, the whole
  * diagonal for thickness) and seed. Throws, with what to pass instead, on a mesh without UVs or a number out of range.
  */
 export function bakeMeshMap(geometry, name, options = {}) {
