@@ -32,11 +32,12 @@ import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMU
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
 import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
-import { namesCatalogFiles, resolveAssetPlacementNames, namesCatalogSequences, resolveCatalogSequenceNames } from '../src/agent-asset-names.js';
+import { namesCatalogFiles, resolveAssetPlacementNames, namesCatalogSequences, resolveCatalogSequenceNames, namesCatalogTextureMaps, resolveTextureSetNames } from '../src/agent-asset-names.js';
 import { sequenceFrameIds, hasStreamedSequence } from '../src/agent-texture-sequence.js';
 import { readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
 import { catalogLookReferences, BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES } from '../src/look-catalog.js';
 import { TEXTURE_SEQUENCE_CAPABILITIES, TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
+import { TEXTURE_SET_CAPABILITIES } from '../src/texture-set-names.js';
 import { writeWebBuild } from './web-export.mjs';
 import { gameAssetIds, gameImageIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
@@ -407,6 +408,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   async function pinNamedAssets(value) {
     if (namesCatalogFiles(value)) resolveAssetPlacementNames(value, (await rescannedCatalog()).resolveName);
     if (namesCatalogSequences(value)) await resolveCatalogSequenceNames(value, pattern => rescannedCatalog().then(assets => assets.resolveSequence(pattern)));
+    if (namesCatalogTextureMaps(value)) {
+      const assets = await rescannedCatalog();
+      await resolveTextureSetNames(value, { resolveSet: assets.resolveTextureSet, checkMap: assets.checkTextureMap });
+    }
   }
 
   /** The same for the asset recipe of scene_create_asset: `assetName` (a catalog file name) becomes `assetId`. */
@@ -1304,7 +1309,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return tierReport({ backend, nativeTracer: Boolean((await nativeTracerLocator.find()).tracer) });
       };
       return {
-        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES },
+        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES, textureSet: TEXTURE_SET_CAPABILITIES },
         sceneLimits: SCENE_LIMITS,
         preview: { backend, memoryBudgetMiB: memory, maximumWidth: 1024, maximumHeight: 1024, maximumImageBytes: MAXIMUM_IMAGE_BYTES, maximumActiveScenes: SCENE_STORE_LIMITS.maxOpenScenes, maximumOpenSceneBytes: SCENE_STORE_LIMITS.maxOpenSceneBytes, maximumQueuedCalls: MAXIMUM_QUEUED_CALLS, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS },
         review: { ...REVIEW_LIMITS, backend, memoryBudgetMiB: memory, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS,
