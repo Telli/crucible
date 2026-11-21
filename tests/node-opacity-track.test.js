@@ -98,3 +98,12 @@ test('a copy of the fading material keeps every field of the shared material', (
   assert.equal(copy.roughness, shared.roughness);
   assert.equal(copy.alphaMode, 'blend');
 });
+
+test('without an opacity track every part keeps the shared material object and the same fields', () => {
+  const scene = createAgentScene(recipeWith({}));
+  const [first, second] = scene.parts;
+  assert.equal(first.material, second.material, 'nodes that share a material share one material object');
+  assert.equal(first.material.alphaMode, 'opaque');
+  assert.equal(first.material.opacity, 1);
+  assert.equal(Object.hasOwn(first, 'opacityScale'), false);
+});
