@@ -1,0 +1,1 @@
+- The Blender demo export bakes a Sky Texture world to sky.hdr and records its view transform and exposure in world.json, and the README preview scene files use them, so the Lone Monk courtyard is lit by its own sun at its own exposure instead of an unrelated airport sky (#2761).

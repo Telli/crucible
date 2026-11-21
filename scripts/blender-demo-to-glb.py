@@ -30,7 +30,12 @@ An image texture tinted on its way to the Base Color by constant nodes only (Hue
 flat colour) is graded instead: the tint is applied to a copy of the image in linear light, as Cycles does, and that copy is
 wired in, so the texture keeps its full resolution (#2761). Baking those to vertex colours left blotches on large plaster walls.
 Modifiers are applied before the bake so a subdivided wall gets its colour on the vertices that are exported.
+
+A world lit by an analytic sky (a Sky Texture node, as the Lone Monk has instead of lamps) is rendered to sky.hdr with its sun
+at full strength, and world.json records the scene's view transform and exposure. scripts/blender-world-sky.mjs reads both into
+scene.json: the HDRI replaces the airport sky, whose sun Crucible takes out as the shadowed key (#2761).
 """
+import json
 import os
 import sys
 
@@ -417,6 +422,70 @@ if sun_strength is not None:
         print("SUN", light.name, sun_strength)
 
 
+
+
+SKY_BAKE_WIDTH = 2048
+SKY_BAKE_HEIGHT = 1024
+
+
+def find_analytic_sky(world):
+    """The Sky Texture node of a world that is lit by an analytic sky (Nishita and its siblings), or None."""
+    if world is None or not world.use_nodes or world.node_tree is None:
+        return None
+    return first_node(world, "TEX_SKY")
+
+
+def bake_world_sky(directory):
+    """A world lit by an analytic sky has no light in the glTF, so the sky is rendered to sky.hdr with its sun at full
+    strength (a Cycles equirectangular view, Standard view transform so the file is linear), and world.json records the
+    view transform and exposure for the scene file (#2761). The map faces Blender +Y, which is glTF -Z, the middle of
+    Crucible's equirectangular map. Worlds without a Sky Texture write nothing, and the scene keeps its default sky."""
+    scene = bpy.context.scene
+    world = scene.world
+    sky = find_analytic_sky(world)
+    if sky is None:
+        return
+    settings = scene.view_settings
+    world_description = {
+        "viewTransform": settings.view_transform,
+        "look": settings.look,
+        "exposureStops": settings.exposure,
+        "gamma": settings.gamma,
+        "sky": {"type": sky.sky_type, "sunDisc": bool(getattr(sky, "sun_disc", False)),
+                "sunElevationRadians": getattr(sky, "sun_elevation", None), "sunRotationRadians": getattr(sky, "sun_rotation", None),
+                "sunSizeRadians": getattr(sky, "sun_size", None), "sunIntensity": getattr(sky, "sun_intensity", None)},
+    }
+    bake_scene = bpy.data.scenes.new("sky-bake")
+    bake_scene.world = world
+    bake_scene.render.engine = "CYCLES"
+    bake_scene.cycles.device = "CPU"
+    bake_scene.cycles.samples = 16
+    bake_scene.cycles.use_denoising = False
+    bake_scene.render.resolution_x = SKY_BAKE_WIDTH
+    bake_scene.render.resolution_y = SKY_BAKE_HEIGHT
+    bake_scene.render.resolution_percentage = 100
+    bake_scene.render.film_transparent = False
+    bake_scene.view_settings.view_transform = "Standard"
+    bake_scene.view_settings.look = "None"
+    bake_scene.view_settings.exposure = 0.0
+    bake_scene.render.image_settings.file_format = "HDR"
+    bake_scene.render.image_settings.color_depth = "32"
+    camera_data = bpy.data.cameras.new("sky-bake-camera")
+    camera_data.type = "PANO"
+    camera_data.panorama_type = "EQUIRECTANGULAR"
+    camera_data.clip_start = 0.1
+    camera = bpy.data.objects.new("sky-bake-camera", camera_data)
+    camera.rotation_euler = (1.5707963267948966, 0.0, 0.0)
+    bake_scene.collection.objects.link(camera)
+    bake_scene.camera = camera
+    bake_scene.render.filepath = directory + "/sky.hdr"
+    bpy.ops.render.render(write_still=True, scene=bake_scene.name)
+    with open(directory + "/world.json", "w", encoding="utf-8") as world_file:
+        json.dump(world_description, world_file, indent=2)
+    print("SKY", sky.sky_type, "baked to sky.hdr; view", settings.view_transform, "exposure", settings.exposure)
+
+
+bake_world_sky(output_directory)
 join_realized_instances()
 bpy.ops.export_scene.gltf(
     filepath=output_directory + "/scene.glb", export_format="GLB", export_apply=True, export_gpu_instances=True,
