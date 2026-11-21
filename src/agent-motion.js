@@ -17,7 +17,8 @@ const PHYSICAL_SKY_TRACK_PROPERTIES = new Set(['sunElevation', 'sunRotation', 't
 
 const PROPERTIES = {
   // visible is 1 or 0 and defaults to STEP interpolation; a hidden node and its children draw and cast nothing.
-  node: { translation: 3, rotation: 4, scale: 3, visible: 1 },
+  // opacity is 0 to 1 and multiplies the part's material opacity (and its children's); it needs a blend or add material, or an opaque one, which draws blended while the track exists.
+  node: { translation: 3, rotation: 4, scale: 3, visible: 1, opacity: 1 },
   material: { color: 3, emissiveColor: 3, emission: 1, metallic: 1, roughness: 1 },
   camera: { eye: 3, target: 3, fov: 1, roll: 1 },
   // An imported asset's morph target weight, addressed by the target's name.
@@ -78,6 +79,9 @@ function validateValue(kind, property, value, valuePath = `${kind}.${property}`)
   }
   if (property === 'visible' && components.some(component => component !== 0 && component !== 1)) {
     throw invalidField(valuePath, value, '1 (shown) or 0 (hidden)');
+  }
+  if (kind === 'node' && property === 'opacity' && components.some(component => component < 0 || component > 1)) {
+    throw invalidField(valuePath, value, 'a node opacity from 0 (clear) to 1 (opaque), such as 0.5');
   }
   if (property === 'scale' && components.some(component => Math.fround(component) <= 0)) {
     throw invalidField(valuePath, value, 'positive numbers, such as [1, 1, 1]');

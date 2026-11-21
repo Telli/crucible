@@ -67,7 +67,7 @@ const motion = {
 };
 ```
 
-Node properties are `translation`, `rotation`, and `scale`.
+Node properties are `translation`, `rotation`, `scale`, `visible` and `opacity`. An `opacity` track runs from 0 (clear) to 1 (opaque) and multiplies the material opacity of the node and of the nodes under it; it eases like any track, and a value outside 0 to 1 is refused with that range. A node with an opacity track draws blended even at 1 (an opaque material gets a private blended view, so the nodes that share the material keep it; an `add` or `blend` material is used as it is). At 0 the part draws nothing. The raster renderer honors it; the path tracer does not yet.
 Material properties are `color`, `emissiveColor`, `emission`, `metallic`, and `roughness`.
 A material track names a recipe material, or the `id` of an `asset.materials[]` override on a placed asset (docs/agent-scene.md), which is how an imported part heats and cools.
 Camera properties are `eye`, `target`, `fov`, and `roll`.

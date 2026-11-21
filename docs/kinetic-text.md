@@ -37,13 +37,13 @@ const recipe = {
 `staggerNodeTracks(nodes, { property, keyframes, offset, order, seed, easing })` returns `{ tracks, duration, delays }`: one `node` track per node, `motion.tracks`-ready, and the shortest `motion.duration` that holds them all.
 
 - `nodes` are `{ id, translation? }`, such as `splitText(...).nodes`.
-- `property` is `translation`, `rotation`, `scale` or `visible`. Translation keyframes are offsets from each node's own translation, so one rise track works for every letter. The other properties are the values themselves.
+- `property` is `translation`, `rotation`, `scale`, `visible` or `opacity` (0 to 1, a fade; the node draws blended while it has the track). Translation keyframes are offsets from each node's own translation, so one rise track works for every letter. The other properties are the values themselves.
 - `offset` is the delay in seconds between one node's start and the next one's.
 - `order` is `forward`, `reverse`, `center` (the middle starts first; the two middle nodes of an even count start together) or `random` (a seeded shuffle: the same `seed` gives the same order).
 - `easing` spreads the start times between the first and the last node. `linear` (the default) starts each node exactly `offset` after the one before; another curve from the [keyframe easings](animation-curves.md) bunches the starts. A curve that overshoots (`easeOutBack`) is clamped at 0. Easings on individual keyframes pass through to the tracks.
 - Before its start a node holds its first keyframe: a track that starts late gets a keyframe at time 0 with that value.
 - The limits of a motion apply: 128 tracks, 2048 keyframes in all and a duration of at most 30 seconds. An error names the limit and what to lower.
 
-Node tracks have no opacity, so a per-letter fade is not covered: use `visible`, `scale` or `translation`.
+A per-letter fade is `property: 'opacity'` with keyframes from 0 to 1: `node scripts/render-title-reveal.mjs --effect fade` renders CRUCIBLE fading in letter by letter.
 
-The MCP tools take no new fields. An agent builds the recipe through these functions, or writes the same geometries, nodes and tracks by hand.
+The MCP tools take no new fields apart from the node `opacity` track property. An agent builds the recipe through these functions, or writes the same geometries, nodes and tracks by hand.

@@ -3,8 +3,8 @@ import { easedProgress, normalizeKeyframeEasing } from './easing.js';
 import { requireWholeSeed, seededRandom } from './seeded-random.js';
 
 export const STAGGER_ORDERS = Object.freeze(['forward', 'reverse', 'center', 'random']);
-const STAGGER_PROPERTIES = Object.freeze(['translation', 'rotation', 'scale', 'visible']);
-const PROPERTY_SIZES = { translation: 3, rotation: 4, scale: 3, visible: 1 };
+const STAGGER_PROPERTIES = Object.freeze(['translation', 'rotation', 'scale', 'visible', 'opacity']);
+const PROPERTY_SIZES = { translation: 3, rotation: 4, scale: 3, visible: 1, opacity: 1 };
 const MAX_STAGGER_NODES = 128;
 const MAX_TOTAL_KEYFRAMES = 2048;
 const MIN_MOTION_DURATION = 0.1;
@@ -25,6 +25,7 @@ function checkKeyframes(keyframes, property) {
     if (keyframe.time <= previousTime) throw new RangeError(`keyframes[${index}].time must be later than the keyframe before it (${previousTime}): list the keyframes in time order with distinct times.`);
     previousTime = keyframe.time;
     const valid = size === 1 ? Number.isFinite(keyframe.value) : Array.isArray(keyframe.value) && keyframe.value.length === size && keyframe.value.every(Number.isFinite);
+    if (valid && property === 'opacity' && (keyframe.value < 0 || keyframe.value > 1)) throw new RangeError(`keyframes[${index}].value must be an opacity from 0 (clear) to 1 (opaque), such as 0.5, and this is ${keyframe.value}.`);
     if (!valid) throw new TypeError(`keyframes[${index}].value must be ${size === 1 ? 'a finite number, such as 1' : `an array of ${size} finite numbers`} for a ${property} track.`);
   });
 }
@@ -69,7 +70,7 @@ function shiftedKeyframes(keyframes, delay, property, restTranslation) {
  * `motion.tracks` and use `duration` (or more) as `motion.duration`.
  *
  * `nodes` are `{ id, translation? }`, such as the `nodes` of `splitText`. Translation keyframes are offsets from each node's own
- * translation; rotation, scale and visible keyframes are the values themselves. `order` is forward, reverse, center (middle first;
+ * translation; rotation, scale, visible and opacity (0 to 1) keyframes are the values themselves. `order` is forward, reverse, center (middle first;
  * the two middle nodes of an even count start together) or random (seeded). `easing` spreads the start times between the first
  * and the last node, as in the keyframe easings: linear starts each node `offset` after the one before.
  */
