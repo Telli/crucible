@@ -1,9 +1,8 @@
-// The first-run setup dialog: four groups of choice cards (theme, performance, modelling, working with an agent) that
-// change the live Studio behind it. It is built from the preferences Studio already keeps, so nothing here is saved
-// anywhere new. `open({ layout })` shows the groups one page at a time ('steps') or all on one sheet ('sheet').
+// The first-run setup dialog: four steps of choice cards (theme, performance, modelling, working with an agent) that
+// change the live Studio behind it, one step a page. It is built from the preferences Studio already keeps, so nothing
+// here is saved anywhere new.
 import { STUDIO_PREFERENCE_CHOICES } from './studio-preferences.js';
-
-export const STUDIO_SETUP_LAYOUTS = Object.freeze(['steps', 'sheet']);
+import { STUDIO_TOOLS } from './studio-templates.js';
 
 const THEME_CHOICES = Object.freeze([
   { value: 'system', label: 'System' },
@@ -12,21 +11,24 @@ const THEME_CHOICES = Object.freeze([
 ]);
 
 const PERFORMANCE_CHOICES = Object.freeze([
-  { value: 'automatic', label: 'Automatic' },
-  { value: 'light', label: 'Light' },
-  { value: 'balanced', label: 'Balanced' },
-  { value: 'sharp', label: 'Sharp' },
+  { value: 'automatic', label: 'Automatic', icon: 'tierAutomatic' },
+  { value: 'light', label: 'Light', icon: 'tierLight' },
+  { value: 'balanced', label: 'Balanced', icon: 'tierBalanced' },
+  { value: 'sharp', label: 'Sharp', icon: 'tierSharp' },
 ]);
 
 const MODELLING_ROWS = Object.freeze([
-  { name: 'moveSnapStep', label: 'Move snap step', describe: value => `${value} m` },
-  { name: 'rotateSnapDegrees', label: 'Rotate snap angle', describe: value => `${value}°` },
-  { name: 'gizmoSize', label: 'Handle size', describe: capitalize },
-  { name: 'startWorkspace', label: 'Open in', describe: capitalize },
+  { name: 'moveSnapStep', label: 'Move snap step', icon: 'translate', describe: value => `${value} m` },
+  { name: 'rotateSnapDegrees', label: 'Rotate snap angle', icon: 'rotate', describe: value => `${value}°` },
+  { name: 'gizmoSize', label: 'Handle size', icon: 'handle', describe: capitalize },
+  { name: 'startWorkspace', label: 'Open in', icon: 'panels', describe: capitalize },
 ]);
 
-// The sketch's parts, drawn in the tokens of the theme the sketch shows.
-const SKETCH_PARTS = Object.freeze(['bar', 'rail', 'viewport', 'ground', 'solid', 'card-top', 'card-bottom']);
+// The icons Studio's own workspace tabs use, so a chip shows the workspace it opens.
+const WORKSPACE_ICONS = Object.freeze({ build: 'node', look: 'material', animate: 'play' });
+
+// What the rail of a miniature holds, grouped as the real rail groups them: the tools, the scene edits, the switches.
+const MINIATURE_RAIL_GROUPS = Object.freeze([STUDIO_TOOLS, ['add', 'undo', 'redo'], ['grid', 'panels']]);
 
 let setupInstanceCount = 0;
 
@@ -38,26 +40,68 @@ function formatRatio(pixelRatio) {
   return `${Number(pixelRatio.toFixed(2))}x`;
 }
 
-/** A miniature of Studio in one theme: top bar, tool rail, a viewport with a ground line and a solid, and two cards. */
-function createThemeSketch(documentReference, createElement, theme, half = null) {
-  const frame = createElement(
+/**
+ * A miniature of the real Studio chrome in one theme, made of the real Studio classes so the real stylesheet draws it:
+ * the top bar, the tool rail with its icons, the viewport as a plain block and the two panel cards as empty surfaces.
+ * It is a Studio root of its own with data-theme set, so the theme's tokens resolve again on that element and its
+ * --studio-* colours follow the theme it shows, whatever theme the Studio around the dialog is in.
+ */
+function createStudioMiniature(documentReference, createElement, createIcon, theme, half = null) {
+  const railGroups = MINIATURE_RAIL_GROUPS.map(iconNames => createElement(
     documentReference,
-    'span',
-    { className: 'crucible-studio-setup-sketch-frame' },
-    ...SKETCH_PARTS.map(part => createElement(documentReference, 'span', { className: 'crucible-studio-setup-sketch-part', dataset: { part } })),
+    'div',
+    { className: 'crucible-studio-group' },
+    ...iconNames.map(iconName => createElement(
+      documentReference,
+      'button',
+      { type: 'button', dataset: { icon: iconName }, attributes: { tabindex: '-1', 'aria-pressed': iconName === 'select' ? 'true' : null } },
+      createIcon(documentReference, iconName),
+    )),
+  ));
+  const rail = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-toolbar crucible-studio-island' },
+    railGroups[0],
+    railGroups[1],
+    createElement(documentReference, 'div', { className: 'crucible-studio-toolbar-rule' }),
+    railGroups[2],
   );
-  const sketch = createElement(documentReference, 'span', { className: 'crucible-studio-setup-sketch', dataset: { theme } }, frame);
+  const cards = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio-side' },
+    createElement(documentReference, 'div', { className: 'crucible-studio-dock crucible-studio-outliner' }),
+    createElement(documentReference, 'div', { className: 'crucible-studio-dock crucible-studio-inspector' }),
+  );
+  const miniature = createElement(
+    documentReference,
+    'div',
+    { className: 'crucible-studio crucible-studio-miniature', dataset: { theme, floating: 'false' } },
+    createElement(documentReference, 'div', { className: 'crucible-studio-viewport' }),
+    createElement(documentReference, 'header', { className: 'crucible-studio-menubar' }),
+    rail,
+    cards,
+  );
   if (half) {
-    sketch.dataset.half = half;
+    miniature.dataset.half = half;
   }
-  return sketch;
+  return miniature;
 }
 
-function createThemePreview(documentReference, createElement, theme) {
-  const sketches = theme === 'system'
-    ? [createThemeSketch(documentReference, createElement, 'light', 'left'), createThemeSketch(documentReference, createElement, 'dark', 'right')]
-    : [createThemeSketch(documentReference, createElement, theme)];
-  return createElement(documentReference, 'span', { className: 'crucible-studio-setup-preview' }, ...sketches);
+// The cards are built empty and filled with their miniatures the first time the dialog opens, once, so Studio's start
+// costs nothing for a dialog that may never be shown. The miniatures are inert and hidden from assistive technology.
+function createThemePreview(documentReference, createElement) {
+  const preview = createElement(documentReference, 'span', { className: 'crucible-studio-setup-preview', attributes: { 'aria-hidden': 'true' } });
+  preview.inert = true;
+  return preview;
+}
+
+function fillThemePreview(documentReference, createElement, createIcon, preview, theme) {
+  const miniatures = theme === 'system'
+    ? [createStudioMiniature(documentReference, createElement, createIcon, 'light', 'left'), createStudioMiniature(documentReference, createElement, createIcon, 'dark', 'right')]
+    : [createStudioMiniature(documentReference, createElement, createIcon, theme)];
+  preview.append(...miniatures);
 }
 
 export function createStudioSetup({
@@ -75,12 +119,13 @@ export function createStudioSetup({
   setupInstanceCount += 1;
   const instanceId = setupInstanceCount;
   const radios = [];
-  let layout = 'steps';
   let stepIndex = 0;
+  let previewsFilled = false;
+  const themePreviews = [];
 
   // One radio per card, so the arrow keys, Tab and a screen reader work without any script. The radio sits invisibly
   // over the card; the card shows a check mark when chosen, so the choice is never shown by colour alone.
-  function createChoiceCard({ groupName, preferenceName, value, preview, label, details = [] }) {
+  function createChoiceCard({ groupName, preferenceName, value, preview, iconName, label, details = [] }) {
     const radio = createElement(documentReference, 'input', { type: 'radio', name: `crucible-studio-setup-${instanceId}-${groupName}`, value: String(value) });
     radio.dataset.setup = preferenceName;
     radio.addEventListener('change', () => {
@@ -93,6 +138,7 @@ export function createStudioSetup({
       documentReference,
       'span',
       { className: 'crucible-studio-setup-card-name' },
+      ...(iconName ? [createIcon(documentReference, iconName)] : []),
       createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-label', textContent: label }),
     );
     return createElement(
@@ -116,13 +162,11 @@ export function createStudioSetup({
     );
   }
 
-  const themeCards = THEME_CHOICES.map(({ value, label }) => createChoiceCard({
-    groupName: 'theme',
-    preferenceName: 'theme',
-    value,
-    label,
-    preview: createThemePreview(documentReference, createElement, value),
-  }));
+  const themeCards = THEME_CHOICES.map(({ value, label }) => {
+    const preview = createThemePreview(documentReference, createElement);
+    themePreviews.push({ preview, theme: value });
+    return createChoiceCard({ groupName: 'theme', preferenceName: 'theme', value, label, preview });
+  });
 
   // Each tier card shows what the tier gives on this screen: the pixel ratio and the anti-aliasing samples.
   const performanceFacts = [];
@@ -135,30 +179,38 @@ export function createStudioSetup({
   // Automatic gives no numbers of its own: it names the tier it picks here and the hardware that decided it.
   const automaticPick = createElement(documentReference, 'span', { className: 'crucible-studio-setup-facts' });
   const hardwareLine = createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-detail' });
-  const performanceCards = PERFORMANCE_CHOICES.map(({ value, label }) => {
+  const performanceCards = PERFORMANCE_CHOICES.map(({ value, label, icon }) => {
     const automatic = value === 'automatic';
     return createChoiceCard({
       groupName: 'performance',
       preferenceName: 'performance',
       value,
       label,
+      iconName: icon,
       details: automatic ? [automaticPick, hardwareLine] : [createFacts(value)],
     });
   });
 
-  const modellingRows = MODELLING_ROWS.map(({ name, label, describe }) => {
+  const modellingRows = MODELLING_ROWS.map(({ name, label, icon, describe }) => {
     const cards = STUDIO_PREFERENCE_CHOICES[name].map(value => createChoiceCard({
       groupName: name,
       preferenceName: name,
       value,
       label: describe(value),
+      iconName: name === 'startWorkspace' ? WORKSPACE_ICONS[value] : null,
       preview: name === 'gizmoSize' ? createElement(documentReference, 'span', { className: 'crucible-studio-setup-handle', dataset: { size: value } }) : null,
     }));
     return createElement(
       documentReference,
       'div',
       { className: 'crucible-studio-setup-row' },
-      createElement(documentReference, 'span', { className: 'crucible-studio-setup-row-label', textContent: label }),
+      createElement(
+        documentReference,
+        'span',
+        { className: 'crucible-studio-setup-row-label' },
+        createIcon(documentReference, icon),
+        createElement(documentReference, 'span', { textContent: label }),
+      ),
       createCardGroup(label, cards, 'crucible-studio-setup-chips'),
     );
   });
@@ -183,21 +235,34 @@ export function createStudioSetup({
   });
 
   const groups = [
-    { title: 'Theme', stepName: 'Theme', content: [createCardGroup('Theme', themeCards, 'crucible-studio-setup-cards-theme')] },
-    { title: 'Performance', stepName: 'Performance', content: [createCardGroup('Performance', performanceCards, 'crucible-studio-setup-cards-wide')] },
-    { title: 'Modelling', stepName: 'Modelling', content: modellingRows },
-    { title: 'Work with an AI agent', stepName: 'AI agent', content: [createElement(documentReference, 'div', { className: 'crucible-studio-setup-agent' }, promptBlock, copyPromptButton)] },
+    { title: 'Theme', stepName: 'Theme', icon: 'theme', content: [createCardGroup('Theme', themeCards, 'crucible-studio-setup-cards-theme')] },
+    { title: 'Performance', stepName: 'Performance', icon: 'speed', content: [createCardGroup('Performance', performanceCards, 'crucible-studio-setup-cards-wide')] },
+    { title: 'Modelling', stepName: 'Modelling', icon: 'node', content: modellingRows },
+    { title: 'Work with an AI agent', stepName: 'AI agent', icon: 'agent', content: [createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-setup-agent' },
+      createElement(documentReference, 'span', { className: 'crucible-studio-setup-agent-mark' }, createIcon(documentReference, 'chat')),
+      promptBlock,
+      copyPromptButton,
+    )] },
   ];
   const sections = groups.map(({ title, content }, index) => createElement(
     documentReference,
     'section',
-    { className: 'crucible-studio-setup-group', attributes: { 'aria-labelledby': `crucible-studio-setup-${instanceId}-title-${index}` } },
+    { className: 'crucible-studio-setup-group', dataset: { fill: String(content.length === 1) }, attributes: { 'aria-labelledby': `crucible-studio-setup-${instanceId}-title-${index}` } },
     createElement(documentReference, 'h3', { id: `crucible-studio-setup-${instanceId}-title-${index}`, textContent: title }),
     ...content,
   ));
 
-  const stepButtons = groups.map(({ stepName }, index) => {
-    const button = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-step', textContent: stepName });
+  const stepButtons = groups.map(({ stepName, icon }, index) => {
+    const button = createElement(
+      documentReference,
+      'button',
+      { type: 'button', className: 'crucible-studio-setup-step' },
+      createIcon(documentReference, icon),
+      createElement(documentReference, 'span', { textContent: stepName }),
+    );
     button.addEventListener('click', () => {
       stepIndex = index;
       showStep();
@@ -226,12 +291,10 @@ export function createStudioSetup({
   });
 
   function showStep() {
-    const stepped = layout === 'steps';
     const lastStep = stepIndex === groups.length - 1;
-    dialog.dataset.layout = layout;
     sections.forEach((section, index) => {
       // Every step sits in one grid cell, so the dialog is as tall as the tallest and never jumps; a step that is not shown is invisible and inert.
-      section.inert = stepped && index !== stepIndex;
+      section.inert = index !== stepIndex;
     });
     stepButtons.forEach((button, index) => {
       button.dataset.current = String(index === stepIndex);
@@ -241,10 +304,9 @@ export function createStudioSetup({
         button.removeAttribute('aria-current');
       }
     });
-    stepRow.hidden = !stepped;
-    backButton.hidden = !stepped || stepIndex === 0;
-    nextButton.hidden = !stepped || lastStep;
-    doneButton.hidden = stepped && !lastStep;
+    backButton.hidden = stepIndex === 0;
+    nextButton.hidden = lastStep;
+    doneButton.hidden = !lastStep;
   }
 
   // Focus rests on the dialog itself, so no control opens with a focus ring and the first Tab lands on the first control.
@@ -286,11 +348,18 @@ export function createStudioSetup({
     showCopied(false);
   }
 
-  function open({ layout: requestedLayout = 'steps' } = {}) {
-    if (!STUDIO_SETUP_LAYOUTS.includes(requestedLayout)) {
-      throw new RangeError(`Unknown setup layout "${String(requestedLayout)}". Use one of ${STUDIO_SETUP_LAYOUTS.join(', ')}.`);
+  function fillPreviewsOnce() {
+    if (previewsFilled) {
+      return;
     }
-    layout = requestedLayout;
+    previewsFilled = true;
+    for (const { preview, theme } of themePreviews) {
+      fillThemePreview(documentReference, createElement, createIcon, preview, theme);
+    }
+  }
+
+  function open() {
+    fillPreviewsOnce();
     stepIndex = 0;
     refresh();
     showStep();

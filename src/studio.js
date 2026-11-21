@@ -2183,8 +2183,8 @@ export function createStudio(container, {
       if (!preferences.setupDone) setPreference('setupDone', true);
     },
   });
-  function openSetup({ layout } = {}) {
-    setup.open({ layout });
+  function openSetup() {
+    setup.open();
   }
 
   function storePreferences() {
@@ -3817,7 +3817,7 @@ export function createStudio(container, {
     get gridVisible() { return gridVisible; },
     setPreference,
     get preferences() { return { ...preferences }; },
-    /** Opens the first-run setup. `layout` is 'steps' (one group a page, the default) or 'sheet' (all groups on one page). Studio never opens it on its own. */
+    /** Opens the first-run setup, one step a page. Studio never opens it on its own. */
     openSetup,
     get setupDone() { return preferences.setupDone; },
     selectNode: nodeId => controller.selectNode(nodeId),
