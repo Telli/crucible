@@ -69,6 +69,8 @@ import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
 import { GLB_EXPORT_NOTES } from '../src/glb-export-omissions.js';
 import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 import { previewDeadlineMilliseconds } from './preview-deadline.mjs';
+import { realismReport } from '../src/realism-checks.js';
+import { reviewTilingFindings } from './review-realism.mjs';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
@@ -1650,6 +1652,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             backend, width: settings.gridWidth, height: settings.gridHeight, shots,
             peakNodeBytes, peakBrowserHeap, maximumPendingFrames: 1,
               ...(recipeMoves(snapshot.recipe) && settings.shots.some(shot => shot.motionTime === null) ? { hints: [MOTION_NOT_SET_HINT] } : {}) } };
+          if (settings.checks === 'realism') output.metadata.realism = realismReport(snapshot.recipe, reviewTilingFindings(result.data, settings));
         } catch (error) {
           if (deadlineExpired) throw new Error(reviewDeadlineText());
           throw error;
