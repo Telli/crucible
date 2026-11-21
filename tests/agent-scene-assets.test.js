@@ -148,7 +148,7 @@ test('an asset that is not in the pool is refused by id, and the 32 distinct ass
   const pool = new Map();
   for (const operation of many) pool.set(assetCopyKey(operation.node.asset.id, 0), await strip());
   scene.provideAssets(pool);
-  assert.throws(() => scene.apply(many, { expectedRevision: scene.revision }), /at most 512 assets, 32 different ones.*Reuse one asset id/);
+  assert.throws(() => scene.apply(many, { expectedRevision: scene.revision }), /at most 512 assets, 32 different ones.*Reuse an asset id/);
 });
 
 test('a scene places 32 different assets and the capabilities text states the cap (#2839)', async () => {
