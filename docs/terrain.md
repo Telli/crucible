@@ -111,7 +111,7 @@ In a recipe, the same ground is the `terrain` geometry: see [Recipe terrain](#re
 - `terrain.pathMasks` is `null` without paths. Otherwise `names` lists the masks, `at(name, x, z)` gives 0 to 1 (1 across the width, fading to 0 over half the falloff; no name gives the strongest of all paths), and `image(name, resolution = 256)` gives `{ width, height, data, bounds }` RGBA pixels with the mask in red. Use it as a splat `maskMap` with `maskBounds: [-size / 2, -size / 2, size / 2, size / 2]` and the rule `{ mask: 'r', invertMask: true }` on grass and `{ mask: 'r' }` on dirt.
 - A recipe does not draw splat materials yet, so the mask feeds the splat rules of an addon scene. Clutter or vegetation `exclude` can read `pathMasks.at(name, x, z)` the same way; the recipe `exclude` field takes only circles and nodes today.
 - Cost: segments sit in a grid, so a sample reads only those near it. A smoothed path of 256 points is at most 8192 segments in all.
-- Looks: a bench reads best with `depth` 0.5 to 0.8 on a slope, `falloff` 3 to 4, `shoulder` 0.3 and `triplanar: true` on the road layer. A rut is as wide as about a quarter of the half-width, so give the ground cells of 0.1 m or less (a 40 m ground at resolution 400) to see two clear grooves; at 0.5 m cells they blur.
+- Looks: a cut bench reads best with `depth` 0.7 to 1, `falloff` 1 to 1.5 (a steep bank; a wide falloff gives a soft slope), `shoulder` 0.3 and a road layer with `triplanar: true` and `splat.triplanarStart` near 12 so banks do not stretch the texture. A rut is as wide as about a quarter of the half-width, so give the ground cells of 0.1 m or less (a 40 m ground at resolution 400) to see two clear grooves; at 0.5 m cells they blur.
 
 ## Terrain near water
 
