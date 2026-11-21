@@ -123,8 +123,13 @@ function cameraOperations(currentCamera, targetCamera) {
   if (sameRecipeValue(currentCamera, targetCamera)) {
     return [];
   }
+  if (!isPlainObject(targetCamera)) {
+    return null;
+  }
+  // A lens given as a focal length replaces a field of view, so a field the target lacks is not always a reason to
+  // rebuild: the whole target camera is sent, and the caller's recipe check catches a field that stays behind.
   const patch = changedFields(currentCamera, targetCamera);
-  return patch === null ? null : [{ type: 'set-camera', ...patch }];
+  return [{ type: 'set-camera', ...(patch ?? targetCamera) }];
 }
 
 function otherKeysMatch(currentRecipe, targetRecipe) {
