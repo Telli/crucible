@@ -80,7 +80,7 @@ export function createStudioSetup({
 
   // One radio per card, so the arrow keys, Tab and a screen reader work without any script. The radio sits invisibly
   // over the card; the card shows a check mark when chosen, so the choice is never shown by colour alone.
-  function createChoiceCard({ groupName, preferenceName, value, preview, label, labelSuffix, details = [] }) {
+  function createChoiceCard({ groupName, preferenceName, value, preview, label, details = [] }) {
     const radio = createElement(documentReference, 'input', { type: 'radio', name: `crucible-studio-setup-${instanceId}-${groupName}`, value: String(value) });
     radio.dataset.setup = preferenceName;
     radio.addEventListener('change', () => {
@@ -94,7 +94,6 @@ export function createStudioSetup({
       'span',
       { className: 'crucible-studio-setup-card-name' },
       createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-label', textContent: label }),
-      ...(labelSuffix ? [labelSuffix] : []),
     );
     return createElement(
       documentReference,
@@ -133,11 +132,9 @@ export function createStudioSetup({
     performanceFacts.push({ tier, ratio, antiAliasing });
     return createElement(documentReference, 'span', { className: 'crucible-studio-setup-facts' }, ratio, antiAliasing);
   }
+  // Automatic gives no numbers of its own: it names the tier it picks here and the hardware that decided it.
+  const automaticPick = createElement(documentReference, 'span', { className: 'crucible-studio-setup-facts' });
   const hardwareLine = createElement(documentReference, 'span', { className: 'crucible-studio-setup-card-detail' });
-  // A small Molten dot on the tier card that Automatic resolves to.
-  function createPickMark() {
-    return createElement(documentReference, 'span', { className: 'crucible-studio-setup-pick', title: 'Automatic picks this', attributes: { role: 'img', 'aria-label': 'Automatic picks this' } });
-  }
   const performanceCards = PERFORMANCE_CHOICES.map(({ value, label }) => {
     const automatic = value === 'automatic';
     return createChoiceCard({
@@ -145,8 +142,7 @@ export function createStudioSetup({
       preferenceName: 'performance',
       value,
       label,
-      labelSuffix: automatic ? null : createPickMark(),
-      details: automatic ? [createFacts(null), hardwareLine] : [createFacts(value)],
+      details: automatic ? [automaticPick, hardwareLine] : [createFacts(value)],
     });
   });
 
@@ -279,13 +275,11 @@ export function createStudioSetup({
     }
     const { tier: detectedTier, summary } = describeHardware();
     for (const { tier, ratio, antiAliasing } of performanceFacts) {
-      const { pixelRatio, samples } = viewportSettingsForTier(tier ?? detectedTier);
+      const { pixelRatio, samples } = viewportSettingsForTier(tier);
       ratio.textContent = formatRatio(pixelRatio);
       antiAliasing.textContent = `AA ${samples}x`;
     }
-    for (const card of performanceCards.slice(1)) {
-      card.dataset.picked = String(card.querySelector('input').value === detectedTier);
-    }
+    automaticPick.textContent = `${capitalize(detectedTier)} on this machine`;
     hardwareLine.textContent = summary;
     hardwareLine.title = summary;
     promptBlock.value = agentPromptText();

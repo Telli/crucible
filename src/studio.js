@@ -2224,6 +2224,11 @@ export function createStudio(container, {
   // A forced theme is a data-theme on the root, which the tokens and the dialogs inside it follow. System leaves it off,
   // so the page's own colour scheme decides, as it always did.
   let appliedTheme = null;
+  function resolvedTheme() {
+    if (preferences.theme !== 'system') return preferences.theme;
+    const systemIsDark = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return systemIsDark ? 'dark' : 'light';
+  }
   function applyTheme() {
     if (preferences.theme === 'system') {
       delete root.dataset.theme;
@@ -2232,10 +2237,18 @@ export function createStudio(container, {
     }
     if (preferences.theme !== appliedTheme) {
       appliedTheme = preferences.theme;
-      const systemIsDark = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      onThemeChange?.(preferences.theme === 'system' ? (systemIsDark ? 'dark' : 'light') : preferences.theme);
+      onThemeChange?.(resolvedTheme());
     }
   }
+  // While the preference is System the page's colour scheme decides, so a flip of the operating system's scheme is
+  // reported to the host the same way a change of the preference is. A forced theme ignores the system.
+  const systemSchemeQuery = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  function onSystemSchemeChange() {
+    if (preferences.theme === 'system') {
+      onThemeChange?.(resolvedTheme());
+    }
+  }
+  systemSchemeQuery?.addEventListener?.('change', onSystemSchemeChange);
 
   // What the browser says about this computer, read once. A live renderer's context is asked first so no second
   // WebGL context is made; otherwise a short-lived one is.
@@ -3832,6 +3845,7 @@ export function createStudio(container, {
       clearTimeout(draftTimer);
       clearTimeout(statusTimer);
       agentPresence.dispose();
+      systemSchemeQuery?.removeEventListener?.('change', onSystemSchemeChange);
       if (frameHandle) cancelAnimationFrame(frameHandle);
       stopFlight();
       finishModalTransform(false);

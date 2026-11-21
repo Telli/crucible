@@ -3962,6 +3962,35 @@ test('Theme forces light or dark on the Studio root, and System leaves the page 
   assert.ok(ui.root.querySelector('.crucible-studio-settings-dialog'), 'the dialogs sit inside the root and follow its theme');
 });
 
+test('while Theme is System a flip of the operating system scheme reaches the host, and dispose stops listening (#2847)', testContext => {
+  const dom = installStudioDom();
+  const listeners = new Set();
+  let systemIsDark = false;
+  dom.document.defaultView.matchMedia = () => ({
+    get matches() { return systemIsDark; },
+    addEventListener: (type, listener) => { if (type === 'change') listeners.add(listener); },
+    removeEventListener: (type, listener) => listeners.delete(listener),
+  });
+  const themes = [];
+  const ui = mountStudio(testContext, { sharedDom: dom, onThemeChange: theme => themes.push(theme) });
+  testContext.after(() => dom.uninstall());
+  const flip = isDark => {
+    systemIsDark = isDark;
+    for (const listener of [...listeners]) listener({ matches: isDark });
+  };
+  assert.deepEqual(themes, ['light']);
+  flip(true);
+  assert.deepEqual(themes, ['light', 'dark'], 'System follows the flip');
+  chooseSetting(ui, 'theme', 'light');
+  flip(false);
+  flip(true);
+  assert.deepEqual(themes, ['light', 'dark', 'light'], 'a forced theme ignores the flip');
+  chooseSetting(ui, 'theme', 'system');
+  assert.deepEqual(themes.at(-1), 'dark');
+  ui.studio.dispose();
+  assert.equal(listeners.size, 0, 'dispose removes the listener');
+});
+
 test('Performance sets the viewport pixel ratio cap and never touches the recipe (#2847)', testContext => {
   const ui = mountStudio(testContext);
   ui.dom.document.defaultView.devicePixelRatio = 3;
@@ -4100,7 +4129,7 @@ test('the setup names its steps in a row, jumps between them and rests focus on 
   assert.equal(ui.root.querySelector('.crucible-studio-setup-steps').hidden, true, 'the sheet has no step row');
 });
 
-test('each tier card shows its pixel ratio and anti-aliasing on this screen, and Automatic names the tier it took (#2847)', testContext => {
+test('each tier card shows its pixel ratio and anti-aliasing on this screen, and Automatic names the tier it took instead of repeating its numbers (#2847)', testContext => {
   const ui = mountStudio(testContext);
   ui.dom.document.defaultView.devicePixelRatio = 1;
   ui.studio.openSetup();
@@ -4109,9 +4138,9 @@ test('each tier card shows its pixel ratio and anti-aliasing on this screen, and
   assert.deepEqual(facts(cardOf('light')), ['0.75x', 'AA 2x']);
   assert.deepEqual(facts(cardOf('balanced')), ['1x', 'AA 2x']);
   assert.deepEqual(facts(cardOf('sharp')), ['1x', 'AA 4x']);
-  assert.deepEqual(facts(cardOf('automatic')), ['1x', 'AA 2x'], 'Automatic shows the facts of the tier it took');
-  assert.deepEqual(['light', 'balanced', 'sharp'].map(tier => cardOf(tier).dataset.picked), ['false', 'true', 'false'], 'the tier Automatic took is marked');
-  assert.equal(cardOf('balanced').querySelector('.crucible-studio-setup-pick').getAttribute('aria-label'), 'Automatic picks this');
+  assert.deepEqual(facts(cardOf('automatic')), [], 'Automatic repeats no numbers');
+  assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-facts').textContent, 'Balanced on this machine');
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-setup-pick').length, 0, 'no dot marks a tier card');
   assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-card-detail').textContent, 'Hardware not reported');
   assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-card-detail').title, 'Hardware not reported');
 });
