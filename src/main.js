@@ -1,10 +1,10 @@
 import './site-chrome.js';
 import './style.css';
-import { CrucibleRenderer } from './renderer.js';
+import { CrucibleRenderer, groundPart, studioFloorHeight } from './renderer.js';
 import { createAdaptiveResolution, createGpuTimer } from './adaptive-quality.js';
-import { createModel } from './model.js';
+import { loadSampleModel } from './model.js';
 import { downloadGlb } from './export.js';
-import { assemblyOffset } from './assembly.js';
+import { assemblyBounds, assemblyOffset, distanceToFill } from './assembly.js';
 import { approachValue } from './preview-transition.js';
 
 const canvas = document.querySelector('#viewport');
@@ -13,20 +13,17 @@ const isExport = renderParameters.get('export') === '1';
 // Live viewing lowers the resolution when frames run long. An export keeps full quality, so it has none.
 const adaptiveResolution = isExport ? null : createAdaptiveResolution({ exporting: false });
 let selectedPixelRatio = isExport ? 1 : 1.5;
-const parts = createModel();
-const finishes = {
-  yellow: { name: 'Factory yellow', color: [0.62, 0.34, 0.035], surface: [0.48, 0.43] },
-  ceramic: { name: 'Ceramic', color: [0.7, 0.77, 0.74], surface: [0.05, 0.24] },
-  graphite: { name: 'Graphite', color: [0.10, 0.14, 0.17], surface: [0.65, 0.4] },
-};
-const state = { azimuth: 0.48, elevation: 0.18, distance: 7.8, finish: 'yellow', exposure: 1, inspection: false, rotating: false, assembly: Math.max(0, Math.min(1, Number(new URLSearchParams(location.search).get('explosion')) || 0)), layer: 'all' };
+const parts = await loadSampleModel(new URL('sample-model.glb', document.baseURI));
+// Close enough that the four objectives and their labels read at the default zoom.
+const DEFAULT_DISTANCE = 9.2;
+const state = { azimuth: 0.48, elevation: 0.18, distance: DEFAULT_DISTANCE, exposure: 1.3, inspection: false, rotating: false, assembly: Math.max(0, Math.min(1, Number(new URLSearchParams(location.search).get('explosion')) || 0)), layer: 'all' };
 state.look = 'studio';
-state.targetHeight = 1.35;
+state.targetHeight = 1.8;
 state.touring = false;
 state.assemblyTarget = state.assembly;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const looks = {
-  studio: { lightDirection: [-3, 6, 4], temperature: 0, contrast: 1.02 },
+  studio: { lightDirection: [-2, 5, 6], temperature: 0, contrast: 1.02 },
   warm: { lightDirection: [-5, 3, 2], temperature: 0.14, contrast: 1.06 },
   cool: { lightDirection: [4, 5, 3], temperature: -0.14, contrast: 1.05 },
 };
@@ -47,20 +44,44 @@ function notify(message, failure = false) {
   if (!failure) noticeTimer = setTimeout(() => { notice.hidden = true; }, 4000);
 }
 
+// The ambient is lifted so the dark parts read under the default studio light. The fill is cut to 0.3 because it is teal: it tinted every shaded
+// metal face green-blue (measured as blue minus red, #2218), and the enamel and the dark metals are tinted to carry what is left.
+const MICROSCOPE_AMBIENT = 1.3;
+const MICROSCOPE_FILL = 0.3;
+// The default studio floor is as dark as the backdrop, so the black stand sinks into it. This sample stands on a floor that is about twice as light
+// (the floor shader scales its tone by the floor colour), which the stand and its shadow read against.
+const MICROSCOPE_FLOOR_COLOR = [0.08, 0.1, 0.12];
+function microscopeFloor(visibleParts) {
+  const floor = groundPart(studioFloorHeight(visibleParts));
+  return { ...floor, material: { ...floor.material, color: [...MICROSCOPE_FLOOR_COLOR] } };
+}
+// The settings panel covers the right 240 px and the title the left 340 px, so the model centres 50 px right of the canvas middle.
+const CENTER_SHIFT_PIXELS = 100;
+
+// The exploded pose is framed from its own bounds, so its parts fill most of the canvas whatever the layout.
+const EXPLODED_BOUNDS = assemblyBounds(parts, 1);
+const EXPLODED_CENTER_HEIGHT = (EXPLODED_BOUNDS.minimum[1] + EXPLODED_BOUNDS.maximum[1]) / 2;
+const EXPLODED_SIZE = [Math.hypot(EXPLODED_BOUNDS.maximum[0] - EXPLODED_BOUNDS.minimum[0], EXPLODED_BOUNDS.maximum[2] - EXPLODED_BOUNDS.minimum[2]), EXPLODED_BOUNDS.maximum[1] - EXPLODED_BOUNDS.minimum[1]];
+const EXPLODED_FILL = 0.8;
+const VERTICAL_FIELD_OF_VIEW = Math.PI / 5.5;
+
 function camera() {
   const mobile = canvas.clientWidth <= 700;
-  if (renderer) renderer.projection[8] = mobile || state.exporting ? 0 : -0.25 + state.assembly * 0.15;
-  const distance = state.distance * (mobile ? 1.05 : 1) + state.assembly * (mobile ? 8 : 10);
-  const target = [0, (mobile ? 1.5 : state.targetHeight) + state.assembly * 0.35, 0];
+  if (renderer) renderer.projection[8] = mobile || state.exporting ? 0 : -CENTER_SHIFT_PIXELS / canvas.clientWidth;
+  const assembledDistance = state.distance * (mobile ? 1.05 : 1);
+  const explodedDistance = distanceToFill(EXPLODED_SIZE, { verticalFov: VERTICAL_FIELD_OF_VIEW, aspect: canvas.clientWidth / canvas.clientHeight, fill: EXPLODED_FILL }) * (state.distance / DEFAULT_DISTANCE);
+  const distance = assembledDistance + (explodedDistance - assembledDistance) * state.assembly;
+  const assembledHeight = mobile ? 1.8 : state.targetHeight;
+  const target = [0, assembledHeight + (EXPLODED_CENTER_HEIGHT - assembledHeight) * state.assembly, 0];
+  // Looking down a little in the exploded view shows the flat mirror parts as discs instead of edge-on slivers.
+  const elevation = state.elevation + state.assembly * 0.4;
   return {
     target,
-    eye: [Math.sin(state.azimuth) * Math.cos(state.elevation) * distance, target[1] + Math.sin(state.elevation) * distance, Math.cos(state.azimuth) * Math.cos(state.elevation) * distance],
-    armorColor: finishes[state.finish].color,
-    armorSurface: finishes[state.finish].surface,
+    eye: [Math.sin(state.azimuth) * Math.cos(elevation) * distance, target[1] + Math.sin(elevation) * distance, Math.cos(state.azimuth) * Math.cos(elevation) * distance],
     exposure: state.exposure,
     inspection: state.inspection,
     assemblyAmount: state.assembly,
-    environment: { lightDirection: looks[state.look].lightDirection },
+    environment: { lightDirection: looks[state.look].lightDirection, ambientIntensity: MICROSCOPE_AMBIENT, fillIntensity: MICROSCOPE_FILL },
     effects: { contrast: looks[state.look].contrast, temperature: looks[state.look].temperature, saturation: 1.02, vignette: 0.08, bloom: { strength: 0.12, threshold: 1.15, radius: 1 } },
   };
 }
@@ -100,7 +121,7 @@ function invalidate() {
 
 function initialize() {
   const visibleParts = state.layer === 'all' ? parts : parts.filter((part) => part.assembly?.layer === state.layer);
-  renderer = new CrucibleRenderer(canvas, visibleParts, { hdr: true, samples: Number(renderParameters.get('samples') ?? 4), memoryBudgetMiB: Number(renderParameters.get('memory') ?? 256), pixelRatio: selectedPixelRatio, createGpuTimer: isExport ? null : createGpuTimer, shadowBounds: { extent: 6, eye: [-3, 7, 4], target: [0, 1.5, 0] } });
+  renderer = new CrucibleRenderer(canvas, visibleParts, { hdr: true, samples: Number(renderParameters.get('samples') ?? 4), memoryBudgetMiB: Number(renderParameters.get('memory') ?? 256), pixelRatio: selectedPixelRatio, ground: microscopeFloor(visibleParts), createGpuTimer: isExport ? null : createGpuTimer, shadowBounds: { extent: 6, eye: [-3, 7, 4], target: [0, 1.5, 0] } });
   document.querySelector('#parts').textContent = `${visibleParts.length} parts · ${Math.round(renderer.triangles / 1000)}k triangles`;
   document.querySelector('#calls').textContent = `${renderer.batches.length} geometry draws`;
   invalidate();
@@ -139,14 +160,14 @@ document.querySelector('#assembly-tour').addEventListener('click', () => {
   if (state.touring) { stopTour(); return; }
   if (reducedMotion.matches) { state.assembly = state.assembly > 0.5 ? 0 : 1; syncAssembly(); invalidate(); return; }
   // A complete-model composition keeps all moving components in the frame.
-  Object.assign(state, { distance: 7.8, targetHeight: 1.35, touring: true });
+  Object.assign(state, { distance: DEFAULT_DISTANCE, targetHeight: 1.8, touring: true });
   tourOrigin = performance.now();
   document.querySelector('#assembly-tour').textContent = 'Pause assembly';
   invalidate();
 });
 document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => {
   stopTour();
-  const views = { hero: [0.48, 0.18, 7.8, 1.35, 0], face: [0.12, 0.12, 3.8, 2.55, 0], machine: [0.7, 0.34, 6.8, 1.35, 0.65] };
+  const views = { hero: [0.48, 0.18, DEFAULT_DISTANCE, 1.8, 0], eyepiece: [0.12, 0.12, 4.2, 3.0, 0], parts: [0.7, 0.34, 6.8, 1.8, 0.65] };
   const [azimuth, elevation, distance, targetHeight, assembly] = views[button.dataset.view];
   Object.assign(state, { azimuth, elevation, distance, targetHeight, assembly, assemblyTarget:assembly });
   document.querySelectorAll('[data-view]').forEach(control => control.setAttribute('aria-pressed', String(control === button)));
@@ -159,7 +180,7 @@ document.querySelector('#save-model').addEventListener('click', () => {
   canvas.toBlob(blob => {
     if (!blob) { notify('Image capture failed. Try again.', true); return; }
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a'); link.href = url; link.download = 'crucible-wall-e.png'; link.click();
+    const link = document.createElement('a'); link.href = url; link.download = 'crucible-sample-model.png'; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, 'image/png');
 });
@@ -212,19 +233,9 @@ canvas.addEventListener('keydown', (event) => {
 });
 document.querySelector('#reset').addEventListener('click', () => {
   stopTour();
-  Object.assign(state, { azimuth: 0.48, elevation: 0.18, distance: 7.8, targetHeight: 1.35 });
+  Object.assign(state, { azimuth: 0.48, elevation: 0.18, distance: DEFAULT_DISTANCE, targetHeight: 1.8 });
   invalidate();
 });
-document.querySelectorAll('[data-finish]').forEach((button) => button.addEventListener('click', () => {
-  state.finish = button.dataset.finish;
-  document.querySelectorAll('[data-finish]').forEach((swatch) => {
-    const selected = swatch === button;
-    swatch.classList.toggle('selected', selected);
-    swatch.setAttribute('aria-pressed', String(selected));
-  });
-  document.querySelector('#finish-name').textContent = finishes[state.finish].name;
-  invalidate();
-}));
 document.querySelector('#exposure').addEventListener('input', (event) => {
   state.exposure = Number(event.target.value);
   document.querySelector('#exposure-value').textContent = state.exposure.toFixed(1);
@@ -250,13 +261,11 @@ document.querySelector('#quality').addEventListener('change', (event) => {
 });
 document.querySelector('#export').addEventListener('click', () => {
   try {
-    const finish = finishes[state.finish];
     const exported = parts.filter((part) => state.layer === 'all' || part.assembly?.layer === state.layer).map((part) => {
       const matrix = new Float32Array(part.matrix);
       const displacement = assemblyOffset(part, state.assembly);
       for (let axis = 0; axis < 3; axis++) matrix[12 + axis] += displacement[axis];
-      const material = part.material.tag === 'armor' ? { ...part.material, color: finish.color, metallic: finish.surface[0], roughness: finish.surface[1] } : part.material;
-      return { ...part, matrix, material };
+      return { ...part, matrix };
     });
     downloadGlb(exported);
     notify('GLB exported. Open it in Blender or another glTF viewer.');

@@ -78,9 +78,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
-## WALL-E character
+## Microscope (sample model, not in the npm package)
 
-The Crucible license covers the authored source code. WALL-E character rights belong to Disney/Pixar. No ownership of that character is claimed.
+`public/sample-model.glb` is the Sketchfab model "Microscope" (https://sketchfab.com/3d-models/microscope-9562226299a045bab13c3d66f8593208) by Eugen Vahrushin (https://sketchfab.com/eugen_vahrushin), a laboratory student microscope, under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). It was changed: the one mesh was split into 14 named parts (`scripts/build-sample-model.py`), the node transforms and a uniform scale were baked in so it rests on y = 0, the four PBR textures were re-encoded as smaller JPEG files and normals and UVs were stored as normalized integers. The shape of the geometry and the textures are otherwise unchanged.
 
 ## Built files
 

@@ -15,7 +15,7 @@ setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 await rm('artifacts/scene-assets-jobs', { recursive: true, force: true });
 await mkdir('artifacts/scene-assets-jobs', { recursive: true });
 await mkdir('artifacts/scene-assets-proof', { recursive: true });
-await writeFile('artifacts/scene-assets-proof/wall-e.glb', await readFile('public/wall-e.glb'));
+await writeFile('artifacts/scene-assets-proof/sample-model.glb', await readFile('public/sample-model.glb'));
 await writeFile('artifacts/scene-assets-proof/textured-rig.glb', await createTexturedRigFixture());
 const transport = new StdioClientTransport({ command: process.execPath,
   args: [resolve('scripts/mcp-server.mjs'), '--backend', 'cpu', '--memory', '192', '--assets', resolve('artifacts/scene-assets-proof'),
@@ -60,7 +60,7 @@ try {
   await client.connect(transport, { timeout: 180000 });
   await assertToolListMatchesServer(client);
   const catalog = (await call('scene_asset_catalog')).structuredContent;
-  const robot = catalog.assets.find(asset => asset.name === 'wall-e.glb').assetId;
+  const robot = catalog.assets.find(asset => asset.name === 'sample-model.glb').assetId;
   const rig = catalog.assets.find(asset => asset.name === 'textured-rig.glb').assetId;
   const copies = Array.from({ length: 10 }, (_, index) => ({
     id: `rig-${index}`, translation: [index * 1.5 - 7, 0, 2],
