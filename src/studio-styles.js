@@ -218,6 +218,18 @@ export const STUDIO_CSS = `
   stroke: none;
   pointer-events: none;
 }
+.crucible-studio-selection-mask {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.crucible-studio-mask-filters {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
 .crucible-studio-silhouette-colour {
   flood-color: var(--studio-accent);
 }

@@ -136,6 +136,12 @@ export class FakeNode {
     return node;
   }
 
+  before(...nodes) {
+    const siblings = this.parentNode.children;
+    const adopted = this.parentNode.adoptChildren(nodes);
+    siblings.splice(siblings.indexOf(this), 0, ...adopted);
+  }
+
   prepend(...nodes) {
     this.children.unshift(...this.adoptChildren(nodes));
   }

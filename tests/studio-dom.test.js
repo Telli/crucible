@@ -9,6 +9,7 @@ import { directionToSunAngles, hexToLinearRgb } from '../src/studio-controller.j
 import { buildGridParts } from '../src/studio-viewport-aids.js';
 import { VIEW_TRANSFORM_NAMES } from '../src/view-transform-names.js';
 import { tinyHdrBytes } from './helpers/tiny-hdr.js';
+import { createFakeWebgl2 } from './support/fake-webgl2.mjs';
 import {
   byDataset,
   byLabel,
@@ -3967,4 +3968,48 @@ test('an edit still waiting to be kept is written when the window goes to the ba
   ui.dom.document.hidden = false;
   dispatch(ui.dom.document, 'visibilitychange');
   assert.equal(storage.entries.has(DRAFT_KEY), false, 'nothing is written when no edit waits');
+});
+
+test('a dense selection is outlined by the mask canvas, with no hull and no frame left running', testContext => {
+  const { context, state } = createFakeWebgl2();
+  const dom = installStudioDom();
+  testContext.after(() => dom.uninstall());
+  const createElement = dom.document.createElement.bind(dom.document);
+  dom.document.createElement = tagName => {
+    const element = createElement(tagName);
+    if (tagName === 'canvas') element.getContext = () => context;
+    return element;
+  };
+  const recipe = makeRecipe();
+  recipe.geometries.push({ id: 'dense-ball', type: 'sphere', segments: 96, rings: 64 });
+  recipe.nodes.push({ id: 'dense', geometry: 'dense-ball', material: 'paint', translation: [0, 1, 0] });
+  const ui = mountStudio(testContext, { recipe, sharedDom: dom });
+  const maskCanvases = () => ui.viewport.querySelectorAll('.crucible-studio-selection-mask');
+
+  assert.equal(maskCanvases().length, 0, 'no mask exists before a dense selection');
+  ui.controller.selectNode('dense');
+  ui.studio.renderNow();
+  assert.equal(maskCanvases().length, 1);
+  assert.equal(maskCanvases()[0].hidden, false);
+  assert.ok(state.draws.length >= 1, 'the dense mesh is drawn');
+  assert.equal(ui.gizmo.querySelectorAll('.crucible-studio-selection-outline').length, 0, 'no hull polygon');
+  assert.equal(ui.gizmo.querySelectorAll('.crucible-studio-selection-silhouette').length, 0, 'no path of a million numbers');
+  const viewportChildren = ui.viewport.children;
+  assert.ok(viewportChildren.indexOf(maskCanvases()[0]) < viewportChildren.indexOf(ui.gizmo), 'the mask lies under the gizmo handles');
+
+  dom.runAnimationFrames(0);
+  dom.runTimers();
+  assert.equal(dom.pendingAnimationFrameCount, 0, 'nothing is scheduled while the scene is idle');
+
+  ui.controller.selectNode('hero');
+  ui.studio.renderNow();
+  assert.equal(maskCanvases()[0].hidden, true, 'a small selection hides the mask');
+  assert.equal(state.buffersDeleted, state.buffersCreated, 'and frees its buffers');
+  assert.equal(ui.gizmo.querySelectorAll('.crucible-studio-selection-silhouette').length, 1, 'the small mesh keeps the path outline');
+
+  ui.controller.selectNode('dense');
+  ui.studio.renderNow();
+  ui.studio.dispose();
+  assert.equal(state.buffersDeleted, state.buffersCreated, 'dispose frees the buffers');
+  assert.equal(state.programsDeleted, 1);
 });

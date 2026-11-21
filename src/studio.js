@@ -21,6 +21,7 @@ import {
   normalizeStudioPreferences,
   saveStudioPreferences,
 } from './studio-preferences.js';
+import { createOutlineMask } from './studio-outline-mask.js';
 import { createPanelGrips } from './studio-panel-grips.js';
 import { studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
@@ -622,6 +623,22 @@ function appendSelectionSilhouette(documentReference, gizmoSvg, triangles) {
   }));
 }
 
+// The filter that turns the mask canvas into its edge: the same dilate-and-subtract as the path outline, over the whole canvas.
+function createMaskFilterSvg(documentReference, filterId) {
+  const filter = createSvgElement(documentReference, 'filter', { id: filterId, x: '0', y: '0', width: '1', height: '1' });
+  filter.append(
+    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'dilate', radius: SILHOUETTE_EDGE_PIXELS, result: 'grown' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'grown', in2: 'SourceAlpha', operator: 'out', result: 'edge' }),
+    createSvgElement(documentReference, 'feFlood', { class: 'crucible-studio-silhouette-colour', result: 'colour' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'colour', in2: 'edge', operator: 'in' }),
+  );
+  const definitions = createSvgElement(documentReference, 'defs');
+  definitions.append(filter);
+  const holder = createSvgElement(documentReference, 'svg', { class: 'crucible-studio-mask-filters', width: '0', height: '0', 'aria-hidden': 'true' });
+  holder.append(definitions);
+  return holder;
+}
+
 // How far from a handle a press still takes it, in pixels: the drawn handle stays thin, the area that answers is wide.
 const GIZMO_HIT_LINE_WIDTH = 22;
 const GIZMO_HIT_TIP_RADIUS = 16;
@@ -667,13 +684,15 @@ function appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool) {
   gizmoSvg.append(hitDisc(origin, GIZMO_HIT_ORIGIN_RADIUS, tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen'));
 }
 
-function renderGizmoMarkup(documentReference, gizmoSvg, controller) {
+function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask) {
   gizmoSvg.replaceChildren();
   const width = controller.viewportWidth;
   const height = controller.viewportHeight;
   gizmoSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   const silhouette = controller.selectionSilhouette();
-  const outline = silhouette ? null : controller.selectionOutline();
+  // A dense selection is drawn by the mask; the hull below is only for when the mask cannot draw (no WebGL2).
+  const maskDrawn = outlineMask.draw(silhouette ? null : controller.selectionMaskSource(), width, height);
+  const outline = silhouette || maskDrawn ? null : controller.selectionOutline();
   if (silhouette) {
     appendSelectionSilhouette(documentReference, gizmoSvg, silhouette);
   } else if (outline) {
@@ -1516,6 +1535,17 @@ export function createStudio(container, {
   }
   // Each Studio on a page gets its own filter, so two of them never share one outline region.
   const gizmoSvg = createSvgElement(documentReference, 'svg', { class: 'crucible-studio-gizmo', 'aria-hidden': 'true', 'data-silhouette-filter': `${SILHOUETTE_FILTER_ID}-${canvas.id.split('-').pop()}` });
+  const maskFilterId = `${gizmoSvg.getAttribute('data-silhouette-filter')}-mask`;
+  const maskFilterSvg = createMaskFilterSvg(documentReference, maskFilterId);
+  const outlineMask = createOutlineMask({
+    documentReference,
+    className: 'crucible-studio-selection-mask',
+    mount: maskCanvas => {
+      maskCanvas.style.filter = `url(#${maskFilterId})`;
+      gizmoSvg.before(maskCanvas);
+    },
+    onRestored: () => requestFrame(),
+  });
   const statusRegion = createElement(documentReference, 'p', { className: 'crucible-studio-status', attributes: { role: 'status' } });
   const hintBar = createElement(documentReference, 'div', { className: 'crucible-studio-hintbar' });
   const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: 'Drop a scene.json to open it' });
@@ -1646,7 +1676,7 @@ export function createStudio(container, {
     onDiscard: () => discardDraft(),
   });
   const stopWatchingContextLoss = watchContextLoss(canvas, { onLost: pauseForContextLoss, onRestored: recoverFromContextLoss });
-  viewportElement.append(canvas, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element, draftNotice.element);
+  viewportElement.append(canvas, maskFilterSvg, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element, draftNotice.element);
 
   // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
   const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
@@ -2611,7 +2641,7 @@ export function createStudio(container, {
     try {
       syncViewportDimensions();
       drawSceneFrame();
-      renderGizmoMarkup(documentReference, gizmoSvg, controller);
+      renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask);
       if (!capturingStill) {
         renderSceneObjectMarks(documentReference, gizmoSvg, controller);
       }
@@ -3745,6 +3775,7 @@ export function createStudio(container, {
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
       controller.dispose();
+      outlineMask.dispose();
       renderer?.dispose();
       catalog.dispose();
       root.remove();
