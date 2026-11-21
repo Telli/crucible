@@ -26,4 +26,4 @@ What each picture is built from (the table is `scripts/readme-previews-plan.mjs`
 - The object studio picture (`wall-e`) is kept as published; the script does not rebuild it.
 - The two Blender demo scenes are downloaded on first use into `~/.cache/crucible-readme-previews` (change it with `--cache`), never into the repository, and converted with Blender 5.3 (`BLENDER=<path>`, or `blender` on the PATH). Classroom is by Christophe Seux (CC0); Lone Monk is by Carlo Bergonzini (CC-BY). The cameras are in the plan table: Classroom uses the Blender camera, Lone Monk the Blender camera moved 2 m forward.
 - The MCP render needs `npm run build` and `node scripts/build-mcp.mjs` first.
-- Run it as a light GPU job: `bash ~/.agents/tools/gpu-lock.sh node scripts/render-readme-previews.mjs ...`.
+- Run it when no other job holds the GPU: `node scripts/render-readme-previews.mjs ...`.
