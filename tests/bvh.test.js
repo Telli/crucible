@@ -104,10 +104,10 @@ test('a joint with fewer than three rotation channels rotates about those axes o
   assertVectorClose(rotateVector(await childRotationAt('Zrotation', '90'), [1, 0, 0]), [0, 1, 0]);
 });
 
-test('the rest pose is the OFFSETs with no rotation, in metres', async () => {
+test('the rest pose is the OFFSETs with no rotation, in metres, and a moving root rests at its first frame position', async () => {
   const asset = await parseGlb(bvhToGlb(sampleText).glb);
   const byName = new Map(asset.nodes.map(node => [node.name, node]));
-  assert.deepEqual(Array.from(byName.get('Hips').translation).map(value => Number(value.toFixed(6))), [0, 1, 0]);
+  assert.deepEqual(Array.from(byName.get('Hips').translation).map(value => Number(value.toFixed(6))), [0, 0.98, 0]);
   assert.deepEqual(Array.from(byName.get('LeftLeg').translation).map(value => Number(value.toFixed(6))), [0, -0.5, 0]);
   assert.deepEqual(Array.from(byName.get('LeftLeg').rotation), [0, 0, 0, 1]);
   assert.equal(byName.get('LeftFoot_End').joint, true);
@@ -244,4 +244,66 @@ test('the catalog stops on a malformed .bvh with its name and line, and skips on
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+/** A child bone splayed 45 degrees in the OFFSETs; frame 0 is the straight reference pose (root Z rotation 45 turns it upright), frame 1 a 30 degree pose. */
+const SPLAYED_ZERO_POSE_BVH = `HIERARCHY
+ROOT Root
+{
+  OFFSET 0 0 0
+  CHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation
+  JOINT Child
+  {
+    OFFSET 1 1 0
+    CHANNELS 3 Zrotation Xrotation Yrotation
+    End Site
+    {
+      OFFSET 0 0 0.5
+    }
+  }
+}
+MOTION
+Frames: 2
+Frame Time: 0.04
+0 0 0 45 0 0 0 0 0
+0 0 0 30 0 0 0 0 0
+`;
+
+function zAngleDegrees(quaternion) {
+  return 2 * Math.atan2(quaternion[2], quaternion[3]) * 180 / Math.PI;
+}
+
+test('a straight first frame becomes the rest pose and is not played, so a splayed zero pose is not copied by a retarget', async () => {
+  const converted = bvhToGlb(SPLAYED_ZERO_POSE_BVH);
+  assert.equal(converted.restPose, 'firstFrame');
+  assert.equal(converted.frameCount, 1);
+  const asset = await parseGlb(converted.glb);
+  const root = asset.nodes.find(node => node.name === 'Root');
+  assert.ok(Math.abs(zAngleDegrees(Array.from(root.rotation)) - 45) < 1e-4, `the rest rotation is the first frame: ${Array.from(root.rotation)}`);
+  const clip = clipFromGltfAnimation(asset.animations[0]);
+  const track = clip.tracks.find(candidate => candidate.target === 'Root' && candidate.property === 'rotation');
+  assert.equal(track.keyframes[0].time, 0);
+  assert.ok(Math.abs(zAngleDegrees(track.keyframes[0].value) - 30) < 1e-4);
+});
+
+test('restPose offsets keeps the zero pose and every frame; firstFrame forces the first frame; a bad value is refused', async () => {
+  const offsets = bvhToGlb(SPLAYED_ZERO_POSE_BVH, { restPose: 'offsets' });
+  assert.equal(offsets.frameCount, 2);
+  const root = (await parseGlb(offsets.glb)).nodes.find(node => node.name === 'Root');
+  assert.deepEqual(Array.from(root.rotation), [0, 0, 0, 1]);
+  assert.equal(bvhToGlb(sampleText).restPose, 'offsets');
+  assert.equal(bvhToGlb(sampleText, { restPose: 'firstFrame' }).frameCount, 3);
+  assert.throws(() => bvhToGlb(sampleText, { restPose: 'middle' }), /restPose must be one of auto, offsets, firstFrame/);
+});
+
+test('a root with OFFSET 0 and an absolute height in the frames does not lift the retargeted hips by that height', async () => {
+  const lines = sampleText.split('\n');
+  const rootOffsetLine = lines.findIndex(line => line.trim() === 'OFFSET 0 100 0');
+  assert.ok(rootOffsetLine > 0, 'the fixture root has OFFSET 0 100 0');
+  lines[rootOffsetLine] = lines[rootOffsetLine].replace('OFFSET 0 100 0', 'OFFSET 0 0 0');
+  const source = await parseGlb(bvhToGlb(lines.join('\n')).glb);
+  const target = await parseGltf(humanoidGlb({ names: UNREAL_LIKE, joints: humanoidJoints({ hipsHeight: 1.1, thigh: 0.62, shin: 0.48 }) }));
+  const retargeted = retargetAssetClip(source.nodes, target.nodes, clipFromGltfAnimation(source.animations[0]));
+  const pelvis = retargeted.tracks.find(track => track.target === UNREAL_LIKE.hips && track.property === 'translation');
+  assert.ok(Math.abs(pelvis.keyframes[0].value[1] - 1.1) < 0.1, `hips start at the target's rest height: ${pelvis.keyframes[0].value}`);
 });

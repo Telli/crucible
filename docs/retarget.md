@@ -90,6 +90,11 @@ position channel a translation track, at the times of `Frame Time`. That GLB loa
 - `scale` is metres per file unit. Left out, or `"auto"`, the rest height of the skeleton picks it: up to 4 is metres, below 40 the CMU
   unit (0.45 inch), otherwise centimetres. The hips travel is scaled by the rest hip heights on retargeting, so the unit does not change
   what a target does; it sets the size of the standalone clip.
+- `restPose` is `'auto'` (default), `'offsets'` or `'firstFrame'`. The retarget compares each bone with the rest pose, and a mocap file's
+  zero pose is only the skeleton's own (CMU's splays the legs by about 20 degrees and leans the spine), which a T-pose character would
+  copy. Many files open with a T-pose reference frame, so `'auto'` makes frame 0 the rest pose, and does not play it, when its bones lie
+  clearly closer to the world axes than the OFFSETs do. `'offsets'` keeps the zero pose and every frame; `'firstFrame'` forces frame 0.
+  The result reports `restPose` and the played `frameCount`.
 - Bounded: 256 joints (End Sites count), 100,000 frames, 8,000,000 channel values and 32 MiB of text. Errors name the line and what was
   expected.
 - The catalog (`--assets` and packs) accepts `.bvh`: `scene_asset_catalog` lists it as a GLB with `meshes: 0`, one clip named after the

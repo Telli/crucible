@@ -15,6 +15,8 @@ import { BVH_LIMITS } from './bvh-limits.js';
 
 export { BVH_LIMITS };
 
+const CHANNEL_NAMES = ['Xposition', 'Yposition', 'Zposition', 'Xrotation', 'Yrotation', 'Zrotation'];
+
 /**
  * Units are not written in a BVH file, so the rest height of the skeleton (highest joint minus lowest, from the OFFSETs) says which
  * a file uses: up to 4 is metres, 4 to 40 is the CMU mocap unit (0.45 inch, so a person is about 30 units), more is centimetres.
