@@ -153,7 +153,7 @@ The `terrain` geometry of a recipe calls `createTerrain` with these fields. A fi
 | `size`, `seed`, `amplitude` | ground width in metres, noise seed, hill height | 1 to 2000 (40), whole 0 to 2147483647 (1), 0 to 200 (1) |
 | `featureSize` | width of one hill in metres | 0.01 to 10000 (`size / 4`) |
 | `octaves` | noise layers; fewer is smoother | whole 1 to 8 (6) |
-| `warp` | metres a slow noise pushes the ground sideways, which bends valleys | 0 to 1000 (0) |
+| `warp` | metres a slow noise pushes the ground sideways, which bends valleys; a warp near `featureSize` stretches the noise into steep, jagged slopes (a 110 m warp on 150 m features did) | 0 to 1000 (0) |
 | `ridged` | `true` grows ridged mountains in the patches the library picks | true or false (false) |
 | `mountainMask` | one share of ridged mountains over the whole ground; not together with `ridged` | 0 to 1 (0) |
 | `mountainAmplitude` | height of the ridged mountains in metres | 0 to 500 (46) |

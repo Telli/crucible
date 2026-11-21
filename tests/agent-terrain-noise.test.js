@@ -151,3 +151,31 @@ test('the documented limits hold', () => {
   assert.ok((TERRAIN_LIMITS.resolution[1] + 2) ** 2 > MAX_VERTICES);
   assert.doesNotThrow(() => terrainVertexEstimate({ resolution: 499 }));
 });
+
+test('scene_create accepts the terrain noise and chunk fields through the tool schema', async () => {
+  const { Client } = await import('@modelcontextprotocol/client');
+  const { InMemoryTransport } = await import('@modelcontextprotocol/server');
+  const { createAgentRuntime } = await import('../scripts/agent-runtime.mjs');
+  const { createAgentMcpServer } = await import('../scripts/mcp-server.mjs');
+  const runtime = createAgentRuntime({ backend: 'cpu', memory: 192 });
+  const mcp = createAgentMcpServer(runtime);
+  const client = new Client({ name: 'terrain-noise-test', version: '1' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await mcp.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const recipe = {
+      format: 'crucible.scene', schemaVersion: 1,
+      geometries: [{ id: 'ground', type: 'terrain', size: 300, resolution: 16, chunks: 4, levels: 3, featureSize: 60, octaves: 4, warp: 20, ridged: true, mountainAmplitude: 50 }],
+      materials: [{ id: 'earth', color: [0.4, 0.4, 0.3] }],
+      nodes: [{ id: 'land', geometry: 'ground', material: 'earth' }],
+      camera: { eye: [0, 60, 200], target: [0, 10, 0] },
+    };
+    const result = await client.callTool({ name: 'scene_create', arguments: { recipe } });
+    assert.equal(result.isError, undefined, result.content?.find(item => item.type === 'text')?.text);
+  } finally {
+    await client.close();
+    await mcp.close();
+    await runtime.close();
+  }
+});
