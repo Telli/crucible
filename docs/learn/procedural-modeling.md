@@ -179,4 +179,4 @@ A `curve` point is `[x, y, z]` with automatic smooth handles, or `{ position, ha
 - **A folded lathe profile.** A profile that doubles back can intersect itself.
 - **Generating inside the render loop.** Build once, then share the geometry. The renderer does not take new geometry after construction.
 
-See also the [scene graph](https://github.com/codepawl/crucible/blob/main/docs/scene-graph.md), which supports hierarchy and pivots without changing mesh topology, and the [modeling demo](https://crucible.codepawl.com/modeling.html), which combines these tools in a lantern scene.
+See also the [scene graph](https://github.com/codepawl/crucible/blob/main/docs/scene-graph.md), which supports hierarchy and pivots without changing mesh topology.
