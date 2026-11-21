@@ -1,5 +1,6 @@
 import { WEDGE_LIMITS, parseWedgeField, wedgeColumns, wedgeLabel } from '../src/agent-wedge.js';
 import { invalidField } from '../src/field-error.js';
+import { REVIEW_CAMERA_FIELDS, validateReviewCamera } from './agent-review.mjs';
 
 const ALLOWED_INPUT = ['sessionId', 'expectedRevision', 'target', 'parameter', 'values', 'shot', 'width', 'height'];
 const ALLOWED_SHOT = ['camera', 'motionTime'];
@@ -32,8 +33,17 @@ function requireValues(values) {
   }
 }
 
+function requireCamera(camera) {
+  if (!camera || typeof camera !== 'object' || Array.isArray(camera)) {
+    throw new TypeError(`Wedge camera must be an object with the fields ${REVIEW_CAMERA_FIELDS.join(', ')}.`);
+  }
+  requireKnownKeys(camera, REVIEW_CAMERA_FIELDS, 'Wedge camera');
+  validateReviewCamera(camera);
+}
+
 function requireShot(shot) {
   requireKnownKeys(shot, ALLOWED_SHOT, 'Wedge shot');
+  if (shot.camera !== undefined) requireCamera(shot.camera);
   const { motionTime } = shot;
   const valid = motionTime === undefined || motionTime === null || (Number.isFinite(motionTime) && motionTime >= 0 && motionTime <= 3600);
   if (!valid) throw invalidField('shot.motionTime', motionTime, 'a time in seconds from 0 to 3600, or null for the authored pose');

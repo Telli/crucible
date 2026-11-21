@@ -1215,13 +1215,13 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     const shown = chosenFormat('scene_review', response_format) === 'concise' ? conciseReview(metadata) : metadata;
     return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(shown) }], structuredContent: shown };
   });
-  register('scene_wedge', 'Render one field at 2 to 8 values side by side in one labeled PNG grid, to compare a look. target: environment, effects, shadow or a material ID; parameter: a field name or a path such as roughness, lightDirection, keyIntensity, fogDensity or pointLights.0.intensity. The scene, its revision and its branches stay unchanged.', z.strictObject({
+  register('scene_wedge', 'Compare one field at 2 to 8 values in one labeled PNG grid; the scene stays unchanged. target: environment, effects, shadow or a material ID. parameter: a field such as roughness, lightDirection or pointLights.0.intensity.', z.strictObject({
     ...sessionFields, expectedRevision,
     target: z.string().min(1).max(128),
     parameter: z.string().min(1).max(64),
-    values: z.array(z.unknown()).min(2).max(8).describe('One JSON value per picture, as scene_apply takes it.'),
-    shot: z.strictObject({ camera: z.strictObject(cameraFields).optional(), motionTime: z.number().min(0).max(3600).nullable().optional() }).optional().describe('Camera and pose shared by every picture.'),
-    width: z.number().int().min(64).max(480).optional().describe('Picture width. Defaults to 320, or 240 for 7 or 8 values.'),
+    values: z.array(z.unknown()).min(2).max(8).describe('One value per picture, as scene_apply takes it.'),
+    shot: z.strictObject({ camera: z.record(z.string(), z.unknown()).optional().describe('eye, target, up, fov: as a scene_review shot takes them.'), motionTime: z.number().min(0).max(3600).nullable().optional() }).optional().describe('Shared by every picture.'),
+    width: z.number().int().min(64).max(480).optional().describe('Per picture. Default 320.'),
     height: z.number().int().min(64).max(480).optional(),
   }), readOnly, async argumentsValue => {
     const { data, mimeType, metadata } = await runtime.wedge(argumentsValue);

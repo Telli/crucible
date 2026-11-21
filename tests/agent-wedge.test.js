@@ -94,6 +94,12 @@ test('a wedge is one shot per value, each with its label, the shared camera and 
   assert.deepEqual(settings.groups.map(group => group.shotIndexes), [[0], [1], [2]]);
 });
 
+test('the shared camera is checked like a review camera', () => {
+  assert.throws(() => normalizeWedge({ ...validInput, shot: { camera: { focalLength: 50 } } }), /Wedge camera field not accepted: focalLength/);
+  assert.throws(() => normalizeWedge({ ...validInput, shot: { camera: { eye: [0, 1] } } }), /finite Float32 values/);
+  assert.throws(() => normalizeWedge({ ...validInput, shot: { camera: 'front' } }), /Wedge camera must be an object/);
+});
+
 test('the runtime refuses a bad wedge before it opens a browser', async () => {
   const runtime = createAgentRuntime({ backend: 'cpu' });
   await assert.rejects(runtime.wedge({ ...validInput, values: [0.5] }), /values: got 1;/);
