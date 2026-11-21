@@ -27,8 +27,12 @@ function rankSummary(scene) {
   return scene.parts.map(part => [part.name, flushOrderOf(part)?.ranges.map(range => `${range.rank}:${range.start}:${range.count}`) ?? null]);
 }
 
-function nextTurn() {
-  return new Promise(resolve => setTimeout(resolve, 5));
+// Waits for the search to finish on its own, slice after slice, instead of for a fixed time.
+async function nextTurn(scene) {
+  const deadline = Date.now() + 5000;
+  while (scene.flushPending && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
 }
 
 test('a heavy edit returns with the search pending and the parts not yet ranked', () => {
@@ -44,7 +48,7 @@ test('the deferred search finishes on its own and equals the cold synchronous re
   const scene = createAgentScene(recipe(), {}, HEAVY_OPTIONS);
   scene.apply(addBadge, { expectedRevision: 0 });
   const topologyPending = scene.topologyRevision;
-  await nextTurn();
+  await nextTurn(scene);
   assert.equal(scene.flushPending, false);
   assert.equal(scene.topologyRevision, topologyPending + 1, 'the renderer is told to regroup the ranked parts');
   const cold = createAgentScene(recipe());
@@ -78,7 +82,7 @@ test('a second edit before the search runs replaces the pending one and ranks th
   scene.apply(addBadge, { expectedRevision: 0 });
   const addSecond = [{ type: 'add-node', node: { id: 'second', geometry: 'box', material: 'paint', translation: [-1, 0, 0], scale: [1, 0.5, 0.2] } }];
   scene.apply(addSecond, { expectedRevision: 1 });
-  await nextTurn();
+  await nextTurn(scene);
   assert.equal(scene.flushPending, false);
   const cold = createAgentScene(recipe());
   cold.apply(addBadge, { expectedRevision: 0 });

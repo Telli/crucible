@@ -165,6 +165,10 @@ await studio.ready;
 
 The viewport draws a scene's volume fog. Post passes written as shader code and other render-only steps show in the MCP preview and in renders, not in the Studio viewport.
 
+## Scenes with a large scan
+
+An edit of a scene that holds 100,000 or more triangles to rank returns at once and ranks the near-coplanar faces right after, in slices of about 8 ms (see [the agent scene](agent-scene.md)). The viewport draws on demand, so the controller watches `scene.flushPending` with one 32 ms timer while a search waits, and when it ends the controller calls `onChange` once with `{ kind: 'flush' }`. Studio answers with one redraw and no panel update. Nothing is scheduled while no search waits, and `dispose()` and a change of scene stop the timer.
+
 ## See the agent at work
 
 When an agent edits the scene, Studio shows a pointer with the agent's name, the way a collaborator's cursor shows in a shared document. The pointer travels to each object the agent changed, a dashed outline marks that object, and the status line says what changed ("Claude edited hero, orb").

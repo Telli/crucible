@@ -2077,7 +2077,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   function cancelPendingFlush() {
     if (pendingFlush) {
-      clearTimeout(pendingFlush.timer);
+      pendingFlush.runner.cancel();
       pendingFlush = null;
     }
   }
@@ -2087,8 +2087,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       && !rankedLists().some(candidate => sameParts(candidate.rankedParts, parts));
   }
 
-  function rankAndStage(coplanar, recipe, parts, rest) {
-    const list = rankedList(coplanar, partsToRank(recipe, parts), rest);
+  function rankAndStage(coplanar, recipe, parts, rest, searched = null) {
+    const list = rankedList(coplanar, partsToRank(recipe, parts), rest, searched);
     // Ranked parts batch apart, so the list they are staged in is a new one: the renderer then regroups, also when the
     // ranking is switched on or off for parts that did not change. The same parts, or their staged list, get it back.
     // The rest and posed parts of a moving sea share one ranking (#2730), so each keeps its own staged list.
@@ -2102,22 +2102,26 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return staged;
   }
 
-  // Runs the deferred search now, whether the timer fired or a caller needs the ranks first. It is the same search a cold edit
-  // runs, so the result is byte for byte the same; the drawn parts are swapped for the ranked list as a topology change.
+  // Finishes the deferred search now, whether the slices ran out or a caller needs the ranks first. It is the same search a cold
+  // edit runs, so the result is byte for byte the same.
   function settleFlush() {
-    const pending = pendingFlush;
-    if (!pending) {
+    if (!pendingFlush) {
       return false;
     }
-    cancelPendingFlush();
-    const staged = rankAndStage(agentSceneModule('coplanar'), pending.recipe, pending.parts, pending.rest);
+    pendingFlush.runner.drain();
+    return true;
+  }
+
+  // The drawn parts are swapped for the ranked list as a topology change.
+  function finishFlush(pending, searched) {
+    pendingFlush = null;
+    const staged = rankAndStage(agentSceneModule('coplanar'), pending.recipe, pending.parts, pending.rest, searched);
     if (staged !== pending.parts) {
       const drawnChanged = state.parts === pending.parts;
       state.restParts = state.restParts === pending.parts ? staged : state.restParts;
       state.parts = drawnChanged ? staged : state.parts;
       topologyRevision++;
     }
-    return true;
   }
 
   function stageCoplanarOffsets(recipe, parts, { rest = false } = {}) {
@@ -2143,7 +2147,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       cancelPendingFlush();
       if (shouldDeferFlush(recipe, parts)) {
         flushCache = { parts, staged: parts, list: null, ranked: 0, leftovers: [] };
-        pendingFlush = { parts, rest, recipe, timer: setTimeout(settleFlush, 0) };
+        const pending = { parts, rest, recipe, runner: null };
+        const onFailure = () => { pendingFlush = null; };
+        pending.runner = coplanar.startFlushParts(parts, { onDone: searched => finishFlush(pending, searched), onFailure });
+        pendingFlush = pending;
         return parts;
       }
       rankAndStage(coplanar, recipe, parts, rest);
@@ -2161,10 +2168,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   function rankedLists() {
     return restRankedList ? [restRankedList, ...posedRankedLists] : posedRankedLists;
   }
-  function rankedList(coplanar, rankedParts, rest) {
+  function rankedList(coplanar, rankedParts, rest, searched = null) {
     let list = rankedLists().find(candidate => sameParts(candidate.rankedParts, rankedParts));
     if (!list) {
-      const resolved = coplanar.resolveFlushParts(rankedParts);
+      const resolved = searched ?? coplanar.resolveFlushParts(rankedParts);
       list = { rankedParts, resolved, orders: rankedParts.map(flushOrderOf) };
       if (rest) restRankedList = list;
       else posedRankedLists = [list, ...posedRankedLists].slice(0, 2);

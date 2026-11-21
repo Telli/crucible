@@ -9,6 +9,8 @@ import { isLiveGeometry } from './live-geometry.js';
 
 const REMEMBERED_PAIR_LIMIT = 200_000;
 const CHANGED_PART_LIMIT = 256;
+// Triangles handled between two checkpoints of the generators below (issue #2905).
+const CHECKPOINT_TRIANGLES = 8192;
 
 let remembered = null;
 let nextGeometryNumber = 1;
@@ -126,11 +128,12 @@ export function reusableSearch(signatures, starts, reach, limitsKey) {
  * The ids of the triangles a search for the pairs of the changed entries has to look at: every triangle of a changed entry
  * and every other triangle whose box lies within `reach` of the bounds of one. Ascending, so a pair keeps its first triangle.
  */
-export function triangleIdsNearChanged(table, entries, changed, reach) {
+export function* triangleIdsNearChanged(table, entries, changed, reach) {
   const changedBounds = entries.filter((entry, index) => changed[index]).map(entry => entry.bounds);
   const ids = [];
   const { boxes, owner } = table;
   for (let id = 0; id < table.count; id++) {
+    if (id % CHECKPOINT_TRIANGLES === CHECKPOINT_TRIANGLES - 1) yield;
     if (changed[owner[id]] || nearAnyBounds(boxes, id, changedBounds, reach)) ids.push(id);
   }
   return Uint32Array.from(ids);
@@ -146,7 +149,7 @@ function nearAnyBounds(boxes, id, boundsList, reach) {
 }
 
 /** A table of only the triangles in `ids`, in that order, sharing the columns' meaning of the full table. */
-export function subTableOf(table, ids) {
+export function* subTableOf(table, ids) {
   const count = ids.length;
   const sub = {
     count,
@@ -157,13 +160,15 @@ export function subTableOf(table, ids) {
     owner: new Uint32Array(count),
     local: new Uint32Array(count),
   };
-  ids.forEach((id, index) => {
+  for (let index = 0; index < count; index++) {
+    if (index % CHECKPOINT_TRIANGLES === CHECKPOINT_TRIANGLES - 1) yield;
+    const id = ids[index];
     sub.corners.set(table.corners.subarray(id * 9, id * 9 + 9), index * 9);
     sub.normals.set(table.normals.subarray(id * 3, id * 3 + 3), index * 3);
     sub.boxes.set(table.boxes.subarray(id * 6, id * 6 + 6), index * 6);
     sub.areas[index] = table.areas[id];
     sub.owner[index] = table.owner[id];
     sub.local[index] = table.local[id];
-  });
+  }
   return sub;
 }
