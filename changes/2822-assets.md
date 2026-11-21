@@ -1,0 +1,1 @@
+- The asset viewer opens on a CC0 scanned treasure chest (Poly Haven, 972 KB GLB, credited in `public/textures/CREDITS.md`) lit by the sky HDRI on a warm floor with a visible contact shadow, instead of the small clockwork orb on a grey void, and every asset it opens now gets the same sky, floor and sun shadow (Part of #2822)

@@ -124,10 +124,10 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: `node scripts/drive.mjs shot film`
 
 ### `modeling`
-- Name: Aster lantern (modeling player)
+- Name: Modeling (redirects to docs.html#procedural-modeling)
 - Surface: Site
 - Reach: `/modeling.html`
-- Source: `site/modeling.html`, `src/modeling-player.js`
+- Source: `site/modeling.html`
 - Drive: `node scripts/drive.mjs shot modeling`
 
 ### `view2d`
