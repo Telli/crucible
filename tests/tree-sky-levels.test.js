@@ -59,6 +59,24 @@ test('the level match weights each vertex by its share of the leaf area', () => 
   assert.notEqual(Math.round(coverageMean(matched, coverage) * 1000), Math.round(plainMean * 1000));
 });
 
+test('vertexCoverage refuses an index that is not a whole number below the vertex count (#2618)', () => {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  for (const index of [3, -1, 1.5, NaN]) {
+    assert.throws(
+      () => vertexCoverage(positions, [0, 1, index]),
+      /Pass indices that are whole numbers from 0 to 2, got .* at index 2/,
+      String(index),
+    );
+  }
+});
+
+test('vertexCoverage refuses an index list that does not end on a whole triangle (#2618)', () => {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  for (const indices of [[0, 1], [0, 1, 2, 0]]) {
+    assert.throws(() => vertexCoverage(positions, indices), /Pass whole triangles: the number of indices must be a multiple of 3/, `${indices.length} indices`);
+  }
+});
+
 test('a tree whose far level carries more leaf area than its species usually does gets a larger colour gain', () => {
   // Seeds of one broadleaf differ in how much clump area level 2 has against level 0; the colour of level 2 follows it.
   const leafArea = geometry => vertexCoverage(geometry.positions, geometry.indices).reduce((sum, share) => sum + share, 0);

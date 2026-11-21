@@ -97,7 +97,15 @@ export function createCrownSkyField(positions) {
 // How much leaf each vertex stands for: a third of the area of every triangle it belongs to. A level of large clumps has few
 // vertices that each stand for a lot of leaf, so a plain mean over vertices does not say how much sky the leaf sees.
 export function vertexCoverage(positions, indices) {
-  const coverage = new Float32Array(positions.length / 3);
+  if (indices.length % 3 !== 0) throw new RangeError(`Pass whole triangles: the number of indices must be a multiple of 3, got ${indices.length}.`);
+  const vertexCount = positions.length / 3;
+  for (let corner = 0; corner < indices.length; corner++) {
+    const index = indices[corner];
+    if (!Number.isInteger(index) || index < 0 || index >= vertexCount) {
+      throw new RangeError(`Pass indices that are whole numbers from 0 to ${vertexCount - 1}, got ${String(index)} at index ${corner}.`);
+    }
+  }
+  const coverage = new Float32Array(vertexCount);
   for (let corner = 0; corner < indices.length; corner += 3) {
     const [first, second, third] = [indices[corner], indices[corner + 1], indices[corner + 2]];
     const edgeX = [positions[second * 3] - positions[first * 3], positions[second * 3 + 1] - positions[first * 3 + 1], positions[second * 3 + 2] - positions[first * 3 + 2]];
