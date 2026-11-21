@@ -88,6 +88,7 @@ test('the CPU albedo sum of the 200-copy scene is pinned and within 3 percent of
 });
 
 // The albedo only feeds the denoisers, so an undenoised picture must not move. This hash was taken on origin/main before #1941.
+// Re-recorded for #2318: the sun's shadow ray now passes through the glass part, which lights the floor under it.
 test('the undenoised beauty is byte for byte what it was before the albedo definition changed', async () => {
   const environment = { keyColor: [3, 3, 3], lightDirection: [0.4, 0.8, 0.5], map: constantSky(0.4) };
   const parts = [
@@ -97,5 +98,5 @@ test('the undenoised beauty is byte for byte what it was before the albedo defin
   const camera = { eye: [0, 2, 2.5], target: [0, 0.3, 0], up: [0, 1, 0], fov: 40 };
   const result = await renderPathTracedImage({ parts, environment, camera }, { width: 24, height: 18, samples: 8, bounces: 4, seed: 3, threads: 1, denoise: false });
   const hash = createHash('sha256').update(Buffer.from(result.linear.buffer, result.linear.byteOffset, result.linear.byteLength)).digest('hex');
-  assert.equal(hash, '86a838b3d2c6ebf91261627061224b6e4030305646375ca504dcbba36f1f476e');
+  assert.equal(hash, 'd7e3507874276f02e8eeaee00007266b6606f8a6572a2446af09e64d4d7722d3');
 });
