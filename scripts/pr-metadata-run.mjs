@@ -1,7 +1,7 @@
 // GitHub glue of the `PR metadata` workflow. It reads a pull request and its file list through the API, never checks out the
 // pull request's code, and runs the pure rules of pr-metadata-check.mjs and pr-metadata-flow.mjs on them.
 // `github` is the Octokit client that actions/github-script passes in. Tests pass a fake with the same few methods.
-import { checkPullRequest, isAutoCloseExempt, isLookPath, LOOK_HOLD_LABEL } from './pr-metadata-check.mjs';
+import { checkPullRequest, isAutoCloseExempt, isLookFile, LOOK_HOLD_LABEL } from './pr-metadata-check.mjs';
 import {
   CLOSE_MARKER,
   REMINDER_MARKER,
@@ -26,14 +26,14 @@ function toCheckInput(pullRequest, files) {
       milestone: pullRequest.milestone?.title ?? null,
       draft: Boolean(pullRequest.draft),
     },
-    files: files.map(file => ({ filename: file.filename, additions: file.additions, deletions: file.deletions })),
+    files: files.map(file => ({ filename: file.filename, additions: file.additions, deletions: file.deletions, patch: file.patch })),
   };
 }
 
 // Only the owner removes hold:look-approval, after seeing the pictures. A look change whose hold label was added and is gone
 // now is approved: the removal sticks and no picture is asked for again.
 async function lookWasApproved({ github, repo, number, input }) {
-  const touchesLook = input.files.some(file => isLookPath(file.filename));
+  const touchesLook = input.files.some(isLookFile);
   if (!touchesLook || input.pr.labels.includes(LOOK_HOLD_LABEL)) return false;
   const events = await github.paginate(github.rest.issues.listEvents, { ...repo, issue_number: number, per_page: 100 });
   return events.some(event => event.event === 'labeled' && event.label?.name === LOOK_HOLD_LABEL);
