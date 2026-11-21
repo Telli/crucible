@@ -778,6 +778,10 @@ export const STUDIO_CSS = `
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  /* Two rows, then the swatches scroll: a scene with many materials must not squeeze the object list above it. */
+  max-block-size: 56px;
+  overflow-y: auto;
+  flex-shrink: 0;
 }
 .crucible-studio button.crucible-studio-swatch-btn,
 .crucible-studio button.crucible-studio-swatch-add {

@@ -760,6 +760,24 @@ test('selectionSilhouette gives the triangles of the selection on screen, all wo
   controller.dispose();
 });
 
+test('a mesh too dense to outline triangle by triangle is outlined by its hull on screen', () => {
+  const recipe = makeStudioRecipe();
+  recipe.geometries.push({ id: 'dense-ball', type: 'sphere', segments: 96, rings: 64 });
+  recipe.nodes.push({ id: 'dense', geometry: 'dense-ball', material: recipe.materials[0].id, translation: [0, 1, 0] });
+  const controller = createStudioController({ scene: createAgentScene(recipe), viewportWidth: 800, viewportHeight: 600 });
+  controller.selectNode('dense');
+  const densePart = controller.scene.parts.find(part => part.name === 'dense');
+  assert.ok(densePart.geometry.indices.length / 3 > 8000, 'the ball is past the triangle budget');
+  const triangles = controller.selectionSilhouette();
+  const hull = controller.selectionOutline();
+  assert.equal(triangles.length, (hull.length - 2) * 6, 'one fan over the hull corners');
+  for (let offset = 0; offset < triangles.length; offset += 6) {
+    const [ax, ay, bx, by, cx, cy] = triangles.slice(offset, offset + 6);
+    assert.ok((bx - ax) * (cy - ay) - (cx - ax) * (by - ay) > 0, 'wound like every other outline triangle');
+  }
+  controller.dispose();
+});
+
 test('selectionOutline is null without a selection, for a group without parts and when everything is off screen', () => {
   const recipe = makeStudioRecipe();
   recipe.nodes.push({ id: 'empty-group', translation: [0, 0, 0] });
