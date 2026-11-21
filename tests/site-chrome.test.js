@@ -34,16 +34,15 @@ test('the footer lists every page, since the phone top bar keeps only Docs, GitH
   }
 });
 
-test('full-screen viewer pages carry the top bar and no footer, and the canvas page keeps its footer where it scrolls', () => {
+test('full-screen viewer pages carry the top bar and no footer', () => {
   assert.deepEqual([...FOOTERLESS_PAGES].sort(), ['assets', 'film', 'motion', 'nature', 'object', 'view2d']);
   for (const pageName of FOOTERLESS_PAGES) assert.ok(!readPage(pageName).includes('site-chrome:footer'), `${pageName} must not carry a footer`);
-  assert.ok(readPage('modeling').includes('site-chrome:footer'));
   const pageWithFooter = ['<!-- site-chrome:header -->', '<!-- /site-chrome:header -->', '<!-- site-chrome:footer -->', '<!-- /site-chrome:footer -->'].join('\n');
   assert.throws(() => applyChrome(pageWithFooter, 'film'), /carries no footer/);
 });
 
 test('every viewer page loads the shared chrome and viewer styles, wears the viewer class and keeps no top bar of its own', () => {
-  const viewerScripts = { film: 'film-player', motion: 'motion-player', modeling: 'modeling-player', nature: 'nature-viewer', object: 'main', view2d: 'view2d', assets: 'asset-viewer' };
+  const viewerScripts = { film: 'film-player', motion: 'motion-player', nature: 'nature-viewer', object: 'main', view2d: 'view2d', assets: 'asset-viewer' };
   const oldHeaders = ['class="navigation"', 'class="film-header', 'class="world-header"', 'class="motion-header', 'class="studio-nav"', 'class="site-footer"'];
   for (const [pageName, scriptName] of Object.entries(viewerScripts)) {
     const html = readPage(pageName);
@@ -52,7 +51,7 @@ test('every viewer page loads the shared chrome and viewer styles, wears the vie
     const script = readFileSync(new URL(`../src/${scriptName}.js`, import.meta.url), 'utf8');
     assert.ok(script.includes("import './site-chrome.js';"), `src/${scriptName}.js must load the shared chrome`);
   }
-  for (const stylesheet of ['film-style', 'motion-style', 'modeling-style', 'nature-style', 'style', 'view2d']) {
+  for (const stylesheet of ['film-style', 'motion-style', 'nature-style', 'style', 'view2d']) {
     const css = readFileSync(new URL(`../src/${stylesheet}.css`, import.meta.url), 'utf8');
     assert.ok(css.startsWith("@import './viewer-chrome.css';"), `${stylesheet}.css must start with the shared viewer styles`);
   }

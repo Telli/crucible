@@ -230,7 +230,6 @@
     "publish:ci": "node scripts/publish-ci.mjs",
     "publish:addons:ci": "node scripts/publish-addons-ci.mjs",
     "smoke:character": "node scripts/smoke-character.mjs",
-    "smoke:modeling": "node scripts/smoke-modeling.mjs",
     "smoke:material-maps": "node scripts/smoke-material-maps.mjs",
     "smoke:replace-textured-parts": "node scripts/smoke-replace-textured-parts.mjs",
     "smoke:texture-update": "node scripts/smoke-texture-update.mjs",
