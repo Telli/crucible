@@ -8,7 +8,11 @@ import { createFakeRenderer, installStudioDom } from './support/studio-dom.mjs';
 
 // The load-all preload brings in the mesh code but not the Manifold binary, so a boolean edit is refused until
 // Studio itself loads it. Each test file runs in its own process, so this file starts with the binary unloaded.
-const demoRoomText = readFileSync(new URL('./fixtures/demo-room.recipe.json', import.meta.url), 'utf8');
+// The room is loaded without its light bake: the bake has nothing to do with the boolean edit, and under coverage on a
+// slow machine it runs past its own time limit, which fails the load for a reason this file does not test.
+const demoRoomRecipe = JSON.parse(readFileSync(new URL('./fixtures/demo-room.recipe.json', import.meta.url), 'utf8'));
+delete demoRoomRecipe.bake;
+const demoRoomText = JSON.stringify(demoRoomRecipe);
 const demoRoomNodeCount = JSON.parse(demoRoomText).nodes.length;
 
 function mountStudio(testContext, options = {}) {
