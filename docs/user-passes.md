@@ -140,11 +140,11 @@ A material can carry its own fragment code: a GLSL function that changes the sur
 
 | Field | Meaning |
 | --- | --- |
-| `fragment` | GLSL ES 3.00 text that defines `void materialHook(inout vec3 color, inout float alpha, vec2 uv, vec3 worldPosition)`, or `waterHook` below. Helper functions and `const` values may come before it. 4096 bytes of code at most; comments and extra spaces are not counted (the text as sent may be up to 65536 bytes). |
+| `fragment` | GLSL ES 3.00 text that defines `void materialHook(inout vec3 color, inout float alpha, vec2 uv, vec3 worldPosition)`, or `waterHook` below. Add a fifth parameter, `float time`, to read the frame time. Helper functions and `const` values may come before it. 4096 bytes of code at most; comments and extra spaces are not counted (the text as sent may be up to 65536 bytes). |
 | `uniforms` | Named values, as for a post pass: a number is a `float`, `[x, y]` to `[x, y, z, w]` are vectors, `{ "type": "int", "value": 4 }` is an int. At most 16. |
 | `mask` | Optional, `"map"`: the snippet may sample `snippetMask` (a `sampler2D`), which is the material's own map or pattern. Load the image as the material `map`; there are no remote URLs. |
 
-Inputs: `color` is the base colour after the map and the vertex tint, `alpha` is the map alpha before the material opacity, `uv` is the texture coordinate and `worldPosition` the position in the world. `discard` removes the fragment in every alpha mode. A lowered `alpha` cuts only when the material has `alphaMode: "mask"`.
+Inputs: `color` is the base colour after the map and the vertex tint, `alpha` is the map alpha before the material opacity, `uv` is the texture coordinate and `worldPosition` the position in the world. A fifth `float` parameter (any name, for example `float time`) receives the frame time in seconds, the same time `waterHook` and `userPass` get, in stills and in video frames; it animates flames, beacons, grass sway or a flowing highlight on any material. The shadow pass gets the same time, so a discard that moves with it moves the shadow, but the shadow map is redrawn only when the scene changes. `discard` removes the fragment in every alpha mode. A lowered `alpha` cuts only when the material has `alphaMode: "mask"`.
 
 ## Filter a thin pattern with the pixel footprint
 
