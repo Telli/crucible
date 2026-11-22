@@ -78,6 +78,30 @@ Shots of the same branch share one private scene. Each shot reports `branch` and
 
 `labels: true`, on `scene_review` and on `scene_look`, draws the node name, a material tag other than `surface` and the mesh lint problems (in orange) at each visible part's bounds centre. The same list returns as JSON, `labels: [{ id, name, tag, faceTags, problems, x, y }]`, with `x` and `y` in the pixels of that image or shot. At most 24 parts are labelled; hidden parts are left out. Names are cut to printable ASCII. Imported assets get names and tags but no lint.
 
+## Realism checks
+
+Some reasons a render looks fake can be measured. `checks: "realism"` on `scene_review` adds `realism: { passed, checks }` to the result. Every check is listed with `status` (`pass`, `fail` or `warn`), its `fix`, and `findings` (target and message) when it did not pass. `passed` is false only when a check fails. The two material checks also appear as warnings in the diagnostics of `scene_inspect`.
+
+| Check | Status | Threshold | What it reads |
+| --- | --- | --- | --- |
+| `albedo-out-of-range` | fail | Luminance of the linear base colour (Rec. 709 weights) below 0.013 or above 0.9 | Surface, grass and foliage materials. Not checked: metals (metallic 0.5 or more, whose colour is a reflectance), emitters, transmitting glass, materials with a pattern or map (the colour only tints them), water, liquid, foam and unlit materials, and a material whose name has the word snow. |
+| `metallic-on-dielectric` | fail | `metallic` above 0 | A material with the `grass` tag, or one named ground, rock, grass, wood, soil, dirt, mud or bark: by its own id, or by the id or label of a node that uses it. Whole words only, so `background` and `rocket` do not match. A name that also says metal, steel, iron, brass and the like is left alone. |
+| `visible-tiling` | warn | Normalised autocorrelation of 0.5 or more at a lag of 8 pixels or more (at 96 pixels across), with a second peak of 0.3 at twice the lag | The picture of each shot, so it follows what the camera sees. It warns and never fails. |
+
+The material checks read the source scene (a branch shot is checked against the source recipe, not its branch) and do not need the picture.
+
+The tiling check cuts each shot to at most 96 by 96 pixels, subtracts a blurred copy so smooth shading does not correlate with itself, and searches the autocorrelation for a repeat. The cost is fixed (about 40 million multiply-adds a shot) whatever the render size. It finds a texture that repeats at a fixed pixel spacing, such as a ground seen from above or a wall seen head on. A repeat foreshortened by perspective has no single spacing, so it is not detected.
+
+Sources of the thresholds (the limits were taken from the issue and checked against these references, not measured by Crucible):
+
+- Epic's "Physically Based Materials" guide for Unreal Engine lists measured base colours: charcoal 0.04, bare soil 0.13, green grass 0.21, fresh snow 0.81. It advises keeping non-metal base colours between sRGB 30 and 240, which is 0.013 to 0.87 linear. The upper limit of 0.9 leaves room above its fresh snow; the lower limit of 0.013 is its sRGB 30.
+- The [Physically Based database](https://physicallybased.info/) holds the same kind of measured albedo values, in linear RGB, for real materials; none of its non-metals is black or white.
+- Metals are exempt because a metal's base colour is its reflectance at normal incidence, which is bright by design (Epic's guide and the Physically Based database both list metals well above the non-metal range).
+- Metallic above 0 on ground, rock, grass or wood: these do not conduct. The same guides treat metallic as 0 or 1 for real materials and keep in-between values for the edge of a blend, such as rust or dirt on metal.
+- The tiling test is the autocorrelation of the picture, the standard measure of periodic structure. Its limits were set on synthetic grids of noise, and the tests check that noise, a gradient, a flat picture and a single object do not trip it.
+
+Each limit is a default for plain surfaces, not a ruling: a deliberate black cut-out or a stylised flat look can pass the fix with a note.
+
 ## Budgets and ownership
 
 | Limit | Value |
