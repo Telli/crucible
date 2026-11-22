@@ -1025,6 +1025,28 @@ const TOOL_TITLES = {
   scene_render_result: 'Render job result', scene_render_release: 'Release render job',
 };
 
+// --tools picks the tools a client lists. The inline annotate view's submit tool follows scene_ask_user and is never named.
+const INTERNAL_TOOLS = new Set(['scene_ask_user_submit']);
+export const SELECTABLE_TOOL_NAMES = Object.freeze(Object.keys(TOOL_TITLES).filter(name => !INTERNAL_TOOLS.has(name)));
+
+// Returns the tool names of a --tools value, or undefined for every tool.
+export function parseToolSelection(value) {
+  if (value === undefined) return undefined;
+  const names = [...new Set(String(value).split(',').map(name => name.trim()).filter(Boolean))];
+  const unknown = names.filter(name => !SELECTABLE_TOOL_NAMES.includes(name));
+  if (unknown.length > 0) {
+    throw new Error(`--tools names unknown tools: ${unknown.join(', ')}. Pass a comma-separated list of: ${SELECTABLE_TOOL_NAMES.join(', ')}.`);
+  }
+  if (!names.includes('scene_capabilities')) {
+    throw new Error('--tools must include scene_capabilities: the other tools point to it for the fields they take. Add it to the list.');
+  }
+  return names;
+}
+
+function selectedToolsInstructions(selectedTools) {
+  return selectedTools ? ` This server lists only these tools: ${selectedTools.join(', ')}. Ignore advice about any other tool.` : '';
+}
+
 // Top-level fields only and loose nested objects: every output schema is sent with tools/list, so it counts against the tool-cost ceilings.
 const OUTPUT_SCHEMAS = {
   scene_capabilities: z.looseObject({ phase: z.string().optional() }),
@@ -1109,7 +1131,7 @@ function jsonResult(value) {
   return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value };
 }
 
-export function createAgentMcpServer(runtime, { version = packageMetadata.version, branches = true, relations = true, findings = true, callLogPath = readEnvironmentVariable(CALL_LOG_ENVIRONMENT_VARIABLE), updateAvailable = () => null } = {}) {
+export function createAgentMcpServer(runtime, { version = packageMetadata.version, branches = true, relations = true, findings = true, tools: selectedTools, callLogPath = readEnvironmentVariable(CALL_LOG_ENVIRONMENT_VARIABLE), updateAvailable = () => null } = {}) {
   const newerVersion = updateAvailable();
   let updateReported = false;
   const logCall = createCallLogger(callLogPath);
@@ -1121,7 +1143,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
   const branchInstructions = branches ? ' To try variants, give scene_apply a branch name for each (the scene stays put), compare them in one scene_review with a branch per shot, then keep the best with scene_restore and its branch.' : '';
   installVolumeGridFiles();
   const server = new McpServer({ name: 'crucible-scene', version }, {
-    instructions: 'Start with scene_capabilities. Create a procedural recipe with scene_create, or select a configured GLB digest from scene_asset_catalog and use scene_create_asset. Pass its sessionId to work on several open scenes; without it the last used scene is used. Inspect stable IDs and save a checkpoint before editing. Apply small batches with the current expectedRevision and check committed, revision and renderSucceeded. A committed edit can have a separate renderError; do not retry it with an old revision.'+branchInstructions+' Pass labels: true to scene_look or scene_review to match part names to the image. Use scene_look to judge the actual image, or scene_review with the current expectedRevision to compare independent camera and motion samples in one grid while preserving the source pose. When jobs are configured, scene_render_submit captures an immutable snapshot. Poll scene_render_status, cancel when needed, and retrieve verified local artifact metadata with scene_render_result after completion. Preview rendering and edits pause during a job; source revision and checkpoints survive. Release outputs with scene_render_release. Export the final recipe and dispose the scene when finished. No arbitrary JavaScript, remote URLs or caller-selected output paths are exposed.'+(newerVersion ? updateNoticeText(newerVersion) : ''),
+    instructions: 'Start with scene_capabilities. Create a procedural recipe with scene_create, or select a configured GLB digest from scene_asset_catalog and use scene_create_asset. Pass its sessionId to work on several open scenes; without it the last used scene is used. Inspect stable IDs and save a checkpoint before editing. Apply small batches with the current expectedRevision and check committed, revision and renderSucceeded. A committed edit can have a separate renderError; do not retry it with an old revision.'+branchInstructions+' Pass labels: true to scene_look or scene_review to match part names to the image. Use scene_look to judge the actual image, or scene_review with the current expectedRevision to compare independent camera and motion samples in one grid while preserving the source pose. When jobs are configured, scene_render_submit captures an immutable snapshot. Poll scene_render_status, cancel when needed, and retrieve verified local artifact metadata with scene_render_result after completion. Preview rendering and edits pause during a job; source revision and checkpoints survive. Release outputs with scene_render_release. Export the final recipe and dispose the scene when finished. No arbitrary JavaScript, remote URLs or caller-selected output paths are exposed.'+selectedToolsInstructions(selectedTools)+(newerVersion ? updateNoticeText(newerVersion) : ''),
   });
   let closePromise;
   server.server.onclose = () => {
@@ -1141,8 +1163,12 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     const activeSessionId = runtime.activeSessionId();
     return activeSessionId ? { ...argumentsValue, sessionId: activeSessionId } : argumentsValue;
   }
+  const registeredTools = new Map();
+  function isToolSelected(name) {
+    return !selectedTools || selectedTools.includes(name);
+  }
   function register(name, description, inputSchema, annotations, run, extraConfig = {}) {
-    return server.registerTool(name, { title: TOOL_TITLES[name], description, inputSchema, annotations: { title: TOOL_TITLES[name], ...annotations }, ...(OUTPUT_SCHEMAS[name] ? { outputSchema: OUTPUT_SCHEMAS[name] } : {}), ...extraConfig }, async argumentsValue => {
+    const registeredTool = server.registerTool(name, { title: TOOL_TITLES[name], description, inputSchema, annotations: { title: TOOL_TITLES[name], ...annotations }, ...(OUTPUT_SCHEMAS[name] ? { outputSchema: OUTPUT_SCHEMAS[name] } : {}), ...extraConfig }, async argumentsValue => {
       const call = async () => {
       try {
         return await run(withActiveSession(argumentsValue, inputSchema));
@@ -1154,6 +1180,8 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
       };
       return logCall ? logCall(name, call) : call();
     });
+    registeredTools.set(name, registeredTool);
+    return registeredTool;
   }
   const capabilitiesTopic = z.union([z.string().min(1).max(64), z.array(z.string()).max(MAX_TOPICS_PER_CALL)]).optional().describe('A name, name.branch (meshEdit.bevel) or a list of up to 8. Omit for the index.');
   register('scene_capabilities', 'Index of supported recipe features and runtime budgets; pass topic for the detail of one. Read it before authoring. Does not launch a browser.', z.strictObject({ topic: capabilitiesTopic, response_format: responseFormatField }), readOnly, async ({ topic, response_format }) => {
@@ -1202,7 +1230,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
   const previousInitialized = server.server.oninitialized;
   server.server.oninitialized = () => {
     previousInitialized?.();
-    if (!clientSupportsMcpApps(server.server.getClientCapabilities())) return;
+    if (!isToolSelected('scene_ask_user') || !clientSupportsMcpApps(server.server.getClientCapabilities())) return;
     clientShowsApps = true;
     annotateViewResource.enable();
     submitAskUserTool.enable();
@@ -1247,6 +1275,11 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     return renderResultContent(result, chosenFormat('scene_render_result', response_format) === 'concise' ? conciseJobResult(result) : result, { images });
   });
   register('scene_render_release', 'Delete the owned files and record for a terminal job, freeing store quota. Active jobs must be cancelled first.', z.strictObject(jobFields, { error: jobKeysHint('scene_render_release', Object.keys(jobFields)) }), destroy, async argumentsValue => jsonResult(await runtime.releaseJob(argumentsValue)));
+  // Removed after registration so every schema is still built the same way and the default list stays byte-identical.
+  for (const [name, registeredTool] of registeredTools) {
+    const selected = INTERNAL_TOOLS.has(name) ? isToolSelected('scene_ask_user') : isToolSelected(name);
+    if (!selected) registeredTool.remove();
+  }
   return server;
 }
 
@@ -1275,6 +1308,8 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   const addonSet = resolveAddons({ folder: options.addons, names: allowedAddonNames, version });
   for (const { name, reason } of addonSet.skipped) console.error(`Crucible addon ${name} skipped: ${reason}`);
   options.addons = addonSet;
+  const selectedTools = parseToolSelection(options.tools);
+  delete options.tools;
   for (const flag of ['branches', 'relations', 'findings']) {
     if (options[flag] !== undefined && !['on', 'off'].includes(options[flag])) {
       throw new Error(`--${flag} must be on or off, got "${options[flag]}".`);
@@ -1305,7 +1340,7 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
   // Test-only: answers for scene_ask_user from a file, set by whoever starts the server (#1956). Read once, here.
   const askUserFixture = loadAskUserFixture();
   if (askUserFixture) console.error(describeAskUserFixture(askUserFixture));
-  const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl, askUserFixture }), { version, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
+  const handle = serveStdio(() => createAgentMcpServer(createAgentRuntime({ ...options, previewUrl, askUserFixture }), { version, tools: selectedTools, branches: options.branches !== 'off', relations: options.relations !== 'off', findings: options.findings !== 'off', updateAvailable: updateCheck.current }), {
     transport: new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 2 * 1024 * 1024 }),
     onerror: error => console.error(`Crucible MCP error: ${error.message}`),
   });
