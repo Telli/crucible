@@ -92,8 +92,9 @@ Downscaling a full-size frame (`scale` below 1, or `stylize.pixelate`) shimmers 
 
 - The main pass, `sceneDepth`, render passes, line art and every user pass run on a `(width + 2 pad) x (height + 2 pad)` target with one sample. Passes read the frame with nearest filtering, and `postPassesAntialias` behaves as `"off"` while the grid is on.
 - An orthographic camera moves onto whole texels (a texel is `orthoScale / height`). The frame then goes to the canvas with a nearest blit of the visible grid, moved by the part of a texel the snap took, so static geometry keeps its pixels while a pan still moves smoothly at output size. A perspective camera renders on the grid without snapping.
+- `stylize.pixelate` and a pass with `scale` below 1 count in grid pixels on the grid. Their blocks (`pixelate` pixels, or `1 / scale` rounded) start on a lattice that moves with the snapped camera, so a block stays on the same geometry while the camera pans instead of flickering. A pass on the grid reports the block count as `resolution` and is enlarged back to the grid size before the next pass reads it; a `scale` that rounds to one pixel per block runs at the grid size.
 - The canvas must be at least the padded grid in each side. `pad` (default 2) is the ring that covers the shift.
-- Without `pixelGrid` the render is unchanged. `scene_create` takes it; in JavaScript, `installPixelGrid(renderer)` from `src/pixel-grid.js` after `installUserPasses`, then `renderer.pixelGrid.set({ width, height, pad })`, or `set(null)`.
+- Without `pixelGrid` the render is unchanged. `scene_create` takes it, and `scene_apply` takes `{ "type": "set-pixel-grid", "pixelGrid": { "width": 256, "height": 144 } }` (`null` turns it off); in JavaScript, `installPixelGrid(renderer)` from `src/pixel-grid.js` after `installUserPasses`, then `renderer.pixelGrid.set({ width, height, pad })`, or `set(null)`.
 
 ## Limits and rules
 

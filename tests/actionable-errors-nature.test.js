@@ -88,7 +88,9 @@ for (const [name, trigger, path, received, expectation] of CASES) {
 // accepted. A throw listed here stays raw on purpose: host wiring no recipe field can fix. A new raw throw fails this
 // test until it uses invalidField or is listed.
 const RAW_THROWS_LEFT = {
-  'src/agent-vegetation.js': [],
+  'src/agent-vegetation.js': [
+    '`Node ${nodeId}: vegetation.scans.${species}.leaves.${field} image ${entry.leaves[field].slice(0, 12)} was not loaded. The host decodes catalog images before createAgentScene or apply.`',
+  ],
   'src/agent-particles.js': [],
   'src/agent-cloth.js': [],
   'src/agent-texture-sequence.js': [

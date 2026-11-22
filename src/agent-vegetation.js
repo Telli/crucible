@@ -2,6 +2,8 @@ import { mat4 } from 'gl-matrix';
 import { leafTextureDescriptor } from './vegetation-textures.js';
 import { SPECIES, TREE_PRESETS, createTree, scatterVegetation, levelForDistance } from './vegetation.js';
 import { checkTreeGrowth } from './vegetation-presets.js';
+import { createImage } from './material-texture-kit.js';
+import { createTextureMaps } from './agent-texture-set.js';
 import { createRecipeTerrain } from './agent-terrain.js';
 import { invalidField } from './field-error.js';
 
@@ -14,7 +16,11 @@ export const VEGETATION_LIMITS = Object.freeze({
   maxInstances: 1000, maxVariants: 4, maxExclusions: 32, maxCandidates: 4000, maxCachedSets: 4,
 });
 const SCATTER_SPECIES = [...Object.keys(SPECIES), 'grass', 'flowers'];
-const VEGETATION_FIELDS = ['species', 'preset', 'tree', 'mix', 'seed', 'height', 'leaves', 'season', 'cullDistance', 'distanceScale', 'scatter'];
+const VEGETATION_FIELDS = ['species', 'preset', 'tree', 'mix', 'seed', 'height', 'leaves', 'season', 'cullDistance', 'distanceScale', 'scatter', 'scans'];
+// Scanned bark and leaf cards per species, as catalog image IDs. The MCP server fills them from the vegetation-scans pack.
+const SCAN_PART_FIELDS = Object.freeze({ bark: ['colorMap', 'normalMap', 'roughnessMap'], leaves: ['colorMap', 'normalMap', 'crownMap'] });
+const CATALOG_IMAGE_ID = /^[a-f0-9]{64}$/;
+const CLAMP_TO_EDGE = 33071;
 const SCATTER_FIELDS = ['ground', 'density', 'slopeLimit', 'area', 'exclude', 'variants', 'scale'];
 const EXCLUSION_FIELDS = ['center', 'radius', 'min', 'max', 'node'];
 const GROUND_EDGE_MARGIN = 0.5;
@@ -168,7 +174,81 @@ export function normalizeVegetation(value, node) {
   if (value.cullDistance !== undefined) result.cullDistance = numberWithin(value.cullDistance, 1, 100_000, 'vegetation.cullDistance');
   result.distanceScale = numberWithin(value.distanceScale ?? 1, 0.1, 10, 'vegetation.distanceScale');
   if (value.scatter !== undefined) result.scatter = normalizeScatter(value.scatter, 'vegetation.scatter');
+  if (value.scans !== undefined) result.scans = normalizeScans(value.scans);
   return result;
+}
+
+function normalizeScanPart(value, part, path) {
+  knownKeys(value, SCAN_PART_FIELDS[part], path);
+  if (value.colorMap === undefined) throw invalidField(`${path}.colorMap`, value.colorMap, 'the catalog image ID of the colour map; the other maps are optional', TypeError);
+  const result = {};
+  for (const [field, id] of Object.entries(value)) {
+    if (typeof id !== 'string' || !CATALOG_IMAGE_ID.test(id.toLowerCase())) {
+      throw invalidField(`${path}.${field}`, id, 'the 64 hexadecimal characters of a catalog image asset ID; scene_asset_catalog lists the vegetation-scans pack images', TypeError);
+    }
+    result[field] = id.toLowerCase();
+  }
+  return result;
+}
+
+// `scans: {}` keeps every tree procedural even when the pack is installed, because the server only fills a node that has no scans.
+function normalizeScans(value) {
+  knownKeys(value, Object.keys(SPECIES), 'vegetation.scans');
+  const result = {};
+  for (const [species, entry] of Object.entries(value)) {
+    knownKeys(entry, Object.keys(SCAN_PART_FIELDS), `vegetation.scans.${species}`);
+    result[species] = {};
+    for (const part of Object.keys(entry)) result[species][part] = normalizeScanPart(entry[part], part, `vegetation.scans.${species}.${part}`);
+  }
+  return result;
+}
+
+function leafDescriptor(frame) {
+  return { image: createImage(frame.data, frame.width, frame.height), colorSpace: 'srgb', wrapS: CLAMP_TO_EDGE, wrapT: CLAMP_TO_EDGE };
+}
+
+/**
+ * The `barkTextures` and `leafTextures` createTree takes, from the decoded catalog images of `scans`. `leafFrames` maps each leaf
+ * colour descriptor to its decoded pixels, so a season can recolour the scan instead of swapping in the procedural sprite.
+ */
+function scanTextures(scans, pool, nodeId) {
+  const barkTextures = {};
+  const leafTextures = {};
+  const leafFrames = new Map();
+  for (const [species, entry] of Object.entries(scans ?? {})) {
+    if (entry.bark) {
+      const maps = createTextureMaps(`${nodeId} vegetation.scans.${species}.bark`, entry.bark, pool);
+      barkTextures[species] = { color: maps.map, ...(maps.normalMap && { normal: maps.normalMap }), ...(maps.metallicRoughnessMap && { roughness: maps.metallicRoughnessMap }) };
+    }
+    if (entry.leaves) {
+      const frameOf = field => {
+        const frame = pool?.get(entry.leaves[field]);
+        if (!frame) throw new Error(`Node ${nodeId}: vegetation.scans.${species}.leaves.${field} image ${entry.leaves[field].slice(0, 12)} was not loaded. The host decodes catalog images before createAgentScene or apply.`);
+        return frame;
+      };
+      const set = { color: leafDescriptor(frameOf('colorMap')) };
+      leafFrames.set(set.color, frameOf('colorMap'));
+      if (entry.leaves.normalMap) set.normal = { ...leafDescriptor(frameOf('normalMap')), colorSpace: 'linear' };
+      if (entry.leaves.crownMap) {
+        set.crown = leafDescriptor(frameOf('crownMap'));
+        leafFrames.set(set.crown, frameOf('crownMap'));
+      }
+      leafTextures[species] = set;
+    }
+  }
+  return { barkTextures, leafTextures, leafFrames };
+}
+
+// A scanned card keeps its own detail through the seasons: each channel is scaled by how far the season colour sits from the species colour.
+function recoloredLeafDescriptor(descriptor, frame, base, target) {
+  const ratios = target.map((channel, axis) => channel / Math.max(1, base[axis]));
+  const data = new Uint8ClampedArray(frame.data);
+  for (let offset = 0; offset < data.length; offset += 4) {
+    data[offset] = data[offset] * ratios[0];
+    data[offset + 1] = data[offset + 1] * ratios[1];
+    data[offset + 2] = data[offset + 2] * ratios[2];
+  }
+  return { ...descriptor, image: createImage(data, frame.width, frame.height) };
 }
 
 /** A leaf colour (0 to 255 sRGB) for a season: summer keeps the species colour, then 0.35 gold, 0.6 orange and 0.85 brown. */
@@ -184,7 +264,12 @@ export function seasonLeafColor(base, season) {
 }
 
 // Cards recolour their procedural leaf sprite, because a colour factor cannot turn a green leaf orange; mesh leaves and grass blades recolour the material.
-function seasonalMaterial(material, variant, species, season) {
+function seasonalMaterial(material, variant, species, season, leafFrames) {
+  const scannedFrame = leafFrames?.get(material.map);
+  if (scannedFrame) {
+    const base = SPECIES[species].leaf.color;
+    return { ...material, map: recoloredLeafDescriptor(material.map, scannedFrame, base, seasonLeafColor(base, season)) };
+  }
   if (material.map) {
     const preset = SPECIES[species];
     const kind = species === 'grass' ? 'grass' : material === variant.materials.crown ? 'clump' : preset.leaf.texture;
@@ -277,17 +362,18 @@ function growthOptions(vegetation) {
   return Object.keys(growth).length ? { growth } : {};
 }
 
-function grow(recipe, vegetation) {
+function grow(recipe, vegetation, pool, nodeId) {
+  const { barkTextures, leafTextures, leafFrames } = scanTextures(vegetation.scans, pool, nodeId);
   if (!vegetation.scatter) {
     const growth = growthOptions(vegetation).growth ?? {};
-    const tree = createTree({ species: vegetation.species, ...growth, leaves: vegetation.leaves, ...(vegetation.height ? { height: vegetation.height } : {}) }, vegetation.seed);
-    return { variants: [tree], instances: [{ variant: tree, matrix: mat4.create(), species: tree.species }] };
+    const tree = createTree({ species: vegetation.species, ...growth, leaves: vegetation.leaves, barkTextures, leafTextures, ...(vegetation.height ? { height: vegetation.height } : {}) }, vegetation.seed);
+    return { variants: [tree], instances: [{ variant: tree, matrix: mat4.create(), species: tree.species }], leafFrames };
   }
-  const scattered = scatterVegetation(scatterOptionsFor(recipe, vegetation));
+  const scattered = scatterVegetation({ ...scatterOptionsFor(recipe, vegetation), barkTextures, leafTextures });
   if (scattered.instances.length > VEGETATION_LIMITS.maxInstances) {
     throw invalidField('vegetation.scatter.density', vegetation.scatter.density, `a density that places at most ${VEGETATION_LIMITS.maxInstances} instances (this placed ${scattered.instances.length}); lower it or give a smaller area`);
   }
-  return { variants: Object.values(scattered.variants).flat(), instances: scattered.instances };
+  return { variants: Object.values(scattered.variants).flat(), instances: scattered.instances, leafFrames };
 }
 
 // Where a named exclusion stands in the ground's space, or null while the node or the ground is missing (growing reports that).
@@ -315,9 +401,10 @@ function materialJson(material) {
 /**
  * Generate the geometries, materials and part nodes of every vegetation node into a normalized recipe, in place.
  * `cache` (the scene's asset output map) holds grown trees across edits, so a camera or season edit does not grow them again.
- * Returns the runtime maps the scene merges with the placed-asset ones, and a report for scene_inspect.
+ * Returns the runtime maps the scene merges with the placed-asset ones, and a report for scene_inspect. `pool` holds the decoded
+ * catalog images that `vegetation.scans` names.
  */
-export function expandVegetation(recipe, limits, cache, placedRuntime) {
+export function expandVegetation(recipe, limits, cache, placedRuntime, pool) {
   cache.serial ??= 0;
   const planted = recipe.nodes.filter(node => node.vegetation);
   const runtime = { geometryParts: new Map(), materialOutputs: new Map(), partExtras: new Map(), report: [] };
@@ -331,7 +418,7 @@ export function expandVegetation(recipe, limits, cache, placedRuntime) {
       // The scene shares this map with its placed assets, so only grown sets are evicted.
       const grownKeys = [...cache.keys()].filter(candidate => candidate.startsWith('vegetation:'));
       if (grownKeys.length >= VEGETATION_LIMITS.maxCachedSets) cache.delete(grownKeys[0]);
-      cache.set(key, { serial: ++cache.serial, grown: grow(recipe, vegetation), outputs: new Map() });
+      cache.set(key, { serial: ++cache.serial, grown: grow(recipe, vegetation, pool, node.id), outputs: new Map() });
     }
     const entry = cache.get(key);
     const bare = vegetation.season >= BARE_SEASON;
@@ -375,7 +462,7 @@ export function expandVegetation(recipe, limits, cache, placedRuntime) {
         const materialId = `vegetation:${entry.serial}:${variantIds.get(instance.variant)}:${materialIds.get(part.material)}:${tinted ? `s${vegetation.season}` : 'plain'}`;
         if (!runtime.materialOutputs.has(materialId)) {
           if (!entry.outputs.has(materialId)) {
-            entry.outputs.set(materialId, Object.freeze(tinted ? seasonalMaterial(part.material, instance.variant, instance.species, vegetation.season) : { ...part.material }));
+            entry.outputs.set(materialId, Object.freeze(tinted ? seasonalMaterial(part.material, instance.variant, instance.species, vegetation.season, entry.grown.leafFrames) : { ...part.material }));
           }
           runtime.materialOutputs.set(materialId, entry.outputs.get(materialId));
           recipe.materials.push({ id: materialId, ...materialJson(entry.outputs.get(materialId)), assetSource: true });

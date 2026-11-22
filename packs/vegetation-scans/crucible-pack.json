@@ -1,0 +1,112 @@
+{
+  "format": "crucible.pack",
+  "schemaVersion": 1,
+  "name": "vegetation-scans",
+  "version": "1.0.0",
+  "engines": {
+    "crucible": ">=0.22.0"
+  },
+  "license": "CC0-1.0",
+  "author": "Poly Haven and ambientCG scans, packed by Crucible",
+  "description": "Scanned bark and leaf cards that recipe trees draw with when this pack is installed.",
+  "contents": {
+    "images": [
+      {
+        "id": "broadleaf-bark-color",
+        "file": "bark/broadleaf/color.webp"
+      },
+      {
+        "id": "broadleaf-bark-normal",
+        "file": "bark/broadleaf/normal.webp"
+      },
+      {
+        "id": "broadleaf-bark-roughness",
+        "file": "bark/broadleaf/roughness.webp"
+      },
+      {
+        "id": "conifer-bark-color",
+        "file": "bark/conifer/color.webp"
+      },
+      {
+        "id": "conifer-bark-normal",
+        "file": "bark/conifer/normal.webp"
+      },
+      {
+        "id": "conifer-bark-roughness",
+        "file": "bark/conifer/roughness.webp"
+      },
+      {
+        "id": "palm-bark-color",
+        "file": "bark/palm/color.webp"
+      },
+      {
+        "id": "palm-bark-normal",
+        "file": "bark/palm/normal.webp"
+      },
+      {
+        "id": "palm-bark-roughness",
+        "file": "bark/palm/roughness.webp"
+      },
+      {
+        "id": "bush-bark-color",
+        "file": "bark/bush/color.webp"
+      },
+      {
+        "id": "bush-bark-normal",
+        "file": "bark/bush/normal.webp"
+      },
+      {
+        "id": "bush-bark-roughness",
+        "file": "bark/bush/roughness.webp"
+      },
+      {
+        "id": "broadleaf-leaf-color",
+        "file": "leaves/broadleaf/color.webp"
+      },
+      {
+        "id": "broadleaf-leaf-normal",
+        "file": "leaves/broadleaf/normal.webp"
+      },
+      {
+        "id": "broadleaf-leaf-crown",
+        "file": "leaves/broadleaf/crown.webp"
+      },
+      {
+        "id": "birch-leaf-color",
+        "file": "leaves/birch/color.webp"
+      },
+      {
+        "id": "birch-leaf-normal",
+        "file": "leaves/birch/normal.webp"
+      },
+      {
+        "id": "birch-leaf-crown",
+        "file": "leaves/birch/crown.webp"
+      },
+      {
+        "id": "bush-leaf-color",
+        "file": "leaves/bush/color.webp"
+      },
+      {
+        "id": "bush-leaf-normal",
+        "file": "leaves/bush/normal.webp"
+      },
+      {
+        "id": "bush-leaf-crown",
+        "file": "leaves/bush/crown.webp"
+      },
+      {
+        "id": "conifer-leaf-color",
+        "file": "leaves/conifer/color.webp"
+      },
+      {
+        "id": "conifer-leaf-normal",
+        "file": "leaves/conifer/normal.webp"
+      },
+      {
+        "id": "conifer-leaf-crown",
+        "file": "leaves/conifer/crown.webp"
+      }
+    ]
+  }
+}

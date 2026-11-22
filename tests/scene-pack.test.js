@@ -72,7 +72,7 @@ test('a recipe that crucible pack cannot write yet is refused with what to chang
   assert.throws(() => validatePackRecipe([]), /not an object/);
   assert.throws(() => validatePackRecipe({ format: 'gltf' }), /expected "crucible.scene"/);
   assert.throws(() => validatePackRecipe({ ...RECIPE, motion: {} }), /recipe\.motion: .*remove "motion"/);
-  assert.throws(() => validatePackRecipe({ ...RECIPE, environment: { hdri: 'studio' } }), /environment\.hdri: .*set environment\.setup/);
+  assert.throws(() => validatePackRecipe({ ...RECIPE, environment: { sky: { sunElevation: 30 } } }), /environment\.sky: .*set environment\.setup/);
   assert.doesNotThrow(() => validatePackRecipe(RECIPE));
 });
 
