@@ -34,6 +34,7 @@ import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, des
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
 import { clearStudioDraft, createDraftNotice, DRAFT_SAVE_DELAY_MILLISECONDS, draftDiffersFrom, loadStudioDraft, saveStudioDraft } from './studio-draft.js';
+import { createPostPassNotice, createPostPassPlanner, installPostPasses, sceneHasPostPasses } from './studio-post-passes.js';
 import { CONTEXT_LOST_MESSAGE, createPausedPictureNotice, describeFrameFailure, watchContextLoss } from './studio-context-loss.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
 import {
@@ -992,6 +993,8 @@ export function createStudio(container, {
   canvas: suppliedCanvas,
   renderer: suppliedRenderer,
   rendererOptions = {},
+  // Fetches the render pass code a post pass with `objects` needs; tests pass their own to control when it arrives.
+  renderPassesLoader = undefined,
   desktop = null,
   fileName: initialFileName = 'untitled.scene.json',
   homeHref = null,
@@ -1743,6 +1746,11 @@ export function createStudio(container, {
     createIcon: iconName => createIcon(documentReference, iconName),
     reload: () => documentReference.defaultView?.location?.reload?.(),
   });
+  const postPassPlanner = createPostPassPlanner({ loadRenderPasses: renderPassesLoader, requestFrame: () => requestFrame() });
+  const postPassNotice = createPostPassNotice({
+    documentReference,
+    createIcon: iconName => createIcon(documentReference, iconName),
+  });
   const draftNotice = createDraftNotice({
     documentReference,
     createIcon: iconName => createIcon(documentReference, iconName),
@@ -1751,7 +1759,7 @@ export function createStudio(container, {
   });
   const stopWatchingDiagnostics = watchStudioDiagnostics(studioDiagnostics, { windowReference: documentReference.defaultView, canvas });
   const stopWatchingContextLoss = watchContextLoss(canvas, { onLost: pauseForContextLoss, onRestored: recoverFromContextLoss });
-  viewportElement.append(canvas, maskFilterSvg, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element, draftNotice.element);
+  viewportElement.append(canvas, maskFilterSvg, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element, postPassNotice.element, draftNotice.element);
 
   // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
   const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
@@ -2663,7 +2671,7 @@ export function createStudio(container, {
   // with a depth target, built once; it stays for the scenes after it.
   function sceneNeedsDepth() {
     const environment = controller.scene.environment;
-    return Boolean(environment.volumeFog?.density > 0 || environment.localVolumes?.length);
+    return Boolean(environment.volumeFog?.density > 0 || environment.localVolumes?.length || sceneHasPostPasses(controller.scene));
   }
 
   function ensureRenderer() {
@@ -2672,7 +2680,7 @@ export function createStudio(container, {
       renderer = null;
     }
     if (renderer) {
-      return renderer;
+      return installPostPasses(renderer);
     }
     const environment = controller.scene.environment;
     rendererHasDepth = sceneNeedsDepth();
@@ -2691,7 +2699,7 @@ export function createStudio(container, {
     });
     renderedScene = controller.scene;
     renderedTopology = controller.scene.topologyRevision;
-    return renderer;
+    return installPostPasses(renderer);
   }
 
   function syncViewportDimensions() {
@@ -2837,7 +2845,7 @@ export function createStudio(container, {
     activeRenderer.world = environment.world;
     // A still is the scene's own shot, so it keeps the animated camera even while the viewport looks around freely.
     const frameCamera = capturingStill ? controller.scene.camera : controller.viewCamera;
-    activeRenderer.render({
+    renderWithPostPasses(activeRenderer, {
       ...frameCamera,
       ...(capturingStill ? {} : viewportClipPlanes(frameCamera)),
       environment: { ...environment, map: agentEnvironmentMap(environment) },
@@ -2846,6 +2854,32 @@ export function createStudio(container, {
       time: controller.motionTime,
       lines: environment.lines,
     });
+  }
+
+  // A pass that fails to compile is refused and the frame is drawn again without it, so one bad pass never pauses the picture.
+  function renderWithPostPasses(activeRenderer, frame) {
+    while (true) {
+      const plan = postPassPlanner.resolve(activeRenderer, controller.scene);
+      let drawingObjectIds = false;
+      try {
+        if (plan.needsObjectIds) {
+          drawingObjectIds = true;
+          activeRenderer.render({ ...frame, pass: 'objectId', previousCamera: undefined });
+          drawingObjectIds = false;
+        }
+        activeRenderer.render(frame);
+        postPassNotice.show(plan.notDrawn);
+        return;
+      } catch (error) {
+        // A frame that is still linking its programs must reach the caller untouched.
+        const refused = !(error instanceof ProgramNotReady)
+          && (postPassPlanner.refuseFailedPass(error, controller.scene)
+            || (drawingObjectIds && postPassPlanner.refuseObjectPasses(activeRenderer, error)));
+        if (!refused) {
+          throw error;
+        }
+      }
+    }
   }
 
   function drawAgentOutline() {

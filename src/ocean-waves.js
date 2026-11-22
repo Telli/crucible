@@ -60,7 +60,7 @@ export function oceanWaves({ windSpeed, direction, size, seed, resolution }) {
       const amplitude = Math.sqrt(windSpectrum(waveNumber, alignment, windSpeed)) * gaussian(waves.length, seed);
       variance += amplitude * amplitude / 2;
       waves.push({
-        waveX, waveZ, waveNumber, amplitude,
+        waveX, waveZ, waveNumber, amplitude, column, row,
         phase: seededRandom(waves.length, CHANNEL_PHASE, seed) * 2 * Math.PI,
         frequency: Math.sqrt(GRAVITY * waveNumber),
       });
@@ -157,4 +157,193 @@ export function oceanSurfaceAt(waves, restX, restZ, time, choppiness, foamThresh
   }
   const jacobian = (1 + squeezeXX) * (1 + squeezeZZ) - squeezeXZ * squeezeXZ;
   return { height, moveX, moveZ, jacobian, foam: foamFromJacobian(jacobian, foamThreshold), riseSpeed, driftX, driftZ };
+}
+
+// Batch path for a whole mesh. Wave vectors sit on a lattice (waveX = column * step, waveZ = row * step), so sin and cos
+// of the spatial angle of a wave come from one table per distinct column and one per distinct row (angle addition), and
+// sin and cos of the time and phase term come once per wave and moment. A point then costs a few multiplications per
+// wave instead of a sin and a cos. The sums are those of oceanSurfaceAt, equal up to rounding.
+
+function phaseTable(batch, time) {
+  const { waveCount, frequency, phase } = batch;
+  const sine = new Float64Array(waveCount);
+  const cosine = new Float64Array(waveCount);
+  for (let index = 0; index < waveCount; index++) {
+    const angle = phase[index] - frequency[index] * time;
+    sine[index] = Math.sin(angle);
+    cosine[index] = Math.cos(angle);
+  }
+  return { sine, cosine };
+}
+
+function latticeReach(waves, indexOf) {
+  let reach = 0;
+  for (const wave of waves) reach = Math.max(reach, Math.abs(indexOf(wave)));
+  return reach;
+}
+
+// The lattice step as the farthest wave of an axis gives it, where the division is the most exact.
+function latticeStep(waves, indexOf, valueOf, reach) {
+  const farthest = waves.find((wave) => Math.abs(indexOf(wave)) === reach);
+  return farthest && reach > 0 ? valueOf(farthest) / indexOf(farthest) : 0;
+}
+
+/** Per-call tables for evaluating `waves` at many rest points at one time: wave constants, lattice tables and the time terms. With `foamMemory > 0` it also holds the time terms of the earlier moments that oceanBatchFoamWithMemory reads. */
+export function prepareOceanBatch(waves, time, choppiness, foamMemory = 0) {
+  const waveCount = waves.length;
+  const columnReach = latticeReach(waves, (wave) => wave.column);
+  const rowReach = latticeReach(waves, (wave) => wave.row);
+  const batch = {
+    waveCount,
+    columnReach,
+    rowReach,
+    columnStep: latticeStep(waves, (wave) => wave.column, (wave) => wave.waveX, columnReach),
+    rowStep: latticeStep(waves, (wave) => wave.row, (wave) => wave.waveZ, rowReach),
+    columnAt: new Int32Array(waveCount),
+    rowAt: new Int32Array(waveCount),
+    columnSine: new Float64Array(2 * columnReach + 1),
+    columnCosine: new Float64Array(2 * columnReach + 1),
+    rowSine: new Float64Array(2 * rowReach + 1),
+    rowCosine: new Float64Array(2 * rowReach + 1),
+    frequency: new Float64Array(waveCount),
+    phase: new Float64Array(waveCount),
+    amplitude: new Float64Array(waveCount),
+    amplitudeFrequency: new Float64Array(waveCount),
+    moveX: new Float64Array(waveCount),
+    moveZ: new Float64Array(waveCount),
+    driftX: new Float64Array(waveCount),
+    driftZ: new Float64Array(waveCount),
+    slopeXX: new Float64Array(waveCount),
+    slopeZZ: new Float64Array(waveCount),
+    slopeXZ: new Float64Array(waveCount),
+    moments: [],
+    now: null,
+    foamMemory,
+  };
+  for (let index = 0; index < waveCount; index++) {
+    const wave = waves[index];
+    const directionX = wave.waveX / wave.waveNumber;
+    const directionZ = wave.waveZ / wave.waveNumber;
+    const chopSlope = choppiness * wave.amplitude * wave.waveNumber;
+    batch.frequency[index] = wave.frequency;
+    batch.phase[index] = wave.phase;
+    batch.amplitude[index] = wave.amplitude;
+    batch.amplitudeFrequency[index] = wave.amplitude * wave.frequency;
+    batch.columnAt[index] = wave.column + columnReach;
+    batch.rowAt[index] = wave.row + rowReach;
+    batch.moveX[index] = choppiness * directionX * wave.amplitude;
+    batch.moveZ[index] = choppiness * directionZ * wave.amplitude;
+    batch.driftX[index] = choppiness * directionX * wave.amplitude * wave.frequency;
+    batch.driftZ[index] = choppiness * directionZ * wave.amplitude * wave.frequency;
+    batch.slopeXX[index] = directionX * directionX * chopSlope;
+    batch.slopeZZ[index] = directionZ * directionZ * chopSlope;
+    batch.slopeXZ[index] = directionX * directionZ * chopSlope;
+  }
+  batch.now = phaseTable(batch, time);
+  if (foamMemory > 0) {
+    const step = foamMemory * FOAM_MEMORY_STEP_FRACTION;
+    for (let age = 1; age <= MAX_FOAM_MEMORY_SAMPLES; age++) batch.moments.push(phaseTable(batch, time - age * step));
+  }
+  return batch;
+}
+
+// sin and cos of index * stepAngle for index -reach..reach, by rotating one unit step: two trig pairs per axis and point.
+function fillRotationTable(sineTable, cosineTable, reach, stepAngle) {
+  const unitSine = Math.sin(stepAngle);
+  const unitCosine = Math.cos(stepAngle);
+  let sine = 0;
+  let cosine = 1;
+  sineTable[reach] = 0;
+  cosineTable[reach] = 1;
+  for (let index = 1; index <= reach; index++) {
+    const nextSine = sine * unitCosine + cosine * unitSine;
+    cosine = cosine * unitCosine - sine * unitSine;
+    sine = nextSine;
+    sineTable[reach + index] = sine;
+    cosineTable[reach + index] = cosine;
+    sineTable[reach - index] = -sine;
+    cosineTable[reach - index] = cosine;
+  }
+}
+
+/** Load the spatial sin and cos tables for one rest point; call before oceanBatchSurface or oceanBatchFoamWithMemory at that point. */
+export function setOceanBatchPoint(batch, restX, restZ) {
+  fillRotationTable(batch.columnSine, batch.columnCosine, batch.columnReach, batch.columnStep * restX);
+  fillRotationTable(batch.rowSine, batch.rowCosine, batch.rowReach, batch.rowStep * restZ);
+}
+
+/** The same fields as oceanSurfaceAt at the point set by setOceanBatchPoint, written into `result` (reused, no allocation). */
+export function oceanBatchSurface(batch, result, foamThreshold = -Infinity) {
+  const { waveCount, columnAt, rowAt, columnSine, columnCosine, rowSine, rowCosine } = batch;
+  const { amplitude, amplitudeFrequency, moveX: moveXCoefficient, moveZ: moveZCoefficient, driftX: driftXCoefficient, driftZ: driftZCoefficient } = batch;
+  const { slopeXX, slopeZZ, slopeXZ } = batch;
+  const { sine: phaseSine, cosine: phaseCosine } = batch.now;
+  let height = 0;
+  let moveX = 0;
+  let moveZ = 0;
+  let squeezeXX = 0;
+  let squeezeZZ = 0;
+  let squeezeXZ = 0;
+  let riseSpeed = 0;
+  let driftX = 0;
+  let driftZ = 0;
+  for (let index = 0; index < waveCount; index++) {
+    const columnSlot = columnAt[index];
+    const rowSlot = rowAt[index];
+    const spatialSine = columnSine[columnSlot] * rowCosine[rowSlot] + columnCosine[columnSlot] * rowSine[rowSlot];
+    const spatialCosine = columnCosine[columnSlot] * rowCosine[rowSlot] - columnSine[columnSlot] * rowSine[rowSlot];
+    const sine = spatialSine * phaseCosine[index] + spatialCosine * phaseSine[index];
+    const cosine = spatialCosine * phaseCosine[index] - spatialSine * phaseSine[index];
+    height += amplitude[index] * cosine;
+    riseSpeed += amplitudeFrequency[index] * sine;
+    driftX += driftXCoefficient[index] * cosine;
+    driftZ += driftZCoefficient[index] * cosine;
+    moveX -= moveXCoefficient[index] * sine;
+    moveZ -= moveZCoefficient[index] * sine;
+    squeezeXX -= slopeXX[index] * cosine;
+    squeezeZZ -= slopeZZ[index] * cosine;
+    squeezeXZ -= slopeXZ[index] * cosine;
+  }
+  const jacobian = (1 + squeezeXX) * (1 + squeezeZZ) - squeezeXZ * squeezeXZ;
+  result.height = height;
+  result.moveX = moveX;
+  result.moveZ = moveZ;
+  result.jacobian = jacobian;
+  result.foam = foamFromJacobian(jacobian, foamThreshold);
+  result.riseSpeed = riseSpeed;
+  result.driftX = driftX;
+  result.driftZ = driftZ;
+  return result;
+}
+
+function batchJacobian(batch, phaseTerms) {
+  const { waveCount, columnAt, rowAt, columnSine, columnCosine, rowSine, rowCosine, slopeXX, slopeZZ, slopeXZ } = batch;
+  const { sine: phaseSine, cosine: phaseCosine } = phaseTerms;
+  let squeezeXX = 0;
+  let squeezeZZ = 0;
+  let squeezeXZ = 0;
+  for (let index = 0; index < waveCount; index++) {
+    const columnSlot = columnAt[index];
+    const rowSlot = rowAt[index];
+    const spatialSine = columnSine[columnSlot] * rowCosine[rowSlot] + columnCosine[columnSlot] * rowSine[rowSlot];
+    const spatialCosine = columnCosine[columnSlot] * rowCosine[rowSlot] - columnSine[columnSlot] * rowSine[rowSlot];
+    const cosine = spatialCosine * phaseCosine[index] - spatialSine * phaseSine[index];
+    squeezeXX -= slopeXX[index] * cosine;
+    squeezeZZ -= slopeZZ[index] * cosine;
+    squeezeXZ -= slopeXZ[index] * cosine;
+  }
+  return (1 + squeezeXX) * (1 + squeezeZZ) - squeezeXZ * squeezeXZ;
+}
+
+/** oceanFoamWithMemory at the point set by setOceanBatchPoint, with the batch prepared for the same `foamMemory`. */
+export function oceanBatchFoamWithMemory(batch, threshold, foamNow) {
+  if (!(batch.foamMemory > 0)) return foamNow;
+  let foam = foamNow;
+  for (let age = 1; age <= MAX_FOAM_MEMORY_SAMPLES; age++) {
+    const fade = Math.exp(-age * FOAM_MEMORY_STEP_FRACTION);
+    if (fade <= foam) break;
+    const earlier = foamFromJacobian(batchJacobian(batch, batch.moments[age - 1]), threshold) * fade;
+    if (earlier > foam) foam = earlier;
+  }
+  return foam;
 }
