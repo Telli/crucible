@@ -1105,8 +1105,32 @@ export class CrucibleRenderer {
     return this.backend.startProgram(benchmark ? benchmarkVertexShader : createVertexShader(this.shaderFeatures), fragmentSource);
   }
 
+  // While a context is being prepared, a main program that is still linking stays started (ProgramNotReady). The draw that comes
+  // back finishes that same program instead of compiling its 40 KB of source again; a build for other source drops it (#2944).
   buildMainProgram() {
-    this.finishMainProgram(this.startMainProgram());
+    const key = `${[...this.shaderFeatures ?? []].sort()}|${this.viewTransform}|${Boolean(this.cameraRelativeMainProgram)}`;
+    if (this.pendingMainProgram && (this.pendingMainProgram.key !== key || this.pendingMainProgram.look !== this.lookSource)) this.releasePendingMainProgram();
+    this.pendingMainProgram ??= { key, look: this.lookSource, started: this.startMainProgram() };
+    const { started } = this.pendingMainProgram;
+    try {
+      this.finishMainProgram(started);
+    } catch (error) {
+      // A failed program is already deleted; only one that is still building is kept for the next draw.
+      if (!(error instanceof ProgramNotReady)) this.pendingMainProgram = null;
+      throw error;
+    }
+    this.pendingMainProgram = null;
+  }
+
+  // Reads the link status first: deleting a program mid-link leaves a GL error that the next draw on this context sees (#74).
+  releasePendingMainProgram() {
+    if (!this.pendingMainProgram) return;
+    const context = this.context;
+    const { program, shaders } = this.pendingMainProgram.started;
+    context.getProgramParameter(program, context.LINK_STATUS);
+    shaders.forEach((shader) => context.deleteShader(shader));
+    context.deleteProgram(program);
+    this.pendingMainProgram = null;
   }
 
   finishMainProgram(pendingProgram) {
@@ -3012,6 +3036,7 @@ export class CrucibleRenderer {
     }
     this.pendingConstruction = null;
     this.pendingEnvironmentPrograms = null;
+    this.releasePendingMainProgram();
   }
 
   dispose() {

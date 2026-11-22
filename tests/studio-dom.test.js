@@ -17,6 +17,7 @@ import {
   dispatch,
   installStudioDom,
 } from './support/studio-dom.mjs';
+import { ProgramNotReady, finishProgram } from '../src/gl-program.js';
 
 function makeRecipe() {
   return {
@@ -3747,6 +3748,54 @@ test('a frame that throws once shows the notice, and the next requested frame dr
   ui.dom.runAnimationFrames(200);
   assert.equal(ui.renderer.frames.length, framesBefore + 1);
   assert.equal(pausedNotice(ui).hidden, true);
+});
+
+test('a scheduled frame whose main program is still linking keeps the picture and draws once the program is ready (#2944)', testContext => {
+  const ui = mountStudio(testContext);
+  const context = { linked: false, getExtension: () => ({ COMPLETION_STATUS_KHR: 0x91b1 }), getProgramParameter: () => context.linked };
+  ui.renderer.context = context;
+  ui.renderer.updateFailure = new ProgramNotReady({});
+  const framesBefore = ui.renderer.frames.length;
+  ui.selectRow('hero');
+  assert.doesNotThrow(() => ui.dom.runAnimationFrames(100));
+  assert.equal(ui.renderer.frames.length, framesBefore, 'the frame that needs the program is not drawn');
+  assert.equal(pausedNotice(ui).hidden, true, 'a program that is still linking is not a failure');
+  assert.equal(ui.renderer.calls.includes('dispose'), false, 'the renderer is kept');
+
+  ui.dom.runTimers();
+  assert.equal(ui.dom.pendingAnimationFrameCount, 0, 'no frame is drawn while the driver still builds');
+  const syncsWhileLinking = ui.renderer.calls.filter(call => call === 'updateParts').length;
+  ui.selectRow('orb');
+  ui.dom.runAnimationFrames(150);
+  assert.equal(ui.renderer.calls.filter(call => call === 'updateParts').length, syncsWhileLinking, 'a frame asked for meanwhile does not upload the parts again');
+
+  ui.renderer.updateFailure = null;
+  context.linked = true;
+  ui.dom.runTimers();
+  assert.equal(ui.dom.pendingAnimationFrameCount, 1, 'the waiting scene asks for its frame without another input');
+  ui.dom.runAnimationFrames(200);
+  assert.equal(ui.renderer.frames.length, framesBefore + 1);
+});
+
+test('only a scheduled frame syncs its parts while the context is preparing', testContext => {
+  const ui = mountStudio(testContext);
+  ui.renderer.context = { getExtension: () => ({ COMPLETION_STATUS_KHR: 0x91b1 }), getProgramParameter: () => false };
+  let preparingDuringSync = null;
+  const updateParts = ui.renderer.updateParts;
+  ui.renderer.updateParts = parts => {
+    try {
+      finishProgram(ui.renderer.context, { program: {}, shaders: [] });
+      preparingDuringSync = false;
+    } catch (error) {
+      preparingDuringSync = error instanceof ProgramNotReady;
+    }
+    updateParts(parts);
+  };
+  ui.studio.renderNow();
+  assert.equal(preparingDuringSync, false, 'renderNow blocks, since its caller reads the canvas');
+  ui.selectRow('hero');
+  ui.dom.runAnimationFrames(100);
+  assert.equal(preparingDuringSync, true);
 });
 
 test('disposing Studio removes the context loss listeners from the canvas', testContext => {

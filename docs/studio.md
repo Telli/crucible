@@ -214,6 +214,8 @@ The viewport draws a scene's volume fog. Post passes written as shader code and 
 
 An edit of a scene that holds 100,000 or more triangles to rank returns at once and ranks the near-coplanar faces right after, in slices of about 8 ms (see [the agent scene](agent-scene.md)). The viewport draws on demand, so the controller watches `scene.flushPending` with one 32 ms timer while a search waits, and when it ends the controller calls `onChange` once with `{ kind: 'flush' }`. Studio answers with one redraw and no panel update. Nothing is scheduled while no search waits, and `dispose()` and a change of scene stop the timer.
 
+Parts that arrive after the renderer was built can need a shader feature its main program left out: the first duplicate of an object makes two parts share one batch, which needs the instanced code. The driver takes about 190 ms to link that program. A scheduled frame does not wait for it: the viewport keeps its last picture, Studio asks the driver every 8 ms whether the program is linked (`KHR_parallel_shader_compile`), and draws the waiting scene when it is. `renderNow()` and a still wait for the driver instead, because their caller reads the canvas. Only the main program is deferred this way; a program that a pass builds on its first draw still links inside that frame.
+
 ## See the agent at work
 
 When an agent edits the scene, Studio shows a pointer with the agent's name, the way a collaborator's cursor shows in a shared document. The pointer travels to each object the agent changed, a dashed outline marks that object, and the status line says what changed ("Claude edited hero, orb").

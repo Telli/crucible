@@ -6,6 +6,7 @@ import { agentSceneModulesNeeded } from './agent-scene-modules.js';
 import { LIGHTING_SETUP_NAMES } from './agent-scene-capabilities.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
 import { CrucibleRenderer, studioFloorHeight } from './renderer.js';
+import { ProgramNotReady, isLinkComplete, setPreparing } from './gl-program.js';
 import { exportGlb } from './export.js';
 import { encodePack } from './scene-pack-format.js';
 import { encodePackOrRefuse } from './studio-pack-refusal.js';
@@ -1048,6 +1049,11 @@ export function createStudio(container, {
   let lastFrameTime = 0;
   let isVisible = true;
   let insideDraw = false;
+  // A scheduled frame does not wait for the driver to link a main program that new parts need (#2944): it keeps the last
+  // picture and draws again once the program is ready. A direct draw and a still block instead, since their caller reads the canvas.
+  let deferringLinks = false;
+  let awaitedProgram = null;
+  let awaitedProgramTimer = 0;
   let pointerState = null;
   let viewportPointer = null;
   let modalTransform = null;
@@ -2738,6 +2744,9 @@ export function createStudio(container, {
       activeRenderer.updateParts(partsToDraw());
       return activeRenderer;
     } catch (error) {
+      if (error instanceof ProgramNotReady) {
+        throw error;
+      }
       if (!suppliedRenderer && typeof renderer?.dispose === 'function') {
         renderer.dispose();
         renderer = null;
@@ -2747,8 +2756,45 @@ export function createStudio(container, {
     }
   }
 
+  // Only the part sync runs while the context is preparing: it rolls back when a program is not ready, and a frame half drawn would not.
+  function syncPartsWithoutStall(activeRenderer) {
+    const context = activeRenderer.context;
+    if (!deferringLinks || capturingStill || !context) {
+      return syncRendererParts(activeRenderer);
+    }
+    setPreparing(context, true);
+    try {
+      return syncRendererParts(activeRenderer);
+    } finally {
+      setPreparing(context, false);
+    }
+  }
+
+  function programStillLinking() {
+    if (!awaitedProgram) {
+      return false;
+    }
+    if (renderer?.context === awaitedProgram.context && !renderer.disposed && !isLinkComplete(awaitedProgram.context, awaitedProgram.program)) {
+      return true;
+    }
+    awaitedProgram = null;
+    return false;
+  }
+
+  // Asks the driver every few milliseconds, off the frame, and draws the waiting scene the moment the program is linked.
+  function drawWhenLinked() {
+    clearTimeout(awaitedProgramTimer);
+    awaitedProgramTimer = setTimeout(() => {
+      if (programStillLinking()) {
+        drawWhenLinked();
+        return;
+      }
+      requestFrame();
+    }, 8);
+  }
+
   function drawSceneFrame() {
-    const activeRenderer = syncRendererParts(ensureRenderer());
+    const activeRenderer = syncPartsWithoutStall(ensureRenderer());
     const environment = controller.scene.environment;
     const effects = controller.scene.effects;
     const shadow = fitAgentShadow(controller.scene.shadow, controller.scene.parts);
@@ -2813,6 +2859,10 @@ export function createStudio(container, {
 
   // A frame that fails pauses the picture with a notice instead of ending the loop in silence; the next requested frame tries again.
   function renderScheduledPass() {
+    if (programStillLinking()) {
+      return true;
+    }
+    deferringLinks = true;
     try {
       renderPass();
       if (!contextLost) {
@@ -2820,8 +2870,15 @@ export function createStudio(container, {
       }
       return true;
     } catch (error) {
+      if (error instanceof ProgramNotReady) {
+        awaitedProgram = { context: renderer.context, program: error.program };
+        drawWhenLinked();
+        return true;
+      }
       pausedNotice.show(describeFrameFailure(error));
       return false;
+    } finally {
+      deferringLinks = false;
     }
   }
 
@@ -3958,6 +4015,7 @@ export function createStudio(container, {
     dispose() {
       clearTimeout(draftTimer);
       clearTimeout(statusTimer);
+      clearTimeout(awaitedProgramTimer);
       agentPresence.dispose();
       systemSchemeQuery?.removeEventListener?.('change', onSystemSchemeChange);
       if (frameHandle) cancelAnimationFrame(frameHandle);
