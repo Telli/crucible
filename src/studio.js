@@ -30,7 +30,7 @@ import { createPanelGrips } from './studio-panel-grips.js';
 import { STUDIO_BRAND_ICON_NAMES, studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
 import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-properties.js';
-import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
+import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, studioDrawsFloor, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
 import { clearStudioDraft, createDraftNotice, DRAFT_SAVE_DELAY_MILLISECONDS, draftDiffersFrom, loadStudioDraft, saveStudioDraft } from './studio-draft.js';
@@ -993,6 +993,8 @@ export function createStudio(container, {
   canvas: suppliedCanvas,
   renderer: suppliedRenderer,
   rendererOptions = {},
+  // Builds the renderer when Studio makes its own; tests pass a recording one.
+  createRenderer = (renderCanvas, parts, options) => new CrucibleRenderer(renderCanvas, parts, options),
   // Fetches the render pass code a post pass with `objects` needs; tests pass their own to control when it arrives.
   renderPassesLoader = undefined,
   desktop = null,
@@ -1054,6 +1056,8 @@ export function createStudio(container, {
   let autoReloadWatch = true;
   let renderer = suppliedRenderer ?? null;
   let rendererHasDepth = false;
+  let rendererHasFloor = true;
+  let floorDecision = { scene: null, revision: -1, drawsFloor: true };
   let renderedScene = initialScene;
   let renderedTopology = initialScene.topologyRevision;
   let gridVisible = preferences.gridVisible;
@@ -2674,8 +2678,19 @@ export function createStudio(container, {
     return Boolean(environment.volumeFog?.density > 0 || environment.localVolumes?.length || sceneHasPostPasses(controller.scene));
   }
 
+  // The renderer takes its floor at construction, so a floor that appears or goes (a part now forms one, the ground was
+  // switched off) rebuilds it. The rule walks every part's bounds, so it runs once per scene revision, never per frame.
+  function sceneWantsFloor() {
+    const scene = controller.scene;
+    if (floorDecision.scene !== scene || floorDecision.revision !== scene.revision) {
+      floorDecision = { scene, revision: scene.revision, drawsFloor: studioDrawsFloor(scene.parts, scene.environment) };
+    }
+    return floorDecision.drawsFloor;
+  }
+
   function ensureRenderer() {
-    if (renderer && !suppliedRenderer && !rendererHasDepth && sceneNeedsDepth()) {
+    const needsDepth = !rendererHasDepth && sceneNeedsDepth();
+    if (renderer && !suppliedRenderer && (needsDepth || rendererHasFloor !== sceneWantsFloor())) {
       renderer.dispose();
       renderer = null;
     }
@@ -2684,9 +2699,10 @@ export function createStudio(container, {
     }
     const environment = controller.scene.environment;
     rendererHasDepth = sceneNeedsDepth();
+    rendererHasFloor = sceneWantsFloor();
     const viewportSettings = viewportSettingsForTier(chosenTier());
     rendererSamples = viewportSettings.samples;
-    renderer = new CrucibleRenderer(canvas, controller.scene.parts, {
+    renderer = createRenderer(canvas, controller.scene.parts, {
       hdr: true,
       depth: rendererHasDepth,
       world: environment.world,
@@ -2694,7 +2710,7 @@ export function createStudio(container, {
       shadowBounds: resolveAgentShadow(fitAgentShadow(controller.scene.shadow, controller.scene.parts), environment.lightDirection),
       pixelRatio: viewportSettings.pixelRatio,
       samples: viewportSettings.samples,
-      ground: viewportFloorPart(studioFloorHeight(controller.scene.parts)),
+      ground: rendererHasFloor && viewportFloorPart(studioFloorHeight(controller.scene.parts)),
       ...rendererOptions,
     });
     renderedScene = controller.scene;
