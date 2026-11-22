@@ -86,3 +86,37 @@ test('updatePartVertices refuses non-finite positions and normals before it writ
     assert.deepEqual(calls, [], 'no buffer was written');
   }
 });
+
+/** The fake renderer with the colour and index buffers a water part with sky visibility holds. */
+function fakeWaterRenderer() {
+  const harness = fakeRenderer();
+  harness.geometry.skyVisibility = new Float32Array([1, 1, 1]);
+  harness.renderer.geometryBuffers.get(harness.geometry).set('colors', 'colorBuffer').set('indices', 'indexBuffer');
+  harness.renderer.context.ELEMENT_ARRAY_BUFFER = 34963;
+  harness.renderer.context.bindVertexArray = vertexArray => harness.calls.push(['bindVertexArray', vertexArray]);
+  return harness;
+}
+
+test('updatePartVertices writes sky visibility into the fourth channel of the colour buffer', () => {
+  const { renderer, part, geometry, calls } = fakeWaterRenderer();
+  updatePartVertices(renderer, part, geometry.positions, undefined, { skyVisibility: new Float32Array([0.25, 0.5, 1]) });
+  assert.deepEqual(calls.at(-1), ['bufferSubData', 0, [1, 1, 1, 0.25, 1, 1, 1, 0.5, 1, 1, 1, 1]]);
+  assert.deepEqual(Array.from(geometry.skyVisibility), [0.25, 0.5, 1], 'the geometry holds the new truth');
+});
+
+test('updatePartVertices rewrites triangle indices of the same count with no vertex array bound', () => {
+  const { renderer, part, geometry, calls } = fakeWaterRenderer();
+  updatePartVertices(renderer, part, geometry.positions, undefined, { indices: new Uint32Array([2, 1, 0]) });
+  assert.deepEqual(calls.slice(-3), [['bindVertexArray', null], ['bindBuffer', 'indexBuffer'], ['bufferSubData', 0, [2, 1, 0]]]);
+  assert.deepEqual(Array.from(geometry.indices), [2, 1, 0]);
+});
+
+test('updatePartVertices refuses sky visibility or indices that do not fit, before it writes anything', () => {
+  const { renderer, part, geometry, calls } = fakeWaterRenderer();
+  assert.throws(() => updatePartVertices(renderer, part, geometry.positions, undefined, { skyVisibility: new Float32Array(2) }), /skyVisibility must be a Float32Array of 3/);
+  assert.throws(() => updatePartVertices(renderer, part, geometry.positions, undefined, { indices: new Uint32Array(6) }), /indices must be a Uint32Array of 3/);
+  assert.throws(() => updatePartVertices(renderer, part, geometry.positions, undefined, { indices: new Uint16Array(3) }), /indices must be a Uint32Array of 3/);
+  geometry.surfaceMasks = new Float32Array(3);
+  assert.throws(() => updatePartVertices(renderer, part, geometry.positions, undefined, { skyVisibility: new Float32Array(3) }), /no surface masks/);
+  assert.deepEqual(calls, [], 'no buffer was written');
+});
