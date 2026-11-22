@@ -598,7 +598,7 @@ function coplanarCarryFor(scene) {
   return { held: coplanarHeldByScene.get(scene), key: () => (scene.motionTime == null ? undefined : scene.revision) };
 }
 
-function initializeRenderer(scene,{ memoryBudgetMiB, backend, transparent = false, tier = 'realtime' }) {
+function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = false, tier = 'realtime' }) {
   probeSnippets(scene);
   const placement = automaticGroundPlacement(scene);
   const renderer = installCoplanarDiagnostics(installRenderPasses(installCameraEffects(new CrucibleRenderer(canvas, scene.parts, {
