@@ -672,9 +672,29 @@ export function createStudioController({
     const nextRecipe = entry.restoresCamera || currentRecipe.camera === undefined
       ? entry.recipe
       : { ...entry.recipe, camera: currentRecipe.camera };
-    if (!restoreRecipeInPlace(currentRecipe, nextRecipe, { allowRecordChanges: true })) {
+    if (restoreRecipeInPlace(currentRecipe, nextRecipe, { allowRecordChanges: true })) {
+      return;
+    }
+    if (!restoreWholeRecipe(nextRecipe)) {
       swapRecipe(nextRecipe);
     }
+  }
+
+  // A step no list of operations expresses (an object back in the middle of the list, a camera field that has to go) hands
+  // the scene the whole recipe. The scene keeps every part both recipes share, so it costs about as much as the edit it undoes.
+  function restoreWholeRecipe(targetRecipe) {
+    try {
+      invalidateQuery();
+      dragState = null;
+      currentScene.restoreRecipe(targetRecipe, { expectedRevision: currentScene.revision });
+    } catch {
+      return false;
+    }
+    if (!sameRecipeValue(currentScene.exportRecipe(), targetRecipe)) {
+      return false;
+    }
+    settleSelectionAndMotion();
+    return true;
   }
 
   // Applies the difference as scene operations on the scene already built, which takes milliseconds where a rebuild

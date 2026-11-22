@@ -1,0 +1,3 @@
+- scene:agent-scene: 22 bytes gzip for `scene.restoreRecipe`, which lets Studio undo put an object back into the middle of the list in about 80 ms where it built the 137-node lighthouse scene again in 3 to 4.5 s
+- scene:agent-scene+lazy: same code, bundled with the lazy scene code
+- goal:agent-scene: 22 bytes gzip for the method above; it calls the private stage and commit of the scene session, so no addon can hold it
