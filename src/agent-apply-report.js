@@ -11,6 +11,7 @@ const LOOK_SECTIONS = Object.freeze({ 'set-environment': 'environment', 'set-eff
 export const OWN_SECTIONS = Object.freeze({
   'set-motion': 'motion', 'set-physics': 'physics', 'set-timeline': 'timeline', 'set-cloth': 'cloth',
   'set-bake': 'bake', 'set-particles': 'particles', 'set-post-passes': 'postPasses', 'set-armatures': 'armatures', 'set-game': 'game',
+  'set-pixel-grid': 'pixelGrid',
 });
 
 function isPlainObject(value) {
