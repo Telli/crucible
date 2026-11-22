@@ -765,6 +765,8 @@ export class CrucibleRenderer {
     /** Milliseconds the GPU took for a recent frame, when `createGpuTimer` is given. */
     this.gpuMilliseconds = null;
     this.culling = culling;
+    // A NaN or negative error would pick the coarsest level everywhere without a word (#2403).
+    if (typeof lodPixelError !== 'number' || !(lodPixelError >= 0)) throw new TypeError(`lodPixelError must be a number of 0 or more pixels, got ${lodPixelError}.`);
     this.lodPixelError = lodPixelError;
     this.frustumPlanes = new Float32Array(24);
     if (!Number.isInteger(samples) || samples < 1) throw new Error('MSAA sample count must be a positive integer.');
