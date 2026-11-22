@@ -12,19 +12,19 @@ import {
 /** Names the engine provides to a snippet; a uniform cannot take one. */
 export const MATERIAL_SNIPPET_INPUTS = Object.freeze(['materialHook', 'waterHook', 'snippetMask']);
 const SNIPPET_FIELDS = ['fragment', 'uniforms', 'mask', 'feature'];
-const MATERIAL_HOOK_PATTERN = /\bvoid\s+materialHook\s*\(\s*inout\s+vec3\s+[A-Za-z_]\w*\s*,\s*inout\s+float\s+[A-Za-z_]\w*\s*,\s*vec2\s+[A-Za-z_]\w*\s*,\s*vec3\s+[A-Za-z_]\w*\s*\)\s*\{/;
+const MATERIAL_HOOK_PATTERN = /\bvoid\s+materialHook\s*\(\s*inout\s+vec3\s+[A-Za-z_]\w*\s*,\s*inout\s+float\s+[A-Za-z_]\w*\s*,\s*vec2\s+[A-Za-z_]\w*\s*,\s*vec3\s+[A-Za-z_]\w*\s*(?:,\s*float\s+[A-Za-z_]\w*\s*)?\)\s*\{/;
 // The water entry runs after lighting on water surfaces only; the engine declares the WaterInputs struct for it.
 const WATER_HOOK_PATTERN = /\bvoid\s+waterHook\s*\(\s*inout\s+vec3\s+[A-Za-z_]\w*\s*,\s*WaterInputs\s+[A-Za-z_]\w*\s*\)\s*\{/;
 const WATER_INPUTS_FIELDS = 'vec3 normal; vec3 view; float foam; float depthBelow; float time; float lit;';
 const ENTRY_FUNCTION = Object.freeze({
   pattern: new RegExp(`${MATERIAL_HOOK_PATTERN.source}|${WATER_HOOK_PATTERN.source}`),
-  example: 'void materialHook(inout vec3 color, inout float alpha, vec2 uv, vec3 worldPosition) { } or void waterHook(inout vec3 color, WaterInputs water) { } (or both)',
+  example: 'void materialHook(inout vec3 color, inout float alpha, vec2 uv, vec3 worldPosition) { } (add , float time to animate) or void waterHook(inout vec3 color, WaterInputs water) { } (or both)',
 });
 
 /** What scene_capabilities reports under materialSnippet; it lives here so the scene entry does not carry the text. */
 export const MATERIAL_SNIPPET_CAPABILITIES = Object.freeze({
-  fields: 'material.snippet { fragment (defines void materialHook(inout vec3 color, inout float alpha, vec2 uv, vec3 worldPosition)), uniforms, mask: "map" }; null clears it',
-  inputs: 'color (albedo after the map), alpha (map alpha), uv, worldPosition; snippetMask (the material map, with mask "map"); discard',
+  fields: 'material.snippet { fragment (defines void materialHook(inout vec3 color, inout float alpha, vec2 uv, vec3 worldPosition[, float time])), uniforms, mask: "map" }; null clears it',
+  inputs: 'color (albedo after the map), alpha (map alpha), uv, worldPosition; snippetMask (the material map, with mask "map"); discard; time (seconds, the frame time of stills and video, as waterHook gets it) when materialHook declares a fifth float parameter',
   waterHook: 'void waterHook(inout vec3 color, WaterInputs water) on tag "water" only, after lighting, before fog and tone mapping. color is the lit linear radiance, in and out. water.normal (shading normal with ripples), water.view (surface to eye), water.foam (0 to 1, the ocean foam mask), water.depthBelow (metres to the floor below; 0 for now), water.time (seconds), water.lit (key light facing times shadow, 0 to 1)',
   uniforms: 'as postPasses.uniforms',
   rules: 'as postPasses.rules',
@@ -121,6 +121,11 @@ function patchDepthVertex(source) {
     .replace('textureUV = uv;', () => 'textureUV = uv;\n  snippetWorld = world.xyz;');
 }
 
+// A materialHook with a fifth `float` parameter gets the frame time; the four-argument form keeps working unchanged.
+function hookTakesTime(fragment) {
+  return /\bvoid\s+materialHook\s*\([^)]*,\s*float\s+[A-Za-z_]\w*\s*\)/.test(fragment);
+}
+
 function registerSnippetFeature(snippet) {
   const { code, declarations, hook, waterHook, waterInputs } = prefixedCode(snippet);
   const flag = `u67_${snippet.feature}`;
@@ -128,19 +133,20 @@ function registerSnippetFeature(snippet) {
   const hasWaterHook = WATER_HOOK_PATTERN.test(snippet.fragment);
   const waterStruct = hasWaterHook ? `struct ${waterInputs} { ${WATER_INPUTS_FIELDS} };\n` : '';
   const mainCode = replaceName(`uniform float ${flag};\n${declarations}\n${waterStruct}${code}\n`, 'snippetMask', 'baseMap');
-  const call = `if (${flag} > 0.5) ${hook}(hookColor, hookAlpha, textureUV, snippetWorld);\n`;
+  const timeArgument = hookTakesTime(snippet.fragment) ? ', time' : '';
+  const call = `if (${flag} > 0.5) ${hook}(hookColor, hookAlpha, textureUV, snippetWorld${timeArgument});\n`;
   // The water values are locals of the main shader; the renderer compiles the world material code in for a snippet with a water hook.
   const waterArguments = `${waterInputs}(normal, viewDirection, waterFoam, 0.0, time, clamp(dot(normal, normalize(lightDirection)), 0.0, 1.0) * visibility)`;
   registerShaderFeatureCode(snippet.feature, Object.freeze({
     libraries: mainCode,
-    ...(hasMaterialHook ? { surfaceHook: `  if (${flag} > 0.5) ${hook}(color, textureAlpha, textureUV, worldPosition);\n` } : {}),
+    ...(hasMaterialHook ? { surfaceHook: `  if (${flag} > 0.5) ${hook}(color, textureAlpha, textureUV, worldPosition${timeArgument});\n` } : {}),
     ...(hasWaterHook ? { waterHook: `  if (TAG_WATER && ${flag} > 0.5) ${waterHook}(radiance, ${waterArguments});\n` } : {}),
     depth: (source) => {
       if (!hasMaterialHook) return source;
       if (source.includes('lightProjection * world')) return patchDepthVertex(source);
       let text = source;
       if (!text.includes(DEPTH_CALL_MARK)) {
-        text = text.replace('in vec2 textureUV;', () => 'in vec2 textureUV;\nin vec3 snippetWorld;')
+        text = text.replace('in vec2 textureUV;', () => 'in vec2 textureUV;\nin vec3 snippetWorld;\nuniform float time;')
           .replace(DEPTH_FRAGMENT_HEAD, () => `${DEPTH_CODE_MARK}${DEPTH_FRAGMENT_BODY}`);
       }
       return insertAfter(insertAfter(text, DEPTH_CODE_MARK, mainCode), DEPTH_CALL_MARK, `  ${call}`);
@@ -206,7 +212,8 @@ const waterStructDeclaration = (fragment) => (WATER_HOOK_PATTERN.test(fragment) 
 ` : '');
 
 function probeFooter(fragment) {
-  const materialCall = MATERIAL_HOOK_PATTERN.test(fragment) ? 'materialHook(color, alpha, vec2(0.5), vec3(0.0));' : '';
+  const timeArgument = hookTakesTime(fragment) ? ', 1.5' : '';
+  const materialCall = MATERIAL_HOOK_PATTERN.test(fragment) ? `materialHook(color, alpha, vec2(0.5), vec3(0.0)${timeArgument});` : '';
   const waterCall = WATER_HOOK_PATTERN.test(fragment) ? 'waterHook(color, WaterInputs(vec3(0.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0), 0.5, 0.0, 0.0, 1.0));' : '';
   return `\nvoid main() { vec3 color = vec3(0.5); float alpha = 1.0; ${materialCall} ${waterCall} u67_output = vec4(color, alpha); }\n`;
 }
