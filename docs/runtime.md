@@ -86,3 +86,7 @@ Rules a system can rely on:
 - A system does not touch the film path, so the same scene still renders a deterministic film.
 
 Errors from the runtime name the option and say what to pass, for example `createRuntime mode must be one of fixed, variable, both`.
+
+## Checking the governor in a browser
+
+`npm run smoke:idle-governor` drives a 1920x1080 runtime in headless Chrome (GPU, through gpu-lock on the maintainer's machine) and counts real WebGL draw calls for three seconds in each state: idle, after a pointer move, busy, busy and scrolled out of view, and back. It expects zero draws while idle or offscreen and a return to drawing on wake or scrolling back. It also reads `renderer.memoryReport()` for an opaque HDR canvas (compact `R11F_G11F_B10F`), the same canvas with `compactColor: false`, and a transparent canvas, which keeps `RGBA16F`, and compares the compact frame with the `RGBA16F` one. Results go to `artifacts/2179/result.json`.
