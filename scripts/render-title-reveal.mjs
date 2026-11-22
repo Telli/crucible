@@ -1,5 +1,5 @@
-// A title that drops in and grows letter by letter (splitText plus staggerNodeTracks), rendered through the MCP render job.
-// Usage: node scripts/render-title-reveal.mjs [--text CRUCIBLE] [--order forward|reverse|center|random] [--backend gpu|cpu] [--width 640] [--height 360] [--out artifacts/2891]
+// A title that drops in, grows and fades in letter by letter (splitText plus staggerNodeTracks), rendered through the MCP render job.
+// Usage: node scripts/render-title-reveal.mjs [--text CRUCIBLE] [--effect rise|fade] [--metallic 0.9] [--order forward|reverse|center|random] [--backend gpu|cpu] [--width 640] [--height 360] [--out artifacts/2891]
 // CHROME_PATH names another Chrome or Chromium executable.
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -17,6 +17,7 @@ const backend = option('backend', 'gpu');
 const width = Number(option('width', 640));
 const height = Number(option('height', 360));
 const order = option('order', 'forward');
+const effect = option('effect', 'rise');
 const titleText = option('text', 'CRUCIBLE');
 const outputFolder = resolve(option('out', 'artifacts/2891'));
 const jobsFolder = join(outputFolder, 'jobs');
@@ -33,15 +34,22 @@ function buildRecipe() {
     property: 'scale', offset: 0.09, order,
     keyframes: [{ time: 0, value: [0.2, 0.2, 0.2], easing: 'easeOutCubic' }, { time: 0.7, value: [1, 1, 1] }],
   });
+  const fade = staggerNodeTracks(title.nodes, {
+    property: 'opacity', offset: 0.18, order,
+    keyframes: [{ time: 0, value: 0, easing: 'easeOutCubic' }, { time: 0.6, value: 1 }],
+  });
+  const fadeOnly = effect === 'fade';
+  const shown = fadeOnly ? fade : drop;
+  const tracks = fadeOnly ? fade.tracks : [...drop.tracks, ...grow.tracks];
   return {
     format: 'crucible.scene', schemaVersion: 1,
     geometries: title.geometries,
     materials: [
-      { id: 'gold', color: [0.9, 0.65, 0.2], metallic: 0.9, roughness: 0.3 },
+      { id: 'gold', color: [0.9, 0.65, 0.2], metallic: Number(option('metallic', 0.9)), roughness: 0.3 },
     ],
     nodes: title.nodes,
     camera: { eye: [0, 0.4, 9], target: [0, 0.3, 0], up: [0, 1, 0], fov: 35, near: 0.1, far: 100 },
-    motion: { duration: drop.duration + HOLD_SECONDS, tracks: [...drop.tracks, ...grow.tracks] },
+    motion: { duration: shown.duration + HOLD_SECONDS, tracks },
   };
 }
 
@@ -71,8 +79,9 @@ try {
     await delay(500);
   }
   const result = (await call('scene_render_result', { jobId: job.jobId })).structuredContent;
-  const outputPath = join(outputFolder, `title-reveal-${order}.mp4`);
+  const outputPath = join(outputFolder, `title-${effect === 'fade' ? 'fade' : 'reveal'}-${order}.mp4`);
   await writeFile(outputPath, await readFile(result.artifacts[0].path));
+  await writeFile(outputPath.replace(/.mp4$/, '.json'), JSON.stringify({ effect, order, backend, width, height, fps: FPS, seed: 0, camera: recipe.camera, light: 'default sun and sky of the recipe', recipe }, null, 2));
   console.log(`wrote ${outputPath} (${recipe.motion.duration} s)`);
 } finally {
   await client.close();

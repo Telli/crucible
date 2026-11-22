@@ -407,7 +407,7 @@ function curveAndTextGeometries(id) {
     z.strictObject({ ...id, type: z.literal('sdf'), root: z.record(z.string(), z.unknown()), resolution: looseField }).describe('Signed-distance shapes with smooth union; see scene_capabilities curveText.'),
     z.strictObject({ ...id, type: z.literal('text'), text: z.string().max(256), size: looseField, depth: looseField, font: looseField, align: looseField, curveSegments: looseField }).describe('3D text; see scene_capabilities curveText.'),
     z.strictObject({ ...id, type: z.literal('cloud'), seed: looseField, puffs: looseField, width: looseField, height: looseField, flatBase: looseField, resolution: looseField, levels: z.array(z.unknown()).max(4).optional(), upBias: looseField, unionSoftness: looseField }).describe('Seeded cumulus of round puffs; see scene_capabilities cloud.'),
-    z.strictObject({ ...id, type: z.literal('terrain'), size: looseField, resolution: looseField, seed: looseField, amplitude: looseField, featureSize: looseField, octaves: looseField, warp: looseField, ridged: looseField, mountainAmplitude: looseField, mountainMask: looseField, chunks: looseField, levels: looseField, holes: z.array(z.unknown()).max(16).optional() }).describe('Hills with round holes; see scene_capabilities terrain.'),
+    z.strictObject({ ...id, type: z.literal('terrain'), size: looseField, resolution: looseField, seed: looseField, amplitude: looseField, featureSize: looseField, octaves: looseField, warp: looseField, ridged: looseField, mountainAmplitude: looseField, mountainMask: looseField, chunks: looseField, levels: looseField, paths: z.array(z.unknown()).max(16).optional(), holes: z.array(z.unknown()).max(16).optional() }).describe('Hills with round holes; see scene_capabilities terrain.'),
     z.strictObject({ ...id, type: z.literal('floorPlan'), walls: z.array(z.unknown()).max(256), openings: z.array(z.unknown()).max(256).optional(), height: looseField, thickness: looseField, part: looseField }).describe('Walls, openings, floor, ceiling and door and window presets from a plan; see scene_capabilities floorPlan.'),
   ];
 }
@@ -708,7 +708,7 @@ const ikSolver = z.discriminatedUnion('type', [
 ]);
 // Properties of the tracks the schema accepts; light, sun, environment and effects take any property name here and the backend checks it.
 const motionTrackProperties = {
-  node: ['translation', 'rotation', 'scale'],
+  node: ['translation', 'rotation', 'scale', 'opacity'],
   material: ['color', 'emissiveColor', 'emission', 'metallic', 'roughness'],
   camera: ['eye', 'target', 'fov', 'roll'],
   morph: ['weight'],
@@ -743,6 +743,7 @@ const motion = z.strictObject({
     motionTrack('node', 'translation', vector3, vector3),
     motionTrack('node', 'rotation', quaternion, quaternion),
     motionTrack('node', 'scale', z.tuple([positive, positive, positive]), vector3),
+    motionTrack('node', 'opacity', unit, finite),
     motionTrack('material', 'color', color, vector3),
     motionTrack('material', 'emissiveColor', z.tuple([nonnegative, nonnegative, nonnegative]), vector3),
     motionTrack('material', 'emission', nonnegative, finite),
@@ -1162,7 +1163,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     return jsonResult(pendingUpdate === null ? shown : { ...shown, updateAvailable: pendingUpdate });
   });
   register('scene_create', 'Create a render scene from a JSON recipe; the result has its sessionId. Several scenes stay open; past the cap the least recently used one is closed.', z.strictObject({ recipe: relations ? recipe : recipeWithoutRelations }), { ...edit, destructiveHint: false }, async argumentsValue => jsonResult(await runtime.create(argumentsValue)));
-  register('scene_asset_catalog', 'List content-bound GLB, image, HDRI and look IDs from the asset directory and installed packs. pack with recipe or material reads that item. No paths or downloads; scene_capabilities packs.', z.strictObject({ pack: packName.optional(), recipe: packName.optional(), material: packName.optional() }), readOnly, async argumentsValue => jsonResult(await runtime.assetCatalog(argumentsValue)));
+  register('scene_asset_catalog', 'List content-bound GLB, BVH motion capture, image, HDRI and look IDs from the asset directory and installed packs. pack with recipe or material reads that item. No paths or downloads; scene_capabilities packs.', z.strictObject({ pack: packName.optional(), recipe: packName.optional(), material: packName.optional() }), readOnly, async argumentsValue => jsonResult(await runtime.assetCatalog(argumentsValue)));
   register('scene_create_asset', 'Create the active scene from a catalog GLB and editable asset recipe. Preserves supported maps, skins, morphs and clips. The result has its sessionId.', z.strictObject({ recipe: assetRecipe }), { ...edit, destructiveHint: false }, async argumentsValue => jsonResult(await runtime.createAsset(argumentsValue)));
   register('scene_inspect', 'Read revision, counts and selected nodes. For a recipe with physics, the result lists body final positions, resting times, contacts and sensor enter/leave events. Bounds describe authored geometry rather than shader displacement.', z.strictObject({ ...sessionFields, ids: z.array(identifier).max(4096).optional().describe('Selected node IDs; an imported node means its parts and those below. Omit to inspect scene order.'), kind: z.enum(['meshes', 'hierarchy']).optional().describe('Imported assets only: hierarchy exposes stable source-node IDs and joints.'), offset: z.number().int().min(0).max(4096).optional().describe('Imported assets only: pagination offset.'), limit: z.number().int().min(1).max(4096).optional().describe('Maximum returned node records. Defaults to 64.'), includeBounds: z.boolean().optional().describe('Include world geometry bounds. Defaults to false.'), path: z.record(z.string(), z.unknown()).optional().describe('Walking route over a ground node, around holes: fields in scene_capabilities navigation.'), profile: z.boolean().optional().describe('Add ms per frame, draw calls, triangles, texture bytes; scene_capabilities profile.'), profileFrames: z.number().int().min(1).max(120).optional().describe('Frames to time, default 30.') }), readOnly, async argumentsValue => jsonResult(await runtime.inspect(argumentsValue)));
   register('scene_walkmap', 'Walkable map on a grid: rows of . walkable, x blocked, # no surface. keepOut (m) avoids obstacles. assetId: query a big catalog GLB, no render.', z.strictObject({ ...sessionFields, assetId: z.string().regex(/^[a-f0-9]{64}$/).optional(), min: z.tuple([z.number(), z.number()]), max: z.tuple([z.number(), z.number()]), cellSize: z.number().min(0.05).default(1), clearance: z.number().min(0).default(2), keepOut: z.number().min(0).optional(), streetY: z.number().optional(), includeCells: z.boolean().optional() }), readOnly, async argumentsValue => jsonResult(await runtime.walkMap(argumentsValue)));
