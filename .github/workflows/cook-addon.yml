@@ -335,6 +335,7 @@ on:
       - 'src/physics-buoyancy.js'
       - 'src/physics-values.js'
       - 'src/physics.js'
+      - 'src/pixel-grid.js'
       - 'src/post-air.js'
       - 'src/post-fields.js'
       - 'src/post-mask.js'

@@ -50,6 +50,19 @@ A pass reads the depth, the world position and the object IDs at one sample per 
 
 In JavaScript, `renderer.userPasses.setAntialias("off")`. In a recipe, `{ "postPassesAntialias": "off" }` next to `postPasses`; `scene_create` takes it. Any other value is refused with the allowed values. The icon sketch look sets `"off"` itself, since its ink and paper pixels are measured.
 
+## Pixel grid: a true low-resolution render
+
+Downscaling a full-size frame (`scale` below 1, or `stylize.pixelate`) shimmers when the camera pans, because every frame samples the scene at a different offset. `pixelGrid` renders on the low-resolution grid itself:
+
+```json
+{ "pixelGrid": { "width": 256, "height": 144, "pad": 2 } }
+```
+
+- The main pass, `sceneDepth`, render passes, line art and every user pass run on a `(width + 2 pad) x (height + 2 pad)` target with one sample. Passes read the frame with nearest filtering, and `postPassesAntialias` behaves as `"off"` while the grid is on.
+- An orthographic camera moves onto whole texels (a texel is `orthoScale / height`). The frame then goes to the canvas with a nearest blit of the visible grid, moved by the part of a texel the snap took, so static geometry keeps its pixels while a pan still moves smoothly at output size. A perspective camera renders on the grid without snapping.
+- The canvas must be at least the padded grid in each side. `pad` (default 2) is the ring that covers the shift.
+- Without `pixelGrid` the render is unchanged. `scene_create` takes it; in JavaScript, `installPixelGrid(renderer)` from `src/pixel-grid.js` after `installUserPasses`, then `renderer.pixelGrid.set({ width, height, pad })`, or `set(null)`.
+
 ## Limits and rules
 
 The check runs on the text before any compile. A snippet that breaks a rule is refused with the line, the column and a fix.
