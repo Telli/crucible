@@ -2859,12 +2859,16 @@ export function createStudio(container, {
       renderedShadowKey = shadowKey;
     }
     activeRenderer.world = environment.world;
+    // The renderer fills a frame's missing environment fields from the environment it holds. Left as the one it was
+    // built with, a field the opened recipe does not set (its view transform, its look) kept the previous scene's value.
+    const frameEnvironment = { ...environment, map: agentEnvironmentMap(environment) };
+    activeRenderer.environment = frameEnvironment;
     // A still is the scene's own shot, so it keeps the animated camera even while the viewport looks around freely.
     const frameCamera = capturingStill ? controller.scene.camera : controller.viewCamera;
     renderWithPostPasses(activeRenderer, {
       ...frameCamera,
       ...(capturingStill ? {} : viewportClipPlanes(frameCamera)),
-      environment: { ...environment, map: agentEnvironmentMap(environment) },
+      environment: frameEnvironment,
       effects,
       exposure: effects.exposure,
       time: controller.motionTime,
