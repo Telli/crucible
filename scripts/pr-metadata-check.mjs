@@ -26,6 +26,8 @@ const lightPathPattern = /^(docs\/|\.github\/|tests\/|changes\/)|\.md$/;
 // "flight" and "highlight" do not match "light".
 const lookNamePattern = /(^|[-_/.])(shaders?|glsl|lights?|lighting|materials?|environment|shadows?|tone|tonemap|fog|sky|post|bloom|ssao|taa|exposure)(?=$|[-_/.])/i;
 const lookRootPattern = /^(src|packages)\//;
+// A maintainer who changed a look path without changing a pixel (a compile fix, a refactor, a test) says so in one line.
+const lookUnchangedPattern = /\b(?:the )?look is unchanged\b|\bno look change\b|\bpixels? (?:are |is )?unchanged\b/i;
 
 const linkedIssuePattern = /\b(?:closes|close|closed|fixes|fix|fixed|resolves|resolve|resolved|part of):?\s+(?:#\d+|https:\/\/github\.com\/codepawl\/crucible\/issues\/\d+)/i;
 const localPathPatterns = [
@@ -93,6 +95,19 @@ function showsEvidence(body, visibleBody) {
 
 function normalizePath(path) {
   return path.replace(/\\/g, '/');
+}
+
+// Only a maintainer's word counts: outside pull requests that touch a look path always wait for the owner.
+export function statesLookUnchanged(pr) {
+  const author = (pr.author ?? '').toLowerCase();
+  const trusted = author === OWNER_LOGIN || TRUSTED_ASSOCIATIONS.has(pr.authorAssociation ?? '');
+  return trusted && lookUnchangedPattern.test(stripHtmlComments(pr.body ?? ''));
+}
+
+// The owner looks at the pictures when a look path changed, the look is not approved yet, and no maintainer said the
+// pixels stay the same.
+function needsLookReview(pr, files) {
+  return !pr.lookApproved && !statesLookUnchanged(pr) && files.some(isLookFile);
 }
 
 export function isLookPath(path) {
@@ -221,8 +236,7 @@ function contributorFixesFor(pr, files, light) {
     ));
   }
 
-  const touchesLook = files.some(isLookFile);
-  if (touchesLook && !pr.lookApproved && !imagePattern.test(visibleBody)) {
+  if (needsLookReview(pr, files) && !imagePattern.test(visibleBody)) {
     fixes.push(fix(
       'look-without-image',
       'This changes how a scene looks, so add a before and an after picture to the description.',
@@ -245,7 +259,7 @@ function maintainerTodosFor(pr, files, contributorFixes) {
   if (!labels.some(label => ['bug', 'enhancement', 'documentation'].includes(label))) todos.push('Set a type label (bug, enhancement or documentation).');
   if (!pr.milestone) todos.push('Set a milestone.');
   const paths = files.map(file => normalizePath(file.filename));
-  if (!pr.lookApproved && files.some(isLookFile)) todos.push('Look change: only the owner removes hold:look-approval after seeing the pictures.');
+  if (needsLookReview(pr, files)) todos.push('Look change: only the owner removes hold:look-approval after seeing the pictures.');
   const needsToolBench = paths.some(path => toolOrSkillPathPattern.test(path));
   if (needsToolBench && contributorFixes.length === 0 && benchOptOutPattern.test(pr.body ?? '')) {
     todos.push('Run the agent bench for this pull request (bench/agent-modeling).');
@@ -265,7 +279,7 @@ export function checkPullRequest({ pr, files }) {
   if (classificationMissing && !labels.includes(NEEDS_TRIAGE_LABEL)) addLabels.push(NEEDS_TRIAGE_LABEL);
   if (!classificationMissing && labels.includes(NEEDS_TRIAGE_LABEL)) removeLabels.push(NEEDS_TRIAGE_LABEL);
 
-  const needsHold = !pr.lookApproved && files.some(isLookFile);
+  const needsHold = needsLookReview(pr, files);
   if (needsHold && !labels.includes(LOOK_HOLD_LABEL)) addLabels.push(LOOK_HOLD_LABEL);
 
   if (!isAutoCloseExempt(pr)) {
