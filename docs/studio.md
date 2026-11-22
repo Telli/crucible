@@ -38,7 +38,7 @@ Each tool has its own handle shape, so the shape says what a drag will do: arrow
 - **Rotate** turns the object by the angle the pointer sweeps on the ring. Hold Shift to turn in steps (15 degrees unless you change it in Settings). While you drag, the other two rings leave, a dashed spoke stays where the drag began, a solid spoke follows the object, and a faint wedge between them fills the angle turned so far. A turn can go past half a circle and keeps counting.
 - **Scale** on an axis handle scales by how far you pull it: twice the distance doubles that axis. The centre handle scales all three.
 
-One drag is one undo step, and undo leaves the viewport camera where you put it.
+One drag is one undo step, and undo leaves the viewport camera where you put it. Undo and redo of an edit, of adding or duplicating an object, and of deleting one change the scene already built instead of building it again, so a large scene stays responsive; putting a deleted object back into the middle of the list is the one step that still rebuilds it.
 
 ## Add an object or a light
 
@@ -155,7 +155,7 @@ await studio.ready;
 ```
 
 - Each function takes the id the recipe names and returns the file: a GLB and a Radiance `.hdr` as an `ArrayBuffer` or a `Uint8Array`, a `.cube` look as text. Pass only the ones your scenes use. An asset id is the SHA-256 of the file, which is how the MCP catalog names it.
-- Studio asks for a file once and keeps the decoded result until `studio.dispose()`, so a reload of the watched file, undo and redo do not fetch again.
+- Studio asks for a file once and keeps the decoded result until `studio.dispose()`, so a reload of the watched file, undo and redo do not fetch again. A reload whose file differs from the open scene only by what scene operations can set (a node turned or moved, a light or the sun changed) is applied to the scene on screen, so the other parts and their textures stay. The z-fight search that ranks flush faces keeps its last result and searches only the triangles near a part that is new or moved, so adding a node to a scene of large scans takes milliseconds instead of seconds.
 - `createStudio` still returns at once. When the recipe needs catalog files, Studio opens on the starting scene and swaps the recipe in when they have loaded; `studio.ready` settles then. Opening the scene is not an edit: nothing to undo, no unsaved mark.
 - The unsaved mark follows every edit of the scene, camera rows, lens chips and view chips included. Orbiting, zooming and panning are navigation and do not set it. Picking a mesh while the Sun, a light or the camera is selected leaves the Look or Camera tab for the mesh's own tab (Material, or Object from the camera).
 - Studio keeps the scene you are editing as a draft in the browser's `localStorage` (a moment after the edits pause; skipped when the recipe is above about 2 MB, which also drops the older draft). Save, New and Open clear it. When Studio starts and a draft differs from the scene that opened, a notice offers **Restore** (the draft comes back as one undo step) or **Discard**; the first edit made while it is on offer counts as carrying on with the current scene, so the notice closes and the draft follows the new work. A host with no storage gets no draft.
@@ -164,6 +164,10 @@ await studio.ready;
 - Studio loads no Draco or KTX2 decoder. Serve a GLB that uses neither.
 
 The viewport draws a scene's volume fog. Post passes written as shader code and other render-only steps show in the MCP preview and in renders, not in the Studio viewport.
+
+## Scenes with a large scan
+
+An edit of a scene that holds 100,000 or more triangles to rank returns at once and ranks the near-coplanar faces right after, in slices of about 8 ms (see [the agent scene](agent-scene.md)). The viewport draws on demand, so the controller watches `scene.flushPending` with one 32 ms timer while a search waits, and when it ends the controller calls `onChange` once with `{ kind: 'flush' }`. Studio answers with one redraw and no panel update. Nothing is scheduled while no search waits, and `dispose()` and a change of scene stop the timer.
 
 ## See the agent at work
 
