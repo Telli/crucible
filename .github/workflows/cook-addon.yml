@@ -125,6 +125,7 @@ on:
       - 'src/crowd-skinning.js'
       - 'src/curve-operations.js'
       - 'src/depth-layer.js'
+      - 'src/diagnostic-repeats.js'
       - 'src/drawn-light-lists.js'
       - 'src/easing.js'
       - 'src/effects.js'

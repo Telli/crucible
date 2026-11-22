@@ -1051,6 +1051,11 @@ export function createAgentAssetScene(asset, inputRecipe, { sources } = {}) {
       }
       return publish(candidate);
     },
+    /** The findings an edit answer carries; an asset scene has no coplanar repeat tracker, so it reports what inspect does. */
+    editDiagnostics() {
+      const { diagnostics } = this.inspect();
+      return diagnostics?.length ? { diagnostics } : {};
+    },
     inspect(inputOptions = {}) {
       const options = copiedJson(inputOptions);
       knownKeys(options, ['ids', 'limit', 'includeBounds', 'kind', 'offset'], 'inspection');
