@@ -2,7 +2,7 @@ import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene, loadPhysicsEngine } from '../src/agent-scene.js';
-import { MAX_WAKE_POINTS, normalizeWake, wakeAt, wakeTrail } from '../src/ocean-wake.js';
+import { MAX_WAKE_POINTS, normalizeWake, slamStrength, wakeAt, wakeTrail } from '../src/ocean-wake.js';
 import { oceanMesh } from '../src/mesh-ocean-modifier.js';
 import { createMeshData } from '../src/mesh-data.js';
 
@@ -211,4 +211,57 @@ test('the foam of a static wake point holds still while the sea moves under it',
       assert.ok(Math.abs(rise - expected.offset) < 1e-5, `vertex ${vertex} at ${time}s has the wake offset of its rest position, got ${rise} not ${expected.offset}`);
     }
   }
+});
+
+test('slam foam follows the closing speed on the water and fades with the decay time', () => {
+  const pulseAtOneSecond = moment => (Math.abs(moment - 1) < 0.01 ? 3 : 0);
+  const options = { closingSpeedAt: pulseAtOneSecond, decay: 0.5, fullSpeed: 1.5, step: 0.01 };
+  assert.equal(slamStrength({ ...options, time: 0.5 }), 0, 'nothing before the slam');
+  assert.equal(slamStrength({ ...options, time: 1 }), 1, 'a hard slam is full foam');
+  assert.ok(Math.abs(slamStrength({ ...options, time: 1.5 }) - Math.exp(-1)) < 0.03, 'it fades by e every decay');
+  assert.equal(slamStrength({ ...options, time: 4 }), 0, 'and is gone after four decays');
+  assert.equal(slamStrength({ ...options, closingSpeedAt: () => 0.75, time: 2 }), 0.5, 'half the full speed is half the foam');
+  assert.equal(slamStrength({ ...options, closingSpeedAt: () => 0, time: 2 }), 0, 'a hull rising or resting makes none');
+});
+
+function boatOnSwell(windSpeed, bootWake) {
+  const recipe = boatRecipe(bootWake);
+  recipe.geometries[1].stack[0].windSpeed = windSpeed;
+  recipe.geometries[1].stack[0].choppiness = 1;
+  recipe.physics.bodies[0].float.boat = { thrust: 0, controls: [{ time: 0, throttle: 0 }], ...(bootWake ? { wake: bootWake } : {}) };
+  return createAgentScene(recipe);
+}
+
+function wakeEnergyNearHull(windSpeed, wake, times) {
+  const wet = boatOnSwell(windSpeed, wake);
+  const dry = boatOnSwell(windSpeed, undefined);
+  let energy = 0;
+  for (const time of times) {
+    wet.sampleMotion(time);
+    dry.sampleMotion(time);
+    const wetSea = wet.parts[0].geometry.positions;
+    const drySea = dry.parts[0].geometry.positions;
+    for (let vertex = 0; vertex < wetSea.length / 3; vertex++) {
+      if (Math.hypot(wetSea[vertex * 3], wetSea[vertex * 3 + 2]) < 6) energy += Math.abs(wetSea[vertex * 3 + 1] - drySea[vertex * 3 + 1]);
+    }
+  }
+  return energy;
+}
+
+test('a hull resting on calm water makes almost no wake foam, and one slamming on a big swell makes bursts', () => {
+  const afterSettling = [3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7];
+  const wake = { height: 0.15 };
+  const calm = wakeEnergyNearHull(1, wake, afterSettling);
+  const swell = wakeEnergyNearHull(14, wake, afterSettling);
+  assert.ok(swell > 10 * Math.max(calm, 0.01), `swell ${swell} against calm ${calm}`);
+  assert.equal(swell, wakeEnergyNearHull(14, wake, afterSettling), 'the same bake gives the same foam');
+});
+
+test('slamSpeed and slamDecay are checked and a harder slamSpeed asks for a harder hit', () => {
+  const afterSettling = [3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7];
+  const gentle = wakeEnergyNearHull(14, { height: 0.15, slamSpeed: 0.3 }, afterSettling);
+  const stiff = wakeEnergyNearHull(14, { height: 0.15, slamSpeed: 20 }, afterSettling);
+  assert.ok(gentle > 1.5 * stiff, `gentle ${gentle} against stiff ${stiff}`);
+  assert.throws(() => boatOnSwell(14, { slamSpeed: 0 }), /slamSpeed/);
+  assert.throws(() => boatOnSwell(14, { slamDecay: 99 }), /slamDecay/);
 });

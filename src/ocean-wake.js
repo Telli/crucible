@@ -83,6 +83,23 @@ export function wakeAt(wake, positionX, positionZ) {
   return { foam: foam > 0.001 ? 0.5 + 0.5 * foam : 0, offset: weight > 0 ? wake.height * weight * churn(positionX, positionZ) : 0 };
 }
 
+const SLAM_MEMORY_LIFETIMES = 4;
+
+/**
+ * Foam strength (0 to 1) left by hull slams at `time`. `closingSpeedAt(moment)` is how fast the hull closes on the water surface
+ * under it, in m/s (0 when it is rising away). A closing speed of `fullSpeed` makes full foam, and the foam fades by e every
+ * `decay` seconds, so a bow that slams down bursts white and then calms, and a hull riding the swell makes none.
+ */
+export function slamStrength({ closingSpeedAt, time, decay, fullSpeed, step }) {
+  const earliest = Math.max(0, time - SLAM_MEMORY_LIFETIMES * decay);
+  let strongest = 0;
+  for (let moment = time; moment >= earliest; moment -= step) {
+    const fresh = Math.min(1, closingSpeedAt(moment) / fullSpeed) * Math.exp(-(time - moment) / decay);
+    strongest = Math.max(strongest, fresh);
+  }
+  return strongest;
+}
+
 /**
  * The wake points of a hull at `time`: the last `lifetime` seconds of its path, `count` samples (at most 64) evenly spaced.
  * `sample(time)` returns the stern as { x, z, speed }, and may answer for a time before 0 when the hull was already under way.

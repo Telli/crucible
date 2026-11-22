@@ -8,7 +8,7 @@ import { boundedNumber, rejectUnknownKeys, rotateByQuaternion } from './physics-
 export const BOAT_LIMITS = Object.freeze({ maxControls: 256 });
 
 const BOAT_KEYS = ['thrust', 'rudder', 'keelDrag', 'stern', 'forward', 'controls', 'wake'];
-const WAKE_KEYS = ['width', 'strength', 'height', 'lifetime'];
+const WAKE_KEYS = ['width', 'strength', 'height', 'lifetime', 'slamSpeed', 'slamDecay'];
 const FORWARD_AXES = Object.freeze({ '+x': [1, 0, 0], '-x': [-1, 0, 0], '+z': [0, 0, 1], '-z': [0, 0, -1] });
 const DEFAULT_THRUST = 4;
 const DEFAULT_RUDDER = 1;
@@ -46,6 +46,8 @@ function normalizeBoatWake(input, label) {
     strength: boundedNumber(spec.strength ?? 1, `${label}.strength`, 0, 1, 1),
     height: boundedNumber(spec.height ?? 0.06, `${label}.height`, 0, 2, 0.06),
     lifetime: boundedNumber(spec.lifetime ?? 5, `${label}.lifetime`, 0.5, 60, 5),
+    slamSpeed: boundedNumber(spec.slamSpeed ?? 1.5, `${label}.slamSpeed`, 0.1, 20, 1.5),
+    slamDecay: boundedNumber(spec.slamDecay ?? 0.7, `${label}.slamDecay`, 0.05, 10, 0.7),
   };
 }
 
