@@ -12,6 +12,7 @@ import { recipeMoves } from '../src/motion-hint.js';
 import { normalizeFilmTimeline, filmTimelineDuration, videoFrameCount } from '../src/film-timeline.js';
 import { OIDN_DEFAULT_SAMPLES, PATH_TRACER_DENOISERS, PATH_TRACER_JOB_LIMITS } from '../src/path-tracer-capabilities.js';
 import { AGENT_ASSET_LIMITS, describeAssetBytes } from '../src/agent-asset-limits.js';
+import { estimateOutputBytes } from './agent-render-estimate.mjs';
 import { iconArtifactNames, normalizeIconSettings } from '../src/icon-sheet.js';
 
 const UUID =/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -453,6 +454,19 @@ function artifactGroupKey(filename, passes = []) {
     if (stem.endsWith(suffix)) return stem.slice(0, -suffix.length);
   }
   return stem;
+}
+
+// An estimate is a typical size, and PNG size moves with scene content, so the space held for a job is the estimate times this
+// margin plus a small floor; the job may still use more, up to the output cap, while the store has room (see stopWhenStoreIsFull).
+const OUTPUT_RESERVATION_MARGIN = 1.75;
+const OUTPUT_RESERVATION_FLOOR_BYTES = 2 * 1024 ** 2;
+const SNAPSHOT_RESERVATION_BYTES = 131072;
+const REFUSAL_NAMED_JOBS = 3;
+
+/** The output bytes a submit holds free in the store: the job's own estimated size with a margin, never above the output cap. */
+export function outputReservationBytes(settings, maximumOutputBytes) {
+  const estimatedBytes = estimateOutputBytes(settings);
+  return Math.min(maximumOutputBytes, Math.ceil(estimatedBytes * OUTPUT_RESERVATION_MARGIN) + OUTPUT_RESERVATION_FLOOR_BYTES);
 }
 
 function describeJobBytes(bytes) {
@@ -952,10 +966,23 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       await releaseFinishedJob(jobId, job);
       existingBytes = await storeBytes();
     }
-    if (existingBytes + neededBytes <= limits.maxStoreBytes) return;
+    if (existingBytes + neededBytes <= limits.maxStoreBytes) return existingBytes;
     const freeMiB = Math.max(0, Math.floor((limits.maxStoreBytes - existingBytes) / 1024 ** 2));
     const neededMiB = Math.ceil(neededBytes / 1024 ** 2);
-    throw new RangeError(`Job store lacks space for the snapshot and output reservation: it needs ${neededMiB} MiB free and has ${freeMiB} MiB. Call scene_render_release on finished jobs you no longer need (jobs whose result you already read are released automatically, oldest first).`);
+    throw new RangeError(`Job store lacks space for the snapshot and output reservation: it needs ${neededMiB} MiB free and has ${freeMiB} MiB. ${await releaseAdvice()}`);
+  }
+
+  /** Names the largest finished jobs, so the refusal says which ones to read (scene_render_result) and release (scene_render_release). */
+  async function releaseAdvice() {
+    const finished = [];
+    for (const [jobId, job] of jobs) {
+      if (active === job || !TERMINAL.has(job.record.state)) continue;
+      finished.push({ jobId, bytes: await directoryBytes(await directoryFor(jobId)) });
+    }
+    if (!finished.length) return 'No finished job holds space: wait for the running job or submit a smaller one.';
+    const largest = finished.sort((first, second) => second.bytes - first.bytes).slice(0, REFUSAL_NAMED_JOBS);
+    const named = largest.map(({ jobId, bytes }) => `${jobId} (${describeJobBytes(bytes)})`).join(', ');
+    return `Read what you need with scene_render_result, then free space with scene_render_release on the largest: ${named}.`;
   }
 
   async function storeBytes() {
@@ -1111,6 +1138,22 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
     }
   }
 
+  /**
+   * The submit held only an estimate of the output, so a job may write more than it held, up to the output cap. This runs after each
+   * frame: once the job is past what it held, it stops (failed, files kept for release) when one more frame would not fit in the store
+   * beside the other jobs. A job inside its reservation never reaches the store check, because the submit already proved room for it.
+   * Only a release can change the other jobs' bytes while this job runs, and a release only lowers them, so the sum stays an upper bound.
+   */
+  async function stopWhenStoreIsFull(job, directory) {
+    const jobBytes = await directoryBytes(directory);
+    if (jobBytes <= job.reservedBytes) return;
+    const settings = job.record.settings;
+    const filesPerFrame = settings.kind === 'video' ? 1 : Math.ceil(artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer, settings.frameCount, settings.mattes, settings).length / Math.max(1, settings.frameCount));
+    const nextFrameBytes = filesPerFrame * artifactByteLimit(settings, limits);
+    if (job.otherJobsBytes + jobBytes + nextFrameBytes <= limits.maxStoreBytes) return;
+    throw new RangeError(`Job output (${describeJobBytes(jobBytes)}) passed the space held for it and the job store has no room for more. Release finished jobs, and this one, with scene_render_release, then render in smaller parts or at a lower width and height.`);
+  }
+
   async function finish(job, snapshot) {
     const { record, controller } = job;
     let timer;
@@ -1163,10 +1206,11 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       if (controller.signal.aborted) throw controller.signal.reason;
       const completed = await run({
         jobId: record.jobId, sessionId: job.sessionId, directory: runnerDirectory, snapshot, settings: structuredClone(record.settings), signal: controller.signal, startRenderClock,
-        progress(update) {
+        async progress(update) {
           objectKeys(update, ['frames', 'maximumPendingFrames'], 'progress');
           if (controller.signal.aborted) throw controller.signal.reason;
           if (record.state !== 'running') throw new Error('Progress is only accepted while the callback is running.');
+          await stopWhenStoreIsFull(job, runnerDirectory);
           const frames = boundedNumber(update.frames ?? record.progress.frames, record.progress.frames, record.settings.frameCount, 'captured frames', true);
           const maximumPendingFrames = boundedNumber(update.maximumPendingFrames ?? record.progress.maximumPendingFrames, 0, 1, 'pending frames', true);
           record.progress = { frames, maximumPendingFrames: Math.max(record.progress.maximumPendingFrames, maximumPendingFrames) };
@@ -1270,8 +1314,10 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       const operation = (async () => {
         if (jobs.size >= limits.maxRecords) throw new RangeError('Job record budget exhausted. Release a finished job.');
         const snapshotText = JSON.stringify(snapshotMetadata);
-        const neededBytes = Buffer.byteLength(snapshotText) + (snapshot.assetBytes?.length ?? 0) + limits.maxOutputBytes + 131072;
-        await makeRoomInStore(neededBytes);
+        const snapshotBytes = Buffer.byteLength(snapshotText) + (snapshot.assetBytes?.length ?? 0);
+        const reservedOutputBytes = outputReservationBytes(settings, limits.maxOutputBytes);
+        const neededBytes = snapshotBytes + reservedOutputBytes + SNAPSHOT_RESERVATION_BYTES;
+        const otherJobsBytes = await makeRoomInStore(neededBytes);
         const jobId = randomUUID();
         const directory = join(root, jobId);
         const staging = join(root, `.pending-${storeId}-${jobId}`);
@@ -1282,7 +1328,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
         const record = { schemaVersion: 1, jobId, sourceRevision, state: 'queued', settings, progress: { frames: 0, maximumPendingFrames: 0 }, artifacts: [] };
         await writeFile(join(staging, 'status.json'), JSON.stringify(record), { flag: 'wx', mode: 0o600 });
         await rename(staging, directory);
-        const job = { record, sessionId: input.sessionId, controller: new AbortController(), persistence: Promise.resolve() };
+        const job = { record, sessionId: input.sessionId, controller: new AbortController(), persistence: Promise.resolve(), otherJobsBytes, reservedBytes: snapshotBytes + reservedOutputBytes + SNAPSHOT_RESERVATION_BYTES };
         jobs.set(jobId, job);
         active = job;
         const result = structuredClone(record);
