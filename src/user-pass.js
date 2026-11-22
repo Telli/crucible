@@ -395,6 +395,15 @@ export function installUserPasses(renderer) {
     return state.entries;
   }
 
+  // On a pixel grid (src/pixel-grid.js) the passes read hard pixels and never smooth the edges they draw.
+  function captureFilter() {
+    return renderer.pixelGrid?.active ? renderer.context.NEAREST : renderer.context.LINEAR;
+  }
+
+  function effectiveAntialias() {
+    return renderer.pixelGrid?.active ? 'off' : state.antialias;
+  }
+
   function captureFinishedFrame(width, height) {
     const context = renderer.context;
     if (state.capture && (state.capture.width !== width || state.capture.height !== height)) {
@@ -403,7 +412,7 @@ export function installUserPasses(renderer) {
     }
     // A copy from the canvas needs a texture format the canvas has: without an alpha channel it has none either.
     const withAlpha = Boolean(context.getContextAttributes()?.alpha);
-    state.capture ??= { texture: createTexture(context, width, height, context.LINEAR, withAlpha), width, height };
+    state.capture ??= { texture: createTexture(context, width, height, captureFilter(), withAlpha), width, height };
     context.bindFramebuffer(context.FRAMEBUFFER, null);
     context.bindTexture(context.TEXTURE_2D, state.capture.texture);
     context.copyTexSubImage2D(context.TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
@@ -478,7 +487,7 @@ export function installUserPasses(renderer) {
     context.disable(context.CULL_FACE);
     context.disable(context.BLEND);
     context.bindVertexArray(null);
-    const steps = planUserPassSteps(entries.map(entry => entry.pass), state.antialias);
+    const steps = planUserPassSteps(entries.map(entry => entry.pass), effectiveAntialias());
     const antialiasLast = steps[steps.length - 1].kind === 'antialias';
     let input = captureFinishedFrame(width, height);
     let drewToCanvas = false;
