@@ -1390,7 +1390,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       }, { recoversFailedRuntime: true });
     },
     inspect(input) {
-      return enqueue(() => invoke('inspect', input));
+      if (!input.profile) return enqueue(() => invoke('inspect', input));
+      // A cost profile draws real frames, so it takes a GPU slot like a look does.
+      return gpuUnit('light', () => enqueue(async () => {
+        await requirePreviewRenderer();
+        return invoke('inspect', input);
+      }));
     },
     inspectMeshes(input) {
       return enqueue(() => invoke('inspectMeshes', input));
