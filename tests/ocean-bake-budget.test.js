@@ -2,28 +2,47 @@ import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
-import { oceanBakeStride, OCEAN_BAKE_VERTEX_STEPS } from '../src/agent-particles.js';
+import { oceanMesh } from '../src/mesh-ocean-modifier.js';
+import { registerModifierRunner } from '../src/mesh-modifiers.js';
 import { createMeshSource } from '../src/particle-emitter-mesh.js';
 
 // A spray emitter on a big sea that an oceanTime track moves must bake in seconds, not past the 30 s preview limit (#2823).
 
-test('a small sea is built at every 1/24 s, a bigger one at a coarser step that keeps a 5 s clip inside the budget', () => {
-  assert.equal(oceanBakeStride(1000), 1);
-  assert.equal(oceanBakeStride(25_000), 1);
-  assert.equal(oceanBakeStride(75_000), 3);
-  assert.equal(oceanBakeStride(75_266), 4);
-  assert.equal(oceanBakeStride(300_000), 12);
-  for (const vertexCount of [10_000, 75_000, 250_000]) {
-    const builtSeas = Math.ceil(120 / oceanBakeStride(vertexCount));
-    assert.ok(builtSeas * vertexCount <= OCEAN_BAKE_VERTEX_STEPS * 1.05, `${vertexCount} vertices build ${builtSeas} seas`);
+// The ocean times the modifier is asked to build, seen through the same runner the scene uses.
+function recordOceanTimes(build) {
+  const times = [];
+  registerModifierRunner('ocean', (mesh, edit) => {
+    times.push(edit.time);
+    return { mesh: oceanMesh(mesh, edit), result: {} };
+  });
+  try {
+    build();
+  } finally {
+    registerModifierRunner('ocean', (mesh, edit) => ({ mesh: oceanMesh(mesh, edit), result: {} }));
   }
+  return times;
+}
+
+const STEP = 1 / 24;
+
+test('a sea of 75,000 vertices is built at every 4th 1/24 s, not at all of them', () => {
+  const times = recordOceanTimes(() => createAgentScene(bigSeaRecipe('vertices', 13, 3)));
+  const distinct = [...new Set(times)];
+  assert.ok(distinct.length <= 96 / 4 + 4, `${distinct.length} ocean times built; 1/24 s steps would build about 96`);
+  const snapped = distinct.filter(time => time > 0 && Math.abs(time / (4 * STEP) - Math.round(time / (4 * STEP))) < 1e-9);
+  assert.ok(snapped.length >= distinct.length - 2, 'the built times sit on multiples of 4/24 s');
 });
 
-function bigSeaRecipe(from) {
+test('a small sea is still built at every 1/24 s', () => {
+  const times = recordOceanTimes(() => createAgentScene(bigSeaRecipe('vertices', 1)));
+  assert.ok(new Set(times).size >= 40, `${new Set(times).size} ocean times built`);
+});
+
+function bigSeaRecipe(from, cuts = 7, levels = 2) {
   return {
     format: 'crucible.scene', schemaVersion: 1,
     geometries: [
-      { id: 'sea', type: 'mesh', base: { type: 'box', bevel: 0 }, edits: [{ op: 'subdivide_edges', edges: { all: true }, cuts: 7 }, { op: 'subdivide', levels: 2 }, { op: 'transform_selection', select: { all: true }, scale: [140, 1, 140] }],
+      { id: 'sea', type: 'mesh', base: { type: 'box', bevel: 0 }, edits: [{ op: 'subdivide_edges', edges: { all: true }, cuts }, { op: 'subdivide', levels }, { op: 'transform_selection', select: { all: true }, scale: [140, 1, 140] }],
         stack: [{ op: 'ocean', windSpeed: 6, choppiness: 0.8, size: 40, seed: 11, resolution: 6, spray: true }] },
       { id: 'drop', type: 'box', bevel: 0 },
     ],
