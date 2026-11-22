@@ -84,20 +84,27 @@ export function wakeAt(wake, positionX, positionZ) {
 }
 
 const SLAM_MEMORY_LIFETIMES = 4;
+// Foam under this strength is gone, so a faded burst ends instead of leaving a trace.
+const SLAM_FLOOR = 0.02;
+// Ripples and drift are not slams: the closing speed (m/s) and the forward speed (m/s) below these count as nothing.
+const SLAM_CLOSING_DEAD_ZONE = 0.5;
+const SLAM_FORWARD_DEAD_ZONE = 0.3;
 
 /**
  * Foam strength (0 to 1) left by hull slams at `time`. `closingSpeedAt(moment)` is how fast the hull closes on the water surface
- * under it, in m/s (0 when it is rising away). A closing speed of `fullSpeed` makes full foam, and the foam fades by e every
+ * under it, in m/s (0 when it is rising away). `forwardSpeedAt(moment)` is the hull's speed over the water. Closing speed above 0.5 m/s and forward speed above 0.3 m/s count (below that is ripple and drift); `fullSpeed` of closing at `fullForward` of forward speed makes full foam, each scaling it linearly, so a hull at rest makes none, and the foam fades by e every
  * `decay` seconds, so a bow that slams down bursts white and then calms, and a hull riding the swell makes none.
  */
-export function slamStrength({ closingSpeedAt, time, decay, fullSpeed, step }) {
+export function slamStrength({ closingSpeedAt, forwardSpeedAt, time, decay, fullSpeed, fullForward, step }) {
   const earliest = Math.max(0, time - SLAM_MEMORY_LIFETIMES * decay);
   let strongest = 0;
   for (let moment = time; moment >= earliest; moment -= step) {
-    const fresh = Math.min(1, closingSpeedAt(moment) / fullSpeed) * Math.exp(-(time - moment) / decay);
+    const closing = Math.min(1, Math.max(0, closingSpeedAt(moment) - SLAM_CLOSING_DEAD_ZONE) / fullSpeed);
+    const forward = closing > 0 ? Math.min(1, Math.max(0, forwardSpeedAt(moment) - SLAM_FORWARD_DEAD_ZONE) / fullForward) : 0;
+    const fresh = closing * forward * Math.exp(-(time - moment) / decay);
     strongest = Math.max(strongest, fresh);
   }
-  return strongest;
+  return strongest < SLAM_FLOOR ? 0 : strongest;
 }
 
 /**

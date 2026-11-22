@@ -632,7 +632,7 @@ export function physicsBakeKey(recipe, geometryRecords) {
 function createBoatWake(physics, scene, oceanInput) {
   const body = physics.bodies.find(candidate => candidate.float?.boat?.wake);
   if (!body) return null;
-  const { width, strength, height, lifetime, slamSpeed, slamDecay } = body.float.boat.wake;
+  const { width, strength, height, lifetime, slamSpeed, slamForward, slamDecay } = body.float.boat.wake;
   const sea = normalizeOcean(oceanInput);
   const stern = scene.sternOf(body.node);
   const bodyOffset = scene.bodyIndex(body.node) * 7;
@@ -663,7 +663,8 @@ function createBoatWake(physics, scene, oceanInput) {
     return pose[bodyOffset + 1] + rotated[1] - (sea.level + seaHeightAt(sea, bowX, bowZ, time));
   };
   const closingSpeedAt = time => Math.max(0, (bowGapAt(Math.max(0, time - scene.timestep)) - bowGapAt(time)) / scene.timestep);
-  const slamAt = time => strength * slamStrength({ closingSpeedAt, time, decay: slamDecay, fullSpeed: slamSpeed, step: scene.timestep * 2 });
+  const forwardSpeedAt = time => sample(time).speed;
+  const slamAt = time => strength * slamStrength({ closingSpeedAt, forwardSpeedAt, time, decay: slamDecay, fullSpeed: slamSpeed, fullForward: slamForward, step: scene.timestep * 2 });
   // White water where the hull meets the sea: one point at the middle of the hull and one at the bow (the stern is the head of the trail).
   const hullCollar = (time, trailStrength) => {
     const [sternX, sternZ] = sternAt(time);
@@ -671,17 +672,22 @@ function createBoatWake(physics, scene, oceanInput) {
     const centreZ = pose[bodyOffset + 2];
     return [[centreX, centreZ, trailStrength, width * 0.75], [2 * centreX - sternX, 2 * centreZ - sternZ, trailStrength, width * 0.5]];
   };
+  // A slam bursts white and wide at the bow and, weaker, amidships; it only reshapes the two hull points, so foam stays around the hull and never reaches the open sea.
+  const burstCollar = (time, collar) => {
+    if (slamSpeed === null) return collar;
+    const slam = slamAt(time);
+    const [middle, bow] = collar;
+    return [
+      [middle[0], middle[1], Math.max(middle[2], slam * 0.6), middle[3] * (1 + slam)],
+      [bow[0], bow[1], Math.max(bow[2], slam), bow[3] * (1 + 3 * slam)],
+    ];
+  };
   return (geometryId, time) => {
     if (geometryId !== physics.ocean.geometry) return undefined;
     const at = Math.min(time, scene.duration);
     const trail = wakeTrail({ sample: sampleWithRunIn, time: at, lifetime, width, strength, count: MAX_WAKE_POINTS - 2 });
     const underway = trail.length > 0 ? trail[0][2] : 0;
-    // A slam bursts foam at the bow and, weaker, amidships; forward speed keeps the collar white while the hull is under way.
-    const slam = slamAt(at);
-    const collar = hullCollar(at, underway);
-    collar[0][2] = Math.max(collar[0][2], slam * 0.6);
-    collar[1][2] = Math.max(collar[1][2], slam);
-    return { wake: { points: [...collar, ...trail], height } };
+    return { wake: { points: [...burstCollar(at, hullCollar(at, underway)), ...trail], height } };
   };
 }
 
