@@ -2003,9 +2003,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const assetOutput = assetRuntime.materialOutputs.get(material.id);
       const handle = assetOutput ? assetMaterialHandle(snapshot, assetOutput, preferredHandle, activeHandle) : existing ?? materialHandle(snapshot, material.map && agentSceneModule('assets').createTextureSequence(material.id, material.map, options.sequenceFrames), options.sequenceFrames);
       materialHandles.set(material.id, handle);
-      if (!assetOutput) {
-        stagedMaterialSnapshots.push({ holder: handle.holder, snapshot });
-      }
+      stagedMaterialSnapshots.push({ holder: handle.holder, snapshot });
     }
     const activeParts = new Map(state?.sourceRestParts.map(part => [part.name, part]) ?? []);
     const preferredParts = new Map(preferred?.sourceRestParts.map(part => [part.name, part]) ?? []);

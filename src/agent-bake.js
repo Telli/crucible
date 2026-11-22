@@ -1,6 +1,6 @@
 import { invalidField } from './field-error.js';
 import { planLightmaps, estimateBake, traceLightmaps, clearUnwrapReuse, MAX_BAKE_TEXELS } from './light-bake.js';
-import { contentFingerprint, retainedBytes } from './content-fingerprint.js';
+import { contentFingerprint, ownedCopy, retainedBytes } from './content-fingerprint.js';
 import { runKernel } from './kernel-offload.js';
 import { motionEnvironment } from './agent-motion.js';
 import { normalizeProbeList, traceProbes } from './probe-trace.js';
@@ -392,15 +392,23 @@ let tracedBakes = 0;
 
 function reusedOrTraced(snapshots, lighting, settings, trace) {
   const key = contentFingerprint([snapshots, lighting, { ...settings, rebake: undefined }]);
+  if (key === null) {
+    // Something the key cannot read (a function, a Set, a class instance): trace, and keep nothing a later bake might wrongly find.
+    tracedBakes++;
+    return trace();
+  }
   const reused = bakeReuse.get(key);
   if (reused) {
     bakeReuse.delete(key);
     bakeReuse.set(key, reused);
-    return reused.outputs;
+    return ownedCopy(reused.outputs);
   }
   const outputs = trace();
   tracedBakes++;
-  rememberBake(key, outputs);
+  const kept = ownedCopy(outputs);
+  if (kept) {
+    rememberBake(key, kept);
+  }
   return outputs;
 }
 

@@ -8,7 +8,7 @@ import { extractRender } from './mesh-render.js';
 import { meshFromGeometry } from './mesh-convert.js';
 import { unwrapUv } from './mesh-uv.js';
 import { createImage, linearToSrgbByte } from './material-texture-kit.js';
-import { contentFingerprint, retainedBytes } from './content-fingerprint.js';
+import { contentFingerprint, ownedCopy, retainedBytes } from './content-fingerprint.js';
 
 // Light bake: the light that bounces between surfaces, written into one lightmap texture per part. A part draws it
 // through its emissive map, so the renderer, its shaders and every scene without a bake stay exactly as they were.
@@ -723,16 +723,25 @@ const unwrapReuse = new Map();
 let computedUnwraps = 0;
 
 function reusedUnwrap(geometry, scale, margin, slot, twoSided) {
-  const key = [slot, twoSided, scaleKey(scale), margin, contentFingerprint(geometry)].join('|');
+  const fingerprint = contentFingerprint(geometry);
+  if (fingerprint === null) {
+    computedUnwraps++;
+    return unwrapPart(geometry, scale, margin, slot, twoSided);
+  }
+  const key = [slot, twoSided, scaleKey(scale), margin, fingerprint].join('|');
   const reused = unwrapReuse.get(key);
   if (reused) {
     unwrapReuse.delete(key);
     unwrapReuse.set(key, reused);
-    return reused.unwrapped;
+    return ownedCopy(reused.unwrapped);
   }
   const unwrapped = unwrapPart(geometry, scale, margin, slot, twoSided);
   computedUnwraps++;
-  unwrapReuse.set(key, { unwrapped, bytes: retainedBytes(unwrapped) });
+  const kept = ownedCopy(unwrapped);
+  if (!kept) {
+    return unwrapped;
+  }
+  unwrapReuse.set(key, { unwrapped: kept, bytes: retainedBytes(kept) });
   let total = [...unwrapReuse.values()].reduce((sum, entry) => sum + entry.bytes, 0);
   for (const [oldestKey, entry] of unwrapReuse) {
     if (unwrapReuse.size <= UNWRAP_REUSE_ENTRIES && total <= UNWRAP_REUSE_BYTES) {

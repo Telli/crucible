@@ -59,15 +59,19 @@ function mixValue(state, value, path) {
     mixString(state, value);
   } else if (typeof value === 'boolean') {
     mixWord(state, value ? 1 : 2);
-  } else if (typeof value === 'function') {
-    mixString(state, 'function');
   } else if (ArrayBuffer.isView(value)) {
     mixTypedArray(state, value);
   } else if (typeof value === 'object') {
     mixObject(state, value, path);
   } else {
-    mixString(state, String(value));
+    // A function, a symbol or a bigint: a hash of it would not tell two different ones apart.
+    throw UNREADABLE;
   }
+}
+
+function isPlainObject(object) {
+  const prototype = Object.getPrototypeOf(object);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function mixObject(state, object, path) {
@@ -88,23 +92,52 @@ function mixObject(state, object, path) {
     for (const item of object) {
       mixValue(state, item, path);
     }
-  } else {
+  } else if (isPlainObject(object)) {
     mixString(state, 'Object');
     for (const key of Object.keys(object)) {
       mixString(state, key);
       mixValue(state, object[key], path);
     }
+  } else {
+    // A Set, a raw ArrayBuffer, a Date or a class instance holds state this walk cannot read.
+    throw UNREADABLE;
   }
   path.delete(object);
 }
 
-/** The fingerprint of `value` as a short string; equal content gives an equal string, and key order inside an object counts. */
+const UNREADABLE = Object.freeze({ unreadable: true });
+
+/**
+ * The fingerprint of `value` as a short string; equal content gives an equal string, and key order inside an object counts.
+ * Returns null when the value holds something the walk cannot read (a function, a Set, an ArrayBuffer, a class instance): the
+ * caller must then not reuse anything, because two different values would otherwise share one key.
+ */
 export function contentFingerprint(value) {
   const state = createState();
-  mixValue(state, value, new Set());
+  try {
+    mixValue(state, value, new Set());
+  } catch (error) {
+    if (error === UNREADABLE) {
+      return null;
+    }
+    throw error;
+  }
   const first = Math.imul(state.first ^ state.words, FINISH_MULTIPLIER) >>> 0;
   const second = Math.imul(state.second ^ (state.words >>> 16), FINISH_MULTIPLIER) >>> 0;
   return `${first.toString(36)}-${second.toString(36)}-${state.words.toString(36)}`;
+}
+
+/**
+ * A deep copy of `value` that shares no array or object with it, or null when it holds something that cannot be copied.
+ * A cache keeps one copy and hands each user another, so a scene that edits or drops what it was given cannot change what
+ * the next scene finds.
+ */
+export function ownedCopy(value) {
+  try {
+    return structuredClone(value);
+  } catch {
+    return null;
+  }
 }
 
 /** The bytes a value's typed arrays hold, which is what a cache of it keeps alive. */
