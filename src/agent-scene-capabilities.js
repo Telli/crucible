@@ -80,7 +80,7 @@ export const MATERIAL_GRAPH_NODES = Object.freeze({
   outputs: 'color (linear RGB; a number is grey), roughness, metallic, emission (defaults to 1), height (normal map), opacity (alpha), clearcoat, transmission (masks), aov (linear RGB or scalar).',
   textures: Object.freeze({
     noise: '{"noise":{"scale":8,"seed":1,"octaves":4,"kind":"fbm"|"ridged"|"billow","lacunarity":2,"gain":0.5}} kind: fbm soft clouds (default), ridged sharp crests for rock, mountains and veins, billow rounded hills; lacunarity 1-4 is the frequency step per octave, gain 0-1 the amplitude step (Blender Roughness).',
-    voronoi: '{"voronoi":{"scale":6,"output":"distance"|"edge"|"cell"}}',
+    voronoi: '{"voronoi":{"scale":6,"jitter":1,"output":"distance"|"edge"|"cell"|"f2"|"f2MinusF1"|"smoothF1","smoothness":1}} distance is F1 (nearest point); f2MinusF1 (same as edge) is 0 on the line between cells: cracks, cobble joints, dry mud; f2 the second nearest point; smoothF1 is F1 with soft seams for organic blobs and scales (smoothness 0-1, only with smoothF1); cell a random value per cell. jitter 0-1 is how far points stray from cell centres: 0 a regular grid, 1 the default.',
     wave: '{"wave":{"frequency":4,"direction":"u"|"v"|"diagonal","shape":"sine"|"saw"|"triangle"}}',
     checker: '{"checker":{"count":8}} (even)',
     gradient: '{"gradient":{"type":"u"|"v"|"radial"}}',
