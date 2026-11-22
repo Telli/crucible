@@ -12,7 +12,12 @@ export async function writeSkillPromptFile(workingDirectory, skillPrompt) {
   return skillPromptPath;
 }
 
-export function claudeArguments({ prompt, model, configPath, serverName, builtInTools, skillPromptPath }) {
+/**
+ * systemPromptPath replaces Claude Code's default system prompt and turns off every built-in tool, so the agent sees only
+ * that prompt and the Crucible MCP tools. This compares a custom system prompt against the default. The skill prompt, if
+ * any, is still appended after it.
+ */
+export function claudeArguments({ prompt, model, configPath, serverName, builtInTools, skillPromptPath, systemPromptPath }) {
   return [
     '-p', prompt,
     '--model', model,
@@ -23,6 +28,7 @@ export function claudeArguments({ prompt, model, configPath, serverName, builtIn
     '--permission-mode', 'dontAsk',
     '--setting-sources', 'project',
     '--no-session-persistence',
+    ...(systemPromptPath ? ['--system-prompt-file', systemPromptPath, '--tools', ''] : []),
     ...(skillPromptPath ? ['--append-system-prompt-file', skillPromptPath] : []),
   ];
 }
