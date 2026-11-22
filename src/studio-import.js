@@ -140,7 +140,39 @@ function selectedMaterialOrProblem(controller, fileName) {
   if (material.pattern !== undefined) {
     return { problem: `The material of ${node.label ?? node.id} is made from a procedural pattern, and an image cannot share it. Select an object with a plain material.` };
   }
+  const unmappedProblem = unmappedUsersProblem(controller, recipe, material, fileName);
+  if (unmappedProblem) return { problem: unmappedProblem };
   return { material };
+}
+
+const MILLISECONDS_PER_CHARACTER = 60;
+const MAXIMUM_MESSAGE_MILLISECONDS = 12000;
+
+/** How long the status line keeps an import message up: about 60 ms a character, never under the usual time, at most 12 s. */
+export function importMessageDuration(message, minimumMilliseconds) {
+  const proportional = message.length * MILLISECONDS_PER_CHARACTER;
+  return Math.min(MAXIMUM_MESSAGE_MILLISECONDS, Math.max(minimumMilliseconds, proportional));
+}
+
+const MAXIMUM_NAMED_OBJECTS = 3;
+
+// The renderer pauses the picture when a material map lands on geometry without UV coordinates (a box, a bevelled box, a cylinder or a cone),
+// and the edit is in place, so every object that wears this material counts. The built geometry answers it, not a list of types.
+function unmappedUsersProblem(controller, recipe, material, fileName) {
+  const labelsByNodeId = new Map(recipe.nodes.map(node => [node.id, node.label ?? node.id]));
+  const unmappedLabels = [];
+  for (const part of controller.scene?.parts ?? []) {
+    if (part.material?.id !== material.id) continue;
+    const geometry = part.geometry ?? {};
+    if (geometry.uvs || geometry.lightUvs || part.material.boxMapScale) continue;
+    const label = labelsByNodeId.get(part.name) ?? part.name;
+    if (!unmappedLabels.includes(label)) unmappedLabels.push(label);
+  }
+  if (unmappedLabels.length === 0) return null;
+  const shown = unmappedLabels.slice(0, MAXIMUM_NAMED_OBJECTS).join(', ');
+  const hidden = unmappedLabels.length - MAXIMUM_NAMED_OBJECTS;
+  const names = hidden > 0 ? `${shown} and ${hidden} more` : shown;
+  return `${fileName} cannot go on this material: ${names} ${unmappedLabels.length === 1 ? 'has' : 'have'} no UV coordinates, so the picture would stop the viewport. Only sphere, torus, plane, grid and unwrapped mesh objects take an image. Select one of those, or give ${unmappedLabels.length === 1 ? 'that object its' : 'those objects their'} own material first.`;
 }
 
 function placeModel({ controller, fileName, id }) {

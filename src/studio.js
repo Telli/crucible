@@ -71,6 +71,7 @@ export {
 };
 
 const AXIS_NAMES = Object.freeze(['x', 'y', 'z']);
+const STATUS_DEFAULT_MILLISECONDS = 3400;
 const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
 const LENS_CHIP_TOLERANCE_MILLIMETRES = 0.5;
@@ -1640,12 +1641,12 @@ export function createStudio(container, {
   const hintBar = createElement(documentReference, 'div', { className: 'crucible-studio-hintbar' });
   const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: canImport ? 'Drop a scene.json, GLB, HDR or image' : 'Drop a scene.json to open it' });
 
-  function announce(message) {
+  function announce(message, durationMilliseconds = STATUS_DEFAULT_MILLISECONDS) {
     statusRegion.textContent = message;
     clearTimeout(statusTimer);
     statusTimer = setTimeout(() => {
       statusRegion.textContent = '';
-    }, 3400);
+    }, durationMilliseconds);
   }
 
   // Viewport Top-Left Toolbar (Modern Web Guidance: toolbar pattern)
@@ -2631,10 +2632,12 @@ export function createStudio(container, {
       return;
     }
     try {
-      const { importFile } = await import('./studio-import.js');
-      announce(await importFile(file, { catalog, controller, prepareRecipe }));
+      const { importFile, importMessageDuration } = await import('./studio-import.js');
+      const message = await importFile(file, { catalog, controller, prepareRecipe });
+      announce(message, importMessageDuration(message, STATUS_DEFAULT_MILLISECONDS));
     } catch (error) {
-      announce(error.message);
+      const { importMessageDuration } = await import('./studio-import.js');
+      announce(error.message, importMessageDuration(error.message, STATUS_DEFAULT_MILLISECONDS));
     }
   }
 

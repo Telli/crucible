@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { deflateSync } from 'node:zlib';
 import { createAgentScene } from '../src/agent-scene.js';
+import { decodePack } from '../src/scene-pack-format.js';
 import { textureMapIds } from '../src/agent-texture-set.js';
 import { AGENT_ASSET_LIMITS } from '../src/agent-asset-limits.js';
 import { createStudio, createStudioController } from '../src/studio.js';
@@ -142,15 +143,45 @@ function baseRecipe() {
   return {
     format: 'crucible.scene',
     schemaVersion: 1,
-    geometries: [{ id: 'ground', type: 'box' }],
+    geometries: [{ id: 'ground', type: 'plane' }, { id: 'block', type: 'box' }],
     materials: [
       { id: 'grass', tag: 'surface', color: [0.2, 0.5, 0.2], roughness: 0.8, metallic: 0 },
       { id: 'bricks', tag: 'surface', color: [1, 1, 1], roughness: 0.9, metallic: 0, pattern: { type: 'bricks', size: 1 } },
     ],
     nodes: [
-      { id: 'floor', geometry: 'ground', material: 'grass', scale: [20, 0.1, 20] },
-      { id: 'wall', geometry: 'ground', material: 'bricks', translation: [0, 1, 0] },
+      { id: 'floor', geometry: 'ground', material: 'grass', scale: [20, 1, 20] },
+      { id: 'wall', geometry: 'block', material: 'bricks', translation: [0, 1, 0] },
     ],
+  };
+}
+
+// The renderer pauses a picture on any part whose map has no UV channel; this is its rule from renderer.js, applied to the real built parts.
+function partsTheRendererWouldPause(controller) {
+  return controller.scene.parts
+    .filter(part => part.material.map && !part.geometry.uvs && !part.geometry.lightUvs && !part.material.boxMapScale)
+    .map(part => part.name);
+}
+
+function createGeometrySession(host, nodeGeometries) {
+  const recipe = {
+    format: 'crucible.scene',
+    schemaVersion: 1,
+    geometries: [
+      { id: 'plain-box', type: 'box' },
+      { id: 'bevelled-box', type: 'box', bevel: 0.04 },
+      { id: 'ball', type: 'sphere' },
+      { id: 'sheet', type: 'plane' },
+    ],
+    materials: [{ id: 'paint', tag: 'surface', color: [0.8, 0.2, 0.2], roughness: 0.5, metallic: 0 }],
+    nodes: Object.entries(nodeGeometries).map(([id, geometry]) => ({ id, geometry, material: 'paint' })),
+  };
+  const catalog = createStudioCatalog(host.hooks);
+  const controller = createStudioController({ scene: createAgentScene(recipe, {}, { assets: catalog.pool, sequenceFrames: catalog.pool }), assets: catalog.pool });
+  return {
+    catalog,
+    controller,
+    importBytes: (name, bytes) => importFile({ name, bytes }, { catalog, controller, prepareRecipe: nextRecipe => catalog.prepare(nextRecipe) }),
+    snapshot: () => JSON.stringify({ recipe: controller.exportRecipe(), canUndo: controller.canUndo, pool: catalog.pool.size }),
   };
 }
 
@@ -315,6 +346,101 @@ test('a rejection of the host store reaches the person as written and changes no
   await assert.rejects(session.importBytes('rock.glb', triangleGlb()), error => error.message === 'Save the scene first, then import again.');
   assert.equal(session.snapshot(), before);
   assert.deepEqual(session.catalog.names, {});
+});
+
+test('a picture goes on a geometry that carries UVs and the built scene has nothing the renderer would pause', async testContext => {
+  installImageDecoder(testContext);
+  const host = createHost();
+  const session = createGeometrySession(host, { ball: 'ball', sheet: 'sheet' });
+  session.controller.selectNode('sheet');
+  await session.importBytes('brick.png', tinyPng());
+  assert.equal(session.controller.scene.parts.every(part => part.material.map), true, 'both objects wear the picture');
+  assert.deepEqual(partsTheRendererWouldPause(session.controller), []);
+});
+
+test('a picture is refused on a box, a bevelled box and a material shared with one, naming the object and changing nothing', async testContext => {
+  installImageDecoder(testContext);
+  for (const [geometry, nodeId] of [['plain-box', 'crate'], ['bevelled-box', 'trim']]) {
+    const host = createHost();
+    const session = createGeometrySession(host, { [nodeId]: geometry });
+    session.controller.selectNode(nodeId);
+    await assertRefused(session, 'brick.png', tinyPng(), new RegExp(`brick\\.png cannot go on this material: ${nodeId} has no UV coordinates.*Select one of those, or give that object its own material first\\.`));
+    assert.deepEqual(host.storeCalls, [], `${geometry}: nothing reached the host`);
+    assert.deepEqual(partsTheRendererWouldPause(session.controller), []);
+  }
+
+  const host = createHost();
+  const session = createGeometrySession(host, { ball: 'ball', crate: 'plain-box', trim: 'bevelled-box' });
+  session.controller.selectNode('ball');
+  await assertRefused(session, 'brick.png', tinyPng(), /brick\.png cannot go on this material: crate, trim have no UV coordinates/);
+  assert.deepEqual(host.storeCalls, []);
+  assert.equal(session.catalog.pool.size, 0);
+});
+
+test('a box built with a colour map really has no UVs, which is the gap the guard closes', async testContext => {
+  installImageDecoder(testContext);
+  const session = createGeometrySession(createHost(), { crate: 'plain-box' });
+  const withMap = { ...session.controller.exportRecipe().materials[0], colorMap: 'f'.repeat(64) };
+  session.catalog.pool.set(withMap.colorMap, { width: 2, height: 2, data: new Uint8Array(16).fill(255) });
+  const recipe = { ...session.controller.exportRecipe(), materials: [withMap] };
+  const paused = createAgentScene(recipe, {}, { assets: session.catalog.pool, sequenceFrames: session.catalog.pool });
+  assert.deepEqual(paused.parts.filter(part => part.material.map && !part.geometry.uvs).map(part => part.name), ['crate'], 'a box built with a map has no UVs, which is what the guard looks for');
+});
+
+test('the status line keeps an import message up in proportion to its length, between 3.4 and 12 seconds', async testContext => {
+  installImmediateScheduler(testContext);
+  const dom = installStudioDom();
+  const container = dom.document.createElement('div');
+  dom.document.body.append(container);
+  const studio = createStudio(container, { recipe: baseRecipe(), renderer: createFakeRenderer(), catalog: createHost().hooks });
+  testContext.after(() => {
+    studio.dispose();
+    dom.uninstall();
+  });
+  const root = container.firstElementChild;
+  const statusText = () => root.querySelector('.crucible-studio-status').textContent;
+  const viewport = root.querySelector('.crucible-studio-viewport');
+  const dropAndRead = async (name, bytes) => {
+    dom.runTimers();
+    dispatch(viewport, 'drop', { dataTransfer: { files: [{ name, size: bytes.length, arrayBuffer: async () => bytes.buffer }] } });
+    for (let attempt = 0; attempt < 400 && statusText() === ''; attempt += 1) {
+      await dom.settle();
+    }
+    return { text: statusText(), delays: [dom.pendingTimerDelays.at(-1)] };
+  };
+  const short = await dropAndRead('rock.glb', triangleGlb());
+  assert.equal(short.text, 'Placed rock.glb');
+  assert.deepEqual(short.delays, [3400], 'a short message keeps the usual time');
+  const long = await dropAndRead('notes.txt', new TextEncoder().encode('hello'));
+  assert.ok(long.text.length > 100, 'the refusal is a long sentence');
+  assert.deepEqual(long.delays, [Math.min(12000, long.text.length * 60)]);
+  assert.ok(long.delays[0] > 3400 && long.delays[0] <= 12000);
+});
+
+test('an imported HDR sky does not travel into the web pack, and the pack reports it as left out', async testContext => {
+  installImmediateScheduler(testContext);
+  const dom = installStudioDom();
+  const container = dom.document.createElement('div');
+  dom.document.body.append(container);
+  const studio = createStudio(container, { recipe: baseRecipe(), renderer: createFakeRenderer(), catalog: createHost().hooks });
+  testContext.after(() => {
+    studio.dispose();
+    dom.uninstall();
+  });
+  const root = container.firstElementChild;
+  const withoutSky = decodePack((await studio.buildWebPackPayload()).packBytes);
+  const softbox = new Uint8Array(await readFile(SOFTBOX_URL));
+  dispatch(root.querySelector('.crucible-studio-viewport'), 'drop', { dataTransfer: { files: [{ name: 'softbox.hdr', size: softbox.length, arrayBuffer: async () => softbox.buffer }] } });
+  for (let attempt = 0; attempt < 400 && root.querySelector('.crucible-studio-status').textContent === ''; attempt += 1) {
+    await dom.settle();
+  }
+  assert.equal(root.querySelector('.crucible-studio-status').textContent, 'Sky set to softbox.hdr');
+  const payload = await studio.buildWebPackPayload();
+  const withSky = decodePack(payload.packBytes);
+  assert.equal(withoutSky.environment.map, undefined, 'the scene without the sky has no environment map');
+  assert.equal(withSky.environment.map, undefined, 'the pack drops an HDRI sky by design (buildPackReadyRecipe strips environment.hdri)');
+  assert.deepEqual(withSky.environment, withoutSky.environment, 'the packed environment is the same with or without the imported sky');
+  assert.deepEqual(payload.stripped, ['environment.hdri', 'procedural material patterns'], 'the pack says what it left out, so the sky loss is reported to the person');
 });
 
 test('without a store hook an import is refused with one sentence and the pool is untouched', async () => {
