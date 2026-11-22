@@ -17,6 +17,8 @@ renderer.render(camera); // parts first, then the splats, farthest first
 detach();               // or renderer.dispose()
 ```
 
+`detach()` frees the GPU copy and reads the packed data back, so the same `splats` can then attach to another renderer, for example one made at a new size, without packing them again. Splats attach to one renderer at a time. After `renderer.dispose()` or a lost context, call `createGaussianSplats` again.
+
 ## What it reads
 
 Two formats. The first is the standard 3DGS PLY that the original training code and most tools write: binary little endian with `x y z f_dc_0..2 opacity scale_0..2 rot_0..3` per vertex. Other properties (normals, `f_rest_*`) are skipped, so a splat has one colour from every direction (spherical harmonics of degree 0). `.ksplat` and `.splat` files are not read; `bench/gaussian-splats/fetch-sample.mjs` shows a short `.splat` to PLY conversion.
