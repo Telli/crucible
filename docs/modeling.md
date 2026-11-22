@@ -156,7 +156,7 @@ A scene geometry takes the same fields with `"type": "cloud"` (see `scene_capabi
 
 With `levels` such as `[{"count": 7, "sizeRatio": 1}, {"count": 60, "sizeRatio": 0.35}, {"count": 680, "sizeRatio": 0.12}]` the cloud becomes a tower covered in rounded lobes. Normals come from the gradient of the blended field at each vertex, not from the mesh faces, so toon steps follow the lobes without fine rings. Later levels find their neighbours in a grid, so 680 bumps cost little per sample; three such towers at `resolution` 128 take about 2.3 s together. A mesh over 150000 faces is refused with the resolution to pass instead.
 
-Three tall towers over a sea, each with three levels of lobes and three hard toon tones (`toonColors`, darkest to lightest), are in [`recipes/cumulus-towers.json`](https://crucible.codepawl.com/recipes/cumulus-towers.json). A still of it, rendered by Crucible:
+Three wide cumulus over a sea, each with a flat base and three levels of softly blended lobes, shaded with six toon steps (`toonColors`, darkest to lightest) from blue-grey in the shade to warm white in the sun, are in [`recipes/cumulus-towers.json`](https://crucible.codepawl.com/recipes/cumulus-towers.json). A still of it, rendered by Crucible:
 
 ![Three cumulus towers over the sea](https://crucible.codepawl.com/recipes/cumulus-towers.webp)
 

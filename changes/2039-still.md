@@ -1,1 +1,1 @@
-- A recipe of three cumulus towers over the sea, with three coloured toon tones, in `public/recipes/cumulus-towers.json` (#2039)
+- A recipe of three wide, flat-based cumulus over the sea, with softly blended lobes and six cool-to-warm toon steps, in `public/recipes/cumulus-towers.json` (#2039)

@@ -19,17 +19,24 @@ function hashOf(mesh) {
   return hash.digest('hex');
 }
 
-test('the cumulus towers recipe has three tall towers and three toon tones with their own colours', () => {
+test('the cumulus towers recipe has three wide, flat-based clouds with soft lobes and a cool-to-warm toon ramp', () => {
   const recipe = JSON.parse(recipeText);
   const towers = recipe.geometries.filter(geometry => geometry.type === 'cloud');
   assert.deepEqual(towers.map(tower => tower.id), TOWER_IDS);
   for (const tower of towers) {
-    assert.ok(tower.height > tower.width, `${tower.id} must be taller than wide`);
-    assert.equal(tower.levels.length, 3);
+    assert.ok(tower.width > tower.height, `${tower.id} must be wider than tall, as a cumulus is`);
+    assert.equal(tower.flatBase, 1, `${tower.id} keeps a flat base`);
+    assert.ok(tower.unionSoftness >= 0.2, `${tower.id} blends its lobes softly`);
+    assert.ok(tower.levels.at(-1).count <= 200, `${tower.id} has few enough small lobes to stay fluffy`);
   }
   const cumulus = recipe.materials.find(material => material.id === 'cumulus');
-  assert.equal(cumulus.toon, 3);
-  assert.equal(cumulus.toonColors.length, 3);
+  assert.equal(cumulus.toon, 6);
+  assert.equal(cumulus.toonColors.length, 6);
+  const [darkest] = cumulus.toonColors;
+  const lightest = cumulus.toonColors.at(-1);
+  assert.ok(darkest[2] > darkest[0], 'the shaded step is blue-grey');
+  assert.ok(lightest[0] > lightest[2], 'the lit step is warm white');
+  assert.ok(Math.min(...darkest) >= 0.25, 'the shaded step stays light, so no dark pits');
 });
 
 test('the cumulus towers recipe builds the same towers byte for byte every time, each different from the others', () => {
