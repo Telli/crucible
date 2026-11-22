@@ -86,6 +86,8 @@ export function sequenceFrameIds(value) {
     }
     if (node.op === 'displace' && typeof node.source?.image === 'string' && ASSET_ID.test(node.source.image.toLowerCase())) ids.add(node.source.image.toLowerCase());
     for (const id of textureMapIds(node)) ids.add(id);
+    // The far crown clump of a scanned leaf card (vegetation.scans) sits beside its colour and normal maps.
+    if (typeof node.crownMap === 'string' && ASSET_ID.test(node.crownMap.toLowerCase())) ids.add(node.crownMap.toLowerCase());
     const frames = node.map?.sequence?.frames;
     if (Array.isArray(frames)) {
       const shippedFrames = isStreamedSequence(frames) ? frames.slice(0, 1) : frames;

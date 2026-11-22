@@ -9,11 +9,13 @@ import { CrucibleRenderer, studioFloorHeight } from './renderer.js';
 import { ProgramNotReady, isLinkComplete, setPreparing } from './gl-program.js';
 import { exportGlb } from './export.js';
 import { encodePack } from './scene-pack-format.js';
+import { checkImageBudget } from './scene-pack-limits.js';
+import { packedSkyOf } from './scene-pack-sky.js';
 import { encodePackOrRefuse } from './studio-pack-refusal.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
 import { findKeymapAction, findMouseNavigation, formatShortcutKeys, KEYMAP_PRESETS, keyLabel, lastKeyLabel, resolveKeymapPreset, shortcutRowsFor } from './studio-keymap.js';
-import { createStudioCatalog } from './studio-catalog.js';
+import { createStudioCatalog, NO_STORE_MESSAGE } from './studio-catalog.js';
 import { createStudioSetup } from './studio-setup.js';
 import { detectStudioHardware, gatherStudioHardwareInputs, rendererChangeFor, resolveStudioPerformanceTier, studioViewportSettingsFor } from './studio-hardware.js';
 import { createStudioDiagnostics, describeStudioEnvironment, watchStudioDiagnostics } from './studio-diagnostics.js';
@@ -29,6 +31,7 @@ import { createOutlineMask } from './studio-outline-mask.js';
 import { createPanelGrips } from './studio-panel-grips.js';
 import { STUDIO_BRAND_ICON_NAMES, studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
+import { createKeyMarkers } from './studio-timeline-keys.js';
 import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-properties.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, studioDrawsFloor, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
@@ -71,6 +74,7 @@ export {
 };
 
 const AXIS_NAMES = Object.freeze(['x', 'y', 'z']);
+const STATUS_DEFAULT_MILLISECONDS = 3400;
 const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
 const LENS_CHIP_TOLERANCE_MILLIMETRES = 0.5;
@@ -910,7 +914,7 @@ function buildPackReadyRecipe(recipe) {
     }
   }
   if (cloned.environment) {
-    for (const envField of ['sky', 'hdri', 'keyFromHdri', 'spotLights', 'areaLights', 'shadowCascades', 'sunAngularRadius', 'lines']) {
+    for (const envField of ['sky', 'spotLights', 'areaLights', 'shadowCascades', 'sunAngularRadius', 'lines']) {
       if (cloned.environment[envField] !== undefined) {
         delete cloned.environment[envField];
         stripped.push(`environment.${envField}`);
@@ -1023,7 +1027,8 @@ export function createStudio(container, {
   // swaps the recipe in when `ready` settles, so createStudio itself stays synchronous.
   const pendingRecipe = suppliedRecipe && !suppliedScene && catalog.needsLoading(suppliedRecipe) ? suppliedRecipe : null;
   const initialRecipe = pendingRecipe ? buildTemplateRecipe(template) : suppliedRecipe ?? (suppliedScene ? null : buildTemplateRecipe(template));
-  const initialScene = suppliedScene ?? createAgentScene(initialRecipe);
+  // The scene reads catalog assets and images from the pool, so an import into the first scene can place them.
+  const initialScene = suppliedScene ?? createAgentScene(initialRecipe, {}, { assets: catalog.pool, sequenceFrames: catalog.pool });
   let handleChange = () => {};
   const studioDiagnostics = createStudioDiagnostics({
     limit: diagnosticsOptions.limit,
@@ -1138,6 +1143,9 @@ export function createStudio(container, {
     return button;
   };
   const openButton = showActionKey(createElement(documentReference, 'button', { type: 'button', textContent: 'Open…' }), 'file.open');
+  // Import needs a place to keep the file (catalog.store) and a way to name it (SHA-256); without either the row is not offered.
+  const canImport = catalog.canStore && Boolean(documentReference.defaultView?.crypto?.subtle ?? globalThis.crypto?.subtle);
+  const importButton = canImport ? createElement(documentReference, 'button', { type: 'button', textContent: 'Import…' }) : null;
   const saveButton = showActionKey(createElement(documentReference, 'button', { type: 'button', textContent: 'Save' }), 'file.save');
   const saveAsButton = showActionKey(createElement(documentReference, 'button', { type: 'button', textContent: 'Save as…' }), 'file.saveAs');
   const addMenuButton = createIconButton(documentReference, 'add', 'Add an object or a light', { attributes: { popovertarget: 'crucible-studio-pop-add' } });
@@ -1415,6 +1423,7 @@ export function createStudio(container, {
     attributes: { popover: 'auto' },
   }, exportPngButton, exportGlbButton, exportPackButton);
   giveMenuIcon(openButton, 'open');
+  if (importButton) giveMenuIcon(importButton, 'add');
   giveMenuIcon(saveButton, 'save');
   giveMenuIcon(saveAsButton, 'saveAs');
   giveMenuIcon(editJsonButton, 'code');
@@ -1423,6 +1432,7 @@ export function createStudio(container, {
   giveMenuIcon(exportPackButton, 'globe');
   newPopover.prepend(
     openButton,
+    ...(importButton ? [importButton] : []),
     saveButton,
     saveAsButton,
     editJsonButton,
@@ -1632,14 +1642,14 @@ export function createStudio(container, {
   });
   const statusRegion = createElement(documentReference, 'p', { className: 'crucible-studio-status', attributes: { role: 'status' } });
   const hintBar = createElement(documentReference, 'div', { className: 'crucible-studio-hintbar' });
-  const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: 'Drop a scene.json to open it' });
+  const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: canImport ? 'Drop a scene.json, GLB, HDR or image' : 'Drop a scene.json to open it' });
 
-  function announce(message) {
+  function announce(message, durationMilliseconds = STATUS_DEFAULT_MILLISECONDS) {
     statusRegion.textContent = message;
     clearTimeout(statusTimer);
     statusTimer = setTimeout(() => {
       statusRegion.textContent = '';
-    }, 3400);
+    }, durationMilliseconds);
   }
 
   // Viewport Top-Left Toolbar (Modern Web Guidance: toolbar pattern)
@@ -1949,7 +1959,7 @@ export function createStudio(container, {
     isOpen: (groupId, openByDefault) => preferences.propertyGroupsOpen[groupId] ?? openByDefault,
     setOpen: (groupId, open) => setPreference('propertyGroupsOpen', { ...preferences.propertyGroupsOpen, [groupId]: open }),
   };
-  const createLookPanel = (resolveKey, panelOptions = {}) => createPropertyPanel({ documentReference, controller, announce, builders: propertyBuilders, resolveKey, groups: propertyGroups, prepareRecipe, ...panelOptions });
+  const createLookPanel = (resolveKey, panelOptions = {}) => createPropertyPanel({ documentReference, controller, announce, builders: propertyBuilders, resolveKey, groups: propertyGroups, prepareRecipe, catalogNames: catalog.names, ...panelOptions });
   const selectedLightKey = () => (/^(point|spot|area):/u.test(controller.selectedObjectKey ?? '') ? controller.selectedObjectKey : null);
   // Only the first group of a tab starts open, so the tab opens on one screen of rows.
   const lightPanel = createLookPanel(() => selectedLightKey() ?? 'sun', { opensFirstGroup: true });
@@ -2105,10 +2115,14 @@ export function createStudio(container, {
   const playTooltip = isPlaying => `${isPlaying ? 'Pause' : 'Play'} (${keyLabel(keymap, 'animate.play')})`;
   const playButton = createIconButton(documentReference, 'play', playTooltip(false), { attributes: { 'aria-pressed': 'false' } });
   const keyframeButton = createKeyedIconButton('keyframe', () => `Add a keyframe here (${lastKeyLabel(keymap, 'animate.keyframe')})`);
+  const autoKeyButton = createIconButton(documentReference, 'autoKey', 'Auto-key', { attributes: { 'aria-pressed': controller.autoKey ? 'true' : 'false' } });
   const timeOutput = createElement(documentReference, 'output', { textContent: '0.00 s' });
   const scrubInput = createElement(documentReference, 'input', { type: 'range', min: '0', max: '4', step: '0.02', value: '0', attributes: { 'aria-label': 'Timeline scrub' } });
+  const keysElement = createElement(documentReference, 'div', { className: 'crucible-studio-keys' });
+  const trackElement = createElement(documentReference, 'div', { className: 'crucible-studio-track' }, scrubInput, keysElement);
   const quickBookmarksRow = createElement(documentReference, 'div', { className: 'crucible-studio-shots' });
   const fileInput = createElement(documentReference, 'input', { type: 'file', accept: '.json,application/json', hidden: true });
+  const importInput = createElement(documentReference, 'input', { type: 'file', accept: '.glb,.hdr,.png,.jpg,.jpeg,.webp', hidden: true });
 
   playButton.addEventListener('click', () => {
     if (!hasAnimatedData(controller.exportRecipe())) {
@@ -2132,18 +2146,28 @@ export function createStudio(container, {
       announce(error.message);
     }
   });
+  autoKeyButton.addEventListener('click', () => controller.setAutoKey(!controller.autoKey));
   scrubInput.addEventListener('input', () => {
     const seconds = Number(scrubInput.value);
     if (hasAnimatedData(controller.exportRecipe())) {
       controller.setMotionTime(seconds);
     }
   });
+  const keyMarkers = createKeyMarkers({
+    documentReference,
+    controller,
+    keysElement,
+    trackElement,
+    announce,
+    isDeleteKey: event => findKeymapAction(keymap, event, 'normal')?.actionId === 'edit.delete',
+    fallbackFocus: keyframeButton,
+  });
 
   const bottomElement = createElement(
     documentReference,
     'footer',
     { className: 'crucible-studio-bottombar crucible-studio-island', attributes: { 'aria-label': 'Timeline' } },
-    createElement(documentReference, 'div', { className: 'crucible-studio-scrub' }, playButton, keyframeButton, scrubInput, timeOutput),
+    createElement(documentReference, 'div', { className: 'crucible-studio-scrub' }, playButton, keyframeButton, autoKeyButton, trackElement, timeOutput),
     quickBookmarksRow,
   );
 
@@ -2429,7 +2453,7 @@ export function createStudio(container, {
   }
 
   applyPreferences();
-  root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, recipeDialog, shortcutsDialog, settingsDialog, setup.dialog);
+  root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, importInput, recipeDialog, shortcutsDialog, settingsDialog, setup.dialog);
   container.append(root);
 
   function syncWatchNote() {
@@ -2517,7 +2541,7 @@ export function createStudio(container, {
   async function buildWebPackPayload() {
     const { stillRecipe, stripped } = buildPackReadyRecipe(controller.exportRecipe());
     await prepareRecipe(stillRecipe);
-    const stillScene = createAgentScene(stillRecipe, {}, { assets: catalog.pool });
+    const stillScene = createAgentScene(stillRecipe, {}, { assets: catalog.pool, sequenceFrames: catalog.pool });
     const environment = stillScene.environment;
     const shaderModules = agentSceneModulesNeeded(stillRecipe).filter(name => Object.hasOwn(PACK_SHADER_MODULES, name));
     for (const moduleName of agentSceneModulesNeeded(stillRecipe)) {
@@ -2525,10 +2549,12 @@ export function createStudio(container, {
         stripped.push(PACK_UNSUPPORTED_MODULES[moduleName]);
       }
     }
+    checkImageBudget(stillScene.parts);
     const packBytes = encodePackOrRefuse(encodePack, {
       shaderModules,
       camera: stillScene.camera,
       environment,
+      environmentMap: packedSkyOf(environment),
       effects: stillScene.effects,
       shadowBounds: resolveAgentShadow(fitAgentShadow(stillScene.shadow, stillScene.parts), environment.lightDirection),
       parts: stillScene.parts.map(part => ({
@@ -2615,6 +2641,29 @@ export function createStudio(container, {
     } catch (error) {
       announce(error.message);
     }
+  });
+
+  // The import code loads on the first import; an import is one undo step, and a refusal says what to do and changes nothing.
+  async function importFileIntoScene(file) {
+    if (!canImport) {
+      announce(NO_STORE_MESSAGE);
+      return;
+    }
+    try {
+      const { importFile, importMessageDuration } = await import('./studio-import.js');
+      const message = await importFile(file, { catalog, controller, prepareRecipe });
+      announce(message, importMessageDuration(message, STATUS_DEFAULT_MILLISECONDS));
+    } catch (error) {
+      const { importMessageDuration } = await import('./studio-import.js');
+      announce(error.message, importMessageDuration(error.message, STATUS_DEFAULT_MILLISECONDS));
+    }
+  }
+
+  importButton?.addEventListener('click', () => importInput.click());
+  importInput.addEventListener('change', async () => {
+    const file = importInput.files?.[0];
+    importInput.value = '';
+    if (file) await importFileIntoScene(file);
   });
 
   exportPngButton.addEventListener('click', async () => {
@@ -3219,6 +3268,29 @@ export function createStudio(container, {
     outlinerTree.style.setProperty('--studio-tree-row-size', `${stretchedRowSize}px`);
   }
 
+  // A locked row says so with the keyframe mark beside its title, the mark the property panel puts on a driven field.
+  const lockedRowMarks = new Map();
+  function lockedRowMark(row) {
+    if (!lockedRowMarks.has(row)) {
+      const mark = createElement(documentReference, 'span', {
+        className: 'crucible-studio-driven-mark',
+        attributes: { role: 'img', 'aria-label': 'Animated by a track' },
+      }, createIcon(documentReference, 'keyframe'));
+      row.container.querySelector('.crucible-studio-field-head').firstElementChild.append(mark);
+      lockedRowMarks.set(row, mark);
+    }
+    return lockedRowMarks.get(row);
+  }
+
+  function setRowLockedByTrack(row, lockedByTrack) {
+    row.setDisabled(lockedByTrack);
+    row.container.dataset.driven = lockedByTrack ? 'true' : 'false';
+    row.container.title = lockedByTrack ? 'Animated by a track. Turn on Auto-key to edit.' : '';
+    if (lockedByTrack || lockedRowMarks.has(row)) {
+      lockedRowMark(row).hidden = !lockedByTrack;
+    }
+  }
+
   function syncUi() {
     const recipe = controller.exportRecipe();
     toolButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.tool === controller.tool ? 'true' : 'false'));
@@ -3261,9 +3333,16 @@ export function createStudio(container, {
       nodeLabelInput.value = '';
       nodeParentSelect.value = '';
     }
-    positionRow.setValues(selectedNode?.translation ?? [0, 0, 0]);
-    rotationRow.setValues(quaternionToEulerDegrees(selectedNode?.rotation ?? [0, 0, 0, 1]), DEGREE_PRECISION);
-    scaleRow.setValues(selectedNode?.scale ?? [1, 1, 1]);
+    // A keyed node shows the pose its tracks give at the playhead, so a typed edit starts from what is on screen.
+    const animatedProperties = selectedNode ? controller.animatedNodeProperties(selectedNode.id) : [];
+    const shownPose = animatedProperties.length > 0 ? controller.nodePose(selectedNode.id) : selectedNode;
+    positionRow.setValues(shownPose?.translation ?? [0, 0, 0]);
+    rotationRow.setValues(quaternionToEulerDegrees(shownPose?.rotation ?? [0, 0, 0, 1]), DEGREE_PRECISION);
+    scaleRow.setValues(shownPose?.scale ?? [1, 1, 1]);
+    // An edit of a keyed property lands as a key only with Auto-key on; without it the track would put the old pose back.
+    setRowLockedByTrack(positionRow, !controller.autoKey && animatedProperties.includes('translation'));
+    setRowLockedByTrack(rotationRow, !controller.autoKey && animatedProperties.includes('rotation'));
+    setRowLockedByTrack(scaleRow, !controller.autoKey && animatedProperties.includes('scale'));
 
     const boundMaterial = selectedNode?.material ? recipe.materials.find(material => material.id === selectedNode.material) : null;
     renderPaletteSwatches(recipe, boundMaterial?.id ?? null);
@@ -3334,6 +3413,8 @@ export function createStudio(container, {
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
     setButtonIcon(playButton, playing ? 'pause' : 'play', playTooltip(playing));
     timeOutput.textContent = `${controller.motionTime.toFixed(1)} / ${duration.toFixed(1)} s`;
+    autoKeyButton.setAttribute('aria-pressed', controller.autoKey ? 'true' : 'false');
+    keyMarkers.sync(Math.max(0.1, duration));
     syncPropertyPanels();
     syncHintBar();
     syncFileBanner();
@@ -3729,6 +3810,10 @@ export function createStudio(container, {
     delete viewportElement.dataset.dropActive;
     const file = event.dataTransfer?.files?.[0];
     if (!file) return;
+    if (!/\.json$/i.test(file.name) && file.type !== 'application/json') {
+      await importFileIntoScene(file);
+      return;
+    }
     try {
       await loadExternalTextFile(await file.text(), { filePath: file.path || null, fileName: file.name });
       announce(`Loaded ${file.name}`);
@@ -4006,7 +4091,7 @@ export function createStudio(container, {
     if (detail.deltaLabel !== undefined) {
       liveDeltaLabel = detail.deltaLabel;
     }
-    if (['topology', 'transform', 'transformCommit', 'material', 'look', 'undo', 'redo'].includes(detail.kind) || (detail.kind === 'camera' && detail.edited)) {
+    if (['topology', 'transform', 'transformCommit', 'motion', 'material', 'look', 'undo', 'redo'].includes(detail.kind) || (detail.kind === 'camera' && detail.edited)) {
       isDirty = true;
       scheduleDraftSave();
     }

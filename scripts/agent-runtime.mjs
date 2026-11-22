@@ -31,6 +31,7 @@ import { addonCapabilities, addonFileFor, addonImportMap } from './mcp-addons.mj
 import { createAgentAssetCatalog, fingerprintAssetDirectory } from './agent-asset-catalog.mjs';
 import { launchWithShaderCache, shaderCacheDirectory } from './agent-shader-cache.mjs';
 import { createPackRegistry } from './agent-packs.mjs';
+import { VEGETATION_SCANS_PACK, fillVegetationScans, needsVegetationScans, vegetationScansFromPack } from '../src/agent-vegetation-scans.js';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
 import { AGENT_ASSET_LIMITS, configureAssetByteLimit, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
@@ -411,8 +412,20 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return packsPromise;
   }
 
+  // The bark and leaf scans per species of the installed vegetation-scans pack, or null without it.
+  async function vegetationScans() {
+    const registry = await packs();
+    const pack = registry?.list().packs.find(candidate => candidate.name === VEGETATION_SCANS_PACK);
+    return pack ? vegetationScansFromPack(pack.items.images) : null;
+  }
+
   /** Replaces each `asset: { name }` placement of a recipe or edit list with its catalog id, so everything after this holds the pinned hash. */
   async function pinNamedAssets(value) {
+    // Trees without scans draw the vegetation-scans pack when it is installed (`scans: {}` keeps them procedural).
+    if (needsVegetationScans(value)) {
+      const scans = await vegetationScans();
+      if (scans) fillVegetationScans(value, scans);
+    }
     if (namesCatalogFiles(value)) resolveAssetPlacementNames(value, (await rescannedCatalog()).resolveName);
     if (namesCatalogSequences(value)) await resolveCatalogSequenceNames(value, pattern => rescannedCatalog().then(assets => assets.resolveSequence(pattern)));
     if (namesCatalogTextureMaps(value)) {
@@ -1341,6 +1354,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           configured: Boolean(packsRoot), format: 'crucible.pack', manifest: 'crucible-pack.json', contentKinds: Object.keys(PACK_CONTENT_KINDS),
           extensions: PACK_CONTENT_KINDS, maximumPacks: MAXIMUM_INSTALLED_PACKS, maximumFiles: MAXIMUM_PACK_FILES, maximumBytes: MAXIMUM_PACK_BYTES,
           maximumFileBytes: MAXIMUM_PACK_FILE_BYTES, maximumJsonBytes: MAXIMUM_PACK_JSON_BYTES, maximumItemsPerKind: MAXIMUM_PACK_ITEMS_PER_KIND,
+          vegetationScans: (await vegetationScans()) ? 'on: trees draw scanned bark and leaves' : 'off: trees draw procedural bark and leaves; install the vegetation-scans pack for scans',
           use: 'scene_asset_catalog lists packs: name, version, license, author, description and item ids. GLBs, images, looks and environments carry assetId values that work in scene_create_asset, look, hdri and texture fields. Materials and recipes are read with scene_asset_catalog { pack, material } or { pack, recipe }: pass a recipe to scene_create, and a material as a materials entry or a scene_apply set-material. Packs are installed by the user (crucible packs add <name>, or unzip into the packs folder); crucible-mcp reads ~/.crucible/packs unless --packs names another folder, and a tool call never downloads one. Invalid packs are skipped and listed under packs.rejected with the reason.',
         },
         jobs: { configured: Boolean(jobRoot), kinds: ['image', 'stills', 'video', 'icons'], icons: ICON_CAPABILITIES, passes: RENDER_PASS_NAMES, pathTracer: PATH_TRACER_CAPABILITIES, maximumActiveJobs: 1, estimate: RENDER_ESTIMATE_NOTE, budget: RENDER_BUDGET_NOTE, quality: RENDER_QUALITY_NOTE, tiers: await deviceTiers(),

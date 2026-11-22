@@ -50,11 +50,11 @@ function dotProduct(first, second) {
 /**
  * Prepares one camera frame for the padded grid. An orthographic frame has its eye and target moved onto whole texels of the
  * view plane (a texel is orthographicHeight / grid height) and its height widened to cover the pad; what the snap moved is
- * returned as `remainder`, in texels along the camera's right and up, for the final blit to put back. Any other frame is
- * returned unchanged with a zero remainder.
+ * returned as `remainder`, in texels along the camera's right and up, for the final blit to put back, and the whole texel the
+ * eye landed on as `texel`. Any other frame is returned unchanged with a zero remainder and texel.
  */
 export function snapFrameToGrid(frame, grid) {
-  if (frame.projection !== 'orthographic' || frame.reflectionTarget) return { frame, remainder: [0, 0] };
+  if (frame.projection !== 'orthographic' || frame.reflectionTarget) return { frame, remainder: [0, 0], texel: [0, 0] };
   const visibleHeight = frame.orthographicHeight ?? frame.orthoScale ?? 4;
   if (!Number.isFinite(visibleHeight) || visibleHeight <= 0) throw new RangeError('Orthographic height must be positive and finite');
   const eye = frame.eye;
@@ -78,7 +78,15 @@ export function snapFrameToGrid(frame, grid) {
     orthographicHeight: visibleHeight * padded.height / grid.height,
   };
   delete snapped.orthoScale;
-  return { frame: snapped, remainder: [-moveRight / texelSize, -moveUp / texelSize] };
+  return { frame: snapped, remainder: [-moveRight / texelSize, -moveUp / texelSize], texel: [Math.round(rightOffset / texelSize), Math.round(upOffset / texelSize)] };
+}
+
+/**
+ * Where blocks of `blockSize` grid pixels start, so they stay on the same geometry while the snapped camera moves: a block edge
+ * sits at every grid pixel p with (p + origin) a multiple of blockSize. `texel` is the eye's whole texel from snapFrameToGrid.
+ */
+export function blockLatticeOrigin(texel, blockSize) {
+  return texel.map(index => ((index % blockSize) + blockSize) % blockSize);
 }
 
 // Reads the padded grid with texelFetch, so no filtering can blend two grid pixels: each output pixel takes the one grid pixel under
@@ -123,7 +131,7 @@ function createRenderSurface(realCanvas, state) {
 export function installPixelGrid(renderer) {
   if (renderer.pixelGrid) return renderer;
   const realCanvas = renderer.canvas;
-  const state = { grid: null, size: { width: 1, height: 1 }, remainder: [0, 0], saved: null, blit: null, texture: null, textureSize: null };
+  const state = { grid: null, size: { width: 1, height: 1 }, remainder: [0, 0], texel: [0, 0], saved: null, blit: null, texture: null, textureSize: null };
   let surface = null;
 
   function releaseBlitTexture() {
@@ -146,7 +154,7 @@ export function installPixelGrid(renderer) {
   }
 
   // The frame is on the canvas's lower-left corner at the grid size; copy it out and draw it back across the whole canvas.
-  function presentGrid() {
+  function presentGrid(remainder = state.remainder) {
     const context = renderer.context;
     const { width, height } = state.size;
     const outputWidth = realCanvas.width;
@@ -169,7 +177,7 @@ export function installPixelGrid(renderer) {
     context.uniform1i(state.blit.uniforms.sourceTexture, 0);
     context.uniform2f(state.blit.uniforms.gridSize, state.grid.width, state.grid.height);
     context.uniform1f(state.blit.uniforms.pad, state.grid.pad);
-    context.uniform2f(state.blit.uniforms.remainder, state.remainder[0], state.remainder[1]);
+    context.uniform2f(state.blit.uniforms.remainder, remainder[0], remainder[1]);
     context.drawArrays(context.TRIANGLES, 0, 3);
   }
 
@@ -190,8 +198,15 @@ export function installPixelGrid(renderer) {
   renderer.render = function renderOnPixelGrid(frame, ...rest) {
     if (!state.grid) return render.call(this, frame, ...rest);
     const snapped = snapFrameToGrid(frame, state.grid);
-    if (frame.pass === undefined && !frame.reflectionTarget) state.remainder = snapped.remainder;
-    return render.call(this, snapped.frame, ...rest);
+    if (frame.pass === undefined && !frame.reflectionTarget) {
+      state.remainder = snapped.remainder;
+      state.texel = snapped.texel;
+    }
+    const result = render.call(this, snapped.frame, ...rest);
+    // A render pass (depth, normal, object ID) is copied to the canvas at the grid size too; it gets the same crop and shift as the
+    // lit frame, so an exported pass lines up with it pixel for pixel.
+    if (frame.pass !== undefined && !frame.reflectionTarget && !frame.emissionMaskPass && !this.benchmark) presentGrid(snapped.remainder);
+    return result;
   };
 
   const resolveFrame = renderer.resolveFrame;
@@ -240,6 +255,10 @@ export function installPixelGrid(renderer) {
     },
     get grid() {
       return state.grid ? { ...state.grid } : null;
+    },
+    /** The block lattice of `stylize.pixelate` and of post passes below scale 1 for this frame; [0, 0] while the grid is off. */
+    latticeOrigin(blockSize) {
+      return state.grid ? blockLatticeOrigin(state.texel, blockSize) : [0, 0];
     },
   };
   return renderer;
