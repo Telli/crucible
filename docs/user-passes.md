@@ -190,6 +190,8 @@ A material can carry its own fragment code: a GLSL function that changes the sur
 | `uniforms` | Named values, as for a post pass: a number is a `float`, `[x, y]` to `[x, y, z, w]` are vectors, `{ "type": "int", "value": 4 }` is an int. At most 16. |
 | `mask` | Optional, `"map"`: the snippet may sample `snippetMask` (a `sampler2D`), which is the material's own map or pattern. Load the image as the material `map`; there are no remote URLs. |
 
+Materials may share the same `fragment` text and still differ in `uniforms`: they share one compiled function, and each draw sets the uniform values of its own material.
+
 Inputs: `color` is the base colour after the map and the vertex tint, `alpha` is the map alpha before the material opacity, `uv` is the texture coordinate and `worldPosition` the position in the world. A fifth `float` parameter (any name, for example `float time`) receives the frame time in seconds, the same time `waterHook` and `userPass` get, in stills and in video frames; it animates flames, beacons, grass sway or a flowing highlight on any material. The shadow pass gets the same time, so a discard that moves with it moves the shadow, but the shadow map is redrawn only when the scene changes. `discard` removes the fragment in every alpha mode. A lowered `alpha` cuts only when the material has `alphaMode: "mask"`.
 
 ## Filter a thin pattern with the pixel footprint
