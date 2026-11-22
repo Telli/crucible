@@ -7,7 +7,7 @@ import { IK_SOLVER_TYPE_NAMES } from '../src/motion-ik-solver-types.js';
 import { MOTION_PROPERTY_KIND_NAMES } from '../src/motion-property-kinds.js';
 import { BRANCH_NAME_PATTERN } from '../src/agent-branches.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
-import { NORMAL_CONVENTIONS, TEXTURE_MAP_FIELDS } from '../src/texture-set-fields.js';
+import { NORMAL_CONVENTIONS, TEXTURE_MAP_FIELDS, UV_TRANSFORM_LIMITS } from '../src/texture-set-fields.js';
 import { readEnvironmentVariable } from '../src/environment-variable.js';
 import { McpServer } from '@modelcontextprotocol/server';
 import { resolveJobRoot } from './agent-job-root.mjs';
@@ -40,6 +40,7 @@ import { MINIMUM_SPOT_ANGLE, MAXIMUM_SPOT_ANGLE, spotAngleExpectation } from '..
 import { annotateViewHtml, clientSupportsMcpApps, ANNOTATE_VIEW_URI, MCP_APPS_MIME_TYPE } from './annotate-app-view.mjs';
 import { loadAskUserFixture, describeAskUserFixture } from './ask-user-fixture.mjs';
 import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
+import { resolvePacksOption } from '../bin/crucible-pack-folder.mjs';
 
 describeSchemaInputsWithReceivedValues();
 
@@ -200,6 +201,8 @@ const subsurface = z.strictObject({
 
 const catalogImageId = z.string().regex(/^[a-f0-9]{64}$/i).describe('Catalog image asset ID from scene_asset_catalog.');
 
+const uvScaleNumber = z.number().min(UV_TRANSFORM_LIMITS.scale[0]).max(UV_TRANSFORM_LIMITS.scale[1]);
+const uvOffsetNumber = z.number().min(UV_TRANSFORM_LIMITS.offset[0]).max(UV_TRANSFORM_LIMITS.offset[1]);
 const materialFields = {
   ...waterFields,
   ...materialLayerFields,
@@ -217,6 +220,10 @@ const materialFields = {
   textureSet: z.string().max(256).optional().describe('Name of a catalog texture set (scene_asset_catalog textureSets): fills colorMap, normalMap, roughnessMap, metallicMap, occlusionMap and heightMap; scene_capabilities textureSet.'),
   ...Object.fromEntries(TEXTURE_MAP_FIELDS.map(field => [field, catalogImageId.optional()])),
   normalConvention: z.enum(NORMAL_CONVENTIONS).optional().describe('opengl (default) or directx normal map; directx has its green channel flipped on load.'),
+  uvScale: z.union([uvScaleNumber, z.tuple([uvScaleNumber, uvScaleNumber])]).optional().describe('Tiles of every catalog map: one number or [u, v]; with the other UV fields it follows glTF KHR_texture_transform.'),
+  uvOffset: z.tuple([uvOffsetNumber, uvOffsetNumber]).optional().describe('[u, v] shift of every catalog map, in tiles.'),
+  uvRotation: z.number().min(UV_TRANSFORM_LIMITS.rotation[0]).max(UV_TRANSFORM_LIMITS.rotation[1]).optional().describe('Degrees every catalog map turns.'),
+  worldScale: z.number().min(UV_TRANSFORM_LIMITS.worldScale[0]).max(UV_TRANSFORM_LIMITS.worldScale[1]).optional().describe('Metres one texture tile covers, so the tile size does not depend on the mesh size; not with uvScale.'),
   color: color.optional().describe('Linear RGB base color, each component between zero and one.'),
   metallic: unit.optional(),
   roughness: unit.optional(),
@@ -1269,6 +1276,7 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
     if (name === '--allow-addon') allowedAddonNames.push(value);
     else options[name.slice(2)] = name === '--memory' || name === '--max-asset-bytes' ? Number(value) : value;
   }
+  options.packs = resolvePacksOption(options.packs);
   options.gpuQueue = createGpuQueueFromFlags({ queue: options['gpu-queue'], wait: options['gpu-queue-wait'] });
   delete options['gpu-queue'];
   delete options['gpu-queue-wait'];

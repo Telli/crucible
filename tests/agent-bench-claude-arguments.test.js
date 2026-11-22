@@ -54,3 +54,19 @@ test('a run without a skill prompt writes no file and passes no prompt flag', as
   const argumentsList = argumentsFor(taskById(BENCH_TASKS[0].id), null);
   assert.ok(!argumentsList.some(argument => argument.startsWith('--append-system-prompt')));
 });
+
+test('a system prompt file replaces the default prompt, turns off built-in tools and keeps the skill appended', () => {
+  const argumentsList = claudeArguments({ prompt: 'p', model: 'haiku', configPath: 'mcp.json', serverName: 'crucible', builtInTools: ['Bash'], skillPromptPath: 'skill-prompt.md', systemPromptPath: 'custom-prompt.md' });
+  const promptIndex = argumentsList.indexOf('--system-prompt-file');
+  assert.equal(argumentsList[promptIndex + 1], 'custom-prompt.md');
+  const toolsIndex = argumentsList.indexOf('--tools');
+  assert.equal(argumentsList[toolsIndex + 1], '');
+  assert.equal(argumentsList[argumentsList.indexOf('--append-system-prompt-file') + 1], 'skill-prompt.md');
+  assert.equal(argumentsList[argumentsList.indexOf('--allowedTools') + 1], 'mcp__crucible');
+});
+
+test('without a system prompt file the default prompt and tool set stay', () => {
+  const argumentsList = claudeArguments({ prompt: 'p', model: 'haiku', configPath: 'mcp.json', serverName: 'crucible', builtInTools: ['Bash'], skillPromptPath: null });
+  assert.ok(!argumentsList.includes('--system-prompt-file'));
+  assert.ok(!argumentsList.includes('--tools'));
+});

@@ -9,7 +9,7 @@ import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, 
 import { postStepSupport } from './shader-registry.js';
 import { agentSceneModule, agentSceneModuleActive, agentSceneModuleLoaded, defaultStageModulesNamed } from './agent-scene-modules.js';
 import { CURVE_TEXT_LIMITS, AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, MAX_MATERIAL_PATTERNS, RECIPE_ALPHA_MODES } from './agent-scene-capabilities.js';
-import { TEXTURE_SET_RECIPE_FIELDS, TEXTURE_MAP_FIELDS } from './texture-set-fields.js';
+import { TEXTURE_SET_RECIPE_FIELDS, TEXTURE_MAP_FIELDS, UV_TRANSFORM_FIELDS } from './texture-set-fields.js';
 import { normalizeMaterialWear, geometryWithSurfaceMasks } from './material-wear.js';
 import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from './material-layers.js';
 import { recipeDiagnostics, closedRoomDiagnostic } from './agent-diagnostics.js';
@@ -1232,22 +1232,41 @@ function cameraOverridesFrom(baseCamera, overrides) {
   return structuredClone(overrides);
 }
 
+const viewBytes = values => values.reduce((total, value) => total + (ArrayBuffer.isView(value) ? value.byteLength : 0), 0);
+
+/** Bytes a geometry holds: its typed arrays and the arrays of its morph targets, which are not typed fields themselves. */
+export function geometryBufferBytes(geometry) {
+  return viewBytes(Object.values(geometry)) + viewBytes((geometry.morphTargets ?? []).flatMap(target => [target.positions, target.normals]));
+}
+
+// geometryBytes is the generated geometry the scene's maxGeometryBytes budget limits. assetBytes is the decoded asset geometry the
+// asset decoder bounds instead; residentBytes is both, the memory the scene really holds.
 function geometryStats(records) {
   let vertices = 0;
   let geometryBytes = 0;
+  let residentBytes = 0;
   let estimatedGeometryBytes = 0;
   for (const record of records) {
     vertices += record.vertices;
     geometryBytes += record.geometryBytes;
+    residentBytes += record.geometryBytes + (record.assetBytes ?? 0);
     estimatedGeometryBytes += record.estimatedVertices * 56;
   }
-  return { vertices, geometryBytes, estimatedGeometryBytes };
+  return { vertices, geometryBytes, estimatedGeometryBytes, residentBytes };
 }
 
 function batchSignature(material) {
   // Textures are fixed per renderer, so a changed pattern rebuilds it like a changed tag does.
   // Transmission moves a material to the pass that sees the opaque scene, which is fixed per renderer.
   return `${material.tag}|${material.alphaMode}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${JSON.stringify(material.snippet)}${textureMapSignature(material)}`;
+}
+
+// A material's uvScale, uvOffset, uvRotation and worldScale are baked into the UVs of the geometry it draws, like glTF KHR_texture_transform.
+// A material without them returns the geometry untouched, so its parts, uploads and pixels are as before.
+function geometryWithMaterialUvs(geometry, recipe, materialId, graph, nodeId) {
+  const material = recipe.materials.find(candidate => candidate.id === materialId);
+  if (!material || !UV_TRANSFORM_FIELDS.some(field => material[field] !== undefined)) return geometry;
+  return agentSceneModule('assets').geometryWithUvTransform(geometry, material, graph.getNode(nodeId).worldMatrix, nodeId);
 }
 
 // The catalog maps of a material are textures fixed per renderer like a pattern, so another map or convention builds a new handle. Empty for a material without them.
@@ -1595,8 +1614,11 @@ function hiddenNodeIds(recipe, sampled) {
 // renderer sees no topology change. Particles still bring a new geometry per time, so those parts are replaced.
 function withTerrainLod(geometries, stagedState, graph, camera) {
   if (!stagedState.terrainLodNodes?.length) return geometries;
-  const wearOf = materialId => stagedState.materialHandles.get(materialId)?.output.wear;
-  const drawn = agentSceneModule('terrain').terrainLodGeometries(stagedState.terrainLodNodes, graph, camera.eye, wearOf, geometryWithSurfaceMasks);
+  const drawn = agentSceneModule('terrain').terrainLodGeometries(stagedState.terrainLodNodes, graph, camera.eye, (geometry, nodeId, materialId) => {
+    const wear = stagedState.materialHandles.get(materialId)?.output.wear;
+    const masked = wear ? geometryWithSurfaceMasks(geometry, wear, nodeId) : geometry;
+    return geometryWithMaterialUvs(masked, stagedState.recipe, materialId, graph, nodeId);
+  });
   return geometries ? new Map([...geometries, ...drawn]) : drawn;
 }
 
@@ -1907,10 +1929,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       if (!record && plan.definition.type === 'asset') {
         // A decoded asset geometry is shared by every placement. Its size is bounded by the asset decoder, not by this scene's budget.
         const geometry = assetRuntime.geometryParts.get(plan.definition.id);
-        record = Object.freeze({ signature: plan.signature, geometry, bounds: boundsFor(geometry, mat4.create()), vertices: 0, geometryBytes: 0, estimatedVertices: 0 });
+        record = Object.freeze({ signature: plan.signature, geometry, bounds: boundsFor(geometry, mat4.create()), vertices: 0, geometryBytes: 0, assetBytes: geometryBufferBytes(geometry), estimatedVertices: 0 });
       } else if (!record) {
         const geometry = Object.freeze(generateGeometry(plan.definition, Math.min(limits.maxVertices, 1_000_000), { definitions: definitionsById, chain: [], heightSources: buildHeightSources }));
-        const geometryBytes = Object.values(geometry).reduce((total, array) => total + array.byteLength, 0);
+        const geometryBytes = geometryBufferBytes(geometry);
         const vertices = geometry.positions.length / 3;
         if (plan.definition.type === 'mesh' || plan.definition.type === 'fragment') {
           // Edits can grow a mesh past its estimate. Undo history never blocks an edit, so release the oldest revisions before refusing.
@@ -1925,7 +1947,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
             }
             throw new RangeError(`Mesh ${plan.definition.id} has ${vertices} render vertices after its edits, which exceeds maxVertices across the scene. Reduce detail or edits.`);
           }
-        } else if (vertices > plan.estimatedVertices || geometryBytes > plan.estimatedVertices * (56 + TERRAIN_SKY_VISIBILITY_BYTES)) {
+        } else if (vertices > plan.estimatedVertices || viewBytes(Object.values(geometry)) > plan.estimatedVertices * (56 + TERRAIN_SKY_VISIBILITY_BYTES)) {
           throw new RangeError('Generated geometry exceeds its conservative preflight bound.');
         }
         record = Object.freeze({
@@ -1968,7 +1990,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const recipeMaterial = materialHandles.get(node.material);
       const sourceGeometry = binding?.geometry ?? (roomJoinedNodeIds.has(node.id) ? sharpJoinBoxGeometry() : geometries.get(node.geometry));
       const foamGeometry = sourceGeometry.vertexGroups?.foam ? agentSceneModule('mesh').waterFoamGeometry(sourceGeometry, recipeMaterial.output) : sourceGeometry;
-      const geometry = recipeMaterial.output.wear ? geometryWithSurfaceMasks(foamGeometry, recipeMaterial.output.wear, node.id) : foamGeometry;
+      const maskedGeometry = recipeMaterial.output.wear ? geometryWithSurfaceMasks(foamGeometry, recipeMaterial.output.wear, node.id) : foamGeometry;
+      const geometry = geometryWithMaterialUvs(maskedGeometry, recipe, node.material, graph, node.id);
       // A graph with a vertexGroup node bakes with this mesh's weights, so its textures belong to the mesh.
       const drawnMaterial = recipeMaterial.output.pattern?.graph ? agentSceneModule('patterns').materialViewForGeometry(recipeMaterial.output, geometry, node.id, recipeMaterial.holder.images) : recipeMaterial.output;
       const fades = fadedNodeIds.has(node.id);
@@ -2767,9 +2790,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           geometries: state.geometries.size, materials: state.recipe.materials.length,
           vertices: state.stats.vertices,
         },
-        geometryBytes: state.stats.geometryBytes,
+        geometryBytes: state.stats.residentBytes,
         estimatedGeometryBytes: state.stats.estimatedGeometryBytes,
-        residentGeometryBytes: resident.geometryBytes,
+        residentGeometryBytes: resident.residentBytes,
         residentGeometryVertices: resident.vertices,
         look: {
           world: state.recipe.environment.world,

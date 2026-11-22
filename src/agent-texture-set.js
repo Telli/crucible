@@ -1,6 +1,6 @@
 import { createImage } from './material-texture-kit.js';
 import { invalidField } from './field-error.js';
-import { NORMAL_CONVENTIONS, TEXTURE_MAP_FIELDS } from './texture-set-fields.js';
+import { NORMAL_CONVENTIONS, TEXTURE_MAP_FIELDS, UV_TRANSFORM_FIELDS, UV_TRANSFORM_LIMITS } from './texture-set-fields.js';
 
 // Scanned PBR maps on a recipe material: `colorMap`, `normalMap`, `roughnessMap`, `metallicMap`, `occlusionMap` and `heightMap`
 // each take a catalog image asset ID (the MCP server turns `textureSet: "<name>"` into those IDs before the scene is built).
@@ -34,6 +34,7 @@ export function applyTextureMaps(value, result) {
     throw invalidField('textureSet', value.textureSet, 'a recipe with the maps already filled in: the MCP server swaps textureSet for the catalog image IDs of its maps, so a library caller passes colorMap, normalMap, roughnessMap, metallicMap, occlusionMap and heightMap itself');
   }
   const used = TEXTURE_MAP_FIELDS.filter(field => value[field] !== undefined);
+  applyUvTransform(value, result, used.length > 0);
   if (used.length === 0 && value.normalConvention === undefined) return;
   if (result.tag !== 'surface') throw invalidField(used[0] ?? 'normalConvention', value[used[0]], 'a material with the surface tag; remove the map fields or use the surface tag');
   if (value.pattern !== undefined) throw invalidField(used[0] ?? 'normalConvention', value[used[0]], 'nothing, because a material takes a pattern or catalog maps, not both', TypeError);
@@ -111,4 +112,127 @@ export function createTextureMaps(materialId, material, pool) {
   if (material.occlusionMap) textures.occlusionMap = descriptorOf(frameOf('occlusionMap'), 'linear');
   if (material.heightMap) textures.heightMap = descriptorOf(frameOf('heightMap'), 'linear');
   return textures;
+}
+
+const DEGREES_TO_RADIANS = Math.PI / 180;
+
+function rangeText([minimum, maximum]) {
+  return `from ${minimum} to ${maximum}`;
+}
+
+function checkedNumber(field, value, [minimum, maximum], example) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw invalidField(field, value, `a number ${rangeText([minimum, maximum])}, such as ${example}`);
+  }
+  return value;
+}
+
+function checkedPair(field, value, limits, example, componentExample) {
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw invalidField(field, value, `two numbers [u, v] ${rangeText(limits)}, such as ${example}`, TypeError);
+  }
+  return value.map((component, index) => checkedNumber(`${field}[${index}]`, component, limits, componentExample));
+}
+
+/**
+ * Validates the UV transform fields of a recipe material and stores them on `result`, in the order the glTF KHR_texture_transform
+ * applies them: scale, then rotation (degrees), then offset, for every map of the material together. `uvScale` is one number or [u, v].
+ * `worldScale` is the metres one texture tile covers, so the tile size does not depend on the mesh size. Absent fields store nothing.
+ */
+export function applyUvTransform(value, result, hasMaps) {
+  const given = UV_TRANSFORM_FIELDS.filter(field => value[field] !== undefined);
+  if (given.length === 0) return;
+  if (!hasMaps) throw invalidField(given[0], value[given[0]], 'a material that sets colorMap or another catalog map; the UV transform moves those maps, so add a map or remove the UV fields');
+  if (value.uvScale !== undefined && value.worldScale !== undefined) {
+    throw invalidField('worldScale', value.worldScale, 'nothing next to uvScale: worldScale sets the tile size in metres, uvScale the tile count; keep one of them', TypeError);
+  }
+  const limits = UV_TRANSFORM_LIMITS;
+  if (value.uvScale !== undefined) {
+    if (typeof value.uvScale === 'number') {
+      const tiles = checkedNumber('uvScale', value.uvScale, limits.scale, 50);
+      result.uvScale = [tiles, tiles];
+    } else {
+      result.uvScale = checkedPair('uvScale', value.uvScale, limits.scale, '[50, 50] or 50', 50);
+    }
+  }
+  if (value.uvOffset !== undefined) result.uvOffset = checkedPair('uvOffset', value.uvOffset, limits.offset, '[0.25, 0]', 0.25);
+  if (value.uvRotation !== undefined) result.uvRotation = checkedNumber('uvRotation', value.uvRotation, limits.rotation, 45);
+  if (value.worldScale !== undefined) result.worldScale = checkedNumber('worldScale', value.worldScale, limits.worldScale, 2);
+}
+
+/** Whether a recipe material changes the UVs at all: a transform of scale 1, offset 0 and rotation 0 leaves the geometry as it is. */
+export function changesUvs(material) {
+  if (material?.worldScale !== undefined) return true;
+  const [scaleU, scaleV] = material?.uvScale ?? [1, 1];
+  const [offsetU, offsetV] = material?.uvOffset ?? [0, 0];
+  return scaleU !== 1 || scaleV !== 1 || offsetU !== 0 || offsetV !== 0 || (material?.uvRotation ?? 0) !== 0;
+}
+
+function columnScale(matrix) {
+  if (!matrix) return [1, 1, 1];
+  return [0, 4, 8].map(offset => Math.hypot(matrix[offset], matrix[offset + 1], matrix[offset + 2]));
+}
+
+/** Metres one UV unit spans on the drawn mesh: the square root of the world area over the UV area of its triangles. */
+function metresPerUvUnit(geometry, scale) {
+  const { positions, indices, uvs } = geometry;
+  let worldArea = 0;
+  let uvArea = 0;
+  for (let triangle = 0; triangle < indices.length; triangle += 3) {
+    const [first, second, third] = [0, 1, 2].map(corner => indices[triangle + corner]);
+    const edgeA = [0, 1, 2].map(axis => (positions[second * 3 + axis] - positions[first * 3 + axis]) * scale[axis]);
+    const edgeB = [0, 1, 2].map(axis => (positions[third * 3 + axis] - positions[first * 3 + axis]) * scale[axis]);
+    worldArea += Math.hypot(edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1], edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2], edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]) / 2;
+    const [uA, vA] = [uvs[second * 2] - uvs[first * 2], uvs[second * 2 + 1] - uvs[first * 2 + 1]];
+    const [uB, vB] = [uvs[third * 2] - uvs[first * 2], uvs[third * 2 + 1] - uvs[first * 2 + 1]];
+    uvArea += Math.abs(uA * vB - uB * vA) / 2;
+  }
+  return uvArea > 0 ? Math.sqrt(worldArea / uvArea) : 0;
+}
+
+const transformedByGeometry = new WeakMap();
+
+/**
+ * The geometry with the material's UV transform baked into its first UV channel, the way the glTF loader bakes KHR_texture_transform:
+ * the renderers, the path tracers and the exports all read the same UVs. Cached per source geometry and transform, so a part keeps its
+ * identity between rebuilds. A transform that changes nothing returns the geometry itself. `worldMatrix` gives worldScale the mesh size.
+ */
+export function geometryWithUvTransform(geometry, material, worldMatrix, nodeId) {
+  if (!changesUvs(material)) return geometry;
+  if (!geometry.uvs) throw invalidField('uvScale', nodeId, `a mesh with UVs; node ${nodeId} has none, so use a geometry that has UVs or remove the UV fields from its material`);
+  const scale = columnScale(worldMatrix);
+  const key = [material.uvScale, material.uvOffset, material.uvRotation, material.worldScale, material.worldScale === undefined ? '' : scale].join('|');
+  let variants = transformedByGeometry.get(geometry);
+  if (!variants) {
+    variants = new Map();
+    transformedByGeometry.set(geometry, variants);
+  }
+  let transformed = variants.get(key);
+  if (!transformed) {
+    transformed = { ...geometry, uvs: bakedUvs(geometry, material, scale, nodeId) };
+    variants.set(key, transformed);
+  }
+  return transformed;
+}
+
+function bakedUvs(geometry, material, scale, nodeId) {
+  let [scaleU, scaleV] = material.uvScale ?? [1, 1];
+  if (material.worldScale !== undefined) {
+    const metres = metresPerUvUnit(geometry, scale);
+    if (!(metres > 0)) throw invalidField('worldScale', material.worldScale, `a mesh whose UVs cover an area; node ${nodeId} has degenerate UVs, so remove worldScale or fix the UVs`);
+    scaleU = metres / material.worldScale;
+    scaleV = scaleU;
+  }
+  const rotation = (material.uvRotation ?? 0) * DEGREES_TO_RADIANS;
+  const cosine = Math.cos(rotation);
+  const sine = Math.sin(rotation);
+  const [offsetU, offsetV] = material.uvOffset ?? [0, 0];
+  const uvs = new Float32Array(geometry.uvs.length);
+  for (let index = 0; index < uvs.length; index += 2) {
+    const u = geometry.uvs[index];
+    const v = geometry.uvs[index + 1];
+    uvs[index] = cosine * scaleU * u + sine * scaleV * v + offsetU;
+    uvs[index + 1] = -sine * scaleU * u + cosine * scaleV * v + offsetV;
+  }
+  return uvs;
 }

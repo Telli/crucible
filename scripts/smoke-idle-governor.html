@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>body { margin: 0; } canvas { display: block; width: 1920px; height: 1080px; } .spacer { height: 6000px; }</style>
+<canvas id="live"></canvas>
+<div class="spacer"></div>
+<script type="importmap">{"imports":{"gl-matrix":"/node_modules/gl-matrix/esm/index.js"}}</script>
+<script type="module">
+// Page for scripts/smoke-idle-governor.mjs (issue #2179). Counts the real WebGL draw calls the live loop makes.
+const counters = { drawCalls: 0 };
+for (const name of ['drawElements', 'drawArrays', 'drawElementsInstanced', 'drawArraysInstanced', 'drawRangeElements']) {
+  const original = WebGL2RenderingContext.prototype[name];
+  WebGL2RenderingContext.prototype[name] = function countedDraw(...parameters) {
+    counters.drawCalls += 1;
+    return original.apply(this, parameters);
+  };
+}
+const { CrucibleRenderer } = await import('/src/renderer.js');
+await import('/src/fog-shader.js');
+const { createFilmScenes } = await import('/src/film.js');
+const { createRuntime } = await import('/src/runtime.js');
+
+const scene = createFilmScenes().laboratory;
+const camera = { eye: [3, 2, 5], target: [0, 1, 0], up: [0, 1, 0], fov: 45, near: 0.1, far: 100 };
+const rendererOptions = { hdr: true, depth: true, world: true, ground: false, pixelRatio: 1, samples: 4, environment: scene.environment, shadowBounds: scene.shadowBounds };
+
+function createRenderer(canvas, extra) {
+  const renderer = new CrucibleRenderer(canvas, scene.parts, { ...rendererOptions, ...extra });
+  renderer.resize();
+  return renderer;
+}
+
+const wait = milliseconds => new Promise(done => setTimeout(done, milliseconds));
+
+window.readCounters = () => ({ renderCalls: window.liveState.renderer.frames, glDrawCalls: counters.drawCalls });
+
+window.startLiveLoop = async () => {
+  const canvas = document.getElementById('live');
+  const renderer = createRenderer(canvas, {});
+  const state = { renderer: { frames: 0 }, busy: false };
+  const realRender = renderer.render.bind(renderer);
+  renderer.render = frame => { state.renderer.frames += 1; return realRender(frame); };
+  const runtime = createRuntime(renderer, {
+    element: canvas,
+    isIdle: () => !state.busy,
+    frame: context => ({ ...camera, environment: scene.environment, time: context.elapsedSeconds }),
+  });
+  window.addEventListener('pointermove', () => runtime.wake());
+  window.liveState = state;
+  window.liveRuntime = runtime;
+  runtime.start();
+  return true;
+};
+window.setBusy = busy => { window.liveState.busy = busy; window.liveRuntime.wake(); };
+window.liveFlags = () => ({ sleeping: window.liveRuntime.sleeping, paused: window.liveRuntime.paused });
+
+function renderedPixels(renderer, canvas, environment) {
+  renderer.render({ ...camera, environment, time: 0 });
+  const copy = document.createElement('canvas');
+  copy.width = canvas.width;
+  copy.height = canvas.height;
+  const context = copy.getContext('2d');
+  context.drawImage(canvas, 0, 0);
+  return context.getImageData(0, 0, copy.width, copy.height).data;
+}
+
+window.measureMemory = () => {
+  const variants = {
+    'opaque default (compact)': {},
+    'opaque compactColor:false (RGBA16F)': { compactColor: false },
+    'transparent (volume fog off, it needs an opaque canvas)': { transparent: true, environment: { ...scene.environment, volumeFog: { density: 0 } } },
+  };
+  const results = [];
+  const pixels = {};
+  for (const [label, extra] of Object.entries(variants)) {
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'width:1920px;height:1080px;position:absolute;top:0;left:0;z-index:-1';
+    document.body.append(canvas);
+    const renderer = createRenderer(canvas, extra);
+    pixels[label] = renderedPixels(renderer, canvas, extra.environment ?? scene.environment);
+    const report = renderer.memoryReport();
+    const colorTargets = report.targets.filter(target => /^(frameColor|multisampleColor)$/.test(target.name));
+    results.push({ label, canvas: `${canvas.width}x${canvas.height}`, colorFormat: renderer.colorFormat, compactColor: renderer.compactColor, totalBytes: report.totalBytes, colorTargets: colorTargets.map(target => ({ name: target.name, format: target.format, bytes: target.bytes })), colorBytes: colorTargets.reduce((total, target) => total + target.bytes, 0) });
+    renderer.dispose?.();
+    canvas.remove();
+  }
+  const compact = pixels['opaque default (compact)'];
+  const full = pixels['opaque compactColor:false (RGBA16F)'];
+  let squared = 0;
+  for (let index = 0; index < compact.length; index++) squared += (compact[index] - full[index]) ** 2;
+  return { results, compactVersusFullRmse: Math.sqrt(squared / compact.length) };
+};
+window.idleProofReady = true;
+</script>

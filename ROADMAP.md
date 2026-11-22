@@ -69,6 +69,8 @@ Ideas that nobody is working on live here instead of as open issues, so the issu
 - scene_compare: compare a render with a reference photo (#2880)
 - Turntable preset for scene_review (#2878)
 - Show the scene annotate view inline in chat apps through MCP Apps (#923)
+- MCP: open a saved recipe file and change one post-pass uniform (#2285)
+- Post passes: camera uniform, more than 64 motion keys, and scene_apply deleting a field (#2288)
 
 ### Games
 
@@ -82,6 +84,8 @@ Ideas that nobody is working on live here instead of as open issues, so the issu
 
 ### Look
 
+- A packed web page draws a lit surface a little darker than the MCP render of the same scene (seen in #3003)
+- An image map on a dented or fragment box: those boxes still have no UVs (seen in #3003)
 - Path tracer: trace box, sphere and mesh local volumes natively, and mesh volumes on WebGPU (#2004)
 - Material graph: vertexGroup node (design first) (#1957)
 - Cook: cheaper filter for texture mip levels above 0 (#1810)
@@ -94,21 +98,35 @@ Ideas that nobody is working on live here instead of as open issues, so the issu
 - Cook: Blender add-on that renders a scene through the v2 scene pack (#900)
 - Look: bounced sun and beam-local multiple scattering in sunlit fog rooms (#643)
 - Path tracer: real-time hybrid view with raster primary hits, radiance cache and temporal denoise (#624)
+- KTX2 texture sets for recipes and terrain (#2884)
+- Material snippets that change normal and roughness; image node for height and normal (#2883)
+- Materials: anti-tiling for large surfaces (#2862)
+- Materials: parallax occlusion mapping from the graph height (#2860)
+- Sun shafts through volume fog or as a post pass (#2831)
+- Toon vegetation: toonColors on recipe vegetation, scatter without terrain ground (#2840)
+- Water: ripples and glint alias into pixels at a distance (#853)
 
 ### Modeling
 
 - Proposal: OpenUSD and MaterialX (#2887)
+- Blender add-on: carry terrain and texture sets into Crucible (#2886)
+- Outdoor starter recipes and a terrain-and-ground skill reference (#2885)
+- Terrain: thermal and hydraulic erosion (#2864)
+- Export lathe geometry and a hide path from the standalone bundle (#2751)
 
 ### Motion and simulation
 
 - Audio markers: key animation to beats and sound cues (#2892)
 - Vehicles: dents, detachable parts and broken glass on impact (#983)
+- Ocean: spray from breaking crests and bows (#2040)
 
 ### Other
 
 - GTAO in place of depth-only SSAO (#2800)
 - Measure moving dev tooling and CI from npm and Node to Bun (#2746)
 - Voxel helper for meshes and trained splats (sprite stacks) (#2745)
+- Studio: export a video of the timeline (#2853)
+- Studio: select and edit several objects at once (#2816)
 
 ## Package size
 
