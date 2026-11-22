@@ -185,7 +185,7 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 
 `sessionId` is the scene ID: `scene_create` and `scene_create_asset` return it, and every scene tool takes it. It is optional: a call that leaves it out means the last used scene. An ID that names no open scene (an invented one, one from a disposed scene, or one that was evicted) is rejected with the open IDs in the message, because acting on a scene the caller did not name could edit the wrong one.
 
-One server keeps up to 4 scenes open, within 96 MiB of resident geometry together. The 96 MiB counts the geometry every open scene holds (including its revision history and checkpoints) plus the new one; an imported GLB counts its vertex, index and morph target buffers, and its textures stay outside the cap, under the `--memory` budget, so a few large scenes (terrain, vegetation, imported models) can fill it before the fourth scene opens; small scenes reach 4. Creating a scene past either cap closes the least recently used scenes until both hold, and the create result lists them under `evictedSessions` with `evictionReason`, which names the cap that was exceeded and the MiB involved; a later call with that ID fails with an `evicted` error that repeats the reason. Save a scene with `scene_export_recipe` before it can be evicted. Only one scene holds the preview renderer at a time, so a call on another scene rebuilds it first; that costs a moment, so finish a batch of calls on one scene before switching.
+One server keeps up to 4 scenes open, within 96 MiB of resident geometry together. The 96 MiB counts the geometry every open scene holds (including its revision history and checkpoints) plus the new one; an imported GLB counts its vertex, index and morph target buffers, and so does each GLB a scene places (once, however many times it is placed), while textures stay outside the cap, under the `--memory` budget, so a few large scenes (terrain, vegetation, imported models) can fill it before the fourth scene opens; small scenes reach 4. Creating a scene past either cap closes the least recently used scenes until both hold, and the create result lists them under `evictedSessions` with `evictionReason`, which names the cap that was exceeded and the MiB involved; a later call with that ID fails with an `evicted` error that repeats the reason. Save a scene with `scene_export_recipe` before it can be evicted. Only one scene holds the preview renderer at a time, so a call on another scene rebuilds it first; that costs a moment, so finish a batch of calls on one scene before switching.
 
 Each scene keeps up to 16 checkpoints. `scene_checkpoint` returns `checkpointId`; past the limit the oldest checkpoint is evicted and the result lists it under `evictedCheckpointIds`. A `checkpointId` belongs to the scene that returned it. A render job stays tied to the scene it was submitted for. While a job runs the preview renderer is leased, so `scene_create`, edits and disposal wait for it, as before.
 
@@ -367,7 +367,7 @@ The script prints calls, errors, error rate and median duration per tool, most c
 
 | Budget | Limit |
 | --- | --- |
-| Open scenes | 4, within 96 MiB of resident geometry |
+| Open scenes | 4, within 96 MiB of resident geometry (placed GLBs included) |
 | Nodes | 4096 |
 | Geometries and materials | 256 each |
 | Operations per batch | 256 |
