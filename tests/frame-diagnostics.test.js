@@ -34,3 +34,18 @@ test('ambient occlusion with depth, or switched off, is silent', () => {
   assert.deepEqual(frameDiagnostics({ depth: true, effects: resolveEffects({ ambientOcclusion: 0.6 }) }), []);
   assert.deepEqual(frameDiagnostics({ depth: false, effects: resolveEffects({ ambientOcclusion: 0 }) }), []);
 });
+
+test('effect keys the renderer does not draw are named in a warning each', () => {
+  const requestedEffects = { vignette: 0.2, glare: { strength: 1 }, lensDistortion: { distortion: 0.2 }, stylize: { pixelate: 4 }, exposure: 2, depthOfField: { focusDistance: 2, aperture: 0.2 } };
+  const problems = frameDiagnostics({ depth: true, effects: quietEffects, requestedEffects });
+  const targets = problems.map(problem => problem.target).sort();
+  assert.deepEqual(targets, ['effects.depthOfField.aperture', 'effects.exposure', 'effects.glare', 'effects.lensDistortion', 'effects.stylize']);
+  assert.ok(problems.every(problem => problem.kind === 'effect-not-drawn' && problem.severity === 'warning'));
+  assert.match(problems.find(problem => problem.target === 'effects.exposure').fix, /render\(\{ exposure \}\)/);
+});
+
+test('drawn effects, and an exposure repeated as the frame exposure, are silent', () => {
+  const requestedEffects = { vignette: 0.2, grain: 0.01, bloom: { strength: 0.3, radius: 1 }, depthOfField: { blur: 0.4, focusDistance: 3 }, motionBlur: { shutter: 0.2 }, exposure: 1.5 };
+  assert.deepEqual(frameDiagnostics({ depth: true, effects: quietEffects, requestedEffects, requestedExposure: 1.5 }), []);
+  assert.deepEqual(frameDiagnostics({ depth: true, effects: quietEffects }), []);
+});

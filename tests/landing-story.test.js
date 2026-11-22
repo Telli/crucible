@@ -34,9 +34,23 @@ test('a capture, measure or scout page always shows the live scene', () => {
 
 test('the page ships five beats and a fallback still for each one', () => {
   assert.equal((landingPage.match(/class="beat/g) ?? []).length, BEAT_STARTS.length);
-  const stills = [...landingPage.matchAll(/src="(\/previews\/foundry-splats-\d\.png)"/g)].map((match) => match[1]);
+  const stills = [...landingPage.matchAll(/class="still" src="(\/previews\/foundry-splats-\d\.png)"/g)].map((match) => match[1]);
   assert.equal(stills.length, BEAT_STARTS.length);
   stills.forEach((still) => assert.ok(existsSync(new URL(`../public${still}`, import.meta.url)), `${still} is missing`));
+});
+
+test('the Pour note has a phone placement beside the stream for when the mould covers its corner', () => {
+  assert.match(landingPage, /<div class="callout" data-anchor="pour" data-aside data-from="0\.12" data-to="0\.31">/);
+  const landingStyles = readFileSync(new URL('../src/landing.css', import.meta.url), 'utf8');
+  assert.match(landingStyles, /\.landing \.callout\.aside \{[^}]*bottom: auto/);
+  const landingScript = readFileSync(new URL('../src/landing.js', import.meta.url), 'utf8');
+  assert.match(landingScript, /shown\.classList\.add\('aside'\)/);
+});
+
+test('the hero shows the first still as a poster until the live scene draws', () => {
+  assert.match(landingPage, /<div class="frame"><img class="poster" src="\/previews\/foundry-splats-0\.png"/);
+  const landingScript = readFileSync(new URL('../src/landing.js', import.meta.url), 'utf8');
+  assert.match(landingScript, /story\.classList\.add\('scene-live'\)/);
 });
 
 test('the page keeps the sections, release hooks and install paths of the old home page', () => {

@@ -1768,7 +1768,7 @@ A fog or fire sphere is judged by how soft its edge is, not only by its mean bri
 It reads headerless little-endian float32 files in linear light, row 0 at the top. To make them from Crucible's rasterizer, run these from the repository root (the capture is a light GPU job):
 
 ```sh
-bash ~/.agents/tools/gpu-lock.sh node bench/cycles-parity/capture-volume-edge.mjs --label after --output-folder artifacts/volume-edge
+node bench/cycles-parity/capture-volume-edge.mjs --label after --output-folder artifacts/volume-edge
 node bench/cycles-parity/linearize-display-floats.mjs --width 960 --height 540 artifacts/volume-edge/after-1.f32 artifacts/volume-edge/after-4.f32
 uv run --no-project --with numpy python bench/cycles-parity/edge-width.py --width 960 --height 540 --channels 3 --radius 174.79775107469544 artifacts/volume-edge/after-1-linear.f32 artifacts/volume-edge/after-4-linear.f32
 ```

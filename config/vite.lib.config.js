@@ -51,6 +51,7 @@ export default defineConfig({
         canvas2d: 'src/canvas2d.js',
         gltf: 'src/gltf.js',
         modeling: 'src/modeling.js',
+        'kinetic-text': 'src/kinetic-text.js',
         sculpt: 'src/sculpt.js',
         surface: 'src/surface.js',
         'mesh-query': 'src/mesh-query.js',
@@ -131,6 +132,7 @@ export default defineConfig({
         fracture: 'src/fracture.js',
         morph: 'src/morph.js',
         skinning: 'src/skinning.js',
+        studio: 'src/studio.js',
         // Page of the MCP preview. It imports the engine chunks above instead of bundling its own copy.
         'mcp/preview': 'scripts/agent-preview-browser.js',
       },

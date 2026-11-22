@@ -10,7 +10,7 @@ Release `0.7.0` adds [procedural motion](agent-motion.md), transient preview see
 Release `0.8.0` adds [imported character motion](agent-character-motion.md) with source joints and independent clip timing.
 Release `0.9.0` adds [visual review](agent-review.md) for several labeled views or poses from one isolated snapshot.
 
-This guide follows `main`, and the npm release can be older. A field, tool or behavior that the last release does not have carries a tag such as `{since 0.22.0}`: it needs that release or a later one, and an older server refuses it by name. `npx -y -p @codepawlhq/crucible crucible-mcp --version` prints the installed version. `npm run check:guide-fields` fails when this guide or the [game guide](game.md) names a field that is newer than the last release without the tag.
+This guide follows `main`, and the npm release can be older. A field, tool or behavior that the last release does not have carries a tag such as `{since 0.23.0}`: it needs that release or a later one, and an older server refuses it by name. `npx -y -p @codepawlhq/crucible crucible-mcp --version` prints the installed version. `npm run check:guide-fields` fails when this guide or the [game guide](game.md) names a field that is newer than the last release without the tag.
 
 To see what changed, including changes not yet released, read `https://crucible.codepawl.com/changelog.json`: `released` sections, `unreleased` entries and each entry's issue number and `breaking` flag.
 
@@ -63,6 +63,7 @@ Using Node directly also avoids shell-specific npm launcher behavior in MCP clie
 The memory guard of a render job or review follows `--memory`: the job fails when the Node process RSS passes max(512, memory + 128) MiB or the sampled browser heap passes max(256, two thirds of memory) MiB, so 384 and below keep the old 512 and 256 and a larger `--memory` raises both. A job on the native path tracer (`backend: "native"`) runs the Cook addon inside the Node process, so it gets an extra allowance on top of the Node limit: 640 MiB, plus 1 KiB per pixel, plus 2 MiB for each MiB of `--memory` (the 2 is a headroom choice, not a measurement), capped at 2048 MiB plus the same share of `--memory`. The error names the limit that tripped and, while `--memory` can still go up, the maximum for this machine.
 
 `--assets` selects an absolute directory containing GLB files.
+`--max-asset-bytes <bytes>` raises (or lowers) the 64 MiB limit on one GLB and on the assets of one call and scene, from 1048576 (1 MiB) to 268435456 (256 MiB). The default stays 64 MiB because a local Chrome test lost the preview page from 80 MiB; raise it only on a machine you control, for large scans such as Poly Haven trees. The limit error lists the three largest assets of the call with their sizes and suggests `gltf-transform simplify`, `gltf-transform meshopt` or smaller textures.
 The asset catalog reads regular files directly inside that directory, with limits of 64 files and 64 MiB per file. One call that places several assets, motion sources and sequence frames sends them to the preview page in one message, so their total is capped at 64 MiB too (`maxCombinedBytes`); grid files (`.67vg`) and look files count too. A call over it fails with an error that names the limit and the total, and the agent places the rest in later calls. The cap also holds for the whole scene: a render job loads every unique asset at once, so `scene_apply` refuses an add-node that would take the scene's unique assets (one asset placed many times counts once) past it, before the preview page loads anything. The scene's grid files count in that total, and a render job or review of a scene already over it fails with the same message before the preview page is handed over, so the page keeps its scene. The server adds up the file sizes first, so a refused call reads no file. Decoding takes 1,000,000 vertices, 4,096 parts and 1,024 joints at most; `scene_capabilities` reports every number under `assets`. They are lower than the `loadGltf` defaults (256 MiB, 8,000,000 vertices) because the server hands the whole file to the preview page as one base64 string, which crashed the page from 80 MiB in a local Chrome test. A file over a limit fails with an error that names the limit and the value it hit; a larger scene loads through `loadGltf` in code (see [gltf.md](gltf.md)). All limits live in `src/agent-asset-limits.js`.
 Asset IDs bind file contents through SHA-256. The `--assets` folder is looked at again (names, sizes and modification times only, no file is read) whenever `scene_asset_catalog` is called and whenever a recipe, edit or icon item names a GLB or image sequence by name, so a GLB, image or HDRI copied in during the session is listed by the next catalog call and can be placed by name without a restart. A removed file leaves the list, and a rewritten file is listed under its new ID. An ID already pinned in a scene keeps its bytes check: if that file changed on disk, the read fails and the scene needs the new ID. The same count and size limits apply on every look. Installed packs are still checked once per runtime.
 Catalog imports retain supported textures, skins, morphs and animation clips.
@@ -149,7 +150,7 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 | `scene_create` | `recipe` | Session ID, revision, inspection, and render status |
 | `scene_asset_catalog` | None | Configured catalog and content-bound GLB, image, `.hdr` (kind `environment`) and `.cube` (kind `look`) IDs; an ID goes in `environment.hdri` or `environment.look`, see [agent-look](agent-look.md#catalog-hdris-and-looks). A file over its limit (an `.hdr` over 8 MiB, a `.cube` over 4 MiB, an image over 1024 pixels a side or 64 MiB decoded, read from its header), or a GLB whose image is missing next to it (the reason says which file to copy), is left out and listed with a reason in `skipped`, so the other IDs still list. A folder of more than 256 consecutively numbered images is listed once under `sequences` (`name` such as `frame_####.png`, `first`, `last`, `frames`, `width`, `height`), and a material `map.sequence` names it with `catalog` instead of listing the frame IDs, see [agent-scene](agent-scene.md#image-sequence-maps) |
 | `scene_create_asset` | `recipe` using `crucible.asset` | Imported scene ID, revision, inspection and render status |
-| `scene_inspect` | `sessionId`, optional `ids`, `limit`, `includeBounds` | Compact node records and revision |
+| `scene_inspect` | `sessionId`, optional `ids`, `limit`, `includeBounds`, `profile` {since 0.23.0}, `profileFrames` {since 0.23.0} | Compact node records and revision; `profile: true` adds ms per frame, draw calls, triangles, texture bytes and the heaviest nodes |
 | `scene_apply` | `sessionId`, `expectedRevision`, `operations` | Updated revision, render status, results and diff |
 | `scene_walkmap` | `sessionId` or `assetId` (query a big catalog GLB), `min`, `max`, optional `cellSize`, `clearance`, `keepOut`, `streetY`, `includeCells` | Grid rows of `.` walkable, `x` blocked and `#` no surface, with counts; ground height and headroom per cell with `includeCells`. See [scene-query.md](scene-query.md) |
 | `mesh_inspect` | `sessionId`, optional `geometries` (up to 16 IDs) | Per geometry: polygon counts, face sizes, parts, face tags, bounds and lint problems with fixes |
@@ -157,7 +158,7 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 | `mesh_stack` | `sessionId`, `expectedRevision`, `geometry`, optional `stack`, `apply` | Updated revision, render status and the mesh report with per-node results |
 | `scene_look` | `sessionId`, optional `width`, `height`, `motionTime`, `labels` | PNG image and metadata |
 | `scene_ask_user` | `sessionId`, optional `prompt`, `maxMarks`, `timeoutSeconds`, `motionTime`, `reviewFile` | Opens the view in the browser, waits for Send, returns numbered marks with `partId`, `point`, `normal`, `note`, the camera and the marked PNG. With `reviewFile` it reads the marks a [review page](#review-link) saved instead (no browser, no image) |
-| `scene_review` | `sessionId`, `expectedRevision`, `shots` (each with an optional `branch`), optional `width`, `height`, `labels`, `response_format` | Labeled PNG grid and metadata from an isolated snapshot |
+| `scene_review` | `sessionId`, `expectedRevision`, `shots` (each with an optional `branch`) or `wedge` {since 0.23.0}, optional `width`, `height`, `labels`, `response_format` | Labeled PNG grid and metadata from an isolated snapshot |
 | `scene_checkpoint` | `sessionId` | Checkpoint ID, session ID, and revision |
 | `scene_restore` | `sessionId`, `expectedRevision`, and a `checkpointId`, a `revision` or a `branch` | Updated revision and render status |
 | `scene_release_checkpoint` | `sessionId`, `checkpointId` | Release confirmation |
@@ -218,7 +219,7 @@ A `mesh` geometry starts from one of the others as `base` and replays an edit lo
 Geometry fields remain flat inside each geometry record.
 Set operations use `set-node`, `set-material`, or `set-camera`, with fields directly on each command.
 
-`set-motion` accepts a complete motion record or `null` to clear it, or `removeTracks` selectors to drop some tracks {since 0.22.0}.
+`set-motion` accepts a complete motion record or `null` to clear it, or `removeTracks` selectors to drop some tracks.
 `scene_look` can seek procedural `motionTime` without changing revisions. Omission preserves the last preview pose.
 An explicit `null` restores the authored base pose. Release `0.8.0` also supports imported source-node motion.
 Imported clip sampling remains available through `set-animation`.
@@ -427,7 +428,7 @@ Run `node scripts/smoke-agent-topology.mjs` to inspect native GPU allocations du
 Its staging-budget failure must allocate no buffers and retain the previous rendered frame.
 Use `node scripts/smoke-agent-topology.mjs cpu` for software rendering. Both modes also verify recovery through a smaller CPU preview under a 32 MiB budget.
 
-Run `node scripts/smoke-agent-assets.mjs` for actual imported WALL-E and textured rig previews through CPU stdio tools.
+Run `node scripts/smoke-agent-assets.mjs` for actual imported microscope and textured rig previews through CPU stdio tools.
 The script checks content IDs, root edits, retained texture decoding, reverse animation sampling and exact checkpoint restoration.
 
 Run `node scripts/smoke-agent-motion.mjs` for procedural motion through actual CPU MCP previews and jobs.

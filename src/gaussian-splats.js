@@ -119,6 +119,23 @@ void main() {
   outputColor = vec4(color, 1.0);
 }`;
 
+// Soft splats blend without depth write, so a user pass or depth effect would read the background behind them (#2752). A second
+// colourless pass writes the depth of every fragment whose gaussian alpha reaches this level; the nearest one wins, so the
+// order of the splats does not matter.
+export const SPLAT_DEPTH_ALPHA_THRESHOLD = 0.5;
+const DEPTH_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
+uniform float alphaCut;
+in vec4 vertexColor;
+in vec2 vertexOffset;
+out vec4 outputColor;
+void main() {
+  float falloff = -dot(vertexOffset, vertexOffset);
+  if (falloff < -4.0) discard;
+  if (exp(falloff) * vertexColor.a < alphaCut) discard;
+  outputColor = vec4(0.0);
+}`;
+
 const UNIFORM_NAMES = ['splatData', 'modelView', 'projection', 'focal', 'viewport', 'hdrEnabled', 'exposure', 'alphaCut'];
 export const GAUSSIAN_SPLAT_SHADER_SOURCES = Object.freeze({ vertex: VERTEX_SOURCE, fragment: FRAGMENT_SOURCE, opaqueFragment: OPAQUE_FRAGMENT_SOURCE });
 
@@ -315,7 +332,7 @@ function createProgramInfo(context, fragmentSource, extraUniformNames = [], vert
 
 function createAttachment(renderer) {
   const context = renderer.context;
-  const attachment = { blended: createProgramInfo(context, FRAGMENT_SOURCE), opaque: null, palettePrograms: new Map(), outline: null, entries: new Set(), modelView: mat4.create(), original: null, disposeOriginal: null };
+  const attachment = { blended: createProgramInfo(context, FRAGMENT_SOURCE), opaque: null, depth: null, palettePrograms: new Map(), outline: null, entries: new Set(), modelView: mat4.create(), original: null, disposeOriginal: null };
   attachment.original = renderer.drawBlendBatches;
   attachment.disposeOriginal = renderer.dispose;
   renderer.drawBlendBatches = function drawBlendBatchesAndSplats(frame) {
@@ -340,6 +357,7 @@ function releaseAttachment(renderer, attachment) {
   attachment.entries.clear();
   renderer.context.deleteProgram(attachment.blended.program);
   if (attachment.opaque) renderer.context.deleteProgram(attachment.opaque.program);
+  if (attachment.depth) renderer.context.deleteProgram(attachment.depth.program);
   if (attachment.outline) renderer.context.deleteProgram(attachment.outline.program);
   for (const programInfo of attachment.palettePrograms.values()) renderer.context.deleteProgram(programInfo.program);
   renderer.drawBlendBatches = attachment.original;
@@ -383,6 +401,18 @@ function prepareOpaqueState(renderer, attachment, frame) {
   context.depthMask(true);
   context.disable(context.BLEND);
   useProgram(renderer, attachment.opaque, frame);
+}
+
+function drawBlendedDepth(renderer, attachment, blendedEntries, frame) {
+  const context = renderer.context;
+  attachment.depth ??= createProgramInfo(context, DEPTH_FRAGMENT_SOURCE);
+  context.depthMask(true);
+  context.colorMask(false, false, false, false);
+  context.disable(context.BLEND);
+  useProgram(renderer, attachment.depth, frame);
+  context.uniform1f(attachment.depth.uniforms.alphaCut, SPLAT_DEPTH_ALPHA_THRESHOLD);
+  for (const entry of blendedEntries) drawEntry(renderer, attachment, entry, attachment.depth);
+  context.colorMask(true, true, true, true);
 }
 
 function paletteProgramFor(renderer, attachment, palette) {
@@ -462,6 +492,7 @@ function drawEntries(renderer, attachment, frame) {
     prepareBlendedState(renderer, attachment, frame);
     const farToNear = blendedEntries.map(entry => ({ entry, distance: distanceToEye(entry.splats, frame.eye) })).sort((first, second) => second.distance - first.distance);
     for (const { entry } of farToNear) drawEntry(renderer, attachment, entry, attachment.blended);
+    drawBlendedDepth(renderer, attachment, blendedEntries, frame);
   }
   restoreState(renderer);
 }

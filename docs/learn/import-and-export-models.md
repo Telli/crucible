@@ -4,9 +4,9 @@ Crucible reads and writes GLB, the binary form of glTF 2.0. Blender, Maya, Sketc
 
 ## Load a GLB file
 
-`loadGltf(url)` returns an asset. `asset.parts` is a list of ordinary parts, ready for `CrucibleRenderer`. The example loads a robot from this site and frames it from its size.
+`loadGltf(url)` returns an asset. `asset.parts` is a list of ordinary parts, ready for `CrucibleRenderer`. The example loads a laboratory microscope from this site and frames it from its size.
 
-```js live poster=gltf-robot
+```js live poster=gltf-microscope
 import { CrucibleRenderer } from 'crucible';
 import { loadGltf } from 'crucible/addons/gltf';
 
@@ -30,7 +30,7 @@ function boundsOf(parts) {
 
 const canvas = document.querySelector('#scene');
 canvas.style.touchAction = 'none';
-const asset = await loadGltf('/wall-e.glb');
+const asset = await loadGltf('/sample-model.glb');
 const renderer = new CrucibleRenderer(canvas, asset.parts, { hdr: true });
 const { minimum, maximum } = boundsOf(asset.parts);
 const center = minimum.map((value, axis) => (value + maximum[axis]) / 2);

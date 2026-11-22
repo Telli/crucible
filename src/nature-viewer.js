@@ -1,5 +1,5 @@
+import './site-chrome.js';
 import './nature-style.css';
-import './brand.js';
 import { vec4 } from 'gl-matrix';
 import { CrucibleRenderer } from './renderer.js';
 import { createNatureWorld } from './nature.js';

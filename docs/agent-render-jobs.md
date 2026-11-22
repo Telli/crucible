@@ -70,10 +70,22 @@ editor is a non-goal of the engine (`docs/goal.md`), so there are no layers, ove
 | --- | --- |
 | `name` | 1 to 24 letters, digits, `-` or `_`, unique. Job metrics list shots by name with their start second. |
 | `duration` | 0.1 to 30 s. The timeline holds up to 64 shots and 60 s. |
+| `endAt` | A marker name (see below) in place of `duration`: the shot ends at that cue, so `duration` is the marker time minus the shot start. Both may be set only when they agree. |
 | `motionStart` | Second of the motion clock the shot starts at. Omitted, the shot reads the motion at its place on the timeline, so a non-looping motion must cover it. Only for recipes with motion, physics or cloth. |
 | `camera` | A partial camera (`eye`, `target`, `up`, `fov`, `near`, `far`) on top of the sampled camera. Omitted, the shot keeps the camera of the motion tracks. |
 | `focusDistance`, `blur` | Depth of field for this shot: focus distance 0.01 to 100000 m and blur 0 to 1. Each is optional and replaces the recipe `effects.depthOfField` value for the shot only, so a close-up can pull focus without a global setting. A seek into a shot gives the same bytes as the frame in a sequence. |
 | `dip` | 0.05 to 4 s. The previous shot fades to black over the first half and this one fades up over the second half. |
+
+### Markers
+
+The timeline names cue times in timeline seconds, so cuts can sit on the beat of a score you already have. `markers` is a list of `{ name, time }` (names as for shots, up to 256 markers, times 0 to 60 s). `beatGrid: { bpm, offset, count }` adds the markers `beat-0`, `beat-1` ... at `offset + index * 60 / bpm` seconds (`bpm` 1 to 400, `offset` default 0, `count` a whole number up to 256). A shot with `endAt` ends at its marker; the marker must lie after the shot start by the shot minimum and maximum. Crucible does not detect beats in an audio file: give it the bpm and offset, or the cue times.
+
+```json
+{ "timeline": { "beatGrid": { "bpm": 120, "count": 8 }, "shots": [
+  { "name": "wide", "endAt": "beat-2" },
+  { "name": "close", "endAt": "beat-4", "camera": { "fov": 30 } }
+] } }
+```
 
 `set-timeline` edits the section and `null` removes it. A job renders it with `settings.timeline: { start }` (default 0) for kind `image`, `stills` or `video`.
 `duration` defaults to the rest of the timeline. The timeline owns the motion clock, so `motion` and `animation` settings are rejected, and the renderer clock reads timeline time.
@@ -160,7 +172,7 @@ Videos hold the lit image only.
 A seek to any frame gives the same pixels: a job samples each frame from its time and keeps no state between frames.
 `npm run smoke:render-passes` proves it through MCP: it renders eight stills with every pass, then renders frame 3 again as an image in a different order of seeks and compares the bytes of the lit image and all five passes.
 
-### ID mattes {since 0.22.0}
+### ID mattes
 
 `settings.mattes` on an `image` or `stills` job writes one gray PNG per entry next to the lit image: `render-matte-<n>.png` (`frame-N-matte-<n>.png` for stills), where `<n>` is the entry's position. A pixel is white where the named part is drawn and black elsewhere.
 
@@ -168,7 +180,7 @@ A seek to any frame gives the same pixels: a job samples each frame from its tim
 { "kind": "image", "width": 1280, "height": 720, "mattes": [{ "object": "hero" }, { "material": "stone" }] }
 ```
 
-Each entry names exactly one `object` (a part name from `metrics.objectNames`) or one `material` (a name from `metrics.cryptomatte.materials`), up to 8 entries and 120 characters a name. An object matte is read from the exact 24-bit object ID, so a part that other parts overlap still gets its own clean edge. A material matte is read from the `cryptomatte` pass, whose hash has 255 values: two materials can share one, and then `metrics.mattes[n].sharedWith` lists the other names and the matte holds both. A name the scene does not have fails the job with the list of names it does have.
+Each entry names exactly one `object` (a part name from `metrics.objectNames`) or one `material` (a name from `metrics.cryptomatte.materials`), up to 8 entries and 120 characters a name. An object matte is read from the exact 24-bit object ID, so a part that other parts overlap still gets its own clean edge. A part with a `blend` material (tree leaves exported as BLEND) is in the ID passes too, drawn as a cutout where its alpha is at least 0.5, so its see-through texels leave the part behind it visible. A material matte is read from the `cryptomatte` pass, whose hash has 255 values: two materials can share one, and then `metrics.mattes[n].sharedWith` lists the other names and the matte holds both. A name the scene does not have fails the job with the list of names it does have.
 `metrics.mattes` holds `{ object, partIds, coveragePixels }` or `{ material, sharedWith?, coveragePixels }` for each entry, from the last frame. Mattes are 8-bit PNG: they need `format` png, no `multilayer` and no `renderer`, and they cost about one extra pass each in the job estimate.
 
 ### Combining pass pixels
@@ -206,7 +218,7 @@ Passes in these formats are drawn into half-float targets, so albedo, normal and
 The path tracer writes an 8-bit PNG of the whole frame: `transparent`, `format` and `region` are refused with `renderer`. H.264 has no alpha, so `transparent` and `format` are refused for video. 16-bit and EXR output need `EXT_color_buffer_float`; without it the job fails with a message that says to use `png`.
 A `png16` or `exr` frame is up to four times the 8-bit frame limit (48 MiB). A region with the browser H.264 encoder (`encoder: "nvenc"`) uses screenshot frames instead.
 
-## Icons {since 0.22.0}
+## Icons
 
 `kind: "icons"` renders a set of GLBs as matching transparent square icons in one job, for inventories, asset browsers and docs. It is a job kind of `scene_render_submit`, so status, result and release work as for any job. The scene you submit it with is not drawn (any open scene will do, for instance an empty one).
 
@@ -420,13 +432,13 @@ A job that traces on the native path tracer holds more in the Node process, beca
 | Duration | 0.1 to 60 seconds |
 | Maximum video frames | 900 |
 | Still frames | 8, or 2 to 300 with `settings.stillCount` |
-| Job elapsed deadline | 60 seconds plus 2 seconds per frame, multiplied for frames larger than 1024x576 (360 frames at 1024x576 get 13 minutes), never more than 30 minutes; it counts render time only and starts once the job has its turn and the scene page is handed over |
+| Job elapsed deadline | 60 seconds plus 2 seconds per frame, multiplied for frames larger than 1024x576 (360 frames at 1024x576 get 13 minutes), never more than 30 minutes; a video that has finished frames is held to 1.5 times its measured time per frame for all its frames instead when that is longer, so a heavy scene is not cut off at the 2 second guess; it counts render time only and starts once the job has its turn and the scene page is handed over |
 | Job queue wait | Five minutes behind other calls and the page handoff, counted apart from the elapsed deadline; the failure says "queue wait deadline" |
 | Video encoder drain and finalization | 30 seconds each |
 | Close settlement deadline | Five seconds |
 
 Handing the scene page to a job, or to a review, and bringing it back each get four times the ordinary 30 second call limit, 120 seconds, because a job that ran out of time usually shared the GPU with another process.
-A job that passes its elapsed deadline fails alone. Retry it once the card is free. If the scene page still does not come back within 120 seconds, the runtime is `failed`, and calls on the lost scene say so. The next `scene_create` starts a fresh runtime (a new browser, no scenes carried over) and the call after it works as usual; no server restart is needed.
+A job that passes its elapsed deadline fails alone, and the failure says how many frames it finished and about how many seconds a frame took, so a shorter clip can be sized from it. Retry it once the card is free. If the scene page still does not come back within 120 seconds, the runtime is `failed`, and calls on the lost scene say so. The next `scene_create` starts a fresh runtime (a new browser, no scenes carried over) and the call after it works as usual; no server restart is needed.
 Other calls (`scene_inspect`, `scene_apply`) queue behind that handoff, so after a deadline failure they can wait up to 120 seconds, and the job stays `cancelling` for that long.
 One server owns one `--jobs` folder. A second server given the same folder fails with "The job store is already owned by a live process", and the error says to start it with its own `--jobs` folder.
 

@@ -1,4 +1,5 @@
-import './home.js';
+import './site-chrome.js';
+import './site.css';
 import './documentation.css';
 import guide from '../docs/guide.md?raw';
 import { highlightCode } from './code-highlight.js';
@@ -427,4 +428,8 @@ search.addEventListener('input', () => {
   renderNavigation();
 });
 window.addEventListener('hashchange', () => openTopic(true));
+const openedWithoutAnchor = !location.hash;
 openTopic();
+// openTopic writes #introduction into the address, and the browser then scrolls to that section when the page finishes loading, past the
+// sidebar on a phone. A visit with no anchor starts at the top.
+if (openedWithoutAnchor) addEventListener('load', () => scrollTo({ top: 0 }), { once: true });

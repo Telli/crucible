@@ -1,5 +1,5 @@
 import { registerShaderFeatureCode, lightShapeSupport } from './shader-registry.js';
-import { MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
+import { MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS, POINT_LIGHT_SHADOW_TILES, shadowAtlasOverflowMessage } from './light-limits.js';
 // The same values as in lighting.js, which this module does not import so the core bundle keeps its own chunk layout.
 const NO_SHADOW_TILE = -1;
 const SPOT_FACE = -1;
@@ -131,6 +131,14 @@ function uploadProfileTable(renderer) {
   context.uniform1fv(tableLocations.get(renderer.program), profileTable);
 }
 
+// The shadowed lights of each kind that ask for a tile, for the atlas error. The point lights' tiles are what the spot and area lights leave of the casters taken so far.
+function countShadowedLights(state, spotLights, areaLights) {
+  const spotCount = spotLights.filter(light => light.castShadow).length;
+  const areaCount = areaLights.filter(light => light.castShadow).length;
+  const pointTiles = state.shadowCasters.filter(caster => caster.face !== SPOT_FACE).length;
+  return { pointLights: Math.round(pointTiles / POINT_LIGHT_SHADOW_TILES), spotLights: spotCount, areaLights: areaCount };
+}
+
 // Called by updateLightingState after the point, spot and area lights are written. A shadowed area light takes the
 // atlas tile after the spot lights' tiles; its position's w holds the tile, and the widest tile view looks along its emitting side.
 lightShapeSupport.update = (state, spotLights, areaLights) => {
@@ -139,7 +147,7 @@ lightShapeSupport.update = (state, spotLights, areaLights) => {
     if (light.castShadow !== undefined && typeof light.castShadow !== 'boolean') throw new TypeError('Area light castShadow must be true or false');
     state.areaPositions[index * 4 + 3] = NO_SHADOW_TILE;
     if (!light.castShadow) return;
-    if (state.shadowCasters.length >= SHADOW_ATLAS_TILES) throw new RangeError(`Shadow casting lights need more than the ${SHADOW_ATLAS_TILES} atlas tiles (a point light uses 6, a spot or area light one)`);
+    if (state.shadowCasters.length >= SHADOW_ATLAS_TILES) throw new RangeError(shadowAtlasOverflowMessage(countShadowedLights(state, spotLights, areaLights)));
     state.areaPositions[index * 4 + 3] = state.shadowCasters.length;
     const direction = state.areaNormals.slice(index * 4, index * 4 + 3);
     state.shadowCasters.push({ light: { position: light.position, direction, range: 0, angle: Math.PI / 2 - 0.01 }, face: SPOT_FACE });

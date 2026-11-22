@@ -148,14 +148,14 @@ try {
       report.interactions.push('Grouped docs, start pages, a running live example, old-link aliases, search, deep links and labeled syntax highlighting');
     }
     if (route === '/object.html') {
-      await page.locator('[data-view="face"]').click();
-      assert.equal(await page.evaluate(() => window.__studio.state.targetHeight),2.55);
+      await page.locator('[data-view="eyepiece"]').click();
+      assert.equal(await page.evaluate(() => window.__studio.state.targetHeight),3);
       await page.locator('#look').selectOption('warm');
-      await page.locator('[data-view="machine"]').click();
+      await page.locator('[data-view="parts"]').click();
       assert.equal(await page.evaluate(() => window.__studio.state.assembly),0.65);
       const download = page.waitForEvent('download');
       await page.locator('#save-model').click();
-      assert.equal((await download).suggestedFilename(),'crucible-wall-e.png');
+      assert.equal((await download).suggestedFilename(),'crucible-sample-model.png');
       await page.locator('#assembly-tour').click();
       assert.equal(await page.evaluate(() => window.__studio.state.touring),false);
       const graphics = await page.evaluate(() => window.__studio.renderer.context.getError());

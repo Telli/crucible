@@ -424,7 +424,6 @@
   "tests/volume-grid-sequence.test.js": 182,
   "tests/volume-grid.test.js": 226,
   "tests/volumetric.test.js": 134,
-  "tests/wall-e-preview-scene.test.js": 414,
   "tests/water-ocean-look.test.js": 521,
   "tests/water-reflection.test.js": 407,
   "tests/water-shadows-render.test.js": 343,

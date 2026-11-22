@@ -9,7 +9,7 @@ import { assertToolListMatchesServer } from './mcp-tool-list.mjs';
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 await mkdir('artifacts/asset-catalog-proof', { recursive: true });
-await writeFile('artifacts/asset-catalog-proof/wall-e.glb', await readFile('public/wall-e.glb'));
+await writeFile('artifacts/asset-catalog-proof/sample-model.glb', await readFile('public/sample-model.glb'));
 await writeFile('artifacts/asset-catalog-proof/textured-rig.glb', await createTexturedRigFixture());
 const transport = new StdioClientTransport({ command: process.execPath,
   args: [resolve('scripts/mcp-server.mjs'), '--backend', 'cpu', '--memory', '192', '--assets', resolve('artifacts/asset-catalog-proof')],
@@ -40,20 +40,20 @@ try {
   const catalog = (await call('scene_asset_catalog')).structuredContent;
   assert.equal(catalog.configured, true);
   assert.equal(catalog.assets.length, 2);
-  const robot = catalog.assets.find(asset => asset.name === 'wall-e.glb');
+  const robot = catalog.assets.find(asset => asset.name === 'sample-model.glb');
   const created = (await call('scene_create_asset', { recipe: { format: 'crucible.asset', schemaVersion: 1, assetId: robot.assetId } })).structuredContent;
   const sessionId = created.sessionId;
-  const before = await look(sessionId, 'wall-e-before');
+  const before = await look(sessionId, 'sample-before');
   const checkpoint = (await call('scene_checkpoint', { sessionId })).structuredContent;
   const edited = (await call('scene_apply', { sessionId, expectedRevision: 0, operations: [
     { type: 'set-root', rotation: [0, Math.sin(0.3), 0, Math.cos(0.3)] },
     { type: 'set-environment', environment: { keyColor: [2.8, 3.5, 5], fillIntensity: 0.4 } },
   ] })).structuredContent;
   assert.equal(edited.renderSucceeded, true);
-  const after = await look(sessionId, 'wall-e-after');
+  const after = await look(sessionId, 'sample-after');
   assert.notDeepEqual(after, before);
   await call('scene_restore', { sessionId, checkpointId: checkpoint.checkpointId, expectedRevision: 1 });
-  assert.deepEqual(await look(sessionId, 'wall-e-restored'), before);
+  assert.deepEqual(await look(sessionId, 'sample-restored'), before);
   const exported = (await call('scene_export_recipe', { sessionId })).structuredContent;
   assert.equal(exported.recipe.assetId, robot.assetId);
   await call('scene_dispose', { sessionId });
