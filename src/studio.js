@@ -9,6 +9,8 @@ import { CrucibleRenderer, studioFloorHeight } from './renderer.js';
 import { ProgramNotReady, isLinkComplete, setPreparing } from './gl-program.js';
 import { exportGlb } from './export.js';
 import { encodePack } from './scene-pack-format.js';
+import { checkImageBudget } from './scene-pack-limits.js';
+import { packedSkyOf } from './scene-pack-sky.js';
 import { encodePackOrRefuse } from './studio-pack-refusal.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
@@ -912,7 +914,7 @@ function buildPackReadyRecipe(recipe) {
     }
   }
   if (cloned.environment) {
-    for (const envField of ['sky', 'hdri', 'keyFromHdri', 'spotLights', 'areaLights', 'shadowCascades', 'sunAngularRadius', 'lines']) {
+    for (const envField of ['sky', 'spotLights', 'areaLights', 'shadowCascades', 'sunAngularRadius', 'lines']) {
       if (cloned.environment[envField] !== undefined) {
         delete cloned.environment[envField];
         stripped.push(`environment.${envField}`);
@@ -2547,10 +2549,12 @@ export function createStudio(container, {
         stripped.push(PACK_UNSUPPORTED_MODULES[moduleName]);
       }
     }
+    checkImageBudget(stillScene.parts);
     const packBytes = encodePackOrRefuse(encodePack, {
       shaderModules,
       camera: stillScene.camera,
       environment,
+      environmentMap: packedSkyOf(environment),
       effects: stillScene.effects,
       shadowBounds: resolveAgentShadow(fitAgentShadow(stillScene.shadow, stillScene.parts), environment.lightDirection),
       parts: stillScene.parts.map(part => ({

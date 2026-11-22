@@ -2,6 +2,7 @@ import './support/load-agent-scene-modules.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
+import { decodePack } from '../src/scene-pack-format.js';
 import { STUDIO_CSS } from '../src/studio-styles.js';
 import { createStudio, createStudioController, STUDIO_PRIMITIVES, STUDIO_TABS, STUDIO_TEMPLATES, STUDIO_TOOLS } from '../src/studio.js';
 import { LIGHTING_SETUP_NAMES } from '../src/agent-scene-capabilities.js';
@@ -3458,6 +3459,26 @@ test('the HDRI select loads the file before it writes the choice, and None clear
   assert.equal(ui.studio.exportRecipe().environment.hdri, undefined);
   assert.equal(ui.controller.undo(), true);
   assert.equal(ui.label('HDRI').value, 'sky-clouds', 'undo puts the choice back');
+});
+
+test('the web pack keeps the HDRI sky as an image, and still names a physical sky it leaves out', async testContext => {
+  const ui = mountStudio(testContext, { catalog: { environment: async () => tinyHdrBytes() } });
+  ui.tab('look').click();
+  const select = ui.label('HDRI');
+  select.value = 'sky-clouds';
+  dispatch(select, 'change');
+  await ui.dom.settle();
+  const payload = await ui.studio.buildWebPackPayload();
+  assert.deepEqual(payload.stripped, []);
+  const packed = decodePack(payload.packBytes);
+  assert.equal(packed.environment.hdri, 'sky-clouds');
+  assert.ok(packed.environmentMap.data instanceof Float32Array);
+  assert.deepEqual([packed.environmentMap.width, packed.environmentMap.height], [4, 2]);
+
+  const withSky = ui.studio.exportRecipe();
+  withSky.environment.sky = { type: 'physical', sunElevation: 30 };
+  await ui.studio.loadExternalTextFile(JSON.stringify(withSky), { filePath: null, agent: true });
+  assert.deepEqual((await ui.studio.buildWebPackPayload()).stripped, ['environment.sky']);
 });
 
 test('a catalog HDRI the list lacks shows as the current value', async testContext => {
