@@ -33,7 +33,7 @@ const ROTATION_RING_SEGMENTS = 32;
 const WORLD_BASIS = Object.freeze({ x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] });
 const AXIS_PARALLEL_LIMIT = 0.002;
 const OUTLINE_VERTEX_BUDGET = 4000;
-// Above this many triangles the selection falls back to the hull outline: the silhouette is redrawn on every camera move.
+// Above this many triangles the selection is outlined from a mask the graphics card draws: an SVG path of that many triangles costs seconds a frame.
 const SILHOUETTE_TRIANGLE_BUDGET = 8000;
 const RING_EDGE_ON_LIMIT = 0.12;
 const RING_RADIUS_FACTOR = 0.92;
@@ -1063,11 +1063,44 @@ export function createStudioController({
   }
 
   let silhouetteCache = { scene: null, key: '', triangles: null };
+  let selectionMembersCache = { scene: null, key: '', parts: [], triangleCount: 0 };
+
+  // The parts of the selected node and their triangle count, kept until the scene changes or the selection moves.
+  function selectionMembers() {
+    const key = `${currentScene.revision}|${selectedNodeId}`;
+    if (selectionMembersCache.scene !== currentScene || selectionMembersCache.key !== key) {
+      const memberIds = descendantIdsOf(currentScene.exportRecipe().nodes, selectedNodeId);
+      const parts = currentScene.parts.filter(part => ownsPart(memberIds, part) && part.matrix && part.geometry?.positions && part.geometry.indices?.length);
+      const triangleCount = parts.reduce((count, part) => count + part.geometry.indices.length / 3, 0);
+      selectionMembersCache = { scene: currentScene, key, parts, triangleCount };
+    }
+    return selectionMembersCache;
+  }
+
+  // For a selection past the triangle budget: its parts with the matrix that takes each one's own vertices to clip space,
+  // so the graphics card projects them and a part behind the camera is clipped by the card, not dropped. Null otherwise.
+  function selectionMaskSource() {
+    if (!selectedNodeId) {
+      return null;
+    }
+    const { parts, triangleCount } = selectionMembers();
+    if (triangleCount <= SILHOUETTE_TRIANGLE_BUDGET) {
+      return null;
+    }
+    const { viewProjection } = cameraMatrices(viewCamera(), width / height, Boolean(currentScene.environment?.world));
+    return {
+      parts: parts.map(part => ({
+        geometry: part.geometry,
+        modelViewProjection: mat4.multiply(new Float32Array(16), viewProjection, part.matrix),
+      })),
+    };
+  }
 
   // The selected object's triangles on screen, as a flat list of x, y pairs (six numbers a triangle), all wound the same
   // way so a filled drawing of them has no holes where a back face meets a front face. The viewport draws the edge of
   // that shape, which follows a star or a letter where the hull would cut across. Null when there is nothing to draw,
-  // or part of the object is behind the camera. An object with more triangles than the budget gets its hull instead.
+  // or part of the object is behind the camera. An object with more triangles than the budget has none: the viewport
+  // draws it from selectionMaskSource() instead, because a path of that many triangles costs seconds a frame.
   function selectionSilhouette() {
     if (!selectedNodeId) {
       return null;
@@ -1080,39 +1113,10 @@ export function createStudioController({
     return silhouetteCache.triangles;
   }
 
-  // A dense mesh, such as a scan, is too many triangles to outline one by one on every camera move. It gets the outline
-  // of its hull on screen instead: looser than its shape, but it shows what is selected.
-  function hullSilhouette() {
-    const corners = nodeOutline(selectedNodeId);
-    if (!corners || corners.length < 3) {
-      return null;
-    }
-    const triangles = [];
-    for (let corner = 1; corner < corners.length - 1; corner += 1) {
-      const first = corners[0];
-      let second = corners[corner];
-      let third = corners[corner + 1];
-      const signedArea = (second[0] - first[0]) * (third[1] - first[1]) - (third[0] - first[0]) * (second[1] - first[1]);
-      if (signedArea === 0) {
-        continue;
-      }
-      if (signedArea < 0) {
-        [second, third] = [third, second];
-      }
-      triangles.push(first[0], first[1], second[0], second[1], third[0], third[1]);
-    }
-    return triangles.length ? triangles : null;
-  }
-
   function computeSelectionSilhouette() {
-    const memberIds = descendantIdsOf(currentScene.exportRecipe().nodes, selectedNodeId);
-    const memberParts = currentScene.parts.filter(part => ownsPart(memberIds, part) && part.matrix && part.geometry?.positions && part.geometry.indices?.length);
-    const triangleCount = memberParts.reduce((count, part) => count + part.geometry.indices.length / 3, 0);
-    if (triangleCount === 0) {
+    const { parts: memberParts, triangleCount } = selectionMembers();
+    if (triangleCount === 0 || triangleCount > SILHOUETTE_TRIANGLE_BUDGET) {
       return null;
-    }
-    if (triangleCount > SILHOUETTE_TRIANGLE_BUDGET) {
-      return hullSilhouette();
     }
     const point = vec3.create();
     const triangles = [];
@@ -2383,6 +2387,7 @@ export function createStudioController({
     get interactionSettings() { return { moveSnapStep, rotateSnapDegrees, gizmoPixels }; },
     selectionOutline,
     selectionSilhouette,
+    selectionMaskSource,
     nodeOutline,
     nodeBounds,
     beginGizmoDrag,
