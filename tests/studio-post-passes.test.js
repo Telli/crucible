@@ -52,9 +52,31 @@ function createPassRenderer({ depth = true, canTakePasses = true } = {}) {
   return renderer;
 }
 
-function mountPassStudio(testContext, recipe, renderer = createPassRenderer()) {
+// A loader the test resolves or rejects when it chooses, standing in for the lazy render pass chunk.
+function createControlledLoader() {
+  const loader = { requested: 0 };
+  loader.load = () => {
+    loader.requested += 1;
+    return new Promise((resolve, reject) => {
+      loader.resolve = () => resolve({ installRenderPasses: installFakeRenderPasses });
+      loader.reject = reason => reject(reason);
+    });
+  };
+  return loader;
+}
+
+function installFakeRenderPasses(renderer) {
+  renderer.passSupport = {};
+  return renderer;
+}
+
+async function settle() {
+  await new Promise(resolve => setImmediate(resolve));
+}
+
+function mountPassStudio(testContext, recipe, renderer = createPassRenderer(), studioOptions = {}) {
   const dom = installStudioDom();
-  const studio = createStudio(dom.container, { recipe, renderer });
+  const studio = createStudio(dom.container, { recipe, renderer, ...studioOptions });
   testContext.after(() => {
     studio.dispose();
     dom.uninstall();
@@ -82,9 +104,10 @@ test('the passes of the recipe are set on the renderer, with the antialias mode'
   assert.ok(ui.renderer.frames.length > 0);
 });
 
-test('a pass with objects gets the object ID render before the frame', testContext => {
-  const objectPass = { name: 'edge', fragment: FOAM_FRAGMENT.replace('strength', '1.0'), objects: ['hero'] };
-  const ui = mountPassStudio(testContext, passRecipe([objectPass]));
+const OBJECT_PASS = { name: 'edge', fragment: FOAM_FRAGMENT.replace('strength', '1.0'), objects: ['hero'] };
+
+test('a pass with objects gets the object ID render before the frame, on a renderer that has render passes', testContext => {
+  const ui = mountPassStudio(testContext, passRecipe([OBJECT_PASS]), installFakeRenderPasses(createPassRenderer()));
   const frames = ui.renderer.frames;
   const objectFrameIndex = frames.findIndex(frame => frame.pass === 'objectId');
   assert.ok(objectFrameIndex >= 0, 'the object ID frame is drawn');
@@ -201,4 +224,56 @@ test('opening and saving a recipe leaves its post passes as the normalised input
 
   ui.studio.loadRecipe(JSON.parse(JSON.stringify(ui.studio.exportRecipe())));
   assert.deepEqual(ui.studio.exportRecipe().postPasses, expected, 'the saved text opens to the same passes');
+});
+
+test('a pass with objects waits quietly while the render pass code loads, then is drawn after the object ID render', async testContext => {
+  const loader = createControlledLoader();
+  const passes = [OBJECT_PASS, TWO_PASSES[0]];
+  const ui = mountPassStudio(testContext, passRecipe(passes), createPassRenderer(), { renderPassesLoader: loader.load });
+  assert.equal(loader.requested, 1);
+  assert.deepEqual(ui.renderer.userPasses.passes.map(pass => pass.name), ['foam'], 'the object pass is absent while loading');
+  assert.equal(ui.notice().hidden, true, 'loading is not a refusal');
+  assert.equal(ui.renderer.frames.some(frame => frame.pass === 'objectId'), false);
+
+  loader.resolve();
+  await settle();
+  assert.equal(ui.dom.pendingAnimationFrameCount, 1, 'a frame is requested once the code is in');
+  ui.renderer.frames.length = 0;
+  ui.dom.runAnimationFrames(100);
+  assert.deepEqual(ui.renderer.userPasses.passes.map(pass => pass.name), ['edge', 'foam']);
+  assert.equal(ui.notice().hidden, true);
+  assert.equal(ui.renderer.frames[0].pass, 'objectId', 'the object ID render comes first');
+  assert.equal(loader.requested, 1, 'the code is fetched once');
+});
+
+test('a render pass chunk that fails to load names the object passes and draws the others', async testContext => {
+  const loader = createControlledLoader();
+  const passes = [OBJECT_PASS, TWO_PASSES[0]];
+  const ui = mountPassStudio(testContext, passRecipe(passes), createPassRenderer(), { renderPassesLoader: loader.load });
+  loader.reject(new Error('network down'));
+  await settle();
+  ui.dom.runAnimationFrames(100);
+  assert.deepEqual(ui.noticeLines(), ['Post pass "edge" is not drawn here: the render pass code could not be loaded: network down']);
+  assert.deepEqual(ui.renderer.userPasses.passes.map(pass => pass.name), ['foam']);
+  assert.equal(ui.paused().hidden, true);
+});
+
+test('an object ID render that throws never pauses the picture: the object passes are named and the rest draw', testContext => {
+  const renderer = installFakeRenderPasses(createPassRenderer());
+  const render = renderer.render;
+  renderer.render = frame => {
+    if (frame.pass === 'objectId') {
+      throw new Error('Render passes need installRenderPasses(renderer)\nsecond line');
+    }
+    render(frame);
+  };
+  const passes = [OBJECT_PASS, TWO_PASSES[0]];
+  const ui = mountPassStudio(testContext, passRecipe(passes), renderer);
+  assert.equal(ui.paused().hidden, true);
+  assert.deepEqual(ui.noticeLines(), ['Post pass "edge" is not drawn here: the object ID render failed here: Render passes need installRenderPasses(renderer)']);
+  assert.deepEqual(ui.renderer.userPasses.passes.map(pass => pass.name), ['foam']);
+  assert.ok(ui.renderer.frames.length > 0, 'the frame still draws');
+  const framesBefore = ui.renderer.frames.length;
+  ui.studio.renderNow();
+  assert.equal(ui.renderer.frames.length, framesBefore + 1, 'one frame, with no object ID render tried again');
 });

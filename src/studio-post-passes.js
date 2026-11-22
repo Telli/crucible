@@ -31,6 +31,10 @@ function firstReasonLine(message) {
   return reasonLines.map(line => line.trim()).find(line => line !== '') ?? 'it did not compile';
 }
 
+function firstLine(message) {
+  return String(message ?? '').split('\n').map(line => line.trim()).find(line => line !== '') ?? 'no reason given';
+}
+
 function whyRendererCannotRun(renderer) {
   if (!agentSceneModuleLoaded('userPass')) {
     return 'the post pass code is not loaded';
@@ -43,10 +47,55 @@ function whyRendererCannotRun(renderer) {
  * to the renderer once per change. `userPasses.set` compares a JSON copy on every call, so a frame that changed nothing
  * must not reach it.
  */
-export function createPostPassPlanner() {
+export function createPostPassPlanner({ loadRenderPasses = () => import('./render-passes.js'), requestFrame = () => {} } = {}) {
   // Keyed by fragment text: a fixed pass is tried again, an unchanged broken one is not.
   const refusedByFragment = new Map();
   const resolvedByRenderer = new WeakMap();
+  // Why the object ID render failed on a renderer; every pass with `objects` waits on that render.
+  const objectRefusalByRenderer = new WeakMap();
+  // A pass with `objects` reads the object ID pass, which only a renderer with render passes installed can draw. The code
+  // is a lazy chunk, fetched the first time a scene needs it.
+  const renderPassesLoad = { state: 'idle', installRenderPasses: null, reason: '' };
+
+  function startRenderPassesLoad() {
+    renderPassesLoad.state = 'loading';
+    new Promise(resolve => resolve(loadRenderPasses()))
+      .then(module => {
+        renderPassesLoad.installRenderPasses = module.installRenderPasses;
+        renderPassesLoad.state = 'loaded';
+      })
+      .catch(error => {
+        renderPassesLoad.reason = `the render pass code could not be loaded: ${firstLine(error?.message)}`;
+        renderPassesLoad.state = 'failed';
+      })
+      .then(requestFrame);
+  }
+
+  // Says why an object pass cannot draw now: nothing while the code loads, a reason when it cannot run on this renderer.
+  function objectPassBlock(renderer) {
+    const refusal = objectRefusalByRenderer.get(renderer);
+    if (refusal) {
+      return { reason: refusal };
+    }
+    if (renderer.passSupport) {
+      return null;
+    }
+    if (renderPassesLoad.state === 'idle') {
+      startRenderPassesLoad();
+    }
+    if (renderPassesLoad.state === 'loading') {
+      return { loading: true };
+    }
+    if (renderPassesLoad.state === 'failed') {
+      return { reason: renderPassesLoad.reason };
+    }
+    try {
+      renderPassesLoad.installRenderPasses(renderer);
+    } catch (error) {
+      return { reason: `this renderer cannot take render passes: ${firstLine(error?.message)}` };
+    }
+    return null;
+  }
 
   function resolve(renderer, scene) {
     const canTake = Boolean(renderer.userPasses);
@@ -55,7 +104,9 @@ export function createPostPassPlanner() {
       && cached.scene === scene
       && cached.revision === scene.revision
       && cached.refusedCount === refusedByFragment.size
-      && cached.canTake === canTake;
+      && cached.canTake === canTake
+      && cached.renderPassesState === renderPassesLoad.state
+      && cached.objectRefusal === objectRefusalByRenderer.get(renderer);
     if (unchanged) {
       return cached;
     }
@@ -71,7 +122,12 @@ export function createPostPassPlanner() {
       } else if (!renderer.depth && READS_SCENE_DEPTH.test(pass.fragment)) {
         notDrawn.push({ name: pass.name, reason: 'it reads the scene depth and this renderer has none' });
       } else {
-        drawn.push(pass);
+        const block = pass.objects ? objectPassBlock(renderer) : null;
+        if (!block) {
+          drawn.push(pass);
+        } else if (!block.loading) {
+          notDrawn.push({ name: pass.name, reason: block.reason });
+        }
       }
     }
     const resolved = {
@@ -79,6 +135,8 @@ export function createPostPassPlanner() {
       revision: scene.revision,
       refusedCount: refusedByFragment.size,
       canTake,
+      renderPassesState: renderPassesLoad.state,
+      objectRefusal: objectRefusalByRenderer.get(renderer),
       drawn,
       notDrawn,
       needsObjectIds: drawn.some(pass => pass.objects),
@@ -105,7 +163,19 @@ export function createPostPassPlanner() {
     return true;
   }
 
-  return { resolve, refuseFailedPass };
+  /**
+   * Remembers that the object ID render failed on this renderer, so every pass with `objects` stops being drawn and is named.
+   * Answers false when it was already refused, so the caller lets the error through.
+   */
+  function refuseObjectPasses(renderer, error) {
+    if (objectRefusalByRenderer.has(renderer)) {
+      return false;
+    }
+    objectRefusalByRenderer.set(renderer, `the object ID render failed here: ${firstLine(error?.message)}`);
+    return true;
+  }
+
+  return { resolve, refuseFailedPass, refuseObjectPasses };
 }
 
 /**

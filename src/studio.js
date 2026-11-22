@@ -993,6 +993,8 @@ export function createStudio(container, {
   canvas: suppliedCanvas,
   renderer: suppliedRenderer,
   rendererOptions = {},
+  // Fetches the render pass code a post pass with `objects` needs; tests pass their own to control when it arrives.
+  renderPassesLoader = undefined,
   desktop = null,
   fileName: initialFileName = 'untitled.scene.json',
   homeHref = null,
@@ -1744,7 +1746,7 @@ export function createStudio(container, {
     createIcon: iconName => createIcon(documentReference, iconName),
     reload: () => documentReference.defaultView?.location?.reload?.(),
   });
-  const postPassPlanner = createPostPassPlanner();
+  const postPassPlanner = createPostPassPlanner({ loadRenderPasses: renderPassesLoader, requestFrame: () => requestFrame() });
   const postPassNotice = createPostPassNotice({
     documentReference,
     createIcon: iconName => createIcon(documentReference, iconName),
@@ -2858,15 +2860,22 @@ export function createStudio(container, {
   function renderWithPostPasses(activeRenderer, frame) {
     while (true) {
       const plan = postPassPlanner.resolve(activeRenderer, controller.scene);
+      let drawingObjectIds = false;
       try {
         if (plan.needsObjectIds) {
+          drawingObjectIds = true;
           activeRenderer.render({ ...frame, pass: 'objectId', previousCamera: undefined });
+          drawingObjectIds = false;
         }
         activeRenderer.render(frame);
         postPassNotice.show(plan.notDrawn);
         return;
       } catch (error) {
-        if (!postPassPlanner.refuseFailedPass(error, controller.scene)) {
+        // A frame that is still linking its programs must reach the caller untouched.
+        const refused = !(error instanceof ProgramNotReady)
+          && (postPassPlanner.refuseFailedPass(error, controller.scene)
+            || (drawingObjectIds && postPassPlanner.refuseObjectPasses(activeRenderer, error)));
+        if (!refused) {
           throw error;
         }
       }
