@@ -21,8 +21,8 @@ import sharp from 'sharp';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import {
-  DEFAULT_LEVEL_MARGIN, DEFAULT_SEED, PRESET_NAMES, fieldOfViewForHeightFraction, formatProofTable, levelCameraEye, levelProbes,
-  measureTreeLevels, treeExtent,
+  DEFAULT_LEVEL_MARGIN, DEFAULT_SEED, PRESET_NAMES, fitFraming, formatProofTable, growTree, levelBounds, levelCameraEye, levelProbes,
+  measureTreeLevels,
 } from './tree-proof-lib.mjs';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -71,10 +71,10 @@ async function readCredits(referenceFolder, preset) {
   return { ...credits, photoPath: join(referenceFolder, preset, credits.file) };
 }
 
-function buildRecipe({ preset, seed, extent, distance, heightFraction }) {
-  const eye = levelCameraEye({ treeHeight: extent.height, distance });
-  const target = [0, extent.height / 2, 0];
-  const fov = fieldOfViewForHeightFraction({ treeHeight: extent.height, distance, heightFraction });
+function buildRecipe({ preset, seed, bounds, shadowHeight, distance, heightFraction, aspect }) {
+  const { fov, centerX, centerY } = fitFraming({ bounds, aspect, photoFraction: heightFraction, distance });
+  const eye = levelCameraEye({ centerX, centerY, distance });
+  const target = [centerX, centerY, 0];
   return {
     format: 'crucible.scene',
     schemaVersion: 1,
@@ -87,7 +87,7 @@ function buildRecipe({ preset, seed, extent, distance, heightFraction }) {
     camera: { eye, target, fov },
     environment: { world: true, lightDirection: SUN_DIRECTION },
     // The default shadow view is 3.5 m wide; this one covers the crown and its shadow on the ground.
-    shadow: { target, extent: extent.height * 1.6, distance: extent.height * 3, far: extent.height * 8 },
+    shadow: { target: [0, shadowHeight / 2, 0], extent: shadowHeight * 1.6, distance: shadowHeight * 3, far: shadowHeight * 8 },
   };
 }
 
@@ -134,14 +134,14 @@ function labelBuffer(text, width) {
   return Buffer.from(`<svg width="${width}" height="${SHEET_LABEL_HEIGHT}"><rect width="100%" height="100%" fill="#111"/><text x="6" y="16" font-family="Arial" font-size="13" fill="#fff">${safeText}</text></svg>`);
 }
 
-async function composeRow({ credits, plans, rowTop }) {
+async function composeRow({ preset, credits, plans, rowTop }) {
   const cells = [];
   if (credits && existsSync(credits.photoPath)) {
-    cells.push({ label: `photo ${credits.licence}, ${credits.author?.slice(0, 22) ?? ''}`, path: credits.photoPath });
+    cells.push({ label: `${preset}: photo ${credits.licence}, ${credits.author?.slice(0, 22) ?? ''}`, path: credits.photoPath });
   } else {
-    cells.push({ label: 'photo missing', path: null });
+    cells.push({ label: `${preset}: photo missing`, path: null });
   }
-  for (const plan of plans) cells.push({ label: `level ${plan.level}, ${plan.distance.toFixed(1)} m`, path: plan.stillPath });
+  for (const plan of plans) cells.push({ label: `${preset} level ${plan.level}, ${plan.distance.toFixed(1)} m`, path: plan.stillPath });
   const composites = [];
   for (let column = 0; column < cells.length; column++) {
     const left = column * SHEET_CELL_WIDTH;
@@ -156,14 +156,14 @@ async function composeRow({ credits, plans, rowTop }) {
 async function writeSheets({ presetResults, outputFolder }) {
   const rowHeight = SHEET_CELL_HEIGHT + SHEET_LABEL_HEIGHT;
   const rows = [];
-  for (const result of presetResults) rows.push(await composeRow({ credits: result.credits, plans: result.plans, rowTop: 0 }));
+  for (const result of presetResults) rows.push(await composeRow({ preset: result.preset, credits: result.credits, plans: result.plans, rowTop: 0 }));
   const width = Math.max(...rows.map(row => row.width));
   for (let index = 0; index < rows.length; index++) {
     await sharp({ create: { width, height: rowHeight, channels: 3, background: '#000' } }).composite(rows[index].composites).jpeg({ quality: 86 }).toFile(join(outputFolder, `sheet-${presetResults[index].preset}.jpg`));
   }
   const stacked = [];
   for (let index = 0; index < presetResults.length; index++) {
-    const row = await composeRow({ credits: presetResults[index].credits, plans: presetResults[index].plans, rowTop: index * rowHeight });
+    const row = await composeRow({ preset: presetResults[index].preset, credits: presetResults[index].credits, plans: presetResults[index].plans, rowTop: index * rowHeight });
     stacked.push(...row.composites);
   }
   const sheetPath = join(outputFolder, 'sheet.jpg');
@@ -182,11 +182,12 @@ async function main() {
   for (const preset of options.presets) {
     rows.push(...measureTreeLevels({ preset, seed: options.seed }));
     const credits = await readCredits(referenceFolder, preset);
-    const extent = treeExtent({ preset, seed: options.seed });
+    const tree = growTree({ preset, seed: options.seed });
+    const shadowHeight = tree.bounds.maximum[1] - tree.bounds.minimum[1];
     const heightFraction = credits?.treeHeightFraction ?? FALLBACK_HEIGHT_FRACTION;
     await mkdir(join(outputFolder, preset), { recursive: true });
     const plans = probes.map((probe) => {
-      const recipe = buildRecipe({ preset, seed: options.seed, extent, distance: probe.distance, heightFraction });
+      const recipe = buildRecipe({ preset, seed: options.seed, bounds: levelBounds(tree, probe.level), shadowHeight, distance: probe.distance, heightFraction, aspect: options.width / options.height });
       const name = `${preset}-level${probe.level}-${probe.distance.toFixed(1)}m`;
       return {
         name, level: probe.level, distance: probe.distance, recipe,

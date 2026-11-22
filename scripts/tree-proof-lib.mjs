@@ -91,18 +91,49 @@ export function paintedLeafLengthCentimeters({ texture, cardHeightMeters, leafSc
   return pixels.map(length => length / LEAF_TEXTURE_PIXELS * cardHeightMeters * leafScale * 100);
 }
 
-/** The vertical field of view in degrees that makes a tree `treeHeight` meters tall fill `heightFraction` of the picture from `distance` meters. */
-export function fieldOfViewForHeightFraction({ treeHeight, distance, heightFraction }) {
-  if (!(treeHeight > 0) || !(distance > 0)) throw new RangeError('treeHeight and distance must be positive numbers of meters');
-  if (!(heightFraction > 0 && heightFraction <= 1)) throw new RangeError('heightFraction must be above 0 and at most 1, such as 0.85');
-  return 2 * Math.atan(treeHeight / heightFraction / 2 / distance) * 180 / Math.PI;
+/** The camera eye of a level camera `distance` meters (straight line) from the tree base, at height `centerY` and sideways position `centerX`. */
+export function levelCameraEye({ centerY, centerX = 0, distance }) {
+  const depthSquared = distance * distance - centerY * centerY - centerX * centerX;
+  if (!(depthSquared > 0)) throw new RangeError(`distance must be above ${Math.hypot(centerX, centerY)} m, the distance to the middle of the tree; pass a larger distance`);
+  return [centerX, centerY, Math.sqrt(depthSquared)];
 }
 
-/** The camera eye of a level camera `distance` meters (straight line) from the tree base, looking at the middle of the tree. */
-export function levelCameraEye({ treeHeight, distance }) {
-  const middle = treeHeight / 2;
-  if (!(distance > middle)) throw new RangeError(`distance must be above half the tree height (${middle} m); pass a larger distance`);
-  return [0, middle, Math.sqrt(distance * distance - middle * middle)];
+/** The axis-aligned bounds of every part of `tree` at `level`: `{ minimum, maximum }` in meters. */
+export function levelBounds(tree, level) {
+  const minimum = [Infinity, Infinity, Infinity];
+  const maximum = [-Infinity, -Infinity, -Infinity];
+  for (const part of tree.levels[level].parts) {
+    const { positions } = part.geometry;
+    for (let index = 0; index < positions.length; index += 3) {
+      for (let axis = 0; axis < 3; axis++) {
+        minimum[axis] = Math.min(minimum[axis], positions[index + axis]);
+        maximum[axis] = Math.max(maximum[axis], positions[index + axis]);
+      }
+    }
+  }
+  return { minimum, maximum };
+}
+
+/**
+ * A level camera that keeps the whole tree in the picture: the field of view (degrees), the middle of the tree and the
+ * visible height. The tree fills `photoFraction` of the picture height like the photo's tree, but never more than `margin`
+ * of the height or of the width (`aspect` is width over height), so the base and the crown are always inside.
+ */
+export function fitFraming({ bounds, aspect, photoFraction, distance, margin = 0.9 }) {
+  const width = Math.max(bounds.maximum[0] - bounds.minimum[0], bounds.maximum[2] - bounds.minimum[2]);
+  const height = bounds.maximum[1] - bounds.minimum[1];
+  const visibleHeight = Math.max(height / photoFraction, height / margin, width / (aspect * margin));
+  return {
+    fov: 2 * Math.atan(visibleHeight / 2 / distance) * 180 / Math.PI,
+    centerX: (bounds.minimum[0] + bounds.maximum[0]) / 2,
+    centerY: (bounds.minimum[1] + bounds.maximum[1]) / 2,
+    visibleHeight,
+  };
+}
+
+/** The tree the proof measures and renders (the same seed the recipe grows). */
+export function growTree({ preset, seed = DEFAULT_SEED }) {
+  return createTree({ preset }, seed);
 }
 
 function trianglesOf(parts, role) {
@@ -149,12 +180,6 @@ export function measureTreeLevels({ preset, seed = DEFAULT_SEED, height, frameSi
       leafCentimeters: paintsLeaves ? paintedLeafLengthCentimeters({ texture: leaf.texture, cardHeightMeters: leaf.cardSize[1], leafScale: setting.leafScale }) : null,
     };
   });
-}
-
-/** The tree itself (height of the model and its trunk-to-crown extent in meters), for framing. */
-export function treeExtent({ preset, seed = DEFAULT_SEED, height }) {
-  const tree = createTree({ preset, ...(height === undefined ? {} : { height }) }, seed);
-  return { height: tree.bounds.maximum[1] - tree.bounds.minimum[1], baseY: tree.bounds.minimum[1], requestedHeight: tree.height };
 }
 
 /** The measured rows as aligned text, one line per preset level. */
