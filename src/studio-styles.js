@@ -1551,6 +1551,13 @@ export const STUDIO_CSS = `
 .crucible-studio-properties [data-driven="true"] input { color: var(--studio-muted); }
 .crucible-studio-properties [data-driven="true"] :is(button, svg.crucible-studio-sunpad) { opacity: 0.6; }
 .crucible-studio-properties [data-driven="true"] .crucible-studio-driven-mark { opacity: 1; }
+.crucible-studio-field-head .crucible-studio-driven-mark[hidden] { display: none; }
+.crucible-studio-field[data-driven="true"] input { color: var(--studio-muted); }
+.crucible-studio-field-head > span:has(> .crucible-studio-driven-mark) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .crucible-studio-sunpad {
   width: 120px;
   height: 120px;

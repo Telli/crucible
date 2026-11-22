@@ -3233,10 +3233,27 @@ export function createStudio(container, {
     outlinerTree.style.setProperty('--studio-tree-row-size', `${stretchedRowSize}px`);
   }
 
+  // A locked row says so with the keyframe mark beside its title, the mark the property panel puts on a driven field.
+  const lockedRowMarks = new Map();
+  function lockedRowMark(row) {
+    if (!lockedRowMarks.has(row)) {
+      const mark = createElement(documentReference, 'span', {
+        className: 'crucible-studio-driven-mark',
+        attributes: { role: 'img', 'aria-label': 'Animated by a track' },
+      }, createIcon(documentReference, 'keyframe'));
+      row.container.querySelector('.crucible-studio-field-head').firstElementChild.append(mark);
+      lockedRowMarks.set(row, mark);
+    }
+    return lockedRowMarks.get(row);
+  }
+
   function setRowLockedByTrack(row, lockedByTrack) {
     row.setDisabled(lockedByTrack);
     row.container.dataset.driven = lockedByTrack ? 'true' : 'false';
     row.container.title = lockedByTrack ? 'Animated by a track. Turn on Auto-key to edit.' : '';
+    if (lockedByTrack || lockedRowMarks.has(row)) {
+      lockedRowMark(row).hidden = !lockedByTrack;
+    }
   }
 
   function syncUi() {

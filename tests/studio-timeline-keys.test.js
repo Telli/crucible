@@ -247,7 +247,14 @@ test('a keyed object’s fields are editable with Auto-key on and locked with it
 
   ui.controller.setAutoKey(false);
   assert.equal(ui.positionField('X').disabled, true);
-  assert.equal(ui.positionField('X').parentNode.parentNode.parentNode.title, 'Animated by a track. Turn on Auto-key to edit.');
+  const lockedRow = ui.positionField('X').parentNode.parentNode.parentNode;
+  assert.equal(lockedRow.title, 'Animated by a track. Turn on Auto-key to edit.');
+  const lockedMark = lockedRow.querySelector('.crucible-studio-driven-mark');
+  assert.equal(lockedMark.hidden, false, 'a locked row carries the keyframe mark');
+  assert.equal(lockedMark.getAttribute('aria-label'), 'Animated by a track');
+  ui.controller.setAutoKey(true);
+  assert.equal(lockedMark.hidden, true, 'the mark leaves when the row unlocks');
+  ui.controller.setAutoKey(false);
   ui.controller.selectNode('orb');
   assert.equal(ui.positionField('X').disabled, false, 'an object with no track is never locked');
 });
