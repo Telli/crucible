@@ -1,0 +1,3 @@
+- entry:update-part-vertices: it now also rewrites sky visibility and triangle indices, which a sea needs to be updated in place instead of rebuilt each frame.
+- scene:agent-scene: it keeps a live copy of each ocean-time sea and rewrites it per frame; this is what removes the per-frame mesh swap.
+- scene:agent-scene+lazy: the same agent-scene code.

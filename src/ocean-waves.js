@@ -188,8 +188,8 @@ function latticeStep(waves, indexOf, valueOf, reach) {
   return farthest && reach > 0 ? valueOf(farthest) / indexOf(farthest) : 0;
 }
 
-/** Per-call tables for evaluating `waves` at many rest points at one time: wave constants, lattice tables and the time terms. With `foamMemory > 0` it also holds the time terms of the earlier moments that oceanBatchFoamWithMemory reads. */
-export function prepareOceanBatch(waves, time, choppiness, foamMemory = 0) {
+/** Per-call tables for evaluating `waves` at many rest points at one time: wave constants, lattice tables and the time terms. With `foamMemory > 0` it also holds the time terms of the earlier moments that oceanBatchFoamWithMemory reads. With `withVelocity` false, oceanBatchSurface leaves `riseSpeed`, `driftX` and `driftZ` at 0 and skips their sums; every other field is the same. */
+export function prepareOceanBatch(waves, time, choppiness, foamMemory = 0, withVelocity = true) {
   const waveCount = waves.length;
   const columnReach = latticeReach(waves, (wave) => wave.column);
   const rowReach = latticeReach(waves, (wave) => wave.row);
@@ -219,6 +219,7 @@ export function prepareOceanBatch(waves, time, choppiness, foamMemory = 0) {
     moments: [],
     now: null,
     foamMemory,
+    withVelocity,
   };
   for (let index = 0; index < waveCount; index++) {
     const wave = waves[index];
@@ -278,6 +279,7 @@ export function oceanBatchSurface(batch, result, foamThreshold = -Infinity) {
   const { amplitude, amplitudeFrequency, moveX: moveXCoefficient, moveZ: moveZCoefficient, driftX: driftXCoefficient, driftZ: driftZCoefficient } = batch;
   const { slopeXX, slopeZZ, slopeXZ } = batch;
   const { sine: phaseSine, cosine: phaseCosine } = batch.now;
+  const { withVelocity } = batch;
   let height = 0;
   let moveX = 0;
   let moveZ = 0;
@@ -295,9 +297,11 @@ export function oceanBatchSurface(batch, result, foamThreshold = -Infinity) {
     const sine = spatialSine * phaseCosine[index] + spatialCosine * phaseSine[index];
     const cosine = spatialCosine * phaseCosine[index] - spatialSine * phaseSine[index];
     height += amplitude[index] * cosine;
-    riseSpeed += amplitudeFrequency[index] * sine;
-    driftX += driftXCoefficient[index] * cosine;
-    driftZ += driftZCoefficient[index] * cosine;
+    if (withVelocity) {
+      riseSpeed += amplitudeFrequency[index] * sine;
+      driftX += driftXCoefficient[index] * cosine;
+      driftZ += driftZCoefficient[index] * cosine;
+    }
     moveX -= moveXCoefficient[index] * sine;
     moveZ -= moveZCoefficient[index] * sine;
     squeezeXX -= slopeXX[index] * cosine;
