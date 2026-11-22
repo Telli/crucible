@@ -129,7 +129,7 @@ test('staggerNodeTracks says what to pass for bad input and for the motion limit
   const nodes = splitText('AB', { id: 'title' }).nodes;
   const valid = { property: 'translation', keyframes: RISE, offset: 0.1 };
   assert.throws(() => staggerNodeTracks([], valid), /at least one node/);
-  assert.throws(() => staggerNodeTracks(nodes, { ...valid, property: 'opacity' }), /property must be one of translation, rotation, scale, visible/);
+  assert.throws(() => staggerNodeTracks(nodes, { ...valid, property: 'glow' }), /property must be one of translation, rotation, scale, visible, opacity/);
   assert.throws(() => staggerNodeTracks(nodes, { ...valid, offset: -1 }), /offset must be a finite number of seconds from 0/);
   assert.throws(() => staggerNodeTracks(nodes, { ...valid, order: 'spiral' }), /order must be one of forward, reverse, center, random/);
   assert.throws(() => staggerNodeTracks(nodes, { ...valid, seed: 1.5 }), /seed/);

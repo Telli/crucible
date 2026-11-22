@@ -1380,6 +1380,7 @@ function motionBakeSource(stagedState) {
 function stagePose(stagedState, time) {
   const sampled = time === null ? null : stagedState.motionSampler?.sample(time);
   const hiddenNodes = hiddenNodeIds(stagedState.recipe, sampled);
+  const opacities = sampledOpacities(stagedState.recipe, stagedState.fadedNodeIds, sampled);
   const simulated = simulatedPose(stagedState, time);
   const graph = stagedState.poseGraph ?? stagedState.graph;
   if (stagedState.poseGraph) {
@@ -1420,7 +1421,7 @@ function stagePose(stagedState, time) {
   // Staged last: a pose pending on a decoded asset must be committed or discarded, so nothing above may throw after it.
   const assetClips = stagedState.assetRuntime.animators.length ? agentSceneModule('assets').stageAssetClips(stagedState.assetRuntime, graph, time) : null;
   const movedLook = stagedState.motionSampler && agentSceneModule('motion').motionMovesLook(sampled) ? sampled : null;
-  return { graph, materialUpdates, camera, time, clothGeometries, assetClips, hiddenNodes, movedLook, morphs: sampled?.morphs ?? null };
+  return { graph, materialUpdates, camera, time, clothGeometries, assetClips, hiddenNodes, opacities, movedLook, morphs: sampled?.morphs ?? null };
 }
 
 /** A mesh stack built with every ocean node's `time` set to `oceanTime`: the sea the renderer draws at that moment of an oceanTime track. */
@@ -1485,12 +1486,63 @@ function sameRayVisibility(first, second) {
   return JSON.stringify(first ?? null) === JSON.stringify(second ?? null);
 }
 
-function sameRenderFlags(part, node, usesVisibility, assetExtras) {
-  return PART_FLAG_FIELDS.every(flag => part[flag] === (node[flag] ?? assetExtras?.[flag])) && sameRayVisibility(part.rayVisibility, node.rayVisibility) && Boolean(part.visibility) === usesVisibility;
+function sameRenderFlags(part, node, usesVisibility, assetExtras, fades = false) {
+  return PART_FLAG_FIELDS.every(flag => part[flag] === (node[flag] ?? assetExtras?.[flag])) && sameRayVisibility(part.rayVisibility, node.rayVisibility) && Boolean(part.visibility) === usesVisibility && Boolean(part.opacityScale) === fades;
 }
 
 function recipeUsesVisibility(recipe) {
   return recipe.nodes.some(node => node.visible !== undefined) || Boolean(recipe.motion?.tracks?.some(track => track.kind === 'node' && track.property === 'visible'));
+}
+
+/** Node IDs a node opacity track fades: each tracked node and everything under it. Empty when no track animates opacity. */
+function opacityNodeIds(recipe) {
+  const tracked = new Set((recipe.motion?.tracks ?? []).filter(track => track.kind === 'node' && track.property === 'opacity').map(track => track.id));
+  if (tracked.size === 0) return tracked;
+  const byId = new Map(recipe.nodes.map(node => [node.id, node]));
+  const faded = new Set();
+  for (const node of recipe.nodes) {
+    for (let cursor = node, depth = 0; cursor && depth < 256; cursor = byId.get(cursor.parent), depth++) {
+      if (tracked.has(cursor.id)) {
+        faded.add(node.id);
+        break;
+      }
+    }
+  }
+  return faded;
+}
+
+/** What each faded node draws at a pose, as a multiple of its material opacity: its own sampled opacity times its parents'. */
+function sampledOpacities(recipe, fadedIds, sampled) {
+  const opacities = new Map();
+  if (fadedIds.size === 0) return opacities;
+  const byId = new Map(recipe.nodes.map(node => [node.id, node]));
+  for (const id of fadedIds) {
+    let opacity = 1;
+    for (let cursor = byId.get(id), depth = 0; cursor && depth < 256; cursor = byId.get(cursor.parent), depth++) {
+      opacity *= sampled?.nodes.get(cursor.id)?.opacity ?? 1;
+    }
+    opacities.set(id, opacity);
+  }
+  return opacities;
+}
+
+const blendedViews = new WeakMap();
+
+// Own live getters, not a prototype link, so a copy of the view (the renderer's spread, a structured clone) keeps every field.
+function blendedView(material) {
+  const view = {};
+  for (const field of Object.keys(material)) Object.defineProperty(view, field, { enumerable: true, configurable: true, get: () => material[field] });
+  Object.defineProperty(view, 'alphaMode', { enumerable: true, value: 'blend' });
+  return Object.freeze(view);
+}
+
+/** The material a faded part draws with: blend and add materials as they are, an opaque one as a blended view. Shared materials stay untouched. */
+function fadeMaterial(material, nodeId) {
+  const alphaMode = material.alphaMode ?? 'opaque';
+  if (alphaMode === 'blend' || alphaMode === 'add') return material;
+  if (alphaMode === 'mask') throw invalidField(`materials.${material.id}.alphaMode`, alphaMode, `opaque or blend, because node "${nodeId}" has an opacity track and a mask cutout is fixed per batch (or animate scale or visible instead)`);
+  if (!blendedViews.has(material)) blendedViews.set(material, blendedView(material));
+  return blendedViews.get(material);
 }
 
 /** Node IDs hidden at a pose: a node set invisible by its field or a sampled track, and everything under it. */
@@ -1553,6 +1605,7 @@ function publishShapeKeyWeights(part, sampledMorphs) {
 function publishPose(stagedState, pose) {
   for (const part of stagedState.restParts) {
     if (part.visibility) part.visibility.visible = !pose.hiddenNodes.has(part.name);
+    if (part.opacityScale) part.opacityScale.value = pose.opacities.get(part.name) ?? 1;
     Float32Array.prototype.set.call(part.matrix, pose.graph.getNode(part.name).worldMatrix);
     publishShapeKeyWeights(part, pose.morphs);
   }
@@ -1881,6 +1934,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const activeParts = new Map(state?.sourceRestParts.map(part => [part.name, part]) ?? []);
     const preferredParts = new Map(preferred?.sourceRestParts.map(part => [part.name, part]) ?? []);
     const usesVisibility = recipeUsesVisibility(recipe);
+    const fadedNodeIds = opacityNodeIds(recipe);
     const roomJoinedNodeIds = roomJoinedBoxNodeIds(recipe);
     const nextParts = recipe.nodes.filter(node => node.geometry !== undefined).map(node => {
       const binding = skinBindings.get(node.id);
@@ -1889,19 +1943,23 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const foamGeometry = sourceGeometry.vertexGroups?.foam ? agentSceneModule('mesh').waterFoamGeometry(sourceGeometry, recipeMaterial.output) : sourceGeometry;
       const geometry = recipeMaterial.output.wear ? geometryWithSurfaceMasks(foamGeometry, recipeMaterial.output.wear, node.id) : foamGeometry;
       // A graph with a vertexGroup node bakes with this mesh's weights, so its textures belong to the mesh.
-      const material = recipeMaterial.output.pattern?.graph ? agentSceneModule('patterns').materialViewForGeometry(recipeMaterial.output, geometry, node.id, recipeMaterial.holder.images) : recipeMaterial.output;
+      const drawnMaterial = recipeMaterial.output.pattern?.graph ? agentSceneModule('patterns').materialViewForGeometry(recipeMaterial.output, geometry, node.id, recipeMaterial.holder.images) : recipeMaterial.output;
+      const fades = fadedNodeIds.has(node.id);
+      const material = fades ? fadeMaterial(drawnMaterial, node.id) : drawnMaterial;
       const assetExtras = assetRuntime.partExtras.get(node.id);
       // Shape keys of a recipe mesh are morph targets with their own weights per part; an imported asset brings its own pose.
       const shapeKeyMorph = geometry.morphTargetValues && !assetExtras?.morph ? { weights: Float32Array.from(geometry.morphTargetValues) } : undefined;
       const activePart = removedNodes.has(node.id) ? null : activeParts.get(node.id);
       const existing = [activePart, preferredParts.get(node.id)]
-        .find(part => part?.geometry === geometry && part.material === material && part.skin === (assetExtras?.skin ?? binding?.skin) && (assetExtras?.morph ? part.morph === assetExtras.morph : Boolean(part.morph) === Boolean(shapeKeyMorph)) && depthLayerOf(part) === depthLayerOf(node) && sameRenderFlags(part, node, usesVisibility, assetExtras));
+        .find(part => part?.geometry === geometry && part.material === material && part.skin === (assetExtras?.skin ?? binding?.skin) && (assetExtras?.morph ? part.morph === assetExtras.morph : Boolean(part.morph) === Boolean(shapeKeyMorph)) && depthLayerOf(part) === depthLayerOf(node) && sameRenderFlags(part, node, usesVisibility, assetExtras, fades));
       return existing ?? Object.freeze({
         name: node.id, geometry, material,
         ...(depthLayerOf(node) ? { depthLayer: depthLayerOf(node) } : {}),
         ...partFlagsOf(node),
         // The renderer reads this holder every update, and publishPose rewrites it for each pose.
         ...(usesVisibility ? { visibility: { visible: true } } : {}),
+        // The renderer multiplies the material opacity by this value, which publishPose rewrites for each pose.
+        ...(fades ? { opacityScale: { value: 1 } } : {}),
         matrix: new Float32Array(graph.getNode(node.id).worldMatrix),
         ...(binding ? { skin: binding.skin } : {}),
         ...(shapeKeyMorph ? { morph: shapeKeyMorph } : {}),
@@ -1918,7 +1976,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     // particles keeps those parts, and only a pose that differs swaps them, which publishPose counts as a topology change.
     const restUnchanged = Boolean(state) && restParts === state.restParts;
     const stagedState = {
-      recipe, geometryRecords, geometries, graph, materialHandles,
+      recipe, geometryRecords, geometries, graph, materialHandles, fadedNodeIds,
       // Part identity decides what the next stage reuses, so it compares the parts as built, before any bake.
       sourceRestParts,
       parts: restUnchanged ? state.parts : restParts, restParts,

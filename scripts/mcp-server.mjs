@@ -707,7 +707,7 @@ const ikSolver = z.discriminatedUnion('type', [
 ]);
 // Properties of the tracks the schema accepts; light, sun, environment and effects take any property name here and the backend checks it.
 const motionTrackProperties = {
-  node: ['translation', 'rotation', 'scale'],
+  node: ['translation', 'rotation', 'scale', 'opacity'],
   material: ['color', 'emissiveColor', 'emission', 'metallic', 'roughness'],
   camera: ['eye', 'target', 'fov', 'roll'],
   morph: ['weight'],
@@ -742,6 +742,7 @@ const motion = z.strictObject({
     motionTrack('node', 'translation', vector3, vector3),
     motionTrack('node', 'rotation', quaternion, quaternion),
     motionTrack('node', 'scale', z.tuple([positive, positive, positive]), vector3),
+    motionTrack('node', 'opacity', unit, finite),
     motionTrack('material', 'color', color, vector3),
     motionTrack('material', 'emissiveColor', z.tuple([nonnegative, nonnegative, nonnegative]), vector3),
     motionTrack('material', 'emission', nonnegative, finite),
