@@ -1,5 +1,5 @@
 // Draws the sea at several roughnesses, before and after the rough-water reflection (issue #331), as one picture:
-//   bash ~/.agents/tools/gpu-lock.sh node scripts/measure-water-roughness.mjs --before <checkout without the fix> --preview out/331-preview.png
+//   node scripts/measure-water-roughness.mjs --before <checkout without the fix> --preview out/331-preview.png
 // The checkout given to --before needs scripts/water-roughness-scene.js copied in, and both need out/assets (see water-preview-scene.js).
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';

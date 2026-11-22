@@ -227,7 +227,7 @@ The package is `@codepawlhq/crucible`, installed locally through the `crucible` 
 | CPU | SwiftShader rendered the HDR motion scene and encoded a square 2D clip through libx264. |
 | Video | Landscape and portrait motion exports each contain 144 H.264 frames over 12 seconds. Imported GLB animation contains 24 frames over two seconds. |
 | Capture queue | Every tested video kept one pending frame and remained within its configured allocation estimate. |
-| Regression | WALL·E assembly, layers, exports, benchmark pixel agreement, keyboard controls and context restoration passed. |
+| Regression | Sample model assembly, layers, exports, benchmark pixel agreement, keyboard controls and context restoration passed. |
 | Layout | New studios rendered at 1440, 390 and 320 pixels without horizontal overflow. |
 
 The tested hardware was an RTX 3060 through ANGLE D3D11. Software rendering used Chrome ANGLE SwiftShader.

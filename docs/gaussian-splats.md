@@ -17,6 +17,8 @@ renderer.render(camera); // parts first, then the splats, farthest first
 detach();               // or renderer.dispose()
 ```
 
+`detach()` frees the GPU copy and reads the packed data back, so the same `splats` can then attach to another renderer, for example one made at a new size, without packing them again. Splats attach to one renderer at a time. After `renderer.dispose()` or a lost context, call `createGaussianSplats` again.
+
 ## What it reads
 
 Two formats. The first is the standard 3DGS PLY that the original training code and most tools write: binary little endian with `x y z f_dc_0..2 opacity scale_0..2 rot_0..3` per vertex. Other properties (normals, `f_rest_*`) are skipped, so a splat has one colour from every direction (spherical harmonics of degree 0). `.ksplat` and `.splat` files are not read; `bench/gaussian-splats/fetch-sample.mjs` shows a short `.splat` to PLY conversion.
@@ -65,7 +67,7 @@ Data written by code, not parsed, is checked at the call. `count` must be a whol
 ## What it draws
 
 - Each splat is a screen-space quad shaped by its 3D covariance, projected through the camera as in the original paper. Colour is the stored colour, as 3DGS viewers show it, not converted from sRGB. The opacity falls off as a Gaussian toward the quad edge.
-- The splats draw after the opaque and translucent parts of the renderer, with the depth test against them and no depth write, so a part in front hides the splats behind it and splats never hide a part. A splat is tested at its centre depth, so one that pokes through a surface is not clipped along the surface.
+- The splats draw after the opaque and translucent parts of the renderer, with the depth test against them and no depth write, so a part in front hides the splats behind it and splats never hide a part. The colour draw writes no depth; a soft scene then draws once more, colourless, writing depth for every pixel whose gaussian alpha is 0.5 or more (the nearest wins), so `depthAt`, `worldPointAt` and depth effects such as fog and depth of field see the splats instead of what is behind them. A splat is tested at its centre depth, so one that pokes through a surface is not clipped along the surface.
 - Splats blend back to front. The sort is on the CPU, on the main thread: a counting sort of the view depth into 65536 steps, then one upload of the order (4 bytes per visible splat). The sort is skipped when the view depth axis is the same as in the last frame: a still camera, or one that only moves sideways or up and down. Splats behind the camera are left out.
 - `matrix` may rotate, translate and scale uniformly. Perspective cameras only. Splats are not drawn in render passes, benchmark mode or the water reflection image, and are not lit, shadowed or fogged.
 - `attachGaussianSplats` wraps `renderer.drawBlendBatches`, the step that runs once per frame after the parts and before the frame is resolved. The renderer has no other link to the addon. Attach several scenes and they draw farthest first by their bounds centre.

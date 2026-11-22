@@ -448,6 +448,8 @@ The boat code is part of the buoyancy chunk, so a scene without floating bodies 
 
 ### Spray from the sea
 
+`coverage` (-1 to 1) is the foam strength knob, and `foamMemory` is 0 (off) by default: it is opt-in and costs 8 extra wave evaluations per vertex.
+
 An `ocean` edit with `spray: true` writes the vertex group `spray` and the vector `spray` (the velocity of the surface, m/s). A particle system takes its droplets from the crests that are rising and sends them off with that velocity:
 
 ```jsonc
@@ -455,7 +457,7 @@ An `ocean` edit with `spray: true` writes the vertex group `spray` and the vecto
   "materials": [{ "id": "water", "color": [0.1, 0.3, 0.5] }, { "id": "foam", "color": [0.9, 0.95, 1] }],
   "geometries": [
     { "id": "sea", "type": "mesh", "base": { "type": "box", "bevel": 0 },
-      "edits": [{ "op": "subdivide", "levels": 4 }, { "op": "ocean", "windSpeed": 12, "choppiness": 2, "size": 2, "resolution": 4, "time": 1.5, "seed": 3, "spray": true }] },
+      "edits": [{ "op": "subdivide", "levels": 4 }, { "op": "ocean", "windSpeed": 12, "coverage": 1, "foamMemory": 2, "choppiness": 2, "size": 2, "resolution": 4, "time": 1.5, "seed": 3, "spray": true }] },
     { "id": "speck", "type": "box", "bevel": 0 }],
   "nodes": [
     { "id": "surface", "geometry": "sea", "material": "water" },
@@ -771,7 +773,7 @@ A recipe `particles` section holds up to 4 systems (`src/particles.js`, `src/hai
 ```
 
 - An emitter system draws its root node's own geometry once per particle, so keep the shape low-poly. The node's transform does not move or scale particles. `count` is at most 2000 a system and 4000 in total, and at most 100000 vertices are drawn in total (a box with `bevel: 0` is 24 per particle, but a default `box` has a bevel and is 1176, so give particle shapes `bevel: 0`; a default sphere is too heavy; the error names the vertices per particle of the node).
-- Fields and defaults are in `scene_capabilities` under `particles`: `seed`, `count`, `rate` (omit for one burst at time 0), `start` (seconds before the first birth, 0; `delay` is the same field) and `stop` (seconds, after `start`: nothing is born at or after it, so a system with a `rate` emits only inside the window; particles already born finish their life), `lifetime`, `speed` and `size` (a number or `[min, max]`), `direction`, `spread` (cone half angle, degrees), `emitter` (`point`, `box`, `sphere`, `disc` or `mesh`), `instances` and `orient` (see the next two bullets), `scale` (`constant`, `shrink`, `grow`), `drag` and `floor`. `gravity` and a steady `wind` sit on the section; wind pulls the velocity only where `drag` is above zero.
+- Fields and defaults are in `scene_capabilities` under `particles`: `seed`, `count`, `rate` (omit for one burst at time 0), `start` (seconds before the first birth, 0; `delay` is the same field) and `stop` (an absolute time in seconds, not a duration after `start`, and above `start`: nothing is born at or after it, so a system with a `rate` emits only inside the window; particles already born finish their life), `lifetime`, `speed` and `size` (a number or `[min, max]`), `direction`, `spread` (cone half angle, degrees), `emitter` (`point`, `box`, `sphere`, `disc` or `mesh`), `instances` and `orient` (see the next two bullets), `scale` (`constant`, `shrink`, `grow`), `drag` and `floor`. `gravity` and a steady `wind` sit on the section; wind pulls the velocity only where `drag` is above zero.
 - A particle is a closed-form function of its own seeded launch values and the time (drag, wind and gravity have an exact solution), checked against a 1e-5 s integration in `tests/particles.test.js`. There is no stepping, so the state at time t never depends on earlier seeks: the same time gives the same particles, a seek backwards repeats them, the same seed gives identical bytes, and raising `count` keeps the particles already there. The landing time on a `floor` is found once per particle from its launch values.
 - A hair system (`type: "hair"`) grows `count` strands from area-weighted seeded points of a `surface` node into its own `node` (the surface is only read, so several systems can share one). A strand is a triangular tube of 1 to 8 segments tapering to 15 percent, leaning off the surface normal by `lean`, bending with `droop`, and swaying by `sway` metres along the horizontal wind at `swayRate` hertz. Without `sway` the mesh is built once.
 - Both kinds replace their node's part at each sampled time, so the renderer sees a topology change. `npm run smoke:agent-particles` seeks sparks and hair through the MCP preview, repeats the PNG bytes after a seek back and checks that a second session renders the same bytes.

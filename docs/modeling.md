@@ -178,5 +178,3 @@ Lathe, bevel construction and curve frames follow the formulas Three.js used bef
 
 Mesh edits select and shape points and faces with JSON field expressions, never code; see [field expressions](mesh.md#field-expressions).
 
-The Aster lantern at `/modeling.html` combines these tools with texture channels and the shared scene graph.
-It is a procedural modeling demonstration, not a mesh editor or a Blender feature parity claim.

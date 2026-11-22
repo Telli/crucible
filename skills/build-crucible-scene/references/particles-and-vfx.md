@@ -104,12 +104,12 @@ Sample a burst with `scene_review` shots at different `motionTime` values (for e
 
 ## Sea spray, foam and wake
 
-An `ocean` mesh edit writes a `foam` vertex group. With `spray: true` it also writes a `spray` group (where the surface rises) and a `spray` velocity vector. A system takes droplets from the strong crests:
+An `ocean` mesh edit writes a `foam` vertex group, as much as the wind's real whitecaps cover; a small patch may have none, so raise `coverage` (up to 1, six times the whitecaps) and keep foam with `foamMemory` (seconds). With `spray: true` it also writes a `spray` group (where the surface rises) and a `spray` velocity vector. A system takes droplets from the strong crests:
 
 ```json
 { "expectedRevision": 1, "operations": [
   { "type": "add-geometry", "geometry": { "id": "sea", "type": "mesh", "base": { "type": "box", "bevel": 0 },
-    "edits": [ { "op": "subdivide", "levels": 4 }, { "op": "ocean", "windSpeed": 12, "choppiness": 2, "size": 2, "resolution": 4, "time": 1.5, "seed": 3, "spray": true } ] } },
+    "edits": [ { "op": "subdivide", "levels": 4 }, { "op": "ocean", "windSpeed": 12, "choppiness": 2, "size": 2, "resolution": 4, "time": 1.5, "seed": 3, "coverage": 1, "foamMemory": 2, "spray": true } ] } },
   { "type": "add-geometry", "geometry": { "id": "speck", "type": "box", "bevel": 0 } },
   { "type": "add-material", "material": { "id": "water", "color": [0.1, 0.3, 0.5] } },
   { "type": "add-material", "material": { "id": "foam", "color": [0.9, 0.95, 1] } },

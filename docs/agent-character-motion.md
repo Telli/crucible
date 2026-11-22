@@ -144,4 +144,4 @@ The asset must remain exclusively owned by its adapter while transactions are ac
 
 This feature does not create a rig for a flat mesh collection.
 Imported asset recipes do not change topology. For a hand reaching or a head looking at a point, use [`motion.ik`](agent-motion.md#inverse-kinematics) instead of writing rotations. In code, [skeleton pose layers](skeleton-pose.md) mix clips with masks and [retargeting](https://crucible.codepawl.com/retarget.md) moves clips between rigs.
-The current WALL·E asset has separate mesh roots and no skeleton. It supports rigid part movement through source-node tracks.
+The sample microscope asset has separate mesh roots and no skeleton. It supports rigid part movement through source-node tracks.

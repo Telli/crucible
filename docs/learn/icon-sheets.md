@@ -9,7 +9,7 @@ One call turns a folder of 3D models into matching 2D icons: an inventory sheet,
 Ask an MCP server started with `--assets <folder>` for an icon job. The scene you submit it with is not drawn, so an empty one will do.
 
 ```json
-{ "kind": "icons", "items": ["boat.glb", "robot.glb", "chair.glb"], "size": 128, "style": "sketch", "breakdown": true, "seed": 1 }
+{ "kind": "icons", "items": ["boat.glb", "microscope.glb", "chair.glb"], "size": 128, "style": "sketch", "breakdown": true, "seed": 1 }
 ```
 
 Each icon is a transparent square PNG with the model framed to fill it. `atlas.png` packs them in a grid and `icons.json` says where each one sits. `angles: 4` or `8` draws every model from that many sides in a row of the atlas, which makes a turnaround sheet. The same items, settings and seed give the same files. [Render jobs](https://github.com/codepawl/crucible/blob/main/docs/agent-render-jobs.md) lists every field.

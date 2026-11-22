@@ -59,6 +59,57 @@ Extend deformation with surface bindings, remeshing and authored humanoid rigs.
 Improve character assets and cinematic environments through measured rendering and inspected reference frames.
 Blender is the visual quality reference for authored scenes. Rendering parity and universal speed advantages remain goals that need evidence.
 
+## Ideas (not scheduled)
+
+Ideas that nobody is working on live here instead of as open issues, so the issue list holds only work to do. To take one up, open an issue that links its old number and says why it matters now.
+
+### Agent surface
+
+- Recipe performance budget with warnings and fixes (#2882)
+- scene_compare: compare a render with a reference photo (#2880)
+- Turntable preset for scene_review (#2878)
+- Show the scene annotate view inline in chat apps through MCP Apps (#923)
+
+### Games
+
+- Multiplayer: state sync with pluggable transport and authority (#778)
+
+### Lighter
+
+- Move GLB export out of the core entry into an addon (#2386)
+- Cook: retire the WebGL2 backend once the WebGPU kernel is the default (#899)
+- Path tracer: optional native package with hardware ray queries (Rust, wgpu) (#626)
+
+### Look
+
+- Path tracer: trace box, sphere and mesh local volumes natively, and mesh volumes on WebGPU (#2004)
+- Material graph: vertexGroup node (design first) (#1957)
+- Cook: cheaper filter for texture mip levels above 0 (#1810)
+- Gaussian splats: pixel-art output and surface-to-splat baking for code-built splat dioramas (#1744)
+- Apply the local volume surface shadow in the main shader so glowing surfaces keep their emission (#1360)
+- Cook: camera near clip, so geometry in front of the clip start is not drawn (#1159)
+- Showcase: one scene in every tier, and Cook beside Cycles (#906)
+- Viewport: Glaze while moving, Cook refines at rest (#903)
+- Glaze: the realtime-high tier (GPU-driven geometry, cached global illumination, temporal upscaling) (#902)
+- Cook: Blender add-on that renders a scene through the v2 scene pack (#900)
+- Look: bounced sun and beam-local multiple scattering in sunlit fog rooms (#643)
+- Path tracer: real-time hybrid view with raster primary hits, radiance cache and temporal denoise (#624)
+
+### Modeling
+
+- Proposal: OpenUSD and MaterialX (#2887)
+
+### Motion and simulation
+
+- Audio markers: key animation to beats and sound cues (#2892)
+- Vehicles: dents, detachable parts and broken glass on impact (#983)
+
+### Other
+
+- GTAO in place of depth-only SSAO (#2800)
+- Measure moving dev tooling and CI from npm and Node to Bun (#2746)
+- Voxel helper for meshes and trained splats (sprite stacks) (#2745)
+
 ## Package size
 
 Large features that carry data or a heavy dependency should ship as separate optional packages (for example `@codepawlhq/crucible-film`), not as more entries of the main archive. Lazy loading alone does not help here: a lazy chunk still sits in the same npm archive, so it saves page weight but not the 1 MiB archive budget. A separate package does both, and users who never import it never download it. The cost is a second version to release and a peer range to keep in step, so small code-only addons (a few tens of KB gzip) stay in the main package. The film demo left the main archive for this reason.

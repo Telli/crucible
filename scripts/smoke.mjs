@@ -67,8 +67,8 @@ try {
   assert.ok(await page.evaluate(() => window.__studio.renderer.shadowTexture === window.__shadowBefore));
   const explodedDownloadReady = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export GLB' }).click();
-  await (await explodedDownloadReady).saveAs(fileURLToPath(new URL('wall-e-exploded.glb', artifactDirectory)));
-  const exportedBinary = await readFile(new URL('wall-e-exploded.glb', artifactDirectory));
+  await (await explodedDownloadReady).saveAs(fileURLToPath(new URL('sample-model-exploded.glb', artifactDirectory)));
+  const exportedBinary = await readFile(new URL('sample-model-exploded.glb', artifactDirectory));
   const exportedScene = JSON.parse(exportedBinary.subarray(20, 20 + exportedBinary.readUInt32LE(12)).toString());
   const expectedPanel = await page.evaluate(() => {
     const part = window.__studio.parts.find((part) => Math.abs(part.assembly.offset[2]) > 1);
@@ -96,7 +96,7 @@ try {
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export GLB' }).click();
   const download = await downloadPromise;
-  await download.saveAs(fileURLToPath(new URL('wall-e.glb', artifactDirectory)));
+  await download.saveAs(fileURLToPath(new URL('sample-model.glb', artifactDirectory)));
   await page.getByRole('button', { name: 'Measure performance' }).click();
   await page.waitForFunction(() => window.__benchmarkReport || document.querySelector('#benchmark-summary').textContent.startsWith('⚠'), null, { timeout: 90000 });
   assert.ok(await page.evaluate(() => Boolean(window.__benchmarkReport)), await page.locator('#benchmark-summary').textContent());

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene } from '../src/agent-scene.js';
 
-const OCEAN = { op: 'ocean', seed: 3, windSpeed: 4, size: 2, resolution: 4 };
+const OCEAN = { op: 'ocean', coverage: 1, seed: 3, windSpeed: 4, size: 2, resolution: 4 };
 
 function seaRecipe({ trackTime = true, stack = [{ op: 'subdivide', levels: 3 }, OCEAN] } = {}) {
   return {

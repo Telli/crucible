@@ -69,8 +69,18 @@ export function ridgedNoise(positionU, positionV, cellsU, cellsV, seed = 0, octa
   return total / amplitudeSum;
 }
 
-/** Periodic Worley noise: distances to the nearest and second nearest feature point, in cell units, and a hash of the nearest cell. */
-export function cellularNoise(positionU, positionV, cells, seed = 0) {
+// Where the feature point of a cell sits inside it, in cell units. A jitter of 1 puts it anywhere in the cell (the hash
+// itself), 0 at the cell centre, so the cells form a regular grid.
+function featurePointOffset(hashHalf, jitter) {
+  const random = hashHalf / 65536;
+  return jitter === 1 ? random : 0.5 + (random - 0.5) * jitter;
+}
+
+/**
+ * Periodic Worley noise: distances to the nearest and second nearest feature point, in cell units, and a hash of the
+ * nearest cell. `jitter` (0 to 1, default 1) scales how far each point strays from its cell centre.
+ */
+export function cellularNoise(positionU, positionV, cells, seed = 0, jitter = 1) {
   const scaledU = positionU * cells;
   const scaledV = positionV * cells;
   const floorU = Math.floor(scaledU);
@@ -83,8 +93,8 @@ export function cellularNoise(positionU, positionV, cells, seed = 0) {
       const cellU = floorU + offsetU;
       const cellV = floorV + offsetV;
       const hash = hashCell(wrapCell(cellU, cells), wrapCell(cellV, cells), seed);
-      const pointU = cellU + (hash & 0xffff) / 65536;
-      const pointV = cellV + (hash >>> 16) / 65536;
+      const pointU = cellU + featurePointOffset(hash & 0xffff, jitter);
+      const pointV = cellV + featurePointOffset(hash >>> 16, jitter);
       const distance = Math.hypot(pointU - scaledU, pointV - scaledV);
       if (distance < nearest) {
         second = nearest;
@@ -96,6 +106,40 @@ export function cellularNoise(positionU, positionV, cells, seed = 0) {
     }
   }
   return { nearest, second, cell: nearestCell };
+}
+
+const SMOOTH_DISTANCE_START = 8;
+const SMOOTH_NEIGHBOUR_RADIUS = 2;
+
+/**
+ * Smooth F1: the distance to the nearest feature point with the hard minimum replaced by a polynomial smooth minimum over
+ * the 5 by 5 cells around the position, as Blender's Voronoi Smooth F1 does (its Smoothness is 0 to 1 and is halved). A
+ * smoothness of 0 is the plain nearest distance. Periodic like `cellularNoise`.
+ */
+export function smoothCellularDistance(positionU, positionV, cells, seed = 0, jitter = 1, smoothness = 1) {
+  const blend = Math.min(Math.max(smoothness, 0), 1) / 2;
+  const scaledU = positionU * cells;
+  const scaledV = positionV * cells;
+  const floorU = Math.floor(scaledU);
+  const floorV = Math.floor(scaledV);
+  let smoothDistance = SMOOTH_DISTANCE_START;
+  for (let offsetV = -SMOOTH_NEIGHBOUR_RADIUS; offsetV <= SMOOTH_NEIGHBOUR_RADIUS; offsetV++) {
+    for (let offsetU = -SMOOTH_NEIGHBOUR_RADIUS; offsetU <= SMOOTH_NEIGHBOUR_RADIUS; offsetU++) {
+      const cellU = floorU + offsetU;
+      const cellV = floorV + offsetV;
+      const hash = hashCell(wrapCell(cellU, cells), wrapCell(cellV, cells), seed);
+      const pointU = cellU + featurePointOffset(hash & 0xffff, jitter);
+      const pointV = cellV + featurePointOffset(hash >>> 16, jitter);
+      const distance = Math.hypot(pointU - scaledU, pointV - scaledV);
+      if (blend === 0) {
+        smoothDistance = Math.min(smoothDistance, distance);
+        continue;
+      }
+      const share = smoothStep(0, 1, 0.5 + 0.5 * (smoothDistance - distance) / blend);
+      smoothDistance = smoothDistance + (distance - smoothDistance) * share - blend * share * (1 - share);
+    }
+  }
+  return smoothDistance;
 }
 
 export function linearToSrgbByte(value) {

@@ -37,6 +37,7 @@ const SKY_VISIBLE_ENOUGH = 0.98;
 // The renderer's own soft edge for a spot light that gives none.
 const DEFAULT_SPOT_PENUMBRA = 0.15;
 
+const BACK_FACE_ATTRIBUTES = ['positions', 'normals', 'uvs', 'colors', 'skyVisibility', 'surfaceMasks'];
 const MAP_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
 const SURFACE_UTILIZATION_FLOOR = 0.05;
 const MINIMUM_AXIS_SCALE = 1e-6;
@@ -154,7 +155,32 @@ export function withReach(lights, parts) {
     return Uint8Array.from(parts, part => (names.has(part.name) ? 1 : 0));
   };
   const linked = light => ({ ...light, reach: reachOf(light) });
-  return { pointLights: lights.pointLights.map(linked), spotLights: lights.spotLights.map(linked), areaLights: lights.areaLights.map(linked), sun: lights.sun && linked(lights.sun) };
+  const linkedPoint = light => ({ ...linked(light), ownEmitters: emittersAroundPoint(light.position, parts) });
+  return { pointLights: lights.pointLights.map(linkedPoint), spotLights: lights.spotLights.map(linked), areaLights: lights.areaLights.map(linked), sun: lights.sun && linked(lights.sun) };
+}
+
+/**
+ * One byte per part: 1 for an emissive part whose bounds hold `position`. A lamp mesh drawn around its own point light is the
+ * lamp, not an obstacle to it, so shadow rays of that light pass through such a part (#2299). A part that does not glow
+ * (a shade, a wall) still blocks the light. Null when no part is such a lamp.
+ */
+function emittersAroundPoint(position, parts) {
+  const surrounds = parts.map(part => emittedRadiance(part.material).some(channel => channel > 0) && boundsHoldPoint(part, position));
+  return surrounds.some(Boolean) ? Uint8Array.from(surrounds, flag => (flag ? 1 : 0)) : null;
+}
+
+function boundsHoldPoint({ geometry, matrix }, point) {
+  const minimum = [Infinity, Infinity, Infinity];
+  const maximum = [-Infinity, -Infinity, -Infinity];
+  const source = geometry.positions;
+  for (let vertex = 0; vertex < source.length; vertex += 3) {
+    for (let axis = 0; axis < 3; axis++) {
+      const transformed = matrix[axis] * source[vertex] + matrix[4 + axis] * source[vertex + 1] + matrix[8 + axis] * source[vertex + 2] + matrix[12 + axis];
+      minimum[axis] = Math.min(minimum[axis], transformed);
+      maximum[axis] = Math.max(maximum[axis], transformed);
+    }
+  }
+  return [0, 1, 2].every(axis => point[axis] >= minimum[axis] && point[axis] <= maximum[axis]);
 }
 
 function lightReaches(light, owner) {
@@ -352,14 +378,28 @@ export function cosineDirection(normal, firstUnit, secondUnit, out) {
 export function createDirectIrradiance(tracer, lights, offset, scale, sunReaching = null) {
   const result = [0, 0, 0];
   const shadowReach = scale * 1e6;
-  function addLight(point, normal, toLight, distance, power) {
+  // Whether a part other than the light's own lamp mesh (`ownEmitters`, see emittersAroundPoint) stands between the point and the light.
+  function shadowed(point, normal, toLight, distance, ownEmitters) {
+    let originX = point[0] + normal[0] * offset;
+    let originY = point[1] + normal[1] * offset;
+    let originZ = point[2] + normal[2] * offset;
+    let remaining = distance;
+    while (remaining > 0) {
+      const hit = tracer.trace(originX, originY, originZ, toLight[0], toLight[1], toLight[2], remaining, ownEmitters === null);
+      if (hit.nearestTriangle < 0) return false;
+      if (ownEmitters === null || ownEmitters[tracer.triangleOwner[hit.nearestTriangle]] !== 1) return true;
+      const travelled = hit.nearestDistance + offset;
+      originX += toLight[0] * travelled;
+      originY += toLight[1] * travelled;
+      originZ += toLight[2] * travelled;
+      remaining -= travelled;
+    }
+    return false;
+  }
+  function addLight(point, normal, toLight, distance, power, ownEmitters = null) {
     const cosine = normal[0] * toLight[0] + normal[1] * toLight[1] + normal[2] * toLight[2];
     if (cosine <= 0) return;
-    const blocked = tracer.trace(
-      point[0] + normal[0] * offset, point[1] + normal[1] * offset, point[2] + normal[2] * offset,
-      toLight[0], toLight[1], toLight[2], distance, true,
-    ).nearestTriangle >= 0;
-    if (blocked) return;
+    if (shadowed(point, normal, toLight, distance, ownEmitters)) return;
     for (let channel = 0; channel < 3; channel++) result[channel] += power[channel] * cosine;
   }
   const toLight = [0, 0, 0];
@@ -427,7 +467,7 @@ export function createDirectIrradiance(tracer, lights, offset, scale, sunReachin
       toLight[2] = deltaZ / distance;
       const strength = light.intensity * pointLightFalloff(distanceSquared, light);
       for (let channel = 0; channel < 3; channel++) power[channel] = light.color[channel] * strength;
-      addLight(point, normal, toLight, distance - offset, power);
+      addLight(point, normal, toLight, distance - offset, power, light.ownEmitters ?? null);
     }
     for (const light of lights.spotLights) {
       if (lightReaches(light, owner)) addSpotLight(point, normal, light);
@@ -605,6 +645,78 @@ function unscaledAfterUnwrap(extracted, scale) {
     for (let axis = 0; axis < 3; axis++) normals[vertex * 3 + axis] /= length;
   }
   return { ...extracted, positions, normals };
+}
+
+/**
+ * A copy of the geometry followed by its back faces: the same corners in reverse winding with flipped normals. An opaque
+ * two-sided part unwraps and bakes this doubled mesh, so each face has its own lightmap texels and the lit side never lends
+ * its light to the other. The back copy sits `offset` along x while it unwraps: at the same place the unwrap would weld it
+ * to the front, every edge would join four faces and the charts would fall apart into strips (#2754).
+ */
+function withBackFaces(geometry, offset) {
+  const vertexCount = geometry.positions.length / 3;
+  const doubled = { indices: new Uint32Array(geometry.indices.length * 2) };
+  doubled.indices.set(geometry.indices);
+  for (let triangle = 0; triangle < geometry.indices.length / 3; triangle++) {
+    const first = triangle * 3;
+    doubled.indices[geometry.indices.length + first] = geometry.indices[first] + vertexCount;
+    doubled.indices[geometry.indices.length + first + 1] = geometry.indices[first + 2] + vertexCount;
+    doubled.indices[geometry.indices.length + first + 2] = geometry.indices[first + 1] + vertexCount;
+  }
+  for (const attribute of BACK_FACE_ATTRIBUTES) {
+    const values = geometry[attribute];
+    if (!values) continue;
+    const copy = new Float32Array(values.length * 2);
+    copy.set(values);
+    for (let slot = 0; slot < values.length; slot++) copy[values.length + slot] = attribute === 'normals' ? -values[slot] : values[slot];
+    doubled[attribute] = copy;
+  }
+  for (let vertex = vertexCount; vertex < vertexCount * 2; vertex++) doubled.positions[vertex * 3] += offset;
+  return doubled;
+}
+
+/** How far the back copy moves while it unwraps: well past the part's own extent along x. */
+function backFaceOffset(geometry) {
+  let lowest = Infinity;
+  let highest = -Infinity;
+  for (let index = 0; index < geometry.positions.length; index += 3) {
+    lowest = Math.min(lowest, geometry.positions[index]);
+    highest = Math.max(highest, geometry.positions[index]);
+  }
+  return { offset: (highest - lowest) * 4 + 1, boundary: highest + (highest - lowest) * 2 + 0.5 };
+}
+
+/** Moves the back copy of an unwrapped doubled mesh back onto the front: every vertex past `boundary` along x came from it. */
+function withBackFacesInPlace(unwrapped, { offset, boundary }) {
+  const positions = unwrapped.geometry.positions.slice();
+  for (let index = 0; index < positions.length; index += 3) {
+    if (positions[index] > boundary) positions[index] -= offset;
+  }
+  return { ...unwrapped, geometry: { ...unwrapped.geometry, positions } };
+}
+
+/**
+ * A two-sided part whose faces block light bakes each face apart. A thin part that lets light through (transmission or
+ * subsurface) keeps one texel for both faces, so the light on one side still shows on the other. Parts with alpha are
+ * never baked (skipReason).
+ */
+function bakesFacesApart(material) {
+  if (material.doubleSided !== true) return false;
+  if (material.transmission > 0) return false;
+  return !(material.subsurface?.weight > 0);
+}
+
+/** Unwraps a geometry for its lightmap; an opaque two-sided part unwraps its front and back faces as separate charts. */
+function unwrapPart(geometry, scale, margin, slot, twoSided) {
+  const unwrap = slot ? unwrapIntoSecondUvSet : unwrapForLightmap;
+  if (!twoSided) return unwrap(geometry, scale, margin);
+  const placement = backFaceOffset(geometry);
+  return withBackFacesInPlace(unwrap(withBackFaces(geometry, placement.offset), scale, margin), placement);
+}
+
+/** Leaves the part single-sided once its back faces are real triangles, so no face is drawn twice. */
+function withoutDoubleSided(part) {
+  return { ...part, material: { ...part.material, doubleSided: false } };
 }
 
 /** Gives a geometry its lightmap UVs in channel 0, from the unwrap that `uv_unwrap` uses. */
@@ -987,12 +1099,13 @@ export function planLightmaps(parts, lighting, options = {}) {
     const cache = slot ? secondSetCache : unwrapCache;
     if (!cache.has(part.geometry)) cache.set(part.geometry, new Map());
     const unwraps = cache.get(part.geometry);
-    const key = scaleKey(scale);
+    const twoSided = bakesFacesApart(part.material);
+    const key = `${scaleKey(scale)}|${twoSided}`;
+    const area = worldTriangleArea(part) * (twoSided ? 2 : 1);
     if (!unwraps.has(key)) {
-      const margin = chartMargin(worldTriangleArea(part), settings);
-      unwraps.set(key, slot ? unwrapIntoSecondUvSet(part.geometry, scale, margin) : unwrapForLightmap(part.geometry, scale, margin));
+      unwraps.set(key, unwrapPart(part.geometry, scale, chartMargin(area, settings), slot, twoSided));
     }
-    entries.push({ part, index, unwrapped: unwraps.get(key), area: worldTriangleArea(part), slot });
+    entries.push({ part, index, unwrapped: unwraps.get(key), area, slot, twoSided });
   });
   return { parts, lights, settings, started, entries, skipped };
 }
@@ -1069,7 +1182,7 @@ export function finishLightmaps(plan, settings, rasterized, gathered, sizes) {
   const baked = plan.parts.slice();
   const partReports = [];
   rasterized.forEach(({ entry, resolution, positions, normals, covered, nearestDistance }, entryNumber) => {
-    const { part, index, unwrapped, area, slot } = entry;
+    const { part, index, unwrapped, area, slot, twoSided } = entry;
     const { light, escaped } = gathered[entryNumber];
     const albedo = diffuseAlbedo(part.material);
     const radiance = new Float32Array(resolution * resolution * 3);
@@ -1103,7 +1216,7 @@ export function finishLightmaps(plan, settings, rasterized, gathered, sizes) {
     const smoothPeak = smoothRadiance.reduce((largest, value) => Math.max(largest, value), 0);
     if (smoothPeak > 0) bakedResult = (slot ? lightMappedPart : bakedPart)(part, unwrapped.geometry, lightmapTexture(smoothRadiance, resolution, smoothPeak), smoothPeak);
     if (sealed) bakedResult = skyVisibilityPart(bakedResult, unwrapped.geometry, skyVisibilityTexture(smoothSkyVisibility, resolution), slot);
-    baked[index] = bakedResult;
+    baked[index] = twoSided && bakedResult !== part ? withoutDoubleSided(bakedResult) : bakedResult;
   });
   const report = { parts: partReports, skipped: plan.skipped, texels: sizes.texels, rayWork: sizes.rayWork, backend: settings.backend, seconds: (performance.now() - plan.started) / 1000 };
   return { parts: baked, report };

@@ -40,15 +40,11 @@ new ResizeObserver(() => {
 
 ## What you can build
 
-Each demo on this site is a Crucible scene. Open one to see what the engine does, then read its topic in these docs.
+Each picture is a Crucible scene. Open one to see what the engine does, then read its topic in these docs.
 
 ```cards
-Object studio | /object.html | A robot model with orbit controls, lighting looks and an exploded view. | /previews/wall-e.webp
-Procedural modeling | /modeling.html | A lantern made from lathe, extrude and tube geometry. | /previews/modeling.webp
-Nature | /nature.html | Terrain, trees and grass with wind and a sun you can move. | /previews/grass.webp
-Assets | /assets.html | GLB models loaded, lit and animated. | /previews/assets.webp
 Showcase | /showcase.html | Large scenes: an airport, a data center and a port. | /previews/showcase-airport.webp
-2D | /view2d.html | Flat posters drawn with an orthographic camera. | /previews/view2d.webp
+Path tracer | #cook-path-tracer | Cook traces a scene for a still with real bounce light. | /previews/cook-monk.webp
 ```
 
 ## How a scene works
@@ -65,7 +61,7 @@ To move something, change the part and call `renderer.updateParts(parts)`. Then 
 
 ## What Crucible is not
 
-Crucible does not copy the three.js API. If you know three.js, [If you know three.js](#if-you-know-three-js) maps its common calls to Crucible, and the optional `three-compat` addon builds Crucible parts from the common three.js names. It supports a subset, so code that uses other three.js names needs changes. You build scenes in code, or an AI agent builds them through the MCP server. A web Studio for editing the same scene recipe by hand is planned ([#2177](https://github.com/codepawl/crucible/issues/2177)); until it ships there is no mouse editor.
+Crucible does not copy the three.js API. If you know three.js, [If you know three.js](#if-you-know-three-js) maps its common calls to Crucible, and the optional `three-compat` addon builds Crucible parts from the common three.js names. It supports a subset, so code that uses other three.js names needs changes. You build scenes in code, or an AI agent builds them through the MCP server. Studio, an optional addon, edits the same scene recipe with a mouse; the [Studio guide](https://github.com/codepawl/crucible/blob/main/docs/studio.md) describes it.
 
 ## How these docs are organized
 

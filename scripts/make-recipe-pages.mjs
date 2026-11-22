@@ -4,18 +4,11 @@
 // Usage: node scripts/make-recipe-pages.mjs        write the pages
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { applyChrome, THEME_COLOR_META } from './site-chrome.mjs';
 import { beforeSource, RECIPES, recipeSource } from './recipe-catalog.mjs';
 
 const siteFolder = fileURLToPath(new URL('../site/', import.meta.url));
 const ORIGIN = 'https://crucible.codepawl.com';
-
-const NAVIGATION_LINKS = [
-  { href: '/docs.html', label: 'Docs' },
-  { href: '/recipes.html', label: 'Recipes' },
-  { href: '/marketplace.html', label: 'Marketplace' },
-  { href: '/showcase.html', label: 'Showcase' },
-  { href: '/changelog.html', label: 'Changelog' },
-];
 
 export function pageFileName(slug) {
   return `recipe-${slug}.html`;
@@ -25,40 +18,30 @@ export function escapeHtml(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function navigation(currentHref) {
-  const links = NAVIGATION_LINKS.map(link => `<a href="${link.href}"${link.href === currentHref ? ' aria-current="page"' : ''}>${link.label}</a>`).join('');
-  return `<a class="brand" href="/" aria-label="Crucible home">Crucible</a>
-      <nav aria-label="Library">${links}</nav>
-      <a class="site-nav-cta" href="https://github.com/codepawl/crucible" aria-label="GitHub"><span class="package-logo package-logo-github" aria-hidden="true"></span><span class="site-nav-cta-label">GitHub</span></a>`;
-}
-
-function pageShell({ title, description, path, currentHref, body }) {
-  return `<!doctype html>
+function pageShell({ title, description, path, body }) {
+  const page = `<!doctype html>
 <html lang="en" data-theme="crucible">
   <head>
-    <meta charset="UTF-8" /><script>try{var saved=localStorage.getItem("crucible-color");if(saved==="light"||saved==="dark")document.documentElement.dataset.color=saved}catch(error){}</script>
+    <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    ${THEME_COLOR_META}
     <meta name="description" content="${escapeHtml(description)}" />
     <link rel="canonical" href="${ORIGIN}${path}" />
     <title>${escapeHtml(title)} · Crucible</title>
     <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" /><link rel="icon" href="/favicon.ico?v=2" sizes="48x48" /><link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   </head>
-  <body class="site recipes">
+  <body class="site themed recipes">
     <a class="skip-link" href="#content">Skip to content</a>
-    <header class="navigation">
-      ${navigation(currentHref)}
-    </header>
+    <!-- site-chrome:header --><!-- /site-chrome:header -->
     <main id="content">
 ${body}
     </main>
-    <footer class="site-footer" aria-label="Site footer">
-      <p><a class="brand" href="/" aria-label="Crucible home">Crucible</a> by <a href="https://codepawl.com">CodePawl</a></p>
-      <nav class="footer-links" aria-label="Project links"><a href="https://github.com/codepawl/crucible"><span class="package-logo package-logo-github" aria-hidden="true"></span>GitHub</a><a href="https://www.npmjs.com/package/@codepawlhq/crucible"><span class="package-logo package-logo-npm" aria-hidden="true"></span>npm</a><a href="/changelog.md">Changelog</a><a href="/license.txt">MIT license</a></nav>
-    </footer>
+    <!-- site-chrome:footer --><!-- /site-chrome:footer -->
     <script type="module" src="/src/recipes.js"></script>
   </body>
 </html>
 `;
+  return applyChrome(page, path.slice(1, -5));
 }
 
 function frameFigure(recipe, frame) {
@@ -93,7 +76,7 @@ ${mediaSection(recipe)}
       <div class="recipe-why">${whyLines}</div>
 ${blocks.join('\n')}
       <p class="recipe-file"><a href="/recipes/${recipe.slug}.json" download>Download ${recipe.slug}.json</a><span>Paste it into <code>scene_create</code> as <code>recipe</code>.</span></p>`;
-  return pageShell({ title: recipe.title, description: recipe.summary, path, currentHref: '/recipes.html', body });
+  return pageShell({ title: recipe.title, description: recipe.summary, path, body });
 }
 
 export function renderIndexPage() {
@@ -106,7 +89,7 @@ export function renderIndexPage() {
       <div class="recipe-list">
 ${cards}
       </div>`;
-  return pageShell({ title: 'Recipes', description: 'One rendering technique per page: a before and after picture, why it matters and the scene code that made it.', path: '/recipes.html', currentHref: '/recipes.html', body });
+  return pageShell({ title: 'Recipes', description: 'One rendering technique per page: a before and after picture, why it matters and the scene code that made it.', path: '/recipes.html', body });
 }
 
 export function renderRecipePages() {

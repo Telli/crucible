@@ -116,6 +116,8 @@ function gridPoints(source) {
   const total = counts[0] * counts[1] * counts[2];
   if (total > MAX_INSTANCE_CANDIDATES) throw instanceError(`a grid of ${total} points is over the limit of ${MAX_INSTANCE_CANDIDATES}.`);
   const spacing = coordinates(source.spacing, 'grid spacing');
+  const coincidentAxis = ['x', 'y', 'z'].find((axis, index) => counts[index] > 1 && spacing[index] === 0);
+  if (coincidentAxis) throw instanceError(`grid spacing is 0 on ${coincidentAxis} but its count is above 1, so the points coincide. Give that spacing a nonzero value or set its count to 1.`);
   const positions = new Float64Array(total * 3);
   let index = 0;
   for (let z = 0; z < counts[2]; z++) {
@@ -269,6 +271,16 @@ function keptIndices(spec, place, points, fields, seed) {
   return kept;
 }
 
+// A where expression that is 0 at every candidate is nearly always a wrong expression, and an empty result only shows
+// later as unused-material diagnostics. The recipe has no warning channel at this step, so it is an error.
+function rejectEmptyWhere(nodeId, where, points) {
+  const count = points.positions.length / 3;
+  if (!where || count === 0 || where.values.some((value, index) => index < count && value !== 0)) return;
+  const label = JSON.stringify(String(nodeId).slice(0, 48));
+  const noun = count === 1 ? 'point' : 'points';
+  throw instanceError(`node ${label} instances.where dropped all ${count} candidate ${noun}. Check the expression: where keeps a point when its value is not 0, so a comparison must be true somewhere inside the source's bounds; remove where to keep every point.`);
+}
+
 function instanceRotation(spec, seed, candidate, normals, turns) {
   const rotation = quat.create();
   if (spec.alignToNormal && normals) {
@@ -336,6 +348,7 @@ export function expandInstancedNodes(nodes, { resolveSurface, maxNodes, maxVerti
     if (place.at && !Object.hasOwn(spec, 'surface')) throw instanceError('place.at needs a surface source.');
     const points = candidatePoints(spec, seed, resolveSurface, place);
     const fields = placementFields(spec, place, points, resolveSurface);
+    rejectEmptyWhere(node.id, fields.where, points);
     expanded.push(group);
     const placements = keptIndices(spec, place, points, fields, seed).map((candidate, slot) => {
       const variant = place.variants ? pickVariant(place.variants, fields.variant?.values, candidate, seed) : { geometry, material };

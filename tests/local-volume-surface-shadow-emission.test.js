@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { encodePng } from '../src/export-png.js';
 
 const SIZE = 256;
@@ -126,7 +126,7 @@ test('a shadowing volume dims the light a lit slab receives and leaves a glowing
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const open = { ...SMOKE, castShadow: false };
     const { frames, glError } = await rasterFrames(page, [[SMOKE], [open], [SMOKE], [SMOKE], [open], [SMOKE]]);
     assert.equal(glError, 0);
@@ -155,7 +155,7 @@ test('a shadowing volume dims the light a lit slab receives and leaves a glowing
     assert.deepEqual(frames[4], unshadowed, 'a frame without castShadow after a shadowed one draws as before');
     // Without the preload the chunk loads during the first frame: that frame dims the glow as before, the next one has the mask and matches the preloaded picture.
     const freshPage = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await freshPage.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(freshPage, port);
     const lazy = await rasterFrames(freshPage, [[SMOKE], [SMOKE]], { preload: false });
     assert.equal(lazy.glError, 0);
     assert.ok(slabMean(lazy.frames[0], GLOWING_CENTER_X) / numbers.glowingOpen < 0.85, 'the first frame, before the chunk has loaded, dims the glow as it did before the mask');
@@ -210,7 +210,7 @@ test('the bloom of a glowing slab survives a shadowing volume over it (#1360)', 
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const open = { ...SMOKE, castShadow: false };
     const bloom = { bloom: { strength: 0.8, threshold: 1, radius: 3 } };
     const glowing = 8;
@@ -272,7 +272,7 @@ test('a lit floor still takes the shadow of a volume seen in perspective, beside
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const bloom = { bloom: { strength: 0.6, threshold: 1, radius: 3 } };
     // A glow of 10 is far above what a mask clamped at 1 can hold.
     const { frames, glError } = await rasterFrames(page, [[PERSPECTIVE_SMOKE], [{ ...PERSPECTIVE_SMOKE, castShadow: false }]], { camera: PERSPECTIVE_CAMERA, light: PERSPECTIVE_LIGHT, effects: bloom, glowingEmission: 10, groundColor: [0.25, 0.25, 0.25] });
