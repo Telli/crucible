@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-// The crucible command line. `crucible pack <scene.json> --out <dir>` compiles a recipe into a runtime-only web bundle (docs/pack.md).
+// The crucible command line. `crucible pack <scene.json> --out <dir>` compiles a recipe into a runtime-only web bundle (docs/pack.md);
+// `crucible packs add <name>` installs a pinned data-only pack (docs/packs.md).
 import { existsSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const USAGE = 'Usage: crucible pack <scene.json> --out <dir> [--poster <picture.webp> | --no-poster] [--poster-size <w>x<h>] [--runtime <crucible-scene.js>]';
+const USAGE = 'Usage: crucible pack <scene.json> --out <dir> [--poster <picture.webp> | --no-poster] [--poster-size <w>x<h>] [--runtime <crucible-scene.js>]\n       crucible packs add|list|remove [<name>]';
 const PACK_FLAGS = Object.freeze(['--out', '--poster', '--poster-size', '--runtime']);
 const PACK_SWITCHES = Object.freeze(['--no-poster']);
 
@@ -57,8 +58,12 @@ async function loadPosterModule() {
 
 async function main(argumentList) {
   const [command, ...rest] = argumentList;
+  if (command === 'packs') {
+    const { runPacksCommand } = await import('./crucible-packs.mjs');
+    return runPacksCommand(rest);
+  }
   if (command !== 'pack') {
-    console.error(command === undefined ? USAGE : `${command}: unknown command; the only command is pack.\n${USAGE}`);
+    console.error(command === undefined ? USAGE : `${command}: unknown command; the commands are pack and packs.\n${USAGE}`);
     return 1;
   }
   try {
