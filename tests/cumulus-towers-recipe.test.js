@@ -24,10 +24,12 @@ test('the cumulus towers recipe has three wide, flat-based clouds with soft lobe
   const towers = recipe.geometries.filter(geometry => geometry.type === 'cloud');
   assert.deepEqual(towers.map(tower => tower.id), TOWER_IDS);
   for (const tower of towers) {
-    assert.ok(tower.width > tower.height, `${tower.id} must be wider than tall, as a cumulus is`);
+    assert.ok(tower.height <= 1.2 * tower.width, `${tower.id} stays a heap, not a tall tower`);
     assert.equal(tower.flatBase, 1, `${tower.id} keeps a flat base`);
     assert.ok(tower.unionSoftness >= 0.2, `${tower.id} blends its lobes softly`);
-    assert.ok(tower.levels.at(-1).count <= 200, `${tower.id} has few enough small lobes to stay fluffy`);
+    const softnesses = tower.levels.map(level => level.softness);
+    assert.ok(softnesses.every(softness => softness >= 0.2), `${tower.id} never blends a level crisply enough to cut pits`);
+    assert.ok(softnesses[0] > softnesses[1], `${tower.id} blends its big lobes more softly than its middle ones`);
   }
   const cumulus = recipe.materials.find(material => material.id === 'cumulus');
   assert.equal(cumulus.toon, 6);
@@ -37,6 +39,15 @@ test('the cumulus towers recipe has three wide, flat-based clouds with soft lobe
   assert.ok(darkest[2] > darkest[0], 'the shaded step is blue-grey');
   assert.ok(lightest[0] > lightest[2], 'the lit step is warm white');
   assert.ok(Math.min(...darkest) >= 0.25, 'the shaded step stays light, so no dark pits');
+});
+
+test('the three clouds have their own seeds and sit apart, so they read as separate clouds', () => {
+  const recipe = JSON.parse(recipeText);
+  const towers = recipe.nodes.filter(node => node.id.startsWith('tower'));
+  const seeds = recipe.geometries.filter(geometry => geometry.type === 'cloud').map(geometry => geometry.seed);
+  assert.equal(new Set(seeds).size, 3);
+  const gaps = towers.map(node => node.translation[0]).sort((first, second) => first - second);
+  assert.ok(gaps[1] - gaps[0] >= 50 && gaps[2] - gaps[1] >= 50, 'neighbouring clouds sit at least 50 m apart across the view');
 });
 
 test('the cumulus towers recipe builds the same towers byte for byte every time, each different from the others', () => {

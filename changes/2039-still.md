@@ -1,1 +1,1 @@
-- A recipe of three wide, flat-based cumulus over the sea, with softly blended lobes and six cool-to-warm toon steps, in `public/recipes/cumulus-towers.json` (#2039)
+- A cloud level takes its own `softness`, so small cauliflower bumps stay crisp on big soft lobes (a recipe without it builds the same bytes); the cumulus recipe now shows three separate, flat-based clouds with six cool-to-warm toon steps (#2039)

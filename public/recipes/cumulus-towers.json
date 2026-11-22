@@ -65,75 +65,84 @@
     {
       "id": "tower-left",
       "type": "cloud",
-      "seed": 11,
-      "width": 58,
-      "height": 52,
+      "seed": 12,
+      "width": 52,
+      "height": 50,
       "flatBase": 1,
       "upBias": 0.5,
-      "unionSoftness": 0.2,
+      "unionSoftness": 0.3,
       "resolution": 112,
       "levels": [
         {
-          "count": 5,
-          "sizeRatio": 1
+          "count": 6,
+          "sizeRatio": 1,
+          "softness": 0.4
         },
         {
-          "count": 24,
-          "sizeRatio": 0.4
+          "count": 60,
+          "sizeRatio": 0.34,
+          "softness": 0.28
         },
         {
-          "count": 180,
-          "sizeRatio": 0.16
+          "count": 300,
+          "sizeRatio": 0.15,
+          "softness": 0.3
         }
       ]
     },
     {
       "id": "tower-middle",
       "type": "cloud",
-      "seed": 23,
-      "width": 68,
+      "seed": 7,
+      "width": 58,
       "height": 62,
       "flatBase": 1,
       "upBias": 0.5,
-      "unionSoftness": 0.2,
+      "unionSoftness": 0.3,
       "resolution": 112,
       "levels": [
         {
-          "count": 5,
-          "sizeRatio": 1
+          "count": 6,
+          "sizeRatio": 1,
+          "softness": 0.4
         },
         {
-          "count": 24,
-          "sizeRatio": 0.4
+          "count": 60,
+          "sizeRatio": 0.34,
+          "softness": 0.28
         },
         {
-          "count": 180,
-          "sizeRatio": 0.16
+          "count": 300,
+          "sizeRatio": 0.15,
+          "softness": 0.3
         }
       ]
     },
     {
       "id": "tower-right",
       "type": "cloud",
-      "seed": 5,
-      "width": 54,
+      "seed": 33,
+      "width": 48,
       "height": 46,
       "flatBase": 1,
       "upBias": 0.5,
-      "unionSoftness": 0.2,
+      "unionSoftness": 0.3,
       "resolution": 112,
       "levels": [
         {
-          "count": 5,
-          "sizeRatio": 1
+          "count": 6,
+          "sizeRatio": 1,
+          "softness": 0.4
         },
         {
-          "count": 24,
-          "sizeRatio": 0.4
+          "count": 60,
+          "sizeRatio": 0.34,
+          "softness": 0.28
         },
         {
-          "count": 180,
-          "sizeRatio": 0.16
+          "count": 300,
+          "sizeRatio": 0.15,
+          "softness": 0.3
         }
       ]
     }
@@ -205,7 +214,7 @@
       "geometry": "tower-left",
       "material": "cumulus",
       "translation": [
-        -34,
+        -52,
         10,
         -34
       ]
@@ -215,7 +224,7 @@
       "geometry": "tower-middle",
       "material": "cumulus",
       "translation": [
-        14,
+        10,
         10,
         -90
       ]
@@ -225,7 +234,7 @@
       "geometry": "tower-right",
       "material": "cumulus",
       "translation": [
-        62,
+        66,
         10,
         -50
       ]

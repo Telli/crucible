@@ -17,7 +17,7 @@ export const CLOUD_LEVEL_LIMITS = Object.freeze({
   faces: 150_000,
   defaults: Object.freeze({ upBias: 0.5, unionSoftness: 0.3, resolution: 128 }),
 });
-const LEVEL_FIELDS = ['count', 'sizeRatio'];
+const LEVEL_FIELDS = ['count', 'sizeRatio', 'softness'];
 // A grown lobe sits this share of its radius inside its parent's surface, so it protrudes by the rest.
 const SINK_SHARE = 0.3;
 const SIZE_JITTER = 0.4;
@@ -32,7 +32,7 @@ function levelError(path, value, expected) {
   return invalidField(`cloud.levels${path}`, value, expected);
 }
 
-/** Validates the `levels` array and returns it as [{ count, sizeRatio }]. */
+/** Validates the `levels` array and returns it as [{ count, sizeRatio }], plus softness on a level that sets its own (otherwise the cloud's unionSoftness blends it). */
 export function levelSettings(levels) {
   const [minimumLevels, maximumLevels] = CLOUD_LEVEL_LIMITS.levels;
   if (!Array.isArray(levels) || levels.length < minimumLevels || levels.length > maximumLevels) {
@@ -48,7 +48,7 @@ export function levelSettings(levels) {
 
 function levelSetting(level, index) {
   const path = `[${index}]`;
-  if (level === null || typeof level !== 'object' || Array.isArray(level)) throw levelError(path, level, 'an object {count, sizeRatio}');
+  if (level === null || typeof level !== 'object' || Array.isArray(level)) throw levelError(path, level, 'an object {count, sizeRatio, softness (optional)}');
   for (const key of Object.keys(level)) {
     if (!LEVEL_FIELDS.includes(key)) throw levelError(`${path}.${key}`, level[key], `one of ${LEVEL_FIELDS.join(', ')}; remove "${key}"`);
   }
@@ -60,7 +60,12 @@ function levelSetting(level, index) {
   if (!Number.isFinite(level.sizeRatio) || level.sizeRatio < minimumRatio || level.sizeRatio > maximumRatio) {
     throw levelError(`${path}.sizeRatio`, level.sizeRatio, `a number from ${minimumRatio} to ${maximumRatio}, the lobe size as a share of the first level's, such as ${index === 0 ? 1 : 0.35}`);
   }
-  return { count: level.count, sizeRatio: level.sizeRatio };
+  if (level.softness === undefined) return { count: level.count, sizeRatio: level.sizeRatio };
+  const [minimumSoftness, maximumSoftness] = CLOUD_LEVEL_LIMITS.unionSoftness;
+  if (!Number.isFinite(level.softness) || level.softness < minimumSoftness || level.softness > maximumSoftness) {
+    throw levelError(`${path}.softness`, level.softness, `a number from ${minimumSoftness} to ${maximumSoftness}, how softly this level of lobes blends, as a share of its lobe radius, such as 0.2 for crisp bumps; leave it out to use the cloud's unionSoftness`);
+  }
+  return { count: level.count, sizeRatio: level.sizeRatio, softness: level.softness };
 }
 
 // A direction on the unit sphere. upBias 0 is uniform; 1 flattens the lower half onto the equator, so lobes grow up and out.
