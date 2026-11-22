@@ -519,6 +519,10 @@ function velocityVectorOf(emitter, geometry, matrix, emitterPath) {
 
 // A sea whose oceanTime a motion track drives is sampled at the ocean time of each particle's birth, rounded to this step (seconds of ocean time).
 const OCEAN_TIME_STEP = 1 / 24;
+// A clip of this many ocean-time steps (5 s) is what the sea bake budget is sized for.
+const OCEAN_BAKE_REFERENCE_STEPS = 120;
+// Vertex-steps (sea vertices times ocean times built) one emitter may spend; each costs about 0.1 ms, so this stays near 10 s (#2823).
+export const OCEAN_BAKE_VERTEX_STEPS = 3_000_000;
 // How many steps either side of a birth to look when the sea has no spray at that moment.
 const OCEAN_TIME_SEARCH_STEPS = 96;
 
@@ -528,7 +532,8 @@ function meshSourceFrom(emitter, geometry, sourceNode, emitterPath) {
   const sharpAngle = emitter.sharpAngle ?? null;
   const vectors = emitter.velocityFrom ? velocityVectorOf(emitter, geometry, nodeMatrix(sourceNode), emitterPath) : null;
   const source = createMeshSource(world.positions, world.normals, geometry.indices, emitter.from, weights, sharpAngle, vectors, emitter.groupThreshold ?? 0);
-  if (source && source.triangleCount > PARTICLE_LIMITS.maxEmitterTriangles) {
+  // A vertices emitter keeps no per-triangle records, so the geometry's own vertex limit is the bound there (#2823).
+  if (source && emitter.from !== 'vertices' && source.triangleCount > PARTICLE_LIMITS.maxEmitterTriangles) {
     throw invalidField(`${emitterPath}.mesh`, `${source.triangleCount} triangles on node ${emitter.mesh}`, `a mesh with at most ${PARTICLE_LIMITS.maxEmitterTriangles} triangles, such as a simpler proxy mesh`);
   }
   return source;
@@ -540,17 +545,27 @@ function emptySourceError(emitter, emitterPath, detail) {
 }
 
 // The source of a sea that an oceanTime track moves: each particle takes its point from the sea as it is when the particle is born.
+/** Whole ocean-time steps between two built seas: 1 up to a sea of about 25,000 vertices, more for a bigger one so a 5 s clip stays inside OCEAN_BAKE_VERTEX_STEPS. */
+export function oceanBakeStride(vertexCount) {
+  return Math.max(1, Math.ceil(vertexCount * OCEAN_BAKE_REFERENCE_STEPS / OCEAN_BAKE_VERTEX_STEPS));
+}
+
 function followingSeaSource(emitter, sourceNode, sea, emitterPath) {
   const frames = new Map();
+  let stride = null;
   const sourceAt = step => {
     if (!frames.has(step)) {
       const geometry = sea.geometryAt(sourceNode.geometry, step * OCEAN_TIME_STEP);
+      stride ??= oceanBakeStride(geometry.positions.length / 3);
       frames.set(step, meshSourceFrom(emitter, geometry, sourceNode, emitterPath));
     }
     return frames.get(step);
   };
-  const nearestSource = step => {
-    for (let distance = 0; distance <= OCEAN_TIME_SEARCH_STEPS; distance++) {
+  const nearestSource = rawStep => {
+    // The first sea built tells the stride; every step after it is a multiple of it, so a big sea is built at fewer ocean times.
+    if (stride === null) sourceAt(rawStep);
+    const step = Math.round(rawStep / stride) * stride;
+    for (let distance = 0; distance <= OCEAN_TIME_SEARCH_STEPS; distance += stride) {
       const source = sourceAt(step + distance) ?? sourceAt(step - distance);
       if (source) return source;
     }
