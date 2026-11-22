@@ -20,7 +20,7 @@ Passes run in order on the finished frame: after depth of field, motion blur, li
 | `fragment` | GLSL ES 3.00 text that defines `vec4 userPass(vec2 uv)`. Helper functions and `const` values may come before it. 4096 bytes of code at most; comments and extra spaces are not counted (the text as sent may be up to 65536 bytes). |
 | `uniforms` | Named values. A number is a `float`; `[x, y]`, `[x, y, z]` and `[x, y, z, w]` are `vec2`, `vec3` and `vec4`; an int is `{ "type": "int", "value": 4 }`. |
 | `scale` | 0.05 to 1 (default 1). The pass renders at this fraction of the width and height, and whatever reads it enlarges it with nearest filtering. A `scale` of 0.25 on the last pass is a pixel-art downscale. |
-| `objects` | Optional list of 1 to 16 part names (node ids, as the object ID pass lists them). `objectSlotAt(uv)` tells which of them is under a pixel. The preview and render jobs draw the object ID pass first when a pass lists parts. |
+| `objects` | Optional list of 1 to 16 names. A name is a part (as the object ID pass lists it) or the node id of a placed asset, which stands for every part of that asset; the names may resolve to at most 64 parts. `objectSlotAt(uv)` tells which of them is under a pixel. The preview and render jobs draw the object ID pass first when a pass lists parts. |
 | `needs` | Optional list of `normal`, `objectId`, `albedo`, `emission`. Each adds one exact input to the pass. |
 | `luts` | Optional palette textures, up to 4: `{ "palette": { "colors": ["#101820", "#f2aa4c"] } }`. |
 
@@ -39,7 +39,7 @@ You do not declare uniforms or the version line; the engine writes them. A snipp
 | `worldFootprintAt(uv, direction)` | function | How far `dot(worldPointAt(uv), direction)` changes over one pixel. |
 | `bandLimitedLine(coordinate, pitch, width, footprint)` | function | Coverage 0 to 1 of lines that repeat every `pitch`, averaged over `footprint`. |
 | `normalAt(uv)`, `objectIdAt(uv)`, `albedoAt(uv)`, `emissionAt(uv)` | functions | Exact G-buffer reads, only when the pass lists them in `needs` ([below](#exact-normals-object-ids-albedo-and-emission)). |
-| `objectSlotAt(uv)` | function | The position in the pass's `objects` list of the part under `uv`, or -1 for the background, any other part, and a pass with no `objects`. A name that matches several parts gives all of them its one position. Edges are hard: an object ID cannot be antialiased. A name that is not a part in the frame fails the render and lists part names to use. |
+| `objectSlotAt(uv)` | function | The position in the pass's `objects` list of the part under `uv`, or -1 for the background, any other part, and a pass with no `objects`. A name that matches several parts, or a placed asset id that covers all its parts, gives all of them its one position. Edges are hard: an object ID cannot be antialiased. A name that is not a part in the frame fails the render and lists part names to use. |
 | `gl_FragCoord` | `vec4` | The pixel position inside this pass. |
 
 ## Exact normals, object IDs, albedo and emission
