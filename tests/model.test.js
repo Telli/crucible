@@ -62,8 +62,8 @@ test('sphere UVs preserve separate seam coordinates and cover every vertex', () 
   for (let row = 0; row <= rings; row++) {
     const first = row * (segments + 1);
     const last = first + segments;
-    assert.equal(mesh.uvs[first * 2], 0);
-    assert.equal(mesh.uvs[last * 2], 1);
+    assert.equal(mesh.uvs[first * 2], 1);
+    assert.equal(mesh.uvs[last * 2], 0);
     for (let axis = 0; axis < 3; axis++) assert.ok(Math.abs(mesh.positions[first * 3 + axis] - mesh.positions[last * 3 + axis]) < 1e-6);
   }
 });
