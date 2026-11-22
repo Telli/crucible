@@ -96,9 +96,9 @@ The generators also enforce their existing numeric and modeling constraints.
 | `tube` | `path`, `radius`, `segments`, `radialSegments`, `closed` | Required XYZ path, `0.1`, `64`, `12`, `false` |
 | `curve` | `points` or `shape` or `splines`, `closed`, `kind`, `weights`, `trim`, `grow`, `radius`, `taper`, `profile`, `resolution`, `radialSegments` | One of points, shape or splines, `false`, `bezier`, 1, none, none, `0.05`, none, round, `12`, `8` |
 | `text` | `text`, `size`, `depth`, `font`, `align`, `curveSegments` | Required string, `1`, `0.2`, `default`, `left`, `4` |
-| `terrain` | `size`, `resolution`, `seed`, `amplitude`, `holes` | `40` m, `64` cells, `1`, `1` m, none |
+| `terrain` | `size`, `resolution`, `seed`, `amplitude`, `holes`, `featureSize`, `octaves`, `warp`, `ridged`, `mountainAmplitude`, `mountainMask`, `chunks`, `levels` | `40` m, `64` cells, `1`, `1` m, none, `size / 4` m, `6`, `0` m, off, `46` m, none, `1`, `1` |
 
-`seed` is a whole number from 0 to 2147483647 (anything else is refused, not rounded or wrapped). `terrain` is one seeded ground mesh from `-size / 2` to `size / 2` on X and Z with hills about y = 0 and up to 16 round `holes` (`{ center: [x, z], radius }`) that leave no surface; it loads on demand. Details are in `scene_capabilities` under `terrain`.
+`seed` is a whole number from 0 to 2147483647 (anything else is refused, not rounded or wrapped). `terrain` is one seeded ground mesh from `-size / 2` to `size / 2` on X and Z with hills about y = 0 and up to 16 round `holes` (`{ center: [x, z], radius }`) that leave no surface; it loads on demand. Shape, chunks and levels: [terrain](https://crucible.codepawl.com/terrain.md#recipe-terrain). Details are in `scene_capabilities` under `terrain`.
 
 Boxes that meet in a room: the rounded edge of a default box leaves a groove where two boxes touch, and sun, sky and lamps shine through it. When at least four pairs of plain boxes (translation and scale only, no parent) touch and the joined boxes have a thin slab on each of the six sides, the engine draws those boxes with sharp edges, whatever their `bevel`. Props that only stand on a floor, rooms without a ceiling, rotated or parented boxes, and scenes with more than 1500 rounded boxes keep their rounded edges. The recipe is not changed, so `bevel` still reads as written.
 
