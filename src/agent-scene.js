@@ -1834,7 +1834,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       : NO_ASSETS;
     // Grown vegetation travels the placed-asset channel; its module returns the placed runtime with its own parts added.
     const plantedRuntime = recipe.nodes.some(node => node.vegetation)
-      ? agentSceneModule('vegetation').expandVegetation(recipe, limits, assetOutputCache, placedRuntime)
+      ? agentSceneModule('vegetation').expandVegetation(recipe, limits, assetOutputCache, placedRuntime, options.sequenceFrames)
       : placedRuntime;
     // Scattered clutter travels the same channel and adds its own parts after the trees.
     const assetRuntime = recipe.nodes.some(node => node.clutter)
