@@ -219,8 +219,8 @@ function foamColorUploads(foamColor) {
 test('foamColor tints the foam through its own uniform, and leaving it out uploads white so the default pixels do not change', () => {
   const shader = createFragmentShader(['water', 'vertexColors']);
   assert.match(shader, /uniform vec3 waterFoamColor;/);
-  assert.ok(shader.includes('mix(vec3(0.92, 0.95, 0.97) * waterFoamColor * ('), 'the lit lace is tinted');
-  assert.ok(shader.includes('mix(vec3(0.85, 0.9, 0.95) * waterFoamColor, waterContactColor'), 'the lit foam is tinted');
+  assert.ok(shader.includes('radiance *= vec3(1.0) + (waterFoamColor - vec3(1.0)) * waterFoam * (1.0 - waterContactShare);'), 'the whole foam pixel is tinted, and white adds zero');
+  assert.ok(!shader.includes('waterFoamColor *'), 'no partial tint is left on one term');
   assert.deepEqual(foamColorUploads(undefined), [1, 1, 1], 'no foamColor uploads exact white');
   assert.deepEqual(foamColorUploads([1, 1, 1]), foamColorUploads(undefined), 'white given equals the default');
   assert.deepEqual(foamColorUploads([0.8, 0.95, 1]), [0.8, 0.95, 1]);

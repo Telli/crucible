@@ -763,7 +763,7 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     }
     float grazing = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
     color = mix(color, vec3(0.0137, 0.147, 0.195), grazing * 0.85);
-    color = mix(color, mix(vec3(0.92, 0.95, 0.97) * waterFoamColor * (0.68 + 0.32 * (fineLace * 0.5 + midLace * 0.5)), waterContactColor, waterContactShare), waterFoam);
+    color = mix(color, mix(vec3(0.92, 0.95, 0.97) * (0.68 + 0.32 * (fineLace * 0.5 + midLace * 0.5)), waterContactColor, waterContactShare), waterFoam);
     roughness = mix(0.16, 0.8, waterFoam);
     if (waterRampHead.x > 0.5) {
       float rampSun = clamp(dot(normal, normalize(lightDirection)), 0.0, 1.0);
@@ -845,7 +845,9 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     float glintShape = pow(max(dot(normal, halfVector), 0.0), glintSharpness);
     float glintFresnel = 0.02 + 0.98 * pow(1.0 - max(dot(halfVector, viewDirection), 0.0), 5.0);
     radiance += vec3(1.0, 0.9, 0.7) * glintShape * (0.5 + 40.0 * glintFresnel) * 6.0 * keyResponse * (1.0 - waterFoam);
-    radiance += mix(vec3(0.85, 0.9, 0.95) * waterFoamColor, waterContactColor, waterContactShare) * waterFoam * (max(dot(normal, normalize(lightDirection)), 0.0) * keyResponse + 0.35 * daylight * ambientIntensity);
+    radiance += mix(vec3(0.85, 0.9, 0.95), waterContactColor, waterContactShare) * waterFoam * (max(dot(normal, normalize(lightDirection)), 0.0) * keyResponse + 0.35 * daylight * ambientIntensity);
+    // foamColor tints everything the foam shows: its diffuse, its lit add and any light the foam pixel picked up on the way. White adds exactly zero, so the default is unchanged.
+    radiance *= vec3(1.0) + (waterFoamColor - vec3(1.0)) * waterFoam * (1.0 - waterContactShare);
     if (waterBody.w > 0.5 && alphaMode > 1.5) {
       // Blended water draws its own background: the opaque scene refracted and blurred, not the one behind it unbent.
       radiance = radiance * alpha + refractedBackground(radiance, worldPosition, normal, viewDirection) * (1.0 - alpha);
