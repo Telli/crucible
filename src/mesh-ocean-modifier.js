@@ -1,5 +1,8 @@
 import { GROUP_PREFIX, VECTOR_PREFIX, createMeshData } from './mesh-data.js';
-import { oceanWaves, oceanSurfaceAt, oceanFoamThreshold, oceanFoamWithMemory, MAX_FOAM_MEMORY_SAMPLES } from './ocean-waves.js';
+import {
+  oceanWaves, oceanSurfaceAt, oceanFoamThreshold, prepareOceanBatch, setOceanBatchPoint, oceanBatchSurface, oceanBatchFoamWithMemory,
+  MAX_FOAM_MEMORY_SAMPLES,
+} from './ocean-waves.js';
 import { normalizeWake, wakeAt } from './ocean-wake.js';
 import { registerModifierNormalizer, registerModifierRunner } from './mesh-modifiers.js';
 
@@ -34,14 +37,17 @@ export function oceanMesh(mesh, { axis, windSpeed, direction, choppiness, size, 
   const sprayVelocity = spray ? new Float32Array(mesh.vertexCount * 3) : null;
   const foamThreshold = oceanFoamThreshold(waves, { windSpeed, size, choppiness, coverage });
   const fullSprayRise = SPRAY_RISE_PER_WIND * windSpeed;
+  const batch = prepareOceanBatch(waves, time, choppiness, foamMemory);
+  const surface = {};
   for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
     const restX = positions[vertex * 3 + first];
     const restZ = positions[vertex * 3 + second];
-    const surface = oceanSurfaceAt(waves, restX, restZ, time, choppiness, foamThreshold);
+    setOceanBatchPoint(batch, restX, restZ);
+    oceanBatchSurface(batch, surface, foamThreshold);
     positions[vertex * 3 + up] += surface.height;
     positions[vertex * 3 + first] += surface.moveX;
     positions[vertex * 3 + second] += surface.moveZ;
-    foam[vertex] = oceanFoamWithMemory(waves, restX, restZ, time, choppiness, foamThreshold, foamMemory, surface.foam);
+    foam[vertex] = oceanBatchFoamWithMemory(batch, foamThreshold, surface.foam);
     if (spray) {
       sprayWeight[vertex] = Math.min(1, Math.max(0, surface.riseSpeed / fullSprayRise));
       sprayVelocity[vertex * 3 + up] = surface.riseSpeed;
