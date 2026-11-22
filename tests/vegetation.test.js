@@ -71,7 +71,7 @@ test('invalid inputs are rejected', () => {
 });
 
 test('triangle budgets fall with each level of detail', () => {
-  const budgets = { broadleaf: [60000, 12000, 2500, 2500], birch: [60000, 12000, 2500, 2500], conifer: [60000, 12000, 2500, 1200], palm: [30000, 8000, 3000, 3000], bush: [20000, 5000, 2500, 2500] };
+  const budgets = { broadleaf: [60000, 12000, 2500, 2500], birch: [60000, 12000, 2500, 2500], conifer: [60000, 12000, 3200, 1500], palm: [30000, 8000, 3000, 3000], bush: [20000, 5000, 2500, 2500] };
   for (const species of SPECIES_NAMES) {
     for (const leaves of ['cards', 'mesh']) {
       const triangles = createTree({ species, leaves }, 4).levels.map(level => level.triangles);

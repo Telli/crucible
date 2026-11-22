@@ -18,9 +18,9 @@ function opaqueShare(pixels) {
   return opaque / (pixels.width * pixels.height);
 }
 
-function geometryHash(tree) {
+function geometryHash(tree, levelCount = tree.levels.length) {
   const hash = createHash('sha256');
-  for (const level of tree.levels) {
+  for (const level of tree.levels.slice(0, levelCount)) {
     for (const part of level.parts) {
       const { positions } = part.geometry;
       hash.update(Buffer.from(positions.buffer, positions.byteOffset, positions.byteLength));
@@ -52,7 +52,9 @@ test('broad-leaved tree presets carry twig cards and crown placement, plain spec
 });
 
 test('plain species grow the same geometry as before twig cards', () => {
-  assert.deepEqual(['broadleaf', 'birch', 'bush'].map(species => geometryHash(createTree(species, 4))), ['8d529c72e840', '6da290072153', '505a750a3783']);
+  // Levels 0 and 1 only: the far levels now keep the species' own leaf card (#3051). The bush keeps its clumps at every level.
+  assert.deepEqual(['broadleaf', 'birch'].map(species => geometryHash(createTree(species, 4), 2)), ['6c932dbfcea7', 'd1b1b3c5dc22']);
+  assert.equal(geometryHash(createTree('bush', 4)), '505a750a3783');
 });
 
 test('mesh leaves of the presets grow the same geometry as before twig cards', () => {

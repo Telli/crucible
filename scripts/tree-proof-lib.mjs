@@ -175,7 +175,7 @@ export function measureTreeLevels({ preset, seed = DEFAULT_SEED, height, frameSi
   const leaf = grown.leaf;
   return tree.levels.map((level, index) => {
     const setting = LEVEL_SETTINGS[index];
-    const paintsLeaves = setting.leafKeep > 0 && leaf.cardSize && leaf.texture;
+    const paintsLeaves = setting.leafKeep > 0 && !(setting.clumps && leaf.farClumps) && leaf.cardSize && leaf.texture;
     return {
       preset, seed, level: index,
       foliageTriangles: trianglesOf(level.parts, 'foliage'),
