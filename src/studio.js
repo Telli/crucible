@@ -884,7 +884,7 @@ function buildPackReadyRecipe(recipe) {
     }
   }
   if (cloned.environment) {
-    for (const envField of ['sky', 'hdri', 'spotLights', 'areaLights', 'shadowCascades', 'sunAngularRadius', 'lines']) {
+    for (const envField of ['sky', 'hdri', 'keyFromHdri', 'spotLights', 'areaLights', 'shadowCascades', 'sunAngularRadius', 'lines']) {
       if (cloned.environment[envField] !== undefined) {
         delete cloned.environment[envField];
         stripped.push(`environment.${envField}`);
