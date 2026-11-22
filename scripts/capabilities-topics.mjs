@@ -222,7 +222,12 @@ function answerOneTopic(capabilities, topic, names, outlineSources) {
   const source = outlineSources.get(name);
   const found = [notes, runtime, source].some(value => value !== undefined);
   if (!found) {
-    const suggestions = [...new Set([...suggestTopics(requestedName, allNames), ...branchTopicsNamed(requestedName, outlineSources)])].slice(0, MAX_SUGGESTIONS);
+    const branchTopics = branchTopicsNamed(requestedName, outlineSources);
+    // A bare geometry or op name (cylinder, uv_unwrap) that is the branch of exactly one topic means that topic (#3018).
+    if (branchName === undefined && branchTopics.length === 1) {
+      return answerOneTopic(capabilities, branchTopics[0], names, outlineSources);
+    }
+    const suggestions = [...new Set([...suggestTopics(requestedName, allNames), ...branchTopics])].slice(0, MAX_SUGGESTIONS);
     const didYouMean = suggestions.length ? ` Did you mean ${suggestions.join(' or ')}?` : '';
     throw new UnknownTopicError(`Unknown topic ${topic}.${didYouMean}`, allNames);
   }
