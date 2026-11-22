@@ -3,6 +3,7 @@ import { roomJoinedBoxNodeIds } from './room-box-joins.js';
 import { box, checkTorusShape, circle, cone, cylinder, grid, icoSphere, sphere, torus } from './geometry.js';
 import { createSceneGraph } from './scene-graph.js';
 import { invalidField, withFieldPrefix } from './field-error.js';
+import { createRepeatTracker, partFingerprint, unchangedFindingsLine } from './diagnostic-repeats.js';
 import { applyProjection, validateCameraShift, CAMERA_LENS_FIELDS } from './camera.js';
 import { checkLocalVolumePartNames } from './local-volume-resolve.js';
 import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, agentEnvironmentKey, SKY_OVERRIDABLE_FIELDS, VOLUME_FOG_FIELDS } from './agent-look.js';
@@ -2302,6 +2303,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   // scene_inspect names what the ranking could not settle. A scene that opted out gets the pairs of parts that fight instead:
   // that check is bounded, runs on inspect only and is kept until the scene changes.
+  const repeatTracker = createRepeatTracker();
   let coplanarReportCache = null;
   function coplanarProblems() {
     if (!agentSceneModuleActive('coplanar', requestedModules)) {
@@ -2495,6 +2497,15 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     /** The z-fighting the draw-time ranking could not settle, as coplanar-overlap findings; none when the scene opted out (the renderer reports its pairs) or has none. */
     flushLeftovers() {
       return state.recipe.environment.resolveCoplanar === false ? [] : coplanarProblems();
+    },
+    /**
+     * The scene's findings for an edit answer (#2207): a coplanar overlap already reported with both parts unchanged is left out
+     * and counted in one line. scene_inspect and scene_look still list every finding. Spread the result into the answer.
+     */
+    editDiagnostics() {
+      const { shown, unchanged } = repeatTracker.filter(this.inspect().diagnostics ?? [], name => partFingerprint(state.parts.find(part => part.name === name)));
+      const diagnostics = unchanged ? [...shown, { kind: 'coplanar-overlap-unchanged', severity: 'info', count: unchanged, message: unchangedFindingsLine(unchanged) }] : shown;
+      return diagnostics.length ? { diagnostics } : {};
     },
     get postPasses() {
       return structuredClone(state.recipe.postPasses ?? []);

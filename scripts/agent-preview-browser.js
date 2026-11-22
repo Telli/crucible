@@ -507,8 +507,7 @@ function status(record) {
 // An agent that needs the node list calls scene_inspect. The scene's own warnings (closed room without a bake, stale bake,
 // coplanar overlap, ignored material fields) still ride along, only when there are any.
 function sceneDiagnostics(record) {
-  const { diagnostics } = record.scene.inspect();
-  return diagnostics?.length ? { diagnostics } : {};
+  return record.scene.editDiagnostics();
 }
 
 // An edit that released old undo steps to fit the vertex budget says so, so the agent does not rely on them.

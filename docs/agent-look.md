@@ -151,6 +151,10 @@ Directional key radiance equals `keyColor * keyIntensity`.
 Zero intensity disables that lighting contribution.
 Direction magnitude remains in the canonical recipe.
 The shadow projector uses its normalized direction, so changing only magnitude does not change shadow placement.
+
+### Coplanar findings in edit answers
+
+A `coplanar-overlap` finding rides along with an edit answer (`scene_apply`, `mesh_edit` and the other edit tools) only when it is new or when one of its parts moved or changed shape since the last answer carried it. When a batch leaves reported findings untouched, the answer adds one `coplanar-overlap-unchanged` entry with a count, for example "2 coplanar overlaps reported earlier are unchanged". `scene_inspect` always lists every finding. A finding that goes away and later comes back is reported again.
 High radiance can clip at the renderer's half-float HDR target limit of `65504` before bloom and tone mapping.
 
 ## Light units and three.js conversion
