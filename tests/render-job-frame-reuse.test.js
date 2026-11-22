@@ -102,6 +102,25 @@ test('a frame falls back to a new renderer when replaceParts refuses the change'
   assert.equal(harness.rendererOptions.length, renderersBefore + 1);
 });
 
+test('a kept renderer fits the cascades of each new sea time exactly, as the new renderer of a textured scene did', () => {
+  const harness = previewHarness();
+  const sessionId = 'sea-cascade-fits';
+  const recipe = seaWithTexturedBox();
+  recipe.environment = { shadowCascades: 3 };
+  harness.preview.create({ recipe, sessionId, backend: 'cpu', memoryBudgetMiB: 192 });
+  harness.preview.frame({ sessionId, motionTime: 0.5 });
+  const cascades = harness.rendererOptions.at(-1).shadowCascades;
+  const rendererCount = harness.rendererOptions.length;
+  assert.ok(cascades, 'the scene draws with cascades');
+  // A moving camera leaves a wider fit in a slice; a frame of the next time may not shade with it.
+  cascades.holds = [{ fit: 'wider', tight: 'tight' }];
+  harness.preview.frame({ sessionId, motionTime: 0.5 });
+  assert.equal(cascades.holds.length, 1, 'the same time keeps the fits, as a draw that moves no sea did');
+  harness.preview.frame({ sessionId, motionTime: 1.5 });
+  assert.equal(harness.rendererOptions.length, rendererCount, 'the renderer is kept');
+  assert.equal(cascades.holds.length, 0, 'a new sea time drops them');
+});
+
 function countingBatches(partCounter) {
   const part = { name: 'floor', geometry: { positions: new Float32Array(9), indices: new Uint32Array(3) }, matrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) };
   return [{ get parts() { partCounter.searches++; return [part]; } }];

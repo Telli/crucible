@@ -396,6 +396,16 @@ function syncShadowCascades(record) {
   }
 }
 
+// A textured scene took a new renderer for every pose that moved its sea, so each frame fitted its shadow cascades exactly. The
+// kept renderer holds the wider fits of a moving camera (cascaded-shadows.js chooseFit), which shade the textured land
+// differently, so it forgets them when the sea moves to a new time (#3038).
+function forgetShadowFitsOfMovedSea(record) {
+  const { scene, renderer } = record;
+  if (!record.rendererTextured || !renderer.shadowCascades || scene.motionTime === record.seaFitTime) return;
+  record.seaFitTime = scene.motionTime;
+  if (scene.parts.some(part => isReindexedGeometry(part.geometry))) renderer.shadowCascades.forgetFits();
+}
+
 function draw(record, time = 0, camera = record.scene.camera, frameOptions = {}) {
   // A heavy edit ranks its coplanar triangles right after it returns (#2905); a frame never draws them unranked.
   record.scene.settleFlush?.();
@@ -426,6 +436,7 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
     const { positions, normals, skyVisibility, indices } = part.geometry;
     updatePartVertices(record.renderer, part, positions, normals, { skyVisibility, ...(isReindexedGeometry(part.geometry) && { indices }) });
   }
+  forgetShadowFitsOfMovedSea(record);
   syncAutomaticGround(record);
   syncShadowCascades(record);
   syncSequenceTextures(record);

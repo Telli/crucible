@@ -1,3 +1,4 @@
 - entry:update-part-vertices: it now also rewrites sky visibility and triangle indices, which a sea needs to be updated in place instead of rebuilt each frame.
 - scene:agent-scene: it keeps a live copy of each ocean-time sea and rewrites it per frame; this is what removes the per-frame mesh swap.
 - scene:agent-scene+lazy: the same agent-scene code.
+- goal:agent-scene: +497 B gzip pays for the kept sea (live copy per ocean-time node, overwritten each pose, with a full-layout check) that replaces the per-frame sea mesh rebuild and part swap: a 72-frame ocean render drops from about 54 s to about 14 to 23 s. The check that a changed sea falls back to the swap is what keeps every frame equal to a rebuilt one.
