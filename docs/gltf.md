@@ -63,7 +63,8 @@ The renderer retains its separate memory budget.
 ## Output
 
 The result contains `parts`, `warnings`, `animations`, `applyAnimation`, `dispose`, and `capabilities`.
-Each part contains `name`, `geometry`, `matrix`, and `material`.
+Each part contains `name`, `label`, `geometry`, `matrix`, and `material`.
+Three.js strips periods, slashes, brackets and colons from node names, so `name` is the decoded name that clip tracks and `pose.jointWorld` address. `label` is the node name exactly as authored in the file (the same string as the `label` of the matching entry in `nodes`), so metadata or frame tracks keyed by an authored name such as `Ship_Cargo_-2.5_-0.46_0` find their part with `asset.parts.find(part => part.label === authored)`. A part of an unnamed node has the same generated name in both fields.
 The column-major matrix contains the complete world transform, including parent transforms.
 Repeated primitives share geometry objects.
 Static mirrored instances keep their authored winding and world matrices; the renderer batches parts with a negative-determinant matrix apart and draws them with clockwise front faces.
