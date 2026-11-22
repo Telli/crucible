@@ -35,7 +35,7 @@ const ENVIRONMENT_FIELDS = [
   'daylight', 'pointLights', 'spotLights', 'areaLights', 'skyTop', 'skyBottom', 'fogColor', 'fogDensity', 'volumeFog', 'localVolumes', 'liquid', 'shadowCascades', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'wind', 'sky',
 ];
 const EFFECT_FIELDS = ['exposure', 'saturation', 'contrast', 'temperature', 'vignette', 'grain', 'ambientOcclusion', 'ambientOcclusionRadius', 'bloom', 'depthOfField', 'motionBlur'];
-const SHADOW_FIELDS = ['target', 'extent', 'distance', 'near', 'far'];
+const SHADOW_FIELDS = ['target', 'extent', 'distance', 'near', 'far', 'hard'];
 const POINT_LIGHT_FIELDS = ['position', 'color', 'intensity', 'radius', 'range', 'castShadow', 'softFalloff', 'affects'];
 const SPOT_LIGHT_FIELDS = ['position', 'direction', 'angle', 'penumbra', 'color', 'intensity', 'radius', 'range', 'castShadow', 'softFalloff', 'ies', 'affects'];
 const AREA_LIGHT_FIELDS = ['position', 'direction', 'up', 'width', 'height', 'color', 'intensity', 'castShadow', 'ies', 'portal', 'affects'];
@@ -516,7 +516,10 @@ function shadowFrom(input = {}) {
   if (Math.fround(shadow.near) >= Math.fround(shadow.far)) {
     throw new RangeError('Shadow needs near < far at Float32 precision.');
   }
-  return shadow;
+  if (input.hard !== undefined && typeof input.hard !== 'boolean') {
+    throw new RangeError('shadow hard must be true or false. Pass hard: true for one-texel sun shadow edges, or leave it out for the soft filter.');
+  }
+  return input.hard ? { ...shadow, hard: true } : shadow;
 }
 
 function shadowBoundsFrom(shadow, direction) {
@@ -536,7 +539,7 @@ function shadowBoundsFrom(shadow, direction) {
       throw new RangeError('Shadow view, projection, and combined matrices must remain finite and nonsingular at Float32 precision.');
     }
   }
-  return { eye, target: [...shadow.target], up, extent: shadow.extent, near: shadow.near, far: shadow.far };
+  return { eye, target: [...shadow.target], up, extent: shadow.extent, near: shadow.near, far: shadow.far, ...(shadow.hard ? { hard: true } : {}) };
 }
 
 // A recipe that leaves `shadow` out gets a 7 m wide view around [0, 1, 0], and a bigger scene has no shadow data beyond it, so the sun reaches
@@ -574,7 +577,7 @@ export function fitAgentShadow(shadow, parts) {
   const extent = radius * SHADOW_FIT_PADDING;
   if (!(extent > defaults.extent && extent <= LARGEST_FITTED_SHADOW_EXTENT)) return shadow;
   const target = bounds.maximum.map((value, axis) => (value + bounds.minimum[axis]) / 2);
-  return { target, extent, distance: extent * 2.4, near: 1, far: extent * 5 };
+  return { target, extent, distance: extent * 2.4, near: 1, far: extent * 5, ...(shadow.hard ? { hard: true } : {}) };
 }
 
 /** Derive a detached directional shadow projector from validated ordinary JSON. */

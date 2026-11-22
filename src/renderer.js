@@ -1,5 +1,5 @@
 import { resolveBackground, clearColourFor } from './clear-colour.js';
-import { materialTags } from './shader-registry.js';
+import { materialTags, registeredFeatureCode } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
@@ -25,7 +25,7 @@ import { wearUniformValues } from './material-wear.js';
 import { fittedFogDensity } from './fog-fit.js';
 import { canUseCompactColor, respecifyColorTargets } from './compact-color.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
-import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope, sunShadowMapSize } from './shadow-light.js';
+import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope, snapShadowView, sunShadowMapSize } from './shadow-light.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
 
 // Liquid and foam see the resolved opaque scene, so they draw in their own pass after it.
@@ -922,6 +922,7 @@ export class CrucibleRenderer {
     if (shading === 'light') this.shaderFeatures.add(LIGHT_SHADING_FEATURE);
     this.shaderFeatures.add(FRAGMENT_SHADOW_POSITION_FEATURE);
     if (shadowCascades) this.shaderFeatures.add(shadowCascades.shaderFeature);
+    if (shadowBounds?.hard) this.addHardShadowFeature(Boolean(shadowCascades));
     // Cascades replace the single map the tint is cut against, and the tint map is a half float render target.
     if (this.shaderFeatures.has('tintedShadows') && (shadowCascades || !this.context.getExtension('EXT_color_buffer_float'))) this.shaderFeatures.delete('tintedShadows');
     this.tintedShadowsActive = this.shaderFeatures.has('tintedShadows');
@@ -1811,6 +1812,12 @@ export class CrucibleRenderer {
 
   // A one texel map stays cleared to the far depth, so every point reads as lit. That is exact when nothing casts, and when
   // cascades replace the main shader's lookup and nothing else (volume fog, subsurface thickness) still reads this map.
+  addHardShadowFeature(hasCascades) {
+    if (hasCascades) throw new Error('shadow.hard cannot combine with shadowCascades, which have their own filter. Remove one of them.');
+    if (!registeredFeatureCode.has('hardShadows')) throw new Error('shadow.hard needs its shader code: for a recipe call await loadAgentSceneModules(recipe) first, otherwise import the crucible light-modules module.');
+    this.shaderFeatures.add('hardShadows');
+  }
+
   shadowMapSizeWanted() {
     const casts = this.batches.some(batch => !batch.floor && batch.castShadow && !this.tintsShadow(batch));
     if (!casts || this.shadowCascades?.replacesSingleMap(this)) return 1;
@@ -1846,7 +1853,7 @@ export class CrucibleRenderer {
       if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('Shadow framebuffer is incomplete.');
       this.shadowFramebufferCheckedSize = mapSize;
     }
-    const light = resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds, this.fittedWorldShadowView());
+    const light = snapShadowView(resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds, this.fittedWorldShadowView()), mapSize);
     const lightView = mat4.lookAt(mat4.create(), light.eye, light.target, light.up ?? [0, 1, 0]);
     mat4.ortho(this.lightProjection, -light.extent, light.extent, -light.extent, light.extent, light.near, light.far);
     mat4.multiply(this.lightProjection, this.lightProjection, lightView);

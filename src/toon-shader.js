@@ -14,6 +14,10 @@ import { MATERIAL_LAYER_STATE_LENGTH } from './material-layers.js';
 // light falls in, blending with the step below across the same narrow edge, and illuminate multiplies the light by it in
 // place of the grey step level, so the darkest step can be a tint rather than black. The side facing away from a light
 // gets no direct light at all, so it shows the ambient light.
+//
+// `toonCrisp` swaps the soft edge for a hard step. `toonDither` above 0 also moves each pixel's light by an ordered
+// Bayer 4 by 4 threshold, up to that fraction of a step either way (1 spreads a band edge over a whole step), so the edge
+// becomes a pattern of pixels instead of a line. Both are 0 by default, which leaves the soft edge untouched.
 
 const TOON_SOFTNESS = '0.02';
 
@@ -23,19 +27,33 @@ const TOON_DECLARATIONS = `uniform float materialToon;
 uniform float toonDefault;
 uniform float materialToonColored;
 uniform vec3 materialToonColors[${MAX_TOON_STEPS}];
+uniform float materialToonCrisp;
+uniform float materialToonDither;
+const float BAYER_4[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+float toonScaledLight(float light, float bands) {
+  float scaled = clamp(light, 0.0, 1.0) * bands;
+  if (materialToonDither <= 0.0) return scaled;
+  ivec2 cell = ivec2(mod(gl_FragCoord.xy, 4.0));
+  float threshold = (BAYER_4[cell.y * 4 + cell.x] + 0.5) / 16.0 - 0.5;
+  return clamp(scaled + threshold * materialToonDither, 0.0, bands);
+}
+float toonEdge(float scaled, float band, float bands) {
+  if (materialToonCrisp > 0.5 || materialToonDither > 0.0) return scaled > band ? 1.0 : 0.0;
+  return smoothstep(0.0, ${TOON_SOFTNESS} * bands, scaled - band);
+}
 float toonLight(float light) {
   float bands = materialToon > 0.0 ? materialToon : toonDefault;
   if (bands <= 0.0) return light;
-  float scaled = clamp(light, 0.0, 1.0) * bands;
+  float scaled = toonScaledLight(light, bands);
   float band = floor(scaled);
-  return (band + smoothstep(0.0, ${TOON_SOFTNESS} * bands, scaled - band)) / bands;
+  return (band + toonEdge(scaled, band, bands)) / bands;
 }
 vec3 toonStepColor(float light) {
-  float scaled = clamp(light, 0.0, 1.0) * materialToon;
+  float scaled = toonScaledLight(light, materialToon);
   float band = floor(scaled);
   int top = int(min(band, materialToon - 1.0));
   if (top == 0) return materialToonColors[0];
-  float blend = band >= materialToon ? 1.0 : smoothstep(0.0, ${TOON_SOFTNESS} * materialToon, scaled - band);
+  float blend = band >= materialToon ? 1.0 : toonEdge(scaled, band, materialToon);
   return mix(materialToonColors[top - 1], materialToonColors[top], blend);
 }
 `;
@@ -51,7 +69,9 @@ registerShaderFeatureCode('toon', Object.freeze({
 `,
 }));
 
-const TOON_COLORS_STATE_INDEX = MATERIAL_LAYER_STATE_LENGTH - 1;
+const TOON_COLORS_STATE_INDEX = MATERIAL_LAYER_STATE_LENGTH - 3;
+const TOON_CRISP_STATE_INDEX = MATERIAL_LAYER_STATE_LENGTH - 2;
+const TOON_DITHER_STATE_INDEX = MATERIAL_LAYER_STATE_LENGTH - 1;
 const parsedColorsByState = new Map();
 
 function toonColorValues(colorsState) {
@@ -74,6 +94,8 @@ layerTextureSupport.bind = (renderer, mapState, layerState, batch) => {
   previousBind?.(renderer, mapState, layerState, batch);
   if (!renderer.shaderFeatures?.has('toon')) return;
   const colorsState = layerState[TOON_COLORS_STATE_INDEX];
+  renderer.context.uniform1f(uniformOf(renderer, 'materialToonCrisp'), layerState[TOON_CRISP_STATE_INDEX]);
+  renderer.context.uniform1f(uniformOf(renderer, 'materialToonDither'), layerState[TOON_DITHER_STATE_INDEX]);
   renderer.context.uniform1f(uniformOf(renderer, 'materialToonColored'), colorsState ? 1 : 0);
   if (colorsState) renderer.context.uniform3fv(uniformOf(renderer, 'materialToonColors'), toonColorValues(colorsState));
 };

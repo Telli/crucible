@@ -3,7 +3,7 @@
 // more than the checks it saves. tests/material-snapshot.test.js keeps the lists in step with the renderer's material fields.
 
 /** Material fields that the renderer compares with the batch a part was committed to. */
-export const SNAPSHOT_VALUE_FIELDS = Object.freeze(['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap', 'tag', 'alphaMode', 'alphaCutoff', 'opacity', 'doubleSided', 'occlusionStrength', 'moss', 'boxMapScale', 'boxMapAxis', 'lightMapScale', 'layerMaps', 'lightMask', 'clearcoat', 'clearcoatRoughness', 'transmission', 'thickness', 'ior', 'dispersion', 'sheenRoughness', 'specular', 'anisotropy', 'anisotropyRotation', 'iridescence', 'iridescenceIor', 'iridescenceThickness', 'attenuationDistance', 'toon', 'toonColors', 'emissionFresnel', 'softEdge']);
+export const SNAPSHOT_VALUE_FIELDS = Object.freeze(['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap', 'tag', 'alphaMode', 'alphaCutoff', 'opacity', 'doubleSided', 'occlusionStrength', 'moss', 'boxMapScale', 'boxMapAxis', 'lightMapScale', 'layerMaps', 'lightMask', 'clearcoat', 'clearcoatRoughness', 'transmission', 'thickness', 'ior', 'dispersion', 'sheenRoughness', 'specular', 'anisotropy', 'anisotropyRotation', 'iridescence', 'iridescenceIor', 'iridescenceThickness', 'attenuationDistance', 'toon', 'toonColors', 'toonCrisp', 'toonDither', 'emissionFresnel', 'softEdge']);
 
 /** Fields holding an array or descriptor, which can change in place. A material that sets one is never snapshotted. */
 export const SNAPSHOT_REFERENCE_FIELDS = Object.freeze(['normalScale', 'mossColor', 'lightMap', 'attenuationColor', 'sheenColor', 'specularColor', 'subsurface', 'wear', 'emissionMask', 'retro', 'waterGlint']);
@@ -62,6 +62,8 @@ export class MaterialSnapshot {
     this.attenuationDistance = material.attenuationDistance;
     this.toon = material.toon;
     this.toonColors = material.toonColors;
+    this.toonCrisp = material.toonCrisp;
+    this.toonDither = material.toonDither;
     this.emissionFresnel = material.emissionFresnel;
     this.softEdge = material.softEdge;
   }
@@ -101,6 +103,8 @@ export class MaterialSnapshot {
       this.attenuationDistance === material.attenuationDistance &&
       this.toon === material.toon &&
       this.toonColors === material.toonColors &&
+      this.toonCrisp === material.toonCrisp &&
+      this.toonDither === material.toonDither &&
       this.emissionFresnel === material.emissionFresnel &&
       this.softEdge === material.softEdge;
   }
