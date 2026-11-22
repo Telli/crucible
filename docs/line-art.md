@@ -33,6 +33,8 @@ The width is in pixels of the output, so a 480 pixel preview and a 1920 pixel re
 
 `toonColors` on a material gives each step its own colour: one linear `[red, green, blue]` (0 to 4) per step, darkest first, and as many as `toon`, such as `"toon": 3, "toonColors": [[0.2, 0.5, 0.55], [0.6, 0.8, 0.75], [1, 0.92, 0.95]]`. Each colour replaces the grey level of its step, so the darkest step can be a tint instead of black. The side facing away from a light gets no direct light and shows the ambient light, so raise the ambient intensity to light it. A colour is a weight on the sun light (diffuse, albedo and the display curve still apply), so with a white albedo, `keyIntensity` near 3.6 and `environment.viewTransform` `neutral`, a step shows within a few levels of its sRGB colour; the default `aces` curve adds contrast and shifts the tones, and a weight above 1 is compressed toward white by the curve. Without `toonColors` the render is unchanged.
 
+`toonEdge` on a material (0 to 2, default 0) picks the edge between two steps: 0 the soft edge, 1 a hard step, 2 a hard step after an ordered Bayer 4 by 4 threshold moves each pixel's light by up to half a step either way, so the edge becomes a pattern of pixels. It needs `toon` above 0.
+
 ## Lines on some nodes
 
 `nodes` keys are node IDs (a placed asset is one node, however many parts it has). A node it does not name draws as usual.

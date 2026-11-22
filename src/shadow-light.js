@@ -53,6 +53,8 @@ export function resolveShadowLight(world, lightDirection, shadowBounds = {}, fit
 
 // How far the 9 tap filter (taps 2.5 texels apart, plus the bilinear blend) reaches from its centre, in shadow texels.
 const FILTER_REACH_TEXELS = 3.5;
+// A hard shadow (`light.hard`) reads one texel, and the other readers of the bias (the tint map, subsurface thickness) blend 2 by 2.
+const HARD_REACH_TEXELS = 2;
 
 /**
  * The depth bias the sun shadow needs per unit of slope (tan of the angle between the surface normal and the sun), in
@@ -64,7 +66,7 @@ export function shadowBiasPerSlope(light, mapSize) {
   requireFiniteInRange('shadowBiasPerSlope', 'mapSize and light.extent', [mapSize, light.extent], Number.MIN_VALUE, MAXIMUM_COORDINATE);
   requireFiniteInRange('shadowBiasPerSlope', 'light.far - light.near', light.far - light.near, Number.MIN_VALUE, MAXIMUM_COORDINATE);
   const texelWorldSize = (light.extent * 2) / mapSize;
-  return (texelWorldSize * FILTER_REACH_TEXELS) / (light.far - light.near);
+  return (texelWorldSize * (light.hard ? HARD_REACH_TEXELS : FILTER_REACH_TEXELS)) / (light.far - light.near);
 }
 
 const DEFAULT_SHADOW_MAP_SIZE = 2048;

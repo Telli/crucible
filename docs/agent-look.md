@@ -10,6 +10,7 @@ Failed look validation preserves the previous recipe and revision.
 The optional helper `normalizeAgentLook({ environment, effects, shadow })` returns detached, fully normalized JSON.
 It fills omitted fields without mutating the input.
 `resolveAgentShadow(shadow, lightDirection)` returns detached renderer bounds with `eye`, `target`, `up`, `extent`, `near`, and `far`.
+`shadow.hard: true` (default off) gives the sun shadow one-texel edges: one depth compare per pixel instead of the 3 by 3 filter, and the shadow view snaps to whole texels in light space so edges do not crawl on a pan. Its bias is smaller (2 texels instead of 3.5). It replaces the automatic cascades for that scene; an explicit `environment.shadowCascades` above 0 or `sunAngularRadius` with it is an error, since cascades have their own filter. The recipe loads the code with `await loadAgentSceneModules(recipe)`.
 The helpers do not create geometry, render targets, or GPU resources.
 
 ```js

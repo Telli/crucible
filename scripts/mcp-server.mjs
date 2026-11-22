@@ -158,6 +158,7 @@ const materialLayerFields = {
   iridescenceIor: layerNumber('iridescenceIor'),
   iridescenceThickness: layerNumber('iridescenceThickness'),
   toon: layerNumber('toon'),
+  toonEdge: layerNumber('toonEdge'),
   softEdge: layerNumber('softEdge'),
   toonColors: z.array(z.array(z.number().min(0).max(TOON_COLOR_MAXIMUM)).length(3)).min(1).max(8).optional().describe('One linear [r,g,b] per toon step, darkest first; the count must equal toon.'),
 };
@@ -228,7 +229,7 @@ const materialFields = {
 };
 const materialTag = z.enum(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']).optional().describe('Surface kind; liquid, foam, foliage, grass and water change how it renders: see scene_capabilities materialTags and water.');
 const materialCore = coreOf(materialFields, ['color', 'metallic', 'roughness', 'emission', 'opacity']);
-const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics, foamEdge, foamWidth, foamVeins, contactFoam, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors; see scene_capabilities materialFields.';
+const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics, foamEdge, foamWidth, foamVeins, contactFoam, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors, toonEdge; see scene_capabilities materialFields.';
 const materialListed = (strictSchema, description, extraCore) => listed('materialFields', strictSchema, `${description} ${materialMore}`, { ...extraCore, ...materialCore });
 const liquidOptics = z.strictObject({
   thickness: z.number().min(0).max(100).optional().describe('Metres of liquid where it faces the camera.'),
@@ -398,6 +399,7 @@ const shadow = z.strictObject({
   distance: bounded(0.01, 1e6).optional(),
   near: bounded(0.001, 1e6).optional(),
   far: bounded(0.001, 1e6).optional(),
+  hard: z.boolean().optional(),
 }).describe('Directional shadow coverage. Backend checks Float32 view/projection consistency.');
 // Curve and text sit in the geometry list only, not in mesh bases or cutters. Value types and limits are checked by the
 // engine and listed in scene_capabilities curveText, because every tool that takes a recipe repeats this schema.

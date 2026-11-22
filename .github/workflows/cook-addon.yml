@@ -171,6 +171,7 @@ on:
       - 'src/glitter-shader.js'
       - 'src/grid-medium.js'
       - 'src/ground-bounce.js'
+      - 'src/hard-shadows.js'
       - 'src/hair.js'
       - 'src/hdri.js'
       - 'src/impostor-shader.js'

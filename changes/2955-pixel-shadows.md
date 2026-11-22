@@ -1,0 +1,1 @@
+- Add opt-in `shadow.hard` (one-texel sun shadow edges with a texel-snapped view) and the material fields `toonCrisp` and `toonDither` (hard or Bayer 4x4 dithered toon step edges); scenes that leave them out render byte for byte as before (#2955).
