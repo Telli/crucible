@@ -41,6 +41,7 @@ import { annotateViewHtml, clientSupportsMcpApps, ANNOTATE_VIEW_URI, MCP_APPS_MI
 import { loadAskUserFixture, describeAskUserFixture } from './ask-user-fixture.mjs';
 import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
 import { resolvePacksOption } from '../bin/crucible-pack-folder.mjs';
+import { FOLDED_APPLY_OPERATION_TYPES } from '../src/apply-operation-notes.js';
 
 describeSchemaInputsWithReceivedValues();
 
@@ -930,21 +931,11 @@ const otherOperations = [
   z.strictObject({ type: z.literal('set-camera'), ...cameraFields, fStop: cameraFields.fStop.nullable().optional(), focusDistance: positive.nullable().optional() }),
   z.strictObject({ type: z.literal('set-motion'), motion: recipeMotionReference.nullable().optional(), removeTracks: z.array(z.record(z.string(), z.string())).min(1).max(64).optional().describe('Instead of motion: selectors { kind, id, property } of tracks to drop.') })
     .refine(operationBody => (operationBody.motion !== undefined) !== (operationBody.removeTracks !== undefined), { message: 'set-motion takes one of motion or removeTracks.' }),
-  z.strictObject({ type: z.literal('bake-motion'), nodes: z.array(identifier).min(1).max(32), start: nonnegative.optional(), end: nonnegative.optional(), step: positive.optional(), tolerance: z.record(z.string(), z.number()).optional() }),
-  z.strictObject({
-    type: z.literal('fracture-node'), node: identifier, cells: z.number().int().min(2).max(64), strength: positive,
-    seed: detail(0, 4294967295), impact: vector3.optional(), impactRadius: positive.optional(), density: positive.optional(), friction: nonnegative.optional(),
-  }).describe('Break a convex root node into glued physics pieces. Fields: scene_capabilities physics.'),
-  z.looseObject({ type: z.literal('add-explosion'), id: identifier, center: vector3, size: positive }).describe('Layered blast; more fields: scene_capabilities explosion.'),
-  z.strictObject({ type: z.literal('settle'), settle: z.record(z.string(), z.unknown()).describe('See scene_capabilities topic settle.') }),
-  z.strictObject({ type: z.literal('set-armatures'), armatures: armaturesReference.nullable() }),
-  z.strictObject({ type: z.literal('set-physics'), physics: z.record(z.string(), z.unknown()).nullable().describe('Same object as recipe.physics in scene_create.') }),
-  z.looseObject({ type: z.enum(['set-cloth', 'set-timeline', 'set-particles', 'set-bake', 'set-pixel-grid']) }).describe('One field named after the section (cloth, timeline, particles, bake, pixelGrid): the same object as in scene_create, or null to clear it.'),
-  z.strictObject({ type: z.literal('set-post-passes'), postPasses: z.array(z.record(z.string(), z.unknown())).nullable() }),
-  z.strictObject({ type: z.literal('set-game'), game: gameReference.nullable() }),
+  // Rarely used edits share one branch so every turn carries fewer schema bytes (#3047). The backend checks their fields
+  // and names the fix; scene_capabilities applyOperations lists them.
+  z.looseObject({ type: z.enum(FOLDED_APPLY_OPERATION_TYPES) }).describe('Fields sit beside type. Each one: scene_capabilities applyOperations.<type>.'),
   z.strictObject({ type: z.literal('set-environment'), environment: environmentListed }),
   z.strictObject({ type: z.literal('set-effects'), effects: effectsListed }),
-  z.strictObject({ type: z.literal('set-shadow'), shadow }),
   z.strictObject({ type: z.literal('set-root'), translation: vector3.optional(), rotation: quaternion.optional(), scale: z.tuple([positive, positive, positive]).optional() }),
   z.strictObject({ type: z.literal('set-asset-node'), id: identifier, translation: vector3.optional(), rotation: quaternion.optional(), scale: z.tuple([positive, positive, positive]).optional() }),
   z.strictObject({ type: z.literal('set-animation'), clip: z.number().int().min(0).nullable().optional(), time: nonnegative.optional() }),
@@ -952,7 +943,6 @@ const otherOperations = [
   z.strictObject({ type: z.literal('add-geometry'), geometry: geometryListed }),
   z.strictObject({ type: z.literal('remove-geometry'), id: identifier }),
   z.strictObject({ type: z.literal('add-material'), material: materialListed(z.strictObject({ id: identifier, tag: materialTag, ...materialFields }), 'New material.', { id: identifier, tag: materialTag }) }),
-  z.strictObject({ type: z.literal('remove-material'), id: identifier }),
 ];
 const operation = z.discriminatedUnion('type', [...nodeOperations(nodeFields, nodeRecord), ...otherOperations]);
 // The same schemas without the relations field, for the benchmark switch --relations off.

@@ -315,6 +315,8 @@ Each shot starts from the authored base pose. The [review guide](agent-review.md
 
 `set-node` can rebind a mesh to another geometry/material pair.
 
+The tool schema types the common operations one by one. Rarely used ones (`bake-motion`, `fracture-node`, `add-explosion`, `settle`, `set-armatures`, `set-physics`, `set-cloth`, `set-timeline`, `set-particles`, `set-bake`, `set-pixel-grid`, `set-post-passes`, `set-game`, `set-shadow` and `remove-material`) share one branch to keep every turn smaller: their fields sit beside `type`, `scene_capabilities` topic `applyOperations` lists them, and the backend checks them and names the fix.
+
 The recipe also accepts [authored lighting, fog, effects and shadow coverage](agent-look.md).
 Use `set-environment`, `set-effects` and `set-shadow` with nested partial records to adjust the look.
 Nested `volumeFog` and `bloom` fields merge. `pointLights` replaces the complete list.
