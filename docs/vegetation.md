@@ -169,5 +169,5 @@ Meshes and textures are built in plain JavaScript, so tests run in Node.
 
 - Cards need the renderer's alpha mask to look right. Without `leafTextures` the leaf textures are 128 px procedural sprigs that look flat from under a few metres; the scanned cards hold up to about 1 m. Palm fronds have no scanned card yet. The conifer card is a cedar spray, so it reads as a flat branch tip rather than separate needles.
 - Level changes pop unless `selectLevels` gets `fade`; level 2 crowns are blobs or crossed cards, and baked impostors exist only when asked for (see Impostors and cross-fade).
-- Species are fixed presets; there is no wind-bent skeleton or collision with other trees. Seasonal colour exists only in recipes (the `season` field), not in the addon call.
+- Species are fixed presets; there is no wind-bent skeleton or collision with other trees. Seasonal colour exists only in recipes (the `season` field), not in the addon call. A broadleaf from `createTree` also has `bareParts(levelIndex)`, the twigged bark to draw at that level in place of the level's parts once it has shed its leaves.
 - In recipes, tags `foliage` and `grass` accept a `tag` override on placed assets, so an imported tree sways; its leaf shading and alpha coverage stay those of the renderer.

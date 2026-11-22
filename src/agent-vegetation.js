@@ -330,9 +330,12 @@ export function expandVegetation(recipe, limits, cache, placedRuntime) {
       counts.levels[level] = (counts.levels[level] ?? 0) + 1;
       const leafless = bare && DECIDUOUS_SPECIES.has(instance.species);
       const seasonal = DECIDUOUS_SPECIES.has(instance.species) || instance.species === 'grass';
-      instance.variant.levels[level].parts.forEach((part, partIndex) => {
+      // A bare broadleaf draws its twigged bark instead of the level's parts (#2826); other bare species drop their leaves.
+      const twigged = leafless && typeof instance.variant.bareParts === 'function';
+      const levelParts = twigged ? instance.variant.bareParts(level) : instance.variant.levels[level].parts;
+      levelParts.forEach((part, partIndex) => {
         if (leafless && part.tintable) return;
-        const geometryId = `vegetation:${entry.serial}:${variantIds.get(instance.variant)}:${level}:${partIndex}`;
+        const geometryId = `vegetation:${entry.serial}:${variantIds.get(instance.variant)}:${level}:${partIndex}${twigged ? ':bare' : ''}`;
         if (!geometryIds.has(geometryId)) {
           geometryIds.add(geometryId);
           recipe.geometries.push({ id: geometryId, type: 'asset', vegetation: entry.serial });

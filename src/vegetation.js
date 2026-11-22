@@ -83,6 +83,88 @@ function createChildSlots(spec, random) {
   return slots;
 }
 
+// The direction a child leaves its parent at `sample`: `angle` radians away from the parent, turned by the slot's azimuth.
+function sproutDirection(sample, slot, angle) {
+  const frame = createFrame(sample.direction);
+  const axis = addVectors(scaleVector(frame.first, Math.cos(slot.azimuth)), scaleVector(frame.second, Math.sin(slot.azimuth)));
+  return normalized(addVectors(scaleVector(sample.direction, Math.cos(angle)), scaleVector(axis, Math.sin(angle))));
+}
+
+// The rings of one branch: `parameters.segments` steps that wander by `gnarl`, bend by `tropism` and taper to `tipRadius`.
+function walkBranch(origin, direction, length, radius, parameters, random) {
+  const points = [origin];
+  const radii = [radius];
+  const stepLength = length / parameters.segments;
+  let current = direction;
+  for (let step = 1; step <= parameters.segments; step++) {
+    const wander = scaleVector(randomUnitOffset(random), parameters.gnarl * 2);
+    current = normalized(addVectors(addVectors(current, wander), [0, parameters.tropism, 0]));
+    points.push(addScaled(points[step - 1], current, stepLength));
+    radii.push(radius * lerp(1, parameters.tipRadius, step / parameters.segments));
+  }
+  return { points, radii, length };
+}
+
+/**
+ * The twigs a bare tree shows past its last branch level (#2826), one generation per entry of `preset.bareTwigs`. They
+ * draw from their own random stream, so growing them leaves the leafy tree, its leaf sites and its crown exactly as they were.
+ */
+function growTwigs(skeleton, preset, seed) {
+  const random = createRandom(seed * 6151 + 29);
+  const lastLevel = preset.levels.length - 1;
+  const twigs = [];
+  let parents = skeleton.branches.filter(branch => branch.level === lastLevel);
+  preset.bareTwigs.forEach((generation, generationIndex) => {
+    const grown = [];
+    for (const parent of parents) {
+      for (const slot of createChildSlots(generation, random)) {
+        const sample = sampleBranch(parent, slot.fraction);
+        const direction = sproutDirection(sample, slot, randomInRange(random, generation.angle));
+        const length = parent.length * randomInRange(random, generation.lengthRatio);
+        const walked = walkBranch(sample.position, direction, length, sample.radius * generation.radiusRatio, generation, random);
+        grown.push({ level: lastLevel + 1 + generationIndex, ...walked });
+      }
+    }
+    twigs.push(...grown);
+    parents = grown;
+  });
+  return twigs;
+}
+
+// How deep the bark of a bare tree goes at each level of detail: every twig up close, the first twig generation at
+// level 1, and at the far levels one branch level more than the leafy tree, whose crown clumps no longer hide the limbs.
+function bareBranchLimit(levelIndex, lastLevel) {
+  if (levelIndex === 0) return Infinity;
+  if (levelIndex === 1) return lastLevel + 1;
+  return lastLevel - 1;
+}
+
+/**
+ * `bareParts(levelIndex)` for a species with `bareTwigs`: the bark of that level with the twigs, the part a renderer
+ * draws for a leafless tree in place of the level's parts. Built on first use and kept, so a leafy scene pays nothing.
+ */
+function createBareParts(skeleton, preset, seed, bark, materials, shadowTrunks) {
+  const lastLevel = preset.levels.length - 1;
+  const built = [];
+  let twigs = null;
+  return (levelIndex) => {
+    if (!Number.isInteger(levelIndex) || levelIndex < 0 || levelIndex >= LEVEL_SETTINGS.length) {
+      throw new RangeError(`bareParts needs a level index from 0 to ${LEVEL_SETTINGS.length - 1}; got ${levelIndex}.`);
+    }
+    if (!built[levelIndex]) {
+      twigs ??= growTwigs(skeleton, preset, seed);
+      const setting = { ...LEVEL_SETTINGS[levelIndex], maximumBranchLevel: bareBranchLimit(levelIndex, lastLevel) };
+      // Three-sided twigs keep a bare tree near the triangles of the same tree in leaf.
+      const twigSides = { ...preset, sides: [...preset.sides, ...preset.bareTwigs.map(() => 3)] };
+      const geometry = buildBark({ branches: [...skeleton.branches, ...twigs] }, twigSides, setting, bark);
+      built[levelIndex] = Object.freeze([
+        { role: 'bark', geometry, material: materials.bark, tintable: false, shadowLods: [{ geometry, error: 0 }, ...shadowTrunks] },
+      ]);
+    }
+    return built[levelIndex];
+  };
+}
+
 function growSkeleton(preset, height, random) {
   const lastLevel = preset.levels.length - 1;
   const branches = [];
@@ -107,10 +189,7 @@ function growSkeleton(preset, height, random) {
   function spawnChildren(branch, spec) {
     for (const slot of createChildSlots(spec, random)) {
       const sample = sampleBranch(branch, slot.fraction);
-      const frame = createFrame(sample.direction);
-      const axis = addVectors(scaleVector(frame.first, Math.cos(slot.azimuth)), scaleVector(frame.second, Math.sin(slot.azimuth)));
-      const angle = randomInRange(random, spec.angle);
-      const direction = normalized(addVectors(scaleVector(sample.direction, Math.cos(angle)), scaleVector(axis, Math.sin(angle))));
+      const direction = sproutDirection(sample, slot, randomInRange(random, spec.angle));
       const progress = (slot.fraction - spec.start) / Math.max(spec.end - spec.start, 1e-6);
       growBranch({
         origin: sample.position,
@@ -124,17 +203,7 @@ function growSkeleton(preset, height, random) {
 
   function growBranch({ origin, direction, length, radius, level }) {
     const parameters = preset.levels[level];
-    const points = [origin];
-    const radii = [radius];
-    const stepLength = length / parameters.segments;
-    let current = direction;
-    for (let step = 1; step <= parameters.segments; step++) {
-      const wander = scaleVector(randomUnitOffset(random), parameters.gnarl * 2);
-      current = normalized(addVectors(addVectors(current, wander), [0, parameters.tropism, 0]));
-      points.push(addScaled(points[step - 1], current, stepLength));
-      radii.push(radius * lerp(1, parameters.tipRadius, step / parameters.segments));
-    }
-    const branch = { level, points, radii, length };
+    const branch = { level, ...walkBranch(origin, direction, length, radius, parameters, random) };
     branches.push(branch);
     if (parameters.children) spawnChildren(branch, parameters.children);
     if (level === lastLevel) addLeafSites(branch);
@@ -493,7 +562,8 @@ function describeLevel(parts) {
 /**
  * Grows one tree. `speciesOrOptions` is a preset name ('broadleaf', 'birch', 'conifer', 'palm',
  * 'bush') or `{ species, height, leaves, barkTextures, barkTileSize, leafTextures }`. Returns three levels of detail; each level lists the
- * parts (`bark`, `foliage`) with their geometry and material, in local meters with the trunk at the origin.
+ * parts (`bark`, `foliage`) with their geometry and material, in local meters with the trunk at the origin. A broadleaf also
+ * has `bareParts(levelIndex)`, the parts to draw at that level once it has shed its leaves: the bark with fine twigs.
  */
 export function createTree(speciesOrOptions = 'broadleaf', seed = 1) {
   const options = typeof speciesOrOptions === 'string' ? { species: speciesOrOptions } : { ...speciesOrOptions };
@@ -528,8 +598,10 @@ export function createTree(speciesOrOptions = 'broadleaf', seed = 1) {
     ]);
   });
   bakeCrownSkyVisibility(levels, options.species);
+  const bareParts = preset.bareTwigs ? createBareParts(skeleton, preset, seed, bark, materials, [shadowTrunk, thinnedShadowTrunk]) : null;
   return {
     kind: 'tree', species: options.species, seed, height, leaves, levels, materials,
+    ...(bareParts ? { bareParts } : {}),
     distances: TREE_LEVEL_DISTANCES,
     bounds: boundsOf(levels[0].parts.map(part => part.geometry)),
   };
