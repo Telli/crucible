@@ -70,7 +70,7 @@ const skinSpec = z.strictObject({
 }).describe('Bind this mesh node to an armature with automatic weights: each vertex follows its nearest bones, by distance to the bone segments. Needs the armature at rest where the mesh is.');
 const relationList = z.array(z.record(z.string(), z.unknown())).max(8).describe('Relations against other mesh nodes; fields in scene_capabilities relations. [] removes them.').meta({ id: 'Relations' });
 const placedAsset = z.record(z.string(), z.unknown()).describe('Catalog GLB placed at this group node: {id or name,materials,clip,drive}; see scene_capabilities placedAssets.').meta({ id: 'PlacedAsset' });
-const placedVegetation = z.record(z.string(), z.unknown()).describe('Trees at this group node: {species} or {preset, tree?} for one, or {mix, scatter:{ground,...}} over a terrain node; see scene_capabilities vegetation.').meta({ id: 'PlacedVegetation' });
+const placedVegetation = z.record(z.string(), z.unknown()).describe('Trees at this group node: {species} for one, or {mix, scatter:{ground,...}} over a terrain node; see scene_capabilities vegetation.').meta({ id: 'PlacedVegetation' });
 const placedClutter = z.unknown();
 // Left open here and checked by the scene (normalizeRayVisibility), whose errors say what to pass; the shape is in scene_capabilities renderFlags.
 const rayVisibility = z.unknown();

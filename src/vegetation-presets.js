@@ -54,7 +54,7 @@ export const TREE_PRESETS = Object.freeze({
   birch: Object.freeze({ label: 'Birch', species: 'birch', tree: {} }),
   pine: Object.freeze({
     label: 'Pine', species: 'conifer', height: [12, 17],
-    tree: { crownShape: 'umbrella', branches: [36, 6], branchAngle: [72, 55], branchStart: [0.5, 0.2], lengthFalloff: [0.26, 0.3], gnarliness: [0.03, 0.12, 0.1], tropism: [0, 0.08, 0.04], leafStart: 0.4 },
+    tree: { crownShape: 'umbrella', branches: [44, 9], branchAngle: [74, 55], branchStart: [0.55, 0.2], lengthFalloff: [0.4, 0.35], gnarliness: [0.03, 0.12, 0.1], tropism: [0, 0.08, 0.04], leafStart: 0.4 },
   }),
   palm: Object.freeze({ label: 'Palm', species: 'palm', tree: {} }),
   bush: Object.freeze({ label: 'Bush', species: 'bush', tree: {} }),
