@@ -143,19 +143,87 @@ test('undo and redo of duplicate keep the same scene object', () => {
   assert.deepEqual(controller.exportRecipe(), afterDuplicate);
 });
 
-test('undo of deleting a middle node restores the recipe, redo removes it in place', () => {
+function partBytes(scene) {
+  scene.settleFlush();
+  return scene.parts.map(part => [
+    part.name,
+    Buffer.from(part.geometry.positions.buffer, part.geometry.positions.byteOffset, part.geometry.positions.byteLength).toString('hex'),
+    Buffer.from(part.matrix.buffer, part.matrix.byteOffset, part.matrix.byteLength).toString('hex'),
+  ]);
+}
+
+test('undo of deleting a middle node puts it back in the scene already built, and redo removes it in place (#2787)', () => {
   const controller = makeController();
+  const sceneBefore = controller.scene;
   const before = controller.exportRecipe();
+  const partsBefore = controller.scene.parts;
   controller.selectNode('hero');
   controller.deleteSelected();
   const afterDelete = controller.exportRecipe();
   assert.deepEqual(afterDelete.nodes.map(node => node.id), ['ground', 'orb']);
   controller.undo();
-  assert.deepEqual(controller.exportRecipe(), before, 'a node back in the middle of the list is rebuilt');
-  const sceneAfterUndo = controller.scene;
+  assert.equal(controller.scene, sceneBefore, 'a node back in the middle of the list does not build the scene again');
+  assert.deepEqual(controller.exportRecipe(), before);
+  assert.equal(controller.selectedNodeId, 'hero', 'the object that came back is selected');
+  const partsAfter = controller.scene.parts;
+  assert.equal(partsAfter.length, partsBefore.length);
+  assert.equal(partsAfter[0], partsBefore[0], 'the part before the returned node is the same object');
+  assert.equal(partsAfter[2], partsBefore[2], 'the part after the returned node is the same object');
+  assert.deepEqual(partBytes(controller.scene), partBytes(createAgentScene(before)), 'the scene equals one built from the recipe');
   controller.redo();
-  assert.equal(controller.scene, sceneAfterUndo);
+  assert.equal(controller.scene, sceneBefore);
   assert.deepEqual(controller.exportRecipe(), afterDelete);
+});
+
+test('undo of deleting a parent with its children keeps the scene and equals a scene built from the recipe (#2787)', () => {
+  const recipe = makeRecipe();
+  recipe.nodes.splice(1, 0, { id: 'group', translation: [1, 0, 0] }, { id: 'child', parent: 'group', geometry: 'cube', material: 'stone', translation: [0, 1, 0] });
+  const controller = createStudioController({ scene: createAgentScene(recipe), viewportWidth: 800, viewportHeight: 600 });
+  const sceneBefore = controller.scene;
+  const before = controller.exportRecipe();
+  controller.selectNode('group');
+  controller.deleteSelected();
+  assert.deepEqual(controller.exportRecipe().nodes.map(node => node.id), ['ground', 'hero', 'orb']);
+  controller.undo();
+  assert.equal(controller.scene, sceneBefore);
+  assert.deepEqual(controller.exportRecipe(), before);
+  assert.deepEqual(partBytes(controller.scene), partBytes(createAgentScene(before)));
+});
+
+test('undo of a lens change on a field-of-view camera keeps the scene (#2787)', () => {
+  const controller = makeController();
+  const sceneBefore = controller.scene;
+  const before = controller.exportRecipe();
+  const partsBefore = controller.scene.parts;
+  controller.setCameraLensMillimetres(85);
+  controller.undo();
+  assert.deepEqual(controller.exportRecipe(), before, 'the field of view is back and the projection field is gone');
+  assert.equal(controller.scene, sceneBefore);
+  assert.equal(controller.scene.parts.length, partsBefore.length);
+  assert.equal(controller.scene.parts[1], partsBefore[1], 'no part was made again');
+});
+
+test('a history step the scene refuses to take whole still restores the recipe by building it', () => {
+  const recipe = makeRecipe();
+  const scene = createAgentScene(recipe);
+  const refusals = [];
+  // The scene is frozen, so the refusal sits on an object that inherits everything else from it.
+  const refusing = Object.create(scene, {
+    restoreRecipe: {
+      value() {
+        refusals.push('refused');
+        throw new Error('refused');
+      },
+    },
+  });
+  const controller = createStudioController({ scene: refusing, viewportWidth: 800, viewportHeight: 600 });
+  const before = controller.exportRecipe();
+  controller.selectNode('hero');
+  controller.deleteSelected();
+  controller.undo();
+  assert.deepEqual(refusals, ['refused']);
+  assert.notEqual(controller.scene, refusing);
+  assert.deepEqual(controller.exportRecipe(), before);
 });
 
 test('undo of add, duplicate and delete in a row still restores every recipe', () => {
