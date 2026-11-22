@@ -1,9 +1,11 @@
 // Recipe terrain: a seeded ground (hills, ridged mountains, a warped valley) with optional round holes, built with the terrain addon as one mesh.
+// Paths carve roads and emit named masks (terrain-paths.js).
 // It loads on demand with the recipes that contain a terrain geometry, so the scene entry does not carry it.
 import './world-material-shader.js';
 import { mat4 } from 'gl-matrix';
 import { createTerrain, TERRAIN_GRID_LIMITS } from './terrain.js';
 import { invalidField } from './field-error.js';
+import { normalizeTerrainPaths } from './terrain-paths.js';
 import { diagnostic } from './agent-diagnostics.js';
 import { TERRAIN_DEFAULT_SIZE, TERRAIN_DEFAULT_RESOLUTION, holesCoverWholeGround, holesRemovingNoCell } from './terrain-hole-cells.js';
 
@@ -111,6 +113,7 @@ export function terrainVertexEstimate(value) {
     throw invalidField('terrain.holes', value.holes, `a list of at most ${TERRAIN_LIMITS.maximumHoles} circles, such as [{ "center": [0, 0], "radius": 2 }]`);
   }
   value.holes?.forEach(checkHole);
+  normalizeTerrainPaths(value.paths);
   checkHolesLeaveGround(value.holes, settings.size, settings.resolution * settings.chunks);
   // Every chunk is its own mesh with its own border vertices.
   return settings.chunks * settings.chunks * (settings.resolution + 1) * (settings.resolution + 1);
@@ -153,6 +156,7 @@ export function createRecipeTerrain(value, { lodDistance, eye } = {}) {
     resolution: settings.resolution,
     seed: settings.seed,
     holes: value.holes,
+    paths: value.paths,
     height: noiseOptions(settings),
     ...(lodDistance === undefined ? {} : { lodDistance }),
     ...(eye === undefined ? {} : { eye }),
@@ -194,7 +198,7 @@ const mergedByTerrain = new WeakMap();
 
 /** The chunked terrain of a record, kept between poses: its height grid is the costly part, and a camera move only changes which chunks use which level. */
 function cachedTerrain(value, lodDistance) {
-  const key = JSON.stringify([value.size, value.resolution, value.seed, value.amplitude, value.holes, value.featureSize, value.octaves, value.warp, value.ridged, value.mountainAmplitude, value.mountainMask, value.chunks, value.levels, lodDistance ?? null]);
+  const key = JSON.stringify([value.size, value.resolution, value.seed, value.amplitude, value.holes, value.paths, value.featureSize, value.octaves, value.warp, value.ridged, value.mountainAmplitude, value.mountainMask, value.chunks, value.levels, lodDistance ?? null]);
   let terrain = lodTerrains.get(key);
   if (!terrain) {
     terrain = createRecipeTerrain(value, { lodDistance });

@@ -367,6 +367,7 @@ on:
       - 'src/sun-bounce.js'
       - 'src/surface-nets.js'
       - 'src/terrain-hole-cells.js'
+      - 'src/terrain-paths.js'
       - 'src/terrain-sky.js'
       - 'src/terrain.js'
       - 'src/text-geometry.js'

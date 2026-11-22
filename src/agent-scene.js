@@ -579,7 +579,7 @@ const GEOMETRY_FIELDS = {
   curve: ['points', 'shape', 'splines', 'closed', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'radius', 'taper', 'profile', 'resolution', 'radialSegments'],
   text: ['text', 'size', 'depth', 'font', 'align', 'curveSegments'],
   mesh: ['base', 'edits', 'stack', 'smoothAngle', 'shapeKeys'],
-  terrain: ['size', 'resolution', 'seed', 'amplitude', 'holes', 'featureSize', 'octaves', 'warp', 'ridged', 'mountainAmplitude', 'mountainMask', 'chunks', 'levels'],
+  terrain: ['size', 'resolution', 'seed', 'amplitude', 'holes', 'featureSize', 'octaves', 'warp', 'ridged', 'mountainAmplitude', 'mountainMask', 'chunks', 'levels', 'paths'],
   cloud: ['seed', 'puffs', 'width', 'height', 'flatBase', 'resolution', 'levels', 'upBias', 'unionSoftness'],
   fragment: ['source', 'seed', 'cells', 'index', 'impact', 'impactRadius'],
   dented: ['source', 'impacts', 'stiffness', 'maxDepth', 'radius'],
@@ -621,7 +621,7 @@ function geometryEstimate(value, scope = PENDING_CUTTER_SCOPE) {
     // Terrain checks its own numbers (a whole resolution from 2 to 499), so its message names the real range; null is not absent there, so it still fails below.
     if (value.type === 'terrain' && ['size', 'resolution', 'amplitude', 'featureSize', 'octaves', 'warp', 'ridged', 'mountainAmplitude', 'mountainMask', 'chunks', 'levels'].includes(field) && value[field] !== null) continue;
     if (value.type === 'cloud' && value[field] !== null) continue;
-    if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact', 'impacts'].includes(field)) {
+    if (value[field] !== undefined && !['profile', 'contour', 'holes', 'path', 'closed', 'base', 'edits', 'stack', 'shapeKeys', 'points', 'taper', 'text', 'font', 'align', 'from', 'to', 'shape', 'splines', 'kind', 'weights', 'order', 'knots', 'knotMode', 'trim', 'grow', 'root', 'source', 'impact', 'impacts', 'paths'].includes(field)) {
       finite(value[field], field);
     }
   }

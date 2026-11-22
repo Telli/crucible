@@ -90,6 +90,29 @@ Memory: three `TEXTURE_2D_ARRAY`s on units 11, 12 and 14 (sRGB colour, normal, r
 
 In a recipe, the same ground is the `terrain` geometry: see [Recipe terrain](#recipe-terrain) and [agent-scene](agent-scene.md). There, holes that remove every cell are refused with an error on `geometries[i].holes` (lower a radius or move a center), and a hole that removes no cell, because it does not reach a cell centre, returns a `terrain-hole-removes-no-cell` warning with the cell size (`size / resolution`) and the smallest radius that removes one. `scene_export_glb` names the node whose mesh has no triangles.
 
+## Paths
+
+`paths` carves roads, trails and riverbeds into the ground and gives each one a mask. It works in `createTerrain({ paths })` and in the recipe `terrain` geometry. At most 16 paths of 2 to 256 points `[x, z]` in metres each.
+
+| Field | Meaning | Range (default) |
+| --- | --- | --- |
+| `points` | the centre line: a curve through them, or straight segments with `smooth: false` | 2 to 256 points |
+| `width` | metres across the carved bed | 0.1 to 200 (3) |
+| `depth` | metres the bed sits below the ground at the centre line | 0 to 20 (0.2) |
+| `falloff` | metres on each side where the bed blends back into the hills | 0 to 200 (`width`) |
+| `ruts` | depth in metres of two wheel grooves at 0.225 of the width from the centre, so the strip between them is about as wide as one groove | 0 to 2 (0) |
+| `crown` | metres the middle of the bed rises above its sides | 0 to 2 (0) |
+| `shoulder` | metres of a lip raised beside the road, in the middle of the falloff | 0 to 2 (0) |
+| `smooth` | `true` runs a Catmull-Rom curve through the points, sampled every `width / 4` metres; `false` keeps straight segments | true or false (true) |
+| `name` | name of the mask | 1 to 64 characters (`path0`, `path1`, ...), no two alike |
+
+- The bed is level across its width at the height the ground has under the nearest point of the centre line, minus `depth`, so a road across a slope is cut into the hillside. Paths apply in order after the noise. The same seed and points give the same heights.
+- The carve changes the height grid, so the mesh, `heightAt`, `normalAt` and vegetation all see the road.
+- `terrain.pathMasks` is `null` without paths. Otherwise `names` lists the masks, `at(name, x, z)` gives 0 to 1 (1 across the width, fading to 0 over half the falloff; no name gives the strongest of all paths), and `image(name, resolution = 256)` gives `{ width, height, data, bounds }` RGBA pixels with the mask in red. Use it as a splat `maskMap` with `maskBounds: [-size / 2, -size / 2, size / 2, size / 2]` and the rule `{ mask: 'r', invertMask: true }` on grass and `{ mask: 'r' }` on dirt.
+- A recipe does not draw splat materials yet, so the mask feeds the splat rules of an addon scene. Clutter or vegetation `exclude` can read `pathMasks.at(name, x, z)` the same way; the recipe `exclude` field takes only circles and nodes today.
+- Cost: segments sit in a grid, so a sample reads only those near it. A smoothed path of 256 points is at most 8192 segments in all.
+- Looks: a cut bench reads best with `depth` 0.7 to 1, `falloff` 1 to 1.5 (a steep bank; a wide falloff gives a soft slope), `shoulder` 0.3 and a road layer with `triplanar: true` and `splat.triplanarStart` near 12 so banks do not stretch the texture. A rut is as wide as about a quarter of the half-width, so give the ground cells of 0.1 m or less (a 40 m ground at resolution 400) to see two clear grooves; at 0.5 m cells they blur.
+
 ## Terrain near water
 
 A terrain near water needs nothing set. When `applyWaterReflection` finds a water surface in the scene, every terrain part it is given builds up to two extra coarse meshes per chunk (as many halvings as the resolution allows) that only the water reflection draws; `attachWaterReflection` takes `scale` (0.05 to 1 of the canvas, default 0.75) and `updateEvery` (0 to 1000 lit frames) and refuses other values; it hides them from every other draw. This is one build of about 130 ms in `applyWaterReflection`, before the renderer exists, so no frame waits for it. The first call with water builds the coarse levels (about 0.1 s and 22 MB), so call it during setup, before the animation starts. Terrain in a scene without water builds nothing extra: its memory and build time are what they were. Pass `mirrorLevels` to choose the count yourself; `mirrorLevels: 0` keeps the plain terrain even next to water, and a number you set is built when the terrain is created, as before. Measured on a 900 m terrain at resolution 128 with 8 by 8 chunks: the levels add about 22 MB of mesh data (the finest level is 61 MB). In return the mirror frame of the water benchmark (960 by 540, RTX 3060, median of 240 samples) costs +25% over reflection off instead of +40%.
@@ -164,6 +187,7 @@ The `terrain` geometry of a recipe calls `createTerrain` with these fields. A fi
 - `resolution` must divide by `2 ** (levels - 1)`, and `chunks * resolution` is at most 4096 cells per side, as in `createTerrain`.
 - A record with `chunks` or `levels` above 1 is built at its finest level, and the scene swaps in the level each chunk needs for the camera at every pose: each frame of a render job and each time of a camera track. The mesh is the same object while no chunk changes level. `heightAt`, vegetation and navigation read the finest grid, so heights do not depend on `chunks` or `levels`. A moved or scaled ground sees the camera in its own space.
 - `holes` cut cells of the whole ground (`chunks * resolution` across).
+- `paths` carve roads: see [Paths](#paths).
 
 ## Measured
 
