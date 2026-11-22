@@ -12,13 +12,13 @@ freezeBakeClockForFile();
 const LAMP_POSITION = [0.9, 2.5, 0.6];
 const SHADE_BASE = [LAMP_POSITION[0], LAMP_POSITION[1] - 0.15, LAMP_POSITION[2]];
 
-function roomWithShade(doubleSided, baked = true) {
+function roomWithShade(doubleSided, baked = true, materialFields = {}) {
   const recipe = closedRoom();
   if (!baked) delete recipe.bake;
   recipe.environment.pointLights = [{ position: LAMP_POSITION, intensity: 14, radius: 0.05 }];
   recipe.nodes = recipe.nodes.filter(node => node.id !== 'bulb');
   recipe.geometries.push({ id: 'shade', type: 'lathe', profile: [[0.28, 0], [0.13, 0.3]], segments: 16 });
-  recipe.materials.push({ id: 'shadeMaterial', color: [0.8, 0.8, 0.8], roughness: 0.9, doubleSided });
+  recipe.materials.push({ id: 'shadeMaterial', color: [0.8, 0.8, 0.8], roughness: 0.9, doubleSided, ...materialFields });
   recipe.nodes.push({ id: 'shade', geometry: 'shade', material: 'shadeMaterial', translation: SHADE_BASE });
   return recipe;
 }
@@ -88,3 +88,45 @@ test('a one-sided part keeps its triangles and its single face', () => {
   assert.equal(baked.material.doubleSided, false);
   assert.equal(baked.geometry.indices.length, source.geometry.indices.length);
 });
+
+/** Mean step in lightmap value between neighbouring outside faces around the shade, in 0 to 255. */
+function outsideRingRoughness(part) {
+  const bytes = lightmapBytes(part);
+  const { positions, normals, indices } = part.geometry;
+  const outside = [];
+  for (let triangle = 0; triangle < indices.length / 3; triangle++) {
+    const centre = [0, 0, 0];
+    for (let corner = 0; corner < 3; corner++) {
+      const vertex = indices[triangle * 3 + corner];
+      for (let axis = 0; axis < 3; axis++) centre[axis] += positions[vertex * 3 + axis] / 3;
+    }
+    const firstVertex = indices[triangle * 3];
+    let facing = 0;
+    for (let axis = 0; axis < 3; axis++) facing += normals[firstVertex * 3 + axis] * (LAMP_POSITION[axis] - centre[axis] - SHADE_BASE[axis]);
+    if (facing < 0) outside.push({ angle: Math.atan2(centre[2], centre[0]), value: lightmapValueAt(part, bytes, triangle) });
+  }
+  outside.sort((first, second) => first.angle - second.angle);
+  let steps = 0;
+  for (let index = 1; index < outside.length; index++) steps += Math.abs(outside[index].value - outside[index - 1].value);
+  return steps / (outside.length - 1);
+}
+
+test('the outside of an opaque two-sided shade bakes smoothly around the ring, without strips', () => {
+  // The back copy once unwrapped welded to the front, so the charts fell apart into vertical strips: steps near 38.
+  const roughness = outsideRingRoughness(shadePart(roomWithShade(true)));
+  assert.ok(roughness < 8, `neighbouring outside faces differ by ${roughness} on average`);
+});
+
+const LIGHT_THROUGH_MATERIALS = {
+  transmission: { transmission: 0.5 },
+  subsurface: { subsurface: { weight: 0.5 } },
+};
+
+for (const [label, fields] of Object.entries(LIGHT_THROUGH_MATERIALS)) {
+  test(`a two-sided part with ${label} keeps one texel for both faces, so light still shows through`, () => {
+    const source = shadePart(roomWithShade(true, false, fields));
+    const baked = shadePart(roomWithShade(true, true, fields));
+    assert.equal(baked.material.doubleSided, true);
+    assert.equal(baked.geometry.indices.length, source.geometry.indices.length);
+  });
+}

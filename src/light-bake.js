@@ -647,12 +647,13 @@ function unscaledAfterUnwrap(extracted, scale) {
   return { ...extracted, positions, normals };
 }
 
-/** Gives a geometry its lightmap UVs in channel 0, from the unwrap that `uv_unwrap` uses. */
 /**
- * A copy of the geometry followed by its back faces: the same corners in reverse winding with flipped normals. A two-sided part
- * unwraps and bakes this doubled mesh, so each face has its own lightmap texels and the lit side never lends its light to the other.
+ * A copy of the geometry followed by its back faces: the same corners in reverse winding with flipped normals. An opaque
+ * two-sided part unwraps and bakes this doubled mesh, so each face has its own lightmap texels and the lit side never lends
+ * its light to the other. The back copy sits `offset` along x while it unwraps: at the same place the unwrap would weld it
+ * to the front, every edge would join four faces and the charts would fall apart into strips (#2754).
  */
-function withBackFaces(geometry) {
+function withBackFaces(geometry, offset) {
   const vertexCount = geometry.positions.length / 3;
   const doubled = { indices: new Uint32Array(geometry.indices.length * 2) };
   doubled.indices.set(geometry.indices);
@@ -670,7 +671,47 @@ function withBackFaces(geometry) {
     for (let slot = 0; slot < values.length; slot++) copy[values.length + slot] = attribute === 'normals' ? -values[slot] : values[slot];
     doubled[attribute] = copy;
   }
+  for (let vertex = vertexCount; vertex < vertexCount * 2; vertex++) doubled.positions[vertex * 3] += offset;
   return doubled;
+}
+
+/** How far the back copy moves while it unwraps: well past the part's own extent along x. */
+function backFaceOffset(geometry) {
+  let lowest = Infinity;
+  let highest = -Infinity;
+  for (let index = 0; index < geometry.positions.length; index += 3) {
+    lowest = Math.min(lowest, geometry.positions[index]);
+    highest = Math.max(highest, geometry.positions[index]);
+  }
+  return { offset: (highest - lowest) * 4 + 1, boundary: highest + (highest - lowest) * 2 + 0.5 };
+}
+
+/** Moves the back copy of an unwrapped doubled mesh back onto the front: every vertex past `boundary` along x came from it. */
+function withBackFacesInPlace(unwrapped, { offset, boundary }) {
+  const positions = unwrapped.geometry.positions.slice();
+  for (let index = 0; index < positions.length; index += 3) {
+    if (positions[index] > boundary) positions[index] -= offset;
+  }
+  return { ...unwrapped, geometry: { ...unwrapped.geometry, positions } };
+}
+
+/**
+ * A two-sided part whose faces block light bakes each face apart. A thin part that lets light through (transmission or
+ * subsurface) keeps one texel for both faces, so the light on one side still shows on the other. Parts with alpha are
+ * never baked (skipReason).
+ */
+function bakesFacesApart(material) {
+  if (material.doubleSided !== true) return false;
+  if (material.transmission > 0) return false;
+  return !(material.subsurface?.weight > 0);
+}
+
+/** Unwraps a geometry for its lightmap; an opaque two-sided part unwraps its front and back faces as separate charts. */
+function unwrapPart(geometry, scale, margin, slot, twoSided) {
+  const unwrap = slot ? unwrapIntoSecondUvSet : unwrapForLightmap;
+  if (!twoSided) return unwrap(geometry, scale, margin);
+  const placement = backFaceOffset(geometry);
+  return withBackFacesInPlace(unwrap(withBackFaces(geometry, placement.offset), scale, margin), placement);
 }
 
 /** Leaves the part single-sided once its back faces are real triangles, so no face is drawn twice. */
@@ -678,6 +719,7 @@ function withoutDoubleSided(part) {
   return { ...part, material: { ...part.material, doubleSided: false } };
 }
 
+/** Gives a geometry its lightmap UVs in channel 0, from the unwrap that `uv_unwrap` uses. */
 function unwrapForLightmap(geometry, scale, margin) {
   const { positions, normals, indices } = scaledForUnwrap(geometry, scale);
   const mesh = meshFromGeometry({ positions, normals, indices }, { quads: false, tags: 'none' });
@@ -1057,13 +1099,11 @@ export function planLightmaps(parts, lighting, options = {}) {
     const cache = slot ? secondSetCache : unwrapCache;
     if (!cache.has(part.geometry)) cache.set(part.geometry, new Map());
     const unwraps = cache.get(part.geometry);
-    const twoSided = part.material.doubleSided === true;
+    const twoSided = bakesFacesApart(part.material);
     const key = `${scaleKey(scale)}|${twoSided}`;
     const area = worldTriangleArea(part) * (twoSided ? 2 : 1);
     if (!unwraps.has(key)) {
-      const source = twoSided ? withBackFaces(part.geometry) : part.geometry;
-      const margin = chartMargin(area, settings);
-      unwraps.set(key, slot ? unwrapIntoSecondUvSet(source, scale, margin) : unwrapForLightmap(source, scale, margin));
+      unwraps.set(key, unwrapPart(part.geometry, scale, chartMargin(area, settings), slot, twoSided));
     }
     entries.push({ part, index, unwrapped: unwraps.get(key), area, slot, twoSided });
   });
