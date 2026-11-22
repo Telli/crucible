@@ -82,7 +82,7 @@ test('detached splats attach to another renderer with the same packed words (#27
   assert.equal(first.state.packBuffer, 'renderer pack buffer', 'detach restores the pixel pack buffer binding');
   const second = createTextureMemoryRenderer();
   attachGaussianSplats(second.renderer, splats);
-  const [uploaded] = second.textureWords.values();
+  const uploaded = [...second.textureWords.values()].at(-1);
   assert.deepEqual(uploaded, packedWords);
   assert.ok(splats.statistics.gpuBytes > 0);
 });

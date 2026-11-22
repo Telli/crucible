@@ -6,6 +6,7 @@ import { GAUSSIAN_SPLAT_HARD_COUNT_LIMIT, GAUSSIAN_SPLAT_LIMITS, parseGaussianSp
 import { parseGaussianSplatSpz, parseGaussianSplatSpzAsync } from './gaussian-splat-spz.js';
 import { buildPaletteFragmentSource, resolveSplatPalette } from './splat-palette.js';
 import { buildOutlineVertexSource, OUTLINE_FRAGMENT_SOURCE, resolveSplatOutline } from './splat-outline.js';
+import { HARMONIC_SHADER_SOURCE, harmonicCoefficientsPerChannel, harmonicTexelsPerSplat, SPHERICAL_HARMONIC_MAXIMUM_DEGREE, toHalfFloatBits } from './gaussian-splat-harmonics.js';
 
 export { GAUSSIAN_SPLAT_HARD_COUNT_LIMIT, GAUSSIAN_SPLAT_LIMITS, parseGaussianSplatPly, parseGaussianSplatPlyAsync, parseGaussianSplatSpz, parseGaussianSplatSpzAsync };
 
@@ -17,6 +18,8 @@ export { GAUSSIAN_SPLAT_HARD_COUNT_LIMIT, GAUSSIAN_SPLAT_LIMITS, parseGaussianSp
 // The per-splat data sits in one RGBA32UI texture, three texels per splat:
 // - texel 0: centre x, y, z as float bits and the colour as four bytes;
 // - texels 1 and 2: the six unique values of the 3D covariance (xx, xy, xz, yy, yz, zz) as float bits.
+// Splats with spherical harmonic bands (#2734) have a second RGBA32UI texture of their coefficients as half floats, two per
+// word, read by the vertex shader for the direction from the eye.
 // The only per-frame upload is the sort order, one 32-bit index per visible splat.
 
 const DATA_TEXTURE_WIDTH = 2048;
@@ -24,6 +27,7 @@ const TEXELS_PER_SPLAT = 3;
 const WORDS_PER_TEXEL = 4;
 const MAXIMUM_SPLAT_COUNT = GAUSSIAN_SPLAT_HARD_COUNT_LIMIT;
 const DATA_TEXTURE_UNIT = 10;
+const HARMONIC_TEXTURE_UNIT = 11;
 
 const VERTEX_SOURCE = `#version 300 es
 precision highp float;
@@ -37,6 +41,7 @@ uniform vec2 viewport;
 layout(location = 0) in uint splatIndex;
 out vec4 vertexColor;
 out vec2 vertexOffset;
+${HARMONIC_SHADER_SOURCE}
 ivec2 texelOf(uint splat, uint texel) {
   uint linear = splat * 3u + texel;
   return ivec2(int(linear & 2047u), int(linear >> 11));
@@ -79,6 +84,7 @@ void main() {
   vec2 corner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1)) * 4.0 - 2.0;
   vec2 offset = (corner.x * majorAxis + corner.y * minorAxis) * 2.0 / viewport;
   vertexColor = vec4(float(first.w & 255u), float((first.w >> 8) & 255u), float((first.w >> 16) & 255u), float(first.w >> 24)) / 255.0;
+  if (harmonicDegree > 0) vertexColor.rgb = max(vertexColor.rgb + harmonicColor(splatIndex, normalize(center - eyeModel)), 0.0);
   vertexOffset = corner;
   gl_Position = vec4(clip.xy / clip.w + offset, clip.z / clip.w, 1.0);
 }`;
@@ -136,7 +142,7 @@ void main() {
   outputColor = vec4(0.0);
 }`;
 
-const UNIFORM_NAMES = ['splatData', 'modelView', 'projection', 'focal', 'viewport', 'hdrEnabled', 'exposure', 'alphaCut'];
+const UNIFORM_NAMES = ['splatData', 'modelView', 'projection', 'focal', 'viewport', 'hdrEnabled', 'exposure', 'alphaCut', 'harmonicData', 'harmonicDegree', 'harmonicTexels', 'eyeModel'];
 export const GAUSSIAN_SPLAT_SHADER_SOURCES = Object.freeze({ vertex: VERTEX_SOURCE, fragment: FRAGMENT_SOURCE, opaqueFragment: OPAQUE_FRAGMENT_SOURCE });
 
 // A quaternion of any length stands for the rotation of its unit version; all zero stands for no rotation.
@@ -178,7 +184,39 @@ function createSplatPacker(data) {
       floats.set(covariance, base + 4);
     }
   }
-  return { packRange, packed: { words, rows } };
+  const harmonics = createHarmonicPacker(data);
+  function packRangeWithHarmonics(start, end) {
+    packRange(start, end);
+    harmonics?.packRange(start, end);
+  }
+  return { packRange: packRangeWithHarmonics, packed: { words, rows, harmonics: harmonics?.packed ?? null } };
+}
+
+// Packs each splat's band coefficients as half floats, two per 32-bit word, into texels of their own.
+function createHarmonicPacker(data) {
+  if (!data.sphericalHarmonics) return null;
+  const { degree, coefficients, colorOverflow } = data.sphericalHarmonics;
+  const coefficientsPerSplat = harmonicCoefficientsPerChannel(degree) * 3;
+  // The colour overflow follows the coefficients; data without it packs zero, the bytes' own colour.
+  const valuesPerSplat = coefficientsPerSplat + 3;
+  const valueOf = (index, value) => {
+    if (value < coefficientsPerSplat) return coefficients[index * coefficientsPerSplat + value];
+    return colorOverflow ? colorOverflow[index * 3 + value - coefficientsPerSplat] : 0;
+  };
+  const texelsPerSplat = harmonicTexelsPerSplat(degree);
+  const wordsPerSplat = texelsPerSplat * WORDS_PER_TEXEL;
+  const rows = Math.ceil((data.count * texelsPerSplat) / DATA_TEXTURE_WIDTH);
+  const words = new Uint32Array(rows * DATA_TEXTURE_WIDTH * WORDS_PER_TEXEL);
+  function packRange(start, end) {
+    for (let index = start; index < end; index++) {
+      for (let value = 0; value < valuesPerSplat; value += 2) {
+        const low = toHalfFloatBits(valueOf(index, value));
+        const high = value + 1 < valuesPerSplat ? toHalfFloatBits(valueOf(index, value + 1)) : 0;
+        words[index * wordsPerSplat + value / 2] = (low | (high << 16)) >>> 0;
+      }
+    }
+  }
+  return { packRange, packed: { words, rows, degree, texelsPerSplat } };
 }
 
 // Per-splat arrays the packer reads: how many values each splat takes and which typed arrays are accepted. colors are read
@@ -202,6 +240,25 @@ function checkSplatArray(data, { field, stride, types, meaning }, caller) {
   }
   if (field === 'colors' && values.byteOffset % 4 !== 0) {
     throw new RangeError(`${caller} needs data.colors to start on a 4-byte boundary of its buffer (byteOffset ${values.byteOffset}). Pass a copy made with colors.slice()`);
+  }
+}
+
+// Optional bands: { degree, coefficients } as parseGaussianSplatPly returns them.
+function checkSplatHarmonics(data, caller) {
+  const harmonics = data.sphericalHarmonics;
+  if (harmonics === undefined || harmonics === null) return;
+  const degree = harmonics?.degree;
+  if (!Number.isInteger(degree) || degree < 1 || degree > SPHERICAL_HARMONIC_MAXIMUM_DEGREE) {
+    throw new RangeError(`${caller} needs data.sphericalHarmonics.degree as a whole number from 1 to ${SPHERICAL_HARMONIC_MAXIMUM_DEGREE}, got ${String(degree)}. Pass the sphericalHarmonics parseGaussianSplatPly returns, or leave it out for one colour per splat`);
+  }
+  const expectedLength = data.count * harmonicCoefficientsPerChannel(degree) * 3;
+  const coefficients = harmonics.coefficients;
+  if (!(coefficients instanceof Float32Array || coefficients instanceof Float64Array) || coefficients.length < expectedLength) {
+    throw new TypeError(`${caller} needs data.sphericalHarmonics.coefficients as a Float32Array or Float64Array of ${expectedLength} values (${data.count} splats x ${harmonicCoefficientsPerChannel(degree)} coefficients x red, green, blue), got ${ArrayBuffer.isView(coefficients) ? `a ${coefficients.constructor.name} of ${coefficients.length}` : typeof coefficients}`);
+  }
+  const overflow = harmonics.colorOverflow;
+  if (overflow !== undefined && !((overflow instanceof Float32Array || overflow instanceof Float64Array) && overflow.length >= data.count * 3)) {
+    throw new TypeError(`${caller} needs data.sphericalHarmonics.colorOverflow as a Float32Array or Float64Array of ${data.count * 3} values (red, green, blue per splat that the colour bytes cut), got ${ArrayBuffer.isView(overflow) ? `a ${overflow.constructor.name} of ${overflow.length}` : typeof overflow}. Pass the sphericalHarmonics parseGaussianSplatPly returns, or leave colorOverflow out`);
   }
 }
 
@@ -237,6 +294,7 @@ function checkSplatInput(data, maximumCount, caller) {
   if (!Number.isInteger(data.count)) throw new RangeError(`${caller} needs data.count to be a whole number of splats, got ${data.count}`);
   if (data.count > limit) throw new RangeError(`Gaussian splat scene holds ${data.count} splats, over the limit of ${limit}`);
   for (const description of SPLAT_ARRAYS) checkSplatArray(data, description, caller);
+  checkSplatHarmonics(data, caller);
   checkSplatBounds(data.bounds, caller);
 }
 
@@ -270,8 +328,9 @@ function buildSplats(data, matrix, packed, { alphaCut, palette, outline }) {
  * palette colour, and `dither` (`'none'` default, `'bayer4'`, `'bayer8'`) adds an ordered dither first. Both are off by default.
  * `outline` (`{ color, width }`, width 1 to 4 pixels, color a hex string or [r, g, b], default near black; needs `alphaCut`)
  * draws a dark outline round the outer silhouette of the hard discs. Off by default.
+ * `data.sphericalHarmonics` (from the parse, optional) makes each splat change colour with the view direction.
  * The returned object has `count`, `matrix`, `bounds` and `statistics` (`count`, `visibleCount`, `sortMilliseconds`,
- * `gpuBytes`, `cpuBytes`).
+ * `gpuBytes`, `cpuBytes`, and `harmonicsSkipped` when the GPU could not hold the bands and they were left off).
  */
 export function createGaussianSplats(data, options) {
   const resolvedOptions = resolveSplatOptions(options, 'createGaussianSplats');
@@ -300,14 +359,34 @@ export async function createGaussianSplatsAsync(data, rawOptions) {
   return buildSplats(data, matrix, packed, look);
 }
 
-function createGpuResources(context, splats) {
-  const { words, rows } = splats.packed;
+function uploadWordTexture(context, unit, rows, words) {
   const texture = context.createTexture();
-  context.activeTexture(context.TEXTURE0 + DATA_TEXTURE_UNIT);
+  context.activeTexture(context.TEXTURE0 + unit);
   context.bindTexture(context.TEXTURE_2D, texture);
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.NEAREST);
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, context.NEAREST);
   context.texImage2D(context.TEXTURE_2D, 0, context.RGBA32UI, DATA_TEXTURE_WIDTH, rows, 0, context.RGBA_INTEGER, context.UNSIGNED_INT, words);
+  return texture;
+}
+
+// The band texture is twice as tall as the splat texture at degree 3, so a GPU with a small texture limit could refuse it
+// for a file whose splats fit. Then the splats draw with one colour from every direction, as they did before bands were read,
+// and `statistics.harmonicsSkipped` says why.
+function uploadHarmonics(context, harmonics, statistics) {
+  if (!harmonics) return null;
+  const largestRows = context.getParameter(context.MAX_TEXTURE_SIZE);
+  if (typeof largestRows === 'number' && harmonics.rows > largestRows) {
+    statistics.harmonicsSkipped = `The spherical harmonic texture needs ${harmonics.rows} rows, over this GPU's limit of ${largestRows}; the splats draw with one colour from every direction. Parse the file with a lower sphericalHarmonicDegree, or with fewer splats, to keep the bands`;
+    return null;
+  }
+  const texture = uploadWordTexture(context, HARMONIC_TEXTURE_UNIT, harmonics.rows, harmonics.words);
+  return { texture, rows: harmonics.rows, degree: harmonics.degree, texelsPerSplat: harmonics.texelsPerSplat };
+}
+
+function createGpuResources(context, splats) {
+  const { words, rows } = splats.packed;
+  const harmonics = uploadHarmonics(context, splats.packed.harmonics, splats.statistics);
+  const texture = uploadWordTexture(context, DATA_TEXTURE_UNIT, rows, words);
   const orderBuffer = context.createBuffer();
   context.bindBuffer(context.ARRAY_BUFFER, orderBuffer);
   context.bufferData(context.ARRAY_BUFFER, splats.count * 4, context.DYNAMIC_DRAW);
@@ -317,26 +396,33 @@ function createGpuResources(context, splats) {
   context.vertexAttribIPointer(0, 1, context.UNSIGNED_INT, 0, 0);
   context.vertexAttribDivisor(0, 1);
   context.bindVertexArray(null);
-  splats.statistics.gpuBytes = words.byteLength + splats.count * 4;
+  const harmonicBytes = harmonics ? splats.packed.harmonics.words.byteLength : 0;
+  splats.statistics.gpuBytes = words.byteLength + splats.count * 4 + harmonicBytes;
   splats.packed = null;
-  return { texture, orderBuffer, vertexArray, rows };
+  return { texture, orderBuffer, vertexArray, rows, harmonics };
 }
 
-// Reads the packed data texture back so detached splats can attach to another renderer without keeping a CPU copy.
+// Reads the packed data textures back so detached splats can attach to another renderer without keeping a CPU copy.
 function readPackedBack(context, entry) {
   if (context.isContextLost?.()) return null;
-  const words = new Uint32Array(entry.rows * DATA_TEXTURE_WIDTH * WORDS_PER_TEXEL);
+  const words = readTextureWords(context, entry.texture, entry.rows);
+  const harmonics = entry.harmonics && { words: readTextureWords(context, entry.harmonics.texture, entry.harmonics.rows), rows: entry.harmonics.rows, degree: entry.harmonics.degree, texelsPerSplat: entry.harmonics.texelsPerSplat };
+  return { words, rows: entry.rows, harmonics };
+}
+
+function readTextureWords(context, texture, rows) {
+  const words = new Uint32Array(rows * DATA_TEXTURE_WIDTH * WORDS_PER_TEXEL);
   const previousFramebuffer = context.getParameter(context.READ_FRAMEBUFFER_BINDING);
   const previousPackBuffer = context.getParameter(context.PIXEL_PACK_BUFFER_BINDING);
   const framebuffer = context.createFramebuffer();
   context.bindBuffer(context.PIXEL_PACK_BUFFER, null);
   context.bindFramebuffer(context.READ_FRAMEBUFFER, framebuffer);
-  context.framebufferTexture2D(context.READ_FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, entry.texture, 0);
-  context.readPixels(0, 0, DATA_TEXTURE_WIDTH, entry.rows, context.RGBA_INTEGER, context.UNSIGNED_INT, words);
+  context.framebufferTexture2D(context.READ_FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, texture, 0);
+  context.readPixels(0, 0, DATA_TEXTURE_WIDTH, rows, context.RGBA_INTEGER, context.UNSIGNED_INT, words);
   context.bindFramebuffer(context.READ_FRAMEBUFFER, previousFramebuffer);
   context.bindBuffer(context.PIXEL_PACK_BUFFER, previousPackBuffer);
   context.deleteFramebuffer(framebuffer);
-  return { words, rows: entry.rows };
+  return words;
 }
 
 const attachments = new WeakMap();
@@ -349,7 +435,9 @@ function createProgramInfo(context, fragmentSource, extraUniformNames = [], vert
 
 function createAttachment(renderer) {
   const context = renderer.context;
-  const attachment = { blended: createProgramInfo(context, FRAGMENT_SOURCE), opaque: null, depth: null, palettePrograms: new Map(), outline: null, entries: new Set(), modelView: mat4.create(), original: null, disposeOriginal: null };
+  const attachment = { blended: createProgramInfo(context, FRAGMENT_SOURCE), opaque: null, depth: null, palettePrograms: new Map(), outline: null, entries: new Set(), modelView: mat4.create(), inverseModelView: mat4.create(), emptyHarmonics: null, original: null, disposeOriginal: null };
+  // Splats without bands still need an unsigned integer texture on the harmonic unit for the shader's sampler.
+  attachment.emptyHarmonics = uploadWordTexture(context, HARMONIC_TEXTURE_UNIT, 1, new Uint32Array(DATA_TEXTURE_WIDTH * WORDS_PER_TEXEL));
   attachment.original = renderer.drawBlendBatches;
   attachment.disposeOriginal = renderer.dispose;
   renderer.drawBlendBatches = function drawBlendBatchesAndSplats(frame) {
@@ -365,6 +453,7 @@ function createAttachment(renderer) {
 
 function releaseEntry(context, entry) {
   context.deleteTexture(entry.texture);
+  if (entry.harmonics) context.deleteTexture(entry.harmonics.texture);
   context.deleteBuffer(entry.orderBuffer);
   context.deleteVertexArray(entry.vertexArray);
 }
@@ -372,6 +461,7 @@ function releaseEntry(context, entry) {
 function releaseAttachment(renderer, attachment) {
   for (const entry of attachment.entries) releaseEntry(renderer.context, entry);
   attachment.entries.clear();
+  renderer.context.deleteTexture(attachment.emptyHarmonics);
   renderer.context.deleteProgram(attachment.blended.program);
   if (attachment.opaque) renderer.context.deleteProgram(attachment.opaque.program);
   if (attachment.depth) renderer.context.deleteProgram(attachment.depth.program);
@@ -402,6 +492,7 @@ function useProgram(renderer, programInfo, frame) {
   context.uniform1f(uniforms.hdrEnabled, renderer.hdr ? 1 : 0);
   context.uniform1f(uniforms.exposure, frame.exposure ?? 1);
   context.uniform1i(uniforms.splatData, DATA_TEXTURE_UNIT);
+  context.uniform1i(uniforms.harmonicData, HARMONIC_TEXTURE_UNIT);
 }
 
 function prepareBlendedState(renderer, attachment, frame) {
@@ -481,11 +572,28 @@ function drawEntry(renderer, attachment, entry, programInfo) {
   context.uniformMatrix4fv(programInfo.uniforms.modelView, false, attachment.modelView);
   if (splats.alphaCut !== null) context.uniform1f(programInfo.uniforms.alphaCut, splats.alphaCut);
   if (splats.palette && programInfo.uniforms.paletteColors !== undefined) context.uniform3fv(programInfo.uniforms.paletteColors, splats.palette.colors);
+  bindHarmonics(context, attachment, entry, programInfo);
   context.activeTexture(context.TEXTURE0 + DATA_TEXTURE_UNIT);
   context.bindTexture(context.TEXTURE_2D, entry.texture);
   context.bindVertexArray(entry.vertexArray);
   context.bindBuffer(context.ARRAY_BUFFER, entry.orderBuffer);
   context.drawArraysInstanced(context.TRIANGLE_STRIP, 0, 4, visibleCount);
+}
+
+// The bands are evaluated in the splats' own space, so the eye is moved there: the inverse model-view's translation.
+function bindHarmonics(context, attachment, entry, programInfo) {
+  const { uniforms } = programInfo;
+  context.activeTexture(context.TEXTURE0 + HARMONIC_TEXTURE_UNIT);
+  if (!entry.harmonics) {
+    context.bindTexture(context.TEXTURE_2D, attachment.emptyHarmonics);
+    context.uniform1i(uniforms.harmonicDegree, 0);
+    return;
+  }
+  context.bindTexture(context.TEXTURE_2D, entry.harmonics.texture);
+  context.uniform1i(uniforms.harmonicDegree, entry.harmonics.degree);
+  context.uniform1i(uniforms.harmonicTexels, entry.harmonics.texelsPerSplat);
+  mat4.invert(attachment.inverseModelView, attachment.modelView);
+  context.uniform3f(uniforms.eyeModel, attachment.inverseModelView[12], attachment.inverseModelView[13], attachment.inverseModelView[14]);
 }
 
 function drawEntries(renderer, attachment, frame) {

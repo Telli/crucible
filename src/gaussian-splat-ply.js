@@ -1,9 +1,11 @@
 // Reads a standard 3D Gaussian splat PLY: the file written by the original 3DGS training code and by most tools that
 // export splats. It is binary little endian with one vertex per splat and the properties x, y, z, f_dc_0 to f_dc_2,
-// opacity, scale_0 to scale_2 and rot_0 to rot_3. Higher-order spherical harmonics (f_rest_*) and normals are skipped,
-// so a splat shows one colour from every direction. Other splat formats (.spz, .ksplat, .splat) are not read here.
+// opacity, scale_0 to scale_2 and rot_0 to rot_3. Higher-order spherical harmonics (f_rest_*, degree 1 to 3) are read as
+// well, so a splat changes colour with the view as it did in training (#2734); normals are skipped. Other splat formats
+// (.spz, .ksplat, .splat) are not read here.
 
 import { runInChunks } from './gaussian-splat-chunks.js';
+import { harmonicCoefficientsPerChannel, SPHERICAL_HARMONIC_MAXIMUM_DEGREE, turnHarmonicsZUpToYUp } from './gaussian-splat-harmonics.js';
 
 export const GAUSSIAN_SPLAT_LIMITS = Object.freeze({
   // A file this large cannot be read into memory safely in a browser tab.
@@ -114,6 +116,37 @@ function propertyLayout(properties) {
   return { layout, stride: offset };
 }
 
+// Degree of the f_rest_* bands a file holds: 3, 8, 15 or 24 coefficients per channel are degree 1 to 4.
+const DEGREE_BY_PER_CHANNEL = new Map([[0, 0], [3, 1], [8, 2], [15, 3], [24, 4]]);
+
+function fileHarmonicDegree(layout) {
+  let restCount = 0;
+  while (layout.has(`f_rest_${restCount}`)) restCount++;
+  const degree = DEGREE_BY_PER_CHANNEL.get(restCount / 3);
+  // Any other count is not a set of bands this reader knows, so the splats keep one colour, as before bands were read.
+  if (degree === undefined) return { degree: 0, perChannel: 0 };
+  return { degree, perChannel: restCount / 3 };
+}
+
+function resolveHarmonicDegree(options, caller) {
+  const degree = options.sphericalHarmonicDegree ?? SPHERICAL_HARMONIC_MAXIMUM_DEGREE;
+  if (!Number.isInteger(degree) || degree < 0 || degree > SPHERICAL_HARMONIC_MAXIMUM_DEGREE) {
+    throw new RangeError(`${caller} sphericalHarmonicDegree must be a whole number from 0 (one colour from every direction) to ${SPHERICAL_HARMONIC_MAXIMUM_DEGREE} (the default, every band the file has), got ${String(degree)}`);
+  }
+  return degree;
+}
+
+// The f_rest fields to read, in [coefficient][channel] order: coefficient k of channel c is f_rest_(c * perChannel + k).
+function harmonicFields(layout, options, caller) {
+  const file = fileHarmonicDegree(layout);
+  const degree = Math.min(file.degree, resolveHarmonicDegree(options, caller));
+  const fields = [];
+  for (let coefficient = 0; coefficient < harmonicCoefficientsPerChannel(degree); coefficient++) {
+    for (let channel = 0; channel < 3; channel++) fields.push(layout.get(`f_rest_${channel * file.perChannel + coefficient}`));
+  }
+  return { degree, fields };
+}
+
 export function resolveLimits(options) {
   const maximumBytes = options.maximumBytes ?? GAUSSIAN_SPLAT_LIMITS.maximumBytes;
   const maximumCount = options.maximumCount ?? GAUSSIAN_SPLAT_LIMITS.maximumCount;
@@ -130,9 +163,13 @@ function toByte(unit) {
 /**
  * Parses a standard 3DGS PLY into flat typed arrays. Throws a RangeError, before reading any splat, when the file is
  * larger than `maximumBytes` (default 512 MiB) or holds more than `maximumCount` splats (default 2,000,000; never more
- * than 4,000,000). Returns `{ count, positions, colors, scales, rotations, bounds, skipped }`, where `skipped` is `{ count, fields }`: a splat with any non-finite field (a scale that overflows counts) is dropped, `count` is how many were dropped (0 for a clean file) and `fields` names the fields that were non-finite. It throws only when no splat is usable. In the arrays: positions are xyz, colors are
+ * than 4,000,000). Returns `{ count, positions, colors, scales, rotations, bounds, skipped }`, plus `sphericalHarmonics` as
+ * `{ degree, coefficients }` when the file has f_rest_* bands, where `skipped` is `{ count, fields }`: a splat with any non-finite field (a scale that overflows counts) is dropped, `count` is how many were dropped (0 for a clean file) and `fields` names the fields that were non-finite. It throws only when no splat is usable. In the arrays: positions are xyz, colors are
  * RGBA bytes (RGB from the DC spherical harmonic, A from the sigmoid of opacity), scales are the exponentiated
- * axis lengths in metres and rotations are unit quaternions in w, x, y, z order.
+ * axis lengths in metres and rotations are unit quaternions in w, x, y, z order. `coefficients` is a Float32Array of
+ * (degree + 1)^2 - 1 coefficients per splat, each as red, green, blue, in the 3DGS basis.
+ * `sphericalHarmonicDegree` (0 to 3, default 3) keeps at most that many bands; 0 drops them, and degree 1 keeps most of the
+ * look at a fifth of the memory of degree 3.
  * `upAxis` is `'y'` (default, no change) or `'z'` for a Z-up file such as one written by Blender: positions and rotations are
  * turned by -90 degrees about x, so the file's +z comes out on +y and each splat's orientation turns with it.
  */
@@ -180,7 +217,7 @@ function openSplatPly(buffer, options, caller) {
     throw new Error(`Gaussian splat PLY is truncated: ${vertexCount} splats need ${vertexCount * stride} bytes, ${Math.max(0, bytes.length - vertexStart)} are present`);
   }
   const body = new DataView(bytes.buffer, bytes.byteOffset + vertexStart, vertexCount * stride);
-  return { view: body, vertexCount, layout, stride, upAxis: resolveUpAxis(options, caller) };
+  return { view: body, vertexCount, layout, stride, upAxis: resolveUpAxis(options, caller), harmonics: harmonicFields(layout, options, caller) };
 }
 
 const FIELD_NAMES = [...REQUIRED_PROPERTIES];
@@ -209,7 +246,7 @@ function turnZUpToYUp(row) {
   row[13] = HALF_SQUARE_ROOT * (qz - qy);
 }
 
-function createSplatReader({ view, vertexCount, layout, stride, upAxis }) {
+function createSplatReader({ view, vertexCount, layout, stride, upAxis, harmonics }) {
   const positions = new Float32Array(vertexCount * 3);
   const colors = new Uint8Array(vertexCount * 4);
   const scales = new Float32Array(vertexCount * 3);
@@ -219,6 +256,11 @@ function createSplatReader({ view, vertexCount, layout, stride, upAxis }) {
   const fields = FIELD_NAMES.map(name => layout.get(name));
   const values = new Float64Array(fields.length);
   const badFieldNames = new Set();
+  const harmonicValueCount = harmonics.fields.length;
+  const coefficients = new Float32Array(vertexCount * harmonicValueCount);
+  // What the 0 to 1 colour bytes cut from the constant colour; only kept with bands, which can bring it back into range.
+  const colorOverflow = new Float32Array(harmonicValueCount > 0 ? vertexCount * 3 : 0);
+  const harmonicValues = new Float32Array(harmonicValueCount);
   let kept = 0;
   function readRange(start, end) {
     for (let index = start; index < end; index++) readSplat(index);
@@ -237,8 +279,20 @@ function createSplatReader({ view, vertexCount, layout, stride, upAxis }) {
         valid = false;
       }
     }
+    for (let field = 0; field < harmonicValueCount; field++) {
+      const value = harmonics.fields[field].read(view, row + harmonics.fields[field].offset);
+      harmonicValues[field] = value;
+      if (!Number.isFinite(harmonicValues[field])) {
+        badFieldNames.add('f_rest');
+        valid = false;
+      }
+    }
     if (!valid) return;
-    if (upAxis === 'z') turnZUpToYUp(values);
+    if (upAxis === 'z') {
+      turnZUpToYUp(values);
+      turnHarmonicsZUpToYUp(harmonicValues, 0, harmonics.degree);
+    }
+    coefficients.set(harmonicValues, kept * harmonicValueCount);
     writeSplat(kept++, values);
   }
   function writeSplat(slot, row) {
@@ -246,19 +300,25 @@ function createSplatReader({ view, vertexCount, layout, stride, upAxis }) {
       positions[slot * 3 + axis] = row[axis];
       if (row[axis] < minimum[axis]) minimum[axis] = row[axis];
       if (row[axis] > maximum[axis]) maximum[axis] = row[axis];
-      colors[slot * 4 + axis] = toByte(0.5 + SPHERICAL_HARMONIC_DC * row[3 + axis]);
+      const color = 0.5 + SPHERICAL_HARMONIC_DC * row[3 + axis];
+      colors[slot * 4 + axis] = toByte(color);
+      if (colorOverflow.length > 0) colorOverflow[slot * 3 + axis] = color - colors[slot * 4 + axis] / 255;
       scales[slot * 3 + axis] = row[7 + axis];
     }
     colors[slot * 4 + 3] = toByte(1 / (1 + Math.exp(-row[6])));
     rotations.set(unitQuaternion(row[10], row[11], row[12], row[13]), slot * 4);
   }
+  function withHarmonics(parsed, keptCoefficients, keptOverflow) {
+    if (harmonics.degree === 0) return parsed;
+    return { ...parsed, sphericalHarmonics: { degree: harmonics.degree, coefficients: keptCoefficients, colorOverflow: keptOverflow } };
+  }
   function result() {
-    const skipped = { count: vertexCount - kept, fields: FIELD_NAMES.filter(name => badFieldNames.has(name)) };
+    const skipped = { count: vertexCount - kept, fields: [...FIELD_NAMES, 'f_rest'].filter(name => badFieldNames.has(name)) };
     if (kept === 0) {
       throw new Error(`Gaussian splat PLY has no usable splat: every one of the ${vertexCount} has a non-finite ${skipped.fields.join(', ')}. Re-export the file.`);
     }
-    if (skipped.count === 0) return { count: kept, positions, colors, scales, rotations, bounds: { minimum, maximum }, skipped };
-    return {
+    if (skipped.count === 0) return withHarmonics({ count: kept, positions, colors, scales, rotations, bounds: { minimum, maximum }, skipped }, coefficients, colorOverflow);
+    return withHarmonics({
       count: kept,
       positions: positions.slice(0, kept * 3),
       colors: colors.slice(0, kept * 4),
@@ -266,7 +326,7 @@ function createSplatReader({ view, vertexCount, layout, stride, upAxis }) {
       rotations: rotations.slice(0, kept * 4),
       bounds: { minimum, maximum },
       skipped,
-    };
+    }, coefficients.slice(0, kept * harmonicValueCount), colorOverflow.slice(0, kept * 3));
   }
   return { readRange, result };
 }
