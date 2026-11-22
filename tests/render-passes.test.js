@@ -18,7 +18,7 @@ const limits = { maxOutputBytes: 1024, maxFrameBytes: 128, maxStoreBytes: 1024 *
 
 test('capabilities and the renderer list the same passes in the same order, wireframe last as a composed pass', () => {
   assert.deepEqual([...Object.keys(RENDER_PASS_MODES), 'wireframe'], [...RENDER_PASS_NAMES]);
-  assert.deepEqual(Object.values(RENDER_PASS_MODES), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+  assert.deepEqual(Object.values(RENDER_PASS_MODES), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]);
 });
 
 test('the pass branch of the main shader is compiled out unless a pass is requested', () => {

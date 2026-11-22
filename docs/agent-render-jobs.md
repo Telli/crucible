@@ -119,7 +119,9 @@ and a click placed on a cut in a WAV lands on the decoded cut frame within a fra
 
 ## Render passes
 
-`image` and `stills` jobs accept `settings.passes`, a list of `albedo`, `normal`, `emission`, `depth`, `objectId`, `diffuse`, `glossy`, `shadow`, `ao`, `mist`, `position`, `velocity`, `uv`, `transmission`, `volume`, `environment`, `cryptomatte`, `aov` and `wireframe`.
+`scene_look` draws one of these as a quick check, without a job: see [Channel views](#channel-views-in-scene_look).
+
+`image` and `stills` jobs accept `settings.passes`, a list of `albedo`, `normal`, `emission`, `depth`, `objectId`, `diffuse`, `glossy`, `shadow`, `ao`, `mist`, `position`, `velocity`, `uv`, `transmission`, `volume`, `environment`, `cryptomatte`, `aov`, `roughness`, `metallic`, `lighting` and `wireframe`.
 Each frame writes its lit image and then one PNG per pass: `render.png` and `render-<pass>.png` for an image, `frame-N.png` and `frame-N-<pass>.png` for stills.
 Passes are raw data at the lit image's size: no tone mapping, grading, bloom, depth of field or antialiasing, so values stay exact at silhouettes.
 Only opaque and cutout geometry appears. Liquid, foam and blended parts, the sky and the environment background do not.
@@ -144,7 +146,17 @@ Only opaque and cutout geometry appears. Liquid, foam and blended parts, the sky
 | `environment` | Image-based / sky environment lighting contribution times exposure. Background 0 |
 | `cryptomatte` | Deterministic float hash per object in red, per material in green and coverage `1` in blue (`metrics.cryptomatte` holds the `{ objects, materials }` manifest). Background 0 |
 | `aov` | Custom material AOV from `material.aov` (`0..1` scalar or RGB) and/or a material graph's `aov` output. Background 0 |
+| `roughness` | Roughness after maps, wear and specular antialiasing, as grey. Background 0 |
+| `metallic` | Metallic after maps and wear, as grey. Background 0 |
+| `lighting` | The `diffuse` light on a white, non-metal surface: lighting only, with no albedo, texture or metal tint. Background 0 |
 | `wireframe` | The `diffuse` surface with every polygon edge drawn over it, for reviewing topology; see below. Background light grey |
+
+### Channel views in scene_look
+
+`scene_look` takes `view`: `beauty` (the default, the lit image, unchanged), `albedo`, `normal`, `roughness`, `metallic`, `ao` or `lighting`. Any other name is an error that lists the valid ones.
+A view draws the render pass of the same name into the preview PNG, so the values are the linear ones in the table above, and the metadata says which `view` it drew. The exposure findings read the lit frame, so a view leaves them out; labels still draw.
+`scene_look` always draws on the raster renderer, so there is no path traced view and no fallback to note. A job's `renderer: "native"` writes the lit image only, as in [Path tracer](#path-tracer).
+The `lookViews` topic of `scene_capabilities` lists the names.
 
 ### Wireframe pass
 

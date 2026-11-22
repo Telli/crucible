@@ -24,6 +24,7 @@ import { framingProblems, placementProblems, textureProblems, exposureProblems, 
 import { agentAssetDecodeOptions, withCatalogLimitAdvice } from '../../src/agent-asset-limits.js';
 import { sceneQueryFor, partMaterialsFor, summarizeWalkMap, walkOptionsFor, createQueryOnlyCache } from '../../scripts/agent-walkmap.js';
 import { describeMarks, validateMarks } from '../../src/agent-annotate.js';
+import { LOOK_VIEW_PASSES, resolveLookView } from '../../src/look-views.js';
 import { profileFrameCount, profileFrames, heaviestNodes } from '../../src/render-profile.js';
 
 // Runs the preview page's adapter code in a VM with a fault-injected renderer, the way the MCP preview runs it in a browser.
@@ -93,6 +94,7 @@ export function previewHarness({ createImageBitmap = async () => { throw new Err
       return new Proxy({}, { get: (target, field) => bridgedMethods.has(field)
         ? value => scene[field](JSON.parse(JSON.stringify(value ?? {}))) : scene[field] });
     },
+    LOOK_VIEW_PASSES, resolveLookView,
     needsMeshBooleans, loadMeshBooleans, meshBooleansLoaded, loadAllAgentSceneModules, allAgentSceneModulesLoaded,
     // The VM has no Worker, as in Node: builds stay synchronous, the way the preview falls back without workers.
     buildWithKernels: build => build(), kernelWorkersAvailable: () => false,

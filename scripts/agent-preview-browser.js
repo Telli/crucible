@@ -41,6 +41,7 @@ import { hasPatternTextures } from './agent-preview-textures.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
 import { missingStreamedFrames, supplyStreamedFrame, retainStreamedWindow } from '../src/agent-texture-sequence.js';
 import { decodeCatalogImage } from '../src/decode-catalog-image.js';
+import { LOOK_VIEW_PASSES, resolveLookView } from '../src/look-views.js';
 import { registerCatalogEnvironment, registerCatalogLook } from '../src/look-catalog.js';
 import { registerVolumeGrid } from '../src/volume-grid.js';
 import { parseRadianceHdr } from '../src/hdri.js';
@@ -1355,8 +1356,10 @@ window.__agentPreview = {
     const [mesh] = record.scene.inspectMeshes({ geometries: [geometry] }).meshes;
     return { ...status, mesh };
   },
-  look({ sessionId, motionTime, labels: withLabels = false }) {
+  look({ sessionId, motionTime, labels: withLabels = false, view }) {
     const record = requireSession(sessionId);
+    const viewName = resolveLookView(view);
+    const viewPass = LOOK_VIEW_PASSES[viewName];
     if (motionTime !== undefined) {
       if (typeof record.scene.sampleMotion !== 'function') {
         throw new RangeError('Procedural motion time is unavailable for imported assets.');
@@ -1365,15 +1368,16 @@ window.__agentPreview = {
     }
     // The post pass clock is the pose's motion time, as in a render job frame, so a pass anchored to a moving part stays on it.
     const poseTime = record.scene.motionTime ?? undefined;
-    draw(record, 0, record.scene.camera, poseTime === undefined ? {} : { passTime: poseTime });
-    const render = renderInfo(record.renderer, viewProblems(record, record.scene.camera, record.scene.effects.exposure, { placement: true }));
+    draw(record, 0, record.scene.camera, { ...(poseTime === undefined ? {} : { passTime: poseTime }), ...(viewPass ? { pass: viewPass } : {}) });
+    // The exposure findings read the lit frame, so a channel view leaves them out.
+    const render = renderInfo(record.renderer, viewProblems(record, record.scene.camera, viewPass ? undefined : record.scene.effects.exposure, { placement: true }));
     record.lastRender = render;
     const labels = withLabels ? collectLabels(record, record.scene.camera, canvas.width, canvas.height) : undefined;
     return {
       data: labeledPng(labels),
       mimeType: 'image/png',
       metadata: { sessionId, revision: record.scene.revision, topologyRevision: record.scene.topologyRevision,
-        motionTime: record.scene.motionTime ?? null, ...render, ...(labels ? { labels } : {}),
+        motionTime: record.scene.motionTime ?? null, ...(viewPass ? { view: viewName } : {}), ...render, ...(labels ? { labels } : {}),
         ...(motionTime === undefined && recipeMoves(record.scene.exportRecipe()) ? { hints: [MOTION_NOT_SET_HINT] } : {}) },
     };
   },
