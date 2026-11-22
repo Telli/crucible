@@ -392,6 +392,7 @@ on:
       - 'src/triangulate.js'
       - 'src/unsupported-part.js'
       - 'src/user-pass.js'
+      - 'src/user-pass-inputs.js'
       - 'src/vegetation-geometry.js'
       - 'src/vegetation-impostors.js'
       - 'src/vegetation-options.js'

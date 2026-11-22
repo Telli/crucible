@@ -3,6 +3,7 @@ import {
   SNIPPET_LIMITS, requireKnownFields, validateShaderSnippet, validateSnippetUniforms, snippetUniformDeclarations, mapShaderInfoLog,
 } from './shader-snippet-validator.js';
 import { MAXIMUM_MASK_OBJECTS, resolveObjectNames, objectIdentifierSlots, unbindMask } from './post-mask.js';
+import { normalizeNeeds, needInputNames, normalizeLuts, passInputDeclarations, missingNeedMessage, createPassInputs } from './user-pass-inputs.js';
 
 // User post-process passes: fragment snippets that run on the finished frame, after the stock effects, the grade and the
 // view transform, as the last step before the canvas. The core renderer carries nothing for them. installUserPasses wraps
@@ -14,7 +15,7 @@ const ORIGIN = Object.freeze([0, 0, 0]);
 export const USER_PASS_INPUTS = Object.freeze(['sceneColor', 'sceneDepth', 'resolution', 'time', 'cameraEye', 'depthAt', 'worldPointAt', 'worldNormalAt', 'pixelFootprintAt', 'worldFootprintAt', 'bandLimitedLine', 'objectSlotAt', 'sceneObjectIds', 'userPass']);
 export const USER_PASS_SCALE = Object.freeze({ min: 0.05, max: 1 });
 const PASS_NAME_PATTERN = /^[a-z][A-Za-z0-9-]{0,31}$/;
-const PASS_FIELDS = ['name', 'fragment', 'uniforms', 'scale', 'objects'];
+const PASS_FIELDS = ['name', 'fragment', 'uniforms', 'scale', 'objects', 'needs', 'luts'];
 const ENTRY_FUNCTION = Object.freeze({ pattern: /\bvec4\s+userPass\s*\(\s*vec2\s+[A-Za-z_]\w*\s*\)\s*\{/, example: 'vec4 userPass(vec2 uv) { return texture(sceneColor, uv); }' });
 
 /**
@@ -38,10 +39,19 @@ export function normalizeUserPasses(input) {
     if (typeof scale !== 'number' || !(scale >= USER_PASS_SCALE.min && scale <= USER_PASS_SCALE.max)) {
       throw new RangeError(`Post pass "${entry.name}" scale must be between ${USER_PASS_SCALE.min} and ${USER_PASS_SCALE.max}. Fix: 0.25 renders at a quarter of the width and height.`);
     }
-    validateShaderSnippet(entry.fragment, { label: `Post pass "${entry.name}" fragment`, requiredFunction: ENTRY_FUNCTION });
-    const uniforms = validateSnippetUniforms(entry.uniforms, { label: `Post pass "${entry.name}"`, reservedNames: USER_PASS_INPUTS });
+    const fragmentLabel = `Post pass "${entry.name}" fragment`;
+    const { source } = validateShaderSnippet(entry.fragment, { label: fragmentLabel, requiredFunction: ENTRY_FUNCTION });
+    const needs = entry.needs === undefined ? [] : normalizeNeeds(entry.needs, `postPasses[${index}]`);
+    const missing = missingNeedMessage(source, needs, fragmentLabel);
+    if (missing) throw new RangeError(missing);
+    const uniforms = validateSnippetUniforms(entry.uniforms, { label: `Post pass "${entry.name}"`, reservedNames: [...USER_PASS_INPUTS, ...needInputNames(needs)] });
     const normalized = { name: entry.name, fragment: entry.fragment, uniforms, scale };
     if (entry.objects !== undefined) normalized.objects = resolveObjectNames(entry.objects, `postPasses[${index}].objects`);
+    if (entry.needs !== undefined) normalized.needs = needs;
+    if (entry.luts !== undefined) {
+      const reservedNames = [...USER_PASS_INPUTS, ...needInputNames(needs), ...Object.keys(uniforms)];
+      normalized.luts = normalizeLuts(entry.luts, { label: `postPasses[${index}]`, reservedNames });
+    }
     return normalized;
   });
 }
@@ -71,7 +81,9 @@ export function planUserPassSteps(passes, antialias = 'fxaa') {
 
 /** What scene_capabilities reports under postPasses; it lives here so the scene entry does not carry the text. */
 export const USER_PASS_CAPABILITIES = Object.freeze({
-  fields: 'name, fragment (defines vec4 userPass(vec2 uv)), uniforms, scale 0.05-1 (1), objects (1-16 part names)',
+  fields: 'name, fragment (defines vec4 userPass(vec2 uv)), uniforms, scale 0.05-1 (1), objects (1-16 part names), needs (normal, objectId, albedo, emission), luts (up to 4 palettes)',
+  needs: 'needs adds exact G-buffer reads, one extra scene draw each, none when absent: normalAt(uv) (world normal, vec3(0) in the sky), objectIdAt(uv) (raw 24-bit part ID as int, 0 = background, no 16-part cap), albedoAt(uv), emissionAt(uv) (vec3, 8-bit). Nearest sampling, silhouettes stay exact. A snippet that calls one without listing it is refused',
+  luts: 'luts: { name: { colors: ["#rrggbb", ...] } } (one row, or a list of rows) or { width, height, pixels } (base64 RGBA8); at most 4 textures, 256 x 16 each, inline data only. Read with texture(name, uv) or texelFetch(name, ivec2(x, y), 0); nearest, clamped',
   inputs: 'sceneColor, sceneDepth (sampler2D), resolution (vec2, this pass), time (s; the motion time when the frame has one, else the renderer time), depthAt(uv), worldPointAt(uv), worldNormalAt(uv, from depth), pixelFootprintAt(uv) (vec2, world size of one pixel along screen x and y, 0 in sky), worldFootprintAt(uv, direction) (how far dot(worldPointAt, direction) changes over one pixel), bandLimitedLine(coordinate, pitch, width, footprint) (coverage 0-1 of repeating lines averaged over footprint), objectSlotAt(uv) (position of the part under uv in the pass objects list, or -1); gl_FragCoord',
   uniforms: 'a number is float, [x,y(,z(,w))] is vec2-4, {type:"int",value} is int; name ^[a-z][A-Za-z0-9]{0,31}$',
   rules: 'no # lines, while, do, uniform/layout declarations, gl_ names but gl_FragCoord, or u67_ names; for loops only as for (int i = 0; i < N; i++) { } with literal bounds, 64 iterations at most, loop work under 4096',
@@ -86,6 +98,8 @@ export function describeUserPasses(passes) {
     name: pass.name,
     scale: pass.scale,
     ...(pass.objects ? { objects: pass.objects } : {}),
+    ...(pass.needs?.length ? { needs: pass.needs } : {}),
+    ...(pass.luts ? { luts: Object.entries(pass.luts).map(([name, { width, height }]) => `${name}:${width}x${height}`) } : {}),
     uniforms: Object.entries(pass.uniforms).map(([name, { type }]) => `${name}:${type}`),
     fragmentBytes: pass.fragment.length,
   }));
@@ -262,7 +276,7 @@ const FRAGMENT_FOOTER = '\nvoid main() { u67_output = userPass(textureCoordinate
 /** The full fragment source of a normalized pass, and how many lines come before the snippet. */
 export function buildPassFragment(pass) {
   const { source: snippet } = validateShaderSnippet(pass.fragment, { label: `Post pass "${pass.name}" fragment`, requiredFunction: ENTRY_FUNCTION });
-  const header = `${FRAGMENT_HEADER}${snippetUniformDeclarations(pass.uniforms)}\n`;
+  const header = `${FRAGMENT_HEADER}${passInputDeclarations(pass)}${snippetUniformDeclarations(pass.uniforms)}\n`;
   return { source: `${header}${snippet}${FRAGMENT_FOOTER}`, headerLines: header.split('\n').length - 1, snippet };
 }
 
@@ -320,6 +334,7 @@ export function installUserPasses(renderer) {
   if (renderer.userPasses) return renderer;
   const state = { passes: [], key: '[]', antialias: 'fxaa', entries: [], capture: null, copy: null, smooth: null };
   const builtByPass = new WeakMap();
+  const inputs = createPassInputs(renderer);
 
   function releaseEntryTarget(context, entry) {
     if (!entry.target) return;
@@ -337,10 +352,12 @@ export function installUserPasses(renderer) {
     if (state.capture) context.deleteTexture(state.capture.texture);
     state.capture = null;
     state.entries.forEach(entry => releaseEntryTarget(context, entry));
+    inputs.releaseCaptures(context);
   }
 
   function dispose(context) {
     releaseTargets(context);
+    inputs.dispose(context);
     state.entries.forEach(entry => context.deleteProgram(entry.program));
     state.entries = [];
     if (state.copy) context.deleteProgram(state.copy.program);
@@ -369,7 +386,7 @@ export function installUserPasses(renderer) {
         throw compilationError(pass, error, built);
       }
       if (entry) releaseEntry(context, entry);
-      const names = ['sceneColor', 'sceneDepth', 'sceneObjectIds', 'u67_objectCount', 'u67_objectIds', 'u67_objectSlots', 'u67_inverseViewProjection', 'resolution', 'time', 'cameraEye', ...Object.keys(pass.uniforms)];
+      const names = ['sceneColor', 'sceneDepth', 'sceneObjectIds', 'u67_objectCount', 'u67_objectIds', 'u67_objectSlots', 'u67_inverseViewProjection', 'resolution', 'time', 'cameraEye', 'sceneNormal', 'sceneAlbedo', 'sceneEmission', ...Object.keys(pass.luts ?? {}), ...Object.keys(pass.uniforms)];
       state.entries[index] = {
         pass, source: built.source, program, target: null,
         locations: Object.fromEntries(names.map(name => [name, context.getUniformLocation(program, name)])),
@@ -433,13 +450,18 @@ export function installUserPasses(renderer) {
       const paddedSlots = new Int32Array(MAXIMUM_MASK_OBJECTS);
       paddedSlots.set(slots);
       context.uniform1iv(locations.u67_objectSlots, paddedSlots);
+    }
+    // Before the object IDs: making a texture binds it to the active unit.
+    inputs.bind(context, pass, locations);
+    const readsObjectIds = identifiers.length > 0 || Boolean(pass.needs?.includes('objectId'));
+    if (readsObjectIds) {
       context.activeTexture(context.TEXTURE2);
       context.bindTexture(context.TEXTURE_2D, renderer.passSupport.texture);
       context.uniform1i(locations.sceneObjectIds, 2);
     }
     context.drawArrays(context.TRIANGLES, 0, 3);
     // The next frame draws into the object ID target, so it must not stay bound as a texture.
-    if (identifiers.length > 0) unbindMask(context);
+    if (readsObjectIds) unbindMask(context);
   }
 
   function drawTextureToCanvas(slot, fragment, texture, width, height) {
@@ -481,7 +503,16 @@ export function installUserPasses(renderer) {
     });
     if (antialiasLast) drawTextureToCanvas('smooth', antialiasFragment, input, width, height);
     else if (!drewToCanvas) drawTextureToCanvas('copy', copyFragment, input, width, height);
+    inputs.prune(context, state.passes);
   }
+
+  // A pass that lists `needs` reads render passes drawn from this frame's camera, so they are drawn here, before the lit frame.
+  const render = renderer.render;
+  renderer.render = function renderWithPassInputs(frame, ...rest) {
+    const drawsLitFrame = state.passes.length > 0 && !frame.pass && !frame.reflectionTarget && !this.benchmark;
+    if (drawsLitFrame) inputs.draw(passFrame => render.call(this, passFrame, ...rest), frame, state.passes);
+    return render.call(this, frame, ...rest);
+  };
 
   const resolveFrame = renderer.resolveFrame;
   renderer.resolveFrame = function resolveFrameWithUserPasses(frame, ...rest) {

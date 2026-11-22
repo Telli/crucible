@@ -2825,6 +2825,14 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       }
       return commit(stage(entry.snapshot.recipe, entry.snapshot), true);
     },
+    /**
+     * Replace the recipe of this scene with another whole recipe, as one transaction. Geometry, material handles and parts
+     * that both recipes hold stay the same objects, so a recipe that differs by one object costs about as much as that edit.
+     */
+    restoreRecipe(recipe, options = {}) {
+      expected(options);
+      return commit(stage(recipe), true);
+    },
     releaseCheckpoint(handle) {
       if (!checkpoints.delete(handle)) {
         throw invalidField('checkpointId', handle, 'a checkpointId that scene_checkpoint returned and you have not released');

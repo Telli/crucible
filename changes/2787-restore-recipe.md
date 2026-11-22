@@ -1,0 +1,2 @@
+- Studio undo of deleting an object from the middle of the list and undo of a lens change now change the scene already built instead of building it again: on a 137-node scene that undo took 3 to 4.5 seconds and 0.6 seconds, and now takes about as long as the edit it undoes (#2787)
+- `scene.restoreRecipe(recipe, { expectedRevision })` replaces the whole recipe of an agent scene in one transaction and keeps the geometry, material handles and parts both recipes hold (#2787)

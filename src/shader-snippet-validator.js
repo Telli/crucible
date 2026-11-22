@@ -25,7 +25,7 @@ export const ENGINE_PREFIX = 'u67_';
 const ALLOWED_BUILTIN_VARIABLE = 'gl_FragCoord';
 
 // GLSL ES 3.00 keywords and reserved words that fit the uniform name pattern.
-const RESERVED_WORDS = new Set(`attribute const uniform varying break continue do for while if else in out inout float int void bool
+export const RESERVED_WORDS = new Set(`attribute const uniform varying break continue do for while if else in out inout float int void bool
   true false discard return mat2 mat3 mat4 vec2 vec3 vec4 ivec2 ivec3 ivec4 uvec2 uvec3 uvec4 bvec2 bvec3 bvec4 struct precision highp
   mediump lowp layout centroid flat smooth patch sample buffer shared coherent volatile restrict readonly writeonly resource common
   partition active asm class union enum typedef template this packed goto inline noinline public static extern external interface
