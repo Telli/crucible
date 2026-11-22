@@ -29,6 +29,7 @@ import { createOutlineMask } from './studio-outline-mask.js';
 import { createPanelGrips } from './studio-panel-grips.js';
 import { STUDIO_BRAND_ICON_NAMES, studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
+import { createKeyMarkers } from './studio-timeline-keys.js';
 import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-properties.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, studioDrawsFloor, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
@@ -2105,8 +2106,11 @@ export function createStudio(container, {
   const playTooltip = isPlaying => `${isPlaying ? 'Pause' : 'Play'} (${keyLabel(keymap, 'animate.play')})`;
   const playButton = createIconButton(documentReference, 'play', playTooltip(false), { attributes: { 'aria-pressed': 'false' } });
   const keyframeButton = createKeyedIconButton('keyframe', () => `Add a keyframe here (${lastKeyLabel(keymap, 'animate.keyframe')})`);
+  const autoKeyButton = createIconButton(documentReference, 'autoKey', 'Auto-key', { attributes: { 'aria-pressed': controller.autoKey ? 'true' : 'false' } });
   const timeOutput = createElement(documentReference, 'output', { textContent: '0.00 s' });
   const scrubInput = createElement(documentReference, 'input', { type: 'range', min: '0', max: '4', step: '0.02', value: '0', attributes: { 'aria-label': 'Timeline scrub' } });
+  const keysElement = createElement(documentReference, 'div', { className: 'crucible-studio-keys' });
+  const trackElement = createElement(documentReference, 'div', { className: 'crucible-studio-track' }, scrubInput, keysElement);
   const quickBookmarksRow = createElement(documentReference, 'div', { className: 'crucible-studio-shots' });
   const fileInput = createElement(documentReference, 'input', { type: 'file', accept: '.json,application/json', hidden: true });
 
@@ -2132,18 +2136,28 @@ export function createStudio(container, {
       announce(error.message);
     }
   });
+  autoKeyButton.addEventListener('click', () => controller.setAutoKey(!controller.autoKey));
   scrubInput.addEventListener('input', () => {
     const seconds = Number(scrubInput.value);
     if (hasAnimatedData(controller.exportRecipe())) {
       controller.setMotionTime(seconds);
     }
   });
+  const keyMarkers = createKeyMarkers({
+    documentReference,
+    controller,
+    keysElement,
+    trackElement,
+    announce,
+    isDeleteKey: event => findKeymapAction(keymap, event, 'normal')?.actionId === 'edit.delete',
+    fallbackFocus: keyframeButton,
+  });
 
   const bottomElement = createElement(
     documentReference,
     'footer',
     { className: 'crucible-studio-bottombar crucible-studio-island', attributes: { 'aria-label': 'Timeline' } },
-    createElement(documentReference, 'div', { className: 'crucible-studio-scrub' }, playButton, keyframeButton, scrubInput, timeOutput),
+    createElement(documentReference, 'div', { className: 'crucible-studio-scrub' }, playButton, keyframeButton, autoKeyButton, trackElement, timeOutput),
     quickBookmarksRow,
   );
 
@@ -3219,6 +3233,29 @@ export function createStudio(container, {
     outlinerTree.style.setProperty('--studio-tree-row-size', `${stretchedRowSize}px`);
   }
 
+  // A locked row says so with the keyframe mark beside its title, the mark the property panel puts on a driven field.
+  const lockedRowMarks = new Map();
+  function lockedRowMark(row) {
+    if (!lockedRowMarks.has(row)) {
+      const mark = createElement(documentReference, 'span', {
+        className: 'crucible-studio-driven-mark',
+        attributes: { role: 'img', 'aria-label': 'Animated by a track' },
+      }, createIcon(documentReference, 'keyframe'));
+      row.container.querySelector('.crucible-studio-field-head').firstElementChild.append(mark);
+      lockedRowMarks.set(row, mark);
+    }
+    return lockedRowMarks.get(row);
+  }
+
+  function setRowLockedByTrack(row, lockedByTrack) {
+    row.setDisabled(lockedByTrack);
+    row.container.dataset.driven = lockedByTrack ? 'true' : 'false';
+    row.container.title = lockedByTrack ? 'Animated by a track. Turn on Auto-key to edit.' : '';
+    if (lockedByTrack || lockedRowMarks.has(row)) {
+      lockedRowMark(row).hidden = !lockedByTrack;
+    }
+  }
+
   function syncUi() {
     const recipe = controller.exportRecipe();
     toolButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.tool === controller.tool ? 'true' : 'false'));
@@ -3261,9 +3298,16 @@ export function createStudio(container, {
       nodeLabelInput.value = '';
       nodeParentSelect.value = '';
     }
-    positionRow.setValues(selectedNode?.translation ?? [0, 0, 0]);
-    rotationRow.setValues(quaternionToEulerDegrees(selectedNode?.rotation ?? [0, 0, 0, 1]), DEGREE_PRECISION);
-    scaleRow.setValues(selectedNode?.scale ?? [1, 1, 1]);
+    // A keyed node shows the pose its tracks give at the playhead, so a typed edit starts from what is on screen.
+    const animatedProperties = selectedNode ? controller.animatedNodeProperties(selectedNode.id) : [];
+    const shownPose = animatedProperties.length > 0 ? controller.nodePose(selectedNode.id) : selectedNode;
+    positionRow.setValues(shownPose?.translation ?? [0, 0, 0]);
+    rotationRow.setValues(quaternionToEulerDegrees(shownPose?.rotation ?? [0, 0, 0, 1]), DEGREE_PRECISION);
+    scaleRow.setValues(shownPose?.scale ?? [1, 1, 1]);
+    // An edit of a keyed property lands as a key only with Auto-key on; without it the track would put the old pose back.
+    setRowLockedByTrack(positionRow, !controller.autoKey && animatedProperties.includes('translation'));
+    setRowLockedByTrack(rotationRow, !controller.autoKey && animatedProperties.includes('rotation'));
+    setRowLockedByTrack(scaleRow, !controller.autoKey && animatedProperties.includes('scale'));
 
     const boundMaterial = selectedNode?.material ? recipe.materials.find(material => material.id === selectedNode.material) : null;
     renderPaletteSwatches(recipe, boundMaterial?.id ?? null);
@@ -3334,6 +3378,8 @@ export function createStudio(container, {
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
     setButtonIcon(playButton, playing ? 'pause' : 'play', playTooltip(playing));
     timeOutput.textContent = `${controller.motionTime.toFixed(1)} / ${duration.toFixed(1)} s`;
+    autoKeyButton.setAttribute('aria-pressed', controller.autoKey ? 'true' : 'false');
+    keyMarkers.sync(Math.max(0.1, duration));
     syncPropertyPanels();
     syncHintBar();
     syncFileBanner();
@@ -4006,7 +4052,7 @@ export function createStudio(container, {
     if (detail.deltaLabel !== undefined) {
       liveDeltaLabel = detail.deltaLabel;
     }
-    if (['topology', 'transform', 'transformCommit', 'material', 'look', 'undo', 'redo'].includes(detail.kind) || (detail.kind === 'camera' && detail.edited)) {
+    if (['topology', 'transform', 'transformCommit', 'motion', 'material', 'look', 'undo', 'redo'].includes(detail.kind) || (detail.kind === 'camera' && detail.edited)) {
       isDirty = true;
       scheduleDraftSave();
     }
