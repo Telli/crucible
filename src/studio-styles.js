@@ -374,6 +374,26 @@ export const STUDIO_CSS = `
 .crucible-studio-paused .crucible-studio-icon,
 .crucible-studio-draft .crucible-studio-icon { flex: none; color: var(--studio-accent); }
 
+/* Names each post pass the viewport cannot draw. It sits low and centred, above the hint pill and the readout, where the notices at the top never reach. */
+.crucible-studio-pass-notice {
+  position: absolute;
+  inset-inline: calc(var(--studio-rail) + 2 * var(--studio-edge)) calc(var(--studio-side-width, 284px) + 2 * var(--studio-edge));
+  inset-block-end: 170px;
+  inline-size: fit-content;
+  max-inline-size: 520px;
+  margin-inline: auto;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--studio-text);
+  font-family: var(--studio-font);
+  font-size: 13px;
+  z-index: 9;
+}
+.crucible-studio[data-compact="true"] .crucible-studio-pass-notice { inset-inline: var(--studio-edge); }
+.crucible-studio-pass-notice[hidden] { display: none; }
+.crucible-studio-pass-notice p { margin: 0; }
+.crucible-studio-pass-notice .crucible-studio-icon { flex: none; color: var(--studio-accent); }
+
 .crucible-studio-menubar {
   position: absolute;
   inset: var(--studio-edge) var(--studio-edge) auto;

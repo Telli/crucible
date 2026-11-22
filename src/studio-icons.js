@@ -13,6 +13,7 @@ export const STUDIO_ICON_PATHS = Object.freeze({
   export: 'M12 15V3M7 8l5-5 5 5M5 15v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4',
   play: 'M7 4.5v15l12-7.5z',
   pause: 'M8 5v14M16 5v14',
+  warning: 'M12 4l9 16H3zM12 10v4M12 17h.01',
   keyframe: 'M12 3l7 9-7 9-7-9z',
   duplicate: 'M9 9h11v11H9zM5 15H4V4h11v1',
   remove: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
