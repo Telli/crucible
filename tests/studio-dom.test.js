@@ -2258,6 +2258,10 @@ test('Settings change the snap, the handles and what the viewport shows, and are
     rotateSnapDegrees: 45,
     gizmoSize: 'large',
     startWorkspace: 'animate',
+    theme: 'system',
+    performance: 'automatic',
+    keymap: 'crucible',
+    setupDone: false,
     gridVisible: false,
     readoutVisible: false,
     viewWidgetVisible: false,
@@ -2276,7 +2280,7 @@ test('Settings change the snap, the handles and what the viewport shows, and are
   assert.deepEqual(next.controller.interactionSettings, { moveSnapStep: 0.25, rotateSnapDegrees: 15, gizmoPixels: 74 });
   assert.equal(next.root.dataset.readout, 'on');
   assert.equal(JSON.parse(saved.get('crucible-studio-preferences')).startWorkspace, 'build');
-  assert.throws(() => next.studio.setPreference('theme', 'pink'), /Unknown Studio preference/);
+  assert.throws(() => next.studio.setPreference('colour', 'pink'), /Unknown Studio preference/);
 });
 
 test('a Shift drag snaps a move to the step chosen in Settings', testContext => {
@@ -3835,9 +3839,6 @@ test('Discard drops the draft, and a draft equal to the opened scene is not offe
 
   const second = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
   await second.studio.ready;
-  second.controller.updateNodeTransform('hero', { translation: [9, 0.5, 0] });
-  second.dom.runTimers();
-  assert.equal(JSON.parse(storage.entries.get(DRAFT_KEY)).recipe.nodes.find(node => node.id === 'hero').translation[0], 3, 'edits do not overwrite a draft that is still on offer');
   second.button('Discard').click();
   assert.equal(second.root.querySelector('.crucible-studio-draft').hidden, true);
   assert.equal(storage.entries.has(DRAFT_KEY), false);
@@ -3847,6 +3848,48 @@ test('Discard drops the draft, and a draft equal to the opened scene is not offe
   const third = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
   await third.studio.ready;
   assert.equal(third.root.querySelector('.crucible-studio-draft').hidden, true);
+});
+
+test('edits made while the restore notice is showing close it and survive a reload (#2838)', async testContext => {
+  const storage = draftStorage();
+  const first = mountStudio(testContext, { preferenceStorage: storage });
+  first.controller.updateNodeTransform('hero', { translation: [3, 0.5, 0] });
+  first.dom.runTimers();
+  first.studio.dispose();
+
+  const second = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
+  await second.studio.ready;
+  const notice = second.root.querySelector('.crucible-studio-draft');
+  assert.equal(notice.hidden, false);
+  second.controller.updateNodeTransform('hero', { translation: [9, 0.5, 0] });
+  assert.equal(notice.hidden, true, 'the first edit answers the notice: the person carries on with the current scene');
+  second.dom.runTimers();
+  const keptTranslation = JSON.parse(storage.entries.get(DRAFT_KEY)).recipe.nodes.find(node => node.id === 'hero').translation;
+  assert.deepEqual(keptTranslation, [9, 0.5, 0], 'the draft holds the new edit, not the older draft');
+  second.studio.dispose();
+
+  const third = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
+  await third.studio.ready;
+  assert.equal(third.root.querySelector('.crucible-studio-draft').hidden, false, 'the reload offers the newest work');
+  third.button('Restore').click();
+  await third.dom.settle();
+  assert.deepEqual(third.node('hero').translation, [9, 0.5, 0]);
+});
+
+test('Restore pressed before any edit still replaces the scene as one undo step (#2838)', async testContext => {
+  const storage = draftStorage();
+  const first = mountStudio(testContext, { preferenceStorage: storage });
+  first.controller.updateNodeTransform('hero', { translation: [3, 0.5, 0] });
+  first.dom.runTimers();
+  first.studio.dispose();
+
+  const second = mountStudio(testContext, { preferenceStorage: storage, sharedDom: first.dom });
+  await second.studio.ready;
+  second.button('Restore').click();
+  await second.dom.settle();
+  assert.deepEqual(second.node('hero').translation, [3, 0.5, 0]);
+  second.controller.undo();
+  assert.equal(second.node('hero').translation[0], 0);
 });
 
 test('choosing a new scene on purpose clears the draft and its notice', async testContext => {
@@ -3928,4 +3971,474 @@ test('an edit still waiting to be kept is written when the window goes to the ba
   ui.dom.document.hidden = false;
   dispatch(ui.dom.document, 'visibilitychange');
   assert.equal(storage.entries.has(DRAFT_KEY), false, 'nothing is written when no edit waits');
+});
+
+function chooseSetting(ui, name, value) {
+  const control = ui.root.querySelector('.crucible-studio-settings-dialog').descendants().find(element => element.dataset?.setting === name);
+  control.value = String(value);
+  dispatch(control, 'change');
+}
+
+function setupButton(ui, text) {
+  return ui.root.querySelector('.crucible-studio-setup-dialog').descendants().find(element => element.tagName === 'BUTTON' && element.textContent === text);
+}
+
+function setupCard(ui, preferenceName, value) {
+  const dialog = ui.root.querySelector('.crucible-studio-setup-dialog');
+  return dialog.descendants().find(element => element.tagName === 'INPUT' && element.dataset.setup === preferenceName && element.value === String(value));
+}
+
+test('Theme forces light or dark on the Studio root, and System leaves the page to decide (#2847)', testContext => {
+  const themes = [];
+  const ui = mountStudio(testContext, { onThemeChange: theme => themes.push(theme) });
+  assert.equal(ui.root.dataset.theme, undefined, 'System sets nothing on the root');
+  chooseSetting(ui, 'theme', 'dark');
+  assert.equal(ui.root.dataset.theme, 'dark');
+  chooseSetting(ui, 'theme', 'light');
+  assert.equal(ui.root.dataset.theme, 'light');
+  chooseSetting(ui, 'theme', 'system');
+  assert.equal(ui.root.dataset.theme, undefined);
+  assert.deepEqual(themes, ['light', 'dark', 'light', 'light'], 'the host hears the effective theme at the start and on each change');
+  assert.ok(ui.root.querySelector('.crucible-studio-settings-dialog'), 'the dialogs sit inside the root and follow its theme');
+});
+
+test('while Theme is System a flip of the operating system scheme reaches the host, and dispose stops listening (#2847)', testContext => {
+  const dom = installStudioDom();
+  const listeners = new Set();
+  let systemIsDark = false;
+  dom.document.defaultView.matchMedia = () => ({
+    get matches() { return systemIsDark; },
+    addEventListener: (type, listener) => { if (type === 'change') listeners.add(listener); },
+    removeEventListener: (type, listener) => listeners.delete(listener),
+  });
+  const themes = [];
+  const ui = mountStudio(testContext, { sharedDom: dom, onThemeChange: theme => themes.push(theme) });
+  testContext.after(() => dom.uninstall());
+  const flip = isDark => {
+    systemIsDark = isDark;
+    for (const listener of [...listeners]) listener({ matches: isDark });
+  };
+  assert.deepEqual(themes, ['light']);
+  flip(true);
+  assert.deepEqual(themes, ['light', 'dark'], 'System follows the flip');
+  chooseSetting(ui, 'theme', 'light');
+  flip(false);
+  flip(true);
+  assert.deepEqual(themes, ['light', 'dark', 'light'], 'a forced theme ignores the flip');
+  chooseSetting(ui, 'theme', 'system');
+  assert.deepEqual(themes.at(-1), 'dark');
+  ui.studio.dispose();
+  assert.equal(listeners.size, 0, 'dispose removes the listener');
+});
+
+test('Performance sets the viewport pixel ratio cap and never touches the recipe (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.dom.document.defaultView.devicePixelRatio = 3;
+  ui.renderer.pixelRatio = 3;
+  const recipeBefore = JSON.stringify(ui.studio.exportRecipe());
+  chooseSetting(ui, 'performance', 'light');
+  assert.equal(ui.renderer.pixelRatio, 1);
+  chooseSetting(ui, 'performance', 'balanced');
+  assert.equal(ui.renderer.pixelRatio, 1.5);
+  chooseSetting(ui, 'performance', 'sharp');
+  assert.equal(ui.renderer.pixelRatio, 2);
+  assert.ok(ui.renderer.calls.includes('resize'), 'the renderer is told to resize at the new ratio');
+  assert.equal(JSON.stringify(ui.studio.exportRecipe()), recipeBefore);
+  const resizesBefore = ui.renderer.calls.filter(call => call === 'resize').length;
+  chooseSetting(ui, 'moveSnapStep', 1);
+  assert.equal(ui.renderer.calls.filter(call => call === 'resize').length, resizesBefore, 'a preference that is not a tier leaves the renderer alone');
+});
+
+test('Automatic performance takes the detected tier and a screen below the cap keeps its own ratio (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.dom.document.defaultView.devicePixelRatio = 1.25;
+  ui.renderer.pixelRatio = 3;
+  chooseSetting(ui, 'performance', 'sharp');
+  assert.equal(ui.renderer.pixelRatio, 1.25);
+  ui.dom.document.defaultView.devicePixelRatio = 2;
+  chooseSetting(ui, 'performance', 'automatic');
+  assert.equal(ui.renderer.pixelRatio, 1.5, 'hardware the browser does not report is the balanced tier');
+});
+
+test('Studio does not open the setup on its own, and Skip and Done both mark it done (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  const dialog = ui.root.querySelector('.crucible-studio-setup-dialog');
+  assert.notEqual(dialog.open, true, 'no modal until the host asks');
+  assert.equal(ui.studio.setupDone, false);
+
+  ui.studio.openSetup();
+  assert.equal(dialog.open, true);
+  setupButton(ui, 'Skip').click();
+  assert.equal(dialog.open, false);
+  assert.equal(ui.studio.setupDone, true);
+
+  ui.studio.setPreference('setupDone', false);
+  ui.studio.openSetup();
+  setupButton(ui, 'Next').click();
+  setupButton(ui, 'Next').click();
+  setupButton(ui, 'Next').click();
+  setupButton(ui, 'Done').click();
+  assert.equal(ui.studio.setupDone, true);
+
+  ui.studio.setPreference('setupDone', false);
+  ui.studio.openSetup();
+  dialog.close();
+  assert.equal(ui.studio.setupDone, true, 'Esc closes the dialog the same way');
+});
+
+test('the setup shows one group a page, with Back, Next and Done (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  const groups = ui.root.querySelectorAll('.crucible-studio-setup-group');
+  const visibleTitles = () => groups.filter(group => !group.inert).map(group => group.children[0].textContent);
+  ui.studio.openSetup();
+  assert.deepEqual(visibleTitles(), ['Theme']);
+  assert.equal(setupButton(ui, 'Back').hidden, true);
+  assert.equal(setupButton(ui, 'Done').hidden, true);
+  setupButton(ui, 'Next').click();
+  assert.deepEqual(visibleTitles(), ['Performance']);
+  setupButton(ui, 'Next').click();
+  setupButton(ui, 'Next').click();
+  setupButton(ui, 'Next').click();
+  assert.deepEqual(visibleTitles(), ['Work with an AI agent']);
+  assert.equal(setupButton(ui, 'Next').hidden, true);
+  assert.equal(setupButton(ui, 'Done').hidden, false);
+  setupButton(ui, 'Back').click();
+  assert.deepEqual(visibleTitles(), ['Keys']);
+  setupButton(ui, 'Skip').click();
+});
+
+test('openSetup takes no layout: one call shows the steps, whatever it is given (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  assert.equal(ui.studio.openSetup.length, 0);
+  ui.studio.openSetup({ layout: 'sheet' });
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-setup-group').filter(group => !group.inert).length, 1);
+  assert.equal(setupButton(ui, 'Next').hidden, false);
+  assert.equal(ui.root.querySelector('.crucible-studio-setup-dialog').dataset.layout, undefined);
+});
+
+test('choosing a card in the setup applies at once and the cards show the current choice (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.studio.openSetup();
+  assert.equal(setupCard(ui, 'theme', 'system').checked, true);
+  const dark = setupCard(ui, 'theme', 'dark');
+  dark.checked = true;
+  dispatch(dark, 'change');
+  assert.equal(ui.root.dataset.theme, 'dark', 'the live Studio behind the dialog changes');
+  assert.equal(setupCard(ui, 'theme', 'dark').parentNode.dataset.selected, 'true');
+  assert.equal(setupCard(ui, 'theme', 'system').parentNode.dataset.selected, 'false');
+
+  const snap = setupCard(ui, 'moveSnapStep', 1);
+  snap.checked = true;
+  dispatch(snap, 'change');
+  assert.equal(ui.controller.interactionSettings.moveSnapStep, 1);
+  const sharp = setupCard(ui, 'performance', 'sharp');
+  sharp.checked = true;
+  dispatch(sharp, 'change');
+  assert.equal(ui.studio.preferences.performance, 'sharp');
+  assert.ok(setupCard(ui, 'performance', 'automatic'), 'Automatic is a card of its own');
+});
+
+test('the Help menu reopens the setup and the Agent group copies the same prompt as the Agent menu (#2847)', async testContext => {
+  const ui = mountStudio(testContext);
+  byText(ui.root.querySelector('#crucible-studio-pop-help'), 'Set up Studio…').click();
+  assert.equal(ui.root.querySelector('.crucible-studio-setup-dialog').open, true);
+  setupButton(ui, 'Copy an agent prompt').click();
+  await ui.dom.settle();
+  assert.equal(ui.dom.clipboardTexts.length, 1);
+  assert.match(ui.dom.clipboardTexts[0], /Edit Crucible scene/);
+});
+
+test('Reset in Settings keeps the setup marked done (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.studio.setPreference('setupDone', true);
+  ui.studio.setPreference('theme', 'dark');
+  ui.button('Reset').click();
+  assert.equal(ui.studio.preferences.theme, 'system');
+  assert.equal(ui.studio.setupDone, true);
+});
+
+test('the setup names its steps in a row, jumps between them and rests focus on the primary button (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  const stepNames = () => ui.root.querySelectorAll('.crucible-studio-setup-step').map(button => button.textContent);
+  ui.studio.openSetup();
+  assert.deepEqual(stepNames(), ['Theme', 'Performance', 'Modelling', 'Keys', 'AI agent']);
+  assert.equal(ui.dom.document.activeElement, ui.root.querySelector('.crucible-studio-setup-dialog'), 'the dialog holds the focus, so no control starts with a ring');
+  const performanceStep = ui.root.querySelectorAll('.crucible-studio-setup-step')[1];
+  performanceStep.click();
+  assert.equal(performanceStep.getAttribute('aria-current'), 'step');
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-setup-group').filter(group => !group.inert).length, 1);
+  ui.root.querySelectorAll('.crucible-studio-setup-step')[4].click();
+  assert.equal(setupButton(ui, 'Done').hidden, false);
+});
+
+function hasIcon(element) {
+  return element.descendants().some(descendant => descendant.tagName === 'svg' || descendant.tagName === 'SVG');
+}
+
+test('each theme card holds a miniature of the real Studio chrome: inert, hidden from assistive technology, no text and no ids (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.studio.openSetup();
+  const previews = ['system', 'light', 'dark'].map(theme => setupCard(ui, 'theme', theme).parentNode.querySelector('.crucible-studio-setup-preview'));
+  previews.forEach(preview => {
+    assert.ok(preview, 'every theme card has a preview');
+    assert.equal(preview.inert, true);
+    assert.equal(preview.getAttribute('aria-hidden'), 'true');
+    assert.equal(preview.textContent.trim(), '', 'a miniature carries no text');
+    assert.ok(preview.descendants().every(element => !element.id), 'a miniature carries no id');
+    assert.ok(preview.descendants().every(element => !element.hasAttribute('aria-label') && !element.title), 'and no label that would repeat the real Studio');
+  });
+  const themesOf = preview => preview.querySelectorAll('.crucible-studio-miniature').map(miniature => miniature.dataset.theme);
+  assert.deepEqual(themesOf(previews[0]), ['light', 'dark'], 'System shows both halves');
+  assert.deepEqual(themesOf(previews[1]), ['light']);
+  assert.deepEqual(themesOf(previews[2]), ['dark']);
+  const miniature = previews[1].querySelector('.crucible-studio-miniature');
+  for (const className of ['crucible-studio-viewport', 'crucible-studio-menubar', 'crucible-studio-toolbar', 'crucible-studio-side', 'crucible-studio-outliner', 'crucible-studio-inspector']) {
+    assert.ok(miniature.querySelector(`.${className}`), `the miniature has the real ${className}`);
+  }
+  assert.equal(miniature.dataset.floating, 'false', 'the miniature shows the default docked panels');
+  assert.ok(hasIcon(miniature.querySelector('.crucible-studio-toolbar')), 'the rail keeps its icons');
+  assert.equal(miniature.querySelector('.crucible-studio-viewport').children.length, 0, 'the viewport is a plain block');
+  assert.equal(miniature.querySelector('.crucible-studio-outliner').children.length, 0, 'the panel cards are empty surfaces');
+  assert.equal(previews[1].querySelectorAll('canvas').length, 0);
+});
+
+test('the miniatures are built once, when the setup first opens, and the dialog holds no sketch parts (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-miniature').length, 0, 'nothing is built before the dialog opens');
+  ui.studio.openSetup();
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-miniature').length, 4);
+  setupButton(ui, 'Skip').click();
+  ui.studio.openSetup();
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-miniature').length, 4, 'a second open builds nothing new');
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-setup-sketch-part').length, 0);
+  assert.ok(STUDIO_CSS.includes('.crucible-studio-miniature[data-half="left"]'));
+});
+
+test('every performance tier card and every modelling row carries an icon, and each step names its icon (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.studio.openSetup();
+  for (const tier of ['automatic', 'light', 'balanced', 'sharp']) {
+    assert.ok(hasIcon(setupCard(ui, 'performance', tier).parentNode.querySelector('.crucible-studio-setup-card-name')), `the ${tier} tier has an icon`);
+  }
+  const tierIcons = ['automatic', 'light', 'balanced', 'sharp'].map(tier => setupCard(ui, 'performance', tier).parentNode.querySelector('.crucible-studio-icon path').getAttribute('d'));
+  assert.equal(new Set(tierIcons).size, 4, 'the four tiers have four different icons');
+  const rows = ui.root.querySelectorAll('.crucible-studio-setup-row');
+  assert.equal(rows.length, 4);
+  rows.forEach(row => assert.ok(hasIcon(row.querySelector('.crucible-studio-setup-row-label')), 'a modelling row has an icon on its label'));
+  ui.root.querySelectorAll('.crucible-studio-setup-step').forEach(step => assert.ok(hasIcon(step), 'a step has an icon'));
+  ['build', 'look', 'animate'].forEach(workspace => assert.ok(hasIcon(setupCard(ui, 'startWorkspace', workspace).parentNode), `the ${workspace} chip has an icon`));
+  assert.ok(hasIcon(ui.root.querySelector('.crucible-studio-setup-agent-mark')), 'the agent step shows a chat mark beside the prompt');
+});
+
+test('each tier card shows its pixel ratio and anti-aliasing on this screen, and Automatic names the tier it took instead of repeating its numbers (#2847)', testContext => {
+  const ui = mountStudio(testContext);
+  ui.dom.document.defaultView.devicePixelRatio = 1;
+  ui.studio.openSetup();
+  const facts = card => card.querySelectorAll('.crucible-studio-setup-fact').map(fact => fact.textContent);
+  const cardOf = value => setupCard(ui, 'performance', value).parentNode;
+  assert.deepEqual(facts(cardOf('light')), ['0.75x', 'AA 2x']);
+  assert.deepEqual(facts(cardOf('balanced')), ['1x', 'AA 2x']);
+  assert.deepEqual(facts(cardOf('sharp')), ['1x', 'AA 4x']);
+  assert.deepEqual(facts(cardOf('automatic')), [], 'Automatic repeats no numbers');
+  assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-facts').textContent, 'Balanced on this machine');
+  assert.equal(ui.root.querySelectorAll('.crucible-studio-setup-pick').length, 0, 'no dot marks a tier card');
+  assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-card-detail').textContent, 'Hardware not reported');
+  assert.equal(cardOf('automatic').querySelector('.crucible-studio-setup-card-detail').title, 'Hardware not reported');
+});
+
+test('the agent step shows the prompt and the button says Copied once it is on the clipboard (#2847)', async testContext => {
+  const ui = mountStudio(testContext);
+  ui.studio.openSetup();
+  const prompt = ui.root.querySelector('.crucible-studio-setup-prompt');
+  assert.equal(prompt.readOnly, true);
+  assert.match(prompt.value, /Edit Crucible scene/);
+  setupButton(ui, 'Copy an agent prompt').click();
+  await ui.dom.settle();
+  const copied = setupButton(ui, 'Copied');
+  assert.ok(copied, 'the button shows Copied');
+  assert.ok(copied.querySelector('svg') ?? copied.children[0], 'with the check icon');
+  assert.equal(ui.dom.clipboardTexts[0], prompt.value);
+});
+
+// Keymap presets (#2847): the preference swaps the keys live.
+function keyboardUi(testContext, keymap) {
+  const ui = mountStudio(testContext);
+  chooseSetting(ui, 'keymap', keymap);
+  ui.selectRow('hero');
+  dispatch(ui.viewport, 'pointermove', { clientX: 300, clientY: 200 });
+  const press = (key, properties = {}) => dispatch(ui.dom.document, 'keydown', { key, ...properties });
+  return { ui, press };
+}
+
+test('the Maya keymap: W, E and R choose the tool without picking the object up, and S keys', async testContext => {
+  const { ui, press } = keyboardUi(testContext, 'maya');
+  assert.equal(ui.studio.preferences.keymap, 'maya');
+  press('w');
+  assert.equal(ui.controller.tool, 'translate');
+  assert.equal(ui.root.dataset.modal, undefined, 'a Maya tool key does not start a grab');
+  assert.equal(ui.controller.dragging, false);
+  press('e');
+  assert.equal(ui.controller.tool, 'rotate');
+  press('r');
+  assert.equal(ui.controller.tool, 'scale');
+  assert.equal(ui.root.dataset.modal, undefined);
+  press('q');
+  assert.equal(ui.controller.tool, 'select');
+  press('g');
+  assert.notEqual(ui.controller.tool, 'translate', 'G is Blender\'s key, not Maya\'s');
+  press('s');
+  await ui.dom.settle();
+  assert.equal(ui.studio.exportRecipe().motion.tracks.length > 0, true, 'S sets a key');
+  assert.notEqual(ui.controller.tool, 'scale', 'S no longer scales');
+  const nodeCount = ui.studio.exportRecipe().nodes.length;
+  press('x');
+  assert.equal(ui.studio.exportRecipe().nodes.length, nodeCount, 'X no longer deletes');
+  press('Delete');
+  assert.equal(ui.studio.exportRecipe().nodes.length, nodeCount - 1);
+});
+
+test('the Cinema 4D keymap: E, R and T choose the tool, 9 selects and F9 keys', async testContext => {
+  const { ui, press } = keyboardUi(testContext, 'cinema4d');
+  press('e');
+  assert.equal(ui.controller.tool, 'translate');
+  assert.equal(ui.root.dataset.modal, undefined);
+  press('r');
+  assert.equal(ui.controller.tool, 'rotate');
+  press('t');
+  assert.equal(ui.controller.tool, 'scale');
+  assert.equal(ui.root.dataset.modal, undefined);
+  press('9');
+  assert.equal(ui.controller.tool, 'select');
+  press('S', { shiftKey: true });
+  assert.equal(ui.controller.tool, 'snap');
+  press('F9');
+  await ui.dom.settle();
+  assert.equal(ui.studio.exportRecipe().motion.tracks.length > 0, true, 'F9 sets a key');
+});
+
+test('the Blender keymap still picks the object up on G, and switching keymaps back restores it', testContext => {
+  const { ui, press } = keyboardUi(testContext, 'maya');
+  chooseSetting(ui, 'keymap', 'crucible');
+  press('g');
+  assert.equal(ui.root.dataset.modal, 'translate');
+  press('Escape');
+  assert.equal(ui.root.dataset.modal, undefined);
+});
+
+test('choosing a keymap rewrites the menu keys, the tooltips and the shortcuts dialog at once', testContext => {
+  const ui = mountStudio(testContext);
+  const editMenu = ui.root.querySelector('#crucible-studio-pop-edit');
+  const objectMenu = ui.root.querySelector('#crucible-studio-pop-object');
+  const shortcutsText = () => ui.root.querySelector('.crucible-studio-shortcuts').textContent;
+  assert.equal(byText(editMenu, 'Hide').dataset.shortcut, 'H');
+  assert.equal(byText(editMenu, 'Duplicate').dataset.shortcut, 'Shift+D');
+  assert.ok(ui.label('Move (G)'));
+  assert.match(shortcutsText(), /Pick up to move/);
+
+  chooseSetting(ui, 'keymap', 'maya');
+  assert.equal(byText(editMenu, 'Hide').dataset.shortcut, 'Ctrl+H');
+  assert.equal(byText(editMenu, 'Show all').dataset.shortcut, 'Ctrl+Shift+H');
+  assert.equal(byText(editMenu, 'Duplicate').dataset.shortcut, 'Ctrl+D');
+  assert.equal(byText(objectMenu, 'Frame').dataset.shortcut, 'F');
+  assert.equal(byText(ui.root.querySelector('#crucible-studio-pop-view'), 'Properties').dataset.shortcut, 'Ctrl+A');
+  assert.ok(ui.label('Move (W)'));
+  assert.ok(ui.label('Scale (R)'));
+  assert.ok(ui.label('Redo (Ctrl+Y)'));
+  assert.ok(ui.label('Play (Alt+V)'));
+  assert.ok(ui.label('Add a keyframe here (S)'));
+  assert.match(shortcutsText(), /W \/ E \/ R/);
+  assert.match(shortcutsText(), /Alt \+ left drag/);
+  assert.doesNotMatch(shortcutsText(), /While holding/);
+
+  chooseSetting(ui, 'keymap', 'cinema4d');
+  assert.equal(byText(editMenu, 'Hide').dataset.shortcut, 'H');
+  assert.equal(byText(ui.root.querySelector('#crucible-studio-pop-view'), 'Properties').dataset.shortcut, 'Shift+F5');
+  assert.ok(ui.label('Scale (T)'));
+  assert.ok(ui.label('Play (F8)'));
+
+  chooseSetting(ui, 'keymap', 'crucible');
+  assert.equal(byText(editMenu, 'Hide').dataset.shortcut, 'H');
+  assert.ok(ui.label('Move (G)'));
+  assert.match(shortcutsText(), /Pick up to move/);
+});
+
+test('the keymap starts from the saved preference', testContext => {
+  const ui = mountStudio(testContext, { preferences: { keymap: 'cinema4d' } });
+  assert.ok(ui.label('Rotate (R)'));
+  assert.ok(ui.label('Move (E)'));
+  assert.equal(byText(ui.root.querySelector('#crucible-studio-pop-view'), 'Properties').dataset.shortcut, 'Shift+F5');
+});
+
+test('Settings has a Keys row with Blender, Maya and Cinema 4D', testContext => {
+  const ui = mountStudio(testContext);
+  const control = ui.root.querySelector('.crucible-studio-settings-dialog').descendants().find(element => element.dataset?.setting === 'keymap');
+  assert.deepEqual(control.querySelectorAll('option').map(option => [option.value, option.textContent]), [['crucible', 'Blender'], ['maya', 'Maya'], ['cinema4d', 'Cinema 4D']]);
+  assert.equal(control.value, 'crucible');
+});
+
+test('the setup has a Keys step after Modelling with a card per program, each with its logo and its real keys', testContext => {
+  const ui = mountStudio(testContext);
+  ui.studio.openSetup();
+  const names = ui.root.querySelectorAll('.crucible-studio-setup-step').map(button => button.textContent);
+  assert.deepEqual(names.slice(2, 5), ['Modelling', 'Keys', 'AI agent']);
+  const expectedKeys = { crucible: ['G', 'R', 'S', 'F'], maya: ['W', 'E', 'R', 'F'], cinema4d: ['E', 'R', 'T', 'O'] };
+  const expectedLabels = { crucible: 'Blender', maya: 'Maya', cinema4d: 'Cinema 4D' };
+  for (const [preset, keys] of Object.entries(expectedKeys)) {
+    const card = setupCard(ui, 'keymap', preset).parentNode;
+    assert.equal(card.querySelector('.crucible-studio-setup-card-label').textContent, expectedLabels[preset]);
+    const logo = card.querySelector('.crucible-studio-setup-card-name svg');
+    assert.equal(logo.dataset.brand, 'true', `${preset} has a brand logo`);
+    assert.equal(logo.querySelectorAll('path').length, 1);
+    assert.deepEqual(card.querySelectorAll('kbd').map(key => key.textContent), keys);
+  }
+  assert.equal(setupCard(ui, 'keymap', 'crucible').checked, true);
+  const maya = setupCard(ui, 'keymap', 'maya');
+  maya.checked = true;
+  dispatch(maya, 'change');
+  assert.equal(ui.studio.preferences.keymap, 'maya');
+  assert.equal(setupCard(ui, 'keymap', 'maya').parentNode.dataset.selected, 'true');
+  assert.ok(ui.label('Move (W)'), 'the live Studio behind the dialog follows');
+});
+
+test('Maya and Cinema 4D navigate with Alt and a mouse button, and the Blender keymap does not', testContext => {
+  const ui = mountStudio(testContext);
+  const start = ui.clientPoint({ x: 400, y: 300 });
+  const distance = () => Math.hypot(...ui.controller.scene.camera.eye.map((value, index) => value - ui.controller.scene.camera.target[index]));
+  const drag = (button, to) => {
+    dispatch(ui.canvas, 'pointerdown', { ...start, button, altKey: true });
+    dispatch(ui.canvas, 'pointermove', ui.clientPoint(to));
+    dispatch(ui.canvas, 'pointerup', ui.clientPoint(to));
+  };
+
+  ui.controller.selectNode(null);
+  chooseSetting(ui, 'keymap', 'maya');
+  let eyeBefore = ui.controller.scene.camera.eye.slice();
+  drag(0, { x: 500, y: 320 });
+  assert.notDeepEqual(ui.controller.scene.camera.eye, eyeBefore, 'Alt and the left button orbit');
+  assert.equal(ui.controller.selectedNodeId, null, 'a navigation drag does not select');
+  let targetBefore = ui.controller.scene.camera.target.slice();
+  drag(1, { x: 480, y: 340 });
+  assert.notDeepEqual(ui.controller.scene.camera.target, targetBefore, 'Alt and the middle button pan');
+  const distanceBefore = distance();
+  drag(2, { x: 460, y: 240 });
+  assert.ok(distance() < distanceBefore, 'Alt and the right button zoom in when dragged right and up');
+  assert.equal(ui.controller.selectedNodeId, null);
+  const orbPoint = ui.clientPoint(ui.controller.projectWorldPoint([2.2, 0.5, 0]));
+  dispatch(ui.canvas, 'pointerdown', { ...orbPoint, altKey: true });
+  dispatch(ui.canvas, 'pointerup', { ...orbPoint, altKey: true });
+  assert.equal(ui.controller.selectedNodeId, null, 'an Alt click over an object does not pick it');
+  dispatch(ui.canvas, 'pointerdown', orbPoint);
+  dispatch(ui.canvas, 'pointerup', orbPoint);
+  assert.equal(ui.controller.selectedNodeId, 'orb', 'a plain click still picks');
+  ui.controller.selectNode(null);
+
+  chooseSetting(ui, 'keymap', 'cinema4d');
+  eyeBefore = ui.controller.scene.camera.eye.slice();
+  drag(0, { x: 560, y: 330 });
+  assert.notDeepEqual(ui.controller.scene.camera.eye, eyeBefore);
+
+  chooseSetting(ui, 'keymap', 'crucible');
+  targetBefore = ui.controller.scene.camera.target.slice();
+  drag(2, { x: 420, y: 300 });
+  assert.notDeepEqual(ui.controller.scene.camera.target, targetBefore, 'the default right drag still pans, whatever the keymap');
 });
