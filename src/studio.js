@@ -13,7 +13,7 @@ import { encodePackOrRefuse } from './studio-pack-refusal.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
 import { findKeymapAction, findMouseNavigation, formatShortcutKeys, KEYMAP_PRESETS, keyLabel, lastKeyLabel, resolveKeymapPreset, shortcutRowsFor } from './studio-keymap.js';
-import { createStudioCatalog } from './studio-catalog.js';
+import { createStudioCatalog, NO_STORE_MESSAGE } from './studio-catalog.js';
 import { createStudioSetup } from './studio-setup.js';
 import { detectStudioHardware, gatherStudioHardwareInputs, rendererChangeFor, resolveStudioPerformanceTier, studioViewportSettingsFor } from './studio-hardware.js';
 import { createStudioDiagnostics, describeStudioEnvironment, watchStudioDiagnostics } from './studio-diagnostics.js';
@@ -1023,7 +1023,8 @@ export function createStudio(container, {
   // swaps the recipe in when `ready` settles, so createStudio itself stays synchronous.
   const pendingRecipe = suppliedRecipe && !suppliedScene && catalog.needsLoading(suppliedRecipe) ? suppliedRecipe : null;
   const initialRecipe = pendingRecipe ? buildTemplateRecipe(template) : suppliedRecipe ?? (suppliedScene ? null : buildTemplateRecipe(template));
-  const initialScene = suppliedScene ?? createAgentScene(initialRecipe);
+  // The scene reads catalog assets and images from the pool, so an import into the first scene can place them.
+  const initialScene = suppliedScene ?? createAgentScene(initialRecipe, {}, { assets: catalog.pool, sequenceFrames: catalog.pool });
   let handleChange = () => {};
   const studioDiagnostics = createStudioDiagnostics({
     limit: diagnosticsOptions.limit,
@@ -1138,6 +1139,9 @@ export function createStudio(container, {
     return button;
   };
   const openButton = showActionKey(createElement(documentReference, 'button', { type: 'button', textContent: 'Open…' }), 'file.open');
+  // Import needs a place to keep the file (catalog.store) and a way to name it (SHA-256); without either the row is not offered.
+  const canImport = catalog.canStore && Boolean(documentReference.defaultView?.crypto?.subtle ?? globalThis.crypto?.subtle);
+  const importButton = canImport ? createElement(documentReference, 'button', { type: 'button', textContent: 'Import…' }) : null;
   const saveButton = showActionKey(createElement(documentReference, 'button', { type: 'button', textContent: 'Save' }), 'file.save');
   const saveAsButton = showActionKey(createElement(documentReference, 'button', { type: 'button', textContent: 'Save as…' }), 'file.saveAs');
   const addMenuButton = createIconButton(documentReference, 'add', 'Add an object or a light', { attributes: { popovertarget: 'crucible-studio-pop-add' } });
@@ -1415,6 +1419,7 @@ export function createStudio(container, {
     attributes: { popover: 'auto' },
   }, exportPngButton, exportGlbButton, exportPackButton);
   giveMenuIcon(openButton, 'open');
+  if (importButton) giveMenuIcon(importButton, 'add');
   giveMenuIcon(saveButton, 'save');
   giveMenuIcon(saveAsButton, 'saveAs');
   giveMenuIcon(editJsonButton, 'code');
@@ -1423,6 +1428,7 @@ export function createStudio(container, {
   giveMenuIcon(exportPackButton, 'globe');
   newPopover.prepend(
     openButton,
+    ...(importButton ? [importButton] : []),
     saveButton,
     saveAsButton,
     editJsonButton,
@@ -1632,7 +1638,7 @@ export function createStudio(container, {
   });
   const statusRegion = createElement(documentReference, 'p', { className: 'crucible-studio-status', attributes: { role: 'status' } });
   const hintBar = createElement(documentReference, 'div', { className: 'crucible-studio-hintbar' });
-  const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: 'Drop a scene.json to open it' });
+  const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: canImport ? 'Drop a scene.json, GLB, HDR or image' : 'Drop a scene.json to open it' });
 
   function announce(message) {
     statusRegion.textContent = message;
@@ -1949,7 +1955,7 @@ export function createStudio(container, {
     isOpen: (groupId, openByDefault) => preferences.propertyGroupsOpen[groupId] ?? openByDefault,
     setOpen: (groupId, open) => setPreference('propertyGroupsOpen', { ...preferences.propertyGroupsOpen, [groupId]: open }),
   };
-  const createLookPanel = (resolveKey, panelOptions = {}) => createPropertyPanel({ documentReference, controller, announce, builders: propertyBuilders, resolveKey, groups: propertyGroups, prepareRecipe, ...panelOptions });
+  const createLookPanel = (resolveKey, panelOptions = {}) => createPropertyPanel({ documentReference, controller, announce, builders: propertyBuilders, resolveKey, groups: propertyGroups, prepareRecipe, catalogNames: catalog.names, ...panelOptions });
   const selectedLightKey = () => (/^(point|spot|area):/u.test(controller.selectedObjectKey ?? '') ? controller.selectedObjectKey : null);
   // Only the first group of a tab starts open, so the tab opens on one screen of rows.
   const lightPanel = createLookPanel(() => selectedLightKey() ?? 'sun', { opensFirstGroup: true });
@@ -2109,6 +2115,7 @@ export function createStudio(container, {
   const scrubInput = createElement(documentReference, 'input', { type: 'range', min: '0', max: '4', step: '0.02', value: '0', attributes: { 'aria-label': 'Timeline scrub' } });
   const quickBookmarksRow = createElement(documentReference, 'div', { className: 'crucible-studio-shots' });
   const fileInput = createElement(documentReference, 'input', { type: 'file', accept: '.json,application/json', hidden: true });
+  const importInput = createElement(documentReference, 'input', { type: 'file', accept: '.glb,.hdr,.png,.jpg,.jpeg,.webp', hidden: true });
 
   playButton.addEventListener('click', () => {
     if (!hasAnimatedData(controller.exportRecipe())) {
@@ -2429,7 +2436,7 @@ export function createStudio(container, {
   }
 
   applyPreferences();
-  root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, recipeDialog, shortcutsDialog, settingsDialog, setup.dialog);
+  root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, importInput, recipeDialog, shortcutsDialog, settingsDialog, setup.dialog);
   container.append(root);
 
   function syncWatchNote() {
@@ -2517,7 +2524,7 @@ export function createStudio(container, {
   async function buildWebPackPayload() {
     const { stillRecipe, stripped } = buildPackReadyRecipe(controller.exportRecipe());
     await prepareRecipe(stillRecipe);
-    const stillScene = createAgentScene(stillRecipe, {}, { assets: catalog.pool });
+    const stillScene = createAgentScene(stillRecipe, {}, { assets: catalog.pool, sequenceFrames: catalog.pool });
     const environment = stillScene.environment;
     const shaderModules = agentSceneModulesNeeded(stillRecipe).filter(name => Object.hasOwn(PACK_SHADER_MODULES, name));
     for (const moduleName of agentSceneModulesNeeded(stillRecipe)) {
@@ -2615,6 +2622,27 @@ export function createStudio(container, {
     } catch (error) {
       announce(error.message);
     }
+  });
+
+  // The import code loads on the first import; an import is one undo step, and a refusal says what to do and changes nothing.
+  async function importFileIntoScene(file) {
+    if (!canImport) {
+      announce(NO_STORE_MESSAGE);
+      return;
+    }
+    try {
+      const { importFile } = await import('./studio-import.js');
+      announce(await importFile(file, { catalog, controller, prepareRecipe }));
+    } catch (error) {
+      announce(error.message);
+    }
+  }
+
+  importButton?.addEventListener('click', () => importInput.click());
+  importInput.addEventListener('change', async () => {
+    const file = importInput.files?.[0];
+    importInput.value = '';
+    if (file) await importFileIntoScene(file);
   });
 
   exportPngButton.addEventListener('click', async () => {
@@ -3729,6 +3757,10 @@ export function createStudio(container, {
     delete viewportElement.dataset.dropActive;
     const file = event.dataTransfer?.files?.[0];
     if (!file) return;
+    if (!/\.json$/i.test(file.name) && file.type !== 'application/json') {
+      await importFileIntoScene(file);
+      return;
+    }
     try {
       await loadExternalTextFile(await file.text(), { filePath: file.path || null, fileName: file.name });
       announce(`Loaded ${file.name}`);
