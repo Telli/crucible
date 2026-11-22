@@ -71,7 +71,7 @@ async function connect(context) {
       return { data: png, mimeType: 'image/png', metadata: { sessionId, revision: scene.revision,
         motionTime: scene.motionTime, width, height, backend: 'fake' } };
     },
-    async review({ expectedRevision, width, height, shots }) {
+    async review({ expectedRevision, width = 384, height = 384, shots }) {
       calls++;
       assert.equal(expectedRevision, scene.revision);
       return { data: png, mimeType: 'image/png', metadata: { sessionId,
@@ -209,6 +209,8 @@ test('review SDK exposes one image and rejects unknown or unbounded shot fields 
   assert.equal(tools.length, 25);
   assert.equal(tool.annotations.readOnlyHint, true);
   assert.equal(tool.inputSchema.properties.shots.maxItems, 4);
+  assert.equal(tool.inputSchema.properties.wedge.properties.values.maxItems, 8);
+  assert.equal(tool.inputSchema.properties.wedge.properties.values.minItems, 2);
   assert.equal(tool.inputSchema.properties.shots.items.additionalProperties, false);
   assert.equal(tool.inputSchema.properties.shots.items.properties.camera.additionalProperties, false);
   const input = { sessionId, expectedRevision: 0, shots: [{ label: 'Front', camera: { eye: [4, 2, 1] } }, {}] };

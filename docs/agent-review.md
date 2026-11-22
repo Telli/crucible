@@ -124,3 +124,24 @@ Cleanup and source preview recovery follow that deadline. `elapsedSeconds` repor
 
 The tool provides visual evidence. It does not diagnose every intersection, guarantee a good composition or supply automatic framing of deformed assets.
 Mesh inspection bounds describe authored geometry. Skinning and morphs can move the visible surface beyond those bounds.
+
+## Compare values of one parameter
+
+`scene_review` with `wedge` {since 0.23.0} draws one field of the scene at two to eight values in one labeled grid, such as roughness 0.1, 0.3, 0.6 and 0.9, or four sun directions. Pass `wedge` instead of `shots`. Each picture is a scratch copy of the scene with that one value set. The source recipe, revision, branches, checkpoints and preview pose stay as they were, so nothing needs undoing afterwards.
+
+```json
+{
+  "sessionId": "<scene UUID>",
+  "expectedRevision": 0,
+  "wedge": { "target": "brass", "parameter": "roughness", "values": [0.1, 0.3, 0.6, 0.9] }
+}
+```
+
+- `target` is `environment`, `effects`, `shadow` or the ID of a material. Sun and lamps are environment fields: `lightDirection`, `keyIntensity` and `keyColor` for the sun, `pointLights.0.intensity` for the first point light.
+- `parameter` is the name `scene_apply` takes for that target, or a path into a list or an object that is already set, such as `pointLights.0.intensity`. The scene must already hold that list or object.
+- `values` holds one JSON value per picture, in the shape `scene_apply` takes, each at most 2048 bytes. A value the scene refuses fails the whole call and the message names which one (`wedge.values[2]`).
+- `shots` may hold one shot (no `branch` or `animation`) whose `camera` and `motionTime` every picture shares. Without it each picture uses the scene's camera and pose.
+- Up to four values draw in two columns, five or six in three and seven or eight in four. `width` and `height` set one picture (at most 960 by 1008 for the grid; the default is 320, or 240 for seven or eight values).
+- It supports procedural recipe scenes, not an imported asset scene. The grid is a PNG of at most 1 MiB under the same total deadline as a review.
+
+The metadata lists each shot with its value. To keep the best value, call `scene_apply` with it. `scene_capabilities` topic `wedge` lists the limits.

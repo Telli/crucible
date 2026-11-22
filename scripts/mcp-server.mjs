@@ -1205,10 +1205,10 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     submitAskUserTool.enable();
     askUserTool.update({ _meta: { ui: { resourceUri: ANNOTATE_VIEW_URI } } });
   };
-  register('scene_review', 'Compare one to four independent camera or motion samples in one labeled PNG grid. Preserves source revision, transient pose, viewport and checkpoints. Omitted motionTime restores authored base pose; omitted animation uses the authored asset clip pose; rendererTime defaults to the shot motionTime (or animation time), else zero. No render job store is required.', z.strictObject({
+  register('scene_review', 'Compare one to four independent camera or motion samples in one labeled PNG grid. Preserves source revision, transient pose, viewport and checkpoints. Omitted motionTime restores authored base pose; omitted animation uses the authored asset clip pose; rendererTime defaults to the shot motionTime (or animation time), else zero. No render job store is required. wedge replaces shots: one picture per value of a parameter (target environment, effects, shadow or a material ID; topic wedge).', z.strictObject({
     ...sessionFields, expectedRevision,
-    width: z.number().int().min(64).max(480).default(384),
-    height: z.number().int().min(64).max(480).default(384),
+    width: z.number().int().min(64).max(480).optional(),
+    height: z.number().int().min(64).max(480).optional(),
     labels: labelsFlag,
     checks: z.literal('realism').optional().describe('realism: pass or fail list with fixes.'),
     response_format: responseFormatField,
@@ -1219,7 +1219,8 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
       animation: z.strictObject({ clip: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), time: z.number().min(0).max(3600) }).optional(),
       motionTime: z.number().min(0).max(3600).nullable().optional(),
       rendererTime: z.number().min(0).max(3600).optional(),
-    })).min(1).max(4),
+    })).min(1).max(4).optional(),
+    wedge: z.strictObject({ target: z.string().max(128), parameter: z.string().max(64), values: z.array(z.unknown()).min(2).max(8) }).optional(),
   }), readOnly, async ({ response_format, ...reviewInput }) => {
     const { data, mimeType, metadata } = await runtime.review(reviewInput);
     const shown = chosenFormat('scene_review', response_format) === 'concise' ? conciseReview(metadata) : metadata;

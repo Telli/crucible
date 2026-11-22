@@ -63,6 +63,8 @@ import { ANNOTATE_LIMITS, validateMarks, isBoundedPng } from '../src/agent-annot
 import { REVIEW_LINK_LIMITS, newReviewId, parseReviewFile, validateReviewMarks } from '../src/review-link.js';
 import { writeReviewBuild } from './review-page.mjs';
 import { normalizeReview, reviewDeadlineMessage, REVIEW_LIMITS } from './agent-review.mjs';
+import { normalizeWedge } from './agent-wedge.mjs';
+import { WEDGE_LIMITS } from '../src/agent-wedge.js';
 import { mergeFrameDiagnostics, pathTracerFindingsLimit, pathTracerSkippedPassesWarning } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { createSharedGpuCard } from './agent-gpu-queue.mjs';
@@ -1324,6 +1326,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         review: { ...REVIEW_LIMITS, backend, memoryBudgetMiB: memory, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS,
           totalTimeoutMs: EVALUATION_TIMEOUT_MS,
           sourcePreserved: true, defaultMotionTime: null, defaultRendererTime: 0, branches: BRANCH_LIMITS },
+        wedge: { ...WEDGE_LIMITS, usage: 'scene_review with wedge {target, parameter, values} instead of shots. target: environment, effects, shadow or a material ID. parameter: a field name or path such as roughness, lightDirection, keyIntensity, fogDensity or pointLights.0.intensity. values: 2 to 8 JSON values as scene_apply takes them. shots may hold one shot for the shared camera and motionTime.', backend, memoryBudgetMiB: memory },
         phase: closing && phase !== 'closed' ? 'closing' : phase,
         availableIn: packageMetadata.version,
         assets: {
@@ -1560,9 +1563,23 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return invoke('checkpoint', { ...input, checkpointId: randomUUID() });
       });
     },
-    review(input) {
+    // scene_review with wedge: one parameter at several values; each value is a scratch copy of the scene drawn through the same review path.
+    async wedge(input) {
+      const settings = normalizeWedge(input);
+      const loadRecipes = async () => {
+        const { recipes } = await invoke('wedgeRecipes', { sessionId: settings.sessionId, expectedRevision: settings.expectedRevision,
+          target: settings.wedge.target, field: settings.wedge.parameter, values: settings.wedge.values });
+        return new Map(recipes.map((recipe, index) => [settings.wedge.variantNames[index], { recipe: withSnapshotSkyColors({ recipe }).recipe, stale: false }]));
+      };
+      const output = await this.review(input, { settings, loadRecipes });
+      const { shots, ...rest } = output.metadata;
+      const wedgeShots = shots.map(({ branch: _branch, branchStale: _stale, ...shot }, index) => ({ ...shot, value: settings.wedge.values[index] }));
+      return { ...output, metadata: { ...rest, wedge: { target: settings.wedge.target, parameter: settings.wedge.parameter }, shots: wedgeShots } };
+    },
+    review(input, wedgeRun) {
+      if (input?.wedge !== undefined && !wedgeRun) return this.wedge(input);
       let settings;
-      try { settings = normalizeReview(input); }
+      try { settings = wedgeRun ? wedgeRun.settings : normalizeReview(input); }
       catch (error) { return Promise.reject(error); }
       return gpuUnit('light', () => enqueue(async () => {
         await requirePreviewRenderer();
@@ -1573,6 +1590,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         for (const name of settings.branchNames) {
           branchRecipes.set(name, withSnapshotSkyColors(await invoke('branchRecipe', { sessionId: settings.sessionId, name })));
         }
+        if (wedgeRun) for (const [name, variant] of await wedgeRun.loadRecipes()) branchRecipes.set(name, variant);
         const assetBytes = snapshot.recipe.format === 'crucible.asset' ? await (await catalog()).read(snapshot.recipe.assetId) : undefined;
         let privateSessionId;
         const started = performance.now();

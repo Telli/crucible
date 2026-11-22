@@ -158,7 +158,7 @@ Inspect or export the recipe before retrying. Context loss still permits recipe 
 | `mesh_stack` | `sessionId`, `expectedRevision`, `geometry`, optional `stack`, `apply` | Updated revision, render status and the mesh report with per-node results |
 | `scene_look` | `sessionId`, optional `width`, `height`, `motionTime`, `labels` | PNG image and metadata |
 | `scene_ask_user` | `sessionId`, optional `prompt`, `maxMarks`, `timeoutSeconds`, `motionTime`, `reviewFile` | Opens the view in the browser, waits for Send, returns numbered marks with `partId`, `point`, `normal`, `note`, the camera and the marked PNG. With `reviewFile` it reads the marks a [review page](#review-link) saved instead (no browser, no image) |
-| `scene_review` | `sessionId`, `expectedRevision`, `shots` (each with an optional `branch`), optional `width`, `height`, `labels`, `response_format` | Labeled PNG grid and metadata from an isolated snapshot |
+| `scene_review` | `sessionId`, `expectedRevision`, `shots` (each with an optional `branch`) or `wedge` {since 0.23.0}, optional `width`, `height`, `labels`, `response_format` | Labeled PNG grid and metadata from an isolated snapshot |
 | `scene_checkpoint` | `sessionId` | Checkpoint ID, session ID, and revision |
 | `scene_restore` | `sessionId`, `expectedRevision`, and a `checkpointId`, a `revision` or a `branch` | Updated revision and render status |
 | `scene_release_checkpoint` | `sessionId`, `checkpointId` | Release confirmation |
