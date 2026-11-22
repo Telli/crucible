@@ -29,8 +29,10 @@ test('far levels draw the species leaf card, not the generic clump card', () => 
     const tree = createTree({ preset }, 4);
     for (const level of [2, 3]) {
       const part = tree.levels[level].parts[FOLIAGE_PART];
-      assert.equal(part.material, tree.levels[1].parts[FOLIAGE_PART].material, `${preset} level ${level} must share the leaf card of level 1`);
-      assert.notEqual(part.material, tree.materials.crown, `${preset} level ${level} drew the clump card`);
+      // Compare by identity: a failing assert.equal on two materials prints a diff of their 64 KB texture pixels, which
+      // grew one test run past 27 GB.
+      assert.ok(part.material === tree.levels[1].parts[FOLIAGE_PART].material, `${preset} level ${level} must share the leaf card of level 1`);
+      assert.ok(part.material !== tree.materials.crown, `${preset} level ${level} drew the clump card`);
       assert.ok(part.geometry.indices.length > 0);
     }
   }
