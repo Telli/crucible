@@ -85,7 +85,10 @@ The four shipped files total about 100 KB. For a bigger HDRI, put a 2k or smalle
 
 Each operation also contains its `type` discriminator.
 Omitted fields retain their current canonical values.
-Nested `volumeFog` and `bloom` objects merge their supplied fields.
+Nested `volumeFog`, `bloom`, `depthOfField` and `motionBlur` objects merge their supplied fields: `{ depthOfField: { blur: 0.8 } }` keeps `focusDistance`.
+`null` clears an optional field back to not set (`ground`, `hdri`, `sunBounce`, `shadowCascades`, `sky` and the other fields a fresh environment leaves out, `motionBlur.objects`, optional post steps), and clearing a field that is not set changes nothing.
+`null` on `depthOfField`, `motionBlur` or `bloom` returns the whole group to its defaults.
+A field every scene has (`keyIntensity`, `exposure`, `depthOfField.blur`, ...) cannot be cleared: `null` on it fails with the default to pass instead. `fogDensity: null` is a value, no override.
 Vector arrays replace their previous vector.
 The complete `pointLights` list replaces the previous list, including `[]` to remove all point lights.
 Final merged look fields pass normalization before any command publishes.
