@@ -503,3 +503,21 @@ test('GitHub also links a closing keyword followed by a colon', () => {
   const noNumber = goodBody.replace('Closes #12', 'Closes: nothing');
   assert.deepEqual(fixIds({ pr: pullRequest({ body: noNumber }), files: shippedFiles }), ['missing-issue-link']);
 });
+
+test('a maintainer who states the look is unchanged gets no hold; an outside author still does (#2951)', () => {
+  const files = [file('src/subsurface-shader.js'), file('changes/12.md')];
+  const unchangedBody = `${goodBody}\nThe look is unchanged: the shader declares one uniform once.\n`;
+  const maintainer = checkPullRequest({ pr: pullRequest({ body: unchangedBody, author: 'anxuanng', authorAssociation: 'OWNER' }), files });
+  assert.ok(!maintainer.addLabels.includes('hold:look-approval'));
+  assert.ok(!maintainer.contributorFixes.some(item => item.id === 'look-without-image'));
+  assert.ok(!maintainer.maintainerTodos.some(todo => todo.startsWith('Look change')));
+  const member = checkPullRequest({ pr: pullRequest({ body: unchangedBody, authorAssociation: 'MEMBER' }), files });
+  assert.ok(!member.addLabels.includes('hold:look-approval'));
+  const outside = checkPullRequest({ pr: pullRequest({ body: unchangedBody }), files });
+  assert.ok(outside.addLabels.includes('hold:look-approval'));
+  const silentMaintainer = checkPullRequest({ pr: pullRequest({ author: 'anxuanng', authorAssociation: 'OWNER' }), files });
+  assert.ok(silentMaintainer.addLabels.includes('hold:look-approval'));
+  const hidden = `${goodBody}\n<!-- The look is unchanged. -->\n`;
+  const commented = checkPullRequest({ pr: pullRequest({ body: hidden, author: 'anxuanng', authorAssociation: 'OWNER' }), files });
+  assert.ok(commented.addLabels.includes('hold:look-approval'));
+});
