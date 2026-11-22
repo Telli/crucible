@@ -27,7 +27,7 @@
   ],
   "materials": [
     { "id": "water", "tag": "water", "color": [0.0033, 0.042, 0.069], "metallic": 0, "roughness": 0.14 },
-    { "id": "cumulus", "color": [1, 1, 1], "metallic": 0, "roughness": 1, "toon": 3, "toonColors": [[0.05, 0.21, 0.25], [0.4, 0.58, 0.53], [1, 0.87, 0.9]] }
+    { "id": "cumulus", "color": [0.89, 0.89, 0.89], "metallic": 0, "roughness": 1, "toon": 3, "toonColors": [[0.0562, 0.236, 0.2809], [0.4494, 0.6517, 0.5955], [1.1236, 0.9775, 1.0112]] }
   ],
   "nodes": [
     { "id": "sea", "geometry": "sea", "material": "water" },
