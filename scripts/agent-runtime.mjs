@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import packageMetadata from '../package.json' with { type: 'json' };
 import { resolveLookView } from '../src/look-views.js';
-import { VEGETATION_CAPABILITY_NOTE } from '../src/agent-vegetation-notes.js';
+import { TREE_GROWTH_CAPABILITIES, VEGETATION_CAPABILITY_NOTE } from '../src/agent-vegetation-notes.js';
 import { CLUTTER_CAPABILITY_NOTE } from '../src/agent-clutter-notes.js';
 import { CROWD_CAPABILITY_NOTE } from '../src/agent-crowd-notes.js';
 import { SETTLE_CAPABILITY_NOTE } from '../src/settle-notes.js';
@@ -226,9 +226,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     }
   }
   // The history only sharpens later estimates, so a failed write never fails the job that finished.
-  async function rememberRenderJob({ settings, estimate, report }) {
+  async function rememberRenderJob({ settings, estimate, report, ranSize }) {
     try {
-      const history = historyWithJob(await readRenderHistory(), { settings, backend, estimate, report });
+      const history = historyWithJob(await readRenderHistory(), { settings, backend, estimate, report, ranSize });
       await writeFile(join(jobRoot, RENDER_HISTORY_FILE), JSON.stringify(history), { mode: 0o600 });
     } catch (error) {
       console.error(`Crucible could not save the render history: ${error.message}`);
@@ -507,6 +507,16 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       return { source: item, asset: readyCatalog.resolveName(item) };
     }));
     return { ...settings, items };
+  }
+
+  /** Bytes of the catalog files a recipe places, each file once however many copies the scene holds, for the render time estimate. */
+  async function placedAssetFileBytes(recipe) {
+    const needs = recipeAssetNeeds(recipe);
+    if (!needs.length) return 0;
+    const readyCatalog = await catalog();
+    let totalBytes = 0;
+    for (const { id } of needs) totalBytes += (await readyCatalog.describeSize(id)).bytes;
+    return totalBytes;
   }
 
   /** Bytes of the catalog assets a recipe or edit list places, base64 by asset id, for the page that decodes them. */
@@ -1267,7 +1277,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       metrics.elapsedSeconds = (performance.now() - started) / 1000;
       metrics.report = renderReport({ estimate, settings, metrics });
       if (settings.renderer?.backend === 'gpu') gpuTracerWarm = true;
-      await rememberRenderJob({ settings, estimate, report: metrics.report });
+      await rememberRenderJob({ settings, estimate, report: metrics.report, ranSize: { width, height } });
       return { artifacts, metrics };
     } catch (error) {
       jobFailed = true;
@@ -1334,7 +1344,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return tierReport({ backend, nativeTracer: Boolean((await nativeTracerLocator.find()).tracer) });
       };
       return {
-        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, clutter: CLUTTER_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES, textureSet: TEXTURE_SET_CAPABILITIES },
+        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, treeGrowth: TREE_GROWTH_CAPABILITIES, clutter: CLUTTER_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES, textureSet: TEXTURE_SET_CAPABILITIES },
         sceneLimits: SCENE_LIMITS,
         preview: { backend, memoryBudgetMiB: memory, maximumWidth: 1024, maximumHeight: 1024, maximumImageBytes: MAXIMUM_IMAGE_BYTES, maximumActiveScenes: SCENE_STORE_LIMITS.maxOpenScenes, maximumOpenSceneBytes: SCENE_STORE_LIMITS.maxOpenSceneBytes, maximumQueuedCalls: MAXIMUM_QUEUED_CALLS, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS },
         review: { ...REVIEW_LIMITS, backend, memoryBudgetMiB: memory, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS,
@@ -1355,7 +1365,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           extensions: PACK_CONTENT_KINDS, maximumPacks: MAXIMUM_INSTALLED_PACKS, maximumFiles: MAXIMUM_PACK_FILES, maximumBytes: MAXIMUM_PACK_BYTES,
           maximumFileBytes: MAXIMUM_PACK_FILE_BYTES, maximumJsonBytes: MAXIMUM_PACK_JSON_BYTES, maximumItemsPerKind: MAXIMUM_PACK_ITEMS_PER_KIND,
           vegetationScans: (await vegetationScans()) ? 'on: trees draw scanned bark and leaves' : 'off: trees draw procedural bark and leaves; install the vegetation-scans pack for scans',
-          use: 'scene_asset_catalog lists packs: name, version, license, author, description and item ids. GLBs, images, looks and environments carry assetId values that work in scene_create_asset, look, hdri and texture fields. Materials and recipes are read with scene_asset_catalog { pack, material } or { pack, recipe }: pass a recipe to scene_create, and a material as a materials entry or a scene_apply set-material. Packs are installed by the user (unzip into the --packs folder); a tool call never downloads one. Invalid packs are skipped and listed under packs.rejected with the reason.',
+          use: 'scene_asset_catalog lists packs: name, version, license, author, description and item ids. GLBs, images, looks and environments carry assetId values that work in scene_create_asset, look, hdri and texture fields. Materials and recipes are read with scene_asset_catalog { pack, material } or { pack, recipe }: pass a recipe to scene_create, and a material as a materials entry or a scene_apply set-material. Packs are installed by the user (crucible packs add <name>, or unzip into the packs folder); crucible-mcp reads ~/.crucible/packs unless --packs names another folder, and a tool call never downloads one. Invalid packs are skipped and listed under packs.rejected with the reason.',
         },
         jobs: { configured: Boolean(jobRoot), kinds: ['image', 'stills', 'video', 'icons'], icons: ICON_CAPABILITIES, passes: RENDER_PASS_NAMES, pathTracer: PATH_TRACER_CAPABILITIES, maximumActiveJobs: 1, estimate: RENDER_ESTIMATE_NOTE, budget: RENDER_BUDGET_NOTE, quality: RENDER_QUALITY_NOTE, tiers: await deviceTiers(),
           maximumWidth: MAXIMUM_JOB_SIDE, maximumHeight: MAXIMUM_JOB_SIDE, maximumPixels: MAXIMUM_JOB_PIXELS, maximumSequenceWidth: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequenceHeight: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequencePixels: MAXIMUM_SEQUENCE_JOB_PIXELS, maximumSquareSide: MAXIMUM_SQUARE_JOB_SIDE, maximumSquareSequenceSide: MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE,
@@ -1819,7 +1829,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         phase = 'rendering';
         try {
           // The estimate is made before the job exists, because the job suspends the scene and starts at once.
-          const size = sceneSizeFrom(await invoke('inspect', { sessionId, limit: Math.max(1, snapshot.recipe.nodes?.length ?? 1) }), snapshot.recipe);
+          const size = sceneSizeFrom(await invoke('inspect', { sessionId, limit: Math.max(1, snapshot.recipe.nodes?.length ?? 1) }), snapshot.recipe,
+            { assetFileBytes: await placedAssetFileBytes(snapshot.recipe) });
           const history = await readRenderHistory();
           const estimateOf = rawSettings => estimateRenderJob({ size, settings: normalizeJobSettings(rawSettings, snapshot.clips, snapshot.recipe), backend, memoryBudgetMiB: memory, history, gpuTracerWarm });
           if (settings?.quality !== undefined && settings.budget !== undefined) throw new TypeError('budget picks the tier: leave settings.quality out, or leave settings.budget out.');

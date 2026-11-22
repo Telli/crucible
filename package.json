@@ -191,6 +191,7 @@
     "smoke:line-art-nodes": "node scripts/smoke-line-art-nodes.mjs",
     "smoke:vegetation-impostors": "node scripts/smoke-vegetation-impostors.mjs",
     "smoke:transport": "node scripts/smoke-film-transport.mjs",
+    "smoke:idle-governor": "node scripts/smoke-idle-governor.mjs",
     "render": "node scripts/render-media.mjs",
     "docs:media": "node scripts/render-doc-media.mjs",
     "score": "node scripts/score.mjs",

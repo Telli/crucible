@@ -52,6 +52,8 @@ Sampler fields use WebGL enum values. Wrapping supports repeat, clamp-to-edge, a
 Magnification supports nearest and linear. Minification also supports all four mipmap filters.
 A texture whose magnification or minification is nearest stays hard-edged: anisotropic filtering, which would blur it, is applied only to textures that filter linearly in both directions.
 
+That filtering is 16x by default, or the GPU limit when that is lower, so a floor or table seen at a few degrees keeps its grain (#2836). `new CrucibleRenderer(canvas, parts, { maxAnisotropy: 4 })`, or `"renderer": { "maxAnisotropy": 4 }` in a scene file, lowers it for a slower GPU; `1` turns it off. The level is read when a texture is uploaded, so set it at construction.
+
 Descriptor identity determines GPU texture reuse. Repeated parts can share descriptors without duplicating GPU textures or texture-budget charges.
 Different descriptors allocate separately even when they reference the same decoded image.
 Every channel and its mipmaps contributes to `textureBytes` and the render memory plan.
