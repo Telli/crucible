@@ -1,0 +1,1 @@
+- A recipe of three cumulus towers over the sea, with three coloured toon tones, in `public/recipes/cumulus-towers.json` (#2039)

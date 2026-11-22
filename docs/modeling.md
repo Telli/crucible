@@ -156,6 +156,12 @@ A scene geometry takes the same fields with `"type": "cloud"` (see `scene_capabi
 
 With `levels` such as `[{"count": 7, "sizeRatio": 1}, {"count": 60, "sizeRatio": 0.35}, {"count": 680, "sizeRatio": 0.12}]` the cloud becomes a tower covered in rounded lobes. Normals come from the gradient of the blended field at each vertex, not from the mesh faces, so toon steps follow the lobes without fine rings. Later levels find their neighbours in a grid, so 680 bumps cost little per sample; three such towers at `resolution` 128 take about 2.3 s together. A mesh over 150000 faces is refused with the resolution to pass instead.
 
+Three tall towers over a sea, each with three levels of lobes and three hard toon tones (`toonColors`, darkest to lightest), are in [`recipes/cumulus-towers.json`](https://crucible.codepawl.com/recipes/cumulus-towers.json). A still of it, rendered by Crucible:
+
+![Three cumulus towers over the sea](https://crucible.codepawl.com/recipes/cumulus-towers.webp)
+
+The scene needs a lowered ambient light (`ambientIntensity` 0.3) so the shaded side keeps the dark tone instead of the sky's blue, and a sun in front of the camera so the lit tones face it.
+
 For a sky with many clouds, keep `resolution` at 48 or lower and repeat a few cloud shapes with a node's `instances` (see [agent-scene.md](agent-scene.md)) instead of building one mesh per cloud. Triangles grow with the square of `resolution`.
 
 ## Resource and precision limits
