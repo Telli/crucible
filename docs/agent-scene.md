@@ -49,7 +49,7 @@ The normal frame loop can render retained parts without calling inspection or ex
 
 ### On-demand code
 
-Mesh editing, `lathe`, `extrude`, `tube` and `curve` geometry, `text` geometry with its font, `terrain` geometry, material `pattern`, `motion` and node `relations` load on demand, so a recipe of
+Mesh editing, `lathe`, `extrude`, `tube` and `curve` geometry, `text` geometry with its font, `terrain` and `floorPlan` geometry, material `pattern`, `motion` and node `relations` load on demand, so a recipe of
 primitives pays about half the bytes. `createAgentScene` and `apply` stay synchronous. When a recipe uses one of them,
 load its code first; a missing module throws an error that names this call.
 
@@ -97,6 +97,7 @@ The generators also enforce their existing numeric and modeling constraints.
 | `curve` | `points` or `shape` or `splines`, `closed`, `kind`, `weights`, `trim`, `grow`, `radius`, `taper`, `profile`, `resolution`, `radialSegments` | One of points, shape or splines, `false`, `bezier`, 1, none, none, `0.05`, none, round, `12`, `8` |
 | `text` | `text`, `size`, `depth`, `font`, `align`, `curveSegments` | Required string, `1`, `0.2`, `default`, `left`, `4` |
 | `terrain` | `size`, `resolution`, `seed`, `amplitude`, `holes`, `featureSize`, `octaves`, `warp`, `ridged`, `mountainAmplitude`, `mountainMask`, `chunks`, `levels` | `40` m, `64` cells, `1`, `1` m, none, `size / 4` m, `6`, `0` m, off, `46` m, none, `1`, `1` |
+| `floorPlan` | `walls`, `openings`, `height`, `thickness`, `part` | Required walls, none, `2.7` m, `0.2` m, `all` (see [floor-plan.md](https://crucible.codepawl.com/floor-plan.md)) |
 
 `seed` is a whole number from 0 to 2147483647 (anything else is refused, not rounded or wrapped). `terrain` is one seeded ground mesh from `-size / 2` to `size / 2` on X and Z with hills about y = 0 and up to 16 round `holes` (`{ center: [x, z], radius }`) that leave no surface; it loads on demand. Shape, chunks and levels: [terrain](https://crucible.codepawl.com/terrain.md#recipe-terrain). Details are in `scene_capabilities` under `terrain`.
 
