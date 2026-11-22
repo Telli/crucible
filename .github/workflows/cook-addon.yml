@@ -75,6 +75,7 @@ on:
       - 'src/agent-explosion.js'
       - 'src/agent-floor-plan.js'
       - 'src/agent-fracture.js'
+      - 'src/agent-clear-fields.js'
       - 'src/agent-look.js'
       - 'src/agent-mesh-engine.js'
       - 'src/agent-mesh.js'
