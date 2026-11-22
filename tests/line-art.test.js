@@ -187,3 +187,25 @@ test('the batch bind uploads the step colours padded to eight, and switches them
   layerTextureSupport.bind(renderer, [], materialLayerState({ tag: 'surface', toon: 3 }), {});
   assert.deepEqual(calls, [['materialToonColored', 0]]);
 });
+
+test('the line modes resolve with their defaults and say what to pass when wrong', () => {
+  const resolved = resolveLineArt({ colorMode: 'darken', silhouetteSide: 'front', convexHighlight: 0.5 });
+  assert.equal(resolved.colorMode, 'darken');
+  assert.equal(resolved.darkenFactor, LINE_ART_DEFAULTS.darkenFactor);
+  assert.equal(resolved.silhouetteSide, 'front');
+  assert.equal(resolved.convexHighlight, 0.5);
+  assert.deepEqual([LINE_ART_DEFAULTS.colorMode, LINE_ART_DEFAULTS.silhouetteSide, LINE_ART_DEFAULTS.convexHighlight], ['solid', 'both', 0]);
+  assert.throws(() => resolveLineArt({ colorMode: 'multiply' }), /lines\.colorMode must be "solid" or "darken"/);
+  assert.throws(() => resolveLineArt({ silhouetteSide: 'back' }), /lines\.silhouetteSide must be "both" or "front"/);
+  assert.throws(() => resolveLineArt({ darkenFactor: 1.5 }), /lines\.darkenFactor must be a number between 0 and 1/);
+  assert.throws(() => resolveLineArt({ convexHighlight: -1 }), /lines\.convexHighlight must be a number between 0 and 4/);
+  assert.deepEqual(resolveLineArt(resolved), resolved, 'a resolved lines object resolves to itself');
+});
+
+test('a recipe keeps the line modes and rejects a wrong one with the field name', async () => {
+  const recipe = { ...BASE_RECIPE, environment: { lines: { colorMode: 'darken', darkenFactor: 0.54, silhouetteSide: 'front', convexHighlight: 1 } } };
+  await loadAgentSceneModules(recipe);
+  const lines = createAgentScene(recipe).environment.lines;
+  assert.deepEqual([lines.colorMode, lines.darkenFactor, lines.silhouetteSide, lines.convexHighlight], ['darken', 0.54, 'front', 1]);
+  assert.throws(() => createAgentScene({ ...BASE_RECIPE, environment: { lines: { silhouetteSide: 'near' } } }), /lines\.silhouetteSide/);
+});
