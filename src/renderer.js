@@ -9,7 +9,7 @@ import { fullscreenVertex, compileProgram, ProgramNotReady, isLinkComplete, setP
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
 import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError, automaticBudgetCeilingMiB } from './budget.js';
 import { applyProjection } from './camera.js';
-import { fittedNearPlane, sceneBoundsOfParts } from './near-plane-fit.js';
+import { boundsGrownByParts, fittedNearPlane, sceneBoundsOfParts } from './near-plane-fit.js';
 import { installReversedDepth, prepareCameraRelativeProgram } from './reversed-depth.js';
 import { isBloomActive, resolveEffects } from './effects.js';
 import { frameDiagnostics } from './frame-diagnostics.js';
@@ -1752,6 +1752,9 @@ export class CrucibleRenderer {
       validateTransform(part, location.normalMatrix);
       location.materialSnapshot = MaterialSnapshot.of(part.material);
     }
+    // A part moved toward the camera may leave the box the near plane is fitted to, and the plane would cut it (#2403). Growing the
+    // box by the moved parts costs only them; it never shrinks, so the plane stays safe if not as tight.
+    if (this.fitBounds) this.fitBounds = boundsGrownByParts(this.fitBounds, parts);
     // A part that crossed a mirror (a flip animation, a toggled billboard) belongs to the other winding batch: regroup every part once.
     // replaceParts packs all parts again, so the rest of this update is done.
     if (mirrorChanged) {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mat4 } from 'gl-matrix';
-import { fittedNearPlane, nearestDepthOfBounds, sceneBoundsOfParts } from '../src/near-plane-fit.js';
+import { boundsGrownByParts, fittedNearPlane, nearestDepthOfBounds, sceneBoundsOfParts } from '../src/near-plane-fit.js';
 
 function boxPart(translation, size = 2) {
   const half = size / 2;
@@ -36,4 +36,16 @@ test('the near plane stays at the default when the eye is inside the scene and m
 test('the near plane never passes one percent of the far plane', () => {
   const bounds = sceneBoundsOfParts([boxPart([0, 0, -500])]);
   assert.equal(fittedNearPlane(bounds, lookingDownNegativeZ(), 100), 1);
+});
+
+test('a moved part grows the fitted box, so the near plane never passes it (#2403)', () => {
+  const view = lookingDownNegativeZ();
+  const fitted = sceneBoundsOfParts([boxPart([0, 0, -80])]);
+  const movedCloser = boxPart([0, 0, -5]);
+  const grown = boundsGrownByParts(fitted, [movedCloser]);
+  assert.ok(fittedNearPlane(fitted, view, 10000) > 5, 'the old box alone would cut the moved part');
+  assert.ok(fittedNearPlane(grown, view, 10000) < 4, 'the grown box keeps the part in front of the plane');
+  assert.ok(grown.minimum[2] <= fitted.minimum[2] && grown.maximum[2] >= -4, 'the box only grows');
+  assert.equal(boundsGrownByParts(fitted, []), fitted, 'no moved part leaves the box as it is');
+  assert.equal(boundsGrownByParts(fitted, [{ ...movedCloser, skin: {} }]), null, 'a part that can leave its box stops the fit');
 });

@@ -35,6 +35,17 @@ export function sceneBoundsOfParts(parts) {
   return { minimum: minimum.map(value => value - padding), maximum: maximum.map(value => value + padding) };
 }
 
+/** `bounds` grown to hold `parts` where they are now, or null when one of them can move out of its box. */
+export function boundsGrownByParts(bounds, parts) {
+  if (parts.length === 0) return bounds;
+  const moved = sceneBoundsOfParts(parts);
+  if (!moved) return null;
+  return {
+    minimum: bounds.minimum.map((value, axis) => Math.min(value, moved.minimum[axis])),
+    maximum: bounds.maximum.map((value, axis) => Math.max(value, moved.maximum[axis])),
+  };
+}
+
 /** Depth in front of the eye of the nearest corner of the box, along the view direction. */
 export function nearestDepthOfBounds(bounds, view) {
   let nearest = Infinity;
