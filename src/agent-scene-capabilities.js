@@ -29,8 +29,7 @@ const WATER_PRESETS_SUMMARY = Object.freeze({
 
 // What each recipe material layer does, beside its range; the MCP schema keeps one short line per field.
 const MATERIAL_LAYER_NOTES = Object.freeze({
-  toonCrisp: 'Toon steps with hard edges instead of the soft 2 percent edge; needs toon above 0.',
-  toonDither: 'Toon steps edged by an ordered Bayer 4x4 dither: this fraction of a step (0-1) either way; 0 off, hard edges; needs toon above 0.',
+  toonEdge: 'Toon step edge: 0 soft, 1 hard, 2 hard with Bayer 4x4 dither; needs toon.',
   clearcoat: 'Lacquer lobe over the base, surface tag.',
   clearcoatRoughness: 'Coat roughness.',
   transmission: 'Refracts the opaque scene behind it, surface or liquid tag; blended parts do not show through; no anisotropy, iridescence, sheen or coat.',

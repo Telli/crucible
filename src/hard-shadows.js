@@ -16,4 +16,41 @@ const HARD_SHADOW_DECLARATIONS = `float hardShadowVisibility(vec3 normal) {
 #define shadowVisibility(normal) hardShadowVisibility(normal)
 `;
 
-registerShaderFeatureCode('hardShadows', { declarations: HARD_SHADOW_DECLARATIONS });
+function normalized(vector) {
+  const length = Math.hypot(vector[0], vector[1], vector[2]);
+  return vector.map(component => component / length);
+}
+
+function crossProduct(first, second) {
+  return [
+    first[1] * second[2] - first[2] * second[1],
+    first[2] * second[0] - first[0] * second[2],
+    first[0] * second[1] - first[1] * second[0],
+  ];
+}
+
+function dotProduct(first, second) {
+  return first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
+}
+
+/**
+ * A hard shadow view moved sideways so its target sits on a whole shadow texel in light space. The edges of a hard shadow
+ * are single texels, and they only stay put on a pan when the texel grid stays put; the shift is under half a texel.
+ * Any other view comes back unchanged. `light` is the result of `resolveShadowLight`.
+ */
+export function snapShadowView(light, mapSize) {
+  if (!light.hard) return light;
+  const forward = normalized(light.target.map((value, axis) => value - light.eye[axis]));
+  const right = normalized(crossProduct(forward, light.up ?? [0, 1, 0]));
+  const up = crossProduct(right, forward);
+  const texel = (light.extent * 2) / mapSize;
+  const shift = [right, up].map(axis => {
+    const position = dotProduct(light.target, axis);
+    return Math.round(position / texel) * texel - position;
+  });
+  const move = point => point.map((value, axis) => value + right[axis] * shift[0] + up[axis] * shift[1]);
+  return { ...light, eye: move(light.eye), target: move(light.target) };
+}
+
+// The renderer reads the snap from the registered code, so a scene without hard shadows never loads it.
+registerShaderFeatureCode('hardShadows', { declarations: HARD_SHADOW_DECLARATIONS, snapView: snapShadowView });

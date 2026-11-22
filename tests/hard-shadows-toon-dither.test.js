@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeAgentLook, resolveAgentShadow, fitAgentShadow } from '../src/agent-look.js';
-import { resolveShadowLight, shadowBiasPerSlope, snapShadowView } from '../src/shadow-light.js';
+import { resolveShadowLight, shadowBiasPerSlope } from '../src/shadow-light.js';
+import { snapShadowView } from '../src/hard-shadows.js';
 import { effectiveShadowCascades } from '../src/cascaded-shadows.js';
 import { createFragmentShader } from '../src/shaders.js';
 import { createAgentScene } from '../src/agent-scene.js';
@@ -83,27 +84,25 @@ test('the hardShadows feature replaces shadowVisibility with one texel-centred c
   assert.ok(agentSceneModulesNeeded({ ...BASE_RECIPE, shadow: { hard: true } }).includes('cascades'));
 });
 
-test('toonCrisp and toonDither are 0 to 1 layer fields in the state, the snapshot and the capabilities', async () => {
-  const recipe = { ...BASE_RECIPE, materials: [{ id: 'gray', color: [0.5, 0.5, 0.5], toon: 3, toonCrisp: 1, toonDither: 0.5 }] };
+test('toonEdge is a 0 to 2 layer field in the state, the snapshot and the capabilities', async () => {
+  const recipe = { ...BASE_RECIPE, materials: [{ id: 'gray', color: [0.5, 0.5, 0.5], toon: 3, toonEdge: 2 }] };
   await loadAgentSceneModules(recipe);
-  const material = createAgentScene(recipe).parts[0].material;
-  assert.equal(material.toonCrisp, 1);
-  assert.equal(material.toonDither, 0.5);
-  assert.throws(() => createAgentScene({ ...recipe, materials: [{ id: 'gray', toon: 3, toonDither: 2 }] }), /toonDither must be between 0 and 1/);
-  const state = materialLayerState({ tag: 'surface', toon: 3, toonCrisp: 1, toonDither: 0.5 });
+  assert.equal(createAgentScene(recipe).parts[0].material.toonEdge, 2);
+  assert.throws(() => createAgentScene({ ...recipe, materials: [{ id: 'gray', toon: 3, toonEdge: 3 }] }), /toonEdge must be between 0 and 2/);
+  const state = materialLayerState({ tag: 'surface', toon: 3, toonEdge: 2 });
   assert.equal(state.length, MATERIAL_LAYER_STATE_LENGTH);
-  assert.deepEqual(state.slice(-2), [1, 0.5]);
-  assert.deepEqual(materialLayerState({ tag: 'surface', toon: 3 }).slice(-2), [0, 0]);
-  assert.ok(AGENT_SCENE_CAPABILITIES.materialLayers.toonDither.note);
-  const snapshot = new MaterialSnapshot({ tag: 'surface', toon: 3, toonDither: 0.5 });
-  assert.equal(snapshot.matches({ tag: 'surface', toon: 3, toonDither: 0.25 }), false);
-  assert.equal(snapshot.matches({ tag: 'surface', toon: 3, toonDither: 0.5 }), true);
+  assert.equal(state.at(-1), 2);
+  assert.equal(materialLayerState({ tag: 'surface', toon: 3 }).at(-1), 0);
+  assert.ok(AGENT_SCENE_CAPABILITIES.materialLayers.toonEdge.note);
+  const snapshot = new MaterialSnapshot({ tag: 'surface', toon: 3, toonEdge: 1 });
+  assert.equal(snapshot.matches({ tag: 'surface', toon: 3, toonEdge: 2 }), false);
+  assert.equal(snapshot.matches({ tag: 'surface', toon: 3, toonEdge: 1 }), true);
 });
 
 test('the toon feature carries the Bayer 4x4 threshold and the crisp edge, and default scenes carry neither', async () => {
   await loadAgentSceneModules({ ...BASE_RECIPE, materials: [{ id: 'gray', toon: 3 }] });
   const shader = createFragmentShader(['toon']);
   assert.match(shader, /const float BAYER_4\[16\]/);
-  assert.match(shader, /materialToonCrisp > 0\.5/);
+  assert.match(shader, /materialToonEdge > 0\.5/);
   assert.doesNotMatch(createFragmentShader([]), /BAYER_4/);
 });

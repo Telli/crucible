@@ -27,8 +27,7 @@ export const MATERIAL_LAYER_DEFAULTS = Object.freeze({
   iridescenceIor: 1.3,
   iridescenceThickness: 400,
   toon: 0,
-  toonCrisp: 0,
-  toonDither: 0,
+  toonEdge: 0,
   softEdge: 0,
 });
 
@@ -49,8 +48,7 @@ export const MATERIAL_LAYER_SCALAR_RANGES = Object.freeze({
   iridescenceIor: Object.freeze([1, 3]),
   iridescenceThickness: Object.freeze([0, 1200]),
   toon: Object.freeze([0, 8]),
-  toonCrisp: UNIT,
-  toonDither: UNIT,
+  toonEdge: Object.freeze([0, 2]),
   softEdge: Object.freeze([0, 8]),
 });
 
@@ -186,9 +184,8 @@ export function materialLayerState(material) {
     material.emissionMask?.to ?? 1,
     materialLayerValue(material, 'softEdge'),
     material.toonColors ? JSON.stringify(material.toonColors) : '',
-    materialLayerValue(material, 'toonCrisp'),
-    materialLayerValue(material, 'toonDither'),
+    materialLayerValue(material, 'toonEdge'),
   ];
 }
 
-export const MATERIAL_LAYER_STATE_LENGTH = 32;
+export const MATERIAL_LAYER_STATE_LENGTH = 31;
