@@ -103,7 +103,7 @@ const meanOf = (cards, property) => cards.reduce((sum, card) => sum + card[prope
 
 test('far cards stand alone: no two share a base, so none reads as a cross', () => {
   const MINIMUM_BASE_GAP = 0.01;
-  for (const preset of ['oak', 'birch', 'palm', 'pine']) {
+  for (const preset of ['birch', 'palm', 'pine']) {
     const tree = createTree({ preset }, 4);
     for (const level of [2, 3]) {
       const cards = cardsOf(tree, level);
@@ -149,4 +149,16 @@ test('far cards droop like level 1 and a far palm keeps fine fronds', () => {
   const palm = createTree({ preset: 'palm' }, 4);
   const lengthFactor = meanOf(cardsOf(palm, 3), 'length') / meanOf(cardsOf(palm, 1), 'length');
   assert.ok(lengthFactor <= PALM_LENGTH_FACTOR, `a level 3 frond is ${lengthFactor.toFixed(2)} times as long as at level 1`);
+});
+
+test('an oak keeps its fanned pair at far levels, two cards to a site, so none stands edge-on', () => {
+  const tree = createTree({ preset: 'oak' }, 4);
+  for (const level of [2, 3]) {
+    const cards = cardsOf(tree, level);
+    assert.equal(cards.length % 2, 0, `oak level ${level} has an odd number of cards`);
+    for (let index = 0; index < cards.length; index += 2) {
+      const gap = Math.hypot(...cards[index].base.map((value, axis) => value - cards[index + 1].base[axis]));
+      assert.ok(gap < 1e-6, `oak level ${level} card ${index} is not paired with the next`);
+    }
+  }
 });

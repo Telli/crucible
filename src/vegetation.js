@@ -586,10 +586,13 @@ function buildFoliage(skeleton, preset, mode, levelSetting, random, levelIndex) 
     return builder.build();
   }
   if (setting.tipScale !== undefined && mode === 'cards') {
-    // One card to a site where the near levels cross two: far away a crossed pair reads as a plus sign. The share of sites
-    // doubles with it, so the leaf area stays that of level 1.
-    const keep = Math.min(1, setting.leafKeep * preset.leaf.cardsPerSite);
-    for (const site of pickFarSites(skeleton, keep)) addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random, { tipScale: setting.tipScale, cardCount: 1 });
+    // An oak (`farPair`) keeps its fanned pair, which lies like a leaf plate, at half the share of sites. Every other species
+    // gets one card to a site: far away a crossed pair reads as a plus sign. The share of sites doubles with it, so the leaf area stays
+    // that of level 1 either way.
+    const fannedPair = Boolean(preset.leaf.farPair);
+    const cardCount = fannedPair ? preset.leaf.cardsPerSite : 1;
+    const keep = Math.min(1, fannedPair ? setting.leafKeep : setting.leafKeep * preset.leaf.cardsPerSite);
+    for (const site of pickFarSites(skeleton, keep)) addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random, { tipScale: setting.tipScale, cardCount });
     return builder.build();
   }
   const stride = Math.round(1 / setting.leafKeep);
