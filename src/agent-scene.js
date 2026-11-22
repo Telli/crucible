@@ -1426,6 +1426,23 @@ function localTransformOf(node, sampled, simulated) {
   };
 }
 
+/**
+ * The world matrix of a node at a scene time: its animated or physics-baked local transform composed with its parents' (#2829).
+ * It reads the samplers only, so the same time gives the same matrix whatever was sampled before.
+ */
+function worldMatrixAt(stagedState, nodeId, time) {
+  const nodesById = new Map(stagedState.recipe.nodes.map(node => [node.id, node]));
+  const sampled = stagedState.motionSampler?.sample(time) ?? null;
+  const simulated = simulatedPose(stagedState, time);
+  const world = mat4.create();
+  const local = mat4.create();
+  for (let cursor = nodesById.get(nodeId), depth = 0; cursor && depth < 256; cursor = nodesById.get(cursor.parent), depth++) {
+    const { translation, rotation, scale } = localTransformOf(cursor, sampled, simulated);
+    mat4.multiply(world, mat4.fromRotationTranslationScale(local, rotation, translation, scale), world);
+  }
+  return world;
+}
+
 /** What a bake-motion operation samples: the committed scene's local node transforms at any time, without touching the pose. */
 function motionBakeSource(stagedState) {
   const nodesById = new Map(stagedState.recipe.nodes.map(node => [node.id, node]));
@@ -2459,7 +2476,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const emitterMeshes = new Set(recipe.particles.systems.map(system => system.emitter?.mesh));
     const involvedNodes = recipe.nodes.filter(node => emitterMeshes.has(node.id) || recipe.particles.systems.some(system => system.node === node.id));
     const oceanTracks = (recipe.motion?.tracks ?? []).filter(track => track.kind === 'geometry' && track.property === 'oceanTime');
-    const key = JSON.stringify([recipe.particles, involvedNodes, involvedNodes.map(node => geometryRecords.get(node.geometry).signature), oceanTracks]);
+    // An emitter that follows a node reads its animated transform, so the motion, the physics and the node tree are part of the key.
+    const followsNode = recipe.particles.systems.some(system => system.emitter?.follow);
+    const followedPose = followsNode ? [recipe.motion, recipe.physics, recipe.armatures, recipe.nodes.map(node => [node.id, node.parent, node.translation, node.rotation, node.scale])] : null;
+    const key = JSON.stringify([recipe.particles, involvedNodes, involvedNodes.map(node => geometryRecords.get(node.geometry).signature), oceanTracks, followedPose]);
     if (particleBake?.key !== key) {
       const geometries = new Map([...geometryRecords].map(([id, record]) => [id, record.geometry]));
       // An emitter on a sea with an oceanTime track samples the sea at the ocean time of each particle's birth (#2152).
@@ -2467,7 +2487,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         oceanTimeAt: (geometryId, time) => stagedState.motionSampler?.sample(time)?.geometries?.get(geometryId)?.oceanTime ?? null,
         geometryAt: (geometryId, oceanTime) => oceanTimeGeometry(recipe, stagedState.maxGeometryVertices, geometryId, oceanTime),
       };
-      particleBake = { key, sampler: agentSceneModule('particles').bakeAgentParticles(recipe.particles, recipe, geometries, sea) };
+      particleBake = { key, sampler: agentSceneModule('particles').bakeAgentParticles(recipe.particles, recipe, geometries, sea, { matrixAt: (nodeId, time) => worldMatrixAt(stagedState, nodeId, time) }) };
     }
     return particleBake.sampler;
   }
