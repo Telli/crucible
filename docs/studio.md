@@ -265,7 +265,7 @@ Each agent gets its own colour, picked from its name out of five brand colours, 
 
 Some people want one window: type to the agent inside the app that shows Studio and watch it edit the scene. Studio ships no model client, no chat panel and no key handling, so this adds zero bytes to it. The app that embeds Studio (the host) owns the chat and the agent, and Studio shows the result. Keeping your own agent app beside Studio works as before.
 
-A trial host proved the path with what Studio has today: a message typed in the app reached an agent command-line tool the person was already signed in to, the agent edited the open scene through the Crucible MCP server, and Studio showed each edit with the agent pointer about a second after it was made. The contract below is what that host had to do. A host that follows it needs nothing new from Studio.
+A trial host proved the path with what Studio has today: a message typed in the app reached an agent command-line tool the person was already signed in to, the agent edited the open scene through the Crucible MCP server, and Studio showed each edit with the agent pointer about a second after it was made. The contract below comes from that trial and needs nothing new from Studio. The trial ran steps 1 and 3 to 7 and the rules for the agent. `stop` and steps 2, 8 and 9 are read from Studio's code and no host has run them yet.
 
 ### What the host owns
 
@@ -283,7 +283,7 @@ The panel talks to the host over whatever channel the host has (an IPC bridge in
 | Message | Direction | Fields |
 |---|---|---|
 | `send` | panel to host | `prompt`, a string. The host answers `{ started: true }`, or `{ started: false, reason }` when a run is in progress or no scene file is open. One run at a time. |
-| `stop` | panel to host | None. The host ends the run. Edits already made stay in the scene. |
+| `stop` | panel to host | None. The host ends the run and every process it started for it. Edits already made stay in the scene. |
 | `event` | host to panel | `{ kind: 'text', text }` for each piece of the reply, `{ kind: 'step', toolName }` when the agent calls a tool, `{ kind: 'scene-written', toolName }` after an edit is in the scene file, `{ kind: 'done', failed, seconds }` and `{ kind: 'error', text }`. |
 
 The host accepts `send` and `stop` only from its own page, and passes the prompt to the agent as one argument, never through a shell.
@@ -291,13 +291,13 @@ The host accepts `send` and `stop` only from its own page, and passes the prompt
 ### One run, step by step
 
 1. **Wait for the scene.** `studio.ready` covers the recipe passed to `createStudio`. A page that opens the scene file afterwards (from a URL or a dialog) must wait for that load too. Start a run only when the file name shows in the top bar, or `studio.exportRecipe()` lists the scene's nodes.
-2. **Put the person's edits in the file.** The agent opens the scene from the file, so unsaved edits in Studio are not in it. Before a run the host writes `studio.exportRecipe()` to the file, or refuses to start while the scene is dirty (`onDirtyChange` reports it). A load of the agent's edit replaces what is on screen without asking.
-3. **Open the file in the agent's session before the agent's first tool call**, so the agent edits the open scene and does not build a new one. With the MCP server this is one `scene_create` call with the file's recipe.
+2. **Put the person's edits in the file.** The agent opens the scene from the file, so unsaved edits in Studio are not in it. Before a run the host writes `studio.exportRecipe()` to the file, or refuses to start while the scene is dirty (`onDirtyChange` reports it). A load of the agent's edit replaces what is on screen without asking, and an edit the person makes during a run never reaches the agent's session, so the host locks editing while a run is in progress or tells the person their edits will be replaced.
+3. **Open the file in the agent's session before the agent's first tool call**, so the agent edits the open scene and does not build a new one. With the MCP server this is one `scene_create` call with the file's recipe. A request the host adds to the agent's session carries the same `_meta` envelope as the agent client's own requests, or the server refuses it.
 4. **Write the exported form once.** The recipe the session exports spells out defaults a hand-written file leaves out, so the first export differs from the file in every node. Write it to the file once at open and load it with `agent: false`. After that, each step differs by what the agent changed.
-5. **After each tool call that changes the scene, export and write the file before the agent sees the tool's answer.** The MCP server keeps the scene in memory and writes no file; `scene_export_recipe` returns the recipe. The changing tools are `scene_create`, `scene_create_asset`, `scene_apply`, `scene_restore`, `mesh_edit` and `mesh_stack`. Write the file in one move (a temporary file, then a rename).
+5. **After each tool call that changes the scene, export and write the file before the agent sees the tool's answer.** The MCP server keeps the scene in memory and writes no file; `scene_export_recipe` returns the recipe. The tools that change the scene return a new revision: `scene_create`, `scene_create_asset`, `scene_apply`, `scene_restore`, `mesh_edit` and `mesh_stack`. Write the file in one move (a temporary file, then a rename).
 6. **Show the step.** Call `studio.loadExternalTextFile(text, { agent: true, filePath, fileName })` with the text just written. Studio finds what changed, moves the pointer there and announces it ("Agent edited cushion"). Pass the same `filePath` and `fileName` on every load: a load without `filePath` clears the watched file, the green dot and the Save target. Pass `agent: { name }` to name the agent.
 7. **One load at a time, in the order written.** Await each load before the next. Two edits can be written closer together than one load takes.
-8. **Respect a paused reload.** While `studio.shouldAutoReloadExternal()` is false, keep the newest text and load it when the person turns reload back on.
+8. **Respect a paused reload.** While `studio.shouldAutoReloadExternal()` is false, keep the newest text and ask again on a timer: Studio sends no event when the person turns reload back on.
 9. **Report a load that fails.** `loadExternalTextFile` rejects when the recipe cannot be loaded, and the scene on screen stays what it was. Send the message to the panel as an `error` event.
 
 `studio.showAgentEdit({ name, nodeIds })` points at objects without a load, for a host that already applied the change another way.
@@ -310,18 +310,6 @@ An agent command-line tool started by the host should see only the scene tools:
 - Do not load the person's own instructions or settings for that tool into the run. They change how the agent talks and what it may do.
 - Tell it in the first line of the prompt that the scene is already open and that it should not create a new one.
 - Small edits, one visible change each, give the person a pointer per step.
-
-### What it costs today
-
-Measured on one machine with a 56-node room and a two-edit request; shared machine, so read them as rough sizes.
-
-| Step | Time |
-|---|---|
-| Agent's edit call to the file written | 1 to 2.5 s without a light bake, 6 to 10 s with one |
-| File written to the edit on screen | about 1 s |
-| A whole two-edit request | 30 to 55 s |
-
-A recipe with a `bake` bakes its light again on every load, in Studio and in the agent's session, which took 8 to 20 s a load in that room. Leave the bake out while chatting and add it for the final render.
 
 ## Diagnostics
 
