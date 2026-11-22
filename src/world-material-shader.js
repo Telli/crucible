@@ -13,7 +13,7 @@ const WATER_MAXIMUM_THICKNESS_RATIO = 0.02;
 
 /** Copies a recipe material's water fields: a water material always carries the resolved absorption, turbidity and preset. */
 export function copyWaterFields(value, result, toVector) {
-  const given = ['waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamVeins', 'contactFoam', 'caustics', 'ripples'].filter(field => value[field] !== undefined);
+  const given = ['waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamColor', 'foamVeins', 'contactFoam', 'caustics', 'ripples'].filter(field => value[field] !== undefined);
   if (result.tag !== 'water') {
     if (given.length > 0) {
       throw new RangeError(`${given.join(', ')} need the water tag.`);
@@ -100,8 +100,8 @@ export function resolveWaterFoamVeins(foamVeins) {
   return Object.freeze(resolved);
 }
 
-/** The foam style fields of a water material: `foamEdge` soft (default, lace) or hard (painted shape), `foamWidth` 0.25 to 4 (default 1) scales how far foam spreads from the crest. Unset fields stay unset. */
-export function resolveWaterFoamStyle({ foamEdge, foamWidth, foamVeins }) {
+/** The foam style fields of a water material: `foamEdge` soft (default, lace) or hard (painted shape), `foamWidth` 0.25 to 4 (default 1) scales how far foam spreads from the crest, `foamColor` three linear numbers from 0 to 1 (default white) tints the foam. Unset fields stay unset. */
+export function resolveWaterFoamStyle({ foamEdge, foamWidth, foamColor, foamVeins }) {
   const style = {};
   if (foamEdge !== undefined) {
     if (!WATER_FOAM_EDGES.includes(foamEdge)) {
@@ -116,12 +116,19 @@ export function resolveWaterFoamStyle({ foamEdge, foamWidth, foamVeins }) {
     }
     style.foamWidth = foamWidth;
   }
+  if (foamColor !== undefined) {
+    if (!Array.isArray(foamColor) || foamColor.length !== 3 || foamColor.some(component => typeof component !== 'number' || !(component >= 0 && component <= 1))) {
+      throw new RangeError('foamColor must be three numbers from 0 to 1, such as [0.8, 0.95, 1].');
+    }
+    style.foamColor = Object.freeze([...foamColor]);
+  }
   if (foamVeins !== undefined) {
     style.foamVeins = resolveWaterFoamVeins(foamVeins);
   }
   return style;
 }
 
+export const WATER_FOAM_COLOR_DEFAULT = Object.freeze([1, 1, 1]);
 export const CONTACT_FOAM_RANGES = Object.freeze({ width: [1, 64], hardness: [0, 1], noise: [0, 1], drift: [0, 1] });
 export const CONTACT_FOAM_DEFAULTS = Object.freeze({ width: 6, hardness: 1, noise: 0.3, drift: 0, rim: true, color: Object.freeze([0.92, 0.95, 0.97]) });
 
@@ -387,19 +394,20 @@ function bindWaterRipples(renderer, batch) {
 
 const foamStyleLocations = new WeakMap();
 
-/** Sends the foam style of a water batch: 1 for a hard edge, and the width factor. Other batches get the soft default. */
-function bindWaterFoamStyle(renderer, batch) {
+/** Sends the foam style of a water batch: 1 for a hard edge, the width factor and the foam tint (white by default). Other batches get the soft default. */
+export function bindWaterFoamStyle(renderer, batch) {
   if (!renderer.shaderFeatures?.has('water')) {
     return;
   }
   let location = foamStyleLocations.get(renderer);
   if (location?.program !== renderer.program) {
     const { context } = renderer;
-    location = { program: renderer.program, style: context.getUniformLocation(renderer.program, 'waterFoamStyle'), contact: context.getUniformLocation(renderer.program, 'waterContact'), contactDrift: context.getUniformLocation(renderer.program, 'waterContactDrift'), contactColor: context.getUniformLocation(renderer.program, 'waterContactColor') };
+    location = { program: renderer.program, style: context.getUniformLocation(renderer.program, 'waterFoamStyle'), color: context.getUniformLocation(renderer.program, 'waterFoamColor'), contact: context.getUniformLocation(renderer.program, 'waterContact'), contactDrift: context.getUniformLocation(renderer.program, 'waterContactDrift'), contactColor: context.getUniformLocation(renderer.program, 'waterContactColor') };
     foamStyleLocations.set(renderer, location);
   }
   const material = batch.parts[0].material;
   renderer.context.uniform2f(location.style, material.foamEdge === 'hard' ? 1 : 0, material.foamWidth ?? 1);
+  renderer.context.uniform3f(location.color, ...(material.foamColor ?? WATER_FOAM_COLOR_DEFAULT));
   const contact = material.contactFoam;
   renderer.context.uniform4f(location.contact, ...contactFoamUniform(contact));
   renderer.context.uniform1f(location.contactDrift, contact?.drift ?? 0);
@@ -433,6 +441,7 @@ export const worldMaterialSlots = {
   declarations: `uniform vec4 waterBody;
 uniform vec2 waterFoamVeins;
 uniform vec2 waterFoamStyle;
+uniform vec3 waterFoamColor;
 uniform vec4 waterContact;
 uniform float waterContactDrift;
 uniform vec3 waterContactColor;
@@ -754,7 +763,7 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     }
     float grazing = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
     color = mix(color, vec3(0.0137, 0.147, 0.195), grazing * 0.85);
-    color = mix(color, mix(vec3(0.92, 0.95, 0.97) * (0.68 + 0.32 * (fineLace * 0.5 + midLace * 0.5)), waterContactColor, waterContactShare), waterFoam);
+    color = mix(color, mix(vec3(0.92, 0.95, 0.97) * waterFoamColor * (0.68 + 0.32 * (fineLace * 0.5 + midLace * 0.5)), waterContactColor, waterContactShare), waterFoam);
     roughness = mix(0.16, 0.8, waterFoam);
     if (waterRampHead.x > 0.5) {
       float rampSun = clamp(dot(normal, normalize(lightDirection)), 0.0, 1.0);
@@ -836,7 +845,7 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     float glintShape = pow(max(dot(normal, halfVector), 0.0), glintSharpness);
     float glintFresnel = 0.02 + 0.98 * pow(1.0 - max(dot(halfVector, viewDirection), 0.0), 5.0);
     radiance += vec3(1.0, 0.9, 0.7) * glintShape * (0.5 + 40.0 * glintFresnel) * 6.0 * keyResponse * (1.0 - waterFoam);
-    radiance += mix(vec3(0.85, 0.9, 0.95), waterContactColor, waterContactShare) * waterFoam * (max(dot(normal, normalize(lightDirection)), 0.0) * keyResponse + 0.35 * daylight * ambientIntensity);
+    radiance += mix(vec3(0.85, 0.9, 0.95) * waterFoamColor, waterContactColor, waterContactShare) * waterFoam * (max(dot(normal, normalize(lightDirection)), 0.0) * keyResponse + 0.35 * daylight * ambientIntensity);
     if (waterBody.w > 0.5 && alphaMode > 1.5) {
       // Blended water draws its own background: the opaque scene refracted and blurred, not the one behind it unbent.
       radiance = radiance * alpha + refractedBackground(radiance, worldPosition, normal, viewDirection) * (1.0 - alpha);

@@ -175,6 +175,7 @@ const waterFields = {
   }).optional().describe('Water tag: foam veins spreading from the crests.'),
   foamEdge: z.enum(['soft', 'hard']).optional().describe('Water tag: soft lace (default) or a hard painted edge.'),
   foamWidth: z.number().min(0.25).max(4).optional().describe('Water tag: foam spread, 1 default.'),
+  foamColor: z.array(unit).length(3).optional().describe('Water tag: foam RGB, white default.'),
   contactFoam: z.strictObject({
     width: z.number().min(1).max(64).optional().describe('Line width in screen pixels, 6 default.'),
     hardness: unit.optional().describe('0 soft edge to 1 one pixel edge, 1 default.'),

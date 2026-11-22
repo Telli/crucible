@@ -5,7 +5,7 @@ import { createAgentScene } from '../src/agent-scene.js';
 import { defaultSmoothAngle, OCEAN_SMOOTH_ANGLE_DEFAULT } from '../src/agent-mesh.js';
 import { MESH_SMOOTH_ANGLE_DEFAULT } from '../src/agent-scene-capabilities.js';
 import { createFragmentShader } from '../src/shaders.js';
-import '../src/world-material-shader.js';
+import { bindWaterFoamStyle } from '../src/world-material-shader.js';
 import { layerTextureSupport } from '../src/shader-registry.js';
 
 function seaRecipe({ tag, smoothAngle, inStack = false }) {
@@ -191,4 +191,37 @@ test('a water batch sends its veins, and a batch without foamVeins sends amount 
   bind({ tag: 'water', foamVeins: { amount: 0.9, scale: 2 } });
   bind({ tag: 'water' });
   assert.deepEqual(sent, [[0.9, 2], [0, 1]]);
+});
+
+test('a water material takes foamColor as three linear numbers, and refuses anything else with what to pass', () => {
+  const tinted = createAgentScene(waterRecipe({ foamColor: [0.8, 0.95, 1] })).parts[0].material;
+  assert.deepEqual([...tinted.foamColor], [0.8, 0.95, 1]);
+  assert.equal(createAgentScene(waterRecipe({})).parts[0].material.foamColor, undefined);
+  for (const bad of [[1, 1], [1, 1, 2], [-0.1, 0, 0], ['white', 1, 1], 'white']) {
+    assert.throws(() => createAgentScene(waterRecipe({ foamColor: bad })), /foamColor must be three numbers from 0 to 1, such as \[0\.8, 0\.95, 1\]/, JSON.stringify(bad));
+  }
+  const plain = seaRecipe({});
+  plain.materials[0].foamColor = [1, 1, 1];
+  assert.throws(() => createAgentScene(plain), /foamColor need the water tag/);
+});
+
+function foamColorUploads(foamColor) {
+  const uploads = {};
+  const context = new Proxy({}, {
+    get: (_, name) => name === 'getUniformLocation' ? (_program, uniform) => uniform : (...values) => { uploads[`${String(name)}:${values[0]}`] = values.slice(1); },
+  });
+  const material = createAgentScene(waterRecipe(foamColor === undefined ? {} : { foamColor })).parts[0].material;
+  const renderer = { context, program: {}, shaderFeatures: new Set(['water']) };
+  bindWaterFoamStyle(renderer, { parts: [{ material }] });
+  return uploads['uniform3f:waterFoamColor'];
+}
+
+test('foamColor tints the foam through its own uniform, and leaving it out uploads white so the default pixels do not change', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  assert.match(shader, /uniform vec3 waterFoamColor;/);
+  assert.ok(shader.includes('mix(vec3(0.92, 0.95, 0.97) * waterFoamColor * ('), 'the lit lace is tinted');
+  assert.ok(shader.includes('mix(vec3(0.85, 0.9, 0.95) * waterFoamColor, waterContactColor'), 'the lit foam is tinted');
+  assert.deepEqual(foamColorUploads(undefined), [1, 1, 1], 'no foamColor uploads exact white');
+  assert.deepEqual(foamColorUploads([1, 1, 1]), foamColorUploads(undefined), 'white given equals the default');
+  assert.deepEqual(foamColorUploads([0.8, 0.95, 1]), [0.8, 0.95, 1]);
 });
