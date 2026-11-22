@@ -159,7 +159,7 @@ test('an error that does not name a pass of the scene still pauses the picture',
   const ui = mountPassStudio(testContext, passRecipe(TWO_PASSES));
   const render = ui.renderer.render;
   ui.renderer.render = frame => {
-    render(frame);
+    render.call(ui.renderer, frame);
     throw new Error('Post pass "ghost" failed to compile as GLSL ES 3.00. Line numbers refer to your fragment snippet.\nERROR: 0:1: nope');
   };
   ui.studio.controller.orbitCamera({ zoomScale: 2 });
