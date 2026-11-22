@@ -342,6 +342,7 @@ on:
       - 'src/post-mask.js'
       - 'src/post-steps.js'
       - 'src/post.js'
+      - 'src/primitive-uvs.js'
       - 'src/probe-glsl.js'
       - 'src/probe-trace.js'
       - 'src/ragdoll.js'

@@ -1856,13 +1856,16 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       for (const record of ownedRecords) {
         availableRecords.set(record.signature, record);
       }
+      // A recipe with no image map never loads the assets module, and needs no UVs (#3003).
+      const geometryIdsWithUvs = agentSceneModuleLoaded('assets') && agentSceneModule('assets').primitiveGeometryIdsNeedingUvs(recipe);
       const plans = recipe.geometries.map(definition => {
-        const signature = geometrySignature(definition, definitionsById, buildHeightSources);
+        const needsUvs = geometryIdsWithUvs && geometryIdsWithUvs.has(definition.id);
+        const signature = geometrySignature(definition, definitionsById, buildHeightSources) + (needsUvs ? '|uvs' : '');
         const preferredRecord = preferred?.geometryRecords.get(definition.id);
         const activeRecord = state?.geometryRecords.get(definition.id);
         const existing = [preferredRecord, activeRecord, availableRecords.get(signature)]
           .find(record => record?.signature === signature);
-        return { definition, signature, existing, estimatedVertices: definition.type === 'asset' ? 0 : geometryEstimate(definition, { definitions: definitionsById, chain: [] }) };
+        return { definition, signature, needsUvs, existing, estimatedVertices: definition.type === 'asset' ? 0 : geometryEstimate(definition, { definitions: definitionsById, chain: [] }) };
       });
       const residentStats = geometryStats(ownedRecords);
       const pendingVertices = plans.filter(plan => !plan.existing).reduce((total, plan) => total + plan.estimatedVertices, 0);
@@ -1905,7 +1908,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         const geometry = assetRuntime.geometryParts.get(plan.definition.id);
         record = Object.freeze({ signature: plan.signature, geometry, bounds: boundsFor(geometry, mat4.create()), vertices: 0, geometryBytes: 0, estimatedVertices: 0 });
       } else if (!record) {
-        const geometry = Object.freeze(generateGeometry(plan.definition, Math.min(limits.maxVertices, 1_000_000), { definitions: definitionsById, chain: [], heightSources: buildHeightSources }));
+        const built = generateGeometry(plan.definition, Math.min(limits.maxVertices, 1_000_000), { definitions: definitionsById, chain: [], heightSources: buildHeightSources });
+        const geometry = Object.freeze(plan.needsUvs ? agentSceneModule('assets').withPrimitiveUvs(plan.definition, built) : built);
         const geometryBytes = Object.values(geometry).reduce((total, array) => total + array.byteLength, 0);
         const vertices = geometry.positions.length / 3;
         if (plan.definition.type === 'mesh' || plan.definition.type === 'fragment') {
