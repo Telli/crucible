@@ -30,6 +30,8 @@ The skeleton is a parametric recursive branching model: each generation has a le
 It was chosen over space colonization because a species is a short readable preset, the cost is known before growing, and conifer whorls and palm fronds fit the same code.
 Branches are swept tubes with parallel-transported rings, a taper, a root flare below the ground line and bark UVs (`u` around, `v` along, one tile per 0.6 m).
 Leaves sit on terminal twigs, face outward and up with jitter, and carry vertex colors that darken toward the crown center, so the canopy has depth.
+The colour also changes from clump to clump (a little lighter or darker, warmer or cooler) and turns cooler toward the inside of the crown. The clump is a cell of the crown, the same cell the far levels merge into one clump card, so a level change does not shift the colour, and the tint comes from a hash of the cell, so the same seed gives the same tree.
+Once this addon is loaded, the `foliage` tag lets sun through a leaf (the addon adds the term to the shader, so a scene without trees carries none of it): a leaf lit from behind glows a warmer, duller green, most of all when you look toward the sun, and a leaf in the crown's own shadow still gets a little of the sun that passed through the leaves above it, so the inside of a crown reads as dim green, not black. Impostor cards keep the vertex tint but get no transmission, because their atlas holds bark as well.
 Shading normals blend toward the crown, so a flat card lights like part of a rounded crown.
 
 The tree has four levels of detail, each listing parts with a `role`, `geometry`, `material` and `tintable` flag:
