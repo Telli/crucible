@@ -290,3 +290,14 @@ test('a setup that throws destroys the jolt interface and every owned object', a
     Jolt.destroy = originalDestroy;
   }
 });
+
+test('the jolt adapter refuses a body that starts disabled and names what to pass instead (#2767)', async () => {
+  await loadJoltEngine();
+  const definition = worldDefinition();
+  definition.bodies[1] = { ...definition.bodies[1], enabled: false };
+  await assert.rejects(createPhysicsSystem(definition, { adapter: joltAdapter }), /body "box" has enabled: false.*rapierAdapter/);
+  const active = worldDefinition();
+  active.bodies[1] = { ...active.bodies[1], enabled: true };
+  const system = await createPhysicsSystem(active, { adapter: joltAdapter });
+  system.dispose();
+});

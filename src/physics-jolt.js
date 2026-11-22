@@ -70,6 +70,9 @@ function validateSupported(prepared) {
   }
   colliderCount.forEach((count, bodyIndex) => {
     const body = prepared.bodies[bodyIndex];
+    if (body.enabled === false) {
+      throw new TypeError(`The jolt adapter cannot start a body disabled; body "${body.name}" has enabled: false. Leave enabled out so the body starts active, or create the system with rapierAdapter.`);
+    }
     if (count > MAX_COMPOUND_COLLIDERS) {
       throw new RangeError(`The jolt adapter takes at most ${MAX_COMPOUND_COLLIDERS} colliders per body; body "${body.name}" has ${count}. Merge colliders or split the body.`);
     }

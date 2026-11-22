@@ -701,3 +701,37 @@ test('a force-field and spring bake matches the output recorded before the live-
   scene.dispose();
   assert.equal(hash.digest('hex'), '0ca9567131bd01531d04580283f2ea10009cc2180e1f08c60b1d3bd523e8fb1c');
 });
+
+test('a disabled body stays out of the simulation until a spawn or enable event', async () => {
+  const definition = fallingBoxDefinition();
+  definition.bodies[1].enabled = false;
+  definition.events = [{ tick: 30, type: 'spawn', body: 'box' }];
+  const scene = await createPhysicsScene(definition, { frameCount: 121 });
+  const initial = bodyPose(scene, 0, 'box');
+  near(bodyPose(scene, 30 * scene.timestep, 'box')[1], initial[1], 1e-5);
+  assert.ok(bodyPose(scene, 0.8, 'box')[1] < initial[1] - 0.2);
+  scene.dispose();
+
+  const enabled = fallingBoxDefinition();
+  enabled.bodies[1].enabled = false;
+  enabled.events = [{ tick: 30, type: 'enable', body: 'box' }];
+  const enabledScene = await createPhysicsScene(enabled, { frameCount: 121 });
+  near(bodyPose(enabledScene, 30 * enabledScene.timestep, 'box')[1], initial[1], 1e-5);
+  assert.ok(bodyPose(enabledScene, 0.8, 'box')[1] < initial[1] - 0.2);
+  enabledScene.dispose();
+});
+
+test('a disabled body with an authored velocity counts as resting while it waits for its spawn (#2767)', async () => {
+  const definition = fallingBoxDefinition();
+  definition.bodies[1] = { ...definition.bodies[1], translation: [0, 0.5, 0], linearVelocity: [2, 0, 0], enabled: false };
+  const waiting = await createPhysicsScene(definition, { frameCount: 61 });
+  // Never spawned: it never moves, so it rests from the first frame instead of reading as still moving at the end.
+  assert.equal(waiting.restFrames[waiting.bodyIndex('box')], 0);
+  waiting.dispose();
+
+  definition.events = [{ tick: 20, type: 'spawn', body: 'box' }];
+  const spawned = await createPhysicsScene(definition, { frameCount: 181 });
+  const restFrame = spawned.restFrames[spawned.bodyIndex('box')];
+  assert.ok(restFrame > 20 && restFrame < 180, `the box slides after its spawn and then rests, got frame ${restFrame}`);
+  spawned.dispose();
+});
