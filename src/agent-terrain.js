@@ -235,7 +235,7 @@ export function terrainLodNodesOf(recipe) {
 }
 
 /** The geometry each chunked terrain node draws for a camera at `worldEye`, with the eye taken into the node's own space (a moved or scaled ground sees the camera where it is). A material with wear gets its surface masks on the new geometry. */
-export function terrainLodGeometries(lodNodes, graph, worldEye, wearOf, withSurfaceMasks) {
+export function terrainLodGeometries(lodNodes, graph, worldEye, finishGeometry) {
   const geometries = new Map();
   const [eyeX, eyeY, eyeZ] = worldEye;
   for (const { nodeId, materialId, definition } of lodNodes) {
@@ -247,8 +247,7 @@ export function terrainLodGeometries(lodNodes, graph, worldEye, wearOf, withSurf
       inverse[2] * eyeX + inverse[6] * eyeY + inverse[10] * eyeZ + inverse[14],
     ];
     const geometry = terrainLodGeometry(definition, localEye);
-    const wear = wearOf(materialId);
-    geometries.set(nodeId, wear ? withSurfaceMasks(geometry, wear, nodeId) : geometry);
+    geometries.set(nodeId, finishGeometry(geometry, nodeId, materialId));
   }
   return geometries;
 }

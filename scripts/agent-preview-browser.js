@@ -129,7 +129,7 @@ function releaseRecord(record) {
 }
 
 function residentBytesOf(record) {
-  return record.scene.inspect().residentGeometryBytes ?? 0;
+  return record.scene.inspect().residentGeometryBytes;
 }
 
 // Close the least recently used scenes until the new scene fits both caps, and name them and the cap to the caller.
@@ -507,8 +507,7 @@ function status(record) {
 // An agent that needs the node list calls scene_inspect. The scene's own warnings (closed room without a bake, stale bake,
 // coplanar overlap, ignored material fields) still ride along, only when there are any.
 function sceneDiagnostics(record) {
-  const { diagnostics } = record.scene.inspect();
-  return diagnostics?.length ? { diagnostics } : {};
+  return record.scene.editDiagnostics();
 }
 
 // An edit that released old undo steps to fit the vertex budget says so, so the agent does not rely on them.
@@ -651,7 +650,7 @@ function createPreview(scene, { sessionId, memoryBudgetMiB, backend, transparent
     if (backend === 'gpu' && /swiftshader|llvmpipe|software/i.test(result.render.graphics)) {
       throw new Error('Hardware GPU rendering was requested, but the browser selected a software renderer.');
     }
-    const { evicted, reason } = evictForNewScene(result.inspection.residentGeometryBytes ?? 0);
+    const { evicted, reason } = evictForNewScene(result.inspection.residentGeometryBytes);
     records.set(sessionId, record);
     return evicted.length ? { ...result, evictedSessions: evicted, evictionReason: reason } : result;
   } catch (error) {
