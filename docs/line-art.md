@@ -17,6 +17,10 @@ That draws a dark outline at silhouettes, part boundaries, creases and depth jum
 | `boundaries` | `true` | A line where the object ID changes: silhouettes and the edge between two parts. |
 | `creaseAngle` | 35 | Degrees. A line where the surface normal turns by more than this between neighbouring pixels. 0 turns creases off. |
 | `depthJump` | 0.08 | A line where one surface sits in front of another of the same part. Relative step of the inverse depth. 0 turns it off. |
+| `colorMode` | `"solid"` | `"darken"` inks each line pixel with the colour of the surface under it times `darkenFactor`, so foliage, roofs and stone get their own dark ink. Replaces `color` and the `color` of `nodes`. |
+| `darkenFactor` | 0.54 | 0 to 1. The share of the body colour that stays in the ink when `colorMode` is `"darken"`. |
+| `silhouetteSide` | `"both"` | `"front"` draws the boundary and depth-step lines on the nearer surface only: 1 px at `width` 2, where `"both"` draws 1 px on each side. A boundary between two parts at the same depth with parallel normals (a road beside a pavement) draws no line. |
+| `convexHighlight` | 0 | 0 to 4. Above 0, a crease that turns away from the viewer is drawn lighter (the body colour times 1 + this) instead of dark. Concave creases keep the dark line. It needs `creaseAngle` above 0 and applies to creases only, not to the edge between two parts. |
 | `toon` | 0 | Light steps for every material that sets no `toon` of its own, 0 to 8. 0 leaves the smooth light. |
 | `polylines` | none | Lines drawn in the world with a screen width, see below. |
 | `nodes` | none | Lines on a subset of nodes, see below. |

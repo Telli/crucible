@@ -2,6 +2,7 @@ import { createImage } from './material-texture-kit.js';
 import { TEXTURE_SEQUENCE_LIMITS } from './texture-sequence-limits.js';
 import { invalidField } from './field-error.js';
 import { graphImageAssets } from './material-graph.js';
+import { textureMapIds } from './agent-texture-set.js';
 
 // An image sequence as the colour map of a recipe material: `map: { sequence: { frames, fps, loop } }`. The frames are
 // catalog image assets that the host decodes before createAgentScene. The scene picks a frame from its motion time, so a
@@ -33,11 +34,13 @@ export function normalizeMapSequence(value) {
   if (!Array.isArray(frames) || frames.length < 2 || frames.length > TEXTURE_SEQUENCE_LIMITS.maxFrames) {
     throw invalidField('map.sequence.frames', Array.isArray(frames) ? `${frames.length} frames` : frames, `a list of 2 to ${TEXTURE_SEQUENCE_LIMITS.maxFrames} catalog image asset IDs, such as [<asset id>, <asset id>]; for a longer film, split it into several sequences or lower the frame rate`);
   }
-  frames.forEach((frame, index) => {
+  // A plain loop: forEach skips the holes of a sparse list.
+  for (let index = 0; index < frames.length; index++) {
+    const frame = frames[index];
     if (typeof frame !== 'string' || !ASSET_ID.test(frame.toLowerCase())) {
       throw invalidField(`map.sequence.frames[${index}]`, frame, 'the 64 hexadecimal characters of a catalog image asset ID; scene_asset_catalog lists them', TypeError);
     }
-  });
+  }
   if (!Number.isFinite(fps) || fps <= 0 || fps > TEXTURE_SEQUENCE_LIMITS.maxFps) {
     throw invalidField('map.sequence.fps', fps, `a number above 0 and at most ${TEXTURE_SEQUENCE_LIMITS.maxFps}, such as 12`);
   }
@@ -81,6 +84,8 @@ export function sequenceFrameIds(value) {
         if (ASSET_ID.test(asset.toLowerCase())) ids.add(asset.toLowerCase());
       }
     }
+    if (node.op === 'displace' && typeof node.source?.image === 'string' && ASSET_ID.test(node.source.image.toLowerCase())) ids.add(node.source.image.toLowerCase());
+    for (const id of textureMapIds(node)) ids.add(id);
     const frames = node.map?.sequence?.frames;
     if (Array.isArray(frames)) {
       const shippedFrames = isStreamedSequence(frames) ? frames.slice(0, 1) : frames;

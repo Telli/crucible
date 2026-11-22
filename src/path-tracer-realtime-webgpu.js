@@ -66,7 +66,8 @@ export async function createWebGpuRealtimeTracer(scene, resolved, suppliedCanvas
   // tells the denoiser where each part was (path-tracer-reprojection.js, partMotionTable).
   const loadScene = async (parts, environment, motion = null) => {
     const keepHistory = motion !== null;
-    const nextTraceScene = await buildTraceSceneForDevice(parts, environment, webGpuTracer);
+    // The real-time kernel reads a flat scene only, so the module it passes does not offer instancing.
+    const nextTraceScene = await buildTraceSceneForDevice(parts, environment, { gpuTriangleLimit: webGpuTracer.gpuTriangleLimit });
     refuseLocalVolumes(nextTraceScene, 'the WebGPU realtime path tracer');
     const next = await webGpuTracer.prepareRealtimeKernel(nextTraceScene, options, REALTIME_KERNEL_PIECES);
     const previousKernel = kernel;
@@ -104,8 +105,8 @@ export async function createWebGpuRealtimeTracer(scene, resolved, suppliedCanvas
           ...[...next.uploaded.buffers, nextTraced[set], nextCache.table, nextRecord].map((buffer, index) => ({ binding: index + 1, resource: { buffer } })),
         ],
       }));
-      // The previous kernel stays usable until its replacement has its bind groups.
-      previousKernel?.uploaded.buffers.forEach(buffer => buffer.destroy());
+      // Everything that can throw runs before the commit below, so a failed load leaves the previous scene whole.
+      const nextCellSizes = cacheCellSizes(nextTraceScene, cacheCellSize);
       reportDeviceErrors(next.device);
       traceScene = nextTraceScene;
       kernel = next;
@@ -122,7 +123,7 @@ export async function createWebGpuRealtimeTracer(scene, resolved, suppliedCanvas
       pendingMotion = motion;
       currentParts = parts;
       currentEnvironment = environment;
-      cellSizes = cacheCellSizes(traceScene, cacheCellSize);
+      cellSizes = nextCellSizes;
       if (!keepHistory) {
         view = null;
         resetHistory = true;
@@ -137,6 +138,8 @@ export async function createWebGpuRealtimeTracer(scene, resolved, suppliedCanvas
       }
       throw error;
     }
+    // Last, once the new kernel is committed: the old one stays usable until then.
+    previousKernel?.uploaded.buffers.forEach(buffer => buffer.destroy());
   };
 
   await loadScene(scene.parts, scene.environment ?? {});

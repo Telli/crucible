@@ -26,8 +26,10 @@ const lightPathPattern = /^(docs\/|\.github\/|tests\/|changes\/)|\.md$/;
 // "flight" and "highlight" do not match "light".
 const lookNamePattern = /(^|[-_/.])(shaders?|glsl|lights?|lighting|materials?|environment|shadows?|tone|tonemap|fog|sky|post|bloom|ssao|taa|exposure)(?=$|[-_/.])/i;
 const lookRootPattern = /^(src|packages)\//;
+// A maintainer who changed a look path without changing a pixel (a compile fix, a refactor, a test) says so in one line.
+const lookUnchangedPattern = /\b(?:the )?look is unchanged\b|\bno look change\b|\bpixels? (?:are |is )?unchanged\b/i;
 
-const linkedIssuePattern = /\b(?:closes|close|closed|fixes|fix|fixed|resolves|resolve|resolved|part of)\s+(?:#\d+|https:\/\/github\.com\/codepawl\/crucible\/issues\/\d+)/i;
+const linkedIssuePattern = /\b(?:closes|close|closed|fixes|fix|fixed|resolves|resolve|resolved|part of):?\s+(?:#\d+|https:\/\/github\.com\/codepawl\/crucible\/issues\/\d+)/i;
 const localPathPatterns = [
   /[A-Za-z]:\\+(?:Users|Documents and Settings)\\/i,
   /(?:^|[\s`"'(=])\/home\/[A-Za-z0-9._-]+/,
@@ -95,9 +97,67 @@ function normalizePath(path) {
   return path.replace(/\\/g, '/');
 }
 
+// Only a maintainer's word counts: outside pull requests that touch a look path always wait for the owner.
+export function statesLookUnchanged(pr) {
+  const author = (pr.author ?? '').toLowerCase();
+  const trusted = author === OWNER_LOGIN || TRUSTED_ASSOCIATIONS.has(pr.authorAssociation ?? '');
+  return trusted && lookUnchangedPattern.test(stripHtmlComments(pr.body ?? ''));
+}
+
+// The owner looks at the pictures when a look path changed, the look is not approved yet, and no maintainer said the
+// pixels stay the same.
+function needsLookReview(pr, files) {
+  return !pr.lookApproved && !statesLookUnchanged(pr) && files.some(isLookFile);
+}
+
 export function isLookPath(path) {
   const normalized = normalizePath(path);
   return lookRootPattern.test(normalized) && lookNamePattern.test(normalized);
+}
+
+// A changed line that cannot alter what renders: blank, a comment, a throw, an error constructor, braces, the head of an if
+// or for that guards input, or a plain JS `const` local. GLSL declarations (`const float`) and assignments are not on the list.
+const guardLinePatterns = [
+  /^$/,
+  /^(\/\/|\/?\*)/,
+  /\bthrow\b/,
+  /\bnew\s+\w*Error\b/,
+  /^[{}()\]);,]+$/,
+  /^(\}\s*)?(else\s+)?if\s*\(.*\)\s*\{?$/,
+  /^for\s*\(.*\)\s*\{?$/,
+  /^const\s+(?!(?:float|int|vec\d|mat\d|bool|uint)\b)[\w$]+\s*=\s*[^`]*;$/,
+];
+const throwLinePattern = /\bthrow\b|\bnew\s+\w*Error\b/;
+
+// True when the patch only adds a thrown message or input validation: every changed line is on the guard list and at least one
+// added line throws. No patch (GitHub omits it for very large diffs) is never guard only, so the file stays a look change.
+export function isGuardOnlyPatch(patch) {
+  if (typeof patch !== 'string' || patch.length === 0) return false;
+  const changed = patch.split(/\r?\n/).filter(line => /^[+-]/.test(line) && !/^(\+\+\+|---)/.test(line));
+  if (changed.length === 0) return false;
+  const bodies = changed.map(line => ({ added: line[0] === '+', text: line.slice(1).trim() }));
+  const allGuards = bodies.every(({ text }) => guardLinePatterns.some(pattern => pattern.test(text)));
+  const addsThrow = bodies.some(({ added, text }) => added && throwLinePattern.test(text));
+  return allGuards && addsThrow && constNumbersAreKnown(bodies);
+}
+
+const numberPattern = /\b\d+(?:\.\d+)?\b/g;
+
+function numbersIn(text) {
+  return (text.match(numberPattern) ?? []).map(Number);
+}
+
+// A number on an added `const` line must be 0, 1 or already on a removed line, so tuning a value (1.2 to 1.5) is not hidden
+// beside a throw. Renaming an identifier (warmColor to coolColor) still slips through: only numbers are compared.
+function constNumbersAreKnown(bodies) {
+  const removedNumbers = new Set(bodies.filter(({ added }) => !added).flatMap(({ text }) => numbersIn(text)));
+  const addedConstLines = bodies.filter(({ added, text }) => added && /^const\s/.test(text) && !throwLinePattern.test(text));
+  return addedConstLines.every(({ text }) => numbersIn(text).every(value => value === 0 || value === 1 || removedNumbers.has(value)));
+}
+
+// A look file is one whose name says look and whose changes are not just a message or an input check.
+export function isLookFile(file) {
+  return isLookPath(file.filename) && !isGuardOnlyPatch(file.patch);
 }
 
 // Docs, CI and test only pull requests skip every rule except the local path one.
@@ -176,8 +236,7 @@ function contributorFixesFor(pr, files, light) {
     ));
   }
 
-  const touchesLook = paths.some(isLookPath);
-  if (touchesLook && !pr.lookApproved && !imagePattern.test(body)) {
+  if (needsLookReview(pr, files) && !imagePattern.test(visibleBody)) {
     fixes.push(fix(
       'look-without-image',
       'This changes how a scene looks, so add a before and an after picture to the description.',
@@ -200,7 +259,7 @@ function maintainerTodosFor(pr, files, contributorFixes) {
   if (!labels.some(label => ['bug', 'enhancement', 'documentation'].includes(label))) todos.push('Set a type label (bug, enhancement or documentation).');
   if (!pr.milestone) todos.push('Set a milestone.');
   const paths = files.map(file => normalizePath(file.filename));
-  if (!pr.lookApproved && paths.some(isLookPath)) todos.push('Look change: only the owner removes hold:look-approval after seeing the pictures.');
+  if (needsLookReview(pr, files)) todos.push('Look change: only the owner removes hold:look-approval after seeing the pictures.');
   const needsToolBench = paths.some(path => toolOrSkillPathPattern.test(path));
   if (needsToolBench && contributorFixes.length === 0 && benchOptOutPattern.test(pr.body ?? '')) {
     todos.push('Run the agent bench for this pull request (bench/agent-modeling).');
@@ -220,7 +279,7 @@ export function checkPullRequest({ pr, files }) {
   if (classificationMissing && !labels.includes(NEEDS_TRIAGE_LABEL)) addLabels.push(NEEDS_TRIAGE_LABEL);
   if (!classificationMissing && labels.includes(NEEDS_TRIAGE_LABEL)) removeLabels.push(NEEDS_TRIAGE_LABEL);
 
-  const needsHold = !pr.lookApproved && files.some(file => isLookPath(file.filename));
+  const needsHold = needsLookReview(pr, files);
   if (needsHold && !labels.includes(LOOK_HOLD_LABEL)) addLabels.push(LOOK_HOLD_LABEL);
 
   if (!isAutoCloseExempt(pr)) {

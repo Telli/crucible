@@ -1,0 +1,108 @@
+// Studio keeps the scene being edited in the browser's storage, so a closed tab or a crash does not lose it. On the next
+// start the person chooses between the draft and the scene that opened. The draft is one entry: the latest unsaved state.
+
+export const STUDIO_DRAFT_KEY = 'crucible.studio.draft';
+
+// A draft above this many characters is not kept: storage holds a few megabytes per site and a huge write blocks the page.
+export const MAXIMUM_DRAFT_CHARACTERS = 2_000_000;
+
+export const DRAFT_SAVE_DELAY_MILLISECONDS = 800;
+
+function removeDraftEntry(storage) {
+  try {
+    storage?.removeItem?.(STUDIO_DRAFT_KEY);
+  } catch {
+    // Storage that refuses a removal has nothing more to give.
+  }
+}
+
+/** Forgets the draft. */
+export function clearStudioDraft(storage) {
+  removeDraftEntry(storage);
+}
+
+/**
+ * Keeps `recipe` as the draft and returns what happened: 'saved', 'too-large' (the recipe is over the limit, and the older
+ * draft is dropped because it would restore a state the person has left) or 'unavailable' (storage refused the write).
+ */
+export function saveStudioDraft(storage, recipe, fileName) {
+  if (!storage) {
+    return 'unavailable';
+  }
+  const text = JSON.stringify({ fileName, recipe });
+  if (text.length > MAXIMUM_DRAFT_CHARACTERS) {
+    removeDraftEntry(storage);
+    return 'too-large';
+  }
+  try {
+    storage.setItem(STUDIO_DRAFT_KEY, text);
+    return 'saved';
+  } catch {
+    return 'unavailable';
+  }
+}
+
+/** The saved draft as `{ fileName, recipe }`, or null when there is none or the entry is damaged (which also drops it). */
+export function loadStudioDraft(storage) {
+  let saved = null;
+  try {
+    saved = storage?.getItem(STUDIO_DRAFT_KEY) ?? null;
+  } catch {
+    return null;
+  }
+  if (saved === null) {
+    return null;
+  }
+  try {
+    const draft = JSON.parse(saved);
+    if (draft && typeof draft === 'object' && draft.recipe && typeof draft.recipe === 'object' && Array.isArray(draft.recipe.nodes)) {
+      return { fileName: typeof draft.fileName === 'string' ? draft.fileName : '', recipe: draft.recipe };
+    }
+  } catch {
+    // A damaged entry falls through to be dropped.
+  }
+  removeDraftEntry(storage);
+  return null;
+}
+
+/** Whether a draft is worth offering: it describes a scene other than the one that opened. */
+export function draftDiffersFrom(draft, openedRecipe) {
+  return JSON.stringify(draft.recipe) !== JSON.stringify(openedRecipe);
+}
+
+/**
+ * The notice that offers the draft. It sits on the same surface as the paused picture notice, leads with an icon, is
+ * announced politely and has two plain buttons.
+ */
+export function createDraftNotice({ documentReference, createIcon, onRestore, onDiscard }) {
+  const message = documentReference.createElement('p');
+  const restoreButton = documentReference.createElement('button');
+  restoreButton.type = 'button';
+  restoreButton.textContent = 'Restore';
+  restoreButton.addEventListener('click', onRestore);
+  const discardButton = documentReference.createElement('button');
+  discardButton.type = 'button';
+  discardButton.textContent = 'Discard';
+  discardButton.addEventListener('click', onDiscard);
+
+  const element = documentReference.createElement('div');
+  element.className = 'crucible-studio-island crucible-studio-draft';
+  element.setAttribute('role', 'status');
+  element.setAttribute('aria-live', 'polite');
+  element.hidden = true;
+  element.append(createIcon('undo'), message, restoreButton, discardButton);
+
+  return {
+    element,
+    show(fileName) {
+      message.textContent = fileName ? `Unsaved changes to ${fileName} were found.` : 'Unsaved changes were found.';
+      element.hidden = false;
+    },
+    hide() {
+      element.hidden = true;
+    },
+    get visible() {
+      return !element.hidden;
+    },
+  };
+}

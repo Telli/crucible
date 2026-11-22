@@ -1,0 +1,1 @@
+- scene:agent-scene+lazy: the batch ocean evaluator adds about 1 KB gzip and makes ocean sampling about five times faster per frame

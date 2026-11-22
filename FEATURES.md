@@ -14,10 +14,10 @@ optional `Ready` expression the driver waits for, and `Drive`.
 ## Site pages
 
 ### `home`
-- Name: Home (hero world loop, install, downloads section)
+- Name: Home (pour-to-cast scroll story, install, showcase, agent and tier sections)
 - Surface: Site
 - Reach: `/`
-- Source: `site/index.html`, `src/home.js`, `src/hero-lab/hero-loop.js`
+- Source: `site/index.html`, `src/landing.js`, `src/landing-scene.js`, `src/landing-story.js`, `src/landing.css`
 - Drive: `node scripts/drive.mjs shot home`
 
 ### `downloads`
@@ -124,10 +124,10 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: `node scripts/drive.mjs shot film`
 
 ### `modeling`
-- Name: Aster lantern (modeling player)
+- Name: Modeling (redirects to docs.html#procedural-modeling)
 - Surface: Site
 - Reach: `/modeling.html`
-- Source: `site/modeling.html`, `src/modeling-player.js`
+- Source: `site/modeling.html`
 - Drive: `node scripts/drive.mjs shot modeling`
 
 ### `view2d`
@@ -145,6 +145,14 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: none: start it through `npm run render -- --scene file`
 
 ## Bench and sample pages
+
+### `studio`
+- Name: Scene studio (development page; Studio is not published on the site)
+- Surface: Bench
+- Reach: `/bench/studio/index.html?setup=off`
+- Source: `bench/studio/index.html`, `bench/studio/main.js`, `src/studio.js`, `src/studio-setup.js`
+- Ready: `Boolean(window.__studioPage?.renderer)`
+- Drive: `node scripts/drive.mjs shot studio`
 
 ### `bench-agent-modeling-look-harness`
 - Name: agent-modeling look-harness
@@ -493,20 +501,6 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `bin/crucible-addon-check.mjs`
 - Drive: none: not a page
 
-### `67js-mcp`
-- Name: Old name of crucible-mcp, kept as an alias
-- Surface: CLI
-- Reach: command `npx 67js-mcp`
-- Source: `bin/67js-mcp.mjs`
-- Drive: none: not a page
-
-### `67js-addon-check`
-- Name: Old name of crucible-addon-check, kept as an alias
-- Surface: CLI
-- Reach: command `npx 67js-addon-check`
-- Source: `bin/67js-addon-check.mjs`
-- Drive: none: not a page
-
 ### `npm-dev`
 - Name: Vite dev server on 127.0.0.1:5173 that serves every page above
 - Surface: CLI
@@ -585,7 +579,7 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Drive: none: not a page
 
 ### `npm-test-mutation-check`
-- Name: Reverts your src, bin and packages changes, runs a test file and fails when it still passes
+- Name: Reverts your src, bin, packages and scripts changes, runs a test file and fails when it still passes
 - Surface: CLI
 - Reach: command `npm run test:mutation-check`
 - Source: `scripts/test-mutation-check.mjs`

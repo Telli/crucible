@@ -1,7 +1,7 @@
 import { withPositions } from './mesh-field-edits.js';
 import { vertexNormals } from './mesh-normals.js';
 import { invalidField } from './field-error.js';
-import { editField, editInteger, editBoolean, editAxis } from './mesh-edit-field.js';
+import { editField, editInteger, editBoolean, editAxis, editDefault } from './mesh-edit-field.js';
 import { vertexGroupWeights } from './mesh-data.js';
 
 // Modifiers that only move vertices, each from a few numbers: lattice (a coarse grid of moved control points), curve (bend
@@ -328,10 +328,10 @@ function checkedVector(value, index, label, finiteNumber) {
 }
 
 function normalizeLattice(edit, normalized, index, { finiteNumber }) {
-  const divisions = edit.divisions ?? [2, 2, 2];
+  const divisions = editDefault(edit.divisions, [2, 2, 2]);
   if (!Array.isArray(divisions) || divisions.length !== 3) throw editField(index, 'divisions', divisions, `an array of three whole numbers from 2 to ${MAX_LATTICE_DIVISIONS}, such as [2, 2, 2]`);
   normalized.divisions = divisions.map(count => editInteger(count, index, 'divisions', 2, MAX_LATTICE_DIVISIONS));
-  const moves = edit.moves ?? [];
+  const moves = editDefault(edit.moves, []);
   if (!Array.isArray(moves) || moves.length > MAX_LATTICE_MOVES) throw editField(index, 'moves', moves, `a list of at most ${MAX_LATTICE_MOVES} moves, such as [{ "point": [0, 0, 0], "offset": [0, 0, 1] }]`, RangeError);
   normalized.moves = moves.map((move, moveIndex) => {
     if (!move || typeof move !== 'object' || Array.isArray(move)) throw editField(index, `moves[${moveIndex}]`, move, 'an object such as { "point": [0, 0, 0], "offset": [0, 0, 1] }');
@@ -346,16 +346,16 @@ function normalizeCurve(edit, normalized, index, { finiteNumber }) {
     throw editField(index, 'path', edit.path, `an array of 2 to ${MAX_CURVE_POINTS} points of three numbers, such as [[0, 0, 0], [0, 0, 2]]`);
   }
   normalized.path = edit.path.map(point => checkedVector(point, index, 'path', finiteNumber));
-  normalized.axis = edit.axis ?? 'x';
+  normalized.axis = editDefault(edit.axis, 'x');
   editAxis(normalized.axis, index);
 }
 
 function normalizeHook(edit, normalized, index, { finiteNumber }) {
-  normalized.center = checkedVector(edit.center ?? [0, 0, 0], index, 'center', finiteNumber);
+  normalized.center = checkedVector(editDefault(edit.center, [0, 0, 0]), index, 'center', finiteNumber);
   normalized.radius = edit.radius === undefined ? 1 : finiteNumber(edit.radius, index, 'radius', { minimum: 0, maximum: 1e4, exclusiveMinimum: true });
-  normalized.translation = checkedVector(edit.translation ?? [0, 0, 0], index, 'translation', finiteNumber);
+  normalized.translation = checkedVector(editDefault(edit.translation, [0, 0, 0]), index, 'translation', finiteNumber);
   normalized.strength = edit.strength === undefined ? 1 : finiteNumber(edit.strength, index, 'strength', { minimum: 0, maximum: 1 });
-  normalized.falloff = edit.falloff ?? 'smooth';
+  normalized.falloff = editDefault(edit.falloff, 'smooth');
   if (!HOOK_FALLOFFS.includes(normalized.falloff)) throw editField(index, 'falloff', normalized.falloff, `one of ${HOOK_FALLOFFS.join(', ')}`);
 }
 
@@ -366,22 +366,22 @@ function normalizeWave(edit, normalized, index, { finiteNumber }) {
   normalized.speed = edit.speed === undefined ? 0.25 : finiteNumber(edit.speed, index, 'speed', { minimum: -1e4, maximum: 1e4 });
   normalized.time = edit.time === undefined ? 0 : finiteNumber(edit.time, index, 'time', { minimum: -1e6, maximum: 1e6 });
   normalized.timeOffset = edit.timeOffset === undefined ? 0 : finiteNumber(edit.timeOffset, index, 'timeOffset', { minimum: -1e6, maximum: 1e6 });
-  const start = edit.start ?? [0, 0];
+  const start = editDefault(edit.start, [0, 0]);
   if (!Array.isArray(start) || start.length !== 2) throw editField(index, 'start', start, 'an array of two numbers, x and y, such as [0, 0]');
   normalized.start = start.map(value => finiteNumber(value, index, 'start'));
-  normalized.cyclic = edit.cyclic ?? true;
-  normalized.normal = edit.normal ?? false;
+  normalized.cyclic = editDefault(edit.cyclic, true);
+  normalized.normal = editDefault(edit.normal, false);
   editBoolean(normalized.cyclic, index, 'cyclic');
   editBoolean(normalized.normal, index, 'normal');
-  normalized.axes = edit.axes ?? 'xy';
+  normalized.axes = editDefault(edit.axes, 'xy');
   if (!WAVE_AXES.includes(normalized.axes)) throw editField(index, 'axes', normalized.axes, `one of ${WAVE_AXES.join(', ')}`);
 }
 
 function normalizeSmoothLaplacian(edit, normalized, index, { finiteNumber }) {
   normalized.factor = edit.factor === undefined ? 0.5 : finiteNumber(edit.factor, index, 'factor', { minimum: 0, maximum: 1, exclusiveMinimum: true });
   normalized.iterations = edit.iterations === undefined ? 1 : editInteger(edit.iterations, index, 'iterations', 1, MAX_LAPLACIAN_ITERATIONS);
-  normalized.preserveVolume = edit.preserveVolume ?? true;
-  normalized.pinBoundary = edit.pinBoundary ?? true;
+  normalized.preserveVolume = editDefault(edit.preserveVolume, true);
+  normalized.pinBoundary = editDefault(edit.pinBoundary, true);
   editBoolean(normalized.preserveVolume, index, 'preserveVolume');
   editBoolean(normalized.pinBoundary, index, 'pinBoundary');
   if (edit.group === undefined) return;
@@ -395,7 +395,7 @@ function normalizeWarp(edit, normalized, index, { finiteNumber }) {
   normalized.from = checkedVector(edit.from, index, 'from', finiteNumber);
   normalized.to = checkedVector(edit.to, index, 'to', finiteNumber);
   normalized.radius = edit.radius === undefined ? 1 : finiteNumber(edit.radius, index, 'radius', { minimum: 0, maximum: 1e4, exclusiveMinimum: true });
-  normalized.curve = edit.curve ?? 'smooth';
+  normalized.curve = editDefault(edit.curve, 'smooth');
   if (!HOOK_FALLOFFS.includes(normalized.curve)) throw editField(index, 'curve', normalized.curve, `one of ${HOOK_FALLOFFS.join(', ')}`);
   normalized.twist = edit.twist === undefined ? 0 : finiteNumber(edit.twist, index, 'twist', { minimum: -3600, maximum: 3600 });
   const apart = Math.hypot(...normalized.to.map((value, axis) => value - normalized.from[axis])) > MINIMUM_SPAN;

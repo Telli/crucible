@@ -4,6 +4,7 @@ import { buildWorld, cosineDirection, radicalInverse, sceneScale } from './light
 import { worldBounds } from './probe-trace.js';
 import { createTracer } from './ray-query.js';
 import { partDiffuseAlbedo } from './ground-bounce.js';
+import { buildOccupancyGrid, createSkyProxy, geometrySkyVisibility } from './sky-voxel-proxy.js';
 
 // The sunlit patches' lights (src/sun-bounce.js) load with the floor sky trace: both are for a closed room a sun lights.
 export { withSunBounce } from './sun-bounce.js';
@@ -22,6 +23,8 @@ export const FLOOR_SKY_MAXIMUM_RAYS = 6_000_000;
 // Both faces and the edges of every slab are traced when the whole room is, so its cut is coarser than a floor's: about a quarter of the vertices for the same area.
 const ROOM_SURFACE_EDGE_SCALE = 2.8;
 export const FLOOR_SKY_STRENGTH = 1;
+// How much of the sky the grid hides on every surface of an open scene (#2771).
+export const OPEN_SCENE_GRID_STRENGTH = 1;
 // With onlyClosedRooms the default is lower: a hall also gets light that comes back from its walls and sunlit floor, which a sky trace does not hold.
 export const FLOOR_SKY_ROOM_STRENGTH = 0.2;
 // A closed room's walls, ceiling and props are traced too (#1334): the raster gave every one of them the whole sky, so a sealed room came out bright.
@@ -87,7 +90,8 @@ function isInteriorVertex(escapedShare) {
 function applyInteriorFill(tracedParts, openShare) {
   let count = 0;
   const albedoTotal = [0, 0, 0];
-  for (const { escapedShares, nearShares, tracedVertices, albedo } of tracedParts) {
+  for (const { escapedShares, tracedVertices, albedo, levelOfPart = false } of tracedParts) {
+    if (levelOfPart) continue;
     for (const vertex of tracedVertices) {
       if (!isInteriorVertex(escapedShares[vertex])) continue;
       count++;
@@ -371,16 +375,80 @@ function fixedSamples(sampleCount) {
   return Array.from({ length: sampleCount }, (unused, sample) => [(sample + 0.5) / sampleCount, (radicalInverse(sample) + FIXED_ROTATION) % 1]);
 }
 
+// A geometry with sky visibility and, for a closed room, a colour per vertex (white where it had none) for the fill's tint.
+function geometryWithSky(geometry, skyVisibility, needsColors) {
+  const next = { ...geometry, skyVisibility };
+  if (needsColors) next.colors = geometry.colors ? new Float32Array(geometry.colors) : new Float32Array(skyVisibility.length * 3).fill(1);
+  return next;
+}
+
+function allVertices(count) {
+  return Array.from({ length: count }, (unused, index) => index);
+}
+
+/**
+ * The sky trace through the occupancy grid of src/sky-voxel-proxy.js, for a scene the triangle trace cannot take: more
+ * triangles than the bake allows or more rays than the budget (#2771). The meshes are not cut; every vertex of the traced
+ * parts, and of each level of their `lods`, reads the grid's value for its cell and normal, so the cost follows the scene's
+ * size and not its triangle count. `report.method` is 'proxy' and `report.fallbackReason` says why the triangle trace was
+ * left. Buried points and the sunlit test are not available here: every interior point takes the fill.
+ */
+function applyProxySkyVisibility({ parts, occluders, floorIndices, everySurface, everyPart = false, strength, roomShare, started }, fallbackReason) {
+  const grid = buildOccupancyGrid(occluders);
+  const proxy = createSkyProxy(grid);
+  const tracedIndices = everyPart ? parts.map((part, index) => index).filter(index => isFloorMaterial(parts[index].material) && hasPlainMesh(parts[index])) : everySurface ? parts.map((part, index) => index).filter(index => floorIndices.includes(index) || (isFloorMaterial(parts[index].material) && hasPlainMesh(parts[index]))) : floorIndices;
+  const nextParts = parts.slice();
+  const floors = [];
+  const tracedParts = [];
+  const finish = reason => ({ parts, report: { floors: [], texels: 0, rays: proxy.rays, seconds: (performance.now() - started) / 1000, method: 'proxy', fallbackReason, reason } });
+  for (const index of tracedIndices) {
+    const part = parts[index];
+    const albedo = partDiffuseAlbedo(part.material ?? {});
+    const levels = part.lods ?? [{ geometry: part.geometry }];
+    const nextLevels = [];
+    for (const [levelIndex, level] of levels.entries()) {
+      const escaped = geometrySkyVisibility(proxy, level.geometry, part.matrix, 1);
+      if (escaped === null) return finish('sky proxy budget spent');
+      const skyVisibility = escaped.map(share => 1 - strength * (1 - share));
+      const geometry = Object.freeze(geometryWithSky(level.geometry, skyVisibility, everySurface));
+      nextLevels.push({ ...level, geometry });
+      const vertexCount = skyVisibility.length;
+      const floor = levelIndex === 0 ? { name: part.name, texels: vertexCount, triangles: level.geometry.indices.length / 3, meanVisibility: 1 } : null;
+      if (floor) floors.push(floor);
+      tracedParts.push({ floor, skyVisibility, escapedShares: escaped, nearShares: new Float32Array(vertexCount), sunlit: new Uint8Array(vertexCount), colors: geometry.colors, tracedVertices: allVertices(vertexCount), albedo, levelOfPart: levelIndex > 0 });
+    }
+    const [levelZero] = nextLevels;
+    nextParts[index] = Object.freeze(part.lods ? { ...part, geometry: levelZero.geometry, lods: nextLevels } : { ...part, geometry: levelZero.geometry });
+  }
+  const interiorFill = everySurface ? applyInteriorFill(tracedParts, 1 - roomShare) : 0;
+  for (const { floor, skyVisibility } of tracedParts) {
+    if (!floor) continue;
+    let sum = 0;
+    for (const value of skyVisibility) sum += value;
+    floor.meanVisibility = skyVisibility.length ? sum / skyVisibility.length : 1;
+  }
+  const texels = floors.reduce((total, floor) => total + floor.texels, 0);
+  const meanVisibility = texels ? floors.reduce((total, floor) => total + floor.meanVisibility * floor.texels, 0) / texels : 1;
+  return { parts: Object.freeze(nextParts), report: { floors, texels, meanVisibility, interiorFill, rays: proxy.rays, seconds: (performance.now() - started) / 1000, method: 'proxy', fallbackReason, cellSize: grid.cellSize, reason: null } };
+}
+
 /**
  * Returns `{ parts, report }`: the parts with their floors cut into texels and given `geometry.skyVisibility`, traced by
  * `raysPerTexel` cosine-weighted rays against every other opaque part. `strength` 1 uses the traced share as it is, 0.5 only
- * half of what it hides. A closed room (the closed-room ray test) comes back unchanged unless `includeClosedRooms` is set. The parts come back unchanged (and `report.reason` says why) when the scene has no floor, is
- * larger than the bake's triangle limit, or the trace passes `maxSeconds`. It reads no clock to decide anything else, and
+ * half of what it hides. A closed room (the closed-room ray test) comes back unchanged unless `includeClosedRooms` is set. The parts come back unchanged (and `report.reason` says why) when the scene has no floor
+ * or the trace passes `maxSeconds`. A scene larger than the bake's triangle limit, or one that needs more than `maximumRays`,
+ * comes back unchanged with `report.fallbackReason` saying which limit it met, or with `largeScenes: 'proxy'` is traced
+ * through the occupancy grid instead (`report.method` 'proxy'). It reads no clock to decide anything else, and
  * the rays are a fixed set, so the same scene gives the same bytes.
  */
-export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors', sunDirection = null } = {}) {
+export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors', sunDirection = null, largeScenes = 'skip', openScenes = 'skip' } = {}) {
+  if (openScenes !== 'skip' && openScenes !== 'proxy') throw new RangeError(`openScenes must be 'skip' or 'proxy', got ${openScenes}`);
+  if (largeScenes !== 'skip' && largeScenes !== 'proxy') throw new RangeError(`largeScenes must be 'skip' or 'proxy', got ${largeScenes}`);
   const started = performance.now();
-  const unchanged = reason => ({ parts, report: { floors: [], texels: 0, rays: 0, seconds: (performance.now() - started) / 1000, reason } });
+  const unchanged = (reason, fallbackReason = null) => ({ parts, report: { floors: [], texels: 0, rays: 0, seconds: (performance.now() - started) / 1000, method: null, fallbackReason, reason } });
+  // A scene the triangle trace cannot take is left as it is ('skip', the default: the grid alone darkened the classroom against Cycles, #2771) or traced through the grid ('proxy').
+  const tooLarge = (reason, detail) => (largeScenes === 'proxy' ? applyProxySkyVisibility(proxyInput, detail) : unchanged(reason, detail));
+  let proxyInput = null;
   const floorIndices = findFloorParts(parts);
   if (floorIndices.length === 0) return unchanged('no floor');
   // Every opaque part blocks sky, floors included: a floor above another one (a gallery, a bridge) hides it, and a floor never
@@ -393,17 +461,23 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
   const closedRoom = roomShare !== null && roomShare >= CLOSED_ROOM_SHARE;
   if (closedRoom && !includeClosedRooms && !onlyClosedRooms) return unchanged('closed room');
   // Open ground gets light back from sunlit facades and streets that a sky trace does not hold, so it comes out too dark.
-  if (onlyClosedRooms && !closedRoom) return unchanged('open scene');
+  if (onlyClosedRooms && !closedRoom) {
+    if (openScenes === 'skip') return unchanged('open scene');
+    return applyProxySkyVisibility({ parts, occluders, floorIndices, everySurface: false, everyPart: true, strength: requestedStrength ?? OPEN_SCENE_GRID_STRENGTH, roomShare, started }, 'open scene');
+  }
   // The walls, ceiling and props are traced as well only in a room that has walls all round: a roof on columns reads as closed to the ray test above, but its floor keeps the light it had.
   const everySurface = surfaces === 'all' && closedRoom && fittedRoomHasWalls(parts, partMatrixLookup(parts));
   const strength = requestedStrength ?? (onlyClosedRooms ? (everySurface ? ROOM_SURFACE_SKY_STRENGTH : FLOOR_SKY_ROOM_STRENGTH) : FLOOR_SKY_STRENGTH);
   // With every surface, every face of every part is cut (a ceiling slab counts as a floor, so its room side needs the cut too).
   const cutPartIndices = everySurface ? parts.map((part, index) => index).filter(index => floorIndices.includes(index) || (isFloorMaterial(parts[index].material) && hasPlainMesh(parts[index]))) : floorIndices;
+  proxyInput = { parts, occluders, floorIndices, everySurface, strength, roomShare, started };
   let world;
   try {
     world = buildWorld(occluders);
-  } catch {
-    return unchanged('too many triangles');
+  } catch (error) {
+    // Only the bake's size limit sends the scene to the grid; any other error is a bug and must surface (#2771).
+    if (!(error instanceof RangeError)) throw error;
+    return tooLarge('too many triangles', error.message);
   }
   const footprint = cutPartIndices.reduce((total, index) => {
     if (everySurface) return total + worldSurfaceArea(parts[index]);
@@ -425,7 +499,7 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
     const part = parts[index];
     const { geometry, matrix } = part;
     const { builder, indices, tracedVertices } = cutGeometry(geometry, matrix, maximumEdge, !everySurface);
-    if (totalRays + tracedVertices.size * raysPerTexel > maximumRays) return unchanged('too many rays');
+    if (totalRays + tracedVertices.size * raysPerTexel > maximumRays) return tooLarge('too many rays', `more than ${maximumRays} rays for ${cutPartIndices.length} parts`);
     const vertexCount = builder.positions.length / 3;
     const skyVisibility = new Float32Array(vertexCount).fill(1);
     const escapedShares = new Float32Array(vertexCount);
@@ -486,7 +560,7 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
   }
   const texels = floors.reduce((total, floor) => total + floor.texels, 0);
   const meanVisibility = texels ? floors.reduce((total, floor) => total + floor.meanVisibility * floor.texels, 0) / texels : 1;
-  return { parts: Object.freeze(nextParts), report: { floors, texels, meanVisibility, interiorFill, rays: totalRays, seconds: (performance.now() - started) / 1000, reason: null } };
+  return { parts: Object.freeze(nextParts), report: { floors, texels, meanVisibility, interiorFill, rays: totalRays, seconds: (performance.now() - started) / 1000, method: 'triangles', fallbackReason: null, reason: null } };
 }
 
 /** True when the environment has a sun: a key light with a colour and intensity above zero. A recipe that sets neither has the default sun. */

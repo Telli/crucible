@@ -1,4 +1,5 @@
 // Preloaded into every test file process (node --import ./scripts/test-hang-guard.mjs, see the test scripts in package.json).
+// Besides the hang guard below it gives the file a private temp folder that is removed at exit (scripts/test-private-temp.mjs, #2848).
 //
 // `--test-timeout` fails a test that runs too long and names it, but the file's process then stays alive for as long as
 // a Chrome, a dev server or any other child it started keeps a handle open (#1320: one CI shard printed nothing for 14
@@ -13,9 +14,12 @@
 // Limit: all of this runs on the file's own event loop. A test that blocks the loop (a long spawnSync or execFileSync
 // without a `timeout` option) is not stopped until it returns, so synchronous child calls in tests set `timeout`.
 import { ChildProcess, spawnSync } from 'node:child_process';
+import { installPrivateTempFolder } from './test-private-temp.mjs';
 
 export const DEFAULT_FILE_LIMIT_MS = 660000;
 export const DEFAULT_GRACE_AFTER_TIMEOUT_MS = 10000;
+// setTimeout runs a longer delay after 1 ms, which would stop a healthy file at once.
+const LONGEST_TIMER_MS = 2 ** 31 - 1;
 const TEST_TIMEOUT_MESSAGE = /test timed out after \d+ms/;
 
 const startedChildren = [];
@@ -106,8 +110,8 @@ function positiveMilliseconds(environment, name, defaultValue) {
   const raw = environment[name];
   if (raw === undefined || raw === '') return defaultValue;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive number of milliseconds, got "${raw}". Unset it to use ${defaultValue}.`);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > LONGEST_TIMER_MS) {
+    throw new Error(`${name} must be a positive number of milliseconds, at most ${LONGEST_TIMER_MS}, got "${raw}". Unset it to use ${defaultValue}.`);
   }
   return parsed;
 }
@@ -159,6 +163,8 @@ function startWatchdog() {
   process.on('exit', () => {
     killStartedChildren({ includeDetached: false });
   });
+  // After the exit handler above, so the children that use the folder are stopped before it is removed.
+  installPrivateTempFolder();
 }
 
 if (runsOneTestFile) startWatchdog();

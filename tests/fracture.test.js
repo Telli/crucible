@@ -131,3 +131,29 @@ test('breakImpulse is only for fixed joints and must be positive', async () => {
   definition.joints[0] = { name: 'j', type: 'fixed', bodyA: 'a', bodyB: 'b', breakImpulse: -1 };
   await assert.rejects(createPhysicsScene(definition, { frameCount: 2 }), /breakImpulse/);
 });
+
+test('bad geometry is refused by the field that is wrong, not by the cell count', () => {
+  const brokenPosition = box(0);
+  brokenPosition.positions[4] = NaN;
+  assert.throws(() => fractureMesh(brokenPosition, { cells: 4 }), /fracture geometry vertex is [0-9]+ with a NaN or Infinity position or normal; use finite numbers/);
+  const brokenNormal = box(0);
+  brokenNormal.normals[2] = Infinity;
+  assert.throws(() => fractureMesh(brokenNormal, { cells: 4 }), /fracture geometry vertex is [0-9]+ with a NaN or Infinity/);
+  const strayIndex = box(0);
+  strayIndex.indices[0] = 9999;
+  assert.throws(() => fractureMesh(strayIndex, { cells: 4 }), /fracture geometry index is 9999; use an integer below/);
+});
+
+test('fragmentPhysics refuses a density, friction or pose the solver cannot use', () => {
+  const fracture = fractureMesh(box(0), { cells: 3 });
+  for (const density of [0, -2, NaN, Infinity]) {
+    assert.throws(() => fragmentPhysics(fracture, { strength: 5, density }), /fragment density is .*above 0/);
+  }
+  for (const friction of [-1, NaN]) {
+    assert.throws(() => fragmentPhysics(fracture, { strength: 5, friction }), /fragment friction is .*0 or more/);
+  }
+  assert.throws(() => fragmentPhysics(fracture, { strength: 5, translation: [0, 1] }), /fragment translation is .*3 finite numbers/);
+  assert.throws(() => fragmentPhysics(fracture, { strength: 5, translation: [NaN, 0, 0] }), /fragment translation/);
+  assert.throws(() => fragmentPhysics(fracture, { strength: 5, rotation: [0, 0, 1] }), /fragment rotation is .*4 finite numbers/);
+  assert.equal(fragmentPhysics(fracture, { strength: 5, friction: 0 }).colliders[0].friction, 0);
+});

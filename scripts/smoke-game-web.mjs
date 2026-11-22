@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir, constants, setPriority } from 'node:os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { constants, setPriority } from 'node:os';
 import { dirname, extname, join, resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { chromium } from 'playwright-core';
 import { MIXAMO_LIKE, UNREAL_LIKE, humanoidGlb, humanoidJoints, walkTracks } from '../tests/fixtures/humanoid-glb.js';
+import { createScratchDirectory } from './scratch-directory.mjs';
 
 // Proves the game path end to end: an agent builds a creature that runs and jumps to collect 3 coins and reach a goal using
 // only MCP tools, exports it as a static web build, and a recorded input replay wins the game in headless Chrome on the GPU.
@@ -17,7 +18,7 @@ import { MIXAMO_LIKE, UNREAL_LIKE, humanoidGlb, humanoidJoints, walkTracks } fro
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 const CHROME_PATH = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const directory = await mkdtemp(join(tmpdir(), 'crucible-game-web-'));
+const directory = await createScratchDirectory('crucible-game-web-');
 const cli = resolve(process.argv[2] ?? 'bin/crucible-mcp.mjs');
 const MIME_TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.glb': 'model/gltf-binary', '.wasm': 'application/wasm' };
 
@@ -272,6 +273,30 @@ function serveFolder(folder) {
   return new Promise(resolveListening => server.listen(0, '127.0.0.1', () => resolveListening(server)));
 }
 
+// While the finger is down the page must draw the stick: a ring centred where the finger landed and a knob cut back to the stick radius
+// (the finger is dragged 120 px up, the radius is 60). GAME_SMOKE_TOUCH_STILL names the PNG that keeps this moment.
+async function expectStickUnderFinger(page, landed, dragged) {
+  await page.waitForFunction(() => document.querySelector('[data-crucible-touch-stick]')?.children.length === 2, null, { timeout: 10000 });
+  const drawn = await page.evaluate(() => {
+    const [ring, knob] = document.querySelector('[data-crucible-touch-stick]').children;
+    const centre = element => { const box = element.getBoundingClientRect(); return [box.left + box.width / 2, box.top + box.height / 2]; };
+    return { ring: centre(ring), knob: centre(knob), opacity: Number(ring.style.opacity), ringWidth: ring.getBoundingClientRect().width };
+  });
+  assert.deepEqual(drawn.ring.map(Math.round), [landed.x, landed.y], 'the ring is under the finger that landed');
+  assert.deepEqual(drawn.knob.map(Math.round), [dragged.x, landed.y - 60], 'the knob follows the drag, cut back to the radius');
+  assert.equal(drawn.opacity, 1);
+  assert.equal(drawn.ringWidth, 120);
+  const stillPath = process.env.GAME_SMOKE_TOUCH_STILL;
+  if (stillPath) await page.screenshot({ path: stillPath });
+  // GAME_SMOKE_TOUCH_STILL_DARK keeps a second still with the scene dimmed, to see the stick over a dark picture.
+  const darkStillPath = process.env.GAME_SMOKE_TOUCH_STILL_DARK;
+  if (darkStillPath) {
+    await page.evaluate(() => { document.getElementById('game').style.filter = 'brightness(0.3)'; });
+    await page.screenshot({ path: darkStillPath });
+    await page.evaluate(() => { document.getElementById('game').style.filter = ''; });
+  }
+}
+
 // Real touch events through the DevTools protocol: finger 1 presses in the left half and drags up past the stick radius (60 px),
 // and finger 2 taps in the right half while finger 1 stays down (touchEnd lists the points that lift), which the touch preset reads as a jump.
 async function holdStickUpAndTapToJump(page) {
@@ -292,6 +317,7 @@ async function holdStickUpAndTapToJump(page) {
   await dispatch('touchStart', [stickStart]);
   await dispatch('touchMove', [stickHeld]);
   await page.waitForTimeout(500);
+  await expectStickUnderFinger(page, stickStart, stickHeld);
   await Promise.all([dispatch('touchStart', [stickHeld, tapPoint]), dispatch('touchEnd', [tapPoint])]);
   await page.waitForFunction(() => window.__peakHeight > 0.05, null, { timeout: 10000 });
   await page.waitForFunction(() => window.__game.controller.state.position[2] < -0.2, null, { timeout: 30000 });

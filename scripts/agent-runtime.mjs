@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { withSnapshotSkyColors } from './snapshot-sky-colors.mjs';
 import { previewCallTimeoutMs, recipeHasGridVolume, operationsAddGridVolume } from './agent-evaluation-timeout.mjs';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -9,7 +10,9 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import packageMetadata from '../package.json' with { type: 'json' };
+import { resolveLookView } from '../src/look-views.js';
 import { VEGETATION_CAPABILITY_NOTE } from '../src/agent-vegetation-notes.js';
+import { CLUTTER_CAPABILITY_NOTE } from '../src/agent-clutter-notes.js';
 import { CROWD_CAPABILITY_NOTE } from '../src/agent-crowd-notes.js';
 import { SETTLE_CAPABILITY_NOTE } from '../src/settle-notes.js';
 import { USER_PASS_CAPABILITIES } from '../src/user-pass.js';
@@ -30,24 +33,25 @@ import { launchWithShaderCache, shaderCacheDirectory } from './agent-shader-cach
 import { createPackRegistry } from './agent-packs.mjs';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
-import { AGENT_ASSET_LIMITS, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
+import { AGENT_ASSET_LIMITS, configureAssetByteLimit, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
-import { namesCatalogFiles, resolveAssetPlacementNames, namesCatalogSequences, resolveCatalogSequenceNames } from '../src/agent-asset-names.js';
+import { namesCatalogFiles, resolveAssetPlacementNames, namesCatalogSequences, resolveCatalogSequenceNames, namesCatalogTextureMaps, resolveTextureSetNames } from '../src/agent-asset-names.js';
 import { sequenceFrameIds, hasStreamedSequence } from '../src/agent-texture-sequence.js';
 import { readVolumeGridFiles, volumeGridFileBytes } from '../src/mcp-volume-grids.js';
 import { catalogLookReferences, BUNDLED_ENVIRONMENT_NAMES, BUNDLED_CUBE_LOOK_NAMES } from '../src/look-catalog.js';
 import { TEXTURE_SEQUENCE_CAPABILITIES, TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
+import { TEXTURE_SET_CAPABILITIES } from '../src/texture-set-names.js';
 import { writeWebBuild } from './web-export.mjs';
-import { gameAssetIds } from '../src/game-assets.js';
+import { gameAssetIds, gameImageIds } from '../src/game-assets.js';
 import { resolveJobRoot } from './agent-job-root.mjs';
-import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError } from './agent-render-jobs.mjs';
+import { createAgentRenderJobs, EXPORT_DIRECTORY_NAME, HIGH_PRECISION_FRAME_FACTOR, MAXIMUM_JOB_FRAME_BYTES, MAXIMUM_JOB_OUTPUT_BYTES, RENDER_HISTORY_FILE, normalizeJobSettings, frameByteLimitFor, oversizeFrameBudgetError, requireTracerBackendAvailable } from './agent-render-jobs.mjs';
 import { RENDER_QUALITY_NOTE, applyQuality, tierReport } from './agent-render-quality.mjs';
 import { RENDER_BUDGET_NOTE, chooseBudgetSettings, parseBudget } from './agent-render-budget.mjs';
-import { RENDER_ESTIMATE_NOTE, estimateRenderJob, historyWithJob, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
+import { RENDER_ESTIMATE_NOTE, addKernelCompile, estimateRenderJob, historyWithJob, outputByteBudgetProblem, parseHistory, pathTraceTriangleProblem, renderReport, sceneSizeFrom } from './agent-render-estimate.mjs';
 import { objectIdMetrics } from './agent-object-id-metrics.mjs';
 import { renderIconsInPage } from './agent-icon-page.mjs';
 import { ICON_CAPABILITIES } from '../src/icon-sheet.js';
-import { renderJobMattes } from './job-mattes.mjs';
+import { renderJobMattes, requireMatteTargets } from './job-mattes.mjs';
 import { encodeRenderOutput, encodeMultilayerExr } from './render-output-encoders.mjs';
 import { createFrameEncoder } from './frame-encoder.mjs';
 import { DEFAULT_PAGE_ENCODER_QUANTIZER, createFrameReceiver, startVideoEncoderInPage } from './gpu-frame-reader.mjs';
@@ -60,12 +64,17 @@ import { ANNOTATE_LIMITS, validateMarks, isBoundedPng } from '../src/agent-annot
 import { REVIEW_LINK_LIMITS, newReviewId, parseReviewFile, validateReviewMarks } from '../src/review-link.js';
 import { writeReviewBuild } from './review-page.mjs';
 import { normalizeReview, reviewDeadlineMessage, REVIEW_LIMITS } from './agent-review.mjs';
+import { normalizeWedge } from './agent-wedge.mjs';
+import { WEDGE_LIMITS } from '../src/agent-wedge.js';
 import { mergeFrameDiagnostics, pathTracerFindingsLimit, pathTracerSkippedPassesWarning } from '../src/frame-checks.js';
 import { BRANCH_LIMITS, validateBranchName } from '../src/agent-branches.js';
 import { createSharedGpuCard } from './agent-gpu-queue.mjs';
 import { isBrowserLoss, describeBrowserLoss } from './agent-browser-loss.mjs';
 import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
+import { GLB_EXPORT_NOTES } from '../src/glb-export-omissions.js';
 import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
+import { previewDeadlineMilliseconds } from './preview-deadline.mjs';
+import { realismReport, reviewTilingFindings } from './review-realism.mjs';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
@@ -73,8 +82,6 @@ const LOOK_STEP_SCALE = 0.75;
 const LOOK_MAXIMUM_STEP_DOWNS = 4;
 const LOOK_MINIMUM_SIDE = 64;
 const MAXIMUM_MOTION_SOURCES = 4;
-// A job writes files, not MCP image responses, so a 1920x1080 PNG may be larger than an inline image.
-const MAXIMUM_JOB_FRAME_BYTES = 12 * 1024 * 1024;
 // A path trace shares the machine with the person using it, so it takes half of the eight-thread ceiling.
 const PATH_TRACER_THREADS = 8;
 const MAXIMUM_QUEUED_CALLS = 16;
@@ -84,7 +91,8 @@ const MAXIMUM_KEPT_GLBS = 8;
 const MAXIMUM_KEPT_WEB_BUILDS = 4;
 const EXPORTED_GLB_NAME = /^[0-9a-f-]{36}\.glb$/;
 const EXPORTED_WEB_BUILD_NAME = /^web-[0-9a-f-]{36}$/;
-const EVALUATION_TIMEOUT_MS = 30000;
+// 30 seconds unless a test harness that starts the server asks for longer (#2741).
+const EVALUATION_TIMEOUT_MS = previewDeadlineMilliseconds();
 // A browser stuck in a long shader compile may never answer the close request; teardown waits this long, then goes on (#2200).
 const BROWSER_CLOSE_TIMEOUT_MS = 5000;
 const RECOVERY_HINT = 'The scenes in this runtime are lost. Call scene_create (or scene_create_asset) to start a fresh runtime; no server restart is needed.';
@@ -144,7 +152,8 @@ export function validateLaunchPaths({ browser, assets, packs, ffmpeg = 'ffmpeg',
 
 export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', browser: browserPath, memory = 192, assets: assetRoot, packs: packsRoot,
   jobs: jobRoot, ffmpeg = 'ffmpeg', audio: audioRoot, gpuQueue, openPage = openInDefaultBrowser, addons: addonSet = { addons: [], skipped: [] },
-  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem(), askUserFixture } = {}) {
+  previewUrl = new URL(/* @vite-ignore */ '../build/mcp/preview.js', import.meta.url), totalMemoryBytes = totalmem(), askUserFixture, maxAssetBytes } = {}) {
+  if (maxAssetBytes !== undefined) configureAssetByteLimit(maxAssetBytes);
   if (!['gpu', 'cpu'].includes(backend)) {
     throw new RangeError('backend must be gpu or cpu.');
   }
@@ -406,6 +415,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
   async function pinNamedAssets(value) {
     if (namesCatalogFiles(value)) resolveAssetPlacementNames(value, (await rescannedCatalog()).resolveName);
     if (namesCatalogSequences(value)) await resolveCatalogSequenceNames(value, pattern => rescannedCatalog().then(assets => assets.resolveSequence(pattern)));
+    if (namesCatalogTextureMaps(value)) {
+      const assets = await rescannedCatalog();
+      await resolveTextureSetNames(value, { resolveSet: assets.resolveTextureSet, checkMap: assets.checkTextureMap });
+    }
   }
 
   /** The same for the asset recipe of scene_create_asset: `assetName` (a catalog file name) becomes `assetId`. */
@@ -437,11 +450,16 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     if (sceneValue) for (const id of catalogIdsOf(sceneValue)) catalogIds.add(id);
     // With a scene, its grid files count too, once per name even when the edit names the same file.
     let total = volumeGridFileBytes(sceneValue ? [value, sceneValue] : value);
+    const namedAssets = [];
     if (catalogIds.size || motionSourceIds.length) {
       const readyCatalog = await catalog();
-      for (const id of [...catalogIds, ...motionSourceIds]) total += await readyCatalog.size(id);
+      for (const id of [...catalogIds, ...motionSourceIds]) {
+        const described = await readyCatalog.describeSize(id);
+        namedAssets.push(described);
+        total += described.bytes;
+      }
     }
-    assertCombinedByteTotal(total, sceneValue ? sceneAssetBytesLimitMessage : undefined);
+    assertCombinedByteTotal(total, sceneValue ? sceneAssetBytesLimitMessage : undefined, namedAssets);
   }
 
   /** Refuses an edit that adds catalog assets to a scene whose unique assets would then pass the combined limit, before the preview page loads them. */
@@ -887,6 +905,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
 
   async function runJob({ jobId, sessionId, directory, snapshot, settings, signal, progress, startRenderClock = () => {} }) {
     let jobPage;
+    let jobFailed = false;
     let session;
     let encoder;
     let frameReceiver;
@@ -1026,11 +1045,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         if (streamedJob && frameInput.motionTime !== undefined) await supplyStreamedFrames(jobPage, jobId, frameInput.motionTime);
         if (settings.renderer) {
           const { type, ...tracerOptions } = settings.renderer;
-          if (settings.renderer.backend === 'gpu' && backend === 'cpu') throw new Error('renderer.backend "gpu" needs a runtime on the GPU backend, and this one runs on SwiftShader.');
+          requireTracerBackendAvailable(settings.renderer, backend);
           nativeTracerLocator ??= createNativeTracerLocator();
           const trace = await chooseTraceBackend({ requested: settings.renderer.backend, runtimeBackend: backend, locator: nativeTracerLocator });
-          // Only a job that really traces on native defaults to OIDN; the cpu, gpu and webgpu defaults do not change.
-          let choice = await chooseDenoiser(settings.renderer.denoise, { preferOidn: trace.backend === 'native' });
+          // denoise true means OIDN on every backend when its package is installed; native differs only in its fallback filter.
+          const keepWavelet = settings.quality === 'final';
+          let choice = await chooseDenoiser(settings.renderer.denoise, { native: trace.backend === 'native', keepWavelet });
           const traceOptions = { width, height, ...tracerOptions, backend: trace.backend === 'native' ? 'gpu' : trace.backend, denoise: choice.denoise, threads: PATH_TRACER_THREADS };
           let traced;
           let backendNote = trace.note;
@@ -1052,7 +1072,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
                 nativeTemporalShotIndex = shotSample?.shotIndex;
               }
               traced = await traceFrameNative({ tracer: trace.tracer, sequence: nativeSequence, temporal: nativeTemporal, exported, width, height, samples: tracerOptions.samples, bounces: tracerOptions.bounces,
-                seed: frameSeed, denoise: choice.denoise === true ? 'wavelet' : choice.denoise === false ? 'none' : choice.denoise, denoiser: choice.denoiser,
+                seed: frameSeed, denoise: choice.denoise === false ? 'none' : choice.denoise, denoiser: choice.denoiser,
                 maxSeconds: tracerOptions.maxSeconds, noiseThreshold: tracerOptions.noiseThreshold, exposure: snapshot.recipe.effects?.exposure ?? 1 });
               nativeMemoryAllowance.grantForAdapter(traced.report.gpu);
             } catch (error) {
@@ -1068,7 +1088,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
               fallbackReason = exportedScene ? (await nativeTracerLocator.find()).reason : `renderer.backend "native" could not export the scene (${error.message}).`;
               backendNote = fallbackReason;
               traceOptions.backend = backend === 'cpu' ? 'cpu' : 'gpu';
-              choice = await chooseDenoiser(settings.renderer.denoise);
+              choice = await chooseDenoiser(settings.renderer.denoise, { keepWavelet });
               traceOptions.denoise = choice.denoise;
               backendNote += ' The ' + traceOptions.backend + ' backend ran instead.';
             }
@@ -1092,6 +1112,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           metrics.width = width;
           metrics.height = height;
           metrics.pathTracer = traced.report;
+          const kernelCompile = addKernelCompile(metrics.kernelCompile, traced.report);
+          if (kernelCompile) metrics.kernelCompile = kernelCompile;
           if (frame === 0) {
             const looked = await jobPage.evaluate(input => window.__agentPreview.findings(input), frameInput);
             mergeFrameDiagnostics(metrics, [pathTracerFindingsLimit(), pathTracerSkippedPassesWarning(snapshot.recipe.postPasses), ...looked.diagnostics].filter(Boolean));
@@ -1235,6 +1257,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       await rememberRenderJob({ settings, estimate, report: metrics.report });
       return { artifacts, metrics };
     } catch (error) {
+      jobFailed = true;
       if (signal.aborted || !isBrowserLoss(error)) throw error;
       browserLossFailure = describeBrowserLoss({ error, frameIndex, frameCount: settings.frameCount, width: settings.width, height: settings.height, passes: settings.passes, memoryMiB: memory, estimatedPeakMemoryMiB: estimate?.peakMemoryMiB });
       throw browserLossFailure;
@@ -1247,8 +1270,9 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       finally {
         try {
           if (jobPage && !jobPage.isClosed()) {
-            // A crashed or navigated page cannot dispose its scene (its bridge is gone: "reading 'dispose'"); the close below frees it, and the failure that matters is the job's own (#2198).
-            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!browserLossFailure && !isBrowserLoss(error)) throw error; }); }
+            // After a failed job the dispose may fail too: a page whose create failed answers "No scene is active", a crashed or navigated page has no bridge ("reading 'dispose'").
+            // The close below frees the page, and the failure that matters is the job's own, never this cleanup's (#2198).
+            try { if (settings.kind !== 'icons') await jobPage.evaluate(sessionId => window.__agentPreview.dispose({ sessionId }), jobId).catch(error => { if (!jobFailed && !browserLossFailure && !isBrowserLoss(error)) throw error; }); }
             finally { await jobPage.close().catch(error => { if (!browserLossFailure && !isBrowserLoss(error)) throw error; }); }
           }
         }
@@ -1297,12 +1321,13 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return tierReport({ backend, nativeTracer: Boolean((await nativeTracerLocator.find()).tracer) });
       };
       return {
-        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES },
+        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, clutter: CLUTTER_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES, textureSet: TEXTURE_SET_CAPABILITIES },
         sceneLimits: SCENE_LIMITS,
         preview: { backend, memoryBudgetMiB: memory, maximumWidth: 1024, maximumHeight: 1024, maximumImageBytes: MAXIMUM_IMAGE_BYTES, maximumActiveScenes: SCENE_STORE_LIMITS.maxOpenScenes, maximumOpenSceneBytes: SCENE_STORE_LIMITS.maxOpenSceneBytes, maximumQueuedCalls: MAXIMUM_QUEUED_CALLS, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS },
         review: { ...REVIEW_LIMITS, backend, memoryBudgetMiB: memory, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS,
           totalTimeoutMs: EVALUATION_TIMEOUT_MS,
           sourcePreserved: true, defaultMotionTime: null, defaultRendererTime: 0, branches: BRANCH_LIMITS },
+        wedge: { ...WEDGE_LIMITS, usage: 'scene_review with wedge {target, parameter, values} instead of shots. target: environment, effects, shadow or a material ID. parameter: a field name or path such as roughness, lightDirection, keyIntensity, fogDensity or pointLights.0.intensity. values: 2 to 8 JSON values as scene_apply takes them. shots may hold one shot for the shared camera and motionTime.', backend, memoryBudgetMiB: memory },
         phase: closing && phase !== 'closed' ? 'closing' : phase,
         availableIn: packageMetadata.version,
         assets: {
@@ -1320,10 +1345,11 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         },
         jobs: { configured: Boolean(jobRoot), kinds: ['image', 'stills', 'video', 'icons'], icons: ICON_CAPABILITIES, passes: RENDER_PASS_NAMES, pathTracer: PATH_TRACER_CAPABILITIES, maximumActiveJobs: 1, estimate: RENDER_ESTIMATE_NOTE, budget: RENDER_BUDGET_NOTE, quality: RENDER_QUALITY_NOTE, tiers: await deviceTiers(),
           maximumWidth: MAXIMUM_JOB_SIDE, maximumHeight: MAXIMUM_JOB_SIDE, maximumPixels: MAXIMUM_JOB_PIXELS, maximumSequenceWidth: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequenceHeight: MAXIMUM_SEQUENCE_JOB_SIDE, maximumSequencePixels: MAXIMUM_SEQUENCE_JOB_PIXELS, maximumSquareSide: MAXIMUM_SQUARE_JOB_SIDE, maximumSquareSequenceSide: MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE,
-          maximumDuration: MAXIMUM_VIDEO_SECONDS, maximumFps: MAXIMUM_JOB_FPS, maximumFrames: MAXIMUM_JOB_FRAMES, maximumStills: 8, maximumStillCount: MAXIMUM_STILLS_FRAMES, stillCountNote: 'a stills job with stillCount (2 to maximumStillCount) and fps writes frame-0.png and on, one per 1 / fps s of the motion clock from motion.start; with transparent each is RGBA. Without stillCount it is 8 spread over duration.',
+          maximumDuration: MAXIMUM_VIDEO_SECONDS, maximumFps: MAXIMUM_JOB_FPS, maximumFrames: MAXIMUM_JOB_FRAMES, maximumStills: 8, maximumStillCount: MAXIMUM_STILLS_FRAMES, maximumOutputBytes: MAXIMUM_JOB_OUTPUT_BYTES, maximumFrameBytes: MAXIMUM_JOB_FRAME_BYTES, stillCountNote: 'a stills job with stillCount (2 to maximumStillCount) and fps writes frame-0.png and on, one per 1 / fps s of the motion clock from motion.start; with transparent each is RGBA. Without stillCount it is 8 spread over duration.',
           encoder: 'H.264', encoders: VIDEO_ENCODERS, audio: Boolean(audioRoot), timeline: true, previewSuspendedDuringJob: true,
           glbExport: { maximumBytes: MAXIMUM_GLB_BYTES, maximumKept: MAXIMUM_KEPT_GLBS, maximumTextureSize: 4096 },
           ...(await jobRecords()) },
+        export: GLB_EXPORT_NOTES,
         addons: addonCapabilities({ addons: addonSet.addons.filter(addon => !refusedAddons.some(refused => refused.name === addon.name)), skipped: addonSet.skipped, registered: registeredByAddon, refused: refusedAddons }),
         unsupported: ['remote asset providers', 'arbitrary code execution', 'imported morph track authoring'],
       };
@@ -1369,7 +1395,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       }, { recoversFailedRuntime: true });
     },
     inspect(input) {
-      return enqueue(() => invoke('inspect', input));
+      if (!input.profile) return enqueue(() => invoke('inspect', input));
+      // A cost profile draws real frames, so it takes a GPU slot like a look does.
+      return gpuUnit('light', () => enqueue(async () => {
+        await requirePreviewRenderer();
+        return invoke('inspect', input);
+      }));
     },
     inspectMeshes(input) {
       return enqueue(() => invoke('inspectMeshes', input));
@@ -1406,7 +1437,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await pinNamedAssets(input.operations);
         if (input.branch !== undefined) {
           const { branch, ...rest } = input;
-          return invoke('branchApply', { ...rest, name: validateBranchName(branch) });
+          await assertSceneAssetsFitAfterEdit(input.sessionId, input.operations);
+          return invoke('branchApply', { ...rest, name: validateBranchName(branch), ...(await placedAssetData(input.operations)) });
         }
         const bakeAfter = bakeAfterOperations(input.operations);
         const hadBake = bakedSessionIds.has(input.sessionId);
@@ -1437,7 +1469,8 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         }
         const lookRequest = { sessionId: input.sessionId,
           ...(input.motionTime !== undefined ? { motionTime: input.motionTime } : {}),
-          ...(input.labels ? { labels: true } : {}) };
+          ...(input.labels ? { labels: true } : {}),
+          ...(input.view !== undefined ? { view: resolveLookView(input.view) } : {}) };
         // A busy picture can encode past the response budget. Render again a step smaller (same aspect, PNG kept) until it fits.
         let result;
         let stepWidth = width;
@@ -1532,19 +1565,34 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return invoke('checkpoint', { ...input, checkpointId: randomUUID() });
       });
     },
-    review(input) {
+    // scene_review with wedge: one parameter at several values; each value is a scratch copy of the scene drawn through the same review path.
+    async wedge(input) {
+      const settings = normalizeWedge(input);
+      const loadRecipes = async () => {
+        const { recipes } = await invoke('wedgeRecipes', { sessionId: settings.sessionId, expectedRevision: settings.expectedRevision,
+          target: settings.wedge.target, field: settings.wedge.parameter, values: settings.wedge.values });
+        return new Map(recipes.map((recipe, index) => [settings.wedge.variantNames[index], { recipe: withSnapshotSkyColors({ recipe }).recipe, stale: false }]));
+      };
+      const output = await this.review(input, { settings, loadRecipes });
+      const { shots, ...rest } = output.metadata;
+      const wedgeShots = shots.map(({ branch: _branch, branchStale: _stale, ...shot }, index) => ({ ...shot, value: settings.wedge.values[index] }));
+      return { ...output, metadata: { ...rest, wedge: { target: settings.wedge.target, parameter: settings.wedge.parameter }, shots: wedgeShots } };
+    },
+    review(input, wedgeRun) {
+      if (input?.wedge !== undefined && !wedgeRun) return this.wedge(input);
       let settings;
-      try { settings = normalizeReview(input); }
+      try { settings = wedgeRun ? wedgeRun.settings : normalizeReview(input); }
       catch (error) { return Promise.reject(error); }
       return gpuUnit('light', () => enqueue(async () => {
         await requirePreviewRenderer();
         requireSession(settings.sessionId);
-        const snapshot = await invoke('snapshot', settings);
+        const snapshot = withSnapshotSkyColors(await invoke('snapshot', settings));
         await assertSceneFitsBeforeJob(snapshot.recipe);
         const branchRecipes = new Map();
         for (const name of settings.branchNames) {
-          branchRecipes.set(name, await invoke('branchRecipe', { sessionId: settings.sessionId, name }));
+          branchRecipes.set(name, withSnapshotSkyColors(await invoke('branchRecipe', { sessionId: settings.sessionId, name })));
         }
+        if (wedgeRun) for (const [name, variant] of await wedgeRun.loadRecipes()) branchRecipes.set(name, variant);
         const assetBytes = snapshot.recipe.format === 'crucible.asset' ? await (await catalog()).read(snapshot.recipe.assetId) : undefined;
         let privateSessionId;
         const started = performance.now();
@@ -1634,6 +1682,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
             backend, width: settings.gridWidth, height: settings.gridHeight, shots,
             peakNodeBytes, peakBrowserHeap, maximumPendingFrames: 1,
               ...(recipeMoves(snapshot.recipe) && settings.shots.some(shot => shot.motionTime === null) ? { hints: [MOTION_NOT_SET_HINT] } : {}) } };
+          if (settings.checks === 'realism') output.metadata.realism = realismReport(snapshot.recipe, reviewTilingFindings(result.data, settings));
         } catch (error) {
           if (deadlineExpired) throw new Error(reviewDeadlineText());
           throw error;
@@ -1728,7 +1777,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         try {
           const assets = new Map();
           for (const id of gameAssetIds(recipe)) assets.set(id, await (await catalog()).read(id));
-          summary = await writeWebBuild({ recipe, buildDirectory: fileURLToPath(new URL('../', previewUrl)), outputDirectory, title, assets });
+          // The catalog images the materials read (graph image nodes, map sequences) travel with the page, which decodes them before the scene is created.
+          const images = new Map();
+          for (const id of gameImageIds(recipe)) images.set(id, await (await catalog()).read(id));
+          summary = await writeWebBuild({ recipe, buildDirectory: fileURLToPath(new URL('../', previewUrl)), outputDirectory, title, assets, images });
         } catch (error) {
           // A refused or half-written build never uses up a retention slot or evicts a good one.
           await rm(outputDirectory, { recursive: true, force: true });
@@ -1748,7 +1800,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           if (!audioLibrary) throw new Error('Configure --audio with an absolute folder before submitting a job with audio.');
           await audioLibrary.resolve(settings.audio.file);
         }
-        const snapshot = await invoke('snapshot', { sessionId, expectedRevision });
+        const snapshot = withSnapshotSkyColors(await invoke('snapshot', { sessionId, expectedRevision }));
         const assetBytes = snapshot.recipe.format === 'crucible.asset' ? await (await catalog()).read(snapshot.recipe.assetId) : undefined;
         phase = 'rendering';
         try {
@@ -1774,6 +1826,11 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           }
           const triangleProblem = pathTraceTriangleProblem(size, jobSettings?.renderer, { canChooseBackend: backend !== 'cpu', picksRenderer: settings?.budget !== undefined || settings?.quality !== undefined });
           if (triangleProblem) throw new RangeError(triangleProblem);
+          const normalizedSettings = normalizeJobSettings(jobSettings, snapshot.clips, snapshot.recipe);
+          const outputProblem = outputByteBudgetProblem(normalizedSettings, controller.limits?.maxOutputBytes ?? MAXIMUM_JOB_OUTPUT_BYTES);
+          if (outputProblem) throw new RangeError(outputProblem);
+          requireTracerBackendAvailable(jobSettings?.renderer, backend);
+          if (jobSettings?.mattes) requireMatteTargets({ mattes: jobSettings.mattes, ...(await invoke('matteTargets', { sessionId })) });
           const estimate = estimateOf(jobSettings);
           estimateForNextJob = estimate;
           try {

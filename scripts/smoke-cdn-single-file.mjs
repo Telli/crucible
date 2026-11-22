@@ -5,12 +5,12 @@
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, extname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
+import { createScratchDirectory } from './scratch-directory.mjs';
 
 const tarball = process.argv[2];
 const urlFlag = process.argv.indexOf('--published-url');
@@ -21,12 +21,12 @@ let moduleUrl = publishedUrl;
 let server;
 if (!publishedUrl) {
   assert.ok(tarball, 'Pass the packed tarball path.');
-  const unpacked = await mkdtemp(join(tmpdir(), 'crucible-cdn-'));
+  const unpacked = await createScratchDirectory('crucible-cdn-');
   const extracted = spawnSync('tar', ['-xzf', resolve(tarball), '-C', unpacked], { encoding: 'utf8' });
   assert.equal(extracted.status, 0, extracted.stderr);
   const packageFolder = join(unpacked, 'package');
   const mountPath = `/npm/@codepawlhq/crucible@${version}/`;
-  const standalone = await readFile(join(packageFolder, 'build/67.standalone.js'));
+  const standalone = await readFile(join(packageFolder, 'build/crucible.standalone.js'));
   console.log(`standalone bytes=${standalone.length} gzip=${gzipSync(standalone, { level: 9 }).length}`);
   server = createServer(async (request, response) => {
     const path = decodeURIComponent(new URL(request.url, 'http://x').pathname);
@@ -37,7 +37,7 @@ if (!publishedUrl) {
     response.end(await readFile(file));
   });
   await new Promise((done) => server.listen(0, '127.0.0.1', done));
-  moduleUrl = `http://127.0.0.1:${server.address().port}${mountPath}build/67.standalone.js`;
+  moduleUrl = `http://127.0.0.1:${server.address().port}${mountPath}build/crucible.standalone.js`;
 }
 
 const page = `<!doctype html><canvas id="view" width="320" height="240"></canvas>

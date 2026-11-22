@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseGltf } from '../src/gltf.js';
 import { createAgentScene, loadAllAgentSceneModules } from '../src/agent-scene.js';
-import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
+import { assetCopyKey, recipeAssetNeeds, ASSET_PLACEMENT_LIMITS } from '../src/agent-scene-assets.js';
+import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
+import { gameAssetIds } from '../src/game-assets.js';
 import { groupParts } from '../src/renderer.js';
 import { normalizeJobSettings } from '../scripts/agent-render-jobs.mjs';
 import { skinnedStripAsset } from './fixtures/skinned-strip.js';
@@ -74,6 +76,18 @@ test('material overrides name the source material and stay shared between placem
   await assert.rejects(async () => createAgentScene(recipe([{ id: 'bad', asset: { id: ASSET_ID, materials: [{ name: 'Nope', color: [1, 0, 0] }] } }]), {}, { assets: await loadedAssets() }), /^RangeError: nodes\[1\]\.asset\.materials\[0\]\.name: got "Nope"; expected one of "Skin"/);
 });
 
+test('recipeAssetNeeds skips a malformed node list, null node and non-list npcs (#2623)', () => {
+  const asset = { id: ASSET_ID };
+  assert.deepEqual(recipeAssetNeeds({ nodes: {} }), []);
+  assert.deepEqual(recipeAssetNeeds({ nodes: [null] }), []);
+  assert.deepEqual(recipeAssetNeeds({ game: { npcs: {} } }), []);
+  assert.deepEqual(recipeAssetNeeds({ nodes: { asset } }), []);
+  assert.deepEqual(recipeAssetNeeds({ game: { npcs: { asset } } }), []);
+  assert.deepEqual(recipeAssetNeeds({ nodes: [{ asset }], game: { npcs: { asset } } }), [{ id: ASSET_ID, copies: 1 }]);
+  assert.deepEqual(gameAssetIds({ game: { npcs: {} } }), []);
+  assert.deepEqual(gameAssetIds({ game: { npcs: [null] } }), []);
+});
+
 test('a placed clip plays on its own time offset and a seek gives the same frame', async () => {
   const nodes = [
     { id: 'walker', translation: [3, 0, 0], asset: { id: ASSET_ID, clip: { index: 0, start: 0.5 } } },
@@ -126,15 +140,27 @@ test('a scene created without assets places its first catalog asset, then a seco
   assert.deepEqual(placed.map(placement => placement.assetId), [ASSET_ID, ASSET_ID]);
 });
 
-test('an asset that is not in the pool is refused by id, and the 16 distinct asset bound still applies', async () => {
+test('an asset that is not in the pool is refused by id, and the 32 distinct asset bound still applies', async () => {
   const scene = createAgentScene(recipe([]), {}, {});
   scene.provideAssets(new Map());
   assert.throws(() => scene.apply([{ type: 'add-node', node: { id: 'boat', asset: { id: ASSET_ID } } }], { expectedRevision: scene.revision }), /Asset abababababab copy 0 is not loaded/);
-  const many = Array.from({ length: 17 }, (_, index) => ({ type: 'add-node', node: { id: `asset-${index}`, asset: { id: index.toString(16).padStart(2, '0').repeat(32) } } }));
+  const many = Array.from({ length: 33 }, (_, index) => ({ type: 'add-node', node: { id: `asset-${index}`, asset: { id: index.toString(16).padStart(2, '0').repeat(32) } } }));
   const pool = new Map();
   for (const operation of many) pool.set(assetCopyKey(operation.node.asset.id, 0), await strip());
   scene.provideAssets(pool);
-  assert.throws(() => scene.apply(many, { expectedRevision: scene.revision }), /at most 512 assets, 16 different ones/);
+  assert.throws(() => scene.apply(many, { expectedRevision: scene.revision }), /at most 512 assets, 32 different ones.*Reuse an asset id/);
+});
+
+test('a scene places 32 different assets and the capabilities text states the cap (#2839)', async () => {
+  const scene = createAgentScene(recipe([]), {}, {});
+  const operations = Array.from({ length: 32 }, (_, index) => ({ type: 'add-node', node: { id: `asset-${index}`, asset: { id: index.toString(16).padStart(2, '0').repeat(32) } } }));
+  const pool = new Map();
+  for (const operation of operations) pool.set(assetCopyKey(operation.node.asset.id, 0), await strip());
+  scene.provideAssets(pool);
+  scene.apply(operations, { expectedRevision: scene.revision });
+  assert.equal(scene.inspect().assets.length, 32);
+  assert.equal(ASSET_PLACEMENT_LIMITS.maxAssets, 32);
+  assert.match(AGENT_SCENE_CAPABILITIES.placedAssets, /32 different assets/);
 });
 
 test('a placed clip gives the scene a timeline: render settings play it with no motion track (#2261)', async () => {

@@ -1,6 +1,7 @@
 import { mat4 } from 'gl-matrix';
 import { applyProjection } from './camera.js';
 import { compileProgram, fullscreenVertex } from './gl-program.js';
+import { invalidField } from './field-error.js';
 import './lighting-pass-shader.js';
 
 // Render passes draw raw material data or isolated lighting/auxiliary terms instead of the lit beauty image.
@@ -12,6 +13,7 @@ export const RENDER_PASS_MODES = Object.freeze({
   albedo: 1, normal: 2, emission: 3, depth: 4, objectId: 5,
   diffuse: 6, glossy: 7, shadow: 8, ao: 9, mist: 10,
   position: 11, velocity: 12, uv: 13, transmission: 14, volume: 15, environment: 16, cryptomatte: 17, aov: 18,
+  roughness: 19, metallic: 20, lighting: 21,
 });
 // Passes drawn as another pass and then finished by their own addon: wireframe is the diffuse pass with polygon edges over it (wireframe-pass.js).
 const COMPOSED_PASSES = Object.freeze({ wireframe: 'diffuse' });
@@ -127,6 +129,7 @@ export function installRenderPasses(renderer) {
     const mode = RENDER_PASS_MODES[COMPOSED_PASSES[frame.pass] ?? frame.pass];
     if (!mode) throw new RangeError(`Unknown render pass: ${frame.pass}. Use ${[...Object.keys(RENDER_PASS_MODES), ...Object.keys(COMPOSED_PASSES)].join(', ')}.`);
     if (renderer.benchmark) throw new Error('Render passes are unavailable in benchmark mode.');
+    if (mode === RENDER_PASS_MODES.velocity) validateVelocityPassInputs(frame);
     const depthRange = frame.passDepthRange ?? 1;
     if (!Number.isFinite(depthRange) || depthRange <= 0) throw new RangeError('Pass depth range must be positive and finite.');
     const context = renderer.context;
@@ -169,7 +172,7 @@ export function installRenderPasses(renderer) {
 
   // Part names by object ID minus one, in the order the object ID pass numbers them (draw order, grouped by geometry).
   function objectParts() {
-    return renderer.batches.filter(batch => renderer.drawsInOpaqueLoop(batch)).flatMap(batch => batch.parts);
+    return renderer.batches.filter(batch => renderer.takesObjectIds(batch)).flatMap(batch => batch.parts);
   }
 
   function objectNames() {
@@ -192,7 +195,7 @@ export function installRenderPasses(renderer) {
   function materialTable() {
     const table = new Map();
     for (const batch of renderer.batches) {
-      if (!renderer.drawsInOpaqueLoop(batch)) continue;
+      if (!renderer.takesObjectIds(batch)) continue;
       for (const part of batch.parts) {
         const material = part.material;
         const key = material.id ?? material.name ?? material;
@@ -220,6 +223,23 @@ export function installRenderPasses(renderer) {
     const view = mat4.lookAt(mat4.create(), camera.eye, camera.target ?? [0, 1.2, 0], camera.up ?? [0, 1, 0]);
     const projection = applyProjection(mat4.create(), camera, aspect);
     return mat4.multiply(mat4.create(), projection, view);
+  }
+
+  // The velocity pass reads the previous camera, its view projection and the object motion matrices. Name the one that is not
+  // what the pass reads, instead of failing inside gl-matrix or the texture upload later.
+  function validateVelocityPassInputs(frame) {
+    const eye = frame.previousCamera?.eye;
+    if (frame.previousCamera && !(typeof eye?.length === 'number' && eye.length === 3 && Array.from(eye).every(Number.isFinite))) {
+      throw invalidField('frame.previousCamera.eye', eye, '[x, y, z] as three finite numbers');
+    }
+    const viewProjection = frame.previousViewProjection;
+    if (viewProjection && (typeof viewProjection.length !== 'number' || viewProjection.length !== 16 || !Array.from(viewProjection).every(Number.isFinite))) {
+      throw invalidField('frame.previousViewProjection', viewProjection, 'sixteen finite numbers');
+    }
+    const matrices = frame.objectMotion?.matrices;
+    if (matrices && !(matrices instanceof Float32Array)) {
+      throw invalidField('frame.objectMotion.matrices', matrices, 'the Float32Array from packObjectMotion');
+    }
   }
 
   function bindFrame(frame, environment, volume) {

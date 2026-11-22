@@ -1,4 +1,4 @@
-import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
+import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS, shadowAtlasOverflowMessage } from './light-limits.js';
 import { lightShapeSupport } from './shader-registry.js';
 
 export { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS };
@@ -99,7 +99,9 @@ function countShadowTiles(pointLights, spotLights) {
   for (const light of pointLights) if (light.castShadow) tiles += POINT_SHADOW_TILES;
   for (const light of spotLights) if (light.castShadow) tiles += 1;
   if (tiles > SHADOW_ATLAS_TILES) {
-    throw new RangeError(`Shadow casting lights need ${tiles} atlas tiles, and the atlas holds ${SHADOW_ATLAS_TILES} (a point light uses ${POINT_SHADOW_TILES}, a spot light one)`);
+    const pointCount = pointLights.filter(light => light.castShadow).length;
+    const spotCount = spotLights.filter(light => light.castShadow).length;
+    throw new RangeError(shadowAtlasOverflowMessage({ pointLights: pointCount, spotLights: spotCount, areaLights: 0 }));
   }
   return tiles;
 }

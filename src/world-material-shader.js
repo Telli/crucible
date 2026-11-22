@@ -1,43 +1,19 @@
+import { resolveWaterMaterial } from './water-presets.js';
 import { layerTextureSupport, registerShaderFeatureCode } from './shader-registry.js';
+import { causticsDeclarations, resolveWaterCaustics, waterCausticsUniform } from './water-caustics.js';
 
 // Water bodies. A material with the water tag can carry `absorption` (RGB per metre: how fast each colour fades going down) and
 // `turbidity` (0 clear to 1 murky: how much light the water scatters into shadows). The largest flat water part of a scene sets
 // the water level. Every surface below it is dimmed by Beer-Lambert absorption of the column above it, and its shadows are lifted
 // by in-scatter and widened with depth times turbidity (worldVisibility below). Absorption folds the way down and the way back up
 // into one coefficient, so a bed `depth` metres down keeps exp(-absorption * depth) of its light.
-/** Water the way people name it: where the light goes and how far a shadow stays sharp. */
-export const WATER_PRESETS = Object.freeze({
-  lake: Object.freeze({ absorption: Object.freeze([0.35, 0.07, 0.04]), turbidity: 0.02 }),
-  sea: Object.freeze({ absorption: Object.freeze([0.4, 0.06, 0.02]), turbidity: 0.1 }),
-  river: Object.freeze({ absorption: Object.freeze([0.8, 0.9, 1.6]), turbidity: 0.75 }),
-});
-export const WATER_DEFAULT_PRESET = 'lake';
-export const WATER_MAXIMUM_ABSORPTION = 20;
+export { WATER_PRESETS, WATER_DEFAULT_PRESET, WATER_MAXIMUM_ABSORPTION, resolveWaterMaterial } from './water-presets.js';
 // A water part counts as one level when it is this flat: thickness against its wider side.
 const WATER_MAXIMUM_THICKNESS_RATIO = 0.02;
 
-/** Resolves a material's water fields: an explicit absorption or turbidity beats the preset, which beats the default lake. */
-export function resolveWaterMaterial({ waterPreset, absorption, turbidity } = {}) {
-  const preset = waterPreset ?? WATER_DEFAULT_PRESET;
-  if (!Object.hasOwn(WATER_PRESETS, preset)) {
-    throw new RangeError(`waterPreset must be one of ${Object.keys(WATER_PRESETS).join(', ')}.`);
-  }
-  const resolvedAbsorption = absorption ?? WATER_PRESETS[preset].absorption;
-  const absorptionValid = Array.isArray(resolvedAbsorption) && resolvedAbsorption.length === 3
-    && resolvedAbsorption.every(channel => Number.isFinite(channel) && channel >= 0 && channel <= WATER_MAXIMUM_ABSORPTION);
-  if (!absorptionValid) {
-    throw new RangeError(`absorption must be three numbers from 0 to ${WATER_MAXIMUM_ABSORPTION} (per metre).`);
-  }
-  const resolvedTurbidity = turbidity ?? WATER_PRESETS[preset].turbidity;
-  if (!Number.isFinite(resolvedTurbidity) || resolvedTurbidity < 0 || resolvedTurbidity > 1) {
-    throw new RangeError('turbidity must be within zero and one.');
-  }
-  return { waterPreset: preset, absorption: [...resolvedAbsorption], turbidity: resolvedTurbidity };
-}
-
 /** Copies a recipe material's water fields: a water material always carries the resolved absorption, turbidity and preset. */
 export function copyWaterFields(value, result, toVector) {
-  const given = ['waterPreset', 'absorption', 'turbidity'].filter(field => value[field] !== undefined);
+  const given = ['waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamVeins', 'contactFoam', 'caustics', 'ripples'].filter(field => value[field] !== undefined);
   if (result.tag !== 'water') {
     if (given.length > 0) {
       throw new RangeError(`${given.join(', ')} need the water tag.`);
@@ -45,7 +21,144 @@ export function copyWaterFields(value, result, toVector) {
     return;
   }
   const absorption = value.absorption === undefined ? undefined : toVector(value.absorption, 3, 'absorption');
-  Object.assign(result, resolveWaterMaterial({ ...value, absorption }));
+  Object.assign(result, resolveWaterMaterial({ ...value, absorption }), resolveWaterFoamStyle(value), resolveContactFoam(value, result));
+  const caustics = resolveWaterCaustics(value.caustics);
+  if (caustics) {
+    result.caustics = caustics;
+  }
+  if (value.ripples !== undefined) {
+    result.ripples = resolveWaterRipples(value.ripples);
+  }
+}
+
+export const WATER_RIPPLE_RANGES = Object.freeze({ strength: [0, 1], speed: [0, 2], windDirection: [-360, 360] });
+export const WATER_RIPPLE_DEFAULTS = Object.freeze({ strength: 1, speed: 1 });
+
+/**
+ * The detail ripples of a water material, the 0.15 to 3 m wind ripples that break the surface and the sun glint into facets.
+ * `strength` 0 to 1 (1 default) scales their height, `speed` 0 to 2 (1 default) scales how fast they travel, and `windDirection` (degrees,
+ * as the `ocean` edit's `direction`; unset by default) runs them downwind within about 40 degrees of that direction instead of in all
+ * directions. With nothing given the ripples are the ones every water material has always had. A calm, wind-aligned sea does not boil
+ * in a film at 24 fps, where fast ripples cross a pixel in a frame.
+ */
+export function resolveWaterRipples(ripples) {
+  if (ripples === null || typeof ripples !== 'object' || Array.isArray(ripples)) {
+    throw new TypeError('ripples must be an object such as { "strength": 0.3, "speed": 0.6, "windDirection": 0 }.');
+  }
+  const unknown = Object.keys(ripples).filter(key => !(key in WATER_RIPPLE_RANGES));
+  if (unknown.length > 0) {
+    throw new TypeError(`ripples has no field ${unknown.join(', ')}; pass strength, speed or windDirection.`);
+  }
+  const resolved = { ...WATER_RIPPLE_DEFAULTS, ...ripples };
+  for (const [field, [minimum, maximum]] of Object.entries(WATER_RIPPLE_RANGES)) {
+    const value = resolved[field];
+    if (value === undefined && field === 'windDirection') {
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+      throw new RangeError(`ripples.${field} must be a number from ${minimum} to ${maximum}, such as ${WATER_RIPPLE_DEFAULTS[field] ?? 0}.`);
+    }
+  }
+  return Object.freeze(resolved);
+}
+
+/** The `waterRipples` uniform: strength, speed, 1 when the ripples follow the wind, and the direction they travel in radians. No `ripples` sends the defaults, which is the unchanged look. */
+export function waterRipplesUniform(ripples) {
+  const strength = ripples?.strength ?? WATER_RIPPLE_DEFAULTS.strength;
+  const speed = ripples?.speed ?? WATER_RIPPLE_DEFAULTS.speed;
+  if (ripples?.windDirection === undefined) {
+    return [strength, speed, 0, 0];
+  }
+  return [strength, speed, 1, ripples.windDirection * Math.PI / 180];
+}
+
+export const WATER_FOAM_EDGES = Object.freeze(['soft', 'hard']);
+export const WATER_FOAM_WIDTH_RANGE = Object.freeze([0.25, 4]);
+export const WATER_FOAM_VEIN_RANGES = Object.freeze({ amount: [0, 1], scale: [0.25, 4] });
+export const WATER_FOAM_VEIN_DEFAULTS = Object.freeze({ amount: 0.6, scale: 1 });
+
+/**
+ * The foam veins of a water material: a net of thin foam lines that spreads from a crest and fades away from it. They are sampled on the
+ * world position with the same step in every direction, so a cell is as long as it is wide. `amount` 0 (off) to 1 (default 0.6 once
+ * `foamVeins` is given) and `scale` 0.25 to 4 (1 default, larger cells are finer). An `amount` of 0 draws nothing.
+ */
+export function resolveWaterFoamVeins(foamVeins) {
+  if (foamVeins === null || typeof foamVeins !== 'object' || Array.isArray(foamVeins)) {
+    throw new TypeError('foamVeins must be an object such as { "amount": 0.6, "scale": 1 }.');
+  }
+  const unknown = Object.keys(foamVeins).filter(key => !(key in WATER_FOAM_VEIN_DEFAULTS));
+  if (unknown.length > 0) {
+    throw new TypeError(`foamVeins has no field ${unknown.join(', ')}; pass amount or scale.`);
+  }
+  const resolved = { ...WATER_FOAM_VEIN_DEFAULTS, ...foamVeins };
+  for (const [field, [minimum, maximum]] of Object.entries(WATER_FOAM_VEIN_RANGES)) {
+    const value = resolved[field];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+      throw new RangeError(`foamVeins.${field} must be a number from ${minimum} to ${maximum}, such as ${WATER_FOAM_VEIN_DEFAULTS[field]}.`);
+    }
+  }
+  return Object.freeze(resolved);
+}
+
+/** The foam style fields of a water material: `foamEdge` soft (default, lace) or hard (painted shape), `foamWidth` 0.25 to 4 (default 1) scales how far foam spreads from the crest. Unset fields stay unset. */
+export function resolveWaterFoamStyle({ foamEdge, foamWidth, foamVeins }) {
+  const style = {};
+  if (foamEdge !== undefined) {
+    if (!WATER_FOAM_EDGES.includes(foamEdge)) {
+      throw new RangeError(`foamEdge must be one of ${WATER_FOAM_EDGES.join(', ')}, such as hard.`);
+    }
+    style.foamEdge = foamEdge;
+  }
+  if (foamWidth !== undefined) {
+    const [minimum, maximum] = WATER_FOAM_WIDTH_RANGE;
+    if (!Number.isFinite(foamWidth) || foamWidth < minimum || foamWidth > maximum) {
+      throw new RangeError(`foamWidth must be a number from ${minimum} to ${maximum}, such as 1.`);
+    }
+    style.foamWidth = foamWidth;
+  }
+  if (foamVeins !== undefined) {
+    style.foamVeins = resolveWaterFoamVeins(foamVeins);
+  }
+  return style;
+}
+
+export const CONTACT_FOAM_RANGES = Object.freeze({ width: [1, 64], hardness: [0, 1], noise: [0, 1], drift: [0, 1] });
+export const CONTACT_FOAM_DEFAULTS = Object.freeze({ width: 6, hardness: 1, noise: 0.3, drift: 0, rim: true, color: Object.freeze([0.92, 0.95, 0.97]) });
+
+/**
+ * The contact foam of a water material: a line where the water meets another surface, from the gap between the water and what lies
+ * behind it. `width` is the line's width in screen pixels (1 to 64, 6 default), `hardness` 0 (soft edge) to 1 (a one pixel edge),
+ * `noise` 0 to 1 (how much the edge breaks up, 0.3 default), `drift` 0 to 1 (0 default, a static rim; above 0 the rim tears into segments that slide with time), `rim` (true default; false draws no contact line at all) and `color` three numbers from 0 to 1. Only water blended with alphaMode "blend" reads what lies behind it, at any opacity.
+ */
+export function resolveContactFoam({ contactFoam }, { alphaMode }) {
+  if (contactFoam === undefined) {
+    return {};
+  }
+  if (contactFoam === null || typeof contactFoam !== 'object' || Array.isArray(contactFoam)) {
+    throw new TypeError('contactFoam must be an object such as { "width": 6, "hardness": 1, "noise": 0.3 }.');
+  }
+  const unknown = Object.keys(contactFoam).filter(key => !(key in CONTACT_FOAM_DEFAULTS));
+  if (unknown.length > 0) {
+    throw new TypeError(`contactFoam has no field ${unknown.join(', ')}; pass width, hardness, noise, drift, rim or color.`);
+  }
+  if (alphaMode !== 'blend') {
+    throw new RangeError('contactFoam needs blended water that reads what lies behind it; pass alphaMode "blend".');
+  }
+  const resolved = { ...CONTACT_FOAM_DEFAULTS, ...contactFoam };
+  for (const [field, [minimum, maximum]] of Object.entries(CONTACT_FOAM_RANGES)) {
+    const value = resolved[field];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+      throw new RangeError(`contactFoam.${field} must be a number from ${minimum} to ${maximum}, such as ${CONTACT_FOAM_DEFAULTS[field]}.`);
+    }
+  }
+  if (typeof resolved.rim !== 'boolean') {
+    throw new TypeError('contactFoam.rim must be true or false, such as true; false draws no contact line.');
+  }
+  const { color } = resolved;
+  if (!Array.isArray(color) || color.length !== 3 || color.some(component => typeof component !== 'number' || !(component >= 0 && component <= 1))) {
+    throw new RangeError('contactFoam.color must be three numbers from 0 to 1, such as [0.92, 0.95, 0.97].');
+  }
+  return { contactFoam: Object.freeze({ ...resolved, color: Object.freeze([...color]) }) };
 }
 
 export const WATER_RAMP_COLOR_COUNT = Object.freeze([3, 5]);
@@ -183,7 +296,7 @@ export function findWaterBody(parts) {
     return null;
   }
   const { absorption, turbidity } = resolveWaterMaterial(best.material);
-  return { level: best.level, absorption, turbidity, refractive: best.refractive };
+  return { level: best.level, absorption, turbidity, refractive: best.refractive, caustics: best.material.caustics ?? null };
 }
 
 const waterLocations = new WeakMap();
@@ -212,7 +325,7 @@ function bindWaterBody(renderer) {
   const context = renderer.context;
   let locations = waterLocations.get(renderer);
   if (locations?.program !== renderer.program) {
-    locations = { program: renderer.program, body: context.getUniformLocation(renderer.program, 'waterBody'), absorption: context.getUniformLocation(renderer.program, 'waterAbsorption'), scene: context.getUniformLocation(renderer.program, 'waterScene'), resolved: false };
+    locations = { program: renderer.program, body: context.getUniformLocation(renderer.program, 'waterBody'), absorption: context.getUniformLocation(renderer.program, 'waterAbsorption'), scene: context.getUniformLocation(renderer.program, 'waterScene'), caustics: context.getUniformLocation(renderer.program, 'waterCaustics'), resolved: false };
     waterLocations.set(renderer, locations);
   }
   const waterParts = renderer.batches.flatMap(batch => (batch.parts[0].material.tag === 'water' ? batch.parts : []));
@@ -222,6 +335,7 @@ function bindWaterBody(renderer) {
   // Refraction needs the frame texture, so it is off for a transparent canvas, whose alpha is the picture's own.
   const refracts = active && body.refractive && !renderer.transparent && !renderer.benchmark && Boolean(renderer.frameTexture);
   context.uniform4f(locations.body, active ? body.level : 0, active ? body.turbidity : 0, active ? 1 : 0, refracts ? 1 : 0);
+  context.uniform4f(locations.caustics, ...waterCausticsUniform(active ? body.caustics : null));
   context.uniform3f(locations.absorption, ...(active ? body.absorption : [0, 0, 0]));
   if (!context.isEnabled(context.BLEND)) {
     locations.resolved = false;
@@ -231,10 +345,74 @@ function bindWaterBody(renderer) {
   }
 }
 
+const foamVeinLocations = new WeakMap();
+
+/** Sends the foam veins of a water batch: amount and scale. Amount 0 turns the veins off, which is every batch without `foamVeins`. */
+function bindWaterFoamVeins(renderer, batch) {
+  if (!renderer.shaderFeatures?.has('water')) {
+    return;
+  }
+  let location = foamVeinLocations.get(renderer);
+  if (location?.program !== renderer.program) {
+    location = { program: renderer.program, veins: renderer.context.getUniformLocation(renderer.program, 'waterFoamVeins') };
+    foamVeinLocations.set(renderer, location);
+  }
+  const veins = batch.parts[0].material.foamVeins ?? WATER_FOAM_VEIN_DEFAULTS;
+  const amount = batch.parts[0].material.foamVeins ? veins.amount : 0;
+  renderer.context.uniform2f(location.veins, amount, veins.scale);
+}
+
+/** The `waterContact` uniform: width, hardness, noise and 1 while the rim is drawn. No contact foam, or `rim` false, sends 0 and the shader draws no line. */
+export function contactFoamUniform(contact) {
+  if (!contact?.rim) {
+    return [0, 0, 0, 0];
+  }
+  return [contact.width, contact.hardness, contact.noise, 1];
+}
+
+const rippleLocations = new WeakMap();
+
+/** Sends the detail ripple controls of a water batch. A batch without `ripples` sends strength 1, speed 1 and no wind alignment. */
+function bindWaterRipples(renderer, batch) {
+  if (!renderer.shaderFeatures?.has('water')) {
+    return;
+  }
+  let location = rippleLocations.get(renderer);
+  if (location?.program !== renderer.program) {
+    location = { program: renderer.program, ripples: renderer.context.getUniformLocation(renderer.program, 'waterRipples') };
+    rippleLocations.set(renderer, location);
+  }
+  renderer.context.uniform4f(location.ripples, ...waterRipplesUniform(batch.parts[0].material.ripples));
+}
+
+const foamStyleLocations = new WeakMap();
+
+/** Sends the foam style of a water batch: 1 for a hard edge, and the width factor. Other batches get the soft default. */
+function bindWaterFoamStyle(renderer, batch) {
+  if (!renderer.shaderFeatures?.has('water')) {
+    return;
+  }
+  let location = foamStyleLocations.get(renderer);
+  if (location?.program !== renderer.program) {
+    const { context } = renderer;
+    location = { program: renderer.program, style: context.getUniformLocation(renderer.program, 'waterFoamStyle'), contact: context.getUniformLocation(renderer.program, 'waterContact'), contactDrift: context.getUniformLocation(renderer.program, 'waterContactDrift'), contactColor: context.getUniformLocation(renderer.program, 'waterContactColor') };
+    foamStyleLocations.set(renderer, location);
+  }
+  const material = batch.parts[0].material;
+  renderer.context.uniform2f(location.style, material.foamEdge === 'hard' ? 1 : 0, material.foamWidth ?? 1);
+  const contact = material.contactFoam;
+  renderer.context.uniform4f(location.contact, ...contactFoamUniform(contact));
+  renderer.context.uniform1f(location.contactDrift, contact?.drift ?? 0);
+  renderer.context.uniform3f(location.contactColor, ...(contact?.color ?? CONTACT_FOAM_DEFAULTS.color));
+}
+
 const previousBind = layerTextureSupport.bind;
 layerTextureSupport.bind = (renderer, mapState, layerState, batch) => {
   previousBind?.(renderer, mapState, layerState, batch);
   bindWaterBody(renderer);
+  bindWaterFoamStyle(renderer, batch);
+  bindWaterFoamVeins(renderer, batch);
+  bindWaterRipples(renderer, batch);
 };
 
 // Wind for the foliage (4) and grass (7) tags, shared by the colour and shadow vertex shaders so both
@@ -253,6 +431,12 @@ export const worldMaterialSlots = {
   // Shadow of a surface under murky water: the classic shadow map read over a wider disc. A cascaded map is read through
   // its own macro and keeps its filter.
   declarations: `uniform vec4 waterBody;
+uniform vec2 waterFoamVeins;
+uniform vec2 waterFoamStyle;
+uniform vec4 waterContact;
+uniform float waterContactDrift;
+uniform vec3 waterContactColor;
+${causticsDeclarations}
 uniform vec4 waterRampHead;
 uniform vec3 waterRampWeights;
 uniform vec2 waterRampHeightRange;
@@ -320,6 +504,28 @@ vec3 refractedBackground(vec3 fallback, vec3 surfacePosition, vec3 normal, vec3 
   // Average only the taps that saw something below the water: a tap past the bed edge must not pull the blur toward the water colour.
   return seen > 0.5 ? seenColor / seen : fallback;
 }
+// Contact foam: a line where the water meets what lies behind it. The opaque pass left the depth below the water level of each
+// surface it drew in the alpha channel, so the gap between this water point and the scene point seen through the same pixel is
+// known; foam is where that gap, measured in screen pixels, is under the width, so the line keeps one width at any distance.
+// waterContact is (width in pixels, hardness, noise, 1 when on); noiseValue is 0 to 1 and breaks the edge up.
+float waterContactFoam(vec3 surfacePosition, float noiseValue) {
+  if (waterContact.w < 0.5 || waterBody.w < 0.5) return 0.0;
+  vec2 size = vec2(textureSize(waterScene, 0));
+  float stored = textureLod(waterScene, gl_FragCoord.xy / size, 0.0).a;
+  if (stored >= 0.999) return 0.0;
+  float sceneDepth = max(stored - 0.5, 0.0) / 0.498 * 8.0;
+  float gap = abs(surfacePosition.y - waterBody.x + sceneDepth);
+  // A pixel far away spans metres, so a width in pixels alone would foam open water up to the horizon, where the scene behind is deep
+  // water, the far plane or the sky. Foam only where the scene is within half a metre of the water surface.
+  if (gap > 0.5) return 0.0;
+  vec4 above = viewProjection * vec4(surfacePosition + vec3(0.0, 1.0, 0.0), 1.0);
+  vec4 here = viewProjection * vec4(surfacePosition, 1.0);
+  float pixelsPerMetre = max(abs(above.y / above.w - here.y / here.w) * 0.5 * size.y, 0.001);
+  float gapPixels = gap * pixelsPerMetre;
+  float edge = waterContact.x * (1.0 + (noiseValue - 0.5) * 2.0 * waterContact.z);
+  float softness = mix(0.6 * waterContact.x, 0.0, waterContact.y) + 1.0;
+  return 1.0 - smoothstep(edge - softness, edge + softness, gapPixels);
+}
 #ifndef shadowVisibility
 float softShadowVisibility(vec3 normal, float radiusTexels) {
   vec3 projected = shadowPosition.xyz / shadowPosition.w * 0.5 + 0.5;
@@ -365,6 +571,7 @@ float underwaterVisibility(float visibility, vec3 normal, float depth) {
     float sunSine = sqrt(max(1.0 - pow(normalize(lightDirection).y, 2.0), 0.0)) / 1.33;
     waterSunTransmittance = exp(-(waterAbsorption + 0.9 * waterBody.y * (1.0 - waterBody.y)) * waterDepth / sqrt(1.0 - sunSine * sunSine));
     waterScatterShare = waterBody.y * (1.0 - exp(-0.4 * waterBody.y * waterDepth));
+    if (waterCaustics.z > 0.0) waterSunTransmittance *= causticGain(worldPosition, waterDepth);
   }
   vec3 keyColor = keyColor * waterSunTransmittance;
 `,
@@ -403,7 +610,9 @@ vec3 windOffset(vec3 localPosition, vec3 worldPoint, vec2 leafUv, float surfaceT
   return vec3(push.x, 0.0, push.y);
 }
 `,
-  worldFunctions: `float terrainHash(vec2 position) {
+  worldFunctions: `// Declared with the function that reads it: programs that carry the functions but no water declarations compile it too.
+uniform vec4 waterRipples;
+float terrainHash(vec2 position) {
   vec3 seed = fract(vec3(position.xyx) * 0.1031);
   seed += dot(seed, seed.yzx + 33.33);
   return fract((seed.x + seed.y) * seed.z);
@@ -432,20 +641,34 @@ vec3 terrainNoise(vec2 position) {
 // stays whole while a pixel is under a fifth of its length and is gone at half (two pixels per wave, the limit of one sample per
 // pixel), so far water does not shimmer but keeps every wave a pixel can still show; the slope variance the faded waves
 // took with them comes back as lostVariance, to widen the glint instead.
-vec2 waterDetailSlope(vec2 position, float footprint, out float lostVariance) {
+// How much of a wave one pixel still shows, from the pixel's size along the wave's travel (footprint, world units) and the wave's
+// wavenumber (radians per unit). A pixel averages the wave over its own width, which scales the wave by sinc(pixel size in
+// wavelengths); it is zero at one pixel per wavelength. The averaged amplitude is what a supersampled render converges to, so far
+// water keeps the part of each wave a pixel can carry instead of cutting the wave off.
+float waterWaveVisibility(float footprint, float wavenumber) {
+  float phaseSpan = clamp(footprint * wavenumber * 0.5, 0.0001, 3.14159265);
+  return sin(phaseSpan) / phaseSpan;
+}
+
+vec2 waterDetailSlope(vec2 position, vec2 positionDx, vec2 positionDy, out float lostVariance) {
   vec2 slope = vec2(0.0);
   lostVariance = 0.0;
   float wavenumber = 2.1;
   float angle = 0.4;
   for (int index = 0; index < 8; index++) {
-    float visible = 1.0 - smoothstep(0.2, 0.5, footprint * wavenumber / 6.2831853);
+    if (waterRipples.z > 0.5) {
+      // Downwind: a wave travels against its direction vector (the phase grows with time), so turn it half a circle to the wind.
+      angle = waterRipples.w + 3.14159265 + (fract(float(index) * 0.618034) - 0.5) * 1.4;
+    }
     vec2 direction = vec2(cos(angle), sin(angle));
+    float footprint = abs(dot(positionDx, direction)) + abs(dot(positionDy, direction));
+    float visible = waterWaveVisibility(footprint, wavenumber);
     float drift = terrainNoise(position * wavenumber * 0.09 + float(index) * 9.17).x - 0.5;
     float strength = 0.15 + 1.7 * terrainNoise(position * wavenumber * 0.06 + float(index) * 23.9 + 4.0).x;
-    float phase = dot(position, direction) * wavenumber + time * sqrt(9.81 * wavenumber) + float(index) * 1.7 + drift * 5.0;
-    float amplitude = 0.085 * pow(wavenumber / 2.1, -0.3) * strength;
+    float phase = dot(position, direction) * wavenumber + time * waterRipples.y * sqrt(9.81 * wavenumber) + float(index) * 1.7 + drift * 5.0;
+    float amplitude = 0.085 * pow(wavenumber / 2.1, -0.3) * strength * waterRipples.x;
     slope += direction * cos(phase) * amplitude * visible;
-    lostVariance += 0.5 * amplitude * amplitude * (1.0 - visible);
+    lostVariance += 0.5 * amplitude * amplitude * (1.0 - visible * visible);
     wavenumber *= 1.7320508;
     angle += 2.399963;
   }
@@ -466,18 +689,22 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
 
 `,
   worldSurface: `  float waterFoam = 0.0;
+  float waterContactShare = 0.0;
   vec3 waterRampRadiance = vec3(0.0);
   float waterRampOwns = 0.0;
   float waterLostVariance = 0.0;
   if (TAG_WATER) {
     // Small ripples tilt the surface's own normal, so a sea mesh keeps its waves; a flat sheet (normal up) gets the same ripples as before.
-    vec3 rippleTilt = vec3(-cos(worldPosition.x * 1.4 + time * 0.8) * 0.035, 0.0, -cos(worldPosition.z * 1.8 - time) * 0.036);
+    vec2 positionDx = dFdx(worldPosition.xz);
+    vec2 positionDy = dFdy(worldPosition.xz);
+    float swellVisibleX = waterWaveVisibility(abs(positionDx.x) + abs(positionDy.x), 1.4);
+    float swellVisibleZ = waterWaveVisibility(abs(positionDx.y) + abs(positionDy.y), 1.8);
+    vec3 rippleTilt = vec3(-cos(worldPosition.x * 1.4 + time * 0.8) * 0.035 * swellVisibleX, 0.0, -cos(worldPosition.z * 1.8 - time) * 0.036 * swellVisibleZ);
     float radius = length(worldPosition.xz - waterRipple.xz);
     float age = time - rippleTime;
     float wave = sin(radius * 11.0 - age * 8.0) * exp(-abs(radius - age * 1.4) * 1.5) * exp(-age * 0.7) * step(0.0, age);
     rippleTilt.xz += normalize(worldPosition.xz - waterRipple.xz + 0.001) * wave * 0.07;
-    float footprint = length(fwidth(worldPosition.xz));
-    vec2 detailSlope = waterDetailSlope(worldPosition.xz, footprint, waterLostVariance);
+    vec2 detailSlope = waterDetailSlope(worldPosition.xz, positionDx, positionDy, waterLostVariance);
     rippleTilt.xz += detailSlope;
     vec3 crestNormal = normal;
     normal = normalize(normal + rippleTilt);
@@ -493,14 +720,41 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     float fineLace = terrainNoise(crestPosition * vec2(3.1, 14.0) + 3.9).x;
     float lace = broadLace * 0.5 + midLace * 0.3 + fineLace * 0.2;
     float foamMask = clamp(2.0 * (1.0 - vertexSkyVisibility) - 1.0, 0.0, 1.0);
-    float foamDensity = foamMask * 1.25 + (lace - 0.5) * 0.9;
-    float foamBand = 0.13 + 1.5 * fwidth(foamDensity);
+    // waterFoamStyle is (hard edge 0 or 1, width): a hard edge draws the mask as a flat painted shape with a one pixel edge and no veins.
+    float foamHard = waterFoamStyle.x;
+    float foamDensity = foamMask * 1.25 * waterFoamStyle.y + (lace - 0.5) * mix(0.9, 0.3, foamHard);
+    float foamBand = mix(0.13, 0.0, foamHard) + 1.5 * fwidth(foamDensity);
     float foamBody = smoothstep(0.5 - foamBand, 0.5 + foamBand, foamDensity) * smoothstep(0.03, 0.25, foamMask);
-    float foamVeins = pow(1.0 - abs(2.0 * midLace - 1.0), 3.0) * smoothstep(0.45, 0.9, foamMask) * (1.0 - foamBody) * 0.32;
-    waterFoam = max(foamBody * mix(0.5, 1.0, smoothstep(0.3, 0.95, foamMask)) * (0.78 + 0.22 * smoothstep(0.25, 0.75, fineLace * 0.6 + midLace * 0.4)), foamVeins);
+    float foamVeins = pow(1.0 - abs(2.0 * midLace - 1.0), 3.0) * smoothstep(0.45, 0.9, foamMask) * (1.0 - foamBody) * 0.32 * (1.0 - foamHard);
+    waterFoam = mix(max(foamBody * mix(0.5, 1.0, smoothstep(0.3, 0.95, foamMask)) * (0.78 + 0.22 * smoothstep(0.25, 0.75, fineLace * 0.6 + midLace * 0.4)), foamVeins), foamBody, foamHard);
+    // waterContactDrift above 0 slides the rim's noise with time and tears the rim into segments: a second noise, slid the other way,
+    // closes the rim where it is low. At 0 the rim is the static one.
+    float contactNoise = terrainNoise(worldPosition.xz * 1.7 + 11.3).x;
+    float contactTear = 1.0;
+    if (waterContactDrift > 0.0) {
+      contactNoise = terrainNoise(worldPosition.xz * 1.7 + 11.3 + vec2(time * 0.35, time * 0.2)).x;
+      float tearNoise = terrainNoise(worldPosition.xz * vec2(1.1, 2.3) + vec2(-time * 0.3, time * 0.12) + 41.7).x;
+      contactTear = mix(1.0, smoothstep(0.32, 0.55, tearNoise), waterContactDrift);
+    }
+    waterContactShare = waterContactFoam(worldPosition, contactNoise) * contactTear;
+    waterFoam = max(waterFoam, waterContactShare);
+    // waterFoamVeins is (amount, scale). Veins are ridged noise, warped by a second noise, on the world position: one step in every direction
+    // and no frame that turns with the surface normal, so a cell is as long as it is wide and does not smear. They read the whole foam group,
+    // not only its heavy half that makes the crest cap, so the lace trails out behind the crest: lines thin out and a slow noise breaks them
+    // into patches as the foam weight falls, instead of ending on one line along the crest.
+    if (waterFoamVeins.x > 0.0) {
+      vec2 veinPosition = worldPosition.xz * 4.0 * waterFoamVeins.y;
+      vec2 veinWarp = terrainNoise(veinPosition * 0.7 + 17.1).xy - 0.5;
+      float veinRidge = 1.0 - abs(2.0 * terrainNoise(veinPosition * 1.6 + veinWarp * 0.9 + 5.7).x - 1.0);
+      float veinTrail = smoothstep(0.0, 0.8, clamp(1.0 - vertexSkyVisibility, 0.0, 1.0));
+      float veinPatch = terrainNoise(veinPosition * 0.3 + 41.7).x;
+      float veinFade = smoothstep(0.0, 0.6, veinTrail * 1.3 - 0.8 * (1.0 - veinPatch));
+      float veinLine = smoothstep(1.0 - 0.3 * sqrt(veinTrail) - 0.02 - fwidth(veinRidge), 1.0 - 0.3 * sqrt(veinTrail) + fwidth(veinRidge), veinRidge);
+      waterFoam = max(waterFoam, veinLine * veinFade * waterFoamVeins.x);
+    }
     float grazing = pow(1.0 - max(dot(normal, viewDirection), 0.0), 4.0);
     color = mix(color, vec3(0.0137, 0.147, 0.195), grazing * 0.85);
-    color = mix(color, vec3(0.92, 0.95, 0.97) * (0.68 + 0.32 * (fineLace * 0.5 + midLace * 0.5)), waterFoam);
+    color = mix(color, mix(vec3(0.92, 0.95, 0.97) * (0.68 + 0.32 * (fineLace * 0.5 + midLace * 0.5)), waterContactColor, waterContactShare), waterFoam);
     roughness = mix(0.16, 0.8, waterFoam);
     if (waterRampHead.x > 0.5) {
       float rampSun = clamp(dot(normal, normalize(lightDirection)), 0.0, 1.0);
@@ -582,7 +836,7 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     float glintShape = pow(max(dot(normal, halfVector), 0.0), glintSharpness);
     float glintFresnel = 0.02 + 0.98 * pow(1.0 - max(dot(halfVector, viewDirection), 0.0), 5.0);
     radiance += vec3(1.0, 0.9, 0.7) * glintShape * (0.5 + 40.0 * glintFresnel) * 6.0 * keyResponse * (1.0 - waterFoam);
-    radiance += vec3(0.85, 0.9, 0.95) * waterFoam * (max(dot(normal, normalize(lightDirection)), 0.0) * keyResponse + 0.35 * daylight * ambientIntensity);
+    radiance += mix(vec3(0.85, 0.9, 0.95), waterContactColor, waterContactShare) * waterFoam * (max(dot(normal, normalize(lightDirection)), 0.0) * keyResponse + 0.35 * daylight * ambientIntensity);
     if (waterBody.w > 0.5 && alphaMode > 1.5) {
       // Blended water draws its own background: the opaque scene refracted and blurred, not the one behind it unbent.
       radiance = radiance * alpha + refractedBackground(radiance, worldPosition, normal, viewDirection) * (1.0 - alpha);

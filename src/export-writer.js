@@ -12,6 +12,7 @@ function componentTypeOf(data) {
 }
 
 function componentBounds(data, componentCount) {
+  if (!data.length) return {};
   const minimum = new Array(componentCount).fill(Infinity);
   const maximum = new Array(componentCount).fill(-Infinity);
   for (let index = 0; index < data.length; index++) {
@@ -19,6 +20,7 @@ function componentBounds(data, componentCount) {
     minimum[component] = Math.min(minimum[component], data[index]);
     maximum[component] = Math.max(maximum[component], data[index]);
   }
+  if (![...minimum, ...maximum].every(Number.isFinite)) throw new RangeError('GLB data must be finite.');
   return { min: minimum, max: maximum };
 }
 
@@ -50,6 +52,7 @@ export function createGlbWriter() {
   function addAccessor(data, type, target, { bounds = type === 'VEC3' } = {}) {
     const bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     const componentCount = COMPONENT_COUNTS[type];
+    if (data.length % componentCount) throw new RangeError(`${type} data needs a multiple of ${componentCount} values.`);
     const entry = { bufferView: addBufferView(bytes, target), componentType: componentTypeOf(data), count: data.length / componentCount, type };
     if (bounds) Object.assign(entry, componentBounds(data, componentCount));
     document.accessors.push(entry);

@@ -31,6 +31,7 @@ export function selectEdges(mesh, rule, table) {
   const keys = Object.keys(rule);
   const mask = new Uint8Array(mesh.edgeCount);
   const facesOf = edge => table.faces[edge];
+  if (rule.open !== undefined && keys.length > 1) throw new TypeError(`Edge rule open does not take ${keys.filter(key => key !== 'open').join(', ')}.`);
   if (keys.length !== 1 && rule.along === undefined) throw new TypeError('Edge rule takes exactly one of between, angle, boundaryOf, along, open, all.');
   if (rule.open !== undefined) return selectOpenEdges(mesh, rule, table);
   if (rule.all === true) {

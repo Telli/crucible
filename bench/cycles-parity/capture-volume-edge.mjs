@@ -1,6 +1,6 @@
 // Renders the #1816 sphere volume (empty frame, 1 octave, 4 octaves) through the rasterizer and writes the displayed RGBA floats and frame times, as input for linearize-display-floats.mjs and edge-width.py.
-// Run from the repository root through gpu-lock:
-//   bash ~/.agents/tools/gpu-lock.sh node bench/cycles-parity/capture-volume-edge.mjs --label after --output-folder artifacts/volume-edge [--width 960 --height 540]
+// Run from the repository root when no other job holds the GPU:
+//   node bench/cycles-parity/capture-volume-edge.mjs --label after --output-folder artifacts/volume-edge [--width 960 --height 540]
 // Writes <label>-empty.f32, <label>-1.f32, <label>-4.f32 (bottom row first) and <label>-timing.json.
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';

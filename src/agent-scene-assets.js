@@ -11,8 +11,9 @@ import { normalizeDrive } from './agent-drive-schema.js';
 
 // The `assets` module also serves map sequences, so a recipe with one loads no extra module entry in the scene.
 export * from './agent-texture-sequence.js';
+export * from './agent-texture-set.js';
 
-export const ASSET_PLACEMENT_LIMITS = Object.freeze({ maxPlacements: 512, maxAssets: 16, maxAnimatedPlacements: 16, maxOverrides: 32 });
+export const ASSET_PLACEMENT_LIMITS = Object.freeze({ maxPlacements: 512, maxAssets: 32, maxAnimatedPlacements: 16, maxOverrides: 32 });
 
 // The crowd code registers itself here when it loads, so this file (which the MCP host imports) never pulls it in.
 let crowdModule = null;
@@ -169,7 +170,7 @@ export function normalizeAssetPlacement(value) {
 export function gamePosedNodeIds(game) {
   const ids = new Set();
   if (game?.player?.animation && game.player.node) ids.add(game.player.node);
-  for (const npc of game?.npcs ?? []) if (npc?.animation && npc.node) ids.add(npc.node);
+  for (const npc of Array.isArray(game?.npcs) ? game.npcs : []) if (npc?.animation && npc.node) ids.add(npc.node);
   return ids;
 }
 
@@ -183,7 +184,9 @@ export function visitPlacements(value, visit, depth = 0) {
   const placement = value.asset;
   if (placement && typeof placement === 'object') visit(placement);
   for (const [key, child] of Object.entries(value)) {
-    if (key !== 'asset') visitPlacements(child, visit, depth + 1);
+    if (key === 'asset') continue;
+    if ((key === 'nodes' || key === 'npcs') && !Array.isArray(child)) continue;
+    visitPlacements(child, visit, depth + 1);
   }
 }
 
@@ -203,7 +206,8 @@ export function recipeAssetNeeds(value) {
   collectPlacements(value, placements);
   const needs = new Map();
   const posedNodes = gamePosedNodeIds(value?.game);
-  const posedPlacements = (value?.nodes ?? []).filter(node => node.asset && posedNodes.has(node.id)).map(node => node.asset);
+  const nodes = Array.isArray(value?.nodes) ? value.nodes : [];
+  const posedPlacements = nodes.filter(node => node && typeof node === 'object' && node.asset && posedNodes.has(node.id)).map(node => node.asset);
   for (const placement of placements) {
     const id = placement.id.toLowerCase();
     const need = needs.get(id) ?? { id, copies: 1 };
@@ -287,7 +291,7 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
   const animated = placed.filter(isAnimated);
   if (placed.length > ASSET_PLACEMENT_LIMITS.maxPlacements || distinct.size > ASSET_PLACEMENT_LIMITS.maxAssets ||
       animated.length > ASSET_PLACEMENT_LIMITS.maxAnimatedPlacements) {
-    throw new RangeError(`A scene places at most ${ASSET_PLACEMENT_LIMITS.maxPlacements} assets, ${ASSET_PLACEMENT_LIMITS.maxAssets} different ones, ${ASSET_PLACEMENT_LIMITS.maxAnimatedPlacements} of them playing a clip; this recipe places ${placed.length}, ${distinct.size} and ${animated.length}.`);
+    throw new RangeError(`A scene places at most ${ASSET_PLACEMENT_LIMITS.maxPlacements} assets, ${ASSET_PLACEMENT_LIMITS.maxAssets} different ones, ${ASSET_PLACEMENT_LIMITS.maxAnimatedPlacements} of them playing a clip; this recipe places ${placed.length}, ${distinct.size} and ${animated.length}. Reuse an asset id for repeats or merge props into one GLB.`);
   }
   const copyCounter = new Map();
   const geometryIds = new Set();

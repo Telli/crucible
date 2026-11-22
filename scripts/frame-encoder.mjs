@@ -21,12 +21,21 @@ export function audioTrimArguments(audioCodec, pictureSeconds) {
   return ['-af', 'apad', ...audioCodecArguments(audioCodec), '-t', pictureSeconds.toFixed(6)];
 }
 
+/**
+ * The page encoder's raw H.264 has no timing data, so ffmpeg guesses each frame's time from the stream. For that stream it
+ * guesses right for the first 50 frames and then gives every frame a 1 microsecond length (a 4 s clip came out 2.08 s long).
+ * The page encodes one frame per tick and no B-frames, so frame N is at N / fps: say so explicitly.
+ */
+export function pageEncodedTimestampFilter(fps) {
+  return `setts=ts=N/${fps}/TB:duration=1/${fps}/TB`;
+}
+
 /** The complete ffmpeg argument list for one encoder, kept apart from the spawn so tests can pin it without ffmpeg. */
 export function frameEncoderArguments({ output, fps, format, backend, audioArguments, audioCodec, frameCount, width, height }) {
   const raw = format === 'rawvideo' ? rawFrameInputArguments({ width, height, fps }) : undefined;
   const encoded = format === 'h264';
   const codec = encoded
-    ? ['-c:v', 'copy']
+    ? ['-c:v', 'copy', '-bsf:v', pageEncodedTimestampFilter(fps)]
     : backend === 'gpu'
     ? ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', '20']
     : ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-threads', '2'];

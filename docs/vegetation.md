@@ -23,7 +23,7 @@ const renderer = new CrucibleRenderer(canvas, [terrain, ...view.parts], options)
 
 ## Trees
 
-`createTree(species | { species, height, leaves }, seed)` grows one tree. Species: `broadleaf`, `birch`, `conifer`, `palm`, `bush`.
+`createTree(species | { species, height, leaves }, seed)` grows one tree. Species: `broadleaf`, `birch`, `conifer`, `palm`, `bush`. `height` runs from 0.01 to 1000 m; a seed of any function here must be a finite number.
 The same species and seed always give the same tree.
 
 The skeleton is a parametric recursive branching model: each generation has a length, wander, tropism (up or droop), taper and child spread.
@@ -115,7 +115,7 @@ A level changes only after the distance passes its threshold by `hysteresis` (de
 It returns `{ parts, changed, levelCounts, culled, triangles }`. Part objects are cached per instance and level, so unchanged instances keep their identity.
 When `changed` is true, build a new renderer from the new parts. Grass switches at 24 m; set `cullDistance` to drop far instances.
 
-`vegetationParts(variant, matrix, level, name)` places one tree or clump yourself.
+`vegetationParts(variant, matrix, level, name)` places one tree or clump yourself. The crown sky field needs finite vertex positions: a missing list or a NaN or Infinity vertex is refused with a `RangeError` that names the fix. An empty list passed to `visibilityOf` still returns an empty visibility array.
 
 ## Recipes and MCP
 
@@ -135,7 +135,7 @@ const view = selectLevels(forest.instances, camera.eye, { impostors: { from: 3 }
 
 `pixelError: { pixels, height, fov }` sets the switch distances from an error in screen pixels instead of metres. The default distances (38, 95 and 150 m) hold for 4 pixels on a 1080 pixel high view with a 60 degree vertical field of view; `pixelErrorScale` returns the factor for any other view, and the factor grows with the instance's scale. It works with `fade`, with `impostors` and with the plain selection.
 
-`impostors` (`true` or `{ from, frameSize, level }`) draws every tree from level `from` on (default 3, beyond 150 m) as one card instead of its mesh. `from: 2` starts at 95 m. Bushes and palms take it too; grass and flowers do not. The result gains `impostors` (cards drawn) and `fading` (instances in a cross-fade).
+`impostors` (`true` or `{ from, frameSize, level }`; `frameSize` is a whole number from 8 to 512, default 96) draws every tree from level `from` on (default 3, beyond 150 m) as one card instead of its mesh. `from: 2` starts at 95 m. Bushes and palms take it too; grass and flowers do not. The result gains `impostors` (cards drawn) and `fading` (instances in a cross-fade).
 
 An impostor is baked per tree variant on first use, or by `prepareImpostors(variants)`. `bakeImpostorAtlas` draws the tree from 8 by 8 directions of a hemi-octahedral grid (the upper hemisphere, so a view from below the horizon shows the horizon view) into a colour atlas (sRGB, alpha is the leaf mask) and a normal atlas (linear, the tangent space of that view, green up), each 96 px a frame, on the CPU in plain JavaScript: it runs in Node and the browser alike and the pixels repeat exactly. It bakes level 3 of the tree, the mesh the card replaces, so the card keeps the same silhouette (`level` picks another). Instance tint multiplies the colour like it does on the meshes.
 

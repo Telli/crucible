@@ -50,7 +50,7 @@ test('objectNodes groups the object IDs by node, and a placed asset is one node'
     nodes: [{ id: 'floor', geometry: 'ground', material: 'grass' }, { id: 'prop', asset: { id: assetId } }],
   };
   const scene = createAgentScene(recipe, {}, { assets: new Map([[assetCopyKey(assetId, 0), asset]]) });
-  const renderer = { batches: [{ parts: scene.parts }], drawsInOpaqueLoop: () => true };
+  const renderer = { batches: [{ parts: scene.parts }], drawsInOpaqueLoop: () => true, takesObjectIds: () => true };
   installRenderPasses(renderer);
   const names = renderer.passSupport.objectNames();
   const nodes = renderer.passSupport.objectNodes();
@@ -75,7 +75,7 @@ function sceneWithNodeIds(ids, lines) {
 test('a node named like an Object.prototype member is an ordinary node', () => {
   const ids = ['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__'];
   const scene = sceneWithNodeIds(ids);
-  const renderer = { batches: [{ parts: scene.parts }], drawsInOpaqueLoop: () => true };
+  const renderer = { batches: [{ parts: scene.parts }], drawsInOpaqueLoop: () => true, takesObjectIds: () => true };
   installRenderPasses(renderer);
   const nodes = renderer.passSupport.objectNodes();
   assert.deepEqual(Object.keys(nodes).sort(), [...ids].sort());
@@ -115,7 +115,7 @@ test('naming the node that grows vegetation reaches every generated part', () =>
     environment: { lines: { nodes: { oak: { lines: false } } } },
   };
   const scene = createAgentScene(recipe, {});
-  const renderer = { batches: [{ parts: scene.parts }], drawsInOpaqueLoop: () => true };
+  const renderer = { batches: [{ parts: scene.parts }], drawsInOpaqueLoop: () => true, takesObjectIds: () => true };
   installRenderPasses(renderer);
   const nodes = renderer.passSupport.objectNodes();
   assert.deepEqual(Object.keys(nodes), ['oak']);
@@ -140,4 +140,13 @@ test('removing a node that lines.nodes names says to drop its entry in the same 
   const scene = sceneWithNodeIds(['rug', 'floor'], { nodes: { rug: { lines: false } } });
   assert.throws(() => scene.apply([{ type: 'remove-node', id: 'rug' }], { expectedRevision: 0 }), /rug.*drop that node's entry from lines\.nodes in the same call/s);
   scene.apply([{ type: 'remove-node', id: 'rug' }, { type: 'set-environment', environment: { lines: { nodes: { floor: { silhouetteOnly: true } } } } }], { expectedRevision: 0 });
+});
+
+test('a node with hundreds of thousands of object IDs still gets its table', () => {
+  const crowdSize = 400_000;
+  const crowd = Array.from({ length: crowdSize }, (unused, index) => index + 1);
+  const lines = resolveLineArt({ nodes: { crowd: { silhouetteOnly: true } } });
+  const table = lineNodeTable(lines, { crowd });
+  assert.equal(table.count, crowdSize + 1);
+  assert.equal(table.data[crowdSize * 4 + 3], 2 + 4 * 1, 'the last ID carries the mode and the node index');
 });

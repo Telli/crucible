@@ -3,11 +3,11 @@ import { materialTags } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
-import { postFragment, createPostFragment, GRID_MOTION_STEP, NOISE_OCTAVES_STEP, localVolumeKindSteps, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
+import { postFragment, createPostFragment, GRID_MOTION_STEP, GRID_DETAIL_STEP, NOISE_OCTAVES_STEP, localVolumeKindSteps, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
 import { createGlazeBackend } from './glaze-backend.js';
 import { fullscreenVertex, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
-import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError } from './budget.js';
+import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError, automaticBudgetCeilingMiB } from './budget.js';
 import { applyProjection } from './camera.js';
 import { fittedNearPlane, sceneBoundsOfParts } from './near-plane-fit.js';
 import { installReversedDepth, prepareCameraRelativeProgram } from './reversed-depth.js';
@@ -25,10 +25,9 @@ import { wearUniformValues } from './material-wear.js';
 import { fittedFogDensity } from './fog-fit.js';
 import { canUseCompactColor, respecifyColorTargets } from './compact-color.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
-import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope } from './shadow-light.js';
+import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope, sunShadowMapSize } from './shadow-light.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
 
-const SHADOW_MAP_SIZE = 2048;
 // Liquid and foam see the resolved opaque scene, so they draw in their own pass after it.
 const TRANSLUCENT_TAGS = new Set(['liquid', 'foam']);
 // The 42nd float is the opacity of a blend or add part, so parts that differ only in opacity share a batch.
@@ -43,6 +42,28 @@ function isTranslucentMode(alphaMode) {
   return alphaMode === 'blend' || alphaMode === 'add';
 }
 const ZERO_VECTOR = Object.freeze([0, 0, 0]);
+/**
+ * Whether a material's shader reads the opaque scene behind it (its depth and colour, resolved once per frame before the first
+ * blended batch draws). Only water does today: contact foam measures the gap to what lies behind the water. Add a reader here and
+ * its batches stay in the blend pass, where the resolve happens, at any opacity.
+ */
+export function materialReadsOpaqueScene(material) {
+  return material.tag === 'water' && material.contactFoam !== undefined;
+}
+
+/**
+ * Whether a blend batch first draws as a cutout of its fully opaque texels. Most of a baked scene exported as BLEND is opaque, and a
+ * cutout writes depth, so it hides whatever lies behind it in any draw order. The cutout draws before the opaque-scene resolve,
+ * so a batch whose shader reads that scene stays in the blend pass, where it is drawn after the resolve.
+ */
+export function blendBatchDrawsCutoutFirst(batch) {
+  if (materialReadsOpaqueScene(batch.parts[0].material)) return false;
+  for (let index = 0; index < batch.instanceCount; index++) {
+    if (batch.instanceData[index * INSTANCE_STRIDE + OPACITY_OFFSET] >= 0.999) return true;
+  }
+  return false;
+}
+
 const MATERIAL_MAPS = ['map', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
 const MAP_UNIFORMS = ['baseMap', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
 const MAP_FLAGS = ['hasBaseMap', 'hasNormalMap', 'hasMetallicRoughnessMap', 'hasOcclusionMap', 'hasEmissiveMap'];
@@ -77,7 +98,7 @@ const MAP_SHADER_FEATURES = ['baseMap', 'normalMap', 'metallicRoughnessMap', 'oc
 // Part or material fields that name their shader feature and switch it on when set.
 const PRESENT_SHADER_FEATURES = ['skin', 'crowd', 'morph', 'lightMap', 'waterReflection', 'retro', 'waterGlint'];
 // Material fields that name their shader feature and switch it on above zero.
-const POSITIVE_SHADER_FEATURES = ['moss', 'anisotropy', 'iridescence', 'toon', 'boxMapScale', 'emissionFresnel'];
+const POSITIVE_SHADER_FEATURES = ['moss', 'anisotropy', 'iridescence', 'toon', 'boxMapScale', 'emissionFresnel', 'softEdge'];
 // Tags whose look the main fragment shader draws with code that other tags never reach.
 const TAG_SHADER_FEATURES = new Set(['floor', 'water', 'foliage', 'terrain', 'grass', 'fire', 'smoke', 'unlit']);
 
@@ -234,7 +255,7 @@ function materialMapState(material) {
   const occlusionStrength = material.occlusionStrength ?? 1;
   if (material.layers || material.splat) requireSplatSupport().validate(material);
   if (material.layers && PROCEDURAL_MATERIAL_TAGS.has(material.tag)) throw new Error('Splat layers require a standard PBR material tag.');
-  return [...MATERIAL_MAPS.map(field => material[field] ?? null), normalScale[0], normalScale[1], occlusionStrength, ...mossState(material), material.boxMapScale ?? 0, material.boxMapAxis ?? 1, ...lightMapState(material), material.layers ?? null, material.splat ?? null, material.layerMaps ?? null, material.environmentProbe ?? null, material.waterReflection ?? null, material.irradianceGrid ?? null, material.wear ?? null, material.waterRamp ?? null];
+  return [...MATERIAL_MAPS.map(field => material[field] ?? null), normalScale[0], normalScale[1], occlusionStrength, ...mossState(material), material.boxMapScale ?? 0, material.boxMapAxis ?? 1, ...lightMapState(material), material.layers ?? null, material.splat ?? null, material.layerMaps ?? null, material.environmentProbe ?? null, material.waterReflection ?? null, material.irradianceGrid ?? null, material.wear ?? null, material.foamEdge ?? null, material.foamWidth ?? null, material.foamVeins ?? null, material.contactFoam ?? null, material.waterRamp ?? null, material.ripples ?? null];
 }
 
 // A baked light map reads the second UV set, so it is only drawn for parts that cannot be skinned or morphed.
@@ -256,10 +277,10 @@ function validateAlphaMaterial(material) {
   if (material.doubleSided !== undefined && typeof material.doubleSided !== 'boolean') throw new TypeError('doubleSided must be a boolean');
 }
 
-/** Opacity of one instance: blend and add parts carry it per instance, so it never splits a batch. */
-function instanceOpacity(material) {
+/** Opacity of one instance: blend and add parts carry it per instance, so it never splits a batch. A part's `opacityScale.value` (0 to 1) multiplies it. */
+export function instanceOpacity(material, part) {
   const alphaMode = material.alphaMode ?? 'opaque';
-  return isTranslucentMode(alphaMode) ? (material.opacity ?? 1) + (material.opacityBias ?? 0) : 1;
+  return isTranslucentMode(alphaMode) ? ((material.opacity ?? 1) + (material.opacityBias ?? 0)) * (part?.opacityScale?.value ?? 1) : 1;
 }
 
 /** Alpha settings that every instance of one draw call must share. Fields that a mode ignores, and the per-instance opacity, are normalized away. */
@@ -277,10 +298,16 @@ function materialAlphaState(material) {
 // Additive light is not a shadow caster unless the part asks for it. A blended part lying on a surface (a decal) would shade
 // the surface it covers, so it casts only when asked too. A shadow catcher only shows the shadow it receives, so it never
 // casts one unless the part asks for it. Other blended parts cast a shadow weighted by their opacity.
-function castsShadow(part) {
+/**
+ * Whether a part is drawn into the sun's shadow map. A water sheet defaults to no: the water shader already dims the sun
+ * along its leg through the water (Beer-Lambert), and a sheet that also shadowed itself drew dark blocks on the sea,
+ * where its own facets met the shadow map. Set `castShadow: true` to make a sheet cast anyway.
+ */
+export function castsShadow(part) {
   const alphaMode = part.material.alphaMode ?? 'opaque';
   const decal = alphaMode === 'blend' && depthLayerOf(part) > 0;
-  return part.castShadow ?? !(part.shadowCatcher === true || alphaMode === 'add' || decal);
+  const waterSheet = part.material.tag === 'water';
+  return part.castShadow ?? !(part.shadowCatcher === true || alphaMode === 'add' || decal || waterSheet);
 }
 
 /** A caster whose shadow is weighted by opacity or tinted by its colour: blended and transmissive parts. */
@@ -363,7 +390,8 @@ export function isMirroredMatrix(matrix) {
 function packInstance(data, index, part, normalMatrix) {
   const offset = index * INSTANCE_STRIDE;
   const material = part.material;
-  if (isHidden(part)) {
+  // A fully faded part draws nothing: a blended surface keeps its specular glints at zero alpha, so it is hidden like a visible: false part.
+  if (isHidden(part) || part.opacityScale?.value === 0) {
     data.fill(0, offset, offset + 25);
   } else {
     data.set(part.matrix, offset);
@@ -377,11 +405,14 @@ function packInstance(data, index, part, normalMatrix) {
   copyVector3(data, offset + 32, part.assembly?.offset ?? ZERO_VECTOR);
   copyVector3(data, offset + 35, part.assembly?.detailOffset ?? ZERO_VECTOR);
   copyVector3(data, offset + 38, material.emissiveColor ?? material.color);
-  data[offset + OPACITY_OFFSET] = instanceOpacity(material);
+  data[offset + OPACITY_OFFSET] = instanceOpacity(material, part);
 }
 
 // The objectId mode of RENDER_PASS_MODES in render-passes.js.
 const OBJECT_ID_PASS_MODE = 5;
+const CRYPTOMATTE_PASS_MODE = 17;
+/** Alpha at or above which a blended texel counts as part of its object in the ID passes. */
+const ID_PASS_BLEND_CUTOFF = 0.5;
 
 function isCullable(parts) {
   const first = parts[0];
@@ -448,7 +479,8 @@ export function studioFloorHeight(parts) {
   return 0.019 - bottom > height * 0.1 ? bottom + height * 0.02 : 0.019;
 }
 
-function groundPart(height = 0.019) {
+/** The studio floor as a part: a 200 by 200 plane at `height` with the floor shader. */
+export function groundPart(height = 0.019) {
   return {
     name: 'Studio floor',
     geometry: {
@@ -597,8 +629,17 @@ export function configureTexture(renderer, info) {
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, info.magFilter);
   if (info.mipmaps) {
     context.generateMipmap(context.TEXTURE_2D);
-    renderer.applyAnisotropy(context.TEXTURE_2D);
+    if (filtersSmoothly(info)) renderer.applyAnisotropy(context.TEXTURE_2D);
   }
+}
+
+// Anisotropic filtering replaces both filters with its own smooth one, so it would turn a NEAREST sampler (pixel art, block
+// textures) into a blur. Only a texture that already filters linearly in both directions gets it.
+function filtersSmoothly({ minFilter, magFilter }) {
+  const LINEAR = 9729;
+  const LINEAR_MIPMAP_NEAREST = 9985;
+  const LINEAR_MIPMAP_LINEAR = 9987;
+  return magFilter === LINEAR && (minFilter === LINEAR_MIPMAP_NEAREST || minFilter === LINEAR_MIPMAP_LINEAR);
 }
 
 export function textureDescriptorInfo(map, maximumSize = Infinity) {
@@ -866,6 +907,8 @@ export class CrucibleRenderer {
     const expectedGeometryBytes = groups.reduce((total, group) => total + geometryBufferBytes(group[0].geometry) + group.length * INSTANCE_STRIDE * 4, 0);
     this.memoryBudgetMiB = planRenderSize({ width: Math.max(1, canvas.clientWidth), height: Math.max(1, canvas.clientHeight), pixelRatio, samples: this.samples, memoryBudgetMiB, geometryBytes: expectedGeometryBytes, textureBytes: this.textureBytes, hdr: this.hdr, bloom: !benchmark, depth: this.depth, maximumSize: textureLimit, maximumMemoryBudgetMiB }).memoryBudgetMiB;
     this.maximumMemoryBudgetMiB = maximumMemoryBudgetMiB;
+    // A budget the caller did not set was sized for the first scene; it follows later scene changes up to its ceiling instead of freezing the page (#2828).
+    this.memoryBudgetFollowsScene = memoryBudgetMiB === undefined;
     this.view = mat4.create();
     this.projection = mat4.create();
     this.viewProjection = mat4.create();
@@ -1062,13 +1105,37 @@ export class CrucibleRenderer {
     return this.backend.startProgram(benchmark ? benchmarkVertexShader : createVertexShader(this.shaderFeatures), fragmentSource);
   }
 
+  // While a context is being prepared, a main program that is still linking stays started (ProgramNotReady). The draw that comes
+  // back finishes that same program instead of compiling its 40 KB of source again; a build for other source drops it (#2944).
   buildMainProgram() {
-    this.finishMainProgram(this.startMainProgram());
+    const key = `${[...this.shaderFeatures ?? []].sort()}|${this.viewTransform}|${Boolean(this.cameraRelativeMainProgram)}`;
+    if (this.pendingMainProgram && (this.pendingMainProgram.key !== key || this.pendingMainProgram.look !== this.lookSource)) this.releasePendingMainProgram();
+    this.pendingMainProgram ??= { key, look: this.lookSource, started: this.startMainProgram() };
+    const { started } = this.pendingMainProgram;
+    try {
+      this.finishMainProgram(started);
+    } catch (error) {
+      // A failed program is already deleted; only one that is still building is kept for the next draw.
+      if (!(error instanceof ProgramNotReady)) this.pendingMainProgram = null;
+      throw error;
+    }
+    this.pendingMainProgram = null;
+  }
+
+  // Reads the link status first: deleting a program mid-link leaves a GL error that the next draw on this context sees (#74).
+  releasePendingMainProgram() {
+    if (!this.pendingMainProgram) return;
+    const context = this.context;
+    const { program, shaders } = this.pendingMainProgram.started;
+    context.getProgramParameter(program, context.LINK_STATUS);
+    shaders.forEach((shader) => context.deleteShader(shader));
+    context.deleteProgram(program);
+    this.pendingMainProgram = null;
   }
 
   finishMainProgram(pendingProgram) {
     this.program = this.backend.finishProgram(pendingProgram);
-    this.uniforms = Object.fromEntries(['materialDielectric', 'materialEmissionFresnel', 'materialCoat', 'materialSheen', 'materialAnisotropy', 'materialIridescence', 'lightLinkMask', 'boxMapScale', 'boxMapAxis', 'lightMap', 'lightMapScale', 'hasLightMap', 'viewProjection', 'flushBias', 'clipPerMetre', 'lightProjection', 'eye', 'armorColor', 'armorSurface', 'exposure', 'inspection', 'shadowMap', 'shadowBiasPerSlope', ...MAP_UNIFORMS, ...MAP_FLAGS, ...SKIN_UNIFORMS, ...MORPH_UNIFORMS, 'normalScale', 'occlusionStrength', 'materialMoss', 'wearEnabled', 'wearMetal', 'wearDirt', 'wearShape', 'wearDirtShape', ...SPLAT_UNIFORMS, 'hdrEnabled', 'time', 'wind', 'worldMode', 'daylight', 'fogColor', 'lightDirection', 'fogDensity', 'waterRipple', 'rippleTime', 'explosionProgress', 'explosionCenter', 'assemblyAmount', 'renderPassMode', 'renderPassDepthRange', 'renderPassObjectBase', 'baseColor', 'surface', 'instanceEmission', 'instanceOpacity', 'boxNormalMatrix', 'shadowBlind', 'compositeMode', 'tintShadowMap', 'tintBlind', ...ALPHA_UNIFORMS].map((name) => [name, this.context.getUniformLocation(this.program, name)]));
+    this.uniforms = Object.fromEntries(['materialDielectric', 'materialEmissionFresnel', 'materialSoftEdge', 'materialCoat', 'materialSheen', 'materialAnisotropy', 'materialIridescence', 'lightLinkMask', 'boxMapScale', 'boxMapAxis', 'lightMap', 'lightMapScale', 'hasLightMap', 'viewProjection', 'flushBias', 'clipPerMetre', 'lightProjection', 'eye', 'armorColor', 'armorSurface', 'exposure', 'inspection', 'shadowMap', 'shadowBiasPerSlope', ...MAP_UNIFORMS, ...MAP_FLAGS, ...SKIN_UNIFORMS, ...MORPH_UNIFORMS, 'normalScale', 'occlusionStrength', 'materialMoss', 'wearEnabled', 'wearMetal', 'wearDirt', 'wearShape', 'wearDirtShape', ...SPLAT_UNIFORMS, 'hdrEnabled', 'time', 'wind', 'worldMode', 'daylight', 'fogColor', 'lightDirection', 'fogDensity', 'waterRipple', 'rippleTime', 'explosionProgress', 'explosionCenter', 'assemblyAmount', 'renderPassMode', 'renderPassDepthRange', 'renderPassObjectBase', 'baseColor', 'surface', 'instanceEmission', 'instanceOpacity', 'boxNormalMatrix', 'shadowBlind', 'compositeMode', 'tintShadowMap', 'tintBlind', ...ALPHA_UNIFORMS].map((name) => [name, this.context.getUniformLocation(this.program, name)]));
     for (const name of LIGHT_UNIFORMS) {
       this.uniforms[name] = this.context.getUniformLocation(this.program, name);
     }
@@ -1181,7 +1248,14 @@ export class CrucibleRenderer {
     const missing = features.filter(feature => !this.shaderFeatures.has(feature));
     if (missing.length === 0) return;
     missing.forEach(feature => this.shaderFeatures.add(feature));
-    this.rebuildMainProgram();
+    try {
+      this.rebuildMainProgram();
+    } catch (error) {
+      // A program that is still linking (ProgramNotReady) leaves the old main program in place. Forget the features, so the draw that comes back asks for them again
+      // and finds the program built; keeping them would draw the old program with no render pass code, and the emission mask would read the lit image (#1360).
+      missing.forEach(feature => this.shaderFeatures.delete(feature));
+      throw error;
+    }
   }
 
   rebuildMainProgram() {
@@ -1279,8 +1353,8 @@ export class CrucibleRenderer {
   pointInstanceAttributes() {
     const stride = INSTANCE_STRIDE;
     for (let column = 0; column < 4; column++) this.attribute(2 + column, 4, stride * 4, column * 16);
-    for (let column = 0; column < 3; column++) this.attribute(6 + column, 3, stride * 4, 64 + column * 12);
-    this.attribute(9, 3, stride * 4, 100);
+    // The normal matrix (9 floats) and colour (3) are read as three vec4s (floats 16 to 27) so slot 9 stays empty (#2042).
+    for (let slot = 0; slot < 3; slot++) this.attribute(6 + slot, 4, stride * 4, 64 + slot * 16);
     this.attribute(10, 4, stride * 4, 112);
     this.attribute(11, 3, stride * 4, 128);
     this.attribute(12, 3, stride * 4, 140);
@@ -1423,6 +1497,19 @@ export class CrucibleRenderer {
     return batch;
   }
 
+  /**
+   * Raises a budget the caller did not set so it holds `neededBytes`, when that fits under the automatic ceiling and the runtime's
+   * own ceiling. Returns whether the budget now holds it; a budget the caller set is never changed.
+   */
+  growAutomaticBudgetTo(neededBytes) {
+    if (!this.memoryBudgetFollowsScene) return false;
+    const neededMiB = Math.ceil(neededBytes / (1024 * 1024));
+    const ceilingMiB = Math.min(automaticBudgetCeilingMiB(), this.maximumMemoryBudgetMiB ?? Infinity);
+    if (neededMiB > ceilingMiB) return false;
+    this.memoryBudgetMiB = neededMiB;
+    return true;
+  }
+
   /** Reconcile immutable rigid, untextured geometry without rebuilding programs or render targets. `retainedUnchanged` skips the re-sync of parts in kept batches, for a world that grows in slices. */
   replaceParts(parts, { regroupOnly = false, retainedUnchanged = false } = {}) {
     if (!Array.isArray(parts) || new Set(parts).size !== parts.length) {
@@ -1445,6 +1532,12 @@ export class CrucibleRenderer {
       if (!this.geometryBuffers.has(geometry)) validateReplacementGeometry(geometry);
     }
     const retained = new Set();
+    // Groups share a few materials, and the layer state is 28 validated values, so each material answers once per call.
+    const layerStates = new Map();
+    const layerStateOf = material => {
+      if (!layerStates.has(material)) layerStates.set(material, materialLayerState(material));
+      return layerStates.get(material);
+    };
     const replacements = groups.map(group => {
       const first = group[0];
       const location = this.partLocations.get(first);
@@ -1456,7 +1549,7 @@ export class CrucibleRenderer {
         batch.floor === (first.material.tag === 'floor') && batchPass(batch) === partPass(first) &&
         [batch.alphaMode, batch.alphaCutoff, batch.opacity, batch.doubleSided, batch.retro, batch.waterGlint].every((value, index) => value === alphaState[index]) &&
         batch.mapState.every((value, index) => value === mapState[index]) &&
-        batch.layerState.every((value, index) => value === materialLayerState(first.material)[index]);
+        batch.layerState.every((value, index) => value === layerStateOf(first.material)[index]);
       if (sameParts && sameState) {
         retained.add(batch);
         return { group, batch };
@@ -1479,7 +1572,7 @@ export class CrucibleRenderer {
     const newInstanceBytes = replacements.filter(item => !item.batch).reduce((total, item) => total + item.group.length * INSTANCE_STRIDE * 4, 0);
     const frameBytes = estimateFrameBytes(this.canvas.width, this.canvas.height, this.samples, 2048, { hdr: this.hdr, bloom: !this.benchmark, depth: this.depth });
     const peakBytes = frameBytes + this.textureBytes + this.geometryBytes + newGeometryBytes + newInstanceBytes;
-    if (peakBytes > this.memoryBudgetMiB * 1024 * 1024) {
+    if (peakBytes > this.memoryBudgetMiB * 1024 * 1024 && !this.growAutomaticBudgetTo(peakBytes)) {
       throw memoryBudgetError(this.geometryBytes + newGeometryBytes + newInstanceBytes, this.textureBytes, frameBytes, this.memoryBudgetMiB, { maximumMemoryBudgetMiB: this.maximumMemoryBudgetMiB });
     }
     const previousLocations = this.partLocations;
@@ -1720,7 +1813,9 @@ export class CrucibleRenderer {
   // cascades replace the main shader's lookup and nothing else (volume fog, subsurface thickness) still reads this map.
   shadowMapSizeWanted() {
     const casts = this.batches.some(batch => !batch.floor && batch.castShadow && !this.tintsShadow(batch));
-    return casts && !this.shadowCascades?.replacesSingleMap(this) ? SHADOW_MAP_SIZE : 1;
+    if (!casts || this.shadowCascades?.replacesSingleMap(this)) return 1;
+    const light = resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds, this.fittedWorldShadowView());
+    return sunShadowMapSize(light.extent);
   }
 
   createShadowMap() {
@@ -1759,7 +1854,7 @@ export class CrucibleRenderer {
     context.enable(context.DEPTH_TEST);
     context.enable(context.CULL_FACE);
     context.clear(context.DEPTH_BUFFER_BIT);
-    this.shadowBiasPerSlope = shadowBiasPerSlope(light, SHADOW_MAP_SIZE);
+    this.shadowBiasPerSlope = shadowBiasPerSlope(light, mapSize);
     this.drawShadowCasters(this.lightProjection, mapSize, true);
     this.drawTintedShadows();
     context.bindFramebuffer(context.FRAMEBUFFER, null);
@@ -2024,6 +2119,8 @@ export class CrucibleRenderer {
 
   releaseFrameTargets() {
     const context = this.context;
+    // The fog step may have left one of the textures deleted below on a mipmapped filter; binding it later is INVALID_OPERATION (1282, #2205).
+    this.mipmappedTexture = null;
     if (this.multisampleFramebuffer) this.backend.deleteFramebuffer(this.multisampleFramebuffer);
     if (this.resolveFramebuffer) this.backend.deleteFramebuffer(this.resolveFramebuffer);
     if (this.multisampleColor) this.backend.deleteRenderbuffer(this.multisampleColor);
@@ -2056,9 +2153,22 @@ export class CrucibleRenderer {
     this.occlusionTarget = null;
   }
 
-  /** Whether a batch is drawn by the opaque loop, and so by render passes. Its parts take object IDs in this order. */
+  /** Whether a batch is drawn by the opaque loop, and so by render passes. */
   drawsInOpaqueLoop(batch) {
     return batchPass(batch) === 'opaque' && !isTranslucentMode(batch.alphaMode);
+  }
+
+  /**
+   * Whether a batch's parts take object IDs, in draw order. A blended batch (tree leaves exported as BLEND) takes them too:
+   * the object ID and Cryptomatte passes draw it as a cutout, so a matte covers its texels instead of leaving them black.
+   */
+  takesObjectIds(batch) {
+    return this.drawsInOpaqueLoop(batch) || (batchPass(batch) === 'opaque' && batch.alphaMode === 'blend');
+  }
+
+  /** The batch an ID pass draws: a blended batch becomes a cutout at half alpha, so see-through texels write nothing and hide nothing. */
+  idPassBatch(batch) {
+    return batch.alphaMode === 'blend' ? { ...batch, alphaMode: 'mask', alphaCutoff: ID_PASS_BLEND_CUTOFF } : batch;
   }
 
   // Compiled and allocated on first use, so scenes without occlusion pay nothing.
@@ -2309,6 +2419,7 @@ export class CrucibleRenderer {
     if (localVolumes && this.localVolumeBuffers.gridShutter > 0) steps.push(GRID_MOTION_STEP);
     if (localVolumes) steps.push(...localVolumeKindSteps(this.localVolumeBuffers.kind));
     if (localVolumes && this.localVolumeBuffers.noiseOctaves) steps.push(NOISE_OCTAVES_STEP);
+    if (localVolumes && this.localVolumeBuffers.gridDetail) steps.push(GRID_DETAIL_STEP);
     if (fogSky) steps.push('sky');
     if (frame.volumeExplosion) steps.push('explosion');
     if (frame.linearOutput) steps.push(requireFeatureCode('linearOutput').step(this, frame));
@@ -2553,14 +2664,6 @@ export class CrucibleRenderer {
     this.context.bufferSubData(this.context.ARRAY_BUFFER, 0, batch.sortedData);
   }
 
-  /** Whether any instance of a blend batch is fully opaque, and so has opaque texels to draw as a cutout first. */
-  hasOpaqueInstance(batch) {
-    for (let index = 0; index < batch.instanceCount; index++) {
-      if (batch.instanceData[index * INSTANCE_STRIDE + OPACITY_OFFSET] >= 0.999) return true;
-    }
-    return false;
-  }
-
   /** Alpha-blended batches draw after opaque and masked geometry, farthest first, without writing depth. Additive batches draw last. */
   drawBlendBatches(frame) {
     const context = this.context;
@@ -2589,7 +2692,7 @@ export class CrucibleRenderer {
     // Fully opaque texels (most of a baked scene exported as BLEND) draw first as a cutout that writes depth, so they hide
     // whatever lies behind them in any draw order. The blend pass below then shades only the translucent texels (depth LESS).
     for (const { batch } of ordered) {
-      if (this.hasOpaqueInstance(batch)) this.drawAlphaBatch({ ...batch, alphaMode: 'mask', alphaCutoff: 0.999 }, true);
+      if (blendBatchDrawsCutoutFirst(batch)) this.drawAlphaBatch({ ...batch, alphaMode: 'mask', alphaCutoff: 0.999 }, true);
     }
     context.enable(context.BLEND);
     // The program writes a blended part premultiplied, so its specular is not faded by alpha (blend-output.js).
@@ -2685,6 +2788,7 @@ export class CrucibleRenderer {
       this.context.uniform1i(this.uniforms.lightLinkMask, layers[21]);
       this.context.uniform1f(this.uniforms.materialToon, layers[22]);
       this.context.uniform1f(this.uniforms.materialEmissionFresnel, layers[24]);
+      this.context.uniform1f(this.uniforms.materialSoftEdge, layers[28]);
       this.context.uniform1f(this.uniforms.boxMapScale, batch.mapState[12]);
       this.context.uniform1i(this.uniforms.boxMapAxis, batch.mapState[13]);
       if (this.shaderFeatures?.has('splat')) requireSplatSupport().bind(this, batch.splat);
@@ -2728,6 +2832,10 @@ export class CrucibleRenderer {
   }
 
   render(frame) {
+    this.localEmissionMaskReady = false;
+    if (frame.pass === undefined && !frame.reflectionTarget && (frame.environment?.localVolumes ?? this.environment?.localVolumes)?.length > 0) {
+      this.localEmissionMaskReady = requireFeatureCode('volumeFog').support.drawEmissionMask(this, frame);
+    }
     const { eye, target = [0, 1.2, 0], armorColor = [0.53, 0.39, 0.24], armorSurface = [0.88, 0.32], exposure = 1, inspection = false } = frame;
     const effects = resolveEffects(frame.effects);
     const environment = { lightDirection: [-3, 6, 4], fogColor: [0.35, 0.43, 0.43], fogDensity: 0.006, daylight: 1, explosionCenter: [0, 0, 0], ...this.environment, ...frame.environment };
@@ -2751,7 +2859,7 @@ export class CrucibleRenderer {
     // The shadow view follows the sun, so a moved sun redraws the map.
     const lightChanged = String(this.activeLightDirection) !== String(environment.lightDirection);
     this.activeLightDirection = environment.lightDirection;
-    this.diagnostics = frameDiagnostics({ world: this.world, depth: this.depth, effects, lightDirection: environment.lightDirection, shadowBounds: this.shadowBounds, coplanarProblems: this.coplanarDiagnostics?.(this.batches), skinProblems: deformationSupport.reflectedSkinDiagnostics?.(this.partLocations) });
+    this.diagnostics = frameDiagnostics({ world: this.world, depth: this.depth, effects, requestedEffects: frame.effects, requestedExposure: frame.exposure, lightDirection: environment.lightDirection, shadowBounds: this.shadowBounds, coplanarProblems: this.coplanarDiagnostics?.(this.batches), skinProblems: deformationSupport.reflectedSkinDiagnostics?.(this.partLocations) });
     const start = performance.now();
     const context = this.context;
     this.beginGpuTiming();
@@ -2842,16 +2950,22 @@ export class CrucibleRenderer {
     context.uniform1f(this.uniforms.renderPassDepthRange, frame.passDepthRange ?? 100);
     if (passMode > 5) this.passSupport.bindFrame(frame, environment, volume);
     let objectBase = 0;
+    const idPass = passMode === OBJECT_ID_PASS_MODE || passMode === CRYPTOMATTE_PASS_MODE;
     for (const batch of this.batches) {
       if (this.benchmark) {
         this.drawBatch(batch, true);
-      } else if ((passMode > 5 ? this.passSupport.drawsInPass(batch, passMode) : this.drawsInOpaqueLoop(batch)) && !(mirrorTarget && batch.mapState[20])) {
-        context.uniform1f(this.uniforms.renderPassObjectBase, objectBase);
-        objectBase += batch.instanceCount;
-        // Object IDs are the instance ordinal, which culling and level selection renumber, so that pass draws every instance.
-        if (passMode > 5) this.passSupport.drawBatch(batch, passMode, frame, objectBase - batch.instanceCount);
-        else this.drawAlphaBatch(batch, true, passMode !== OBJECT_ID_PASS_MODE);
+        continue;
       }
+      const drawn = idPass ? this.takesObjectIds(batch) : (passMode > 5 ? this.passSupport.drawsInPass(batch, passMode) : this.drawsInOpaqueLoop(batch));
+      const firstObject = objectBase;
+      // A batch that takes object IDs keeps its numbers even when this pass does not draw it, so IDs agree across passes.
+      if (drawn || this.takesObjectIds(batch)) objectBase += batch.instanceCount;
+      if (!drawn || (mirrorTarget && batch.mapState[20])) continue;
+      context.uniform1f(this.uniforms.renderPassObjectBase, firstObject);
+      const drawnBatch = idPass ? this.idPassBatch(batch) : batch;
+      // Object IDs are the instance ordinal, which culling and level selection renumber, so that pass draws every instance.
+      if (passMode > 5) this.passSupport.drawBatch(drawnBatch, passMode, frame, firstObject);
+      else this.drawAlphaBatch(drawnBatch, true, passMode !== OBJECT_ID_PASS_MODE);
     }
     this.applyDepthRank(0);
     context.disable(context.SAMPLE_ALPHA_TO_COVERAGE);
@@ -2863,7 +2977,7 @@ export class CrucibleRenderer {
       return;
     }
     if (passMode) {
-      this.passSupport.copyToCanvas();
+      if (!frame.emissionMaskPass) this.passSupport.copyToCanvas();
     } else if (!this.benchmark) {
       this.drawTranslucent(frame, environment, assemblyAmount, environmentMap);
       this.drawBlendBatches(frame);
@@ -2922,6 +3036,7 @@ export class CrucibleRenderer {
     }
     this.pendingConstruction = null;
     this.pendingEnvironmentPrograms = null;
+    this.releasePendingMainProgram();
   }
 
   dispose() {
@@ -2979,4 +3094,3 @@ export class CrucibleRenderer {
 // Glaze is the public name of the real-time renderer; CrucibleRenderer stays for existing code.
 export { CrucibleRenderer as Glaze };
 /** Deprecated: the old name of CrucibleRenderer, removed in the release after 0.20.0. */
-export { CrucibleRenderer as Renderer67 };

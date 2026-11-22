@@ -32,8 +32,10 @@ uses for evaluated meshes:
 | `attributes` | `{ point, edge, face, corner }` | Named `{ data, size }` arrays per domain |
 
 Faces are polygons with three or more corners; consecutive corners cannot repeat a vertex. Inputs are not copied.
-Attribute arrays may be `Float32Array`, `Uint8Array`, `Uint16Array`, `Uint32Array` or `Int32Array` with 1 to 16
-components. Edge attributes need explicit `edgeVertices` and `cornerEdges`, because derived edge order is internal.
+`createMeshData()` with no object reports the missing `positions` array; `attributes: null` is rejected, but leaving
+`attributes` out is allowed. Attribute arrays may be `Float32Array`, `Uint8Array`, `Uint16Array`, `Uint32Array` or
+`Int32Array` with 1 to 16 components. Edge attributes need explicit `edgeVertices` and `cornerEdges`, because derived
+edge order is internal.
 
 Conventions used by the other functions:
 
@@ -259,7 +261,7 @@ Normals stay those of the base mesh. Test: `tests/mesh-shape-keys.test.js`.
 | `bounding_box` | none | Replaces the mesh with the axis-aligned box around all its vertices: 8 vertices and 6 quads. Tags and attributes are dropped. |
 | `convex_hull` | none | Replaces the mesh with its convex hull, outward triangles on the extreme vertices only, from at most 8192 vertices. A mesh whose vertices lie on one line or in one plane has no hull and is refused. Tags and attributes are dropped. |
 | `build` | `order` (index, random or axis), `seed` (0, random only), `axis` (y, axis only), `frame` (0), `start` (0), `length` (60 frames, above 0), `reverse` (false) | Shows the first faces in that order: none before `start`, all from `start + length`, linear between; `reverse` unbuilds. Unused vertices drop, tags and corner attributes follow their faces, and while no face shows the mesh is one zero-area triangle. Same fields and frame give the same bytes on every seek. Works on imported meshes. |
-| `ocean` | `axis` (y, the up axis), `windSpeed` (10 m/s, above 0 to 60), `direction` (0 degrees from +x toward +z), `choppiness` (1, 0 to 4), `size` (100 m, 1 to 10000), `seed` (0), `time` (0 s), `resolution` (8, 1 to 16), `spray` (false), `wake` | A seeded sea like Blender's Ocean modifier, without the FFT: a sum of travelling waves on a lattice of wave vectors with a Phillips spectrum for the wind, so the surface repeats every `size` metres and the same seed and time give identical vertices. Waves lift the up axis; choppiness pulls vertices toward the crests along the other two. The squeeze of that move is written as the vertex group `foam` (0 flat, 1 folded). `spray: true` also writes the vertex group `spray` (the foam where the surface rises, 0 to 1; full at a rise of a tenth of the wind speed per second) and the vector `spray`, the velocity of the surface in m/s along the mesh axes; a `particles` emitter reads both ([spray from the sea](physics.md#spray-from-the-sea)). Without `spray` nothing is written and the sea is unchanged. Waves cost (2 x resolution + 1)^2 - 1 per vertex, capped at 50 million evaluations. A box base has few vertices across a flat face (bevel 0 has none inside it), so run `subdivide_edges` with `cuts` first, or the waves have nothing to move. For an open sea: delete every face but the top, `subdivide_edges` with 16 cuts, `subdivide` 4 levels (about 74,000 vertices), scale the sheet to hundreds of metres, then `ocean` with a `size` of 50 (smaller than the wind's longest wave, so the sea has short chop), and a `vertex_color` field that mixes deep blue to white by `{ "attr": "group", "name": "foam" }`. A part with the `water` tag needs none of that: its shader reads the `foam` group itself and draws white rough foam on the folded crests, with a fresnel sky reflection, a sun glint and a deeper body colour at grazing angles. The mesh smooths over 180 degrees unless `smoothAngle` is set, so choppiness does not split the normals. `wake` (off) is `{ points: up to 64 of [x, z, strength 0-1, width m], height 0.06 }` and adds white foam and a small choppy displacement along a boat trail, see [Boats and wakes](physics.md#boats-and-wakes). Rigid bodies float on this sea: [Floating on the ocean](physics.md#floating-on-the-ocean). |
+| `ocean` | `axis` (y, the up axis), `windSpeed` (10 m/s, above 0 to 60), `direction` (0 degrees from +x toward +z), `choppiness` (1, 0 to 4), `size` (100 m, 1 to 10000), `seed` (0), `time` (0 s), `resolution` (8, 1 to 16), `coverage` (0, -1 to 1), `foamMemory` (0 = off, 0 to 30 s), `spray` (false), `wake` | A seeded sea like Blender's Ocean modifier, without the FFT: a sum of travelling waves on a lattice of wave vectors with a Phillips spectrum for the wind, so the surface repeats every `size` metres and the same seed and time give identical vertices. Waves lift the up axis; choppiness pulls vertices toward the crests along the other two. The squeeze of that move is written as the vertex group `foam` (0 flat, 1 folded). Foam is physical: it is where the Jacobian of that move falls below a threshold (Tessendorf folding), and the threshold is set so the foamy share of the sea equals the whitecap coverage of the wind, W = 3.84e-6 * U^3.41 for U in m/s (Monahan and O'Muircheartaigh, 1980; about 0.5 percent at 8 m/s and 4 percent at 15 m/s). `coverage` is an artist bias on top of that, like Blender's Ocean Foam Coverage: 0 is the physical sea, below 0 keeps only the top peaks, above 0 multiplies the share by 6^coverage (at 1, six times the whitecaps). A flat sea (`choppiness` 0) never folds, so it has no foam. `coverage` (-1 to 1) is the foam strength knob: 0 is the physical sea, each step multiplies the foam by 6^coverage. `foamMemory` is how long foam persists, in seconds; it is 0 (off) by default and opt-in, because each vertex then costs 8 extra evaluations: foam fades by exp(-age / foamMemory), read from at most 8 earlier moments, so with an `oceanTime` track the foam trails behind the crests instead of popping, and a still of the sea at one time shows the same trails. `spray: true` also writes the vertex group `spray` (the foam where the surface rises, 0 to 1; full at a rise of a tenth of the wind speed per second) and the vector `spray`, the velocity of the surface in m/s along the mesh axes; a `particles` emitter reads both ([spray from the sea](physics.md#spray-from-the-sea)). Without `spray` nothing is written and the sea is unchanged. Waves cost (2 x resolution + 1)^2 - 1 per vertex, capped at 50 million evaluations (9 times that per vertex with foam memory, which is why `foamMemory` 0 allows a larger sheet). A box base has few vertices across a flat face (bevel 0 has none inside it), so run `subdivide_edges` with `cuts` first, or the waves have nothing to move. For an open sea: delete every face but the top, `subdivide_edges` with 16 cuts on `{ "open": true }` (`{ "all": true }` selects only edges with two faces, so after the delete it selects nothing and the sheet stays a few vertices wide, and crests between those vertices never foam), `subdivide` 4 levels (about 74,000 vertices), scale the sheet to hundreds of metres, then `ocean` with a `size` of 50 (smaller than the wind's longest wave, so the sea has short chop), and a `vertex_color` field that mixes deep blue to white by `{ "attr": "group", "name": "foam" }`. A part with the `water` tag needs none of that: its shader reads the `foam` group itself and draws white rough foam on the folded crests, with a fresnel sky reflection, a sun glint and a deeper body colour at grazing angles. The mesh smooths over 180 degrees unless `smoothAngle` is set, so choppiness does not split the normals. `wake` (off) is `{ points: up to 64 of [x, z, strength 0-1, width m], height 0.06 }` and adds white foam and a small choppy displacement along a boat trail, see [Boats and wakes](physics.md#boats-and-wakes). Rigid bodies float on this sea: [Floating on the ocean](physics.md#floating-on-the-ocean). |
 
 `triangulate` and `edge_split` check their output size before building it, against the same vertex and face limits as the other edits. Each op has cases in `tests/fixtures/blender/cases.json` and matches Blender 5.2 with no listed difference. `screw` and `wireframe` have cases in the same fixtures (the volume of the open screw strips differs by winding, listed in `differences.json`); `wave` matches Blender on two cases; `skin`, `lattice`, `curve` and `hook` are not compared with Blender, because each needs a second object there. The two normal modifiers are tested by their own properties, because the Blender comparison does not measure normals. Not yet: `shrinkwrap` and `scatter_on_surface` as stack nodes (`instances` already scatters), and cast shapes other than the sphere.
 
@@ -313,6 +315,21 @@ Uses:
   along the surface, twice as wide as the largest requested move, so a face eases into its rim instead of stepping up from it
   and the look does not change with the segment count; the rim's own inward move stays within half its shortest edge.
   Smooth surfaces are unchanged.
+  `displace` takes a `source` in place of `field` (give one, never both): `{ "material": "rock" }` reads the `height` output of
+  that recipe material's graph, and `{ "image": "<catalog image ID>" }` reads the red channel of a catalog image as 0 to 1,
+  with no colour decode. Both are sampled at the mesh UVs, the way a baked texture is: `u` runs left to right, `v` runs
+  down the image, the image repeats, and a vertex on a UV seam takes the mean over its corners so the surface stays closed.
+  The material needs `"mapping": "uv"`, and its height may not read a vertex group. A mesh without UVs is refused with a
+  pointer to `uv_project`. Put `subdivide` before it so there are vertices to move, and read `normal` so the lit normals follow
+  the new surface. Use a periodic height (`noise` tiles by default) on a mesh whose UVs wrap, such as a sphere, because a
+  gradient from 0 to 1 across the seam tears it open. The same graph height then shades the bumps through the material's
+  normal map and shapes the silhouette here, so the two cannot drift apart. It works on recipe mesh geometries and
+  stack nodes, and an image source needs the host to decode that image, as a graph `image` node does. The image is filtered
+  bilinearly, but the mesh only samples it at its vertices, so a steep or slanted ridge in a small mesh shows as a sawtooth
+  along its crest: subdivide until a quad is no wider than a texel (a 256 pixel image on a plane wants about 256 segments),
+  and expect faint terraces on a gentle slope, because an 8 bit image has 256 height steps.
+  Displace when the silhouette or the shadow must change (a rock edge against the sky, a wall that casts relief). Bump is
+  enough for fine grain on a flat or distant surface, and parallax for relief that is only seen from the front.
 - Both are also stack nodes, so a late change reuses the cached earlier nodes.
 - `vertex_group` (`name`, `select`, and one of `weight`, `field`, `gradient` or `measure`) writes the weights, 0 to 1, of a named group for the
   vertices of the selected faces; the others keep theirs (0 in a new group). `gradient` is `{ "axis": "y", "range": [0, 1], "weights": [0, 1] }`,
@@ -413,6 +430,7 @@ is crossed more than twice (a concave face); split it first. `bridge_edge_loops`
 the shortest total distance, then turns them by `twistOffset` vertices. A knife stretch that starts or ends inside a face
 makes no cut, and a face that runs along `direction` is not split (its edge points are still inserted). The sizes of
 `subdivide_edges` are checked before it allocates.
+Points these edits insert on an edge (`subdivide_edges`, `bisect_plane`, `knife_project`, `bridge_edge_loops` rows) take the blend of vertex groups and other point attributes of the edge's two ends, and the inner points of a `subdivide_edges` grid blend all four corners. The inner points of `grid_fill` and the bend points of a knife stroke inside a face start at 0.
 
 Open boundaries reported by lint (`boundary-edge`) are fixed with `fill_holes`. Names follow `bmesh.ops`
 (`holes_fill`, `dissolve_*`, `bisect_plane`, `bridge_loops`, `grid_fill`, `subdivide_edges`) where the meaning matches, and
@@ -489,6 +507,8 @@ the input's units) and `relativeError` (over the bounds diagonal); the asset for
 Skinned and morphed parts are refused. `surfaceDeviation(a, b)` gives the vertex Hausdorff distance both ways. Hand the levels to a
 part as `lods` and `CrucibleRenderer` picks one per instance by its size on screen: see `docs/culling-lod.md`.
 
+Called from code, `remeshMesh` needs `voxelSize` or `resolution` as a finite number above 0, `unwrapUv` takes `maxDistortion` from 0 to 100 and `generateGeometryLods` takes `smoothAngle` from 0 to 180 degrees; each error names the field.
+
 Why our own collapse and not meshoptimizer 1.3.0 (npm, MIT, 2026-09-25): on the same sphere, torus and open bowl at
 ratios 0.5, 0.2 and 0.05 our Hausdorff error was 0.25 to 0.85 of its error (0.0088 against 0.0153 at 0.5 and 0.0647 against 0.0773
 at 0.05 on the sphere, 0.0403 against 0.1603 at 0.05 on the open bowl with its borders locked), and the volume stayed closer
@@ -518,7 +538,7 @@ faces, so a tag confines them. Neither adds or removes faces, and the topology s
   is an error (`onMiss` "error") or stays put (`keep`). The queries use the BVH of `src/mesh-query.js`, at most 20
   million triangle tests per edit.
 
-A mesh base is a primitive or profile record, or a `grid` or `plane` sheet (`segments` 1 to 64). A decal is a grid base shrunk onto a curved target and then solidified:
+A mesh base is a primitive or profile record, or a `grid` or `plane` sheet (`segments` 1 to 64). A `box` base with `bevel` 0 and `subdivisions` (1 to 128) splits each face into an n by n grid, welded across the edges (6 n^2 + 2 vertices), so `set_position`, `displace` and `smoothAngle` have vertices to work on; without `subdivisions` it stays 8 vertices. A decal is a grid base shrunk onto a curved target and then solidified:
 
 ```json
 { "id": "badge", "type": "mesh", "base": { "type": "grid", "segments": 16 }, "edits": [
@@ -558,7 +578,7 @@ square the islands cover. Measured on this machine: a cube gives six equal squar
 cylinder three islands with no distortion, a 48 x 24 sphere six charts with 0.09, and a 96 x 48 sphere (4,608 faces)
 unwraps in about 0.3 s. There is no angle-based (ABF) or SLIM solver and no packing into an existing layout.
 
-Knife and bisect are planned next.
+Cutting by a plane or a path is in the edit table: `bisect_plane` and `knife_project`.
 
 ## MCP
 

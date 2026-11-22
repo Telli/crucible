@@ -4,6 +4,7 @@ import {
   checkPullRequest,
   isAutoCloseExempt,
   isLightPullRequest,
+  isLookFile,
   isLookPath,
   sectionOf,
 } from '../scripts/pr-metadata-check.mjs';
@@ -174,6 +175,79 @@ test('look paths are detected by whole name parts', () => {
   for (const path of ['src/flight-path.js', 'src/highlight.js', 'docs/lighting.md', 'tests/lighting.test.js', 'src/mesh.js']) {
     assert.ok(!isLookPath(path), path);
   }
+});
+
+const messageOnlyPatch = [
+  '@@ -65,6 +65,9 @@ export function registerShaderFeatureCode(feature, slots) {',
+  ' export function requireFeatureCode(feature) {',
+  "+  if (typeof feature !== 'string' || feature.length === 0) {",
+  '+    throw new Error(`A material snippet needs its registered feature name. Fix: pass the snippet through normalizeMaterialSnippet.`);',
+  '+  }',
+  '   const slots = registeredFeatureCode.get(feature);',
+].join('\n');
+
+const validationOnlyPatch = [
+  '@@ -97,7 +97,15 @@ export function createCrownSkyField(positions) {',
+  ' export function vertexCoverage(positions, indices) {',
+  '-  const coverage = new Float32Array(positions.length / 3);',
+  '+  if (indices.length % 3 !== 0) throw new RangeError(`Pass whole triangles, got ${indices.length}.`);',
+  '+  const vertexCount = positions.length / 3;',
+  '+  for (let corner = 0; corner < indices.length; corner++) {',
+  '+    const index = indices[corner];',
+  '+    if (!Number.isInteger(index) || index < 0 || index >= vertexCount) {',
+  '+      throw new RangeError(`Pass indices below ${vertexCount}.`);',
+  '+    }',
+  '+  }',
+  '+  const coverage = new Float32Array(vertexCount);',
+].join('\n');
+
+const shaderMathPatch = [
+  '@@ -10,4 +10,4 @@',
+  ' const SHADER = `',
+  '-  float glow = intensity * 0.5;',
+  '+  float glow = intensity * 0.8;',
+  '`;',
+].join('\n');
+
+const guardWithMathPatch = [
+  '@@ -10,4 +10,5 @@',
+  '+  if (!Number.isFinite(gain)) throw new RangeError("Pass a finite gain.");',
+  '-  const glow = intensity * 0.5;',
+  '+  glow = intensity * 0.8;',
+].join('\n');
+
+test('a look file whose patch only adds a thrown message or an input check is not a look change', () => {
+  assert.ok(!isLookFile({ filename: 'src/shader-registry.js', patch: messageOnlyPatch }));
+  assert.ok(!isLookFile({ filename: 'src/tree-sky.js', patch: validationOnlyPatch }));
+});
+
+test('a look file with a shader math change, a missing patch or math beside a guard is still a look change', () => {
+  assert.ok(isLookFile({ filename: 'src/shaders.js', patch: shaderMathPatch }));
+  assert.ok(isLookFile({ filename: 'src/shaders.js', patch: guardWithMathPatch }));
+  assert.ok(isLookFile({ filename: 'src/shader-registry.js' }));
+  assert.ok(!isLookFile({ filename: 'src/scene.js', patch: shaderMathPatch }));
+});
+
+test('a number tuned or added on a const line beside a throw is still a look change', () => {
+  const throwLine = '+  if (!Number.isFinite(gain)) throw new RangeError("Pass a finite gain.");';
+  const tuned = ['@@ -1,3 +1,4 @@', throwLine, '-const EXPOSURE = 1.2;', '+const EXPOSURE = 1.5;'].join('\n');
+  const fresh = ['@@ -1,3 +1,4 @@', throwLine, '+const brightness = 0.8;'].join('\n');
+  const unchangedNumber = ['@@ -1,3 +1,4 @@', throwLine, '-const EXPOSURE = 1.2;', '+const exposure = 1.2;'].join('\n');
+  assert.ok(isLookFile({ filename: 'src/shaders.js', patch: tuned }));
+  assert.ok(isLookFile({ filename: 'src/shaders.js', patch: fresh }));
+  assert.ok(!isLookFile({ filename: 'src/shaders.js', patch: unchangedNumber }));
+});
+
+test('a message-only or validation-only change to a look file gets no hold label and asks for no picture', () => {
+  const files = [{ ...file('src/shader-registry.js'), patch: messageOnlyPatch }, { ...file('src/tree-sky.js'), patch: validationOnlyPatch }, file('changes/12.md')];
+  const result = checkPullRequest({ pr: pullRequest(), files });
+  assert.ok(!result.addLabels.includes('hold:look-approval'));
+  assert.ok(!result.contributorFixes.some(item => item.id === 'look-without-image'));
+  assert.ok(!result.maintainerTodos.some(todo => /^Look change/.test(todo)));
+  const mathFiles = [{ ...file('src/shaders.js'), patch: shaderMathPatch }, file('changes/12.md')];
+  const mathResult = checkPullRequest({ pr: pullRequest(), files: mathFiles });
+  assert.ok(mathResult.addLabels.includes('hold:look-approval'));
+  assert.deepEqual(mathResult.contributorFixes.map(item => item.id), ['look-without-image']);
 });
 
 test('a look change adds hold:look-approval once and needs an image', () => {
@@ -394,4 +468,56 @@ test('the CI gate fails a shipped change without a note and a protected file edi
   assert.deepEqual(failingGatesFor(['src/a.js', 'changes/1.md']), []);
   assert.deepEqual(failingGatesFor(['CHANGELOG.md']).map(gate => gate.name), ['protected files']);
   assert.deepEqual(failingGatesFor(['docs/a.md']), []);
+});
+
+test('a draft left past the close time is reminded before it closes once it is marked ready', () => {
+  const start = Date.parse('2026-11-01T00:00:00.000Z');
+  const base = { contributorFixes: someFix, exempt: false, labels: [] };
+  const state = { firstFailedAt: '2026-11-01T00:00:00.000Z' };
+  const whileDraft = decideActions({ ...base, draft: true, previousState: state, now: start + 100 * HOUR_MS });
+  assert.ok(!whileDraft.close && !whileDraft.remind);
+  const readyAt = start + 101 * HOUR_MS;
+  const ready = decideActions({ ...base, draft: false, previousState: whileDraft.statusState, now: readyAt });
+  assert.ok(!ready.close, 'a ready PR must not close on the run that follows a long draft');
+  const reminder = decideActions({ ...base, draft: false, previousState: ready.statusState, now: readyAt + REMINDER_AFTER_HOURS * HOUR_MS });
+  assert.ok(reminder.remind && !reminder.close);
+  const closing = decideActions({ ...base, draft: false, previousState: reminder.statusState, now: readyAt + CLOSE_AFTER_HOURS * HOUR_MS });
+  assert.ok(closing.close);
+  const earlyDraft = decideActions({ ...base, draft: true, previousState: state, now: start + 10 * HOUR_MS });
+  assert.equal(earlyDraft.statusState.firstFailedAt, '2026-11-01T00:00:00.000Z');
+});
+
+test('a look change whose only picture sits inside an HTML comment still asks for a picture', () => {
+  const hidden = `${withoutEvidence}<!-- ![after](https://github.com/user-attachments/assets/after.png) -->\n`;
+  const lookFiles = [file('src/shaders.js'), file('changes/12.md')];
+  assert.deepEqual(fixIds({ pr: pullRequest({ body: hidden }), files: lookFiles }), ['look-without-image']);
+  const visible = `${withoutEvidence}![after](https://github.com/user-attachments/assets/after.png)\n`;
+  assert.deepEqual(fixIds({ pr: pullRequest({ body: visible }), files: lookFiles }), []);
+});
+
+test('GitHub also links a closing keyword followed by a colon', () => {
+  for (const line of ['Closes: #12', 'Fixes: #12', 'Part of: #12', 'CLOSES: #12']) {
+    const body = goodBody.replace('Closes #12', line);
+    assert.deepEqual(fixIds({ pr: pullRequest({ body }), files: shippedFiles }), [], line);
+  }
+  const noNumber = goodBody.replace('Closes #12', 'Closes: nothing');
+  assert.deepEqual(fixIds({ pr: pullRequest({ body: noNumber }), files: shippedFiles }), ['missing-issue-link']);
+});
+
+test('a maintainer who states the look is unchanged gets no hold; an outside author still does (#2951)', () => {
+  const files = [file('src/subsurface-shader.js'), file('changes/12.md')];
+  const unchangedBody = `${goodBody}\nThe look is unchanged: the shader declares one uniform once.\n`;
+  const maintainer = checkPullRequest({ pr: pullRequest({ body: unchangedBody, author: 'anxuanng', authorAssociation: 'OWNER' }), files });
+  assert.ok(!maintainer.addLabels.includes('hold:look-approval'));
+  assert.ok(!maintainer.contributorFixes.some(item => item.id === 'look-without-image'));
+  assert.ok(!maintainer.maintainerTodos.some(todo => todo.startsWith('Look change')));
+  const member = checkPullRequest({ pr: pullRequest({ body: unchangedBody, authorAssociation: 'MEMBER' }), files });
+  assert.ok(!member.addLabels.includes('hold:look-approval'));
+  const outside = checkPullRequest({ pr: pullRequest({ body: unchangedBody }), files });
+  assert.ok(outside.addLabels.includes('hold:look-approval'));
+  const silentMaintainer = checkPullRequest({ pr: pullRequest({ author: 'anxuanng', authorAssociation: 'OWNER' }), files });
+  assert.ok(silentMaintainer.addLabels.includes('hold:look-approval'));
+  const hidden = `${goodBody}\n<!-- The look is unchanged. -->\n`;
+  const commented = checkPullRequest({ pr: pullRequest({ body: hidden, author: 'anxuanng', authorAssociation: 'OWNER' }), files });
+  assert.ok(commented.addLabels.includes('hold:look-approval'));
 });

@@ -13,6 +13,8 @@ export const MAXIMUM_PROBES = 4;
 // Probes and the irradiance grid trace on the CPU, and their work grows with the node count, samples and the time limit rather
 // than with the part count, so they take as many parts as the GPU lightmap bake does (#1218).
 export const MAX_PROBE_GRID_PARTS = 1024;
+/** The skip reason of a scene that has nothing to reflect: not a problem, so no diagnostic follows it. */
+export const NO_REFLECTIVE_PART = 'no reflective part';
 export const PROBE_MAP_WIDTH = 64;
 // An automatic probe is only worth placing in a room: below this share of rays hitting a part the scene is open air.
 export const ENCLOSED_HIT_FRACTION = 0.9;
@@ -221,6 +223,59 @@ export function boundsCentre({ minimum, maximum }) {
   return minimum.map((value, axis) => (value + maximum[axis]) / 2);
 }
 
+// Three skew directions that no axis-aligned face or edge lies along, so a crossing count does not land on a seam.
+const ENCLOSURE_DIRECTIONS = [[0.5773, 0.5774, 0.5771], [-0.3719, 0.8412, 0.3929], [0.2437, -0.4561, 0.8571]];
+
+function crossesTriangle(positions, indices, triangle, origin, direction) {
+  const first = indices[triangle * 3] * 3;
+  const second = indices[triangle * 3 + 1] * 3;
+  const third = indices[triangle * 3 + 2] * 3;
+  const edgeOne = [positions[second] - positions[first], positions[second + 1] - positions[first + 1], positions[second + 2] - positions[first + 2]];
+  const edgeTwo = [positions[third] - positions[first], positions[third + 1] - positions[first + 1], positions[third + 2] - positions[first + 2]];
+  const pivot = [direction[1] * edgeTwo[2] - direction[2] * edgeTwo[1], direction[2] * edgeTwo[0] - direction[0] * edgeTwo[2], direction[0] * edgeTwo[1] - direction[1] * edgeTwo[0]];
+  const determinant = edgeOne[0] * pivot[0] + edgeOne[1] * pivot[1] + edgeOne[2] * pivot[2];
+  if (Math.abs(determinant) < 1e-12) return false;
+  const offset = [origin[0] - positions[first], origin[1] - positions[first + 1], origin[2] - positions[first + 2]];
+  const u = (offset[0] * pivot[0] + offset[1] * pivot[1] + offset[2] * pivot[2]) / determinant;
+  if (u < 0 || u > 1) return false;
+  const cross = [offset[1] * edgeOne[2] - offset[2] * edgeOne[1], offset[2] * edgeOne[0] - offset[0] * edgeOne[2], offset[0] * edgeOne[1] - offset[1] * edgeOne[0]];
+  const v = (direction[0] * cross[0] + direction[1] * cross[1] + direction[2] * cross[2]) / determinant;
+  if (v < 0 || u + v > 1) return false;
+  return (edgeTwo[0] * cross[0] + edgeTwo[1] * cross[1] + edgeTwo[2] * cross[2]) / determinant > 0;
+}
+
+/**
+ * Whether `point` lies inside the solid of `part`: an odd number of its triangles crossed by a ray from the point, in most of
+ * three skew directions. Winding does not matter, so a mirrored part counts the same as any other.
+ */
+export function partEnclosesPoint(part, point) {
+  const { positions, indices } = buildWorld([part]);
+  let inside = 0;
+  for (const direction of ENCLOSURE_DIRECTIONS) {
+    let crossings = 0;
+    for (let triangle = 0; triangle < indices.length / 3; triangle++) {
+      if (crossesTriangle(positions, indices, triangle, point, direction)) crossings++;
+    }
+    if (crossings % 2 === 1) inside++;
+  }
+  return inside >= 2;
+}
+
+function boundsDiagonal(part) {
+  const { minimum, maximum } = worldBounds(part);
+  return Math.hypot(maximum[0] - minimum[0], maximum[1] - minimum[1], maximum[2] - minimum[2]);
+}
+
+/**
+ * The parts a probe of `parts[probed]` can see from `position`. A part that holds the probe inside its own solid and is smaller
+ * than the probed part (a glowing bulb in the middle of a ring) would fill every direction of the map with itself, and so
+ * tint every face of the metal the same colour; it is left out. A larger part that holds the probe, such as a room, stays.
+ */
+export function partsVisibleFromProbe(parts, probed, position) {
+  const probedSize = boundsDiagonal(parts[probed]);
+  return parts.filter((part, index) => index !== probed && !(boundsDiagonal(part) < probedSize && partEnclosesPoint(part, position)));
+}
+
 /** The probe a room gets by default: the middle of the parts' bounds, reaching every corner of it. */
 export function roomCentreProbe(parts) {
   const total = { minimum: [Infinity, Infinity, Infinity], maximum: [-Infinity, -Infinity, -Infinity] };
@@ -300,20 +355,22 @@ export function traceObjectProbes(parts, lighting, options = {}) {
   // Many small metal parts (lamp posts, spires) read as shapes and not as mirrors, and each probe costs a trace and a draw batch.
   const tooManyOthers = parts.length - 1 > MAX_PROBE_GRID_PARTS;
   // The probe trace builds a triangle world that takes at most MAX_BAKE_TRIANGLES; a big scene keeps its sky reflection instead of failing the edit.
-  const tooManyTriangles = reflective.length > 0 && countTriangles(parts) > MAX_BAKE_TRIANGLES;
+  const triangleCount = reflective.length > 0 ? countTriangles(parts) : 0;
+  const tooManyTriangles = triangleCount > MAX_BAKE_TRIANGLES;
   const wanted = reflective.length > MAXIMUM_OBJECT_PROBES || tooManyOthers || tooManyTriangles ? [] : reflective;
-  const skipped = wanted.length > 0 ? null : reflective.length > MAXIMUM_OBJECT_PROBES ? `more than ${MAXIMUM_OBJECT_PROBES} reflective parts` : tooManyOthers ? `more than ${MAX_PROBE_GRID_PARTS} other parts` : tooManyTriangles ? `more than ${MAX_BAKE_TRIANGLES} triangles for the automatic object reflection probes (set environment.objectReflections to false to silence this)` : 'no reflective part';
+  const skipped = wanted.length > 0 ? null : reflective.length > MAXIMUM_OBJECT_PROBES ? `more than ${MAXIMUM_OBJECT_PROBES} reflective parts` : tooManyOthers ? `more than ${MAX_PROBE_GRID_PARTS} other parts` : tooManyTriangles ? `${triangleCount} triangles, more than the ${MAX_BAKE_TRIANGLES} the automatic object reflection probes take` : NO_REFLECTIVE_PART;
   if (wanted.length === 0 || parts.length < 2) {
     return { traced: [], automatic: true, requested: reflective.length, skipped, seconds: 0 };
   }
   const started = performance.now();
   const missRadiance = environmentMap ? environmentMissRadiance(environmentMap) : skyMissRadiance(environment);
   const skyIrradiance = environmentMap ? environmentSkyIrradiance(environmentMap) : null;
-  const traced = wanted.map(index => {
-    const others = parts.filter((part, other) => other !== index);
+  const traced = wanted.flatMap(index => {
     const position = boundsCentre(worldBounds(parts[index]));
+    const others = partsVisibleFromProbe(parts, index, position);
+    if (others.length === 0) return [];
     const [map] = traceProbeMaps(others, lighting, [position], { width, samples, bounces, rotation, missRadiance, skyIrradiance, maxSeconds });
-    return { position, radius: null, part: index, ...map };
+    return [{ position, radius: null, part: index, ...map }];
   });
   return { traced, automatic: true, requested: reflective.length, skipped: null, seconds: (performance.now() - started) / 1000 };
 }

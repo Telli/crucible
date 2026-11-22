@@ -2,6 +2,7 @@ import { mat4 } from 'gl-matrix';
 import {
   createStage, previousViewProjectionOf, sharedFragmentHeader, MOTION_BLUR_SAMPLES, MAXIMUM_STREAK,
 } from './camera-effects.js';
+import { invalidField } from './field-error.js';
 
 // Per-object motion blur: a fast prop or part smears along its own screen motion while the still background stays sharp.
 // It is opt-in (`effects.motionBlur.objects` above zero) and loads on demand, so a scene without it pays nothing.
@@ -67,7 +68,12 @@ export function sampleWorldMatrices(parts) {
  * A part with no matrix in `previous` or one that did not move keeps the identity, and so does a pixel of no object.
  */
 export function packObjectMotion(renderer, current, previous) {
-  const drawnParts = renderer.batches.filter(batch => renderer.drawsInOpaqueLoop(batch)).flatMap(batch => batch.parts);
+  for (const [name, matrices] of [['current', current], ['previous', previous]]) {
+    if (!(matrices instanceof Map)) {
+      throw invalidField(name, matrices, 'the Map from sampleWorldMatrices(parts)');
+    }
+  }
+  const drawnParts = renderer.batches.filter(batch => renderer.takesObjectIds(batch)).flatMap(batch => batch.parts);
   const rows = Math.max(1, Math.ceil(drawnParts.length / MATRICES_PER_ROW));
   const matrices = new Float32Array(TEXTURE_WIDTH * rows * 4);
   const inverse = mat4.create();

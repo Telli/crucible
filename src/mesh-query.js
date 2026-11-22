@@ -476,9 +476,9 @@ function queryLocalSurface(record, pointInput, directionInput, options) {
   return { hit: { point: Array.from(bestPoint), distance, triangle: bestTriangle, barycentric: Array.from(bestWeights), normal: Array.from(bestNormal) }, triangleTests: counter.tests };
 }
 
-function nearestRayHit(record, origin, direction) {
+function nearestRayHit(record, origin, direction, maximumDistance = Infinity) {
   const triangle = new Float64Array(9);
-  let bestDistance = Infinity;
+  let bestDistance = maximumDistance;
   let bestTriangle = -1;
   traverseTriangleBvh(
     record.bvh,
@@ -579,6 +579,18 @@ export function createMeshQueryIndex(geometry, options = {}) {
     raycast(matrix, ray) {
       return raycastIndex(live(handle), matrix, ray);
     },
+    /**
+     * The nearest triangle a ray meets within `maxDistance`, as `{ distance, triangle }` or null. `direction` must be a unit
+     * vector. It skips the option checks and the hit details of `project`, which makes it several times faster for the
+     * millions of rays a bake casts.
+     */
+    firstHit(origin, direction, maxDistance) {
+      const current = live(handle);
+      const localOrigin = createVector(...[0, 1, 2].map(axis => (origin[axis] - current.center[axis]) / current.scale));
+      const result = nearestRayHit(current, localOrigin, createVector(...direction), maxDistance / current.scale);
+      if (!result) return null;
+      return { distance: vec3.distance(result.point, localOrigin) * current.scale, triangle: result.triangle };
+    },
     dispose() {
       if (record.disposed) return;
       record.disposed = true;
@@ -638,5 +650,7 @@ export function createMeshPairQuery(indexA, indexB, options = {}) {
 
 /** A query index over indexed triangles in any typed or plain arrays, for callers that hold render geometry or MeshData triangles. */
 export function createTriangleSurfaceIndex({ positions, indices }) {
-  return createMeshQueryIndex({ positions: Float32Array.from(positions), indices: Uint32Array.from(indices) });
+  const wholeIndices = Uint32Array.from(indices);
+  if (wholeIndices.some((index, slot) => index !== indices[slot])) throw new TypeError('indices must be whole vertex numbers');
+  return createMeshQueryIndex({ positions: Float32Array.from(positions), indices: wholeIndices });
 }

@@ -3,19 +3,20 @@
 // and a job that passes maxSeconds fails without writing an image.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile } from 'node:fs/promises';
-import { tmpdir, constants, setPriority } from 'node:os';
+import { readFile } from 'node:fs/promises';
+import { constants, setPriority } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { createScratchDirectory } from './scratch-directory.mjs';
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
-const directory = await mkdtemp(join(tmpdir(), 'crucible-mcp-path-tracer-'));
+const directory = await createScratchDirectory('crucible-mcp-path-tracer-');
 const jobs = join(directory, 'jobs');
 const cli = resolve(process.argv[2] ?? 'bin/crucible-mcp.mjs');
 const transport = new StdioClientTransport({ command: process.execPath,
-  args: [cli, '--backend', 'cpu', '--memory', '128', '--jobs', jobs], cwd: directory, stderr: 'pipe' });
+  args: [cli, '--backend', 'cpu', '--memory', '128', '--jobs', jobs], cwd: directory, env: process.env, stderr: 'pipe' });
 let diagnostics = '';
 transport.stderr.on('data', bytes => { diagnostics = (diagnostics + bytes).slice(-8192); });
 const client = new Client({ name: 'crucible-path-tracer-proof', version: '1' });
@@ -84,7 +85,7 @@ try {
   assert.notDeepEqual(rasterized.bytes, first.bytes, 'The path tracer must not return the rasterizer image.');
 
   // denoise "oidn" runs the native tool of the optional package when it is installed; without it the job says it used the wavelet filter.
-  const { findOidnBinary } = await import('@codepawlhq/crucible-denoise-oidn').catch(() => ({ findOidnBinary: () => null }));
+  const { findOidnBinary } = await import('../packages/denoise-oidn/index.mjs').catch(() => ({ findOidnBinary: () => null }));
   const external = await renderedBytes(sessionId, { ...base, renderer: { ...tracer, denoise: 'oidn' } });
   if (findOidnBinary()) {
     assert.equal(external.metrics.pathTracer.denoiser, 'oidn');
@@ -95,6 +96,20 @@ try {
     assert.equal(external.metrics.pathTracer.denoiser, 'wavelet');
     assert.match(external.metrics.pathTracer.denoiserNote, /wavelet filter ran instead/);
   }
+  // denoise true (the default) reaches the same package, keeps the samples it was asked for, and names the filter that ran.
+  const byDefault = await renderedBytes(sessionId, { ...base, renderer: { ...tracer, denoise: true } });
+  console.log(`denoise oidn ran: ${external.metrics.pathTracer.denoiser}; denoise true ran: ${byDefault.metrics.pathTracer.denoiser}`);
+  assert.equal(byDefault.metrics.pathTracer.samples, tracer.samples);
+  if (findOidnBinary()) {
+    assert.equal(byDefault.metrics.pathTracer.denoiser, 'oidn');
+    assert.deepEqual(byDefault.bytes, external.bytes, 'denoise true must run the same OIDN filter as "oidn" on the same samples.');
+  } else {
+    assert.equal(byDefault.metrics.pathTracer.denoiser, 'wavelet');
+    assert.match(byDefault.metrics.pathTracer.denoiserNote, /denoise true uses OIDN.*wavelet filter ran instead/s);
+  }
+  const explicitWavelet = await renderedBytes(sessionId, { ...base, renderer: { ...tracer, denoise: 'wavelet' } });
+  assert.equal(explicitWavelet.metrics.pathTracer.denoiser, 'wavelet');
+  assert.equal(explicitWavelet.metrics.pathTracer.denoiserNote, undefined);
   for (const [settings, message] of [
     [{ ...base, renderer: { ...tracer, samples: 99999 } }, /samples/],
     [{ ...base, renderer: { ...tracer, extra: 1 } }, /extra|Unrecognized|Unknown/],
@@ -106,10 +121,10 @@ try {
     assert.match(refused.content[0].text, message);
   }
 
-  // A SwiftShader runtime keeps the CPU tracer: a job that asks for the GPU backend fails instead of drawing something else.
+  // A SwiftShader runtime keeps the CPU tracer: a submit that asks for the GPU backend is refused instead of drawing something else.
   const gpuOnSwiftShader = await submit(sessionId, { ...base, renderer: { ...tracer, backend: 'gpu' } });
-  assert.equal(gpuOnSwiftShader.isError, undefined, gpuOnSwiftShader.content?.[0]?.text);
-  assert.equal((await finished(gpuOnSwiftShader.structuredContent.jobId)).state, 'failed', 'backend gpu must fail on a cpu runtime.');
+  assert.equal(gpuOnSwiftShader.isError, true, 'backend gpu must be refused at submit on a cpu runtime.');
+  assert.match(gpuOnSwiftShader.content[0].text, /renderer\.backend "gpu" needs a runtime on the GPU backend/);
 
   const slow = await submit(sessionId, { kind: 'image', width: 512, height: 512, renderer: { type: 'pathTracer', samples: 1024, maxSeconds: 1 } });
   assert.equal(slow.isError, undefined, slow.content?.[0]?.text);

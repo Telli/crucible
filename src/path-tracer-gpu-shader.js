@@ -237,6 +237,7 @@ uniform vec3 uSunColor;
 uniform float uSunCosineMax;
 uniform bool uHasEnvironment;
 uniform vec4 uEnvironmentShape;
+uniform vec4 uCameraBackground;
 uniform vec2 uEnvironmentRotation;
 uniform bool uHasVolume;
 uniform vec3 uVolumeMinimum;
@@ -568,7 +569,7 @@ float alphaAtNearestHit() {
   return sampleAtlas(mapRectangle, fetchData(uMaterials, material + 4).y, uv).a;
 }
 
-bool occluded(vec3 origin, vec3 direction, float limit) {
+bool occluded(vec3 origin, vec3 direction, float limit, int lightBit) {
   vec3 start = origin;
   float remaining = limit;
   // A solid any-hit shadows the point wherever it lies; a transparent one hides what sits before it, so retrace for nearest hits.
@@ -577,9 +578,9 @@ bool occluded(vec3 origin, vec3 direction, float limit) {
     traceRay(start, direction, remaining, anyHit);
     if (nearestSlot < 0) return false;
     int material = nearestMaterialIndex() * MATERIAL_TEXELS;
+    bool ownLamp = lightBit >= 0 && ((int(fetchData(uMaterials, material + 5).w) >> lightBit) & 1) == 1;
     float cutoff = fetchData(uMaterials, material + 3).z;
-    if (cutoff == 0.0) return true;
-    if (alphaAtNearestHit() >= cutoff) return true;
+    if (!ownLamp && (cutoff == 0.0 || alphaAtNearestHit() >= cutoff)) return true;
     if (anyHit) {
       anyHit = false;
       continue;
@@ -958,6 +959,7 @@ float shadowLimit;
 vec3 shadowAmount;
 int shadowDepth;
 bool shadowPending = false;
+int sampleLightBit = -1;
 
 void addDirect(int depth, vec3 normal, float distance, int weightMode) {
   if (inMedium) {
@@ -986,7 +988,7 @@ void addDirect(int depth, vec3 normal, float distance, int weightMode) {
 void flushShadowRay() {
   if (!shadowPending) return;
   shadowPending = false;
-  if (!occluded(shadowOrigin, shadowDirection, shadowLimit)) addRadiance(shadowDepth, shadowAmount);
+  if (!occluded(shadowOrigin, shadowDirection, shadowLimit, sampleLightBit)) addRadiance(shadowDepth, shadowAmount);
 }
 
 bool reaches(int bit) {
@@ -1022,6 +1024,7 @@ float pointLightFalloff(float distanceSquared, float range, float radius) {
 void sampleEmitter(int depth, vec3 normal, int emitter) {
   float distance = 0.0;
   int weightMode = 0;
+  sampleLightBit = -1;
   if (uHasSun && emitter == 0) {
     if (!reaches(0)) return;
     float cosineTheta = 1.0 - nextRandom() * (1.0 - uSunCosineMax);
@@ -1052,6 +1055,7 @@ void sampleEmitter(int depth, vec3 normal, int emitter) {
         if (distance < 1e-6 || emitCosine <= 0.0) return;
         lightRadiance = colorBit.rgb * (intensityRange.x * emitCosine / distanceSquared);
       } else {
+        if (type == 0) sampleLightBit = int(colorBit.w);
         vec3 jitter = randomOnSphere(directionRadius.w);
         distance = aimAt(positionType.xyz + jitter, distanceSquared);
         if (distance < 1e-6) return;
@@ -1177,7 +1181,11 @@ ${lightTree ? `  } else if (LIGHT_TREE) {
   if (shareAfterwards) selectionProbability = 1.0 / float(uEmitterCount);
 }
 
-void addEscape(int depth, float previousPdf, bool afterMirror) {
+void addEscape(int depth, float previousPdf, bool afterMirror, bool isCameraRay) {
+  if (isCameraRay && uCameraBackground.w > 0.0) {
+    addRadiance(depth, throughput * uCameraBackground.rgb);
+    return;
+  }
   if (!uHasEnvironment) return;
   vec3 sky = environmentRadiance(direction);
   float weight = 1.0;
@@ -1219,13 +1227,14 @@ void tracePath(vec3 origin, vec3 startDirection, uint pixel, uint sampleIndex, b
   vec3 position = origin;
   float previousPdf = 0.0;
   bool afterMirror = true;
+  bool isCameraRay = cameraRays;
   vec3 normal = vec3(0.0, 1.0, 0.0);
   for (int depth = 0; depth <= uBounces; depth++) {
     bool found = intersectScene(position, direction, cameraRays && depth == 0);
     bool inFog = uHasVolume && scatterInFog(position, found ? hitDistance : uFarDistance);
     if (!inFog && !found) {
       if (depth == 0) firstLegEscaped = 1.0;
-      addEscape(depth, previousPdf, afterMirror);
+      addEscape(depth, previousPdf, afterMirror, isCameraRay);
       break;
     }
     bool isGlass = false;
@@ -1262,6 +1271,7 @@ ${radianceCache ? CACHE_TERMINAL : ''}
       direction = frame[0] * sine * cos(azimuth) + frame[1] * sine * sin(azimuth) + frame[2] * cosine;
       previousPdf = henyeyGreensteinPhase(uVolumeShape.y, cosine);
       afterMirror = false;
+      isCameraRay = false;
       position = hitPoint;
       if (!survivesRoulette(depth)) break;
       continue;
@@ -1275,8 +1285,10 @@ ${radianceCache ? CACHE_TERMINAL : ''}
       if (!sampleGlass(normal, -direction, entering, hitIor, alpha, selectionUnit, firstUnit, secondUnit, glassDirection)) break;
       direction = glassDirection;
       if (dot(direction, normal) < 0.0) throughput *= hitColor;
+      else isCameraRay = false;
       afterMirror = true;
     } else {
+      isCameraRay = false;
       float lobeUnit = nextRandom();
 ${hasSubsurface ? SUBSURFACE_LOBE : ''}
       float firstUnit = nextRandom();

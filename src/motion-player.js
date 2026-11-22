@@ -1,5 +1,5 @@
+import './site-chrome.js';
 import './motion-style.css';
-import './brand.js';
 import { CrucibleRenderer } from './renderer.js';
 import { createMotionScene, MOTION_DURATION } from './motion.js';
 import { EFFECT_PRESETS } from './effects.js';
