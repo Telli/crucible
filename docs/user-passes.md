@@ -21,6 +21,8 @@ Passes run in order on the finished frame: after depth of field, motion blur, li
 | `uniforms` | Named values. A number is a `float`; `[x, y]`, `[x, y, z]` and `[x, y, z, w]` are `vec2`, `vec3` and `vec4`; an int is `{ "type": "int", "value": 4 }`. |
 | `scale` | 0.05 to 1 (default 1). The pass renders at this fraction of the width and height, and whatever reads it enlarges it with nearest filtering. A `scale` of 0.25 on the last pass is a pixel-art downscale. |
 | `objects` | Optional list of 1 to 16 part names (node ids, as the object ID pass lists them). `objectSlotAt(uv)` tells which of them is under a pixel. The preview and render jobs draw the object ID pass first when a pass lists parts. |
+| `needs` | Optional list of `normal`, `objectId`, `albedo`, `emission`. Each adds one exact input to the pass. |
+| `luts` | Optional palette textures, up to 4: `{ "palette": { "colors": ["#101820", "#f2aa4c"] } }`. |
 
 You do not declare uniforms or the version line; the engine writes them. A snippet sees these names:
 
@@ -36,8 +38,38 @@ You do not declare uniforms or the version line; the engine writes them. A snipp
 | `pixelFootprintAt(uv)` | function | `vec2`: the world distance one pixel of this pass covers along screen x and y. 0 in the sky. [How to use it](#filter-a-thin-pattern-with-the-pixel-footprint). |
 | `worldFootprintAt(uv, direction)` | function | How far `dot(worldPointAt(uv), direction)` changes over one pixel. |
 | `bandLimitedLine(coordinate, pitch, width, footprint)` | function | Coverage 0 to 1 of lines that repeat every `pitch`, averaged over `footprint`. |
+| `normalAt(uv)`, `objectIdAt(uv)`, `albedoAt(uv)`, `emissionAt(uv)` | functions | Exact G-buffer reads, only when the pass lists them in `needs` ([below](#exact-normals-object-ids-albedo-and-emission)). |
 | `objectSlotAt(uv)` | function | The position in the pass's `objects` list of the part under `uv`, or -1 for the background, any other part, and a pass with no `objects`. A name that matches several parts gives all of them its one position. Edges are hard: an object ID cannot be antialiased. A name that is not a part in the frame fails the render and lists part names to use. |
 | `gl_FragCoord` | `vec4` | The pixel position inside this pass. |
+
+## Exact normals, object IDs, albedo and emission
+
+`worldNormalAt` is rebuilt from depth, so it is wrong at silhouettes and on thin parts, and `objects` stops at 16 parts. A pass that needs better lists what it reads in `needs`:
+
+```json
+{ "name": "ink", "needs": ["normal", "objectId"], "fragment": "vec4 userPass(vec2 uv) { ... normalAt(uv) ... objectIdAt(uv) ... }" }
+```
+
+| `needs` | Adds | Value |
+| --- | --- | --- |
+| `normal` | `normalAt(uv)` | `vec3`, the world normal of the surface under the pixel from the `normal` render pass, `vec3(0.0)` in the sky. 8 bits per channel, so it steps by about 0.008. |
+| `objectId` | `objectIdAt(uv)` | `int`, the raw part ID of the `objectId` pass: 1 and up in draw order, 0 for the background, up to 24 bits. No 16 part cap. `scene_render_submit` with the `objectId` pass lists the names by ID. |
+| `albedo` | `albedoAt(uv)` | `vec3`, the base colour without light, from the `albedo` pass. |
+| `emission` | `emissionAt(uv)` | `vec3`, the emitted colour, from the `emission` pass, clamped to 0 to 1 (8 bits). |
+
+Each one is the render pass of the same name, drawn from the same camera without multisampling and read texel by texel, so an edge is exact and one pixel wide. A pass costs one extra scene draw per distinct need, taken once per frame however many passes list it; a scene with no `needs` draws none. A snippet that calls one of these without listing it is refused and the message names the `needs` to add. Passes that also list `objects` keep working: the object ID pass is drawn last. The path tracer has no such buffers and skips passes, as above. In JavaScript the renderer needs `installRenderPasses(renderer)` first; `installUserPasses` then draws these passes inside `renderer.render`.
+
+### Palette textures
+
+`luts` hands a pass small read-only textures so a colour ramp does not use up the 16 uniforms or the 4096 bytes of code. A texture is `{ "colors": [...] }` (hex `#rrggbb` or `#rrggbbaa`; a flat list is one row, a list of lists is one row each, all the same length) or `{ "width", "height", "pixels" }` with `pixels` as base64 RGBA bytes (a `Uint8Array` or array of bytes in JavaScript). Bounds: at most 4 textures per pass, 256 by 16 texels each, inline data only (no URL is read). The name follows the uniform rule and may not reuse an input or a uniform of the pass. In the snippet it is a `sampler2D` with nearest sampling and clamping: `texelFetch(palette, ivec2(column, row), 0).rgb`, or `texture(palette, vec2(u, v))`. The colours are used as they are (not converted), the same space as `sceneColor`.
+
+```c
+vec4 userPass(vec2 uv) {
+  float shade = floor(dot(albedoAt(uv), vec3(0.3, 0.6, 0.1)) * 3.99);
+  int row = objectIdAt(uv) % 2;
+  return vec4(texelFetch(palette, ivec2(int(shade), row), 0).rgb, 1.0);
+}
+```
 
 ## Antialiasing the result
 
