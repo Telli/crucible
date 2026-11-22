@@ -26,9 +26,11 @@ import {
 } from './tree-proof-lib.mjs';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
-// The camera looks toward -z; the light travels the same way, so the sun stands behind the camera and to the side.
-const SUN_DIRECTION = [0.4, -0.6, -0.5];
-const GROUND_SIZE = 800;
+// `lightDirection` points toward the sun. The camera looks toward -z, so this sun stands high on the camera's right: it lights
+// the side of the tree the photo shows and throws the shadow to the left and behind the trunk, onto ground the camera sees.
+const SUN_DIRECTION = [0.6, 0.6, 0.45];
+const GROUND_SIZE = 300;
+const GRASS_COLOR = [0.16, 0.24, 0.07];
 const SHEET_CELL_WIDTH = 320;
 const SHEET_CELL_HEIGHT = 240;
 const SHEET_LABEL_HEIGHT = 22;
@@ -77,13 +79,15 @@ function buildRecipe({ preset, seed, extent, distance, heightFraction }) {
     format: 'crucible.scene',
     schemaVersion: 1,
     geometries: [{ id: 'ground', type: 'box', bevel: 0 }],
-    materials: [{ id: 'soil', color: [0.2, 0.18, 0.12], metallic: 0, roughness: 0.95 }],
+    materials: [{ id: 'soil', color: GRASS_COLOR, metallic: 0, roughness: 0.95 }],
     nodes: [
       { id: 'ground', geometry: 'ground', material: 'soil', translation: [0, -0.05, 0], scale: [GROUND_SIZE, 0.1, GROUND_SIZE] },
       { id: 'tree', vegetation: { preset, seed } },
     ],
     camera: { eye, target, fov },
     environment: { world: true, lightDirection: SUN_DIRECTION },
+    // The default shadow view is 3.5 m wide; this one covers the crown and its shadow on the ground.
+    shadow: { target, extent: extent.height * 1.6, distance: extent.height * 3, far: extent.height * 8 },
   };
 }
 
@@ -114,6 +118,8 @@ async function renderStills({ options, plans, outputFolder }) {
       const result = (await call('scene_render_result', { jobId: submitted.structuredContent.jobId })).structuredContent;
       await copyFile(result.artifacts[0].path, plan.stillPath);
       await writeFile(plan.stillPath.replace(/\.png$/, '.json'), JSON.stringify(plan.description, null, 2));
+      // The server keeps a bounded number of job records; free this one once its picture is copied.
+      await call('scene_render_release', { jobId: submitted.structuredContent.jobId });
       await call('scene_dispose', { sessionId });
       console.log(`rendered ${plan.name}`);
     }
