@@ -29,6 +29,9 @@ export const STUDIO_CSS = `
   font-size: 12.5px;
   user-select: none;
 }
+/* A forced theme: the colours come from the tokens of site-tokens.css; the native controls and scrollbars follow the scheme. */
+.crucible-studio[data-theme="light"] { color-scheme: light; }
+.crucible-studio[data-theme="dark"] { color-scheme: dark; }
 .crucible-studio * { box-sizing: border-box; }
 .crucible-studio input,
 .crucible-studio textarea { user-select: text; }
@@ -59,6 +62,10 @@ export const STUDIO_CSS = `
   inline-size: 32px;
   padding: 0;
   flex-shrink: 0;
+}
+.crucible-studio-icon[data-brand] {
+  fill: currentColor;
+  stroke: none;
 }
 .crucible-studio-icon {
   inline-size: 17px;
@@ -397,9 +404,11 @@ export const STUDIO_CSS = `
 /* The mark's own colours, from the brand kit. On a dark panel the kit makes the body one step lighter. */
 .crucible-studio-mark-body { fill: #393842; }
 .crucible-studio-mark-shadow { fill: #2a282d; }
+.crucible-studio[data-theme="dark"] .crucible-studio-mark-body { fill: #4f4e5a; }
+.crucible-studio[data-theme="dark"] .crucible-studio-mark-shadow { fill: #3b3a44; }
 @media (prefers-color-scheme: dark) {
-  .crucible-studio-mark-body { fill: #4f4e5a; }
-  .crucible-studio-mark-shadow { fill: #3b3a44; }
+  .crucible-studio:not([data-theme]) .crucible-studio-mark-body { fill: #4f4e5a; }
+  .crucible-studio:not([data-theme]) .crucible-studio-mark-shadow { fill: #3b3a44; }
 }
 .crucible-studio-mark-molten-deep { fill: #df5829; }
 .crucible-studio-mark-molten { fill: #fc9132; }
@@ -1695,6 +1704,349 @@ export const STUDIO_CSS = `
   block-size: 16px;
   margin: 0;
   accent-color: var(--studio-text);
+}
+.crucible-studio dialog.crucible-studio-setup-dialog {
+  width: min(780px, calc(100vw - 32px));
+  max-block-size: calc(100vh - 48px);
+  border: 1px solid var(--studio-border);
+}
+.crucible-studio dialog.crucible-studio-setup-dialog:focus { outline: none; }
+.crucible-studio dialog.crucible-studio-setup-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.crucible-studio dialog.crucible-studio-setup-dialog h2 { margin: 0; }
+.crucible-studio-setup-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-inline-start: -9px;
+}
+.crucible-studio dialog button.crucible-studio-setup-step {
+  padding-inline: 9px;
+  background: transparent;
+  color: var(--studio-muted);
+  font-weight: 600;
+}
+/* The step you are on is told apart by its text colour and a soft fill, not by weight, so no label changes width. */
+.crucible-studio dialog button.crucible-studio-setup-step[data-current="true"] {
+  background: color-mix(in srgb, var(--studio-text) 8%, transparent);
+  color: var(--studio-text);
+}
+.crucible-studio-setup-body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  display: grid;
+  gap: 18px;
+  align-content: start;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--studio-muted) transparent;
+}
+.crucible-studio-setup-group {
+  display: grid;
+  gap: 10px;
+}
+/* Every step shares one grid cell, so the dialog takes the height of the tallest step and never jumps. A step that is not
+   shown is invisible and inert, not removed. A step with one block (the theme cards, the tiers, the prompt) fills the cell. */
+.crucible-studio-setup-body { grid-template-columns: minmax(0, 1fr); }
+.crucible-studio-setup-group {
+  grid-area: 1 / 1;
+  align-content: start;
+  gap: 14px;
+}
+.crucible-studio-setup-group[data-fill="true"] { grid-template-rows: minmax(0, 1fr); }
+.crucible-studio-setup-group[inert] { visibility: hidden; }
+/* The step row names the step, so a heading would say it twice. */
+.crucible-studio dialog .crucible-studio-setup-group h3 { display: none; }
+.crucible-studio-setup-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.crucible-studio-setup-card {
+  position: relative;
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 8px;
+  min-inline-size: 0;
+  padding: 8px;
+  border: 1px solid var(--studio-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--studio-text) 6%, transparent);
+  cursor: pointer;
+}
+.crucible-studio-setup-card input {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.crucible-studio-setup-card[data-selected="true"] {
+  border-color: var(--studio-text);
+  box-shadow: inset 0 0 0 1px var(--studio-text);
+}
+/* Keyboard focus is one ring that takes the selected border's place, never a second ring beside it. */
+.crucible-studio-setup-card:has(input:focus-visible) {
+  border-color: var(--studio-accent);
+  box-shadow: inset 0 0 0 1px var(--studio-accent);
+}
+.crucible-studio-setup-card-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-inline-size: 100%;
+  padding-inline-end: 24px;
+}
+.crucible-studio-setup-card-label { font-weight: 600; }
+.crucible-studio-setup-card-name > .crucible-studio-icon { align-self: center; }
+/* A tier card is tall, so its icon is the picture of the tier: large, above the name. */
+.crucible-studio-setup-cards-wide .crucible-studio-setup-card-name,
+.crucible-studio-setup-cards-keys .crucible-studio-setup-card-name {
+  flex-direction: column;
+  align-items: start;
+  gap: 10px;
+}
+.crucible-studio-setup-cards-wide .crucible-studio-setup-card-name > .crucible-studio-icon,
+.crucible-studio-setup-cards-keys .crucible-studio-setup-card-name > .crucible-studio-icon {
+  align-self: start;
+  inline-size: 44px;
+  block-size: 44px;
+}
+.crucible-studio-setup-cards-wide .crucible-studio-setup-card-detail { white-space: normal; }
+.crucible-studio-setup-card-detail {
+  inline-size: 100%;
+  overflow: hidden;
+  color: var(--studio-muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crucible-studio-setup-facts {
+  display: flex;
+  gap: 12px;
+  font-family: var(--studio-font-heading);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.crucible-studio-setup-check {
+  position: absolute;
+  inset-block-start: 6px;
+  inset-inline-end: 6px;
+  display: none;
+  inline-size: 18px;
+  block-size: 18px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--studio-text);
+  color: var(--studio-bg);
+}
+.crucible-studio-setup-card[data-selected="true"] .crucible-studio-setup-check { display: grid; }
+.crucible-studio-setup-check .crucible-studio-icon {
+  inline-size: 12px;
+  block-size: 12px;
+  stroke-width: 2.4;
+}
+/* The three theme cards fill the row. Each card holds a miniature of the real Studio at the real window's proportions. */
+.crucible-studio-setup-cards-theme {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.crucible-studio-setup-cards-theme .crucible-studio-setup-card { justify-items: stretch; }
+/* The tick sits beside the label under the miniature, the same place on every card, never over a half that may be dark. */
+.crucible-studio-setup-cards-theme .crucible-studio-setup-check {
+  inset-block-start: auto;
+  inset-block-end: 8px;
+}
+/* The miniature is a Studio root laid out at 960 by 600 pixels and scaled to the card's width, so every proportion is the
+   real one. It is a root of its own with a forced theme, so its tokens resolve again on that element and it shows its
+   own theme whatever theme the Studio around the dialog is in. The outer border takes the dialog's theme, so Light stays
+   visible on a light dialog and Dark on a dark one. The fixed scale is the fallback for a browser without typed arithmetic. */
+.crucible-studio-setup-preview {
+  position: relative;
+  display: block;
+  inline-size: 100%;
+  aspect-ratio: 8 / 5;
+  container-type: inline-size;
+  overflow: hidden;
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  pointer-events: none;
+}
+.crucible-studio-setup-preview > .crucible-studio-miniature {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inline-size: 960px;
+  block-size: 600px;
+  min-block-size: 0;
+  --studio-side-width: 284px;
+  transform-origin: 0 0;
+  scale: 0.22;
+  scale: calc(100cqw / 960px);
+}
+.crucible-studio-miniature[data-half="left"] { clip-path: inset(0 50% 0 0); }
+.crucible-studio-miniature[data-half="right"] { clip-path: inset(0 0 0 50%); }
+.crucible-studio-setup-cards-wide {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.crucible-studio-setup-cards-keys {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+/* The key caps of a keymap card: each tool's icon over its key, the same four in every card so the rows compare. */
+.crucible-studio-setup-keycaps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  justify-self: stretch;
+  margin-block-start: 6px;
+}
+.crucible-studio-setup-keycap {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: var(--studio-text);
+}
+.crucible-studio-setup-keycap > .crucible-studio-icon {
+  inline-size: 18px;
+  block-size: 18px;
+}
+.crucible-studio .crucible-studio-setup-keycap kbd {
+  box-sizing: border-box;
+  inline-size: 100%;
+  padding: 12px 0;
+  border: 1px solid var(--studio-border);
+  border-radius: 6px;
+  background: var(--studio-bg);
+  color: var(--studio-text);
+  font-family: var(--studio-font);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+}
+.crucible-studio-setup-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+.crucible-studio-setup-row-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 36px;
+}
+/* One chip grid for every row: six equal columns, each row starting at the first, so a row is one line and the
+   columns line up from row to row. The tick has a box of its own after the label in every chip, selected or not and
+   only transparent when not (visibility would show through a hidden step), so a chip never changes width and the label and tick keep one even gap. */
+.crucible-studio-setup-chips {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+.crucible-studio-setup-chips .crucible-studio-setup-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  block-size: 36px;
+  padding: 0 8px;
+}
+.crucible-studio-setup-chips .crucible-studio-setup-card-name { padding-inline-end: 0; }
+.crucible-studio-setup-chips .crucible-studio-setup-card-label { font-weight: 500; }
+.crucible-studio-setup-chips .crucible-studio-setup-check {
+  position: static;
+  display: grid;
+  flex: none;
+  inline-size: 12px;
+  block-size: 12px;
+  opacity: 0;
+}
+.crucible-studio-setup-chips .crucible-studio-setup-card[data-selected="true"] .crucible-studio-setup-check { opacity: 1; }
+/* A handle chip carries a dot and a workspace chip an icon beside the name and the tick, which one column cannot hold, so they take two. */
+.crucible-studio-setup-chips .crucible-studio-setup-card:has(.crucible-studio-setup-handle),
+.crucible-studio-setup-chips .crucible-studio-setup-card:has(.crucible-studio-setup-card-name > .crucible-studio-icon) { grid-column: span 2; }
+.crucible-studio-setup-chips .crucible-studio-setup-check .crucible-studio-icon {
+  inline-size: 9px;
+  block-size: 9px;
+}
+/* The dot sits in a box of one size, so the labels of the three sizes share a baseline. */
+.crucible-studio-setup-handle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 18px;
+  block-size: 18px;
+}
+.crucible-studio-setup-handle::before {
+  content: "";
+  border-radius: 999px;
+  background: var(--studio-text);
+}
+.crucible-studio-setup-handle[data-size="small"]::before { inline-size: 8px; block-size: 8px; }
+.crucible-studio-setup-handle[data-size="medium"]::before { inline-size: 12px; block-size: 12px; }
+.crucible-studio-setup-handle[data-size="large"]::before { inline-size: 18px; block-size: 18px; }
+/* The chat mark stands beside the prompt box, which is as tall as its text; the block rests in the middle of the step. */
+.crucible-studio-setup-agent {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: center;
+  align-items: start;
+  gap: 12px;
+}
+.crucible-studio-setup-agent > button { grid-column: 2; justify-self: start; }
+.crucible-studio-setup-agent-mark {
+  display: grid;
+  place-items: center;
+  inline-size: 40px;
+  block-size: 40px;
+  border: 1px solid var(--studio-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--studio-text) 6%, transparent);
+}
+.crucible-studio-setup-agent-mark .crucible-studio-icon {
+  inline-size: 22px;
+  block-size: 22px;
+}
+.crucible-studio textarea.crucible-studio-setup-prompt {
+  inline-size: 100%;
+  field-sizing: content;
+  max-block-size: 160px;
+  padding: 10px;
+  border: 1px solid var(--studio-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--studio-text) 6%, transparent);
+  color: var(--studio-text);
+  font-family: var(--studio-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+  resize: none;
+  user-select: text;
+}
+.crucible-studio-setup-actions { align-items: center; margin-top: 10px; }
+.crucible-studio dialog button.crucible-studio-setup-skip {
+  margin-inline: -11px auto;
+  background: transparent;
+  color: var(--studio-text);
+}
+.crucible-studio dialog button.crucible-studio-setup-primary {
+  min-inline-size: 88px;
+  background: var(--studio-text);
+  color: var(--studio-bg);
+  font-weight: 600;
+}
+.crucible-studio dialog button[hidden] { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .crucible-studio-setup-card { transition: border-color 120ms ease, box-shadow 120ms ease; }
 }
 .crucible-studio-shortcuts {
   display: grid;

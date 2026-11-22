@@ -32,6 +32,13 @@ function catalogHooksFor(folderParameter) {
   return createCatalogHooks(folder);
 }
 
+// The first visit opens the setup. ?setup=off never does.
+function openSetupWhenWanted(studio, setupParameter) {
+  if (setupParameter !== 'off' && !studio.setupDone) {
+    studio.openSetup();
+  }
+}
+
 async function mountStudioPage() {
   const root = document.querySelector('#studio-root');
   if (!root) {
@@ -51,6 +58,8 @@ async function mountStudioPage() {
     }
     await studio.loadExternalTextFile(await response.text(), { fileName: sceneUrl.pathname.split('/').pop(), recordUndo: false, agent: false });
   }
+  await studio.ready;
+  openSetupWhenWanted(studio, parameters.get('setup'));
 }
 
 mountStudioPage().catch(error => {
