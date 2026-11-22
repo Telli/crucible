@@ -28,8 +28,9 @@ export const COST_MODEL = Object.freeze({
   // A placed asset is rebuilt from its glTF parts (skeleton, materials, textures) however few triangles it has.
   setupSecondsPerAssetPart: 1.2e-3,
   drawSecondsPerAssetPart: 3.5e-5,
-  // Measured on a 132 node scene with three placed GLB files (9.8 MiB, thirteen placements) against the same scene without them
-  // (#2286): the scene took about 7 s longer to build and each frame about 1 s longer, all of it after the first frame.
+  // Fitted on one 132 node scene with three placed GLB files (9.8 MiB, thirteen placements) against the same scene without them
+  // (#2286): with the files, renderer start took about 5 s longer and each frame after the first about 1 s longer. The per-frame
+  // numbers describe slow frames that #3038 tracks; refit them when it lands.
   setupSecondsPerAssetMiB: 0.7,
   drawSecondsPerAssetMiB: 0.09,
   // A motion sample re-poses every node: about 0.4 s a frame for 120 to 130 nodes, paid on each frame after the first.
