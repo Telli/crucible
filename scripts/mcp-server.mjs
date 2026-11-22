@@ -40,6 +40,7 @@ import { MINIMUM_SPOT_ANGLE, MAXIMUM_SPOT_ANGLE, spotAngleExpectation } from '..
 import { annotateViewHtml, clientSupportsMcpApps, ANNOTATE_VIEW_URI, MCP_APPS_MIME_TYPE } from './annotate-app-view.mjs';
 import { loadAskUserFixture, describeAskUserFixture } from './ask-user-fixture.mjs';
 import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
+import { resolvePacksOption } from '../bin/crucible-pack-folder.mjs';
 
 describeSchemaInputsWithReceivedValues();
 
@@ -1272,6 +1273,7 @@ export async function runMcpCli({ argumentsValue = process.argv.slice(2),
     if (name === '--allow-addon') allowedAddonNames.push(value);
     else options[name.slice(2)] = name === '--memory' || name === '--max-asset-bytes' ? Number(value) : value;
   }
+  options.packs = resolvePacksOption(options.packs);
   options.gpuQueue = createGpuQueueFromFlags({ queue: options['gpu-queue'], wait: options['gpu-queue-wait'] });
   delete options['gpu-queue'];
   delete options['gpu-queue-wait'];
