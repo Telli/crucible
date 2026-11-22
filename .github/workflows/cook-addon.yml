@@ -104,6 +104,7 @@ on:
       - 'src/area-light-portal.js'
       - 'src/blend-output.js'
       - 'src/blink-curve.js'
+      - 'src/bvh-limits.js'
       - 'src/camera-effects.js'
       - 'src/camera-path.js'
       - 'src/camera.js'

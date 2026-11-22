@@ -184,6 +184,8 @@ arms and legs) or the call fails and lists what is missing. `scale` (0.1 to 10) 
 `retargetClip` options of the same names. `from` replaces `clip` and `bones`, and morph tracks of the source are not carried.
 The runtime reads the other asset by its catalog ID (at most 4 at once); a session made without a catalog cannot use it.
 The source can be a skeleton-only file (`meshes: 0` in `scene_asset_catalog`, such as the 100STYLE clips): only its clips and joints are read. `scene_create_asset` on such a file fails, since it has nothing to draw.
+A `.bvh` motion capture file in the catalog is such a source: it is listed as a skeleton-only GLB with one clip, so `from` takes its ID
+with `clip: 0` ([BVH motion capture](https://crucible.codepawl.com/retarget.md#bvh-motion-capture)).
 `scene_inspect` `kind: "hierarchy"` returns `retargets`: per `from` layer, `source` and `target` with `mapped` (bones
 matched), `unmapped` (joints no bone claimed, up to 24, with `unmappedCount`) and `missing`.
 
