@@ -241,9 +241,19 @@ texture repeats outside 0 to 1 and tiles. `size` and `axis` only apply to `box`.
 fails at render and at `scene_export_glb` with a message that names `uv_unwrap`. GLB export writes the baked graph textures
 and the geometry UVs.
 
+### Which geometries have UVs
+
+An image map (`map.sequence`, `colorMap` and the other texture set maps) reads UV channel 0, and a geometry type either carries it or does not:
+
+- UVs always: `sphere`, `grid`, `plane`, `circle`, `torus`, `line`, `lathe`, `extrude`, `tube`, `curve`, `sdf`, `text`, `terrain`, `cloud`, `floorPlan`.
+- UVs when an image map is on them: `box`, `cylinder`, `cone`. Each box face shows the whole image, upright from outside. The cylinder and cone wall wraps it once around, and each cap shows it as a disc. One wrap is what Blender and three.js give their cylinder and cone, so the picture is stretched around the whole wall. To tile the picture instead, set `uvScale` or `worldScale` on the material. An untextured box, cylinder or cone has no UV buffer.
+- No UVs: `icoSphere`, `mesh` (until a `uv_unwrap` node adds them), `fragment`, `dented`.
+
+`meshMap`, `vertexGroup`, `uv_pack` and a pattern with `mapping: "uv"` still need a mesh with UVs, so on a box they refuse as before. `box()`, `cylinder()` and `cone()` called as library functions return no `uvs`.
+
 ### Image sequence maps
 
-`map: { sequence: { frames, fps, loop } }` gives a `surface` material a colour map that plays a list of images, such as the output of a video or a simulation. It covers the colour map only (`map`; normal, roughness and emissive maps stay with `pattern`), needs geometry with UVs (`grid`, `box`, a `uv_unwrap`ped mesh), and does not combine with `pattern`. `color` defaults to white and tints the frames.
+`map: { sequence: { frames, fps, loop } }` gives a `surface` material a colour map that plays a list of images, such as the output of a video or a simulation. It covers the colour map only (`map`; normal, roughness and emissive maps stay with `pattern`), needs geometry with UVs (see [Which geometries have UVs](#which-geometries-have-uvs)), and does not combine with `pattern`. `color` defaults to white and tints the frames.
 
 ```json
 { "id": "screen", "map": { "sequence": { "frames": ["<catalog image id>", "<catalog image id>"], "fps": 12 } } }
@@ -271,7 +281,7 @@ A `surface` material takes the maps of a scanned set (Poly Haven, ambientCG) fro
 - `normalConvention` is `opengl` (default) or `directx`. A DirectX normal map has its green channel flipped when it is loaded; a set whose only normal map is a DirectX file sets it for you.
 - The roughness and metallic images are repacked into one glTF metallicRoughness texture: roughness in green, metallic in blue, the other channel 255, so `roughness` and `metallic` (default 1 when their map is set) still scale it. Their sizes must match.
 - `uvScale` (one number or `[u, v]`, 0.001 to 10000 tiles), `uvOffset` (`[u, v]`, -10000 to 10000) and `uvRotation` (degrees, -360 to 360) move every map of the material together, the way glTF `KHR_texture_transform` does: scale, then rotate, then offset. `worldScale` (metres per tile, 0.001 to 100000, not together with `uvScale`) sets the tile size instead, so a 2 m scan repeats every 2 m on a 10 m plane and on a 400 m terrain alike (a chunked terrain too). The transform is baked into the mesh UVs, so the rasterizer, both path tracers and the exports read the same texture coordinates; `worldScale` measures the mesh at its rest size, scaled by its node. A material without these fields draws exactly as before, and the fields need a catalog map and a mesh with UVs.
-- `colorMap` is the base colour, `color` tints it (white by default). It cannot be combined with `map` or `pattern`, nor can any other map field with `pattern`. The material needs UVs.
+- `colorMap` is the base colour, `color` tints it (white by default). It cannot be combined with `map` or `pattern`, nor can any other map field with `pattern`. The material needs UVs, which [some geometries have](#which-geometries-have-uvs).
 - `occlusionMap` is drawn by the rasterizer; the path tracers ignore it and say so. `heightMap` is kept and exported in the recipe, but no renderer displaces or parallax-maps from it yet: `scene_inspect` reports it as ignored, and a path traced render lists it under `ignored`.
 
 Nodes contain `id`, optional `label`, `parent`, `translation`, `rotation`, and `scale`.
