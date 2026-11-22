@@ -886,9 +886,14 @@ export function createStudioController({
     return viewCamera();
   }
 
+  // The pool holds decoded scans under "<id>:<copy>" and decoded catalog images under their plain id, so one Map serves both options.
+  function scenePoolOptions() {
+    return assets ? { assets, sequenceFrames: assets } : {};
+  }
+
   function swapRecipe(recipeInput) {
     // `assets` is the host's pool of decoded catalog assets. It outlives each scene, so undo and redo rebuild from it.
-    installScene(createAgentScene(recipeInput, {}, assets ? { assets } : {}));
+    installScene(createAgentScene(recipeInput, {}, scenePoolOptions()));
   }
 
   function installScene(scene) {
@@ -904,7 +909,7 @@ export function createStudioController({
   // recipe it stands for. When the scene on screen differs from that only by what scene operations can set, they are applied
   // there and the parts, and the textures the renderer holds for them, stay (#2842). Otherwise the built scene is the new one.
   function loadRecipeKeepingScene(recipeInput) {
-    const candidate = createAgentScene(recipeInput, {}, assets ? { assets } : {});
+    const candidate = createAgentScene(recipeInput, {}, scenePoolOptions());
     if (!restoreRecipeInPlace(currentScene.exportRecipe(), candidate.exportRecipe())) {
       installScene(candidate);
     }
@@ -1815,6 +1820,19 @@ export function createStudioController({
     return nodeRecord;
   }
 
+  /**
+   * Applies the operations of one import (a file from disk placed, or set as the sky or a colour map) as one undo step.
+   * `selectNodeId` names a node the batch adds, which becomes the selection as a new mesh does; `detail` says what changed.
+   */
+  function applyImportOperations(operations, { selectNodeId = null, detail = { kind: 'look' } } = {}) {
+    applySceneOperations(operations);
+    if (selectNodeId !== null) {
+      selectedNodeId = selectNodeId;
+      selectedObjectKey = null;
+    }
+    notify(selectNodeId === null ? detail : { ...detail, nodeId: selectNodeId });
+  }
+
   // A new light becomes the selection, as a new mesh does, so its panel and its handle are there to edit at once.
   function selectAddedLight(lightType, count) {
     selectedObjectKey = `${lightType}:${count - 1}`;
@@ -2673,6 +2691,7 @@ export function createStudioController({
     snapSelectedToAt,
     updateNodeTransform,
     addPrimitive: timed('add', addPrimitive),
+    applyImportOperations: timed('add', applyImportOperations),
     addSceneLight: timed('add', addSceneLight),
     duplicateSelected: timed('duplicate', duplicateSelected),
     copySelected,

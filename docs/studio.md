@@ -212,6 +212,37 @@ await studio.ready;
 - Without the function a scene needs, the scene on screen stays as it was and the status line says which file is missing and which function to pass.
 - Studio loads no Draco or KTX2 decoder. Serve a GLB that uses neither.
 
+### Hooks
+
+| Hook | Takes | Returns | Used for |
+| --- | --- | --- | --- |
+| `asset(id)` | the id in `node.asset.id` | GLB bytes | placed scans |
+| `environment(reference)` | the id in `environment.hdri` | Radiance `.hdr` bytes | the sky |
+| `look(reference)` | the id in `environment.look` | `.cube` text | the colour look |
+| `image(id)` | an id in a material's `colorMap` (and the other map fields) | PNG, JPEG or WebP bytes | a colour image on an object |
+| `store({ kind, id, name, extension, bytes })` | a file the person imported | a promise | keeping it, so the read hook of that `kind` (`'asset'`, `'environment'` or `'image'`) returns the same bytes |
+| `name(id)` | an id | the file name kept for it, or `null` | showing the file name instead of the short id |
+
+### Import a file from disk
+
+With a `store` hook (and `crypto.subtle`, which browsers give secure pages), the File menu has **Import…** and the viewport takes a dropped file. Studio tells the kind from the bytes, not the extension:
+
+- a **GLB** is placed at the origin as a new node named after the file, and selected;
+- a Radiance **.hdr** becomes the sky (`environment.hdri`); the World group shows it by the file name, or `Custom` and the first characters of the id when no name is known;
+- a **PNG, JPEG or WebP** becomes the base colour image (`colorMap`) of the selected object's material, and that material's colour goes to white so the old tint does not stain the picture. A material shared with other objects changes for all of them, as it does in the Material tab. A picture needs UV coordinates, which sphere, torus, plane, grid and unwrapped meshes have; box (bevelled or not), cylinder and cone do not, and the renderer would pause the viewport on them. So the import is refused when any object wearing the selected material lacks UVs, and the refusal names those objects. Give them their own material, or pick a geometry with UVs.
+
+Studio names the file by the SHA-256 of its bytes (the id), decodes it, calls `store`, then changes the scene in one undo step. Everything that can be refused is refused before `store` runs, and a refusal leaves the scene, the undo history and the decoded files as they were. A `store` that rejects shows its message as written, so a host can say "Save the scene first". The recipe holds only the id; `name` is how a host gets the file name back when the scene reopens, since Studio only remembers names for the session.
+
+Refused, each with a sentence that says what to do:
+
+- a GLB over 64 MiB, a `.hdr` over 8 MiB, an image over 2048 pixels on a side or 64 MiB;
+- a GLB that needs Draco or KTX2 (re-export without it, or add it through the MCP asset catalog, which converts it);
+- a GLB or glTF JSON that points at separate `.bin` or image files (export one self-contained `.glb`);
+- an image with nothing selected, or whose material takes a pattern or a map sequence;
+- any other file type. A scene.json still opens with Open or a drop.
+
+Without `store`, or without `crypto.subtle`, the Import row is hidden and a dropped binary file gets one sentence saying so. A web pack of a scene that places an imported GLB carries the decoded geometry; a pack refuses a material that holds an imported image, as it does for any decoded image (see the pack message).
+
 The viewport draws a scene's volume fog. Post passes written as shader code and other render-only steps show in the MCP preview and in renders, not in the Studio viewport.
 
 ## Scenes with a large scan

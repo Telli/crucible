@@ -478,6 +478,9 @@ export function installStudioDom({ clipboardFails = false } = {}) {
     get pendingTimerCount() {
       return timers.size;
     },
+    get pendingTimerDelays() {
+      return [...timers.values()].map(timer => timer.delay);
+    },
     get pendingAnimationFrameCount() {
       return animationFrames.size;
     },
