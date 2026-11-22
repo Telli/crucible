@@ -5,6 +5,7 @@ import { decodePack } from './scene-pack-format.js';
 import { loadPackShaderModules } from './scene-pack-shaders.js';
 import { TriggerAnimator, applyViewToCamera, parseHoverTiltAttribute, parseScrollAttribute, parseViews, scrollProgress } from './scene-triggers.js';
 import { partsWithImageData } from './scene-pack-images.js';
+import { createPackEnvironmentMap } from './scene-pack-environment.js';
 
 export const SCENE_STATES = Object.freeze(['loading', 'live', 'error']);
 
@@ -29,19 +30,12 @@ async function fetchPack(url) {
 
 // The renderer and its lighting load after the poster is on screen, so the first paint never waits for them.
 async function createLiveRenderer(canvas, scene) {
-  const [{ CrucibleRenderer }, { createLightingSetupMap, setupMapShowsBackground }] = await Promise.all([
+  const [{ CrucibleRenderer }, map] = await Promise.all([
     import('./renderer.js'),
-    import('./lighting-setups.js'),
+    createPackEnvironmentMap(scene),
     loadPackShaderModules(scene.shaderModules),
   ]);
-  const environment = {
-    ...scene.environment,
-    map: createLightingSetupMap(scene.environment.setup, {
-      intensity: scene.environment.environmentIntensity,
-      rotation: scene.environment.environmentRotation,
-      showBackground: setupMapShowsBackground(scene.environment),
-    }),
-  };
+  const environment = { ...scene.environment, map };
   // Baked lightmaps arrive as plain bytes; the renderer uploads ImageData.
   const renderer = new CrucibleRenderer(canvas, partsWithImageData(scene.parts), {
     ground: false,

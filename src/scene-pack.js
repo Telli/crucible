@@ -5,13 +5,21 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { createAgentScene, loadAllAgentSceneModules } from './agent-scene.js';
 import { fitAgentShadow, resolveAgentShadow } from './agent-look.js';
 import { agentSceneModulesNeeded } from './agent-scene-modules.js';
+import { parseRadianceHdr } from './hdri.js';
+import { BUNDLED_ENVIRONMENT_NAMES, catalogEnvironmentSource, registerCatalogEnvironment } from './look-catalog.js';
 import { encodePack } from './scene-pack-format.js';
+import { PACK_MAX_IMAGE_TEXELS, checkImageBudget } from './scene-pack-limits.js';
+import { packedSkyOf } from './scene-pack-sky.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 
 export const PACK_FILE_NAME = 'scene.pack';
 export const PACK_RUNTIME_FILE_NAME = 'crucible-scene.js';
 export const PACK_POSTER_EXTENSIONS = Object.freeze(['.webp', '.png', '.jpg', '.jpeg']);
+export { PACK_MAX_IMAGE_TEXELS };
 const RECIPE_FORMAT = 'crucible.scene';
+const BUNDLED_SKY_FOLDER = new URL('../assets/looks/', import.meta.url);
+// The material fields that name an image of the asset catalog.
+const MATERIAL_IMAGE_FIELDS = Object.freeze(['colorMap', 'normalMap', 'roughnessMap', 'metallicMap', 'occlusionMap', 'heightMap']);
 // Lightmap texels one pack may carry: 262,144 is 1 MB of raw RGBA bytes. A recipe build may trace up to 1,000,000 texels,
 // but a page downloads every texel, so a pack holds a quarter of that.
 export const PACK_MAX_LIGHTMAP_TEXELS = 262_144;
@@ -44,10 +52,8 @@ export function validatePackRecipe(recipe) {
     }
   }
   const environment = recipe.environment ?? {};
-  for (const field of ['sky', 'hdri']) {
-    if (environment[field]) {
-      refuse(`recipe.environment.${field}: crucible pack lights a scene with a lighting setup for now; remove "${field}" and set environment.setup (daylight, studio and the other names scene_capabilities lists).`);
-    }
+  if (environment.sky) {
+    refuse('recipe.environment.sky: crucible pack lights a scene with a lighting setup or an HDRI sky image for now; remove "sky" and set environment.setup (daylight, studio and the other names scene_capabilities lists) or environment.hdri.');
   }
 }
 
@@ -70,20 +76,54 @@ function checkLightmapBudget(recipe, parts, maxLightmapTexels) {
   refuse(`recipe.bake.texelsPerUnit: the bake wrote ${texels} lightmap texels, over the ${maxLightmapTexels} one pack carries (the page downloads every texel). Lower bake.texelsPerUnit (now ${density}; 1 to 12), set bake.preset to "draft", or bake fewer and smaller parts.`);
 }
 
+function isSkyRegistered(reference) {
+  try {
+    catalogEnvironmentSource(reference);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The command line has no asset catalog: a bundled sky name is read from assets/looks, a catalog file ID is refused by name.
+function registerBundledSky(recipe) {
+  const reference = recipe.environment?.hdri;
+  if (typeof reference !== 'string' || isSkyRegistered(reference)) return;
+  if (!BUNDLED_ENVIRONMENT_NAMES.includes(reference)) {
+    refuse(`recipe.environment.hdri: crucible pack reads only the bundled skies (${BUNDLED_ENVIRONMENT_NAMES.join(', ')}); the catalog file ${reference.slice(0, 16)} is not available to the command line. Use a bundled name, or export the web pack from Studio, which has the catalog.`);
+  }
+  registerCatalogEnvironment(reference, parseRadianceHdr(readFileSync(new URL(`${reference}.hdr`, BUNDLED_SKY_FOLDER))));
+}
+
+function requireCatalogImages(recipe, catalogImages) {
+  if (catalogImages) return;
+  for (const material of recipe.materials ?? []) {
+    const field = MATERIAL_IMAGE_FIELDS.find(name => material[name] !== undefined);
+    if (field) {
+      refuse(`recipe.materials["${material.id}"].${field}: crucible pack cannot read the asset catalog that holds this image. Export the web pack from Studio, which has the catalog, or remove the ${field}.`);
+    }
+  }
+}
+
 /**
  * Compiles a recipe to the bytes of a `.pack` file: its parts, camera, lighting and effects, ready for the runtime.
  * A recipe `bake` runs here, in Node, and its lightmaps travel in the pack as bytes: the page never traces.
+ * `catalogImages` is a Map of catalog image IDs to decoded { width, height, data }, for a host that has an asset catalog.
  */
-export async function compileRecipeToPack(recipe, { maxLightmapTexels = PACK_MAX_LIGHTMAP_TEXELS } = {}) {
+export async function compileRecipeToPack(recipe, { maxLightmapTexels = PACK_MAX_LIGHTMAP_TEXELS, maxImageTexels = PACK_MAX_IMAGE_TEXELS, catalogImages = null } = {}) {
   validatePackRecipe(recipe);
+  requireCatalogImages(recipe, catalogImages);
+  registerBundledSky(recipe);
   await loadAllAgentSceneModules();
-  const scene = createAgentScene(recipe);
+  const scene = createAgentScene(recipe, {}, catalogImages ? { sequenceFrames: catalogImages } : undefined);
   const environment = scene.environment;
   if (recipe.bake) checkLightmapBudget(recipe, scene.parts, maxLightmapTexels);
+  checkImageBudget(scene.parts, maxImageTexels);
   return encodePack({
     shaderModules: agentSceneModulesNeeded(recipe).filter(name => Object.hasOwn(PACK_SHADER_MODULES, name)),
     camera: scene.camera,
     environment,
+    environmentMap: packedSkyOf(environment),
     effects: scene.effects,
     shadowBounds: resolveAgentShadow(fitAgentShadow(scene.shadow, scene.parts), environment.lightDirection),
     parts: scene.parts.map(part => ({ name: part.name, geometry: part.geometry, material: part.material, matrix: part.matrix })),

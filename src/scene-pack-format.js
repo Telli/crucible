@@ -74,15 +74,21 @@ function encodeValue(value, path, chunks, cursor) {
   if (ArrayBuffer.isView(value)) {
     const name = value.constructor.name;
     if (!Object.hasOwn(TYPED_ARRAYS, name)) throw new TypeError(`${path}: got ${name}; expected a typed array such as Float32Array or Uint32Array.`);
+    // An image shared by several parts (one texture on two materials) is written once and read back through one marker.
+    if (value instanceof Uint8ClampedArray && cursor.images.has(value)) return cursor.images.get(value);
     const offset = padTo(cursor.bytes, ALIGNMENT);
     const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
     chunks.push({ offset, bytes });
     cursor.bytes = offset + bytes.byteLength;
-    return { [TYPED_MARKER]: name, offset, length: value.length };
+    const marker = { [TYPED_MARKER]: name, offset, length: value.length };
+    if (value instanceof Uint8ClampedArray) cursor.images.set(value, marker);
+    return marker;
   }
   if (Array.isArray(value)) return value.map((entry, index) => encodeValue(entry, `${path}[${index}]`, chunks, cursor));
   if (value !== undefined && typeof value === 'object') {
     const kind = describeKind(value);
+    // A browser decodes a texture to ImageData; a pack stores it as the plain { width, height, data } the runtime turns back into ImageData.
+    if (kind === 'ImageData') return encodeValue({ width: value.width, height: value.height, data: value.data }, path, chunks, cursor);
     if (kind !== 'Object') throw new TypeError(`${path}: got a ${kind}; expected plain data. A pack holds numbers, strings, arrays, objects and typed arrays only.`);
     const encoded = {};
     for (const key of Object.keys(value)) {
@@ -116,7 +122,7 @@ export function encodePack(scene) {
     throw new TypeError('encodePack: pass the scene object to pack, such as { camera, environment, parts }.');
   }
   const chunks = [];
-  const cursor = { bytes: 0 };
+  const cursor = { bytes: 0, images: new Map() };
   const body = encodeValue(scene, 'scene', chunks, cursor);
   const header = new TextEncoder().encode(JSON.stringify({ format: PACK_FORMAT, version: PACK_VERSION, scene: body }));
   const binaryStart = padTo(HEADER_BYTES + header.length, ALIGNMENT);
