@@ -1993,6 +1993,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const graph = (reusesGraph ? graphWithMovedNodes(recipe, movedNodeIds, localBounds) : compile(recipe, geometries, localBounds, limits));
     const skinBindings = bindSkins({ recipe, graph, geometryRecords, cache: skinCache });
     const materialHandles = new Map();
+    const stagedMaterialSnapshots = [];
     for (const material of recipe.materials) {
       const snapshot = immutableMaterial(material);
       const preferredHandle = preferred?.materialHandles.get(material.id);
@@ -2002,6 +2003,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const assetOutput = assetRuntime.materialOutputs.get(material.id);
       const handle = assetOutput ? assetMaterialHandle(snapshot, assetOutput, preferredHandle, activeHandle) : existing ?? materialHandle(snapshot, material.map && agentSceneModule('assets').createTextureSequence(material.id, material.map, options.sequenceFrames), options.sequenceFrames);
       materialHandles.set(material.id, handle);
+      if (!assetOutput) {
+        stagedMaterialSnapshots.push({ holder: handle.holder, snapshot });
+      }
     }
     const activeParts = new Map(state?.sourceRestParts.map(part => [part.name, part]) ?? []);
     const preferredParts = new Map(preferred?.sourceRestParts.map(part => [part.name, part]) ?? []);
@@ -2043,7 +2047,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const sameParts = state && state.sourceRestParts.length === nextParts.length &&
       state.sourceRestParts.every((part, index) => part === nextParts[index]);
     const sourceRestParts = sameParts ? state.sourceRestParts : Object.freeze(nextParts);
-    const lightBakeResult = stageLightBake(recipe, sourceRestParts, graph);
+    const lightBakeResult = stageLightBake(recipe, sourceRestParts, graph, stagedMaterialSnapshots);
     const { reflected, restParts } = stageRestParts(recipe, sourceRestParts, lightBakeResult, graph);
     // Unchanged rest parts start from the parts the last pose drew (#2730): a pose that samples the same sea, cloth or
     // particles keeps those parts, and only a pose that differs swaps them, which publishPose counts as a topology change.
@@ -2122,11 +2126,29 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     }
   }
 
+  // A material handle kept from the last stage takes the edited material only when the stage commits, which is after the bake.
+  // The bake reads the parts through those handles, so it runs with the edited materials in place and the old ones go back
+  // after it, whatever it does: an edit that is refused later leaves the scene as it was.
+  function withStagedMaterials(stagedMaterialSnapshots, work) {
+    const previous = stagedMaterialSnapshots.map(({ holder }) => holder.snapshot);
+    stagedMaterialSnapshots.forEach(({ holder, snapshot }) => {
+      holder.snapshot = snapshot;
+    });
+    try {
+      return work();
+    } finally {
+      stagedMaterialSnapshots.forEach(({ holder }, index) => {
+        holder.snapshot = previous[index];
+      });
+    }
+  }
+
   // A light bake costs seconds of ray tracing: it runs when the parts, the lights, the materials or the bake fields
   // change, and every other edit, seek or camera move reuses the last result.
-  function stageLightBake(recipe, sourceRestParts, graph) {
+  // `options.skipLightBake` builds the scene without its bake, for a scene made only to read its recipe.
+  function stageLightBake(recipe, sourceRestParts, graph, stagedMaterialSnapshots) {
     skippedBake = null;
-    if (!recipe.bake) {
+    if (!recipe.bake || options.skipLightBake) {
       return null;
     }
     const worldMatrices = new Map(sourceRestParts.map(part => [part.name, new Float32Array(graph.getNode(part.name).worldMatrix)]));
@@ -2137,7 +2159,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       return { ...lightBake, reused: true };
     }
     // The first build of a scene still fails loudly. A later edit stays applied: the old bake no longer fits the edited parts, so it is dropped.
-    const { baked, refusal } = agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators);
+    const { baked, refusal } = withStagedMaterials(stagedMaterialSnapshots, () => agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators));
     if (refusal) {
       lightBake = null;
       skippedBake = refusal;

@@ -8,6 +8,7 @@ import { extractRender } from './mesh-render.js';
 import { meshFromGeometry } from './mesh-convert.js';
 import { unwrapUv } from './mesh-uv.js';
 import { createImage, linearToSrgbByte } from './material-texture-kit.js';
+import { contentFingerprint, retainedBytes } from './content-fingerprint.js';
 
 // Light bake: the light that bounces between surfaces, written into one lightmap texture per part. A part draws it
 // through its emissive map, so the renderer, its shaders and every scene without a bake stay exactly as they were.
@@ -714,6 +715,50 @@ function unwrapPart(geometry, scale, margin, slot, twoSided) {
   return withBackFacesInPlace(unwrap(withBackFaces(geometry, placement.offset), scale, margin), placement);
 }
 
+// An unwrap depends only on the geometry's content, the axis scale, the chart margin and the two flags, so it is kept by
+// those and found again when a scene is rebuilt or a node is moved or recoloured (the margin is part of the key: it follows the area).
+const UNWRAP_REUSE_ENTRIES = 256;
+const UNWRAP_REUSE_BYTES = 96 * 1024 * 1024;
+const unwrapReuse = new Map();
+let computedUnwraps = 0;
+
+function reusedUnwrap(geometry, scale, margin, slot, twoSided) {
+  const key = [slot, twoSided, scaleKey(scale), margin, contentFingerprint(geometry)].join('|');
+  const reused = unwrapReuse.get(key);
+  if (reused) {
+    unwrapReuse.delete(key);
+    unwrapReuse.set(key, reused);
+    return reused.unwrapped;
+  }
+  const unwrapped = unwrapPart(geometry, scale, margin, slot, twoSided);
+  computedUnwraps++;
+  unwrapReuse.set(key, { unwrapped, bytes: retainedBytes(unwrapped) });
+  let total = [...unwrapReuse.values()].reduce((sum, entry) => sum + entry.bytes, 0);
+  for (const [oldestKey, entry] of unwrapReuse) {
+    if (unwrapReuse.size <= UNWRAP_REUSE_ENTRIES && total <= UNWRAP_REUSE_BYTES) {
+      break;
+    }
+    unwrapReuse.delete(oldestKey);
+    total -= entry.bytes;
+  }
+  return unwrapped;
+}
+
+/** How many unwraps were computed (not reused) since the module loaded. */
+export function unwrapsComputed() {
+  return computedUnwraps;
+}
+
+/** What the unwrap reuse cache holds now. */
+export function unwrapReuseStats() {
+  return { entries: unwrapReuse.size, bytes: [...unwrapReuse.values()].reduce((sum, entry) => sum + entry.bytes, 0), maximumEntries: UNWRAP_REUSE_ENTRIES, maximumBytes: UNWRAP_REUSE_BYTES };
+}
+
+/** Forgets every kept unwrap. */
+export function clearUnwrapReuse() {
+  unwrapReuse.clear();
+}
+
 /** Leaves the part single-sided once its back faces are real triangles, so no face is drawn twice. */
 function withoutDoubleSided(part) {
   return { ...part, material: { ...part.material, doubleSided: false } };
@@ -1103,7 +1148,7 @@ export function planLightmaps(parts, lighting, options = {}) {
     const key = `${scaleKey(scale)}|${twoSided}`;
     const area = worldTriangleArea(part) * (twoSided ? 2 : 1);
     if (!unwraps.has(key)) {
-      unwraps.set(key, unwrapPart(part.geometry, scale, chartMargin(area, settings), slot, twoSided));
+      unwraps.set(key, reusedUnwrap(part.geometry, scale, chartMargin(area, settings), slot, twoSided));
     }
     entries.push({ part, index, unwrapped: unwraps.get(key), area, slot, twoSided });
   });
