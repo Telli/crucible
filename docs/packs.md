@@ -63,11 +63,18 @@ It runs the same checks as the server and prints `ok` or `FAIL` with the error. 
 
 ## Install
 
-The [Marketplace page](https://crucible.codepawl.com/marketplace.html) lists the published packs with a checksum. Unzip each pack into its own subfolder of one packs folder and start the server with that folder:
+A pack that Crucible pins installs with one command, then the server finds it on its next start:
 
 ```sh
-crucible-mcp --packs /absolute/path/to/packs
+npx crucible packs add vegetation-scans
+npx crucible-mcp
 ```
+
+`crucible packs add` downloads the pack from its pinned GitHub Release, checks the file against the sha256 that ships in the npm package (`bin/pack-pins.json`) and only then unpacks it into `~/.crucible/packs/<name>`. A wrong checksum, a cut-off download or a pack with another name or version stops with the reason and leaves the folder as it was. A pack that is already installed stays in place until the new one is unpacked. `crucible packs list` shows what is installed and whether a newer version is pinned, and `crucible packs remove <name>` deletes one.
+
+`crucible-mcp` reads `~/.crucible/packs` when it exists and `--packs` is not given. Set `CRUCIBLE_PACKS_HOME` to an absolute folder to use another default, pass `--packs <absolute folder>` to read a different folder for one server, or `--packs none` to load no packs. MCP tools never download anything.
+
+The [Marketplace page](https://crucible.codepawl.com/marketplace.html) lists other published packs with a checksum. Unzip each into its own subfolder of the packs folder by hand.
 
 A pack that fails the checks is skipped and listed with its error under `packs.rejected` in `scene_asset_catalog`; the others still load. Changed files need a server restart, like `--assets`.
 
