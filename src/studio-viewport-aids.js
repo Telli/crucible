@@ -1,3 +1,5 @@
+import { agentGroundPlacement } from './agent-ground.js';
+
 // Working aids for the Studio viewport: a ground grid with the world axes, a view widget that shows where the camera
 // looks and snaps to the main views, and a readout of the camera and the selection. None of them is part of the scene.
 
@@ -187,6 +189,17 @@ export function viewportClipPlanes(camera) {
     near: Math.max(camera.near ?? 0.1, distance / VIEWPORT_NEAR_SHARE),
     far: Math.max(camera.far ?? 100, distance * VIEWPORT_FAR_REACH),
   };
+}
+
+/**
+ * Whether the viewport draws its own floor. It follows the preview's rule (src/agent-ground.js): no floor when the recipe
+ * turns the ground off or a part of it already forms one. An empty scene keeps the floor. Give it scene parts only.
+ */
+export function studioDrawsFloor(parts, environment) {
+  if (parts.length === 0) {
+    return true;
+  }
+  return agentGroundPlacement(parts, environment) !== null;
 }
 
 /** The floor of the viewport as a renderer part. It reaches the horizon at any zoom the camera allows, so its edge never shows. */
