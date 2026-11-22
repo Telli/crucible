@@ -680,6 +680,36 @@ test('restoreRevision undoes the last edits without a checkpoint and restores by
   assert.throws(() => session.restoreRevision(0, { expectedRevision: 3 }), /expectedRevision/);
 });
 
+test('restoreRecipe swaps in a whole recipe, keeps the parts both recipes hold and equals a scene built from it', () => {
+  const session = createAgentScene(recipe());
+  const before = session.exportRecipe();
+  const bytesBefore = geometryBytes(session);
+  const originalParts = session.parts;
+  const firstNode = before.nodes[0].id;
+  const kept = before.nodes.filter(node => node.id !== firstNode && node.parent !== firstNode);
+  assert.ok(kept.length > 0 && kept.length < before.nodes.length);
+  const without = { ...before, nodes: kept };
+  const topologyBefore = session.topologyRevision;
+  assert.equal(session.restoreRecipe(without, { expectedRevision: 0 }), 1);
+  assert.deepEqual(session.exportRecipe(), createAgentScene(without).exportRecipe());
+  assert.equal(session.topologyRevision, topologyBefore + 1);
+  const keptPart = originalParts.find(part => session.parts.includes(part));
+  assert.ok(keptPart, 'a part both recipes hold is the same object');
+  for (let edit = 0; edit < 6; edit += 1) {
+    session.apply([{ type: 'set-environment', environment: { keyIntensity: 1 + edit / 10 } }], { expectedRevision: session.revision });
+  }
+  const laterEnvironment = session.exportRecipe().environment;
+  session.restoreRecipe({ ...before, environment: laterEnvironment }, { expectedRevision: session.revision });
+  assert.deepEqual(session.exportRecipe(), { ...before, environment: laterEnvironment }, 'the first node is back at the head of the list');
+  assert.deepEqual(geometryBytes(session), bytesBefore);
+  assert.deepEqual(geometryBytes(session), geometryBytes(createAgentScene(before)));
+  assert.ok(session.parts.includes(keptPart));
+  const revision = session.revision;
+  assert.throws(() => session.restoreRecipe(without, { expectedRevision: revision - 1 }), /expectedRevision/);
+  assert.throws(() => session.restoreRecipe({ ...before, nodes: [{ id: 'lost', geometry: 'no such geometry', material: 'finish' }] }, { expectedRevision: revision }));
+  assert.equal(session.revision, revision, 'a refused recipe leaves the scene as it was');
+});
+
 test('restoreRevision keeps a bounded history, drops the oldest first and names the kept revisions', () => {
   const session = createAgentScene(recipe());
   assert.throws(() => session.restoreRevision(0, { expectedRevision: 0 }), /revision: got 0; expected a revision this session kept, but none is kept yet/);

@@ -562,6 +562,9 @@ Otherwise, restore can recover the checkpoint's original part and matrix identit
 
 `restore(handle, { expectedRevision })` applies the same atomic validation and increments the revision.
 Released and foreign handles fail.
+`restoreRecipe(recipe, { expectedRevision })` replaces the whole recipe in one transaction with the same validation, and needs no checkpoint.
+Geometry, material handles and parts that both recipes hold stay the same objects, so a recipe one object away costs about as much as that edit.
+Studio undo and redo use it for a step no list of operations expresses.
 `releaseCheckpoint(handle)` frees its slot and does not change the scene revision.
 Released geometry references leave session ownership unless the active scene or another checkpoint still needs them.
 There is no separate unbounded geometry history cache.
