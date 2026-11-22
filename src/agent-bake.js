@@ -136,6 +136,25 @@ export function bakeAtSampledPose(lightBake, recipe, pose) {
 }
 
 /**
+ * A material handle kept from the last stage takes the edited material only when the stage commits, which is after the bake.
+ * The bake reads the parts through those handles, so it runs with the edited materials in place and the old ones go back
+ * after it, whatever it does: an edit that is refused later leaves the scene as it was.
+ */
+export function withStagedMaterials(stagedMaterialSnapshots, work) {
+  const previous = stagedMaterialSnapshots.map(({ holder }) => holder.snapshot);
+  stagedMaterialSnapshots.forEach(({ holder, snapshot }) => {
+    holder.snapshot = snapshot;
+  });
+  try {
+    return work();
+  } finally {
+    stagedMaterialSnapshots.forEach(({ holder }, index) => {
+      holder.snapshot = previous[index];
+    });
+  }
+}
+
+/**
  * `bakeAgentParts`, except that a size limit (a RangeError: part cap, path work, triangles, grid nodes) returns
  * `{ refusal: message }` when `mayRefuse` is true, so an edit of an existing scene can stay applied without its bake.
  */
