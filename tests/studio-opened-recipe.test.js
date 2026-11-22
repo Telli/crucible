@@ -1,6 +1,7 @@
 import './support/load-agent-scene-modules.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { studioFloorHeight } from '../src/renderer.js';
 import { createStudio } from '../src/studio.js';
 import { createFakeRenderer, installStudioDom } from './support/studio-dom.mjs';
 
@@ -64,4 +65,49 @@ test('an opened recipe draws with the same environment as the same recipe given 
     return environment;
   };
   assert.deepEqual(merged(openedRenderer), merged(directRenderer));
+});
+
+function mountStudioRecordingFloors(testContext) {
+  const dom = installStudioDom();
+  const floorHeights = [];
+  const createRenderer = (canvas, parts, rendererOptions) => {
+    floorHeights.push(rendererOptions.ground ? rendererOptions.ground.geometry.positions[1] : null);
+    return createFakeRenderer();
+  };
+  const studio = createStudio(dom.container, { createRenderer });
+  testContext.after(() => {
+    studio.dispose();
+    dom.uninstall();
+  });
+  studio.renderNow();
+  return { studio, floorHeights };
+}
+
+function recipeLoweredBy(distance) {
+  const recipe = structuredClone(PLAIN_RECIPE);
+  recipe.nodes[0].translation[1] -= distance;
+  return recipe;
+}
+
+test('a recipe opened lower than the starting scene gets the Studio floor at its own height', testContext => {
+  const ui = mountStudioRecordingFloors(testContext);
+  ui.studio.controller.loadRecipe(recipeLoweredBy(5));
+  ui.studio.renderNow();
+  ui.studio.renderNow();
+
+  assert.equal(ui.floorHeights.length, 2, 'the opened recipe builds one new renderer');
+  assert.equal(ui.floorHeights[1], Math.fround(studioFloorHeight(ui.studio.controller.scene.parts)));
+  assert.ok(ui.floorHeights[1] < -4, 'the floor went down with the scene');
+});
+
+test('a recipe opened at the same height and a part moved down build no new renderer', testContext => {
+  const ui = mountStudioRecordingFloors(testContext);
+  ui.studio.controller.loadRecipe(structuredClone(PLAIN_RECIPE));
+  ui.studio.renderNow();
+  assert.equal(ui.floorHeights.length, 1, 'same floor height: the renderer stays');
+
+  ui.studio.controller.updateNodeTransform('hero', { translation: [0, -3, 0] });
+  ui.studio.renderNow();
+  assert.ok(studioFloorHeight(ui.studio.controller.scene.parts) < -2, 'the part did move down');
+  assert.equal(ui.floorHeights.length, 1, 'an edit inside the scene leaves the floor and the renderer alone');
 });

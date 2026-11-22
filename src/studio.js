@@ -1057,6 +1057,8 @@ export function createStudio(container, {
   let renderer = suppliedRenderer ?? null;
   let rendererHasDepth = false;
   let rendererHasFloor = true;
+  let rendererFloorHeight = null;
+  let sceneLoadedSinceFloorFit = false;
   let floorDecision = { scene: null, revision: -1, drawsFloor: true };
   let renderedScene = initialScene;
   let renderedTopology = initialScene.topologyRevision;
@@ -2688,9 +2690,20 @@ export function createStudio(container, {
     return floorDecision.drawsFloor;
   }
 
+  // The floor's height is fixed with the renderer too. It is fitted to the scene the renderer was built for, so a recipe
+  // loaded over that scene is measured once and rebuilds the renderer when its floor belongs elsewhere. Edits inside
+  // one scene leave the floor where it is, so moving a part never stalls on a rebuild.
+  function loadedSceneMovesFloor() {
+    if (!sceneLoadedSinceFloorFit) {
+      return false;
+    }
+    sceneLoadedSinceFloorFit = false;
+    return rendererHasFloor && studioFloorHeight(controller.scene.parts) !== rendererFloorHeight;
+  }
+
   function ensureRenderer() {
     const needsDepth = !rendererHasDepth && sceneNeedsDepth();
-    if (renderer && !suppliedRenderer && (needsDepth || rendererHasFloor !== sceneWantsFloor())) {
+    if (renderer && !suppliedRenderer && (needsDepth || rendererHasFloor !== sceneWantsFloor() || loadedSceneMovesFloor())) {
       renderer.dispose();
       renderer = null;
     }
@@ -2700,6 +2713,8 @@ export function createStudio(container, {
     const environment = controller.scene.environment;
     rendererHasDepth = sceneNeedsDepth();
     rendererHasFloor = sceneWantsFloor();
+    rendererFloorHeight = studioFloorHeight(controller.scene.parts);
+    sceneLoadedSinceFloorFit = false;
     const viewportSettings = viewportSettingsForTier(chosenTier());
     rendererSamples = viewportSettings.samples;
     renderer = createRenderer(canvas, controller.scene.parts, {
@@ -2710,7 +2725,7 @@ export function createStudio(container, {
       shadowBounds: resolveAgentShadow(fitAgentShadow(controller.scene.shadow, controller.scene.parts), environment.lightDirection),
       pixelRatio: viewportSettings.pixelRatio,
       samples: viewportSettings.samples,
-      ground: rendererHasFloor && viewportFloorPart(studioFloorHeight(controller.scene.parts)),
+      ground: rendererHasFloor && viewportFloorPart(rendererFloorHeight),
       ...rendererOptions,
     });
     renderedScene = controller.scene;
@@ -3981,6 +3996,9 @@ export function createStudio(container, {
       return;
     }
     selectionReadoutStale = true;
+    if (detail.kind === 'load') {
+      sceneLoadedSinceFloorFit = true;
+    }
     // The object a key is holding is gone or no longer the selection: let go without touching the new scene.
     if (modalTransform && modalTransform.axis && !controller.dragging) {
       finishModalTransform(false);
