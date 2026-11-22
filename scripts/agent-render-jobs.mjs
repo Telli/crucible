@@ -972,16 +972,21 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
     throw new RangeError(`Job store lacks space for the snapshot and output reservation: it needs ${neededMiB} MiB free and has ${freeMiB} MiB. ${await releaseAdvice()}`);
   }
 
-  /** Names the largest finished jobs, so the refusal says which ones to read (scene_render_result) and release (scene_render_release). */
-  async function releaseAdvice() {
+  /** The largest finished jobs with their sizes, or an empty string when none holds space. */
+  async function largestFinishedJobs() {
     const finished = [];
     for (const [jobId, job] of jobs) {
       if (active === job || !TERMINAL.has(job.record.state)) continue;
       finished.push({ jobId, bytes: await directoryBytes(await directoryFor(jobId)) });
     }
-    if (!finished.length) return 'No finished job holds space: wait for the running job or submit a smaller one.';
     const largest = finished.sort((first, second) => second.bytes - first.bytes).slice(0, REFUSAL_NAMED_JOBS);
-    const named = largest.map(({ jobId, bytes }) => `${jobId} (${describeJobBytes(bytes)})`).join(', ');
+    return largest.map(({ jobId, bytes }) => `${jobId} (${describeJobBytes(bytes)})`).join(', ');
+  }
+
+  /** Names the largest finished jobs, so the refusal says which ones to read (scene_render_result) and release (scene_render_release). */
+  async function releaseAdvice() {
+    const named = await largestFinishedJobs();
+    if (!named) return 'No finished job holds space: wait for the running job or submit a smaller one.';
     return `Read what you need with scene_render_result, then free space with scene_render_release on the largest: ${named}.`;
   }
 
@@ -1151,7 +1156,9 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
     const filesPerFrame = settings.kind === 'video' ? 1 : Math.ceil(artifactNames(settings.kind, settings.passes, settings.format, settings.multilayer, settings.frameCount, settings.mattes, settings).length / Math.max(1, settings.frameCount));
     const nextFrameBytes = filesPerFrame * artifactByteLimit(settings, limits);
     if (job.otherJobsBytes + jobBytes + nextFrameBytes <= limits.maxStoreBytes) return;
-    throw new RangeError(`Job output (${describeJobBytes(jobBytes)}) passed the space held for it and the job store has no room for more. Release finished jobs, and this one, with scene_render_release, then render in smaller parts or at a lower width and height.`);
+    const named = await largestFinishedJobs();
+    const otherJobs = named ? ` Read what you need with scene_render_result from the largest finished jobs, then release them too: ${named}.` : '';
+    throw new RangeError(`Job output (${describeJobBytes(jobBytes)}) passed the space held for it and the job store has no room for more. Its partial output still holds that space: free it with scene_render_release on ${job.record.jobId}.${otherJobs} Then submit again, in smaller parts or at a lower width and height.`);
   }
 
   async function finish(job, snapshot) {

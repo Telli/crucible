@@ -94,7 +94,7 @@ test('a job that writes past its reservation stops when the store has no room fo
   const record = await settle(controller, jobId);
   assert.equal(record.state, 'failed');
   assert.match(record.reason, /passed the space held for it/);
-  assert.match(record.reason, /scene_render_release/);
+  assert.ok(record.reason.includes('scene_render_release on ' + jobId), record.reason);
 });
 
 test('a full store names the largest finished jobs with their sizes and the two tools to use', async context => {
