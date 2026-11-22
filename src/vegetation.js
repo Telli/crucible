@@ -8,6 +8,7 @@
 // same silhouette and is harder to budget.
 
 import './world-material-shader.js';
+import './leaf-transmission.js';
 import { mat4, quat } from 'gl-matrix';
 import {
   FULL_TURN, WORLD_UP, addLeafSurface, addScaled, addTube, addVectors, clamp, createFrame, createLeafFrame,
@@ -308,6 +309,31 @@ export function resolveLeafTextures(leafTextures, species) {
   return set;
 }
 
+// A number in [0, 1) for an integer cell and a channel, the same on every machine and independent of the tree's random
+// stream, so tinting the leaves moves none of them.
+function cellHash(cell, channel) {
+  let hash = Math.imul(cell[0] | 0, 73856093) ^ Math.imul(cell[1] | 0, 19349663) ^ Math.imul(cell[2] | 0, 83492791) ^ Math.imul(channel + 1, 2654435761);
+  hash = Math.imul(hash ^ (hash >>> 15), 2246822519);
+  hash = Math.imul(hash ^ (hash >>> 13), 3266489917);
+  return ((hash ^ (hash >>> 16)) >>> 0) / 4294967296;
+}
+
+// Real crowns change green from clump to clump and turn darker and cooler inside, where only sky light filtered through
+// other leaves reaches. The clump is a cell of the crown, the same cell the far level merges into one clump card, so every
+// level of a tree carries the same tint and nothing shifts colour when the level changes (issue #2991).
+const CLUMP_VALUE_SPREAD = 0.3;
+const CLUMP_WARMTH = [0.12, 0.04, -0.15];
+const INNER_COOLING = [-0.22, -0.05, 0.16];
+
+function crownTint(skeleton, position, distanceFraction) {
+  const cellSize = skeleton.crown.radius / 2.1;
+  const cell = position.map(value => Math.floor(value / cellSize));
+  const value = 1 + (cellHash(cell, 0) - 0.5) * CLUMP_VALUE_SPREAD;
+  const warmth = (cellHash(cell, 1) - 0.5) * 2;
+  const cooling = (1 - distanceFraction) ** 1.5;
+  return [0, 1, 2].map(index => value * (1 + CLUMP_WARMTH[index] * warmth) * (1 + INNER_COOLING[index] * cooling));
+}
+
 function crownShading(skeleton, position) {
   const { center, radius } = skeleton.crown;
   const offset = subtractVectors(position, center);
@@ -316,11 +342,12 @@ function crownShading(skeleton, position) {
   return {
     brightness: lerp(0.55, 1.1, distanceFraction ** 0.8) + 0.12 * heightFraction,
     canopyNormal: normalized(addVectors(normalized(offset), scaleVector(WORLD_UP, 0.35))),
+    tint: crownTint(skeleton, position, distanceFraction),
   };
 }
 
 function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
-  const { brightness, canopyNormal } = crownShading(skeleton, site.position);
+  const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position);
   for (let index = 0; index < spec.meshPerSite; index++) {
     const yaw = (index - (spec.meshPerSite - 1) / 2) * spec.meshSpread;
     const direction = normalized(addScaled(rotateAroundUp(site.direction, yaw), WORLD_UP, (random() - 0.5) * 0.5));
@@ -338,12 +365,15 @@ function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
       colorBase: LEAF_COLOR_BASE,
       colorTip: LEAF_COLOR_TIP,
       brightness: brightness * (0.9 + random() * 0.2) / 1.5,
+      tint,
+      // Mesh leaves export to GLB as vertex colours, which glTF keeps within [0, 1].
+      colorCeiling: 1,
     });
   }
 }
 
 function addCards(builder, skeleton, spec, site, scale, random) {
-  const { brightness, canopyNormal } = crownShading(skeleton, site.position);
+  const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position);
   const firstRoll = (random() - 0.5) * 0.6;
   for (let index = 0; index < spec.cardsPerSite; index++) {
     addLeafSurface(builder, {
@@ -359,11 +389,12 @@ function addCards(builder, skeleton, spec, site, scale, random) {
       colorBase: LEAF_COLOR_BASE,
       colorTip: LEAF_COLOR_TIP,
       brightness: brightness * (0.9 + random() * 0.2),
+      tint,
     });
   }
 }
 
-function addBlob(builder, center, radius, brightness = 1) {
+function addBlob(builder, center, radius, brightness = 1, tint = [1, 1, 1]) {
   const segments = 8;
   const rings = 5;
   const firstVertex = builder.vertexCount;
@@ -374,7 +405,7 @@ function addBlob(builder, center, radius, brightness = 1) {
       const direction = [Math.sin(polar) * Math.cos(azimuth), Math.cos(polar), Math.sin(polar) * Math.sin(azimuth)];
       const jitter = 1 + (valueNoise(direction[0] * 2 + center[0], direction[2] * 2 + center[2], 3) - 0.5) * 0.5;
       const position = [center[0] + direction[0] * radius * jitter, center[1] + direction[1] * radius * 0.8 * jitter, center[2] + direction[2] * radius * jitter];
-      const color = scaleVector(LEAF_COLOR_BASE, brightness);
+      const color = scaleVector(LEAF_COLOR_BASE, brightness).map((channel, index) => Math.min(1, channel * tint[index]));
       builder.addVertex(position, direction, segment / segments, ring / rings, color);
     }
   }
@@ -405,9 +436,11 @@ function addCrownClumps(builder, skeleton, spec, mode, random, widthScale = 1) {
     const yaw = clumpIndex * GOLDEN_ANGLE;
     clumpIndex++;
     const shading = crownShading(skeleton, center);
+    // The card stands for every leaf of its cell, so it takes their mean tint; the centre alone sits deeper and reads cooler.
+    const tint = [0, 1, 2].map(index => sites.reduce((sum, site) => sum + crownShading(skeleton, site.position).tint[index], 0) / sites.length);
     const radius = cellSize * (0.55 + 0.1 * Math.min(sites.length, 5)) * widthScale * (spec.clumpScale ?? 1);
     if (mode === 'mesh') {
-      addBlob(builder, center, radius, shading.brightness / 1.5);
+      addBlob(builder, center, radius, shading.brightness / 1.5, tint);
       continue;
     }
     for (let card = 0; card < 3; card++) {
@@ -425,6 +458,7 @@ function addCrownClumps(builder, skeleton, spec, mode, random, widthScale = 1) {
         colorBase: LEAF_COLOR_BASE,
         colorTip: LEAF_COLOR_TIP,
         brightness: shading.brightness,
+        tint,
       });
     }
   }
