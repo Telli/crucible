@@ -246,7 +246,7 @@ and the geometry UVs.
 An image map (`map.sequence`, `colorMap` and the other texture set maps) reads UV channel 0, and a geometry type either carries it or does not:
 
 - UVs always: `sphere`, `grid`, `plane`, `circle`, `torus`, `line`, `lathe`, `extrude`, `tube`, `curve`, `sdf`, `text`, `terrain`, `cloud`, `floorPlan`.
-- UVs when an image map is on them: `box`, `cylinder`, `cone`. Each box face shows the whole image, upright from outside. The cylinder and cone wall wraps it once around, and each cap shows it as a disc. An untextured box, cylinder or cone has no UV buffer.
+- UVs when an image map is on them: `box`, `cylinder`, `cone`. Each box face shows the whole image, upright from outside. The cylinder and cone wall wraps it once around, and each cap shows it as a disc. One wrap is what Blender and three.js give their cylinder and cone, so the picture is stretched around the whole wall. An image map has no repeat setting: to tile a picture, use a `pattern` with an `image` node, where box mapping repeats it every `size` metres on any shape. An untextured box, cylinder or cone has no UV buffer.
 - No UVs: `icoSphere`, `mesh` (until a `uv_unwrap` node adds them), `fragment`, `dented`.
 
 `meshMap`, `vertexGroup`, `uv_pack` and a pattern with `mapping: "uv"` still need a mesh with UVs, so on a box they refuse as before. `box()`, `cylinder()` and `cone()` called as library functions return no `uvs`.
