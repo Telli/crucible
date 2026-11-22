@@ -28,11 +28,11 @@ export const SPECIES = {
         children: { count: [2, 4], start: 0.3, end: 1, angle: [0.5, 0.9], lengthRatio: [0.35, 0.55], radiusRatio: 0.6 } },
       { segments: 2, gnarl: 0.25, tropism: -0.02, tipRadius: 0.3 },
     ],
-    // Two twig generations past the last level that only a bare tree draws (#2826): hundreds of forks down to about a
+    // Two twig generations past the last level that only a bare tree draws (#2826): hundreds of forks that keep most of their parent's thickness and taper slowly, down to about a
     // centimeter, so a winter crown keeps the leafy crown's rounded outline instead of a dozen bare limbs.
     bareTwigs: [
-      { count: [4, 6], start: 0.15, end: 1, angle: [0.4, 0.8], lengthRatio: [0.6, 0.85], radiusRatio: 0.7, segments: 2, gnarl: 0.28, tropism: 0.06, tipRadius: 0.5 },
-      { count: [3, 4], start: 0.25, end: 1, angle: [0.4, 0.8], lengthRatio: [0.5, 0.75], radiusRatio: 0.7, segments: 1, gnarl: 0.3, tropism: 0.08, tipRadius: 0.4 },
+      { count: [4, 6], start: 0.15, end: 1, angle: [0.4, 0.8], lengthRatio: [0.6, 0.85], radiusRatio: 0.95, segments: 2, gnarl: 0.28, tropism: 0.06, tipRadius: 0.82 },
+      { count: [3, 4], start: 0.25, end: 1, angle: [0.4, 0.8], lengthRatio: [0.5, 0.75], radiusRatio: 0.92, segments: 1, gnarl: 0.3, tropism: 0.08, tipRadius: 0.72 },
     ],
     leaf: {
       texture: 'sprig', color: [64, 110, 36], foliageColor: [0.085, 0.24, 0.04], tint: [1.05, 1, 0.85],
