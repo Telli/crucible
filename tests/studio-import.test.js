@@ -5,6 +5,7 @@ import test from 'node:test';
 import { deflateSync } from 'node:zlib';
 import { createAgentScene } from '../src/agent-scene.js';
 import { decodePack } from '../src/scene-pack-format.js';
+import { PACK_MAX_SKY_WIDTH } from '../src/scene-pack-sky.js';
 import { textureMapIds } from '../src/agent-texture-set.js';
 import { AGENT_ASSET_LIMITS } from '../src/agent-asset-limits.js';
 import { createStudio, createStudioController } from '../src/studio.js';
@@ -417,7 +418,7 @@ test('the status line keeps an import message up in proportion to its length, be
   assert.ok(long.delays[0] > 3400 && long.delays[0] <= 12000);
 });
 
-test('an imported HDR sky does not travel into the web pack, and the pack reports it as left out', async testContext => {
+test('an imported HDR sky travels into the web pack as its sky image, and the pack does not report it as left out', async testContext => {
   installImmediateScheduler(testContext);
   const dom = installStudioDom();
   const container = dom.document.createElement('div');
@@ -437,10 +438,13 @@ test('an imported HDR sky does not travel into the web pack, and the pack report
   assert.equal(root.querySelector('.crucible-studio-status').textContent, 'Sky set to softbox.hdr');
   const payload = await studio.buildWebPackPayload();
   const withSky = decodePack(payload.packBytes);
-  assert.equal(withoutSky.environment.map, undefined, 'the scene without the sky has no environment map');
-  assert.equal(withSky.environment.map, undefined, 'the pack drops an HDRI sky by design (buildPackReadyRecipe strips environment.hdri)');
-  assert.deepEqual(withSky.environment, withoutSky.environment, 'the packed environment is the same with or without the imported sky');
-  assert.deepEqual(payload.stripped, ['environment.hdri', 'procedural material patterns'], 'the pack says what it left out, so the sky loss is reported to the person');
+  assert.equal(withoutSky.environmentMap, undefined, 'the scene without the sky carries no sky image');
+  assert.equal(withoutSky.environment.hdri, undefined);
+  assert.equal(typeof withSky.environment.hdri, 'string', 'the packed environment names the imported sky');
+  assert.equal(withSky.environmentMap.kind, 'environment-map', 'the pack carries the decoded sky image (#3004)');
+  assert.ok(withSky.environmentMap.width > 0 && withSky.environmentMap.width <= PACK_MAX_SKY_WIDTH, 'the sky fits the width one pack carries');
+  assert.equal(withSky.environmentMap.data.length, withSky.environmentMap.width * withSky.environmentMap.height * withSky.environmentMap.channels);
+  assert.deepEqual(payload.stripped, ['procedural material patterns'], 'the sky is not in the list of what the pack left out');
 });
 
 test('without a store hook an import is refused with one sentence and the pool is untouched', async () => {
