@@ -400,6 +400,7 @@ on:
       - 'src/vegetation-geometry.js'
       - 'src/vegetation-impostors.js'
       - 'src/vegetation-options.js'
+      - 'src/vegetation-presets.js'
       - 'src/vegetation-species.js'
       - 'src/vegetation-textures.js'
       - 'src/vegetation.js'
