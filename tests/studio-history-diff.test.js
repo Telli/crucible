@@ -203,6 +203,24 @@ test('undo of a lens change on a field-of-view camera keeps the scene (#2787)', 
   assert.equal(controller.scene.parts[1], partsBefore[1], 'no part was made again');
 });
 
+test('undo of the edit that cleared the motion, with the playhead off zero, keeps the scene and leaves no sampled pose (#2787)', () => {
+  const controller = makeController({ animated: true });
+  controller.setMotionTime(1);
+  const animated = controller.exportRecipe();
+  const still = { ...animated };
+  delete still.motion;
+  controller.loadRecipe(still);
+  assert.equal(controller.exportRecipe().motion, undefined);
+  const sceneWithoutMotion = controller.scene;
+  controller.loadRecipe(animated);
+  assert.equal(controller.scene, sceneWithoutMotion, 'the motion came back in place');
+  controller.setMotionTime(1);
+  controller.undo();
+  assert.equal(controller.exportRecipe().motion, undefined);
+  assert.equal(controller.scene, sceneWithoutMotion, 'clearing a section does not build the scene again');
+  assert.deepEqual(partBytes(controller.scene), partBytes(createAgentScene(controller.exportRecipe())), 'the hero rests where the recipe puts it, not where the track left it');
+});
+
 test('a history step the scene refuses to take whole still restores the recipe by building it', () => {
   const recipe = makeRecipe();
   const scene = createAgentScene(recipe);
