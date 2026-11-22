@@ -1,4 +1,4 @@
-import { MATERIAL_GRAPH_LIMITS, MATERIAL_GRAPH_OUTPUTS, MATERIAL_GRAPH_OPERATORS } from './agent-scene-capabilities.js';
+import { MATERIAL_GRAPH_LIMITS, MATERIAL_GRAPH_OUTPUTS, MATERIAL_GRAPH_OPERATORS, MESH_MAP_NAMES } from './agent-scene-capabilities.js';
 import { EMISSION_FRESNEL_IOR_RANGE } from './material-layers.js';
 import { clampUnit, smoothStep, wrapCell, hashCell, cellularNoise, linearToSrgbByte, createImage, normalMapFromHeightFunction } from './material-texture-kit.js';
 
@@ -729,8 +729,41 @@ export function graphVertexGroupNames(graph) {
   return [...names];
 }
 
+// A mesh map (curvature, ao, thickness) is baked per texel from the mesh by mesh-map-bake.js and handed in with the
+// vertex group maps under the key "meshMap:<name>", so the node reads it at the texel's own u and v.
+const MESH_MAP_COST = 2;
+export const MESH_MAP_KEY_PREFIX = 'meshMap:';
+
+function readMeshMapName(node) {
+  const { name } = textureSettings(node, 'meshMap', ['name']);
+  if (!MESH_MAP_NAMES.includes(name)) throw graphError(`meshMap name must be one of ${MESH_MAP_NAMES.join(', ')}, got ${describeKey(name)}, such as {"meshMap":{"name":"curvature"}}.`);
+  return name;
+}
+
+function compileMeshMap(node, state) {
+  const name = readMeshMapName(node);
+  state.cost += MESH_MAP_COST;
+  if (!state.groups) return scalarValue(() => 0);
+  const map = state.groups.get(MESH_MAP_KEY_PREFIX + name);
+  if (!map) throw graphError(`meshMap ${describeKey(name)} was not baked for this mesh. Bake the material through a part whose mesh has UVs.`);
+  return scalarValue((u, v) => sampleImageChannel(map, u, v, 0, byte => byte / 255));
+}
+
+/** The mesh map names a graph reads with `meshMap` nodes, in the order they first appear. */
+export function graphMeshMapNames(graph) {
+  const names = new Set();
+  const visit = (value, depth) => {
+    if (!value || typeof value !== 'object' || depth > MATERIAL_GRAPH_LIMITS.maxDepth * 3) return;
+    if (!Array.isArray(value) && isPlainObject(value.meshMap) && MESH_MAP_NAMES.includes(value.meshMap.name)) names.add(value.meshMap.name);
+    for (const child of Array.isArray(value) ? value : Object.values(value)) visit(child, depth + 1);
+  };
+  visit(graph, 0);
+  return [...names];
+}
+
 const TEXTURE_COMPILERS = new Map([
   ['vertexGroup', compileVertexGroup],
+  ['meshMap', compileMeshMap],
   ['image', compileImage], ['noise', compileNoise], ['whiteNoise', compileWhiteNoise], ['brick', compileBrick], ['voronoi', compileVoronoi], ['wave', compileWave], ['checker', compileChecker], ['gradient', compileGradient],
 ]);
 
