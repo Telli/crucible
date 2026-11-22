@@ -319,7 +319,24 @@ function createGpuResources(context, splats) {
   context.bindVertexArray(null);
   splats.statistics.gpuBytes = words.byteLength + splats.count * 4;
   splats.packed = null;
-  return { texture, orderBuffer, vertexArray };
+  return { texture, orderBuffer, vertexArray, rows };
+}
+
+// Reads the packed data texture back so detached splats can attach to another renderer without keeping a CPU copy.
+function readPackedBack(context, entry) {
+  if (context.isContextLost?.()) return null;
+  const words = new Uint32Array(entry.rows * DATA_TEXTURE_WIDTH * WORDS_PER_TEXEL);
+  const previousFramebuffer = context.getParameter(context.READ_FRAMEBUFFER_BINDING);
+  const previousPackBuffer = context.getParameter(context.PIXEL_PACK_BUFFER_BINDING);
+  const framebuffer = context.createFramebuffer();
+  context.bindBuffer(context.PIXEL_PACK_BUFFER, null);
+  context.bindFramebuffer(context.READ_FRAMEBUFFER, framebuffer);
+  context.framebufferTexture2D(context.READ_FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, entry.texture, 0);
+  context.readPixels(0, 0, DATA_TEXTURE_WIDTH, entry.rows, context.RGBA_INTEGER, context.UNSIGNED_INT, words);
+  context.bindFramebuffer(context.READ_FRAMEBUFFER, previousFramebuffer);
+  context.bindBuffer(context.PIXEL_PACK_BUFFER, previousPackBuffer);
+  context.deleteFramebuffer(framebuffer);
+  return { words, rows: entry.rows };
 }
 
 const attachments = new WeakMap();
@@ -452,7 +469,9 @@ function drawEntry(renderer, attachment, entry, programInfo) {
   mat4.multiply(attachment.modelView, renderer.view, splats.matrix);
   const start = performance.now();
   const { order, visibleCount, changed } = splats.sorter.sort(attachment.modelView);
-  if (changed) {
+  // The sorter keeps its last order, so splats attached again after a detach upload it once to their new buffer.
+  if (changed || !entry.orderUploaded) {
+    entry.orderUploaded = true;
     context.bindBuffer(context.ARRAY_BUFFER, entry.orderBuffer);
     context.bufferSubData(context.ARRAY_BUFFER, 0, order, 0, visibleCount);
     splats.statistics.sortMilliseconds = performance.now() - start;
@@ -508,12 +527,13 @@ function distanceToEye(splats, eye) {
 
 /**
  * Draws `splats` (from `createGaussianSplats`) with `renderer` on every normal frame, after its parts and with their
- * depth. Call it again for more splat scenes: they are drawn farthest first. Returns a function that removes this one
- * and frees its GPU memory; `renderer.dispose()` removes all of them. Not drawn in render passes, benchmark mode or
- * the water reflection image.
+ * depth. Call it again for more splat scenes: they are drawn farthest first. Returns a function that removes this one,
+ * frees its GPU memory and reads the packed data back, so the same splats can then attach to this or another renderer;
+ * `renderer.dispose()` removes all of them without that read, so create them again after it. Not drawn in render
+ * passes, benchmark mode or the water reflection image.
  */
 export function attachGaussianSplats(renderer, splats) {
-  if (!splats?.packed) throw new Error('These splats are already attached to a renderer; create them again to attach to another');
+  if (!splats?.packed) throw new Error('These splats are already attached to a renderer; call the function attachGaussianSplats returned to detach them, then attach again, or create them again');
   if (typeof renderer?.drawBlendBatches !== 'function') throw new TypeError('attachGaussianSplats needs a CrucibleRenderer');
   const attachment = attachments.get(renderer) ?? createAttachment(renderer);
   attachments.set(renderer, attachment);
@@ -521,6 +541,8 @@ export function attachGaussianSplats(renderer, splats) {
   attachment.entries.add(entry);
   return function detachGaussianSplats() {
     if (!attachment.entries.delete(entry)) return;
+    splats.packed = readPackedBack(renderer.context, entry);
+    splats.statistics.gpuBytes = 0;
     releaseEntry(renderer.context, entry);
     if (attachment.entries.size === 0 && attachments.get(renderer) === attachment) releaseAttachment(renderer, attachment);
   };
