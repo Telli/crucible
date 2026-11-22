@@ -29,7 +29,9 @@ function createBuffer(descriptor) {
   return buffer;
 }
 
-const fakePass = { setPipeline() {}, setBindGroup() {}, dispatchWorkgroups() {}, end() {} };
+// Every bind group a frame sets, so a test can tell which load's groups drew it.
+const boundGroups = [];
+const fakePass = { setPipeline() {}, setBindGroup(index, group) { boundGroups.push(group); }, dispatchWorkgroups() {}, end() {} };
 
 const fakeDevice = {
   limits: { maxStorageBufferBindingSize: 1 << 30 },
@@ -41,7 +43,7 @@ const fakeDevice = {
   createPipelineLayout: () => ({}),
   createBindGroup() {
     if (++bindGroupCalls === failBindGroupAt) throw new RangeError('bind group too large');
-    return {};
+    return { serial: bindGroupCalls };
   },
   createCommandEncoder: () => ({
     beginComputePass: () => fakePass,
@@ -90,12 +92,25 @@ test('a reload that fails after the new kernel keeps the previous kernel usable 
   const start = buffers.length;
   const firstLoadBuffers = () => buffers.slice(first, start);
   const liveBefore = firstLoadBuffers().filter(buffer => !buffer.destroyed).length;
-  failBindGroupAt = bindGroupCalls + 1;
+  const lastGroupBeforeReload = bindGroupCalls;
+  // The second trace group fails, so the reload has already made one group of its own that must not be used.
+  failBindGroupAt = bindGroupCalls + 2;
   await assert.rejects(() => tracer.update({ parts: [{ ...scene.parts[0], geometry: { ...floor } }] }), /bind group too large/);
   failBindGroupAt = Infinity;
+  assert.equal(bindGroupCalls, lastGroupBeforeReload + 2, 'the reload got as far as its second trace group');
+  boundGroups.length = 0;
+  const { frame } = tracer.frame(scene.camera);
+  assert.equal(frame, 1, 'the tracer still draws after the failed reload');
+  assert.ok(boundGroups.length > 0);
+  const fromFailedReload = group => group.serial > lastGroupBeforeReload && group.serial <= lastGroupBeforeReload + 2;
+  assert.ok(boundGroups.some(group => group.serial <= lastGroupBeforeReload), 'the frame binds a trace group of the first load');
+  assert.deepEqual(boundGroups.filter(fromFailedReload).map(group => group.serial), [], 'the frame draws with the previous scene, not the half-built one');
   assert.deepEqual(firstLoadBuffers().filter(buffer => buffer.destroyed).map(buffer => buffer.label), [], 'the previous kernel keeps its buffers');
   assert.equal(firstLoadBuffers().filter(buffer => !buffer.destroyed).length, liveBefore);
   assert.ok(buffers.slice(start).length > 0, 'the failed reload made buffers');
   assert.deepEqual(buffers.slice(start).filter(buffer => !buffer.destroyed).map(buffer => buffer.label), []);
+  // The scene the tracer holds is still the first one: updating to the same parts follows their motion and keeps working.
+  await tracer.update({ parts: scene.parts });
+  assert.equal(tracer.frame(scene.camera).frame, 2);
   tracer.dispose();
 });
