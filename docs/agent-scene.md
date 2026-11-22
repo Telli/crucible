@@ -198,6 +198,10 @@ it. Scales and counts are whole numbers (1 to 64, even for `checker`), so every 
 (2D, detail `octaves - 1`, roughness 0.5, lacunarity 2, normalized; `seed` moves the lattice by whole cells) with the lattice
 wrapped so it repeats. `"tile": false` matches Blender's Noise Texture exactly, does not repeat.
 
+`noise` also takes `kind`, `lacunarity` and `gain` (#2856). `kind` is `fbm` (the default, Blender's sum of octaves), `ridged` (each octave is one minus the absolute noise, squared, so sharp crests run where the noise crosses zero: rock, mountains, veins) or `billow` (the absolute noise: rounded hills, puffy clouds); the sums are divided by the amplitude sum, so every kind stays in 0 to 1. `lacunarity` (1 to 4, default 2) is how much the frequency grows each octave and `gain` (0 to 1, default 0.5, Blender's Roughness) how much the amplitude is kept. Leave them out and the output is the same as before. A tiling noise snaps each octave to a whole number of cells, so a lacunarity such as 2.5 still tiles.
+
+Every texture node that takes `at` (all but `vertexGroup`) also takes `warp`: `{ "node": n, "strength": 1 }`, strength 0 to 4 tiles. It moves the lookup by `(n - 0.5) * strength`: a number moves `u` and `v` together (a diagonal push), a vector such as `{ "vec": [noiseA, noiseB, 0] }` moves `u` by its first part and `v` by its second, which flows the pattern in every direction. `warp` is applied after `at`, the warp node is read at the unwarped pixel so a periodic node keeps the texture tiling, and it costs the warp node plus 2. A marble is a `wave` warped by a `noise`: `{ "wave": { "frequency": 6, "direction": "diagonal", "warp": { "node": { "noise": { "scale": 3, "octaves": 5 } }, "strength": 1.5 } } }`.
+
 Placement and pattern nodes:
 
 - `brick` (`columns` 8, `rows` 8 and even, `mortar` 0.05 of a brick, `offset` 0.5 for every other row, `seed`, `output`: `mortar` is 1 in the joint, `edge` is 0 at a joint and 1 at the brick centre, `cell` is one random value per brick) lays a running bond and costs 4. Whole columns and even rows keep it tiling.

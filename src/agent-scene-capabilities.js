@@ -78,7 +78,7 @@ export const MATERIAL_MAPPINGS = Object.freeze(['box', 'uv']);
 export const MATERIAL_GRAPH_NODES = Object.freeze({
   outputs: 'color (linear RGB; a number is grey), roughness, metallic, emission (defaults to 1), height (normal map), opacity (alpha), clearcoat, transmission (masks), aov (linear RGB or scalar).',
   textures: Object.freeze({
-    noise: '{"noise":{"scale":8,"seed":1,"octaves":4}}',
+    noise: '{"noise":{"scale":8,"seed":1,"octaves":4,"kind":"fbm"|"ridged"|"billow","lacunarity":2,"gain":0.5}} kind: fbm soft clouds (default), ridged sharp crests for rock, mountains and veins, billow rounded hills; lacunarity 1-4 is the frequency step per octave, gain 0-1 the amplitude step (Blender Roughness).',
     voronoi: '{"voronoi":{"scale":6,"output":"distance"|"edge"|"cell"}}',
     wave: '{"wave":{"frequency":4,"direction":"u"|"v"|"diagonal","shape":"sine"|"saw"|"triangle"}}',
     checker: '{"checker":{"count":8}} (even)',
@@ -86,7 +86,7 @@ export const MATERIAL_GRAPH_NODES = Object.freeze({
     whiteNoise: '{"whiteNoise":{"scale":16,"seed":1,"output":"value"|"color"}} one random value per cell, tiles.',
     image: '{"image":{"asset":"<64 hex catalog image asset ID>","output":"color"|"alpha"}} bilinear, repeats; color is linear RGB, decoded from sRGB. The host decodes catalog images (scene_asset_catalog); no URLs.',
     brick: '{"brick":{"columns":8,"rows":4,"mortar":0.05,"offset":0.5,"seed":1,"output":"mortar"|"edge"|"cell"}} running bond; rows even.',
-    note: 'Each takes "at", a vector such as {"uv":"both"}. Scales are whole numbers 1-64.',
+    note: 'Each takes "at", a vector such as {"uv":"both"}, and "warp": {"node":n,"strength":0-4}, which moves the lookup by (n - 0.5) * strength tiles: a number moves u and v together, a vector (such as {"vec":[noiseA,noiseB,0]}) moves u by its first part and v by its second. Warp a wave or a noise by a noise for marble and flowing rock. Scales are whole numbers 1-64.',
   }),
   uv: '{"uv":"u"|"v"|"both"} coordinates.',
   coordinates: '{"coord":"generated"|"object"|"world"} vector of where the texel sits: generated is the unit tile, object and world are metres across the tile (u * size); the third axis is 0 because a baked texture is projected. {"mapping":{"vector":node,"scale":n|[x,y,z],"offset":[x,y,z],"rotate":radians}} scales, turns around Z and moves a vector (default: generated). Feed either to "at". Meshes without UVs use box mapping; vertex_color already multiplies the baked colour. In graphs: fresnel, only as an emission factor. Not in graphs: AO, bevel, curvature (per-pixel data a bake lacks).',
