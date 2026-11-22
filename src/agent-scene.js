@@ -1232,16 +1232,27 @@ function cameraOverridesFrom(baseCamera, overrides) {
   return structuredClone(overrides);
 }
 
+const viewBytes = values => values.reduce((total, value) => total + (ArrayBuffer.isView(value) ? value.byteLength : 0), 0);
+
+/** Bytes a geometry holds: its typed arrays and the arrays of its morph targets, which are not typed fields themselves. */
+export function geometryBufferBytes(geometry) {
+  return viewBytes(Object.values(geometry)) + viewBytes((geometry.morphTargets ?? []).flatMap(target => [target.positions, target.normals]));
+}
+
+// geometryBytes is the generated geometry the scene's maxGeometryBytes budget limits. assetBytes is the decoded asset geometry the
+// asset decoder bounds instead; residentBytes is both, the memory the scene really holds.
 function geometryStats(records) {
   let vertices = 0;
   let geometryBytes = 0;
+  let residentBytes = 0;
   let estimatedGeometryBytes = 0;
   for (const record of records) {
     vertices += record.vertices;
     geometryBytes += record.geometryBytes;
+    residentBytes += record.geometryBytes + (record.assetBytes ?? 0);
     estimatedGeometryBytes += record.estimatedVertices * 56;
   }
-  return { vertices, geometryBytes, estimatedGeometryBytes };
+  return { vertices, geometryBytes, estimatedGeometryBytes, residentBytes };
 }
 
 function batchSignature(material) {
@@ -1918,10 +1929,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       if (!record && plan.definition.type === 'asset') {
         // A decoded asset geometry is shared by every placement. Its size is bounded by the asset decoder, not by this scene's budget.
         const geometry = assetRuntime.geometryParts.get(plan.definition.id);
-        record = Object.freeze({ signature: plan.signature, geometry, bounds: boundsFor(geometry, mat4.create()), vertices: 0, geometryBytes: 0, estimatedVertices: 0 });
+        record = Object.freeze({ signature: plan.signature, geometry, bounds: boundsFor(geometry, mat4.create()), vertices: 0, geometryBytes: 0, assetBytes: geometryBufferBytes(geometry), estimatedVertices: 0 });
       } else if (!record) {
         const geometry = Object.freeze(generateGeometry(plan.definition, Math.min(limits.maxVertices, 1_000_000), { definitions: definitionsById, chain: [], heightSources: buildHeightSources }));
-        const geometryBytes = Object.values(geometry).reduce((total, array) => total + array.byteLength, 0);
+        const geometryBytes = geometryBufferBytes(geometry);
         const vertices = geometry.positions.length / 3;
         if (plan.definition.type === 'mesh' || plan.definition.type === 'fragment') {
           // Edits can grow a mesh past its estimate. Undo history never blocks an edit, so release the oldest revisions before refusing.
@@ -1936,7 +1947,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
             }
             throw new RangeError(`Mesh ${plan.definition.id} has ${vertices} render vertices after its edits, which exceeds maxVertices across the scene. Reduce detail or edits.`);
           }
-        } else if (vertices > plan.estimatedVertices || geometryBytes > plan.estimatedVertices * (56 + TERRAIN_SKY_VISIBILITY_BYTES)) {
+        } else if (vertices > plan.estimatedVertices || viewBytes(Object.values(geometry)) > plan.estimatedVertices * (56 + TERRAIN_SKY_VISIBILITY_BYTES)) {
           throw new RangeError('Generated geometry exceeds its conservative preflight bound.');
         }
         record = Object.freeze({
@@ -2779,9 +2790,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           geometries: state.geometries.size, materials: state.recipe.materials.length,
           vertices: state.stats.vertices,
         },
-        geometryBytes: state.stats.geometryBytes,
+        geometryBytes: state.stats.residentBytes,
         estimatedGeometryBytes: state.stats.estimatedGeometryBytes,
-        residentGeometryBytes: resident.geometryBytes,
+        residentGeometryBytes: resident.residentBytes,
         residentGeometryVertices: resident.vertices,
         look: {
           world: state.recipe.environment.world,
