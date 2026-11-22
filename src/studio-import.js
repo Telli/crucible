@@ -80,7 +80,7 @@ function glbProblem(error, fileName) {
   const compression = /Unsupported glTF extension: (KHR_draco_mesh_compression|KHR_texture_basisu)/.exec(message);
   if (compression) {
     const name = compression[1] === 'KHR_draco_mesh_compression' ? 'Draco mesh compression' : 'KTX2 texture compression';
-    return `${fileName} uses ${name}, which Studio has no decoder for. Re-export it without that compression, or add it through the MCP asset catalog, which converts it.`;
+    return `${fileName} uses ${name}, which Studio has no decoder for. Export it again without that compression, or add it through the MCP asset catalog, which converts it.`;
   }
   if (/External glTF uri/.test(message)) {
     return `${fileName} points at files outside itself. Export one self-contained .glb (every buffer and texture inside the file) and import that.`;
