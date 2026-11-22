@@ -394,6 +394,8 @@ export function effectiveShadowCascades(environment, shadow) {
   if (environment.shadowCascades !== undefined) {
     return environment.shadowCascades;
   }
+  // A hard sun shadow (shadow.hard) has its own one-tap lookup, so the automatic cascades stand aside for it.
+  if (shadow.hard && !(environment.sunAngularRadius > 0)) return 0;
   const automaticCount = shadow.extent > AUTOMATIC_CASCADE_EXTENT ? AUTOMATIC_CASCADE_COUNT : 0;
   // A soft sun reads depths from the cascade array, so a scene that names an angle gets at least one slice.
   return environment.sunAngularRadius > 0 ? Math.max(automaticCount, 1) : automaticCount;

@@ -8,6 +8,7 @@
 // same silhouette and is harder to budget.
 
 import './world-material-shader.js';
+import './leaf-transmission.js';
 import { mat4, quat } from 'gl-matrix';
 import {
   FULL_TURN, WORLD_UP, addLeafSurface, addScaled, addTube, addVectors, clamp, createFrame, createLeafFrame,
@@ -83,6 +84,88 @@ function createChildSlots(spec, random) {
   return slots;
 }
 
+// The direction a child leaves its parent at `sample`: `angle` radians away from the parent, turned by the slot's azimuth.
+function sproutDirection(sample, slot, angle) {
+  const frame = createFrame(sample.direction);
+  const axis = addVectors(scaleVector(frame.first, Math.cos(slot.azimuth)), scaleVector(frame.second, Math.sin(slot.azimuth)));
+  return normalized(addVectors(scaleVector(sample.direction, Math.cos(angle)), scaleVector(axis, Math.sin(angle))));
+}
+
+// The rings of one branch: `parameters.segments` steps that wander by `gnarl`, bend by `tropism` and taper to `tipRadius`.
+function walkBranch(origin, direction, length, radius, parameters, random) {
+  const points = [origin];
+  const radii = [radius];
+  const stepLength = length / parameters.segments;
+  let current = direction;
+  for (let step = 1; step <= parameters.segments; step++) {
+    const wander = scaleVector(randomUnitOffset(random), parameters.gnarl * 2);
+    current = normalized(addVectors(addVectors(current, wander), [0, parameters.tropism, 0]));
+    points.push(addScaled(points[step - 1], current, stepLength));
+    radii.push(radius * lerp(1, parameters.tipRadius, step / parameters.segments));
+  }
+  return { points, radii, length };
+}
+
+/**
+ * The twigs a bare tree shows past its last branch level (#2826), one generation per entry of `preset.bareTwigs`. They
+ * draw from their own random stream, so growing them leaves the leafy tree, its leaf sites and its crown exactly as they were.
+ */
+function growTwigs(skeleton, preset, seed) {
+  const random = createRandom(seed * 6151 + 29);
+  const lastLevel = preset.levels.length - 1;
+  const twigs = [];
+  let parents = skeleton.branches.filter(branch => branch.level === lastLevel);
+  preset.bareTwigs.forEach((generation, generationIndex) => {
+    const grown = [];
+    for (const parent of parents) {
+      for (const slot of createChildSlots(generation, random)) {
+        const sample = sampleBranch(parent, slot.fraction);
+        const direction = sproutDirection(sample, slot, randomInRange(random, generation.angle));
+        const length = parent.length * randomInRange(random, generation.lengthRatio);
+        const walked = walkBranch(sample.position, direction, length, sample.radius * generation.radiusRatio, generation, random);
+        grown.push({ level: lastLevel + 1 + generationIndex, ...walked });
+      }
+    }
+    twigs.push(...grown);
+    parents = grown;
+  });
+  return twigs;
+}
+
+// How deep the bark of a bare tree goes at each level of detail: every twig up close, the first twig generation at
+// level 1, and at the far levels one branch level more than the leafy tree, whose crown clumps no longer hide the limbs.
+function bareBranchLimit(levelIndex, lastLevel) {
+  if (levelIndex === 0) return Infinity;
+  if (levelIndex === 1) return lastLevel + 1;
+  return lastLevel - 1;
+}
+
+/**
+ * `bareParts(levelIndex)` for a species with `bareTwigs`: the bark of that level with the twigs, the part a renderer
+ * draws for a leafless tree in place of the level's parts. Built on first use and kept, so a leafy scene pays nothing.
+ */
+function createBareParts(skeleton, preset, seed, bark, materials, shadowTrunks) {
+  const lastLevel = preset.levels.length - 1;
+  const built = [];
+  let twigs = null;
+  return (levelIndex) => {
+    if (!Number.isInteger(levelIndex) || levelIndex < 0 || levelIndex >= LEVEL_SETTINGS.length) {
+      throw new RangeError(`bareParts needs a level index from 0 to ${LEVEL_SETTINGS.length - 1}; got ${levelIndex}.`);
+    }
+    if (!built[levelIndex]) {
+      twigs ??= growTwigs(skeleton, preset, seed);
+      const setting = { ...LEVEL_SETTINGS[levelIndex], maximumBranchLevel: bareBranchLimit(levelIndex, lastLevel) };
+      // Three-sided twigs keep a bare tree near the triangles of the same tree in leaf.
+      const twigSides = { ...preset, sides: [...preset.sides, ...preset.bareTwigs.map(() => 3)] };
+      const geometry = buildBark({ branches: [...skeleton.branches, ...twigs] }, twigSides, setting, bark);
+      built[levelIndex] = Object.freeze([
+        { role: 'bark', geometry, material: materials.bark, tintable: false, shadowLods: [{ geometry, error: 0 }, ...shadowTrunks] },
+      ]);
+    }
+    return built[levelIndex];
+  };
+}
+
 function growSkeleton(preset, height, random) {
   const lastLevel = preset.levels.length - 1;
   const branches = [];
@@ -107,10 +190,7 @@ function growSkeleton(preset, height, random) {
   function spawnChildren(branch, spec) {
     for (const slot of createChildSlots(spec, random)) {
       const sample = sampleBranch(branch, slot.fraction);
-      const frame = createFrame(sample.direction);
-      const axis = addVectors(scaleVector(frame.first, Math.cos(slot.azimuth)), scaleVector(frame.second, Math.sin(slot.azimuth)));
-      const angle = randomInRange(random, spec.angle);
-      const direction = normalized(addVectors(scaleVector(sample.direction, Math.cos(angle)), scaleVector(axis, Math.sin(angle))));
+      const direction = sproutDirection(sample, slot, randomInRange(random, spec.angle));
       const progress = (slot.fraction - spec.start) / Math.max(spec.end - spec.start, 1e-6);
       growBranch({
         origin: sample.position,
@@ -124,17 +204,7 @@ function growSkeleton(preset, height, random) {
 
   function growBranch({ origin, direction, length, radius, level }) {
     const parameters = preset.levels[level];
-    const points = [origin];
-    const radii = [radius];
-    const stepLength = length / parameters.segments;
-    let current = direction;
-    for (let step = 1; step <= parameters.segments; step++) {
-      const wander = scaleVector(randomUnitOffset(random), parameters.gnarl * 2);
-      current = normalized(addVectors(addVectors(current, wander), [0, parameters.tropism, 0]));
-      points.push(addScaled(points[step - 1], current, stepLength));
-      radii.push(radius * lerp(1, parameters.tipRadius, step / parameters.segments));
-    }
-    const branch = { level, points, radii, length };
+    const branch = { level, ...walkBranch(origin, direction, length, radius, parameters, random) };
     branches.push(branch);
     if (parameters.children) spawnChildren(branch, parameters.children);
     if (level === lastLevel) addLeafSites(branch);
@@ -239,6 +309,31 @@ export function resolveLeafTextures(leafTextures, species) {
   return set;
 }
 
+// A number in [0, 1) for an integer cell and a channel, the same on every machine and independent of the tree's random
+// stream, so tinting the leaves moves none of them.
+function cellHash(cell, channel) {
+  let hash = Math.imul(cell[0] | 0, 73856093) ^ Math.imul(cell[1] | 0, 19349663) ^ Math.imul(cell[2] | 0, 83492791) ^ Math.imul(channel + 1, 2654435761);
+  hash = Math.imul(hash ^ (hash >>> 15), 2246822519);
+  hash = Math.imul(hash ^ (hash >>> 13), 3266489917);
+  return ((hash ^ (hash >>> 16)) >>> 0) / 4294967296;
+}
+
+// Real crowns change green from clump to clump and turn darker and cooler inside, where only sky light filtered through
+// other leaves reaches. The clump is a cell of the crown, the same cell the far level merges into one clump card, so every
+// level of a tree carries the same tint and nothing shifts colour when the level changes (issue #2991).
+const CLUMP_VALUE_SPREAD = 0.3;
+const CLUMP_WARMTH = [0.12, 0.04, -0.15];
+const INNER_COOLING = [-0.22, -0.05, 0.16];
+
+function crownTint(skeleton, position, distanceFraction) {
+  const cellSize = skeleton.crown.radius / 2.1;
+  const cell = position.map(value => Math.floor(value / cellSize));
+  const value = 1 + (cellHash(cell, 0) - 0.5) * CLUMP_VALUE_SPREAD;
+  const warmth = (cellHash(cell, 1) - 0.5) * 2;
+  const cooling = (1 - distanceFraction) ** 1.5;
+  return [0, 1, 2].map(index => value * (1 + CLUMP_WARMTH[index] * warmth) * (1 + INNER_COOLING[index] * cooling));
+}
+
 function crownShading(skeleton, position) {
   const { center, radius } = skeleton.crown;
   const offset = subtractVectors(position, center);
@@ -247,11 +342,12 @@ function crownShading(skeleton, position) {
   return {
     brightness: lerp(0.55, 1.1, distanceFraction ** 0.8) + 0.12 * heightFraction,
     canopyNormal: normalized(addVectors(normalized(offset), scaleVector(WORLD_UP, 0.35))),
+    tint: crownTint(skeleton, position, distanceFraction),
   };
 }
 
 function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
-  const { brightness, canopyNormal } = crownShading(skeleton, site.position);
+  const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position);
   for (let index = 0; index < spec.meshPerSite; index++) {
     const yaw = (index - (spec.meshPerSite - 1) / 2) * spec.meshSpread;
     const direction = normalized(addScaled(rotateAroundUp(site.direction, yaw), WORLD_UP, (random() - 0.5) * 0.5));
@@ -269,12 +365,15 @@ function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
       colorBase: LEAF_COLOR_BASE,
       colorTip: LEAF_COLOR_TIP,
       brightness: brightness * (0.9 + random() * 0.2) / 1.5,
+      tint,
+      // Mesh leaves export to GLB as vertex colours, which glTF keeps within [0, 1].
+      colorCeiling: 1,
     });
   }
 }
 
 function addCards(builder, skeleton, spec, site, scale, random) {
-  const { brightness, canopyNormal } = crownShading(skeleton, site.position);
+  const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position);
   const firstRoll = (random() - 0.5) * 0.6;
   for (let index = 0; index < spec.cardsPerSite; index++) {
     addLeafSurface(builder, {
@@ -290,11 +389,12 @@ function addCards(builder, skeleton, spec, site, scale, random) {
       colorBase: LEAF_COLOR_BASE,
       colorTip: LEAF_COLOR_TIP,
       brightness: brightness * (0.9 + random() * 0.2),
+      tint,
     });
   }
 }
 
-function addBlob(builder, center, radius, brightness = 1) {
+function addBlob(builder, center, radius, brightness = 1, tint = [1, 1, 1]) {
   const segments = 8;
   const rings = 5;
   const firstVertex = builder.vertexCount;
@@ -305,7 +405,7 @@ function addBlob(builder, center, radius, brightness = 1) {
       const direction = [Math.sin(polar) * Math.cos(azimuth), Math.cos(polar), Math.sin(polar) * Math.sin(azimuth)];
       const jitter = 1 + (valueNoise(direction[0] * 2 + center[0], direction[2] * 2 + center[2], 3) - 0.5) * 0.5;
       const position = [center[0] + direction[0] * radius * jitter, center[1] + direction[1] * radius * 0.8 * jitter, center[2] + direction[2] * radius * jitter];
-      const color = scaleVector(LEAF_COLOR_BASE, brightness);
+      const color = scaleVector(LEAF_COLOR_BASE, brightness).map((channel, index) => Math.min(1, channel * tint[index]));
       builder.addVertex(position, direction, segment / segments, ring / rings, color);
     }
   }
@@ -336,9 +436,11 @@ function addCrownClumps(builder, skeleton, spec, mode, random, widthScale = 1) {
     const yaw = clumpIndex * GOLDEN_ANGLE;
     clumpIndex++;
     const shading = crownShading(skeleton, center);
+    // The card stands for every leaf of its cell, so it takes their mean tint; the centre alone sits deeper and reads cooler.
+    const tint = [0, 1, 2].map(index => sites.reduce((sum, site) => sum + crownShading(skeleton, site.position).tint[index], 0) / sites.length);
     const radius = cellSize * (0.55 + 0.1 * Math.min(sites.length, 5)) * widthScale * (spec.clumpScale ?? 1);
     if (mode === 'mesh') {
-      addBlob(builder, center, radius, shading.brightness / 1.5);
+      addBlob(builder, center, radius, shading.brightness / 1.5, tint);
       continue;
     }
     for (let card = 0; card < 3; card++) {
@@ -356,6 +458,7 @@ function addCrownClumps(builder, skeleton, spec, mode, random, widthScale = 1) {
         colorBase: LEAF_COLOR_BASE,
         colorTip: LEAF_COLOR_TIP,
         brightness: shading.brightness,
+        tint,
       });
     }
   }
@@ -493,7 +596,8 @@ function describeLevel(parts) {
 /**
  * Grows one tree. `speciesOrOptions` is a preset name ('broadleaf', 'birch', 'conifer', 'palm',
  * 'bush') or `{ species, height, leaves, barkTextures, barkTileSize, leafTextures }`. Returns three levels of detail; each level lists the
- * parts (`bark`, `foliage`) with their geometry and material, in local meters with the trunk at the origin.
+ * parts (`bark`, `foliage`) with their geometry and material, in local meters with the trunk at the origin. A broadleaf also
+ * has `bareParts(levelIndex)`, the parts to draw at that level once it has shed its leaves: the bark with fine twigs.
  */
 export function createTree(speciesOrOptions = 'broadleaf', seed = 1) {
   const options = typeof speciesOrOptions === 'string' ? { species: speciesOrOptions } : { ...speciesOrOptions };
@@ -528,8 +632,10 @@ export function createTree(speciesOrOptions = 'broadleaf', seed = 1) {
     ]);
   });
   bakeCrownSkyVisibility(levels, options.species);
+  const bareParts = preset.bareTwigs ? createBareParts(skeleton, preset, seed, bark, materials, [shadowTrunk, thinnedShadowTrunk]) : null;
   return {
     kind: 'tree', species: options.species, seed, height, leaves, levels, materials,
+    ...(bareParts ? { bareParts } : {}),
     distances: TREE_LEVEL_DISTANCES,
     bounds: boundsOf(levels[0].parts.map(part => part.geometry)),
   };

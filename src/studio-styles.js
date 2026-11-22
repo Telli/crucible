@@ -1,3 +1,5 @@
+import { SCRUB_THUMB_WIDTH } from './studio-timeline-keys.js';
+
 // Studio is one full-bleed viewport with floating islands on top: the scene keeps the screen.
 export const STUDIO_CSS = `
 .crucible-studio {
@@ -373,6 +375,28 @@ export const STUDIO_CSS = `
 .crucible-studio-draft p { margin: 0; }
 .crucible-studio-paused .crucible-studio-icon,
 .crucible-studio-draft .crucible-studio-icon { flex: none; color: var(--studio-accent); }
+
+/* Names each post pass the viewport cannot draw. It sits low and centred, above the hint pill and the readout, where the notices at the top never reach. */
+.crucible-studio-pass-notice {
+  position: absolute;
+  inset-inline: calc(var(--studio-rail) + 2 * var(--studio-edge)) calc(var(--studio-side-width, 284px) + 2 * var(--studio-edge));
+  inset-block-end: 170px;
+  inline-size: fit-content;
+  max-inline-size: 520px;
+  margin-inline: auto;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--studio-text);
+  font-family: var(--studio-font);
+  font-size: 13px;
+  z-index: 9;
+}
+.crucible-studio[data-compact="true"] .crucible-studio-pass-notice { inset-inline: var(--studio-edge); }
+/* Docked, the viewport is already the room between the rail and the column, so the notice only keeps the edge gap. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-pass-notice { inset-inline: var(--studio-edge); }
+.crucible-studio-pass-notice[hidden] { display: none; }
+.crucible-studio-pass-notice p { margin: 0; text-wrap: balance; }
+.crucible-studio-pass-notice .crucible-studio-icon { flex: none; color: var(--studio-accent); }
 
 .crucible-studio-menubar {
   position: absolute;
@@ -1009,15 +1033,16 @@ export const STUDIO_CSS = `
   max-inline-size: calc(100% - 420px);
   margin: 0;
   padding: 6px 14px;
-  border-radius: 999px;
+  /* Half the height of one line, so a short message is still a pill and a long one wraps into a rounded card. */
+  border-radius: 15px;
   background: var(--studio-panel);
   border: 1px solid var(--studio-border);
   box-shadow: var(--studio-shadow);
   font-size: 12px;
   color: var(--studio-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  inline-size: max-content;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
   pointer-events: none;
   z-index: 7;
 }
@@ -1527,6 +1552,13 @@ export const STUDIO_CSS = `
 .crucible-studio-properties [data-driven="true"] input { color: var(--studio-muted); }
 .crucible-studio-properties [data-driven="true"] :is(button, svg.crucible-studio-sunpad) { opacity: 0.6; }
 .crucible-studio-properties [data-driven="true"] .crucible-studio-driven-mark { opacity: 1; }
+.crucible-studio-field-head .crucible-studio-driven-mark[hidden] { display: none; }
+.crucible-studio-field[data-driven="true"] input { color: var(--studio-muted); }
+.crucible-studio-field-head > span:has(> .crucible-studio-driven-mark) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .crucible-studio-sunpad {
   width: 120px;
   height: 120px;
@@ -1611,11 +1643,81 @@ export const STUDIO_CSS = `
   flex: 1 1 240px;
   min-inline-size: 0;
 }
-.crucible-studio-scrub input[type="range"] {
+/* The thumb has a set width, so the key markers over the track can be placed under it (studio-timeline-keys.js). */
+.crucible-studio-track {
+  position: relative;
+  display: flex;
+  align-items: center;
   flex: 1 1 auto;
   min-inline-size: 60px;
+  block-size: 32px;
   margin-inline: 6px;
 }
+.crucible-studio-track input[type="range"] {
+  inline-size: 100%;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.crucible-studio-track input[type="range"]:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.crucible-studio-track input[type="range"]::-webkit-slider-runnable-track {
+  block-size: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-text) 22%, transparent);
+}
+.crucible-studio-track input[type="range"]::-moz-range-track {
+  block-size: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--studio-text) 22%, transparent);
+}
+.crucible-studio-track input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  inline-size: ${SCRUB_THUMB_WIDTH}px;
+  block-size: ${SCRUB_THUMB_WIDTH}px;
+  margin-block-start: calc((2px - ${SCRUB_THUMB_WIDTH}px) / 2);
+  border: 0;
+  border-radius: 50%;
+  background: var(--studio-text);
+}
+.crucible-studio-track input[type="range"]::-moz-range-thumb {
+  inline-size: ${SCRUB_THUMB_WIDTH}px;
+  block-size: ${SCRUB_THUMB_WIDTH}px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--studio-text);
+}
+.crucible-studio-keys {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.crucible-studio .crucible-studio-key {
+  position: absolute;
+  inset-block-start: 50%;
+  transform: translate(-50%, -50%);
+  min-inline-size: 0;
+  min-block-size: 0;
+  inline-size: 20px;
+  block-size: 28px;
+  padding: 0;
+  color: var(--studio-muted);
+  pointer-events: auto;
+  touch-action: none;
+}
+.crucible-studio button.crucible-studio-key[aria-pressed="true"] {
+  background: transparent;
+  color: var(--studio-accent);
+}
+.crucible-studio-key .crucible-studio-icon {
+  inline-size: 12px;
+  block-size: 12px;
+  fill: currentColor;
+}
+.crucible-studio button[data-icon="autoKey"][aria-pressed="true"] .crucible-studio-icon { fill: currentColor; }
 .crucible-studio-scrub output {
   white-space: nowrap;
   flex-shrink: 0;

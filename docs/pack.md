@@ -54,9 +54,19 @@ A recipe `bake` section runs when you pack, in Node. The lightmaps it writes (on
 
 A pack carries at most 262,144 lightmap texels (1 MB of raw bytes), a quarter of what a recipe build may trace, because the page downloads every texel. Past that, pack stops and names `bake.texelsPerUnit`: lower it, set `bake.preset` to `"draft"`, or bake fewer and smaller parts.
 
+## Sky and textures
+
+A recipe `environment.hdri` (a bundled name or the ID of an HDR file in the asset catalog) packs as the decoded sky image: RGBE bytes, a third of the floats, with the intensity, rotation, background and sun disc the scene lights with. The page lights the scene with that image instead of a named setup. It loads no HDR code, because the file was decoded when you packed. `keyFromHdri` works too: the pack carries the sky with its sun already split out. A scene without `hdri` packs to the same bytes as before.
+
+A sky image is at most 1024 pixels wide (2 MiB packed; a 128 by 64 bundled sky is 32 KB). A wider file is halved by averaging pixels until it fits. The renderer prefilters any sky down to 1024 pixels for lighting, so the light does not change; only a visible background (`environment.world`) loses sharpness.
+
+A part's texture images (colour, normal, roughness and metal, occlusion and height maps, from a recipe `colorMap` or a placed catalog asset) travel as plain `{ width, height, data }` pixels, with the texture's colour space, wrap and filter, and the part's UVs. The page turns them back into `ImageData`. A pack carries at most 1,048,576 texels of texture images in all (a 1024 by 1024 image, 4 MiB of raw RGBA bytes); an image used by several parts is stored and counted once. Past that, pack names the part that holds the most and what to do: use a smaller map, or take the texture off the parts that need it least. Pixels are stored raw, so a web server's gzip is the only compression, and a photo texture does not shrink much.
+
+The command line packs a bundled sky (`sky-clouds`, `studio-softbox`) and refuses a sky or image that lives in the asset catalog, naming the field: only Studio and the MCP runtime have the catalog. Studio's web pack export carries both.
+
 ## What a pack refuses
 
-Pack names the recipe field and what to change. For now it refuses `motion`, `timeline`, `physics`, `cloth`, `particles`, `game`, `postPasses`, `armatures`, `environment.sky`, `environment.hdri`, cascaded shadows, area lights, line art, material snippets and procedural material patterns. Scenes light with `environment.setup`. The automatic floor is not drawn: put a floor in the recipe.
+Pack names the recipe field and what to change. For now it refuses `motion`, `timeline`, `physics`, `cloth`, `particles`, `game`, `postPasses`, `armatures`, the physical `environment.sky`, cascaded shadows, area lights, line art, material snippets and procedural material patterns. Scenes light with `environment.setup` or an `environment.hdri` image. The automatic floor is not drawn: put a floor in the recipe.
 
 ## What it costs
 

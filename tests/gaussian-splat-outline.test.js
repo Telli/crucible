@@ -112,7 +112,7 @@ test('without an outline the shaders and draw calls are as before', () => {
   assert.ok(!shaderSources(plain).some(source => source.includes('outline')));
   assert.equal(plain.filter(([name]) => name === 'drawArraysInstanced').length, 1);
   assert.equal(sha256(GAUSSIAN_SPLAT_SHADER_SOURCES.opaqueFragment), 'd86baccbe36073ee22f6df8c9a2687bb6a9c1d2e9f3046b951139e5ae536cb61');
-  assert.equal(sha256(GAUSSIAN_SPLAT_SHADER_SOURCES.vertex), 'c9557318769fb7d25c8f7b69089a23f0c95a4885fc1c23337d56dd4783ec75d8');
+  assert.equal(sha256(GAUSSIAN_SPLAT_SHADER_SOURCES.vertex), '2ffa8ed5b87063c513e2dabab0ecccb82418af24ba077da93d7ecb5d9026a7e7');
 });
 
 test('an outline scene draws the grown quads first, without depth write, then the fill', () => {

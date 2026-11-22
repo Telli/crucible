@@ -37,6 +37,16 @@ The MCP connection uses stdin and stdout, without an HTTP MCP listener.
    For a standalone launch, use `npx --package @codepawlhq/crucible crucible-mcp --backend gpu --memory 192`. Add `@<version>` after the package name to pin one.
    `crucible-mcp --help` lists options. `crucible-mcp --version` reports the installed version.
 
+   For trees with scanned bark and leaves, download the `vegetation-scans` pack (3.8 MB, CC0) from the
+   [Marketplace](https://crucible.codepawl.com/marketplace.html), unzip it into its own folder under one packs folder
+   and add `--packs`:
+
+   ```powershell
+   npx crucible-mcp --backend gpu --memory 256 --packs C:/projects/my-scene/packs
+   ```
+
+   Without the pack, trees draw procedural bark and leaves. `scene_capabilities` topic `packs` says which one is on.
+
 2. Configure your MCP client with absolute paths to Node and the installed CLI:
 
    ```json
@@ -47,7 +57,8 @@ The MCP connection uses stdin and stdout, without an HTTP MCP listener.
          "args": [
            "C:/projects/my-scene/node_modules/crucible/bin/crucible-mcp.mjs",
            "--backend", "gpu",
-           "--memory", "192",
+           "--memory", "256",
+           "--packs", "C:/projects/my-scene/packs",
            "--browser", "C:/Program Files/Google/Chrome/Application/chrome.exe"
          ]
        }

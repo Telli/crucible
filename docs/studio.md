@@ -18,13 +18,13 @@ The scene fills the window and the controls float on top of it.
 | Left rail | The tools that change the scene come first: select, move, rotate, scale, snap to a surface, then add an object or a light, undo and redo. Under one line sit the switches that only change what you see: show or hide the grid, show or hide the panels. |
 | Scene card | At the top of the right column, across from the rail. The list shows whole rows only: it scrolls a row at a time and the rows stretch by a pixel or two so a whole number of them fills it. The materials are one row of swatches that scrolls sideways, with the add button fixed beside it. Its head has a search button, which opens a box that filters the list as you type (Esc closes it and clears the filter), and an add button with the same menu as the rail. Every object in the scene, drawn as the shape of its geometry (cube, sphere, cylinder, cone, torus, plane, or a stack for a group) in the colour of its material, an eye to hide each one, and the scene materials as swatches. |
 | Properties | Under the Scene card, in the same column. The panels of the open workspace: the object in Build, material and look in Look, the camera (views, lens, shots) in Animate, with the object one tab away: picking an object there opens its panel and stays in Animate. |
-| Bottom, in Animate | Play, add a keyframe, scrub the time, jump to a saved shot. The readout moves up to make room for it, and floating panels stop above it. |
+| Bottom, in Animate | Play, add a keyframe, switch Auto-key, scrub the time, jump to a saved shot. The selected object's keys are diamonds on the scrub track: click one to select it and move the playhead there, drag it or press Left and Right (Shift for finer) to retime it, Delete to remove that key. The readout moves up to make room for it, and floating panels stop above it. |
 | Bottom left | The camera (perspective and lens, or orthographic), the grid step, and the size of the selected object in metres. |
 | Top right, beside the right column | The view widget: the X, Y and Z axes as the camera sees them. Click an end to look from the right, left, top, front or back. |
 
 The ground carries a grid that covers the floor far out, with the X axis in red and the Z axis in blue. Up close it has one line per metre; as you zoom out the step grows tenfold (10 m, 100 m) and as you zoom in it shrinks (10 cm), and the readout at the bottom left names the step. Every tenth line is stronger, and the lines thin and fade with distance instead of crowding the far floor. The grid is a working aid: it is not part of the recipe and stays out of PNG, GLB and pack exports. `studio.setGridVisible(false)` hides it from code.
 
-The floor of the viewport reaches the horizon however far you zoom out (up to 400 m from the target), and the viewport keeps drawing the scene beyond the `far` of the scene camera. A PNG export still uses the scene camera as it is saved.
+The floor of the viewport reaches the horizon however far you zoom out (up to 400 m from the target), and the viewport keeps drawing the scene beyond the `far` of the scene camera. A PNG export still uses the scene camera as it is saved. The viewport leaves its own floor out when the recipe sets `environment.ground` to false or one of its parts already forms the floor, as the MCP preview does.
 
 The selected object gets an outline that follows its shape: it goes in between the points of a star and around each letter of a text. An object with more than 8,000 triangles (a scan) is outlined the same way from a mask the graphics card draws, so a ship's masts show and no polygon cuts across it, even when part of it is behind the camera; without WebGL2 it gets the outline around its hull. Docked, drag the inner edge of the right column to make it wider or narrower (240 to 520 px), and drag the gap between the two cards to give the Scene card more or less of the column. Floating, each card is its own window: drag its left edge to change only its width, and its bottom edge to change only its height, and the other card keeps its size (the Properties card just moves when the Scene card above it grows). Hold Ctrl (Meta on a Mac) while dragging a width edge to resize both cards together, or while dragging the Scene card's bottom edge to take height from the Properties card as the docked split does; docking the panels again also gives one shared column. The grips show only under the pointer or the keyboard, take the arrow keys (Ctrl for both cards), and a double click puts that card back to its automatic size (with Ctrl, both cards in that direction). The view widget stands at the top right of the viewport, left of the column and level with the Scene card, so it moves with the card as it is resized. The arrow in the head of each card folds that card down to its head. Studio keeps these sizes and folded cards in the browser (`sceneWidth`, `propertiesWidth`, `sceneHeight` and `propertiesHeight` for floating cards, `panelWidth` and `sceneShare` for the docked column; a size of 0 means automatic). The bar, the rail and the column sit on the edges of the window by default, so nothing covers the scene: the viewport is the room they leave and the scene is drawn at that size, with its proportions true. Turn on **Floating panels** in Settings to let the scene fill the window with the panels over it. Below 820 px wide the two cards start closed so the scene keeps the screen; the panels button on the rail opens them.
 
@@ -66,11 +66,15 @@ World, Fog, Quality and Shadows describe the whole scene, so they leave the tab 
 
 Not shown yet: `volumeFog` bounds, ambient, drift, height falloff, shadow ambient, profile, detail and flow fields, `localVolumes`, `liquid`, `wind`, `sky` (the physical sky), `lines`, `keyAffects` and the `look` cube file.
 
+## Post passes
+
+The viewport draws a recipe's `postPasses` and `postPassesAntialias` as the MCP preview does, and stills taken from it include them. A scene with passes gets a renderer with a depth target, since passes may read `sceneDepth`. A pass the viewport cannot run is named in a notice at the bottom of the viewport, one line per pass (`Post pass "foam" is not drawn here: <reason>`): a pass that fails to compile (the first line of the compiler message is the reason), a renderer that cannot take passes, or a supplied renderer without depth when a pass reads it. The picture keeps drawing without that pass, the notice goes when the pass draws or leaves the recipe, and a refused pass is tried again only when its fragment text changes. The recipe is never touched: refused passes stay in it and save unchanged.
+
 ## Light, sun and camera properties
 
 Select a light in the Scene list and the Look tab lists what the agent can set on it, grouped as Blender's Object Data tab groups it: **Light** (color, intensity, and for point and spot lights radius and range), **Shape** (width and height of an area light, angle and penumbra of a spot light), **Shadows** (shadow, soft falloff, portal) and **Transform** (position, and direction for spot and area lights). With no light selected the tab shows the sun: its direction pad with the azimuth and elevation in degrees beside it, strength, color and size. The Camera tab adds, under the view buttons (Front, Right, Top, Iso and the projection switch on one row), a **Lens** group that opens with the lens chips (24, 35, 50 and 85 mm) and holds focal length in millimetres, sensor width, field of view, orthographic size, an Ortho switch, clip start and end, shift, depth of field (f-stop and focus distance) and the eye and target as numbers. Each edit is one undo step, a slider, colour or scrub drag included. An empty f-stop (the field shows "Off") turns depth of field off. A lens chip lights when the focal length is within half a millimetre of it.
 
-A field that a motion track or driver animates is locked, shown in the muted color and marked with a keyframe diamond named "Animated by a track": edit its keyframes instead. When an agent changes the scene file, Studio reloads it and the controls show the new values. Not shown yet: a light's `ies` profile, `affects` links and `lines`. In code, `controller.updateSceneLight(key, patch, { recordUndo })`, `controller.updateSceneCamera(patch)` and `controller.describeSceneObject(key)` do the same, and the rows come from the table in `src/studio-properties.js`, so a later area adds rows and no panel code.
+A field that a motion track or driver animates is locked, shown in the muted color and marked with a keyframe diamond named "Animated by a track": edit its keyframes instead. A keyed object's Position, Rotation and Scale are editable with Auto-key on, where an edit writes the key at the playhead, and locked with it off. When an agent changes the scene file, Studio reloads it and the controls show the new values. Not shown yet: a light's `ies` profile, `affects` links and `lines`. In code, `controller.updateSceneLight(key, patch, { recordUndo })`, `controller.updateSceneCamera(patch)` and `controller.describeSceneObject(key)` do the same, and the rows come from the table in `src/studio-properties.js`, so a later area adds rows and no panel code.
 
 ## Keys
 
@@ -207,6 +211,37 @@ await studio.ready;
 - `studio.loadExternalTextFile(text)`, the Open dialog and the recipe JSON dialog load catalog files the same way. `studio.openRecipe(recipe)` does it for a recipe object; `studio.loadRecipe(recipe)` stays synchronous and expects the files to be loaded already.
 - Without the function a scene needs, the scene on screen stays as it was and the status line says which file is missing and which function to pass.
 - Studio loads no Draco or KTX2 decoder. Serve a GLB that uses neither.
+
+### Hooks
+
+| Hook | Takes | Returns | Used for |
+| --- | --- | --- | --- |
+| `asset(id)` | the id in `node.asset.id` | GLB bytes | placed scans |
+| `environment(reference)` | the id in `environment.hdri` | Radiance `.hdr` bytes | the sky |
+| `look(reference)` | the id in `environment.look` | `.cube` text | the colour look |
+| `image(id)` | an id in a material's `colorMap` (and the other map fields) | PNG, JPEG or WebP bytes | a colour image on an object |
+| `store({ kind, id, name, extension, bytes })` | a file the person imported | a promise | keeping it, so the read hook of that `kind` (`'asset'`, `'environment'` or `'image'`) returns the same bytes |
+| `name(id)` | an id | the file name kept for it, or `null` | showing the file name instead of the short id |
+
+### Import a file from disk
+
+With a `store` hook (and `crypto.subtle`, which browsers give secure pages), the File menu has **Import…** and the viewport takes a dropped file. Studio tells the kind from the bytes, not the extension:
+
+- a **GLB** is placed at the origin as a new node named after the file, and selected;
+- a Radiance **.hdr** becomes the sky (`environment.hdri`); the World group shows it by the file name, or `Custom` and the first characters of the id when no name is known;
+- a **PNG, JPEG or WebP** becomes the base colour image (`colorMap`) of the selected object's material, and that material's colour goes to white so the old tint does not stain the picture. A material shared with other objects changes for all of them, as it does in the Material tab. A picture needs UV coordinates, which sphere, torus, plane, grid and unwrapped meshes have; box (bevelled or not), cylinder and cone do not, and the renderer would pause the viewport on them. So the import is refused when any object wearing the selected material lacks UVs, and the refusal names those objects. Give them their own material, or pick a geometry with UVs.
+
+Studio names the file by the SHA-256 of its bytes (the id), decodes it, calls `store`, then changes the scene in one undo step. Everything that can be refused is refused before `store` runs, and a refusal leaves the scene, the undo history and the decoded files as they were. A `store` that rejects shows its message as written, so a host can say "Save the scene first". The recipe holds only the id; `name` is how a host gets the file name back when the scene reopens, since Studio only remembers names for the session.
+
+Refused, each with a sentence that says what to do:
+
+- a GLB over 64 MiB, a `.hdr` over 8 MiB, an image over 2048 pixels on a side or 64 MiB;
+- a GLB that needs Draco or KTX2 (re-export without it, or add it through the MCP asset catalog, which converts it);
+- a GLB or glTF JSON that points at separate `.bin` or image files (export one self-contained `.glb`);
+- an image with nothing selected, or whose material takes a pattern or a map sequence;
+- any other file type. A scene.json still opens with Open or a drop.
+
+Without `store`, or without `crypto.subtle`, the Import row is hidden and a dropped binary file gets one sentence saying so. A web pack of a scene that places an imported GLB carries the decoded geometry; a pack refuses a material that holds an imported image, as it does for any decoded image (see the pack message).
 
 The viewport draws a scene's volume fog. Post passes written as shader code and other render-only steps show in the MCP preview and in renders, not in the Studio viewport.
 

@@ -1,0 +1,12 @@
+- entry:core: +129 B gzip for the opt-in `toonEdge` layer field (default, range, batching slot, snapshot compare), `shadow.hard` validation and the renderer hook that turns the lazy hard-shadow code on; the shader code, the texel snap and the Bayer threshold are in lazy modules.
+- entry:core+lazy: same +129 B as entry:core; the hard-shadow module rides in the existing cascades chunk.
+- entry:line-art: +223 B gzip of GLSL for the Bayer 4x4 threshold and hard edge of toon steps; it loads only for a scene that uses toon.
+- scene:lit-box: +147 B gzip, the core hooks of entry:core.
+- scene:lit-box+lazy: +149 B gzip, the core hooks of entry:core.
+- scene:gltf-box: +143 B gzip, the core hooks of entry:core.
+- scene:gltf-box+lazy: +142 B gzip, the core hooks of entry:core.
+- scene:agent-scene: +283 B gzip, the core hooks plus the `toonEdge` capability note and the `shadow.hard` field check.
+- scene:agent-scene+lazy: +904 B gzip, which is the hard-shadow module (GLSL, snap), the toon edge GLSL and the marker for loading them, all lazy.
+- goal:lit-box: +147 B is one opt-in layer field and one opt-in shadow flag for pixel-art and stylised looks; they cost nothing in a scene that leaves them out, and the rest of the feature is lazy.
+- goal:gltf-box: +143 B, the same core hooks (the glTF scene shares the renderer).
+- goal:agent-scene: +283 B, the same core hooks plus the capability note an agent reads to find the two options.

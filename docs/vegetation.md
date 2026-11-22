@@ -30,6 +30,8 @@ The skeleton is a parametric recursive branching model: each generation has a le
 It was chosen over space colonization because a species is a short readable preset, the cost is known before growing, and conifer whorls and palm fronds fit the same code.
 Branches are swept tubes with parallel-transported rings, a taper, a root flare below the ground line and bark UVs (`u` around, `v` along, one tile per 0.6 m).
 Leaves sit on terminal twigs, face outward and up with jitter, and carry vertex colors that darken toward the crown center, so the canopy has depth.
+The colour also changes from clump to clump (a little lighter or darker, warmer or cooler) and turns cooler toward the inside of the crown. The clump is a cell of the crown, the same cell the far levels merge into one clump card, so a level change does not shift the colour, and the tint comes from a hash of the cell, so the same seed gives the same tree.
+Once this addon is loaded, the `foliage` tag lets sun through a leaf (the addon adds the term to the shader, so a scene without trees carries none of it): a leaf lit from behind glows a warmer, duller green, most of all when you look toward the sun, and a leaf in the crown's own shadow still gets a little of the sun that passed through the leaves above it, so the inside of a crown reads as dim green, not black. Impostor cards keep the vertex tint but get no transmission, because their atlas holds bark as well.
 Shading normals blend toward the crown, so a flat card lights like part of a rounded crown.
 
 The tree has four levels of detail, each listing parts with a `role`, `geometry`, `material` and `tintable` flag:
@@ -119,7 +121,21 @@ When `changed` is true, build a new renderer from the new parts. Grass switches 
 
 ## Recipes and MCP
 
-A recipe node with a `vegetation` field grows and scatters these trees, with wind, seasons and imported trees; see "Vegetation" in [Agent scenes](https://crucible.codepawl.com/agent-scene.md). `scatterVegetation` is called with the terrain's own `heightAt`, so the instances match the addon for the same options.
+A recipe node with a `vegetation` field grows and scatters these trees, with wind, seasons and imported trees; see "Vegetation" in [Agent scenes](https://crucible.codepawl.com/agent-scene.md).
+
+### Scanned bark and leaves from the pack
+
+With the first-party `vegetation-scans` pack installed (`crucible-mcp --packs <folder>`, see [MCP](/mcp.md)), the server fills `vegetation.scans` on every tree node that has none, so recipe trees draw scanned bark and leaf cards with no change to the recipe. Without the pack they keep the procedural textures. `scene_capabilities` topic `packs` reports `vegetationScans: on` or `off`.
+
+| Species | Bark | Leaves |
+| --- | --- | --- |
+| broadleaf | Poly Haven `bark_brown_02` | scanned card, normal, crown |
+| conifer | Poly Haven `pine_bark` | cedar spray card |
+| bush | Poly Haven `bark_willow_02` | scanned card |
+| birch | procedural white | scanned card |
+| palm | Poly Haven `palm_tree_bark` | procedural fronds |
+
+`scans` is keyed by species, each `{ bark: { colorMap, normalMap, roughnessMap }, leaves: { colorMap, normalMap, crownMap } }` with catalog image IDs; `colorMap` is required and the other maps are optional. The IDs travel with the recipe like texture sequences, so previews, renders and web exports load the same images. A `season` recolours the scanned card instead of swapping in the procedural sprite. Set `scans: {}` to keep one node procedural while the pack is installed. Grass and flowers have no scans. `scatterVegetation` is called with the terrain's own `heightAt`, so the instances match the addon for the same options.
 `levelForDistance(distance, variant, { distanceScale, cullDistance })` is the stateless form of `selectLevels`: no hysteresis, so the level is a pure function of the distance.
 
 ## Impostors and cross-fade
@@ -167,7 +183,8 @@ Meshes and textures are built in plain JavaScript, so tests run in Node.
 
 ## Limits
 
+- Scanned bark and leaves in recipes need the `vegetation-scans` pack; the images of one node count toward the 64 MiB decoded limit of texture sequences (a scanned broadleaf is 12 MiB).
 - Cards need the renderer's alpha mask to look right. Without `leafTextures` the leaf textures are 128 px procedural sprigs that look flat from under a few metres; the scanned cards hold up to about 1 m. Palm fronds have no scanned card yet. The conifer card is a cedar spray, so it reads as a flat branch tip rather than separate needles.
 - Level changes pop unless `selectLevels` gets `fade`; level 2 crowns are blobs or crossed cards, and baked impostors exist only when asked for (see Impostors and cross-fade).
-- Species are fixed presets; there is no wind-bent skeleton or collision with other trees. Seasonal colour exists only in recipes (the `season` field), not in the addon call.
+- Species are fixed presets; there is no wind-bent skeleton or collision with other trees. Seasonal colour exists only in recipes (the `season` field), not in the addon call. A broadleaf from `createTree` also has `bareParts(levelIndex)`, the twigged bark to draw at that level in place of the level's parts once it has shed its leaves.
 - In recipes, tags `foliage` and `grass` accept a `tag` override on placed assets, so an imported tree sways; its leaf shading and alpha coverage stay those of the renderer.

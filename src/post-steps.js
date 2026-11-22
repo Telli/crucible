@@ -191,9 +191,10 @@ uniform float sharpenAmount;
 uniform int kuwaharaRadius;
 uniform float posterizeLevels;
 uniform float pixelateSize;
+uniform vec2 pixelateOrigin;
 vec2 snapped(vec2 coordinate) {
   if (pixelateSize < 1.0) return coordinate;
-  return (floor(coordinate * resolution / pixelateSize) + 0.5) * pixelateSize / resolution;
+  return ((floor((coordinate * resolution + pixelateOrigin) / pixelateSize) + 0.5) * pixelateSize - pixelateOrigin) / resolution;
 }
 vec4 sourceAt(vec2 coordinate) {
   return texture(sourceTexture, snapped(coordinate));
@@ -390,7 +391,7 @@ function createStylizeStage() {
   return withMaskUnbound(createStage({
     name: 'Stylize',
     fragment: stylizeFragment,
-    uniformNames: ['sharpenAmount', 'kuwaharaRadius', 'posterizeLevels', 'pixelateSize', ...MASK_UNIFORM_NAMES],
+    uniformNames: ['sharpenAmount', 'kuwaharaRadius', 'posterizeLevels', 'pixelateSize', 'pixelateOrigin', ...MASK_UNIFORM_NAMES],
     isActive: (effects, frame) => isStylizeActive(stepsOf(frame).stylize),
     setUniforms(context, uniforms, renderer, frame) {
       const { stylize } = stepsOf(frame);
@@ -398,6 +399,8 @@ function createStylizeStage() {
       context.uniform1i(uniforms.kuwaharaRadius, stylize.kuwahara ?? 0);
       context.uniform1f(uniforms.posterizeLevels, stylize.posterize ?? 0);
       context.uniform1f(uniforms.pixelateSize, stylize.pixelate ?? 0);
+      // On a pixel grid the blocks start on a lattice that moves with the snapped camera, so they stay on the same geometry.
+      context.uniform2fv(uniforms.pixelateOrigin, stylize.pixelate > 0 ? renderer.pixelGrid?.latticeOrigin(stylize.pixelate) ?? [0, 0] : [0, 0]);
       bindMask(context, uniforms, renderer, frame, stylize.mask);
     },
   }));

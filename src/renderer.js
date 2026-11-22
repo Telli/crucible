@@ -1,5 +1,5 @@
 import { resolveBackground, clearColourFor } from './clear-colour.js';
-import { materialTags } from './shader-registry.js';
+import { materialTags, registeredFeatureCode } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
@@ -9,7 +9,7 @@ import { fullscreenVertex, compileProgram, ProgramNotReady, isLinkComplete, setP
 import { ambientOcclusionFragment } from './ambient-occlusion.js';
 import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetError, automaticBudgetCeilingMiB } from './budget.js';
 import { applyProjection } from './camera.js';
-import { fittedNearPlane, sceneBoundsOfParts } from './near-plane-fit.js';
+import { boundsGrownByParts, fittedNearPlane, sceneBoundsOfParts } from './near-plane-fit.js';
 import { installReversedDepth, prepareCameraRelativeProgram } from './reversed-depth.js';
 import { isBloomActive, resolveEffects } from './effects.js';
 import { frameDiagnostics } from './frame-diagnostics.js';
@@ -765,6 +765,8 @@ export class CrucibleRenderer {
     /** Milliseconds the GPU took for a recent frame, when `createGpuTimer` is given. */
     this.gpuMilliseconds = null;
     this.culling = culling;
+    // A NaN or negative error would pick the coarsest level everywhere without a word (#2403).
+    if (typeof lodPixelError !== 'number' || !(lodPixelError >= 0)) throw new TypeError(`lodPixelError must be a number of 0 or more pixels, got ${lodPixelError}.`);
     this.lodPixelError = lodPixelError;
     this.frustumPlanes = new Float32Array(24);
     if (!Number.isInteger(samples) || samples < 1) throw new Error('MSAA sample count must be a positive integer.');
@@ -922,6 +924,7 @@ export class CrucibleRenderer {
     if (shading === 'light') this.shaderFeatures.add(LIGHT_SHADING_FEATURE);
     this.shaderFeatures.add(FRAGMENT_SHADOW_POSITION_FEATURE);
     if (shadowCascades) this.shaderFeatures.add(shadowCascades.shaderFeature);
+    if (shadowBounds?.hard) this.addHardShadowFeature(shadowCascades);
     // Cascades replace the single map the tint is cut against, and the tint map is a half float render target.
     if (this.shaderFeatures.has('tintedShadows') && (shadowCascades || !this.context.getExtension('EXT_color_buffer_float'))) this.shaderFeatures.delete('tintedShadows');
     this.tintedShadowsActive = this.shaderFeatures.has('tintedShadows');
@@ -1752,6 +1755,9 @@ export class CrucibleRenderer {
       validateTransform(part, location.normalMatrix);
       location.materialSnapshot = MaterialSnapshot.of(part.material);
     }
+    // A part moved toward the camera may leave the box the near plane is fitted to, and the plane would cut it (#2403). Growing the
+    // box by the moved parts costs only them; it never shrinks, so the plane stays safe if not as tight.
+    if (this.fitBounds) this.fitBounds = boundsGrownByParts(this.fitBounds, parts);
     // A part that crossed a mirror (a flip animation, a toggled billboard) belongs to the other winding batch: regroup every part once.
     // replaceParts packs all parts again, so the rest of this update is done.
     if (mirrorChanged) {
@@ -1811,6 +1817,11 @@ export class CrucibleRenderer {
 
   // A one texel map stays cleared to the far depth, so every point reads as lit. That is exact when nothing casts, and when
   // cascades replace the main shader's lookup and nothing else (volume fog, subsurface thickness) still reads this map.
+  addHardShadowFeature(cascades) {
+    if (cascades || !registeredFeatureCode.has('hardShadows')) throw new Error('shadow.hard needs no shadowCascades and its code: await loadAgentSceneModules(recipe).');
+    this.shaderFeatures.add('hardShadows');
+  }
+
   shadowMapSizeWanted() {
     const casts = this.batches.some(batch => !batch.floor && batch.castShadow && !this.tintsShadow(batch));
     if (!casts || this.shadowCascades?.replacesSingleMap(this)) return 1;
@@ -1846,7 +1857,8 @@ export class CrucibleRenderer {
       if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) throw new Error('Shadow framebuffer is incomplete.');
       this.shadowFramebufferCheckedSize = mapSize;
     }
-    const light = resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds, this.fittedWorldShadowView());
+    const resolvedLight = resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds, this.fittedWorldShadowView());
+    const light = resolvedLight.hard ? registeredFeatureCode.get('hardShadows').snapView(resolvedLight, mapSize) : resolvedLight;
     const lightView = mat4.lookAt(mat4.create(), light.eye, light.target, light.up ?? [0, 1, 0]);
     mat4.ortho(this.lightProjection, -light.extent, light.extent, -light.extent, light.extent, light.near, light.far);
     mat4.multiply(this.lightProjection, this.lightProjection, lightView);

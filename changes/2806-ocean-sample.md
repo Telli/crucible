@@ -1,0 +1,1 @@
+- Make the ocean modifier about five times faster, so a moving sea is sampled per frame much sooner, with the same vertices and foam up to rounding (#2806).

@@ -77,7 +77,7 @@ test('upAxis y and no upAxis parse to identical buffers, and a bad upAxis says w
 });
 
 test('the soft splat shaders are the same text as before alphaCut existed', () => {
-  assert.equal(sha256(GAUSSIAN_SPLAT_SHADER_SOURCES.vertex), 'c9557318769fb7d25c8f7b69089a23f0c95a4885fc1c23337d56dd4783ec75d8');
+  assert.equal(sha256(GAUSSIAN_SPLAT_SHADER_SOURCES.vertex), '2ffa8ed5b87063c513e2dabab0ecccb82418af24ba077da93d7ecb5d9026a7e7');
   assert.equal(sha256(GAUSSIAN_SPLAT_SHADER_SOURCES.fragment), '52063be234f912e7a12a37c3d4591e3ed3ec9aa8f123c722eb535c47ec77c5f2');
   assert.match(GAUSSIAN_SPLAT_SHADER_SOURCES.opaqueFragment, /alpha < max\(alphaCut, 1\.0 \/ 255\.0\)\) discard;/);
   assert.match(GAUSSIAN_SPLAT_SHADER_SOURCES.opaqueFragment, /outputColor = vec4\(color, 1\.0\)/);

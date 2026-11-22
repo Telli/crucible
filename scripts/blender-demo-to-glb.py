@@ -475,7 +475,10 @@ def bake_world_sky(directory):
     camera_data.panorama_type = "EQUIRECTANGULAR"
     camera_data.clip_start = 0.1
     camera = bpy.data.objects.new("sky-bake-camera", camera_data)
-    camera.rotation_euler = (1.5707963267948966, 0.0, 0.0)
+    # Cycles' equirectangular camera puts its own forward axis at the map centre, so the camera is turned -90 degrees
+    # about Z as well: measured with marker spheres, Blender +X lands on Crucible +X and +Y on -Z, the map centre.
+    # Without the turn the sun came out 90 degrees off its Cycles azimuth (#2761).
+    camera.rotation_euler = (1.5707963267948966, 0.0, -1.5707963267948966)
     bake_scene.collection.objects.link(camera)
     bake_scene.camera = camera
     bake_scene.render.filepath = directory + "/sky.hdr"

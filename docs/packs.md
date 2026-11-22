@@ -59,7 +59,7 @@ An error names the pack, the file and the field, and says what to pass instead.
 npm run pack:check -- path/to/my-pack
 ```
 
-It runs the same checks as the server and prints `ok` or `FAIL` with the error. The repository ships `packs/example-starter/` (CC0) as a template to copy.
+It runs the same checks as the server and prints `ok` or `FAIL` with the error. The repository ships `packs/example-starter/` (CC0) as a template to copy, and `packs/vegetation-scans/` (CC0 bark and leaf scans) that recipe trees use when it is installed (see [Vegetation](https://crucible.codepawl.com/vegetation.md)).
 
 ## Install
 
