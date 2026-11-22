@@ -101,7 +101,7 @@ export const SPECIES = {
       texture: 'single', color: [70, 118, 40], foliageColor: [0.1, 0.27, 0.04], tint: [1.05, 1, 0.9],
       sitesPerMeter: 7, start: 0.14, upBias: 0.0,
       meshLength: 0.95, meshWidth: 0.16, meshPerSite: 1, meshSpread: 0, profile: NARROW_LEAF, droop: 0.35, fold: 0.1,
-      cardSize: [0.28, 1.1], cardsPerSite: 1,
+      cardSize: [0.28, 1.1], cardsPerSite: 1, farCards: { 3: { leafKeep: 0.2, leafScale: 2.1 } },
     },
   },
   bush: {
@@ -137,9 +137,9 @@ export const LEVEL_SETTINGS = [
   // The far levels (#3051) keep the species' own leaf card on fewer, bigger quads. Each covers the leaf area of level 1 (keep
   // times scale squared stays near 1), and `tipScale` keeps its tip where a level 1 card's tip is, so a palm keeps its fronds and a crown keeps its width. `clumps` is what a bush and a
   // tree of mesh leaves draw instead: crown clumps, widened by `crownScale`.
-  { sideScale: 0.4, leafKeep: 0.1, leafScale: 3.1, tipScale: 1.7, maximumBranchLevel: 1, clumps: { crownScale: 1 } },
+  { sideScale: 0.4, leafKeep: 0.1, leafScale: 3.1, tipScale: 1.55, maximumBranchLevel: 1, clumps: { crownScale: 1 } },
   // Far level: `pointStride` keeps every n-th ring of a branch above the trunk, so it keeps the trunk and its first branches in
   // far fewer triangles.
-  { sideScale: 0.25, leafKeep: 0.0714, leafScale: 3.7, tipScale: 1.7, maximumBranchLevel: 1, pointStride: 3, clumps: { crownScale: 1.5 } },
+  { sideScale: 0.25, leafKeep: 0.0714, leafScale: 3.7, tipScale: 1.55, maximumBranchLevel: 1, pointStride: 3, clumps: { crownScale: 1.5 } },
 ];
 export const TREE_LEVEL_DISTANCES = [38, 95, 150];

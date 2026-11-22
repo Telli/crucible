@@ -449,7 +449,7 @@ function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
 
 // `tipScale` (a far level, #3051) pulls a bigger card back along its direction so its tip stays where the tip of a card of that scale
 // would be: the far card fills the crown inward and leaves its width alone.
-function addCards(builder, skeleton, spec, site, scale, random, tipScale = scale) {
+function addCards(builder, skeleton, spec, site, scale, random, { tipScale = scale, cardCount = spec.cardsPerSite } = {}) {
   const pullBack = spec.cardSize[1] * site.scale * (scale - tipScale);
   const origin = addScaled(site.position, site.direction, -pullBack);
   const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position);
@@ -457,10 +457,10 @@ function addCards(builder, skeleton, spec, site, scale, random, tipScale = scale
   // Crossed pairs turn each card a quarter turn from the last; a crown placement (#3041) fans them a little around the same
   // upward, outward plate, so every card lies like a leaf and none stands edge-on.
   const fan = spec.placement?.cardFan;
-  for (let index = 0; index < spec.cardsPerSite; index++) {
+  for (let index = 0; index < cardCount; index++) {
     const roll = fan === undefined
       ? firstRoll + index * (Math.PI / 2 + (random() - 0.5) * 0.5)
-      : firstRoll + (index - (spec.cardsPerSite - 1) / 2) * fan;
+      : firstRoll + (index - (cardCount - 1) / 2) * fan;
     addLeafSurface(builder, {
       origin,
       frame: createLeafFrame(site.direction, roll),
@@ -557,17 +557,46 @@ function drawsCrownClumps(setting, preset, mode) {
   return Boolean(setting.clumps) && (mode === 'mesh' || Boolean(preset.leaf.farClumps));
 }
 
-function buildFoliage(skeleton, preset, mode, setting, random) {
+/**
+ * The sites a far level draws a card on (#3051): the same share of the sites in every cell of the crown, and at least one in each
+ * cell that has any. Taking every n-th site left the crown's centre and its lower part bare, since the sites there are few.
+ */
+function pickFarSites(skeleton, keep) {
+  const cellSize = skeleton.crown.radius / 2.1;
+  const cells = new Map();
+  for (const site of skeleton.leafSites) {
+    const key = site.position.map(value => Math.floor(value / cellSize)).join(',');
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(site);
+  }
+  const picked = [];
+  for (const sites of cells.values()) {
+    const count = Math.max(1, Math.round(sites.length * keep));
+    for (let index = 0; index < count; index++) picked.push(sites[Math.floor((index + 0.5) * sites.length / count)]);
+  }
+  return picked;
+}
+
+function buildFoliage(skeleton, preset, mode, levelSetting, random, levelIndex) {
+  // A species may tune a far level: a palm's fronds need more, smaller cards than a crown's twigs (#3051).
+  const setting = { ...levelSetting, ...preset.leaf.farCards?.[levelIndex] };
   const builder = createMeshBuilder({ withColors: true });
   if (setting.leafKeep === 0 || drawsCrownClumps(setting, preset, mode)) {
     addCrownClumps(builder, skeleton, preset.leaf, mode, random, setting.clumps?.crownScale);
+    return builder.build();
+  }
+  if (setting.tipScale !== undefined && mode === 'cards') {
+    // One card to a site where the near levels cross two: far away a crossed pair reads as a plus sign. The share of sites
+    // doubles with it, so the leaf area stays that of level 1.
+    const keep = Math.min(1, setting.leafKeep * preset.leaf.cardsPerSite);
+    for (const site of pickFarSites(skeleton, keep)) addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random, { tipScale: setting.tipScale, cardCount: 1 });
     return builder.build();
   }
   const stride = Math.round(1 / setting.leafKeep);
   skeleton.leafSites.forEach((site, index) => {
     if (index % stride !== 0) return;
     if (mode === 'mesh') addMeshLeaves(builder, skeleton, preset.leaf, site, setting.leafScale, random);
-    else addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random, setting.tipScale);
+    else addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random);
   });
   return builder.build();
 }
@@ -743,7 +772,7 @@ export function createTree(speciesOrOptions = 'broadleaf', seed = 1) {
     const levelRandom = createRandom(seed * 104729 + levelIndex);
     const foliageMaterial = clumpLevels[levelIndex] ? materials.crown : materials.foliage;
     const barkGeometry = buildBark(skeleton, preset, setting, bark);
-    const foliageGeometry = buildFoliage(skeleton, preset, leaves, setting, levelRandom);
+    const foliageGeometry = buildFoliage(skeleton, preset, leaves, setting, levelRandom, levelIndex);
     // Level 0 can drop to either thinner layer and level 1 to the second; the crown clumps of level 2 are thin enough.
     const shadowFoliage = clumpLevels[levelIndex] ? [] : buildShadowFoliage(skeleton, preset, leaves, seed, levelIndex);
     return describeLevel([

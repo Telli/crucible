@@ -181,7 +181,7 @@ export function measureTreeLevels({ preset, seed = DEFAULT_SEED, height, frameSi
       foliageTriangles: trianglesOf(level.parts, 'foliage'),
       barkTriangles: trianglesOf(level.parts, 'bark'),
       solidity: crownSolidity(tree, index, frameSize === undefined ? {} : { frameSize }),
-      leafCentimeters: paintsLeaves ? paintedLeafLengthCentimeters({ texture: leaf.texture, cardHeightMeters: leaf.cardSize[1], leafScale: setting.leafScale }) : null,
+      leafCentimeters: paintsLeaves ? paintedLeafLengthCentimeters({ texture: leaf.texture, cardHeightMeters: leaf.cardSize[1], leafScale: leaf.farCards?.[index]?.leafScale ?? setting.leafScale }) : null,
     };
   });
 }

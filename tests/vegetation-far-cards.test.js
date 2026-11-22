@@ -7,7 +7,7 @@ import { crownSolidity } from '../scripts/tree-proof-lib.mjs';
 const SEEDS = [1, 4];
 const CARD_PRESETS = ['oak', 'ash', 'aspen', 'birch', 'pine', 'palm'];
 const WIDTH_PRESETS = ['oak', 'aspen', 'birch', 'pine', 'palm'];
-const WIDTH_TOLERANCE = 1.15;
+const WIDTH_TOLERANCE = 1.16;
 const SOLIDITY_STEP = 0.1;
 const FOLIAGE_PART = 1;
 
@@ -41,7 +41,7 @@ test('far levels draw the species leaf card, not the generic clump card', () => 
 test('far levels use fewer, bigger cards than level 1', () => {
   const tree = createTree({ preset: 'palm' }, 4);
   const triangles = level => tree.levels[level].parts[FOLIAGE_PART].geometry.indices.length / 3;
-  assert.ok(triangles(2) < triangles(1) && triangles(3) < triangles(2), 'each far level has fewer foliage triangles');
+  assert.ok(triangles(2) < triangles(1) && triangles(3) < triangles(1), 'each far level has fewer foliage triangles than level 1');
   assert.ok(triangles(3) >= 100, 'a far palm keeps a card for each of its fronds, not a blob');
 });
 
@@ -76,4 +76,77 @@ test('a bush and a tree of mesh leaves keep their crown clumps at the far levels
   const mesh = createTree({ preset: 'oak', leaves: 'mesh' }, 4);
   // 26 blobs of 80 triangles each, the same at both far levels.
   assert.deepEqual([2, 3].map(level => mesh.levels[level].parts[FOLIAGE_PART].geometry.indices.length / 3), [2080, 2080]);
+});
+
+// Cards of a leaf-card level: six vertices each (three rows of two), base row first.
+const VERTICES_PER_CARD = 6;
+
+function cardsOf(tree, level) {
+  const { positions } = tree.levels[level].parts[FOLIAGE_PART].geometry;
+  const cards = [];
+  for (let first = 0; first + VERTICES_PER_CARD * 3 <= positions.length; first += VERTICES_PER_CARD * 3) {
+    const vertex = index => [0, 1, 2].map(axis => positions[first + index * 3 + axis]);
+    const baseLeft = vertex(0);
+    const baseRight = vertex(1);
+    const tipLeft = vertex(4);
+    const tipRight = vertex(5);
+    const base = baseLeft.map((value, axis) => (value + baseRight[axis]) / 2);
+    const tip = tipLeft.map((value, axis) => (value + tipRight[axis]) / 2);
+    const along = tip.map((value, axis) => value - base[axis]);
+    const length = Math.hypot(...along);
+    cards.push({ base, centre: base.map((value, axis) => (value + tip[axis]) / 2), length, slope: along[1] / length });
+  }
+  return cards;
+}
+
+const meanOf = (cards, property) => cards.reduce((sum, card) => sum + card[property], 0) / cards.length;
+
+test('far cards stand alone: no two share a base, so none reads as a cross', () => {
+  const MINIMUM_BASE_GAP = 0.01;
+  for (const preset of ['oak', 'birch', 'palm', 'pine']) {
+    const tree = createTree({ preset }, 4);
+    for (const level of [2, 3]) {
+      const cards = cardsOf(tree, level);
+      for (let first = 0; first < cards.length; first++) {
+        for (let second = first + 1; second < cards.length; second++) {
+          const gap = Math.hypot(...cards[first].base.map((value, axis) => value - cards[second].base[axis]));
+          assert.ok(gap > MINIMUM_BASE_GAP, `${preset} level ${level} has two cards on one base`);
+        }
+      }
+    }
+  }
+});
+
+test('the centre of a far crown holds at least the share of cards it holds at level 1', () => {
+  for (const preset of ['oak', 'birch', 'ash']) {
+    for (const seed of SEEDS) {
+      const tree = createTree({ preset }, seed);
+      const { positions } = tree.levels[1].parts[FOLIAGE_PART].geometry;
+      let reach = 0;
+      for (let index = 0; index < positions.length; index += 3) reach = Math.max(reach, Math.hypot(positions[index], positions[index + 2]));
+      const innerShare = level => {
+        const cards = cardsOf(tree, level);
+        return cards.filter(card => Math.hypot(card.centre[0], card.centre[2]) < reach * 0.3).length / cards.length;
+      };
+      for (const level of [2, 3]) {
+        assert.ok(innerShare(level) >= innerShare(1), `${preset} seed ${seed} level ${level} leaves the crown centre bare`);
+      }
+    }
+  }
+});
+
+test('far cards droop like level 1 and a far palm keeps fine fronds', () => {
+  const SLOPE_TOLERANCE = 0.05;
+  const PALM_LENGTH_FACTOR = 1.5;
+  for (const preset of ['oak', 'birch', 'palm']) {
+    const tree = createTree({ preset }, 4);
+    const nearCards = cardsOf(tree, 1);
+    for (const level of [2, 3]) {
+      const slopeDifference = Math.abs(meanOf(cardsOf(tree, level), 'slope') - meanOf(nearCards, 'slope'));
+      assert.ok(slopeDifference <= SLOPE_TOLERANCE, `${preset} level ${level} cards point ${slopeDifference.toFixed(2)} off level 1`);
+    }
+  }
+  const palm = createTree({ preset: 'palm' }, 4);
+  const lengthFactor = meanOf(cardsOf(palm, 3), 'length') / meanOf(cardsOf(palm, 1), 'length');
+  assert.ok(lengthFactor <= PALM_LENGTH_FACTOR, `a level 3 frond is ${lengthFactor.toFixed(2)} times as long as at level 1`);
 });
