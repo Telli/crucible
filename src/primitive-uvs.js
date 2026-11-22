@@ -118,15 +118,24 @@ function materialNeedsUvs(material) {
   return material.map !== undefined || TEXTURE_MAP_FIELDS.some(field => material[field] !== undefined);
 }
 
-/** The ids of the box, cylinder and cone geometries of a normalized recipe that a node with an image map material uses. */
-export function primitiveGeometryIdsNeedingUvs(recipe) {
+/**
+ * For each box, cylinder and cone geometry of a normalized recipe that a node with an image map material uses: its id, and
+ * the function that returns a copy of the built geometry with its UVs.
+ */
+export function primitiveUvWriters(recipe) {
   const materialsById = new Map(recipe.materials.map(material => [material.id, material]));
   const texturedGeometryIds = new Set();
   for (const node of recipe.nodes) {
     const material = node.geometry === undefined ? undefined : materialsById.get(node.material);
     if (material && materialNeedsUvs(material)) texturedGeometryIds.add(node.geometry);
   }
-  return new Set(recipe.geometries.filter(definition => PRIMITIVE_UV_TYPES.includes(definition.type) && texturedGeometryIds.has(definition.id)).map(definition => definition.id));
+  const writers = new Map();
+  for (const definition of recipe.geometries) {
+    if (PRIMITIVE_UV_TYPES.includes(definition.type) && texturedGeometryIds.has(definition.id)) {
+      writers.set(definition.id, geometry => withPrimitiveUvs(definition, geometry));
+    }
+  }
+  return writers;
 }
 
 /** A copy of a built box, cylinder or cone geometry with its UVs. */
