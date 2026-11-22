@@ -149,8 +149,8 @@ optional `Ready` expression the driver waits for, and `Drive`.
 ### `studio`
 - Name: Scene studio (development page; Studio is not published on the site)
 - Surface: Bench
-- Reach: `/bench/studio/index.html`
-- Source: `bench/studio/index.html`, `bench/studio/main.js`, `src/studio.js`
+- Reach: `/bench/studio/index.html?setup=off`
+- Source: `bench/studio/index.html`, `bench/studio/main.js`, `src/studio.js`, `src/studio-setup.js`
 - Ready: `Boolean(window.__studioPage?.renderer)`
 - Drive: `node scripts/drive.mjs shot studio`
 

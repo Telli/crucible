@@ -70,10 +70,22 @@ editor is a non-goal of the engine (`docs/goal.md`), so there are no layers, ove
 | --- | --- |
 | `name` | 1 to 24 letters, digits, `-` or `_`, unique. Job metrics list shots by name with their start second. |
 | `duration` | 0.1 to 30 s. The timeline holds up to 64 shots and 60 s. |
+| `endAt` | A marker name (see below) in place of `duration`: the shot ends at that cue, so `duration` is the marker time minus the shot start. Both may be set only when they agree. |
 | `motionStart` | Second of the motion clock the shot starts at. Omitted, the shot reads the motion at its place on the timeline, so a non-looping motion must cover it. Only for recipes with motion, physics or cloth. |
 | `camera` | A partial camera (`eye`, `target`, `up`, `fov`, `near`, `far`) on top of the sampled camera. Omitted, the shot keeps the camera of the motion tracks. |
 | `focusDistance`, `blur` | Depth of field for this shot: focus distance 0.01 to 100000 m and blur 0 to 1. Each is optional and replaces the recipe `effects.depthOfField` value for the shot only, so a close-up can pull focus without a global setting. A seek into a shot gives the same bytes as the frame in a sequence. |
 | `dip` | 0.05 to 4 s. The previous shot fades to black over the first half and this one fades up over the second half. |
+
+### Markers
+
+The timeline names cue times in timeline seconds, so cuts can sit on the beat of a score you already have. `markers` is a list of `{ name, time }` (names as for shots, up to 256 markers, times 0 to 60 s). `beatGrid: { bpm, offset, count }` adds the markers `beat-0`, `beat-1` ... at `offset + index * 60 / bpm` seconds (`bpm` 1 to 400, `offset` default 0, `count` a whole number up to 256). A shot with `endAt` ends at its marker; the marker must lie after the shot start by the shot minimum and maximum. Crucible does not detect beats in an audio file: give it the bpm and offset, or the cue times.
+
+```json
+{ "timeline": { "beatGrid": { "bpm": 120, "count": 8 }, "shots": [
+  { "name": "wide", "endAt": "beat-2" },
+  { "name": "close", "endAt": "beat-4", "camera": { "fov": 30 } }
+] } }
+```
 
 `set-timeline` edits the section and `null` removes it. A job renders it with `settings.timeline: { start }` (default 0) for kind `image`, `stills` or `video`.
 `duration` defaults to the rest of the timeline. The timeline owns the motion clock, so `motion` and `animation` settings are rejected, and the renderer clock reads timeline time.
@@ -168,7 +180,7 @@ A seek to any frame gives the same pixels: a job samples each frame from its tim
 { "kind": "image", "width": 1280, "height": 720, "mattes": [{ "object": "hero" }, { "material": "stone" }] }
 ```
 
-Each entry names exactly one `object` (a part name from `metrics.objectNames`) or one `material` (a name from `metrics.cryptomatte.materials`), up to 8 entries and 120 characters a name. An object matte is read from the exact 24-bit object ID, so a part that other parts overlap still gets its own clean edge. A material matte is read from the `cryptomatte` pass, whose hash has 255 values: two materials can share one, and then `metrics.mattes[n].sharedWith` lists the other names and the matte holds both. A name the scene does not have fails the job with the list of names it does have.
+Each entry names exactly one `object` (a part name from `metrics.objectNames`) or one `material` (a name from `metrics.cryptomatte.materials`), up to 8 entries and 120 characters a name. An object matte is read from the exact 24-bit object ID, so a part that other parts overlap still gets its own clean edge. A part with a `blend` material (tree leaves exported as BLEND) is in the ID passes too, drawn as a cutout where its alpha is at least 0.5, so its see-through texels leave the part behind it visible. A material matte is read from the `cryptomatte` pass, whose hash has 255 values: two materials can share one, and then `metrics.mattes[n].sharedWith` lists the other names and the matte holds both. A name the scene does not have fails the job with the list of names it does have.
 `metrics.mattes` holds `{ object, partIds, coveragePixels }` or `{ material, sharedWith?, coveragePixels }` for each entry, from the last frame. Mattes are 8-bit PNG: they need `format` png, no `multilayer` and no `renderer`, and they cost about one extra pass each in the job estimate.
 
 ### Combining pass pixels

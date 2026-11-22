@@ -11,8 +11,11 @@ import { encodePack } from './scene-pack-format.js';
 import { encodePackOrRefuse } from './studio-pack-refusal.js';
 import { PACK_SHADER_MODULES, PACK_UNSUPPORTED_MODULES } from './scene-pack-shaders.js';
 import { STUDIO_CSS } from './studio-styles.js';
-import { findKeymapAction, formatShortcutKeys, keyLabel, resolveKeymap, SHORTCUT_ROWS } from './studio-keymap.js';
+import { findKeymapAction, findMouseNavigation, formatShortcutKeys, KEYMAP_PRESETS, keyLabel, lastKeyLabel, resolveKeymapPreset, shortcutRowsFor } from './studio-keymap.js';
 import { createStudioCatalog } from './studio-catalog.js';
+import { createStudioSetup } from './studio-setup.js';
+import { detectStudioHardware, gatherStudioHardwareInputs, rendererChangeFor, resolveStudioPerformanceTier, studioViewportSettingsFor } from './studio-hardware.js';
+import { createStudioDiagnostics, describeStudioEnvironment, watchStudioDiagnostics } from './studio-diagnostics.js';
 import {
   STUDIO_GIZMO_PIXELS,
   STUDIO_PREFERENCE_CHOICES,
@@ -23,7 +26,7 @@ import {
 } from './studio-preferences.js';
 import { createOutlineMask } from './studio-outline-mask.js';
 import { createPanelGrips } from './studio-panel-grips.js';
-import { studioIconPath } from './studio-icons.js';
+import { STUDIO_BRAND_ICON_NAMES, studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
 import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-properties.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
@@ -162,6 +165,9 @@ function createSvgElement(documentReference, tagName, attributes = {}) {
 
 function createIcon(documentReference, iconName) {
   const icon = createSvgElement(documentReference, 'svg', { viewBox: '0 0 24 24', class: 'crucible-studio-icon', 'aria-hidden': 'true' });
+  if (STUDIO_BRAND_ICON_NAMES.includes(iconName)) {
+    icon.dataset.brand = 'true';
+  }
   icon.append(createSvgElement(documentReference, 'path', { d: studioIconPath(iconName) }));
   return icon;
 }
@@ -902,7 +908,7 @@ function buildPackReadyRecipe(recipe) {
     }
   }
   if (cloned.environment) {
-    for (const envField of ['sky', 'hdri', 'spotLights', 'areaLights', 'shadowCascades', 'sunAngularRadius', 'lines']) {
+    for (const envField of ['sky', 'hdri', 'keyFromHdri', 'spotLights', 'areaLights', 'shadowCascades', 'sunAngularRadius', 'lines']) {
       if (cloned.environment[envField] !== undefined) {
         delete cloned.environment[envField];
         stripped.push(`environment.${envField}`);
@@ -937,6 +943,7 @@ function depthSortedNodes(nodes) {
 const MODAL_AXES = Object.freeze(['x', 'y', 'z']);
 const MODAL_AXIS_BY_ACTION = Object.freeze({ 'modal.axisX': 'x', 'modal.axisY': 'y', 'modal.axisZ': 'z' });
 const MODAL_TOOL_BY_ACTION = Object.freeze({ 'modal.translate': 'translate', 'modal.rotate': 'rotate', 'modal.scale': 'scale' });
+const TOOL_ACTION_BY_TOOL = Object.freeze({ select: 'tool.select', translate: 'tool.translate', rotate: 'tool.rotate', scale: 'tool.scale', snap: 'tool.snap' });
 const PICK_UP_TOOL_BY_ACTION = Object.freeze({ 'tool.translate': 'translate', 'tool.rotate': 'rotate', 'tool.scale': 'scale' });
 const MODAL_FREE_AXIS = Object.freeze({ translate: 'screen', scale: 'uniform' });
 const MODAL_TOOL_WORDS = Object.freeze({ translate: 'Move', rotate: 'Rotate', scale: 'Scale' });
@@ -951,6 +958,9 @@ const STUDIO_SETTING_ROWS = Object.freeze([
   ['rotateSnapDegrees', 'Rotate snap angle', value => `${value}°`],
   ['gizmoSize', 'Handle size', value => value[0].toUpperCase() + value.slice(1)],
   ['startWorkspace', 'Open in', value => value[0].toUpperCase() + value.slice(1)],
+  ['theme', 'Theme', value => value[0].toUpperCase() + value.slice(1)],
+  ['performance', 'Performance', value => value[0].toUpperCase() + value.slice(1)],
+  ['keymap', 'Keys', value => KEYMAP_PRESETS[value].label],
   ['gridVisible', 'Grid'],
   ['readoutVisible', 'Camera and size readout'],
   ['viewWidgetVisible', 'Axis widget'],
@@ -964,6 +974,11 @@ function browserPreferenceStorage() {
   } catch {
     return null;
   }
+}
+
+function describeSceneSize(controller) {
+  const triangles = controller.scene.parts.reduce((count, part) => count + (part.geometry?.indices?.length ?? 0) / 3, 0);
+  return { nodes: controller.exportRecipe().nodes.length, triangles: Math.round(triangles) };
 }
 
 /**
@@ -985,6 +1000,9 @@ export function createStudio(container, {
   preferenceStorage = browserPreferenceStorage(),
   catalog: catalogHooks = {},
   onDirtyChange,
+  onThemeChange,
+  onDiagnostic,
+  diagnostics: diagnosticsOptions = {},
 } = {}) {
   const catalog = createStudioCatalog(catalogHooks);
   let preferences = normalizeStudioPreferences({ ...loadStudioPreferences(preferenceStorage), ...suppliedPreferences });
@@ -1001,7 +1019,25 @@ export function createStudio(container, {
   const initialRecipe = pendingRecipe ? buildTemplateRecipe(template) : suppliedRecipe ?? (suppliedScene ? null : buildTemplateRecipe(template));
   const initialScene = suppliedScene ?? createAgentScene(initialRecipe);
   let handleChange = () => {};
-  const controller = createStudioController({ scene: initialScene, assets: catalog.pool, onChange: detail => handleChange(detail) });
+  const studioDiagnostics = createStudioDiagnostics({
+    limit: diagnosticsOptions.limit,
+    now: diagnosticsOptions.now,
+    slowOperationMilliseconds: diagnosticsOptions.slowOperationMilliseconds,
+    onEntry: onDiagnostic,
+    describeScene: () => describeSceneSize(controller),
+    describeEnvironment: () => describeStudioEnvironment({
+      windowReference: documentReference.defaultView,
+      renderer,
+      viewportWidth: controller.viewportWidth,
+      viewportHeight: controller.viewportHeight,
+    }),
+  });
+  const controller = createStudioController({
+    scene: initialScene,
+    assets: catalog.pool,
+    onChange: detail => studioDiagnostics.measure('handleChange', () => handleChange(detail)),
+    measureOperation: studioDiagnostics.measure,
+  });
 
   async function prepareRecipe(recipe) {
     await loadAgentSceneModules(recipe);
@@ -1064,10 +1100,31 @@ export function createStudio(container, {
     title: 'Reloads when the agent edits this file',
     attributes: { role: 'img', 'aria-label': 'Reloads when the agent edits this file' },
   });
-  const keymap = resolveKeymap();
-  const openButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Open…', dataset: { shortcut: keyLabel(keymap, 'file.open') } });
-  const saveButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save', dataset: { shortcut: keyLabel(keymap, 'file.save') } });
-  const saveAsButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Save as…', dataset: { shortcut: keyLabel(keymap, 'file.saveAs') } });
+  // The keymap in force. Choosing another preset swaps it and every place that shows a key is drawn again.
+  let keymap = resolveKeymapPreset(preferences.keymap);
+  let appliedKeymap = preferences.keymap;
+  const menuKeyViews = [];
+  const keyTooltipViews = [];
+  const setShortcutLabel = (element, label) => {
+    if (label) element.dataset.shortcut = label;
+    else delete element.dataset.shortcut;
+  };
+  // A menu row or button that names the key of an action on its right.
+  const showActionKey = (element, actionId) => {
+    if (!actionId) return element;
+    menuKeyViews.push({ element, actionId });
+    setShortcutLabel(element, keyLabel(keymap, actionId));
+    return element;
+  };
+  // An icon button whose tooltip names a key, written again when the keymap changes.
+  const createKeyedIconButton = (iconName, describe, properties = {}) => {
+    const button = createIconButton(documentReference, iconName, describe(), properties);
+    keyTooltipViews.push({ button, iconName, describe });
+    return button;
+  };
+  const openButton = showActionKey(createElement(documentReference, 'button', { type: 'button', textContent: 'Open…' }), 'file.open');
+  const saveButton = showActionKey(createElement(documentReference, 'button', { type: 'button', textContent: 'Save' }), 'file.save');
+  const saveAsButton = showActionKey(createElement(documentReference, 'button', { type: 'button', textContent: 'Save as…' }), 'file.saveAs');
   const addMenuButton = createIconButton(documentReference, 'add', 'Add an object or a light', { attributes: { popovertarget: 'crucible-studio-pop-add' } });
   // The menus of the top bar, as a desktop app lays them out. Each one opens a popover of rows.
   const createMenuButton = (label, popoverId, attributes = {}) => createElement(documentReference, 'button', {
@@ -1086,15 +1143,15 @@ export function createStudio(container, {
     return item;
   };
   // One row of a menu: its icon, what it does, and its key on the right.
-  const createMenuItem = (label, shortcut, onChoose, iconName) => {
-    const item = createElement(documentReference, 'button', { type: 'button', textContent: label, dataset: shortcut ? { shortcut } : {} });
+  const createMenuItem = (label, actionId, onChoose, iconName) => {
+    const item = showActionKey(createElement(documentReference, 'button', { type: 'button', textContent: label }), actionId);
     item.addEventListener('click', onChoose);
     return giveMenuIcon(item, iconName);
   };
   const menuToggles = [];
   const syncMenuToggles = () => menuToggles.forEach(({ item, isOn }) => item.setAttribute('aria-checked', isOn() ? 'true' : 'false'));
-  const createMenuToggle = (label, shortcut, onChoose, isOn, iconName) => {
-    const item = createMenuItem(label, shortcut, () => {
+  const createMenuToggle = (label, actionId, onChoose, isOn, iconName) => {
+    const item = createMenuItem(label, actionId, () => {
       onChoose();
       syncMenuToggles();
     }, iconName);
@@ -1118,31 +1175,31 @@ export function createStudio(container, {
   };
   const editPopover = createMenuPopover(
     'crucible-studio-pop-edit',
-    createMenuItem('Undo', keyLabel(keymap, 'edit.undo'), () => undoButton.click(), 'undo'),
-    createMenuItem('Redo', keyLabel(keymap, 'edit.redo'), () => redoButton.click(), 'redo'),
-    createMenuItem('Copy', keyLabel(keymap, 'edit.copy'), () => copySelection(), 'duplicate'),
-    createMenuItem('Paste', keyLabel(keymap, 'edit.paste'), () => pasteCopy(), 'duplicate'),
-    createMenuItem('Duplicate', keyLabel(keymap, 'edit.duplicate'), () => duplicateSelection(), 'duplicate'),
-    createMenuItem('Delete', keyLabel(keymap, 'edit.delete'), () => deleteButton.click(), 'remove'),
-    createMenuItem('Deselect', keyLabel(keymap, 'edit.deselect'), () => controller.selectNode(null)),
-    createMenuItem('Hide', keyLabel(keymap, 'edit.hide'), () => hideSelection(), 'eyeOff'),
-    createMenuItem('Show all', keyLabel(keymap, 'edit.showAll'), () => showAllHidden(), 'eye'),
-    createMenuItem('Reset position', keyLabel(keymap, 'edit.resetPosition'), () => resetSelectionTransform('translation'), 'translate'),
-    createMenuItem('Reset rotation', keyLabel(keymap, 'edit.resetRotation'), () => resetSelectionTransform('rotation'), 'rotate'),
-    createMenuItem('Reset scale', keyLabel(keymap, 'edit.resetScale'), () => resetSelectionTransform('scale'), 'scale'),
-    createMenuItem('Settings…', keyLabel(keymap, 'settings.open'), () => settingsDialog.showModal(), 'settings'),
+    createMenuItem('Undo', 'edit.undo', () => undoButton.click(), 'undo'),
+    createMenuItem('Redo', 'edit.redo', () => redoButton.click(), 'redo'),
+    createMenuItem('Copy', 'edit.copy', () => copySelection(), 'duplicate'),
+    createMenuItem('Paste', 'edit.paste', () => pasteCopy(), 'duplicate'),
+    createMenuItem('Duplicate', 'edit.duplicate', () => duplicateSelection(), 'duplicate'),
+    createMenuItem('Delete', 'edit.delete', () => deleteButton.click(), 'remove'),
+    createMenuItem('Deselect', 'edit.deselect', () => controller.selectNode(null)),
+    createMenuItem('Hide', 'edit.hide', () => hideSelection(), 'eyeOff'),
+    createMenuItem('Show all', 'edit.showAll', () => showAllHidden(), 'eye'),
+    createMenuItem('Reset position', 'edit.resetPosition', () => resetSelectionTransform('translation'), 'translate'),
+    createMenuItem('Reset rotation', 'edit.resetRotation', () => resetSelectionTransform('rotation'), 'rotate'),
+    createMenuItem('Reset scale', 'edit.resetScale', () => resetSelectionTransform('scale'), 'scale'),
+    createMenuItem('Settings…', 'settings.open', () => settingsDialog.showModal(), 'settings'),
   );
   // A right click on an object, in the viewport or in the Scene list, opens the actions on that object where the
   // pointer is. The rows are the Edit menu's own, so a key learned in one place works in the other.
   const objectPopover = createMenuPopover(
     'crucible-studio-pop-object',
-    createMenuItem('Frame', keyLabel(keymap, 'view.frame'), () => flyToSelection(), 'frame'),
-    createMenuItem('Duplicate', keyLabel(keymap, 'edit.duplicate'), () => duplicateSelection(), 'duplicate'),
-    createMenuItem('Hide', keyLabel(keymap, 'edit.hide'), () => hideSelection(), 'eyeOff'),
-    createMenuItem('Reset position', keyLabel(keymap, 'edit.resetPosition'), () => resetSelectionTransform('translation'), 'translate'),
-    createMenuItem('Reset rotation', keyLabel(keymap, 'edit.resetRotation'), () => resetSelectionTransform('rotation'), 'rotate'),
-    createMenuItem('Reset scale', keyLabel(keymap, 'edit.resetScale'), () => resetSelectionTransform('scale'), 'scale'),
-    createMenuItem('Delete', keyLabel(keymap, 'edit.delete'), () => deleteButton.click(), 'remove'),
+    createMenuItem('Frame', 'view.frame', () => flyToSelection(), 'frame'),
+    createMenuItem('Duplicate', 'edit.duplicate', () => duplicateSelection(), 'duplicate'),
+    createMenuItem('Hide', 'edit.hide', () => hideSelection(), 'eyeOff'),
+    createMenuItem('Reset position', 'edit.resetPosition', () => resetSelectionTransform('translation'), 'translate'),
+    createMenuItem('Reset rotation', 'edit.resetRotation', () => resetSelectionTransform('rotation'), 'rotate'),
+    createMenuItem('Reset scale', 'edit.resetScale', () => resetSelectionTransform('scale'), 'scale'),
+    createMenuItem('Delete', 'edit.delete', () => deleteButton.click(), 'remove'),
   );
   function openObjectMenu(clientX, clientY) {
     const windowWidth = documentReference.defaultView?.innerWidth ?? 1280;
@@ -1190,15 +1247,15 @@ export function createStudio(container, {
   }, () => !controller.freeView, 'camera');
   const viewPopover = createMenuPopover(
     'crucible-studio-pop-view',
-    createMenuItem('Front view', keyLabel(keymap, 'view.front'), () => showView('front')),
-    createMenuItem('Right view', keyLabel(keymap, 'view.right'), () => showView('right')),
-    createMenuItem('Top view', keyLabel(keymap, 'view.top'), () => showView('top')),
-    createMenuItem('Perspective / Orthographic', keyLabel(keymap, 'view.projection'), () => controller.toggleCameraProjection(), 'camera'),
-    createMenuItem('Frame the selection', keyLabel(keymap, 'view.frame'), () => flyToSelection(), 'frame'),
+    createMenuItem('Front view', 'view.front', () => showView('front')),
+    createMenuItem('Right view', 'view.right', () => showView('right')),
+    createMenuItem('Top view', 'view.top', () => showView('top')),
+    createMenuItem('Perspective / Orthographic', 'view.projection', () => controller.toggleCameraProjection(), 'camera'),
+    createMenuItem('Frame the selection', 'view.frame', () => flyToSelection(), 'frame'),
     createMenuToggle('Grid', '', () => gridButton.click(), () => gridVisible, 'grid'),
     sceneCameraToggle,
     createMenuToggle('Scene and Properties', '', () => toggleDocksButton.click(), () => root.dataset.outlinerCollapsed !== 'true' || root.dataset.inspectorCollapsed !== 'true', 'panels'),
-    createMenuToggle('Properties', keyLabel(keymap, 'view.properties'), () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true', 'settings'),
+    createMenuToggle('Properties', 'view.properties', () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'), () => root.dataset.inspectorCollapsed !== 'true', 'settings'),
   );
   // A row that switches something shows whether it is on each time its menu opens.
   viewPopover.addEventListener('toggle', () => {
@@ -1208,7 +1265,9 @@ export function createStudio(container, {
   syncMenuToggles();
   const helpPopover = createMenuPopover(
     'crucible-studio-pop-help',
-    createMenuItem('Keyboard shortcuts', keyLabel(keymap, 'help.shortcuts'), () => shortcutsDialog.showModal(), 'keyboard'),
+    createMenuItem('Keyboard shortcuts', 'help.shortcuts', () => shortcutsDialog.showModal(), 'keyboard'),
+    createMenuItem('Set up Studio…', '', () => openSetup(), 'settings'),
+    createMenuItem('Save diagnostics report', '', () => saveDiagnosticsReport(), 'saveAs'),
   );
   const exportMenuButton = createElement(
     documentReference,
@@ -1302,16 +1361,26 @@ export function createStudio(container, {
     announce(autoReloadWatch ? 'Auto-reload enabled' : 'Auto-reload paused');
   });
   const copyPromptButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Copy a prompt for the agent' });
-  copyPromptButton.addEventListener('click', async () => {
-    aiSyncPopover.hidePopover?.();
+  function agentPromptText() {
     const target = activeFilePath ?? activeFileName;
-    const promptText = `Edit Crucible scene "${target}" (format crucible.scene v1, currently at revision ${controller.scene.revision}, selected node: ${controller.selectedNodeId ?? 'none'}). Save JSON updates directly back to this path.`;
+    return `Edit Crucible scene "${target}" (format crucible.scene v1, currently at revision ${controller.scene.revision}, selected node: ${controller.selectedNodeId ?? 'none'}). Save JSON updates directly back to this path.`;
+  }
+
+  /** Copies the prompt; when the browser refuses, shows it in the recipe dialog instead. Resolves true only when it was copied. */
+  async function copyAgentPrompt() {
+    const promptText = agentPromptText();
     try {
       await navigator.clipboard.writeText(promptText);
       announce('Copied AI prompt to clipboard');
+      return true;
     } catch {
       openImportDialog(promptText);
+      return false;
     }
+  }
+  copyPromptButton.addEventListener('click', () => {
+    aiSyncPopover.hidePopover?.();
+    copyAgentPrompt();
   });
   giveMenuIcon(autoReloadButton);
   giveMenuIcon(copyPromptButton, 'duplicate');
@@ -1560,8 +1629,7 @@ export function createStudio(container, {
 
   // Viewport Top-Left Toolbar (Modern Web Guidance: toolbar pattern)
   const toolLabels = { select: 'Select', translate: 'Move', rotate: 'Rotate', scale: 'Scale', snap: 'Snap' };
-  const toolShortcuts = { select: 'Q', translate: 'G', rotate: 'R', scale: 'S', snap: 'T' };
-  const toolButtons = STUDIO_TOOLS.map(tool => createIconButton(documentReference, tool, `${toolLabels[tool]} (${toolShortcuts[tool]})`, {
+  const toolButtons = STUDIO_TOOLS.map(tool => createKeyedIconButton(tool, () => `${toolLabels[tool]} (${keyLabel(keymap, TOOL_ACTION_BY_TOOL[tool])})`, {
     dataset: { tool },
     attributes: { 'aria-pressed': tool === controller.tool ? 'true' : 'false' },
   }));
@@ -1569,11 +1637,11 @@ export function createStudio(container, {
     button.addEventListener('click', () => controller.setTool(button.dataset.tool));
   });
 
-  const undoButton = createIconButton(documentReference, 'undo', `Undo (${keyLabel(keymap, 'edit.undo')})`, { attributes: { 'aria-disabled': 'true' } });
-  const redoButton = createIconButton(documentReference, 'redo', `Redo (${keyLabel(keymap, 'edit.redo')})`, { attributes: { 'aria-disabled': 'true' } });
-  const duplicateButton = createIconButton(documentReference, 'duplicate', `Duplicate (${keyLabel(keymap, 'edit.duplicate', 1)})`);
+  const undoButton = createKeyedIconButton('undo', () => `Undo (${keyLabel(keymap, 'edit.undo')})`, { attributes: { 'aria-disabled': 'true' } });
+  const redoButton = createKeyedIconButton('redo', () => `Redo (${keyLabel(keymap, 'edit.redo')})`, { attributes: { 'aria-disabled': 'true' } });
+  const duplicateButton = createKeyedIconButton('duplicate', () => `Duplicate (${lastKeyLabel(keymap, 'edit.duplicate')})`);
   const deleteButton = createIconButton(documentReference, 'remove', 'Delete (Del)');
-  const frameButton = createIconButton(documentReference, 'frame', `Frame in view (${keyLabel(keymap, 'view.frame')})`);
+  const frameButton = createKeyedIconButton('frame', () => `Frame in view (${keyLabel(keymap, 'view.frame')})`);
   const toggleDocksButton = createIconButton(documentReference, 'panels', 'Show or hide the panels', { attributes: { 'aria-pressed': 'true' } });
   const gridButton = createIconButton(documentReference, 'grid', 'Show or hide the grid', { attributes: { 'aria-pressed': 'true' } });
   gridButton.addEventListener('click', () => {
@@ -1675,6 +1743,7 @@ export function createStudio(container, {
     onRestore: () => restoreDraft(),
     onDiscard: () => discardDraft(),
   });
+  const stopWatchingDiagnostics = watchStudioDiagnostics(studioDiagnostics, { windowReference: documentReference.defaultView, canvas });
   const stopWatchingContextLoss = watchContextLoss(canvas, { onLost: pauseForContextLoss, onRestored: recoverFromContextLoss });
   viewportElement.append(canvas, maskFilterSvg, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element, draftNotice.element);
 
@@ -2013,8 +2082,9 @@ export function createStudio(container, {
   );
 
   // Bottom Timeline & Telemetry Bar
-  const playButton = createIconButton(documentReference, 'play', `Play (${keyLabel(keymap, 'animate.play')})`, { attributes: { 'aria-pressed': 'false' } });
-  const keyframeButton = createIconButton(documentReference, 'keyframe', `Add a keyframe here (${keyLabel(keymap, 'animate.keyframe', 1)})`);
+  const playTooltip = isPlaying => `${isPlaying ? 'Pause' : 'Play'} (${keyLabel(keymap, 'animate.play')})`;
+  const playButton = createIconButton(documentReference, 'play', playTooltip(false), { attributes: { 'aria-pressed': 'false' } });
+  const keyframeButton = createKeyedIconButton('keyframe', () => `Add a keyframe here (${lastKeyLabel(keymap, 'animate.keyframe')})`);
   const timeOutput = createElement(documentReference, 'output', { textContent: '0.00 s' });
   const scrubInput = createElement(documentReference, 'input', { type: 'range', min: '0', max: '4', step: '0.02', value: '0', attributes: { 'aria-label': 'Timeline scrub' } });
   const quickBookmarksRow = createElement(documentReference, 'div', { className: 'crucible-studio-shots' });
@@ -2022,14 +2092,14 @@ export function createStudio(container, {
 
   playButton.addEventListener('click', () => {
     if (!hasAnimatedData(controller.exportRecipe())) {
-      announce(`Add a keyframe first (${keyLabel(keymap, 'animate.keyframe', 1)})`);
+      announce(`Add a keyframe first (${lastKeyLabel(keymap, 'animate.keyframe')})`);
       return;
     }
     selectWorkspace('animate');
     playing = !playing;
     lastFrameTime = 0;
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
-    setButtonIcon(playButton, playing ? 'pause' : 'play', playing ? `Pause (${keyLabel(keymap, 'animate.play')})` : `Play (${keyLabel(keymap, 'animate.play')})`);
+    setButtonIcon(playButton, playing ? 'pause' : 'play', playTooltip(playing));
     if (playing) requestFrame();
   });
   keyframeButton.addEventListener('click', async () => {
@@ -2097,18 +2167,17 @@ export function createStudio(container, {
   });
 
   const shortcutsHeading = createElement(documentReference, 'h2', { id: 'crucible-studio-shortcuts-title', textContent: 'Studio keyboard shortcuts' });
-  const shortcutsGrid = createElement(
-    documentReference,
-    'div',
-    { className: 'crucible-studio-shortcuts' },
-    ...SHORTCUT_ROWS.map(({ keys, label }) => createElement(
+  const shortcutsGrid = createElement(documentReference, 'div', { className: 'crucible-studio-shortcuts' });
+  function fillShortcutsGrid() {
+    shortcutsGrid.replaceChildren(...shortcutRowsFor(keymap).map(({ keys, label }) => createElement(
       documentReference,
       'div',
       { className: 'crucible-studio-shortcut-item' },
       createElement(documentReference, 'span', { textContent: label }),
       createElement(documentReference, 'kbd', { textContent: formatShortcutKeys(keymap, keys) }),
-    )),
-  );
+    )));
+  }
+  fillShortcutsGrid();
   const shortcutsCloseButton = createElement(documentReference, 'button', { type: 'submit', value: 'close', autofocus: true, textContent: 'Done' });
   const shortcutsDialog = createElement(
     documentReference,
@@ -2137,7 +2206,7 @@ export function createStudio(container, {
   });
   const settingsResetButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Reset' });
   settingsResetButton.addEventListener('click', () => {
-    preferences = normalizeStudioPreferences(null);
+    preferences = normalizeStudioPreferences({ setupDone: preferences.setupDone });
     storePreferences();
     applyPreferences();
     announce('Settings reset');
@@ -2160,6 +2229,24 @@ export function createStudio(container, {
     settingsDialog.returnValue = '';
   });
 
+  const setup = createStudioSetup({
+    documentReference,
+    createElement,
+    createIcon,
+    readPreferences: () => preferences,
+    changePreferences: changes => setPreferences(changes),
+    describeHardware: detectedHardware,
+    viewportSettingsForTier,
+    agentPromptText,
+    copyAgentPrompt,
+    onClose: () => {
+      if (!preferences.setupDone) setPreference('setupDone', true);
+    },
+  });
+  function openSetup() {
+    setup.open();
+  }
+
   function storePreferences() {
     if (preferenceStorage) {
       saveStudioPreferences(preferenceStorage, preferences);
@@ -2168,11 +2255,19 @@ export function createStudio(container, {
 
   // Puts the preferences into effect and shows them in the Settings dialog.
   function applyPreferences() {
+    if (preferences.keymap !== appliedKeymap) {
+      appliedKeymap = preferences.keymap;
+      keymap = resolveKeymapPreset(appliedKeymap);
+      refreshKeyLabels();
+    }
     controller.setInteractionSettings({
       moveSnapStep: preferences.moveSnapStep,
       rotateSnapDegrees: preferences.rotateSnapDegrees,
       gizmoPixels: STUDIO_GIZMO_PIXELS[preferences.gizmoSize],
     });
+    applyTheme();
+    applyPerformance();
+    if (setup.dialog.open) setup.refresh();
     root.dataset.readout = preferences.readoutVisible ? 'on' : 'off';
     root.dataset.viewWidget = preferences.viewWidgetVisible ? 'on' : 'off';
     // Floating panels lie over a scene that fills the window. Docked ones take the window's edges and the viewport
@@ -2188,6 +2283,90 @@ export function createStudio(container, {
     for (const [name, control] of settingControls) {
       if (STUDIO_PREFERENCE_CHOICES[name]) control.value = String(preferences[name]);
       else control.checked = preferences[name];
+    }
+  }
+
+  // Every place that names a key, written again for the keymap now in force: menu rows, tooltips, the shortcuts dialog and the hint bar.
+  function refreshKeyLabels() {
+    for (const { element, actionId } of menuKeyViews) setShortcutLabel(element, keyLabel(keymap, actionId));
+    for (const { button, iconName, describe } of keyTooltipViews) setButtonIcon(button, iconName, describe());
+    setButtonIcon(playButton, playing ? 'pause' : 'play', playTooltip(playing));
+    fillShortcutsGrid();
+    syncHintBar();
+  }
+
+  // A forced theme is a data-theme on the root, which the tokens and the dialogs inside it follow. System leaves it off,
+  // so the page's own colour scheme decides, as it always did.
+  let appliedTheme = null;
+  function resolvedTheme() {
+    if (preferences.theme !== 'system') return preferences.theme;
+    const systemIsDark = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return systemIsDark ? 'dark' : 'light';
+  }
+  function applyTheme() {
+    if (preferences.theme === 'system') {
+      delete root.dataset.theme;
+    } else {
+      root.dataset.theme = preferences.theme;
+    }
+    if (preferences.theme !== appliedTheme) {
+      appliedTheme = preferences.theme;
+      onThemeChange?.(resolvedTheme());
+    }
+  }
+  // While the preference is System the page's colour scheme decides, so a flip of the operating system's scheme is
+  // reported to the host the same way a change of the preference is. A forced theme ignores the system.
+  const systemSchemeQuery = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  function onSystemSchemeChange() {
+    if (preferences.theme === 'system') {
+      onThemeChange?.(resolvedTheme());
+    }
+  }
+  systemSchemeQuery?.addEventListener?.('change', onSystemSchemeChange);
+
+  // What the browser says about this computer, read once. A live renderer's context is asked first so no second
+  // WebGL context is made; otherwise a short-lived one is.
+  let detectedHardwareResult = null;
+  function detectedHardware() {
+    if (detectedHardwareResult) return detectedHardwareResult;
+    let glContext = renderer?.context ?? null;
+    let probeCanvas = null;
+    if (!glContext) {
+      probeCanvas = documentReference.createElement('canvas');
+      glContext = typeof probeCanvas.getContext === 'function' ? probeCanvas.getContext('webgl2') ?? probeCanvas.getContext('webgl') : null;
+    }
+    detectedHardwareResult = detectStudioHardware(gatherStudioHardwareInputs({ glContext, windowReference: documentReference.defaultView ?? window }));
+    if (probeCanvas) glContext?.getExtension?.('WEBGL_lose_context')?.loseContext();
+    return detectedHardwareResult;
+  }
+
+  // What the viewport draws with on this screen for a tier. Only the viewport changes: the scene recipe never hears of it.
+  // A `pixelRatio` or `samples` in rendererOptions wins over the tier.
+  function viewportSettingsForTier(tier) {
+    const settings = studioViewportSettingsFor(tier, window.devicePixelRatio);
+    return { pixelRatio: rendererOptions.pixelRatio ?? settings.pixelRatio, samples: rendererOptions.samples ?? settings.samples };
+  }
+
+  function chosenTier() {
+    const detectedTier = preferences.performance === 'automatic' ? detectedHardware().tier : null;
+    return resolveStudioPerformanceTier(preferences.performance, detectedTier);
+  }
+
+  // A new pixel ratio is set on the live renderer. A new sample count is fixed when a renderer is built, so the renderer
+  // is dropped and ensureRenderer makes the next one, as it does when a scene first needs depth.
+  let rendererSamples = null;
+  function applyPerformance() {
+    if (!renderer || !Number.isFinite(renderer.pixelRatio)) return;
+    const wanted = viewportSettingsForTier(chosenTier());
+    const current = { pixelRatio: renderer.pixelRatio, samples: suppliedRenderer ? wanted.samples : rendererSamples };
+    const change = rendererChangeFor(current, wanted);
+    if (change === 'recreate') {
+      renderer.dispose();
+      renderer = null;
+      requestFrame();
+    } else if (change === 'resize') {
+      renderer.pixelRatio = wanted.pixelRatio;
+      renderer.resize();
     }
   }
 
@@ -2230,7 +2409,7 @@ export function createStudio(container, {
   }
 
   applyPreferences();
-  root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, recipeDialog, shortcutsDialog, settingsDialog);
+  root.append(viewportElement, menubarElement, toolbarElement, sideColumn, bottomElement, fileInput, recipeDialog, shortcutsDialog, settingsDialog, setup.dialog);
   container.append(root);
 
   function syncWatchNote() {
@@ -2256,6 +2435,13 @@ export function createStudio(container, {
     const link = createElement(documentReference, 'a', { href: url, download: filename });
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function saveDiagnosticsReport() {
+    const reportText = `${JSON.stringify(studioDiagnostics.report(), null, 2)}
+`;
+    triggerBlobDownload(reportText, 'crucible-studio-diagnostics.json', 'application/json');
+    announce('Saved the diagnostics report');
   }
 
   function capturePngDataUrl() {
@@ -2484,13 +2670,16 @@ export function createStudio(container, {
     }
     const environment = controller.scene.environment;
     rendererHasDepth = sceneNeedsDepth();
+    const viewportSettings = viewportSettingsForTier(chosenTier());
+    rendererSamples = viewportSettings.samples;
     renderer = new CrucibleRenderer(canvas, controller.scene.parts, {
       hdr: true,
       depth: rendererHasDepth,
       world: environment.world,
       environment: { ...environment, map: agentEnvironmentMap(environment) },
       shadowBounds: resolveAgentShadow(fitAgentShadow(controller.scene.shadow, controller.scene.parts), environment.lightDirection),
-      pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      pixelRatio: viewportSettings.pixelRatio,
+      samples: viewportSettings.samples,
       ground: viewportFloorPart(studioFloorHeight(controller.scene.parts)),
       ...rendererOptions,
     });
@@ -3017,7 +3206,7 @@ export function createStudio(container, {
     scrubInput.disabled = !animated;
     playButton.setAttribute('aria-disabled', animated ? 'false' : 'true');
     playButton.setAttribute('aria-pressed', playing ? 'true' : 'false');
-    setButtonIcon(playButton, playing ? 'pause' : 'play', playing ? `Pause (${keyLabel(keymap, 'animate.play')})` : `Play (${keyLabel(keymap, 'animate.play')})`);
+    setButtonIcon(playButton, playing ? 'pause' : 'play', playTooltip(playing));
     timeOutput.textContent = `${controller.motionTime.toFixed(1)} / ${duration.toFixed(1)} s`;
     syncPropertyPanels();
     syncHintBar();
@@ -3233,6 +3422,15 @@ export function createStudio(container, {
   gizmoSvg.addEventListener('pointerout', clearHoveredHandle);
   gizmoSvg.addEventListener('pointerleave', clearHoveredHandle);
 
+  // First among the handle listeners: in Maya and Cinema 4D Alt and a button navigate even over a handle.
+  gizmoSvg.addEventListener('pointerdown', event => {
+    const mode = findMouseNavigation(keymap, event);
+    if (mode === null) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    beginCameraDrag(event, mode, true, viewportElement);
+  });
+
   gizmoSvg.addEventListener('pointerdown', event => {
     const axis = event.target?.getAttribute?.('data-gizmo-axis');
     if (!axis || (event.button ?? 0) !== 0) return;
@@ -3248,6 +3446,7 @@ export function createStudio(container, {
   // The handles lie over the selected object, so a right click on one is a right click on that object.
   gizmoSvg.addEventListener('contextmenu', event => {
     event.preventDefault();
+    if (findMouseNavigation(keymap, { button: 2, altKey: event.altKey }) !== null) return;
     if (controller.selectedNodeId) {
       openObjectMenu(event.clientX, event.clientY);
     }
@@ -3281,11 +3480,12 @@ export function createStudio(container, {
     viewportElement.setPointerCapture?.(event.pointerId);
   });
 
-  canvas.addEventListener('pointerdown', event => {
-    if (event.button !== 0 && event.button !== 1 && event.button !== 2) return;
+  // A camera drag: orbit, pan or zoom. `keymapNavigation` marks one a keymap asked for (Alt and a button), which never also picks.
+  function beginCameraDrag(event, mode, keymapNavigation, captureElement) {
     const coordinates = localCoordinates(event);
     pointerState = {
-      mode: event.shiftKey || event.button === 2 || event.button === 1 ? 'pan' : 'orbit',
+      mode,
+      keymapNavigation,
       startX: coordinates.x,
       startY: coordinates.y,
       lastX: coordinates.x,
@@ -3293,7 +3493,14 @@ export function createStudio(container, {
       moved: false,
       pointerId: event.pointerId,
     };
-    canvas.setPointerCapture?.(event.pointerId);
+    captureElement.setPointerCapture?.(event.pointerId);
+  }
+
+  canvas.addEventListener('pointerdown', event => {
+    if (event.button !== 0 && event.button !== 1 && event.button !== 2) return;
+    const keymapMode = findMouseNavigation(keymap, event);
+    const defaultMode = event.shiftKey || event.button === 2 || event.button === 1 ? 'pan' : 'orbit';
+    beginCameraDrag(event, keymapMode ?? defaultMode, keymapMode !== null, canvas);
   });
 
   viewportElement.addEventListener('pointermove', event => {
@@ -3317,6 +3524,8 @@ export function createStudio(container, {
     if (!pointerState.moved) return;
     if (pointerState.mode === 'pan') {
       controller.orbitCamera({ panX: -deltaX * 0.002, panY: deltaY * 0.002 });
+    } else if (pointerState.mode === 'zoom') {
+      controller.orbitCamera({ zoomScale: Math.min(1.5, Math.max(0.5, 1 - (deltaX - deltaY) * 0.005)) });
     } else {
       controller.orbitCamera({ deltaAzimuth: -deltaX * 0.008, deltaElevation: deltaY * 0.008 });
     }
@@ -3349,7 +3558,7 @@ export function createStudio(container, {
       controller.endGizmoDrag();
       return;
     }
-    if (!finished.moved) {
+    if (!finished.moved && !finished.keymapNavigation) {
       const coordinates = localCoordinates(event);
       if (controller.tool === 'snap' && controller.selectedNodeId && event.altKey) {
         controller.snapSelectedToAt(coordinates.x, coordinates.y);
@@ -3490,7 +3699,10 @@ export function createStudio(container, {
     'edit.deselect': () => {
       if (controller.selectedNodeId || controller.selectedObjectKey) controller.selectNode(null);
     },
-    'edit.hide': () => hideSelection(),
+    'edit.hide': (event, binding) => {
+      if (binding.ctrl) event.preventDefault();
+      hideSelection();
+    },
     'edit.showAll': event => {
       event.preventDefault();
       showAllHidden();
@@ -3505,7 +3717,10 @@ export function createStudio(container, {
     },
     'view.frame': () => flyToSelection(),
     'view.projection': () => controller.toggleCameraProjection(),
-    'view.properties': () => setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true'),
+    'view.properties': event => {
+      event.preventDefault();
+      setInspectorCollapsed(root.dataset.inspectorCollapsed !== 'true');
+    },
     'animate.keyframe': () => keyframeButton.click(),
     'animate.play': event => {
       event.preventDefault();
@@ -3530,7 +3745,8 @@ export function createStudio(container, {
     'help.shortcuts': () => shortcutsDialog.showModal(),
   };
   for (const [actionId, tool] of Object.entries(PICK_UP_TOOL_BY_ACTION)) {
-    keyHandlers[actionId] = () => pickUpWithTool(tool);
+    // Blender's keys pick the object up; Maya's and Cinema 4D's only choose the tool, whose handles then appear.
+    keyHandlers[actionId] = () => (keymap.toolKeysGrab ? pickUpWithTool(tool) : controller.setTool(tool));
   }
   for (const [actionId, part] of Object.entries(TRANSFORM_PART_BY_ACTION)) {
     keyHandlers[actionId] = event => {
@@ -3648,6 +3864,11 @@ export function createStudio(container, {
   }
 
   handleChange = detail => {
+    // The deferred near-coplanar search settled (#2905): the parts to draw changed with no edit, so the idle viewport redraws once.
+    if (detail.kind === 'flush') {
+      requestFrame();
+      return;
+    }
     selectionReadoutStale = true;
     // The object a key is holding is gone or no longer the selection: let go without touching the new scene.
     if (modalTransform && modalTransform.axis && !controller.dragging) {
@@ -3723,6 +3944,11 @@ export function createStudio(container, {
     /** Settles when the recipe createStudio was given is on screen; it waits only for a recipe that names catalog files. */
     ready,
     exportRecipe: () => controller.exportRecipe(),
+    /** What went wrong and what was slow, in numbers and messages only: never the recipe, node names or file names. */
+    diagnostics: {
+      report: () => studioDiagnostics.report(),
+      entries: () => studioDiagnostics.entries(),
+    },
     /** Synchronous: the recipe's catalog files must be loaded already. `openRecipe` loads them first. */
     loadRecipe: (recipeInput, options) => controller.loadRecipe(recipeInput, options),
     async openRecipe(recipeInput, options) {
@@ -3735,6 +3961,9 @@ export function createStudio(container, {
     get gridVisible() { return gridVisible; },
     setPreference,
     get preferences() { return { ...preferences }; },
+    /** Opens the first-run setup, one step a page. Studio never opens it on its own. */
+    openSetup,
+    get setupDone() { return preferences.setupDone; },
     selectNode: nodeId => controller.selectNode(nodeId),
     setTool: tool => controller.setTool(tool),
     setActiveTab: tab => selectInspectorTab(tab),
@@ -3760,6 +3989,7 @@ export function createStudio(container, {
       clearTimeout(draftTimer);
       clearTimeout(statusTimer);
       agentPresence.dispose();
+      systemSchemeQuery?.removeEventListener?.('change', onSystemSchemeChange);
       if (frameHandle) cancelAnimationFrame(frameHandle);
       stopFlight();
       finishModalTransform(false);
@@ -3771,6 +4001,7 @@ export function createStudio(container, {
       documentReference.removeEventListener('visibilitychange', flushDraftWhenHidden);
       documentReference.defaultView?.removeEventListener?.('pagehide', flushDraftSave);
       stopWatchingContextLoss();
+      stopWatchingDiagnostics();
       pausedNotice.hide();
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
