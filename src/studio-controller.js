@@ -1404,6 +1404,8 @@ export function createStudioController({
       startX: pixelX,
       startY: pixelY,
       baseRecipe: recipe,
+      baseMotion: recipe.motion ?? null,
+      keyedLive: false,
       basePivot,
       baseTranslation: startPose.translation,
       baseRotation: normalizeQuaternion(startPose.rotation),
@@ -1483,6 +1485,20 @@ export function createStudioController({
     return [rotated[0], rotated[1], rotated[2]];
   }
 
+  // A keyed node shows its sampled pose, so with auto-key on the dragged pose is also keyed at the playhead as the pointer
+  // moves; built from the motion the drag began with, so each move replaces the last and cancel can put the motion back.
+  function writeDraggedPose(pose) {
+    const operations = [{ type: 'set-node', id: dragState.nodeId, ...pose }];
+    if (autoKey) {
+      const motion = motionWithPoseKeys(dragState.baseMotion, dragState.nodeId, pose, motionTime);
+      if (motion) {
+        operations.push({ type: 'set-motion', motion });
+        dragState.keyedLive = true;
+      }
+    }
+    applySceneOperations(operations, { recordUndo: false });
+  }
+
   function updateGizmoDrag(pixelX, pixelY, { shiftKey = false } = {}) {
     if (!dragState) {
       return null;
@@ -1498,7 +1514,7 @@ export function createStudioController({
       if (!translation) {
         return null;
       }
-      applySceneOperations([{ type: 'set-node', id: dragState.nodeId, translation }], { recordUndo: false });
+      writeDraggedPose({ translation });
       dragState.changed = true;
       dragState.deltaLabel = 'Snapped to surface';
       notify({ kind: 'transform', nodeId: dragState.nodeId, live: true, deltaLabel: dragState.deltaLabel });
@@ -1530,7 +1546,7 @@ export function createStudioController({
         dragState.baseTranslation[2] + localDelta[2],
       ];
       const translation = roundVector(shiftKey ? snapVector(rawTranslation, moveSnapStep) : rawTranslation);
-      applySceneOperations([{ type: 'set-node', id: dragState.nodeId, translation }], { recordUndo: false });
+      writeDraggedPose({ translation });
       dragState.changed = true;
       dragState.deltaLabel = `${dragState.axis.toUpperCase()} ${deltaLength.toFixed(2)} m`;
       notify({ kind: 'transform', nodeId: dragState.nodeId, live: true, deltaLabel: dragState.deltaLabel });
@@ -1553,7 +1569,7 @@ export function createStudioController({
         dragState.baseTranslation[2] + localDelta[2],
       ];
       const translation = roundVector(rawTranslation);
-      applySceneOperations([{ type: 'set-node', id: dragState.nodeId, translation }], { recordUndo: false });
+      writeDraggedPose({ translation });
       dragState.changed = true;
       dragState.deltaLabel = `${dragState.axis.toUpperCase()} ${travel >= 0 ? '+' : ''}${travel.toFixed(2)} m`;
       notify({ kind: 'transform', nodeId: dragState.nodeId, live: true, deltaLabel: dragState.deltaLabel });
@@ -1582,7 +1598,7 @@ export function createStudioController({
       const deltaQuaternion = quat.setAxisAngle(quat.create(), axisVector, radians);
       const nextQuaternion = quat.multiply(quat.create(), dragState.baseRotation, deltaQuaternion);
       const rotation = normalizeQuaternion(nextQuaternion);
-      applySceneOperations([{ type: 'set-node', id: dragState.nodeId, rotation }], { recordUndo: false });
+      writeDraggedPose({ rotation });
       dragState.changed = true;
       dragState.deltaLabel = `${(axisIndex >= 0 ? dragState.axis : 'z').toUpperCase()} ${degrees >= 0 ? '+' : ''}${degrees.toFixed(1)}°`;
       notify({ kind: 'transform', nodeId: dragState.nodeId, live: true, deltaLabel: dragState.deltaLabel });
@@ -1609,7 +1625,7 @@ export function createStudioController({
       const scale = roundVector(dragState.baseScale.map((component, index) => (
         affectsAxis(index) ? Math.max(MINIMUM_SCALE, Math.min(MAXIMUM_SCALE, component * factor)) : component
       )));
-      applySceneOperations([{ type: 'set-node', id: dragState.nodeId, scale }], { recordUndo: false });
+      writeDraggedPose({ scale });
       dragState.changed = true;
       dragState.deltaLabel = `×${factor.toFixed(2)}`;
       notify({ kind: 'transform', nodeId: dragState.nodeId, live: true, deltaLabel: dragState.deltaLabel });
@@ -1666,10 +1682,14 @@ export function createStudioController({
     if (!dragState) {
       return false;
     }
-    const { nodeId, authoredPose, changed } = dragState;
+    const { nodeId, authoredPose, changed, keyedLive, baseMotion } = dragState;
     dragState = null;
     if (changed && currentScene.exportRecipe().nodes.some(node => node.id === nodeId)) {
-      applySceneOperations([{ type: 'set-node', id: nodeId, ...authoredPose }], { recordUndo: false });
+      const operations = [{ type: 'set-node', id: nodeId, ...authoredPose }];
+      if (keyedLive) {
+        operations.push({ type: 'set-motion', motion: baseMotion });
+      }
+      applySceneOperations(operations, { recordUndo: false });
     }
     notify({ kind: 'transformCancel', deltaLabel: '' });
     return true;
@@ -2520,6 +2540,20 @@ export function createStudioController({
     return nodeKeyTimesIn(currentScene.exportRecipe().motion?.tracks ?? [], nodeId);
   }
 
+  /** The pose properties ("translation", "rotation", "scale") that a track animates on the node. */
+  function animatedNodeProperties(nodeId = selectedNodeId) {
+    const tracks = currentScene.exportRecipe().motion?.tracks ?? [];
+    return POSE_PROPERTIES.filter(property => nodeTracksOf(tracks, nodeId).some(track => track.property === property));
+  }
+
+  /** The pose the node shows at the playhead: sampled from its tracks where it has them, authored elsewhere. */
+  function nodePose(nodeId = selectedNodeId) {
+    const recipe = currentScene.exportRecipe();
+    const node = recipe.nodes.find(candidate => candidate.id === nodeId);
+    requireNode(recipe, nodeId);
+    return sampledNodePose(recipe, node, motionTime);
+  }
+
   function commitNodeTracks(recipe, tracks, duration, nodeId) {
     const nextMotion = { ...recipe.motion, duration, tracks };
     applySceneOperations([{ type: 'set-motion', motion: motionIsEmpty(nextMotion) ? null : nextMotion }]);
@@ -2670,6 +2704,8 @@ export function createStudioController({
     moveNodeKeyframe,
     deleteNodeKeyframe,
     nodeKeyframeTimes,
+    animatedNodeProperties,
+    nodePose,
     get autoKey() { return autoKey; },
     setAutoKey,
     beginUndoGroup,

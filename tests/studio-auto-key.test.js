@@ -73,11 +73,11 @@ test('reproduction: a second pose at another time is keyed by a field edit', () 
   assert.deepEqual(trackOf(controller, 'translation').keyframes[1].value, [3, 0.5, 0]);
 });
 
-test('a gizmo drag writes the key once, at commit', () => {
+test('a gizmo drag keys the playhead live, and commit leaves one key there', () => {
   const controller = makeKeyedController();
   controller.setMotionTime(2);
   const drag = dragAlongX(controller, 1);
-  assert.deepEqual(keyTimes(controller), [0], 'no key while the pointer is still moving');
+  assert.deepEqual(keyTimes(controller), [0, 2], 'the key is written as the pointer moves so the pose shows');
   assert.equal(drag.end(), true);
   assert.deepEqual(keyTimes(controller), [0, 2]);
   assert.ok(Math.abs(trackOf(controller, 'translation').keyframes[1].value[0] - 1) < 0.01);
