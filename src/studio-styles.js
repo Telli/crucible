@@ -1031,15 +1031,16 @@ export const STUDIO_CSS = `
   max-inline-size: calc(100% - 420px);
   margin: 0;
   padding: 6px 14px;
-  border-radius: 999px;
+  /* Half the height of one line, so a short message is still a pill and a long one wraps into a rounded card. */
+  border-radius: 15px;
   background: var(--studio-panel);
   border: 1px solid var(--studio-border);
   box-shadow: var(--studio-shadow);
   font-size: 12px;
   color: var(--studio-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  inline-size: max-content;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
   pointer-events: none;
   z-index: 7;
 }
