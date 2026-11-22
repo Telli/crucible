@@ -494,6 +494,13 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `bin/crucible.mjs`, `src/scene-pack.js`, `src/crucible-scene.js`
 - Drive: none: not a page
 
+### `crucible-packs`
+- Name: Installs, lists and removes pinned data-only packs in the default pack folder that crucible-mcp reads (docs/packs.md)
+- Surface: CLI
+- Reach: command `npx crucible packs add <name>`, `npx crucible packs list`, `npx crucible packs remove <name>`
+- Source: `bin/crucible-packs.mjs`, `bin/crucible-zip-reader.mjs`, `bin/crucible-pack-folder.mjs`, `bin/pack-pins.json`
+- Drive: none: not a page
+
 ### `crucible-addon-check`
 - Name: Checks an addon folder against the addon contract (docs/addons.md)
 - Surface: CLI

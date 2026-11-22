@@ -18,6 +18,9 @@
 // files the task's kind and topics point to. That measures what the skill's knowledge is worth, not whether an agent would load
 // the skill on its own. Bench a change under skills/ in `references`, base and head in the same mode.
 //
+// --system-prompt-file <path> replaces Claude Code's default system prompt with that file and turns off the built-in tools,
+// so a custom system prompt can be measured against the default one.
+//
 // Raw transcripts and recipes go to artifacts/agent-modeling/<run>/ (ignored by Git); the summary goes to
 // bench/agent-modeling/results/<run>.json.
 import { spawn } from 'node:child_process';
@@ -60,6 +63,7 @@ const { values: options } = parseArgs({
     'run-name': { type: 'string' },
     backend: { type: 'string', default: 'gpu' },
     'prompt-note': { type: 'string' },
+    'system-prompt-file': { type: 'string' },
   },
 });
 
@@ -86,6 +90,7 @@ function runClaude(prompt, workingDirectory, configPath, skillPromptPath) {
     serverName: MCP_SERVER_NAME,
     builtInTools: BUILT_IN_TOOLS,
     skillPromptPath,
+    systemPromptPath: options['system-prompt-file'] ? resolve(options['system-prompt-file']) : undefined,
   });
   return new Promise(resolvePromise => {
     const started = performance.now();
