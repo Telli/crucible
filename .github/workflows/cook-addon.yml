@@ -224,6 +224,8 @@ on:
       - 'src/mesh-decimate.js'
       - 'src/mesh-deform-modifiers.js'
       - 'src/mesh-displace-directions.js'
+      - 'src/mesh-displace-keys.js'
+      - 'src/mesh-displace-source.js'
       - 'src/mesh-dissolve.js'
       - 'src/mesh-edgesplit.js'
       - 'src/mesh-edit-field.js'

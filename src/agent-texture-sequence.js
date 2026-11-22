@@ -84,6 +84,7 @@ export function sequenceFrameIds(value) {
         if (ASSET_ID.test(asset.toLowerCase())) ids.add(asset.toLowerCase());
       }
     }
+    if (node.op === 'displace' && typeof node.source?.image === 'string' && ASSET_ID.test(node.source.image.toLowerCase())) ids.add(node.source.image.toLowerCase());
     for (const id of textureMapIds(node)) ids.add(id);
     const frames = node.map?.sequence?.frames;
     if (Array.isArray(frames)) {
