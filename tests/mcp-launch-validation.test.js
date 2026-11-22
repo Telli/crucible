@@ -51,7 +51,7 @@ test('scene_restore rejects more than one of checkpointId, revision and branch',
 
 test('a terrain resolution that is not a number names the real range', () => {
   const recipe = singleGeometryRecipe({ id: 'ground', type: 'terrain', size: 10, resolution: 'abc' });
-  assert.throws(() => createAgentScene(recipe, {}), /terrain\.resolution: got "abc"; expected a number from 2 to 256/);
+  assert.throws(() => createAgentScene(recipe, {}), /terrain\.resolution: got "abc"; expected a number from 2 to 499/);
 });
 
 test('the geometry preflight error names the geometry and the numbers, and checkpoints only when held', () => {
@@ -100,4 +100,12 @@ test('crucible-mcp --help lists every option runMcpCli accepts', async () => {
   for (const option of ACCEPTED_CLI_OPTIONS) {
     assert.ok(bin.includes(option), `${option} missing from --help`);
   }
+});
+
+test('runMcpCli rejects a --max-asset-bytes outside 1 MiB to 256 MiB, naming the range (#2841)', async () => {
+  for (const value of ['abc', '100', '999999999999', '1.5']) {
+    await assert.rejects(() => runMcpCli({ argumentsValue: ['--max-asset-bytes', value] }),
+      error => error instanceof RangeError && /--max-asset-bytes must be a whole number of bytes from 1048576/.test(error.message));
+  }
+  assert.ok(ACCEPTED_CLI_OPTIONS.includes('--max-asset-bytes'));
 });
