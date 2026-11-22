@@ -154,9 +154,9 @@ test('toonColors needs one colour per toon step, and says what to pass', () => {
 test('toon step colours show in the batching state and only when set', () => {
   const plain = materialLayerState({ tag: 'surface', toon: 3 });
   const coloured = materialLayerState({ tag: 'surface', toon: 3, toonColors: THREE_STEP_COLORS });
-  assert.equal(plain[MATERIAL_LAYER_STATE_LENGTH - 1], '');
-  assert.deepEqual(JSON.parse(coloured[MATERIAL_LAYER_STATE_LENGTH - 1]), THREE_STEP_COLORS);
-  assert.deepEqual(plain.slice(0, -1), coloured.slice(0, -1));
+  assert.equal(plain[MATERIAL_LAYER_STATE_LENGTH - 2], '');
+  assert.deepEqual(JSON.parse(coloured[MATERIAL_LAYER_STATE_LENGTH - 2]), THREE_STEP_COLORS);
+  assert.deepEqual(plain.slice(0, -2), coloured.slice(0, -2));
 });
 
 test('the toon shader tints by step only behind the colour uniform, and keeps the grey path', () => {
@@ -185,5 +185,5 @@ test('the batch bind uploads the step colours padded to eight, and switches them
   assert.deepEqual(calls[1][1].slice(0, 3).map(value => Math.fround(value)), THREE_STEP_COLORS[0].map(value => Math.fround(value)));
   calls.length = 0;
   layerTextureSupport.bind(renderer, [], materialLayerState({ tag: 'surface', toon: 3 }), {});
-  assert.deepEqual(calls, [['materialToonColored', 0]]);
+  assert.deepEqual(calls, [['materialToonColored', 0], ['materialToonEdge', 0]]);
 });

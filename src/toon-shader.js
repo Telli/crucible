@@ -91,7 +91,7 @@ layerTextureSupport.bind = (renderer, mapState, layerState, batch) => {
   previousBind?.(renderer, mapState, layerState, batch);
   if (!renderer.shaderFeatures?.has('toon')) return;
   const colorsState = layerState[TOON_COLORS_STATE_INDEX];
-  renderer.context.uniform1f(uniformOf(renderer, 'materialToonEdge'), layerState[TOON_EDGE_STATE_INDEX]);
   renderer.context.uniform1f(uniformOf(renderer, 'materialToonColored'), colorsState ? 1 : 0);
   if (colorsState) renderer.context.uniform3fv(uniformOf(renderer, 'materialToonColors'), toonColorValues(colorsState));
+  renderer.context.uniform1f(uniformOf(renderer, 'materialToonEdge'), layerState[TOON_EDGE_STATE_INDEX]);
 };
