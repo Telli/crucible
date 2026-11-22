@@ -5,6 +5,7 @@
  * Reads of an inspected scene include them only when there is something to say, to keep default results small.
  */
 import { agentSceneModule } from './agent-scene-modules.js';
+import { realismDiagnostics } from './realism-checks.js';
 
 const PLAIN_SURFACE_TAGS = new Set(['surface', 'gltf']);
 const LAYER_FIELDS = ['clearcoat', 'sheenColor', 'specular', 'specularColor', 'anisotropy', 'iridescence'];
@@ -94,6 +95,7 @@ export function recipeDiagnostics(recipe) {
       'Add a node that uses it with scene_apply add-node, or remove it with remove-geometry.'));
   }
   problems.push(...recipe.geometries.filter(geometry => geometry.type === 'terrain').flatMap(geometry => agentSceneModule('terrain').terrainHoleDiagnostics(geometry)));
+  problems.push(...realismDiagnostics(recipe));
   problems.push(...portalProblems(recipe.environment?.areaLights ?? []));
   return problems;
 }

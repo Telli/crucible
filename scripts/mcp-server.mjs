@@ -1209,6 +1209,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     width: z.number().int().min(64).max(480).default(384),
     height: z.number().int().min(64).max(480).default(384),
     labels: labelsFlag,
+    checks: z.literal('realism').optional().describe('realism: pass or fail list with fixes.'),
     response_format: responseFormatField,
     shots: z.array(z.strictObject({
       label: z.string().max(48).optional(),

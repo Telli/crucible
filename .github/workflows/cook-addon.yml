@@ -336,6 +336,7 @@ on:
       - 'src/ragdoll.js'
       - 'src/ray-query.js'
       - 'src/ray-visibility.js'
+      - 'src/realism-checks.js'
       - 'src/reflection-probes.js'
       - 'src/render-culling.js'
       - 'src/render-passes.js'
