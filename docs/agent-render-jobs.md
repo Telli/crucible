@@ -461,11 +461,11 @@ Other calls (`scene_inspect`, `scene_apply`) queue behind that handoff, so after
 One server owns one `--jobs` folder. A second server given the same folder fails with "The job store is already owned by a live process", and the error says to start it with its own `--jobs` folder.
 
 The controller rejects odd MP4 dimensions.
-Admission reserves the maximum output budget plus snapshot and metadata space.
+Admission reserves the job's own estimated output (frames, pixels, passes and mattes, with a margin, never more than the output budget) plus snapshot and metadata space.
 The optional `limits` object can reduce controller budgets for bounded tests.
 It cannot increase production limits.
 Partial files count toward the store budget and remain until explicit release.
-Each submit needs room for its snapshot and a full output reservation (128 MiB by default). When the store is too full, the controller first releases completed jobs whose `scene_render_result` was already read, oldest first, and stops as soon as the new job fits; the files of a released job are gone, so copy outputs you keep before you submit the next job. A job whose result was never read is never released this way. If the job still does not fit, the error says how many MiB it needs and how many are free and names `scene_render_release`. A job read before a server restart counts as unread again.
+Each submit needs room for its snapshot and an output reservation sized to that job: a single image holds a few MiB, a 72 frame 1080x1080 stills job about 93 MiB, and nothing holds more than the 128 MiB output budget. When the store is too full, the controller first releases completed jobs whose `scene_render_result` was already read, oldest first, and stops as soon as the new job fits; the files of a released job are gone, so copy outputs you keep before you submit the next job. A job whose result was never read is never released this way. If the job still does not fit, the error says how many MiB it needs and how many are free, and names the three largest finished jobs by id and size to read with `scene_render_result` and free with `scene_render_release`. A job read before a server restart counts as unread again. A job may write more than it reserved, up to the output budget, while the store has room; after each frame past its reservation the job stops with a failed state when one more frame would not fit beside the other jobs, so the store never grows past its total budget.
 
 ## CPU checks
 
