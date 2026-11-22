@@ -390,8 +390,10 @@ export const STUDIO_CSS = `
   z-index: 9;
 }
 .crucible-studio[data-compact="true"] .crucible-studio-pass-notice { inset-inline: var(--studio-edge); }
+/* Docked, the viewport is already the room between the rail and the column, so the notice only keeps the edge gap. */
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-pass-notice { inset-inline: var(--studio-edge); }
 .crucible-studio-pass-notice[hidden] { display: none; }
-.crucible-studio-pass-notice p { margin: 0; }
+.crucible-studio-pass-notice p { margin: 0; text-wrap: balance; }
 .crucible-studio-pass-notice .crucible-studio-icon { flex: none; color: var(--studio-accent); }
 
 .crucible-studio-menubar {
