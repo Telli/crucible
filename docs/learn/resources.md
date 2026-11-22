@@ -5,6 +5,7 @@
 Each example is a Crucible scene with its source in the repository.
 
 ```cards
+Showcase | /showcase.html | An airport, a data center and a port. | /previews/showcase-port.webp
 Chip fab | #effects-and-lighting | A cleanroom bay with ambient occlusion and bloom. | /previews/showcase-chipfab.webp
 Dark store | #local-lights-and-volume-fog | Shelves lit by point lights in thin fog. | /previews/showcase-darkstore.webp
 Path tracer | #cook-path-tracer | Stills traced by Cook with real bounce light. | /previews/cook-pabellon.webp
