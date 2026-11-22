@@ -6,7 +6,8 @@ import { invalidField, withFieldPrefix } from './field-error.js';
 import { createRepeatTracker, partFingerprint, unchangedFindingsLine } from './diagnostic-repeats.js';
 import { applyProjection, validateCameraShift, CAMERA_LENS_FIELDS } from './camera.js';
 import { checkLocalVolumePartNames } from './local-volume-resolve.js';
-import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, agentEnvironmentKey, SKY_OVERRIDABLE_FIELDS, VOLUME_FOG_FIELDS } from './agent-look.js';
+import { normalizeAgentLook, environmentPatchWithSetup, environmentLinksLights, agentEnvironmentMap, agentEnvironmentKey, SKY_OVERRIDABLE_FIELDS, VOLUME_FOG_FIELDS, EFFECT_GROUP_FIELDS } from './agent-look.js';
+import { cameraFieldsToClear, splitClearedLookFields, mergeGroupPatch } from './agent-clear-fields.js';
 import { postStepSupport } from './shader-registry.js';
 import { agentSceneModule, agentSceneModuleActive, agentSceneModuleLoaded, defaultStageModulesNamed } from './agent-scene-modules.js';
 import { CURVE_TEXT_LIMITS, AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, MAX_MATERIAL_PATTERNS, RECIPE_ALPHA_MODES } from './agent-scene-capabilities.js';
@@ -463,16 +464,33 @@ function nodeFrom(value) {
   return result;
 }
 
+// The section as normalised with nothing set: its keys always have a value, so null cannot clear them.
+function splitClearedLookPatch(lookField, patch) {
+  if (!Object.values(patch).includes(null)) return { kept: patch, cleared: [] };
+  const defaults = normalizeAgentLook({})[lookField];
+  const groupFields = lookField === 'effects' ? Object.keys(EFFECT_GROUP_FIELDS) : [];
+  return splitClearedLookFields(lookField, patch, { requiredDefaults: defaults, valueFields: lookField === 'environment' ? ['fogDensity'] : [], groupFields });
+}
+
+// bloom, depthOfField and motionBlur merge field by field; a field set to null leaves a group of defaults when it has none.
+function mergeEffectGroups(currentEffects, patch, merged) {
+  const defaults = normalizeAgentLook({}).effects;
+  for (const [group, fields] of Object.entries(EFFECT_GROUP_FIELDS)) {
+    if (!Object.hasOwn(patch, group)) continue;
+    knownKeys(patch[group], [...Object.keys(currentEffects[group]), ...fields], group);
+    merged[group] = mergeGroupPatch(group, currentEffects[group], patch[group], defaults[group]);
+  }
+}
+
 /** Sets the given camera fields on a camera; a focal length replaces fov and a fov replaces focal length and sensor, never both. */
 export function applyCameraFields(camera, fields) {
   rejectFovWithFocalLength(fields);
   rejectFocusDistanceWithoutFStop(fields);
+  // null clears an optional lens field back to not set (fStop takes focusDistance with it); a required field refuses null.
+  for (const field of cameraFieldsToClear(fields, CAMERA_DEFAULTS)) delete camera[field];
   for (const field of CAMERA_FIELDS) {
-    if (Object.hasOwn(fields, field)) camera[field] = fields[field];
+    if (Object.hasOwn(fields, field) && fields[field] !== null) camera[field] = fields[field];
   }
-  // null clears: fStop takes focusDistance with it, focusDistance clears only itself.
-  if (fields.fStop === null) delete camera.fStop;
-  if (fields.fStop === null || fields.focusDistance === null) delete camera.focusDistance;
   if (Object.hasOwn(fields, 'focalLength')) delete camera.fov;
   // Back to a perspective view: the old orthographic size no longer applies.
   if (fields.projection === 'perspective' && !Object.hasOwn(fields, 'orthoScale')) delete camera.orthoScale;
@@ -1883,13 +1901,16 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       for (const record of ownedRecords) {
         availableRecords.set(record.signature, record);
       }
+      // A recipe with no image map never loads the assets module, and needs no UVs (#3003).
+      const uvWriters = agentSceneModuleLoaded('assets') && agentSceneModule('assets').primitiveUvWriters(recipe);
       const plans = recipe.geometries.map(definition => {
-        const signature = geometrySignature(definition, definitionsById, buildHeightSources);
+        const addUvs = uvWriters && uvWriters.get(definition.id);
+        const signature = geometrySignature(definition, definitionsById, buildHeightSources) + (addUvs ? '|uvs' : '');
         const preferredRecord = preferred?.geometryRecords.get(definition.id);
         const activeRecord = state?.geometryRecords.get(definition.id);
         const existing = [preferredRecord, activeRecord, availableRecords.get(signature)]
           .find(record => record?.signature === signature);
-        return { definition, signature, existing, estimatedVertices: definition.type === 'asset' ? 0 : geometryEstimate(definition, { definitions: definitionsById, chain: [] }) };
+        return { definition, signature, addUvs, existing, estimatedVertices: definition.type === 'asset' ? 0 : geometryEstimate(definition, { definitions: definitionsById, chain: [] }) };
       });
       const residentStats = geometryStats(ownedRecords);
       const pendingVertices = plans.filter(plan => !plan.existing).reduce((total, plan) => total + plan.estimatedVertices, 0);
@@ -1932,7 +1953,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         const geometry = assetRuntime.geometryParts.get(plan.definition.id);
         record = Object.freeze({ signature: plan.signature, geometry, bounds: boundsFor(geometry, mat4.create()), vertices: 0, geometryBytes: 0, assetBytes: geometryBufferBytes(geometry), estimatedVertices: 0 });
       } else if (!record) {
-        const geometry = Object.freeze(generateGeometry(plan.definition, Math.min(limits.maxVertices, 1_000_000), { definitions: definitionsById, chain: [], heightSources: buildHeightSources }));
+        const built = generateGeometry(plan.definition, Math.min(limits.maxVertices, 1_000_000), { definitions: definitionsById, chain: [], heightSources: buildHeightSources });
+        const geometry = Object.freeze(plan.addUvs ? plan.addUvs(built) : built);
         const geometryBytes = geometryBufferBytes(geometry);
         const vertices = geometry.positions.length / 3;
         if (plan.definition.type === 'mesh' || plan.definition.type === 'fragment') {
@@ -2598,13 +2620,14 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           const optionalFields = lookField === 'environment' ? ['ground', 'spotLights', 'areaLights', 'shadowCascades', 'localVolumes', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'hdri', 'keyFromHdri', 'sky'] : lookField === 'effects' ? postStepSupport.fields : [];
           knownKeys(patch, [...Object.keys(candidate[lookField]), ...optionalFields], lookField);
           requireChange(Object.keys(patch).length > 0, operation, [...Object.keys(candidate[lookField]), ...optionalFields]);
-          const nestedField = lookField === 'environment' ? 'volumeFog' : 'bloom';
-          const merged = { ...candidate[lookField], ...(lookField === 'environment' ? environmentPatchWithSetup(patch) : patch) };
-          if (nestedField && Object.hasOwn(patch, nestedField)) {
-            const nestedKeys = nestedField === 'volumeFog' ? [...Object.keys(candidate[lookField][nestedField]), ...VOLUME_FOG_FIELDS] : Object.keys(candidate[lookField][nestedField]);
-            knownKeys(patch[nestedField], nestedKeys, nestedField);
-            merged[nestedField] = { ...candidate[lookField][nestedField], ...patch[nestedField] };
+          const { kept: keptPatch, cleared: clearedFields } = splitClearedLookPatch(lookField, patch);
+          const merged = { ...candidate[lookField], ...(lookField === 'environment' ? environmentPatchWithSetup(keptPatch) : keptPatch) };
+          for (const field of clearedFields) delete merged[field];
+          if (lookField === 'environment' && Object.hasOwn(patch, 'volumeFog')) {
+            knownKeys(patch.volumeFog, [...Object.keys(candidate.environment.volumeFog), ...VOLUME_FOG_FIELDS], 'volumeFog');
+            merged.volumeFog = { ...candidate.environment.volumeFog, ...patch.volumeFog };
           }
+          if (lookField === 'effects') mergeEffectGroups(candidate.effects, keptPatch, merged);
           // A preset starts the sky again from its own sun, so fields kept from the earlier sky never hide it.
           if (patch.sky) {
             const kept = candidate[lookField].sky;
