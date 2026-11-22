@@ -16,6 +16,8 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { DEMO_SOURCES, PREVIEW_COOK_SAMPLES, USAGE, drawSize, needsCook, parseArguments, renderSize, selectPreviews } from './readme-previews-plan.mjs';
 
+import { applyBlenderWorld, readBlenderWorld } from './blender-world-sky.mjs';
+
 const root = resolve(import.meta.dirname, '..');
 const publishedFolder = join(root, 'public', 'previews');
 const SKY_FILE = join(root, 'public', 'showcase', 'airport', 'sky.hdr');
@@ -90,9 +92,11 @@ function demoSceneDescription(preview) {
 async function renderCookStill(preview, size, options, workFolder, outputPng) {
   const cacheFolder = resolve(options.cache ?? join(homedir(), '.cache', 'crucible-readme-previews'));
   const demoFolder = await prepareDemoGlb(preview.source, cacheFolder);
-  await copyFile(SKY_FILE, join(demoFolder, 'sky.hdr'));
+  // A demo whose world is an analytic sky has its own baked sky.hdr and world.json from the export (#2761); the others get the airport sky.
+  const world = readBlenderWorld(demoFolder);
+  if (!world) await copyFile(SKY_FILE, join(demoFolder, 'sky.hdr'));
   const sceneFile = join(demoFolder, `${preview.name}.scene.json`);
-  await writeFile(sceneFile, JSON.stringify(demoSceneDescription(preview), null, 2));
+  await writeFile(sceneFile, JSON.stringify(applyBlenderWorld(demoSceneDescription(preview), world), null, 2));
   const prefix = join(workFolder, preview.name);
   const samples = options.preview ? PREVIEW_COOK_SAMPLES : preview.samples;
   runNode(['scripts/render-file-native.mjs', '--config', sceneFile, '--out', prefix, '--width', String(size.width), '--height', String(size.height),
