@@ -121,6 +121,7 @@ on:
       - 'src/cloud-geometry.js'
       - 'src/cloud-levels.js'
       - 'src/clutter.js'
+      - 'src/content-fingerprint.js'
       - 'src/cooperative.js'
       - 'src/coplanar-overlap.js'
       - 'src/crowd-skinning.js'
