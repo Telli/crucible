@@ -61,6 +61,25 @@ test('a material without subsurface keeps its batching state and its shader exac
   assert.doesNotMatch(createFragmentShader(features), /ubsurface/, 'a shader built without the feature has no subsurface code');
 });
 
+test('subsurface beside the per-fragment shadow coordinate declares lightProjection once (#2945)', () => {
+  for (const features of [['subsurface', 'fragmentShadowPosition'], ['subsurface']]) {
+    const source = createFragmentShader(features);
+    const lines = source.split('\n');
+    const defined = new Set(lines.filter(line => line.startsWith('#define ')).map(line => line.slice(8).trim()));
+    let active = 0;
+    const stack = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('#ifdef ')) stack.push(defined.has(trimmed.slice(7).trim()));
+      else if (trimmed.startsWith('#ifndef ')) stack.push(!defined.has(trimmed.slice(8).trim()));
+      else if (trimmed === '#else') stack.push(!stack.pop());
+      else if (trimmed === '#endif') stack.pop();
+      else if (trimmed === 'uniform mat4 lightProjection;' && stack.every(Boolean)) active += 1;
+    }
+    assert.equal(active, 1, `features ${features.join(', ')} declare lightProjection ${active} times`);
+  }
+});
+
 test('the subsurface code loads on demand: the recipe marker finds it, and a renderer without it says which import to add', () => {
   assert.deepEqual(agentSceneModulesNeeded(recipeWithMaterial({ subsurface: { weight: 1 } })), ['subsurfaceShader']);
   assert.deepEqual(agentSceneModulesNeeded(recipeWithMaterial({ roughness: 0.4 })), []);
