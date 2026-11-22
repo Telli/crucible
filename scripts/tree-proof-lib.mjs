@@ -13,12 +13,14 @@ export const DEFAULT_LEVEL_MARGIN = 0.05;
 export const HORIZON_ELEVATION_LIMIT = 0.25;
 const SOLIDITY_FRAME_SIZE = 128;
 const LEAF_TEXTURE_PIXELS = 128;
+const TWIG_TEXTURE_PIXELS = 256;
 
 // Painted leaf length in pixels of the 128 px leaf texture, as (shortest, longest) of the painters in
-// src/vegetation-textures.js: a sprig paints 22 to 32 px leaves and a 40 px tip leaf, a needle spray 19 to 34 px needles,
+// src/vegetation-textures.js: a sprig paints 22 to 32 px leaves and a 40 px tip leaf, a twig of the 256 px card 19 to 29 px leaves, a needle spray 19 to 34 px needles,
 // a single frond leaf 96 to 124 px, a clump 24 to 36 px leaves.
 export const PAINTED_LEAF_PIXELS = Object.freeze({
   sprig: Object.freeze([22, 40]),
+  twig: Object.freeze([19, 29]),
   needles: Object.freeze([19, 34]),
   single: Object.freeze([96, 124]),
   clump: Object.freeze([24, 36]),
@@ -88,7 +90,8 @@ export function paintedLeafLengthCentimeters({ texture, cardHeightMeters, leafSc
   const pixels = Object.hasOwn(PAINTED_LEAF_PIXELS, texture) ? PAINTED_LEAF_PIXELS[texture] : null;
   if (!pixels) throw new RangeError(`texture must be one of ${Object.keys(PAINTED_LEAF_PIXELS).join(', ')}; got ${texture}`);
   if (!(cardHeightMeters > 0)) throw new RangeError('cardHeightMeters must be a positive number of meters, such as 1.1');
-  return pixels.map(length => length / LEAF_TEXTURE_PIXELS * cardHeightMeters * leafScale * 100);
+  const textureSize = texture === 'twig' ? TWIG_TEXTURE_PIXELS : LEAF_TEXTURE_PIXELS;
+  return pixels.map(length => length / textureSize * cardHeightMeters * leafScale * 100);
 }
 
 /** The camera eye of a level camera `distance` meters (straight line) from the tree base, at height `centerY` and sideways position `centerX`. */
@@ -132,8 +135,8 @@ export function fitFraming({ bounds, aspect, photoFraction, distance, margin = 0
 }
 
 /** The tree the proof measures and renders (the same seed the recipe grows). */
-export function growTree({ preset, seed = DEFAULT_SEED }) {
-  return createTree({ preset }, seed);
+export function growTree({ preset, seed = DEFAULT_SEED, tree }) {
+  return createTree({ preset, ...(tree === undefined ? {} : { tree }) }, seed);
 }
 
 function trianglesOf(parts, role) {
@@ -165,9 +168,10 @@ export function crownSolidity(tree, level, { frameSize = SOLIDITY_FRAME_SIZE } =
  * One row per level of the preset's tree: triangles of the foliage and the bark, crown solidity and painted leaf length.
  * `leafCentimeters` is `[shortest, longest]` or null (the crown clumps of the far levels paint no leaves).
  */
-export function measureTreeLevels({ preset, seed = DEFAULT_SEED, height, frameSize }) {
-  const tree = createTree({ preset, ...(height === undefined ? {} : { height }) }, seed);
-  const { preset: grown } = resolveTreePreset({ preset });
+export function measureTreeLevels({ preset, seed = DEFAULT_SEED, height, frameSize, tree: growth }) {
+  const growthOptions = growth === undefined ? {} : { tree: growth };
+  const tree = createTree({ preset, ...(height === undefined ? {} : { height }), ...growthOptions }, seed);
+  const { preset: grown } = resolveTreePreset({ preset, ...growthOptions });
   const leaf = grown.leaf;
   return tree.levels.map((level, index) => {
     const setting = LEVEL_SETTINGS[index];

@@ -182,7 +182,45 @@ function createBareParts(skeleton, preset, seed, bark, materials, shadowTrunks) 
   };
 }
 
-function growSkeleton(preset, height, random) {
+/**
+ * The leaf sites of a tree preset that sets `leaf.placement` (#3041): on the last `depth` branch levels, kept more often the
+ * nearer they sit to the crown's outside (`interiorKeep` is the share kept at its centre), and turned up and outward like the
+ * leaves of a real crown, not along the twig with a random wobble.
+ */
+function placeCrownLeafSites(branches, preset, random) {
+  const spec = preset.leaf;
+  const { depth, interiorKeep, outwardTilt, upTilt } = spec.placement;
+  const firstLevel = preset.levels.length - depth;
+  const candidates = [];
+  for (const branch of branches) {
+    if (branch.level < firstLevel || branch.level < 1) continue;
+    const count = Math.max(2, Math.round(branch.length * spec.sitesPerMeter));
+    for (let index = 0; index < count; index++) {
+      candidates.push(sampleBranch(branch, lerp(spec.start, 1, index / (count - 1))));
+    }
+  }
+  const center = scaleVector(candidates.reduce((sum, sample) => addVectors(sum, sample.position), [0, 0, 0]), 1 / candidates.length);
+  const distances = candidates.map(sample => vectorLength(subtractVectors(sample.position, center)));
+  const reach = [...distances].sort((first, second) => first - second)[Math.floor(distances.length * 0.9)] || 1;
+  const leafSites = [];
+  candidates.forEach((sample, index) => {
+    const outside = clamp(distances[index] / reach, 0, 1);
+    if (random() > interiorKeep + (1 - interiorKeep) * outside * outside * (3 - 2 * outside)) return;
+    const outward = normalized(subtractVectors(sample.position, center));
+    const direction = normalized(addVectors(
+      addVectors(scaleVector(outward, outwardTilt), scaleVector(WORLD_UP, upTilt)),
+      addVectors(scaleVector(sample.direction, 0.3), scaleVector(randomUnitOffset(random), 0.25)),
+    ));
+    leafSites.push({ position: sample.position, direction, scale: 0.8 + random() * 0.45, roll: (random() - 0.5) * 0.8 });
+  });
+  if (preset.leafSiteLimit && leafSites.length > preset.leafSiteLimit) {
+    throw new RangeError(`A grown tree may carry at most ${preset.leafSiteLimit} leaf sites; lower tree.leafCount, tree.branches, tree.levels or the height.`);
+  }
+  return leafSites;
+}
+
+function growSkeleton(preset, height, random, leafMode) {
+  const placeCrown = Boolean(preset.leaf.placement) && leafMode === 'cards';
   const lastLevel = preset.levels.length - 1;
   const branches = [];
   const leafSites = [];
@@ -227,7 +265,7 @@ function growSkeleton(preset, height, random) {
     const branch = { level, ...walkBranch(origin, direction, length, radius, parameters, random) };
     branches.push(branch);
     if (parameters.children) spawnChildren(branch, parameters.children, parameters.twist);
-    if (level === lastLevel) addLeafSites(branch);
+    if (level === lastLevel && !placeCrown) addLeafSites(branch);
   }
 
   const trunkSettings = preset.levels[0];
@@ -240,7 +278,8 @@ function growSkeleton(preset, height, random) {
     radius: height * preset.trunkRadiusRatio,
     level: 0,
   });
-  return { branches, leafSites, crown: describeCrown(leafSites) };
+  const sites = placeCrown ? placeCrownLeafSites(branches, preset, random) : leafSites;
+  return { branches, leafSites: sites, crown: describeCrown(sites) };
 }
 
 function describeCrown(leafSites) {
@@ -395,10 +434,16 @@ function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
 function addCards(builder, skeleton, spec, site, scale, random) {
   const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position);
   const firstRoll = (random() - 0.5) * 0.6;
+  // Crossed pairs turn each card a quarter turn from the last; a crown placement (#3041) fans them a little around the same
+  // upward, outward plate, so every card lies like a leaf and none stands edge-on.
+  const fan = spec.placement?.cardFan;
   for (let index = 0; index < spec.cardsPerSite; index++) {
+    const roll = fan === undefined
+      ? firstRoll + index * (Math.PI / 2 + (random() - 0.5) * 0.5)
+      : firstRoll + (index - (spec.cardsPerSite - 1) / 2) * fan;
     addLeafSurface(builder, {
       origin: site.position,
-      frame: createLeafFrame(site.direction, firstRoll + index * (Math.PI / 2 + (random() - 0.5) * 0.5)),
+      frame: createLeafFrame(site.direction, roll),
       length: spec.cardSize[1] * site.scale * scale,
       width: spec.cardSize[0] * site.scale * scale,
       rows: [[0, 1], [0.5, 1], [1, 1]],
@@ -632,8 +677,8 @@ export function resolveTreePreset({ species, preset, tree } = {}) {
   if (!base) throw new RangeError(`Unknown tree species: ${baseSpecies}`);
   const presetLevels = named?.tree.levels ?? base.levels.length - 1;
   const overrides = mergeTreeGrowth(named?.tree ?? {}, tree === undefined ? {} : checkTreeGrowth(tree, presetLevels, growthError));
-  if (Object.keys(overrides).length === 0 && !named?.height) return { species: baseSpecies, preset: base };
-  const grown = applyTreeGrowth(base, overrides, named?.height);
+  if (Object.keys(overrides).length === 0 && !named?.height && !named?.leaf) return { species: baseSpecies, preset: base };
+  const grown = applyTreeGrowth(base, overrides, named?.height, named?.leaf);
   const branches = maximumBranchCount(grown.levels);
   if (branches > MAX_TREE_BRANCHES) {
     throw new RangeError(`This tree could grow ${branches} branches, above the limit of ${MAX_TREE_BRANCHES}; lower tree.branches or tree.levels.`);
@@ -657,7 +702,7 @@ export function createTree(speciesOrOptions = 'broadleaf', seed = 1) {
   const random = createRandom(seed * 7919 + 17);
   const height = options.height ?? randomInRange(random, preset.height);
   checkTreeHeight(height);
-  const skeleton = growSkeleton(preset, height, random);
+  const skeleton = growSkeleton(preset, height, random, leaves);
   const scannedBark = resolveBarkTextures(options.barkTextures, species);
   const bark = { scanned: Boolean(scannedBark), tileSize: options.barkTileSize ?? (scannedBark ? SCANNED_BARK_TILE_SIZE : BARK_TILE_SIZE) };
   const scannedLeaves = leaves === 'cards' ? resolveLeafTextures(options.leafTextures, species) : null;

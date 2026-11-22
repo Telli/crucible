@@ -2,7 +2,7 @@
 // Renders every tree preset beside a real summer photo of the species and prints the numbers that explain the gap (#3041).
 //
 //   node scripts/tree-proof.mjs --out artifacts/3041/proof [--reference artifacts/3041/reference] [--seed 4]
-//        [--presets oak,ash] [--width 640] [--height 480] [--backend gpu|cpu] [--measure-only]
+//        [--presets oak,ash] [--tree '{"leafSize":0.85}'] [--distances 20,70] [--width 640] [--height 480] [--backend gpu|cpu] [--measure-only]
 //
 // For each preset it measures triangles, crown solidity and painted leaf length of every level on the CPU, renders a still
 // just inside and just outside each level switch (a level camera, sun behind the camera, ground and shadow, framed so the
@@ -18,6 +18,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import sharp from 'sharp';
+import { TREE_LEVEL_DISTANCES } from '../src/vegetation-species.js';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import {
@@ -37,7 +38,7 @@ const SHEET_LABEL_HEIGHT = 22;
 const FALLBACK_HEIGHT_FRACTION = 0.8;
 
 function parseArguments(argv) {
-  const options = { out: null, reference: 'artifacts/3041/reference', seed: DEFAULT_SEED, presets: PRESET_NAMES, width: 640, height: 480, backend: 'gpu', measureOnly: false };
+  const options = { out: null, reference: 'artifacts/3041/reference', seed: DEFAULT_SEED, presets: PRESET_NAMES, width: 640, height: 480, backend: 'gpu', measureOnly: false, tree: undefined, distances: undefined };
   for (let index = 0; index < argv.length; index++) {
     const name = argv[index];
     if (name === '--measure-only') {
@@ -53,13 +54,16 @@ function parseArguments(argv) {
     else if (name === '--width') options.width = Number(value);
     else if (name === '--height') options.height = Number(value);
     else if (name === '--backend') options.backend = value;
-    else throw new Error(`Unknown option ${name}; use --out, --reference, --seed, --presets, --width, --height, --backend or --measure-only.`);
+    else if (name === '--distances') options.distances = value.split(',').map(Number);
+    else if (name === '--tree') options.tree = JSON.parse(value);
+    else throw new Error(`Unknown option ${name}; use --out, --reference, --seed, --presets, --tree, --distances, --width, --height, --backend or --measure-only.`);
   }
   if (!options.out) throw new Error('Pass --out <folder>, such as --out artifacts/3041/proof.');
   for (const preset of options.presets) {
     if (!PRESET_NAMES.includes(preset)) throw new Error(`Unknown preset ${preset}; use ${PRESET_NAMES.join(', ')}.`);
   }
   if (!Number.isFinite(options.seed)) throw new Error('--seed must be a number, such as 4.');
+  if (options.distances && options.distances.some(distance => !(distance > 0))) throw new Error('--distances must be meters above 0, such as --distances 20,70.');
   if (!['gpu', 'cpu'].includes(options.backend)) throw new Error('--backend must be gpu or cpu.');
   return options;
 }
@@ -71,7 +75,7 @@ async function readCredits(referenceFolder, preset) {
   return { ...credits, photoPath: join(referenceFolder, preset, credits.file) };
 }
 
-function buildRecipe({ preset, seed, bounds, shadowHeight, distance, heightFraction, aspect }) {
+function buildRecipe({ preset, seed, tree, bounds, shadowHeight, distance, heightFraction, aspect }) {
   const { fov, centerX, centerY } = fitFraming({ bounds, aspect, photoFraction: heightFraction, distance });
   const eye = levelCameraEye({ centerX, centerY, distance });
   const target = [centerX, centerY, 0];
@@ -82,7 +86,7 @@ function buildRecipe({ preset, seed, bounds, shadowHeight, distance, heightFract
     materials: [{ id: 'soil', color: GRASS_COLOR, metallic: 0, roughness: 0.95 }],
     nodes: [
       { id: 'ground', geometry: 'ground', material: 'soil', translation: [0, -0.05, 0], scale: [GROUND_SIZE, 0.1, GROUND_SIZE] },
-      { id: 'tree', vegetation: { preset, seed } },
+      { id: 'tree', vegetation: { preset, seed, ...(tree === undefined ? {} : { tree }) } },
     ],
     camera: { eye, target, fov },
     environment: { world: true, lightDirection: SUN_DIRECTION },
@@ -176,24 +180,24 @@ async function main() {
   const outputFolder = resolve(options.out);
   const referenceFolder = resolve(options.reference);
   await mkdir(outputFolder, { recursive: true });
-  const probes = levelProbes(undefined, DEFAULT_LEVEL_MARGIN);
+  const probes = options.distances ? options.distances.map(distance => ({ level: TREE_LEVEL_DISTANCES.filter(threshold => threshold <= distance).length, distance, side: 'at' })) : levelProbes(undefined, DEFAULT_LEVEL_MARGIN);
   const rows = [];
   const presetResults = [];
   for (const preset of options.presets) {
-    rows.push(...measureTreeLevels({ preset, seed: options.seed }));
+    rows.push(...measureTreeLevels({ preset, seed: options.seed, tree: options.tree }));
     const credits = await readCredits(referenceFolder, preset);
-    const tree = growTree({ preset, seed: options.seed });
+    const tree = growTree({ preset, seed: options.seed, tree: options.tree });
     const shadowHeight = tree.bounds.maximum[1] - tree.bounds.minimum[1];
     const heightFraction = credits?.treeHeightFraction ?? FALLBACK_HEIGHT_FRACTION;
     await mkdir(join(outputFolder, preset), { recursive: true });
     const plans = probes.map((probe) => {
-      const recipe = buildRecipe({ preset, seed: options.seed, bounds: levelBounds(tree, probe.level), shadowHeight, distance: probe.distance, heightFraction, aspect: options.width / options.height });
+      const recipe = buildRecipe({ preset, seed: options.seed, tree: options.tree, bounds: levelBounds(tree, probe.level), shadowHeight, distance: probe.distance, heightFraction, aspect: options.width / options.height });
       const name = `${preset}-level${probe.level}-${probe.distance.toFixed(1)}m`;
       return {
         name, level: probe.level, distance: probe.distance, recipe,
         stillPath: join(outputFolder, preset, `${name}.png`),
         description: {
-          preset, seed: options.seed, level: probe.level, distance: probe.distance, side: probe.side, backend: options.backend,
+          preset, seed: options.seed, tree: options.tree ?? null, level: probe.level, distance: probe.distance, side: probe.side, backend: options.backend,
           size: [options.width, options.height], camera: recipe.camera, sun: SUN_DIRECTION, treeHeightFraction: heightFraction,
           photo: credits ? { url: credits.url, author: credits.author, licence: credits.licence } : null, recipe,
         },
