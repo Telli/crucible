@@ -69,7 +69,8 @@ const MAP_UNIFORMS = ['baseMap', 'normalMap', 'metallicRoughnessMap', 'occlusion
 const MAP_FLAGS = ['hasBaseMap', 'hasNormalMap', 'hasMetallicRoughnessMap', 'hasOcclusionMap', 'hasEmissiveMap'];
 const DEFAULT_NORMAL_SCALE = [1, 1];
 // The most texture taps a mipmapped texture may take along a grazing axis (16 is the usual hardware ceiling, 8 costs less).
-const MAX_TEXTURE_ANISOTROPY = 8;
+// Anisotropic filtering at 16x keeps a surface seen at about 4 degrees or more sharp; GPUs that allow less get their own limit.
+export const DEFAULT_TEXTURE_ANISOTROPY = 16;
 const PROCEDURAL_MATERIAL_TAGS = new Set(['water', 'foliage', 'grass', 'terrain', 'floor', 'fire', 'smoke', 'liquid', 'foam']);
 
 // Tags whose vertices sway in the wind; the shadow pass must be redrawn when time moves.
@@ -747,7 +748,7 @@ export function samplesForDensity(parts, canvas, pixelRatio, samples, denseSampl
 }
 
 export class CrucibleRenderer {
-  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, compactColor = true, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', exactFrames = false, deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB } = {}) {
+  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, compactColor = true, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', exactFrames = false, deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB, maxAnisotropy = DEFAULT_TEXTURE_ANISOTROPY } = {}) {
     this.background = background ? resolveBackground(background) : null;
     this.canvas = canvas;
     this.sceneParts = parts;
@@ -768,6 +769,8 @@ export class CrucibleRenderer {
     // A NaN or negative error would pick the coarsest level everywhere without a word (#2403).
     if (typeof lodPixelError !== 'number' || !(lodPixelError >= 0)) throw new TypeError(`lodPixelError must be a number of 0 or more pixels, got ${lodPixelError}.`);
     this.lodPixelError = lodPixelError;
+    if (!(maxAnisotropy >= 1 && maxAnisotropy <= 16 && Number.isInteger(maxAnisotropy))) throw new RangeError(`maxAnisotropy must be a whole number from 1 to 16, got ${maxAnisotropy}.`);
+    this.maxAnisotropy = maxAnisotropy;
     this.frustumPlanes = new Float32Array(24);
     if (!Number.isInteger(samples) || samples < 1) throw new Error('MSAA sample count must be a positive integer.');
     if (!SHADING_MODES.includes(shading)) throw new Error(`shading must be one of ${SHADING_MODES.join(', ')}.`);
@@ -1185,7 +1188,7 @@ export class CrucibleRenderer {
     const extension = context.getExtension('EXT_texture_filter_anisotropic');
     if (!extension) return;
     // The limit is fixed for the context, and asking for it is a round trip to the GPU process, so it is asked once.
-    this.supportedAnisotropy ??= Math.min(MAX_TEXTURE_ANISOTROPY, context.getParameter(extension.MAX_TEXTURE_MAX_ANISOTROPY_EXT));
+    this.supportedAnisotropy ??= Math.min(this.maxAnisotropy, context.getParameter(extension.MAX_TEXTURE_MAX_ANISOTROPY_EXT));
     context.texParameterf(target, extension.TEXTURE_MAX_ANISOTROPY_EXT, this.supportedAnisotropy);
   }
 
