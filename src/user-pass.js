@@ -271,7 +271,9 @@ void main() {
   outputColor = mix(centerSample, across, max(edgeOffset, subpixel));
 }`;
 
-const FRAGMENT_FOOTER = '\nvoid main() { u67_output = userPass(textureCoordinate); }\n';
+// uvScale and uvOffset are 1 and 0 except for a pass below scale 1 on a pixel grid, where they place its blocks on the grid lattice.
+const FRAGMENT_FOOTER = '\nuniform vec2 u67_uvScale;\nuniform vec2 u67_uvOffset;\nvoid main() { u67_output = userPass(textureCoordinate * u67_uvScale + u67_uvOffset); }\n';
+const FULL_FRAME_PLACEMENT = Object.freeze({ uvScale: [1, 1], uvOffset: [0, 0] });
 
 /** The full fragment source of a normalized pass, and how many lines come before the snippet. */
 export function buildPassFragment(pass) {
@@ -286,6 +288,18 @@ in vec2 textureCoordinate;
 uniform sampler2D sourceTexture;
 out vec4 outputColor;
 void main() { outputColor = texture(sourceTexture, textureCoordinate); }`;
+
+// Enlarges a pass drawn on a block lattice back to the grid size: each grid pixel takes the block it falls in.
+const blockEnlargeFragment = `#version 300 es
+precision highp float;
+uniform sampler2D sourceTexture;
+uniform float blockSize;
+uniform vec2 blockOrigin;
+out vec4 outputColor;
+void main() {
+  ivec2 block = ivec2(floor((floor(gl_FragCoord.xy) + blockOrigin) / blockSize));
+  outputColor = texelFetch(sourceTexture, clamp(block, ivec2(0), textureSize(sourceTexture, 0) - 1), 0);
+}`;
 
 function createTexture(context, width, height, filter, withAlpha = true) {
   const texture = context.createTexture();
@@ -337,10 +351,12 @@ export function installUserPasses(renderer) {
   const inputs = createPassInputs(renderer);
 
   function releaseEntryTarget(context, entry) {
-    if (!entry.target) return;
-    context.deleteTexture(entry.target.texture);
-    context.deleteFramebuffer(entry.target.framebuffer);
-    entry.target = null;
+    for (const slot of ['target', 'enlarged']) {
+      if (!entry[slot]) continue;
+      context.deleteTexture(entry[slot].texture);
+      context.deleteFramebuffer(entry[slot].framebuffer);
+      entry[slot] = null;
+    }
   }
 
   function releaseEntry(context, entry) {
@@ -364,6 +380,8 @@ export function installUserPasses(renderer) {
     state.copy = null;
     if (state.smooth) context.deleteProgram(state.smooth.program);
     state.smooth = null;
+    if (state.enlarge) context.deleteProgram(state.enlarge.program);
+    state.enlarge = null;
   }
 
   // One compiled program per pass, rebuilt only when its fragment or its uniform declarations change.
@@ -386,7 +404,7 @@ export function installUserPasses(renderer) {
         throw compilationError(pass, error, built);
       }
       if (entry) releaseEntry(context, entry);
-      const names = ['sceneColor', 'sceneDepth', 'sceneObjectIds', 'u67_objectCount', 'u67_objectIds', 'u67_objectSlots', 'u67_inverseViewProjection', 'resolution', 'time', 'cameraEye', 'sceneNormal', 'sceneAlbedo', 'sceneEmission', ...Object.keys(pass.luts ?? {}), ...Object.keys(pass.uniforms)];
+      const names = ['sceneColor', 'sceneDepth', 'sceneObjectIds', 'u67_objectCount', 'u67_objectIds', 'u67_objectSlots', 'u67_inverseViewProjection', 'u67_uvScale', 'u67_uvOffset', 'resolution', 'time', 'cameraEye', 'sceneNormal', 'sceneAlbedo', 'sceneEmission', ...Object.keys(pass.luts ?? {}), ...Object.keys(pass.uniforms)];
       state.entries[index] = {
         pass, source: built.source, program, target: null,
         locations: Object.fromEntries(names.map(name => [name, context.getUniformLocation(program, name)])),
@@ -425,11 +443,13 @@ export function installUserPasses(renderer) {
     return entry.target;
   }
 
-  function drawPass(entry, inputTexture, width, height, frame) {
+  function drawPass(entry, inputTexture, width, height, frame, placement = FULL_FRAME_PLACEMENT) {
     const context = renderer.context;
     const { locations, pass } = entry;
     context.viewport(0, 0, width, height);
     context.useProgram(entry.program);
+    context.uniform2fv(locations.u67_uvScale, placement.uvScale);
+    context.uniform2fv(locations.u67_uvOffset, placement.uvOffset);
     context.activeTexture(context.TEXTURE0);
     context.bindTexture(context.TEXTURE_2D, inputTexture);
     context.uniform1i(locations.sceneColor, 0);
@@ -437,7 +457,7 @@ export function installUserPasses(renderer) {
     context.bindTexture(context.TEXTURE_2D, renderer.depthTexture ?? renderer.whiteTexture);
     context.uniform1i(locations.sceneDepth, 1);
     context.uniformMatrix4fv(locations.u67_inverseViewProjection, false, renderer.inverseViewProjection);
-    context.uniform2f(locations.resolution, width, height);
+    context.uniform2f(locations.resolution, placement.resolution?.[0] ?? width, placement.resolution?.[1] ?? height);
     context.uniform1f(locations.time, frame.passTime ?? frame.time ?? 0);
     context.uniform3fv(locations.cameraEye, frame.eye ?? ORIGIN);
     for (const [name, uniform] of Object.entries(pass.uniforms)) setUniformValue(context, locations[name], uniform);
@@ -479,6 +499,58 @@ export function installUserPasses(renderer) {
     context.drawArrays(context.TRIANGLES, 0, 3);
   }
 
+  // On a pixel grid a pass below scale 1 draws one pixel per whole block of grid pixels (1 / scale, rounded), on the lattice that
+  // moves with the snapped camera, so its blocks stay on the same geometry while the camera pans. Null off the grid, or at one pixel.
+  function gridBlock(pass) {
+    if (!renderer.pixelGrid?.active || pass.scale === 1) return null;
+    const size = Math.round(1 / pass.scale);
+    return size > 1 ? { size, origin: renderer.pixelGrid.latticeOrigin(size) } : null;
+  }
+
+  function enlargedTarget(entry, width, height) {
+    if (entry.enlarged && (entry.enlarged.width !== width || entry.enlarged.height !== height)) {
+      renderer.context.deleteTexture(entry.enlarged.texture);
+      renderer.context.deleteFramebuffer(entry.enlarged.framebuffer);
+      entry.enlarged = null;
+    }
+    entry.enlarged ??= createTarget(renderer.context, width, height);
+    return entry.enlarged;
+  }
+
+  // Block j covers grid pixels j * size - origin up to the next block; the pass reads uv at the block centre and reports the block
+  // count as its resolution. Then each grid pixel takes its block again, into a grid-sized target or onto the canvas.
+  function drawBlockPass(entry, inputTexture, width, height, frame, block, toCanvas) {
+    const context = renderer.context;
+    const { size, origin } = block;
+    const columns = Math.ceil((width + origin[0]) / size);
+    const rows = Math.ceil((height + origin[1]) / size);
+    const target = targetFor(entry, columns, rows);
+    context.bindFramebuffer(context.FRAMEBUFFER, target.framebuffer);
+    // An even block has no middle pixel: its centre is a pixel edge, where nearest sampling could take either side, so it reads the
+    // pixel just before the centre.
+    const centring = size % 2 === 0 ? 0.5 : 0;
+    drawPass(entry, inputTexture, columns, rows, frame, {
+      uvScale: [columns * size / width, rows * size / height],
+      uvOffset: [-(origin[0] + centring) / width, -(origin[1] + centring) / height],
+      resolution: [width / size, height / size],
+    });
+    const output = toCanvas ? null : enlargedTarget(entry, width, height);
+    if (!state.enlarge) {
+      const program = compileProgram(context, fullscreenVertex, blockEnlargeFragment);
+      state.enlarge = { program, uniforms: Object.fromEntries(['sourceTexture', 'blockSize', 'blockOrigin'].map(name => [name, context.getUniformLocation(program, name)])) };
+    }
+    context.bindFramebuffer(context.FRAMEBUFFER, output?.framebuffer ?? null);
+    context.viewport(0, 0, width, height);
+    context.useProgram(state.enlarge.program);
+    context.activeTexture(context.TEXTURE0);
+    context.bindTexture(context.TEXTURE_2D, target.texture);
+    context.uniform1i(state.enlarge.uniforms.sourceTexture, 0);
+    context.uniform1f(state.enlarge.uniforms.blockSize, size);
+    context.uniform2fv(state.enlarge.uniforms.blockOrigin, origin);
+    context.drawArrays(context.TRIANGLES, 0, 3);
+    return output?.texture ?? null;
+  }
+
   function runPasses(frame) {
     const context = renderer.context;
     const { width, height } = renderer.canvas;
@@ -492,9 +564,18 @@ export function installUserPasses(renderer) {
     let input = captureFinishedFrame(width, height);
     let drewToCanvas = false;
     entries.forEach((entry, index) => {
-      const directToCanvas = index === entries.length - 1 && entry.pass.scale === 1 && !antialiasLast;
-      const passWidth = directToCanvas ? width : Math.max(1, Math.round(width * entry.pass.scale));
-      const passHeight = directToCanvas ? height : Math.max(1, Math.round(height * entry.pass.scale));
+      const isLast = index === entries.length - 1;
+      const block = gridBlock(entry.pass);
+      if (block) {
+        drewToCanvas = isLast && !antialiasLast;
+        input = drawBlockPass(entry, input, width, height, frame, block, drewToCanvas);
+        return;
+      }
+      // On the grid a pass that rounds to one pixel per block runs at the grid size.
+      const fullSize = entry.pass.scale === 1 || Boolean(renderer.pixelGrid?.active);
+      const directToCanvas = isLast && fullSize && !antialiasLast;
+      const passWidth = fullSize ? width : Math.max(1, Math.round(width * entry.pass.scale));
+      const passHeight = fullSize ? height : Math.max(1, Math.round(height * entry.pass.scale));
       const target = directToCanvas ? null : targetFor(entry, passWidth, passHeight);
       context.bindFramebuffer(context.FRAMEBUFFER, target?.framebuffer ?? null);
       drawPass(entry, input, passWidth, passHeight, frame);

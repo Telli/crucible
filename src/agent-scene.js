@@ -1208,7 +1208,11 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
   }
   if (Object.hasOwn(recipe, 'postPasses')) recipe.postPasses = agentSceneModule('userPass').normalizeUserPasses(recipe.postPasses ?? []);
   if (Object.hasOwn(recipe, 'postPassesAntialias')) recipe.postPassesAntialias = agentSceneModule('userPass').normalizePostPassesAntialias(recipe.postPassesAntialias);
-  if (Object.hasOwn(recipe, 'pixelGrid')) recipe.pixelGrid = agentSceneModule('pixelGrid').normalizePixelGrid(recipe.pixelGrid);
+  if (Object.hasOwn(recipe, 'pixelGrid')) {
+    // Cleared with null, the recipe reads as if it never had a grid, and the on-demand grid module is not needed.
+    if (recipe.pixelGrid === null) delete recipe.pixelGrid;
+    else recipe.pixelGrid = agentSceneModule('pixelGrid').normalizePixelGrid(recipe.pixelGrid);
+  }
   if (Object.hasOwn(recipe, 'game')) {
     if (recipe.game === null) delete recipe.game;
     else recipe.game = agentSceneModule('game').normalizeGameSetup(recipe.game, recipe.nodes);
@@ -1834,7 +1838,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       : NO_ASSETS;
     // Grown vegetation travels the placed-asset channel; its module returns the placed runtime with its own parts added.
     const plantedRuntime = recipe.nodes.some(node => node.vegetation)
-      ? agentSceneModule('vegetation').expandVegetation(recipe, limits, assetOutputCache, placedRuntime)
+      ? agentSceneModule('vegetation').expandVegetation(recipe, limits, assetOutputCache, placedRuntime, options.sequenceFrames)
       : placedRuntime;
     // Scattered clutter travels the same channel and adds its own parts after the trees.
     const assetRuntime = recipe.nodes.some(node => node.clutter)

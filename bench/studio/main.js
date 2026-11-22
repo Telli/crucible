@@ -5,7 +5,8 @@ import { createStudio } from '../../src/studio.js';
 import { createCatalogHooks } from './catalog-hooks.js';
 
 // ?catalog=<folder> names a same-origin folder that holds a scene's catalog files by the id the recipe uses:
-// <id>.glb, <id>.hdr and <id>.cube. ?scene=<file> opens a scene.json from the same origin.
+// <id>.glb, <id>.hdr, <id>.cube and <id>.png, .jpg or .webp. ?catalogStore=1 adds the Import command, which posts the file to that
+// folder. ?scene=<file> opens a scene.json from the same origin.
 // The bundled HDRIs and looks load from assets/looks with no folder.
 const SCENE_FILE_PATTERN = /^\/[\w\-./]+\.json$/;
 
@@ -27,9 +28,9 @@ function sceneFileUrl(value) {
   return url;
 }
 
-function catalogHooksFor(folderParameter) {
+function catalogHooksFor(folderParameter, storeParameter) {
   const folder = folderParameter ? sameOriginUrl(folderParameter.endsWith('/') ? folderParameter : `${folderParameter}/`) : null;
-  return createCatalogHooks(folder);
+  return createCatalogHooks(folder, undefined, { catalogStore: storeParameter === '1' });
 }
 
 // The first visit opens the setup. ?setup=off never does.
@@ -46,7 +47,7 @@ async function mountStudioPage() {
   }
   const parameters = new URLSearchParams(window.location.search);
   await loadAllAgentSceneModules();
-  const studio = createStudio(root, { catalog: catalogHooksFor(parameters.get('catalog')) });
+  const studio = createStudio(root, { catalog: catalogHooksFor(parameters.get('catalog'), parameters.get('catalogStore')) });
   studio.selectNode('cube');
   window.__studioPage = studio;
   const sceneParameter = parameters.get('scene');

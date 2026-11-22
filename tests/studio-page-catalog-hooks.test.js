@@ -54,3 +54,44 @@ test('an id with no catalog folder throws a message that names the fix', async (
   await assert.rejects(hooks.look(SCAN_ID), /no catalog folder.*\?catalog=<folder>/);
   assert.equal(hooks.asset, undefined);
 });
+
+function answers(statuses, log = []) {
+  return async (url, init = {}) => {
+    log.push({ url: String(url), init });
+    const answer = statuses[String(url).split('/').pop()] ?? statuses.default ?? 404;
+    const status = typeof answer === 'number' ? answer : 200;
+    return { ok: status === 200, status, arrayBuffer: async () => new ArrayBuffer(2), text: async () => (typeof answer === 'string' ? answer : '') };
+  };
+}
+
+test('the image hook tries .png, .jpg and .webp in that order and says when none exists', async () => {
+  const log = [];
+  const hooks = createCatalogHooks(FOLDER, answers({ [`${SCAN_ID}.webp`]: 200 }, log));
+  assert.equal((await hooks.image(SCAN_ID)).byteLength, 2);
+  assert.deepEqual(log.map(entry => entry.url), [`${FOLDER}${SCAN_ID}.png`, `${FOLDER}${SCAN_ID}.jpg`, `${FOLDER}${SCAN_ID}.webp`]);
+  await assert.rejects(createCatalogHooks(FOLDER, answers({})).image(SCAN_ID), /no \.png, \.jpg or \.webp file in the catalog folder/);
+  await assert.rejects(createCatalogHooks(FOLDER, answers({ default: 500 })).image(SCAN_ID), /\.png in the catalog folder is not available \(HTTP 500\)/);
+  assert.equal(createCatalogHooks(null, answers({})).image, undefined, 'images need the folder');
+});
+
+test('the name hook reads <id>.name and answers null for a file that is not there', async () => {
+  const hooks = createCatalogHooks(FOLDER, answers({ [`${SCAN_ID}.name`]: 'My Rock.glb' }));
+  assert.equal(await hooks.name(SCAN_ID), 'My Rock.glb');
+  assert.equal(await createCatalogHooks(FOLDER, answers({})).name(SCAN_ID), null);
+  await assert.rejects(createCatalogHooks(FOLDER, answers({ default: 500 })).name(SCAN_ID), /name of cdcdcdcdcdcd is not available \(HTTP 500\)/);
+});
+
+test('the store hook exists only with catalogStore, posts the raw bytes with the catalog headers and passes on the refusal text', async () => {
+  assert.equal(createCatalogHooks(FOLDER, answers({})).store, undefined);
+  assert.equal(createCatalogHooks(null, answers({}), { catalogStore: true }).store, undefined, 'a store needs the folder to post to');
+  const log = [];
+  const hooks = createCatalogHooks(FOLDER, answers({ default: 'stored' }, log), { catalogStore: true });
+  const bytes = new Uint8Array([1, 2, 3]);
+  await hooks.store({ kind: 'asset', id: SCAN_ID, name: 'Rock é.glb', extension: 'glb', bytes });
+  assert.equal(log[0].url, String(FOLDER));
+  assert.equal(log[0].init.method, 'POST');
+  assert.equal(log[0].init.body, bytes);
+  assert.deepEqual(log[0].init.headers, { 'x-catalog-kind': 'asset', 'x-catalog-id': SCAN_ID, 'x-catalog-extension': 'glb', 'x-catalog-name': 'Rock%20%C3%A9.glb' });
+  const refusing = async () => ({ ok: false, status: 409, text: async () => 'Save the scene first.' });
+  await assert.rejects(createCatalogHooks(FOLDER, refusing, { catalogStore: true }).store({ kind: 'image', id: SCAN_ID, name: 'a.png', extension: 'png', bytes }), error => error.message === 'Save the scene first.');
+});

@@ -214,14 +214,15 @@ export function createLeafFrame(forward, roll) {
  * normals blended toward the canopy so a flat quad lights like part of a rounded crown.
  */
 export function addLeafSurface(builder, surface) {
-  const { origin, frame, length, width, rows, droop = 0, fold = 0, canopyNormal, canopyBlend = 0.5, colorBase, colorTip, brightness = 1 } = surface;
+  const { origin, frame, length, width, rows, droop = 0, fold = 0, canopyNormal, canopyBlend = 0.5, colorBase, colorTip, brightness = 1, tint, colorCeiling = Infinity } = surface;
   const columns = fold > 0 ? [-1, 0, 1] : [-1, 1];
   const sides = surface.backFaces === false ? [1] : [1, -1];
   const rowIndicesBySide = sides.map((side) => rows.map(([progress, widthFactor]) => {
     const center = addScaled(addScaled(origin, frame.forward, length * progress), frame.normal, -droop * length * progress * progress);
     const half = width / 2 * widthFactor;
     const forwardTilt = 2 * droop * progress;
-    const color = colorBase ? lerpVectors(colorBase, colorTip ?? colorBase, progress).map(channel => channel * brightness) : [brightness, brightness, brightness];
+    const shade = colorBase ? lerpVectors(colorBase, colorTip ?? colorBase, progress).map(channel => channel * brightness) : [brightness, brightness, brightness];
+    const color = tint ? shade.map((channel, index) => Math.min(colorCeiling, channel * tint[index])) : shade;
     const makeVertex = (column) => {
       const lateralTilt = column * fold;
       const faceNormal = scaleVector(lobeNormal(forwardTilt, lateralTilt, frame.normal, frame.forward, frame.right), side);
