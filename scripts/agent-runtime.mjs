@@ -80,9 +80,16 @@ import { realismReport, reviewTilingFindings } from './review-realism.mjs';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
-const LOOK_STEP_SCALE = 0.75;
+// A PNG grows about with its pixel count, so the retry aims at the budget (with 10 percent to spare) instead of stepping a fixed 0.75: a 1024x640 look that is 1.3 MiB comes back at about 870 wide, not 768 (#3056).
+const LOOK_BUDGET_SPARE = 0.9;
+const LOOK_LARGEST_STEP_SCALE = 0.9;
+const LOOK_SMALLEST_STEP_SCALE = 0.5;
 const LOOK_MAXIMUM_STEP_DOWNS = 4;
 const LOOK_MINIMUM_SIDE = 64;
+function lookStepScale(encodedBytes) {
+  const aimed = Math.sqrt((MAXIMUM_IMAGE_BYTES * LOOK_BUDGET_SPARE) / encodedBytes);
+  return Math.min(LOOK_LARGEST_STEP_SCALE, Math.max(LOOK_SMALLEST_STEP_SCALE, aimed));
+}
 const MAXIMUM_MOTION_SOURCES = 4;
 // A path trace shares the machine with the person using it, so it takes half of the eight-thread ceiling.
 const PATH_TRACER_THREADS = 8;
@@ -1507,16 +1514,19 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           if (step === LOOK_MAXIMUM_STEP_DOWNS) {
             throw new Error(`The PNG exceeds the 1 MiB image response budget even at ${stepWidth}x${stepHeight}. Simplify the scene's high-frequency textures or request a smaller preview.`);
           }
-          stepWidth = Math.max(LOOK_MINIMUM_SIDE, Math.floor(stepWidth * LOOK_STEP_SCALE));
-          stepHeight = Math.max(LOOK_MINIMUM_SIDE, Math.floor(stepHeight * LOOK_STEP_SCALE));
+          const stepScale = lookStepScale(Buffer.byteLength(result.data, 'base64'));
+          stepWidth = Math.max(LOOK_MINIMUM_SIDE, Math.floor(stepWidth * stepScale));
+          stepHeight = Math.max(LOOK_MINIMUM_SIDE, Math.floor(stepHeight * stepScale));
         }
         result.metadata.requestedWidth = width;
         result.metadata.requestedHeight = height;
         result.metadata.backend = backend;
-        if (stepWidth !== width || stepHeight !== height) {
+        const capped = stepWidth !== width || stepHeight !== height;
+        result.metadata.size = { requested: { width, height }, returned: { width: stepWidth, height: stepHeight }, capped, maximumBytes: MAXIMUM_IMAGE_BYTES };
+        if (capped) {
           result.metadata.returnedWidth = stepWidth;
           result.metadata.returnedHeight = stepHeight;
-          result.metadata.note = `The ${width}x${height} PNG was over the 1 MiB image response budget, so this is the ${stepWidth}x${stepHeight} render. Request that size or smaller to skip the retry.`;
+          result.metadata.note = `The ${width}x${height} PNG was over the 1 MiB image response budget, so this is the ${stepWidth}x${stepHeight} render. Request that size or smaller to skip the retry; the PNG limit is bytes, so a calmer scene keeps more pixels.`;
         }
         return result;
       }));
