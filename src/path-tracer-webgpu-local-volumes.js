@@ -377,7 +377,7 @@ fn localSkyLight(volume: i32, point: vec3<f32>) -> vec3<f32> {
 fn localScatteredLight(volume: i32, point: vec3<f32>, width: f32) -> vec3<f32> {
   var lightSum = localSkyLight(volume, point);
   let sunDirection = params.sunDirection.xyz;
-  if (params.emittersFlagsSample.y == 1 && !occluded(point, sunDirection, params.environmentRotationAndRays.w)) {
+  if (params.emittersFlagsSample.y == 1 && !occluded(point, sunDirection, params.environmentRotationAndRays.w, -1)) {
     let flattened = normalize(vec3<f32>(sunDirection.x, sunDirection.y * LOCAL_VOLUME_SUN_FLATTEN, sunDirection.z));
     let sunDepth = localOpticalDepth(volume, point, flattened, 3);
     let phase = henyeyGreensteinPhase(localVolumeTexel(volume, 4).z, dot(sunDirection, direction));

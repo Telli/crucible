@@ -1,6 +1,6 @@
 import { registerShaderFeatureCode } from './shader-registry.js';
 
-// The GLSL of the lighting and auxiliary render passes (modes 6 to 18 of renderPassMode, see RENDER_PASS_MODES), spliced into
+// The GLSL of the lighting and auxiliary render passes (modes 6 to 21 of renderPassMode, see RENDER_PASS_MODES), spliced into
 // the main fragment shader by the `lightingPass` feature. render-passes.js imports this file, so only a renderer that installs
 // render passes carries it, and only a frame that asks for one of these passes compiles it in.
 registerShaderFeatureCode('lightingPass', {
@@ -24,6 +24,12 @@ float cryptoHash(float id) {
   h ^= h >> 13u;
   return float((h % 255u) + 1u) / 255.0;
 }
+`,
+  // The lighting view (mode 21) is the diffuse light on a white, non-metal surface: no albedo, texture or metal tint.
+  worldSurface: `  if (renderPassMode > 20.5) {
+    color = vec3(1.0);
+    metallic = 0.0;
+  }
 `,
   illuminateSpecular: '  if (USES_LIGHTING_PASS) glossyLight += specular * radiance * normalLight;\n',
   probeReflection: `  if (USES_LIGHTING_PASS && ENVIRONMENT_ENABLED) {
@@ -59,7 +65,10 @@ float cryptoHash(float id) {
       : renderPassMode < 15.5 ? passVolumeColor * (1.0 - exp(-length(worldPosition - eye) * passVolumeDensity)) * exposure
       : renderPassMode < 16.5 ? environmentLight * exposure
       : renderPassMode < 17.5 ? vec3(cryptoHash(renderPassObjectBase + instanceEmission.w + 1.0), cryptoHash(passMaterialIds[min(instanceIndex, 31)]), 1.0)
-      : passMaterialAov * auxSample.rgb;
+      : renderPassMode < 18.5 ? passMaterialAov * auxSample.rgb
+      : renderPassMode < 19.5 ? vec3(roughness)
+      : renderPassMode < 20.5 ? vec3(metallic)
+      : (radiance - glossyLight - emission) * exposure;
     outputColor = vec4(passValue, 1.0);
     return;
   }

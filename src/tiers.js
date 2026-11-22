@@ -1,5 +1,5 @@
+import './site-chrome.js';
 import './site.css';
-import './brand.js';
 import './tiers.css';
 import data from '../bench/tiers/results/tier-page-lit-interior.json';
 import { describeConditions, describeTier } from './tiers-model.js';

@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 
 async function startServer(port) {
   const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -33,6 +33,9 @@ async function drawFrames(page) {
     const { installRenderPasses } = await import('/src/render-passes.js');
     const { readFloatPixels } = await import('/src/float-output.js');
     const canvas = document.createElement('canvas');
+    // The renderer sizes its frame from the canvas's CSS box. The test pins that box so that the frame does not depend on a page's style.
+    canvas.style.width = '320px';
+    canvas.style.height = '320px';
     canvas.width = 64;
     canvas.height = 64;
     document.body.append(canvas);
@@ -109,7 +112,7 @@ test('diffuse + glossy + emission match the beauty frame, and auxiliary passes r
       return;
     }
     const page = await browser.newPage({ viewport: { width: 64, height: 64 } });
-    await page.goto(`http://127.0.0.1:${port}/`, { timeout: 60000 });
+    await openBlankPage(page, port);
     const { beauty, passes, movedVelocity, manifest, transmission, size: SIZE } = await drawFrames(page);
     let compared = 0;
     let totalError = 0;

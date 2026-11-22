@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { encodePng } from '../src/export-png.js';
 import { applyViewTransform } from '../src/view-transform.js';
 import { encodeVolumeGrid } from '../src/volume-grid.js';
@@ -125,7 +125,7 @@ test('linear output of a glowing grid volume passes 1 and matches the display fr
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const { display, linear, displayAgain, explicitOff, withoutTarget, glError } = await renderBothWays(page);
     if (process.env.LINEAR_OUTPUT_ARTIFACTS) {
       mkdirSync(process.env.LINEAR_OUTPUT_ARTIFACTS, { recursive: true });

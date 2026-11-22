@@ -13,7 +13,7 @@ setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 const assetsDirectory = resolve('artifacts/apply-first-asset-assets');
 await rm(assetsDirectory, { recursive: true, force: true });
 await mkdir(assetsDirectory, { recursive: true });
-await writeFile(resolve(assetsDirectory, 'robot.glb'), await readFile('public/wall-e.glb'));
+await writeFile(resolve(assetsDirectory, 'robot.glb'), await readFile('public/sample-model.glb'));
 
 const transport = new StdioClientTransport({
   command: process.execPath,

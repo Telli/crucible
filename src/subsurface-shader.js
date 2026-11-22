@@ -18,9 +18,12 @@ import { validateSubsurface, subsurfaceUniformValues } from './subsurface-limits
 const REFERENCE_LENGTH = '0.1';
 const BACK_TRANSLUCENCY = '1.0';
 
+// The colour shader already declares lightProjection when it computes the shadow coordinate per fragment (#2945).
 const SUBSURFACE_DECLARATIONS = `uniform vec4 materialSubsurface;
 uniform vec3 materialSubsurfaceColor;
+#ifndef SHADOW_IN_FRAGMENT
 uniform mat4 lightProjection;
+#endif
 `;
 
 const SUBSURFACE_LIBRARIES = `float sunThickness(float reference) {

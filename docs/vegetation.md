@@ -115,7 +115,7 @@ A level changes only after the distance passes its threshold by `hysteresis` (de
 It returns `{ parts, changed, levelCounts, culled, triangles }`. Part objects are cached per instance and level, so unchanged instances keep their identity.
 When `changed` is true, build a new renderer from the new parts. Grass switches at 24 m; set `cullDistance` to drop far instances.
 
-`vegetationParts(variant, matrix, level, name)` places one tree or clump yourself.
+`vegetationParts(variant, matrix, level, name)` places one tree or clump yourself. The crown sky field needs finite vertex positions: a missing list or a NaN or Infinity vertex is refused with a `RangeError` that names the fix. An empty list passed to `visibilityOf` still returns an empty visibility array.
 
 ## Recipes and MCP
 

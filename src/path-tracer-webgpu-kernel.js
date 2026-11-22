@@ -85,6 +85,8 @@ struct Params {
   volumeMinimumDensity: vec4<f32>,
   volumeMaximumAnisotropy: vec4<f32>,
   volumeAlbedoDistance: vec4<f32>,
+  // The flat colour a camera ray sees where it escapes the scene (#2016); w is 1 when environment.world is false, else 0.
+  cameraBackground: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -338,6 +340,8 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
     hitRoughness *= texel.g;
     hitMetallic *= texel.b;
   }
+  // A metal does not transmit: only the dielectric share of the surface lets light through (#2827).
+  hitTransmission *= 1.0 - hitMetallic;
   let normalRectangle = materials[material + 7];
   if (normalRectangle.z > 0.0) {
     let normalOnSecondSet = mapReadsSecondUvSet(flagsTwo.z, 2);
@@ -398,7 +402,8 @@ fn alphaAtNearestHit() -> f32 {
   return sampleAtlas(mapRectangle, materials[material + 4].y, uv).a;
 }
 
-fn occluded(origin: vec3<f32>, direction: vec3<f32>, limit: f32) -> bool {
+// lightBit is the point light whose shadow ray this is (-1 for the sun and other rays): the glowing bulb around that light does not block it.
+fn occluded(origin: vec3<f32>, direction: vec3<f32>, limit: f32, lightBit: i32) -> bool {
   var start = origin;
   var remaining = limit;
   let surfaceOffset = params.environmentRotationAndRays.z;
@@ -408,9 +413,9 @@ fn occluded(origin: vec3<f32>, direction: vec3<f32>, limit: f32) -> bool {
     traceRay(start, direction, remaining, anyHit);
     if (nearestSlot < 0) { return false; }
     let material = ${instanced ? NEAREST_MATERIAL : FLAT_NEAREST_MATERIAL} * MATERIAL_TEXELS;
+    let ownLamp = lightBit >= 0 && ((i32(materials[material + 5].w) >> u32(lightBit)) & 1) == 1;
     let cutoff = materials[material + 3].z;
-    if (cutoff == 0.0) { return true; }
-    if (alphaAtNearestHit() >= cutoff) { return true; }
+    if (!ownLamp && (cutoff == 0.0 || alphaAtNearestHit() >= cutoff)) { return true; }
     if (anyHit) {
       anyHit = false;
       continue;
@@ -864,6 +869,7 @@ fn directWeight(mode: i32, candidatePdf: f32) -> f32 {
 var<private> shadowOrigin: vec3<f32>;
 var<private> shadowDirection: vec3<f32>;
 var<private> shadowLimit: f32;
+var<private> shadowLightBit: i32 = -1;
 var<private> shadowAmount: vec3<f32>;
 var<private> shadowDepth: i32;
 var<private> shadowPending: bool = false;
@@ -897,7 +903,7 @@ ${hasLocalVolumes ? buildLocalVolumeFunctions({ hasGrid: hasGridVolume, hasNoise
 fn flushShadowRay() {
   if (!shadowPending) { return; }
   shadowPending = false;
-  if (!occluded(shadowOrigin, shadowDirection, shadowLimit)) { addRadiance(shadowDepth, shadowAmount); }
+  if (!occluded(shadowOrigin, shadowDirection, shadowLimit, shadowLightBit)) { addRadiance(shadowDepth, shadowAmount); }
 }
 
 fn reaches(bit: i32) -> bool {
@@ -1039,6 +1045,7 @@ fn lightsFromEveryEmitter(depth: i32, emitterCount: i32) -> bool {
 fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
   var distance = 0.0;
   var weightMode = 0;
+  shadowLightBit = -1;
   let hasSun = params.emittersFlagsSample.y != 0;
   let lightCount = params.sizeBouncesLights.w;
   if (hasSun && emitter == 0) {
@@ -1074,6 +1081,7 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
         distance = aimAt(positionType.xyz + jitter);
         if (distance < 1e-6) { return; }
         var mask = 1.0;
+        if (lightType == 0) { shadowLightBit = i32(colorBit.w); }
         if (lightType == 1) {
           let inside = -dot(directionRadius.xyz, lightDirection) - acrossCone.w;
           if (inside <= 0.0) { return; }
@@ -1108,7 +1116,13 @@ fn sampleEmitter(depth: i32, normal: vec3<f32>, emitter: i32) {
   addDirect(depth, normal, distance, weightMode);
 }
 
-fn addEscape(depth: i32, previousPdf: f32, afterMirror: bool, rayOrigin: vec3<f32>) {
+// A ray that has only gone straight on or through glass is a camera ray: with world false it sees the flat background the
+// rasterizer clears to, and the map keeps lighting the scene through every other escape (#2016).
+fn addEscape(depth: i32, previousPdf: f32, afterMirror: bool, rayOrigin: vec3<f32>, isCameraRay: bool) {
+  if (isCameraRay && params.cameraBackground.w > 0.0) {
+    addRadiance(depth, throughput * params.cameraBackground.xyz);
+    return;
+  }
   if (params.emittersFlagsSample.z == 0) { return; }
   let sky = environmentRadiance(direction);
   var weight = 1.0;
@@ -1232,6 +1246,7 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
   var previousPdf = 0.0;
   pathMinimumPdf = 1e30;
   var afterMirror = true;
+  var isCameraRay = cameraRays;
   var normal = vec3<f32>(0.0, 1.0, 0.0);
   let bounces = params.sizeBouncesLights.z;
   let surfaceOffset = params.environmentRotationAndRays.z;
@@ -1241,7 +1256,7 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
     ${hasLocalVolumes ? `crossLocalVolumes(depth, position, select(select(params.environmentRotationAndRays.w, hitDistance, found), distance(position, hitPoint), inFog));` : ''}
     if (!inFog && !found) {
       if (depth == 0) { firstLegEscaped = 1.0; }
-      addEscape(depth, previousPdf, afterMirror, position);
+      addEscape(depth, previousPdf, afterMirror, position, isCameraRay);
       break;
     }
     var isGlass = false;
@@ -1279,6 +1294,7 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
       direction = frame[0] * phaseSine * cos(azimuth) + frame[1] * phaseSine * sin(azimuth) + frame[2] * phaseCosine;
       previousPdf = henyeyGreensteinPhase(params.volumeMaximumAnisotropy.w, phaseCosine);
       afterMirror = false;
+      isCameraRay = false;
       position = hitPoint;
       if (!survivesRoulette(depth)) { break; }
       continue;
@@ -1290,9 +1306,10 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
       let secondUnit = nextRandom();
       if (!sampleGlass(normal, -direction, entering, hitIor, alpha, selectionUnit, firstUnit, secondUnit)) { break; }
       direction = sampledDirection;
-      if (dot(direction, normal) < 0.0) { throughput *= hitColor; }
+      if (dot(direction, normal) < 0.0) { throughput *= hitColor; } else { isCameraRay = false; }
       afterMirror = true;
     } else {
+      isCameraRay = false;
       var lobeUnit = nextRandom();
       ${hasSubsurface ? `if (subsurfaceWeight > 0.0) {
         if (lobeUnit < surfaceSubsurfaceChance) {
@@ -1348,6 +1365,8 @@ const FLAG_ALIVE: u32 = 1u;
 const FLAG_AFTER_MIRROR: u32 = 2u;
 const FLAG_HIT: u32 = 4u;
 const FLAG_SHADED: u32 = 8u;
+// Set while the path has only gone straight on or through glass from the camera (#2016).
+const FLAG_CAMERA: u32 = 16u;
 
 fn loadVector(index: u32) -> vec4<f32> {
   return bitcast<vec4<f32>>(pathState[index]);
@@ -1384,7 +1403,7 @@ fn storeShadowRecord(path: u32, slot: u32) {
   let base = shadowRecordBase(path, slot);
   if (shadowPending) {
     storeVector(base, vec4<f32>(shadowOrigin, shadowLimit));
-    storeVector(base + 1u, vec4<f32>(shadowDirection, 0.0));
+    storeVector(base + 1u, vec4<f32>(shadowDirection, f32(shadowLightBit)));
     storeVector(base + 2u, vec4<f32>(shadowAmount, 1.0));
   } else {
     storeVector(base + 2u, vec4<f32>(0.0));
@@ -1432,7 +1451,7 @@ fn generatePaths(@builtin(global_invocation_id) id: vec3<u32>) {
   storeVector(base + 3u, vec4<f32>(0.0));
   storeVector(base + 4u, vec4<f32>(1.0, 1.0, 1.0, 0.0));
   storeVector(base + 5u, vec4<f32>(0.0, 0.0, 1.0, 0.0));
-  pathState[base + 8u] = vec4<u32>(rngState, FLAG_ALIVE | FLAG_AFTER_MIRROR, 0u, 0u);
+  pathState[base + 8u] = vec4<u32>(rngState, FLAG_ALIVE | FLAG_AFTER_MIRROR | FLAG_CAMERA, 0u, 0u);
 }
 
 @compute @workgroup_size(${WAVEFRONT_WORKGROUP_SIZE})
@@ -1487,7 +1506,7 @@ fn extendPaths(@builtin(global_invocation_id) id: vec3<u32>) {
   throughput = loadVector(base + 2u).xyz;
   radiance = radianceData.xyz;
   selectionProbability = directionSelection.w;
-  addEscape(currentDepth(), originPrevious.w, (flags & FLAG_AFTER_MIRROR) != 0u, originPrevious.xyz);
+  addEscape(currentDepth(), originPrevious.w, (flags & FLAG_AFTER_MIRROR) != 0u, originPrevious.xyz, (flags & FLAG_CAMERA) != 0u);
   storeVector(base + 3u, vec4<f32>(radiance, radianceData.w));
   pathMeta.y = flags & ~(FLAG_ALIVE | FLAG_HIT);
   pathState[base + 8u] = pathMeta;
@@ -1580,6 +1599,7 @@ fn shadePaths(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   var alive = depth < params.sizeBouncesLights.z;
   var afterMirror = (pathMeta.y & FLAG_AFTER_MIRROR) != 0u;
+  var isCameraRay = (pathMeta.y & FLAG_CAMERA) != 0u;
   var previousPdf = originPrevious.w;
   if (alive && isGlass) {
     let alpha = roughnessToAlpha(hitRoughness);
@@ -1588,12 +1608,13 @@ fn shadePaths(@builtin(global_invocation_id) id: vec3<u32>) {
     let secondUnit = nextRandom();
     if (sampleGlass(normal, -direction, entering, hitIor, alpha, selectionUnit, firstUnit, secondUnit)) {
       direction = sampledDirection;
-      if (dot(direction, normal) < 0.0) { throughput *= hitColor; }
+      if (dot(direction, normal) < 0.0) { throughput *= hitColor; } else { isCameraRay = false; }
       afterMirror = true;
     } else {
       alive = false;
     }
   } else if (alive) {
+    isCameraRay = false;
     let lobeUnit = nextRandom();
     let firstUnit = nextRandom();
     let secondUnit = nextRandom();
@@ -1627,7 +1648,7 @@ fn shadePaths(@builtin(global_invocation_id) id: vec3<u32>) {
   storeVector(base + 2u, vec4<f32>(throughput, pathMinimumPdf));
   storeVector(base + 3u, vec4<f32>(radiance, radianceData.w));
   pathMeta.x = rngState;
-  pathMeta.y = select(0u, FLAG_ALIVE, alive) | select(0u, FLAG_AFTER_MIRROR, afterMirror) | FLAG_SHADED;
+  pathMeta.y = select(0u, FLAG_ALIVE, alive) | select(0u, FLAG_AFTER_MIRROR, afterMirror) | select(0u, FLAG_CAMERA, isCameraRay) | FLAG_SHADED;
   pathState[base + 8u] = pathMeta;
 }
 
@@ -1652,7 +1673,8 @@ fn shadowPaths(@builtin(global_invocation_id) id: vec3<u32>) {
     if (amount.w == 0.0) { continue; }
     let origin = loadVector(recordBase);
     let rayDirection = loadVector(recordBase + 1u).xyz;
-    if (!occluded(origin.xyz, rayDirection, origin.w)) { addRadiance(depth, amount.xyz); }
+    let recordLightBit = i32(loadVector(recordBase + 1u).w);
+    if (!occluded(origin.xyz, rayDirection, origin.w, recordLightBit)) { addRadiance(depth, amount.xyz); }
   }
   storeVector(base + 3u, vec4<f32>(radiance, radianceData.w));
 }

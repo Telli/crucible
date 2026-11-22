@@ -26,7 +26,7 @@ export const MODIFIER_OPERATIONS = /* @__PURE__ */ Object.freeze({
   bounding_box: { fields: [], tags: [] },
   convex_hull: { fields: [], tags: [] },
   build: { fields: ['order', 'axis', 'seed', 'frame', 'start', 'length', 'reverse'], tags: [] },
-  ocean: { fields: ['axis', 'windSpeed', 'direction', 'choppiness', 'size', 'seed', 'time', 'resolution', 'wake', 'spray'], tags: [] },
+  ocean: { fields: ['axis', 'windSpeed', 'direction', 'choppiness', 'size', 'seed', 'time', 'resolution', 'coverage', 'foamMemory', 'wake', 'spray'], tags: [] },
 });
 
 export const MESH_EDIT_OPERATIONS = /* @__PURE__ */ Object.freeze({
@@ -72,7 +72,7 @@ export const MESH_EDIT_OPERATIONS = /* @__PURE__ */ Object.freeze({
   unsubdivide: { fields: [], tags: [] },
   circularize: { fields: ['verts', 'factor', 'regular'], tags: [] },
   set_position: { fields: ['select', 'position', 'offset'], tags: [] },
-  displace: { fields: ['select', 'field', 'strength', 'midlevel', 'direction', 'group'], tags: [] },
+  displace: { fields: ['select', 'field', 'source', 'strength', 'midlevel', 'direction', 'group'], tags: [] },
   vertex_group: { fields: ['select', 'name', 'weight', 'field', 'gradient', 'measure', 'gain', 'angle', 'rays', 'distance', 'seed'], tags: [] },
   vertex_color: { fields: ['select', 'color', 'field', 'gradient'], tags: [] },
   decimate: { fields: ['ratio'], tags: [] },

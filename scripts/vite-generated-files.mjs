@@ -14,7 +14,7 @@ function currentCommit(root) {
   return /^[a-f0-9]{40}$/.test(commit) ? commit : '0000000000000000000000000000000000000000';
 }
 
-// The release metadata src/home.js reads, for a checkout that never ran `npm run prepare:release`. It names the version in
+// The release metadata src/landing.js reads, for a checkout that never ran `npm run prepare:release`. It names the version in
 // package.json and the commit checked out; the download links point where prepare:release would put the files.
 export function devRelease({ packageJson, commit }) {
   const { name, version } = packageJson;

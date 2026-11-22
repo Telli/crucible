@@ -33,6 +33,9 @@ async function call(client, name, argumentsValue) {
   return result.structuredContent;
 }
 
+// The tests read the exported recipe, not the picture, so the preview is drawn small: the software renderer on a CI runner costs time by the pixel (#2779).
+const SMALL_LOOK = { width: 256, height: 170 };
+
 const recipe = {
   format: 'crucible.scene', schemaVersion: 1,
   geometries: [{ id: 'box', type: 'box' }],
@@ -44,11 +47,11 @@ const recipe = {
 test('scene_look draws a blast added by scene_apply, and the exported recipe is created fresh', { timeout: 240000 }, async context => {
   const client = await startServer(context);
   const created = await call(client, 'scene_create', { recipe });
-  await call(client, 'scene_look', {});
+  await call(client, 'scene_look', SMALL_LOOK);
   const applied = await call(client, 'scene_apply', { sessionId: created.sessionId, expectedRevision: created.revision, operations: [{ type: 'add-explosion', id: 'blast', center: [0, 0, 0], size: 2 }] });
   assert.ok(applied.revision > created.revision);
   for (const motionTime of [0, 0.3, 1.5]) {
-    await call(client, 'scene_look', { sessionId: created.sessionId, motionTime });
+    await call(client, 'scene_look', { sessionId: created.sessionId, motionTime, ...SMALL_LOOK });
   }
   const exported = await call(client, 'scene_export_recipe', { sessionId: created.sessionId });
   const exportedRecipe = exported.recipe ?? exported;
@@ -65,7 +68,7 @@ test('sparks and motionBlur options go through scene_apply, and the exported rec
   const created = await call(client, 'scene_create', { recipe });
   const operation = { type: 'add-explosion', id: 'blast', center: [0, 0, 0], size: 2, sparks: { count: 50, lifetime: [0.5, 1] }, motionBlur: false };
   await call(client, 'scene_apply', { sessionId: created.sessionId, expectedRevision: created.revision, operations: [operation] });
-  await call(client, 'scene_look', { sessionId: created.sessionId, motionTime: 0.5 });
+  await call(client, 'scene_look', { sessionId: created.sessionId, motionTime: 0.5, ...SMALL_LOOK });
   const exported = await call(client, 'scene_export_recipe', { sessionId: created.sessionId });
   const exportedRecipe = exported.recipe ?? exported;
   const [sparks] = exportedRecipe.particles.systems;
@@ -79,7 +82,7 @@ test('the default blast sends velocity grids and an exported recipe with them is
   const client = await startServer(context);
   const created = await call(client, 'scene_create', { recipe });
   await call(client, 'scene_apply', { sessionId: created.sessionId, expectedRevision: created.revision, operations: [{ type: 'add-explosion', id: 'blast', center: [0, 0, 0], size: 2 }] });
-  await call(client, 'scene_look', { sessionId: created.sessionId, motionTime: 0.3 });
+  await call(client, 'scene_look', { sessionId: created.sessionId, motionTime: 0.3, ...SMALL_LOOK });
   const exported = await call(client, 'scene_export_recipe', { sessionId: created.sessionId });
   const exportedRecipe = exported.recipe ?? exported;
   assert.ok(exportedRecipe.environment.localVolumes[0].frames.every(name => name.includes('velocity')));

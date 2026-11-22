@@ -13,6 +13,7 @@ export const RENDER_PASS_MODES = Object.freeze({
   albedo: 1, normal: 2, emission: 3, depth: 4, objectId: 5,
   diffuse: 6, glossy: 7, shadow: 8, ao: 9, mist: 10,
   position: 11, velocity: 12, uv: 13, transmission: 14, volume: 15, environment: 16, cryptomatte: 17, aov: 18,
+  roughness: 19, metallic: 20, lighting: 21,
 });
 // Passes drawn as another pass and then finished by their own addon: wireframe is the diffuse pass with polygon edges over it (wireframe-pass.js).
 const COMPOSED_PASSES = Object.freeze({ wireframe: 'diffuse' });
@@ -171,7 +172,7 @@ export function installRenderPasses(renderer) {
 
   // Part names by object ID minus one, in the order the object ID pass numbers them (draw order, grouped by geometry).
   function objectParts() {
-    return renderer.batches.filter(batch => renderer.drawsInOpaqueLoop(batch)).flatMap(batch => batch.parts);
+    return renderer.batches.filter(batch => renderer.takesObjectIds(batch)).flatMap(batch => batch.parts);
   }
 
   function objectNames() {
@@ -194,7 +195,7 @@ export function installRenderPasses(renderer) {
   function materialTable() {
     const table = new Map();
     for (const batch of renderer.batches) {
-      if (!renderer.drawsInOpaqueLoop(batch)) continue;
+      if (!renderer.takesObjectIds(batch)) continue;
       for (const part of batch.parts) {
         const material = part.material;
         const key = material.id ?? material.name ?? material;

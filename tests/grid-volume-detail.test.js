@@ -5,7 +5,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { encodeVolumeGrid } from '../src/volume-grid.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes } from '../src/local-volumes.js';
 import { describeIgnoredFeatures } from '../src/path-tracer.js';
@@ -129,7 +129,7 @@ test('the rasterizer breaks a constant grid into detail around the same mean, an
       return;
     }
     const page = await browser.newPage({ viewport: { width: 64, height: 64 } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const cells = 32 * 32 * 32;
     const bytes = Array.from(encodeVolumeGrid({ resolution: [32, 32, 32], channels: { density: new Float32Array(cells).fill(1) } }));
     const flat = await drawSpread(page, bytes, {});

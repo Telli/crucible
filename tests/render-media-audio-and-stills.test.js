@@ -101,6 +101,26 @@ test('a rendered audio length that differs from the picture fails the render', {
   }
 });
 
+test('a page-encoded H.264 clip longer than 50 frames keeps its length and evenly spaced frame times (#2759)', { skip: !ffmpegAvailable }, async () => {
+  const frameCount = 72;
+  const fps = 24;
+  const directory = await mkdtemp(join(tmpdir(), 'crucible-2759-'));
+  try {
+    const output = join(directory, 'long.mp4');
+    const encoder = createFrameEncoder({ output, fps, format: 'h264', frameCount });
+    encoder.writeChunk(await readFile(new URL('./fixtures/page-encoder-72-frames-24fps.h264', import.meta.url)));
+    await encoder.finish();
+    await encoder.close();
+    const probe = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'packet=pts_time', '-of', 'csv=p=0', output]);
+    const times = String(probe.stdout).trim().split(/\r?\n/).map(Number);
+    assert.equal(times.length, frameCount);
+    times.forEach((time, index) => assert.ok(Math.abs(time - index / fps) < 0.001, `frame ${index} is at ${time}`));
+    assert.ok(Math.abs(await measureStreamSeconds('ffmpeg', output, 'video') - frameCount / fps) < 0.01);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('stills are distinct files frame-0 to frame-7 beside --output, however short the duration', () => {
   const names = stillPaths(join('out', 's.png'), 8, 'png');
   assert.equal(new Set(names).size, 8);

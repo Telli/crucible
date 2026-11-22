@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { freePort } from './helpers/free-port.js';
-import { launchChrome, skipOrThrow } from './helpers/dev-server-browser.js';
+import { launchChrome, skipOrThrow, openBlankPage } from './helpers/dev-server-browser.js';
 import { renderPathTracedImage } from '../src/path-tracer.js';
 import { applyViewTransform } from '../src/view-transform.js';
 import { resolveLocalVolumes, createLocalVolumeBuffers, packLocalVolumes, LOCAL_VOLUME_BLUR_PIXELS } from '../src/local-volumes.js';
@@ -173,7 +173,7 @@ test('density is extinction per metre: a slab of density d and thickness t lets 
       return;
     }
     const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await openBlankPage(page, port);
     const numbers = {};
     const plain = await drawRaster(page, [], []);
     const blackBar = { size: [0.3, 0.2, 6], center: [0, 0.1, 0] };

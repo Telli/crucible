@@ -51,7 +51,7 @@ Scenes built with Crucible open live in the browser on the [showcase](https://cr
   <a href="https://crucible.codepawl.com/showcase.html?scene=airport"><img src="https://crucible.codepawl.com/previews/showcase-airport.webp" alt="Airport ramp, rendered by Crucible" width="49%"></a>
   <a href="https://crucible.codepawl.com/showcase.html?scene=port"><img src="https://crucible.codepawl.com/previews/showcase-port.webp" alt="Container port, rendered by Crucible" width="49%"></a>
   <a href="https://crucible.codepawl.com/showcase.html"><img src="https://crucible.codepawl.com/previews/cook-monk.webp" alt="A monastery courtyard with a stone well, seen from a desk with an open book, path traced by Cook" width="49%"></a>
-  <a href="https://crucible.codepawl.com/object.html"><img src="https://crucible.codepawl.com/previews/wall-e.webp" alt="A robot model in the object studio, rendered by Crucible" width="49%"></a>
+  <a href="https://crucible.codepawl.com/showcase.html"><img src="https://crucible.codepawl.com/previews/cook-pabellon.webp" alt="A glass pavilion with a travertine wall behind a shallow pool of pebbles, path traced by Cook" width="49%"></a>
 </p>
 
 The pictures above are rebuilt from the current code with `node scripts/render-readme-previews.mjs` (add names to rebuild some, `--preview <folder>` for small test renders; [guide](https://github.com/codepawl/crucible/blob/main/docs/readme-previews.md)).
