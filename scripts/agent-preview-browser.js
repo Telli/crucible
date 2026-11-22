@@ -429,6 +429,7 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   const postPasses = record.scene.postPasses ?? [];
   record.renderer.userPasses?.set(postPasses);
   record.renderer.userPasses?.setAntialias(record.scene.postPassesAntialias);
+  record.renderer.pixelGrid?.set(record.scene.pixelGrid);
   applyRecipeWindHeading(record.renderer, environment);
   const { objectMotion, ...renderOptions } = frameOptions;
   const frame = { ...camera, environment: litEnvironment(record.scene.parts, environment, Boolean(record.renderer.groundPart)), effects, exposure: effects.exposure, time, lines: environment.lines, ...windFrame(environment), ...renderOptions, effects: effectsWithFStop(renderOptions.effects ?? effects, camera) };
@@ -599,7 +600,8 @@ function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = fal
   // Outlines, toon light and polylines draw only for a frame that carries environment.lines; user passes run last, on the finished frame.
   // Mesh blend installs before line art, so its stage runs first and the lines draw over the blended colour; it blends only the
   // parts whose nodes carry `blend` (syncMeshBlend), so a recipe without it draws as before.
-  return agentSceneModule('userPass').installUserPasses(agentSceneModule('lineArt').installLineArt(installMeshBlend(renderer)));
+  // The pixel grid installs last: its blit must follow the user passes.
+  return agentSceneModule('pixelGrid').installPixelGrid(agentSceneModule('userPass').installUserPasses(agentSceneModule('lineArt').installLineArt(installMeshBlend(renderer))));
 }
 
 // Camera fields from a timeline shot on top of the sampled camera, checked with the scene's own camera rules.
