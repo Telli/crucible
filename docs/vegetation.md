@@ -119,7 +119,21 @@ When `changed` is true, build a new renderer from the new parts. Grass switches 
 
 ## Recipes and MCP
 
-A recipe node with a `vegetation` field grows and scatters these trees, with wind, seasons and imported trees; see "Vegetation" in [Agent scenes](https://crucible.codepawl.com/agent-scene.md). `scatterVegetation` is called with the terrain's own `heightAt`, so the instances match the addon for the same options.
+A recipe node with a `vegetation` field grows and scatters these trees, with wind, seasons and imported trees; see "Vegetation" in [Agent scenes](https://crucible.codepawl.com/agent-scene.md).
+
+### Scanned bark and leaves from the pack
+
+With the first-party `vegetation-scans` pack installed (`crucible-mcp --packs <folder>`, see [MCP](/mcp.md)), the server fills `vegetation.scans` on every tree node that has none, so recipe trees draw scanned bark and leaf cards with no change to the recipe. Without the pack they keep the procedural textures. `scene_capabilities` topic `packs` reports `vegetationScans: on` or `off`.
+
+| Species | Bark | Leaves |
+| --- | --- | --- |
+| broadleaf | Poly Haven `bark_brown_02` | scanned card, normal, crown |
+| conifer | Poly Haven `pine_bark` | cedar spray card |
+| bush | Poly Haven `bark_willow_02` | scanned card |
+| birch | procedural white | scanned card |
+| palm | Poly Haven `palm_tree_bark` | procedural fronds |
+
+`scans` is keyed by species, each `{ bark: { colorMap, normalMap, roughnessMap }, leaves: { colorMap, normalMap, crownMap } }` with catalog image IDs; `colorMap` is required and the other maps are optional. The IDs travel with the recipe like texture sequences, so previews, renders and web exports load the same images. A `season` recolours the scanned card instead of swapping in the procedural sprite. Set `scans: {}` to keep one node procedural while the pack is installed. Grass and flowers have no scans. `scatterVegetation` is called with the terrain's own `heightAt`, so the instances match the addon for the same options.
 `levelForDistance(distance, variant, { distanceScale, cullDistance })` is the stateless form of `selectLevels`: no hysteresis, so the level is a pure function of the distance.
 
 ## Impostors and cross-fade
@@ -167,6 +181,7 @@ Meshes and textures are built in plain JavaScript, so tests run in Node.
 
 ## Limits
 
+- Scanned bark and leaves in recipes need the `vegetation-scans` pack; the images of one node count toward the 64 MiB decoded limit of texture sequences (a scanned broadleaf is 12 MiB).
 - Cards need the renderer's alpha mask to look right. Without `leafTextures` the leaf textures are 128 px procedural sprigs that look flat from under a few metres; the scanned cards hold up to about 1 m. Palm fronds have no scanned card yet. The conifer card is a cedar spray, so it reads as a flat branch tip rather than separate needles.
 - Level changes pop unless `selectLevels` gets `fade`; level 2 crowns are blobs or crossed cards, and baked impostors exist only when asked for (see Impostors and cross-fade).
 - Species are fixed presets; there is no wind-bent skeleton or collision with other trees. Seasonal colour exists only in recipes (the `season` field), not in the addon call.
