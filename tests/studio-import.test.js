@@ -458,7 +458,7 @@ test('an imported HDR sky travels into the web pack as its sky image, and the pa
   assert.equal(withSky.environmentMap.kind, 'environment-map', 'the pack carries the decoded sky image (#3004)');
   assert.ok(withSky.environmentMap.width > 0 && withSky.environmentMap.width <= PACK_MAX_SKY_WIDTH, 'the sky fits the width one pack carries');
   assert.equal(withSky.environmentMap.data.length, withSky.environmentMap.width * withSky.environmentMap.height * withSky.environmentMap.channels);
-  assert.deepEqual(payload.stripped, ['procedural material patterns'], 'the sky is not in the list of what the pack left out');
+  assert.deepEqual(payload.stripped, [], 'the sky is not in the list of what the pack left out');
 });
 
 test('without a store hook an import is refused with one sentence and the pool is untouched', async () => {
@@ -502,7 +502,7 @@ test('the Import row shows only with a store, and a dropped GLB or scene.json ta
   const payload = await studio.buildWebPackPayload();
   const withoutImport = await mountStudio({}).studio.buildWebPackPayload();
   assert.ok(payload.packBytes.byteLength > withoutImport.packBytes.byteLength, 'the pack carries the decoded triangle of the imported model');
-  assert.deepEqual(payload.stripped, ['procedural material patterns'], 'the import adds nothing the pack leaves out');
+  assert.deepEqual(payload.stripped, [], 'the import adds nothing the pack leaves out');
 
   dom.runTimers();
   dispatch(viewport, 'drop', { dataTransfer: { files: [{ name: 'again.scene.json', text: async () => JSON.stringify(baseRecipe()) }] } });
