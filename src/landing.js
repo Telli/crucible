@@ -1,5 +1,6 @@
 import './site-tokens.css';
 import './brand-fonts.css';
+import './site-chrome.css';
 import './landing.css';
 import { beatIndexAt, prefersStillStory } from './landing-story.js';
 
@@ -210,10 +211,21 @@ function pickCallout(progress) {
   for (const note of calloutNotes) {
     if (!plainView && progress >= Number(note.dataset.from) && progress <= Number(note.dataset.to)) shown = note;
   }
+  for (const note of calloutNotes) note.classList.remove('aside');
   if (!shown) return null;
-  const noteBox = shown.getBoundingClientRect();
-  const covered = foundry.subjectBoxes().some((box) => !box.name.startsWith('Spark') && box.left < noteBox.right + 4 && box.right > noteBox.left - 4 && box.top < noteBox.bottom + 4 && box.bottom > noteBox.top - 4);
-  return covered ? null : shown;
+  if (!isCoveredBySubject(shown)) return shown;
+  // On a phone the rising mould reaches the bottom edge before the beat ends: the note moves to the free column beside the stream.
+  if (compactScreen.matches && shown.hasAttribute('data-aside')) {
+    shown.classList.add('aside');
+    if (!isCoveredBySubject(shown)) return shown;
+    shown.classList.remove('aside');
+  }
+  return null;
+}
+
+function isCoveredBySubject(note) {
+  const noteBox = note.getBoundingClientRect();
+  return foundry.subjectBoxes().some((box) => !box.name.startsWith('Spark') && box.left < noteBox.right + 4 && box.right > noteBox.left - 4 && box.top < noteBox.bottom + 4 && box.bottom > noteBox.top - 4);
 }
 
 function drawLeader(points, endX, endY) {
@@ -234,13 +246,23 @@ function placeCallout(progress) {
     return;
   }
   const endX = Math.round(anchor[0]);
-  if (fromBelow) {
+  if (fromBelow && !shown.classList.contains('aside')) {
     const riseX = Math.round(Math.max(shown.offsetLeft + 10, Math.min(shown.offsetLeft + shown.offsetWidth - 10, anchor[0])));
     const topY = Math.round(Math.min(shown.offsetTop - 16, anchor[1]));
     drawLeader(`${riseX},${shown.offsetTop - 6} ${riseX},${topY} ${endX},${topY}`, endX, topY);
     return;
   }
   const noteBottom = shown.offsetTop + shown.offsetHeight;
+  if (shown.classList.contains('aside')) {
+    // Beside the stream the pointer ends exactly on the anchor: straight across when it is level with the note, else down or up first.
+    const anchorY = Math.round(anchor[1]);
+    const noteRight = shown.offsetLeft + shown.offsetWidth;
+    const leaveX = Math.round(Math.max(shown.offsetLeft + 10, Math.min(noteRight - 10, endX)));
+    if (anchorY >= shown.offsetTop && anchorY <= noteBottom) drawLeader(`${noteRight + 6},${anchorY} ${endX},${anchorY}`, endX, anchorY);
+    else if (anchorY > noteBottom) drawLeader(`${leaveX},${noteBottom + 6} ${leaveX},${anchorY} ${endX},${anchorY}`, endX, anchorY);
+    else drawLeader(`${leaveX},${shown.offsetTop - 6} ${leaveX},${anchorY} ${endX},${anchorY}`, endX, anchorY);
+    return;
+  }
   const dropX = Math.round(Math.max(shown.offsetLeft + 10, Math.min(shown.offsetLeft + shown.offsetWidth - 10, anchor[0] + 24)));
   const endY = Math.round(Math.max(noteBottom + 16, anchor[1]));
   drawLeader(`${dropX},${noteBottom + 6} ${dropX},${endY} ${endX},${endY}`, endX, endY);

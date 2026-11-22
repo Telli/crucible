@@ -51,11 +51,11 @@ function recordingDevice(maxStorageBufferBindingSize = 1 << 30) {
 }
 
 // The digests of the default megakernel, the texel megakernel and the wavefront WGSL, taken on origin/main before instancing existed
-// and updated for the lamp-mesh shadow pass-through (#2353).
+// updated for the lamp-mesh shadow pass-through (#2353), for the flat camera background of world false (#2016) and for metals that do not transmit (#2827).
 // A scene without shared geometry compiles exactly this text. Change them only with an intended change of the flat kernel.
-const FLAT_MEGAKERNEL_DIGEST = '261da7e7e12c2592';
-const FLAT_TEXEL_KERNEL_DIGEST = 'e6fd1a21ab97645b';
-const FLAT_WAVEFRONT_DIGEST = 'ba795baded273cc9';
+const FLAT_MEGAKERNEL_DIGEST = '4dc8fa93bfab198d';
+const FLAT_TEXEL_KERNEL_DIGEST = '772a5725beb712ee';
+const FLAT_WAVEFRONT_DIGEST = 'da2b0cee2e378cb8';
 
 test('a scene without shared geometry compiles the WGSL origin/main compiled', () => {
   assert.equal(digestOf(buildMegakernelSource()).slice(0, 16), FLAT_MEGAKERNEL_DIGEST);

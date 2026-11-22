@@ -120,6 +120,7 @@ Sky colors use display RGB, matching the renderer's existing environment contrac
 | --- | --- | --- |
 | `world` | `false` | Boolean world presentation flag. With `true` the setup environment is also the background, unless you set `skyTop` or `skyBottom` to other than the setup's colours: then those two colours are drawn as the background gradient and the setup still lights the scene (a `sky` or `hdri` always draws its own background) |
 | `hdri` | absent | A shipped HDRI (`sky-clouds`, `studio-softbox`) or the 64-character ID of a `.hdr` file in `scene_asset_catalog`. It lights, reflects and (with `world: true`) forms the background instead of the setup sky; `environmentIntensity` is its strength and `environmentRotation` turns it about the vertical axis. The setup still gives the key light, so set `keyIntensity: 0` when the HDRI has its own sun. `null` clears. See [Catalog HDRIs and looks](#catalog-hdris-and-looks) |
+| `keyFromHdri` | absent | Absent unless set. `true`, together with `hdri`, finds the sun in the HDRI and gives the key light its direction (turned by `environmentRotation`), colour and strength, then takes the sun out of the map so it does not light twice; the background still shows the sun disc. It replaces `lightDirection`, `keyColor` and `keyIntensity` when the scene is built, and the recipe keeps the values you wrote. The fill and baked light (`bake`) are not changed. An HDRI with no distinct sun, as on an overcast sky, is an error that says to pick another HDRI or set the key yourself; `sky` cannot be combined with it |
 | `ground` | on | Absent unless set. `false` removes the preview's automatic floor and contact shadow |
 | `resolveCoplanar` | `'offset'` | Flush and near-flush faces, inside one mesh or across parts, are ranked per triangle and drawn with a small depth-only bias, so the face in front wins at every distance and nothing flickers. Geometry never moves. `false` opts out, and `scene_inspect` then lists each pair as a `coplanar-overlap` warning (only pairs closer than the pair's own reach, never more than 50 mm). Parts that set `decal` or `depthLayer` keep their own layer. Where an opaque face covers another on the same plane, or in front of it by at most a thousandth of the shared face (between a millimetre and a centimetre), the covered part is cut out of the drawn copy of the hidden face (the part and its geometry stay as you made them), so a stack of any depth is settled and the path tracer sees one face. What cannot be settled comes back as a `coplanar-overlap` warning with a `reason`: `rank-overflow` (more than 16 faces a wider gap apart), `double-sided-gap`, `unchecked` (past the triangle or pair budget, the part the search stopped at is named) or `collapsed-node` (an axis a millionth of the longest one; a 2 cm slab 400 m wide is a ground, not a collapse). A scene of millions of triangles gets a coarser search grid instead of an error; the search only fails, with a message naming this field, when even the coarsest grid is too large. Parts that change every frame, particles and a sea with an `oceanTime` track, are left out of the ranking, so playing the timeline never searches the scene again |
 | `objectReflections` | on | Absent unless set. Each smooth metal part (`metallic` 0.5 or more, `roughness` 0.6 or less; at most 8 such parts, in a scene with at most 1,024 other parts) gets a reflection probe of the scene around it, so a chrome sphere shows the floor and its neighbours. A smaller part that holds the probe inside its solid (a glowing bulb at the middle of a ring) is left out of that probe, since it would fill every direction. `false` turns it off. Probes are traced at rest, so a part that moves reflects the scene as it started. `scene_inspect` names them in `reflections` |
@@ -184,7 +185,7 @@ The MCP preview adds an automatic floor: a light grey disc under the scene's low
 Each point light requires a world-space `position`.
 The renderer uses inverse-square attenuation outside its radius.
 Radius limits attenuation rather than creating an area emitter or softening shadows.
-Point lights currently cast no local shadows and do not scatter through volume fog.
+Point lights do not scatter through volume fog. A point light casts a local shadow only with `castShadow: true` (see [Local shadows](lighting.md#local-shadows)).
 
 | Field | Default | Range |
 | --- | --- | --- |
@@ -195,8 +196,7 @@ Point lights currently cast no local shadows and do not scatter through volume f
 | `range` | `0` | `0` for unlimited falloff, otherwise `0.001` to `1000000` |
 
 Range values between zero and `0.001` reject.
-The existing directional shadow map remains the source of shadows.
-Point lights can illuminate through opaque walls.
+The directional shadow map shadows the sun. A point light with `castShadow: true` also draws its own shadow; without it the light can illuminate through opaque walls.
 
 ## Outlines and toon light
 

@@ -1,6 +1,7 @@
 import { CrucibleRenderer } from './renderer.js';
 import { createSharedTextures, loadGltf } from './gltf.js';
 import { loadHdri } from './hdri.js';
+import { loadViewTransformForRendererOptions } from './view-transform-loading.js';
 import { createCascadedShadows } from './cascaded-shadows.js';
 import { applyWaterReflection, attachWaterReflection } from './water-reflection.js';
 import { createCameraSampler } from './camera-track.js';
@@ -58,6 +59,7 @@ async function start() {
   const assetOwnParts = asset.parts;
   asset.parts = await loadStagedParts(description, asset, model, sharedTextures);
   const rendererOptions = withSceneFileRendererDefaults(description.renderer);
+  await loadViewTransformForRendererOptions(rendererOptions);
   const shadowCascades = rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined;
   const reflection = description.waterReflection ? applyWaterReflection(asset.parts) : { parts: asset.parts, surface: null };
   // The GLB's punctual lights light the scene, for the drawn frame and the native trace alike (#2664).

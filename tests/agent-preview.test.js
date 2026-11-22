@@ -48,6 +48,25 @@ test('private review samples reset independently and camera overrides do not pub
   assert.equal(preview.reviewResult({ sessionId }).data, 'cG5n');
 });
 
+// Issue 2206: a review shot with fov failed on a scene camera that uses focalLength ("expected only one of fov or focalLength").
+test('a review shot with fov or no camera works on a scene camera that uses focalLength', () => {
+  const { preview } = previewHarness();
+  const input = recipe();
+  input.camera = { eye: [3, 2, 5], target: [0, 0, 0], focalLength: 30, sensorWidth: 36 };
+  const sessionId = 'review-focal-length';
+  preview.create({ recipe: input, sessionId, backend: 'cpu', memoryBudgetMiB: 64 });
+  const before = preview.exportRecipe({ sessionId });
+  preview.reviewBegin({ sessionId, width: 768, height: 408 });
+  const wide = preview.reviewShot({ sessionId, index: 0, width: 384, height: 384, columns: 2,
+    shot: { label: 'Wide', motionTime: null, rendererTime: 0, camera: { fov: 80 } } });
+  const same = preview.reviewShot({ sessionId, index: 1, width: 384, height: 384, columns: 2,
+    shot: { label: 'Authored', motionTime: null, rendererTime: 0, camera: { eye: [4, 2, 5] } } });
+  assert.equal(wide.camera.fov, 80);
+  assert.equal(wide.camera.focalLength, undefined);
+  assert.equal(same.camera.focalLength, 30);
+  assert.deepEqual(preview.exportRecipe({ sessionId }), before);
+});
+
 test('source suspend and resume preserve transient motion pose and checkpoints', () => {
   const harness = previewHarness();
   const input = recipe();
@@ -310,4 +329,38 @@ test('a look at a motion time gives the post pass the same clock as a frame at t
   assert.equal(lookClocks[0].passTime, 5.65);
   preview.look({ sessionId, motionTime: null });
   assert.equal(renders.at(-1).camera.passTime, undefined);
+});
+
+test('scene_inspect without profile keeps its answer, and profile adds a cost profile and nothing else', () => {
+  const { preview } = previewHarness();
+  const sessionId = 'profile';
+  preview.create({ recipe: recipe(), sessionId, backend: 'gpu', memoryBudgetMiB: 192 });
+  // The page runs in a VM realm, so compare as JSON.
+  const asJson = value => JSON.parse(JSON.stringify(value));
+  const plain = asJson(preview.inspect({ sessionId }));
+  assert.equal('profile' in plain, false);
+  assert.deepEqual(asJson(preview.inspect({ sessionId, profile: false })), plain);
+  const { profile, ...rest } = asJson(preview.inspect({ sessionId, profile: true }));
+  assert.deepEqual(rest, plain);
+  assert.deepEqual(Object.keys(profile).sort(), ['drawCalls', 'frames', 'heaviestNodes', 'height', 'millisecondsMaximum', 'millisecondsMinimum', 'millisecondsPerFrame', 'splatBytes', 'textureBytes', 'triangles', 'width']);
+  assert.equal(profile.frames, 30);
+  assert.equal(profile.drawCalls, 1);
+  assert.equal(profile.triangles, 2);
+  assert.equal(profile.textureBytes, 4096);
+  assert.equal(profile.splatBytes, 1024);
+  assert.deepEqual(profile.heaviestNodes, [{ id: 'cube', triangles: 12, parts: 1 }]);
+  assert.ok(profile.millisecondsPerFrame >= 0);
+});
+
+test('scene_inspect profileFrames sets the number of measured frames within bounds', () => {
+  const harness = previewHarness();
+  const sessionId = 'profile-frames';
+  harness.preview.create({ recipe: recipe(), sessionId, backend: 'gpu', memoryBudgetMiB: 192 });
+  const rendersBefore = harness.renders.length;
+  assert.equal(harness.preview.inspect({ sessionId, profile: true, profileFrames: 5 }).profile.frames, 5);
+  assert.equal(harness.renders.length - rendersBefore, 6, 'one unmeasured frame and five measured ones');
+  assert.equal(harness.preview.inspect({ sessionId, profile: true, profileFrames: 120 }).profile.frames, 120);
+  assert.throws(() => harness.preview.inspect({ sessionId, profile: true, profileFrames: 121 }), /from 1 to 120/);
+  assert.throws(() => harness.preview.inspect({ sessionId, profile: true, profileFrames: 0 }), /from 1 to 120/);
+  assert.throws(() => harness.preview.inspect({ sessionId, profileFrames: 5 }), /only applies with profile: true/);
 });

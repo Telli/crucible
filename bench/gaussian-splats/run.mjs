@@ -1,6 +1,6 @@
 // Runs the Gaussian splat benchmark in Chrome and prints one JSON line per case; pictures go to artifacts/gaussian-splats/.
 //   node bench/gaussian-splats/fetch-sample.mjs          (once, for the millipede sample)
-//   bash ~/.agents/tools/gpu-lock.sh node bench/gaussian-splats/run.mjs [gpu|cpu] [engine67|three|all] [case name filter]
+//   node bench/gaussian-splats/run.mjs [gpu|cpu] [engine67|three|all] [case name filter]
 // gpu uses the machine's graphics card, cpu uses SwiftShader (software). Frame times are the median of 60 frames with a camera
 // that moves every frame ("orbit": a sort each frame) and 60 with a still camera (no sort). A one-pixel readPixels ends each timed frame.
 import { mkdir, writeFile } from 'node:fs/promises';
