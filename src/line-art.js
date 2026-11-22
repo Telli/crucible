@@ -48,6 +48,10 @@ export const LINE_ART_DEFAULTS = Object.freeze({
   creaseAngle: 35,
   depthJump: 0.08,
   toon: 0,
+  colorMode: 'solid',
+  darkenFactor: 0.54,
+  silhouetteSide: 'both',
+  convexHighlight: 0,
 });
 
 export const LINE_ART_LIMITS = Object.freeze({
@@ -56,6 +60,8 @@ export const LINE_ART_LIMITS = Object.freeze({
   creaseAngle: Object.freeze([0, 180]),
   depthJump: Object.freeze([0, 10]),
   toon: Object.freeze([0, 8]),
+  darkenFactor: Object.freeze([0, 1]),
+  convexHighlight: Object.freeze([0, 4]),
   maxPolylines: 64,
   minPolylinePoints: 2,
   maxPolylinePoints: 256,
@@ -64,6 +70,15 @@ export const LINE_ART_LIMITS = Object.freeze({
   maxNodes: 64,
   nodeNameLength: 256,
 });
+
+export const LINE_COLOR_MODES = Object.freeze(['solid', 'darken']);
+export const LINE_SILHOUETTE_SIDES = Object.freeze(['both', 'front']);
+// A boundary between two parts is flat, not a silhouette, when the two surfaces sit within this relative depth of each
+// other and their normals agree within about 5 degrees (a road beside a pavement).
+const COPLANAR_DEPTH = 0.02;
+const COPLANAR_NORMAL_COSINE = 0.996;
+// A surface is nearer than another only by more than this relative depth, so depth buffer noise on a flat wall draws nothing.
+const NEARER_DEPTH_MARGIN = 0.005;
 
 const LINE_ART_FIELDS = [...Object.keys(LINE_ART_DEFAULTS), 'polylines', 'nodes'];
 const POLYLINE_FIELDS = ['points', 'color', 'width', 'depthTest', 'closed'];
@@ -91,6 +106,14 @@ function numberWithin(value, [minimum, maximum], label) {
 
 function booleanValue(value, label) {
   if (typeof value !== 'boolean') throw new TypeError(`${label} must be true or false.`);
+  return value;
+}
+
+function choiceValue(value, choices, label) {
+  if (!choices.includes(value)) {
+    const listed = choices.map(choice => `"${choice}"`).join(' or ');
+    throw new RangeError(`${label} must be ${listed}.`);
+  }
   return value;
 }
 
@@ -165,6 +188,10 @@ export function resolveLineArt(input = {}) {
     creaseAngle: numberWithin(input.creaseAngle ?? LINE_ART_DEFAULTS.creaseAngle, LINE_ART_LIMITS.creaseAngle, 'lines.creaseAngle'),
     depthJump: numberWithin(input.depthJump ?? LINE_ART_DEFAULTS.depthJump, LINE_ART_LIMITS.depthJump, 'lines.depthJump'),
     toon: numberWithin(input.toon ?? LINE_ART_DEFAULTS.toon, LINE_ART_LIMITS.toon, 'lines.toon'),
+    colorMode: choiceValue(input.colorMode ?? LINE_ART_DEFAULTS.colorMode, LINE_COLOR_MODES, 'lines.colorMode'),
+    darkenFactor: numberWithin(input.darkenFactor ?? LINE_ART_DEFAULTS.darkenFactor, LINE_ART_LIMITS.darkenFactor, 'lines.darkenFactor'),
+    silhouetteSide: choiceValue(input.silhouetteSide ?? LINE_ART_DEFAULTS.silhouetteSide, LINE_SILHOUETTE_SIDES, 'lines.silhouetteSide'),
+    convexHighlight: numberWithin(input.convexHighlight ?? LINE_ART_DEFAULTS.convexHighlight, LINE_ART_LIMITS.convexHighlight, 'lines.convexHighlight'),
   };
   if (input.polylines !== undefined) {
     if (!Array.isArray(input.polylines) || input.polylines.length > LINE_ART_LIMITS.maxPolylines) {
@@ -234,9 +261,15 @@ uniform float creaseCosine;
 uniform float depthJump;
 uniform sampler2D nodeTexture;
 uniform int nodeCount;
+uniform float darkenFactor;
+uniform float frontOnly;
+uniform float convexLift;
+uniform vec3 cameraRight;
+uniform vec3 cameraUp;
 out vec4 outputColor;
 ivec2 lastPixel;
 vec3 edgeColor;
+bool edgeIsConvex;
 vec3 partAt(ivec2 pixel) { return texelFetch(partTexture, clamp(pixel, ivec2(0), lastPixel), 0).rgb; }
 vec3 normalAt(ivec2 pixel) { return normalize(texelFetch(normalTexture, clamp(pixel, ivec2(0), lastPixel), 0).rgb * 2.0 - 1.0); }
 float depthAt(ivec2 pixel) {
@@ -258,29 +291,56 @@ NodeLine nodeAt(vec3 part) {
   node.color = texel.rgb;
   return node;
 }
-bool differs(ivec2 center, ivec2 other, vec3 centerPart, vec3 centerNormal, NodeLine centerNode) {
+// frontOnly: the line is drawn on the nearer surface only. A boundary between two surfaces at the same depth with parallel
+// normals is flat ground, not a silhouette, and draws nothing. Perspective depth is an inverse depth, orthographic a distance.
+bool drawsOnFrontSide(ivec2 other, vec3 otherPart, vec3 centerNormal, float centerDepth) {
+  if (!hasPart(otherPart)) return true;
+  float otherDepth = depthAt(other);
+  bool centerIsNearer = projectionDepth.z > 0.5 ? centerDepth <= otherDepth : centerDepth >= otherDepth;
+  if (!centerIsNearer) return false;
+  bool isFlat = abs(centerDepth - otherDepth) < ${COPLANAR_DEPTH} * abs(centerDepth) && dot(centerNormal, normalAt(other)) > ${COPLANAR_NORMAL_COSINE};
+  return !isFlat;
+}
+bool differs(ivec2 center, ivec2 other, vec3 centerPart, vec3 centerNormal, float centerDepth, NodeLine centerNode) {
+  edgeIsConvex = false;
   vec3 otherPart = partAt(other);
   NodeLine otherNode = nodeAt(otherPart);
   bool centerDrawn = hasPart(centerPart);
   if (otherNode.mode == 1.0) return false;
   bool silhouetteOnly = centerDrawn && centerNode.mode == 2.0;
   if (useBoundaries > 0.5 && dot(abs(otherPart - centerPart), vec3(1.0)) > 0.001 && (!silhouetteOnly || otherNode.index != centerNode.index)) {
+    if (frontOnly > 0.5 && (!centerDrawn || !drawsOnFrontSide(other, otherPart, centerNormal, centerDepth))) return false;
     edgeColor = centerDrawn ? centerNode.color : otherNode.color;
     return true;
   }
-  if (!silhouetteOnly && creaseCosine > -1.5 && centerDrawn && hasPart(otherPart) && dot(centerNormal, normalAt(other)) < creaseCosine) return true;
+  if (!silhouetteOnly && creaseCosine > -1.5 && centerDrawn && hasPart(otherPart)) {
+    vec3 otherNormal = normalAt(other);
+    if (dot(centerNormal, otherNormal) >= creaseCosine) return false;
+    // Convex when the surface turns away from the viewer across the step from this pixel to the other one.
+    vec2 stepToOther = vec2(other - center);
+    edgeIsConvex = convexLift > 0.0 && dot(otherNormal - centerNormal, cameraRight * stepToOther.x + cameraUp * stepToOther.y) > 0.0;
+    return true;
+  }
   return false;
 }
 bool depthEdge(ivec2 center, ivec2 offset, float centerDepth) {
-  float jump = abs(depthAt(center + offset) + depthAt(center - offset) - 2.0 * centerDepth);
-  return jump > depthJump * abs(centerDepth);
+  float plusDepth = depthAt(center + offset);
+  float minusDepth = depthAt(center - offset);
+  float jump = abs(plusDepth + minusDepth - 2.0 * centerDepth);
+  if (jump <= depthJump * abs(centerDepth)) return false;
+  if (frontOnly < 0.5) return true;
+  // frontOnly: a pixel at the far end of the step draws nothing.
+  bool isOrthographic = projectionDepth.z > 0.5;
+  float farthestDepth = isOrthographic ? max(plusDepth, minusDepth) : min(plusDepth, minusDepth);
+  float nearerBy = isOrthographic ? farthestDepth - centerDepth : centerDepth - farthestDepth;
+  return nearerBy > ${NEARER_DEPTH_MARGIN} * abs(centerDepth);
 }
 bool ringHasEdge(ivec2 center, int ring, vec3 centerPart, vec3 centerNormal, float centerDepth, NodeLine centerNode) {
   int diagonal = max(1, int(round(float(ring) * 0.70710678)));
   ivec2 offsets[4] = ivec2[4](ivec2(ring, 0), ivec2(0, ring), ivec2(diagonal, diagonal), ivec2(diagonal, -diagonal));
   for (int index = 0; index < 4; index++) {
     ivec2 offset = offsets[index];
-    if (differs(center, center + offset, centerPart, centerNormal, centerNode) || differs(center, center - offset, centerPart, centerNormal, centerNode)) return true;
+    if (differs(center, center + offset, centerPart, centerNormal, centerDepth, centerNode) || differs(center, center - offset, centerPart, centerNormal, centerDepth, centerNode)) return true;
     if (depthJump > 0.0 && centerNode.mode == 0.0 && (nodeCount == 0 || (nodeAt(partAt(center + offset)).mode != 1.0 && nodeAt(partAt(center - offset)).mode != 1.0)) && depthEdge(center, offset, centerDepth)) return true;
   }
   return false;
@@ -304,7 +364,10 @@ void main() {
       break;
     }
   }
-  outputColor = vec4(source.rgb * (1.0 - coverage) + edgeColor * coverage, source.a * (1.0 - coverage) + coverage);
+  vec3 ink = edgeColor;
+  if (darkenFactor >= 0.0) ink = source.rgb * darkenFactor;
+  if (edgeIsConvex) ink = source.rgb * (1.0 + convexLift);
+  outputColor = vec4(source.rgb * (1.0 - coverage) + ink * coverage, source.a * (1.0 - coverage) + coverage);
 }`;
 
 const polylineVertex = `#version 300 es
@@ -507,7 +570,8 @@ function createLineArtStage(state) {
     if (!outlineProgram) {
       outlineProgram = compileProgram(context, fullscreenVertex, outlineFragment);
       outlineUniforms = uniformLocations(context, outlineProgram, ['sourceTexture', 'sceneDepth', 'partTexture', 'normalTexture',
-        'projectionDepth', 'halfWidth', 'lineColor', 'useBoundaries', 'creaseCosine', 'depthJump', 'nodeTexture', 'nodeCount']);
+        'projectionDepth', 'halfWidth', 'lineColor', 'useBoundaries', 'creaseCosine', 'depthJump', 'nodeTexture', 'nodeCount',
+        'darkenFactor', 'frontOnly', 'convexLift', 'cameraRight', 'cameraUp']);
     }
     context.useProgram(outlineProgram);
     const bindings = [[sourceTexture, 'sourceTexture'], [renderer.depthTexture, 'sceneDepth'], [guideTarget(renderer, 'part').texture, 'partTexture'], [guideTarget(renderer, 'normal').texture, 'normalTexture']];
@@ -524,6 +588,13 @@ function createLineArtStage(state) {
     context.uniform1f(outlineUniforms.useBoundaries, lines.boundaries ? 1 : 0);
     context.uniform1f(outlineUniforms.creaseCosine, lines.creaseAngle > 0 ? Math.cos(lines.creaseAngle * Math.PI / 180) : -2);
     context.uniform1f(outlineUniforms.depthJump, lines.depthJump);
+    // A darkenFactor below zero is the shader's "solid ink" switch.
+    context.uniform1f(outlineUniforms.darkenFactor, lines.colorMode === 'darken' ? lines.darkenFactor : -1);
+    context.uniform1f(outlineUniforms.frontOnly, lines.silhouetteSide === 'front' ? 1 : 0);
+    context.uniform1f(outlineUniforms.convexLift, lines.convexHighlight);
+    const { view } = renderer;
+    context.uniform3f(outlineUniforms.cameraRight, view[0], view[4], view[8]);
+    context.uniform3f(outlineUniforms.cameraUp, view[1], view[5], view[9]);
     context.drawArrays(context.TRIANGLES, 0, 3);
   }
 
