@@ -35,7 +35,8 @@ test('the twig card is 256 px and mostly leaf where the sprig card was a fifth l
   assert.equal(twig.height, 256);
   assert.ok(opaqueShare(twig) >= 0.6, `the twig card is ${opaqueShare(twig).toFixed(2)} opaque; paint more leaves`);
   assert.ok(opaqueShare(createLeafPixels('sprig', [64, 110, 36], 1)) < 0.35);
-  assert.deepEqual(createLeafPixels('twig', [64, 110, 36], 1).data, twig.data);
+  // Compare the bytes in one step: a failing deepEqual on 256 KB of pixels prints a diff that can take gigabytes.
+  assert.ok(Buffer.from(createLeafPixels('twig', [64, 110, 36], 1).data).equals(Buffer.from(twig.data)), 'the twig painter is deterministic');
 });
 
 test('broad-leaved tree presets carry twig cards and crown placement, plain species keep sprig cards', () => {

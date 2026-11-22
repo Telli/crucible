@@ -18,7 +18,7 @@ import {
 import { coverageMean, createCrownSkyField, matchMeanVisibility, scaleVisibility, vertexCoverage } from './tree-sky.js';
 import { TREE_LEVEL_GAINS } from './tree-level-gains.js';
 import { LEVEL_SETTINGS, SPECIES, TREE_LEVEL_DISTANCES } from './vegetation-species.js';
-import { MAX_TREE_BRANCHES, TREE_PRESETS, applyTreeGrowth, checkTreeGrowth, maximumBranchCount, mergeTreeGrowth } from './vegetation-presets.js';
+import { MAX_TREE_BRANCHES, MAX_TREE_LEAF_SITES, TREE_PRESETS, applyTreeGrowth, checkTreeGrowth, maximumBranchCount, mergeTreeGrowth } from './vegetation-presets.js';
 import { barkTextureDescriptor, leafTextureDescriptor } from './vegetation-textures.js';
 import { checkClumpOptions, checkGrassRadius, checkScatterOptions, checkSeed, checkTreeHeight } from './vegetation-options.js';
 import { pixelErrorScale, selectBlendedLevels } from './vegetation-impostors.js';
@@ -182,6 +182,23 @@ function createBareParts(skeleton, preset, seed, bark, materials, shadowTrunks) 
   };
 }
 
+// Crown candidates are thinned later, so they may run past the site limit by this factor before the tree stops.
+const CROWN_CANDIDATE_HEADROOM = 4;
+// A tree with no tree options has no limit of its own; this one only stops a runaway grower.
+const DEFAULT_LEAF_SITE_HEADROOM = 10;
+
+/**
+ * Every tree is held to a leaf site limit where its sites are made, so a preset or option mix that would grow millions of
+ * leaves stops with an error before it allocates them, not after.
+ */
+function treeLeafSiteLimit(preset) {
+  return preset.leafSiteLimit ?? MAX_TREE_LEAF_SITES * DEFAULT_LEAF_SITE_HEADROOM;
+}
+
+function tooManyLeafSites(limit) {
+  return new RangeError(`A grown tree may carry at most ${limit} leaf sites; lower tree.leafCount, tree.branches, tree.levels or the height.`);
+}
+
 /**
  * The leaf sites of a tree preset that sets `leaf.placement` (#3041): on the last `depth` branch levels, kept more often the
  * nearer they sit to the crown's outside (`interiorKeep` is the share kept at its centre), and turned up and outward like the
@@ -191,10 +208,12 @@ function placeCrownLeafSites(branches, preset, random) {
   const spec = preset.leaf;
   const { depth, interiorKeep, outwardTilt, upTilt } = spec.placement;
   const firstLevel = preset.levels.length - depth;
+  const limit = treeLeafSiteLimit(preset);
   const candidates = [];
   for (const branch of branches) {
     if (branch.level < firstLevel || branch.level < 1) continue;
     const count = Math.max(2, Math.round(branch.length * spec.sitesPerMeter));
+    if (candidates.length + count > limit * CROWN_CANDIDATE_HEADROOM) throw tooManyLeafSites(limit);
     for (let index = 0; index < count; index++) {
       candidates.push(sampleBranch(branch, lerp(spec.start, 1, index / (count - 1))));
     }
@@ -213,9 +232,7 @@ function placeCrownLeafSites(branches, preset, random) {
     ));
     leafSites.push({ position: sample.position, direction, scale: 0.8 + random() * 0.45, roll: (random() - 0.5) * 0.8 });
   });
-  if (preset.leafSiteLimit && leafSites.length > preset.leafSiteLimit) {
-    throw new RangeError(`A grown tree may carry at most ${preset.leafSiteLimit} leaf sites; lower tree.leafCount, tree.branches, tree.levels or the height.`);
-  }
+  if (leafSites.length > limit) throw tooManyLeafSites(limit);
   return leafSites;
 }
 
@@ -229,9 +246,8 @@ function growSkeleton(preset, height, random, leafMode) {
     const spec = preset.leaf;
     const paired = preset.levels[branch.level].pairedLeaves;
     const count = Math.max(2, Math.round(branch.length * spec.sitesPerMeter));
-    if (preset.leafSiteLimit && leafSites.length + count * (paired ? 2 : 1) > preset.leafSiteLimit) {
-      throw new RangeError(`A grown tree may carry at most ${preset.leafSiteLimit} leaf sites; lower tree.leafCount, tree.branches, tree.levels or the height.`);
-    }
+    const limit = treeLeafSiteLimit(preset);
+    if (leafSites.length + count * (paired ? 2 : 1) > limit) throw tooManyLeafSites(limit);
     for (let index = 0; index < count; index++) {
       const sample = sampleBranch(branch, lerp(spec.start, 1, index / (count - 1)));
       const sideAxis = normalized(crossProduct(sample.direction, WORLD_UP));
