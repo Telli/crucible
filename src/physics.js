@@ -1034,10 +1034,13 @@ function bakePrepared(preparedScene) {
       }
       for (let bodyIndex = 0; bodyIndex < bodies.length; bodyIndex++) {
         const linearVelocity = bodies[bodyIndex].linvel();
+        // A body still waiting for its spawn event keeps its authored velocity without moving, so it is not moving yet.
+        const waiting = !bodies[bodyIndex].isEnabled();
         const angularVelocity = bodies[bodyIndex].angvel();
         scalar(linearVelocity.x ** 2 + linearVelocity.y ** 2 + linearVelocity.z ** 2, 'solver linear velocity squared norm', 0);
         scalar(angularVelocity.x ** 2 + angularVelocity.y ** 2 + angularVelocity.z ** 2, 'solver angular velocity squared norm', 0);
-        if (Math.hypot(linearVelocity.x, linearVelocity.y, linearVelocity.z) > REST_LINEAR_SPEED || Math.hypot(angularVelocity.x, angularVelocity.y, angularVelocity.z) > REST_ANGULAR_SPEED) {
+        const moving = Math.hypot(linearVelocity.x, linearVelocity.y, linearVelocity.z) > REST_LINEAR_SPEED || Math.hypot(angularVelocity.x, angularVelocity.y, angularVelocity.z) > REST_ANGULAR_SPEED;
+        if (moving && !waiting) {
           lastMovingFrames[bodyIndex] = frame;
         }
         const position = bodies[bodyIndex].translation();

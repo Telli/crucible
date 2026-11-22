@@ -720,3 +720,18 @@ test('a disabled body stays out of the simulation until a spawn or enable event'
   assert.ok(bodyPose(enabledScene, 0.8, 'box')[1] < initial[1] - 0.2);
   enabledScene.dispose();
 });
+
+test('a disabled body with an authored velocity counts as resting while it waits for its spawn (#2767)', async () => {
+  const definition = fallingBoxDefinition();
+  definition.bodies[1] = { ...definition.bodies[1], translation: [0, 0.5, 0], linearVelocity: [2, 0, 0], enabled: false };
+  const waiting = await createPhysicsScene(definition, { frameCount: 61 });
+  // Never spawned: it never moves, so it rests from the first frame instead of reading as still moving at the end.
+  assert.equal(waiting.restFrames[waiting.bodyIndex('box')], 0);
+  waiting.dispose();
+
+  definition.events = [{ tick: 20, type: 'spawn', body: 'box' }];
+  const spawned = await createPhysicsScene(definition, { frameCount: 181 });
+  const restFrame = spawned.restFrames[spawned.bodyIndex('box')];
+  assert.ok(restFrame > 20 && restFrame < 180, `the box slides after its spawn and then rests, got frame ${restFrame}`);
+  spawned.dispose();
+});
