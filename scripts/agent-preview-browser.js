@@ -320,6 +320,19 @@ function probeSnippets(scene) {
   if (agentSceneModuleLoaded('materialSnippet')) agentSceneModule('materialSnippet').probeMaterialSnippets(scene.parts);
 }
 
+// A frame of a textured scene that changes only a rigid untextured mesh (the sea of an oceanTime track) keeps its renderer:
+// replaceParts retains every batch whose parts did not change, textures included, and refuses the rest before it touches a
+// batch, so the caller rebuilds. A material snippet or a texture sequence needs a program or texture state only a new renderer has.
+function replacedBesideTextures(record) {
+  if (record.asset || record.scene.parts.some(part => part.material.snippet) || (record.scene.sequenceTextures?.().length ?? 0) > 0) return false;
+  try {
+    record.renderer.replaceParts(record.scene.parts);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function rebuildRenderer(record) {
   probeSnippets(record.scene);
   record.renderer.dispose();
@@ -394,9 +407,10 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   if (record.rendererTopology !== record.scene.topologyRevision) {
     const textured = sceneIsTextured(record.scene);
     // replaceParts refuses skinned and morphed parts, so an edited imported part takes a new renderer as well.
-    if (textured || record.rendererTextured || record.asset) {
+    const replacedInPlace = textured && record.rendererTextured && replacedBesideTextures(record);
+    if (!replacedInPlace && (textured || record.rendererTextured || record.asset)) {
       rebuildRenderer(record);
-    } else {
+    } else if (!replacedInPlace) {
       record.renderer.replaceParts(record.scene.parts);
     }
     record.rendererTextured = textured;
@@ -575,7 +589,16 @@ function cascadesFor(scene) {
   return count > 0 ? agentSceneModule('cascades').createCascadedShadows({ count }) : null;
 }
 
-function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = false, tier = 'realtime' }) {
+// The coplanar warnings of a scene stand for its recipe, not for the pose of one frame: while a motion time is sampled, a renderer
+// built for another frame (or a layout swapped by replaceParts) reuses them until an edit changes the revision.
+const coplanarHeldByScene = new WeakMap();
+
+function coplanarCarryFor(scene) {
+  if (!coplanarHeldByScene.has(scene)) coplanarHeldByScene.set(scene, {});
+  return { held: coplanarHeldByScene.get(scene), key: () => (scene.motionTime == null ? undefined : scene.revision) };
+}
+
+function initializeRenderer(scene,{ memoryBudgetMiB, backend, transparent = false, tier = 'realtime' }) {
   probeSnippets(scene);
   const placement = automaticGroundPlacement(scene);
   const renderer = installCoplanarDiagnostics(installRenderPasses(installCameraEffects(new CrucibleRenderer(canvas, scene.parts, {
@@ -595,7 +618,7 @@ function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = fal
     transparent,
     // Every preview and job frame is read back or exported, so none may draw with the fallback post program of a build in flight (#1767).
     exactFrames: true,
-  }))));
+  }))), null, coplanarCarryFor(scene));
   // Outlines, toon light and polylines draw only for a frame that carries environment.lines; user passes run last, on the finished frame.
   // Mesh blend installs before line art, so its stage runs first and the lines draw over the blended colour; it blends only the
   // parts whose nodes carry `blend` (syncMeshBlend), so a recipe without it draws as before.
