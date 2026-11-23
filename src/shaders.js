@@ -71,6 +71,22 @@ ${PACKED_COLOR_DECLARATION}
  * built without it keeps the exact text it had before, and the renderer adds it for the parts that carry tangents.
  */
 export const TANGENT_FEATURE = 'tangents';
+// A normal map can hold detail finer than a pixel (the one-texel bevel at the rim of a mapped sphere). The widened roughness
+// below keeps the highlight from sparkling, but a thin ring of tilted normals still catches every light once per pixel.
+// The variance of the mapped normal across the pixel footprint therefore also lowers the direct specular, as detail that
+// averages out. The code exists only in a shader that has a normal map, so a shader without one keeps its exact text.
+export const NORMAL_MAP_SPECULAR_FADE_STRENGTH = 32;
+const NORMAL_MAP_SPECULAR_CODE = {
+  declarations: 'float normalMapSpecularFade = 1.0;\n',
+  illuminateSpecular: '  specular *= normalMapSpecularFade;\n',
+  worldSurface: `  if (specularAntiAliasing > 0.0) {
+    vec3 fadeNormalX = dFdx(normal);
+    vec3 fadeNormalY = dFdy(normal);
+    float normalVariance = 0.5 * (dot(fadeNormalX, fadeNormalX) + dot(fadeNormalY, fadeNormalY)) + 0.5 * normalMapVariance;
+    normalMapSpecularFade = 1.0 / (1.0 + ${NORMAL_MAP_SPECULAR_FADE_STRENGTH}.0 * specularAntiAliasing * normalVariance);
+  }
+`,
+};
 const TANGENT_ABSENT = { normalDeclaration: 'layout(location=1) in vec3 normal;\n', varying: '', mainStart: '', transform: '' };
 
 // The tangent code rides in the fourth float of the normal attribute (src/tangent-encoding.js has the encoder and the same angle
@@ -1131,6 +1147,7 @@ function featureCodeSplicer(features) {
     if (!enabled.has(feature)) codes.push(stub);
   }
   if (WORLD_MATERIAL_FEATURES.some(feature => enabled.has(feature))) codes.push(requireFeatureCode('worldMaterials'));
+  if (enabled.has('normalMap')) codes.push(NORMAL_MAP_SPECULAR_CODE);
   if (enabled.has(TANGENT_FEATURE)) codes.push(tangentFragmentCode(enabled.has('normalMapTransform') ? requireFeatureCode('normalMapTransform').normalUv ?? '' : ''));
   codes.push(enabled.has('environmentMap') ? registeredFeatureCode.get('environmentMap') ?? ENVIRONMENT_STUB : ENVIRONMENT_STUB);
   return slot => codes.map(code => code[slot] ?? '').join('');

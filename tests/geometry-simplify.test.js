@@ -238,3 +238,17 @@ test('addLodsToDenseParts gives levels to mid-size meshes by default, so a scene
   assert.equal(result[1].lods, undefined, 'a mesh under the default floor does not (4000 triangles, not 1500: the lower floor shimmered more and drew no faster, #2157)');
   assert.equal(result[2].lods, undefined, 'a tiny mesh does not');
 });
+
+test('a reduced level keeps the tangent of every vertex that survives, four numbers each (#3124)', () => {
+  const grid = uvGrid(24);
+  const vertexCount = grid.positions.length / 3;
+  const tangents = new Float32Array(vertexCount * 4);
+  for (let vertex = 0; vertex < vertexCount; vertex++) tangents.set([1, 0, 0, vertex % 2 ? 1 : -1], vertex * 4);
+  const [level] = simplifyGeometry({ ...grid, tangents }, { ratios: [0.25] });
+  const levelVertexCount = level.geometry.positions.length / 3;
+  assert.ok(levelVertexCount < vertexCount);
+  assert.equal(level.geometry.tangents.length, levelVertexCount * 4);
+  for (let vertex = 0; vertex < levelVertexCount; vertex++) {
+    assert.deepEqual([...level.geometry.tangents.subarray(vertex * 4, vertex * 4 + 3)], [1, 0, 0]);
+  }
+});

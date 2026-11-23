@@ -90,6 +90,20 @@ function replaceColourShaders(replaceVertex) {
   };
 }
 
+
+const SHADER_CUTS = [
+  { name: 'cut-shadow', from: 'float visibility = shadowBlind > 0.5 ? 1.0 : shadowVisibility(normal);', to: 'float visibility = 1.0;' },
+  { name: 'cut-fill', from: 'if (FILL_ON) {', to: 'if (false) {' },
+  { name: 'cut-room', from: 'float room = 1.0 - smoothstep(0.01, 0.06, dot(environmentDiffuse(vec3(0, 1, 0)), vec3(1)) / max(dot(keyColor, vec3(1)), 0.003));', to: 'float room = 0.0;' },
+  { name: 'cut-tint', from: '(USES_TINTED_SHADOWS && shadowBlind < 0.5 && tintBlind < 0.5) ?', to: 'false ?' },
+  { name: 'cut-specular-aa', from: 'if (specularAntiAliasing > 0.0) {', to: 'if (false) {' },
+  { name: 'cut-brdf-lookup', from: 'directSpecularGain = multipleScatterGain(brdfLookup, baseReflectance);', to: '' },
+  { name: 'cut-key-light', from: 'vec3 radiance = illuminate(normal, viewDirection, normalize(lightDirection), keyColor', to: 'vec3 radiance = vec3(0.0) * illuminate(normal, viewDirection, normalize(lightDirection), keyColor' },
+  { name: 'cut-normal-map', from: 'if (USES_NORMAL_MAP) normal = ensureValidReflection', to: 'if (false) normal = ensureValidReflection' },
+  { name: 'cut-base-map', from: 'if (USES_BASE_MAP) {', to: 'if (false) {' },
+  { name: 'cut-metallic-roughness-map', from: 'if (USES_METALLIC_ROUGHNESS_MAP) {', to: 'if (false) {' },
+];
+
 window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, denseLods = false, denseLodsMinimumTriangles = undefined, experiment = null, sequence = null }) {
   const canvas = document.querySelector('#viewport');
   const experiments = new Set(String(experiment ?? '').split(','));
@@ -111,6 +125,20 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
         return originalSource.call(this, shader, TRIVIAL_VERTEX);
       }
       return originalSource.call(this, shader, source);
+    };
+  }
+  // Experiment only: each name cuts one piece out of the colour fragment shader, to price it by itself (the picture changes).
+  const shaderCuts = SHADER_CUTS.filter(cut => experiments.has(cut.name));
+  if (shaderCuts.length) {
+    const originalSource = WebGL2RenderingContext.prototype.shaderSource;
+    WebGL2RenderingContext.prototype.shaderSource = function shaderSource(shader, source) {
+      if (!source.includes('float shadowVisibility')) return originalSource.call(this, shader, source);
+      let cutSource = source;
+      for (const cut of shaderCuts) {
+        if (!cutSource.includes(cut.from)) throw new Error('Shader cut ' + cut.name + ' no longer matches the shader source.');
+        cutSource = cutSource.replace(cut.from, cut.to);
+      }
+      return originalSource.call(this, shader, cutSource);
     };
   }
   if (experiment === 'trivial-fragment') replaceColourShaders(false);
@@ -238,6 +266,7 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
     gpuTotalMedianMs: Number(median(totals).toFixed(3)),
     segmentMedianMs: Object.fromEntries(Object.entries(perSegment).map(([name, values]) => [name, Number(median(values).toFixed(3))])),
     depthPrepassActive: renderer.depthPrepassActive,
+    shaderFeatures: [...renderer.shaderFeatures].sort(),
     alternating: alternate ? Object.fromEntries(['off', 'on', 'only'].map(mode => [mode, {
       gpuTotalMedianMs: Number(median(alternating[mode]).toFixed(3)),
       gpuTotalRangeMs: [Number(Math.min(...alternating[mode]).toFixed(3)), Number(Math.max(...alternating[mode]).toFixed(3))],

@@ -28,6 +28,8 @@ const DEFAULT_LIMITS = Object.freeze({
   maxTextureImagePixels: 67_108_864,
   maxJoints: 4096,
   maxInstances: 65_536,
+  // Most triangles of one primitive that get the duplicate-triangle and non-manifold-edge counts; a larger primitive skips them, with a warning.
+  maxCheckedTriangles: 600_000,
 });
 
 export const GLTF_CAPABILITIES = Object.freeze({
@@ -897,7 +899,7 @@ class UnusablePrimitiveError extends Error {}
  * Drops the triangles that repeat a vertex or have zero area, in place and in their original order.
  * Returns the kept index view and how many of each kind were dropped; a mesh without such triangles comes back untouched.
  */
-async function dropDegenerateTriangles(positions, indices, checkpoint) {
+async function dropDegenerateTriangles(positions, indices, checkpoint, keepDegenerate = false) {
   let kept = 0;
   let repeatedIndex = 0;
   let zeroArea = 0;
@@ -906,11 +908,10 @@ async function dropDegenerateTriangles(positions, indices, checkpoint) {
       const corner = triangle * 3;
       if (indices[corner] === indices[corner + 1] || indices[corner + 1] === indices[corner + 2] || indices[corner] === indices[corner + 2]) {
         repeatedIndex++;
-        continue;
-      }
-      if (!(Math.hypot(...triangleAt(positions, indices, corner).cross) > 0)) {
+        if (!keepDegenerate) continue;
+      } else if (!(Math.hypot(...triangleAt(positions, indices, corner).cross) > 0)) {
         zeroArea++;
-        continue;
+        if (!keepDegenerate) continue;
       }
       if (kept !== corner) indices.copyWithin(kept, corner, corner + 3);
       kept += 3;
@@ -964,7 +965,7 @@ async function settleVertexTangents(geometry, normalMap, uvTransform, onRepair) 
   geometry.tangents = generateTangents(geometry.positions, geometry.normals, uvs, geometry.indices);
 }
 
-async function convertGeometry(source, primitive, secondUvSet, onRepair, checkpoint) {
+async function convertGeometry(source, primitive, secondUvSet, onRepair, checkpoint, meshChecks = {}) {
   const { position, normal, tangent, uv, uv1, color, skinIndex, skinWeight } = source.attributes;
   const zeroedBy = label => count => onRepair(`${count} non-finite ${label} value(s) were set to 0`);
   const positions = await copyAttributeZeroingNonFinite(position, 3, zeroedBy('POSITION'), checkpoint);
@@ -978,11 +979,21 @@ async function convertGeometry(source, primitive, secondUvSet, onRepair, checkpo
       allIndices[index] = value;
     }
   });
-  const { indices, repeatedIndex, zeroArea } = await dropDegenerateTriangles(positions, allIndices, checkpoint);
+  const { indices, repeatedIndex, zeroArea } = await dropDegenerateTriangles(positions, allIndices, checkpoint, meshChecks.keepDegenerateTriangles);
   if (normal && normal.count !== position.count) throw new Error('NORMAL and POSITION counts must match.');
   if (!indices.length) throw new UnusablePrimitiveError('every triangle has zero area');
   if (repeatedIndex || zeroArea) {
-    onRepair(`dropped ${repeatedIndex + zeroArea} degenerate triangle(s) of ${allIndices.length / 3} (${repeatedIndex} with a repeated index, ${zeroArea} with zero area)`);
+    const verb = meshChecks.keepDegenerateTriangles ? 'kept (keepDegenerateTriangles)' : 'dropped';
+    onRepair(`${verb} ${repeatedIndex + zeroArea} degenerate triangle(s) of ${allIndices.length / 3} (${repeatedIndex} with a repeated index, ${zeroArea} with zero area)`);
+  }
+  if (meshChecks.enabled) {
+    // Loaded only by a call that asks for the counts.
+    const { countMeshFindings, describeMeshFindings } = await import('./gltf-mesh-checks.js');
+    // Kept degenerate triangles are not surface: count only the triangles a default load keeps.
+    const surfaceIndices = meshChecks.keepDegenerateTriangles ? (await dropDegenerateTriangles(positions, indices.slice(), checkpoint)).indices : indices;
+    const findings = await countMeshFindings(positions, surfaceIndices, meshChecks.maxTriangles, checkpoint);
+    if (findings === null) meshChecks.onNote(`mesh checks skipped: ${surfaceIndices.length / 3} triangles is over maxCheckedTriangles (${meshChecks.maxTriangles}); raise it to count duplicate triangles and non-manifold edges`);
+    else if (describeMeshFindings(findings)) meshChecks.onNote(describeMeshFindings(findings));
   }
   const normals = normal ? await copyAttribute(normal, 3, checkpoint) : computeVertexNormals(positions, indices);
   const geometry = { positions, normals, indices };
@@ -1349,10 +1360,24 @@ export function createSharedTextures() {
   return Object.assign(new Map(), { descriptors: new Map() });
 }
 
+/** Hands the file to the caller's glTF-Validator; external resources load by the same rules as the loader's own. */
+async function runStrictValidator(data, options, limits) {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data);
+  async function fetchResource(uri) {
+    if (options.allowExternalResources === false || !options.baseUrl) throw new Error(`The validator asked for external uri "${uri}": pass baseUrl (and leave allowExternalResources on), or embed it (GLB or data URI).`);
+    const resolved = new URL(uri, options.baseUrl).href;
+    if (!/^(https?:|blob:)/.test(resolved)) throw new Error('Only HTTP, HTTPS, blob and embedded data resources are supported.');
+    return (await boundedFetch(resolved, limits.maxBytes, options.signal)).bytes;
+  }
+  const { assertValidatorPasses } = await import('./gltf-mesh-checks.js');
+  await assertValidatorPasses(options.validator, bytes, fetchResource);
+}
+
 /** Parse a bounded glTF 2.0 asset into CrucibleRenderer parts. Draco and KTX2 decoders come from options.decoders; meshopt decodes in a chunk that loads on demand, unless options.decoders.meshopt replaces it. */
 export async function parseGltf(data, options = {}) {
   const limits = limitsFor(options);
   const document = documentFrom(data, limits.maxBytes);
+  if (options.strict) await runStrictValidator(data, options, limits);
   validateDocumentReferences(document);
   const fallbackWarnings = await applyFallbacksTo(document);
   const decoders = options.decoders ?? {};
@@ -1443,7 +1468,12 @@ export async function parseGltf(data, options = {}) {
             };
             const { clampedWeights, boundToJointZero } = node.geometry.skinWeightRepairs ?? {};
             if (clampedWeights) onRepair(`${clampedWeights} negative skin weight(s) were clamped to 0${boundToJointZero ? `; ${boundToJointZero} vertex(es) bound to joint 0` : ''}`);
-            const converted = await convertGeometry(node.geometry, primitive, secondUvSet, onRepair, checkpoint);
+            const onNote = reason => {
+              const warning = `Checked ${primitiveLabel(document, association.meshes, association.primitives)}: ${reason}.`;
+              if (!warnings.includes(warning)) warnings.push(warning);
+            };
+            const meshChecks = { enabled: options.checkMesh === true, maxTriangles: limits.maxCheckedTriangles, keepDegenerateTriangles: options.keepDegenerateTriangles === true, onNote };
+            const converted = await convertGeometry(node.geometry, primitive, secondUvSet, onRepair, checkpoint, meshChecks);
             if (converted.uvs) bakeUvTransform(converted.uvs, uvTransform);
             await settleVertexTangents(converted, material.normalMap, uvTransform, onRepair);
             geometries.set(geometryKey, converted);
