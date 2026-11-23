@@ -937,10 +937,14 @@ function worldFaceNormal(worldCorner, vertexNormals, firstVertex, matrix) {
 }
 
 /** Fills texels outside every chart from covered neighbours, so bilinear sampling at a chart edge reads real light. */
-function dilate(radiance, covered, resolution) {
+// Rows of texels the smoothing and the dilation go through between two checkpoints of a bake run in slices (#3052).
+const ROWS_PER_CHECKPOINT = 16;
+
+function* dilateSteps(radiance, covered, resolution) {
   for (let pass = 0; pass < DILATION_PASSES; pass++) {
     const additions = [];
     for (let row = 0; row < resolution; row++) {
+      if (row % ROWS_PER_CHECKPOINT === 0) yield;
       for (let column = 0; column < resolution; column++) {
         if (covered[row * resolution + column]) continue;
         const sum = [0, 0, 0];
@@ -967,10 +971,12 @@ function dilate(radiance, covered, resolution) {
 }
 
 /** Groups the covered texels into cubes of one smoothing radius, so a texel finds its neighbours in the world and not only in its own chart. */
-function groupTexelsByCell(covered, positions, cellSize) {
+function* groupTexelsByCell(covered, positions, cellSize) {
   const cells = new Map();
+  let grouped = 0;
   for (let texel = 0; texel < covered.length; texel++) {
     if (!covered[texel]) continue;
+    if (grouped++ % SMOOTHED_TEXELS_PER_CHECKPOINT === 0) yield;
     const key = cellKey(Math.floor(positions[texel * 3] / cellSize), Math.floor(positions[texel * 3 + 1] / cellSize), Math.floor(positions[texel * 3 + 2] / cellSize));
     if (!cells.has(key)) cells.set(key, []);
     cells.get(key).push(texel);
@@ -1028,14 +1034,23 @@ function surfaceNeighbours(center, cells, positions, normals, settings) {
  * of a chart seam are smoothed over the same patch and a curved mesh keeps no step where its charts meet. Same input, same bytes.
  */
 export function smoothTexels(arrays, covered, positions, normals, resolution, spacing) {
+  return drainSteps(smoothTexelsSteps(arrays, covered, positions, normals, resolution, spacing));
+}
+
+// Texels smoothed between two checkpoints of a bake run in slices (#3052).
+const SMOOTHED_TEXELS_PER_CHECKPOINT = 256;
+
+function* smoothTexelsSteps(arrays, covered, positions, normals, resolution, spacing) {
   const radius = SMOOTH_RADIUS_TEXELS * spacing;
   const settings = { cellSize: radius, radiusSquared: radius * radius, sigmaSquared: (SMOOTH_SIGMA_TEXELS * spacing) ** 2, planeTolerance: spacing * SMOOTH_PLANE_TEXELS };
-  const cells = groupTexelsByCell(covered, positions, radius);
+  const cells = yield* groupTexelsByCell(covered, positions, radius);
   let sources = arrays;
   for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
     const results = sources.map(source => new Float32Array(source.length));
+    let smoothed = 0;
     for (let center = 0; center < resolution * resolution; center++) {
       if (!covered[center]) continue;
+      if (smoothed++ % SMOOTHED_TEXELS_PER_CHECKPOINT === 0) yield;
       const nearby = surfaceNeighbours(center, cells, positions, normals, settings);
       let weightSum = 0;
       for (const { weight } of nearby) weightSum += weight;
@@ -1309,9 +1324,11 @@ export function* finishLightmapsSteps(plan, settings, rasterized, gathered, size
     }
     let bakedResult = part;
     const spacing = Math.sqrt(area / Math.max(skyTexels, 1));
-    const [smoothRadiance, smoothSkyVisibility] = smoothTexels([radiance, skyVisibility], covered, positions, normals, resolution, spacing);
-    if (sealed) dilate(smoothSkyVisibility, covered.slice(), resolution);
-    dilate(smoothRadiance, covered, resolution);
+    yield;
+    const [smoothRadiance, smoothSkyVisibility] = yield* smoothTexelsSteps([radiance, skyVisibility], covered, positions, normals, resolution, spacing);
+    if (sealed) yield* dilateSteps(smoothSkyVisibility, covered.slice(), resolution);
+    yield* dilateSteps(smoothRadiance, covered, resolution);
+    yield;
     const smoothPeak = smoothRadiance.reduce((largest, value) => Math.max(largest, value), 0);
     if (smoothPeak > 0) bakedResult = (slot ? lightMappedPart : bakedPart)(part, unwrapped.geometry, lightmapTexture(smoothRadiance, resolution, smoothPeak), smoothPeak);
     if (sealed) bakedResult = skyVisibilityPart(bakedResult, unwrapped.geometry, skyVisibilityTexture(smoothSkyVisibility, resolution), slot);

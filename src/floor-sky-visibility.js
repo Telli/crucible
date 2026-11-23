@@ -259,20 +259,34 @@ function worldNormalOf(matrix, positions, corners) {
   return normal.map(value => value / length);
 }
 
+// Vertices, triangles or cut pieces the cut goes through between two checkpoints of a trace run in slices (#3052).
+const CUT_ITEMS_PER_CHECKPOINT = 1000;
+
 /**
  * Cuts the upward-facing triangles of a geometry (every triangle with `onlyUpward` false), by their longest edge while a world edge is longer than `maximumEdge`,
  * and leaves the others as they are. Returns the new arrays and which vertices belong to a cut triangle.
  */
-function cutGeometry(geometry, matrix, maximumEdge, onlyUpward = true) {
+function* cutGeometrySteps(geometry, matrix, maximumEdge, onlyUpward, checkpoint) {
+  let itemsSinceCheckpoint = 0;
   const builder = createMeshBuilder(geometry);
   const indices = [];
   const tracedVertices = new Set();
   const midpoints = new Map();
   const sourceIndex = vertexData => builder.addVertex(vertexData.position, vertexData.normal, vertexData.uv, vertexData.color);
   const inputVertices = [];
-  for (let index = 0; index < geometry.positions.length / 3; index++) inputVertices.push(builder.readVertex(index));
+  for (let index = 0; index < geometry.positions.length / 3; index++) {
+    inputVertices.push(builder.readVertex(index));
+    if (++itemsSinceCheckpoint === CUT_ITEMS_PER_CHECKPOINT) {
+      itemsSinceCheckpoint = 0;
+      yield* checkpoint();
+    }
+  }
   const cutWork = [];
   for (let corner = 0; corner < geometry.indices.length; corner += 3) {
+    if (++itemsSinceCheckpoint === CUT_ITEMS_PER_CHECKPOINT) {
+      itemsSinceCheckpoint = 0;
+      yield* checkpoint();
+    }
     const triangle = [0, 1, 2].map(slot => geometry.indices[corner + slot]);
     const normal = worldNormalOf(matrix, geometry.positions, triangle);
     if (!onlyUpward || normal[1] >= UPWARD_NORMAL) {
@@ -283,6 +297,10 @@ function cutGeometry(geometry, matrix, maximumEdge, onlyUpward = true) {
   }
   const lengthBetween = (first, second) => worldEdgeLength(matrix, [...first.position, ...second.position], 0, 1);
   while (cutWork.length > 0) {
+    if (++itemsSinceCheckpoint === CUT_ITEMS_PER_CHECKPOINT) {
+      itemsSinceCheckpoint = 0;
+      yield* checkpoint();
+    }
     const corners = cutWork.pop();
     const edgeLengths = [lengthBetween(corners[0], corners[1]), lengthBetween(corners[1], corners[2]), lengthBetween(corners[2], corners[0])];
     const longest = edgeLengths.indexOf(Math.max(...edgeLengths));
@@ -465,13 +483,16 @@ export function* applyFloorSkyVisibilitySteps(parts, { raysPerTexel = FLOOR_SKY_
   let proxyInput = null;
   const floorIndices = findFloorParts(parts);
   if (floorIndices.length === 0) return unchanged('no floor');
+  yield* checkpoint();
   // Every opaque part blocks sky, floors included: a floor above another one (a gallery, a bridge) hides it, and a floor never
   // blocks its own texels because the rays leave from its top face.
   const occluders = parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode));
   if (occluders.length < 2) return unchanged('nothing above the floor');
   // A closed room has no sky to see: its walls and lamps give the light, and the shader's room term already handles it.
   // The fitted test leaves out a lawn beside the room and heavy props, as the sun bounce does.
+  yield* checkpoint();
   const roomShare = fittedClosedRoomShare(parts, partMatrixLookup(parts));
+  yield* checkpoint();
   const closedRoom = roomShare !== null && roomShare >= CLOSED_ROOM_SHARE;
   if (closedRoom && !includeClosedRooms && !onlyClosedRooms) return unchanged('closed room');
   // Open ground gets light back from sunlit facades and streets that a sky trace does not hold, so it comes out too dark.
@@ -481,6 +502,7 @@ export function* applyFloorSkyVisibilitySteps(parts, { raysPerTexel = FLOOR_SKY_
   }
   // The walls, ceiling and props are traced as well only in a room that has walls all round: a roof on columns reads as closed to the ray test above, but its floor keeps the light it had.
   const everySurface = surfaces === 'all' && closedRoom && fittedRoomHasWalls(parts, partMatrixLookup(parts));
+  yield* checkpoint();
   const strength = requestedStrength ?? (onlyClosedRooms ? (everySurface ? ROOM_SURFACE_SKY_STRENGTH : FLOOR_SKY_ROOM_STRENGTH) : FLOOR_SKY_STRENGTH);
   // With every surface, every face of every part is cut (a ceiling slab counts as a floor, so its room side needs the cut too).
   const cutPartIndices = everySurface ? parts.map((part, index) => index).filter(index => floorIndices.includes(index) || (isFloorMaterial(parts[index].material) && hasPlainMesh(parts[index]))) : floorIndices;
@@ -512,7 +534,7 @@ export function* applyFloorSkyVisibilitySteps(parts, { raysPerTexel = FLOOR_SKY_
   for (const index of cutPartIndices) {
     const part = parts[index];
     const { geometry, matrix } = part;
-    const { builder, indices, tracedVertices } = cutGeometry(geometry, matrix, maximumEdge, !everySurface);
+    const { builder, indices, tracedVertices } = yield* cutGeometrySteps(geometry, matrix, maximumEdge, !everySurface, checkpoint);
     if (totalRays + tracedVertices.size * raysPerTexel > maximumRays) return tooLarge('too many rays', `more than ${maximumRays} rays for ${cutPartIndices.length} parts`);
     const vertexCount = builder.positions.length / 3;
     const skyVisibility = new Float32Array(vertexCount).fill(1);

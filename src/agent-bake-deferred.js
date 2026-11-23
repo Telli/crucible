@@ -23,7 +23,9 @@ export function prepareDeferredBake(parts, worldMatrices, environment, settings,
 export function* deferredBakeSteps({ parts, snapshots, lighting, settings }, settleSteps) {
   try {
     const outputs = yield* reusedOrTraced(snapshots, lighting, settings, () => traceOutputsInSlices(snapshots, lighting, settings));
+    yield;
     const baked = placeOutputs(parts, outputs, settings);
+    yield;
     yield* settleSteps(baked.parts);
     return { baked };
   } catch (error) {
