@@ -23,13 +23,13 @@ function matrixKey(matrix) {
 // The inverse transpose of the upper 3 by 3 of a column-major matrix, as cofactors with the sign of the determinant so
 // a mirrored part keeps its normals pointing out.
 function normalMatrixOf(matrix) {
-  const [a, d, g, b, e, h, c, f, i] = [matrix[0], matrix[1], matrix[2], matrix[4], matrix[5], matrix[6], matrix[8], matrix[9], matrix[10]];
+  const [m00, m10, m20, m01, m11, m21, m02, m12, m22] = [matrix[0], matrix[1], matrix[2], matrix[4], matrix[5], matrix[6], matrix[8], matrix[9], matrix[10]];
   const cofactors = [
-    e * i - f * h, f * g - d * i, d * h - e * g,
-    c * h - b * i, a * i - c * g, b * g - a * h,
-    b * f - c * e, c * d - a * f, a * e - b * d,
+    m11 * m22 - m12 * m21, m12 * m20 - m10 * m22, m10 * m21 - m11 * m20,
+    m02 * m21 - m01 * m22, m00 * m22 - m02 * m20, m01 * m20 - m00 * m21,
+    m01 * m12 - m02 * m11, m02 * m10 - m00 * m12, m00 * m11 - m01 * m10,
   ];
-  const determinant = a * cofactors[0] + b * cofactors[1] + c * cofactors[2];
+  const determinant = m00 * cofactors[0] + m01 * cofactors[1] + m02 * cofactors[2];
   const sign = determinant < 0 ? -1 : 1;
   return cofactors.map(value => value * sign);
 }
@@ -65,9 +65,9 @@ function placedNormals(geometry, positions, normalMatrix) {
 }
 
 function faceNormal(positions, corners) {
-  const [a, b, c] = corners.map(corner => corner * 3);
-  const edgeOne = [positions[b] - positions[a], positions[b + 1] - positions[a + 1], positions[b + 2] - positions[a + 2]];
-  const edgeTwo = [positions[c] - positions[a], positions[c + 1] - positions[a + 1], positions[c + 2] - positions[a + 2]];
+  const [first, second, third] = corners.map(corner => corner * 3);
+  const edgeOne = [positions[second] - positions[first], positions[second + 1] - positions[first + 1], positions[second + 2] - positions[first + 2]];
+  const edgeTwo = [positions[third] - positions[first], positions[third + 1] - positions[first + 1], positions[third + 2] - positions[first + 2]];
   return [
     edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1],
     edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2],
@@ -124,10 +124,10 @@ export function surfaceMap(geometry, settings, resolution, nodeId, worldMatrix) 
     let normalZ;
     let upPosition = 0;
     if (hasNormals) {
-      const [a, b, c] = corners.map(corner => corner * 3);
-      normalX = weightA * normals[a] + weightB * normals[b] + weightC * normals[c];
-      normalY = weightA * normals[a + 1] + weightB * normals[b + 1] + weightC * normals[c + 1];
-      normalZ = weightA * normals[a + 2] + weightB * normals[b + 2] + weightC * normals[c + 2];
+      const [first, second, third] = corners.map(corner => corner * 3);
+      normalX = weightA * normals[first] + weightB * normals[second] + weightC * normals[third];
+      normalY = weightA * normals[first + 1] + weightB * normals[second + 1] + weightC * normals[third + 1];
+      normalZ = weightA * normals[first + 2] + weightB * normals[second + 2] + weightC * normals[third + 2];
     } else {
       [normalX, normalY, normalZ] = faceNormal(positions, corners);
     }
