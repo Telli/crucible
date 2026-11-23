@@ -1,7 +1,7 @@
 // Runs in the page: draws one reference scene, and describes it as plain data for Blender.
 import { useCompactColor } from '/src/compact-color.js';
 import { CrucibleRenderer } from '/src/renderer.js';
-import { REFERENCE_SCENES, KHRONOS_SCENES, KTX2_SCENES, loadBarnLampVariant, CLOTH_SCENES } from './scenes.js';
+import { REFERENCE_SCENES, KHRONOS_SCENES, KTX2_SCENES, loadBarnLampVariant, loadScannedObjectVariant, CLOTH_SCENES } from './scenes.js';
 import { GRAND_SCENES } from './grand-scenes.js';
 import { LOOK_OPTIONS, GRAND_PICKS } from './look-options.js';
 import { DEFAULT_LOOK_SCENES } from './default-look-scenes.js';
@@ -422,6 +422,7 @@ async function renderRecipePathTraced(recipe, options) {
 window.renderRecipePathTraced = renderRecipePathTraced;
 window.renderReferenceScene = renderReferenceScene;
 window.loadBarnLampVariant = loadBarnLampVariant;
+window.loadScannedObjectVariant = loadScannedObjectVariant;
 window.renderReferencePathTraced = renderReferencePathTraced;
 window.referenceSceneIds = Object.keys(SCENES);
 

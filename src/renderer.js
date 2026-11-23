@@ -176,6 +176,7 @@ export function shaderFeaturesOfParts(parts) {
     if ([part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => geometry.colors || vertexAlpha(geometry))) features.add('vertexColors');
     // Particles that fade by opacity carry it in the fourth colour component; the shader reads it as the alpha of a blend draw.
     if (part.geometry.vertexOpacity) features.add(VERTEX_OPACITY_FEATURE);
+    else if ([part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => hasVertexAlpha(geometry))) features.add('vertexAlpha');
     // Vertex tangents replace the screen-derivative frame of a normal map; a box-mapped material projects its map and has no UV frame.
     if (material.normalMap && !material.boxMapScale && [part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => geometry.tangents)) features.add(TANGENT_FEATURE);
   }
@@ -694,19 +695,41 @@ function interleaveUvSets(geometry) {
 }
 
 // Sky visibility, or the packed surface wear masks of a material with `wear`, rides in the fourth component of the vertex
-// colour attribute, so the attribute layout stays the same.
+// colour attribute, so the attribute layout stays the same (every vertex attribute slot is taken). The glTF COLOR_0 alpha
+// shares that component with sky visibility as two 10 bit levels. A part with wear masks keeps them and drops the alpha.
 function vertexAlpha(geometry) {
-  return geometry.surfaceMasks ?? geometry.skyVisibility ?? geometry.vertexOpacity;
+  return geometry.surfaceMasks ?? geometry.vertexOpacity ?? geometry.colorAlpha ?? geometry.skyVisibility;
 }
 
-function interleaveColorsWithSkyVisibility(geometry) {
+function hasVertexAlpha(geometry) {
+  return Boolean(geometry.colorAlpha) && !geometry.surfaceMasks;
+}
+
+const VERTEX_ALPHA_LEVELS = 1023;
+
+/** colour alpha * 1024 + sky visibility, both rounded to 0..1023; exact in a float, and the vertexAlpha shader unpacks it. */
+export function packVertexAlpha(colorAlpha, skyVisibility) {
+  return vertexAlphaLevel(colorAlpha) * 1024 + vertexAlphaLevel(skyVisibility ?? 1);
+}
+
+// Clamped so a value just past 1 can never carry into the next alpha level.
+function vertexAlphaLevel(value) {
+  return Math.round(Math.min(Math.max(value, 0), 1) * VERTEX_ALPHA_LEVELS);
+}
+
+function vertexFourthComponent(geometry, vertex) {
+  if (hasVertexAlpha(geometry)) return packVertexAlpha(geometry.colorAlpha[vertex], geometry.skyVisibility?.[vertex]);
+  return vertexAlpha(geometry)[vertex];
+}
+
+export function interleaveColorsWithSkyVisibility(geometry) {
   const vertexCount = vertexAlpha(geometry).length;
   const combined = new Float32Array(vertexCount * 4);
   for (let vertex = 0; vertex < vertexCount; vertex++) {
     for (let channel = 0; channel < 3; channel++) {
       combined[vertex * 4 + channel] = geometry.colors ? geometry.colors[vertex * 3 + channel] : 1;
     }
-    combined[vertex * 4 + 3] = vertexAlpha(geometry)[vertex];
+    combined[vertex * 4 + 3] = vertexFourthComponent(geometry, vertex);
   }
   return combined;
 }

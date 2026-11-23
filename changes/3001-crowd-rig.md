@@ -1,0 +1,1 @@
+- `createCrowdRigFromGltf` and `createCrowdPartsFromGltf` draw many instances of one skinned glTF clip through the GPU crowd path (one palette, one batch per material, no per-instance pose); a clip that animates morph weights throws and stays on the per-asset path (#3001)
