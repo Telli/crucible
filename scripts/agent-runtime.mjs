@@ -12,6 +12,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import packageMetadata from '../package.json' with { type: 'json' };
 import { resolveLookView } from '../src/look-views.js';
+import { runFitLook } from './agent-fit-look.mjs';
 import { TREE_GROWTH_CAPABILITIES, VEGETATION_CAPABILITY_NOTE } from '../src/agent-vegetation-notes.js';
 import { CLUTTER_CAPABILITY_NOTE } from '../src/agent-clutter-notes.js';
 import { CROWD_CAPABILITY_NOTE } from '../src/agent-crowd-notes.js';
@@ -1538,6 +1539,17 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           result.metadata.note = `The ${width}x${height} PNG was over the 1 MiB image response budget, so this is the ${stepWidth}x${stepHeight} render. Request that size or smaller to skip the retry; the PNG limit is bytes, so a calmer scene keeps more pixels.`;
         }
         return result;
+      }));
+    },
+    // Fits look parameters to reference region colours (#2801). It holds the preview like a look, on the light GPU slot, and the
+    // fit stops at its evaluation and time limits with the best look it found; the scene's recipe is put back at the end.
+    fitLook(input) {
+      return gpuUnit('light', () => enqueue(async () => {
+        await requirePreviewRenderer();
+        requireSession(input.sessionId);
+        const result = await runFitLook({ input, invoke: (method, value) => invoke(method, value), setViewport: (width, height) => page.setViewportSize({ width, height }) });
+        const restored = await invoke('exportRecipe', { sessionId: input.sessionId });
+        return { ...result, revision: restored.revision, backend };
       }));
     },
     // Shows the current view in the person's own browser, waits for their pins and notes, and resolves each pin to a part and a
