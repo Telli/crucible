@@ -6,7 +6,7 @@ import { createLightingState, updateLightingState } from '../src/lighting.js';
 import { createFragmentShader, fragmentShader, WETNESS_FEATURE, SHADER_FEATURES } from '../src/shaders.js';
 import { normalizeAgentLook } from '../src/agent-look.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
-import { wetnessUniformValues, PUDDLE_SOURCES } from '../src/wetness.js';
+import { wetnessUniformValues, wetnessResponse, PUDDLE_SOURCES } from '../src/wetness.js';
 
 function emptySession() {
   return createAgentScene({ format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] });
@@ -41,12 +41,20 @@ test('an unknown puddle source is refused with the one to pass', () => {
 });
 
 test('puddles scale with wetness, so damp ground gets fewer than soaked ground', () => {
-  assert.deepEqual(wetnessUniformValues({ wetness: 0.5, puddles: { coverage: 0.8 } }), [0.5, 0.4, 0]);
+  const damp = wetnessUniformValues({ wetness: 0.5, puddles: { coverage: 0.8 } });
+  assert.deepEqual([damp[0], Math.round(damp[1] * 1000) / 1000, damp[2]], [0.75, 0.6, 0]);
   assert.deepEqual(wetnessUniformValues({ wetness: 1, puddles: { coverage: 0.8 } }), [1, 0.8, 0]);
   assert.deepEqual(wetnessUniformValues({ puddles: { coverage: 0.8 } }), [0, 0, 0]);
   const state = updateLightingState(createLightingState(), { wetness: 0.5, puddles: { coverage: 0.8 } });
-  assert.equal(state.wetness, 0.5);
-  assert.ok(Math.abs(state.wetnessState[1] - 0.4) < 1e-6);
+  assert.equal(state.wetness, 0.75);
+  assert.ok(Math.abs(state.wetnessState[1] - 0.6) < 1e-6);
+});
+
+test('the wetness curve is visible by the middle of the range and keeps its ends', () => {
+  assert.equal(wetnessResponse(0), 0);
+  assert.equal(wetnessResponse(1), 1);
+  assert.equal(wetnessResponse(0.5), 0.75);
+  assert.ok(wetnessResponse(0.1) > 0.15);
 });
 
 test('the wetness code joins the fragment shader only when the feature is on', () => {

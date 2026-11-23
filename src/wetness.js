@@ -40,11 +40,19 @@ export function normalizePuddles(value) {
 }
 
 /**
+ * How wet the surface looks for a wetness value: the first half of the range does most of the work (0.5 gives 0.75), because
+ * a scan of wet asphalt is already dark and glossy once it is damp. Wet ground goes from dry to soaked on this curve.
+ */
+export function wetnessResponse(wetness) {
+  return 1 - (1 - wetness) * (1 - wetness);
+}
+
+/**
  * The three numbers the wetness shader reads: wetness, the puddle share of the surface, and the puddle source (0 is height).
- * Puddles need wet ground, so their share is the coverage scaled by the wetness: damp ground gets a few, soaked ground many.
+ * Both numbers follow wetnessResponse. Puddles need wet ground, so their share is the coverage scaled by it: damp ground gets a few, soaked ground many.
  */
 export function wetnessUniformValues(environment) {
-  const wetness = environment.wetness ?? 0;
+  const response = wetnessResponse(environment.wetness ?? 0);
   const coverage = environment.puddles?.coverage ?? 0;
-  return [wetness, coverage * wetness, 0];
+  return [response, coverage * response, 0];
 }
