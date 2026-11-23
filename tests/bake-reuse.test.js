@@ -93,6 +93,7 @@ test('a one-node move through the controller bakes once, and unwraps nothing aga
   const tracedBefore = bakesTraced();
   const unwrapsBefore = unwrapsComputed();
   controller.loadRecipe(movedBlock(controller.exportRecipe()));
+  controller.settleBake();
   assert.equal(bakesTraced() - tracedBefore, 1);
   assert.equal(unwrapsComputed(), unwrapsBefore);
 });
@@ -102,6 +103,7 @@ test('a material colour edit traces again but does not unwrap again', () => {
   const tracedBefore = bakesTraced();
   const unwrapsBefore = unwrapsComputed();
   controller.loadRecipe(recoloured(controller.exportRecipe()));
+  controller.settleBake();
   assert.equal(bakesTraced() - tracedBefore, 1, 'the colour feeds the bounce, so the light is traced again');
   assert.equal(unwrapsComputed(), unwrapsBefore);
 });
@@ -121,10 +123,13 @@ test('reused light and geometry equal a fresh build byte for byte after a load, 
   controller.loadRecipe(structuredClone(controller.exportRecipe()));
   cases.push(['unchanged', controller.exportRecipe(), bakedBytes(controller.scene)]);
   controller.loadRecipe(movedBlock(controller.exportRecipe()));
+  controller.settleBake();
   cases.push(['moved', controller.exportRecipe(), bakedBytes(controller.scene)]);
   controller.loadRecipe(recoloured(controller.exportRecipe()));
+  controller.settleBake();
   cases.push(['recoloured', controller.exportRecipe(), bakedBytes(controller.scene)]);
   controller.loadRecipe(movedBlock(bakedRoom()));
+  controller.settleBake();
   cases.push(['back to an earlier recipe', controller.exportRecipe(), bakedBytes(controller.scene)]);
   for (const [name, recipe, reusedBytes] of cases) {
     assert.deepEqual(reusedBytes, freshBytes(recipe), name);

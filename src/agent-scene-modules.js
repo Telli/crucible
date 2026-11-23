@@ -21,6 +21,7 @@ const MODULE_LOADERS = {
   cloth: () => import('./agent-cloth.js'),
   particles: () => import('./agent-particles.js'),
   bake: () => import('./agent-bake.js'),
+  bakeDeferred: () => import('./agent-bake-deferred.js'),
   reflections: () => import('./agent-reflections.js'),
   patterns: () => import('./material-patterns.js'),
   relations: () => import('./agent-relations.js'),
@@ -97,6 +98,7 @@ const MODULE_MARKERS = {
   cloth: ['"cloth":{'],
   particles: ['"particles":{', '"add-explosion"'],
   bake: ['"bake":{'],
+  bakeDeferred: ['"bake":{'],
   // A metallic value of 0.5 or more may make a part reflective; the module skips a scene that has no smooth one.
   reflections: [/"metallic":(0\.[5-9]|1(?![0-9]))/],
   patterns: ['"pattern"'],

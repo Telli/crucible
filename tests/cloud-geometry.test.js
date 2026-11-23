@@ -224,3 +224,28 @@ test('a recipe cloud with levels becomes a part', () => {
   });
   assert.equal(hashOf(scene.parts[0].geometry), hashOf(cloudGeometry({ seed: 4, levels: TOWER_LEVELS, resolution: 40 })));
 });
+
+test('a level softness equal to the shared unionSoftness keeps the bytes, and a different one changes only that level', () => {
+  const shared = { seed: 3, resolution: 64, width: 8, height: 6, unionSoftness: 0.3 };
+  const plain = hashOf(cloudGeometry({ ...shared, levels: TOWER_LEVELS }));
+  const sameValue = TOWER_LEVELS.map(level => ({ ...level, softness: 0.3 }));
+  assert.equal(hashOf(cloudGeometry({ ...shared, levels: sameValue })), plain);
+  const crispSmallLobes = TOWER_LEVELS.map((level, index) => (index === 2 ? { ...level, softness: 0.1 } : level));
+  assert.notEqual(hashOf(cloudGeometry({ ...shared, levels: crispSmallLobes })), plain);
+  const softBigLobes = TOWER_LEVELS.map((level, index) => (index === 0 ? { ...level, softness: 0.6 } : level));
+  assert.notEqual(hashOf(cloudGeometry({ ...shared, levels: softBigLobes })), plain);
+});
+
+test('a crisper small level keeps more of its bumps than a soft one on the same big lobes', () => {
+  const shared = { seed: 3, resolution: 64, width: 8, height: 6 };
+  const bumpiness = softness => {
+    const levels = TOWER_LEVELS.map((level, index) => (index === 2 ? { ...level, softness } : level));
+    return cloudGeometry({ ...shared, levels }).indices.length;
+  };
+  assert.ok(bumpiness(0.05) !== bumpiness(0.9), 'the small-level softness changes the surface');
+});
+
+test('a level softness outside 0.02 to 1 names the field and what to pass', () => {
+  assert.throws(() => cloudGeometry({ levels: [{ count: 7, sizeRatio: 1, softness: 0 }] }), /cloud\.levels\[0\]\.softness.*0\.02 to 1.*leave it out/);
+  assert.throws(() => cloudGeometry({ levels: [{ count: 7, sizeRatio: 1 }, { count: 20, sizeRatio: 0.3, softness: 'soft' }] }), /cloud\.levels\[1\]\.softness/);
+});
