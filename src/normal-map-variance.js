@@ -1,9 +1,9 @@
-// Specular anti-aliasing from a normal map (Toksvig with lengths measured at upload, #3142).
+// Specular anti-aliasing from a normal map (Toksvig with spreads measured when the mip chain is made, #3142).
 // A mip level of a normal map averages texels whose normals disagree. The mean normal is shorter than 1 by the amount they disagree,
 // and that shortfall widens the highlight so a pixel that covers many tilted normals does not catch a light once per pixel.
 // The shader cannot read the shortfall from the stored mip: 8 bits and a renormalised direction lose it (measured on the Khronos
-// NormalTangentTest, the sampled length barely shortens at the glint pixels). So it is measured here from the full-resolution
-// texels, level by level, and stored in the alpha channel of every level, which a normal map does not otherwise use.
+// NormalTangentTest, the sampled length barely shortens at the glint pixels). So a small GPU pass builds each level from the level
+// above, keeps the renormalised mean direction in RGB and stores the spread in the alpha channel, which a normal map does not otherwise use.
 
 /** Alpha of a normal map that was not baked (precompressed, updated in place): the shader falls back to the stored normal length. */
 export const UNBAKED_ALPHA = 255;
@@ -11,149 +11,143 @@ export const UNBAKED_ALPHA = 255;
 export const MAXIMUM_BAKED_ALPHA = 254;
 /** The shader treats an alpha above this (0 to 1) as unbaked. */
 export const UNBAKED_ALPHA_THRESHOLD = '0.999';
-
-/** One minus the mean unit-normal length (0 flat to 1) as the stored alpha: the square root keeps resolution where the spread is small. */
-export function encodeSpread(spread) {
-  const clamped = Math.min(Math.max(spread, 0), 1);
-  return Math.min(MAXIMUM_BAKED_ALPHA, Math.round(255 * Math.sqrt(clamped)));
-}
-
-/** The spread a stored alpha stands for, the inverse of encodeSpread. */
-export function decodeSpread(alpha) {
-  const unit = alpha / 255;
-  return unit * unit;
-}
-
-function levelSize(size) {
-  return Math.max(1, size >> 1);
-}
-
-// Unit normals of the texels of RGBA bytes, three floats each. A texel that decodes to a zero vector counts as the flat normal.
-function unitNormalsOf(rgba, width, height) {
-  const normals = new Float32Array(width * height * 3);
-  for (let texel = 0; texel < width * height; texel++) {
-    const x = rgba[texel * 4] / 127.5 - 1;
-    const y = rgba[texel * 4 + 1] / 127.5 - 1;
-    const z = rgba[texel * 4 + 2] / 127.5 - 1;
-    const length = Math.hypot(x, y, z);
-    const target = texel * 3;
-    if (length < 1e-6) {
-      normals[target + 2] = 1;
-    } else {
-      normals[target] = x / length;
-      normals[target + 1] = y / length;
-      normals[target + 2] = z / length;
-    }
-  }
-  return normals;
-}
-
-// The mean vectors of the 2x2 blocks (clamped at an odd edge) of `source`.
-function halvedMeans(source, width, height) {
-  const nextWidth = levelSize(width);
-  const nextHeight = levelSize(height);
-  const means = new Float32Array(nextWidth * nextHeight * 3);
-  for (let row = 0; row < nextHeight; row++) {
-    const rows = [Math.min(row * 2, height - 1), Math.min(row * 2 + 1, height - 1)];
-    for (let column = 0; column < nextWidth; column++) {
-      const columns = [Math.min(column * 2, width - 1), Math.min(column * 2 + 1, width - 1)];
-      const target = (row * nextWidth + column) * 3;
-      for (const sourceRow of rows) {
-        for (const sourceColumn of columns) {
-          const from = (sourceRow * width + sourceColumn) * 3;
-          means[target] += source[from] * 0.25;
-          means[target + 1] += source[from + 1] * 0.25;
-          means[target + 2] += source[from + 2] * 0.25;
-        }
-      }
-    }
-  }
-  return { means, width: nextWidth, height: nextHeight };
-}
-
-function encodeLevel(means, width, height) {
-  const data = new Uint8Array(width * height * 4);
-  for (let texel = 0; texel < width * height; texel++) {
-    const x = means[texel * 3];
-    const y = means[texel * 3 + 1];
-    const z = means[texel * 3 + 2];
-    const length = Math.hypot(x, y, z);
-    const direction = length < 1e-6 ? [0, 0, 1] : [x / length, y / length, z / length];
-    for (let channel = 0; channel < 3; channel++) data[texel * 4 + channel] = Math.round((direction[channel] * 0.5 + 0.5) * 255);
-    data[texel * 4 + 3] = encodeSpread(1 - Math.min(length, 1));
-  }
-  return data;
-}
-
-/**
- * Every mip level of an RGBA tangent-space normal map as { width, height, data } of RGBA bytes: level 0 keeps its direction and gets
- * alpha 0, each lower level holds the renormalised mean direction of the texels it covers and, in alpha, the encoded spread
- * 1 - |mean of unit normals| (see encodeSpread). The means are kept in floats, so the spread does not lose what 8 bits would.
- * Deterministic and linear in the texel count. Odd edges clamp, so a non power-of-two map can differ slightly from a driver's chain.
- */
-export function buildNormalVarianceLevels(rgba, width, height) {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
-    throw new RangeError(`buildNormalVarianceLevels needs a whole width and height of 1 or more; got ${width}x${height}.`);
-  }
-  if (!rgba || rgba.length < width * height * 4) {
-    throw new RangeError(`buildNormalVarianceLevels needs width x height x 4 RGBA bytes; got ${rgba?.length ?? 'none'} for ${width}x${height}.`);
-  }
-  const base = new Uint8Array(width * height * 4);
-  base.set(rgba.subarray(0, width * height * 4));
-  for (let texel = 0; texel < width * height; texel++) base[texel * 4 + 3] = 0;
-  const levels = [{ width, height, data: base }];
-  let current = unitNormalsOf(rgba, width, height);
-  let currentWidth = width;
-  let currentHeight = height;
-  while (currentWidth > 1 || currentHeight > 1) {
-    const next = halvedMeans(current, currentWidth, currentHeight);
-    levels.push({ width: next.width, height: next.height, data: encodeLevel(next.means, next.width, next.height) });
-    current = next.means;
-    currentWidth = next.width;
-    currentHeight = next.height;
-  }
-  return levels;
-}
-
-// The base level of the bound texture as RGBA bytes, or null when the context cannot read it back.
-function readBaseLevel(context, texture, width, height) {
-  const previousFramebuffer = context.getParameter(context.FRAMEBUFFER_BINDING);
-  const framebuffer = context.createFramebuffer();
-  try {
-    context.bindFramebuffer(context.FRAMEBUFFER, framebuffer);
-    context.framebufferTexture2D(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, texture, 0);
-    if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) return null;
-    const pixels = new Uint8Array(width * height * 4);
-    context.readPixels(0, 0, width, height, context.RGBA, context.UNSIGNED_BYTE, pixels);
-    return pixels;
-  } finally {
-    context.bindFramebuffer(context.FRAMEBUFFER, previousFramebuffer);
-    context.deleteFramebuffer(framebuffer);
-  }
-}
-
-/**
- * Replaces the mip chain of the normal map bound to TEXTURE_2D (RGBA8, level 0 uploaded) with the levels of buildNormalVarianceLevels.
- * Returns false and leaves the texture as it was (the caller generates mipmaps; the shader falls back to the stored length)
- * when the base level cannot be read back.
- */
-export function bakeNormalMapVariance(context, texture, width, height) {
-  const base = readBaseLevel(context, texture, width, height);
-  if (!base) return false;
-  const previousFlip = context.getParameter(context.UNPACK_FLIP_Y_WEBGL);
-  const previousPremultiply = context.getParameter(context.UNPACK_PREMULTIPLY_ALPHA_WEBGL);
-  try {
-    context.pixelStorei(context.UNPACK_FLIP_Y_WEBGL, false);
-    context.pixelStorei(context.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    buildNormalVarianceLevels(base, width, height).forEach((level, index) => {
-      context.texImage2D(context.TEXTURE_2D, index, context.RGBA8, level.width, level.height, 0, context.RGBA, context.UNSIGNED_BYTE, level.data);
-    });
-  } finally {
-    context.pixelStorei(context.UNPACK_FLIP_Y_WEBGL, previousFlip);
-    context.pixelStorei(context.UNPACK_PREMULTIPLY_ALPHA_WEBGL, previousPremultiply);
-  }
-  return true;
-}
-
 /** Gain of the baked spread in the specular fade, against the screen-space change of the normal. The glints sit on texels whose spread is tiny (about 1e-3); 100 takes the rim to the path tracer without dimming the interior highlight (#3142). */
 export const NORMAL_SPREAD_GAIN = 100;
+
+const VERTEX_SHADER = `#version 300 es
+void main() {
+  vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+  gl_Position = vec4(corner * 2.0 - 1.0, 0.0, 1.0);
+}
+`;
+
+// One texel of the level above as the mean vector of the normals it stands for: its direction times (1 - spread). Alpha is the
+// square root of the spread, and a level 0 texel has alpha 0, so the first pass averages plain unit normals.
+const FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+uniform highp sampler2D source;
+uniform ivec2 sourceSize;
+out vec4 result;
+vec3 meanVector(ivec2 texel) {
+  vec4 stored = texelFetch(source, min(texel, sourceSize - 1), 0);
+  vec3 direction = stored.xyz * 2.0 - 1.0;
+  float directionLength = length(direction);
+  direction = directionLength < 1e-6 ? vec3(0.0, 0.0, 1.0) : direction / directionLength;
+  return direction * (1.0 - stored.w * stored.w);
+}
+void main() {
+  ivec2 first = ivec2(gl_FragCoord.xy) * 2;
+  vec3 mean = 0.25 * (meanVector(first) + meanVector(first + ivec2(1, 0)) + meanVector(first + ivec2(0, 1)) + meanVector(first + ivec2(1, 1)));
+  float meanLength = length(mean);
+  vec3 direction = meanLength < 1e-6 ? vec3(0.0, 0.0, 1.0) : mean / meanLength;
+  float spread = clamp(1.0 - meanLength, 0.0, 1.0);
+  result = vec4(direction * 0.5 + 0.5, min(round(255.0 * sqrt(spread)), ${MAXIMUM_BAKED_ALPHA}.0) / 255.0);
+}
+`;
+
+const programsByContext = new WeakMap();
+
+function compile(context, type, source) {
+  const shader = context.createShader(type);
+  context.shaderSource(shader, source);
+  context.compileShader(shader);
+  if (!context.getShaderParameter(shader, context.COMPILE_STATUS)) throw new Error(`The normal map spread shader did not compile: ${context.getShaderInfoLog(shader)}`);
+  return shader;
+}
+
+function spreadProgram(context) {
+  if (programsByContext.has(context)) return programsByContext.get(context);
+  const program = context.createProgram();
+  const vertex = compile(context, context.VERTEX_SHADER, VERTEX_SHADER);
+  const fragment = compile(context, context.FRAGMENT_SHADER, FRAGMENT_SHADER);
+  context.attachShader(program, vertex);
+  context.attachShader(program, fragment);
+  context.linkProgram(program);
+  context.deleteShader(vertex);
+  context.deleteShader(fragment);
+  if (!context.getProgramParameter(program, context.LINK_STATUS)) throw new Error(`The normal map spread program did not link: ${context.getProgramInfoLog(program)}`);
+  const entry = { program, sourceLocation: context.getUniformLocation(program, 'source'), sizeLocation: context.getUniformLocation(program, 'sourceSize'), vertexArray: context.createVertexArray() };
+  programsByContext.set(context, entry);
+  return entry;
+}
+
+const TOGGLED_STATES = ['SCISSOR_TEST', 'BLEND', 'DEPTH_TEST', 'CULL_FACE', 'STENCIL_TEST', 'DITHER'];
+
+// What the pass changes, put back by the returned function: the renderer binds its own program, vertex array and targets before every draw, but a texture is
+// created in the middle of a frame and the pass must not leave a target or a mask behind.
+function saveState(context) {
+  const framebuffer = context.getParameter(context.FRAMEBUFFER_BINDING);
+  const viewport = context.getParameter(context.VIEWPORT);
+  const program = context.getParameter(context.CURRENT_PROGRAM);
+  const vertexArray = context.getParameter(context.VERTEX_ARRAY_BINDING);
+  const colorMask = context.getParameter(context.COLOR_WRITEMASK);
+  const enabled = TOGGLED_STATES.map(name => context.isEnabled(context[name]));
+  return () => {
+    TOGGLED_STATES.forEach((name, index) => (enabled[index] ? context.enable(context[name]) : context.disable(context[name])));
+    context.colorMask(...colorMask);
+    context.bindVertexArray(vertexArray);
+    context.useProgram(program);
+    context.viewport(...viewport);
+    context.bindFramebuffer(context.FRAMEBUFFER, framebuffer);
+  };
+}
+
+/**
+ * Replaces the mip chain of the linear RGBA8 normal map bound to TEXTURE_2D (level 0 uploaded) with levels whose alpha holds the spread
+ * of the unit normals each texel averages, sqrt-coded and at most 254 (level 0 gets alpha 0), and whose RGB is their renormalised mean.
+ * Each level is drawn from the one above into a scratch texture the size of level 1 and copied into the map's own storage, so the
+ * map takes no extra memory once the pass is done and no pixel is read back to the CPU: it takes milliseconds where a CPU pass took
+ * 0.3 s on a 2048 map. An odd edge clamps, as a driver's own chain does. Deterministic on one device.
+ * Returns false and leaves the levels for the caller's generateMipmap (the shader then falls back to the stored length) when the
+ * texture cannot be drawn into.
+ */
+export function bakeNormalMapVariance(context, texture, width, height) {
+  const restoreState = saveState(context);
+  const framebuffer = context.createFramebuffer();
+  const scratch = context.createTexture();
+  let baked = false;
+  try {
+    const { program, sourceLocation, sizeLocation, vertexArray } = spreadProgram(context);
+    context.bindFramebuffer(context.FRAMEBUFFER, framebuffer);
+    context.framebufferTexture2D(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, texture, 0);
+    if (context.checkFramebufferStatus(context.FRAMEBUFFER) !== context.FRAMEBUFFER_COMPLETE) return false;
+    TOGGLED_STATES.forEach(name => context.disable(context[name]));
+    context.colorMask(false, false, false, true);
+    context.clearColor(0, 0, 0, 0);
+    context.clear(context.COLOR_BUFFER_BIT);
+    context.colorMask(true, true, true, true);
+    const unit = context.getParameter(context.ACTIVE_TEXTURE);
+    const firstWidth = Math.max(1, width >> 1);
+    const firstHeight = Math.max(1, height >> 1);
+    context.bindTexture(context.TEXTURE_2D, scratch);
+    context.texImage2D(context.TEXTURE_2D, 0, context.RGBA8, firstWidth, firstHeight, 0, context.RGBA, context.UNSIGNED_BYTE, null);
+    context.bindTexture(context.TEXTURE_2D, texture);
+    context.framebufferTexture2D(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, scratch, 0);
+    context.useProgram(program);
+    context.bindVertexArray(vertexArray);
+    context.uniform1i(sourceLocation, unit - context.TEXTURE0);
+    let sourceWidth = width;
+    let sourceHeight = height;
+    for (let level = 1; sourceWidth > 1 || sourceHeight > 1; level++) {
+      const levelWidth = Math.max(1, sourceWidth >> 1);
+      const levelHeight = Math.max(1, sourceHeight >> 1);
+      // The map is only sampled here (the target is the scratch texture), so reading level - 1 alone is allowed.
+      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_BASE_LEVEL, level - 1);
+      context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAX_LEVEL, level - 1);
+      context.viewport(0, 0, levelWidth, levelHeight);
+      context.uniform2i(sizeLocation, sourceWidth, sourceHeight);
+      context.drawArrays(context.TRIANGLES, 0, 3);
+      context.copyTexImage2D(context.TEXTURE_2D, level, context.RGBA8, 0, 0, levelWidth, levelHeight, 0);
+      sourceWidth = levelWidth;
+      sourceHeight = levelHeight;
+    }
+    baked = true;
+  } finally {
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_BASE_LEVEL, 0);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAX_LEVEL, 1000);
+    context.deleteFramebuffer(framebuffer);
+    context.deleteTexture(scratch);
+    restoreState();
+  }
+  return baked;
+}

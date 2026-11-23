@@ -1265,7 +1265,7 @@ export class CrucibleRenderer {
         const info = textureDescriptorInfo(map, context.getParameter(context.MAX_TEXTURE_SIZE));
         if (map.image.compressed) map.image.compressed.upload(context);
         else context.texImage2D(context.TEXTURE_2D, 0, map.colorSpace === 'linear' ? context.RGBA8 : context.SRGB8_ALPHA8, context.RGBA, context.UNSIGNED_BYTE, map.image);
-        configureTexture(this, info, { bakesNormalVariance: isNormalMap && !map.image.compressed });
+        configureTexture(this, info, { bakesNormalVariance: isNormalMap && !map.image.compressed && map.colorSpace === 'linear' });
       } else {
         context.texImage2D(context.TEXTURE_2D, 0, context.RGBA8, 1, 1, 0, context.RGBA, context.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
         context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
