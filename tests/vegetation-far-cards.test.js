@@ -135,15 +135,21 @@ test('the centre of a far crown holds at least the share of cards it holds at le
   }
 });
 
-test('far cards droop like level 1 and a far palm keeps fine fronds', () => {
-  const SLOPE_TOLERANCE = 0.08;
+// One tree's mean slope moves by about 0.05 with the seed, because a far level has a tenth of the cards, so the limit holds for the mean of
+// several seeds, which is what a forest of that species shows.
+test('far cards droop like level 1 on average over eight seeds, and a far palm keeps fine fronds', () => {
+  const SLOPE_TOLERANCE = 0.05;
   const PALM_LENGTH_FACTOR = 1.5;
-  for (const preset of ['oak', 'birch', 'palm']) {
-    const tree = createTree({ preset }, 4);
-    const nearCards = cardsOf(tree, 1);
+  const SLOPE_SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
+  for (const preset of ['oak', 'ash', 'aspen', 'birch', 'palm']) {
+    const differences = { 2: 0, 3: 0 };
+    for (const seed of SLOPE_SEEDS) {
+      const tree = createTree({ preset }, seed);
+      const nearSlope = meanOf(cardsOf(tree, 1), 'slope');
+      for (const level of [2, 3]) differences[level] += (meanOf(cardsOf(tree, level), 'slope') - nearSlope) / SLOPE_SEEDS.length;
+    }
     for (const level of [2, 3]) {
-      const slopeDifference = Math.abs(meanOf(cardsOf(tree, level), 'slope') - meanOf(nearCards, 'slope'));
-      assert.ok(slopeDifference <= SLOPE_TOLERANCE, `${preset} level ${level} cards point ${slopeDifference.toFixed(2)} off level 1`);
+      assert.ok(Math.abs(differences[level]) <= SLOPE_TOLERANCE, `${preset} level ${level} cards point ${differences[level].toFixed(3)} off level 1 on average`);
     }
   }
   const palm = createTree({ preset: 'palm' }, 4);
