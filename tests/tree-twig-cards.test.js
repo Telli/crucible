@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createTree, resolveTreePreset } from '../src/vegetation.js';
-import { createLeafPixels } from '../src/vegetation-textures.js';
+import { createLeafPixels, SPRAY_KINDS } from '../src/vegetation-textures.js';
+import { addLeafSurface, atlasCellRect } from '../src/vegetation-geometry.js';
 import { measureTreeLevels } from '../scripts/tree-proof-lib.mjs';
 
 const OPAQUE_ALPHA = 128;
@@ -29,14 +30,99 @@ function geometryHash(tree) {
   return hash.digest('hex').slice(0, 12);
 }
 
-test('the twig card is 256 px and mostly leaf where the sprig card was a fifth leaf', () => {
-  const twig = createLeafPixels('twig', [64, 110, 36], 1);
-  assert.equal(twig.width, 256);
-  assert.equal(twig.height, 256);
-  assert.ok(opaqueShare(twig) >= 0.6, `the twig card is ${opaqueShare(twig).toFixed(2)} opaque; paint more leaves`);
-  assert.ok(opaqueShare(createLeafPixels('sprig', [64, 110, 36], 1)) < 0.35);
-  // Compare the bytes in one step: a failing deepEqual on 256 KB of pixels prints a diff that can take gigabytes.
-  assert.ok(Buffer.from(createLeafPixels('twig', [64, 110, 36], 1).data).equals(Buffer.from(twig.data)), 'the twig painter is deterministic');
+const SPRAY_COLOR = [64, 110, 36];
+const ATLAS_SIZE = 256;
+const CELL_SIZE = ATLAS_SIZE / 2;
+const MAXIMUM_HULL_FILL = 0.75;
+const MAXIMUM_MIP_DRIFT = 0.05;
+const SMALLEST_MIP_SIZE = 16;
+
+function cross(origin, first, second) {
+  return (first[0] - origin[0]) * (second[1] - origin[1]) - (first[1] - origin[1]) * (second[0] - origin[0]);
+}
+
+function convexHullArea(points) {
+  const sorted = [...points].sort((first, second) => first[0] - second[0] || first[1] - second[1]);
+  const half = (ordered) => {
+    const chain = [];
+    for (const point of ordered) {
+      while (chain.length > 1 && cross(chain[chain.length - 2], chain[chain.length - 1], point) <= 0) chain.pop();
+      chain.push(point);
+    }
+    chain.pop();
+    return chain;
+  };
+  const hull = half(sorted).concat(half([...sorted].reverse()));
+  let twiceArea = 0;
+  hull.forEach((point, index) => {
+    const next = hull[(index + 1) % hull.length];
+    twiceArea += point[0] * next[1] - next[0] * point[1];
+  });
+  return Math.abs(twiceArea) / 2;
+}
+
+function sprayHullFill(pixels, cellIndex) {
+  const left = (cellIndex % 2) * CELL_SIZE;
+  const top = Math.floor(cellIndex / 2) * CELL_SIZE;
+  const opaquePoints = [];
+  for (let y = 0; y < CELL_SIZE; y++) {
+    for (let x = 0; x < CELL_SIZE; x++) {
+      if (pixels.data[((top + y) * ATLAS_SIZE + left + x) * 4 + 3] >= OPAQUE_ALPHA) opaquePoints.push([x, y]);
+    }
+  }
+  return opaquePoints.length / convexHullArea(opaquePoints);
+}
+
+// Opaque share of the alpha plane at each mip level from the full size down to 16 px, boxed down the way a GPU builds the chain.
+function opaqueShareByMip(pixels) {
+  let alpha = Float32Array.from({ length: ATLAS_SIZE * ATLAS_SIZE }, (_, index) => pixels.data[index * 4 + 3]);
+  const shares = [];
+  for (let size = ATLAS_SIZE; size >= SMALLEST_MIP_SIZE; size /= 2) {
+    shares.push(alpha.filter(value => value >= OPAQUE_ALPHA).length / alpha.length);
+    const half = size / 2;
+    const next = new Float32Array(half * half);
+    for (let y = 0; y < half; y++) {
+      for (let x = 0; x < half; x++) {
+        next[y * half + x] = (alpha[2 * y * size + 2 * x] + alpha[2 * y * size + 2 * x + 1] + alpha[(2 * y + 1) * size + 2 * x] + alpha[(2 * y + 1) * size + 2 * x + 1]) / 4;
+      }
+    }
+    alpha = next;
+  }
+  return shares;
+}
+
+for (const kind of SPRAY_KINDS) {
+  test(`${kind}: a 256 px atlas of four open sprays that survive the mip chain, painted the same every time`, () => {
+    for (const seed of [1, 2, 3]) {
+      const atlas = createLeafPixels(kind, SPRAY_COLOR, seed);
+      assert.equal(atlas.width, ATLAS_SIZE);
+      assert.equal(atlas.height, ATLAS_SIZE);
+      for (let cell = 0; cell < 4; cell++) {
+        const fill = sprayHullFill(atlas, cell);
+        assert.ok(fill <= MAXIMUM_HULL_FILL, `${kind} seed ${seed} spray ${cell} is ${fill.toFixed(2)} opaque inside its hull; leave more gaps`);
+        assert.ok(fill > 0.1, `${kind} seed ${seed} spray ${cell} is nearly empty`);
+      }
+      const [full, ...smaller] = opaqueShareByMip(atlas);
+      smaller.forEach((share, level) => {
+        assert.ok(Math.abs(share - full) <= MAXIMUM_MIP_DRIFT, `${kind} seed ${seed} mip ${level + 1} is ${share.toFixed(3)} opaque against ${full.toFixed(3)}`);
+      });
+      // Compare the bytes in one step: a failing deepEqual on 256 KB of pixels prints a diff that can take gigabytes.
+      assert.ok(Buffer.from(createLeafPixels(kind, SPRAY_COLOR, seed).data).equals(Buffer.from(atlas.data)), `${kind} painter is deterministic`);
+    }
+  });
+}
+
+test('the sprig card is still a fifth leaf, and addLeafSurface maps a variant cell of the atlas', () => {
+  assert.ok(opaqueShare(createLeafPixels('sprig', SPRAY_COLOR, 1)) < 0.35);
+  const vertices = [];
+  const builder = { addVertex: (position, normal, u, v) => vertices.push([u, v]) - 1, addTriangle() {} };
+  const surface = { origin: [0, 0, 0], frame: { forward: [0, 1, 0], right: [1, 0, 0], normal: [0, 0, 1] }, length: 1, width: 1, rows: [[0, 1], [1, 1]], canopyNormal: [0, 1, 0], backFaces: false };
+  addLeafSurface(builder, surface);
+  assert.deepEqual(vertices, [[0, 1], [1, 1], [0, 0], [1, 0]]);
+  vertices.length = 0;
+  addLeafSurface(builder, { ...surface, uvRect: atlasCellRect(1) });
+  assert.deepEqual(vertices, [[0.5, 1], [1, 1], [0.5, 0.5], [1, 0.5]]);
+  assert.deepEqual(atlasCellRect(2), { minU: 0, maxU: 0.5, minV: 0, maxV: 0.5 });
 });
 
 test('broad-leaved tree presets carry twig cards and crown placement, plain species keep sprig cards', () => {

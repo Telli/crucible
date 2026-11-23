@@ -30,16 +30,18 @@ function compositePixel(pixels, x, y, color, coverage) {
 }
 
 // Angle zero points up the image; the leaf grows from (baseX, baseY) along that axis.
-function paintLeaf(pixels, { baseX, baseY, angle, length, width, color, shade }) {
+const PLAIN_PROFILE = along => Math.sin(Math.PI * along ** 0.7);
+
+function paintLeaf(pixels, { baseX, baseY, angle, length, width, color, shade, profile = PLAIN_PROFILE, bounds = null }) {
   const axisX = Math.sin(angle);
   const axisY = -Math.cos(angle);
   const sideX = -axisY;
   const sideY = axisX;
   const reach = Math.ceil(length + width);
-  const minimumY = Math.max(0, Math.floor(baseY - reach));
-  const maximumY = Math.min(pixels.height - 1, Math.ceil(baseY + reach));
-  const minimumX = Math.max(0, Math.floor(baseX - reach));
-  const maximumX = Math.min(pixels.width - 1, Math.ceil(baseX + reach));
+  const minimumY = Math.max(bounds?.minY ?? 0, Math.floor(baseY - reach));
+  const maximumY = Math.min(bounds?.maxY ?? pixels.height - 1, Math.ceil(baseY + reach));
+  const minimumX = Math.max(bounds?.minX ?? 0, Math.floor(baseX - reach));
+  const maximumX = Math.min(bounds?.maxX ?? pixels.width - 1, Math.ceil(baseX + reach));
   for (let y = minimumY; y <= maximumY; y++) {
     for (let x = minimumX; x <= maximumX; x++) {
       const offsetX = x + 0.5 - baseX;
@@ -47,7 +49,7 @@ function paintLeaf(pixels, { baseX, baseY, angle, length, width, color, shade })
       const along = (offsetX * axisX + offsetY * axisY) / length;
       if (along < 0 || along > 1) continue;
       const across = offsetX * sideX + offsetY * sideY;
-      const halfWidth = width / 2 * Math.sin(Math.PI * along ** 0.7);
+      const halfWidth = width / 2 * profile(along);
       const coverage = clamp(halfWidth - Math.abs(across) + 0.5, 0, 1);
       if (coverage <= 0) continue;
       const sideDistance = Math.abs(across) / (halfWidth + 1e-3);
@@ -85,43 +87,122 @@ function paintSprig(pixels, color, random) {
   paintLeaf(pixels, { baseX: 64, baseY: 44, angle: 0, length: 40, width: 25, color, shade: 1.05 });
 }
 
-// A twig cluster of real-sized leaves on a 256 px card (#3041). The card is about a meter tall, so a leaf of 19 to 29 px is 8 to 12 cm,
-// the size of an oak or birch leaf. A fan of stems from the base carries a jittered grid of leaves that point away from it, so the
-// card is mostly leaf (the old sprig was 22 percent opaque) and a few hundred leaves still cost one card.
+// Spray cards (#3041, #3057): the twig texture is a 256 px atlas of 2 x 2 spray variants, one shoot of a real species per cell. A cell is a card
+// of about 0.6 m, so a pixel is about 4.7 mm: birch leaves of 3 to 7 cm are 6 to 15 px, oak leaves of 10 to 12 cm 21 to 26 px, and an ash leaf
+// of 20 to 35 cm is a 43 to 75 px rachis with 7 to 13 leaflets. Leaves sit on stems with gaps between them, so a spray is an open shoot and
+// not the solid disc the first twig card was.
 export const TWIG_TEXTURE_SIZE = 256;
-const TWIG_STEM_COUNT = 9;
-const TWIG_LEAF_SPACING = 10;
-// Leaves stay inside a ragged ellipse, so a card reads as a round cluster of leaves and not as a square with leaf texture.
-const TWIG_ENVELOPE_RADIUS = TWIG_TEXTURE_SIZE * 0.5 - 18;
-const TWIG_ENVELOPE_RAGGEDNESS = 16;
+const SPRAY_CELL = TWIG_TEXTURE_SIZE / 2;
 
-function paintTwig(pixels, color, random) {
-  const baseX = TWIG_TEXTURE_SIZE / 2;
-  const baseY = TWIG_TEXTURE_SIZE - 2;
-  const stemColor = [color[0] * 0.55, color[1] * 0.5, color[2] * 0.4];
-  for (let stem = 0; stem < TWIG_STEM_COUNT; stem++) {
-    const spread = (stem / (TWIG_STEM_COUNT - 1) - 0.5) * 2.7;
-    let reach = 0;
-    const stemEnd = distance => [baseX + Math.sin(spread) * distance, baseY - Math.cos(spread) * distance];
-    while (reach < TWIG_TEXTURE_SIZE && Math.hypot(stemEnd(reach + 4)[0] - TWIG_TEXTURE_SIZE / 2, stemEnd(reach + 4)[1] - TWIG_TEXTURE_SIZE / 2) < TWIG_ENVELOPE_RADIUS) reach += 4;
-    paintStem(pixels, baseX, baseY, ...stemEnd(reach), stemColor);
+const LEAF_PROFILES = {
+  oak: along => Math.sin(Math.PI * along ** 0.8) * (0.45 + 0.55 * Math.abs(Math.sin(along * Math.PI * 3.5))),
+  birch: along => (along < 0.3 ? (along / 0.3) ** 0.7 : ((1 - along) / 0.7) ** 0.9),
+  aspen: along => Math.sqrt(Math.max(0, 1 - (2 * along - 1) ** 2)) * (1 - 0.3 * along ** 6),
+  ash: along => Math.sin(Math.PI * along ** 0.85),
+};
+
+function between(random, low, high) {
+  return low + random() * (high - low);
+}
+
+// One leaf or leaflet in a cell, on a stalk of `stalk` px that is painted first. The leaf cannot leave its cell.
+function paintSprayLeaf(pixels, spray, baseX, baseY, angle, length, width, stalk = 0) {
+  const { cell, color, random, profile } = spray;
+  let startX = baseX;
+  let startY = baseY;
+  if (stalk > 0) {
+    startX = baseX + Math.sin(angle) * stalk;
+    startY = baseY - Math.cos(angle) * stalk;
+    paintStem(pixels, Math.round(baseX), Math.round(baseY), Math.round(startX), Math.round(startY), spray.stemColor);
   }
-  const sites = [];
-  for (let y = TWIG_LEAF_SPACING / 2; y < TWIG_TEXTURE_SIZE; y += TWIG_LEAF_SPACING) {
-    for (let x = TWIG_LEAF_SPACING / 2; x < TWIG_TEXTURE_SIZE; x += TWIG_LEAF_SPACING) {
-      sites.push({ x: x + (random() - 0.5) * TWIG_LEAF_SPACING, y: y + (random() - 0.5) * TWIG_LEAF_SPACING, order: random() });
+  const bounds = { minX: cell.x, maxX: cell.x + SPRAY_CELL - 1, minY: cell.y, maxY: cell.y + SPRAY_CELL - 1 };
+  paintLeaf(pixels, { baseX: startX, baseY: startY, angle, length, width, color, shade: between(random, 0.7, 1.15), profile, bounds });
+}
+
+// A shoot grows from (x, y) along `angle` and curves by `curve` radians over its length. Each node carries a leaf on alternating sides, or a
+// pair of leaves, on a stalk, and the tip a leaf of its own. Shoots of depth 1 or more branch toward both sides.
+function paintShoot(pixels, spray, shoot) {
+  const { random, recipe } = spray;
+  const { x: originX, y: originY, angle: originAngle, length, curve, depth } = shoot;
+  const nodeCount = Math.max(2, Math.round(length / recipe.nodeSpacing));
+  const step = length / nodeCount;
+  let x = originX;
+  let y = originY;
+  let angle = originAngle;
+  const stalkLength = () => (recipe.stalk ? between(random, ...recipe.stalk) : 0);
+  for (let node = 1; node <= nodeCount; node++) {
+    const nextX = x + Math.sin(angle) * step;
+    const nextY = y - Math.cos(angle) * step;
+    paintStem(pixels, Math.round(x), Math.round(y), Math.round(nextX), Math.round(nextY), spray.stemColor);
+    x = nextX;
+    y = nextY;
+    angle += curve / nodeCount;
+    const taper = 1 - 0.3 * node / nodeCount;
+    const leafLength = between(random, ...recipe.leafLength) * taper;
+    const side = node % 2 ? 1 : -1;
+    paintSprayLeaf(pixels, spray, x, y, angle + side * between(random, ...recipe.leafSpread), leafLength, leafLength * recipe.leafWidth, stalkLength());
+    if (depth > 0 && node % recipe.branchEvery === 0 && node < nodeCount) {
+      paintShoot(pixels, spray, { x, y, angle: angle - side * between(random, 0.6, 0.9), length: length * 0.5, curve: side * 0.5, depth: depth - 1 });
     }
   }
-  const clusterCenter = TWIG_TEXTURE_SIZE / 2;
-  const insideEnvelope = site => Math.hypot(site.x - clusterCenter, site.y - clusterCenter) < TWIG_ENVELOPE_RADIUS + (random() - 0.5) * 2 * TWIG_ENVELOPE_RAGGEDNESS;
-  sites.splice(0, sites.length, ...sites.filter(insideEnvelope));
-  sites.sort((first, second) => first.order - second.order);
-  for (const site of sites) {
-    const outward = Math.atan2(site.x - baseX, baseY - site.y);
-    const length = 19 + random() * 10;
-    paintLeaf(pixels, { baseX: site.x, baseY: site.y, angle: outward + (random() - 0.5) * 1.3, length, width: length * (0.5 + random() * 0.14), color, shade: 0.7 + random() * 0.5 });
+  const tipLength = between(random, ...recipe.leafLength) * 0.8;
+  paintSprayLeaf(pixels, spray, x, y, angle, tipLength, tipLength * recipe.leafWidth, stalkLength());
+}
+
+// An ash leaf: a rachis with leaflets in opposite pairs and one at the tip, longest at the middle.
+function paintCompoundLeaf(pixels, spray, baseX, baseY, angle) {
+  const { random } = spray;
+  const rachis = between(random, 53, 72);
+  const pairs = 3 + Math.floor(random() * 3);
+  const tipX = baseX + Math.sin(angle) * rachis;
+  const tipY = baseY - Math.cos(angle) * rachis;
+  paintStem(pixels, Math.round(baseX), Math.round(baseY), Math.round(tipX), Math.round(tipY), spray.stemColor);
+  for (let pair = 0; pair <= pairs; pair++) {
+    const progress = 0.25 + 0.75 * pair / pairs;
+    const nodeX = baseX + Math.sin(angle) * rachis * progress;
+    const nodeY = baseY - Math.cos(angle) * rachis * progress;
+    const leafletLength = between(random, 15, 21) * (1 - 0.35 * Math.abs(progress - 0.6));
+    if (pair === pairs) {
+      paintSprayLeaf(pixels, spray, nodeX, nodeY, angle, leafletLength, leafletLength * 0.5);
+      continue;
+    }
+    for (const side of [-1, 1]) {
+      paintSprayLeaf(pixels, spray, nodeX, nodeY, angle + side * between(random, 0.9, 1.2), leafletLength, leafletLength * 0.5, 2);
+    }
   }
 }
+
+const SPRAY_RECIPES = {
+  oak: { leafLength: [21, 26], leafWidth: 0.66, leafSpread: [0.7, 1.1], nodeSpacing: 12, branchEvery: 2 },
+  birch: { leafLength: [8, 15], leafWidth: 0.9, leafSpread: [0.6, 1.2], nodeSpacing: 5, branchEvery: 3, stalk: [1, 3] },
+  aspen: { leafLength: [14, 17], leafWidth: 1.0, leafSpread: [0.5, 1.0], nodeSpacing: 9, branchEvery: 2, stalk: [12, 22] },
+};
+
+function paintSprayCell(pixels, color, random, kind, cell) {
+  const spray = { cell, color, random, profile: LEAF_PROFILES[kind], recipe: SPRAY_RECIPES[kind], stemColor: [color[0] * 0.55, color[1] * 0.5, color[2] * 0.4] };
+  const baseX = cell.x + SPRAY_CELL / 2 + between(random, -6, 6);
+  const baseY = cell.y + SPRAY_CELL - 3;
+  if (kind === 'ash') {
+    const leaves = 2 + Math.floor(random() * 2);
+    for (let leaf = 0; leaf < leaves; leaf++) {
+      const angle = (leaf - (leaves - 1) / 2) * 0.85 + between(random, -0.15, 0.15);
+      paintCompoundLeaf(pixels, spray, baseX, baseY - 2 * leaf, angle);
+    }
+    return;
+  }
+  paintShoot(pixels, spray, { x: baseX, y: baseY, angle: between(random, -0.2, 0.2), length: 76, curve: between(random, -0.3, 0.3), depth: 1 });
+}
+
+function paintSprayAtlas(kind) {
+  return (pixels, color, random) => {
+    for (let index = 0; index < 4; index++) {
+      paintSprayCell(pixels, color, random, kind, { x: (index % 2) * SPRAY_CELL, y: Math.floor(index / 2) * SPRAY_CELL });
+    }
+  };
+}
+
+/** Leaf texture kinds painted as a 2 x 2 atlas of spray variants. `twig` stays as the name of the oak spray. */
+export const SPRAY_KINDS = ['twig', 'twig-birch', 'twig-aspen', 'twig-ash'];
 
 function paintNeedleSpray(pixels, color, random) {
   const stemColor = [color[0] * 0.7, color[1] * 0.6, color[2] * 0.5];
@@ -170,7 +251,10 @@ function bleedColorIntoTransparentPixels(pixels, color) {
 
 const LEAF_PAINTERS = {
   sprig: paintSprig,
-  twig: paintTwig,
+  twig: paintSprayAtlas('oak'),
+  'twig-birch': paintSprayAtlas('birch'),
+  'twig-aspen': paintSprayAtlas('aspen'),
+  'twig-ash': paintSprayAtlas('ash'),
   needles: paintNeedleSpray,
   single: (pixels, color, random) => paintBlades(pixels, color, random, 1, 38),
   grass: (pixels, color, random) => paintBlades(pixels, color, random, 9, 7),
@@ -181,7 +265,7 @@ const LEAF_PAINTERS = {
 export function createLeafPixels(kind, color, seed = 1) {
   const painter = Object.hasOwn(LEAF_PAINTERS, kind) ? LEAF_PAINTERS[kind] : null;
   if (!painter) throw new RangeError(`Unknown leaf texture kind: ${kind}`);
-  const pixels = createPixels(color, kind === 'twig' ? TWIG_TEXTURE_SIZE : TEXTURE_SIZE);
+  const pixels = createPixels(color, SPRAY_KINDS.includes(kind) ? TWIG_TEXTURE_SIZE : TEXTURE_SIZE);
   painter(pixels, color, createRandom(seed));
   bleedColorIntoTransparentPixels(pixels, color);
   return pixels;
