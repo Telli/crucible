@@ -235,3 +235,10 @@ test('foam light replaces the light the foam albedo already got, so foam never o
   assert.ok(replaceLight < addFoamLight, 'the foam add comes after the drop, not before it');
   assert.ok(addFoamLight < tintFoam, 'the tint scales the finished foam pixel');
 });
+
+test('foam lace fades to fixed axes where the surface is level, so a wake draws no fan of rays (#3070)', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  assert.ok(shader.includes('float crestSteadiness = smoothstep(0.01, 0.05, length(crestNormal.xz))'), 'the weight follows how far the normal leans');
+  assert.match(shader, /float broadLace = mix\(terrainNoise\(worldPosition\.xz/);
+  assert.match(shader, /float fineLace = mix\(terrainNoise\(worldPosition\.xz/);
+});
