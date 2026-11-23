@@ -32,7 +32,7 @@ function compositePixel(pixels, x, y, color, coverage) {
 // Angle zero points up the image; the leaf grows from (baseX, baseY) along that axis.
 const PLAIN_PROFILE = along => Math.sin(Math.PI * along ** 0.7);
 
-function paintLeaf(pixels, { baseX, baseY, angle, length, width, color, shade, profile = PLAIN_PROFILE, bounds = null }) {
+function paintLeaf(pixels, { baseX, baseY, angle, length, width, color, shade, profile = PLAIN_PROFILE, bounds = null, midribLift = 0.2 }) {
   const axisX = Math.sin(angle);
   const axisY = -Math.cos(angle);
   const sideX = -axisY;
@@ -53,7 +53,7 @@ function paintLeaf(pixels, { baseX, baseY, angle, length, width, color, shade, p
       const coverage = clamp(halfWidth - Math.abs(across) + 0.5, 0, 1);
       if (coverage <= 0) continue;
       const sideDistance = Math.abs(across) / (halfWidth + 1e-3);
-      const midrib = Math.abs(across) < 0.7 ? 0.2 : 0;
+      const midrib = Math.abs(across) < 0.7 ? midribLift : 0;
       const vein = (along * 7 + sideDistance * 0.9) % 1 < 0.1 ? -0.1 : 0;
       const brightness = shade * (0.82 + 0.3 * (1 - sideDistance) + midrib + vein);
       compositePixel(pixels, x, y, color.map(channel => channel * brightness), coverage);
@@ -101,8 +101,8 @@ const LEAF_PROFILES = {
   oak: (along, phase) => Math.sin(Math.PI * along ** 0.8) * (0.4 + 0.6 * (0.5 - 0.5 * Math.cos(2 * Math.PI * (3 * along + phase * 0.4))) ** 0.7),
   // Triangular with a sawtooth edge: six teeth along the blade.
   birch: along => (along < 0.3 ? (along / 0.3) ** 0.7 : ((1 - along) / 0.7) ** 0.9) * (0.7 + 0.3 * ((along * 6) % 1)),
-  // Rounded-ovate: widest at 40%, with a small drawn-out tip.
-  aspen: along => Math.sqrt(Math.max(0, 1 - ((along - 0.4) / (along < 0.4 ? 0.45 : 0.6)) ** 2)) * Math.min(1, ((1 - along) / 0.18) ** 0.6),
+  // Nearly round with a flattened base, a short pointed tip and a fine crenate edge.
+  aspen: along => Math.sqrt(Math.max(0, 1 - ((along - 0.45) / 0.55) ** 2)) * Math.min(1, ((1 - along) / 0.14) ** 0.7) * (0.9 + 0.1 * Math.abs(Math.sin(along * Math.PI * 9))),
   // Lanceolate: widest a third of the way up, tapering to a point.
   ash: along => Math.sin(Math.PI * along ** 0.65) ** 1.3,
 };
@@ -183,7 +183,7 @@ function paintSprayLeaf(pixels, spray, baseX, baseY, angle, leafLength, leafWidt
   const shade = between(random, 0.7, 1.15);
   paintLeaf(pixels, {
     baseX: startX * SPRAY_SCALE, baseY: startY * SPRAY_SCALE, angle, length: length * SPRAY_SCALE, width: leafWidth * spray.scale * SPRAY_SCALE,
-    color: leafColor(random, spray.color), shade, profile, bounds,
+    color: leafColor(random, spray.color), shade, profile, bounds, midribLift: spray.recipe?.midribLift,
   });
 }
 
@@ -248,7 +248,7 @@ function paintCompoundLeaf(pixels, spray, baseX, baseY, angle) {
 const SPRAY_RECIPES = {
   oak: { leafLength: [22, 28], leafWidth: 0.72, leafSpread: [0.7, 1.1], nodeSpacing: 12, stalk: [2, 4], leavesFrom: 0.45, tipCluster: [4, 6] },
   birch: { leafLength: [8, 13], leafWidth: 0.8, leafSpread: [0.7, 1.3], nodeSpacing: 6, stalk: [1, 3], leavesFrom: 0, trim: 10 },
-  aspen: { leafLength: [13, 17], leafWidth: 0.9, leafSpread: [0.55, 1.0], nodeSpacing: 8, stalk: [14, 19], leavesFrom: 0, trim: 18 },
+  aspen: { leafLength: [16, 21], leafWidth: 0.95, leafSpread: [0.55, 1.0], nodeSpacing: 6, stalk: [13, 18], leavesFrom: 0, trim: 20, midribLift: 0.5 },
 };
 
 function paintSprayCell(pixels, color, random, kind, cell) {
@@ -270,22 +270,26 @@ function paintSprayCell(pixels, color, random, kind, cell) {
   }
   if (kind === 'birch') {
     // Pendulous twigs hang from a short curved bough that enters at a top corner.
-    const bough = side * between(random, 44, 54);
-    const startX = side > 0 ? cell.x + BIRCH_MARGIN : cell.x + SPRAY_CELL - BIRCH_MARGIN;
+    const bough = side * between(random, 36, 44);
+    const startX = side > 0 ? cell.x + BIRCH_MARGIN + 2 : cell.x + SPRAY_CELL - BIRCH_MARGIN - 2;
     const startY = cell.y + BIRCH_MARGIN + 2;
     const start = [startX, startY];
-    const control = [startX + bough * 0.5, startY + between(random, -1, 4)];
-    const end = [startX + bough, startY + between(random, 10, 18)];
+    const control = [startX + bough * 0.5, startY + between(random, 0, 4)];
+    const end = [startX + bough, startY + between(random, 8, 14)];
     paintBough(pixels, spray, start, control, end);
-    for (const progress of [0.12, 0.55, 1]) {
+    for (const progress of [0.25, 0.5, 0.75, 1]) {
       const [x, y] = bezierPoint(start, control, end, progress);
-      paintShoot(pixels, spray, { x, y, angle: Math.PI + between(random, -0.25, 0.25), length: between(random, 55, 72), curve: between(random, -0.5, 0.5), depth: 1 });
+      paintSprayLeaf(pixels, spray, x, y, Math.PI + side * between(random, 0.3, 0.9), between(random, 9, 12), 8, 2);
+    }
+    for (const progress of [0.08, 0.38, 0.68, 1]) {
+      const [x, y] = bezierPoint(start, control, end, progress);
+      paintShoot(pixels, spray, { x, y, angle: Math.PI - side * (0.05 + 0.3 * progress + between(random, -0.1, 0.1)), length: between(random, 64, 82), curve: between(random, -0.5, 0.5), depth: 1 });
     }
     return;
   }
   if (kind === 'aspen') {
     // A few flexible twigs, each bending its own way, with a leaf on a long stalk at every node.
-    for (const lean of [-0.4, 0.02, 0.4]) {
+    for (const lean of [-0.5, -0.17, 0.17, 0.5]) {
       const x = baseX + lean * 30;
       paintShoot(pixels, spray, { x, y: baseY, angle: lean + between(random, -0.12, 0.12), length: between(random, 60, 76), curve: between(random, 0.4, 0.9) * (lean < 0 ? -1 : 1), depth: 0 });
     }
