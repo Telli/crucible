@@ -65,6 +65,8 @@ const CAMERA_DEFAULTS = Object.freeze({ eye: [4, 3, 5], target: [0, 0, 0], up: [
 // Per-node render flags: `visible` hides a node and its children; the rest become renderer part flags of a mesh node.
 const RENDER_FLAG_FIELDS = ['visible', 'castShadow', 'receiveShadow', 'holdout', 'shadowCatcher', 'shadowOnly'];
 const PART_FLAG_FIELDS = RENDER_FLAG_FIELDS.slice(1);
+// On an asset placement these two flags reach each part it expands to.
+const ASSET_PLACEMENT_FLAG_FIELDS = ['castShadow', 'receiveShadow'];
 const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'clutter', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
 const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamVeins', 'contactFoam', 'caustics', 'ripples', 'waterRamp', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
@@ -434,7 +436,8 @@ function nodeFrom(value) {
   }
   for (const flag of RENDER_FLAG_FIELDS) {
     if (value[flag] !== undefined && typeof value[flag] !== 'boolean') throw invalidField(flag, value[flag], 'true or false', TypeError);
-    if (flag !== 'visible' && value[flag] !== undefined && value.geometry === undefined) throw invalidField(flag, value[flag], 'a flag on a mesh node with geometry and material; remove it from group nodes', TypeError);
+    const placesAsset = value.asset !== undefined && ASSET_PLACEMENT_FLAG_FIELDS.includes(flag);
+    if (flag !== 'visible' && value[flag] !== undefined && value.geometry === undefined && !placesAsset) throw invalidField(flag, value[flag], 'a flag on a mesh node with geometry and material; remove it from group nodes', TypeError);
   }
   if (value.rayVisibility !== undefined) {
     if (value.geometry === undefined) throw invalidField('rayVisibility', value.rayVisibility, 'a field on a mesh node; remove it from group nodes', TypeError);

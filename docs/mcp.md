@@ -307,6 +307,7 @@ The same run submits two budgets on the same scene. `{ "framesPerSecond": 30 }` 
 Leave it out for the default: `concise` on the first three, `detailed` on `scene_capabilities`, whose notes are the reason to call it.
 Concise review drops the per-shot resource counters, memory peaks and unset clocks, and keeps each shot's camera, label positions and branch.
 Concise status gives `jobId`, `state`, `frames`, `frameCount`, `reason` and the artifact names.
+A failed job always fills `reason` (the field is `reason`, not `error`); a job that stops without a message says so and names `scene_render_submit` as the retry.
 Concise result drops the SHA-256 digests and the render's resource counters; its other metrics (passes, depth range, object names, sync) stay.
 Concise `scene_capabilities` drops the one-line notes of a schema topic and keeps field names, types, ranges and enums.
 Pass `detailed` to get the earlier full answer. On a four-shot review the concise text is 657 bytes against 2,534 detailed.
