@@ -498,6 +498,15 @@ function syncMeshBlend(record) {
 
 const PROFILE_FRAME_SECONDS = 1 / 60;
 
+// effects.autoExposure picks its exposure from a drawn frame, so scene_inspect draws one at time 0 and reports what the meter chose.
+function reportChosenExposure(record, inspection) {
+  const autoExposure = inspection.look?.autoExposure;
+  if (!autoExposure || !record.renderer) return;
+  draw(record, 0);
+  const chosen = record.renderer.autoExposure;
+  if (chosen) autoExposure.chosen = { exposure: chosen.exposure, target: chosen.target, meteredLuminance: chosen.luminance };
+}
+
 // What the scene costs to draw as it stands: frame time over real frames at the preview size, the draw calls and triangles
 // the GPU receives in one frame, the texture memory the renderer holds and the nodes with the most triangles.
 function profileScene(record, frames) {
@@ -1330,6 +1339,7 @@ window.__agentPreview = {
     const frames = profileFrameCount({ profile, profileFrames: requestedFrames });
     const record = requireSession(sessionId);
     const inspection = { sessionId, ...record.scene.inspect(options), kernels: kernelReport() };
+    reportChosenExposure(record, inspection);
     return profile ? { ...inspection, profile: profileScene(record, frames) } : inspection;
   },
   inspectMeshes({ sessionId, ...options }) {
