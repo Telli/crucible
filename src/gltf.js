@@ -1037,7 +1037,7 @@ const IDENTITY_MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
 /** True when collapseSingularMatrix would replace the matrix at this offset: a non-finite value or a singular axis ratio. */
 function needsCollapse(values, offset) {
-  return singularReason(values.subarray(offset, offset + 16)) !== undefined;
+  return singularReason(values, offset) !== undefined;
 }
 
 function prepareSkinBinding(binding, geometry, checks = true) {
@@ -1085,17 +1085,24 @@ const COLLAPSED_SCALE = 2e-4;
 const SINGULAR_AXIS_RATIO = 1e-12;
 
 /** The scale along each axis of a column-major affine matrix, read as doubles. */
+const determinantScratch = new Float64Array(16);
+
 function axisScales(elements) {
   return [0, 4, 8].map(offset => Math.hypot(elements[offset], elements[offset + 1], elements[offset + 2]));
 }
 
 /** Why a world matrix cannot be drawn: 'non-finite', 'singular', or undefined when it is valid at any size. */
-function singularReason(elements) {
+function singularReason(elements, offset = 0) {
+  // Runs for every node and joint every frame, so it reads the matrix in place and allocates nothing.
   for (let index = 0; index < 16; index++) {
-    if (!Number.isFinite(elements[index])) return 'non-finite';
+    const value = elements[offset + index];
+    determinantScratch[index] = value;
+    if (!Number.isFinite(value)) return 'non-finite';
   }
-  const [scaleX, scaleY, scaleZ] = axisScales(elements);
-  const determinant = mat4.determinant(elements);
+  const scaleX = Math.hypot(determinantScratch[0], determinantScratch[1], determinantScratch[2]);
+  const scaleY = Math.hypot(determinantScratch[4], determinantScratch[5], determinantScratch[6]);
+  const scaleZ = Math.hypot(determinantScratch[8], determinantScratch[9], determinantScratch[10]);
+  const determinant = mat4.determinant(determinantScratch);
   if (!Number.isFinite(determinant)) return 'non-finite';
   return Math.abs(determinant) > SINGULAR_AXIS_RATIO * scaleX * scaleY * scaleZ ? undefined : 'singular';
 }
@@ -1150,9 +1157,9 @@ function isKeyedInClip(node, keyedNodeIndices) {
 function validateNodeTransforms(nodes, pending, tolerated) {
   for (const node of nodes) {
     pending.set(node.matrixWorld.elements);
-    const finite = pending.every(Number.isFinite);
     if (singularReason(pending) === undefined) continue;
     if (tolerated.has(node)) continue;
+    const finite = pending.every(Number.isFinite);
     if (!tolerated.collecting) throw new Error(finite ? 'Animation creates a singular Float32 node transform.' : 'Animation creates a non-finite Float32 world matrix.');
     tolerated.add(node);
   }

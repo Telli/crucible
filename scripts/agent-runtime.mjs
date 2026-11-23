@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { loadPreviewPage } from './agent-page-load.mjs';
 import { withSnapshotSkyColors } from './snapshot-sky-colors.mjs';
 import { previewCallTimeoutMs, recipeHasGridVolume, operationsAddGridVolume } from './agent-evaluation-timeout.mjs';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
@@ -730,7 +731,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     try {
       await bootOnce();
     } catch (error) {
-      if (closing || !/page.goto|Timeout d+ms exceeded/i.test(String(error?.message))) throw error;
+      if (closing || !(error?.pageLoadTimeout || /page.goto|Timeout d+ms exceeded/i.test(String(error?.message)))) throw error;
       await bootOnce();
     }
   }
@@ -805,8 +806,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       page.on?.('console', message => {
         if (message.text().startsWith('Crucible kernel fallback')) console.error(message.text());
       });
-      await page.goto(origin);
-      await page.waitForFunction(() => Boolean(window.__agentPreview));
+      await loadPreviewPage(page, origin);
       await loadAddons();
       phase = 'ready';
     } catch (error) {
@@ -984,8 +984,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       const origin = `http://127.0.0.1:${httpServer.address().port}`;
       await jobPage.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
       jobPage.setDefaultTimeout(15000);
-      await jobPage.goto(origin);
-      await jobPage.waitForFunction(() => Boolean(window.__agentPreview));
+      await loadPreviewPage(jobPage, origin);
       if (settings.kind === 'icons') {
         // Each icon is its own scene, created and disposed inside the job, so the shared dispose below has nothing left to release.
         const icons = await renderIconsInPage({ jobPage, jobId, settings, directory, signal, progress, assetData: placedAssetData, memoryBudgetMiB: memory, backend, tier: settings.quality });
@@ -1680,8 +1679,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const origin = `http://127.0.0.1:${httpServer.address().port}`;
           await reviewPage.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
           reviewPage.setDefaultTimeout(15000);
-          await reviewPage.goto(origin);
-          await reviewPage.waitForFunction(() => Boolean(window.__agentPreview));
+          await loadPreviewPage(reviewPage, origin);
           await reviewEvaluate('reviewBegin', { width: settings.gridWidth, height: settings.gridHeight });
           session = await reviewPage.context().newCDPSession(reviewPage);
           const shots = [];
