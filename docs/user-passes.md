@@ -191,7 +191,11 @@ A material can carry its own fragment code: a GLSL function that changes the sur
 | `uniforms` | Named values, as for a post pass: a number is a `float`, `[x, y]` to `[x, y, z, w]` are vectors, `{ "type": "int", "value": 4 }` is an int. At most 16. |
 | `mask` | Optional, `"map"`: the snippet may sample `snippetMask` (a `sampler2D`), which is the material's own map or pattern. Load the image as the material `map`; there are no remote URLs. |
 
-Materials may share the same `fragment` text and still differ in `uniforms`: they share one compiled function, and each draw sets the uniform values of its own material.
+Materials may share the same `fragment` text and still differ in `uniforms`: they share one compiled function, and each draw sets the uniform values of its own material (each material needs its own `snippet` object—two materials that reference the same `snippet` object share its uniforms unless given distinct `snippet` objects or distinct `fragment` text).
+
+To animate snippet uniforms without recompiling shaders:
+- From a raw `CrucibleRenderer` host, mutate `part.material.snippet.uniforms.<name>.value` in place before `renderer.render(frame)` (remember each material needs its own `snippet` object if values differ).
+- With `createAgentScene`, updating `snippet.uniforms` via `set-material` while keeping the same `fragment` and `mask` preserves part identities so `renderer.updateParts(scene.parts)` succeeds without `replaceParts`; changing `fragment` or `mask` builds new part identities for `renderer.replaceParts(scene.parts)` or a new renderer.
 
 Inputs: `color` is the base colour after the map and the vertex tint, `alpha` is the map alpha before the material opacity, `uv` is the texture coordinate and `worldPosition` the position in the world. A fifth `float` parameter (any name, for example `float time`) receives the frame time in seconds, the same time `waterHook` and `userPass` get, in stills and in video frames; it animates flames, beacons, grass sway or a flowing highlight on any material. The shadow pass gets the same time, so a discard that moves with it moves the shadow, but the shadow map is redrawn only when the scene changes. `discard` removes the fragment in every alpha mode. A lowered `alpha` cuts only when the material has `alphaMode: "mask"`.
 
