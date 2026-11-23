@@ -1,4 +1,4 @@
-import { blendOutputGlsl } from './blend-output.js';
+import { blendOutputGlsl, withBlendCoverage } from './blend-output.js';
 import { WETNESS_CODE } from './wetness-shader.js';
 import { TANGENT_CODE_MINIMUM } from './tangent-encoding.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
@@ -1164,7 +1164,8 @@ export function createFragmentShader(features = SHADER_FEATURES) {
   lines.push(`#define ENVIRONMENT_ENABLED ${environmentCondition(enabled)}`);
   // Not in SHADER_FEATURES: the preset is chosen by the renderer, so a shader built from every feature keeps the full look.
   lines.push(`#define LIGHT_SHADING ${enabled.has(LIGHT_SHADING_FEATURE) ? 'true' : 'false'}`);
-  return buildFragmentShader(lines.join('\n'), featureCodeSplicer([...enabled]));
+  const source = buildFragmentShader(lines.join('\n'), featureCodeSplicer([...enabled]));
+  return enabled.has('alphaMode') ? withBlendCoverage(source) : source;
 }
 
 export const fragmentShader = createFragmentShader();
