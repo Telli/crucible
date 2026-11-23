@@ -243,6 +243,8 @@ Four optional settings, each off by default. A job without them writes the same 
 `png16` writes `render.png` (RGB, or RGBA with `transparent`; alpha is straight) and one PNG per pass. A depth pass is a 16-bit gray PNG holding the raw step 0 to 65535 over 100 m, an `objectId` pass is a 16-bit gray PNG of the ID (a scene with more than 65535 objects fails: use `exr`), and `albedo`, `normal` and `emission` are 16-bit RGB with the same values as the 8-bit pass.
 `exr` writes `render.exr` (half-float R, G, B and A when transparent; alpha stays premultiplied) and `render-<pass>.exr`. `depth` is one float32 channel `Z` in metres (the far limit, 100, is background), `objectId` one float32 channel `id` (0 is background), and `albedo`, `normal` and `emission` are half-float RGB. Files use ZIP compression and open in Blender, Nuke and OpenEXR tools.
 Passes in these formats are drawn into half-float targets, so albedo, normal and emission carry half-float precision, not the 8 bits of the default passes.
+Every screenshot frame is clipped to the requested size, and an image or still whose PNG comes back at another size fails with both sizes in the message instead of returning a cropped picture (#3120).
+
 The path tracer writes an 8-bit PNG of the whole frame: `transparent`, `format` and `region` are refused with `renderer`. H.264 has no alpha, so `transparent` and `format` are refused for video. 16-bit and EXR output need `EXT_color_buffer_float`; without it the job fails with a message that says to use `png`.
 A `png16` or `exr` frame is up to four times the 8-bit frame limit (48 MiB). A region with the browser H.264 encoder (`encoder: "nvenc"`) uses screenshot frames instead.
 

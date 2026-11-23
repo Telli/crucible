@@ -715,9 +715,12 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     vec2 crestAcross = normalize(crestNormal.xz + vec2(0.0001));
     vec2 crestAlong = vec2(-crestAcross.y, crestAcross.x);
     vec2 crestPosition = vec2(dot(worldPosition.xz, crestAlong), dot(worldPosition.xz, crestAcross));
-    float broadLace = terrainNoise(crestPosition * vec2(0.45, 2.4)).x;
-    float midLace = terrainNoise(crestPosition * vec2(1.3, 6.5) + 7.3).x;
-    float fineLace = terrainNoise(crestPosition * vec2(3.1, 14.0) + 3.9).x;
+    // Where the surface is nearly level (a wake's trail, the top of a swell) the normal's horizontal part is about zero and its direction
+    // spins, which fanned the lace out in rays around that point (#3070). The lace there fades to the same noise on fixed axes.
+    float crestSteadiness = smoothstep(0.01, 0.05, length(crestNormal.xz));
+    float broadLace = mix(terrainNoise(worldPosition.xz * vec2(0.45, 2.4)).x, terrainNoise(crestPosition * vec2(0.45, 2.4)).x, crestSteadiness);
+    float midLace = mix(terrainNoise(worldPosition.xz * vec2(1.3, 6.5) + 7.3).x, terrainNoise(crestPosition * vec2(1.3, 6.5) + 7.3).x, crestSteadiness);
+    float fineLace = mix(terrainNoise(worldPosition.xz * vec2(3.1, 14.0) + 3.9).x, terrainNoise(crestPosition * vec2(3.1, 14.0) + 3.9).x, crestSteadiness);
     float lace = broadLace * 0.5 + midLace * 0.3 + fineLace * 0.2;
     float foamMask = clamp(2.0 * (1.0 - vertexSkyVisibility) - 1.0, 0.0, 1.0);
     // waterFoamStyle is (hard edge 0 or 1, width): a hard edge draws the mask as a flat painted shape with a one pixel edge and no veins.

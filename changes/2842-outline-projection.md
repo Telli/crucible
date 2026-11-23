@@ -1,0 +1,1 @@
+- Studio draws the outline of a changed or selected node without reading and copying the scene environment once per vertex, which took about a tenth of a second on a scene with large scans (#2842)
