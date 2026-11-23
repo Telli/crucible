@@ -906,14 +906,14 @@ export function createStudioController({
   }
 
   // A recipe from a file or an agent leaves out the fields the scene fills in, so it is built once on the side to learn the
-  // recipe it stands for. When the scene on screen differs from that only by what scene operations can set, they are applied
+  // recipe it stands for. When the scene on screen differs from that only by what scene operations can set or add or remove, they are applied
   // there and the parts, and the textures the renderer holds for them, stay (#2842). Otherwise the built scene is the new one.
-  // The side build skips the light bake: applying the operations bakes the scene on screen once, and a candidate that has to
-  // be installed is built again with its bake.
+  // The side build is recipe only: no light bake and no staging of its parts, which cost seconds on a scene of scans and which
+  // the operations pay once on the scene on screen. A candidate that has to be installed is built again in full.
   function loadRecipeKeepingScene(recipeInput) {
-    const candidate = createAgentScene(recipeInput, {}, { ...scenePoolOptions(), skipLightBake: true });
-    if (!restoreRecipeInPlace(currentScene.exportRecipe(), candidate.exportRecipe())) {
-      installScene(candidate.exportRecipe().bake ? createAgentScene(recipeInput, {}, scenePoolOptions()) : candidate);
+    const candidate = createAgentScene(recipeInput, {}, { ...scenePoolOptions(), recipeOnly: true });
+    if (!restoreRecipeInPlace(currentScene.exportRecipe(), candidate.exportRecipe(), { allowRecordChanges: true })) {
+      installScene(createAgentScene(recipeInput, {}, scenePoolOptions()));
     }
   }
 
@@ -969,10 +969,14 @@ export function createStudioController({
     return (2 * distance * Math.tan((fieldOfViewDegrees * Math.PI) / 360)) / height;
   }
 
-  function projectWorldPoint(worldPoint) {
-    const coordinates = assertFiniteVector(worldPoint, 3, 'worldPoint');
+  // The camera matrices are built once, so a loop over a node's vertices does not read (and copy) the scene's environment for each point (#2842).
+  function worldPointProjector() {
     const { viewProjection } = cameraMatrices(viewCamera(), width / height, Boolean(currentScene.environment?.world));
-    return projectPointWithMatrix(viewProjection, coordinates, width, height);
+    return worldPoint => projectPointWithMatrix(viewProjection, assertFiniteVector(worldPoint, 3, 'worldPoint'), width, height);
+  }
+
+  function projectWorldPoint(worldPoint) {
+    return worldPointProjector()(worldPoint);
   }
 
   function screenRay(pixelX, pixelY) {
@@ -1195,12 +1199,13 @@ export function createStudioController({
     const stride = Math.max(1, Math.ceil(totalVertices / OUTLINE_VERTEX_BUDGET));
     const point = vec3.create();
     const screenPoints = [];
+    const projectPoint = worldPointProjector();
     for (const part of memberParts) {
       const positions = part.geometry.positions;
       for (let offset = 0; offset < positions.length; offset += 3 * stride) {
         vec3.set(point, positions[offset], positions[offset + 1], positions[offset + 2]);
         vec3.transformMat4(point, point, part.matrix);
-        const projected = projectWorldPoint([point[0], point[1], point[2]]);
+        const projected = projectPoint([point[0], point[1], point[2]]);
         if (!projected.visible) {
           return null;
         }
@@ -1269,13 +1274,14 @@ export function createStudioController({
     }
     const point = vec3.create();
     const triangles = [];
+    const projectPoint = worldPointProjector();
     for (const part of memberParts) {
       const positions = part.geometry.positions;
       const screen = new Float32Array((positions.length / 3) * 2);
       for (let vertex = 0; vertex < positions.length / 3; vertex += 1) {
         vec3.set(point, positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]);
         vec3.transformMat4(point, point, part.matrix);
-        const projected = projectWorldPoint([point[0], point[1], point[2]]);
+        const projected = projectPoint([point[0], point[1], point[2]]);
         if (!projected.visible) {
           return null;
         }
