@@ -192,3 +192,10 @@ test('a water batch sends its veins, and a batch without foamVeins sends amount 
   bind({ tag: 'water' });
   assert.deepEqual(sent, [[0.9, 2], [0, 1]]);
 });
+
+test('foam lace fades to fixed axes where the surface is level, so a wake draws no fan of rays (#3070)', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  assert.ok(shader.includes('float crestSteadiness = smoothstep(0.01, 0.05, length(crestNormal.xz))'), 'the weight follows how far the normal leans');
+  assert.match(shader, /float broadLace = mix\(terrainNoise\(worldPosition\.xz/);
+  assert.match(shader, /float fineLace = mix\(terrainNoise\(worldPosition\.xz/);
+});
