@@ -10,7 +10,8 @@ async function readStats(page) {
     const { CrucibleRenderer } = await import('/src/renderer.js');
     const { createGpuTimer } = await import('/src/adaptive-quality.js');
     const material = { tag: 'surface', color: [0.5, 0.5, 0.5], metallic: 0, roughness: 0.5, emission: 0 };
-    const partAt = (x) => ({ name: 'box', geometry: box(0, 1), matrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1]), material });
+    const sharedGeometry = box(0, 1);
+    const partAt = (x) => ({ name: 'box', geometry: sharedGeometry, matrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1]), material });
     const frame = { eye: [0, 2, 8], target: [0, 0, 0] };
     const measure = (instanceCount, options = {}) => {
       const canvas = document.createElement('canvas');
@@ -44,7 +45,7 @@ test('renderer.stats counts draw calls, drawn triangles and planned bytes after 
     assert.equal(one.first.gpuTimeMs, null, 'no timer was asked for');
     assert.equal(one.ownDrawLeft, false, 'the counting wrappers leave the context as they found it');
     assert.ok(many.first.trianglesDrawn > one.first.trianglesDrawn * 50, 'instances add drawn triangles');
-    assert.ok(many.first.drawCalls <= one.first.drawCalls + 2, 'instances share draw calls');
+    assert.ok(many.first.drawCalls <= one.first.drawCalls + 2, `instances share draw calls: ${one.first.drawCalls} for one, ${many.first.drawCalls} for 200`);
     assert.ok(timed.second.gpuTimeMs === null || timed.second.gpuTimeMs >= 0);
   });
 });
