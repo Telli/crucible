@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sphere } from '../src/geometry.js';
-import { simplifyGeometry, findLockedVertices, SEAM_FALLBACK_OVERSHOOT } from '../src/geometry-simplify.js';
+import { simplifyGeometry, CollapseQueue, findLockedVertices, SEAM_FALLBACK_OVERSHOOT } from '../src/geometry-simplify.js';
 import { generateGeometryLods, generateAssetLods } from '../src/mesh-lod.js';
 
 const TRIANGLES_PER_ISLAND = 24;
@@ -114,4 +114,26 @@ test('generateGeometryLods reports the target and the simplifier of every level,
 
 test('simplifyGeometry names the blendSeams choices when given another value', () => {
   assert.throws(() => simplifyGeometry(seamHeavySphere(), { ratios: [0.5], blendSeams: 'yes' }), /blendSeams must be one of auto, never, always/);
+});
+
+test('the collapse queue pops cheapest first, reuses freed slots and keeps the exact flag of each candidate (#2985)', () => {
+  const queue = new CollapseQueue(2);
+  const costs = [5, 1, 4, 1, 3, 9, 0.5, 7];
+  costs.forEach((cost, index) => queue.push(cost, cost / 2, index, index + 10, index, index + 20, index % 2));
+  const popped = [];
+  while (queue.size) {
+    queue.pop();
+    popped.push([queue.poppedCost, queue.poppedPositionCost, queue.poppedRemoved, queue.poppedKept, queue.poppedRemovedVersion, queue.poppedKeptVersion, queue.poppedExact]);
+  }
+  assert.deepEqual(popped.map(entry => entry[0]), [...costs].sort((first, second) => first - second));
+  for (const [cost, positionCost, removed, kept, removedVersion, keptVersion, exact] of popped) {
+    assert.equal(positionCost, cost / 2);
+    assert.equal(kept, removed + 10);
+    assert.equal(removedVersion, removed);
+    assert.equal(keptVersion, removed + 20);
+    assert.equal(exact, removed % 2);
+  }
+  queue.push(2, 1, 40, 50, 1, 2, 0);
+  assert.equal(queue.peekCost(), 2);
+  assert.equal(queue.poolUsed, costs.length);
 });

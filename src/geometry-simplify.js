@@ -31,14 +31,17 @@ export const MAXIMUM_SIMPLIFY_TRIANGLES = 2000000;
 export const MAXIMUM_SIMPLIFY_VERTICES = 2000000;
 
 /**
- * The collapse candidates, cheapest first, in typed arrays: one slot per candidate holds its cost, the part of the cost
- * that is surface distance, the two sites and their versions, and no object is made per candidate. A candidate whose
- * version no longer matches its site is stale and is skipped when it is popped. After `pop` the cheapest candidate is in
- * the `popped*` fields.
+ * The collapse candidates, cheapest first, in typed arrays and no object per candidate. A binary heap orders (cost,
+ * candidate id) pairs, so a sift moves two numbers; the rest of a candidate (the part of the cost that is surface
+ * distance, the two sites, their versions and whether the cost is exact) sits in a pool slot that stays put until the
+ * candidate is popped. After `pop` the cheapest candidate is in the `popped*` fields.
  */
-class CollapseQueue {
+export class CollapseQueue {
   constructor(capacity = 1024) {
     this.size = 0;
+    this.poolUsed = 0;
+    this.freeCount = 0;
+    this.capacity = 0;
     this.allocate(capacity);
     this.poppedCost = 0;
     this.poppedPositionCost = 0;
@@ -46,79 +49,82 @@ class CollapseQueue {
     this.poppedKept = 0;
     this.poppedRemovedVersion = 0;
     this.poppedKeptVersion = 0;
+    this.poppedExact = 1;
   }
 
   allocate(capacity) {
     const grown = {
-      costs: new Float64Array(capacity),
+      heapCosts: new Float64Array(capacity),
+      heapIds: new Uint32Array(capacity),
+      freeIds: new Uint32Array(capacity),
       positionCosts: new Float64Array(capacity),
       removed: new Uint32Array(capacity),
       kept: new Uint32Array(capacity),
       removedVersions: new Uint32Array(capacity),
       keptVersions: new Uint32Array(capacity),
+      exact: new Uint8Array(capacity),
     };
     for (const [name, array] of Object.entries(grown)) {
-      if (this[name]) array.set(this[name].subarray(0, this.size));
+      if (this[name]) array.set(this[name]);
       this[name] = array;
     }
     this.capacity = capacity;
   }
 
-  moveSlot(from, to) {
-    this.costs[to] = this.costs[from];
-    this.positionCosts[to] = this.positionCosts[from];
-    this.removed[to] = this.removed[from];
-    this.kept[to] = this.kept[from];
-    this.removedVersions[to] = this.removedVersions[from];
-    this.keptVersions[to] = this.keptVersions[from];
-  }
-
-  setSlot(slot, cost, positionCost, removed, kept, removedVersion, keptVersion) {
-    this.costs[slot] = cost;
-    this.positionCosts[slot] = positionCost;
-    this.removed[slot] = removed;
-    this.kept[slot] = kept;
-    this.removedVersions[slot] = removedVersion;
-    this.keptVersions[slot] = keptVersion;
-  }
-
-  push(cost, positionCost, removed, kept, removedVersion, keptVersion) {
+  push(cost, positionCost, removed, kept, removedVersion, keptVersion, exact = 1) {
     if (this.size === this.capacity) this.allocate(this.capacity * 2);
+    const id = this.freeCount ? this.freeIds[--this.freeCount] : this.poolUsed++;
+    this.positionCosts[id] = positionCost;
+    this.removed[id] = removed;
+    this.kept[id] = kept;
+    this.removedVersions[id] = removedVersion;
+    this.keptVersions[id] = keptVersion;
+    this.exact[id] = exact;
+    const { heapCosts, heapIds } = this;
     let index = this.size++;
     while (index > 0) {
       const parent = (index - 1) >> 1;
-      if (this.costs[parent] <= cost) break;
-      this.moveSlot(parent, index);
+      if (heapCosts[parent] <= cost) break;
+      heapCosts[index] = heapCosts[parent];
+      heapIds[index] = heapIds[parent];
       index = parent;
     }
-    this.setSlot(index, cost, positionCost, removed, kept, removedVersion, keptVersion);
+    heapCosts[index] = cost;
+    heapIds[index] = id;
+  }
+
+  /** The cost of the cheapest candidate, which no candidate can undercut. */
+  peekCost() {
+    return this.heapCosts[0];
   }
 
   pop() {
-    this.poppedCost = this.costs[0];
-    this.poppedPositionCost = this.positionCosts[0];
-    this.poppedRemoved = this.removed[0];
-    this.poppedKept = this.kept[0];
-    this.poppedRemovedVersion = this.removedVersions[0];
-    this.poppedKeptVersion = this.keptVersions[0];
+    const { heapCosts, heapIds } = this;
+    const id = heapIds[0];
+    this.poppedCost = heapCosts[0];
+    this.poppedPositionCost = this.positionCosts[id];
+    this.poppedRemoved = this.removed[id];
+    this.poppedKept = this.kept[id];
+    this.poppedRemovedVersion = this.removedVersions[id];
+    this.poppedKeptVersion = this.keptVersions[id];
+    this.poppedExact = this.exact[id];
+    this.freeIds[this.freeCount++] = id;
     const last = --this.size;
     if (last === 0) return;
-    const cost = this.costs[last];
-    const positionCost = this.positionCosts[last];
-    const removed = this.removed[last];
-    const kept = this.kept[last];
-    const removedVersion = this.removedVersions[last];
-    const keptVersion = this.keptVersions[last];
+    const cost = heapCosts[last];
+    const lastId = heapIds[last];
     let index = 0;
     for (;;) {
       let child = index * 2 + 1;
       if (child >= last) break;
-      if (child + 1 < last && this.costs[child + 1] < this.costs[child]) child++;
-      if (this.costs[child] >= cost) break;
-      this.moveSlot(child, index);
+      if (child + 1 < last && heapCosts[child + 1] < heapCosts[child]) child++;
+      if (heapCosts[child] >= cost) break;
+      heapCosts[index] = heapCosts[child];
+      heapIds[index] = heapIds[child];
       index = child;
     }
-    this.setSlot(index, cost, positionCost, removed, kept, removedVersion, keptVersion);
+    heapCosts[index] = cost;
+    heapIds[index] = lastId;
   }
 }
 
@@ -335,6 +341,8 @@ class Collapser {
     this.stampCounter = 0;
     this.keptBuffer = new Uint32Array(64);
     this.removedBuffer = new Uint32Array(64);
+    this.movedFrom = new Uint32Array(64);
+    this.movedTo = new Uint32Array(64);
     this.closestVertex = 0;
     this.triangleAlive = new Uint8Array(this.triangles.length / 3).fill(1);
     this.aliveCount = this.triangles.length / 3;
@@ -347,17 +355,25 @@ class Collapser {
     }
     this.queue = new CollapseQueue();
     this.worstError = 0;
-    const queuedEdges = new Set();
     for (let triangle = 0; triangle < this.triangleAlive.length; triangle++) {
       for (let side = 0; side < 3; side++) {
         const [first, second] = [this.triangles[triangle * 3 + side], this.triangles[triangle * 3 + (side + 1) % 3]];
         // The welded path queues each edge once: the quadric and attribute costs it computes are what dominate its time.
-        const edgeKey = Math.min(first, second) * this.vertexCount + Math.max(first, second);
-        if (this.blendSeams && queuedEdges.has(edgeKey)) continue;
-        queuedEdges.add(edgeKey);
+        if (this.blendSeams && first > second && this.hasDirectedEdge(second, first)) continue;
         this.pushEdge(first, second);
       }
     }
+  }
+
+  /** Whether an alive triangle around `from` runs from `from` to `to` (the partner of a shared edge runs the other way). */
+  hasDirectedEdge(from, to) {
+    for (const triangle of this.vertexTriangles[from]) {
+      const base = triangle * 3;
+      for (let side = 0; side < 3; side++) {
+        if (this.triangles[base + side] === from && this.triangles[base + (side + 1) % 3] === to) return true;
+      }
+    }
+    return false;
   }
 
   /** Queue both directions of an edge: the vertex that goes must not be locked. */
@@ -385,8 +401,9 @@ class Collapser {
 
   pushCollapse(removed, kept, knownSurfaceCost) {
     const positionCost = knownSurfaceCost ?? this.surfaceCost(removed, kept);
-    const cost = this.blendSeams ? positionCost + this.attributePenalty(removed, kept) : positionCost;
-    this.queue.push(cost, positionCost, removed, kept, this.versions[removed], this.versions[kept]);
+    // The welded path queues the surface cost alone, a lower bound: the attribute penalty is added when the candidate is
+    // popped (see `reduceTo`), so a candidate that goes stale first never pays for it.
+    this.queue.push(positionCost, positionCost, removed, kept, this.versions[removed], this.versions[kept], this.blendSeams ? 0 : 1);
   }
 
   /**
@@ -414,6 +431,14 @@ class Collapser {
       }
     }
     return count;
+  }
+
+  growMoved() {
+    for (const field of ['movedFrom', 'movedTo']) {
+      const grown = new Uint32Array(this[field].length * 2);
+      grown.set(this[field]);
+      this[field] = grown;
+    }
   }
 
   growBuffer(buffer) {
@@ -508,14 +533,16 @@ class Collapser {
 
   collapse(removed, kept) {
     const keptCount = this.blendSeams ? this.collectVertices(kept, this.keptBuffer) : 0;
-    const takenBy = this.blendSeams ? new Map() : null;
-    for (const triangle of this.vertexTriangles[removed]) {
+    let movedCount = 0;
+    const removedTriangles = this.vertexTriangles[removed];
+    for (let listed = 0; listed < removedTriangles.length; listed++) {
+      const triangle = removedTriangles[listed];
       const base = triangle * 3;
-      const corners = [this.triangles[base], this.triangles[base + 1], this.triangles[base + 2]];
-      if (corners.includes(kept)) {
+      const [first, second, third] = [this.triangles[base], this.triangles[base + 1], this.triangles[base + 2]];
+      if (first === kept || second === kept || third === kept) {
         this.triangleAlive[triangle] = 0;
         this.aliveCount--;
-        for (const corner of corners) {
+        for (const corner of [first, second, third]) {
           if (corner === removed) continue;
           const list = this.vertexTriangles[corner];
           list.splice(list.indexOf(triangle), 1);
@@ -525,11 +552,15 @@ class Collapser {
           if (this.triangles[base + side] !== removed) continue;
           if (this.blendSeams) {
             const vertex = this.corners[base + side];
-            if (!takenBy.has(vertex)) {
+            let moved = 0;
+            while (moved < movedCount && this.movedFrom[moved] !== vertex) moved++;
+            if (moved === movedCount) {
               this.closestDistance(vertex, keptCount);
-              takenBy.set(vertex, this.closestVertex);
+              if (movedCount === this.movedFrom.length) this.growMoved();
+              this.movedFrom[movedCount] = vertex;
+              this.movedTo[movedCount++] = this.closestVertex;
             }
-            this.corners[base + side] = takenBy.get(vertex);
+            this.corners[base + side] = this.movedTo[moved];
           }
           this.triangles[base + side] = kept;
         }
@@ -558,6 +589,13 @@ class Collapser {
       queue.pop();
       const { poppedRemoved: removed, poppedKept: kept } = queue;
       if (queue.poppedRemovedVersion !== this.versions[removed] || queue.poppedKeptVersion !== this.versions[kept]) continue;
+      if (!queue.poppedExact) {
+        const cost = queue.poppedPositionCost + this.attributePenalty(removed, kept);
+        if (queue.size && cost > queue.peekCost()) {
+          queue.push(cost, queue.poppedPositionCost, removed, kept, queue.poppedRemovedVersion, queue.poppedKeptVersion, 1);
+          continue;
+        }
+      }
       if (!this.isSafe(removed, kept)) continue;
       this.worstError = Math.max(this.worstError, queue.poppedPositionCost);
       this.collapse(removed, kept);
