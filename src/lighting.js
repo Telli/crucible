@@ -131,7 +131,7 @@ export function createLightingState() {
     ambientIntensity: 1,
     specularAntiAliasing: DEFAULT_SPECULAR_ANTI_ALIASING,
     wetness: 0,
-    wetnessState: new Float32Array(3),
+    wetnessState: new Float32Array(4),
   };
 }
 

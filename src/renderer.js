@@ -23,7 +23,7 @@ import { requireEnvironmentSupport, DEFAULT_SUN_ANGULAR_RADIUS } from './environ
 import { materialLayerState, materialLayerValue } from './material-layers.js';
 import { MaterialSnapshot } from './material-snapshot.js';
 import { wearUniformValues } from './material-wear.js';
-import { wetnessKeepOutBoxes } from './wetness-keep-out.js';
+import { wetnessKeepOutBoxes, wetnessGroundHeight } from './wetness-keep-out.js';
 import { fittedFogDensity } from './fog-fit.js';
 import { canUseCompactColor, respecifyColorTargets } from './compact-color.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
@@ -1346,9 +1346,10 @@ export class CrucibleRenderer {
     if (this.wetnessKeepOutParts !== this.fitParts) {
       this.wetnessKeepOutParts = this.fitParts;
       this.wetnessKeepOut = wetnessKeepOutBoxes(this.fitParts ?? []);
+      this.wetnessGroundHeight = wetnessGroundHeight(this.fitParts ?? []);
     }
-    const [wetness, puddleShare] = this.lighting.wetnessState;
-    this.context.uniform3f(this.uniforms.wetnessState, wetness, puddleShare, this.wetnessKeepOut.count);
+    const [wetness, fillLevel] = this.lighting.wetnessState;
+    this.context.uniform4f(this.uniforms.wetnessState, wetness, fillLevel, this.wetnessKeepOut.count, this.wetnessGroundHeight);
     this.context.uniform4fv(this.uniforms['wetnessKeepOut[0]'], this.wetnessKeepOut.boxes);
   }
 

@@ -6,9 +6,10 @@ import { createLightingState, updateLightingState } from '../src/lighting.js';
 import { createFragmentShader, fragmentShader, WETNESS_FEATURE, SHADER_FEATURES } from '../src/shaders.js';
 import { normalizeAgentLook } from '../src/agent-look.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
-import { wetnessUniformValues, wetnessResponse, PUDDLE_SOURCES } from '../src/wetness.js';
-import { PUDDLE_LEVEL_DRY, PUDDLE_LEVEL_SPAN, puddleFillLevel } from '../src/wetness-shader.js';
-import { wetnessKeepOutBoxes, KEEP_OUT_LIMIT } from '../src/wetness-keep-out.js';
+import { wetnessUniformValues, wetnessResponse, puddleShare, PUDDLE_SOURCES, PUDDLE_SHARE_CAP } from '../src/wetness.js';
+import { puddleFillLevel, PUDDLE_LEVEL_TABLE, SOAKED_ROAD_ROUGHNESS_SCALE, WATER_SURFACE_ROUGHNESS } from '../src/wetness-shader.js';
+import { measurePuddleShare } from './support/wetness-noise-port.mjs';
+import { wetnessKeepOutBoxes, wetnessGroundHeight, KEEP_OUT_LIMIT } from '../src/wetness-keep-out.js';
 import { findWaterSurface, flagWetMirrorParts, wetMirrorSurface } from '../src/water-reflection.js';
 
 function emptySession() {
@@ -21,7 +22,7 @@ test('a dry look has no wetness fields and the lighting state stays dry', () => 
   assert.equal('puddles' in environment, false);
   const state = updateLightingState(createLightingState(), environment);
   assert.equal(state.wetness, 0);
-  assert.deepEqual([...state.wetnessState], [0, 0, 0]);
+  assert.deepEqual([...state.wetnessState], [0, 0, 0, 0]);
 });
 
 test('wetness and puddles are bounded, and puddles fill in their defaults', () => {
@@ -43,14 +44,16 @@ test('an unknown puddle source is refused with the one to pass', () => {
   assert.deepEqual(PUDDLE_SOURCES, ['height']);
 });
 
-test('puddles scale with wetness, so damp ground gets fewer than soaked ground', () => {
-  const damp = wetnessUniformValues({ wetness: 0.5, puddles: { coverage: 0.8 } });
-  assert.deepEqual([damp[0], Math.round(damp[1] * 1000) / 1000, damp[2]], [0.75, 0.6, 0]);
-  assert.deepEqual(wetnessUniformValues({ wetness: 1, puddles: { coverage: 0.8 } }), [1, 0.8, 0]);
-  assert.deepEqual(wetnessUniformValues({ puddles: { coverage: 0.8 } }), [0, 0, 0]);
+test('the puddle share is a quarter of the ground at most, and grows with wetness and coverage', () => {
+  assert.equal(PUDDLE_SHARE_CAP, 0.25);
+  assert.equal(puddleShare(1, 1), 0.25);
+  assert.equal(puddleShare(0.5, 0.5), 0.25 * 0.5 * 0.25);
+  assert.equal(puddleShare(0, 1), 0);
+  assert.deepEqual(wetnessUniformValues({ puddles: { coverage: 0.8 } }), [0, 0, 0, 0]);
+  assert.deepEqual(wetnessUniformValues({ wetness: 1, puddles: { coverage: 0 } }), [1, 0, 0, 0]);
   const state = updateLightingState(createLightingState(), { wetness: 0.5, puddles: { coverage: 0.8 } });
   assert.equal(state.wetness, 0.75);
-  assert.ok(Math.abs(state.wetnessState[1] - 0.6) < 1e-6);
+  assert.ok(Math.abs(state.wetnessState[1] - puddleFillLevel(puddleShare(0.5, 0.8))) < 1e-6);
 });
 
 test('the wetness curve is visible by the middle of the range and keeps its ends', () => {
@@ -65,7 +68,7 @@ test('the wetness code joins the fragment shader only when the feature is on', (
   assert.equal(dry, fragmentShader);
   assert.equal(dry.includes('wetnessState'), false);
   const wet = createFragmentShader([...SHADER_FEATURES, WETNESS_FEATURE]);
-  assert.match(wet, /uniform vec3 wetnessState;/);
+  assert.match(wet, /uniform vec4 wetnessState;/);
   assert.match(wet, /float wetBasin\(/);
   assert.match(wet, /\(1\.0 - metallic\)/);
 });
@@ -141,61 +144,68 @@ function wetShaderSource() {
   return createFragmentShader(new Set([...SHADER_FEATURES, WETNESS_FEATURE]));
 }
 
-test('the puddle edge is soft and irregular: warped basin, pixel-wide fade and a pebble break-up', () => {
-  const wet = wetShaderSource();
-  assert.match(wet, /float edgeWidth = clamp[(]4\.0 \* fwidth[(]fill[)], 0\.1, 0\.3[)];/);
-  assert.match(wet, /standing = smoothstep[(]0\.0, edgeWidth, depthField[)] \* gate/);
-  assert.match(wet, /float depthField = fill \+ 0\.08 \* pebble;/);
-  assert.match(wet, /vec2 warp = vec2[(]wearNoise/);
+test('the fill level falls as the share grows, through the measured table', () => {
+  const levels = [0, 0.005, 0.01, 0.02, 0.03, 0.0625, 0.1, 0.125, 0.2, 0.25].map(puddleFillLevel);
+  for (let index = 1; index < levels.length; index++) assert.ok(levels[index] < levels[index - 1], `level ${index} falls`);
+  for (const [share, level] of PUDDLE_LEVEL_TABLE) assert.ok(Math.abs(puddleFillLevel(share) - level) < 1e-9);
+  assert.equal(puddleFillLevel(1), puddleFillLevel(0.25));
 });
 
-test('the shader builds damp ring, shallow and deep water from one depth field', () => {
-  const wet = wetShaderSource();
-  assert.match(wet, /damp = smoothstep[(]-0\.32, 0\.0, depthField[)]/);
-  assert.match(wet, /deep = smoothstep[(]0\.05, 0\.45, fill[)]/);
-  assert.match(wet, /color \*= mix[(]1\.0, mix[(]0\.6, 0\.1, deep[)], standing[)]/);
-  assert.match(wet, /roughness = mix[(]roughness, mix[(]0\.06, 0\.03, deep[)], standing[)]/);
+test('the noise basin floods the share of the ground the settings ask for, never above the cap', () => {
+  for (const [wetness, coverage] of [[0.5, 0.5], [1, 0.5], [1, 1]]) {
+    const [, fillLevel] = wetnessUniformValues({ wetness, puddles: { coverage } });
+    const measured = measurePuddleShare(fillLevel);
+    const wanted = puddleShare(wetness, coverage);
+    assert.ok(Math.abs(measured - wanted) <= 0.015, `wetness ${wetness} coverage ${coverage}: wanted ${wanted}, measured ${measured}`);
+    assert.ok(measured <= 0.27, 'puddles never flood more than a quarter of the ground');
+  }
 });
 
-test('normals flatten with depth, so the rim keeps the road bumps', () => {
+test('puddles fill the same low spots on ground at any height', () => {
+  const [, fillLevel] = wetnessUniformValues({ wetness: 1, puddles: { coverage: 1 } });
+  const groundAtZero = measurePuddleShare(fillLevel, { size: 60, groundHeight: 0 });
+  for (const groundHeight of [3, -2]) {
+    assert.ok(Math.abs(measurePuddleShare(fillLevel, { size: 60, groundHeight }) - groundAtZero) < 0.005, `ground at y ${groundHeight}`);
+  }
+});
+
+function raisedGround(height) {
+  const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, height, 0, 1];
+  return { geometry: { positions: new Float32Array([-10, -0.1, -20, 10, 0, 20]) }, matrix: identity, material: { roughness: 0.95, metallic: 0 } };
+}
+
+test('the ground height is the top of the widest part, so a raised or sunk road is measured from itself', () => {
+  assert.equal(wetnessGroundHeight([]), 0);
+  for (const height of [3, -2, 0]) {
+    const marking = partWithFootprint(-0.1, -5, 0.1, 5, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, height + 50, 0, 1]);
+    assert.ok(Math.abs(wetnessGroundHeight([marking, raisedGround(height)]) - height) < 1e-6);
+  }
+});
+
+test('the shader measures the water depth from the ground height, not from world y', () => {
   const wet = wetShaderSource();
-  assert.match(wet, /flatten = standing \* smoothstep[(]0\.0, 0\.12, depthField[)]/);
-  assert.match(wet, /normal = normalize[(]mix[(]normal, vec3[(]0\.0, 1\.0, 0\.0[)], flatten[)][)]/);
+  assert.ok(wet.includes('6.0 * (worldPosition.y - wetnessState.w)'));
+  assert.equal(wet.includes('6.0 * worldPosition.y'), false);
+});
+
+test('only standing water mirrors: the road is set rough after the lighting and the water smooth', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes(`roughness = wetStanding > 0.99 ? ${WATER_SURFACE_ROUGHNESS.toFixed(2)} : mix(0.5, 0.35, wetStanding);`));
+  assert.ok(wet.includes(`roughness * ${SOAKED_ROAD_ROUGHNESS_SCALE.toFixed(2)}`));
+  assert.ok(WATER_SURFACE_ROUGHNESS < 0.1 && SOAKED_ROAD_ROUGHNESS_SCALE > 0.5, 'water is a mirror, soaked road is satin');
+});
+
+test('the water edge is narrow and pixel-wide, and the interior is flat and smooth', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('standing = smoothstep(-edgeWidth, edgeWidth, stoneDepth) * gate'));
+  assert.ok(wet.includes('float edgeWidth = max(fwidth(puddleDepth), 0.00001);'));
+  assert.ok(wet.includes('normal = normalize(mix(normal, vec3(0.0, 1.0, 0.0), standing));'));
+  assert.ok(wet.includes('float gate = smoothstep(0.996, 0.9995, geometricNormal.y)'));
 });
 
 test('grain and fine detail fade with the pixel footprint so the horizon does not speckle', () => {
   const wet = wetShaderSource();
-  assert.match(wet, /float pixelSize = sqrt[(]length[(]dFdx[(]worldPosition[)][)] \* length[(]dFdy[(]worldPosition[)][)][)]/);
-  assert.match(wet, /\* grainFade;/);
+  assert.ok(wet.includes('float pixelSize = sqrt(length(dFdx(worldPosition)) * length(dFdy(worldPosition)));'));
+  assert.ok(wet.includes('* grainFade;'));
   assert.match(wet, /wetBasin[(]worldPosition, detailFade[)]/);
-});
-
-test('the shader takes its fill level from the same constants as puddleFillLevel', () => {
-  const wet = wetShaderSource();
-  assert.ok(wet.includes(`float level = ${PUDDLE_LEVEL_DRY.toFixed(2)} - ${PUDDLE_LEVEL_SPAN.toFixed(2)} * wetnessState.y * wetnessState.x * wetnessState.x;`));
-});
-
-test('the fill level falls with wetness, so wetness 1 floods clearly more ground than 0.5', () => {
-  const levelAt = (wetness, coverage) => {
-    const [response, share] = wetnessUniformValues({ wetness, puddles: { coverage } });
-    return puddleFillLevel(response, share);
-  };
-  assert.equal(levelAt(0, 0.5), PUDDLE_LEVEL_DRY);
-  assert.equal(levelAt(1, 0), PUDDLE_LEVEL_DRY);
-  assert.ok(levelAt(0.25, 0.5) > levelAt(0.5, 0.5));
-  assert.ok(levelAt(0.5, 0.5) - levelAt(1, 0.5) >= 0.12, 'wetness 0.5 and 1 need visibly different puddle levels');
-  assert.ok(levelAt(1, 1) < levelAt(1, 0.5));
-});
-
-test('wetness 0.5 is damp and wetness 1 soaked: the gloss does not saturate at 0.5', () => {
-  const wet = wetShaderSource();
-  assert.match(wet, /wetSoak = wetnessState\.x \* wetnessState\.x/);
-  const soak = (wetness) => wetnessResponse(wetness) ** 2;
-  assert.ok(soak(1) - soak(0.5) > 0.4);
-});
-
-test('the fill level is capped so soaked ground pools instead of flooding', () => {
-  const [response, share] = wetnessUniformValues({ wetness: 1, puddles: { coverage: 1 } });
-  assert.ok(puddleFillLevel(response, share) >= 0.35, 'even full coverage keeps the level above the flood line');
-  assert.ok(puddleFillLevel(...wetnessUniformValues({ wetness: 1, puddles: { coverage: 0.5 } })) >= 0.6);
 });
