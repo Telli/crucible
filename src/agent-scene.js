@@ -1112,7 +1112,7 @@ function checkLineNodeNames(recipe) {
   }
   // A group that draws nothing itself (an expanded instances node, a plain group) would do nothing without a sign.
   // A placed asset, vegetation and crowd nodes are groups too, but their parts name them in `group`.
-  const drawsNothing = recipe.nodes.find(node => Object.hasOwn(lines.nodes, node.id) && node.geometry === undefined && !node.asset && !node.vegetation && !node.clutter && !node.grass);
+  const drawsNothing = recipe.nodes.find(node => Object.hasOwn(lines.nodes, node.id) && node.geometry === undefined && !node.asset && !growsParts(node));
   if (drawsNothing) {
     const childIds = recipe.nodes.filter(node => node.parent === drawsNothing.id).map(node => node.id);
     throw invalidField(`environment.lines.nodes.${drawsNothing.id}`, drawsNothing.id, `the ID of a node that draws a part; ${JSON.stringify(drawsNothing.id)} is a group with no geometry of its own. ${childIds.length > 0 ? `Name its children instead, such as ${childIds.slice(0, 3).join(', ')}` : 'It has no children, so remove its entry from lines.nodes'}`);
@@ -1777,6 +1777,9 @@ function authoredRecipe(recipe) {
 }
 
 // Node keys whose values the recipe normalizer may rebuild or rewrite in place, so a shared node could not be read-only.
+// Node fields whose module generates part nodes at each edit; the last two scatter over a terrain from the camera eye.
+const GROWN_PART_FIELDS = ['vegetation', 'clutter', 'grass'];
+const growsParts = node => GROWN_PART_FIELDS.some(field => node[field]);
 const NODE_KEYS_NEEDING_OWN_COPY = ['assetPart', 'asset', 'vegetation', 'clutter', 'grass', 'relations', 'skin', 'instances', 'armature'];
 
 /**
@@ -1920,7 +1923,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // resident: the committed state's graph is moved in place instead of being built again.
   function canMoveStagedGraph(recipe, movedNodeIds, assetRuntime) {
     return Boolean(movedNodeIds && state && !state.poseGraph && assetRuntime === NO_ASSETS && !recipe.armatures &&
-      state.recipe.nodes.length === recipe.nodes.length && !recipe.nodes.some(node => node.relations?.length || node.assetPart || node.asset || node.vegetation || node.clutter || node.grass));
+      state.recipe.nodes.length === recipe.nodes.length && !recipe.nodes.some(node => node.relations?.length || node.assetPart || node.asset || growsParts(node)));
   }
 
   function graphWithMovedNodes(recipe, movedNodeIds, localBounds) {
@@ -1944,14 +1947,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const plantedRuntime = recipe.nodes.some(node => node.vegetation)
       ? agentSceneModule('vegetation').expandVegetation(recipe, limits, assetOutputCache, placedRuntime, options.sequenceFrames)
       : placedRuntime;
-    // Scattered clutter travels the same channel and adds its own parts after the trees.
-    const scatteredRuntime = recipe.nodes.some(node => node.clutter)
-      ? agentSceneModule('clutter').expandClutter(recipe, limits, assetOutputCache, plantedRuntime)
-      : plantedRuntime;
-    // Blade grass travels the same channel and adds its tiles last.
-    const assetRuntime = recipe.nodes.some(node => node.grass)
-      ? agentSceneModule('grass').expandGrass(recipe, limits, assetOutputCache, scatteredRuntime)
-      : scatteredRuntime;
+    // Scattered clutter and blade grass travel the same channel and add their parts after the trees.
+    let assetRuntime = plantedRuntime;
+    for (const [field, expand] of [['clutter', 'expandClutter'], ['grass', 'expandGrass']]) {
+      if (recipe.nodes.some(node => node[field])) assetRuntime = agentSceneModule(field)[expand](recipe, limits, assetOutputCache, assetRuntime);
+    }
     // Placed assets and grown vegetation add part nodes, so the part names are checked after the expansion, like the render binds them.
     if (recipe.environment.localVolumes) {
       const partNodeIds = recipe.nodes.filter(node => node.geometry !== undefined).map(node => node.id);

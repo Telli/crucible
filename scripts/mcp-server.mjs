@@ -74,7 +74,7 @@ const relationList = z.array(z.record(z.string(), z.unknown())).max(8).describe(
 const placedAsset = z.record(z.string(), z.unknown()).describe('Catalog GLB placed at this group node: {id or name,materials,clip,drive}; see scene_capabilities placedAssets.').meta({ id: 'PlacedAsset' });
 const placedVegetation = z.record(z.string(), z.unknown()).describe('Trees at this group node: {species} for one, or {mix, scatter:{ground,...}} over a terrain node; see scene_capabilities vegetation.').meta({ id: 'PlacedVegetation' });
 const placedClutter = z.unknown();
-const placedGrass = z.record(z.string(), z.unknown()).describe('Blade grass at this group node: {ground: terrain node ID, preset, density, height, dryness, seed, area or polygon, exclude}; see scene_capabilities grass.').meta({ id: 'PlacedGrass' });
+const placedGrass = z.unknown();
 // Left open here and checked by the scene (normalizeRayVisibility), whose errors say what to pass; the shape is in scene_capabilities renderFlags.
 const rayVisibility = z.unknown();
 const nodeFields = {

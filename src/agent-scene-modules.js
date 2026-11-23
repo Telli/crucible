@@ -112,7 +112,7 @@ const MODULE_MARKERS = {
   fogShader: ['volumeFog', 'localVolumes', '"add-explosion"'],
   // A volume that casts a shadow draws the emission of the parts it covers apart from the dimmed light (#1360); loaded up front, the first frame already has it.
   volumeEmissionMask: ['"castShadow":true'],
-  worldMaterials: ['"tag":"water"', '"waterPreset"', '"absorption"', '"turbidity"', '"caustics"', '"waterRamp"', '"vegetation":{', '"grass":{', '"tag":"foliage"', '"tag":"grass"', '"tag":"terrain"', '"tag":"fire"', '"tag":"smoke"', '"moss"'],
+  worldMaterials: ['"tag":"water"', '"waterPreset"', '"absorption"', '"turbidity"', '"caustics"', '"waterRamp"', '"vegetation":{', '"tag":"foliage"', '"tag":"grass"', '"tag":"terrain"', '"tag":"fire"', '"tag":"smoke"', '"moss"'],
   terrain: ['"type":"terrain"'],
   floorPlan: ['"type":"floorPlan"'],
   // No recipe text asks for it, only the path option of scene_inspect does, so a host loads it with loadAllAgentSceneModules.
