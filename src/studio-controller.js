@@ -637,8 +637,13 @@ export function createStudioController({
   maxHistory = 32,
   onChange,
   measureOperation = (name, operation) => operation(),
+  bakeWhileSettling = 'previous',
 } = {}) {
+  if (!['previous', 'none', 'wait'].includes(bakeWhileSettling)) {
+    throw new RangeError(`bakeWhileSettling must be 'previous', 'none' or 'wait', got ${JSON.stringify(bakeWhileSettling)}.`);
+  }
   let currentScene = validateSceneHandle(initialScene);
+  showEditsBeforeTheirBake(currentScene);
   let moveSnapStep = TRANSLATION_SNAP_STEP;
   let rotateSnapDegrees = ROTATION_SNAP_DEGREES;
   let gizmoPixels = GIZMO_SCREEN_PIXELS;
@@ -692,17 +697,27 @@ export function createStudioController({
   let flushTimer = null;
 
   function watchPendingFlush() {
-    if (flushTimer !== null || !currentScene.flushPending) {
+    if (flushTimer !== null || !isSettling()) {
       return;
     }
     flushTimer = setTimeout(() => {
       flushTimer = null;
-      if (currentScene.flushPending) {
+      if (isSettling()) {
         watchPendingFlush();
       } else {
         notify({ kind: 'flush' });
       }
     }, FLUSH_WATCH_MILLISECONDS);
+  }
+
+  // An edit of a baked scene shows before its light bake is done (#3052): 'previous' draws the last light meanwhile, 'none' draws
+  // none, 'wait' keeps the edit waiting for its bake. The viewport is told once when the bake lands, like a deferred flush search.
+  function showEditsBeforeTheirBake(scene) {
+    scene.setBakeDeferral?.(bakeWhileSettling === 'wait' ? null : bakeWhileSettling);
+  }
+
+  function isSettling() {
+    return currentScene.flushPending || Boolean(currentScene.bakePending);
   }
 
   function stopWatchingFlush() {
@@ -902,7 +917,11 @@ export function createStudioController({
     stopWatchingFlush();
     // A drag in progress belongs to the scene it began on.
     dragState = null;
+    if (currentScene !== scene) {
+      currentScene.cancelBake?.();
+    }
     currentScene = scene;
+    showEditsBeforeTheirBake(scene);
     settleSelectionAndMotion();
   }
 
@@ -2657,6 +2676,10 @@ export function createStudioController({
     get scene() { return currentScene; },
     get viewCamera() { return viewCamera(); },
     get cameraDriven() { return cameraIsDriven(); },
+    /** True while an edit shows before its light bake is done; the viewport is told (kind 'flush') when it lands. */
+    get bakePending() { return Boolean(currentScene.bakePending); },
+    /** Finishes the pending light bake now, so a still or an export has the light a fresh build has. Returns whether it had to. */
+    settleBake() { return Boolean(currentScene.settleBake?.()); },
     get freeView() { return Boolean(freeViewPose) && cameraIsDriven(); },
     lookThroughSceneCamera,
     get selectedNodeId() { return selectedNodeId; },
@@ -2749,6 +2772,7 @@ export function createStudioController({
       return currentScene.exportRecipe();
     },
     dispose() {
+      currentScene.cancelBake?.();
       stopWatchingFlush();
       invalidateQuery();
     },

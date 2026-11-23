@@ -1825,6 +1825,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   let clothBake = null;
   let particleBake = null;
   let lightBake = null;
+  // Whether an edit of a built scene shows before its bake is done (#3052): null waits for it, 'previous' draws the last light
+  // meanwhile, 'none' draws no light. `settling.pending` is the plan of the bake that is running.
+  let bakeDeferral = options.deferBake ?? null;
+  const settling = { pending: null };
   // Why the last stage's rebake could not run (a size limit), for the staged state to report.
   let skippedBake = null;
   let skippedReflections = null;
@@ -2028,7 +2032,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const assetOutput = assetRuntime.materialOutputs.get(material.id);
       const handle = assetOutput ? assetMaterialHandle(snapshot, assetOutput, preferredHandle, activeHandle) : existing ?? materialHandle(snapshot, material.map && agentSceneModule('assets').createTextureSequence(material.id, material.map, options.sequenceFrames), options.sequenceFrames);
       materialHandles.set(material.id, handle);
-      stagedMaterialSnapshots.push({ holder: handle.holder, snapshot });
+      stagedMaterialSnapshots.push({ id: material.id, holder: handle.holder, snapshot });
     }
     const activeParts = new Map(state?.sourceRestParts.map(part => [part.name, part]) ?? []);
     const preferredParts = new Map(preferred?.sourceRestParts.map(part => [part.name, part]) ?? []);
@@ -2043,7 +2047,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const maskedGeometry = recipeMaterial.output.wear ? geometryWithSurfaceMasks(foamGeometry, recipeMaterial.output.wear, node.id) : foamGeometry;
       const geometry = geometryWithMaterialUvs(maskedGeometry, recipe, node.material, graph, node.id);
       // A graph with a vertexGroup node bakes with this mesh's weights, so its textures belong to the mesh.
-      const drawnMaterial = recipeMaterial.output.pattern?.graph ? agentSceneModule('patterns').materialViewForGeometry(recipeMaterial.output, geometry, node.id, recipeMaterial.holder.images) : recipeMaterial.output;
+      const drawnMaterial = recipeMaterial.output.pattern?.graph ? agentSceneModule('patterns').materialViewForGeometry(recipeMaterial.output, geometry, node.id, recipeMaterial.holder.images, graph.getNode(node.id).worldMatrix) : recipeMaterial.output;
       const fades = fadedNodeIds.has(node.id);
       const material = fades ? fadeMaterial(drawnMaterial, node.id) : drawnMaterial;
       const assetExtras = assetRuntime.partExtras.get(node.id);
@@ -2085,6 +2089,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       // Parts a pose replaces (cloth, particles, ocean) are new objects with no flush rank, so the pose ranks them again.
       rankFlushParts: parts => stageCoplanarOffsets(recipe, parts),
       bakeSkipped: skippedBake,
+      settlingPlan: lightBakeResult?.plan,
       reflectionSkipped: skippedReflections,
       bakeReport: lightBakeResult ? agentSceneModule('bake').withLocalVolumeReport({ ...lightBakeResult.report, reused: lightBakeResult.reused }, recipe.environment.localVolumes) : null,
       reflectionReport: reflected ? reflected.report : null,
@@ -2131,7 +2136,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // The bake no longer matches the frame: motion moved a light, the sun or a part off the pose it was traced at.
   // Only a scene with both a bake and motion pays for this check, and bake.rebake turns it off (it bakes each sampled pose).
   function staleBakeProblems() {
-    return lightBake && state.recipe.bake && state.motionSampler ? agentSceneModule('bake').staleBakeProblems(state, lightBake.key) : [];
+    return lightBake && state.recipe.bake && state.motionSampler && !settling.pending ? agentSceneModule('bake').staleBakeProblems(state, lightBake.key) : [];
   }
 
   function stageRestParts(recipe, sourceRestParts, lightBakeResult, graph) {
@@ -2139,6 +2144,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       return { restParts: sourceRestParts };
     }
     const baked = lightBakeResult?.parts ?? sourceRestParts;
+    // Its floor sky and reflections wait for the real light while the edit's bake runs.
+    if (lightBakeResult?.pending) {
+      return { reflected: null, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, baked), { rest: true }) };
+    }
     const reflected = stageObjectReflections(recipe, sourceRestParts, baked, graph);
     return { reflected, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked, graph)), { rest: true }) };
   }
@@ -2167,6 +2176,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     if (lightBake?.key === key && lightBake.sourceRestParts === sourceRestParts) {
       lightBake.currentKey = key;
       return { ...lightBake, reused: true };
+    }
+    if (bakeDeferral && state && !recipe.bake.rebake) {
+      return agentSceneModule('bakeDeferred').stageSettling(settling, bakeDeferral, { key, recipe, sourceRestParts, worldMatrices, generatedGeometryGenerators, stagedMaterialSnapshots, lightBake, state });
     }
     // The first build of a scene still fails loudly. A later edit stays applied: the old bake no longer fits the edited parts, so it is dropped.
     const { baked, refusal } = agentSceneModule('bake').withStagedMaterials(stagedMaterialSnapshots, () => agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators));
@@ -2478,10 +2490,24 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       }
     }
     state = stagedState;
+    if (settling.pending || stagedState.settlingPlan) {
+      agentSceneModule('bakeDeferred').adoptSettling(settling, stagedState.settlingPlan, finishSettledBake);
+    }
     if (incrementRevision) {
       revision++;
     }
     return revision;
+  }
+
+  // The bake of the last edit is done: the scene's parts are staged again with its light, like a fresh build, and swapped in as a
+  // topology change. A bake a limit stopped leaves the scene drawn without light and says why, as an edit that skips its bake does.
+  function finishSettledBake(plan, outcome) {
+    const settled = agentSceneModule('bakeDeferred').settledBake(plan, outcome, state.recipe);
+    lightBake = settled.lightBake;
+    const { reflected, restParts } = stageRestParts(state.recipe, state.sourceRestParts, lightBake && { ...lightBake, reused: false }, state.graph);
+    Object.assign(state, { restParts, bakeSkipped: settled.bakeSkipped, bakeReport: settled.bakeReport, reflectionReport: reflected ? reflected.report : null });
+    publishPose(state, state.poseGraph ? poseAtPlayhead(state) : stagePose(state, null));
+    topologyRevision++;
   }
 
   function expected(options) {
@@ -2514,6 +2540,25 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     },
     /** Ranks the near-coplanar triangles of a pending edit now, so a render or an export never misses an offset. Returns whether it had to. */
     settleFlush,
+    /** True while an edit shows before its light bake is done (#3052); the bake finishes on its own right after the edit. */
+    get bakePending() {
+      return Boolean(settling.pending);
+    },
+    /** Finishes the pending bake now, so a render or an export has the light a fresh build has. Returns whether it had to. */
+    settleBake() {
+      const waiting = Boolean(settling.pending);
+      settling.pending?.runner.drain();
+      return waiting;
+    },
+    /** Drops the pending bake of a scene nobody draws any more. */
+    cancelBake() {
+      settling.pending?.runner.cancel();
+      settling.pending = null;
+    },
+    /** null: an edit waits for its bake. 'previous': it shows at once with the last light. 'none': it shows at once with no light. */
+    setBakeDeferral(mode) {
+      bakeDeferral = mode;
+    },
     get camera() {
       return structuredClone(state.renderCamera);
     },

@@ -19,7 +19,8 @@ function groupWeights(geometry, name, nodeId) {
   return weights;
 }
 
-function fillTriangle(texels, covered, resolution, uvs, weights, corners) {
+// `valueAt(weightA, weightB, weightC)` is the texel value 0 to 1 from the barycentric weights of the three corners.
+function fillTriangle(texels, covered, resolution, uvs, corners, valueAt) {
   const points = corners.map(corner => [uvs[corner * 2] * resolution, uvs[corner * 2 + 1] * resolution]);
   const [[ax, ay], [bx, by], [cx, cy]] = points;
   const area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
@@ -36,7 +37,7 @@ function fillTriangle(texels, covered, resolution, uvs, weights, corners) {
       const weightC = ((bx - ax) * (pointY - ay) - (pointX - ax) * (by - ay)) / area;
       const weightA = 1 - weightB - weightC;
       if (weightA < -INSIDE_TOLERANCE || weightB < -INSIDE_TOLERANCE || weightC < -INSIDE_TOLERANCE) continue;
-      const value = weightA * weights[corners[0]] + weightB * weights[corners[1]] + weightC * weights[corners[2]];
+      const value = valueAt(weightA, weightB, weightC);
       const pixel = row * resolution + column;
       texels[pixel] = Math.min(255, Math.max(0, Math.round(value * 255)));
       covered[pixel] = 1;
@@ -74,6 +75,29 @@ export function dilateTexels(texels, covered, resolution) {
   }
 }
 
+/**
+ * Fills every triangle of `geometry` at its UVs with `valueAt(corners, weightA, weightB, weightC)` (0 to 1, drawn as
+ * a byte in the red channel), spreads the filled texels outward and returns the frozen `{ width, height, data }` RGBA
+ * map. `vertexCount` is the corner count of an unindexed mesh. The work is the texels each triangle covers.
+ */
+export function rasterizeUvTriangles(geometry, resolution, vertexCount, valueAt) {
+  const texels = new Uint8Array(resolution * resolution);
+  const covered = new Uint8Array(resolution * resolution);
+  const { indices, uvs } = geometry;
+  const cornerCount = indices ? indices.length : vertexCount;
+  for (let corner = 0; corner + 2 < cornerCount; corner += 3) {
+    const corners = indices ? [indices[corner], indices[corner + 1], indices[corner + 2]] : [corner, corner + 1, corner + 2];
+    fillTriangle(texels, covered, resolution, uvs, corners, (weightA, weightB, weightC) => valueAt(corners, weightA, weightB, weightC));
+  }
+  dilateTexels(texels, covered, resolution);
+  const data = new Uint8ClampedArray(resolution * resolution * 4);
+  for (let pixel = 0; pixel < texels.length; pixel++) {
+    data[pixel * 4] = texels[pixel];
+    data[pixel * 4 + 3] = 255;
+  }
+  return Object.freeze({ width: resolution, height: resolution, data });
+}
+
 const mapsByGeometry = new WeakMap();
 
 /**
@@ -91,21 +115,9 @@ export function vertexGroupMap(geometry, name, resolution, nodeId) {
   const key = `${name}|${resolution}`;
   const remembered = maps.get(key);
   if (remembered) return remembered;
-  const texels = new Uint8Array(resolution * resolution);
-  const covered = new Uint8Array(resolution * resolution);
-  const { indices, uvs } = geometry;
-  const cornerCount = indices ? indices.length : weights.length;
-  for (let corner = 0; corner + 2 < cornerCount; corner += 3) {
-    const corners = indices ? [indices[corner], indices[corner + 1], indices[corner + 2]] : [corner, corner + 1, corner + 2];
-    fillTriangle(texels, covered, resolution, uvs, weights, corners);
-  }
-  dilateTexels(texels, covered, resolution);
-  const data = new Uint8ClampedArray(resolution * resolution * 4);
-  for (let pixel = 0; pixel < texels.length; pixel++) {
-    data[pixel * 4] = texels[pixel];
-    data[pixel * 4 + 3] = 255;
-  }
-  const map = Object.freeze({ width: resolution, height: resolution, data });
+  const map = rasterizeUvTriangles(geometry, resolution, weights.length, (corners, weightA, weightB, weightC) => {
+    return weightA * weights[corners[0]] + weightB * weights[corners[1]] + weightC * weights[corners[2]];
+  });
   maps.set(key, map);
   return map;
 }

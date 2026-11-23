@@ -167,12 +167,12 @@ function fitLayout(levelLobes, { width, height }) {
 
 // The union of the lobes with the underside cut flat by a plane that rounds off where it meets them, in layout units. flatBase 0
 // keeps the round underside of the lowest lobes; 1 cuts as far as the widest lobe reaches. A union of one level blends by a share
-// of the widest lobe; with levels, each level blends by a share of its own widest lobe, so small bumps stay crisp.
+// of the widest lobe; with levels, each level blends by a share of its own widest lobe, so small bumps stay crisp, and a level's own softness replaces the shared one.
 function layoutField(levelLobes, { flatBase, unionSoftness, levels }) {
   const lobes = levelLobes.flat();
   const widest = Math.max(...lobes.map(lobe => lobe.radius));
   const softness = unionSoftness ?? BLEND_PER_RADIUS;
-  const blends = levelLobes.map(level => softness * (levels ? Math.max(...level.map(lobe => lobe.radius)) : widest));
+  const blends = levelLobes.map((level, index) => (levels?.[index]?.softness ?? softness) * (levels ? Math.max(...level.map(lobe => lobe.radius)) : widest));
   const union = levelUnion(levelLobes.map((level, index) => ({ lobes: level, blend: blends[index] })));
   const rounding = widest * BASE_ROUNDING_PER_RADIUS;
   const cutHeight = extentOf(lobes, 1).low + flatBase * widest * 0.9;

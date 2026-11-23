@@ -3,6 +3,7 @@ import test from 'node:test';
 import { CrucibleRenderer } from '../src/renderer.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
 import { worldBounds } from '../src/probe-trace.js';
+import { geometryBoundingSphere } from '../src/render-culling.js';
 
 /** A WebGL2 stand-in that records buffer writes, with one rigid part already uploaded. */
 function fakeRenderer() {
@@ -85,4 +86,13 @@ test('updatePartVertices refuses non-finite positions and normals before it writ
     assert.equal(batch.bounds, boundsBefore, 'the culling bounds are untouched');
     assert.deepEqual(calls, [], 'no buffer was written');
   }
+});
+
+test('updatePartVertices makes the next bounding sphere measure the new positions, as every near plane and shadow fit reads it (#3038)', () => {
+  const { renderer, part, geometry } = fakeRenderer();
+  const before = geometryBoundingSphere(geometry);
+  updatePartVertices(renderer, part, new Float32Array([0, 0, 50, 1, 0, 50, 0, 1, 50]));
+  const after = geometryBoundingSphere(geometry);
+  assert.notEqual(after, before);
+  assert.equal(after.maximum[2], 50);
 });

@@ -1,5 +1,7 @@
 // Frame time, draw calls, picture and culling checks of the GPU crowd path: npm run benchmark:crowd [-- --cpu | --gpu] [--counts 100,500] [--frames 10]
 // --skinned <url> --counts 100,1000 [--hidden-every n]: skinned glTF instances posed one asset each, with the pose / updateParts / draw split (#3001).
+// --skinned <url> --crowd: the same instances through createCrowdPartsFromGltf (one palette, one batch per material).
+// --skinned <url> --picture <seconds> [--picture-dir <folder>]: one instance, crowd path against applyAnimation, with RMSE (and stills in the folder).
 // --cpu uses SwiftShader (the path a headless agent has); the default is the machine's GPU. Prints one JSON object.
 import { writeFile } from 'node:fs/promises';
 import { constants, setPriority } from 'node:os';
@@ -19,6 +21,11 @@ const skinnedFlag = flags.indexOf('--skinned');
 const skinnedUrl = skinnedFlag >= 0 ? flags[skinnedFlag + 1] : null;
 const hiddenFlag = flags.indexOf('--hidden-every');
 const hiddenEvery = hiddenFlag >= 0 ? Number(flags[hiddenFlag + 1]) : 0;
+const crowdPath = flags.includes('--crowd');
+const pictureFlag = flags.indexOf('--picture');
+const pictureSeconds = pictureFlag >= 0 ? Number(flags[pictureFlag + 1]) : null;
+const pictureDirFlag = flags.indexOf('--picture-dir');
+const pictureDirectory = pictureDirFlag >= 0 ? flags[pictureDirFlag + 1] : null;
 const width = skinnedUrl ? 480 : 1280;
 const height = skinnedUrl ? 270 : 720;
 
@@ -50,7 +57,16 @@ if (skinnedUrl) {
   // --skinned <url of a .glb the dev server serves>: one parsed asset per instance, split into pose, updateParts and draw. Skips the other tasks.
   const skinnedReport = { backend: useCpu ? 'swiftshader' : 'gpu', width, height, frames, model: skinnedUrl, skinned: [] };
   try {
-    for (const count of counts) skinnedReport.skinned.push(await runTask({ task: 'skinned', modelUrl: skinnedUrl, count, frames, hiddenEvery }));
+    if (pictureSeconds !== null) {
+      const picture = await runTask({ task: 'gltfPicture', modelUrl: skinnedUrl, clipName: 'Run', seconds: pictureSeconds, dump: Boolean(pictureDirectory) });
+      if (picture.dumps) {
+        for (const [name, dataUrl] of Object.entries(picture.dumps)) await writeFile(`${pictureDirectory}/${name}-${pictureSeconds}.png`, Buffer.from(dataUrl.split(',')[1], 'base64'));
+        delete picture.dumps;
+      }
+      skinnedReport.picture = picture;
+    } else {
+      for (const count of counts) skinnedReport.skinned.push(await runTask({ task: 'skinned', modelUrl: skinnedUrl, count, frames, hiddenEvery, crowd: crowdPath }));
+    }
   } finally {
     await server.close();
   }

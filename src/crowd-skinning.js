@@ -407,3 +407,74 @@ export function createCrowdParts({ rig, palette, instances, lods = true, cells, 
     },
   };
 }
+
+const MAXIMUM_GLTF_CROWD_INSTANCES = 100000;
+
+/**
+ * A crowd rig and baked palette for one clip of an imported glTF asset. Each palette frame is the asset's own pose at
+ * that clip time: `asset.applyAnimation` runs once per frame here and never again while the crowd plays, so the pose
+ * costs the CPU nothing per instance. Rigid node animation bakes as joints, like `createCrowdRig` does.
+ *
+ * Limits: morph weights are not part of the palette. A clip that animates them throws, so draw that asset one asset
+ * per instance. Morph targets that the clip does not animate are ignored, as in `createCrowdRig`. The asset is left
+ * posed at the last baked time, so draw the crowd and not `asset.parts`.
+ * Returns { rig, palette, clip }.
+ */
+export function createCrowdRigFromGltf(asset, clipIndex = 0, { frameRate = DEFAULT_FRAME_RATE, loop = true } = {}) {
+  if (!asset || !Array.isArray(asset.parts) || typeof asset.applyAnimation !== 'function' || !Array.isArray(asset.animations)) {
+    throw new TypeError('createCrowdRigFromGltf needs the asset parseGltf returned (parts, animations and applyAnimation).');
+  }
+  const clip = asset.animations[clipIndex];
+  if (!Number.isInteger(clipIndex) || !clip) {
+    throw new RangeError(`Clip ${clipIndex} does not exist: this asset has ${asset.animations.length} clips. Pass a clip index from asset.animations.`);
+  }
+  if (!Number.isFinite(clip.duration) || clip.duration <= 0) throw new RangeError(`Clip ${clipIndex} has no duration to bake. Pass a clip with keyframes.`);
+  const rig = createCrowdRig(asset.parts);
+  const morphedParts = asset.parts.filter(part => part.morph);
+  let firstWeights = null;
+  const palette = bakeCrowdPalette(rig, (seconds) => {
+    asset.applyAnimation(seconds, clipIndex);
+    firstWeights ??= morphedParts.map(part => Float32Array.from(part.morph.weights));
+    morphedParts.forEach((part, index) => {
+      if (part.morph.weights.some((weight, target) => weight !== firstWeights[index][target])) {
+        throw new RangeError(`Clip ${clipIndex} animates morph weights of ${part.name}, which a crowd palette cannot hold. Draw this asset one asset per instance instead.`);
+      }
+    });
+  }, { duration: clip.duration, loop, frameRate });
+  return { rig, palette, clip };
+}
+
+/**
+ * Crowd parts for many instances of one imported glTF clip: one geometry, one material set and one palette shared by
+ * every instance, so a crowd of a thousand costs one draw per material instead of a parse, a texture and a skin upload
+ * each. `instances` is a list of { matrix (16 numbers, column-major), phase? (seconds added to the clip time) }.
+ * Call `setTime(seconds)` once per frame, then `renderer.updateParts(set.parts)`. `setTimes` takes a time per instance.
+ * Options: `clip`, `frameRate`, `loop`, and the `lods`, `cells`, `farPose` and `name` of createCrowdParts.
+ */
+export function createCrowdPartsFromGltf(asset, instances, { clip = 0, frameRate, loop, lods, cells, farPose, name } = {}) {
+  if (!Array.isArray(instances) || instances.length === 0) throw new TypeError('A glTF crowd needs a list of instances: [{ matrix, phase? }].');
+  if (instances.length > MAXIMUM_GLTF_CROWD_INSTANCES) {
+    throw new RangeError(`A glTF crowd holds at most ${MAXIMUM_GLTF_CROWD_INSTANCES} instances; got ${instances.length}. Split it into several crowds.`);
+  }
+  instances.forEach((instance, index) => {
+    if (!instance?.matrix || instance.matrix.length !== FLOATS_PER_MATRIX || !Array.from(instance.matrix).every(Number.isFinite)) {
+      throw new TypeError(`Crowd instance ${index} needs a matrix of 16 finite numbers. Pass { matrix: mat4 }.`);
+    }
+    if (instance.phase !== undefined && !Number.isFinite(instance.phase)) {
+      throw new RangeError(`Crowd instance ${index} needs a finite phase in seconds, got ${instance.phase}.`);
+    }
+  });
+  const { rig, palette } = createCrowdRigFromGltf(asset, clip, { frameRate, loop });
+  const set = createCrowdParts({ rig, palette, instances, lods, cells, farPose, name });
+  const phases = instances.map(instance => instance.phase ?? 0);
+  return {
+    ...set,
+    rig,
+    palette,
+    /** Every instance at `seconds` plus its own phase. `eye` is the camera position, used with `farPose`. */
+    setTime(seconds, eye = null) {
+      if (!Number.isFinite(seconds)) throw new RangeError(`setTime needs finite seconds, got ${seconds}.`);
+      set.setTimes(index => seconds + phases[index], eye);
+    },
+  };
+}
