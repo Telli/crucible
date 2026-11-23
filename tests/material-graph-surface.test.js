@@ -207,3 +207,45 @@ test('the view is rebuilt when the part moves in world space and kept for object
   const kept = materialViewForGeometry(objectMaterial, geometry, 'cube', undefined, IDENTITY);
   assert.equal(materialViewForGeometry(objectMaterial, geometry, 'cube', undefined, QUARTER_TURN), kept);
 });
+
+// A colour texture is stored sRGB encoded, so the slope drawn as a grey is decoded back to the value the graph computed.
+function decodeSrgb(encoded) {
+  return encoded <= 0.04045 ? encoded / 12.92 : ((encoded + 0.055) / 1.055) ** 2.4;
+}
+
+function worldFaceSlope(geometry, matrix, corners) {
+  const placed = corners.map(corner => [0, 1, 2].map(axis => matrix[axis] * geometry.positions[corner * 3] + matrix[4 + axis] * geometry.positions[corner * 3 + 1] + matrix[8 + axis] * geometry.positions[corner * 3 + 2] + matrix[12 + axis]));
+  const [first, second, third] = placed;
+  const edgeOne = [0, 1, 2].map(axis => second[axis] - first[axis]);
+  const edgeTwo = [0, 1, 2].map(axis => third[axis] - first[axis]);
+  const normal = [edgeOne[1] * edgeTwo[2] - edgeOne[2] * edgeTwo[1], edgeOne[2] * edgeTwo[0] - edgeOne[0] * edgeTwo[2], edgeOne[0] * edgeTwo[1] - edgeOne[1] * edgeTwo[0]];
+  const length = Math.hypot(...normal);
+  return length < 1e-12 ? undefined : Math.min(1, Math.acos(Math.max(-1, Math.min(1, normal[1] / length))) / (Math.PI / 2));
+}
+
+test('a displaced sphere scaled unevenly bakes the slope its triangles have in the world', () => {
+  const recipe = recipeWith([{ op: 'uv_project', mode: 'sphere' }, { op: 'displace', field: { noise: { scale: 2.2, seed: 11 } }, strength: 0.4, midlevel: 0.5 }], { color: { surface: { output: 'slope' } } });
+  recipe.geometries[0].base = { type: 'sphere', segments: 96, rings: 64 };
+  recipe.nodes[0] = { id: 'block', geometry: 'block', material: 'snowy', translation: [0, 0.6, 0], scale: [1.5, 1.1, 1.3] };
+  const [part] = createAgentScene(recipe).parts;
+  const { geometry, matrix } = part;
+  const { data, width } = part.material.map.image;
+  const buckets = { flat: [], wall: [], down: [] };
+  let errorSum = 0;
+  let count = 0;
+  for (let corner = 0; corner + 2 < geometry.indices.length; corner += 3) {
+    const corners = [geometry.indices[corner], geometry.indices[corner + 1], geometry.indices[corner + 2]];
+    const expected = worldFaceSlope(geometry, matrix, corners);
+    if (expected === undefined) continue;
+    const u = corners.reduce((sum, index) => sum + geometry.uvs[index * 2], 0) / 3;
+    const v = corners.reduce((sum, index) => sum + geometry.uvs[index * 2 + 1], 0) / 3;
+    const baked = decodeSrgb(data[(Math.floor(v * width) * width + Math.floor(u * width)) * 4] / 255);
+    errorSum += Math.abs(baked - expected);
+    count++;
+    if (expected < 0.1) buckets.flat.push(baked);
+    if (expected > 0.45 && expected < 0.55) buckets.wall.push(baked);
+  }
+  assert.ok(errorSum / count < 0.03, `mean error between baked and world face slope is ${(errorSum / count).toFixed(3)}`);
+  assert.ok(buckets.flat.length > 50 && Math.max(...buckets.flat) < 0.2, 'texels of nearly flat triangles read close to 0');
+  assert.ok(buckets.wall.length > 50 && buckets.wall.every(value => Math.abs(value - 0.5) < 0.2), 'texels of triangles at 45 degrees read close to 0.5');
+});
