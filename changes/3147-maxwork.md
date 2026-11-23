@@ -1,0 +1,1 @@
+- The material graph bake budget (`maxWork`) is now 60,000,000 work units, so a graph of about 60 units per pixel bakes at 1024 by 1024.
