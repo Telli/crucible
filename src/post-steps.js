@@ -22,6 +22,10 @@ const MAXIMUM_KUWAHARA_RADIUS = 8;
 // Longest lateral color offset at the image corner at full dispersion, as a fraction of the distance from the center.
 const MAXIMUM_DISPERSION = 0.03;
 
+// Local tone mapping works on the blur of the frame at a radius that is a fraction of its height; the taps read a mip level, so the cost does not grow with the radius.
+const LOCAL_TONE_TAPS = 24;
+const LOCAL_TONE_PIVOT = 0.18;
+
 const NEUTRAL = Object.freeze({ lift: [0, 0, 0], gamma: [1, 1, 1], gain: [1, 1, 1] });
 
 function resolveColorBalance(input) {
@@ -138,6 +142,18 @@ function resolveLensDistortion(input) {
   };
 }
 
+function resolveLocalToneMapping(input) {
+  const group = groupOf(input, 'localToneMapping');
+  onlyKeys(group, ['strength', 'highlightContrast', 'shadowContrast', 'detail', 'blurRadius'], 'localToneMapping');
+  return {
+    strength: numberInRange(group.strength, 0.5, 0, 1, 'localToneMapping.strength'),
+    highlightContrast: numberInRange(group.highlightContrast, 0.6, 0, 1, 'localToneMapping.highlightContrast'),
+    shadowContrast: numberInRange(group.shadowContrast, 0.6, 0, 1, 'localToneMapping.shadowContrast'),
+    detail: numberInRange(group.detail, 1, 0, 2, 'localToneMapping.detail'),
+    blurRadius: numberInRange(group.blurRadius, 0.08, 0.01, 0.25, 'localToneMapping.blurRadius'),
+  };
+}
+
 /** The named steps an effects input sets, resolved with their defaults. A step the input leaves out stays out of the result. */
 export function resolvePostSteps(effects) {
   const resolved = {};
@@ -148,6 +164,7 @@ export function resolvePostSteps(effects) {
   if (effects.lensDistortion !== undefined) resolved.lensDistortion = resolveLensDistortion(effects.lensDistortion);
   if (effects.stylize !== undefined) resolved.stylize = resolveStylize(effects.stylize);
   if (effects.composite !== undefined) resolved.composite = resolveComposite(effects.composite);
+  if (effects.localToneMapping !== undefined) resolved.localToneMapping = resolveLocalToneMapping(effects.localToneMapping);
   refuseMaskWithLensDistortion(resolved);
   return resolved;
 }
@@ -168,7 +185,7 @@ function refuseMaskWithLensDistortion(resolved) {
 }
 
 // Registers what the look needs: the field names it accepts and how to resolve them (src/shader-registry.js).
-postStepSupport.fields = ['distortion', 'flash', 'colorBalance', 'glare', 'lensDistortion', 'stylize', 'composite'];
+postStepSupport.fields = ['distortion', 'flash', 'colorBalance', 'glare', 'lensDistortion', 'stylize', 'composite', 'localToneMapping'];
 postStepSupport.resolve = resolvePostSteps;
 
 export const colorBalanceFragment = `${sharedFragmentHeader}
@@ -345,6 +362,46 @@ void main() {
     texture(sourceTexture, blue / vec2(aspect, 1.0) * 0.5 + 0.5).b, center.a);
 }`;
 
+// Local exposure (as in UE5, where a contrast scale of 1 leaves a range alone and less than 1 compresses it): the frame splits into a base, a bilateral blur of log luminance whose taps stop at edges so a bright sky does not
+// bleed into the grass beside it, and the detail left over. The base is pulled toward middle grey, highlights and shadows each by their own
+// amount, and the detail is added back, so a low sun's sky and the shaded ground both fit in one frame without flattening texture.
+export const localToneMappingFragment = `${sharedFragmentHeader}
+uniform float strength;
+uniform float highlightContrast;
+uniform float shadowContrast;
+uniform float detailGain;
+uniform float radiusPixels;
+uniform float baseLod;
+float logLuminance(vec3 color) {
+  return log(max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 0.0001));
+}
+void main() {
+  vec4 source = texture(sourceTexture, textureCoordinate);
+  float centerLog = logLuminance(source.rgb);
+  // The pixel's own brightness is a tap of weight 1, so the base is continuous across an edge and never empty.
+  float sum = centerLog;
+  float weightSum = 1.0;
+  for (int index = 0; index < ${LOCAL_TONE_TAPS}; index++) {
+    float ring = sqrt((float(index) + 0.5) / ${LOCAL_TONE_TAPS}.0);
+    float angle = float(index) * 2.3999632;
+    vec2 offset = vec2(cos(angle), sin(angle)) * ring * radiusPixels / resolution;
+    float tapLog = logLuminance(textureLod(sourceTexture, textureCoordinate + offset, baseLod).rgb);
+    float difference = tapLog - centerLog;
+    // Spatial falloff times an edge stop: taps more than about a stop and a half away in brightness barely count.
+    float weight = (1.0 - ring * ring * 0.8) * exp(-difference * difference / 0.5);
+    sum += tapLog * weight;
+    weightSum += weight;
+  }
+  float pivot = log(${LOCAL_TONE_PIVOT});
+  float baseLog = sum / weightSum;
+  float detailLog = centerLog - baseLog;
+  float above = max(baseLog - pivot, 0.0);
+  float below = min(baseLog - pivot, 0.0);
+  float mappedBase = pivot + above * mix(1.0, highlightContrast, strength) + below * mix(1.0, shadowContrast, strength);
+  float mappedLog = mappedBase + detailLog * detailGain;
+  outputColor = vec4(source.rgb * exp(mappedLog - centerLog), source.a);
+}`;
+
 // The renderer resolves only the core effects, so a stage reads its group from the frame's own effects.
 function stepsOf(frame) {
   return resolvePostSteps(frame.effects ?? {});
@@ -493,6 +550,54 @@ function createLensDistortionStage() {
   });
 }
 
+// Strength 0, or contrasts and detail all at 1 (which leave the frame as it is), draws nothing.
+function isLocalToneMappingActive(localToneMapping) {
+  if (!localToneMapping || localToneMapping.strength === 0) return false;
+  return localToneMapping.highlightContrast !== 1 || localToneMapping.shadowContrast !== 1 || localToneMapping.detail !== 1;
+}
+
+function createLocalToneMappingStage() {
+  const stage = createStage({
+    name: 'Local tone mapping',
+    fragment: localToneMappingFragment,
+    uniformNames: ['strength', 'highlightContrast', 'shadowContrast', 'detailGain', 'radiusPixels', 'baseLod'],
+    isActive: (effects, frame) => isLocalToneMappingActive(stepsOf(frame).localToneMapping),
+    setUniforms(context, uniforms, renderer, frame) {
+      const { localToneMapping } = stepsOf(frame);
+      context.uniform1f(uniforms.strength, localToneMapping.strength);
+      context.uniform1f(uniforms.highlightContrast, localToneMapping.highlightContrast);
+      context.uniform1f(uniforms.shadowContrast, localToneMapping.shadowContrast);
+      context.uniform1f(uniforms.detailGain, localToneMapping.detail);
+      const radiusPixels = localToneMapping.blurRadius * renderer.canvas.height;
+      context.uniform1f(uniforms.radiusPixels, radiusPixels);
+      context.uniform1f(uniforms.baseLod, Math.max(0, Math.log2(radiusPixels / 3)));
+    },
+  });
+  // The base reads blurred levels of the frame, so the frame gets a mip chain for this draw and goes back to one level after it.
+  return {
+    ...stage,
+    apply(renderer, frame, effects, sourceTexture) {
+      // Without a float frame (a benchmark renderer, or no float buffers) the picture is already clamped, so the step stays off.
+      if (!renderer.hdr) return null;
+      const context = renderer.context;
+      const active = isLocalToneMappingActive(stepsOf(frame).localToneMapping);
+      if (active) {
+        context.activeTexture(context.TEXTURE0);
+        context.bindTexture(context.TEXTURE_2D, sourceTexture);
+        context.generateMipmap(context.TEXTURE_2D);
+        context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR_MIPMAP_LINEAR);
+      }
+      const result = stage.apply(renderer, frame, effects, sourceTexture);
+      if (active) {
+        context.activeTexture(context.TEXTURE0);
+        context.bindTexture(context.TEXTURE_2D, sourceTexture);
+        context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
+      }
+      return result;
+    },
+  };
+}
+
 /**
  * Adds the air distortion and flash steps (post-air.js), glare, lens distortion, color balance, the stylize filters and the composite key to a renderer, after any depth of field and motion blur it has, in that
  * order. Like them it needs `depth: true`. Each stage runs only for a frame whose effects set it. A step with a `mask` by
@@ -500,7 +605,7 @@ function createLensDistortionStage() {
  */
 export function installPostSteps(renderer) {
   if (!renderer.postStages.some(stage => stage.name === 'Glare')) {
-    renderer.postStages.push(createDistortionStage(stepsOf), createFlashStage(stepsOf), createGlareStage(), createLensDistortionStage(), createColorBalanceStage(), createStylizeStage(), createCompositeStage());
+    renderer.postStages.push(createDistortionStage(stepsOf), createFlashStage(stepsOf), createGlareStage(), createLocalToneMappingStage(), createLensDistortionStage(), createColorBalanceStage(), createStylizeStage(), createCompositeStage());
   }
   return renderer;
 }
