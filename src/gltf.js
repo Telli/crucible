@@ -1137,6 +1137,17 @@ function validateNodeTransforms(nodes, pending, tolerated) {
   }
 }
 
+/** The node name as authored in the file: three.js strips periods, slashes and brackets from `node.name`. */
+function authoredNodeName(node, document) {
+  for (let current = node; current; current = current.parent) {
+    const sourceNodeIndex = current.association?.nodes;
+    if (sourceNodeIndex === undefined) continue;
+    const authored = document.nodes?.[sourceNodeIndex]?.name;
+    return typeof authored === 'string' && authored ? authored.slice(0, 256) : undefined;
+  }
+  return undefined;
+}
+
 function instanceMatricesOf(node, maximumInstances) {
   if (!node.isInstancedMesh) return [null];
   throwOverruns(overLimit([], 'instances of one node', node.count, 'maxInstances', maximumInstances));
@@ -1383,7 +1394,8 @@ export async function parseGltf(data, options = {}) {
         if (firstSetMaps.some(map => map && map.uvChannel === 0) && !geometry.uvs) throw new Error('Material textures require TEXCOORD_0.');
         const initialMatrix = new Float32Array(worldMatrixOf(node, instanceMatrix, pendingTransform).elements);
         collapseSingularMatrix(initialMatrix);
-        const part = { name: node.name || `glTF mesh ${parts.length + 1}`, geometry, matrix: initialMatrix, material };
+        const name = node.name || `glTF mesh ${parts.length + 1}`;
+        const part = { name, label: authoredNodeName(node, document) ?? name, geometry, matrix: initialMatrix, material };
         const transformBinding = { node, instanceMatrix, part, mirrored, matrix: part.matrix, pendingMatrix: new Float32Array(16) };
         let pendingSkin;
         if (node.isSkinnedMesh) {
