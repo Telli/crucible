@@ -303,6 +303,7 @@ on:
       - 'src/motion-validation.js'
       - 'src/navmesh.js'
       - 'src/near-plane-fit.js'
+      - 'src/normal-map-variance.js'
       - 'src/node-constraints.js'
       - 'src/npc-follower.js'
       - 'src/object-motion-blur.js'

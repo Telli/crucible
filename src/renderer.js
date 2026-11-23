@@ -30,6 +30,7 @@ import { countDraws } from './draw-counter.js';
 import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope, sunShadowMapSize } from './shadow-light.js';
 import { CLIP_PLANES_FEATURE, MAX_CLIP_PLANES, packClipPlanes, clipPlaneLocations, bindClipPlanes, clipPlanesChanged } from './clip-planes.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
+import { bakeNormalMapVariance } from './normal-map-variance.js';
 
 // Liquid and foam see the resolved opaque scene, so they draw in their own pass after it.
 const TRANSLUCENT_TAGS = new Set(['liquid', 'foam']);
@@ -633,14 +634,16 @@ export function groupWorld(previous, parts, groundPart, batching, retainedUnchan
 }
 
 // Sampler state and mipmaps of the texture bound to TEXTURE_2D, once its level 0 is uploaded. Needs only the renderer's context and applyAnisotropy.
-export function configureTexture(renderer, info) {
+// `bakesNormalVariance` marks a normal map: its mip chain is built from the texels with the spread of each level in alpha (src/normal-map-variance.js).
+export function configureTexture(renderer, info, { bakesNormalVariance = false } = {}) {
   const context = renderer.context;
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, info.wrapS);
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_T, info.wrapT);
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, info.minFilter);
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, info.magFilter);
   if (info.mipmaps) {
-    context.generateMipmap(context.TEXTURE_2D);
+    const baked = bakesNormalVariance && bakeNormalMapVariance(context, context.getParameter(context.TEXTURE_BINDING_2D), info.width, info.height);
+    if (!baked) context.generateMipmap(context.TEXTURE_2D);
     if (filtersSmoothly(info)) renderer.applyAnisotropy(context.TEXTURE_2D);
   }
 }
@@ -1267,10 +1270,11 @@ export class CrucibleRenderer {
     const descriptors = source.flatMap(item => (item?.material ? materialMapState(item.material).slice(0, 5) : [item]));
     // The slicing code loads on demand, so a renderer that never preloads does not carry it.
     const { preloadRendererTextures } = await import('./texture-upload.js');
-    await preloadRendererTextures(this, descriptors, options);
+    const normalMaps = new Set(source.flatMap(item => (item?.material ? [materialMapState(item.material)[1]] : [])).filter(Boolean));
+    await preloadRendererTextures(this, descriptors, { ...options, normalMaps });
   }
 
-  createTexture(map) {
+  createTexture(map, isNormalMap = false) {
     if (this.textures.has(map)) return this.textures.get(map);
     const context = this.context;
     const texture = context.createTexture();
@@ -1284,7 +1288,7 @@ export class CrucibleRenderer {
         const info = textureDescriptorInfo(map, context.getParameter(context.MAX_TEXTURE_SIZE));
         if (map.image.compressed) map.image.compressed.upload(context);
         else context.texImage2D(context.TEXTURE_2D, 0, map.colorSpace === 'linear' ? context.RGBA8 : context.SRGB8_ALPHA8, context.RGBA, context.UNSIGNED_BYTE, map.image);
-        configureTexture(this, info);
+        configureTexture(this, info, { bakesNormalVariance: isNormalMap && !map.image.compressed && map.colorSpace === 'linear' });
       } else {
         context.texImage2D(context.TEXTURE_2D, 0, context.RGBA8, 1, 1, 0, context.RGBA, context.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
         context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
@@ -1555,7 +1559,7 @@ export class CrucibleRenderer {
     context.bindVertexArray(null);
     const map = parts[0].material.map ?? null;
     const mapState = materialMapState(parts[0].material);
-    const textures = mapState.slice(0, 5).map(descriptor => this.createTexture(descriptor));
+    const textures = mapState.slice(0, 5).map((descriptor, index) => this.createTexture(descriptor, index === 1));
     const splat = parts[0].material.layers ? requireSplatSupport().createResources(this, parts[0].material, requireSplatSupport()) : null;
     const lightMapTexture = mapState[14] ? this.createTexture(mapState[14]) : null;
     if (lightMapTexture && (parts[0].skin || parts[0].morph || !geometry.lightUvs)) throw new Error('A light map needs lightUvs on rigid geometry, with no skin or morph.');
