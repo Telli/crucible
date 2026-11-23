@@ -422,6 +422,7 @@ on:
       - 'src/water-caustics.js'
       - 'src/water-mirror-glsl.js'
       - 'src/water-presets.js'
+      - 'src/water-reflection.js'
       - 'src/wetness-keep-out.js'
       - 'src/wetness-shader.js'
       - 'src/wetness.js'
