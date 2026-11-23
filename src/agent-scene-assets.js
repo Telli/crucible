@@ -374,11 +374,12 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
         id: partNodeId, parent: node.id, label: String(part.name ?? partNodeId).slice(0, 256),
         translation: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1],
         geometry: geometryId, material: materialKey, assetPart: { placement: node.id, index, matrix: Array.from(part.matrix) },
+        castShadow: node.castShadow, receiveShadow: node.receiveShadow,
       });
       runtime.partExtras.set(partNodeId, {
         group: node.id,
         ...(part.skin ? { skin: part.skin } : {}), ...(part.morph ? { morph: part.morph } : {}),
-        ...(part.castShadow !== undefined ? { castShadow: part.castShadow } : {}),
+        ...(part.castShadow !== undefined && node.castShadow === undefined ? { castShadow: part.castShadow } : {}),
       });
     });
     const record = { node: node.id, assetId, copy, asset, partNodeIds, clip: clip ?? null, pose: posed ? { nodeOverrides: [], morphWeights: undefined } : null, drive: drive ? createDrive(node.id, `nodes[${recipe.nodes.indexOf(node)}].asset.drive`, createAssetDrive, asset, drive) : null, drivePose: null };

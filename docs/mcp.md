@@ -307,6 +307,7 @@ The same run submits two budgets on the same scene. `{ "framesPerSecond": 30 }` 
 Leave it out for the default: `concise` on the first three, `detailed` on `scene_capabilities`, whose notes are the reason to call it.
 Concise review drops the per-shot resource counters, memory peaks and unset clocks, and keeps each shot's camera, label positions and branch.
 Concise status gives `jobId`, `state`, `frames`, `frameCount`, `reason` and the artifact names.
+A failed job always fills `reason` (the field is `reason`, not `error`); a job that stops without a message says so and names `scene_render_submit` as the retry.
 Concise result drops the SHA-256 digests and the render's resource counters; its other metrics (passes, depth range, object names, sync) stay.
 Concise `scene_capabilities` drops the one-line notes of a schema topic and keeps field names, types, ranges and enums.
 Pass `detailed` to get the earlier full answer. On a four-shot review the concise text is 657 bytes against 2,534 detailed.
@@ -395,7 +396,7 @@ Render targets can shrink to fit the configured memory budget.
 Image metadata reports actual dimensions alongside requested dimensions and estimated render bytes.
 
 An oversized PNG response returns an error. Request a smaller preview rather than treating the failure as an empty image.
-Browser evaluations have a 30-second deadline. A timeout closes the preview browser and makes the runtime unavailable. A test harness that starts the server can raise it with `CRUCIBLE_TEST_PREVIEW_DEADLINE_SECONDS` (whole seconds from 30 to 180); the live smokes that render on SwiftShader set it so a loaded CI runner does not fail them. No tool call can set it.
+Opening a browser page (the preview, a render job or a review page) and waiting for its preview to be ready may take up to 60 seconds on a busy machine, and an error that says the preview page did not load in 60 s means retry or run fewer jobs at once. Browser evaluations have a 30-second deadline. A `scene_create` that places catalog GLB files gets 1.5 more seconds per MiB of those files, at most 90 more, because the page decodes each file, scales its images and uploads them before the first draw (a 12 MiB hero asset with an 8K base colour and two 4K maps took 2 s on a free GPU and 13 to 70 s on a loaded one). When it still times out, the error names the three largest placed files and says to shrink their textures. A timeout closes the preview browser and makes the runtime unavailable. A test harness that starts the server can raise it with `CRUCIBLE_TEST_PREVIEW_DEADLINE_SECONDS` (whole seconds from 30 to 180); the live smokes that render on SwiftShader set it so a loaded CI runner does not fail them. No tool call can set it.
 Camera matrices must remain finite at every supported preview aspect ratio, from 1:16 to 16:1.
 
 Geometry resources remain immutable. Remove an unused definition and add its replacement in one batch, or add a new resource ID and rebind its nodes.

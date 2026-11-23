@@ -31,12 +31,12 @@ import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { clipDisplayName, resolveClipIndex } from '../src/clip-name.js';
 import { exportGlb } from '../src/export.js';
 import { omittedFromGlb } from '../src/glb-export-omissions.js';
+import { bakeMovingPartTracks, hasBakedNodeTracks, motionClip } from '../src/glb-export-motion.js';
 import { matrixFrame } from '../src/export-skeleton.js';
 import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
 import { sampleMotionAtZeroForGround } from './motion-ground-sample.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
-import { isLiveGeometry, isReindexedGeometry } from '../src/live-geometry.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
@@ -396,16 +396,6 @@ function syncShadowCascades(record) {
   }
 }
 
-// A textured scene took a new renderer for every pose that moved its sea, so each frame fitted its shadow cascades exactly. The
-// kept renderer holds the wider fits of a moving camera (cascaded-shadows.js chooseFit), which shade the textured land
-// differently, so it forgets them when the sea moves to a new time (#3038).
-function forgetShadowFitsOfMovedSea(record) {
-  const { scene, renderer } = record;
-  if (!record.rendererTextured || !renderer.shadowCascades || scene.motionTime === record.seaFitTime) return;
-  record.seaFitTime = scene.motionTime;
-  if (scene.parts.some(part => isReindexedGeometry(part.geometry))) renderer.shadowCascades.forgetFits();
-}
-
 function draw(record, time = 0, camera = record.scene.camera, frameOptions = {}) {
   // A heavy edit ranks its coplanar triangles right after it returns (#2905); a frame never draws them unranked.
   record.scene.settleFlush?.();
@@ -430,13 +420,13 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   } else {
     record.renderer.updateParts(record.scene.parts);
   }
-  // Cloth and a sea driven by an ocean time track rewrite their geometry in place, so a seek only uploads the new values.
-  for (const part of record.scene.parts) {
-    if (!isLiveGeometry(part.geometry)) continue;
-    const { positions, normals, skyVisibility, indices } = part.geometry;
-    updatePartVertices(record.renderer, part, positions, normals, { skyVisibility, ...(isReindexedGeometry(part.geometry) && { indices }) });
+  // Cloth rewrites its geometry in place, so a seek only uploads the new positions and normals.
+  if (agentSceneModuleLoaded('cloth')) {
+    const { isLiveClothGeometry } = agentSceneModule('cloth');
+    for (const part of record.scene.parts) {
+      if (isLiveClothGeometry(part.geometry)) updatePartVertices(record.renderer, part, part.geometry.positions, part.geometry.normals);
+    }
   }
-  forgetShadowFitsOfMovedSea(record);
   syncAutomaticGround(record);
   syncShadowCascades(record);
   syncSequenceTextures(record);
@@ -830,10 +820,29 @@ function seekForExport(record, motionTime) {
 }
 
 // The scene's parts already carry the current pose, including IK and node overrides, so skinned parts export it as is.
-function posedExport(record) {
-  const rig = record.scene.rigExport?.() ?? { nodes: [], clips: [] };
-  const options = rig.nodes.length ? rig : {};
-  return { parts: record.scene.parts.map(withoutRoundoffShear), options: { ...options, nodePaths: nodePathsOf(record.scene.exportRecipe().nodes) } };
+// Without a motionTime the recipe's node tracks are baked into one clip with the bone clip, and the camera and the point
+// and spot lights are written beside the parts. `written` tells omittedFromGlb what the file now carries.
+function posedExport(record, { bakeMotion }) {
+  const { scene } = record;
+  const recipe = scene.exportRecipe();
+  const rig = scene.rigExport?.() ?? { nodes: [], clips: [] };
+  const options = rig.nodes.length ? { ...rig } : {};
+  const written = { boneIds: rig.clips.length ? rig.nodes.map(node => node.id) : [] };
+  if (bakeMotion && hasBakedNodeTracks(recipe)) {
+    const clip = motionClip(recipe.motion, bakeMovingPartTracks(scene, recipe.motion), rig.clips[0]);
+    if (clip) options.clips = [clip];
+    written.nodeTracks = true;
+  }
+  if (recipe.camera) {
+    options.camera = scene.camera;
+    written.camera = true;
+  }
+  const { pointLights = [], spotLights = [] } = recipe.environment ?? {};
+  if (pointLights.length || spotLights.length) {
+    options.lights = { pointLights, spotLights };
+    written.lights = true;
+  }
+  return { parts: scene.parts.map(withoutRoundoffShear), options: { ...options, nodePaths: nodePathsOf(recipe.nodes) }, written };
 }
 
 /** "parent > child" for each node that has a parent, so an export error says where the node sits. */
@@ -880,7 +889,7 @@ function clipExport(record, clipReference) {
   const clip = { ...sourceClip, name, tracks: [...sourceClip.tracks, ...weightTracksFromGltfAnimation(animation)] };
   // Edited parts export their edited geometry on the source part's own matrix, skin and morph.
   const parts = asset.parts.map((part, index) => scene.parts[index].geometry === part.geometry ? part : { ...part, geometry: scene.parts[index].geometry });
-  return { parts, options: { nodes: asset.nodes, clips: [clip] } };
+  return { parts, options: { nodes: asset.nodes, clips: [clip] }, written: { boneIds: asset.nodes.map(node => node.id) } };
 }
 
 function bytesToBase64(bytes) {
@@ -1542,14 +1551,14 @@ window.__agentPreview = {
   exportGlb({ sessionId, clip, motionTime, maxTextureSize, maximumBytes }) {
     const record = requireSession(sessionId);
     if (motionTime !== undefined) seekForExport(record, motionTime);
-    const { parts, options } = clip === undefined ? posedExport(record) : clipExport(record, clip);
+    const { parts, options, written } = clip === undefined ? posedExport(record, { bakeMotion: motionTime === undefined }) : clipExport(record, clip);
     const binary = exportGlb(parts, { ...options, ...(maxTextureSize === undefined ? {} : { maxTextureSize }) });
     if (binary.byteLength > maximumBytes) {
       throw new RangeError(`The GLB is ${binary.byteLength} bytes, above the ${maximumBytes} byte limit. Lower maxTextureSize or simplify the scene.`);
     }
     return { sessionId, revision: record.scene.revision, bytes: binary.byteLength,
       parts: parts.length, clips: options.clips?.length ?? 0,
-      omitted: omittedFromGlb(record.scene.exportRecipe(), options.clips?.length ? (options.nodes ?? []).map(node => node.id) : []), data: bytesToBase64(new Uint8Array(binary)) };
+      omitted: omittedFromGlb(record.scene.exportRecipe(), written), data: bytesToBase64(new Uint8Array(binary)) };
   },
   dispose({ sessionId }) {
     releaseRecord(lookupSession(sessionId));

@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
+import { loadPreviewPage } from './agent-page-load.mjs';
 import { withSnapshotSkyColors } from './snapshot-sky-colors.mjs';
-import { previewCallTimeoutMs, recipeHasGridVolume, operationsAddGridVolume } from './agent-evaluation-timeout.mjs';
+import { previewCallTimeoutMs, recipeHasGridVolume, operationsAddGridVolume, assetDataBytes, slowAssetsNote } from './agent-evaluation-timeout.mjs';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { totalmem } from 'node:os';
@@ -527,6 +528,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return totalBytes;
   }
 
+  /** The file name and byte length of each catalog asset a recipe or edit list places, for the error of a call that ran long. */
+  async function placedAssetSizes(value) {
+    const readyCatalog = await catalog();
+    return Promise.all(recipeAssetNeeds(value).map(({ id }) => readyCatalog.describeSize(id)));
+  }
+
   /** Bytes of the catalog assets a recipe or edit list places, base64 by asset id, for the page that decodes them. */
   async function placedAssetData(value) {
     await assertPlacedAssetsFitBeforeReading(value);
@@ -730,7 +737,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     try {
       await bootOnce();
     } catch (error) {
-      if (closing || !/page.goto|Timeout d+ms exceeded/i.test(String(error?.message))) throw error;
+      if (closing || !(error?.pageLoadTimeout || /page.goto|Timeout d+ms exceeded/i.test(String(error?.message)))) throw error;
       await bootOnce();
     }
   }
@@ -805,8 +812,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       page.on?.('console', message => {
         if (message.text().startsWith('Crucible kernel fallback')) console.error(message.text());
       });
-      await page.goto(origin);
-      await page.waitForFunction(() => Boolean(window.__agentPreview));
+      await loadPreviewPage(page, origin);
       await loadAddons();
       phase = 'ready';
     } catch (error) {
@@ -984,8 +990,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       const origin = `http://127.0.0.1:${httpServer.address().port}`;
       await jobPage.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
       jobPage.setDefaultTimeout(15000);
-      await jobPage.goto(origin);
-      await jobPage.waitForFunction(() => Boolean(window.__agentPreview));
+      await loadPreviewPage(jobPage, origin);
       if (settings.kind === 'icons') {
         // Each icon is its own scene, created and disposed inside the job, so the shared dispose below has nothing left to release.
         const icons = await renderIconsInPage({ jobPage, jobId, settings, directory, signal, progress, assetData: placedAssetData, memoryBudgetMiB: memory, backend, tier: settings.quality });
@@ -1393,7 +1398,11 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await boot();
         const sessionId = randomUUID();
         const createInput ={ recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) };
-        const result = await evaluate('create', createInput, page, previewCallTimeoutMs({ bakes: Boolean(recipe?.bake), addsGridVolume: recipeHasGridVolume(recipe), plainTimeoutMs: EVALUATION_TIMEOUT_MS, bakeTimeoutMs: BAKE_EVALUATION_TIMEOUT_MS }));
+        const createTimeoutMs = previewCallTimeoutMs({ bakes: Boolean(recipe?.bake), addsGridVolume: recipeHasGridVolume(recipe), plainTimeoutMs: EVALUATION_TIMEOUT_MS, bakeTimeoutMs: BAKE_EVALUATION_TIMEOUT_MS, assetBytes: assetDataBytes(createInput.assetData) });
+        const result = await evaluate('create', createInput, page, createTimeoutMs).catch(async error => {
+          if (error?.message?.startsWith('The preview operation')) error.message += slowAssetsNote(await placedAssetSizes(recipe));
+          throw error;
+        });
         registerCreatedScene(sessionId, result, Boolean(recipe?.bake));
         return result;
       }, { recoversFailedRuntime: true });
@@ -1680,8 +1689,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const origin = `http://127.0.0.1:${httpServer.address().port}`;
           await reviewPage.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
           reviewPage.setDefaultTimeout(15000);
-          await reviewPage.goto(origin);
-          await reviewPage.waitForFunction(() => Boolean(window.__agentPreview));
+          await loadPreviewPage(reviewPage, origin);
           await reviewEvaluate('reviewBegin', { width: settings.gridWidth, height: settings.gridHeight });
           session = await reviewPage.context().newCDPSession(reviewPage);
           const shots = [];
