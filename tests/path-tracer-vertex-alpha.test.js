@@ -99,3 +99,15 @@ test('the WebGL tracer packs the three corner alphas of each triangle slot and b
   assert.match(buildFragmentSource({ vertexAlpha: true }), /uniform sampler2D uVertexAlpha;/);
   assert.doesNotMatch(buildFragmentSource(), /uVertexAlpha/);
 });
+
+test('an instanced scene keeps the blend of every part after the first, with no vertex alpha cutout (#3082)', () => {
+  const shared = box(0, 1);
+  const parts = [
+    { name: 'copy-a', geometry: shared, matrix: placed([-2, 0, 0], [1, 1, 1]), material: surface(RED) },
+    { name: 'copy-b', geometry: shared, matrix: placed([2, 0, 0], [1, 1, 1]), material: surface(RED) },
+    { name: 'pane', geometry: box(0, 1), matrix: placed([0, 0, 0], [1, 1, 1]), material: surface(BLUE, { alphaMode: 'blend', opacity: 0.3 }) },
+  ];
+  const scene = buildTraceScene(parts, environment, { instancing: true });
+  assert.ok(scene.instances, 'the two copies of one mesh make the scene instanced');
+  scene.materials.forEach((material, index) => assert.equal(material.alphaCutoff, 0, `alpha cutoff of ${parts[index].name}`));
+});

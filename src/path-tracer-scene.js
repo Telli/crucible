@@ -959,7 +959,8 @@ function boundingBoxOf(positions) {
 function buildInstancedTraceScene(parts, geometries, environment, localVolumes, limits) {
   requireInstancedCaps(parts, measureInstancedParts(parts, geometries), limits);
   const tracedPartMaterials = parts.map(tracedMaterialOf);
-  const traceMaterials = tracedPartMaterials.map(resolveMaterial);
+  // The instanced kernel reads no vertex alpha, so no material takes the vertex alpha cutout here.
+  const traceMaterials = tracedPartMaterials.map(material => resolveMaterial(material));
   const materials = tracedPartMaterials.map((material, index) => ({ ...material, ...traceMaterials[index] }));
   const geometryViews = new Map();
   const instances = parts.map((part, index) => instanceFor(part, geometries[index], index, materials[index], geometryViews));
