@@ -35,7 +35,7 @@ const BLEND_CALLS = [
 ];
 
 /**
- * The lit fragment source of a shader that draws a blend part (#3104). The specular of a blended dielectric stays at full
+ * The lit fragment source of a shader that draws a blend part (#3110). The specular of a blended dielectric stays at full
  * strength, as for glass, but a texel the colour map leaves transparent has nothing to reflect: the specular share is
  * scaled by the texture alpha (`coverage`), so a card cut out of a leaf picture shows no reflective rectangle. Only shaders
  * with the alphaMode feature take this; every other shader keeps its source byte for byte.

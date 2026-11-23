@@ -27,7 +27,7 @@ test('a blended fragment fades the diffuse share only: the reflection is the sam
   close(opaque[0], displayed[0]);
 });
 
-test('a texel the texture leaves transparent shows no reflection, while a uniformly translucent material keeps it (#3104)', () => {
+test('a texel the texture leaves transparent shows no reflection, while a uniformly translucent material keeps it (#3110)', () => {
   const displayedDiffuse = [0.2, 0.3, 0.25];
   const specular = [0.4, 0.4, 0.45];
   const displayed = displayedDiffuse.map((value, index) => value + specular[index]);
@@ -63,7 +63,7 @@ test('the lit program writes blend parts premultiplied and keeps the specular of
   assert.match(source, /blendSpecular \+= environmentLighting\(/);
   assert.match(source, /#define USES_ALPHA_MODE \(alphaMode > 0\.5\)/);
   assert.match(createFragmentShader([]), /#define USES_ALPHA_MODE false/);
-  // Shaders without a blend part keep the plain three-argument form, so their source is the one they had before #3104.
+  // Shaders without a blend part keep the plain three-argument form, so their source is the one they had before #3110.
   assert.match(createFragmentShader([]), /vec4 blendedOutput\(vec3 displayed, vec3 displayedDiffuse, float alpha\) \{/);
   assert.doesNotMatch(createFragmentShader([]), /float coverage\)/);
 });
