@@ -15,14 +15,19 @@ export function prepareDeferredBake(parts, worldMatrices, environment, settings,
 }
 
 /**
- * The bake of `prepareDeferredBake` as steps, for the runner of a scene whose edit shows before its bake is done. Returns
+ * The bake of `prepareDeferredBake` as steps, for the runner of a scene whose edit shows before its bake is done. `settleSteps(parts)`
+ * is the scene's own work on the baked parts (its floor sky trace), run in slices before the bake lands. Returns
  * `{ baked }`, the same as `bakeAgentParts`, or `{ refusal }` when a size or time limit stopped it, because nobody waits to
  * read an error: the scene stays as it is, drawn without the bake.
  */
-export function* deferredBakeSteps({ parts, snapshots, lighting, settings }) {
+export function* deferredBakeSteps({ parts, snapshots, lighting, settings }, settleSteps) {
   try {
     const outputs = yield* reusedOrTraced(snapshots, lighting, settings, () => traceOutputsInSlices(snapshots, lighting, settings));
-    return { baked: placeOutputs(parts, outputs, settings) };
+    yield;
+    const baked = placeOutputs(parts, outputs, settings);
+    yield;
+    yield* settleSteps(baked.parts);
+    return { baked };
   } catch (error) {
     if (error instanceof RangeError || /passed maxSeconds/.test(error.message)) {
       return { refusal: error.message };
@@ -69,7 +74,7 @@ export function stageSettling(settling, mode, { key, recipe, sourceRestParts, wo
  * Runs the plan of the edit that committed, in slices of a few milliseconds on the same thread, and drops the plan of an edit
  * that came before. `onSettled(plan, outcome)` is the scene's turn to swap the baked parts in.
  */
-export function adoptSettling(settling, plan, onSettled) {
+export function adoptSettling(settling, plan, onSettled, settleSteps) {
   if (plan === settling.pending) {
     return;
   }
@@ -80,7 +85,7 @@ export function adoptSettling(settling, plan, onSettled) {
   }
   settling.pending = plan;
   plan.runner = createFlushSearchRunner({
-    steps: deferredBakeSteps(plan.prepared),
+    steps: deferredBakeSteps(plan.prepared, settleSteps),
     onDone: outcome => {
       settling.pending = null;
       onSettled(plan, outcome);

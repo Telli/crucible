@@ -1,5 +1,5 @@
 import { invalidField } from './field-error.js';
-import { planLightmaps, estimateBake, traceLightmaps, traceLightmapsSteps, clearUnwrapReuse, MAX_BAKE_TEXELS } from './light-bake.js';
+import { planLightmapsSteps, estimateBake, traceLightmaps, traceLightmapsSteps, clearUnwrapReuse, MAX_BAKE_TEXELS } from './light-bake.js';
 import { drainSteps } from './flush-search-runner.js';
 import { contentFingerprint, ownedCopy, retainedBytes } from './content-fingerprint.js';
 import { runKernel } from './kernel-offload.js';
@@ -324,8 +324,7 @@ export function bakeChangedParts(snapshots, lighting, settings) {
 
 /** bakeChangedParts as steps (#3052): the same answer, with a checkpoint every few dozen texels for a bake run in slices. */
 export function* bakeChangedPartsSteps(snapshots, lighting, settings) {
-  const plan = planLightmaps(snapshots, lighting, { ...settings, maxSeconds: bakeSecondsLimit() });
-  yield;
+  const plan = yield* planLightmapsSteps(snapshots, lighting, { ...settings, maxSeconds: bakeSecondsLimit() });
   const { used, reduced, reduction } = fitSettingsToBudget(plan, settings);
   const { parts, report } = yield* traceWithAdvice(plan, used);
   return { changed: changedPartsOf(parts, snapshots), report, used, reduced, reduction };
@@ -419,8 +418,19 @@ const BAKE_REUSE_BYTES = 128 * 1024 * 1024;
 const bakeReuse = new Map();
 let tracedBakes = 0;
 
+// One fingerprint per part, with a checkpoint between them, so a bake run in slices does not hash the whole scene in one turn (#3052). null when something cannot be read.
+function* bakeReuseKey(snapshots, lighting, settings) {
+  const fingerprints = [];
+  for (const snapshot of snapshots) {
+    fingerprints.push(contentFingerprint(snapshot));
+    yield;
+  }
+  fingerprints.push(contentFingerprint([lighting, { ...settings, rebake: undefined }]));
+  return fingerprints.includes(null) ? null : fingerprints.join('|');
+}
+
 export function* reusedOrTraced(snapshots, lighting, settings, trace) {
-  const key = contentFingerprint([snapshots, lighting, { ...settings, rebake: undefined }]);
+  const key = yield* bakeReuseKey(snapshots, lighting, settings);
   if (key === null) {
     // Something the key cannot read (a function, a Set, a class instance): trace, and keep nothing a later bake might wrongly find.
     tracedBakes++;
@@ -434,7 +444,9 @@ export function* reusedOrTraced(snapshots, lighting, settings, trace) {
   }
   const outputs = yield* trace();
   tracedBakes++;
+  yield;
   const kept = ownedCopy(outputs);
+  yield;
   if (kept) {
     rememberBake(key, kept);
   }

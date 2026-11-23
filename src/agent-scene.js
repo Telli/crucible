@@ -2491,12 +2491,26 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     }
     state = stagedState;
     if (settling.pending || stagedState.settlingPlan) {
-      agentSceneModule('bakeDeferred').adoptSettling(settling, stagedState.settlingPlan, finishSettledBake);
+      agentSceneModule('bakeDeferred').adoptSettling(settling, stagedState.settlingPlan, finishSettledBake, stageSettledParts);
     }
     if (incrementRevision) {
       revision++;
     }
     return revision;
+  }
+
+  // What the landing stages on the baked parts runs in slices before it (#3052), in the landing's order, so it finds each result kept:
+  // the reflections, the floor sky and the coplanar ranks.
+  function* stageSettledParts(bakedParts) {
+    const { recipe, graph } = state;
+    const reflected = stageObjectReflections(recipe, state.sourceRestParts, bakedParts, graph);
+    const sky = agentSceneModuleActive('floorSky', requestedModules) ? yield* agentSceneModule('floorSky').stageFloorSkySteps(recipe.environment, reflected ? reflected.parts : bakedParts, name => graph.getNode(name).worldMatrix) : reflected ? reflected.parts : bakedParts;
+    const linked = stageLightLinks(recipe, sky);
+    const rankedParts = partsToRank(recipe, linked);
+    if (agentSceneModuleActive('coplanar', requestedModules) && recipe.environment.resolveCoplanar !== false && !rankedLists().some(list => sameParts(list.rankedParts, rankedParts))) {
+      const coplanar = agentSceneModule('coplanar');
+      rankAndStage(coplanar, recipe, linked, true, yield* coplanar.resolveFlushPartsSteps(rankedParts));
+    }
   }
 
   // The bake of the last edit is done: the scene's parts are staged again with its light, like a fresh build, and swapped in as a
