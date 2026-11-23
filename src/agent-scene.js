@@ -68,7 +68,7 @@ const PART_FLAG_FIELDS = RENDER_FLAG_FIELDS.slice(1);
 // On an asset placement these two flags reach each part it expands to.
 const ASSET_PLACEMENT_FLAG_FIELDS = ['castShadow', 'receiveShadow'];
 const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'clutter', 'grass', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
-const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'alphaCutoff', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamColor', 'foamVeins', 'contactFoam', 'caustics', 'ripples', 'waterRamp', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
+const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'alphaCutoff', 'doubleSided', 'depthTest', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamColor', 'foamVeins', 'contactFoam', 'caustics', 'ripples', 'waterRamp', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
 // Fields of an optional shader module join the list here, so the long list above stays a line each material feature does not rewrite.
@@ -359,6 +359,12 @@ function materialFrom(value) {
   result.doubleSided = defaultValue(value.doubleSided, false);
   if (typeof result.doubleSided !== 'boolean') {
     throw invalidField('doubleSided', result.doubleSided, 'true or false', TypeError);
+  }
+  if (value.depthTest !== undefined) {
+    if (typeof value.depthTest !== 'boolean') {
+      throw invalidField('depthTest', value.depthTest, 'true or false', TypeError);
+    }
+    result.depthTest = value.depthTest;
   }
   for (const field of ['metallic', 'roughness']) {
     finite(result[field], field);
@@ -1299,7 +1305,7 @@ function geometryStats(records) {
 function batchSignature(material) {
   // Textures are fixed per renderer, so a changed pattern rebuilds it like a changed tag does.
   // Transmission moves a material to the pass that sees the opaque scene, which is fixed per renderer.
-  return `${material.tag}|${material.alphaMode}|${material.alphaCutoff}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${JSON.stringify(material.snippet)}${textureMapSignature(material)}`;
+  return `${material.tag}|${material.alphaMode}|${material.alphaCutoff}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${material.depthTest !== false}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${JSON.stringify(material.snippet)}${textureMapSignature(material)}`;
 }
 
 // A material's uvScale, uvOffset, uvRotation and worldScale are baked into the UVs of the geometry it draws, like glTF KHR_texture_transform.
