@@ -152,6 +152,27 @@ any seek time equals the one reached by playing. `crowdVertexAt(palette, geometr
 - Limits: at most 4096 joints in a rig; an `assemblyAmount` does not move a crowd; a clip is baked once, so another clip is another palette and
   another batch.
 
+### Crowds of one glTF clip
+
+An imported skinned glTF does not need a retarget pose. `createCrowdPartsFromGltf(asset, instances, { clip })` bakes the clip with the asset's own
+`applyAnimation` (`createCrowdRigFromGltf(asset, clip)` returns the rig and palette alone) and shares one geometry, one material set and one palette
+between every instance, so a crowd costs one draw per material and no pose work per instance:
+
+```js
+import { createCrowdPartsFromGltf } from 'crucible/addons/crowd-skinning';
+
+const set = createCrowdPartsFromGltf(asset, [{ matrix, phase: 0.3 }, ...], { clip: asset.animations.findIndex(c => c.name === 'Run') });
+const renderer = new CrucibleRenderer(canvas, set.parts, options);
+// each frame:
+set.setTime(seconds);               // every instance plays at seconds + its phase
+renderer.updateParts(set.parts);
+```
+
+`instances` takes 1 to 100000 entries of `{ matrix, phase? }`. Each palette frame equals the joint matrices `applyAnimation` poses at that time, so
+a frame at a baked clip time draws what the per-asset path draws; between baked frames (30 a second by default, `frameRate`) joints blend linearly.
+Rigid node animation bakes as joints. Limits: a clip that animates morph weights throws (draw that asset one asset per instance); morph targets the
+clip leaves alone are ignored. The asset is left posed at the last baked time, so draw the crowd, not `asset.parts`.
+
 ### Recipe crowds
 
 An agent asks for a crowd in a recipe (`scene_create`, `scene_apply`) with the `crowd` field of an asset placement:

@@ -47,7 +47,7 @@ test('every alphaMode that scene_capabilities lists is accepted by the validator
   for (const alphaMode of listed) {
     assert.doesNotThrow(() => createAgentScene(recipeWithMaterial({ alphaMode })), `alphaMode ${alphaMode}`);
   }
-  assert.throws(() => createAgentScene(recipeWithMaterial({ alphaMode: 'multiply' })), /opaque, blend, add/);
+  assert.throws(() => createAgentScene(recipeWithMaterial({ alphaMode: 'multiply' })), /opaque, mask, blend, add/);
 });
 
 test('the material schema topic takes the alphaModes scene_capabilities lists', async context => {

@@ -12,6 +12,8 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import packageMetadata from '../package.json' with { type: 'json' };
 import { resolveLookView } from '../src/look-views.js';
+import { runFitLook } from './agent-fit-look.mjs';
+import { FIT_LOOK_CAPABILITY_NOTE } from '../src/look-fit-notes.js';
 import { TREE_GROWTH_CAPABILITIES, VEGETATION_CAPABILITY_NOTE } from '../src/agent-vegetation-notes.js';
 import { CLUTTER_CAPABILITY_NOTE } from '../src/agent-clutter-notes.js';
 import { GRASS_CAPABILITY_NOTE } from '../src/agent-grass-notes.js';
@@ -37,7 +39,7 @@ import { createPackRegistry } from './agent-packs.mjs';
 import { VEGETATION_SCANS_PACK, fillVegetationScans, needsVegetationScans, vegetationScansFromPack } from '../src/agent-vegetation-scans.js';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
-import { AGENT_ASSET_LIMITS, configureAssetByteLimit, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
+import { AGENT_ASSET_LIMITS, MAX_CHECKED_TRIANGLES, configureAssetByteLimit, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { namesCatalogFiles, resolveAssetPlacementNames, namesCatalogSequences, resolveCatalogSequenceNames, namesCatalogTextureMaps, resolveTextureSetNames } from '../src/agent-asset-names.js';
 import { sequenceFrameIds, hasStreamedSequence } from '../src/agent-texture-sequence.js';
@@ -1360,7 +1362,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return tierReport({ backend, nativeTracer: Boolean((await nativeTracerLocator.find()).tracer) });
       };
       return {
-        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, treeGrowth: TREE_GROWTH_CAPABILITIES, clutter: CLUTTER_CAPABILITY_NOTE, grass: GRASS_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, applyOperations: FOLDED_APPLY_OPERATION_NOTES, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES, textureSet: TEXTURE_SET_CAPABILITIES },
+        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, treeGrowth: TREE_GROWTH_CAPABILITIES, clutter: CLUTTER_CAPABILITY_NOTE, grass: GRASS_CAPABILITY_NOTE, fitLook: FIT_LOOK_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, applyOperations: FOLDED_APPLY_OPERATION_NOTES, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES, textureSet: TEXTURE_SET_CAPABILITIES },
         sceneLimits: SCENE_LIMITS,
         preview: { backend, memoryBudgetMiB: memory, maximumWidth: 1024, maximumHeight: 1024, maximumImageBytes: MAXIMUM_IMAGE_BYTES, maximumActiveScenes: SCENE_STORE_LIMITS.maxOpenScenes, maximumOpenSceneBytes: SCENE_STORE_LIMITS.maxOpenSceneBytes, maximumQueuedCalls: MAXIMUM_QUEUED_CALLS, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS },
         review: { ...REVIEW_LIMITS, backend, memoryBudgetMiB: memory, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS,
@@ -1374,6 +1376,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           maximumBytes: AGENT_ASSET_LIMITS.maxBytes, maximumAssets: AGENT_ASSET_LIMITS.maxAssets, maximumCombinedBytes: AGENT_ASSET_LIMITS.maxCombinedBytes,
           maximumVertices: AGENT_ASSET_LIMITS.maxVertices, maximumParts: AGENT_ASSET_LIMITS.maxParts, maximumTexturePixels: AGENT_ASSET_LIMITS.maxTexturePixels,
           maximumJoints: AGENT_ASSET_LIMITS.maxJoints, maximumClips: AGENT_ASSET_LIMITS.maxClips,
+          meshChecks: `scene_create_asset checkMesh: true adds assetWarnings to the result: per mesh, the triangles that repeat an earlier one and the edges more than two triangles share, judged by position. A mesh over ${MAX_CHECKED_TRIANGLES} triangles skips the counts and says so. Nothing is merged or rewritten. A full glTF-Validator run needs a validator, which is code, so it is not offered here.`,
           commands: ['set-root', 'set-asset-node', 'set-motion', 'set-animation', 'set-material', 'set-camera', 'set-environment', 'set-effects', 'set-shadow'],
         },
         packs: {
@@ -1426,14 +1429,14 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return { configured: true, ...(await rescannedCatalog()).list(), ...(packsRoot && { packs: (await packs()).list() }) };
       });
     },
-    createAsset({ recipe }) {
+    createAsset({ recipe, checkMesh = false }) {
       return enqueue(async () => {
         await requirePreviewRenderer();
         await pinNamedAssetRecipe(recipe);
         const bytes = await (await catalog()).read(recipe.assetId);
         await boot();
         const sessionId = randomUUID();
-        const result = await evaluate('createAsset', { recipe, data: bytes.toString('base64'), sessionId, memoryBudgetMiB: memory, backend, ...(await motionSources([recipe.motion])) });
+        const result = await evaluate('createAsset', { recipe, checkMesh, data: bytes.toString('base64'), sessionId, memoryBudgetMiB: memory, backend, ...(await motionSources([recipe.motion])) });
         registerCreatedScene(sessionId, result, false);
         return result;
       }, { recoversFailedRuntime: true });
@@ -1541,6 +1544,17 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           result.metadata.note = `The ${width}x${height} PNG was over the 1 MiB image response budget, so this is the ${stepWidth}x${stepHeight} render. Request that size or smaller to skip the retry; the PNG limit is bytes, so a calmer scene keeps more pixels.`;
         }
         return result;
+      }));
+    },
+    // Fits look parameters to reference region colours (#2801). It holds the preview like a look, on the light GPU slot, and the
+    // fit stops at its evaluation and time limits with the best look it found; the scene's recipe is put back at the end.
+    fitLook(input) {
+      return gpuUnit('light', () => enqueue(async () => {
+        await requirePreviewRenderer();
+        requireSession(input.sessionId);
+        const result = await runFitLook({ input, invoke: (method, value) => invoke(method, value), setViewport: (width, height) => page.setViewportSize({ width, height }) });
+        const restored = await invoke('exportRecipe', { sessionId: input.sessionId });
+        return { ...result, revision: restored.revision, backend };
       }));
     },
     // Shows the current view in the person's own browser, waits for their pins and notes, and resolves each pin to a part and a

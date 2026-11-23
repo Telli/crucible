@@ -36,6 +36,10 @@ The optional `signal` aborts those fetches.
 
 Mesh checks are off by default, because the counts cost load time (about 10 to 90 percent on the shipped showcase meshes, measured without textures). `checkMesh: true` adds one warning per primitive naming how many triangles repeat an earlier one (same corner positions and winding) and how many edges more than two triangles share. Both are judged by position, with vertices at the same spot treated as one, so a seam that repeats its vertices does not hide them; nothing is merged or rewritten. `keepDegenerateTriangles: true` keeps the repeated-index and zero-area triangles instead of dropping them (the warning still counts them). `strict: true` with `validator: await import('gltf-validator')` runs the Khronos glTF-Validator on the file bytes first and fails on any error, naming the first few; Crucible does not bundle the validator, and `strict` without it throws with that instruction.
 
+Through MCP, `scene_create_asset` takes `checkMesh: true` and returns the decoder's warnings, the mesh-check counts among them, in `assetWarnings` (they also show in `scene_inspect` diagnostics). The counts keep the 600,000-triangle limit per primitive. `strict` and `validator` are not offered there: a validator is code, and the tool takes none.
+
+To run the Khronos validator over real files, use `node scripts/validate-gltf.mjs [--validator <folder>] [file or folder ...]`. It loads each GLB with `strict` and `checkMesh` and prints one line per file (`pass` or `FAIL` with the first errors, and how many mesh-check warnings it got); with no path it checks the GLBs the repository ships. `gltf-validator` is a devDependency, never part of the core; `--validator` or `GLTF_VALIDATOR` names a package folder instead. The exit code is 0 when every file passes, 1 when one fails and 2 when the validator or the files are missing. Textures decode to a 1 x 1 stand-in there, so the run judges structure and meshes, not pixels.
+
 | Option | Default | Limit |
 | --- | ---: | --- |
 | `maxBytes` | 268,435,456 | Total encoded input and fetched external resources. |
@@ -77,7 +81,7 @@ The importer computes missing normals and normalizes supplied normals.
 It rejects non-finite attributes, invalid indices, singular transforms, and unusable normals.
 `geometry.uvs` preserves `TEXCOORD_0` as two floats per vertex.
 A primitive with a normal map also gets `geometry.tangents` (four floats per vertex): the file's `TANGENT` when it has a usable one, otherwise tangents generated from the UVs the map samples. [Material maps](material-maps.md) describes the frame and when the loader replaces an authored `TANGENT`.
-`geometry.colors` preserves opaque `COLOR_0` values as three linear RGB floats per vertex.
+`geometry.colors` preserves the RGB of `COLOR_0` as three linear RGB floats per vertex. An RGBA `COLOR_0` with an alpha below one also fills `geometry.colorAlpha`, one float per vertex. The rasterizer multiplies it into the opacity of `blend` and `mask` materials, lit or unlit (so a `flatten: { unlit: true }` ribbon fades at its edges); an opaque material ignores it, as glTF says. The alpha shares the fourth vertex-colour component with baked sky visibility (two 10 bit levels), so both survive; a part with `surfaceMasks` (material wear) keeps those instead of the alpha, and the scene diagnostics warn with `vertex-alpha-dropped`. The CPU and WebGL (`backend: "gpu"`) path tracers read it too, interpolated at the hit: a `mask` material multiplies it into the alpha it tests against its cutoff, and a `blend` material is traced as a cutout at 0.5 (the tracers have no blending), so a vertex alpha below half lets a ray through. The WebGL tracer uploads one extra texel per triangle only for a scene that has such a part. The WebGPU tracer and the native Cook kernel do not read it yet (`traceNotes` says so).
 
 Materials preserve linear `color`, `metallic`, `roughness`, and `emissiveColor` factors.
 `emission` contains the emissive intensity.
@@ -266,6 +270,21 @@ three's KTX2Loader picks the format from the context. For this file it chose AST
 | Load time on SwiftShader | 0.15 s | 0.21 s |
 
 The Khronos KTX2 files hold no mip chain, so the 5.3x saving mixes the format (4 bytes to 1 a texel) with the missing mips; with a full chain BC7 would take 21.3 MiB, 4.2x less. WebGL does not report driver memory, so these are not driver readings. KTX2 loads slower because of the Basis transcode. Drawn through the reference suite's Khronos framing and scored against the stored Cycles array, the PNG variant gets FLIP 0.0386 over the whole frame and 0.3341 over the pixels the lamp covers; the KTX2 variant gets 0.0385 and 0.3330, a difference of 0.0001 and 0.0011.
+
+### Making KTX2 textures
+
+`scripts/encode-glb-ktx2.mjs` re-encodes the textures of a GLB as KTX2 (`KHR_texture_basisu`) with `toktx` from [KTX-Software](https://github.com/KhronosGroup/KTX-Software/releases). It is a script, so the engine gains no dependency.
+
+```sh
+node scripts/encode-glb-ktx2.mjs scan.glb scan-ktx2.glb [--max-texture 2048] [--toktx <path>] [--threads 2] [--quality default|high]
+```
+
+- Colour maps (base colour, emissive) and data maps (roughness, occlusion and the rest) become ETC1S. Normal maps become UASTC with RDO, and are capped at 1024 pixels.
+- `--quality high` encodes colour maps as UASTC with RDO instead of ETC1S. Use it for assets with small printed text or fine lines, where ETC1S blurs and flattens colour. Data and normal maps stay as above. On two scanned objects the KTX2 GLB grew from 163 KB to 694 KB (Perricone, 129 KB as WebP) and from 345 KB to 1.91 MB (Pass_The_Popcorn, 440 KB as WebP). Drawn in Crucible from one camera against the WebP file, the RMSE (0 to 255) fell from 1.89 to 0.74 and from 4.69 to 1.96. The GPU copy is BC7 either way, so memory does not change; only the download does.
+- Every image gets a full mip chain and both edges are rounded to a multiple of 4.
+- PNG, JPEG and WebP images are read (a WebP texture is found through `EXT_texture_webp`, which is dropped once nothing uses it). Images that are already KTX2 stay. Meshopt geometry is copied byte for byte.
+- `toktx` comes from `--toktx`, then `CRUCIBLE_TOKTX`, then `~/.local/bin/ktx-software`, then `PATH`. Without it the script stops and says where to get it.
+- The file needs a KTX2 decoder to load (see above). The MCP server still turns KTX2 images into PNG on the way to the preview page ([mcp.md](mcp.md)); keeping them compressed there is not done yet.
 
 ### Instancing limits
 

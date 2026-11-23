@@ -56,7 +56,7 @@ export async function createProgressiveTracer(scene, rawOptions = {}, { resoluti
     traceScene = buildTraceScene(parts, environment, { gpuTriangleLimit: gpuTriangleLimit() });
     refuseLocalVolumes(traceScene, 'the progressive path tracer');
     sceneOptions = { ...options, lightSelection: resolveLightSelection(options.lightSelection, traceScene.lights) };
-    const kernel = getKernel(sceneUsesSubsurface(traceScene.materials), false, sceneOptions);
+    const kernel = getKernel(sceneUsesSubsurface(traceScene.materials), false, { ...sceneOptions, vertexAlpha: Boolean(traceScene.vertexAlpha) });
     program = kernel.program;
     compileSeconds = kernel.compileSeconds;
     gl.useProgram(program);

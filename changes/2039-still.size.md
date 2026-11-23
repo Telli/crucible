@@ -1,0 +1,3 @@
+- scene:agent-scene: a per-level cloud softness (67 bytes gzip) is what lets small cauliflower bumps stay crisp on soft big lobes without dark pits, the visible fix for clouds that read as snow towers.
+- scene:agent-scene+lazy: the same 67 bytes plus the capabilities text that tells agents about the field (219 bytes gzip in all).
+- goal:agent-scene: the growth is 67 bytes in a bundle that is 63 KB over its goal for other reasons; the field is small, bounded and validated.

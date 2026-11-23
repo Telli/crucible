@@ -1,0 +1,2 @@
+- scene:agent-scene+lazy: the emitter region puts all 2000 droplets of a bow-spray look where the camera looks instead of across a 140 m sea (87 of 2000 landed in a 30 m box before), for 864 bytes gzip across four emitter modes.
+- goal:agent-scene: the region is an agent-facing capability of the mesh emitter (an optional box in the recipe); the 62 bytes gzip it adds to this bundle buy it for vertices, edges, surface and volume.

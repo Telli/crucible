@@ -65,6 +65,7 @@ Ideas that nobody is working on live here instead of as open issues, so the issu
 
 ### Agent surface
 
+- Rain-night wet streets: long vertical streak reflections of lights on soaked roads (from #2874)
 - Recipe performance budget with warnings and fixes (#2882)
 - scene_compare: compare a render with a reference photo (#2880)
 - Turntable preset for scene_review (#2878)
@@ -113,6 +114,7 @@ Ideas that nobody is working on live here instead of as open issues, so the issu
 - Outdoor starter recipes and a terrain-and-ground skill reference (#2885)
 - Terrain: thermal and hydraulic erosion (#2864)
 - Export lathe geometry and a hide path from the standalone bundle (#2751)
+- Weld duplicate glTF vertices on load, remapping attributes, morph targets and skins (from #2981)
 
 ### Motion and simulation
 

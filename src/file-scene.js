@@ -8,7 +8,8 @@ import { createCameraSampler } from './camera-track.js';
 import { inWholeWorldOrder, readPartRanks } from './showcase-download.js';
 import { withinDrawnLightLimits } from './drawn-light-lists.js';
 import { createFileSceneRenderAt } from './file-scene-clip.js';
-import { partsForRendererOptions, sceneFileLighting, sunShadowBounds, withFileSceneInteriorLight, withSceneFileLights, withSceneFileRendererDefaults } from './dense-lods.js';
+import { startDeferredLods } from './deferred-lods.js';
+import { partsForRendererOptions, planLodsForRendererOptions, sceneFileLighting, sunShadowBounds, withFileSceneInteriorLight, withSceneFileLights, withSceneFileRendererDefaults } from './dense-lods.js';
 
 // Headless twin of the showcase page for scripts/render-media.mjs (--scene file). The export script serves the scene.json
 // at /__file/config.json with every asset path already pointing at a file it can read, and an optional camera track at
@@ -37,6 +38,49 @@ async function loadStagedParts(description, asset, model, sharedTextures) {
 function environmentForRenderer(environment) {
   if (!new URLSearchParams(location.search).has('traceLights')) return environment;
   return withinDrawnLightLimits(environment);
+}
+
+// A person viewing the page gets the first frame at once and the levels of detail afterwards (#2985). A page driven by a
+// script (navigator.webdriver, as every render and smoke script is) makes the levels before the first frame, so what it
+// draws never depends on timing; `?lods=sync` or `?lods=deferred` chooses either way. `window.__scene.lodsReady` settles
+// when the levels are in (at once for 'sync'), and a script that draws for output awaits it.
+function lodTiming() {
+  const asked = new URLSearchParams(location.search).get('lods');
+  if (asked === 'sync' || asked === 'deferred') return asked;
+  if (asked !== null) throw new Error(`lods must be sync or deferred, got ${asked}.`);
+  return navigator.webdriver ? 'sync' : 'deferred';
+}
+
+/** Gives each planned part its levels, with the sky light the renderer's copy of level 0 carries; one step, after every level is made. */
+function swapInLevels({ renderer, plan, sourceParts, rendererParts, levelsByGeometry, sky }) {
+  const planned = new Set(plan.parts);
+  const withLevels = sourceParts.map(part => (planned.has(part) ? { ...part, lods: levelsByGeometry.get(part.geometry) } : part));
+  const levelled = sky ? sky.applyDefaultFloorSky(withLevels, sky.environment).parts : withLevels;
+  levelled.forEach((part, index) => {
+    if (!planned.has(sourceParts[index])) return;
+    const rendererPart = rendererParts[index];
+    renderer.setPartLods(rendererPart, [{ ...part.lods[0], geometry: rendererPart.geometry }, ...part.lods.slice(1)]);
+  });
+}
+
+function deferLevels({ plan, sourceParts, rendererParts, renderer, sky }) {
+  const deferred = startDeferredLods({ geometries: plan.geometries, ratios: plan.ratios });
+  const dispose = renderer.dispose.bind(renderer);
+  renderer.dispose = () => {
+    deferred.cancel();
+    dispose();
+  };
+  const lodsReady = deferred.ready.then(levelsByGeometry => {
+    if (!levelsByGeometry || renderer.disposed) return;
+    try {
+      swapInLevels({ renderer, plan, sourceParts, rendererParts, levelsByGeometry, sky });
+    } catch (error) {
+      console.warn(`Levels of detail were made but not swapped in: ${error.message}`);
+      throw error;
+    }
+  });
+  lodsReady.catch(error => { window.__fileSceneLodError = error.message; });
+  return lodsReady;
 }
 
 async function readJson(url) {
@@ -68,7 +112,9 @@ async function start() {
   // A scene with lights of its own is drawn as before, and the native trace keeps the whole map.
   const drawn = sceneFileLighting(map, asset.lights, rendererOptions.environment, { hdriSun: description.hdriSun !== false });
   const viewport = document.querySelector('#file-viewport');
-  const interior = await withFileSceneInteriorLight(partsForRendererOptions(reflection.parts, viewport, rendererOptions), drawn.environment);
+  const deferLods = lodTiming() === 'deferred';
+  const plan = deferLods ? planLodsForRendererOptions(reflection.parts, viewport, rendererOptions) : null;
+  const interior = await withFileSceneInteriorLight(deferLods ? reflection.parts : partsForRendererOptions(reflection.parts, viewport, rendererOptions), drawn.environment);
   const rendererParts = interior.parts;
   const renderer = new CrucibleRenderer(viewport, rendererParts, {
     ground: false, hdr: true, samples: 4, memoryBudgetMiB: 384,
@@ -82,7 +128,9 @@ async function start() {
   // A GLB with an animation clip plays its first clip on a loop, as the showcase page does; one without a clip is drawn as before.
   const renderAt = createFileSceneRenderAt({ asset, posedParts: assetOwnParts, sceneParts: asset.parts, rendererParts, renderer, camera, description, frame });
   // `parts` and `environment` let scripts/render-file-native.mjs pack the same scene for the native path tracer.
-  window.__scene = { renderer, duration: camera?.duration, renderAt, poseClipAt: seconds => renderAt.clipPlayer?.applyAt(seconds), pause() {}, parts: reflection.parts, environment: { ...sceneEnvironment, map } };
+  const sky = interior.skyReport ? { ...(await import('./floor-sky-visibility.js')), environment: drawn.environment } : null;
+  const lodsReady = plan?.geometries.length ? deferLevels({ plan, sourceParts: reflection.parts, rendererParts, renderer, sky }) : Promise.resolve();
+  window.__scene = { renderer, lodsReady, duration: camera?.duration, renderAt, poseClipAt: seconds => renderAt.clipPlayer?.applyAt(seconds), pause() {}, parts: reflection.parts, environment: { ...sceneEnvironment, map } };
 }
 
 start().catch(error => {

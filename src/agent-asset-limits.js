@@ -44,10 +44,18 @@ export function resetAssetByteLimit() {
   assetByteLimit = DEFAULT_ASSET_BYTES;
 }
 
-/** The options `parseGltf` takes for a catalog file. An MCP decode fetches no external resource, so a uri in the file never reaches the network. */
-export function agentAssetDecodeOptions() {
+/** Most triangles of one primitive that checkMesh counts; a larger one skips the counts with a warning. Same as the loadGltf default. */
+export const MAX_CHECKED_TRIANGLES = 600_000;
+
+/**
+ * The options `parseGltf` takes for a catalog file. An MCP decode fetches no external resource, so a uri in the file never reaches the network.
+ * `checkMesh: true` adds the loader's duplicate-triangle and non-manifold-edge counts (bounded by its maxCheckedTriangles default) as warnings.
+ * An agent cannot pass `strict` or a validator: a validator is code.
+ */
+export function agentAssetDecodeOptions({ checkMesh = false } = {}) {
   const { maxBytes, maxVertices, maxParts, maxTexturePixels, maxJoints } = AGENT_ASSET_LIMITS;
-  return { maxBytes, maxVertices, maxParts, maxTexturePixels, maxJoints, allowExternalResources: false };
+  const options = { maxBytes, maxVertices, maxParts, maxTexturePixels, maxJoints, allowExternalResources: false };
+  return checkMesh ? { ...options, checkMesh: true, maxCheckedTriangles: MAX_CHECKED_TRIANGLES } : options;
 }
 
 /** "64 MiB" for byte limits, so a message and the docs read the same. */

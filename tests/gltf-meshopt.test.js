@@ -263,12 +263,12 @@ test('the public showcase and sample GLBs load without a decoder option', async 
   assert.ok(asset.parts.length > 0);
 });
 
-test('the bundled Dark store showcase GLB loads and reports its empty meshopt views', async () => {
+test('the bundled Dark store showcase GLB loads without empty meshopt views', async () => {
   globalThis.createImageBitmap ??= async () => ({ width: 4, height: 4, close() {} });
   const bytes = await readFile(new URL('../public/showcase/darkstore/scene.glb', import.meta.url));
   const asset = await parseGltf(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), { maxTexturePixels: 67108864 });
   assert.ok(asset.parts.length > 0);
-  assert.ok(asset.warnings.some(warning => /count is 0 and no accessor reads it/.test(warning)));
+  assert.ok(!asset.warnings.some(warning => /count is 0 and no accessor reads it/.test(warning)));
 });
 
 /** One valid small view whose extension fields are then overridden, read with a decoder that counts its calls. */

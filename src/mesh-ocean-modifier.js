@@ -18,9 +18,24 @@ const SPRAY_RISE_PER_WIND = 0.1;
 export const SPRAY_GROUP = 'spray';
 export const SPRAY_VELOCITY_VECTOR = 'spray';
 
+// The waves and the foam threshold follow from the sea's settings and not from its time, so a sea driven through its time
+// finds them again for every frame.
+let lastSeaKey = null;
+let lastSea = null;
+
+function seaSettings(settings) {
+  const key = JSON.stringify(settings);
+  if (key !== lastSeaKey) {
+    const waves = oceanWaves(settings);
+    lastSea = { waves, foamThreshold: oceanFoamThreshold(waves, settings) };
+    lastSeaKey = key;
+  }
+  return lastSea;
+}
+
 /** Displace every vertex by the sea and write the vertex group `foam`; `axis` is the up axis of the sea. A `wake` adds foam and a trough along its points. With `spray: true` it also writes the vertex group `spray` (foam where the surface is rising, 0 to 1) and the vector `spray` (the surface velocity in m/s, along the mesh axes) for particle emitters. */
 export function oceanMesh(mesh, { axis, windSpeed, direction, choppiness, size, seed, time, resolution, coverage = 0, foamMemory = DEFAULT_FOAM_MEMORY, wake, spray }) {
-  const waves = oceanWaves({ windSpeed, direction, size, seed, resolution });
+  const { waves, foamThreshold } = seaSettings({ windSpeed, direction, size, seed, resolution, choppiness, coverage });
   const evaluationsPerVertex = waves.length * (foamMemory > 0 ? 1 + MAX_FOAM_MEMORY_SAMPLES : 1);
   if (evaluationsPerVertex * mesh.vertexCount > MAX_OCEAN_WORK) {
     throw new RangeError(`ocean would make ${evaluationsPerVertex * mesh.vertexCount} wave evaluations, over the limit of ${MAX_OCEAN_WORK}. Lower resolution, set foamMemory to 0 or use a coarser grid.`);
@@ -35,9 +50,8 @@ export function oceanMesh(mesh, { axis, windSpeed, direction, choppiness, size, 
   const foam = new Float32Array(mesh.vertexCount);
   const sprayWeight = spray ? new Float32Array(mesh.vertexCount) : null;
   const sprayVelocity = spray ? new Float32Array(mesh.vertexCount * 3) : null;
-  const foamThreshold = oceanFoamThreshold(waves, { windSpeed, size, choppiness, coverage });
   const fullSprayRise = SPRAY_RISE_PER_WIND * windSpeed;
-  const batch = prepareOceanBatch(waves, time, choppiness, foamMemory);
+  const batch = prepareOceanBatch(waves, time, choppiness, foamMemory, Boolean(spray));
   const surface = {};
   for (let vertex = 0; vertex < mesh.vertexCount; vertex++) {
     const restX = positions[vertex * 3 + first];

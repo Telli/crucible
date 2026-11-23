@@ -1,0 +1,1 @@
+- A cloud level takes its own `softness`, so small cauliflower bumps stay crisp on big soft lobes (a recipe without it builds the same bytes); the cumulus recipe now shows three separate, flat-based clouds with six cool-to-warm toon steps (#2039)

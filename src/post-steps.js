@@ -1,4 +1,5 @@
 import { postStepSupport } from './shader-registry.js';
+import { resolveAutoExposure } from './auto-exposure.js';
 import { createStage, sharedFragmentHeader } from './camera-effects.js';
 import { numberInRange, groupOf, onlyKeys, triple } from './post-fields.js';
 import { resolveDistortion, resolveFlash, createDistortionStage, createFlashStage } from './post-air.js';
@@ -170,6 +171,7 @@ export function resolvePostSteps(effects) {
   if (effects.stylize !== undefined) resolved.stylize = resolveStylize(effects.stylize);
   if (effects.composite !== undefined) resolved.composite = resolveComposite(effects.composite);
   if (effects.localToneMapping !== undefined) resolved.localToneMapping = resolveLocalToneMapping(effects.localToneMapping);
+  if (effects.autoExposure !== undefined) resolved.autoExposure = resolveAutoExposure(effects.autoExposure);
   refuseMaskWithLensDistortion(resolved);
   return resolved;
 }
@@ -190,7 +192,7 @@ function refuseMaskWithLensDistortion(resolved) {
 }
 
 // Registers what the look needs: the field names it accepts and how to resolve them (src/shader-registry.js).
-postStepSupport.fields = ['distortion', 'flash', 'colorBalance', 'glare', 'lensDistortion', 'stylize', 'composite', 'localToneMapping'];
+postStepSupport.fields = ['distortion', 'flash', 'colorBalance', 'glare', 'lensDistortion', 'stylize', 'composite', 'localToneMapping', 'autoExposure'];
 postStepSupport.resolve = resolvePostSteps;
 
 export const colorBalanceFragment = `${sharedFragmentHeader}

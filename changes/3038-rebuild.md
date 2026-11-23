@@ -1,1 +1,0 @@
-- A render job builds the ocean-time sea again for each frame, so GPU frames are the same from run to run (#3038)

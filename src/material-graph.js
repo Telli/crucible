@@ -1,4 +1,4 @@
-import { MATERIAL_GRAPH_LIMITS, MATERIAL_GRAPH_OUTPUTS, MATERIAL_GRAPH_OPERATORS, MESH_MAP_NAMES } from './agent-scene-capabilities.js';
+import { MATERIAL_GRAPH_LIMITS, MATERIAL_GRAPH_OUTPUTS, MATERIAL_GRAPH_OPERATORS, MESH_MAP_NAMES, SURFACE_OUTPUTS, SURFACE_SPACES } from './agent-scene-capabilities.js';
 import { EMISSION_FRESNEL_IOR_RANGE } from './material-layers.js';
 import { clampUnit, smoothStep, wrapCell, hashCell, cellularNoise, smoothCellularDistance, linearToSrgbByte, createImage, normalMapFromHeightFunction } from './material-texture-kit.js';
 
@@ -92,7 +92,8 @@ function liftComponentwise(values, compute) {
     const [first, second, third] = values.map(value => value.evaluate);
     return scalarValue((u, v) => compute(first(u, v), second?.(u, v), third?.(u, v)));
   }
-  const [first, second, third] = values.map(partsOf);
+  // A scalar beside a vector is read by all three channels; keep its value for the texel instead of working it out three times.
+  const [first, second, third] = values.map(value => (value.kind === 'vector' ? value.parts : Array(3).fill(rememberLastTexel(value.evaluate))));
   const channel = index => (u, v) => compute(first[index](u, v), second?.[index](u, v), third?.[index](u, v));
   return vectorValue(channel(0), channel(1), channel(2));
 }
@@ -770,14 +771,159 @@ export function graphMeshMapNames(graph) {
   return [...names];
 }
 
+// A surface node reads the slope, the up part of the normal or the height of the mesh at each texel. The host bakes
+// each distinct output, space and range into UV space (material-surface-map.js) and hands the maps in under the key
+// "surface:<output>|<space>|<range>", so the node reads it at the texel's own u and v.
+const SURFACE_COST = 2;
+export const SURFACE_KEY_PREFIX = 'surface:';
+const SURFACE_EXAMPLE = '{"surface":{"output":"slope","space":"world"}}';
+
+function readSurfaceRange(range, output) {
+  if (range === undefined) return undefined;
+  if (output !== 'height') throw graphError(`surface range only applies to output "height", not ${describeKey(output)}; slope and normalY are already 0 to 1.`);
+  const valid = Array.isArray(range) && range.length === 2 && range.every(value => typeof value === 'number' && Number.isFinite(value)) && range[0] < range[1];
+  if (!valid) throw graphError('surface range must be [low, high] in metres with low below high, such as {"surface":{"output":"height","range":[0,2]}}.');
+  return [range[0], range[1]];
+}
+
+function readSurfaceSettings(node) {
+  const settings = textureSettings(node, 'surface', ['output', 'space', 'range']);
+  const { output } = settings;
+  if (!SURFACE_OUTPUTS.includes(output)) throw graphError(`surface output must be one of ${SURFACE_OUTPUTS.join(', ')}, got ${describeKey(String(output))}, such as ${SURFACE_EXAMPLE}.`);
+  const space = settings.space ?? 'world';
+  if (!SURFACE_SPACES.includes(space)) throw graphError(`surface space must be one of ${SURFACE_SPACES.join(', ')}, got ${describeKey(String(space))}, such as ${SURFACE_EXAMPLE}.`);
+  const range = readSurfaceRange(settings.range, output);
+  return range ? { output, space, range } : { output, space };
+}
+
+/** The key a baked surface map is handed to the graph under, one per output, space and range. */
+export function surfaceMapKey({ output, space, range }) {
+  return `${SURFACE_KEY_PREFIX}${output}|${space}|${range ? range.join(',') : ''}`;
+}
+
+function compileSurface(node, state) {
+  const settings = readSurfaceSettings(node);
+  state.cost += SURFACE_COST;
+  if (!state.groups) return scalarValue(() => 0);
+  const map = state.groups.get(surfaceMapKey(settings));
+  if (!map) throw graphError(`surface ${describeKey(settings.output)} was not baked for this mesh. Bake the material through a part whose mesh has UVs.`);
+  return scalarValue((u, v) => sampleImageChannel(map, u, v, 0, byte => byte / 255));
+}
+
+/** The distinct `surface` settings a graph reads, in the order they first appear. */
+export function graphSurfaceSettings(graph) {
+  const found = new Map();
+  const visit = (value, depth) => {
+    if (!value || typeof value !== 'object' || depth > MATERIAL_GRAPH_LIMITS.maxDepth * 3) return;
+    if (!Array.isArray(value) && isPlainObject(value.surface)) {
+      const settings = readSurfaceSettings(value);
+      found.set(surfaceMapKey(settings), settings);
+    }
+    for (const child of Array.isArray(value) ? value : Object.values(value)) visit(child, depth + 1);
+  };
+  visit(graph, 0);
+  return [...found.values()];
+}
+
 const TEXTURE_COMPILERS = new Map([
   ['vertexGroup', compileVertexGroup],
   ['meshMap', compileMeshMap],
+  ['surface', compileSurface],
   ['image', compileImage], ['noise', compileNoise], ['whiteNoise', compileWhiteNoise], ['brick', compileBrick], ['voronoi', compileVoronoi], ['wave', compileWave], ['checker', compileChecker], ['gradient', compileGradient],
 ]);
 
-// `field` names where the node sits (such as 'hue "color"'), so a missing or wrong input says which one it is (#2403).
+// Shared subgraphs (#3147). A node that appears more than once in a graph (the same snow mask gating colour, roughness and
+// bump) is compiled once: later copies reuse it, add nothing to the cost or the node count, and its value is kept for the
+// texel being baked, so every output reads one evaluation. Equal nodes are found by hash-consing: each distinct structure
+// gets one number, built from the numbers of its parts, so the walk stays linear however deep the graph nests.
+const UNSHARED_STRUCTURE = -1;
+const MAX_INTERNED_DEPTH = 512;
+
+function internStructure(value, ids, interned, depth = 0) {
+  const isObject = value !== null && typeof value === 'object';
+  if (isObject && ids.has(value)) return ids.get(value);
+  // Too deep (or a loop): leave it unshared so compiling reports the nesting error.
+  if (depth > MAX_INTERNED_DEPTH) return UNSHARED_STRUCTURE;
+  let signature;
+  if (isObject) {
+    const keys = Array.isArray(value) ? undefined : Object.keys(value);
+    const parts = (keys ?? value).map(entry => internStructure(keys ? value[entry] : entry, ids, interned, depth + 1));
+    if (parts.includes(UNSHARED_STRUCTURE)) return UNSHARED_STRUCTURE;
+    signature = keys ? `o:${keys.map((key, index) => `${JSON.stringify(key)}:${parts[index]}`).join(',')}` : `a:${parts.join(',')}`;
+  } else if (typeof value === 'number') {
+    signature = Object.is(value, -0) ? 'n:-0' : `n:${value}`;
+  } else {
+    signature = `p:${JSON.stringify(value) ?? 'undefined'}`;
+  }
+  if (!interned.has(signature)) interned.set(signature, interned.size);
+  const id = interned.get(signature);
+  if (isObject) ids.set(value, id);
+  return id;
+}
+
+// How many times each object structure is reached; a repeated structure is not walked again, so what sits inside a
+// shared node is counted once.
+function countRepeatedStructures(graph) {
+  const ids = new Map();
+  internStructure(graph, ids, new Map());
+  const reached = new Map();
+  const visit = value => {
+    if (!value || typeof value !== 'object') return;
+    const id = ids.get(value);
+    reached.set(id, (reached.get(id) ?? 0) + 1);
+    if (reached.get(id) > 1) return;
+    for (const part of Array.isArray(value) ? value : Object.values(value)) visit(part);
+  };
+  visit(graph);
+  const repeated = new Set();
+  for (const [id, count] of reached) if (count > 1) repeated.add(id);
+  return { ids, repeated };
+}
+
+// Keep the value of the last texel asked for. The bake asks every output for the same texel in turn, so a node shared by
+// several outputs is worked out once per texel. An exact match on (u, v) is the only reuse, so the result is the same
+// number the node would give again.
+function rememberLastTexel(evaluate) {
+  let lastU = Number.NaN;
+  let lastV = Number.NaN;
+  let lastValue = 0;
+  return (u, v) => {
+    if (u !== lastU || v !== lastV) {
+      lastValue = evaluate(u, v);
+      lastU = u;
+      lastV = v;
+    }
+    return lastValue;
+  };
+}
+
+function rememberCompiled(compiled) {
+  if (compiled.kind === 'scalar') return scalarValue(rememberLastTexel(compiled.evaluate));
+  return vectorValue(...compiled.parts.map(rememberLastTexel));
+}
+
+function compileSharedNode(node, state, depth, field, structureId) {
+  const cached = state.shared.compiled.get(structureId);
+  if (cached) {
+    // Compile the copy once more, apart from the totals, so it is checked at its own nesting depth.
+    compileNodeAt(node, { ...state, nodeCount: 0, cost: 0, shared: undefined }, depth, field);
+    return cached;
+  }
+  const compiled = rememberCompiled(compileNodeAt(node, state, depth, field));
+  state.shared.compiled.set(structureId, compiled);
+  return compiled;
+}
+
 function compileNode(node, state, depth, field) {
+  const structureId = state.shared?.ids.get(node);
+  if (structureId !== undefined && state.shared.repeated.has(structureId) && isPlainObject(node)) {
+    return compileSharedNode(node, state, depth, field, structureId);
+  }
+  return compileNodeAt(node, state, depth, field);
+}
+
+// `field` names where the node sits (such as 'hue "color"'), so a missing or wrong input says which one it is (#2403).
+function compileNodeAt(node, state, depth, field) {
   state.nodeCount++;
   state.cost++;
   if (state.nodeCount > MATERIAL_GRAPH_LIMITS.maxNodes) throw graphError(`more than ${MATERIAL_GRAPH_LIMITS.maxNodes} nodes.`);
@@ -823,7 +969,8 @@ export function compileMaterialGraph(graph, { size = 1, images, groups } = {}) {
   onlyKeys(graph, MATERIAL_GRAPH_OUTPUTS, 'graph');
   const names = Object.keys(graph);
   if (names.length === 0) throw graphError(`graph needs at least one output: ${MATERIAL_GRAPH_OUTPUTS.join(', ')}.`);
-  const state = { nodeCount: 0, cost: 0, size, images, groups };
+  const { ids, repeated } = countRepeatedStructures(graph);
+  const state = { nodeCount: 0, cost: 0, size, images, groups, shared: { ids, repeated, compiled: new Map() } };
   const outputs = Object.create(null);
   let emissionFresnel;
   for (const name of MATERIAL_GRAPH_OUTPUTS) {
