@@ -893,11 +893,30 @@ function ignoredMorphTangentWarnings(document) {
 /** A primitive whose decoded data cannot be drawn; the loader skips it with a warning instead of refusing the file. */
 class UnusablePrimitiveError extends Error {}
 
-function hasTriangleWithArea(positions, indices) {
-  for (let corner = 0; corner < indices.length; corner += 3) {
-    if (Math.hypot(...triangleAt(positions, indices, corner).cross) > 0) return true;
-  }
-  return false;
+/**
+ * Drops the triangles that repeat a vertex or have zero area, in place and in their original order.
+ * Returns the kept index view and how many of each kind were dropped; a mesh without such triangles comes back untouched.
+ */
+async function dropDegenerateTriangles(positions, indices, checkpoint) {
+  let kept = 0;
+  let repeatedIndex = 0;
+  let zeroArea = 0;
+  await forEachChunk(indices.length / 3, checkpoint, (from, to) => {
+    for (let triangle = from; triangle < to; triangle++) {
+      const corner = triangle * 3;
+      if (indices[corner] === indices[corner + 1] || indices[corner + 1] === indices[corner + 2] || indices[corner] === indices[corner + 2]) {
+        repeatedIndex++;
+        continue;
+      }
+      if (!(Math.hypot(...triangleAt(positions, indices, corner).cross) > 0)) {
+        zeroArea++;
+        continue;
+      }
+      if (kept !== corner) indices.copyWithin(kept, corner, corner + 3);
+      kept += 3;
+    }
+  });
+  return { indices: kept === indices.length ? indices : indices.slice(0, kept), repeatedIndex, zeroArea };
 }
 
 /** Once the last node that uses a decoded source has been converted, its raw attribute arrays are not read again: let them go. */
@@ -917,16 +936,22 @@ async function convertGeometry(source, primitive, secondUvSet, onIgnoredVertexAl
   const { position, normal, uv, uv1, color, skinIndex, skinWeight } = source.attributes;
   const zeroedBy = label => count => onRepair(`${count} non-finite ${label} value(s) were set to 0`);
   const positions = await copyAttributeZeroingNonFinite(position, 3, zeroedBy('POSITION'), checkpoint);
-  const indices = new Uint32Array(source.index?.count ?? position.count);
-  await forEachChunk(indices.length, checkpoint, (from, to) => {
+  const allIndices = new Uint32Array(source.index?.count ?? position.count);
+  await forEachChunk(allIndices.length, checkpoint, (from, to) => {
     for (let index = from; index < to; index++) {
       const value = source.index ? source.index.array[index] : index;
-      if (!Number.isInteger(value) || value < 0 || value >= position.count) throw new UnusablePrimitiveError('an index is out of range of its POSITION accessor');
-      indices[index] = value;
+      if (!Number.isInteger(value) || value < 0 || value >= position.count) {
+        throw new UnusablePrimitiveError(`an index is out of range of its POSITION accessor (index value ${value} at position ${index} of ${allIndices.length}, but the accessor has ${position.count} vertices); re-export the mesh with every index below the vertex count`);
+      }
+      allIndices[index] = value;
     }
   });
+  const { indices, repeatedIndex, zeroArea } = await dropDegenerateTriangles(positions, allIndices, checkpoint);
   if (normal && normal.count !== position.count) throw new Error('NORMAL and POSITION counts must match.');
-  if (!hasTriangleWithArea(positions, indices)) throw new UnusablePrimitiveError('every triangle has zero area');
+  if (!indices.length) throw new UnusablePrimitiveError('every triangle has zero area');
+  if (repeatedIndex || zeroArea) {
+    onRepair(`dropped ${repeatedIndex + zeroArea} degenerate triangle(s) of ${allIndices.length / 3} (${repeatedIndex} with a repeated index, ${zeroArea} with zero area)`);
+  }
   const normals = normal ? await copyAttribute(normal, 3, checkpoint) : computeVertexNormals(positions, indices);
   const geometry = { positions, normals, indices };
   const repairedNormals = [];
@@ -1131,6 +1156,17 @@ function validateNodeTransforms(nodes, pending, tolerated) {
     if (!tolerated.collecting) throw new Error(finite ? 'Animation creates a singular Float32 node transform.' : 'Animation creates a non-finite Float32 world matrix.');
     tolerated.add(node);
   }
+}
+
+/** The node name as authored in the file: three.js strips periods, slashes and brackets from `node.name`. */
+function authoredNodeName(node, document) {
+  for (let current = node; current; current = current.parent) {
+    const sourceNodeIndex = current.association?.nodes;
+    if (sourceNodeIndex === undefined) continue;
+    const authored = document.nodes?.[sourceNodeIndex]?.name;
+    return typeof authored === 'string' && authored ? authored.slice(0, 256) : undefined;
+  }
+  return undefined;
 }
 
 function instanceMatricesOf(node, maximumInstances) {
@@ -1375,7 +1411,8 @@ export async function parseGltf(data, options = {}) {
         if (firstSetMaps.some(map => map && map.uvChannel === 0) && !geometry.uvs) throw new Error('Material textures require TEXCOORD_0.');
         const initialMatrix = new Float32Array(worldMatrixOf(node, instanceMatrix, pendingTransform).elements);
         collapseSingularMatrix(initialMatrix);
-        const part = { name: node.name || `glTF mesh ${parts.length + 1}`, geometry, matrix: initialMatrix, material };
+        const name = node.name || `glTF mesh ${parts.length + 1}`;
+        const part = { name, label: authoredNodeName(node, document) ?? name, geometry, matrix: initialMatrix, material };
         const transformBinding = { node, instanceMatrix, part, mirrored, matrix: part.matrix, pendingMatrix: new Float32Array(16) };
         let pendingSkin;
         if (node.isSkinnedMesh) {
