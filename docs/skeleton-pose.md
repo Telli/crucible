@@ -116,7 +116,7 @@ The turn is the shortest rotation, so `aim` does not hold an up direction and ca
 ## Reading the result
 
 `pose.jointWorld(name)` returns `{ position, rotation }` after the last `apply`, in world space, for attaching props or
-chaining targets. `pose.ikResults` holds one `{ reached, error }` per solver: `error` is metres from the target for
+chaining targets. To inspect deformed mesh vertices directly on the CPU after `apply(time)`, call `posedVertexPositions(part, output?)` (exported from `'crucible'` and `'crucible/addons/skeleton-pose'`), which returns world-space `[x, y, z, ...]` positions matching the renderer's normalized skinning blend. `pose.ikResults` holds one `{ reached, error }` per solver: `error` is metres from the target for
 two-bone and radians off target for aim.
 
 ## Rigs seen so far

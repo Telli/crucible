@@ -1,6 +1,7 @@
 import { mat4, quat, vec3 } from 'gl-matrix';
 import { compileAnimationSampler, createAnimationClip } from './animation.js';
-import { updateSkinPose } from './skinning.js';
+import { updateSkinPose, posedVertexPositions } from './skinning.js';
+export { posedVertexPositions };
 import { eulerFromQuaternion, quaternionFromEuler } from './rotation-euler.js';
 import {
   bindSourceTracks, computeWorldPose, createPoseState, createRigFromSkin, mapHumanoidBones, prepareRigGeometry, validateRigJoints,
