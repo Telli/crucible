@@ -104,7 +104,56 @@ const SHADER_CUTS = [
   { name: 'cut-normal-map', from: 'if (USES_NORMAL_MAP) normal = ensureValidReflection', to: 'if (false) normal = ensureValidReflection' },
   { name: 'cut-base-map', from: 'if (USES_BASE_MAP) {', to: 'if (false) {' },
   { name: 'cut-metallic-roughness-map', from: 'if (USES_METALLIC_ROUGHNESS_MAP) {', to: 'if (false) {' },
+  // Base shading cuts (#2144): each removes one piece of the work every pixel does, to price it by itself (the picture changes).
+  { name: 'cut-ibl-diffuse-tap', from: 'return (environmentIrradianceGrid(mapped) + environmentBounce) * environmentDiffuseFrame.z;', to: 'return (vec3(0.3) + environmentBounce) * environmentDiffuseFrame.z;' },
+  { name: 'cut-ibl-specular-tap', from: 'vec3 specular = environmentRadiance(reflected, roughness * environmentLevelMax) * specularColor;', to: 'vec3 specular = vec3(0.3) * specularColor;' },
+  { name: 'cut-ibl-brdf-tap', from: 'vec2 lookup = environmentBrdfLookup(normalView, roughness);', to: 'vec2 lookup = vec2(0.6, 0.05);' },
+  { name: 'cut-ibl-off', from: 'return (specular + diffuse) * occlusion * ambient;', to: 'return vec3(0.0);' },
+  { name: 'cut-fog', from: 'float fog = 1.0 - exp(-length(worldPosition - eye) * fogDensity);', to: 'float fog = 0.0;' },
+  { name: 'cut-hdr-encode', from: 'return hdrEnabled > 0.5 ? clamp(radiance * exposure, vec3(0), vec3(65504.0)) : pow(toneMap(radiance * exposure), vec3(1.0 / 2.2));', to: 'return radiance * exposure;' },
+  { name: 'cut-blend-output', from: 'outputColor = blendedOutput(displayedColor, displayedDiffuse, alpha);', to: 'outputColor = vec4(displayedColor, 1.0);' },
+  { name: 'cut-material-setup', from: 'vec3 color = mix(baseColor, armorColor, step(0.5, surface.w) * (1.0 - step(1.5, surface.w)));\n  if (!USES_SPLAT) color *= vertexTint;', to: 'vec3 color = baseColor;' },
+  { name: 'cut-armor-surface', from: 'if (surface.w > 0.5 && surface.w < 1.5) {', to: 'if (false) {' },
+  // Standalone variants: they replace text another cut removes, so cumulative runs leave them out.
+  { name: 'ibl-fixed-mip', standalone: true, from: 'environmentRadiance(reflected, roughness * environmentLevelMax)', to: 'environmentRadiance(reflected, 3.0)' },
+  // Occupancy probes (#2144): the picture must not change.
+  { name: 'occupancy-constant-uniforms', standalone: true, transform: constifyUniforms },
+  { name: 'occupancy-extra-uniforms', standalone: true, transform: addUsedUniforms },
+  { name: 'occupancy-mediump', standalone: true, transform: useMediumPrecision },
 ];
+
+// Uniforms the Lone Monk courtyard frame never changes become constants, so the program has fewer to hold.
+const CONSTANT_UNIFORMS = [['float', 'hdrEnabled', '1.0'], ['float', 'inspection', '0.0'], ['float', 'compositeMode', '0.0'], ['float', 'renderPassMode', '0.0']];
+function constifyUniforms(source) {
+  let changed = source;
+  for (const [type, name, value] of CONSTANT_UNIFORMS) {
+    const declaration = `uniform ${type} ${name};`;
+    if (!changed.includes(declaration)) throw new Error('Occupancy cut: ' + declaration + ' is no longer declared; update CONSTANT_UNIFORMS.');
+    changed = changed.replace(declaration, `const ${type} ${name} = ${value};`);
+  }
+  return changed;
+}
+
+// Adds 32 vec4 uniforms the shader reads, to see whether a larger uniform file by itself slows the frame.
+function addUsedUniforms(source) {
+  const withDeclaration = source.replace('uniform float compositeMode;', 'uniform float compositeMode;\nuniform vec4 occupancyPadding[32];');
+  if (withDeclaration === source) throw new Error('Occupancy cut: compositeMode is no longer declared; update addUsedUniforms.');
+  const read = 'vec4 occupancySum = vec4(0.0);\n  for (int index = 0; index < 32; index++) occupancySum += occupancyPadding[index];\n  outputColor.rgb += occupancySum.rgb * 0.0;\n';
+  return withDeclaration.replace(/\n\}\s*$/, '\n  ' + read + '}');
+}
+
+// Default precision drops to mediump after the last uniform, so uniforms and varyings stay highp across both stages.
+function useMediumPrecision(source) {
+  const marker = 'uniform float compositeMode;';
+  if (!source.includes(marker)) throw new Error('Occupancy cut: compositeMode is no longer declared; update useMediumPrecision.');
+  return source.replace(marker, marker + '\nprecision mediump float;');
+}
+
+function applyCut(cut, source) {
+  if (cut.transform) return cut.transform(source);
+  if (!source.includes(cut.from)) throw new Error('Shader cut ' + cut.name + ' no longer matches the shader source.');
+  return source.replace(cut.from, cut.to);
+}
 
 window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, denseLods = false, denseLodsMinimumTriangles = undefined, experiment = null, sequence = null, profile = null, cumulativeCuts = null }) {
   const canvas = document.querySelector('#viewport');
@@ -136,10 +185,7 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
     WebGL2RenderingContext.prototype.shaderSource = function shaderSource(shader, source) {
       if (!source.includes('float shadowVisibility')) return originalSource.call(this, shader, source);
       let cutSource = source;
-      for (const cut of shaderCuts) {
-        if (!cutSource.includes(cut.from)) throw new Error('Shader cut ' + cut.name + ' no longer matches the shader source.');
-        cutSource = cutSource.replace(cut.from, cut.to);
-      }
+      for (const cut of shaderCuts) cutSource = applyCut(cut, cutSource);
       return originalSource.call(this, shader, cutSource);
     };
   }
@@ -465,4 +511,89 @@ async function measureProfile({ renderer, context, canvas, timer, frame, cameras
     };
   }
   return { coldStart, perCamera, rounds, frames, warmupFrames: WARMUP_FRAMES };
+}
+
+// Times the colour fragment shader with cuts applied, one renderer per step on the same page, on the whole-frame GPU timer.
+//   mode 'cumulative': the cuts stay off one after another, in listed order then reversed order (the reversed run starts again from none).
+//   mode 'each': every cut alone against none, with none repeated at the end to show drift.
+// `round` rotates which order runs first, so a card whose load drifts does not favour one. `cuts` names the cuts (default: the base shading cuts).
+// Each step reports the largest colour program's active uniforms and the GL errors seen at each point of the step.
+const BASE_SHADING_CUTS = ['cut-ibl-diffuse-tap', 'cut-ibl-specular-tap', 'cut-ibl-brdf-tap', 'cut-ibl-off', 'cut-fog', 'cut-hdr-encode', 'cut-blend-output', 'cut-material-setup'];
+async function measureCumulativeCuts({ createRenderer, canvas, frame, frames = 100, round = 0, baselineOnly = false, cuts = BASE_SHADING_CUTS, mode = 'cumulative', keepRendererTimer = false }) {
+  const unknown = cuts.filter(name => !SHADER_CUTS.some(cut => cut.name === name));
+  if (unknown.length) throw new Error('Unknown shader cuts: ' + unknown.join(', ') + '. Pass names from SHADER_CUTS.');
+  let activeCuts = [];
+  const colourShaders = new WeakSet();
+  const programsWithColourShader = new WeakSet();
+  const linkedPrograms = [];
+  const prototype = WebGL2RenderingContext.prototype;
+  const originalSource = prototype.shaderSource;
+  const originalAttach = prototype.attachShader;
+  const originalLink = prototype.linkProgram;
+  prototype.shaderSource = function shaderSource(shader, source) {
+    if (!source.includes('float shadowVisibility')) return originalSource.call(this, shader, source);
+    colourShaders.add(shader);
+    let cutSource = source;
+    for (const name of activeCuts) cutSource = applyCut(SHADER_CUTS.find(cut => cut.name === name), cutSource);
+    return originalSource.call(this, shader, cutSource);
+  };
+  prototype.attachShader = function attachShader(program, shader) {
+    if (colourShaders.has(shader)) programsWithColourShader.add(program);
+    return originalAttach.call(this, program, shader);
+  };
+  prototype.linkProgram = function linkProgram(program) {
+    originalLink.call(this, program);
+    if (programsWithColourShader.has(program)) linkedPrograms.push({ context: this, program });
+  };
+  const drainErrors = context => {
+    const found = [];
+    for (let error = context.getError(); error !== context.NO_ERROR && found.length < 8; error = context.getError()) found.push(error);
+    return found;
+  };
+  const measureStep = async (label, stepCuts) => {
+    activeCuts = stepCuts;
+    linkedPrograms.length = 0;
+    const renderer = createRenderer();
+    const context = renderer.context;
+    const errorTrace = { beforeRenderer: drainErrors(context) };
+    const timer = createSegmentTimer(context);
+    // The renderer's own timer would open a query inside ours, and WebGL allows one at a time (keepRendererTimer leaves it on to show the INVALID_OPERATION that causes).
+    if (!keepRendererTimer) renderer.gpuTimer = null;
+    errorTrace.afterCreate = drainErrors(context);
+    renderer.render(frame);
+    errorTrace.afterFirstRender = drainErrors(context);
+    const result = await timeFrames({ renderer, context, canvas, timer, frame, frames, segmented: false });
+    errorTrace.afterTiming = drainErrors(context);
+    const gpuFrames = result.gpu.slice(WARMUP_FRAMES).map(totalOf);
+    const activeUniforms = Math.max(0, ...linkedPrograms.map(({ context: owner, program }) => owner.getProgramParameter(program, owner.ACTIVE_UNIFORMS)));
+    renderer.dispose();
+    return {
+      label,
+      cuts: stepCuts.length,
+      lastCut: stepCuts.at(-1) ?? null,
+      gpuMedianMs: Number(median(gpuFrames).toFixed(3)),
+      gpuMinMs: Number(Math.min(...gpuFrames).toFixed(3)),
+      wallMedianMs: Number(median(result.wall.slice(WARMUP_FRAMES)).toFixed(3)),
+      activeUniforms,
+      glErrors: errorTrace,
+    };
+  };
+  const steps = [];
+  try {
+    steps.push({ order: 'none', ...await measureStep('none', []) });
+    if (!baselineOnly) {
+      const plans = mode === 'each'
+        ? [{ order: 'each', lists: cuts.map(name => [name]) }]
+        : [{ order: 'listed', lists: cuts.map((_, index) => cuts.slice(0, index + 1)) }, { order: 'reversed', lists: cuts.map((_, index) => [...cuts].reverse().slice(0, index + 1)) }];
+      for (const { order, lists } of rotatedOrder(plans, round)) {
+        for (const list of lists) steps.push({ order, ...await measureStep(`${order} ${list.length}`, list) });
+      }
+      steps.push({ order: 'none-again', ...await measureStep('none again', []) });
+    }
+  } finally {
+    prototype.shaderSource = originalSource;
+    prototype.attachShader = originalAttach;
+    prototype.linkProgram = originalLink;
+  }
+  return { cumulative: steps, mode, cutOrder: cuts, round, frames };
 }
