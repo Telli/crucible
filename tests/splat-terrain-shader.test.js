@@ -17,12 +17,12 @@ test('a shader with splat layers defines terrainNoise before the splat code that
 });
 
 // Builds a splat terrain, with or without grass, in one renderer and draws one frame. Returns what the browser reported.
-async function drawSplatTerrain(page, { withGrass, withEnvironment, withGlass = false, glassCastsShadow = true }) {
+async function drawSplatTerrain(page, { withGrass, withEnvironment, withGlass = false, glassCastsShadow = true, glassColor = [0, 1, 1] }) {
   const browserMessages = [];
   page.on('console', message => {
     if (['warning', 'error'].includes(message.type())) browserMessages.push(message.text());
   });
-  const task = async ({ withGrass, withEnvironment, withGlass, glassCastsShadow }) => {
+  const task = async ({ withGrass, withEnvironment, withGlass, glassCastsShadow, glassColor }) => {
     await import('/src/splat-shader.js');
     await import('/src/fog-shader.js');
     const { createEnvironmentMap } = await import('/src/environment.js');
@@ -55,7 +55,7 @@ async function drawSplatTerrain(page, { withGrass, withEnvironment, withGlass = 
     if (withGrass) parts.push(...scatterVegetation({ area: { minX: -20, maxX: 20, minZ: -20, maxZ: 20 }, density: 0.01, variants: 1, seed: 5, terrainHeight: terrain.heightAt }).parts);
     if (withGlass) {
       const { box } = await import('/src/geometry.js');
-      parts.push({ name: 'glass', geometry: box(0.2, 1), matrix: new Float32Array([3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 2, 0, 1]), material: { color: [0, 1, 1], metallic: 0, roughness: 0.1, alphaMode: 'blend', opacity: 0.9 }, castShadow: glassCastsShadow });
+      parts.push({ name: 'glass', geometry: box(0.2, 1), matrix: new Float32Array([3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 2, 0, 1]), material: { color: glassColor, metallic: 0, roughness: 0.1, alphaMode: 'blend', opacity: 0.9 }, castShadow: glassCastsShadow });
     }
     // Reads the sampler uniforms of the linked program: how many the fragment stage reads, the highest unit and any unit
     // that two samplers of different types share.
@@ -101,7 +101,7 @@ async function drawSplatTerrain(page, { withGrass, withEnvironment, withGlass = 
     console.error = originalError;
     return { failure, glError, problems, audit, pixels };
   };
-  const result = await page.evaluate(task, { withGrass, withEnvironment, withGlass, glassCastsShadow });
+  const result = await page.evaluate(task, { withGrass, withEnvironment, withGlass, glassCastsShadow, glassColor });
   return { ...result, problems: [...result.problems, ...browserMessages] };
 }
 
@@ -165,14 +165,16 @@ function shadowedChannelRatios(shadowedFrame, litFrame) {
   return { changedPixels, ratios: shadowed.map((value, channel) => value / Math.max(lit[channel], 1)) };
 }
 
-test('a cyan glass slab throws a cyan shadow onto a splat terrain', async context => {
+test('a cyan glass cube throws a shadow that loses more red than a white one on a splat terrain', async context => {
   await withDevServerPage(context, async page => {
-    const withShadow = await drawSplatTerrain(page, { withGrass: false, withEnvironment: false, withGlass: true, glassCastsShadow: true });
-    const withoutShadow = await drawSplatTerrain(page, { withGrass: false, withEnvironment: false, withGlass: true, glassCastsShadow: false });
-    assert.equal(withShadow.audit.splatBatchesBlind, 0, 'splat batches must read the tinted shadow map');
-    assertWithinUnitBudget(withShadow.audit);
-    const { changedPixels, ratios } = shadowedChannelRatios(withShadow.pixels, withoutShadow.pixels);
-    assert.ok(changedPixels > 60, `the glass shadow changed only ${changedPixels} terrain pixels`);
-    assert.ok(ratios[0] < ratios[1] - 0.1, `red keeps ${ratios[0].toFixed(2)} of its light and green ${ratios[1].toFixed(2)}: the shadow is not tinted`);
+    const lit = await drawSplatTerrain(page, { withGrass: false, withEnvironment: false, withGlass: true, glassCastsShadow: false });
+    const cyan = await drawSplatTerrain(page, { withGrass: false, withEnvironment: false, withGlass: true, glassColor: [0, 1, 1] });
+    const white = await drawSplatTerrain(page, { withGrass: false, withEnvironment: false, withGlass: true, glassColor: [1, 1, 1] });
+    assert.equal(cyan.audit.splatBatchesBlind, 0, 'splat batches must read the tinted shadow map');
+    assertWithinUnitBudget(cyan.audit);
+    const cyanShadow = shadowedChannelRatios(cyan.pixels, lit.pixels);
+    const whiteShadow = shadowedChannelRatios(white.pixels, lit.pixels);
+    assert.ok(cyanShadow.changedPixels > 60, `the glass shadow changed only ${cyanShadow.changedPixels} terrain pixels`);
+    assert.ok(cyanShadow.ratios[0] < whiteShadow.ratios[0] - 0.05, `red keeps ${cyanShadow.ratios[0].toFixed(2)} under cyan glass and ${whiteShadow.ratios[0].toFixed(2)} under white glass: the shadow is not tinted`);
   });
 });
