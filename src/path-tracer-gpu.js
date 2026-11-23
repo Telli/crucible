@@ -12,6 +12,8 @@ const TARGET_COUNT = 4;
 const DRAW_SECONDS_TARGET = 0.08;
 const MINIMUM_BAND_ROWS = 4;
 const YIELD_SECONDS = 0.25;
+export const MAX_TILE_WIDTH = 256;
+export const MAX_TILE_PIXELS = 65536;
 
 function createCanvas() {
   if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(1, 1);
@@ -32,18 +34,35 @@ function compileShader(gl, type, source) {
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    throw new Error(`The GPU path tracer shader did not compile: ${gl.getShaderInfoLog(shader)}`);
+    const info = gl.getShaderInfoLog(shader);
+    gl.deleteShader(shader);
+    throw new Error(`The GPU path tracer shader did not compile: ${info}`);
   }
   return shader;
 }
 
 function createProgram(gl, variant) {
   const program = gl.createProgram();
-  gl.attachShader(program, compileShader(gl, gl.VERTEX_SHADER, VERTEX_SOURCE));
-  gl.attachShader(program, compileShader(gl, gl.FRAGMENT_SHADER, buildFragmentSource(variant)));
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(`The GPU path tracer program did not link: ${gl.getProgramInfoLog(program)}`);
-  return program;
+  let vertexShader;
+  let fragmentShader;
+  try {
+    vertexShader = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SOURCE);
+    fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, buildFragmentSource(variant));
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      const info = gl.getProgramInfoLog(program);
+      throw new Error(`The GPU path tracer program did not link: ${info}`);
+    }
+    return program;
+  } catch (error) {
+    gl.deleteProgram(program);
+    throw error;
+  } finally {
+    if (vertexShader) gl.deleteShader(vertexShader);
+    if (fragmentShader) gl.deleteShader(fragmentShader);
+  }
 }
 
 // Textures and targets of the render in progress; the context and program outlive it (compiling the kernel takes seconds).
@@ -271,37 +290,45 @@ export function releaseResources(gl) {
   resources.length = 0;
 }
 
-/** The band size and the last turn given to the page, kept from one sample to the next. */
-export function createBandState(height) {
-  return { bandRows: Math.min(height, 32), lastYield: performance.now() };
+/** The band size, tile width and the last turn given to the page, kept from one sample to the next. */
+export function createBandState(height, tileWidth = MAX_TILE_WIDTH) {
+  return { bandRows: Math.min(height, 32), tileWidth, lastYield: performance.now() };
 }
 
-/** Draws one sample of every pixel in bands that take about DRAW_SECONDS_TARGET each, giving the page a turn now and then. */
+/** Draws one sample of every pixel in bounded 2D tiles that take about DRAW_SECONDS_TARGET each, yielding between tiles. */
 export async function drawOneSample(gl, program, width, height, sample, band, shouldStop) {
+  const tileWidth = Math.max(1, Math.min(width, band.tileWidth ?? MAX_TILE_WIDTH));
+  const maxBandRows = Math.min(height, Math.max(MINIMUM_BAND_ROWS, Math.floor(MAX_TILE_PIXELS / tileWidth)));
   gl.viewport(0, 0, width, height);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE);
   gl.enable(gl.SCISSOR_TEST);
   gl.uniform1i(gl.getUniformLocation(program, 'uSample'), sample);
   let rowStart = 0;
-  while (rowStart < height) {
-    const rows = Math.min(band.bandRows, height - rowStart);
-    const firstRow = rowStart;
-    rowStart += rows;
-    const started = performance.now();
-    gl.scissor(0, firstRow, width, rows);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    gl.finish();
-    const seconds = (performance.now() - started) / 1000;
-    const scale = Math.min(2, DRAW_SECONDS_TARGET / Math.max(seconds, 1e-4));
-    band.bandRows = Math.max(MINIMUM_BAND_ROWS, Math.min(height, Math.round(rows * scale)));
-    shouldStop();
-    if ((performance.now() - band.lastYield) / 1000 > YIELD_SECONDS) {
-      await nextTask();
-      band.lastYield = performance.now();
+  try {
+    while (rowStart < height) {
+      const rows = Math.min(band.bandRows, maxBandRows, height - rowStart);
+      const firstRow = rowStart;
+      rowStart += rows;
+      for (let colStart = 0; colStart < width; colStart += tileWidth) {
+        const cols = Math.min(tileWidth, width - colStart);
+        const started = performance.now();
+        gl.scissor(colStart, firstRow, cols, rows);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.finish();
+        const seconds = (performance.now() - started) / 1000;
+        const scale = Math.min(2, DRAW_SECONDS_TARGET / Math.max(seconds, 1e-4));
+        band.bandRows = Math.max(MINIMUM_BAND_ROWS, Math.min(maxBandRows, Math.round(rows * scale)));
+        shouldStop();
+        if ((performance.now() - band.lastYield) / 1000 > YIELD_SECONDS) {
+          await nextTask();
+          band.lastYield = performance.now();
+        }
+      }
     }
+  } finally {
+    gl.disable(gl.SCISSOR_TEST);
   }
-  gl.disable(gl.SCISSOR_TEST);
 }
 
 async function drawSamples(gl, program, width, height, samples, shouldStop) {

@@ -28,7 +28,7 @@ function constantSky(value) {
   return createEnvironmentMap({ width: 8, height: 4, data: new Float32Array(8 * 4 * 3).fill(value) });
 }
 
-async function centerAlbedo(material, environment = { skyColor: [0.5, 0.5, 0.5] }) {
+async function centerAlbedo(material, environment = {}) {
   const part = { name: 'floor', geometry: QUAD, matrix: IDENTITY, material: { tag: 'surface', color: [0.8, 0.8, 0.8], metallic: 0, roughness: 0.5, ...material } };
   const result = await renderPathTracedImage({ parts: [part], environment, camera: LOOKING_DOWN }, SMALL);
   return [0, 1, 2].map(channel => result.features.albedo[CENTER * 3 + channel]);

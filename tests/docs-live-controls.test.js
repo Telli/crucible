@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { frameControlScript, frameControlStyle } from '../src/docs-live-controls.js';
+import { escapeHtml, frameControlScript, frameControlStyle, revokeImportUrls } from '../src/docs-live-controls.js';
 
 function fakeElement(properties = {}) {
   const classNames = new Set();
@@ -128,4 +128,11 @@ test('a slider with step any or an exponent step still shows its fraction', () =
     const { created } = runControlScript({ sliderProperties: { min: '0', max: '1', step, stored } });
     assert.equal(created[0].textContent, shown, `step ${step}`);
   }
+});
+
+test('escapeHtml escapes markup attributes and revokeImportUrls releases every blob URL', () => {
+  assert.equal(escapeHtml('a"b<c>&\'d\''), 'a&quot;b&lt;c&gt;&amp;&#39;d&#39;');
+  const revoked = [];
+  revokeImportUrls({ core: 'blob:1', addon: 'blob:2' }, url => revoked.push(url));
+  assert.deepEqual(revoked, ['blob:1', 'blob:2']);
 });

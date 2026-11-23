@@ -203,18 +203,20 @@ export function createPassInputs(renderer) {
 
   return {
     /** Draws what the passes need. `renderPass(passFrame)` is the renderer's own render. */
-    draw(renderPass, frame, passes) {
+    draw(renderPass, frame, passes, { objectIdDrawn = false } = {}) {
       const needs = needsOf(passes);
       const capturedNeeds = CAPTURED_ORDER.filter(need => needs.has(need));
-      const reReadsObjectIds = capturedNeeds.length > 0 && passes.some(pass => pass.objects);
-      if (capturedNeeds.length === 0 && !needs.has('objectId')) return;
-      if (!renderer.passSupport) throw new Error('A pass with needs reads the render passes. Fix: call installRenderPasses(renderer) from crucible/addons/render-passes first.');
+      const usesObjects = passes.some(pass => pass.objects);
+      const wantsObjectIds = needs.has('objectId') || usesObjects;
+      const drawsObjectIds = wantsObjectIds && (capturedNeeds.length > 0 || !objectIdDrawn);
+      if (capturedNeeds.length === 0 && !drawsObjectIds) return;
+      if (!renderer.passSupport) throw new Error('A pass with needs or objects reads the render passes. Fix: call installRenderPasses(renderer) from crucible/addons/render-passes first.');
       const { width, height } = renderer.canvas;
       for (const need of capturedNeeds) {
         renderPass({ ...frame, pass: need, previousCamera: undefined });
         capture(renderer.context, need, width, height);
       }
-      if (needs.has('objectId') || reReadsObjectIds) renderPass({ ...frame, pass: 'objectId', previousCamera: undefined });
+      if (drawsObjectIds) renderPass({ ...frame, pass: 'objectId', previousCamera: undefined });
     },
 
     /** Binds the captured passes and palettes of `pass` to their units and points the uniforms at them. */

@@ -109,7 +109,7 @@ new ResizeObserver(() => {
 }).observe(canvas);
 ```
 
-The model fills the height of the picture with a margin of 20 percent. Change `'front'` to `'right'`, `'top'` or `'perspective'` to see the other views. A perspective view uses `fitPerspectiveDistance(bounds, view, aspect, padding)` instead, which returns the distance from the eye to the target.
+The model fills the height of the picture with a margin of 20 percent. Change `'front'` to `'right'`, `'top'` or `'perspective'` to see the other views. A perspective view uses `fitPerspectiveDistance(bounds, view, aspect, padding)` instead, which returns the distance from the eye to the target. To map a 3D world point to screen pixels for the same camera frame (`{ x, y, depth, inFront }`), call `projectToScreen(frame, point, width, height)`.
 
 Flat 2D uses XY geometry, the `unlit` material tag and a front orthographic camera. The `crucible/addons/canvas2d` addon supplies a poster scene that you can reuse.
 

@@ -43,6 +43,7 @@ import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mj
 import { resolvePacksOption } from '../bin/crucible-pack-folder.mjs';
 import { FOLDED_APPLY_OPERATION_TYPES } from '../src/apply-operation-notes.js';
 import { FIT_PARAMETER_NAMES } from '../src/look-fit-parameters.js';
+import { REVIEW_CAMERA_FIELDS } from './agent-review.mjs';
 
 describeSchemaInputsWithReceivedValues();
 
@@ -238,11 +239,12 @@ const materialFields = {
   alphaMode: z.enum(RECIPE_ALPHA_MODES).optional().describe('mask cuts out where the map alpha is under alphaCutoff (hard edge, crisp shadow); blend draws after opaque geometry, sorted back to front; add adds its light to what is behind it.'),
   alphaCutoff: unit.optional().describe('With alphaMode mask only: alpha below this is cut out (0.5 default).'),
   doubleSided: z.boolean().optional().describe('Draw and light both faces (thin sheets, leaves, cloth).'),
+  depthTest: z.boolean().optional().describe('Test against the depth buffer (true default); false draws blend or add materials through opaque geometry.'),
   aov: z.union([unit, color]).optional(),
 };
 const materialTag = z.enum(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']).optional().describe('Surface kind; liquid, foam, foliage, grass and water change how it renders: see scene_capabilities materialTags and water.');
 const materialCore = coreOf(materialFields, ['color', 'metallic', 'roughness', 'emission', 'opacity']);
-const materialMore = 'More fields: tag, alphaMode, alphaCutoff, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics, foamEdge, foamWidth, foamVeins, contactFoam, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors, toonEdge; see scene_capabilities materialFields.';
+const materialMore = 'More fields: tag, alphaMode, alphaCutoff, doubleSided, depthTest, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics, foamEdge, foamWidth, foamVeins, contactFoam, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors, toonEdge; see scene_capabilities materialFields.';
 const materialListed = (strictSchema, description, extraCore) => listed('materialFields', strictSchema, `${description} ${materialMore}`, { ...extraCore, ...materialCore });
 const liquidOptics = z.strictObject({
   thickness: z.number().min(0).max(100).optional().describe('Metres of liquid where it faces the camera.'),
@@ -1259,7 +1261,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     shots: z.array(z.strictObject({
       label: z.string().max(48).optional(),
       ...reviewBranchField,
-      camera: z.strictObject(cameraFields).optional(),
+      camera: z.strictObject(coreOf(cameraFields, REVIEW_CAMERA_FIELDS)).optional(),
       animation: z.strictObject({ clip: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), time: z.number().min(0).max(3600) }).optional(),
       motionTime: z.number().min(0).max(3600).nullable().optional(),
       rendererTime: z.number().min(0).max(3600).optional(),

@@ -10,6 +10,7 @@ import { unwrapUv } from './mesh-uv.js';
 import { createImage, linearToSrgbByte } from './material-texture-kit.js';
 import { contentFingerprint, ownedCopy, retainedBytes } from './content-fingerprint.js';
 import { drainSteps } from './flush-search-runner.js';
+import { boundsHoldPoint } from './lamp-mesh.js';
 
 // Light bake: the light that bounces between surfaces, written into one lightmap texture per part. A part draws it
 // through its emissive map, so the renderer, its shaders and every scene without a bake stay exactly as they were.
@@ -169,20 +170,6 @@ export function withReach(lights, parts) {
 function emittersAroundPoint(position, parts) {
   const surrounds = parts.map(part => emittedRadiance(part.material).some(channel => channel > 0) && boundsHoldPoint(part, position));
   return surrounds.some(Boolean) ? Uint8Array.from(surrounds, flag => (flag ? 1 : 0)) : null;
-}
-
-function boundsHoldPoint({ geometry, matrix }, point) {
-  const minimum = [Infinity, Infinity, Infinity];
-  const maximum = [-Infinity, -Infinity, -Infinity];
-  const source = geometry.positions;
-  for (let vertex = 0; vertex < source.length; vertex += 3) {
-    for (let axis = 0; axis < 3; axis++) {
-      const transformed = matrix[axis] * source[vertex] + matrix[4 + axis] * source[vertex + 1] + matrix[8 + axis] * source[vertex + 2] + matrix[12 + axis];
-      minimum[axis] = Math.min(minimum[axis], transformed);
-      maximum[axis] = Math.max(maximum[axis], transformed);
-    }
-  }
-  return [0, 1, 2].every(axis => point[axis] >= minimum[axis] && point[axis] <= maximum[axis]);
 }
 
 function lightReaches(light, owner) {
