@@ -3,7 +3,7 @@ import { createSurfaceDistance } from './mesh-surface-distance.js';
 import { meshBounds } from './mesh-data.js';
 import { meshFromGeometry } from './mesh-convert.js';
 import { extractRender } from './mesh-render.js';
-import { simplifyGeometry } from './geometry-simplify.js';
+import { simplifyGeometrySteps, finishSteps } from './geometry-simplify.js';
 import { requireFiniteInRange } from './modeling-limits.js';
 
 // Levels of detail for runtime selection (issue 37). Level 0 is the input; each next level keeps the given ratio of
@@ -42,7 +42,12 @@ function farthestFromSurface(mesh, surface) {
  * Decimate a polygon mesh into levels. Returns [{ level, ratio, mesh, triangles, targetTriangles, error, relativeError, path }],
  * where relativeError is the error over the diagonal of the input's bounds and path is 'decimate' (level 0 is 'input').
  */
-export function generateMeshLods(mesh, { ratios = DEFAULT_LOD_RATIOS } = {}) {
+export function generateMeshLods(mesh, options) {
+  return finishSteps(generateMeshLodsSteps(mesh, options));
+}
+
+/** `generateMeshLods` as a generator that yields before each level, so a caller can run it in slices; returns the levels. */
+function* generateMeshLodsSteps(mesh, { ratios = DEFAULT_LOD_RATIOS } = {}) {
   checkRatios(ratios);
   const surface = createSurfaceDistance(mesh);
   const bounds = meshBounds(mesh);
@@ -51,14 +56,15 @@ export function generateMeshLods(mesh, { ratios = DEFAULT_LOD_RATIOS } = {}) {
   const levels = [{ level: 0, ratio: 1, mesh, triangles: surface.triangleCount, error: 0, relativeError: 0, path: 'input' }];
   let previousRatio = 1;
   let previous = mesh;
-  ratios.forEach((ratio, index) => {
+  for (const [index, ratio] of ratios.entries()) {
+    yield;
     // Each level continues from the one before, so the work shrinks with the mesh.
     const reduced = decimateMesh(previous, { ratio: ratio / previousRatio });
     const error = farthestFromSurface(reduced.mesh, surface);
     levels.push({ level: index + 1, ratio, mesh: reduced.mesh, triangles: reduced.triangles.after, targetTriangles: Math.ceil(surface.triangleCount * ratio), error, relativeError: error / diagonal, path: 'decimate' });
     previous = reduced.mesh;
     previousRatio = ratio;
-  });
+  }
   return levels;
 }
 
@@ -74,7 +80,7 @@ function hasPerVertexLook(geometry) {
  * estimate of how far the surface moved, in the geometry's units; `relativeError` is that over the bounds diagonal;
  * `targetTriangles` is the count asked for and `path` is 'keep' or 'blend', the simplifier that made the level.
  */
-function generateAttributeLods(geometry, { ratios, blendSeams }) {
+function* generateAttributeLodsSteps(geometry, { ratios, blendSeams }) {
   checkRatios(ratios);
   const bounds = geometry.positions;
   const low = [Infinity, Infinity, Infinity];
@@ -87,7 +93,8 @@ function generateAttributeLods(geometry, { ratios, blendSeams }) {
   }
   const diagonal = Math.hypot(...high.map((value, axis) => value - low[axis])) || 1;
   const levels = [{ level: 0, ratio: 1, triangles: geometry.indices.length / 3, error: 0, relativeError: 0, path: 'input', geometry }];
-  simplifyGeometry(geometry, { ratios, blendSeams }).forEach((reduced, index) => {
+  const reducedLevels = yield* simplifyGeometrySteps(geometry, { ratios, blendSeams });
+  reducedLevels.forEach((reduced, index) => {
     levels.push({ level: index + 1, ratio: reduced.ratio, triangles: reduced.triangles, targetTriangles: reduced.target, error: reduced.error, relativeError: reduced.error / diagonal, path: reduced.path, geometry: reduced.geometry });
   });
   return levels;
@@ -98,14 +105,26 @@ function generateAttributeLods(geometry, { ratios, blendSeams }) {
  * level carries a geometry made by extractRender, with edges sharper than `smoothAngle` degrees kept hard. Geometry
  * with per-vertex uvs or colours takes `blendSeams` ('auto', 'never' or 'always') for its seam handling.
  */
-export function generateGeometryLods(geometry, { ratios = DEFAULT_LOD_RATIOS, smoothAngle = 30, blendSeams = 'auto' } = {}) {
+export function generateGeometryLods(geometry, options) {
+  return finishSteps(generateGeometryLodsSteps(geometry, options));
+}
+
+/**
+ * `generateGeometryLods` as a generator for a viewer that must stay responsive (#2985): it yields every few milliseconds
+ * of work, and the levels it returns are the same bytes as `generateGeometryLods` makes whenever the caller resumes it.
+ * A geometry without per-vertex uvs or colours is cut between levels only; one with them is cut inside the simplifier.
+ */
+export function* generateGeometryLodsSteps(geometry, { ratios = DEFAULT_LOD_RATIOS, smoothAngle = 30, blendSeams = 'auto' } = {}) {
   requireFiniteInRange('generateGeometryLods', 'smoothAngle', smoothAngle, 0, 180);
-  if (hasPerVertexLook(geometry)) return generateAttributeLods(geometry, { ratios, blendSeams });
+  if (hasPerVertexLook(geometry)) return yield* generateAttributeLodsSteps(geometry, { ratios, blendSeams });
   const mesh = meshFromGeometry(geometry, { quads: false, tags: 'none' });
-  return generateMeshLods(mesh, { ratios }).map(({ mesh: levelMesh, ...rest }) => ({
-    ...rest,
-    geometry: rest.level === 0 ? geometry : extractRender(levelMesh, { sharpAngle: smoothAngle * Math.PI / 180 }).geometry,
-  }));
+  const meshLevels = yield* generateMeshLodsSteps(mesh, { ratios });
+  const levels = [];
+  for (const { mesh: levelMesh, ...rest } of meshLevels) {
+    if (rest.level > 0) yield;
+    levels.push({ ...rest, geometry: rest.level === 0 ? geometry : extractRender(levelMesh, { sharpAngle: smoothAngle * Math.PI / 180 }).geometry });
+  }
+  return levels;
 }
 
 /**

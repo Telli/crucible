@@ -9,6 +9,7 @@ import { inWholeWorldOrder, readPartRanks } from './showcase-download.js';
 import { withinDrawnLightLimits } from './drawn-light-lists.js';
 import { createFileSceneRenderAt } from './file-scene-clip.js';
 import { startDeferredLods } from './deferred-lods.js';
+import { MEMORY_BUDGET_ERROR_CODE } from './budget.js';
 import { partsForRendererOptions, planLodsForRendererOptions, sceneFileLighting, sunShadowBounds, withFileSceneInteriorLight, withSceneFileLights, withSceneFileRendererDefaults } from './dense-lods.js';
 
 // Headless twin of the showcase page for scripts/render-media.mjs (--scene file). The export script serves the scene.json
@@ -59,7 +60,13 @@ function swapInLevels({ renderer, plan, sourceParts, rendererParts, levelsByGeom
   levelled.forEach((part, index) => {
     if (!planned.has(sourceParts[index])) return;
     const rendererPart = rendererParts[index];
-    renderer.setPartLods(rendererPart, [{ ...part.lods[0], geometry: rendererPart.geometry }, ...part.lods.slice(1)]);
+    try {
+      renderer.setPartLods(rendererPart, [{ ...part.lods[0], geometry: rendererPart.geometry }, ...part.lods.slice(1)]);
+    } catch (error) {
+      if (error.code !== MEMORY_BUDGET_ERROR_CODE) throw error;
+      // The levels would pass memoryBudgetMiB: the part keeps drawing level 0 only, as it would with a budget that cannot hold them.
+      console.warn(`Levels of detail for ${part.name} skipped: ${error.message}`);
+    }
   });
 }
 
