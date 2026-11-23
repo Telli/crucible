@@ -44,7 +44,7 @@ async function renderDemoRoom(requestedBackend, workDirectory) {
       if (['completed', 'cancelled', 'failed'].includes(record.state)) break;
       await delay(200);
     }
-    assert.equal(record.state, 'completed', record.error);
+    assert.equal(record.state, 'completed', record.reason);
     const result = (await call('scene_render_result', { jobId })).structuredContent;
     const imagePath = join(workDirectory, `${requestedBackend}.png`);
     await copyFile(result.artifacts[0].path, imagePath);

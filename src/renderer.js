@@ -25,6 +25,7 @@ import { wearUniformValues } from './material-wear.js';
 import { fittedFogDensity } from './fog-fit.js';
 import { canUseCompactColor, respecifyColorTargets } from './compact-color.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
+import { countDraws } from './draw-counter.js';
 import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope, sunShadowMapSize } from './shadow-light.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
 
@@ -765,6 +766,8 @@ export class CrucibleRenderer {
     this.gpuTimer = undefined;
     /** Milliseconds the GPU took for a recent frame, when `createGpuTimer` is given. */
     this.gpuMilliseconds = null;
+    /** Cost of the last `render()`: draw calls, triangles drawn, planned bytes and the GPU time of a recent frame (docs/learn/renderer-reference.md). */
+    this.stats = { drawCalls: 0, trianglesDrawn: 0, geometryBytes: 0, textureBytes: 0, gpuTimeMs: null };
     this.culling = culling;
     // A NaN or negative error would pick the coarsest level everywhere without a word (#2403).
     if (typeof lodPixelError !== 'number' || !(lodPixelError >= 0)) throw new TypeError(`lodPixelError must be a number of 0 or more pixels, got ${lodPixelError}.`);
@@ -2848,6 +2851,21 @@ export class CrucibleRenderer {
   }
 
   render(frame) {
+    // The water mirror is part of a frame, not a frame: it neither counts draws nor replaces the stats.
+    const draws = frame.reflectionTarget ? null : countDraws(this.context);
+    try {
+      this.renderFrame(frame);
+    } finally {
+      draws?.release();
+    }
+    if (draws) this.publishStats(draws.counters);
+  }
+
+  publishStats({ drawCalls, triangles }) {
+    this.stats = { drawCalls, trianglesDrawn: triangles, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, gpuTimeMs: this.gpuMilliseconds };
+  }
+
+  renderFrame(frame) {
     this.localEmissionMaskReady = false;
     if (frame.pass === undefined && !frame.reflectionTarget && (frame.environment?.localVolumes ?? this.environment?.localVolumes)?.length > 0) {
       this.localEmissionMaskReady = requireFeatureCode('volumeFog').support.drawEmissionMask(this, frame);
