@@ -1375,6 +1375,10 @@ async function runStrictValidator(data, options, limits) {
 
 /** Parse a bounded glTF 2.0 asset into CrucibleRenderer parts. Draco and KTX2 decoders come from options.decoders; meshopt decodes in a chunk that loads on demand, unless options.decoders.meshopt replaces it. */
 export async function parseGltf(data, options = {}) {
+  if (options.textures !== undefined && typeof options.textures !== 'boolean') {
+    throw new TypeError('options.textures must be a boolean (pass false to skip texture decoding).');
+  }
+  const decodeTextures = options.textures !== false;
   const limits = limitsFor(options);
   const document = documentFrom(data, limits.maxBytes);
   if (options.strict) await runStrictValidator(data, options, limits);
@@ -1397,7 +1401,7 @@ export async function parseGltf(data, options = {}) {
   const warnings = [...fallbackWarnings, ...ignoredExtensions.map(extension => `${extension} is accepted but not rendered.`), ...skippedPrimitiveWarnings(document), ...unusablePrimitiveWarnings, ...emptyMeshoptViewWarnings(document), ...clampedIorWarnings(document), ...ignoredMorphTangentWarnings(document)];
   const dataBytes = typeof data === 'string' ? new TextEncoder().encode(data).byteLength : data.byteLength;
   const { resourceBytes, textureScaling } = await prepareResources(document, data, dataBytes, options, limits, overruns);
-  if (textureScaling.scaledTextures.length) {
+  if (decodeTextures && textureScaling.scaledTextures.length) {
     // A large scene can scale hundreds of images; the warning names a few and asset.scaledTextures lists them all.
     const names = textureScaling.scaledTextures.slice(0, 3).map(({ name, from, to }) => `${name} ${from.join('x')} to ${to.join('x')}`);
     const more = textureScaling.scaledTextures.length - names.length;
@@ -1406,10 +1410,10 @@ export async function parseGltf(data, options = {}) {
   }
   let gltf;
   try {
-    gltf = await decodeGltf({ document, glbBinary: binaryChunk(data), resourceBytes, decoders, limits, imageTargets: textureScaling.targetByImageIndex, sharedTextures: options.sharedTextures });
+    gltf = await decodeGltf({ document, glbBinary: binaryChunk(data), resourceBytes, decoders, limits, imageTargets: textureScaling.targetByImageIndex, sharedTextures: options.sharedTextures, decodeTextures });
     // Accessors are decoded one primitive at a time as the conversion reaches them, so the file bytes stay until the last one is read.
     data = null;
-    if (resampler) warnings.push(...resampler.apply(gltf, limits));
+    if (resampler && decodeTextures) warnings.push(...resampler.apply(gltf, limits));
     const parts = [];
     const bindings = [];
     const skinBindings = [];

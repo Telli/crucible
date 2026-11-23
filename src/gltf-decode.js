@@ -82,6 +82,9 @@ async function decodeImage(bytes, mimeType, target) {
     return createImageBitmap(blob, options);
   }
   if (target) throw new Error('Scaling textures to fit maxTexturePixels requires createImageBitmap.');
+  if (typeof Image !== 'function') {
+    throw new Error('Texture decoding requires a browser or { textures: false }.');
+  }
   const url = URL.createObjectURL(blob);
   try {
     const image = new Image();
@@ -141,7 +144,7 @@ function releaserFor(releasers) {
  * The result has the shape the CrucibleRenderer conversion in gltf.js reads. Nothing here imports three.js: Draco, meshopt
  * and KTX2 decoders arrive as `decoders` objects that the caller supplies.
  */
-export async function decodeGltf({ document, glbBinary, resourceBytes, decoders, limits, imageTargets = new Map(), sharedTextures }) {
+export async function decodeGltf({ document, glbBinary, resourceBytes, decoders, limits, imageTargets = new Map(), sharedTextures, decodeTextures = true }) {
   const releasers = [];
   const usedNames = new Map();
   const nodeCache = new Map();
@@ -269,24 +272,26 @@ export async function decodeGltf({ document, glbBinary, resourceBytes, decoders,
       emissiveIntensity: definition.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1,
       aoMapIntensity: definition.occlusionTexture?.strength ?? 1,
     };
-    for (const [field, sourceField, inPbrBlock] of TEXTURE_SLOTS) {
-      const reference = inPbrBlock ? pbr[sourceField] : definition[sourceField];
-      if (!reference) continue;
-      try {
-        material[field] = await loadTexture(reference.index);
-      } catch (error) {
-        throw new Error(`${sourceField} failed to decode. Use a valid PNG, JPEG or WebP image. ${error.message}`);
+    if (decodeTextures) {
+      for (const [field, sourceField, inPbrBlock] of TEXTURE_SLOTS) {
+        const reference = inPbrBlock ? pbr[sourceField] : definition[sourceField];
+        if (!reference) continue;
+        try {
+          material[field] = await loadTexture(reference.index);
+        } catch (error) {
+          throw new Error(`${sourceField} failed to decode. Use a valid PNG, JPEG or WebP image. ${error.message}`);
+        }
       }
-    }
-    const layerTextures = {};
-    for (const [name, reference] of layerTextureReferences(definition)) {
-      try {
-        layerTextures[name] = await loadTexture(reference.index);
-      } catch (error) {
-        throw new Error(`${name} failed to decode. Use a valid PNG, JPEG or WebP image. ${error.message}`);
+      const layerTextures = {};
+      for (const [name, reference] of layerTextureReferences(definition)) {
+        try {
+          layerTextures[name] = await loadTexture(reference.index);
+        } catch (error) {
+          throw new Error(`${name} failed to decode. Use a valid PNG, JPEG or WebP image. ${error.message}`);
+        }
       }
+      if (Object.keys(layerTextures).length > 0) material.layerTextures = layerTextures;
     }
-    if (Object.keys(layerTextures).length > 0) material.layerTextures = layerTextures;
     materials.set(materialIndex, material);
     return material;
   }
