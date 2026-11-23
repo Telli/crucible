@@ -283,3 +283,17 @@ test('a group node still refuses shadow flags and an asset node refuses the othe
   assert.throws(() => createAgentScene(recipe([{ id: 'g', castShadow: false }])), /nodes\[1\]\.castShadow: got false; expected a flag on a mesh node/);
   assert.throws(() => createAgentScene(recipe([{ id: 'a', asset: { id: ASSET_ID }, holdout: true }]), {}, { assets: new Map() }), /holdout: got true; expected a flag on a mesh node with geometry and material/);
 });
+
+test('the per-scene asset cap error names the counted assets and the nodes that place them (#2989)', async () => {
+  const scene = createAgentScene(recipe([]), {}, {});
+  const operations = Array.from({ length: 33 }, (_, index) => ({ type: 'add-node', node: { id: `prop-${index}`, asset: { id: index.toString(16).padStart(2, '0').repeat(32) } } }));
+  const pool = new Map();
+  for (const operation of operations) pool.set(assetCopyKey(operation.node.asset.id, 0), await strip());
+  scene.provideAssets(pool);
+  assert.throws(() => scene.apply(operations, { expectedRevision: scene.revision }), error => {
+    assert.match(error.message, /32 different ones.*this recipe places 33, 33 and 0/);
+    assert.match(error.message, /Counted: 000000000000 \(nodes prop-0\), 010101010101 \(nodes prop-1\)/);
+    assert.match(error.message, /and 21 more\./);
+    return true;
+  });
+});
