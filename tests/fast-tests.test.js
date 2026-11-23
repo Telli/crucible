@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
-import { FAST_TESTS_PATH, GUARD_TEST_PATTERN, readFastTests, selectFastTests, usesNativeAddon } from '../scripts/fast-tests.mjs';
-import { pickFastResults } from '../scripts/record-fast-tests.mjs';
+import { existsSync, readFileSync } from 'node:fs';
+import { FAST_TESTS_PATH, GUARD_TEST_PATTERN, SLOW_IN_FULL_PASS_MS, TEST_TIMINGS_PATH, readFastTests, selectFastTests, usesNativeAddon } from '../scripts/fast-tests.mjs';
+import { countSkippedTests, pickFastResults } from '../scripts/record-fast-tests.mjs';
 import { planChecks } from '../scripts/preflight.mjs';
 
 const existing = ['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js', 'tests/slow.test.js'];
@@ -67,4 +67,27 @@ test('the committed list only names test files that exist', () => {
   assert.ok(listed.length > 100, `${FAST_TESTS_PATH} lists ${listed.length} files; regenerate it with npm run record:fast-tests.`);
   const missing = listed.filter(file => !existsSync(file));
   assert.deepEqual(missing, [], `${FAST_TESTS_PATH} names deleted files; regenerate it with npm run record:fast-tests.`);
+});
+
+test('a file that finishes fast only because its tests skipped is not recorded as fast', () => {
+  const results = [
+    { testFile: 'tests/real.test.js', passed: true, skipped: false, milliseconds: 100 },
+    { testFile: 'tests/skipped.test.js', passed: true, skipped: true, milliseconds: 217 },
+  ];
+  assert.deepEqual(pickFastResults(results, 600), { 'tests/real.test.js': 100 });
+  assert.equal(countSkippedTests(['# tests 1', '# pass 0', '# skipped 1', '# todo 0'].join('\n')), 1);
+  assert.equal(countSkippedTests(['# tests 3', '# pass 3', '# skipped 0'].join('\n')), 0);
+  assert.equal(countSkippedTests(''), 0);
+});
+
+test('a file the full pass times as slow is not run as fast, even when the recorded list says it is fast', () => {
+  const fullPassTimings = { 'tests/b.test.js': 99586, 'tests/a.test.js': 120 };
+  const { files } = selectFastTests(timings, existing, { thresholdMs: 500, budgetMs: 10000, fullPassTimings });
+  assert.deepEqual(files, ['tests/a.test.js', 'tests/c.test.js']);
+});
+
+test('the committed fast list names no file the full pass times as slow', () => {
+  const fullPassTimings = JSON.parse(readFileSync(TEST_TIMINGS_PATH, 'utf8'));
+  const slowListed = Object.keys(readFastTests()).filter(file => (fullPassTimings[file] ?? 0) >= SLOW_IN_FULL_PASS_MS);
+  assert.deepEqual(slowListed, [], `${FAST_TESTS_PATH} lists files that take ${SLOW_IN_FULL_PASS_MS} ms or more where they run; regenerate it with npm run record:fast-tests.`);
 });
