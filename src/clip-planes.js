@@ -40,6 +40,13 @@ registerShaderFeatureCode(CLIP_PLANES_FEATURE, Object.freeze({
   depth: addToShadowShader,
 }));
 
+/** Adds the plane test to the liquid and foam fragment shader, which has its own program and a worldPosition input. */
+export function addClipPlanesToLiquidShader(source) {
+  return source
+    .replace('precision highp float;\n', () => `precision highp float;\n${PLANE_DECLARATIONS}`)
+    .replace('void main() {\n', (start) => `${start}${DISCARD_CALL('worldPosition')}`);
+}
+
 function planeError(label, index, problem) {
   return new Error(`${label} plane ${index} ${problem}. Fix: pass { normal: [x, y, z], constant } with finite numbers; a point p stays when dot(normal, p) + constant is 0 or more.`);
 }

@@ -938,9 +938,11 @@ export class CrucibleRenderer {
     this.tintedShadowsActive = this.shaderFeatures.has('tintedShadows');
     // The camera-relative vertex line is part of the first compile, so reversed depth does not compile the main program twice.
     if (reversedDepthWanted) prepareCameraRelativeProgram(this);
+    // The shadow program keeps the features it was built with: tint and the rest are set up once, at construction.
+    this.depthShaderFeatures = new Set(this.shaderFeatures);
     const pending = {
       main: this.startMainProgram(),
-      depth: this.backend.startProgram(createDepthVertexShader(this.shaderFeatures), createDepthFragmentShader(this.shaderFeatures)),
+      depth: this.backend.startProgram(createDepthVertexShader(this.depthShaderFeatures), createDepthFragmentShader(this.depthShaderFeatures)),
     };
     if (!benchmark) {
       pending.post = this.backend.startProgram(fullscreenVertex, this.withViewTransform(postFragment, 'post'));
@@ -964,8 +966,7 @@ export class CrucibleRenderer {
     const benchmark = this.benchmark;
     this.finishMainProgram(pending.main);
     this.depthProgram = this.backend.finishProgram(pending.depth);
-    this.depthSkinUniforms = Object.fromEntries(SKIN_UNIFORMS.map(name => [name, this.context.getUniformLocation(this.depthProgram, name)]));
-    this.depthMorphUniforms = Object.fromEntries(MORPH_UNIFORMS.map(name => [name, this.context.getUniformLocation(this.depthProgram, name)]));
+    this.readDepthProgramLocations();
     if (!benchmark) {
       this.postProgram = this.backend.finishProgram(pending.post);
       this.skyProgram = this.backend.finishProgram(pending.sky);
@@ -975,11 +976,6 @@ export class CrucibleRenderer {
       this.bloomUniforms = Object.fromEntries(['sourceTexture', 'texelDirection', 'threshold', 'extract'].map(name => [name, this.context.getUniformLocation(this.bloomProgram, name)]));
       this.skyUniforms = Object.fromEntries(['skyTop', 'skyBottom', 'sunDirection', 'inverseViewProjection', 'eye', 'time', 'daylight', 'hdrEnabled'].map((name) => [name, this.context.getUniformLocation(this.skyProgram, name)]));
     }
-    this.depthAlphaUniforms = Object.fromEntries(DEPTH_ALPHA_UNIFORMS.map(name => [name, this.context.getUniformLocation(this.depthProgram, name)]));
-    this.depthUniform = this.context.getUniformLocation(this.depthProgram, 'lightProjection');
-    this.depthClipLocations = clipPlaneLocations(this.context, this.depthProgram);
-    this.depthAssemblyUniform = this.context.getUniformLocation(this.depthProgram, 'assemblyAmount');
-    this.depthWindUniforms = { time: this.context.getUniformLocation(this.depthProgram, 'time'), wind: this.context.getUniformLocation(this.depthProgram, 'wind') };
     this.partCount = parts.length;
     this.triangles = parts.reduce((total, part) => total + part.geometry.indices.length / 3, 0);
     this.whiteTexture = this.createTexture(null);
@@ -1002,6 +998,34 @@ export class CrucibleRenderer {
     this.createShadowMap();
     if (this.reversedDepthMode !== false && !benchmark) installReversedDepth(this, this.reversedDepthMode);
     if (!deferFrameTargets) this.allocateInitialTargets();
+  }
+
+  // The uniform locations of the shadow (depth) program. Read once at construction and again when the program is rebuilt.
+  readDepthProgramLocations() {
+    const context = this.context;
+    const program = this.depthProgram;
+    this.depthSkinUniforms = Object.fromEntries(SKIN_UNIFORMS.map(name => [name, context.getUniformLocation(program, name)]));
+    this.depthMorphUniforms = Object.fromEntries(MORPH_UNIFORMS.map(name => [name, context.getUniformLocation(program, name)]));
+    this.depthAlphaUniforms = Object.fromEntries(DEPTH_ALPHA_UNIFORMS.map(name => [name, context.getUniformLocation(program, name)]));
+    this.depthUniform = context.getUniformLocation(program, 'lightProjection');
+    this.depthClipLocations = clipPlaneLocations(context, program);
+    this.depthAssemblyUniform = context.getUniformLocation(program, 'assemblyAmount');
+    this.depthWindUniforms = { time: context.getUniformLocation(program, 'time'), wind: context.getUniformLocation(program, 'wind') };
+  }
+
+  // Compiles the shadow program again with the clip plane test added, for a clip plane that arrived after construction.
+  rebuildDepthProgram() {
+    const context = this.context;
+    const previousProgram = this.depthProgram;
+    this.depthShaderFeatures.add(CLIP_PLANES_FEATURE);
+    const pending = this.backend.startProgram(createDepthVertexShader(this.depthShaderFeatures), createDepthFragmentShader(this.depthShaderFeatures));
+    this.depthProgram = this.backend.finishProgram(pending);
+    this.readDepthProgramLocations();
+    context.useProgram(this.depthProgram);
+    context.uniform1i(this.depthSkinUniforms.skinInfluences, 6);
+    context.uniform1i(this.depthSkinUniforms.jointPalette, 7);
+    context.uniform1i(this.depthMorphUniforms.morphTargets, 8);
+    context.deleteProgram(previousProgram);
   }
 
   // The size plan and the frame targets: the largest driver calls of construction, so a page that awaits programsReady() takes them in a task of their own.
@@ -1259,11 +1283,16 @@ export class CrucibleRenderer {
   requireFeatureNames(features) {
     if (this.benchmark || !this.shaderFeatures) return;
     const missing = features.filter(feature => !this.shaderFeatures.has(feature));
-    // The shadow program is built once, so a part with clip planes has to be there when the renderer starts.
-    if (missing.includes(CLIP_PLANES_FEATURE)) throw new Error('A part with clipPlanes arrived after the renderer started, and its shadow program has no clip code. Fix: pass clipPlanes: [] in the renderer options, or give a part clipPlanes before the renderer is built.');
     if (missing.length === 0) return;
     missing.forEach(feature => this.shaderFeatures.add(feature));
     try {
+      // The shadow program carries the clip test too, so it is compiled again with the main one.
+      if (missing.includes(CLIP_PLANES_FEATURE)) {
+        this.rebuildDepthProgram();
+        // The liquid pass builds its program again on its next draw, with the plane test.
+        if (this.liquidProgram) this.context.deleteProgram(this.liquidProgram);
+        this.liquidProgram = null;
+      }
       this.rebuildMainProgram();
     } catch (error) {
       // A program that is still linking (ProgramNotReady) leaves the old main program in place. Forget the features, so the draw that comes back asks for them again

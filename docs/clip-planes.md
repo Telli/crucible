@@ -37,10 +37,20 @@ const floor = { name: 'floor', geometry, matrix, material, clipPlanes: [] };
 
 Without `clipPlanes` in the options and without a part that has them, the shaders have no plane code and the pictures are unchanged. With it on, each fragment tests up to 4 planes. A plane that moves redraws the shadow map on the next frame.
 
-The renderer needs the feature when it starts, because the shadow program is built once. `setClipPlanes` on a renderer without it throws and says to pass `clipPlanes: []`, and so does a part with `clipPlanes` that arrives later through `replaceParts`.
+A renderer built without `clipPlanes` compiles its colour, shadow and liquid programs again the first time a part with `clipPlanes` arrives through `replaceParts`, so adding planes later works. It costs one program build, so pass `clipPlanes: []` in the options when you know cuts will come. `setClipPlanes` on a renderer that has neither the option nor such a part throws and says to pass `clipPlanes: []`.
+
+## Where it cuts
+
+- The colour pass, the shadow pass, the liquid and foam pass, and the depth and object-ID render passes (they draw with the colour program).
+
+## Not cut yet
+
+- Line art and wireframe passes: they draw their own edges from the model, so a cut model keeps its outline.
+- The mesh volume pass and the splat outline pass.
+- The studio selection outline mask.
+- The path tracer (Cook): it traces the whole scene.
 
 ## What it does not do
 
 - It does not fill the cut face. Nothing closes the opening, so a hollow model shows its inside.
-- The liquid and foam pass draws its own program and is not cut.
 - There is no MCP tool for it yet.

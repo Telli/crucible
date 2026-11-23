@@ -138,3 +138,91 @@ test('a plane discards the fragments on its far side in the colour pass and in t
     assert.ok(brightness(result.shadowedAgain) < brightness(result.unshadowed) * 0.97, 'the shadow returns when the planes are removed in place');
   });
 });
+
+// A renderer built with no clip plane, then given a part with clipPlanes through replaceParts: the shadow program is compiled again.
+async function drawWithPlanesAddedLater(page) {
+  const task = async () => {
+    const { box } = await import('/src/geometry.js');
+    const { CrucibleRenderer } = await import('/src/renderer.js');
+    await import('/src/liquid-shader.js');
+    const canvas = document.createElement('canvas');
+    canvas.style.width = '96px';
+    canvas.style.height = '96px';
+    document.body.append(canvas);
+    const scale = (x, y, z, moveX = 0, moveY = 0, moveZ = 0) => new Float32Array([x, 0, 0, 0, 0, y, 0, 0, 0, 0, z, 0, moveX, moveY, moveZ, 1]);
+    const matte = (color) => ({ tag: 'surface', color, metallic: 0, roughness: 0.9, emission: 0 });
+    const readPixel = (renderer, x, y) => {
+      const pixel = new Uint8Array(4);
+      renderer.context.readPixels(x, y, 1, 1, renderer.context.RGBA, renderer.context.UNSIGNED_BYTE, pixel);
+      return Array.from(pixel);
+    };
+    const options = { samples: 1, pixelRatio: 1, ground: false, depth: true };
+    const sky = [0.1, 0.1, 0.1];
+    const environment = { skyTop: sky, skyBottom: sky, lightDirection: [0.2, 1, 0.3] };
+    const result = {};
+
+    const floor = { name: 'floor', geometry: box(0, 1), matrix: scale(12, 0.2, 12, 0, -0.1, 0), material: matte([0.8, 0.8, 0.8]) };
+    const cubePlanes = [{ normal: [0, -1, 0], constant: 0 }];
+    const cube = { name: 'cube', geometry: box(0, 1), matrix: scale(1.5, 1.5, 1.5, 0, 1.5, 0), material: matte([0.2, 0.2, 0.9]), clipPlanes: cubePlanes };
+    const renderer = new CrucibleRenderer(canvas, [floor], { ...options, shadowBounds: {} });
+    const frame = { eye: [0, 7, 7], target: [0, 0, 0], fov: 40, environment: { ...environment, lightDirection: [-1, 1, 0.1] } };
+    const floorPixels = () => Array.from({ length: 8 }, (_, index) => readPixel(renderer, 60 + index * 3, 48));
+    renderer.render(frame);
+    try {
+      renderer.replaceParts([floor, cube]);
+      renderer.render(frame);
+      result.unshadowed = floorPixels();
+      cubePlanes.length = 0;
+      renderer.render(frame);
+      result.shadowed = floorPixels();
+    } catch (error) {
+      result.error = error.message;
+    }
+    result.glError = renderer.context.getError();
+
+    const wall = { name: 'wall', geometry: box(0, 1), matrix: scale(8, 8, 0.5), material: matte([0.9, 0.05, 0.05]) };
+    const wallRenderer = new CrucibleRenderer(canvas, [floor], options);
+    const wallFrame = { eye: [0, 0, 8], target: [0, 0, 0], fov: 40, environment };
+    try {
+      wallRenderer.replaceParts([{ ...wall, clipPlanes: [{ normal: [-1, 0, 0], constant: 0 }] }]);
+      wallRenderer.render(wallFrame);
+      result.wall = { left: readPixel(wallRenderer, 24, 48), right: readPixel(wallRenderer, 72, 48) };
+    } catch (error) {
+      result.wallError = error.message;
+    }
+
+    // A liquid part has its own program: it is cut by the same planes, edited in place between renders.
+    const liquidPlanes = [];
+    const liquidRenderer = new CrucibleRenderer(canvas, [floor], options);
+    try {
+      liquidRenderer.replaceParts([{ ...wall, material: { ...matte([0.9, 0.9, 0.9]), transmission: 1 }, clipPlanes: liquidPlanes }]);
+      const liquidPixels = () => ({ left: readPixel(liquidRenderer, 24, 48), right: readPixel(liquidRenderer, 72, 48) });
+      liquidRenderer.render(wallFrame);
+      result.liquidUncut = liquidPixels();
+      liquidPlanes.push({ normal: [-1, 0, 0], constant: 0 });
+      liquidRenderer.render(wallFrame);
+      result.liquidCut = liquidPixels();
+      result.liquidGlError = liquidRenderer.context.getError();
+    } catch (error) {
+      result.liquidError = error.message;
+    }
+    return result;
+  };
+  return page.evaluate(task);
+}
+
+test('a part given clipPlanes through replaceParts after construction is cut in the colour and the shadow pass', async (context) => {
+  await withDevServerPage(context, async (page) => {
+    const result = await drawWithPlanesAddedLater(page);
+    assert.equal(result.error, undefined);
+    assert.equal(result.wallError, undefined);
+    assert.equal(result.glError, 0);
+    assert.ok(brightness(result.shadowed) < brightness(result.unshadowed) * 0.97, 'the cube casts no shadow while its planes cut it away, and one once they are removed');
+    assert.ok(isRed(result.wall.left) && !isRed(result.wall.right), `the wall is cut at the plane: ${JSON.stringify(result.wall)}`);
+    assert.equal(result.liquidError, undefined);
+    assert.equal(result.liquidGlError, 0);
+    const distance = (first, second) => Math.abs(first[0] - second[0]) + Math.abs(first[1] - second[1]) + Math.abs(first[2] - second[2]);
+    assert.ok(distance(result.liquidUncut.right, result.liquidCut.right) > 30, `the liquid's far side is cut: ${JSON.stringify([result.liquidUncut, result.liquidCut])}`);
+    assert.ok(distance(result.liquidUncut.left, result.liquidCut.left) < 6, 'the liquid keeps its near side');
+  });
+});
