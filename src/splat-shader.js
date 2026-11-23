@@ -4,7 +4,7 @@ import { validateSplatMaterial, splatTextureBytes, resolveSplatSize, packSplatPa
 
 // Fragment shader chunk for the splat ground material. It is spliced into the main fragment shader after terrainNoise.
 // Importing this module registers it: a renderer with splat layers needs it, and any other renderer does not carry it.
-// Texture arrays: unit 11 color (sRGB), unit 12 normal (linear), unit 14 roughness (red) and height (green); the 2D weight mask is on unit 13.
+// Texture arrays: unit 11 color (sRGB), unit 12 normal (linear), unit 16 roughness (red) and height (green), unit 14 the 2D weight mask; unit 13 stays free for the tinted shadow map.
 export const splatGlsl = `
 uniform float splatEnabled;
 uniform highp sampler2DArray splatColor;
