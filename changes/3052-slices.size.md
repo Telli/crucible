@@ -1,0 +1,6 @@
+- scene:agent-scene: the core scene bundle grows 115 bytes gzip (139 for entry:agent-scene) for the hand-off that stages a settling bake's own work (reflections, floor sky, coplanar ranks) in slices before the bake lands; the logic itself is in the lazy floor sky, coplanar and deferred-bake modules.
+- goal:agent-scene: the same 115 bytes gzip: without the hand-off the landing traces the floor sky and ranks the baked parts in one turn of 0.5 to 2.7 s.
+- scene:agent-scene+lazy: the stepped BVH build, world build, unwrap plan, rasterize, smoothing, floor sky trace and cut, and the stage hand-off add 584 bytes gzip in all, loaded only by a scene with a bake.
+- entry:studio: the Baking light mark and its styles add 828 bytes gzip; a Studio edit of a baked scene otherwise gives no sign that its light is still coming.
+- entry:light-bake: the stepped unwrap plan, rasterize, finish, smoothing and dilation add 213 bytes gzip (entry:light-bake-gpu 169, entry:floor-sky-visibility 207, entry:coplanar-overlap 21); the plain functions drain the steps, so every path gives the same bytes.
+- entry:mesh: the stepped BVH build adds about 70 to 96 bytes gzip to every bundle that builds a triangle hierarchy (mesh, mesh-query, scene-query, shrinkwrap, path tracers).
