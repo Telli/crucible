@@ -63,7 +63,7 @@ test('a path traced job reports part findings and says why exposure findings and
           if (['completed', 'cancelled', 'failed'].includes(record.state)) break;
           await delay(200);
         }
-        assert.equal(record.state, 'completed', record.error);
+        assert.equal(record.state, 'completed', record.reason);
         const result = (await call('scene_render_result', { jobId })).structuredContent;
         return (result.metrics ?? record.metrics).diagnostics ?? [];
       };

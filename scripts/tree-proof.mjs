@@ -95,7 +95,7 @@ async function waitForJob(call, jobId) {
   for (;;) {
     const record = (await call('scene_render_status', { jobId })).structuredContent;
     if (record.state === 'completed') return;
-    if (['cancelled', 'failed'].includes(record.state)) throw new Error(`Render job ${record.state}: ${record.error}`);
+    if (['cancelled', 'failed'].includes(record.state)) throw new Error(`Render job ${record.state}: ${record.reason}`);
     await delay(250);
   }
 }
