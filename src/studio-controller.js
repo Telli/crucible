@@ -925,14 +925,14 @@ export function createStudioController({
   }
 
   // A recipe from a file or an agent leaves out the fields the scene fills in, so it is built once on the side to learn the
-  // recipe it stands for. When the scene on screen differs from that only by what scene operations can set, they are applied
+  // recipe it stands for. When the scene on screen differs from that only by what scene operations can set or add or remove, they are applied
   // there and the parts, and the textures the renderer holds for them, stay (#2842). Otherwise the built scene is the new one.
-  // The side build skips the light bake: applying the operations bakes the scene on screen once, and a candidate that has to
-  // be installed is built again with its bake.
+  // The side build is recipe only: no light bake and no staging of its parts, which cost seconds on a scene of scans and which
+  // the operations pay once on the scene on screen. A candidate that has to be installed is built again in full.
   function loadRecipeKeepingScene(recipeInput) {
-    const candidate = createAgentScene(recipeInput, {}, { ...scenePoolOptions(), skipLightBake: true });
-    if (!restoreRecipeInPlace(currentScene.exportRecipe(), candidate.exportRecipe())) {
-      installScene(candidate.exportRecipe().bake ? createAgentScene(recipeInput, {}, scenePoolOptions()) : candidate);
+    const candidate = createAgentScene(recipeInput, {}, { ...scenePoolOptions(), recipeOnly: true });
+    if (!restoreRecipeInPlace(currentScene.exportRecipe(), candidate.exportRecipe(), { allowRecordChanges: true })) {
+      installScene(createAgentScene(recipeInput, {}, scenePoolOptions()));
     }
   }
 
