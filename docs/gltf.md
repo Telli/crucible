@@ -73,6 +73,7 @@ Geometry contains `positions` and `normals` as `Float32Array` values, plus `indi
 The importer computes missing normals and normalizes supplied normals.
 It rejects non-finite attributes, invalid indices, singular transforms, and unusable normals.
 `geometry.uvs` preserves `TEXCOORD_0` as two floats per vertex.
+A primitive with a normal map also gets `geometry.tangents` (four floats per vertex): the file's `TANGENT` when it has a usable one, otherwise tangents generated from the UVs the map samples. [Material maps](material-maps.md) describes the frame and when the loader replaces an authored `TANGENT`.
 `geometry.colors` preserves the RGB of `COLOR_0` as three linear RGB floats per vertex. An RGBA `COLOR_0` with an alpha below one also fills `geometry.colorAlpha`, one float per vertex. The rasterizer multiplies it into the opacity of `blend` and `mask` materials, lit or unlit (so a `flatten: { unlit: true }` ribbon fades at its edges); an opaque material ignores it, as glTF says. The alpha shares the fourth vertex-colour component with baked sky visibility (two 10 bit levels), so both survive; a part with `surfaceMasks` (material wear) keeps those instead of the alpha, and the scene diagnostics warn with `vertex-alpha-dropped`. The CPU and WebGL (`backend: "gpu"`) path tracers read it too, interpolated at the hit: a `mask` material multiplies it into the alpha it tests against its cutoff, and a `blend` material is traced as a cutout at 0.5 (the tracers have no blending), so a vertex alpha below half lets a ray through. The WebGL tracer uploads one extra texel per triangle only for a scene that has such a part. The WebGPU tracer and the native Cook kernel do not read it yet (`traceNotes` says so).
 
 Materials preserve linear `color`, `metallic`, `roughness`, and `emissiveColor` factors.
@@ -153,6 +154,8 @@ renderer.render(camera);
 
 Translation, rotation, and scale tracks are supported.
 The importer rejects animation poses that become singular or change triangle winding.
+
+To hide one instance of a crowd, set `visible = false` on its parts (all of an asset's `parts`) and skip `applyAnimation` for it. `renderer.updateParts` then draws it nowhere, casts no shadow, and does not check its matrix or skin pose, so a hidden part may keep a zero-scale matrix. A zero-scale matrix on a visible part is still refused with `Singular transform`; hide the part instead. A hidden part's material is still checked.
 
 The current source supports four-influence [GPU skinning](https://crucible.codepawl.com/skinning.md). GPU skinning is available from version `0.4.0`.
 

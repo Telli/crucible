@@ -15,7 +15,7 @@ export const ADDON_AREAS = [
 export const PACKAGE_NAME = '@codepawlhq/crucible';
 
 export const ADDON_CATALOG = [
-  { name: 'model', area: 'modeling', summary: 'Build a model from parts with createModel.' },
+  { name: 'model', area: 'modeling', summary: 'Load the sample microscope as explodable parts.' },
   { name: 'studio', area: 'modeling', summary: 'A visual editor that works on the same scene recipe as agents.', doc: true },
   { name: 'modeling', area: 'modeling', summary: 'Lathe, sweep and other agent modeling geometry.', doc: true },
   { name: 'mesh', area: 'modeling', summary: 'Polygon mesh core: half-edge edit mesh, normals and lint.', doc: true },

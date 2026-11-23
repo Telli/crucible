@@ -33,7 +33,7 @@ const DEFAULT_LIMITS = Object.freeze({
 export const GLTF_CAPABILITIES = Object.freeze({
   formats: ['glb', 'gltf'],
   limits: DEFAULT_LIMITS,
-  supported: ['triangle meshes', 'world transforms', 'rigid node animations', 'four-influence skeletal skinning', 'joint node animations', 'relative POSITION/NORMAL morph targets', 'morph weight animations', 'PNG/JPEG/WebP base color textures', 'normal/occlusion/emissive/metallic-roughness textures', 'TEXCOORD_0', 'TEXCOORD_1 for every texture, the base color and layer maps included', 'clearcoat, clearcoat roughness, clearcoat normal, anisotropy, sheen color and sheen roughness textures', 'linear RGB vertex colors, with the alpha of RGBA colors multiplying the opacity of blend and mask materials in the rasterizer','metallic roughness factors', 'emissive factors', 'alpha mask and blend modes', 'double-sided materials', 'KHR_mesh_quantization', 'KHR_materials_emissive_strength', 'KHR_materials_clearcoat, transmission, volume, ior, dispersion, specular, sheen, anisotropy and iridescence factors', 'KHR_texture_transform baked into UVs, with a normal map that differs by scale and offset applied in the shader', 'EXT_mesh_gpu_instancing expanded into parts', 'KHR_draco_mesh_compression with options.decoders.draco', 'EXT_meshopt_compression', 'KHR_texture_basisu with options.decoders.ktx2', 'EXT_texture_webp, with the PNG or JPEG fallback source when the browser cannot decode WebP', 'KHR_materials_unlit as the unlit material tag, with a base color map only', 'KHR_lights_punctual point and spot lights (up to eight each) and the first directional light, returned in lights as environment options'],
+  supported: ['triangle meshes', 'world transforms', 'rigid node animations', 'four-influence skeletal skinning', 'joint node animations', 'relative POSITION/NORMAL morph targets', 'morph weight animations', 'PNG/JPEG/WebP base color textures', 'normal/occlusion/emissive/metallic-roughness textures', 'TEXCOORD_0', 'TANGENT for a normal map, with MikkTSpace-style tangents generated at load when a normal-mapped primitive has none', 'TEXCOORD_1 for every texture, the base color and layer maps included', 'clearcoat, clearcoat roughness, clearcoat normal, anisotropy, sheen color and sheen roughness textures', 'linear RGB vertex colors, with the alpha of RGBA colors multiplying the opacity of blend and mask materials in the rasterizer','metallic roughness factors', 'emissive factors', 'alpha mask and blend modes', 'double-sided materials', 'KHR_mesh_quantization', 'KHR_materials_emissive_strength', 'KHR_materials_clearcoat, transmission, volume, ior, dispersion, specular, sheen, anisotropy and iridescence factors', 'KHR_texture_transform baked into UVs, with a normal map that differs by scale and offset applied in the shader', 'EXT_mesh_gpu_instancing expanded into parts', 'KHR_draco_mesh_compression with options.decoders.draco', 'EXT_meshopt_compression', 'KHR_texture_basisu with options.decoders.ktx2', 'EXT_texture_webp, with the PNG or JPEG fallback source when the browser cannot decode WebP', 'KHR_materials_unlit as the unlit material tag, with a base color map only', 'KHR_lights_punctual point and spot lights (up to eight each) and the first directional light, returned in lights as environment options'],
   // The primitive's own material is drawn; the other variants are not selectable.
   ignoredExtensions: ['KHR_materials_variants', 'KHR_materials_diffuse_roughness', 'EXT_materials_bump', 'EXT_texture_avif'],
   optionalExtensions: 'Any other optional extension is ignored and named in warnings. One listed in extensionsRequired that Crucible does not read is refused.',
@@ -932,8 +932,40 @@ function releaseDecodedGeometry(source, remainingUsers) {
   source.load = null;
 }
 
+/** The TANGENT attribute as four floats per vertex, or undefined (with a repair note) when it is not usable and should be generated instead. */
+async function copyAuthoredTangents(tangent, vertexCount, onRepair, checkpoint) {
+  if (tangent.itemSize !== 4 || tangent.count !== vertexCount) {
+    onRepair('TANGENT is not four values for every POSITION; it was ignored and tangents are generated for the normal map');
+    return undefined;
+  }
+  try {
+    return await copyAttribute(tangent, 4, checkpoint);
+  } catch {
+    onRepair('TANGENT has non-finite values; it was ignored and tangents are generated for the normal map');
+    return undefined;
+  }
+}
+
+/**
+ * Settles geometry.tangents for the primitive's normal map: the authored TANGENT when it fits the baked UVs, generated tangents when
+ * it is missing, unusable or no longer fits, and none for a primitive without a normal map or without the UVs the map samples.
+ */
+async function settleVertexTangents(geometry, normalMap, uvTransform, onRepair) {
+  const uvs = normalMap?.uvChannel === 1 ? geometry.lightUvs : geometry.uvs;
+  if (!normalMap || !uvs) {
+    delete geometry.tangents;
+    return;
+  }
+  const { authoredTangentsUsable, generateTangents, transformKeepsTangents } = await import('./gltf-tangents.js');
+  const vertexCount = geometry.positions.length / 3;
+  const keepsAuthored = geometry.tangents && authoredTangentsUsable(geometry.tangents, vertexCount) && (normalMap.uvChannel === 1 || transformKeepsTangents(uvTransform));
+  if (keepsAuthored) return;
+  if (geometry.tangents) onRepair('TANGENT does not fit the normal map UVs (a rotated or mirrored KHR_texture_transform, or invalid values); tangents are generated instead');
+  geometry.tangents = generateTangents(geometry.positions, geometry.normals, uvs, geometry.indices);
+}
+
 async function convertGeometry(source, primitive, secondUvSet, onRepair, checkpoint) {
-  const { position, normal, uv, uv1, color, skinIndex, skinWeight } = source.attributes;
+  const { position, normal, tangent, uv, uv1, color, skinIndex, skinWeight } = source.attributes;
   const zeroedBy = label => count => onRepair(`${count} non-finite ${label} value(s) were set to 0`);
   const positions = await copyAttributeZeroingNonFinite(position, 3, zeroedBy('POSITION'), checkpoint);
   const allIndices = new Uint32Array(source.index?.count ?? position.count);
@@ -995,6 +1027,7 @@ async function convertGeometry(source, primitive, secondUvSet, onRepair, checkpo
   }
   if (uv && uv.count !== position.count) throw new Error('TEXCOORD_0 and POSITION counts must match.');
   if (uv) geometry.uvs = await copyAttribute(uv, 2, checkpoint);
+  if (tangent) geometry.tangents = await copyAuthoredTangents(tangent, position.count, onRepair, checkpoint);
   // The renderer's second UV set is geometry.lightUvs, the one light maps use.
   if (secondUvSet) {
     if (!uv1 || uv1.count !== position.count) throw new Error('TEXCOORD_1 and POSITION counts must match.');
@@ -1041,7 +1074,7 @@ const IDENTITY_MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
 /** True when collapseSingularMatrix would replace the matrix at this offset: a non-finite value or a singular axis ratio. */
 function needsCollapse(values, offset) {
-  return singularReason(values.subarray(offset, offset + 16)) !== undefined;
+  return singularReason(values, offset) !== undefined;
 }
 
 function prepareSkinBinding(binding, geometry, checks = true) {
@@ -1089,17 +1122,24 @@ const COLLAPSED_SCALE = 2e-4;
 const SINGULAR_AXIS_RATIO = 1e-12;
 
 /** The scale along each axis of a column-major affine matrix, read as doubles. */
+const determinantScratch = new Float64Array(16);
+
 function axisScales(elements) {
   return [0, 4, 8].map(offset => Math.hypot(elements[offset], elements[offset + 1], elements[offset + 2]));
 }
 
 /** Why a world matrix cannot be drawn: 'non-finite', 'singular', or undefined when it is valid at any size. */
-function singularReason(elements) {
+function singularReason(elements, offset = 0) {
+  // Runs for every node and joint every frame, so it reads the matrix in place and allocates nothing.
   for (let index = 0; index < 16; index++) {
-    if (!Number.isFinite(elements[index])) return 'non-finite';
+    const value = elements[offset + index];
+    determinantScratch[index] = value;
+    if (!Number.isFinite(value)) return 'non-finite';
   }
-  const [scaleX, scaleY, scaleZ] = axisScales(elements);
-  const determinant = mat4.determinant(elements);
+  const scaleX = Math.hypot(determinantScratch[0], determinantScratch[1], determinantScratch[2]);
+  const scaleY = Math.hypot(determinantScratch[4], determinantScratch[5], determinantScratch[6]);
+  const scaleZ = Math.hypot(determinantScratch[8], determinantScratch[9], determinantScratch[10]);
+  const determinant = mat4.determinant(determinantScratch);
   if (!Number.isFinite(determinant)) return 'non-finite';
   return Math.abs(determinant) > SINGULAR_AXIS_RATIO * scaleX * scaleY * scaleZ ? undefined : 'singular';
 }
@@ -1154,9 +1194,9 @@ function isKeyedInClip(node, keyedNodeIndices) {
 function validateNodeTransforms(nodes, pending, tolerated) {
   for (const node of nodes) {
     pending.set(node.matrixWorld.elements);
-    const finite = pending.every(Number.isFinite);
     if (singularReason(pending) === undefined) continue;
     if (tolerated.has(node)) continue;
+    const finite = pending.every(Number.isFinite);
     if (!tolerated.collecting) throw new Error(finite ? 'Animation creates a singular Float32 node transform.' : 'Animation creates a non-finite Float32 world matrix.');
     tolerated.add(node);
   }
@@ -1391,7 +1431,7 @@ export async function parseGltf(data, options = {}) {
           if (!keyed) continue;
         }
         const mirrored = singular ? false : mat4.determinant(worldElements) < 0;
-        const geometryKey = `${node.geometry.uuid}:${uvKey}:${secondUvSet}`;
+        const geometryKey = `${node.geometry.uuid}:${uvKey}:${secondUvSet}:${material.normalMap ? material.normalMap.uvChannel : 'none'}`;
         if (!geometries.has(geometryKey)) {
           await node.geometry.load();
           actualVertices += node.geometry.attributes.position.count * (1 + (primitive.targets?.length ?? 0));
@@ -1405,6 +1445,7 @@ export async function parseGltf(data, options = {}) {
             if (clampedWeights) onRepair(`${clampedWeights} negative skin weight(s) were clamped to 0${boundToJointZero ? `; ${boundToJointZero} vertex(es) bound to joint 0` : ''}`);
             const converted = await convertGeometry(node.geometry, primitive, secondUvSet, onRepair, checkpoint);
             if (converted.uvs) bakeUvTransform(converted.uvs, uvTransform);
+            await settleVertexTangents(converted, material.normalMap, uvTransform, onRepair);
             geometries.set(geometryKey, converted);
           } catch (error) {
             if (!(error instanceof UnusablePrimitiveError)) throw error;
