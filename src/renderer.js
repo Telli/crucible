@@ -359,9 +359,10 @@ function finiteVector(value, size) {
   return true;
 }
 
-function validateTransform(part, normalMatrix = mat3.create()) {
-  if (!finiteVector(part.matrix, 16)) throw new Error(`Invalid transform: ${part.name}`);
-  if (!mat3.normalFromMat4(normalMatrix, part.matrix) || !finiteVector(normalMatrix, 9)) throw new Error(`Singular transform: ${part.name}`);
+/** A hidden part packs zeros instead of its matrix, so its matrix is not checked; its material still is. */
+function validateTransform(part, normalMatrix = mat3.create(), hidden = false) {
+  if (!hidden && !finiteVector(part.matrix, 16)) throw new Error(`Invalid transform: ${part.name}`);
+  if (!hidden && (!mat3.normalFromMat4(normalMatrix, part.matrix) || !finiteVector(normalMatrix, 9))) throw new Error(`Singular transform: ${part.name}. Hide a part with part.visible = false.`);
   // An absent emissive colour or assembly offset packs as the base colour or zero, which need no second check.
   const material = part.material;
   const assembly = part.assembly;
@@ -510,20 +511,21 @@ const hasSkinData = part => Boolean(part.skin || part.geometry.skinIndices || pa
 const hasMorphData = part => Boolean(part.morph || part.geometry.morphTargets !== undefined);
 
 function validatePartForGrouping(part, morphInfos) {
-  validateTransform(part);
+  const hidden = isHidden(part);
+  validateTransform(part, undefined, hidden);
   validatePartFlags(part);
   if (part.clipPlanes !== undefined) packClipPlanes(part.clipPlanes, new Float32Array(MAX_CLIP_PLANES * 4), `Part "${part.name}" clipPlanes`);
   if (hasSkinData(part)) {
     const { validateSkinGeometry, validateSkinPose } = skinSupport();
     validateSkinGeometry(part.geometry, part.skin);
-    if (part.skin) validateSkinPose(part.skin, part.geometry, part.matrix);
+    if (part.skin && !hidden) validateSkinPose(part.skin, part.geometry, part.matrix);
   }
   if (part.skin && PROCEDURAL_MATERIAL_TAGS.has(part.material.tag)) throw new Error('Skinned parts require a standard material tag.');
   if (hasMorphData(part)) {
     const { validateMorphGeometry, validateMorphPose, validateMorphTransform } = morphSupport();
     if (!morphInfos.has(part.geometry)) morphInfos.set(part.geometry, validateMorphGeometry(part.geometry, part.morph));
     else validateMorphPose(part.morph, morphInfos.get(part.geometry));
-    if (part.morph) validateMorphTransform(part.morph, morphInfos.get(part.geometry), part.matrix, part.skin);
+    if (part.morph && !hidden) validateMorphTransform(part.morph, morphInfos.get(part.geometry), part.matrix, part.skin);
   }
   if (part.morph && PROCEDURAL_MATERIAL_TAGS.has(part.material.tag)) throw new Error('Morphed parts require a standard material tag.');
 }
@@ -1771,22 +1773,24 @@ export class CrucibleRenderer {
         if (alphaState.some((value, index) => value !== batchAlphaState[index])) throw new Error(`Alpha mode, cutoff, double-sided, retro and mask opacity changes require a new renderer: set them when the part is made (blend and add opacity may change): ${part.name}`);
       }
       if (part.geometry !== location.geometry) throw new Error(`Geometry changes require a new renderer: ${part.name}`);
-      if (isMirroredMatrix(part.matrix) !== Boolean(location.batch.mirrored)) mirrorChanged = true;
+      // A hidden part packs zeros, so its matrix (often a zero scale) says nothing about winding, and neither is checked.
+      const hidden = isHidden(part);
+      if (!hidden && isMirroredMatrix(part.matrix) !== Boolean(location.batch.mirrored)) mirrorChanged = true;
       if (!materialUnchanged && partPass(part) !== batchPass(location.batch)) throw new Error(`Moving a part into or out of the liquid or foam pass requires replaceParts: ${part.name}`);
       if ((part.skin ?? null) !== location.skin || part.skin?.jointMatrices !== location.jointMatrices || part.geometry.skinIndices !== location.skinIndices || part.geometry.skinWeights !== location.skinWeights) throw new Error(`Skin identity changes require a new renderer: ${part.name}`);
       if (part.skin) {
         if (PROCEDURAL_MATERIAL_TAGS.has(part.material.tag)) throw new Error('Skinned parts require a standard material tag.');
-        if (checks) skinSupport().validateSkinPose(part.skin, part.geometry, part.matrix);
+        if (checks && !hidden) skinSupport().validateSkinPose(part.skin, part.geometry, part.matrix);
         this.updateSkins.add(location.batch.skinTexture);
       }
       if ((part.morph ?? null) !== (location.morph ?? null) || part.morph?.weights !== location.morphWeights || part.geometry.morphTargets !== location.morphTargets) throw new Error(`Morph identity changes require a new renderer: ${part.name}`);
       if (part.morph) {
         if (PROCEDURAL_MATERIAL_TAGS.has(part.material.tag)) throw new Error('Morphed parts require a standard material tag.');
-        if (checks) morphSupport().validateMorphTransform(part.morph, location.batch.morphTexture.info, part.matrix, part.skin);
+        if (checks && !hidden) morphSupport().validateMorphTransform(part.morph, location.batch.morphTexture.info, part.matrix, part.skin);
         this.updateMorphs.add(part.morph);
       }
       if (materialUnchanged) {
-        validateTransform(part, location.normalMatrix);
+        validateTransform(part, location.normalMatrix, hidden);
         continue;
       }
       if ((part.material.map ?? null) !== location.map) throw new Error(`Texture map changes require a new renderer: ${part.name}`);
@@ -1799,7 +1803,7 @@ export class CrucibleRenderer {
       const [lightMapDescriptor, lightMapScale] = lightMapState(part.material);
       if (lightMapDescriptor !== (mapState[14] ?? null) || lightMapScale !== (mapState[15] ?? 0) || (part.material.layerMaps ?? null) !== (mapState[18] ?? null)) throw new Error(`Light map and layer texture changes require a new renderer: ${part.name}`);
       if (normalScale[0] !== mapState[5] || normalScale[1] !== mapState[6] || (part.material.occlusionStrength ?? 1) !== mapState[7] || mossState(part.material).some((value, index) => value !== mapState[8 + index]) || materialLayerState(part.material).some((value, index) => value !== location.layerState[index])) throw new Error(`Material map or scale changes require a new renderer: ${part.name}`);
-      validateTransform(part, location.normalMatrix);
+      validateTransform(part, location.normalMatrix, hidden);
       location.materialSnapshot = MaterialSnapshot.of(part.material);
     }
     // A part moved toward the camera may leave the box the near plane is fitted to, and the plane would cut it (#2403). Growing the
@@ -1814,7 +1818,7 @@ export class CrucibleRenderer {
     // A palette upload also changes consumers absent from the submitted part list.
     if (checks && this.updateSkins.size) {
       for (const [part, location] of this.partLocations) {
-        if (!location.skin || !this.updateSkins.has(location.batch.skinTexture) || this.updatePartIdentities.has(part)) continue;
+        if (!location.skin || !this.updateSkins.has(location.batch.skinTexture) || this.updatePartIdentities.has(part) || isHidden(part)) continue;
         const committedMatrix = location.committedMatrix ?? location.batch.instanceData.subarray(location.index * INSTANCE_STRIDE, location.index * INSTANCE_STRIDE + 16);
         skinSupport().validateSkinPose(location.skin, location.geometry, committedMatrix);
       }
@@ -1823,7 +1827,7 @@ export class CrucibleRenderer {
     // Nothing is shared when the update carries no morph and no skin.
     if (checks && (this.updateMorphs.size || this.updateSkins.size)) {
       for (const [part, location] of this.partLocations) {
-        if (!location.morph || this.updatePartIdentities.has(part)) continue;
+        if (!location.morph || this.updatePartIdentities.has(part) || isHidden(part)) continue;
         if (!this.updateMorphs.has(location.morph) && !this.updateSkins.has(location.batch.skinTexture)) continue;
         const committedMatrix = location.committedMatrix ?? location.batch.instanceData.subarray(location.index * INSTANCE_STRIDE, location.index * INSTANCE_STRIDE + 16);
         morphSupport().validateMorphTransform(location.morph, location.batch.morphTexture.info, committedMatrix, location.skin);
