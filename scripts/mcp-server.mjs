@@ -406,9 +406,10 @@ const effects = z.strictObject({
   lensDistortion: looseField,
   stylize: looseField,
   composite: looseField,
+  localToneMapping: looseField,
   autoExposure: looseField,
 });
-const effectsListed = listed('effects', effects, 'Post effects: exposure, saturation, contrast, temperature, vignette, grain, ambientOcclusion, ambientOcclusionRadius, bloom {strength, threshold, radius}, depthOfField {blur, focusDistance}, motionBlur {shutter}, colorBalance, glare, lensDistortion, stylize, composite, autoExposure {metering, key, minimum, maximum, speed}; see scene_capabilities effects.', coreOf(effects.shape, ['exposure']));
+const effectsListed = listed('effects', effects, 'Post effects: exposure, saturation, contrast, temperature, vignette, grain, ambientOcclusion, ambientOcclusionRadius, bloom {strength, threshold, radius}, depthOfField {blur, focusDistance}, motionBlur {shutter}, colorBalance, glare, lensDistortion, stylize, composite, localToneMapping, autoExposure {metering, key, minimum, maximum, speed}; see scene_capabilities effects.', coreOf(effects.shape, ['exposure']));
 const shadow = z.strictObject({
   target: boundedVector(-1e6, 1e6).optional(),
   extent: bounded(0.01, 1e5).optional(),

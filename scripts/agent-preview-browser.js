@@ -461,7 +461,7 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   const frame = { ...camera, environment: litEnvironment(record.scene.parts, environment, Boolean(record.renderer.groundPart)), effects, exposure: effects.exposure, time, lines: environment.lines, ...windFrame(environment), ...renderOptions, effects: effectsWithFStop(renderOptions.effects ?? effects, camera) };
   // Object motion blur, a mask by parts and a user pass with `objects` all read the object ID pass.
   let needsObjectIds = Boolean(objectMotion) || postPasses.some(pass => pass.objects);
-  if (effects.colorBalance || effects.glare || effects.lensDistortion || effects.stylize || effects.composite) {
+  if (effects.colorBalance || effects.glare || effects.lensDistortion || effects.stylize || effects.composite || effects.localToneMapping) {
     const postSteps = agentSceneModule('postSteps');
     postSteps.installPostSteps(record.renderer);
     needsObjectIds ||= postSteps.usesObjectMask(postSteps.resolvePostSteps(frame.effects));

@@ -149,7 +149,7 @@ const MODULE_MARKERS = {
   volumeRamp: ['"emissionRamp"'],
   // Only a motionBlur object that sets a non-zero `objects` loads it; the common `"shutter":0` look does not.
   objectMotionBlur: [/"motionBlur":\{[^}]*"objects":(?!0[,}])/],
-  postSteps: [/"(?:colorBalance|glare|lensDistortion|stylize|composite|autoExposure)"|"(?:distortion|flash)":[\[{]|"add-explosion"/],
+  postSteps: [/"(?:colorBalance|glare|lensDistortion|stylize|composite|localToneMapping|autoExposure)"|"(?:distortion|flash)":[\[{]|"add-explosion"/],
 };
 
 /** Whether a recipe, operation list or edit list contains a boolean edit, which needs loadMeshBooleans() first. */
