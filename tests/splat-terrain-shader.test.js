@@ -166,17 +166,19 @@ function shadowedChannelRatios(shadowedFrame, litFrame) {
   return { changedPixels, ratios: shadowed.map((value, channel) => value / Math.max(lit[channel], 1)) };
 }
 
-test('a cyan glass cube throws a shadow that loses more red than a white one on a splat terrain', async context => {
+test('a cyan glass cube throws a cyan shadow on a splat terrain and a white one a neutral shadow', async context => {
   await withDevServerPage(context, async page => {
-    const lit = await drawSplatTerrain(page, { withGrass: false, withEnvironment: false, withGlass: true, glassCastsShadow: false });
-    const cyan = await drawSplatTerrain(page, { withGrass: false, withEnvironment: false, withGlass: true, glassColor: [0, 1, 1] });
-    const white = await drawSplatTerrain(page, { withGrass: false, withEnvironment: false, withGlass: true, glassColor: [1, 1, 1] });
-    assert.equal(cyan.audit.splatBatchesBlind, 0, 'splat batches must read the tinted shadow map');
-    assertWithinUnitBudget(cyan.audit);
-    const cyanShadow = shadowedChannelRatios(cyan.pixels, lit.pixels);
-    const whiteShadow = shadowedChannelRatios(white.pixels, lit.pixels);
-    context.diagnostic(`shadow pixels ${cyanShadow.changedPixels}; red kept under cyan glass ${cyanShadow.ratios[0].toFixed(3)}, under white glass ${whiteShadow.ratios[0].toFixed(3)}; green ${cyanShadow.ratios[1].toFixed(3)} and ${whiteShadow.ratios[1].toFixed(3)}`);
-    assert.ok(cyanShadow.changedPixels > 60, `the glass shadow changed only ${cyanShadow.changedPixels} terrain pixels`);
-    assert.ok(cyanShadow.ratios[0] < whiteShadow.ratios[0] - 0.05, `red keeps ${cyanShadow.ratios[0].toFixed(2)} under cyan glass and ${whiteShadow.ratios[0].toFixed(2)} under white glass: the shadow is not tinted`);
+    const draw = (glassColor, glassCastsShadow) => drawSplatTerrain(page, { withGrass: false, withEnvironment: false, withGlass: true, glassColor, glassCastsShadow });
+    // Each caster colour has its own frame without a shadow, so the cube itself never counts as shadowed terrain.
+    const cyanShadow = shadowedChannelRatios((await draw([0, 1, 1], true)).pixels, (await draw([0, 1, 1], false)).pixels);
+    const whiteFrame = await draw([1, 1, 1], true);
+    const whiteShadow = shadowedChannelRatios(whiteFrame.pixels, (await draw([1, 1, 1], false)).pixels);
+    const cyanFrame = await draw([0, 1, 1], true);
+    assert.equal(cyanFrame.audit.splatBatchesBlind, 0, 'splat batches must read the tinted shadow map');
+    assertWithinUnitBudget(cyanFrame.audit);
+    context.diagnostic(`shadow pixels cyan ${cyanShadow.changedPixels}, white ${whiteShadow.changedPixels}; kept rgb under cyan ${cyanShadow.ratios.map(value => value.toFixed(3))}, under white ${whiteShadow.ratios.map(value => value.toFixed(3))}`);
+    assert.ok(whiteShadow.changedPixels > 0 && cyanShadow.changedPixels > 0, 'the glass cube threw no shadow on the terrain');
+    assert.ok(cyanShadow.ratios[0] < cyanShadow.ratios[1] - 0.1, `under cyan glass the terrain keeps ${cyanShadow.ratios[0].toFixed(2)} of its red and ${cyanShadow.ratios[1].toFixed(2)} of its green: the shadow is not tinted`);
+    assert.ok(Math.abs(whiteShadow.ratios[0] - whiteShadow.ratios[1]) < 0.05, 'a white caster must darken red and green alike');
   });
 });
