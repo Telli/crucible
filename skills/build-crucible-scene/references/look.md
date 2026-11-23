@@ -110,7 +110,7 @@ The sun scatters in volume fog, and so do point and spot lights: at most 8, poin
 `effects` holds `exposure`, `saturation`, `contrast`, `temperature`, `vignette`, `grain`, `ambientOcclusion` (0 = off),
 `bloom` and `depthOfField` (see `camera.md`). Nested `bloom` fields merge.
 Named post steps, each off until set: `colorBalance` (`lift`, `gamma`, `gain`, three numbers each), `glare` (`streaks`,
-`count`, `angle`, `fogGlow`, `threshold`, `size`) `lensDistortion` (`distortion`, `dispersion`), `stylize` (`sharpen`, `kuwahara`, `posterize`, `pixelate`), `localToneMapping` (`strength`, `highlightContrast`, `shadowContrast`, `detail`, `blurRadius`: holds a low sun's sky and shaded ground in one frame) and `composite` (`background` `{ color }` or `{ top, bottom }`, `key` `{ chroma: { color, tolerance, softness } }` or `{ luma: { low, high, invert } }`, `mask`; a key needs a background); ranges in `docs/agent-look.md`.
+`count`, `angle`, `fogGlow`, `threshold`, `size`) `lensDistortion` (`distortion`, `dispersion`), `stylize` (`sharpen`, `kuwahara`, `posterize`, `pixelate`), `localToneMapping` (`strength`, `highlightContrast`, `shadowContrast`, `detail`, `blurRadius`, `midtoneRange`: holds a low sun's sky and shaded ground in one frame) and `composite` (`background` `{ color }` or `{ top, bottom }`, `key` `{ chroma: { color, tolerance, softness } }` or `{ luma: { low, high, invert } }`, `mask`; a key needs a background); ranges in `docs/agent-look.md`.
 `colorBalance`, `stylize` and `composite` take a `mask` (`objects` part names, `depth` `{ near, far, feather }`, `invert`) to apply only to a hero part or a depth band.
 
 Tool `scene_apply`:

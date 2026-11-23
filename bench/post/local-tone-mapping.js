@@ -1,4 +1,4 @@
-// Runs in the page: a low sun in front of the camera over grass, drawn without and with effects.localToneMapping (#2798).
+// Runs in the page: scenes drawn without and with effects.localToneMapping, plus whole-frame numbers (#2798).
 import { CrucibleRenderer } from '/src/renderer.js';
 import { box } from '/src/geometry.js';
 import { installCameraEffects } from '/src/camera-effects.js';
@@ -10,14 +10,34 @@ function placed(center, size) {
 
 const grass = { color: [0.12, 0.3, 0.07], metallic: 0, roughness: 0.9 };
 const trunk = { color: [0.25, 0.17, 0.1], metallic: 0, roughness: 0.9 };
-const parts = [{ geometry: box(), matrix: placed([0, -0.05, -10], [40, 0.1, 40]), material: grass }];
-for (let index = 0; index < 7; index++) {
-  parts.push({ geometry: box(), matrix: placed([-6 + index * 2, 1.2, -6 - (index % 3) * 3], [0.35, 2.4, 0.35]), material: trunk });
+const camera = { eye: [0, 1.7, 4], target: [0, 2.6, -10], fov: 55 };
+
+// A low sun just above the horizon straight ahead; the ground it grazes is lit only a little.
+function lowSunScene() {
+  const parts = [{ geometry: box(), matrix: placed([0, -0.05, -10], [40, 0.1, 40]), material: grass }];
+  for (let index = 0; index < 7; index++) {
+    parts.push({ geometry: box(), matrix: placed([-6 + index * 2, 1.2, -6 - (index % 3) * 3], [0.35, 2.4, 0.35]), material: trunk });
+  }
+  const environment = { keyIntensity: 1, fillIntensity: 0.1, ambientIntensity: 0.15, lightDirection: [0.25, 0.09, -1], skyTop: [0.2, 0.38, 0.52], skyBottom: [2.6, 1.8, 1.0], daylight: 1 };
+  return { parts, environment, camera };
 }
 
-// The sun sits just above the horizon straight ahead; the ground it grazes is lit only a little.
-const environment = { keyIntensity: 1, fillIntensity: 0.1, ambientIntensity: 0.15, lightDirection: [0.25, 0.09, -1], skyTop: [0.2, 0.38, 0.52], skyBottom: [2.6, 1.8, 1.0], daylight: 1 };
-const camera = { eye: [0, 1.7, 4], target: [0, 2.6, -10], fov: 55 };
+// A high sun on bright walls and saturated props: the highlights are strong, and the colours are what has to stay.
+function sunlitScene() {
+  const wall = { color: [0.9, 0.88, 0.8], metallic: 0, roughness: 0.8 };
+  const parts = [
+    { geometry: box(), matrix: placed([0, -0.05, -8], [40, 0.1, 40]), material: { color: [0.55, 0.5, 0.4], metallic: 0, roughness: 0.9 } },
+    { geometry: box(), matrix: placed([0, 2, -12], [14, 4, 0.5]), material: wall },
+    { geometry: box(), matrix: placed([-3, 0.8, -4], [1.4, 1.6, 1.4]), material: { color: [0.8, 0.08, 0.05], metallic: 0, roughness: 0.6 } },
+    { geometry: box(), matrix: placed([0, 0.6, -5], [1.2, 1.2, 1.2]), material: { color: [0.05, 0.2, 0.8], metallic: 0, roughness: 0.6 } },
+    { geometry: box(), matrix: placed([3, 1, -4], [1.4, 2, 1.4]), material: { color: [0.95, 0.75, 0.05], metallic: 0, roughness: 0.6 } },
+    { geometry: box(), matrix: placed([-1.5, 0.5, 0.5], [1, 1, 1]), material: { color: [0.03, 0.03, 0.04], metallic: 0, roughness: 0.7 } },
+  ];
+  const environment = { keyIntensity: 3, fillIntensity: 0.15, ambientIntensity: 0.2, lightDirection: [0.5, 0.8, -0.4], skyTop: [0.25, 0.45, 0.9], skyBottom: [0.9, 0.95, 1.1], daylight: 1 };
+  return { parts, environment, camera: { eye: [0, 1.6, 6], target: [0, 1.6, -10], fov: 55 } };
+}
+
+const SCENES = { lowsun: lowSunScene, sunlit: sunlitScene };
 const SAMPLE_SIZE = 8;
 
 function srgbToLinear(value) {
@@ -46,16 +66,50 @@ function patch(context, x, y) {
   return { oklabL: Number(lightness.toFixed(4)), clippedShare: Number((clipped / (SAMPLE_SIZE * SAMPLE_SIZE)).toFixed(3)) };
 }
 
-window.drawCase = function drawCase(effects, points) {
+// Whole-frame numbers of the display picture: global contrast is the standard deviation of log luminance (stops, base 2), saturation the mean HSV saturation of
+// pixels brighter than 5 percent, and the clip share the pixels with a channel at 255.
+function frameStatistics(context) {
+  const width = context.drawingBufferWidth;
+  const height = context.drawingBufferHeight;
+  const pixels = new Uint8Array(width * height * 4);
+  context.readPixels(0, 0, width, height, context.RGBA, context.UNSIGNED_BYTE, pixels);
+  const logs = [];
+  let saturationSum = 0;
+  let saturationCount = 0;
+  let clipped = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    const [red, green, blue] = [pixels[index], pixels[index + 1], pixels[index + 2]].map(value => value / 255);
+    const luminance = 0.2126 * srgbToLinear(red) + 0.7152 * srgbToLinear(green) + 0.0722 * srgbToLinear(blue);
+    logs.push(Math.log2(Math.max(luminance, 0.0005)));
+    const highest = Math.max(red, green, blue);
+    if (highest > 0.05) {
+      saturationSum += (highest - Math.min(red, green, blue)) / highest;
+      saturationCount += 1;
+    }
+    if (pixels[index] === 255 || pixels[index + 1] === 255 || pixels[index + 2] === 255) clipped += 1;
+  }
+  const mean = logs.reduce((sum, value) => sum + value, 0) / logs.length;
+  const deviation = Math.sqrt(logs.reduce((sum, value) => sum + (value - mean) ** 2, 0) / logs.length);
+  return {
+    logLuminanceStd: Number(deviation.toFixed(4)),
+    meanSaturation: Number((saturationSum / saturationCount).toFixed(4)),
+    clipShare: Number((clipped / logs.length).toFixed(5)),
+    meanLogLuminance: Number(mean.toFixed(3)),
+  };
+}
+
+window.drawCase = function drawCase(sceneName, effects, points) {
   const canvas = document.querySelector('canvas');
+  const { parts, environment, camera: sceneCamera } = SCENES[sceneName]();
   const renderer = installPostSteps(installCameraEffects(new CrucibleRenderer(canvas, parts, { ground: false, hdr: true, depth: true, samples: 4, pixelRatio: 1, memoryBudgetMiB: 1024, environment })));
   renderer.resize();
-  const frame = { ...camera, environment, time: 0, exposure: 1, effects: { ambientOcclusion: 0, ...effects } };
+  const frame = { ...sceneCamera, environment, time: 0, exposure: 1, effects: { ambientOcclusion: 0, ...effects } };
   for (let index = 0; index < 3; index++) renderer.render(frame);
   const glError = renderer.context.getError();
   const samples = Object.fromEntries(Object.entries(points).map(([name, [x, y]]) => [name, patch(renderer.context, x, y)]));
+  const statistics = frameStatistics(renderer.context);
   const image = canvas.toDataURL('image/png').split(',')[1];
   renderer.dispose();
-  return { glError, image, samples, frame: { ...camera, environment, effects, exposure: 1 } };
+  return { glError, image, samples, statistics, frame: { ...sceneCamera, environment, effects, exposure: 1 } };
 };
 window.ready = true;

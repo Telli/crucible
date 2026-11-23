@@ -25,6 +25,10 @@ const MAXIMUM_DISPERSION = 0.03;
 // Local tone mapping works on the blur of the frame at a radius that is a fraction of its height; the taps read a mip level, so the cost does not grow with the radius.
 const LOCAL_TONE_TAPS = 24;
 const LOCAL_TONE_PIVOT = 0.18;
+// The most the base of a shadow is lifted, in natural-log units (2 stops), so deep blacks stay black.
+const LOCAL_TONE_MAXIMUM_LIFT = 1.386;
+// How round the knee between the untouched midtones and the compressed tail is, in squared natural-log units; the shader and localToneMappedLog read the same number.
+const LOCAL_TONE_KNEE_SOFTNESS = 0.04;
 
 const NEUTRAL = Object.freeze({ lift: [0, 0, 0], gamma: [1, 1, 1], gain: [1, 1, 1] });
 
@@ -144,13 +148,14 @@ function resolveLensDistortion(input) {
 
 function resolveLocalToneMapping(input) {
   const group = groupOf(input, 'localToneMapping');
-  onlyKeys(group, ['strength', 'highlightContrast', 'shadowContrast', 'detail', 'blurRadius'], 'localToneMapping');
+  onlyKeys(group, ['strength', 'highlightContrast', 'shadowContrast', 'detail', 'blurRadius', 'midtoneRange'], 'localToneMapping');
   return {
-    strength: numberInRange(group.strength, 0.5, 0, 1, 'localToneMapping.strength'),
+    strength: numberInRange(group.strength, 0.4, 0, 1, 'localToneMapping.strength'),
     highlightContrast: numberInRange(group.highlightContrast, 0.6, 0, 1, 'localToneMapping.highlightContrast'),
     shadowContrast: numberInRange(group.shadowContrast, 0.6, 0, 1, 'localToneMapping.shadowContrast'),
     detail: numberInRange(group.detail, 1, 0, 2, 'localToneMapping.detail'),
     blurRadius: numberInRange(group.blurRadius, 0.08, 0.01, 0.25, 'localToneMapping.blurRadius'),
+    midtoneRange: numberInRange(group.midtoneRange, 1.5, 0, 4, 'localToneMapping.midtoneRange'),
   };
 }
 
@@ -372,6 +377,7 @@ uniform float shadowContrast;
 uniform float detailGain;
 uniform float radiusPixels;
 uniform float baseLod;
+uniform float kneeLog;
 float logLuminance(vec3 color) {
   return log(max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 0.0001));
 }
@@ -395,12 +401,38 @@ void main() {
   float pivot = log(${LOCAL_TONE_PIVOT});
   float baseLog = sum / weightSum;
   float detailLog = centerLog - baseLog;
-  float above = max(baseLog - pivot, 0.0);
-  float below = min(baseLog - pivot, 0.0);
-  float mappedBase = pivot + above * mix(1.0, highlightContrast, strength) + below * mix(1.0, shadowContrast, strength);
-  float mappedLog = mappedBase + detailLog * detailGain;
+  // Only what lies past the knee on either side of middle grey is compressed, so the midtones keep their contrast and the picture does not go flat. A smooth
+  // knee has no kink for the eye to find, and the lift of a shadow is capped so the darkest parts stay dark.
+  float offset = baseLog - pivot;
+  float highTail = offset - kneeLog;
+  float lowTail = -offset - kneeLog;
+  float highExcess = 0.5 * (highTail + sqrt(highTail * highTail + ${LOCAL_TONE_KNEE_SOFTNESS}));
+  float lowExcess = 0.5 * (lowTail + sqrt(lowTail * lowTail + ${LOCAL_TONE_KNEE_SOFTNESS}));
+  float highDrop = highExcess * (1.0 - mix(1.0, highlightContrast, strength));
+  float lowWanted = lowExcess * (1.0 - mix(1.0, shadowContrast, strength));
+  float lowLift = ${LOCAL_TONE_MAXIMUM_LIFT} * tanh(lowWanted / ${LOCAL_TONE_MAXIMUM_LIFT});
+  float mappedLog = pivot + offset - highDrop + lowLift + detailLog * detailGain;
+  // The gain is one number for all three channels, so hue and saturation of the pixel stay as rendered.
   outputColor = vec4(source.rgb * exp(mappedLog - centerLog), source.a);
 }`;
+
+function kneeTail(distancePastKnee) {
+  return 0.5 * (distancePastKnee + Math.sqrt(distancePastKnee * distancePastKnee + LOCAL_TONE_KNEE_SOFTNESS));
+}
+
+/**
+ * The curve of the local tone mapping shader on one pixel, for tests and tools: natural-log luminances in, the mapped natural-log luminance out. `settings` is a resolved localToneMapping group.
+ * Only the base past the knee (`midtoneRange` stops either side of middle grey) is compressed, a shadow's lift is capped, and the detail is added back.
+ */
+export function localToneMappedLog(baseLog, detailLog, settings) {
+  const pivot = Math.log(LOCAL_TONE_PIVOT);
+  const offset = baseLog - pivot;
+  const kneeLog = settings.midtoneRange * Math.LN2;
+  const highDrop = kneeTail(offset - kneeLog) * (1 - (1 + (settings.highlightContrast - 1) * settings.strength));
+  const lowWanted = kneeTail(-offset - kneeLog) * (1 - (1 + (settings.shadowContrast - 1) * settings.strength));
+  const lowLift = LOCAL_TONE_MAXIMUM_LIFT * Math.tanh(lowWanted / LOCAL_TONE_MAXIMUM_LIFT);
+  return pivot + offset - highDrop + lowLift + detailLog * settings.detail;
+}
 
 // The renderer resolves only the core effects, so a stage reads its group from the frame's own effects.
 function stepsOf(frame) {
@@ -560,7 +592,7 @@ function createLocalToneMappingStage() {
   const stage = createStage({
     name: 'Local tone mapping',
     fragment: localToneMappingFragment,
-    uniformNames: ['strength', 'highlightContrast', 'shadowContrast', 'detailGain', 'radiusPixels', 'baseLod'],
+    uniformNames: ['strength', 'highlightContrast', 'shadowContrast', 'detailGain', 'radiusPixels', 'baseLod', 'kneeLog'],
     isActive: (effects, frame) => isLocalToneMappingActive(stepsOf(frame).localToneMapping),
     setUniforms(context, uniforms, renderer, frame) {
       const { localToneMapping } = stepsOf(frame);
@@ -570,6 +602,7 @@ function createLocalToneMappingStage() {
       context.uniform1f(uniforms.detailGain, localToneMapping.detail);
       const radiusPixels = localToneMapping.blurRadius * renderer.canvas.height;
       context.uniform1f(uniforms.radiusPixels, radiusPixels);
+      context.uniform1f(uniforms.kneeLog, localToneMapping.midtoneRange * Math.LN2);
       context.uniform1f(uniforms.baseLod, Math.max(0, Math.log2(radiusPixels / 3)));
     },
   });
