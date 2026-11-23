@@ -188,3 +188,23 @@ test('the documented example passes the validator and builds a scene', async () 
   assert.throws(() => scene.apply([{ type: 'set-post-passes' }], { expectedRevision: scene.revision }), /postPasses: got undefined; expected a postPasses value, or null to clear it/);
   assert.deepEqual(scene.exportRecipe().postPasses, scene.postPasses);
 });
+
+// #2806: a camera edit validates the scene's post passes again; a passing snippet is checked once and a failing one every time.
+test('a snippet that passed is not checked again, and one that failed is', () => {
+  let entryChecks = 0;
+  const countingEntry = {
+    pattern: { source: 'countingEntry', flags: '', test: () => { entryChecks++; return true; } },
+    example: ENTRY,
+  };
+  const source = wrap('  float unusedGain = 0.5;');
+  const first = validateShaderSnippet(source, { label: 'Kept', requiredFunction: countingEntry });
+  const second = validateShaderSnippet(source, { label: 'Kept', requiredFunction: countingEntry });
+  assert.equal(entryChecks, 1, 'the second call reads the kept result');
+  assert.deepEqual(second, first);
+  assert.notEqual(second, first, 'each call gets its own object, so a caller cannot edit the kept one');
+  second.source = 'changed';
+  assert.equal(validateShaderSnippet(source, { label: 'Kept', requiredFunction: countingEntry }).source, first.source);
+  validateShaderSnippet(source, { label: 'Another label', requiredFunction: countingEntry });
+  assert.equal(entryChecks, 2, 'the label is part of the key, so its messages name the right snippet');
+  for (let attempt = 0; attempt < 2; attempt++) rejects(`#define GAIN 1\n${ENTRY}`, /Preprocessor/);
+});

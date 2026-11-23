@@ -10,15 +10,18 @@ import { isMainModule, listTestFiles, repositoryRoot, runTestFiles } from './tes
 export const DEFAULT_THRESHOLD_MS = 1000;
 export const DEFAULT_BUDGET_MS = 120000;
 export const FAST_TESTS_PATH = 'config/fast-tests.json';
+export const TEST_TIMINGS_PATH = 'config/test-timings.json';
+// A file the full pass (measured on CI, where its tests run) times at or above this is never "fast", whatever the recorded list says.
+export const SLOW_IN_FULL_PASS_MS = 5000;
 // Guard tests always run, even when the recorded timings omit them or call them slow: a new src file missing from cook-addon.yml paths fails CI otherwise (#2938).
 export const GUARD_TEST_PATTERN = /^tests\/addon-job-paths[^/]*\.test\.js$/;
 
 // Picks the files recorded under `thresholdMs`, fastest first, until their recorded times add up to `budgetMs`.
 // Files missing from `existingFiles` (renamed or deleted since the timings were recorded) are dropped.
-export function selectFastTests(timings, existingFiles, { thresholdMs = DEFAULT_THRESHOLD_MS, budgetMs = DEFAULT_BUDGET_MS } = {}) {
+export function selectFastTests(timings, existingFiles, { thresholdMs = DEFAULT_THRESHOLD_MS, budgetMs = DEFAULT_BUDGET_MS, fullPassTimings = {} } = {}) {
   const existing = new Set(existingFiles);
   const candidates = Object.entries(timings)
-    .filter(([file, milliseconds]) => existing.has(file) && milliseconds < thresholdMs)
+    .filter(([file, milliseconds]) => existing.has(file) && milliseconds < thresholdMs && !((fullPassTimings[file] ?? 0) >= SLOW_IN_FULL_PASS_MS))
     .sort(([firstFile, firstMs], [secondFile, secondMs]) => firstMs - secondMs || firstFile.localeCompare(secondFile));
   const files = [];
   let recordedMilliseconds = 0;
@@ -42,6 +45,11 @@ export function readFastTests(folder = repositoryRoot) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+function readFullPassTimings(folder = repositoryRoot) {
+  const path = join(folder, TEST_TIMINGS_PATH);
+  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
+}
+
 function numberAfter(arguments_, flag, fallback) {
   const index = arguments_.indexOf(flag);
   if (index < 0) return fallback;
@@ -58,7 +66,7 @@ function main(arguments_) {
   }
   const thresholdMs = numberAfter(arguments_, '--threshold-ms', DEFAULT_THRESHOLD_MS);
   const budgetMs = numberAfter(arguments_, '--budget-ms', DEFAULT_BUDGET_MS);
-  const { files, recordedMilliseconds } = selectFastTests(timings, listTestFiles().filter(file => !usesNativeAddon(readFileSync(join(repositoryRoot, file), 'utf8'), file)), { thresholdMs, budgetMs });
+  const { files, recordedMilliseconds } = selectFastTests(timings, listTestFiles().filter(file => !usesNativeAddon(readFileSync(join(repositoryRoot, file), 'utf8'), file)), { thresholdMs, budgetMs, fullPassTimings: readFullPassTimings() });
   if (files.length === 0) {
     console.log(`No test file is recorded under ${thresholdMs} ms in ${FAST_TESTS_PATH}; nothing to run.`);
     return;
