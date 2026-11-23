@@ -42,10 +42,18 @@ export function wetBasin(x, z) {
   return broad + 0.1 * fine;
 }
 
+/** The road stone height of the shader (wetStone with no fade), centred on 0.5: three octaves on rotated lattices. */
+export function wetStone(x, y, z) {
+  const large = wearNoise((x * 0.8 - z * 0.6) * 30, y * 30, (x * 0.6 + z * 0.8) * 30);
+  const medium = wearNoise((x * 0.485 - z * 0.875) * 70 + 11, y * 70 + 11, (x * 0.875 + z * 0.485) * 70 + 11);
+  const small = wearNoise((x * 0.96 + z * 0.28) * 160 + 23, y * 160 + 23, (z * 0.96 - x * 0.28) * 160 + 23);
+  return 0.5 + 0.35 * (large - 0.5) + 0.45 * (medium - 0.5) + 0.6 * (small - 0.5);
+}
+
 /** The depth of water at a ground point: positive under water. `groundHeight` is the height of the ground plane (the uniform's fourth value). */
 export function puddleDepth(x, y, z, fillLevel, groundHeight) {
   const basinDepth = wetBasin(x, z) - fillLevel - 6 * (y - groundHeight);
-  return basinDepth - 0.012 * (wearNoise(x * 90, y * 90, z * 90) - 0.5);
+  return basinDepth - 0.024 * (wetStone(x, y, z) - 0.5);
 }
 
 /** The share of a flat square of ground, `size` metres wide at `groundHeight`, that is under water at the fill level. */

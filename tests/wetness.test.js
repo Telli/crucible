@@ -10,6 +10,7 @@ import { wetnessUniformValues, wetnessResponse, puddleShare, PUDDLE_SOURCES, PUD
 import { puddleFillLevel, PUDDLE_LEVEL_TABLE, SOAKED_ROAD_ROUGHNESS_SCALE, WATER_SURFACE_ROUGHNESS } from '../src/wetness-shader.js';
 import { wetnessKeepOutBoxes, wetnessGroundHeight, KEEP_OUT_LIMIT } from '../src/wetness-keep-out.js';
 import { findWaterSurface, flagWetMirrorParts, wetMirrorSurface } from '../src/water-reflection.js';
+import { wetStone } from './support/wetness-noise-port.mjs';
 
 function emptySession() {
   return createAgentScene({ format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] });
@@ -179,14 +180,58 @@ test('only standing water mirrors: the road is set rough after the lighting and 
 test('the water edge is narrow and pixel-wide, and the interior is flat and smooth', () => {
   const wet = wetShaderSource();
   assert.ok(wet.includes('standing = smoothstep(-edgeWidth, edgeWidth, stoneDepth) * gate'));
-  assert.ok(wet.includes('float edgeWidth = max(fwidth(puddleDepth), 0.00001);'));
-  assert.ok(wet.includes('normal = normalize(mix(normal, vec3(0.0, 1.0, 0.0), standing));'));
+  assert.ok(wet.includes('float edgeWidth = max(1.5 * fwidth(stoneDepth), 0.00001);'), 'the shore is anti-aliased on the depth the stones break, about 1.5 pixels wide');
+  assert.ok(wet.includes('normal = normalize(mix(normal, normalize(vec3(wetRipple.x, 1.0, wetRipple.y)), standing));'));
   assert.ok(wet.includes('float gate = smoothstep(0.996, 0.9995, geometricNormal.y)'));
 });
 
 test('grain and fine detail fade with the pixel footprint so the horizon does not speckle', () => {
   const wet = wetShaderSource();
   assert.ok(wet.includes('float pixelSize = sqrt(length(dFdx(worldPosition)) * length(dFdy(worldPosition)));'));
-  assert.ok(wet.includes('* grainFade;'));
+  assert.ok(wet.includes('float wallGrainFade = 1.0 - smoothstep(0.006, 0.03, pixelSize);'), 'walls keep the grain fade they had');
   assert.match(wet, /wetBasin[(]worldPosition, detailFade[)]/);
+});
+
+test('the water ripple is a faint slow tilt that moves with time and stays well under the mirror blur', () => {
+  const wet = wetShaderSource();
+  const ripple = wet.match(/vec2 wetRipple = [\s\S]*?\) \* ([0-9.]+);/);
+  assert.ok(ripple, 'the water normal carries a ripple');
+  assert.ok(Number(ripple[1]) <= 0.006, 'a ripple of a fifth of a degree or less keeps the reflection sharp');
+  assert.ok(ripple[0].includes('time *'), 'the ripple moves with the frame time and so is the same for the same time');
+});
+
+test('the soak band only darkens the road, so no bright ring of sky glints sits around a puddle; the wet fringe is narrow and glossy', () => {
+  const wet = wetShaderSource();
+  assert.equal(wet.includes('roughness * 0.75'), false, 'a smoother soak band lit a halo of glints around the water');
+  assert.ok(wet.includes('color *= (1.0 - 0.15 * soakBand) * (1.0 - 0.3 * fringe);'));
+  assert.ok(wet.includes('fringe = smoothstep(-0.014, 0.0, stoneDepth) * gate * (1.0 - standing);'), 'the fringe is about 3 cm wide');
+  assert.ok(wet.includes('roughness = mix(roughness, max(roughness * mix(0.8, 0.45, stoneTop), 0.075), fringe);'));
+});
+
+test('the wet grit eases in from the first drop of wetness and never touches a dry road', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('if (!TAG_WATER && !TAG_FIRE && !TAG_SMOKE && wetnessState.x > 0.0) {'), 'a dry road never enters the wet code');
+  assert.ok(wet.includes('float wetGrit = wetnessState.x * sqrt(wetnessState.x);'));
+  const gritAt = wetness => wetnessResponse(wetness) ** 1.5;
+  assert.equal(gritAt(0), 0);
+  assert.ok(gritAt(0.05) > 0.02 && gritAt(0.05) < gritAt(0.25) && gritAt(0.25) < gritAt(0.5) && gritAt(1) === 1);
+});
+
+test('the road stones are a mix of sizes on rotated lattices, mostly small, and lose their finest octave first', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('float wetStone(vec3 position, vec3 fades) {'));
+  assert.ok(wet.includes('vec3 stoneFades = 1.0 - vec3(smoothstep(0.009, 0.03, pixelSize), smoothstep(0.0055, 0.016, pixelSize), smoothstep(0.0018, 0.0049, pixelSize));'));
+  const heights = [];
+  for (let x = 0; x < 3; x += 0.01) {
+    for (let z = 0; z < 3; z += 0.01) heights.push(wetStone(x, 0, z));
+  }
+  const mean = heights.reduce((sum, value) => sum + value, 0) / heights.length;
+  assert.ok(Math.abs(mean - 0.5) < 0.02, 'the height is centred on 0.5');
+  let neighbourStep = 0;
+  let spread = 0;
+  for (let index = 1; index < heights.length; index++) {
+    neighbourStep += Math.abs(heights[index] - heights[index - 1]);
+    spread += Math.abs(heights[index] - mean);
+  }
+  assert.ok(neighbourStep / spread > 0.04, 'the smallest stones dominate the change from one centimetre to the next');
 });
