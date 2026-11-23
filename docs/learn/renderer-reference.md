@@ -161,7 +161,7 @@ Read these fields for diagnostics:
 | `triangles` | Triangles of the part list. |
 | `batches.length` | Instance batches. Shared geometry keeps it small. |
 | `cpuMilliseconds` | CPU submission time of the last `render`. It is not GPU frame time. |
-| `stats` | What the last `render()` cost: `drawCalls` and `trianglesDrawn`, `geometryBytes` and `textureBytes`, `gpuTimeMs`. See [Frame stats](#frame-stats). |
+| `stats` | What the last `render()` cost: `drawCalls` and `trianglesDrawn`, `geometryBytes` and `textureBytes`, `gpuTimeMs`. See [Frame stats](#renderer-reference/frame-stats). |
 | `diagnostics` | Warnings about the last frame, such as `coplanar-overlap` when [that check is installed](#contact-detection). |
 
 ## Frame stats
