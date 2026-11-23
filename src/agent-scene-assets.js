@@ -275,6 +275,17 @@ export function materialOutput(source, fields, droppedMaps = []) {
   return Object.freeze(output);
 }
 
+const LISTED_PLACED_ASSETS = 12;
+
+/** "Counted: 1a2b3c4d5e6f (nodes tree, tree-2), ..." so an agent knows which placements to remove or merge. */
+function describePlacedAssets(placed) {
+  const nodesByAsset = new Map();
+  for (const node of placed) nodesByAsset.set(node.asset.id, [...(nodesByAsset.get(node.asset.id) ?? []), node.id]);
+  const entries = [...nodesByAsset].map(([assetId, nodeIds]) => `${assetId.slice(0, 12)} (nodes ${nodeIds.slice(0, 3).join(', ')}${nodeIds.length > 3 ? ', ...' : ''})`);
+  const more = entries.length > LISTED_PLACED_ASSETS ? `, and ${entries.length - LISTED_PLACED_ASSETS} more` : '';
+  return `Counted: ${entries.slice(0, LISTED_PLACED_ASSETS).join(', ')}${more}.`;
+}
+
 /**
  * Generate the geometries, materials and child nodes of every placement into a normalized recipe, in place.
  * `assets` maps assetCopyKey(id, copy) to a decoded parseGltf asset; `createAssetDrive` is the loaded drive module's builder. Returns what the scene keeps outside the recipe JSON.
@@ -292,7 +303,7 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
   const animated = placed.filter(isAnimated);
   if (placed.length > ASSET_PLACEMENT_LIMITS.maxPlacements || distinct.size > ASSET_PLACEMENT_LIMITS.maxAssets ||
       animated.length > ASSET_PLACEMENT_LIMITS.maxAnimatedPlacements) {
-    throw new RangeError(`A scene places at most ${ASSET_PLACEMENT_LIMITS.maxPlacements} assets, ${ASSET_PLACEMENT_LIMITS.maxAssets} different ones, ${ASSET_PLACEMENT_LIMITS.maxAnimatedPlacements} of them playing a clip; this recipe places ${placed.length}, ${distinct.size} and ${animated.length}. Reuse an asset id for repeats or merge props into one GLB.`);
+    throw new RangeError(`A scene places at most ${ASSET_PLACEMENT_LIMITS.maxPlacements} assets, ${ASSET_PLACEMENT_LIMITS.maxAssets} different ones, ${ASSET_PLACEMENT_LIMITS.maxAnimatedPlacements} of them playing a clip; this recipe places ${placed.length}, ${distinct.size} and ${animated.length}. Reuse an asset id for repeats or merge props into one GLB. ${describePlacedAssets(placed)}`);
   }
   const copyCounter = new Map();
   const geometryIds = new Set();

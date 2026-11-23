@@ -257,3 +257,17 @@ test('an empty motion on a scene that places a clip says how to play the clip', 
   const scene = createAgentScene(recipe(nodes), {}, { assets: await loadedAssets(2) });
   assert.throws(() => scene.apply([{ type: 'set-motion', motion: { duration: 1, tracks: [] } }], { expectedRevision: 0 }), /needs no motion: leave motion out/);
 });
+
+test('the per-scene asset cap error names the counted assets and the nodes that place them (#2989)', async () => {
+  const scene = createAgentScene(recipe([]), {}, {});
+  const operations = Array.from({ length: 33 }, (_, index) => ({ type: 'add-node', node: { id: `prop-${index}`, asset: { id: index.toString(16).padStart(2, '0').repeat(32) } } }));
+  const pool = new Map();
+  for (const operation of operations) pool.set(assetCopyKey(operation.node.asset.id, 0), await strip());
+  scene.provideAssets(pool);
+  assert.throws(() => scene.apply(operations, { expectedRevision: scene.revision }), error => {
+    assert.match(error.message, /32 different ones.*this recipe places 33, 33 and 0/);
+    assert.match(error.message, /Counted: 000000000000 \(nodes prop-0\), 010101010101 \(nodes prop-1\)/);
+    assert.match(error.message, /and 21 more\./);
+    return true;
+  });
+});
