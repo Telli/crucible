@@ -12,7 +12,7 @@ import './leaf-transmission.js';
 import { mat4, quat } from 'gl-matrix';
 import {
   FULL_TURN, WORLD_UP, addLeafSurface, addScaled, addTube, addVectors, clamp, createFrame, createLeafFrame,
-  createMeshBuilder, createRandom, crossProduct, lerp, lerpVectors, normalized, randomInRange, scaleVector,
+  atlasCellRect, createMeshBuilder, createRandom, crossProduct, lerp, lerpVectors, normalized, randomInRange, scaleVector,
   subtractVectors, valueNoise, vectorLength,
 } from './vegetation-geometry.js';
 import { coverageMean, createCrownSkyField, matchMeanVisibility, scaleVisibility, vertexCoverage } from './tree-sky.js';
@@ -532,11 +532,11 @@ function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
   }
 }
 
-// LANE C HOOK (#3057): the part of the twig texture a card draws. Lane C's atlas of spray variants returns one quarter per
-// variant index here; until it lands every card draws the whole texture.
-const FULL_TEXTURE_RECT = Object.freeze([0, 0, 1, 1]);
-function cardUvRect() {
-  return FULL_TEXTURE_RECT;
+// A crown placement paints its twig texture as a 2 x 2 atlas of spray variants (#3057): each card draws one cell, picked by
+// its variant index. A plain species draws the whole texture.
+const FULL_TEXTURE_RECT = Object.freeze({ minU: 0, minV: 0, maxU: 1, maxV: 1 });
+function cardUvRect(crowned, variantIndex) {
+  return crowned ? atlasCellRect(variantIndex) : FULL_TEXTURE_RECT;
 }
 
 function addCards(builder, skeleton, spec, site, scale, random, variantIndex = 0) {
@@ -555,7 +555,7 @@ function addCards(builder, skeleton, spec, site, scale, random, variantIndex = 0
       rows: crowned ? [[0, 1], [1, 1]] : [[0, 1], [0.5, 1], [1, 1]],
       backFaces: false,
       droop: crowned ? 0 : 0.12,
-      uvRect: cardUvRect(variantIndex),
+      uvRect: cardUvRect(crowned, variantIndex),
       canopyNormal,
       canopyBlend: 0.55,
       colorBase: LEAF_COLOR_BASE,
@@ -646,7 +646,7 @@ function buildFoliage(skeleton, preset, mode, setting, random) {
   skeleton.leafSites.forEach((site, index) => {
     if (index % stride !== 0) return;
     if (mode === 'mesh') addMeshLeaves(builder, skeleton, preset.leaf, site, setting.leafScale, random);
-    else addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random, index);
+    else addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random, Math.floor(index / stride));
   });
   return builder.build();
 }
