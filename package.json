@@ -117,6 +117,7 @@
     "./addons/camera-effects": "./build/camera-effects.js",
     "./addons/water-reflection": "./build/water-reflection.js",
     "./addons/render-passes": "./build/render-passes.js",
+    "./addons/wireframe-pass": "./build/wireframe-pass.js",
     "./addons/user-pass": "./build/user-pass.js",
     "./addons/line-art": "./build/line-art.js",
     "./addons/mesh-blend": "./build/mesh-blend.js",
