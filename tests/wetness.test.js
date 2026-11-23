@@ -143,9 +143,9 @@ function wetShaderSource() {
 
 test('the puddle edge is soft and irregular: warped basin, pixel-wide fade and a pebble break-up', () => {
   const wet = wetShaderSource();
-  assert.match(wet, /float edgeWidth = clamp[(]4\.0 \* fwidth[(]fill[)], 0\.07, 0\.3[)];/);
+  assert.match(wet, /float edgeWidth = clamp[(]4\.0 \* fwidth[(]fill[)], 0\.1, 0\.3[)];/);
   assert.match(wet, /standing = smoothstep[(]0\.0, edgeWidth, depthField[)] \* gate/);
-  assert.match(wet, /float depthField = fill \+ 0\.05 \* pebble;/);
+  assert.match(wet, /float depthField = fill \+ 0\.08 \* pebble;/);
   assert.match(wet, /vec2 warp = vec2[(]wearNoise/);
 });
 
@@ -165,7 +165,7 @@ test('normals flatten with depth, so the rim keeps the road bumps', () => {
 
 test('grain and fine detail fade with the pixel footprint so the horizon does not speckle', () => {
   const wet = wetShaderSource();
-  assert.match(wet, /float pixelSize = length[(]fwidth[(]worldPosition[)][)]/);
+  assert.match(wet, /float pixelSize = sqrt[(]length[(]dFdx[(]worldPosition[)][)] \* length[(]dFdy[(]worldPosition[)][)][)]/);
   assert.match(wet, /\* grainFade;/);
   assert.match(wet, /wetBasin[(]worldPosition, detailFade[)]/);
 });
@@ -192,4 +192,10 @@ test('wetness 0.5 is damp and wetness 1 soaked: the gloss does not saturate at 0
   assert.match(wet, /wetSoak = wetnessState\.x \* wetnessState\.x/);
   const soak = (wetness) => wetnessResponse(wetness) ** 2;
   assert.ok(soak(1) - soak(0.5) > 0.4);
+});
+
+test('the fill level is capped so soaked ground pools instead of flooding', () => {
+  const [response, share] = wetnessUniformValues({ wetness: 1, puddles: { coverage: 1 } });
+  assert.ok(puddleFillLevel(response, share) >= 0.35, 'even full coverage keeps the level above the flood line');
+  assert.ok(puddleFillLevel(...wetnessUniformValues({ wetness: 1, puddles: { coverage: 0.5 } })) >= 0.6);
 });
