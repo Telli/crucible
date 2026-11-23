@@ -101,8 +101,8 @@ const LEAF_PROFILES = {
   oak: (along, phase) => Math.sin(Math.PI * along ** 0.8) * (0.4 + 0.6 * (0.5 - 0.5 * Math.cos(2 * Math.PI * (3 * along + phase * 0.4))) ** 0.7),
   // Triangular with a sawtooth edge: six teeth along the blade.
   birch: along => (along < 0.3 ? (along / 0.3) ** 0.7 : ((1 - along) / 0.7) ** 0.9) * (0.7 + 0.3 * ((along * 6) % 1)),
-  // Rounded with a flat base and a small pointed tip.
-  aspen: along => Math.max(0, 1 - ((along - 0.45) / 0.55) ** 2) ** (along < 0.45 ? 0.5 : 0.9),
+  // Rounded-ovate: widest at 40%, with a small drawn-out tip.
+  aspen: along => Math.sqrt(Math.max(0, 1 - ((along - 0.4) / (along < 0.4 ? 0.45 : 0.6)) ** 2)) * Math.min(1, ((1 - along) / 0.18) ** 0.6),
   // Lanceolate: widest a third of the way up, tapering to a point.
   ash: along => Math.sin(Math.PI * along ** 0.65) ** 1.3,
 };
@@ -129,22 +129,54 @@ function sprayBounds(cell, margin) {
   };
 }
 
+const BIRCH_MARGIN = 12;
+
+function bezierPoint(start, control, end, progress) {
+  const rest = 1 - progress;
+  return [0, 1].map(axis => rest * rest * start[axis] + 2 * rest * progress * control[axis] + progress * progress * end[axis]);
+}
+
+// A short curved branch that tapers from 3 px to about 1 px, painted as discs along a quadratic curve.
+function paintBough(pixels, spray, start, control, end) {
+  const { bounds } = spray;
+  for (let step = 0; step <= 48; step++) {
+    const progress = step / 48;
+    const [centerX, centerY] = bezierPoint(start, control, end, progress).map(value => Math.round(value * SPRAY_SCALE));
+    const radius = (1.6 - progress) * SPRAY_SCALE;
+    for (let offsetY = -Math.ceil(radius); offsetY <= radius; offsetY++) {
+      for (let offsetX = -Math.ceil(radius); offsetX <= radius; offsetX++) {
+        const x = centerX + offsetX;
+        const y = centerY + offsetY;
+        const inside = x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY;
+        if (inside && offsetX * offsetX + offsetY * offsetY <= radius * radius) compositePixel(pixels, x, y, spray.stemColor, 1);
+      }
+    }
+  }
+}
+
 function paintSprayStem(pixels, spray, fromX, fromY, toX, toY) {
   const [from, to] = [[fromX, fromY], [toX, toY]].map(point => point.map(value => Math.round(value * SPRAY_SCALE)));
   paintStem(pixels, ...from, ...to, spray.stemColor, spray.bounds);
   paintStem(pixels, from[0], from[1] + 1, to[0], to[1] + 1, spray.stemColor, spray.bounds);
 }
 
-// One leaf or leaflet on a stalk of `stalk` px, painted first. A leaf whose tip would pass the cell margin is left out, stalk and all.
+// Whether a leaf's tip stays inside the cell margin; one that does not is left out, stalk and all.
+function leafFits(spray, baseX, baseY, angle, leafLength, leafWidth, stalk = 0) {
+  const { bounds } = spray;
+  const length = (leafLength + stalk) * spray.scale;
+  const tipX = (baseX + Math.sin(angle) * length) * SPRAY_SCALE;
+  const tipY = (baseY - Math.cos(angle) * length) * SPRAY_SCALE;
+  const reach = leafWidth * spray.scale * SPRAY_SCALE / 2;
+  return tipX - reach >= bounds.minX && tipX + reach <= bounds.maxX && tipY - reach >= bounds.minY && tipY + reach <= bounds.maxY;
+}
+
+// One leaf or leaflet on a stalk of `stalk` px, painted first.
 function paintSprayLeaf(pixels, spray, baseX, baseY, angle, leafLength, leafWidth, stalk = 0) {
   const { random, bounds } = spray;
   const length = leafLength * spray.scale;
   const startX = baseX + Math.sin(angle) * stalk * spray.scale;
   const startY = baseY - Math.cos(angle) * stalk * spray.scale;
-  const tipX = (startX + Math.sin(angle) * length) * SPRAY_SCALE;
-  const tipY = (startY - Math.cos(angle) * length) * SPRAY_SCALE;
-  const reach = leafWidth * spray.scale * SPRAY_SCALE / 2;
-  if (tipX - reach < bounds.minX || tipX + reach > bounds.maxX || tipY - reach < bounds.minY || tipY + reach > bounds.maxY) return;
+  if (!leafFits(spray, baseX, baseY, angle, leafLength, leafWidth, stalk)) return;
   if (stalk > 0) paintSprayStem(pixels, spray, baseX, baseY, startX, startY);
   const phase = random();
   const profile = along => spray.profile(along, phase);
@@ -176,6 +208,7 @@ function paintShoot(pixels, spray, shoot) {
   for (let node = 1; node <= nodeCount; node++) {
     const nextX = x + Math.sin(angle) * step;
     const nextY = y - Math.cos(angle) * step;
+    if (recipe.trim && !leafFits(spray, nextX, nextY, angle, recipe.trim, recipe.trim)) break;
     paintSprayStem(pixels, spray, x, y, nextX, nextY);
     [x, y] = [nextX, nextY];
     angle += curve / nodeCount;
@@ -189,36 +222,38 @@ function paintShoot(pixels, spray, shoot) {
   paintLeavesAt(x, y, angle, 1, 1);
 }
 
-// An ash leaf: a straight rachis with leaflets in opposite pairs along it and one at the tip, 7 to 13 in all.
+// An ash leaf: a straight rachis with leaflets in strictly opposite pairs (4 to 6) and one at the tip, 9 to 13 in all. A pair is kept or
+// dropped together, so the two sides never turn into an alternate arrangement.
 function paintCompoundLeaf(pixels, spray, baseX, baseY, angle) {
   const { random } = spray;
-  const rachis = between(random, 58, 76);
-  const pairs = 3 + Math.floor(random() * 4);
+  const rachis = between(random, 78, 92);
+  const pairs = 4 + Math.floor(random() * 3);
+  const tilt = between(random, 0.95, 1.15);
   paintSprayStem(pixels, spray, baseX, baseY, baseX + Math.sin(angle) * rachis, baseY - Math.cos(angle) * rachis);
   for (let pair = 0; pair <= pairs; pair++) {
     const progress = 0.2 + 0.8 * pair / pairs;
     const nodeX = baseX + Math.sin(angle) * rachis * progress;
     const nodeY = baseY - Math.cos(angle) * rachis * progress;
-    const leafletLength = between(random, 14, 21) * (1 - 0.35 * Math.abs(progress - 0.6));
+    const leafletLength = between(random, 22, 28) * (1 - 0.3 * Math.abs(progress - 0.55));
     if (pair === pairs) {
-      paintSprayLeaf(pixels, spray, nodeX, nodeY, angle, leafletLength, leafletLength * 0.5);
+      paintSprayLeaf(pixels, spray, nodeX, nodeY, angle, leafletLength, leafletLength * 0.46);
       continue;
     }
-    for (const side of [-1, 1]) {
-      paintSprayLeaf(pixels, spray, nodeX, nodeY, angle + side * between(random, 0.9, 1.2), leafletLength, leafletLength * 0.5, 2);
-    }
+    const sides = [-1, 1].map(side => angle + side * tilt);
+    if (!sides.every(sideAngle => leafFits(spray, nodeX, nodeY, sideAngle, leafletLength, leafletLength * 0.46, 2))) continue;
+    for (const sideAngle of sides) paintSprayLeaf(pixels, spray, nodeX, nodeY, sideAngle, leafletLength, leafletLength * 0.46, 2);
   }
 }
 
 const SPRAY_RECIPES = {
   oak: { leafLength: [22, 28], leafWidth: 0.72, leafSpread: [0.7, 1.1], nodeSpacing: 12, stalk: [2, 4], leavesFrom: 0.45, tipCluster: [4, 6] },
-  birch: { leafLength: [8, 13], leafWidth: 0.8, leafSpread: [0.7, 1.3], nodeSpacing: 6, stalk: [1, 3], leavesFrom: 0 },
-  aspen: { leafLength: [13, 17], leafWidth: 1.0, leafSpread: [0.9, 1.5], nodeSpacing: 10, stalk: [14, 20], leavesFrom: 0, pair: true },
+  birch: { leafLength: [8, 13], leafWidth: 0.8, leafSpread: [0.7, 1.3], nodeSpacing: 6, stalk: [1, 3], leavesFrom: 0, trim: 10 },
+  aspen: { leafLength: [13, 17], leafWidth: 0.9, leafSpread: [0.55, 1.0], nodeSpacing: 8, stalk: [14, 19], leavesFrom: 0, trim: 18 },
 };
 
 function paintSprayCell(pixels, color, random, kind, cell) {
   const spray = {
-    cell, color, random, profile: LEAF_PROFILES[kind], recipe: SPRAY_RECIPES[kind], bounds: sprayBounds(cell, SPRAY_MARGIN),
+    cell, color, random, profile: LEAF_PROFILES[kind], recipe: SPRAY_RECIPES[kind], bounds: sprayBounds(cell, kind === 'birch' ? BIRCH_MARGIN : SPRAY_MARGIN),
     stemColor: [color[0] * 0.55, color[1] * 0.5, color[2] * 0.4], scale: between(random, 0.88, 1.12), spacing: between(random, 0.85, 1.2),
     branchEvery: random() < 0.5 ? 2 : 3,
   };
@@ -228,20 +263,31 @@ function paintSprayCell(pixels, color, random, kind, cell) {
   if (kind === 'ash') {
     const leaves = random() < 0.25 ? 1 : 2;
     for (let leaf = 0; leaf < leaves; leaf++) {
-      const angle = leaves === 1 ? between(random, -0.1, 0.1) : (leaf - 0.5) * 0.6 + between(random, -0.1, 0.1);
+      const angle = leaves === 1 ? between(random, -0.08, 0.08) : (leaf - 0.5) * 0.44 + between(random, -0.06, 0.06);
       paintCompoundLeaf(pixels, spray, baseX + (leaves - 1) * (leaf - 0.5) * 12, baseY, angle);
     }
     return;
   }
   if (kind === 'birch') {
-    // Pendulous twigs hang from a short bough near the top of the cell.
-    const topY = cell.y + SPRAY_MARGIN + 6;
-    const reach = between(random, 22, 30);
-    const centerX = cell.x + SPRAY_CELL / 2;
-    paintSprayStem(pixels, spray, centerX - reach, topY, centerX + reach, topY + between(random, -4, 4));
-    for (const offset of [-1, 0, 1]) {
-      const hanging = { x: centerX + offset * reach * 0.9, y: topY, angle: Math.PI + between(random, -0.3, 0.3), length: between(random, 60, 80), curve: between(random, -0.5, 0.5), depth: 1 };
-      paintShoot(pixels, spray, hanging);
+    // Pendulous twigs hang from a short curved bough that enters at a top corner.
+    const bough = side * between(random, 44, 54);
+    const startX = side > 0 ? cell.x + BIRCH_MARGIN : cell.x + SPRAY_CELL - BIRCH_MARGIN;
+    const startY = cell.y + BIRCH_MARGIN + 2;
+    const start = [startX, startY];
+    const control = [startX + bough * 0.5, startY + between(random, -1, 4)];
+    const end = [startX + bough, startY + between(random, 10, 18)];
+    paintBough(pixels, spray, start, control, end);
+    for (const progress of [0.12, 0.55, 1]) {
+      const [x, y] = bezierPoint(start, control, end, progress);
+      paintShoot(pixels, spray, { x, y, angle: Math.PI + between(random, -0.25, 0.25), length: between(random, 55, 72), curve: between(random, -0.5, 0.5), depth: 1 });
+    }
+    return;
+  }
+  if (kind === 'aspen') {
+    // A few flexible twigs, each bending its own way, with a leaf on a long stalk at every node.
+    for (const lean of [-0.4, 0.02, 0.4]) {
+      const x = baseX + lean * 30;
+      paintShoot(pixels, spray, { x, y: baseY, angle: lean + between(random, -0.12, 0.12), length: between(random, 60, 76), curve: between(random, 0.4, 0.9) * (lean < 0 ? -1 : 1), depth: 0 });
     }
     return;
   }
