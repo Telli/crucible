@@ -164,7 +164,7 @@ test('surface validates its settings without a mesh and reports them', () => {
 });
 
 test('a graph with surface needs uv mapping and a mesh with UVs', () => {
-  assert.throws(() => normalizeMaterialPattern({ type: 'graph', graph: SLOPE_GRAPH }), /vertexGroup, meshMap or surface node.*"mapping": "uv"/);
+  assert.throws(() => normalizeMaterialPattern({ type: 'graph', graph: SLOPE_GRAPH }), /surface node.*"mapping": "uv"/);
   assert.ok(normalizeMaterialPattern({ type: 'graph', mapping: 'uv', graph: SLOPE_GRAPH }));
   const bare = { positions: new Float32Array(9), indices: Uint32Array.from([0, 1, 2]) };
   assert.throws(() => surfaceMap(bare, { output: 'slope', space: 'world' }, 64, 'rock'), /surface: got "slope"; expected a mesh with UVs \(node rock has none\)/);

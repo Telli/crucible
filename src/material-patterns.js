@@ -179,7 +179,7 @@ function normalizeGraphPattern(value, mappingField) {
   if (!RESOLUTIONS.includes(resolution)) throw patternError(`resolution must be one of ${RESOLUTIONS.join(', ')}.`);
   const graph = normalizeMaterialGraph(value.graph, resolution);
   if ((graphVertexGroupNames(graph).length > 0 || graphMeshMapNames(graph).length > 0 || graphSurfaceSettings(graph).length > 0) && mappingField.mapping !== 'uv') {
-    throw patternError('uses a vertexGroup, meshMap or surface node, which reads the mesh in UV space: set "mapping": "uv" on the pattern (the mesh needs UVs).');
+    throw patternError('uses a vertexGroup node, a meshMap node or a surface node, which reads the mesh in UV space: set "mapping": "uv" on the pattern (the mesh needs UVs).');
   }
   return {
     type: GRAPH_TYPE,
