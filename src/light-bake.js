@@ -1,7 +1,7 @@
 import { invalidField } from './field-error.js';
 import { emittingAreaLights } from './area-light-portal.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
-import { buildTriangleBvh } from './triangle-bvh.js';
+import { buildTriangleBvhSteps } from './triangle-bvh.js';
 import { readTriangle } from './triangle-math.js';
 import { createTracer, pointLightFalloff } from './ray-query.js';
 import { extractRender } from './mesh-render.js';
@@ -291,6 +291,11 @@ export function emittedRadiance(material) {
 
 /** All parts in world space as one triangle soup: positions, indices, and the part each triangle belongs to. */
 export function buildWorld(parts) {
+  return drainSteps(buildWorldSteps(parts));
+}
+
+/** buildWorld as steps (#3052): a checkpoint after each part's triangles are placed, and inside the hierarchy build. */
+export function* buildWorldSteps(parts) {
   let vertexTotal = 0;
   let indexTotal = 0;
   for (const part of parts) {
@@ -303,7 +308,7 @@ export function buildWorld(parts) {
   const triangleOwner = new Uint32Array(indexTotal / 3);
   let vertexOffset = 0;
   let triangleOffset = 0;
-  parts.forEach((part, partIndex) => {
+  for (const [partIndex, part] of parts.entries()) {
     const { matrix } = part;
     const source = part.geometry.positions;
     for (let vertex = 0; vertex < source.length / 3; vertex++) {
@@ -319,8 +324,9 @@ export function buildWorld(parts) {
     triangleOwner.fill(partIndex, triangleOffset, triangleOffset + part.geometry.indices.length / 3);
     vertexOffset += source.length / 3;
     triangleOffset += part.geometry.indices.length / 3;
-  });
-  return { positions, indices, triangleOwner, bvh: buildTriangleBvh(positions, indices) };
+    yield;
+  }
+  return { positions, indices, triangleOwner, bvh: yield* buildTriangleBvhSteps(positions, indices) };
 }
 
 export function sceneScale(positions) {
@@ -1131,6 +1137,11 @@ function createSkyVisibilityGatherer({ tracer, offset, samples }) {
  * machine. Pass the plan and the final settings to `traceLightmaps`.
  */
 export function planLightmaps(parts, lighting, options = {}) {
+  return drainSteps(planLightmapsSteps(parts, lighting, options));
+}
+
+/** planLightmaps as steps (#3052): a checkpoint after each part is unwrapped. */
+export function* planLightmapsSteps(parts, lighting, options = {}) {
   const settings = normalizeBakeOptions(options);
   const lights = normalizeLights(lighting);
   const maximumParts = settings.backend !== 'cpu' ? MAX_GPU_BAKE_PARTS : MAX_BAKE_PARTS;
@@ -1143,11 +1154,11 @@ export function planLightmaps(parts, lighting, options = {}) {
   const secondSetCache = new Map();
   const entries = [];
   const skipped = [];
-  parts.forEach((part, index) => {
+  for (const [index, part] of parts.entries()) {
     const reason = skipReason(part);
     if (reason) {
       skipped.push({ name: part.name, reason });
-      return;
+      continue;
     }
     const slot = usesLightMapSlot(part.material);
     const scale = partAxisScale(part.matrix);
@@ -1161,7 +1172,8 @@ export function planLightmaps(parts, lighting, options = {}) {
       unwraps.set(key, reusedUnwrap(part.geometry, scale, chartMargin(area, settings), slot, twoSided));
     }
     entries.push({ part, index, unwrapped: unwraps.get(key), area, slot, twoSided });
-  });
+    yield;
+  }
   return { parts, lights, settings, started, entries, skipped };
 }
 
@@ -1190,10 +1202,18 @@ export function checkBudget(plan, settings) {
 
 /** Where every texel of every bakeable part sits in the world: the same input to the CPU and the GPU tracer. */
 export function rasterizeEntries(plan, settings) {
-  return plan.entries.map((entry) => {
+  return drainSteps(rasterizeEntriesSteps(plan, settings));
+}
+
+/** rasterizeEntries as steps (#3052): a checkpoint after each part. */
+export function* rasterizeEntriesSteps(plan, settings) {
+  const rasterized = [];
+  for (const entry of plan.entries) {
     const resolution = lightmapResolution(entry.area, entry.unwrapped.utilization, settings);
-    return { entry, resolution, ...rasterizeTexels(entry.unwrapped.geometry, entry.part.matrix, resolution) };
-  });
+    rasterized.push({ entry, resolution, ...rasterizeTexels(entry.unwrapped.geometry, entry.part.matrix, resolution) });
+    yield;
+  }
+  return rasterized;
 }
 
 /**
@@ -1210,10 +1230,11 @@ const TEXELS_PER_CHECKPOINT = 64;
 // gatherOnCpu as steps: each yield is a checkpoint where a sliced run may hand the thread back (#3052).
 function* gatherOnCpuSteps(plan, settings, rasterized) {
   const { parts, lights } = plan;
-  const world = buildWorld(parts);
+  const world = yield* buildWorldSteps(parts);
   const scale = sceneScale(world.positions);
   const offset = scale * 1e-4;
   const tracer = createTracer(world);
+  yield;
   const directIrradiance = createDirectIrradiance(tracer, withReach(lights, parts), offset, scale);
   const albedoOfPart = parts.map(part => diffuseAlbedo(part.material));
   const emissionOfPart = parts.map(part => emittedRadiance(part.material));
@@ -1249,9 +1270,14 @@ function* gatherOnCpuSteps(plan, settings, rasterized) {
 
 /** Lightmaps and parts from the gathered light: albedo, smoothing, dilation, sky visibility and the baked copies of the parts. */
 export function finishLightmaps(plan, settings, rasterized, gathered, sizes) {
+  return drainSteps(finishLightmapsSteps(plan, settings, rasterized, gathered, sizes));
+}
+
+/** finishLightmaps as steps (#3052): a checkpoint after each part. */
+export function* finishLightmapsSteps(plan, settings, rasterized, gathered, sizes) {
   const baked = plan.parts.slice();
   const partReports = [];
-  rasterized.forEach(({ entry, resolution, positions, normals, covered, nearestDistance }, entryNumber) => {
+  for (const [entryNumber, { entry, resolution, positions, normals, covered, nearestDistance }] of rasterized.entries()) {
     const { part, index, unwrapped, area, slot, twoSided } = entry;
     const { light, escaped } = gathered[entryNumber];
     const albedo = diffuseAlbedo(part.material);
@@ -1277,7 +1303,10 @@ export function finishLightmaps(plan, settings, rasterized, gathered, sizes) {
     const meanSkyVisibility = skyTexels > 0 ? skySum / skyTexels : 1;
     partReports.push({ name: part.name, resolution, peak, skyVisibility: meanSkyVisibility });
     const sealed = meanSkyVisibility < SKY_VISIBLE_ENOUGH && !part.material.occlusionMap;
-    if (peak <= 0 && !sealed) return;
+    if (peak <= 0 && !sealed) {
+      yield;
+      continue;
+    }
     let bakedResult = part;
     const spacing = Math.sqrt(area / Math.max(skyTexels, 1));
     const [smoothRadiance, smoothSkyVisibility] = smoothTexels([radiance, skyVisibility], covered, positions, normals, resolution, spacing);
@@ -1287,7 +1316,8 @@ export function finishLightmaps(plan, settings, rasterized, gathered, sizes) {
     if (smoothPeak > 0) bakedResult = (slot ? lightMappedPart : bakedPart)(part, unwrapped.geometry, lightmapTexture(smoothRadiance, resolution, smoothPeak), smoothPeak);
     if (sealed) bakedResult = skyVisibilityPart(bakedResult, unwrapped.geometry, skyVisibilityTexture(smoothSkyVisibility, resolution), slot);
     baked[index] = twoSided && bakedResult !== part ? withoutDoubleSided(bakedResult) : bakedResult;
-  });
+    yield;
+  }
   const report = { parts: partReports, skipped: plan.skipped, texels: sizes.texels, rayWork: sizes.rayWork, backend: settings.backend, seconds: (performance.now() - plan.started) / 1000 };
   return { parts: baked, report };
 }
@@ -1306,8 +1336,7 @@ export function* traceLightmapsSteps(plan, tracedSettings) {
   const settings = { ...plan.settings, ...tracedSettings };
   if (settings.backend !== 'cpu') throw new TypeError(`Light bake backend "${settings.backend}" is asynchronous: use bakeLightmapsAsync from light-bake-gpu.js.`);
   const sizes = checkedBakeSize(plan, settings);
-  const rasterized = rasterizeEntries(plan, settings);
-  yield;
+  const rasterized = yield* rasterizeEntriesSteps(plan, settings);
   const gathered = yield* gatherOnCpuSteps(plan, settings, rasterized);
-  return finishLightmaps(plan, settings, rasterized, gathered, sizes);
+  return yield* finishLightmapsSteps(plan, settings, rasterized, gathered, sizes);
 }

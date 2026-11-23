@@ -1,6 +1,10 @@
 // Bounding volume hierarchy over triangles, stored in typed arrays. Nodes sit in depth-first order:
 // the left child of node n is n + 1 and rightChild[n] holds the right child, or -1 for a leaf.
+import { drainSteps } from './flush-search-runner.js';
+
 const BIN_COUNT = 16;
+// Triangles the build goes through between two checkpoints of a build run in slices (#3052): about a millisecond of work.
+const TRIANGLES_PER_CHECKPOINT = 20_000;
 
 function triangleBoundsAndCentroids(positions, indices) {
   const triangleCount = indices.length / 3;
@@ -137,7 +141,12 @@ function splitRange(triangleBounds, centroids, order, start, end) {
  * Builds a hierarchy over the triangles of an indexed mesh. The mesh arrays are kept by reference.
  * `triangleOrder` maps leaf slots back to triangle ids.
  */
-export function buildTriangleBvh(positions, indices, { leafSize = 8, maxDepth = 64 } = {}) {
+export function buildTriangleBvh(positions, indices, options) {
+  return drainSteps(buildTriangleBvhSteps(positions, indices, options));
+}
+
+/** buildTriangleBvh as steps (#3052): the same hierarchy, with a checkpoint every few thousand triangles for a build run in slices. */
+export function* buildTriangleBvhSteps(positions, indices, { leafSize = 8, maxDepth = 64 } = {}) {
   const triangleCount = indices.length / 3;
   const { bounds: triangleBounds, centroids } = triangleBoundsAndCentroids(positions, indices);
   const triangleOrder = Uint32Array.from({ length: triangleCount }, (value, slot) => slot);
@@ -148,8 +157,14 @@ export function buildTriangleBvh(positions, indices, { leafSize = 8, maxDepth = 
   const rangeCount = new Uint32Array(capacity);
   let nodeCount = 0;
   const pending = [{ start: 0, end: triangleCount, depth: 0, parent: -1 }];
+  let trianglesSinceCheckpoint = 0;
   while (pending.length) {
     const { start, end, depth, parent } = pending.pop();
+    trianglesSinceCheckpoint += end - start;
+    if (trianglesSinceCheckpoint >= TRIANGLES_PER_CHECKPOINT) {
+      trianglesSinceCheckpoint = 0;
+      yield;
+    }
     const node = nodeCount++;
     if (parent >= 0) rightChild[parent] = node;
     unionBounds(triangleBounds, triangleOrder, start, end, nodeBounds, node * 6);

@@ -1,5 +1,5 @@
 import { invalidField } from './field-error.js';
-import { planLightmaps, estimateBake, traceLightmaps, traceLightmapsSteps, clearUnwrapReuse, MAX_BAKE_TEXELS } from './light-bake.js';
+import { planLightmapsSteps, estimateBake, traceLightmaps, traceLightmapsSteps, clearUnwrapReuse, MAX_BAKE_TEXELS } from './light-bake.js';
 import { drainSteps } from './flush-search-runner.js';
 import { contentFingerprint, ownedCopy, retainedBytes } from './content-fingerprint.js';
 import { runKernel } from './kernel-offload.js';
@@ -324,8 +324,7 @@ export function bakeChangedParts(snapshots, lighting, settings) {
 
 /** bakeChangedParts as steps (#3052): the same answer, with a checkpoint every few dozen texels for a bake run in slices. */
 export function* bakeChangedPartsSteps(snapshots, lighting, settings) {
-  const plan = planLightmaps(snapshots, lighting, { ...settings, maxSeconds: bakeSecondsLimit() });
-  yield;
+  const plan = yield* planLightmapsSteps(snapshots, lighting, { ...settings, maxSeconds: bakeSecondsLimit() });
   const { used, reduced, reduction } = fitSettingsToBudget(plan, settings);
   const { parts, report } = yield* traceWithAdvice(plan, used);
   return { changed: changedPartsOf(parts, snapshots), report, used, reduced, reduction };
