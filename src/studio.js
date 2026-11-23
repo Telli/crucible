@@ -1373,17 +1373,44 @@ export function createStudio(container, {
   const lightGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid', attributes: { role: 'group', 'aria-label': 'Lights' } }, addPointLightButton, addSpotLightButton, addAreaLightButton);
   // The trees load on first use: their picker draws one picture of each preset, and their code stays out of the core entry.
   let treeToolsPromise = null;
+  let treePickerLoad = null;
   const loadTreeTools = () => {
     treeToolsPromise ??= import('./studio-trees.js');
     return treeToolsPromise;
   };
-  const treePicker = createElement(documentReference, 'div', { className: 'crucible-studio-tree-picker' });
-  treePicker.hidden = true;
+  // The preset tiles open in a flyout of their own beside the Tree entry, so the add menu keeps its size and place.
+  const treePicker = createElement(documentReference, 'div', { className: 'crucible-studio-popover crucible-studio-tree-picker', attributes: { popover: 'manual' } });
   const addTreeButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Tree', dataset: { keepPopover: '' }, attributes: { 'aria-expanded': 'false' } });
+  const closeTreePicker = () => {
+    if (treePicker.matches?.(':popover-open')) {
+      treePicker.hidePopover?.();
+    }
+    addTreeButton.setAttribute('aria-expanded', 'false');
+  };
+  // Beside the add menu at the height of the Tree entry, on the other side when the window ends there, and inside the window either way.
+  const placeTreePicker = () => {
+    const view = documentReference.defaultView;
+    if (!view) return;
+    const menuRectangle = addPopover.getBoundingClientRect();
+    const entryRectangle = addTreeButton.getBoundingClientRect();
+    const pickerRectangle = treePicker.getBoundingClientRect();
+    const margin = 8;
+    const rightLeft = menuRectangle.right + margin;
+    const fitsRight = rightLeft + pickerRectangle.width <= view.innerWidth - margin;
+    const left = fitsRight ? rightLeft : Math.max(margin, menuRectangle.left - margin - pickerRectangle.width);
+    const wantedTop = entryRectangle.top - margin;
+    const top = Math.max(margin, Math.min(wantedTop, view.innerHeight - margin - pickerRectangle.height));
+    treePicker.style.left = `${Math.round(left)}px`;
+    treePicker.style.top = `${Math.round(top)}px`;
+  };
+  addPopover.addEventListener('toggle', event => {
+    if (event.newState === 'closed') {
+      closeTreePicker();
+    }
+  });
   const pickTree = async presetName => {
     addPopover.hidePopover?.();
-    treePicker.hidden = true;
-    addTreeButton.setAttribute('aria-expanded', 'false');
+    closeTreePicker();
     try {
       const treeTools = await loadTreeTools();
       const created = await treeTools.addTree({ controller, loadAgentSceneModules, findFreeSpot: freeSpawnTranslation }, presetName);
@@ -1392,38 +1419,28 @@ export function createStudio(container, {
       announce(error.message);
     }
   };
-  // The menu is placed before the tree tiles exist, so opening them moves it up enough to keep their last row in the window.
-  const keepAddMenuInWindow = () => {
-    const view = documentReference.defaultView;
-    if (!view) return;
-    const overflow = addPopover.getBoundingClientRect().bottom - (view.innerHeight - 8);
-    if (overflow <= 0) return;
-    addPopover.style.top = `${Math.max(8, Math.round(addPopover.getBoundingClientRect().top - overflow))}px`;
-    addPopover.style.bottom = 'auto';
-  };
   addTreeButton.addEventListener('click', async () => {
-    treePicker.hidden = !treePicker.hidden;
-    addTreeButton.setAttribute('aria-expanded', treePicker.hidden ? 'false' : 'true');
-    if (treePicker.hidden) return;
-    if (treePicker.childElementCount > 0) {
-      keepAddMenuInWindow();
+    if (treePicker.matches?.(':popover-open')) {
+      closeTreePicker();
       return;
     }
+    addTreeButton.setAttribute('aria-expanded', 'true');
     try {
       const treeTools = await loadTreeTools();
-      const picker = treeTools.createTreePicker({
-        documentReference,
-        createElement,
-        onPick: pickTree,
-        loadPictures: () => treeTools.renderPresetPictures({ documentReference, createAgentScene, loadAgentSceneModules, createRenderer, agentEnvironmentMap, fitAgentShadow, resolveAgentShadow }),
-      });
-      treePicker.append(picker.element);
-      keepAddMenuInWindow();
-      const ObserverClass = documentReference.defaultView?.ResizeObserver;
-      if (ObserverClass) {
-        new ObserverClass(keepAddMenuInWindow).observe(addPopover);
+      if (treePicker.childElementCount === 0) {
+        const picker = treeTools.createTreePicker({
+          documentReference,
+          createElement,
+          onPick: pickTree,
+          loadPictures: () => treeTools.renderPresetPictures({ documentReference, createAgentScene, loadAgentSceneModules, createRenderer, agentEnvironmentMap, fitAgentShadow, resolveAgentShadow }),
+        });
+        treePicker.append(picker.element);
+        treePickerLoad = picker.load;
       }
-      await picker.load();
+      treePicker.showPopover?.();
+      placeTreePicker();
+      await treePickerLoad();
+      placeTreePicker();
     } catch (error) {
       announce(error.message);
     }
@@ -1933,12 +1950,12 @@ export function createStudio(container, {
     'div',
     { className: 'crucible-studio-panel-body' },
     createElement(documentReference, 'div', { className: 'crucible-studio-name-row' }, nodeLabelInput, visibleToggle, frameButton, duplicateButton, deleteButton),
+    treeSection,
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Parent' }), nodeParentSelect),
     positionRow.container,
     rotationRow.container,
     scaleRow.container,
     createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, castShadowToggle, receiveShadowToggle),
-    treeSection,
   );
 
   // Tab 2: Material Panel

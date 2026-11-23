@@ -12,7 +12,9 @@ import {
   nextTreeSeed,
   renderPresetPictures,
   singleTreeOf,
+  thumbnailCamera,
   treeControlValues,
+  treeSpawnTranslation,
 } from '../src/studio-trees.js';
 
 function emptyRecipe() {
@@ -153,4 +155,44 @@ test('the preset pictures come from the renderer, one per preset, and the canvas
   assert.ok(drawn.every(frame => frame.parts > 0));
   assert.notDeepEqual(drawn[0].eye, drawn[1].eye);
   assert.equal(fakeCanvas.removed, true);
+});
+
+test('a new tree spawns clear of the objects already in the scene by its own crown', async () => {
+  const { controller, tools } = mountController();
+  const crowded = [{ id: 'box', translation: [0, 0.5, 0] }, { id: 'ball', translation: [-1.6, 0.5, 0.4] }, { id: 'cone', translation: [1.5, 0.5, -0.6] }];
+  const spot = treeSpawnTranslation(crowded, 'oak', freeSpawnTranslation);
+  for (const node of crowded) {
+    assert.ok(Math.hypot(node.translation[0] - spot[0], node.translation[2] - spot[2]) >= 5, 'the crown clears ' + node.id);
+  }
+  const planted = await addTree(tools, 'oak');
+  assert.deepEqual(planted.translation, treeSpawnTranslation([], 'oak', freeSpawnTranslation));
+  assert.equal(controller.selectedNodeId, planted.id);
+});
+
+test('the picture camera fits each preset inside the tile and fills most of it', () => {
+  for (const presetName of TREE_PRESET_NAMES) {
+    const scene = createAgentScene({ ...emptyRecipe(), nodes: [{ id: 'tree', vegetation: { preset: presetName, seed: 1 } }] });
+    const camera = thumbnailCamera(scene.parts);
+    const subtract = (first, second) => first.map((value, axis) => value - second[axis]);
+    const dot = (first, second) => first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
+    const unit = vector => vector.map(value => value / Math.hypot(...vector));
+    const forward = unit(subtract(camera.target, camera.eye));
+    const right = unit([forward[1] * 0 - forward[2] * 1, forward[2] * 0 - forward[0] * 0, forward[0] * 1 - forward[1] * 0]);
+    const up = [right[1] * forward[2] - right[2] * forward[1], right[2] * forward[0] - right[0] * forward[2], right[0] * forward[1] - right[1] * forward[0]];
+    const halfView = Math.tan((38 * Math.PI) / 360);
+    let widest = 0;
+    for (const part of scene.parts) {
+      const positions = part.geometry.positions;
+      const matrix = part.matrix;
+      for (let offset = 0; offset < positions.length; offset += 3) {
+        const [x, y, z] = [positions[offset], positions[offset + 1], positions[offset + 2]];
+        const world = [0, 1, 2].map(row => matrix[row] * x + matrix[row + 4] * y + matrix[row + 8] * z + matrix[row + 12]);
+        const offsetFromEye = subtract(world, camera.eye);
+        const depth = dot(offsetFromEye, forward);
+        widest = Math.max(widest, Math.abs(dot(offsetFromEye, right)) / (depth * halfView), Math.abs(dot(offsetFromEye, up)) / (depth * halfView));
+      }
+    }
+    assert.ok(widest <= 1, presetName + ' stays inside the tile, reaches ' + widest.toFixed(2));
+    assert.ok(widest >= 0.7, presetName + ' fills the tile, reaches ' + widest.toFixed(2));
+  }
 });

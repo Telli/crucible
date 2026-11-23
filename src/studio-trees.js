@@ -13,7 +13,9 @@ export const TREE_LEAF_DENSITY_RANGE = Object.freeze({ min: 0.5, max: 20, step: 
 const SEED_CEILING = 100000;
 const THUMBNAIL_SIZE = 168;
 const THUMBNAIL_VIEW_DIRECTION = Object.freeze([0.38, 0.16, 1]);
-const THUMBNAIL_DISTANCE_PER_METRE = 2.1;
+const THUMBNAIL_FIELD_OF_VIEW = 38;
+const THUMBNAIL_PADDING = 1.1;
+const THUMBNAIL_VERTEX_BUDGET = 40000;
 
 /** The vegetation field of a node that grows exactly one tree, or null for any other node. */
 export function singleTreeOf(node) {
@@ -102,13 +104,35 @@ export function addTreeOperation(recipe, presetName, translation) {
   return { operation: { type: 'add-node', node }, nodeId };
 }
 
+/** The crown of a tree spreads about half its height each side, and objects already in the scene keep this much room too. */
+const SPAWN_OBJECT_ALLOWANCE = 1.5;
+const SPAWN_STEP = 1;
+const SPAWN_ATTEMPTS = 200;
+
+/** The first spot along X, from where new objects start, that the whole crown of the tree clears every top level node. */
+export function treeSpawnTranslation(nodes, presetName, findFreeSpot) {
+  const footprint = defaultTreeHeight({ preset: presetName }) * 0.5 + SPAWN_OBJECT_ALLOWANCE;
+  const isClear = spot => nodes.every(node => {
+    if (node.parent) {
+      return true;
+    }
+    const distance = Math.hypot((node.translation?.[0] ?? 0) - spot[0], (node.translation?.[2] ?? 0) - spot[2]);
+    return distance >= footprint;
+  });
+  let spot = findFreeSpot([0, 0, 0], nodes);
+  for (let attempt = 0; attempt < SPAWN_ATTEMPTS && !isClear(spot); attempt += 1) {
+    spot = findFreeSpot([spot[0] + SPAWN_STEP, spot[1], spot[2]], nodes);
+  }
+  return spot;
+}
+
 /**
  * Plants a preset tree where Studio puts new objects and selects it, as one undo step.
  * `findFreeSpot(translation, nodes)` is the controller's free spawn point finder; the vegetation code loads before the edit.
  */
 export async function addTree({ controller, loadAgentSceneModules, findFreeSpot }, presetName) {
   const recipe = controller.exportRecipe();
-  const { operation, nodeId } = addTreeOperation(recipe, presetName, findFreeSpot([0, 0, 0], recipe.nodes));
+  const { operation, nodeId } = addTreeOperation(recipe, presetName, treeSpawnTranslation(recipe.nodes, presetName, findFreeSpot));
   await loadAgentSceneModules({ nodes: [operation.node] });
   controller.applyImportOperations([operation], { selectNodeId: nodeId });
   return operation.node;
@@ -125,18 +149,73 @@ export function changeSelectedTree(controller, nodeId, change) {
 }
 
 function thumbnailRecipe(presetName) {
-  const vegetation = { preset: presetName, seed: 1 };
-  const height = defaultTreeHeight(vegetation);
-  const distance = height * THUMBNAIL_DISTANCE_PER_METRE;
-  const length = Math.hypot(...THUMBNAIL_VIEW_DIRECTION);
-  const eye = THUMBNAIL_VIEW_DIRECTION.map(component => (component / length) * distance);
-  eye[1] += height * 0.5;
   return {
     format: 'crucible.scene',
     schemaVersion: 1,
-    nodes: [{ id: 'tree', vegetation }],
-    camera: { eye, target: [0, height * 0.5, 0], up: [0, 1, 0], fov: 38, near: 0.1, far: height * 20 },
+    nodes: [{ id: 'tree', vegetation: { preset: presetName, seed: 1 } }],
+    camera: { eye: [0, 5, 20], target: [0, 5, 0], up: [0, 1, 0], fov: THUMBNAIL_FIELD_OF_VIEW, near: 0.1, far: 1000 },
   };
+}
+
+function normalized(vector) {
+  const length = Math.hypot(...vector);
+  return vector.map(component => component / length);
+}
+
+function crossProduct(first, second) {
+  return [
+    first[1] * second[2] - first[2] * second[1],
+    first[2] * second[0] - first[0] * second[2],
+    first[0] * second[1] - first[1] * second[0],
+  ];
+}
+
+function dotProduct(first, second) {
+  return first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
+}
+
+/**
+ * The camera that fills a square picture with the drawn parts: it looks from `THUMBNAIL_VIEW_DIRECTION` and stands back
+ * until the widest and tallest extent seen from there fit with the same padding, so every preset fills a similar share.
+ */
+export function thumbnailCamera(parts) {
+  const backward = normalized(THUMBNAIL_VIEW_DIRECTION);
+  const right = normalized(crossProduct([0, 1, 0], backward));
+  const up = crossProduct(backward, right);
+  const axes = [right, up, backward];
+  const low = [Infinity, Infinity, Infinity];
+  const high = [-Infinity, -Infinity, -Infinity];
+  const totalVertices = parts.reduce((count, part) => count + (part.geometry?.positions?.length ?? 0) / 3, 0);
+  const stride = Math.max(1, Math.ceil(totalVertices / THUMBNAIL_VERTEX_BUDGET));
+  for (const part of parts) {
+    const positions = part.geometry?.positions;
+    const matrix = part.matrix;
+    if (!positions || !matrix) {
+      continue;
+    }
+    for (let offset = 0; offset < positions.length; offset += 3 * stride) {
+      const x = positions[offset];
+      const y = positions[offset + 1];
+      const z = positions[offset + 2];
+      const world = [
+        matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+        matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+        matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
+      ];
+      axes.forEach((axis, index) => {
+        const coordinate = dotProduct(world, axis);
+        low[index] = Math.min(low[index], coordinate);
+        high[index] = Math.max(high[index], coordinate);
+      });
+    }
+  }
+  const center = low.map((value, index) => (value + high[index]) / 2);
+  const halfExtent = Math.max(high[0] - low[0], high[1] - low[1]) / 2;
+  const halfDepth = (high[2] - low[2]) / 2;
+  const distance = (halfExtent / Math.tan((THUMBNAIL_FIELD_OF_VIEW * Math.PI) / 360)) * THUMBNAIL_PADDING + halfDepth;
+  const target = [0, 1, 2].map(component => right[component] * center[0] + up[component] * center[1] + backward[component] * center[2]);
+  const eye = target.map((value, component) => value + backward[component] * distance);
+  return { eye, target, far: Math.max(1000, distance * 4) };
 }
 
 /**
@@ -175,7 +254,7 @@ export async function renderPresetPictures({
       });
       try {
         renderer.resize();
-        renderer.render({ ...scene.camera, environment: lighting, effects, exposure: effects.exposure, time: 0, lines: environment.lines });
+        renderer.render({ ...scene.camera, ...thumbnailCamera(scene.parts), environment: lighting, effects, exposure: effects.exposure, time: 0, lines: environment.lines });
         pictures.set(presetName, canvas.toDataURL('image/png'));
       } catch {
         // A preset that cannot draw here still gets its tile, with the name only.
@@ -249,6 +328,7 @@ export function createTreeInspector({ documentReference, createElement, createSl
   const seasonField = createSliderField(documentReference, 'Season', { ...TREE_SEASON_RANGE, value: 0 }, season => write({ season }));
   const seedInput = createElement(documentReference, 'input', { type: 'number', min: '-2147483648', max: '2147483647', step: '1', attributes: { 'aria-label': 'Seed' } });
   const newSeedButton = createElement(documentReference, 'button', { type: 'button', textContent: 'New seed' });
+  const newSeedChips = createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, newSeedButton);
   seedInput.addEventListener('change', () => {
     const seed = Number(seedInput.value);
     if (Number.isInteger(seed)) {
@@ -260,10 +340,11 @@ export function createTreeInspector({ documentReference, createElement, createSl
     documentReference,
     'div',
     { className: 'crucible-studio-tree-controls' },
+    createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Tree' }),
     heightField.container,
-    leafField.container,
     seasonField.container,
-    createElement(documentReference, 'div', { className: 'crucible-studio-tree-seed' }, seedInput, newSeedButton),
+    createElement(documentReference, 'div', { className: 'crucible-studio-tree-seed' }, seedInput, newSeedChips),
+    leafField.container,
   );
   element.hidden = true;
   return {
