@@ -239,7 +239,7 @@ test('addLodsToDenseParts gives levels to mid-size meshes by default, so a scene
   assert.equal(result[2].lods, undefined, 'a tiny mesh does not');
 });
 
-test('a reduced level keeps the tangent of every vertex that survives, four numbers each (#2144)', () => {
+test('a reduced level keeps the tangent of every vertex that survives, four numbers each (#3124)', () => {
   const grid = uvGrid(24);
   const vertexCount = grid.positions.length / 3;
   const tangents = new Float32Array(vertexCount * 4);
