@@ -1501,7 +1501,7 @@ function stagePose(stagedState, time) {
   }
   const camera = sampled?.camera ? cameraPoseFrom(sampled.camera) : stagedState.recipe.camera;
   retainedMatrices(stagedState.parts);
-  const clothGeometries = withTerrainLod(sampledGeometries(stagedState, time, sampled), stagedState, graph, camera);
+  const clothGeometries = withTerrainLod(sampledGeometries(stagedState, time, sampled, camera), stagedState, graph, camera);
   // Staged last: a pose pending on a decoded asset must be committed or discarded, so nothing above may throw after it.
   const assetClips = stagedState.assetRuntime.animators.length ? agentSceneModule('assets').stageAssetClips(stagedState.assetRuntime, graph, time) : null;
   const movedLook = stagedState.motionSampler && agentSceneModule('motion').motionMovesLook(sampled) ? sampled : null;
@@ -1549,13 +1549,13 @@ function oceanTimeGeometries(stagedState, sampled, time) {
 }
 
 // Cloth and particles replace the geometry of their own nodes at a sampled time; no node belongs to both.
-function sampledGeometries(stagedState, time, sampled) {
+function sampledGeometries(stagedState, time, sampled, camera) {
   if (time === null) {
     return null;
   }
   const geometries = oceanTimeGeometries(stagedState, sampled, time);
   for (const sampler of [stagedState.clothSampler, stagedState.particleSampler]) {
-    sampler?.sample(time)?.forEach((geometry, nodeId) => geometries.set(nodeId, geometry));
+    sampler?.sample(time, camera)?.forEach((geometry, nodeId) => geometries.set(nodeId, geometry));
   }
   return geometries.size ? geometries : null;
 }
@@ -2135,10 +2135,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   }
 
   function stageRestParts(recipe, sourceRestParts, lightBakeResult, graph) {
+    if (options.recipeOnly) {
+      return { restParts: sourceRestParts };
+    }
     const baked = lightBakeResult?.parts ?? sourceRestParts;
-    // Its floor sky and reflections wait for the real light: while the edit's bake runs, and in a baked recipe built without its
-    // bake, which is only read for its recipe and then rebuilt or dropped.
-    if (lightBakeResult?.pending || options.skipLightBake && recipe.bake) {
+    // Its floor sky and reflections wait for the real light while the edit's bake runs.
+    if (lightBakeResult?.pending) {
       return { reflected: null, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, baked), { rest: true }) };
     }
     const reflected = stageObjectReflections(recipe, sourceRestParts, baked, graph);
@@ -2156,10 +2158,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   // A light bake costs seconds of ray tracing: it runs when the parts, the lights, the materials or the bake fields
   // change, and every other edit, seek or camera move reuses the last result.
-  // `options.skipLightBake` builds the scene without its bake, for a scene made only to read its recipe (a baked recipe then skips its floor sky too).
+  // `options.recipeOnly` builds the scene without its bake and without staging its parts (flush ranking, floor sky, reflections),
+  // for a scene made only to read its recipe.
   function stageLightBake(recipe, sourceRestParts, graph, stagedMaterialSnapshots) {
     skippedBake = null;
-    if (!recipe.bake || options.skipLightBake) {
+    if (!recipe.bake || options.recipeOnly) {
       return null;
     }
     const worldMatrices = new Map(sourceRestParts.map(part => [part.name, new Float32Array(graph.getNode(part.name).worldMatrix)]));
@@ -2322,7 +2325,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   }
 
   function stageCoplanarOffsets(recipe, parts, { rest = false } = {}) {
-    if (!agentSceneModuleActive('coplanar', requestedModules)) {
+    if (options.recipeOnly || !agentSceneModuleActive('coplanar', requestedModules)) {
       return parts;
     }
     const coplanar = agentSceneModule('coplanar');

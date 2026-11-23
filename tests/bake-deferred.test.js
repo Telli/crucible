@@ -57,8 +57,9 @@ function recoloured(recipe) {
 
 function reshapedRecipe(recipe) {
   const reshaped = structuredClone(recipe);
-  reshaped.geometries.push({ id: 'ball', type: 'sphere' });
-  reshaped.nodes.find(node => node.id === 'block').geometry = 'ball';
+  // A changed geometry record is not a difference scene operations express, so the load builds a new scene.
+  const blockGeometryId = reshaped.nodes.find(node => node.id === 'block').geometry;
+  reshaped.geometries.find(geometry => geometry.id === blockGeometryId).type = 'sphere';
   return reshaped;
 }
 
@@ -180,7 +181,8 @@ test('a fresh scene and a scene that did not ask for it still bake before they r
 });
 
 test('the stepped trace is the trace, with a checkpoint between every few dozen texels', () => {
-  const scene = createAgentScene(bakedRoom(), {}, { skipLightBake: true });
+  const { bake: droppedBake, ...unbakedRoom } = bakedRoom();
+  const scene = createAgentScene(unbakedRoom);
   const snapshots = scene.parts.map(part => ({ ...part, material: { ...part.material } }));
   const lighting = { pointLights: [], spotLights: [], areaLights: [], keyColor: [1, 1, 1], skyTop: [0.5, 0.6, 0.8], skyBottom: [0.3, 0.3, 0.3], lightDirection: [-0.3, -1, -0.2] };
   const options = { samples: 2, bounces: 1, texelsPerUnit: 1, maxSeconds: 60 };
