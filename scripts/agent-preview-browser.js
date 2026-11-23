@@ -695,11 +695,12 @@ setPhysicsModuleLoader(() => import(/* @vite-ignore */ new URL('/vendor/rapier.j
 
 let queryOnly;
 const ASSET_DECODE_LIMITS = agentAssetDecodeOptions();
+const ASSET_DECODE_LIMITS_WITH_MESH_CHECKS = agentAssetDecodeOptions({ checkMesh: true });
 
 // An agent cannot pass loadGltf options, so a limit error names the catalog limits instead of "Fix: pass { ... }".
-async function parseCatalogAsset(buffer) {
+async function parseCatalogAsset(buffer, { checkMesh = false } = {}) {
   try {
-    return await parseGltf(buffer, ASSET_DECODE_LIMITS);
+    return await parseGltf(buffer, checkMesh ? ASSET_DECODE_LIMITS_WITH_MESH_CHECKS : ASSET_DECODE_LIMITS);
   } catch (error) {
     throw withCatalogLimitAdvice(error);
   }
@@ -1305,8 +1306,10 @@ window.__agentPreview = {
     try {
       // Labels, mesh reports and motion read the on-demand modules on any asset, not only one with mesh edits.
       await loadAllAgentSceneModules();
-      asset = await parseCatalogAsset(bytes.buffer);
-      return createPreview(createAgentAssetScene(asset, input.recipe, { sources: await decodeMotionSources(input.sources) }), input, asset);
+      asset = await parseCatalogAsset(bytes.buffer, { checkMesh: input.checkMesh === true });
+      const preview = createPreview(createAgentAssetScene(asset, input.recipe, { sources: await decodeMotionSources(input.sources) }), input, asset);
+      // The decoder's warnings, with the mesh-check counts among them, come back only when the caller asked for the checks.
+      return input.checkMesh === true ? { ...preview, assetWarnings: asset.warnings } : preview;
     } catch (error) {
       asset?.dispose();
       throw error;
