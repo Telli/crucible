@@ -550,11 +550,7 @@ export const STUDIO_CSS = `
 .crucible-studio-tree-section { display: grid; }
 .crucible-studio-tree-section[hidden], .crucible-studio-tree-controls[hidden] { display: none; }
 .crucible-studio-tree-controls { display: grid; gap: 14px; }
-.crucible-studio-tree-controls > .crucible-studio-field-head {
-  margin-block-end: -8px;
-  font-weight: 600;
-  color: var(--studio-text);
-}
+.crucible-studio-tree-controls > .crucible-studio-field-head { margin-block-end: -8px; }
 .crucible-studio-tree-seed {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

@@ -1387,18 +1387,20 @@ export function createStudio(container, {
     }
     addTreeButton.setAttribute('aria-expanded', 'false');
   };
-  // Beside the add menu at the height of the Tree entry, on the other side when the window ends there, and inside the window either way.
+  // Beside the add menu with its top level with the menu's top, else its bottom level with the menu's bottom, and inside the window either way.
   const placeTreePicker = () => {
     const view = documentReference.defaultView;
     if (!view) return;
     const menuRectangle = addPopover.getBoundingClientRect();
-    const entryRectangle = addTreeButton.getBoundingClientRect();
     const pickerRectangle = treePicker.getBoundingClientRect();
     const margin = 8;
     const rightLeft = menuRectangle.right + margin;
     const fitsRight = rightLeft + pickerRectangle.width <= view.innerWidth - margin;
     const left = fitsRight ? rightLeft : Math.max(margin, menuRectangle.left - margin - pickerRectangle.width);
-    const wantedTop = entryRectangle.top - margin;
+    const alignedTop = menuRectangle.top;
+    const alignedBottom = menuRectangle.bottom - pickerRectangle.height;
+    const fitsAtTop = alignedTop + pickerRectangle.height <= view.innerHeight - margin;
+    const wantedTop = fitsAtTop ? alignedTop : alignedBottom;
     const top = Math.max(margin, Math.min(wantedTop, view.innerHeight - margin - pickerRectangle.height));
     treePicker.style.left = `${Math.round(left)}px`;
     treePicker.style.top = `${Math.round(top)}px`;

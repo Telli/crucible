@@ -220,6 +220,7 @@ export function thumbnailCamera(parts) {
 
 /**
  * One picture of each preset, drawn by Crucible's own renderer into a canvas that sits off screen only while it draws.
+ * The sky is left out and the pixels around the tree stay transparent, so the tile's own `--studio-surface` shows through.
  * Resolves a map from preset name to an image data URL; a preset that fails to draw is left out.
  */
 export async function renderPresetPictures({
@@ -242,7 +243,7 @@ export async function renderPresetPictures({
       await loadAgentSceneModules(recipe);
       const scene = createAgentScene(recipe);
       const { environment, effects } = scene;
-      const lighting = { ...environment, map: agentEnvironmentMap(environment) };
+      const lighting = { ...environment, map: { ...agentEnvironmentMap(environment), showBackground: false } };
       const renderer = createRenderer(canvas, scene.parts, {
         hdr: true,
         ground: false,
@@ -251,6 +252,7 @@ export async function renderPresetPictures({
         shadowBounds: resolveAgentShadow(fitAgentShadow(scene.shadow, scene.parts), environment.lightDirection),
         pixelRatio: 1,
         samples: 4,
+        transparent: true,
       });
       try {
         renderer.resize();
@@ -343,7 +345,13 @@ export function createTreeInspector({ documentReference, createElement, createSl
     createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Tree' }),
     heightField.container,
     seasonField.container,
-    createElement(documentReference, 'div', { className: 'crucible-studio-tree-seed' }, seedInput, newSeedChips),
+    createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-field' },
+      createElement(documentReference, 'div', { className: 'crucible-studio-field-head' }, createElement(documentReference, 'span', { textContent: 'Seed' })),
+      createElement(documentReference, 'div', { className: 'crucible-studio-tree-seed' }, seedInput, newSeedChips),
+    ),
     leafField.container,
   );
   element.hidden = true;
