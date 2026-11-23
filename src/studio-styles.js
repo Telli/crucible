@@ -2142,7 +2142,9 @@ export const STUDIO_CSS = `
   align-items: start;
   gap: 12px;
 }
-.crucible-studio-setup-agent > button { grid-column: 2; justify-self: start; }
+.crucible-studio-setup-agent > button,
+.crucible-studio-setup-agent > textarea { grid-column: 2; justify-self: start; }
+.crucible-studio-setup-agent > textarea { justify-self: stretch; }
 .crucible-studio-setup-agent-mark {
   display: grid;
   place-items: center;
