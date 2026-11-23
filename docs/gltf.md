@@ -264,6 +264,20 @@ three's KTX2Loader picks the format from the context. For this file it chose AST
 
 The Khronos KTX2 files hold no mip chain, so the 5.3x saving mixes the format (4 bytes to 1 a texel) with the missing mips; with a full chain BC7 would take 21.3 MiB, 4.2x less. WebGL does not report driver memory, so these are not driver readings. KTX2 loads slower because of the Basis transcode. Drawn through the reference suite's Khronos framing and scored against the stored Cycles array, the PNG variant gets FLIP 0.0386 over the whole frame and 0.3341 over the pixels the lamp covers; the KTX2 variant gets 0.0385 and 0.3330, a difference of 0.0001 and 0.0011.
 
+### Making KTX2 textures
+
+`scripts/encode-glb-ktx2.mjs` re-encodes the textures of a GLB as KTX2 (`KHR_texture_basisu`) with `toktx` from [KTX-Software](https://github.com/KhronosGroup/KTX-Software/releases). It is a script, so the engine gains no dependency.
+
+```sh
+node scripts/encode-glb-ktx2.mjs scan.glb scan-ktx2.glb [--max-texture 2048] [--toktx <path>] [--threads 2]
+```
+
+- Colour maps (base colour, emissive) and data maps (roughness, occlusion and the rest) become ETC1S. Normal maps become UASTC with RDO, and are capped at 1024 pixels.
+- Every image gets a full mip chain and both edges are rounded to a multiple of 4.
+- PNG, JPEG and WebP images are read (a WebP texture is found through `EXT_texture_webp`, which is dropped once nothing uses it). Images that are already KTX2 stay. Meshopt geometry is copied byte for byte.
+- `toktx` comes from `--toktx`, then `CRUCIBLE_TOKTX`, then `~/.local/bin/ktx-software`, then `PATH`. Without it the script stops and says where to get it.
+- The file needs a KTX2 decoder to load (see above). The MCP server still turns KTX2 images into PNG on the way to the preview page ([mcp.md](mcp.md)); keeping them compressed there is not done yet.
+
 ### Instancing limits
 
 `maxInstances` (default 65,536) caps the instances of one node, and `maxParts` still caps the total number of parts.
