@@ -28,45 +28,95 @@ const SEAM_NORMAL_WEIGHT = 0.05;
 export const MAXIMUM_SIMPLIFY_TRIANGLES = 2000000;
 export const MAXIMUM_SIMPLIFY_VERTICES = 2000000;
 
-class MinHeap {
-  constructor() {
-    this.entries = [];
+/**
+ * The collapse candidates, cheapest first, in typed arrays: one slot per candidate holds its cost, the part of the cost
+ * that is surface distance, the two sites and their versions, and no object is made per candidate. A candidate whose
+ * version no longer matches its site is stale and is skipped when it is popped. After `pop` the cheapest candidate is in
+ * the `popped*` fields.
+ */
+class CollapseQueue {
+  constructor(capacity = 1024) {
+    this.size = 0;
+    this.allocate(capacity);
+    this.poppedCost = 0;
+    this.poppedPositionCost = 0;
+    this.poppedRemoved = 0;
+    this.poppedKept = 0;
+    this.poppedRemovedVersion = 0;
+    this.poppedKeptVersion = 0;
   }
 
-  get size() {
-    return this.entries.length;
+  allocate(capacity) {
+    const grown = {
+      costs: new Float64Array(capacity),
+      positionCosts: new Float64Array(capacity),
+      removed: new Uint32Array(capacity),
+      kept: new Uint32Array(capacity),
+      removedVersions: new Uint32Array(capacity),
+      keptVersions: new Uint32Array(capacity),
+    };
+    for (const [name, array] of Object.entries(grown)) {
+      if (this[name]) array.set(this[name].subarray(0, this.size));
+      this[name] = array;
+    }
+    this.capacity = capacity;
   }
 
-  push(entry) {
-    const entries = this.entries;
-    let index = entries.length;
-    entries.push(entry);
+  moveSlot(from, to) {
+    this.costs[to] = this.costs[from];
+    this.positionCosts[to] = this.positionCosts[from];
+    this.removed[to] = this.removed[from];
+    this.kept[to] = this.kept[from];
+    this.removedVersions[to] = this.removedVersions[from];
+    this.keptVersions[to] = this.keptVersions[from];
+  }
+
+  setSlot(slot, cost, positionCost, removed, kept, removedVersion, keptVersion) {
+    this.costs[slot] = cost;
+    this.positionCosts[slot] = positionCost;
+    this.removed[slot] = removed;
+    this.kept[slot] = kept;
+    this.removedVersions[slot] = removedVersion;
+    this.keptVersions[slot] = keptVersion;
+  }
+
+  push(cost, positionCost, removed, kept, removedVersion, keptVersion) {
+    if (this.size === this.capacity) this.allocate(this.capacity * 2);
+    let index = this.size++;
     while (index > 0) {
       const parent = (index - 1) >> 1;
-      if (entries[parent].cost <= entry.cost) break;
-      entries[index] = entries[parent];
+      if (this.costs[parent] <= cost) break;
+      this.moveSlot(parent, index);
       index = parent;
     }
-    entries[index] = entry;
+    this.setSlot(index, cost, positionCost, removed, kept, removedVersion, keptVersion);
   }
 
   pop() {
-    const entries = this.entries;
-    const top = entries[0];
-    const last = entries.pop();
-    if (entries.length) {
-      let index = 0;
-      for (;;) {
-        let child = index * 2 + 1;
-        if (child >= entries.length) break;
-        if (child + 1 < entries.length && entries[child + 1].cost < entries[child].cost) child++;
-        if (entries[child].cost >= last.cost) break;
-        entries[index] = entries[child];
-        index = child;
-      }
-      entries[index] = last;
+    this.poppedCost = this.costs[0];
+    this.poppedPositionCost = this.positionCosts[0];
+    this.poppedRemoved = this.removed[0];
+    this.poppedKept = this.kept[0];
+    this.poppedRemovedVersion = this.removedVersions[0];
+    this.poppedKeptVersion = this.keptVersions[0];
+    const last = --this.size;
+    if (last === 0) return;
+    const cost = this.costs[last];
+    const positionCost = this.positionCosts[last];
+    const removed = this.removed[last];
+    const kept = this.kept[last];
+    const removedVersion = this.removedVersions[last];
+    const keptVersion = this.keptVersions[last];
+    let index = 0;
+    for (;;) {
+      let child = index * 2 + 1;
+      if (child >= last) break;
+      if (child + 1 < last && this.costs[child + 1] < this.costs[child]) child++;
+      if (this.costs[child] >= cost) break;
+      this.moveSlot(child, index);
+      index = child;
     }
-    return top;
+    this.setSlot(index, cost, positionCost, removed, kept, removedVersion, keptVersion);
   }
 }
 
@@ -108,14 +158,34 @@ function validateRatios(ratios) {
   });
 }
 
+/**
+ * Counts how many triangles use each undirected edge, in an open-addressing table of typed arrays. `slotOf(first, second)`
+ * finds (or, with `create`, adds) the slot of an edge; `counts[slot]` is its triangle count.
+ */
+function createEdgeCounter(indexCount) {
+  let size = 16;
+  while (size < indexCount * 2) size *= 2;
+  const firsts = new Uint32Array(size);
+  const seconds = new Uint32Array(size);
+  const counts = new Uint8Array(size);
+  const slotOf = (first, second) => {
+    const [low, high] = first < second ? [first, second] : [second, first];
+    let slot = (Math.imul(low, 73856093) ^ Math.imul(high, 19349663)) >>> 0 & (size - 1);
+    while (counts[slot] !== 0 && (firsts[slot] !== low || seconds[slot] !== high)) slot = (slot + 1) & (size - 1);
+    firsts[slot] = low;
+    seconds[slot] = high;
+    return slot;
+  };
+  return { counts, slotOf };
+}
+
 /** Vertices that touch an edge used by other than two triangles: they stay exactly as they are. */
 export function findLockedVertices(indices, vertexCount) {
-  const edgeCounts = new Map();
-  const edgeKey = (first, second) => (first < second ? first * vertexCount + second : second * vertexCount + first);
+  const { counts, slotOf } = createEdgeCounter(indices.length);
   for (let corner = 0; corner < indices.length; corner += 3) {
     for (let side = 0; side < 3; side++) {
-      const key = edgeKey(indices[corner + side], indices[corner + (side + 1) % 3]);
-      edgeCounts.set(key, (edgeCounts.get(key) ?? 0) + 1);
+      const slot = slotOf(indices[corner + side], indices[corner + (side + 1) % 3]);
+      if (counts[slot] < 255) counts[slot]++;
     }
   }
   const locked = new Uint8Array(vertexCount);
@@ -123,7 +193,7 @@ export function findLockedVertices(indices, vertexCount) {
     for (let side = 0; side < 3; side++) {
       const first = indices[corner + side];
       const second = indices[corner + (side + 1) % 3];
-      if (edgeCounts.get(edgeKey(first, second)) !== 2) {
+      if (counts[slotOf(first, second)] !== 2) {
         locked[first] = 1;
         locked[second] = 1;
       }
@@ -193,23 +263,40 @@ function triangleNormal(positions, first, second, third, replaced, replacement) 
   return [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx];
 }
 
-/** One site per distinct position, numbered in order of first use: the vertices of a seam share a site. */
+/** One site per distinct position (by bit pattern, so -0 and 0 are one), numbered in order of first use: the vertices of a seam share a site. */
 function weldPositions(positions) {
-  const siteOfVertex = new Uint32Array(positions.length / 3);
-  const sitePositions = [];
-  const siteByPosition = new Map();
-  for (let vertex = 0; vertex < siteOfVertex.length; vertex++) {
-    const [x, y, z] = [positions[vertex * 3] + 0, positions[vertex * 3 + 1] + 0, positions[vertex * 3 + 2] + 0];
-    const key = `${x},${y},${z}`;
-    let site = siteByPosition.get(key);
-    if (site === undefined) {
-      site = siteByPosition.size;
-      siteByPosition.set(key, site);
-      sitePositions.push(x, y, z);
+  const vertexCount = positions.length / 3;
+  const bits = Uint32Array.from(new Uint32Array(positions.buffer, positions.byteOffset, positions.length));
+  for (let index = 0; index < positions.length; index++) if (positions[index] === 0) bits[index] = 0;
+  let tableSize = 16;
+  while (tableSize < vertexCount * 2) tableSize *= 2;
+  const table = new Int32Array(tableSize).fill(-1);
+  const siteOfVertex = new Uint32Array(vertexCount);
+  const firstVertexOfSite = [];
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
+    const [x, y, z] = [bits[vertex * 3], bits[vertex * 3 + 1], bits[vertex * 3 + 2]];
+    let slot = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(z, 83492791)) >>> 0 & (tableSize - 1);
+    for (;;) {
+      const site = table[slot];
+      if (site < 0) {
+        table[slot] = firstVertexOfSite.length;
+        siteOfVertex[vertex] = firstVertexOfSite.length;
+        firstVertexOfSite.push(vertex);
+        break;
+      }
+      const other = firstVertexOfSite[site];
+      if (bits[other * 3] === x && bits[other * 3 + 1] === y && bits[other * 3 + 2] === z) {
+        siteOfVertex[vertex] = site;
+        break;
+      }
+      slot = (slot + 1) & (tableSize - 1);
     }
-    siteOfVertex[vertex] = site;
   }
-  return { siteOfVertex, sitePositions: Float32Array.from(sitePositions) };
+  const sitePositions = new Float32Array(firstVertexOfSite.length * 3);
+  firstVertexOfSite.forEach((vertex, site) => {
+    for (let axis = 0; axis < 3; axis++) sitePositions[site * 3 + axis] = positions[vertex * 3 + axis] + 0;
+  });
+  return { siteOfVertex, sitePositions };
 }
 
 function boundsDiagonal(positions) {
@@ -239,7 +326,14 @@ class Collapser {
     this.vertexCount = this.positions.length / 3;
     this.triangles = weld ? Uint32Array.from(geometry.indices, vertex => weld.siteOfVertex[vertex]) : Uint32Array.from(geometry.indices);
     this.corners = weld ? Uint32Array.from(geometry.indices) : this.triangles;
-    this.attributeScale = boundsDiagonal(geometry.positions);
+    const attributeScale = boundsDiagonal(geometry.positions);
+    this.uvWeightSquared = (SEAM_UV_WEIGHT * attributeScale) ** 2;
+    this.normalWeightSquared = (SEAM_NORMAL_WEIGHT * attributeScale) ** 2;
+    this.stamps = new Uint32Array(this.vertexCount);
+    this.stampCounter = 0;
+    this.keptBuffer = new Uint32Array(64);
+    this.removedBuffer = new Uint32Array(64);
+    this.closestVertex = 0;
     this.triangleAlive = new Uint8Array(this.triangles.length / 3).fill(1);
     this.aliveCount = this.triangles.length / 3;
     this.locked = findLockedVertices(this.triangles, this.vertexCount);
@@ -249,7 +343,7 @@ class Collapser {
     for (let triangle = 0; triangle < this.triangleAlive.length; triangle++) {
       for (let side = 0; side < 3; side++) this.vertexTriangles[this.triangles[triangle * 3 + side]].push(triangle);
     }
-    this.heap = new MinHeap();
+    this.queue = new CollapseQueue();
     this.worstError = 0;
     const queuedEdges = new Set();
     for (let triangle = 0; triangle < this.triangleAlive.length; triangle++) {
@@ -266,80 +360,125 @@ class Collapser {
 
   /** Queue both directions of an edge: the vertex that goes must not be locked. */
   pushEdge(first, second) {
+    if (this.blendSeams && !this.locked[first] && !this.locked[second]) {
+      this.pushCheaperDirection(first, second);
+      return;
+    }
     if (!this.locked[first]) this.pushCollapse(first, second);
     if (!this.locked[second]) this.pushCollapse(second, first);
   }
 
-  pushCollapse(removed, kept) {
-    const positions = this.positions;
-    const positionCost = quadricError(this.quadrics, removed, kept, positions[kept * 3], positions[kept * 3 + 1], positions[kept * 3 + 2]);
-    const cost = this.blendSeams ? positionCost + this.attributePenalty(removed, kept) : positionCost;
-    this.heap.push({ cost, positionCost, removed, kept, removedVersion: this.versions[removed], keptVersion: this.versions[kept] });
+  /** The welded path queues one direction per edge, the one that moves the surface less: half the entries to order and half the attribute costs to work out. */
+  pushCheaperDirection(first, second) {
+    const forward = this.surfaceCost(first, second);
+    const backward = this.surfaceCost(second, first);
+    if (forward <= backward) this.pushCollapse(first, second, forward);
+    else this.pushCollapse(second, first, backward);
   }
 
-  /** The distinct vertices (with their attributes) that the alive triangles around a site use, in the order the triangles list them. */
-  verticesAround(site) {
-    const vertices = [];
-    for (const triangle of this.vertexTriangles[site]) {
+  surfaceCost(removed, kept) {
+    const positions = this.positions;
+    return quadricError(this.quadrics, removed, kept, positions[kept * 3], positions[kept * 3 + 1], positions[kept * 3 + 2]);
+  }
+
+  pushCollapse(removed, kept, knownSurfaceCost) {
+    const positionCost = knownSurfaceCost ?? this.surfaceCost(removed, kept);
+    const cost = this.blendSeams ? positionCost + this.attributePenalty(removed, kept) : positionCost;
+    this.queue.push(cost, positionCost, removed, kept, this.versions[removed], this.versions[kept]);
+  }
+
+  /**
+   * Writes the distinct vertices (with their attributes) that the alive triangles around a site use into `buffer`, in the
+   * order the triangles list them, and returns how many. The buffers are reused, so no array is made per call.
+   */
+  collectVertices(site, buffer) {
+    let count = 0;
+    const triangles = this.vertexTriangles[site];
+    for (let listed = 0; listed < triangles.length; listed++) {
+      const base = triangles[listed] * 3;
       for (let side = 0; side < 3; side++) {
-        if (this.triangles[triangle * 3 + side] !== site) continue;
-        const vertex = this.corners[triangle * 3 + side];
-        if (!vertices.includes(vertex)) vertices.push(vertex);
+        if (this.triangles[base + side] !== site) continue;
+        const vertex = this.corners[base + side];
+        let known = false;
+        for (let seen = 0; seen < count; seen++) {
+          if (buffer[seen] === vertex) {
+            known = true;
+            break;
+          }
+        }
+        if (known) continue;
+        if (count === buffer.length) buffer = this.growBuffer(buffer);
+        buffer[count++] = vertex;
       }
     }
-    return vertices;
+    return count;
+  }
+
+  growBuffer(buffer) {
+    const grown = new Uint32Array(buffer.length * 2);
+    grown.set(buffer);
+    if (buffer === this.keptBuffer) this.keptBuffer = grown;
+    else this.removedBuffer = grown;
+    return grown;
   }
 
   /** How far two vertices differ in uv and normal, squared, in position units (the bounds diagonal scales the difference). */
   attributeDistance(first, second) {
     let squared = 0;
-    const { uvs, normals } = this.geometry;
-    if (uvs) squared += (SEAM_UV_WEIGHT * this.attributeScale) ** 2 * ((uvs[first * 2] - uvs[second * 2]) ** 2 + (uvs[first * 2 + 1] - uvs[second * 2 + 1]) ** 2);
+    const uvs = this.geometry.uvs;
+    if (uvs) {
+      const [du, dv] = [uvs[first * 2] - uvs[second * 2], uvs[first * 2 + 1] - uvs[second * 2 + 1]];
+      squared += this.uvWeightSquared * (du * du + dv * dv);
+    }
+    const normals = this.geometry.normals;
     if (normals) {
-      let difference = 0;
-      for (let axis = 0; axis < 3; axis++) difference += (normals[first * 3 + axis] - normals[second * 3 + axis]) ** 2;
-      squared += (SEAM_NORMAL_WEIGHT * this.attributeScale) ** 2 * difference;
+      const [dx, dy, dz] = [normals[first * 3] - normals[second * 3], normals[first * 3 + 1] - normals[second * 3 + 1], normals[first * 3 + 2] - normals[second * 3 + 2]];
+      squared += this.normalWeightSquared * (dx * dx + dy * dy + dz * dz);
     }
     return squared;
   }
 
-  /** The vertex among `candidates` whose uv and normal are closest to `vertex`; the lowest index wins a tie. */
-  closestVertex(vertex, candidates) {
-    let best = candidates[0];
+  /** The smallest attribute distance from `vertex` to the first `count` vertices of the kept buffer; `closestVertex` holds which one (the first wins a tie). */
+  closestDistance(vertex, count) {
     let bestDistance = Infinity;
-    for (const candidate of candidates) {
-      const distance = this.attributeDistance(vertex, candidate);
+    for (let candidate = 0; candidate < count; candidate++) {
+      const distance = this.attributeDistance(vertex, this.keptBuffer[candidate]);
       if (distance < bestDistance) {
-        best = candidate;
+        this.closestVertex = this.keptBuffer[candidate];
         bestDistance = distance;
       }
     }
-    return { vertex: best, distance: bestDistance };
+    return bestDistance;
   }
 
   /** The squared attribute distance a collapse adds: each copy of the removed site moves to the closest copy of the kept one. */
   attributePenalty(removed, kept) {
-    const keptVertices = this.verticesAround(kept);
+    const keptCount = this.collectVertices(kept, this.keptBuffer);
+    const removedCount = this.collectVertices(removed, this.removedBuffer);
     let penalty = 0;
-    for (const vertex of this.verticesAround(removed)) penalty += this.closestVertex(vertex, keptVertices).distance;
+    for (let copy = 0; copy < removedCount; copy++) penalty += this.closestDistance(this.removedBuffer[copy], keptCount);
     return penalty;
   }
 
   /** The collapse keeps the surface a manifold and turns no neighbouring face over. */
   isSafe(removed, kept) {
-    const around = this.vertexTriangles[removed];
-    const neighbours = new Set();
+    const { positions, triangles } = this;
+    const stamp = this.nextStamp();
     let shared = 0;
-    for (const triangle of around) {
-      const corners = [this.triangles[triangle * 3], this.triangles[triangle * 3 + 1], this.triangles[triangle * 3 + 2]];
-      const containsKept = corners.includes(kept);
+    for (const triangle of this.vertexTriangles[removed]) {
+      const base = triangle * 3;
+      const [first, second, third] = [triangles[base], triangles[base + 1], triangles[base + 2]];
+      const containsKept = first === kept || second === kept || third === kept;
       if (containsKept) shared++;
-      for (const corner of corners) if (corner !== removed && corner !== kept) neighbours.add(corner);
+      for (let side = 0; side < 3; side++) {
+        const corner = triangles[base + side];
+        if (corner !== removed && corner !== kept) this.stamps[corner] = stamp;
+      }
       if (containsKept) continue;
-      const before = triangleNormal(this.positions, corners[0], corners[1], corners[2], -1, -1);
-      const after = triangleNormal(this.positions, corners[0], corners[1], corners[2], removed, kept);
-      const beforeLength = Math.hypot(...before);
-      const afterLength = Math.hypot(...after);
+      const before = triangleNormal(positions, first, second, third, -1, -1);
+      const after = triangleNormal(positions, first, second, third, removed, kept);
+      const beforeLength = Math.hypot(before[0], before[1], before[2]);
+      const afterLength = Math.hypot(after[0], after[1], after[2]);
       if (afterLength === 0 || beforeLength === 0) return false;
       const agreement = (before[0] * after[0] + before[1] * after[1] + before[2] * after[2]) / (beforeLength * afterLength);
       if (agreement < MINIMUM_NORMAL_AGREEMENT) return false;
@@ -349,16 +488,25 @@ class Collapser {
     let commonNeighbours = 0;
     for (const triangle of this.vertexTriangles[kept]) {
       for (let side = 0; side < 3; side++) {
-        const corner = this.triangles[triangle * 3 + side];
-        if (neighbours.delete(corner)) commonNeighbours++;
+        const corner = triangles[triangle * 3 + side];
+        if (this.stamps[corner] === stamp) {
+          this.stamps[corner] = 0;
+          commonNeighbours++;
+        }
       }
     }
     return commonNeighbours === 2;
   }
 
+  /** A fresh mark for `stamps`: a vertex is in the current set when its stamp equals it. */
+  nextStamp() {
+    this.stampCounter++;
+    return this.stampCounter;
+  }
+
   collapse(removed, kept) {
-    const keptVertices = this.blendSeams ? this.verticesAround(kept) : null;
-    const takenBy = new Map();
+    const keptCount = this.blendSeams ? this.collectVertices(kept, this.keptBuffer) : 0;
+    const takenBy = this.blendSeams ? new Map() : null;
     for (const triangle of this.vertexTriangles[removed]) {
       const base = triangle * 3;
       const corners = [this.triangles[base], this.triangles[base + 1], this.triangles[base + 2]];
@@ -373,9 +521,12 @@ class Collapser {
       } else {
         for (let side = 0; side < 3; side++) {
           if (this.triangles[base + side] !== removed) continue;
-          if (keptVertices) {
+          if (this.blendSeams) {
             const vertex = this.corners[base + side];
-            if (!takenBy.has(vertex)) takenBy.set(vertex, this.closestVertex(vertex, keptVertices).vertex);
+            if (!takenBy.has(vertex)) {
+              this.closestDistance(vertex, keptCount);
+              takenBy.set(vertex, this.closestVertex);
+            }
             this.corners[base + side] = takenBy.get(vertex);
           }
           this.triangles[base + side] = kept;
@@ -387,12 +538,12 @@ class Collapser {
     for (let index = 0; index < 10; index++) this.quadrics[kept * 10 + index] += this.quadrics[removed * 10 + index];
     this.versions[removed]++;
     this.versions[kept]++;
-    const requeued = new Set();
+    const requeued = this.nextStamp();
     for (const triangle of this.vertexTriangles[kept]) {
       for (let side = 0; side < 3; side++) {
         const corner = this.triangles[triangle * 3 + side];
-        if (corner === kept || (this.blendSeams && requeued.has(corner))) continue;
-        requeued.add(corner);
+        if (corner === kept || (this.blendSeams && this.stamps[corner] === requeued)) continue;
+        this.stamps[corner] = requeued;
         this.pushEdge(kept, corner);
       }
     }
@@ -400,12 +551,14 @@ class Collapser {
 
   /** Collapse the cheapest edges until `targetTriangles` are left or no safe collapse remains. */
   reduceTo(targetTriangles) {
-    while (this.aliveCount > targetTriangles && this.heap.size) {
-      const entry = this.heap.pop();
-      if (entry.removedVersion !== this.versions[entry.removed] || entry.keptVersion !== this.versions[entry.kept]) continue;
-      if (!this.isSafe(entry.removed, entry.kept)) continue;
-      this.worstError = Math.max(this.worstError, entry.positionCost);
-      this.collapse(entry.removed, entry.kept);
+    const queue = this.queue;
+    while (this.aliveCount > targetTriangles && queue.size) {
+      queue.pop();
+      const { poppedRemoved: removed, poppedKept: kept } = queue;
+      if (queue.poppedRemovedVersion !== this.versions[removed] || queue.poppedKeptVersion !== this.versions[kept]) continue;
+      if (!this.isSafe(removed, kept)) continue;
+      this.worstError = Math.max(this.worstError, queue.poppedPositionCost);
+      this.collapse(removed, kept);
     }
   }
 
