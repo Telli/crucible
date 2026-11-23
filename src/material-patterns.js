@@ -1,6 +1,7 @@
 import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS } from './agent-scene-capabilities.js';
-import { bakeMaterialGraph, graphImageData, graphMeshMapNames, graphVertexGroupNames, MESH_MAP_KEY_PREFIX, normalizeMaterialGraph } from './material-graph.js';
+import { bakeMaterialGraph, graphImageData, graphMeshMapNames, graphSurfaceSettings, graphVertexGroupNames, MESH_MAP_KEY_PREFIX, normalizeMaterialGraph, surfaceMapKey } from './material-graph.js';
 import { meshMapForGeometry } from './mesh-map-bake.js';
+import { surfaceMap } from './material-surface-map.js';
 import { vertexGroupMap } from './material-vertex-group-map.js';
 import { kernelKey, runKernel } from './kernel-offload.js';
 
@@ -177,8 +178,8 @@ function normalizeGraphPattern(value, mappingField) {
   const resolution = value.resolution ?? 512;
   if (!RESOLUTIONS.includes(resolution)) throw patternError(`resolution must be one of ${RESOLUTIONS.join(', ')}.`);
   const graph = normalizeMaterialGraph(value.graph, resolution);
-  if ((graphVertexGroupNames(graph).length > 0 || graphMeshMapNames(graph).length > 0) && mappingField.mapping !== 'uv') {
-    throw patternError('uses a vertexGroup or meshMap node, which reads the mesh in UV space: set "mapping": "uv" on the pattern (the mesh needs UVs).');
+  if ((graphVertexGroupNames(graph).length > 0 || graphMeshMapNames(graph).length > 0 || graphSurfaceSettings(graph).length > 0) && mappingField.mapping !== 'uv') {
+    throw patternError('uses a vertexGroup, meshMap or surface node, which reads the mesh in UV space: set "mapping": "uv" on the pattern (the mesh needs UVs).');
   }
   return {
     type: GRAPH_TYPE,
@@ -335,10 +336,23 @@ function vertexGroupNamesOf(pattern) {
   return names;
 }
 
-function groupMapsOf(pattern, geometry, nodeId) {
+const surfaceSettingsByPattern = new WeakMap();
+
+function surfaceSettingsOf(pattern) {
+  if (!pattern?.graph) return [];
+  let settings = surfaceSettingsByPattern.get(pattern);
+  if (!settings) {
+    settings = graphSurfaceSettings(pattern.graph);
+    surfaceSettingsByPattern.set(pattern, settings);
+  }
+  return settings;
+}
+
+function groupMapsOf(pattern, geometry, nodeId, worldMatrix) {
   const maps = {};
   for (const name of vertexGroupNamesOf(pattern)) maps[name] = vertexGroupMap(geometry, name, pattern.resolution, nodeId);
   for (const name of meshMapNamesOf(pattern)) maps[MESH_MAP_KEY_PREFIX + name] = meshMapForGeometry(geometry, name, pattern.resolution);
+  for (const settings of surfaceSettingsOf(pattern)) maps[surfaceMapKey(settings)] = surfaceMap(geometry, settings, pattern.resolution, nodeId, worldMatrix);
   return maps;
 }
 
@@ -346,33 +360,37 @@ function groupMapsOf(pattern, geometry, nodeId) {
  * The material a part of `geometry` renders with. A material whose graph has no `vertexGroup` node is returned as it
  * is. Otherwise the result is a view of it whose baked textures come from the graph baked with this mesh's vertex
  * group weights, cached per geometry and material so the renderer sees the same textures on every rebuild.
+ * `worldMatrix` (the part's 16 numbers, column-major) places the mesh for `surface` nodes in world space; it is read
+ * when the view is built, so the maps are baked and a part that moves needs a new build to update them.
  */
-export function materialViewForGeometry(material, geometry, nodeId, imagePool) {
+export function materialViewForGeometry(material, geometry, nodeId, imagePool, worldMatrix) {
   const pattern = material.pattern;
-  if (vertexGroupNamesOf(pattern).length === 0 && meshMapNamesOf(pattern).length === 0) return material;
+  const surfaceSettings = surfaceSettingsOf(pattern);
+  if (vertexGroupNamesOf(pattern).length === 0 && meshMapNamesOf(pattern).length === 0 && surfaceSettings.length === 0) return material;
   // The groups are checked now, so a mesh without UVs or without the group fails when the part is built.
-  const groups = groupMapsOf(pattern, geometry, nodeId);
+  const groups = groupMapsOf(pattern, geometry, nodeId, worldMatrix);
+  const placement = surfaceSettings.some(settings => settings.space === 'world') && worldMatrix ? Array.from(worldMatrix).join(',') : '';
   let views = viewsByGeometry.get(geometry);
   if (!views) {
     views = new WeakMap();
     viewsByGeometry.set(geometry, views);
   }
-  let view = views.get(material);
-  if (view) return view;
+  const remembered = views.get(material);
+  if (remembered?.placement === placement) return remembered.view;
   const output = {};
   for (const field of Object.keys(material)) {
     Object.defineProperty(output, field, { enumerable: true, configurable: true, get: () => material[field] });
   }
   let baked;
   const bakedTextures = () => {
-    baked ??= materialPatternTextures(material.pattern, imagePool, groupMapsOf(material.pattern, geometry, nodeId));
+    baked ??= materialPatternTextures(material.pattern, imagePool, groups);
     return baked;
   };
   for (const field of Object.keys(material).filter(name => PATTERN_TEXTURE_FIELDS.includes(name))) {
     Object.defineProperty(output, field, { enumerable: true, configurable: true, get: () => bakedTextures()[field] });
   }
-  view = Object.freeze(output);
-  views.set(material, view);
+  const view = Object.freeze(output);
+  views.set(material, { placement, view });
   return view;
 }
 
