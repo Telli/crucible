@@ -60,7 +60,7 @@ test('far crowns keep the width of level 1', () => {
 });
 
 test('crown solidity changes by at most 0.1 across each level switch', () => {
-  for (const preset of ['oak', 'birch', 'palm']) {
+  for (const preset of ['oak', 'birch', 'palm', 'pine']) {
     const tree = createTree({ preset }, 4);
     const solidity = [0, 1, 2, 3].map(level => crownSolidity(tree, level));
     for (let level = 1; level < solidity.length; level++) {
@@ -104,22 +104,20 @@ const meanOf = (cards, property) => cards.reduce((sum, card) => sum + card[prope
 
 test('far cards stand alone: no two share a base, so none reads as a cross', () => {
   const MINIMUM_BASE_GAP = 0.01;
-  for (const preset of ['pine']) {
-    const tree = createTree({ preset }, 4);
-    for (const level of [2, 3]) {
-      const cards = cardsOf(tree, level);
-      for (let first = 0; first < cards.length; first++) {
-        for (let second = first + 1; second < cards.length; second++) {
-          const gap = Math.hypot(...cards[first].base.map((value, axis) => value - cards[second].base[axis]));
-          assert.ok(gap > MINIMUM_BASE_GAP, `${preset} level ${level} has two cards on one base`);
-        }
+  const tree = createTree('conifer', 4);
+  for (const level of [2, 3]) {
+    const cards = cardsOf(tree, level);
+    for (let first = 0; first < cards.length; first++) {
+      for (let second = first + 1; second < cards.length; second++) {
+        const gap = Math.hypot(...cards[first].base.map((value, axis) => value - cards[second].base[axis]));
+        assert.ok(gap > MINIMUM_BASE_GAP, `conifer level ${level} has two cards on one base`);
       }
     }
   }
 });
 
 test('the centre of a far crown holds at least the share of cards it holds at level 1', () => {
-  for (const preset of ['oak', 'birch', 'ash']) {
+  for (const preset of ['oak', 'birch', 'ash', 'pine']) {
     for (const seed of SEEDS) {
       const tree = createTree({ preset }, seed);
       const { positions } = tree.levels[1].parts[FOLIAGE_PART].geometry;
@@ -141,7 +139,7 @@ test('the centre of a far crown holds at least the share of cards it holds at le
 test('far cards droop like level 1 on average over eight seeds', () => {
   const SLOPE_TOLERANCE = 0.05;
   const SLOPE_SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
-  for (const preset of ['oak', 'ash', 'aspen', 'birch']) {
+  for (const preset of ['oak', 'ash', 'aspen', 'birch', 'pine']) {
     const differences = { 2: 0, 3: 0 };
     for (const seed of SLOPE_SEEDS) {
       const tree = createTree({ preset }, seed);
@@ -152,6 +150,19 @@ test('far cards droop like level 1 on average over eight seeds', () => {
       assert.ok(Math.abs(differences[level]) <= SLOPE_TOLERANCE, `${preset} level ${level} cards point ${differences[level].toFixed(3)} off level 1 on average`);
     }
   }
+});
+
+test('the pine cluster card is 256 px, deterministic and lush without forming a solid disk', () => {
+  const pine = createLeafPixels('pine', [56, 102, 48], 1);
+  assert.equal(pine.width, 256);
+  assert.equal(pine.height, 256);
+  assert.ok(Buffer.from(createLeafPixels('pine', [56, 102, 48], 1).data).equals(Buffer.from(pine.data)), 'pine texture is deterministic');
+  let opaque = 0;
+  for (let offset = 3; offset < pine.data.length; offset += 4) {
+    if (pine.data[offset] >= 128) opaque++;
+  }
+  const share = opaque / (pine.width * pine.height);
+  assert.ok(share >= 0.4 && share <= 0.75, `pine opaque share ${share.toFixed(3)} out of [0.40, 0.75]`);
 });
 
 test('a palm draws curved feathery 256 px frond ribbons cleanly across all four levels', () => {
@@ -195,7 +206,7 @@ test('a palm draws curved feathery 256 px frond ribbons cleanly across all four 
 });
 
 test('a twig-crown tree keeps its fanned pair at far levels, two cards to a site, so none stands edge-on', () => {
-  for (const preset of ['oak', 'birch', 'ash']) {
+  for (const preset of ['oak', 'birch', 'ash', 'pine']) {
     const tree = createTree({ preset }, 4);
     for (const level of [2, 3]) {
       const cards = cardsOf(tree, level);

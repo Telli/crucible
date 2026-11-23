@@ -22,6 +22,7 @@ export const PAINTED_LEAF_PIXELS = Object.freeze({
   sprig: Object.freeze([22, 40]),
   twig: Object.freeze([19, 29]),
   needles: Object.freeze([19, 34]),
+  pine: Object.freeze([18, 30]),
   frond: Object.freeze([24, 115]),
   single: Object.freeze([96, 124]),
   clump: Object.freeze([24, 36]),
@@ -91,7 +92,7 @@ export function paintedLeafLengthCentimeters({ texture, cardHeightMeters, leafSc
   const pixels = Object.hasOwn(PAINTED_LEAF_PIXELS, texture) ? PAINTED_LEAF_PIXELS[texture] : null;
   if (!pixels) throw new RangeError(`texture must be one of ${Object.keys(PAINTED_LEAF_PIXELS).join(', ')}; got ${texture}`);
   if (!(cardHeightMeters > 0)) throw new RangeError('cardHeightMeters must be a positive number of meters, such as 1.1');
-  const textureSize = texture === 'twig' || texture === 'frond' ? TWIG_TEXTURE_PIXELS : LEAF_TEXTURE_PIXELS;
+  const textureSize = texture === 'twig' || texture === 'frond' || texture === 'pine' ? TWIG_TEXTURE_PIXELS : LEAF_TEXTURE_PIXELS;
   return pixels.map(length => length / textureSize * cardHeightMeters * leafScale * 100);
 }
 

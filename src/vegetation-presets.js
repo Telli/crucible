@@ -45,6 +45,16 @@ const TWIG_CROWN_LEAF = Object.freeze({
   farPair: true,
 });
 
+// Tufted Scots pine clusters on layered crown shoots, sharing the fanned crown placement cleanly at far levels (#3051).
+const PINE_CROWN_LEAF = Object.freeze({
+  texture: 'pine',
+  color: Object.freeze([56, 102, 48]),
+  cardSize: Object.freeze([1.08, 1.08]),
+  placement: Object.freeze({ depth: 2, interiorKeep: 0.35, outwardTilt: 0.85, upTilt: 0.45, cardFan: 0.9 }),
+  farPair: true,
+  farCards: Object.freeze({}),
+});
+
 // Each preset is a small JSON object: the base species, an optional height range in metres and growth overrides.
 export const TREE_PRESETS = Object.freeze({
   oak: Object.freeze({
@@ -61,8 +71,8 @@ export const TREE_PRESETS = Object.freeze({
   }),
   birch: Object.freeze({ label: 'Birch', species: 'birch', tree: {}, leaf: TWIG_CROWN_LEAF }),
   pine: Object.freeze({
-    label: 'Pine', species: 'conifer', height: [12, 17],
-    tree: { crownShape: 'umbrella', branches: [44, 9], branchAngle: [74, 55], branchStart: [0.55, 0.2], lengthFalloff: [0.4, 0.35], gnarliness: [0.03, 0.12, 0.1], tropism: [0, 0.08, 0.04], leafStart: 0.4 },
+    label: 'Pine', species: 'conifer', height: [12, 17], leaf: PINE_CROWN_LEAF,
+    tree: { crownShape: 'round', branches: [30, 5], branchAngle: [78, 52], branchStart: [0.34, 0.18], lengthFalloff: [0.42, 0.44], gnarliness: [0.03, 0.14, 0.14], tropism: [0, -0.02, 0.01], leafStart: 0.2, leafCount: 2.8 },
   }),
   palm: Object.freeze({ label: 'Palm', species: 'palm', tree: {} }),
   bush: Object.freeze({ label: 'Bush', species: 'bush', tree: {} }),
