@@ -1,12 +1,13 @@
 // Measures every test file once and writes config/fast-tests.json: the files that finish in under 0.6 s of wall time
 // (node start-up included), as { "tests/x.test.js": milliseconds }. scripts/fast-tests.mjs runs them in the pre-push check.
+// A file that starts a browser is never measured or listed (scripts/browser-tests.mjs): its fast time is only a skip.
 // The 0.6 s line leaves room under the 1 s the pre-push check promises, so a loaded machine or a CI runner keeps them fast.
 // Run it again when many test files were added: npm run record:fast-tests
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isMainModule, listTestFiles, repositoryRoot } from './test-run.mjs';
-import { FAST_TESTS_PATH, usesNativeAddon } from './fast-tests.mjs';
+import { FAST_TESTS_PATH, usesNativeAddon, withoutBrowserTests } from './fast-tests.mjs';
 
 export const RECORD_LIMIT_MS = 600;
 const PARALLEL_MEASUREMENTS = 3;
@@ -47,7 +48,7 @@ export function pickFastResults(results, limitMs = RECORD_LIMIT_MS) {
 }
 
 async function main() {
-  const testFiles = listTestFiles().filter(file => !usesNativeAddon(readFileSync(join(repositoryRoot, file), 'utf8'), file));
+  const testFiles = withoutBrowserTests(listTestFiles().filter(file => !usesNativeAddon(readFileSync(join(repositoryRoot, file), 'utf8'), file)));
   console.log(`Measuring ${testFiles.length} test files, ${PARALLEL_MEASUREMENTS} at a time.`);
   const fastTests = pickFastResults(await measureAll(testFiles));
   writeFileSync(join(repositoryRoot, FAST_TESTS_PATH), `${JSON.stringify(fastTests, null, 2)}\n`);

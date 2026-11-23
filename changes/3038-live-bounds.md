@@ -1,0 +1,1 @@
+- A mesh rewritten in place (cloth, and any part passed to `updatePartVertices`) has its bounding sphere measured again after each write. The first pose's sphere was remembered for good, so culling, the near plane and the sun's shadow view kept reading the first pose (#3038).

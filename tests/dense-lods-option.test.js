@@ -69,3 +69,33 @@ test('a pixel ratio that is not a usable number is refused by name, and NaN thre
     assert.throws(() => addLodsToDenseParts([scanPart()], { pixels: 1e9, ...options }), /addLodsToDenseParts: minimumTriangle/);
   }
 });
+
+const OWN_PANEL = { position: [0, 3, 0], direction: [0, -1, 0], width: 2, height: 2, intensity: 20 };
+
+test('a scene file with its own point, spot or area lights drops the studio key and fill (#2765)', () => {
+  for (const lights of [{ areaLights: [OWN_PANEL] }, { pointLights: [{ position: [0, 2, 0], intensity: 5 }] }, { spotLights: [{ position: [0, 2, 0], direction: [0, -1, 0], intensity: 5 }] }]) {
+    const environment = withSceneFileLights(undefined, lights);
+    assert.equal(environment.keyIntensity, 0, Object.keys(lights)[0]);
+    assert.equal(environment.fillIntensity, 0, Object.keys(lights)[0]);
+  }
+});
+
+test('a keyIntensity or fillIntensity written next to the scene file lights still wins (#2765)', () => {
+  const environment = withSceneFileLights(undefined, { areaLights: [OWN_PANEL], keyIntensity: 0.4, fillIntensity: 0.3 });
+  assert.equal(environment.keyIntensity, 0.4);
+  assert.equal(environment.fillIntensity, 0.3);
+  assert.equal(withSceneFileLights(undefined, { areaLights: [OWN_PANEL], fillIntensity: 0.3 }).keyIntensity, 0);
+});
+
+test('a scene file that names a sun keeps its key when it also lists lights (#2765)', () => {
+  const environment = withSceneFileLights(undefined, { areaLights: [OWN_PANEL], lightDirection: [0, 1, 0] });
+  assert.equal(environment.keyIntensity, undefined);
+  assert.equal(environment.fillIntensity, 0);
+});
+
+test('a scene file without lights of its own, or with only a portal, keeps the studio key and fill (#2765)', () => {
+  assert.deepEqual(withSceneFileLights(undefined, { exposure: 2 }), { exposure: 2 });
+  assert.deepEqual(withSceneFileLights(undefined, { areaLights: [], pointLights: [] }), { areaLights: [], pointLights: [] });
+  const portalOnly = { areaLights: [{ ...OWN_PANEL, portal: true }] };
+  assert.deepEqual(withSceneFileLights(undefined, portalOnly), portalOnly);
+});
