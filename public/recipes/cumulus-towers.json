@@ -1,0 +1,272 @@
+{
+  "format": "crucible.scene",
+  "schemaVersion": 1,
+  "geometries": [
+    {
+      "id": "sea",
+      "type": "mesh",
+      "base": {
+        "type": "box",
+        "bevel": 0.002
+      },
+      "edits": [
+        {
+          "op": "delete",
+          "select": {
+            "not": {
+              "normal": [
+                0,
+                1,
+                0
+              ],
+              "maxAngle": 10
+            }
+          }
+        },
+        {
+          "op": "subdivide_edges",
+          "edges": {
+            "all": true
+          },
+          "cuts": 16
+        },
+        {
+          "op": "subdivide",
+          "levels": 3
+        },
+        {
+          "op": "set_position",
+          "position": {
+            "mul": [
+              {
+                "attr": "position"
+              },
+              [
+                600,
+                1,
+                600
+              ]
+            ]
+          }
+        },
+        {
+          "op": "ocean",
+          "axis": "y",
+          "windSpeed": 10,
+          "direction": 100,
+          "choppiness": 1,
+          "size": 50,
+          "seed": 7,
+          "time": 2,
+          "resolution": 10
+        }
+      ]
+    },
+    {
+      "id": "tower-left",
+      "type": "cloud",
+      "seed": 12,
+      "width": 52,
+      "height": 50,
+      "flatBase": 1,
+      "upBias": 0.5,
+      "unionSoftness": 0.3,
+      "resolution": 112,
+      "levels": [
+        {
+          "count": 6,
+          "sizeRatio": 1,
+          "softness": 0.4
+        },
+        {
+          "count": 60,
+          "sizeRatio": 0.34,
+          "softness": 0.28
+        },
+        {
+          "count": 300,
+          "sizeRatio": 0.15,
+          "softness": 0.3
+        }
+      ]
+    },
+    {
+      "id": "tower-middle",
+      "type": "cloud",
+      "seed": 7,
+      "width": 58,
+      "height": 62,
+      "flatBase": 1,
+      "upBias": 0.5,
+      "unionSoftness": 0.3,
+      "resolution": 112,
+      "levels": [
+        {
+          "count": 6,
+          "sizeRatio": 1,
+          "softness": 0.4
+        },
+        {
+          "count": 60,
+          "sizeRatio": 0.34,
+          "softness": 0.28
+        },
+        {
+          "count": 300,
+          "sizeRatio": 0.15,
+          "softness": 0.3
+        }
+      ]
+    },
+    {
+      "id": "tower-right",
+      "type": "cloud",
+      "seed": 33,
+      "width": 48,
+      "height": 46,
+      "flatBase": 1,
+      "upBias": 0.5,
+      "unionSoftness": 0.3,
+      "resolution": 112,
+      "levels": [
+        {
+          "count": 6,
+          "sizeRatio": 1,
+          "softness": 0.4
+        },
+        {
+          "count": 60,
+          "sizeRatio": 0.34,
+          "softness": 0.28
+        },
+        {
+          "count": 300,
+          "sizeRatio": 0.15,
+          "softness": 0.3
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "id": "water",
+      "tag": "water",
+      "color": [
+        0.0033,
+        0.042,
+        0.069
+      ],
+      "metallic": 0,
+      "roughness": 0.14
+    },
+    {
+      "id": "cumulus",
+      "color": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "metallic": 0,
+      "roughness": 1,
+      "toon": 6,
+      "toonColors": [
+        [
+          0.3,
+          0.38,
+          0.52
+        ],
+        [
+          0.5,
+          0.58,
+          0.7
+        ],
+        [
+          0.72,
+          0.77,
+          0.86
+        ],
+        [
+          0.95,
+          0.94,
+          0.92
+        ],
+        [
+          1.2,
+          1.1,
+          0.95
+        ],
+        [
+          1.4,
+          1.22,
+          1
+        ]
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "sea",
+      "geometry": "sea",
+      "material": "water"
+    },
+    {
+      "id": "tower-left",
+      "geometry": "tower-left",
+      "material": "cumulus",
+      "translation": [
+        -52,
+        10,
+        -34
+      ]
+    },
+    {
+      "id": "tower-middle",
+      "geometry": "tower-middle",
+      "material": "cumulus",
+      "translation": [
+        10,
+        10,
+        -90
+      ]
+    },
+    {
+      "id": "tower-right",
+      "geometry": "tower-right",
+      "material": "cumulus",
+      "translation": [
+        66,
+        10,
+        -50
+      ]
+    }
+  ],
+  "camera": {
+    "eye": [
+      0,
+      14,
+      70
+    ],
+    "target": [
+      0,
+      38,
+      -40
+    ],
+    "fov": 50
+  },
+  "effects": {
+    "exposure": 0.9
+  },
+  "environment": {
+    "sky": {
+      "type": "physical",
+      "sunElevation": 28,
+      "sunRotation": 145,
+      "turbidity": 2,
+      "aerialPerspective": 0.3
+    },
+    "world": true,
+    "ground": false,
+    "ambientIntensity": 0.3,
+    "keyIntensity": 2.2
+  }
+}
