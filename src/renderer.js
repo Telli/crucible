@@ -1469,6 +1469,26 @@ export class CrucibleRenderer {
     }
   }
 
+  /**
+   * Gives a part that was built without `lods` its levels now, for levels made after the first frame (#2985). The part must
+   * be alone in its batch (a scan is) and may take lods; `lods` follows the rules of the `lods` field: level 0 is the part's own
+   * geometry and the errors do not decrease. Culling picks among the levels from the next frame on.
+   */
+  setPartLods(part, lods) {
+    const location = this.partLocations.get(part);
+    if (!location) throw new RangeError(`setPartLods needs a part this renderer draws: ${part?.name ?? '?'}.`);
+    const batch = location.batch;
+    if (batch.parts.length !== 1) throw new RangeError(`setPartLods needs a part that is alone in its batch; ${part.name} is drawn with ${batch.parts.length - 1} others that share its geometry. Pass lods in the part when the renderer is built.`);
+    if (!batch.cullable) throw new RangeError(`lods need rigid or swaying, opaque parts without assembly motion: ${part.name}`);
+    validateLods(part, lods);
+    this.releaseLevelDraws(batch);
+    const levelSet = createLevelSet(lods, batch.instanceCount);
+    Object.assign(batch, levelSet);
+    const sphere = geometryBoundingSphere(part.geometry);
+    batch.bounds = { center: sphere.center, radius: sphere.radius + Math.max(...lods.map(level => level.error)) };
+    levelSet.levelGeometries.forEach((geometryOfLevel, level) => this.levelDraw(batch, level));
+  }
+
   /** The instances of a batch that the camera can see, split by level; null when the whole batch draws as it is. */
   selectBatchInstances(batch) {
     if (!this.culling || !batch.cullable) return null;

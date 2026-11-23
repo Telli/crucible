@@ -2,7 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sphere } from '../src/geometry.js';
-import { simplifyGeometry, CollapseQueue, findLockedVertices, SEAM_FALLBACK_OVERSHOOT } from '../src/geometry-simplify.js';
+// Namespace import: a name that main lacks must fail an assertion when the change is reverted, not the module link.
+import * as simplifier from '../src/geometry-simplify.js';
 import { generateGeometryLods, generateAssetLods } from '../src/mesh-lod.js';
 
 const TRIANGLES_PER_ISLAND = 24;
@@ -43,18 +44,18 @@ function attributeKeys(geometry, vertexCount) {
 test('the never-blend path stalls on the seam-heavy fixture, which is what makes it seam-heavy', () => {
   const geometry = seamHeavySphere();
   const inputTriangles = geometry.indices.length / 3;
-  const [firstLevel] = simplifyGeometry(geometry, { ratios: [0.5], blendSeams: 'never' });
+  const [firstLevel] = simplifier.simplifyGeometry(geometry, { ratios: [0.5], blendSeams: 'never' });
   assert.equal(firstLevel.path, 'keep');
   assert.ok(firstLevel.triangles > inputTriangles * 0.9, `expected the never-blend level to keep over 90% of ${inputTriangles} triangles, got ${firstLevel.triangles}`);
 });
 
 test('every level of a seam-heavy geometry reaches its target within 25% and says it ran the blend path', () => {
   const geometry = seamHeavySphere();
-  const levels = simplifyGeometry(geometry, { ratios: RATIOS });
+  const levels = simplifier.simplifyGeometry(geometry, { ratios: RATIOS });
   levels.forEach(level => {
     assert.equal(level.path, 'blend');
     assert.equal(level.target, Math.ceil(geometry.indices.length / 3 * level.ratio));
-    assert.ok(level.triangles <= level.target * SEAM_FALLBACK_OVERSHOOT, `ratio ${level.ratio}: ${level.triangles} triangles for a target of ${level.target}`);
+    assert.ok(level.triangles <= level.target * simplifier.SEAM_FALLBACK_OVERSHOOT, `ratio ${level.ratio}: ${level.triangles} triangles for a target of ${level.target}`);
     assert.ok(level.triangles >= level.target * 0.75);
     assert.equal(level.geometry.indices.length / 3, level.triangles);
   });
@@ -62,8 +63,8 @@ test('every level of a seam-heavy geometry reaches its target within 25% and say
 
 test('blended levels are deterministic, copy attributes from the input and keep a growing finite error', () => {
   const geometry = seamHeavySphere();
-  const first = simplifyGeometry(geometry, { ratios: RATIOS });
-  const second = simplifyGeometry(geometry, { ratios: RATIOS });
+  const first = simplifier.simplifyGeometry(geometry, { ratios: RATIOS });
+  const second = simplifier.simplifyGeometry(geometry, { ratios: RATIOS });
   const inputKeys = attributeKeys(geometry, geometry.positions.length / 3);
   first.forEach((level, index) => {
     for (const field of ['positions', 'normals', 'uvs', 'indices']) assert.deepEqual(level.geometry[field], second[index].geometry[field], `${field} differs between runs`);
@@ -78,21 +79,21 @@ test('blended levels are deterministic, copy attributes from the input and keep 
 
 test('a geometry the never-blend path already reduces keeps that path under auto, and always forces the blend path', () => {
   const smooth = sphere(48, 32);
-  assert.equal(simplifyGeometry(smooth, { ratios: [0.5] })[0].path, 'keep');
-  assert.equal(simplifyGeometry(smooth, { ratios: [0.5], blendSeams: 'always' })[0].path, 'blend');
+  assert.equal(simplifier.simplifyGeometry(smooth, { ratios: [0.5] })[0].path, 'keep');
+  assert.equal(simplifier.simplifyGeometry(smooth, { ratios: [0.5], blendSeams: 'always' })[0].path, 'blend');
 });
 
 test('an open border stays locked on the blend path', () => {
   const geometry = seamHeavySphere();
   const open = { ...geometry, indices: geometry.indices.slice(0, geometry.indices.length - 3 * 200) };
-  const [level] = simplifyGeometry(open, { ratios: [0.5], blendSeams: 'always' });
+  const [level] = simplifier.simplifyGeometry(open, { ratios: [0.5], blendSeams: 'always' });
   const siteByPosition = new Map();
   const siteOfVertex = Uint32Array.from({ length: open.positions.length / 3 }, (unused, vertex) => {
     const key = open.positions.subarray(vertex * 3, vertex * 3 + 3).join(',');
     if (!siteByPosition.has(key)) siteByPosition.set(key, siteByPosition.size);
     return siteByPosition.get(key);
   });
-  const locked = findLockedVertices(open.indices.map(vertex => siteOfVertex[vertex]), siteByPosition.size);
+  const locked = simplifier.findLockedVertices(open.indices.map(vertex => siteOfVertex[vertex]), siteByPosition.size);
   const borderPositions = new Set([...siteByPosition].filter(([, site]) => locked[site]).map(([key]) => key));
   assert.ok(borderPositions.size > 0);
   const survivingPositions = new Set();
@@ -105,7 +106,7 @@ test('generateGeometryLods reports the target and the simplifier of every level,
   const geometry = seamHeavySphere();
   const levels = generateGeometryLods(geometry, { ratios: RATIOS });
   assert.deepEqual(levels.map(level => level.path), ['input', 'blend', 'blend', 'blend']);
-  levels.slice(1).forEach(level => assert.ok(level.triangles <= level.targetTriangles * SEAM_FALLBACK_OVERSHOOT));
+  levels.slice(1).forEach(level => assert.ok(level.triangles <= level.targetTriangles * simplifier.SEAM_FALLBACK_OVERSHOOT));
   const never = generateGeometryLods(geometry, { ratios: [0.5], blendSeams: 'never' });
   assert.equal(never[1].path, 'keep');
   const assetLevels = generateAssetLods({ parts: [{ name: 'scan', geometry }] }, { ratios: RATIOS });
@@ -113,27 +114,5 @@ test('generateGeometryLods reports the target and the simplifier of every level,
 });
 
 test('simplifyGeometry names the blendSeams choices when given another value', () => {
-  assert.throws(() => simplifyGeometry(seamHeavySphere(), { ratios: [0.5], blendSeams: 'yes' }), /blendSeams must be one of auto, never, always/);
-});
-
-test('the collapse queue pops cheapest first, reuses freed slots and keeps the exact flag of each candidate (#2985)', () => {
-  const queue = new CollapseQueue(2);
-  const costs = [5, 1, 4, 1, 3, 9, 0.5, 7];
-  costs.forEach((cost, index) => queue.push(cost, cost / 2, index, index + 10, index, index + 20, index % 2));
-  const popped = [];
-  while (queue.size) {
-    queue.pop();
-    popped.push([queue.poppedCost, queue.poppedPositionCost, queue.poppedRemoved, queue.poppedKept, queue.poppedRemovedVersion, queue.poppedKeptVersion, queue.poppedExact]);
-  }
-  assert.deepEqual(popped.map(entry => entry[0]), [...costs].sort((first, second) => first - second));
-  for (const [cost, positionCost, removed, kept, removedVersion, keptVersion, exact] of popped) {
-    assert.equal(positionCost, cost / 2);
-    assert.equal(kept, removed + 10);
-    assert.equal(removedVersion, removed);
-    assert.equal(keptVersion, removed + 20);
-    assert.equal(exact, removed % 2);
-  }
-  queue.push(2, 1, 40, 50, 1, 2, 0);
-  assert.equal(queue.peekCost(), 2);
-  assert.equal(queue.poolUsed, costs.length);
+  assert.throws(() => simplifier.simplifyGeometry(seamHeavySphere(), { ratios: [0.5], blendSeams: 'yes' }), /blendSeams must be one of auto, never, always/);
 });

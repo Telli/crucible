@@ -227,6 +227,8 @@ export async function renderMedia(values = process.argv.slice(2)) {
     await page.waitForFunction((mode) => window.__fileSceneError || window.__scene?.renderer || (mode === 'film' ? window.__filmReady : mode === 'nature' ? window.__nature?.renderer : mode === 'object' ? window.__studio?.renderer : false), scene, { timeout: SCENE_READY_TIMEOUT_MILLISECONDS });
     const fileSceneError = await page.evaluate(() => window.__fileSceneError);
     if (fileSceneError) throw new Error(`Scene file failed to load: ${fileSceneError}`);
+    // Output draws only after the levels of detail are in, so the frames never depend on when they were made (#2985).
+    await page.evaluate(() => window.__scene?.lodsReady);
     if (options.asset) {
       await page.locator('#file').setInputFiles(resolve(options.asset));
       await page.waitForFunction(() => document.querySelector('#notice').hidden || document.querySelector('#notice').textContent.startsWith('⚠'));

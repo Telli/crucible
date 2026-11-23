@@ -33,10 +33,10 @@ export const MAXIMUM_SIMPLIFY_VERTICES = 2000000;
 /**
  * The collapse candidates, cheapest first, in typed arrays and no object per candidate. A binary heap orders (cost,
  * candidate id) pairs, so a sift moves two numbers; the rest of a candidate (the part of the cost that is surface
- * distance, the two sites, their versions and whether the cost is exact) sits in a pool slot that stays put until the
+ * distance, the two sites and their versions) sits in a pool slot that stays put until the
  * candidate is popped. After `pop` the cheapest candidate is in the `popped*` fields.
  */
-export class CollapseQueue {
+class CollapseQueue {
   constructor(capacity = 1024) {
     this.size = 0;
     this.poolUsed = 0;
@@ -49,7 +49,6 @@ export class CollapseQueue {
     this.poppedKept = 0;
     this.poppedRemovedVersion = 0;
     this.poppedKeptVersion = 0;
-    this.poppedExact = 1;
   }
 
   allocate(capacity) {
@@ -62,7 +61,6 @@ export class CollapseQueue {
       kept: new Uint32Array(capacity),
       removedVersions: new Uint32Array(capacity),
       keptVersions: new Uint32Array(capacity),
-      exact: new Uint8Array(capacity),
     };
     for (const [name, array] of Object.entries(grown)) {
       if (this[name]) array.set(this[name]);
@@ -71,7 +69,7 @@ export class CollapseQueue {
     this.capacity = capacity;
   }
 
-  push(cost, positionCost, removed, kept, removedVersion, keptVersion, exact = 1) {
+  push(cost, positionCost, removed, kept, removedVersion, keptVersion) {
     if (this.size === this.capacity) this.allocate(this.capacity * 2);
     const id = this.freeCount ? this.freeIds[--this.freeCount] : this.poolUsed++;
     this.positionCosts[id] = positionCost;
@@ -79,7 +77,6 @@ export class CollapseQueue {
     this.kept[id] = kept;
     this.removedVersions[id] = removedVersion;
     this.keptVersions[id] = keptVersion;
-    this.exact[id] = exact;
     const { heapCosts, heapIds } = this;
     let index = this.size++;
     while (index > 0) {
@@ -93,11 +90,6 @@ export class CollapseQueue {
     heapIds[index] = id;
   }
 
-  /** The cost of the cheapest candidate, which no candidate can undercut. */
-  peekCost() {
-    return this.heapCosts[0];
-  }
-
   pop() {
     const { heapCosts, heapIds } = this;
     const id = heapIds[0];
@@ -107,7 +99,6 @@ export class CollapseQueue {
     this.poppedKept = this.kept[id];
     this.poppedRemovedVersion = this.removedVersions[id];
     this.poppedKeptVersion = this.keptVersions[id];
-    this.poppedExact = this.exact[id];
     this.freeIds[this.freeCount++] = id;
     const last = --this.size;
     if (last === 0) return;
@@ -401,9 +392,8 @@ class Collapser {
 
   pushCollapse(removed, kept, knownSurfaceCost) {
     const positionCost = knownSurfaceCost ?? this.surfaceCost(removed, kept);
-    // The welded path queues the surface cost alone, a lower bound: the attribute penalty is added when the candidate is
-    // popped (see `reduceTo`), so a candidate that goes stale first never pays for it.
-    this.queue.push(positionCost, positionCost, removed, kept, this.versions[removed], this.versions[kept], this.blendSeams ? 0 : 1);
+    const cost = this.blendSeams ? positionCost + this.attributePenalty(removed, kept) : positionCost;
+    this.queue.push(cost, positionCost, removed, kept, this.versions[removed], this.versions[kept]);
   }
 
   /**
@@ -589,13 +579,6 @@ class Collapser {
       queue.pop();
       const { poppedRemoved: removed, poppedKept: kept } = queue;
       if (queue.poppedRemovedVersion !== this.versions[removed] || queue.poppedKeptVersion !== this.versions[kept]) continue;
-      if (!queue.poppedExact) {
-        const cost = queue.poppedPositionCost + this.attributePenalty(removed, kept);
-        if (queue.size && cost > queue.peekCost()) {
-          queue.push(cost, queue.poppedPositionCost, removed, kept, queue.poppedRemovedVersion, queue.poppedKeptVersion, 1);
-          continue;
-        }
-      }
       if (!this.isSafe(removed, kept)) continue;
       this.worstError = Math.max(this.worstError, queue.poppedPositionCost);
       this.collapse(removed, kept);

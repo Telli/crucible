@@ -110,25 +110,47 @@ export function trianglesPerPixel(parts, pixels) {
   return triangles / pixels;
 }
 
-/**
- * Returns `parts` with `lods` on every part that has at least `minimumTriangles` triangles and may take levels, when
- * the scene is denser than `minimumTrianglesPerPixel`; otherwise returns `parts` itself. Parts that share a geometry
- * share its levels and so one batch; a part that already has `lods` keeps them. The levels keep uvs and colours.
- */
-export function addLodsToDenseParts(parts, { pixels, minimumTrianglesPerPixel = DENSE_TRIANGLES_PER_PIXEL, minimumTriangles = DEFAULT_MINIMUM_TRIANGLES, ratios = DEFAULT_LOD_RATIOS } = {}) {
+/** The parts that would take levels: dense scene, at least `minimumTriangles`, not past the simplifier's limit, may take lods. Empty for a sparse scene. */
+function partsThatTakeDenseLods(parts, { pixels, minimumTrianglesPerPixel = DENSE_TRIANGLES_PER_PIXEL, minimumTriangles = DEFAULT_MINIMUM_TRIANGLES, ratios = DEFAULT_LOD_RATIOS } = {}) {
   if (!Array.isArray(parts)) throw new TypeError('parts must be the array of parts that goes to CrucibleRenderer.');
   // Checked here so bad ratios fail on a sparse scene too, not only on the frame a scene turns dense.
   checkRatios(ratios);
   requireFiniteInRange('addLodsToDenseParts', 'minimumTrianglesPerPixel', minimumTrianglesPerPixel, 0, 1e9);
   requireFiniteInRange('addLodsToDenseParts', 'minimumTriangles', minimumTriangles, 0, 1e9);
-  if (trianglesPerPixel(parts, pixels) <= minimumTrianglesPerPixel) return parts;
+  if (trianglesPerPixel(parts, pixels) <= minimumTrianglesPerPixel) return [];
+  return parts.filter(part => {
+    const triangles = part.geometry.indices.length / 3;
+    return !part.lods && triangles >= minimumTriangles && triangles <= MAXIMUM_SIMPLIFY_TRIANGLES && partTakesLods(part);
+  });
+}
+
+/**
+ * Returns `parts` with `lods` on every part that has at least `minimumTriangles` triangles and may take levels, when
+ * the scene is denser than `minimumTrianglesPerPixel`; otherwise returns `parts` itself. Parts that share a geometry
+ * share its levels and so one batch; a part that already has `lods` keeps them. The levels keep uvs and colours.
+ * The levels are made before this returns, so a frame drawn from the result is the same every time. A viewer that
+ * should not wait for them uses `planDenseLods` and src/deferred-lods.js.
+ */
+export function addLodsToDenseParts(parts, options = {}) {
+  const taking = new Set(partsThatTakeDenseLods(parts, options));
+  if (!taking.size) return parts;
+  const ratios = options.ratios ?? DEFAULT_LOD_RATIOS;
   const levelsByGeometry = new Map();
   return parts.map(part => {
-    const triangles = part.geometry.indices.length / 3;
-    if (part.lods || triangles < minimumTriangles || triangles > MAXIMUM_SIMPLIFY_TRIANGLES || !partTakesLods(part)) return part;
+    if (!taking.has(part)) return part;
     if (!levelsByGeometry.has(part.geometry)) levelsByGeometry.set(part.geometry, generateGeometryLods(part.geometry, { ratios }));
     return { ...part, lods: levelsByGeometry.get(part.geometry) };
   });
+}
+
+/**
+ * What addLodsToDenseParts would do, without doing it: `{ parts, geometries, ratios }` where `parts` are the parts that
+ * would take levels and `geometries` are their distinct geometries (parts that share one share its levels). Both are empty
+ * for a sparse scene. Use it to draw the first frame from level 0 and make the levels afterwards (src/deferred-lods.js).
+ */
+export function planDenseLods(parts, options = {}) {
+  const taking = partsThatTakeDenseLods(parts, options);
+  return { parts: taking, geometries: [...new Set(taking.map(part => part.geometry))], ratios: options.ratios ?? DEFAULT_LOD_RATIOS };
 }
 
 /**
@@ -137,12 +159,22 @@ export function addLodsToDenseParts(parts, { pixels, minimumTrianglesPerPixel = 
  * can keep every triangle of a dense scan.
  */
 export function partsForRendererOptions(parts, canvas, rendererOptions = {}) {
-  const { denseLods = true, pixelRatio = 1.5 } = rendererOptions;
+  const pixels = denseLodPixels('partsForRendererOptions', canvas, rendererOptions);
+  return pixels === null ? parts : addLodsToDenseParts(parts, { pixels });
+}
+
+/** planDenseLods for a scene file's renderer options, the way partsForRendererOptions reads them; an empty plan when `denseLods` is false. */
+export function planLodsForRendererOptions(parts, canvas, rendererOptions = {}) {
+  const pixels = denseLodPixels('planLodsForRendererOptions', canvas, rendererOptions);
+  return pixels === null ? { parts: [], geometries: [], ratios: DEFAULT_LOD_RATIOS } : planDenseLods(parts, { pixels });
+}
+
+/** The canvas pixels the renderer options imply, or null when `denseLods` is false. */
+function denseLodPixels(label, canvas, { denseLods = true, pixelRatio = 1.5 }) {
   if (typeof denseLods !== 'boolean') throw new TypeError('renderer.denseLods must be true or false.');
-  if (!denseLods) return parts;
-  requireFiniteInRange('partsForRendererOptions', 'pixelRatio', pixelRatio, 0.1, 16);
-  const pixels = Math.max(1, canvas.clientWidth) * Math.max(1, canvas.clientHeight) * pixelRatio * pixelRatio;
-  return addLodsToDenseParts(parts, { pixels });
+  if (!denseLods) return null;
+  requireFiniteInRange(label, 'pixelRatio', pixelRatio, 0.1, 16);
+  return Math.max(1, canvas.clientWidth) * Math.max(1, canvas.clientHeight) * pixelRatio * pixelRatio;
 }
 
 /**
