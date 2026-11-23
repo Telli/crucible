@@ -90,7 +90,7 @@ const DEFORMING_TAGS = new Set(['foliage', 'grass', 'water', 'fire', 'smoke']);
 // strength, so they can be culled and given levels like rigid parts.
 const SWAY_REACH_PER_STRENGTH = 0.56;
 
-const POST_UNIFORMS = ['transparent', 'frameTexture', 'bloomTexture', 'bloomStrength', 'hdrEnabled', 'grade', 'vignette', 'grainAmount', 'resolution', 'monochrome', 'fade', 'cinematic', 'time', 'volumeExplosion', 'explosionProgress', 'inverseViewProjection', 'eye', 'sceneDepth', 'volumeShadowMap', 'volumeLightProjection', 'volumeLightDirection', 'volumeLightColor', 'volumeDensity', 'volumeMinimum', 'volumeMaximum', 'volumeColor', 'volumeAmbient', 'volumeDrift', 'volumeSteps', 'volumeAnisotropy', 'volumeShadowAmbient', 'volumeGridFog', 'volumeNoiseAmount', 'volumeNoiseScale', 'volumeHeightFalloff', 'volumeMaxDistance', 'volumeField', 'volumeProfile', 'volumeFlowStrength', 'volumeFlowPeriod', 'volumeLightCount', 'volumeLightPositions[0]', 'volumeLightColors[0]', 'volumeLightDirections[0]', 'volumeLightCones[0]', 'fogSkyVisibility', 'orthographic', 'occlusionTexture', 'occlusionStrength', 'occlusionTexel'];
+const POST_UNIFORMS = ['transparent', 'frameTexture', 'bloomTexture', 'bloomStrength', 'hdrEnabled', 'grade', 'vignette', 'grainAmount', 'resolution', 'monochrome', 'fade', 'cinematic', 'time', 'volumeExplosion', 'explosionProgress', 'inverseViewProjection', 'eye', 'sceneDepth', 'volumeShadowMap', 'volumeLightProjection', 'volumeLightDirection', 'volumeLightColor', 'volumeDensity', 'volumeMinimum', 'volumeMaximum', 'volumeColor', 'volumeAmbient', 'volumeDrift', 'volumeSteps', 'volumeAnisotropy', 'volumeShadowAmbient', 'volumeGridFog', 'volumeNoiseAmount', 'volumeNoiseScale', 'volumeHeightFalloff', 'volumeMaxDistance', 'volumeField', 'volumeProfile', 'volumeFlowStrength', 'volumeFlowPeriod', 'volumeLightCount', 'volumeLightPositions[0]', 'volumeLightColors[0]', 'volumeLightDirections[0]', 'volumeLightCones[0]', 'fogSkyVisibility', 'orthographic', 'occlusionTexture', 'occlusionStrength', 'occlusionTexel', 'autoExposureScale'];
 
 function postUniformLocations(context, program) {
   return Object.fromEntries(POST_UNIFORMS.map(name => [name, context.getUniformLocation(program, name)]));
@@ -2442,6 +2442,7 @@ export class CrucibleRenderer {
     if (fogSky) steps.push('sky');
     if (frame.volumeExplosion) steps.push('explosion');
     if (frame.linearOutput) steps.push(requireFeatureCode('linearOutput').step(this, frame));
+    if (this.autoExposureScale != null) steps.push('autoExposure');
     const gradesColor = effects.saturation !== 1 || effects.contrast !== 1 || effects.temperature !== 0;
     const finishes = gradesColor || (frame.monochrome ?? 0) !== 0 || Boolean(frame.cinematic) || effects.vignette !== 0 || effects.grain !== 0;
     if (finishes) steps.push('finish');
@@ -2469,6 +2470,16 @@ export class CrucibleRenderer {
     return variant;
   }
 
+  // effects.autoExposure (src/auto-exposure.js) meters the frame and sets the factor the post pass scales it by; null when it is off.
+  meterAutoExposure(frame, sourceTexture) {
+    if (frame.effects?.autoExposure === undefined) {
+      this.autoExposure = null;
+      this.autoExposureScale = null;
+      return;
+    }
+    this.autoExposureScale = requireFeatureCode('autoExposure').measure(this, frame, sourceTexture);
+  }
+
   // The fog step leaves the last frame's texture on a mipmapped filter. The stages and bloom read before this frame's
   // mip chain exists, so on that filter they would sample the previous frame's blurred levels: a ghost after a seek.
   restoreSingleLevelFiltering() {
@@ -2493,6 +2504,7 @@ export class CrucibleRenderer {
     if (isBloomActive(effects)) this.drawBloom(effects.bloom, sourceTexture);
     const occluded = effects.ambientOcclusion > 0 && Boolean(this.depthTexture);
     if (occluded) this.drawAmbientOcclusion(frame, effects);
+    this.meterAutoExposure(frame, sourceTexture);
     // A frame that names an outputFramebuffer (src/float-output.js) draws its final pass there, not on the canvas.
     context.bindFramebuffer(context.FRAMEBUFFER, frame.outputFramebuffer ?? null);
     context.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -2531,6 +2543,7 @@ export class CrucibleRenderer {
     context.bindTexture(context.TEXTURE_2D, occluded ? this.occlusionTarget.texture : this.whiteTexture);
     context.uniform1i(post.uniforms.occlusionTexture, 4);
     context.uniform1f(post.uniforms.occlusionStrength, occluded ? effects.ambientOcclusion : 0);
+    if (this.autoExposureScale != null) context.uniform1f(post.uniforms.autoExposureScale, this.autoExposureScale);
     context.uniform2f(post.uniforms.occlusionTexel, 1 / Math.ceil(this.canvas.width / 2), 1 / Math.ceil(this.canvas.height / 2));
     context.uniform1f(post.uniforms.transparent, this.transparent ? 1 : 0);
     context.uniform1f(post.uniforms.hdrEnabled, this.hdr ? 1 : 0);

@@ -2898,6 +2898,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           areaLights: state.recipe.environment.areaLights?.length ?? 0,
           volumeFogDensity: state.recipe.environment.volumeFog.density,
           exposure: state.recipe.effects.exposure,
+          ...(state.recipe.effects.autoExposure ? { autoExposure: { ...state.recipe.effects.autoExposure, chosen: null } } : {}),
         },
         nodes, truncated: selected.length > nodes.length,
         ...(options.path === undefined ? {} : { path: pathQuery(options.path) }),
