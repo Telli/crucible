@@ -2150,7 +2150,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       return { ...lightBake, reused: true };
     }
     if (bakeDeferral && state && !recipe.bake.rebake) {
-      return agentSceneModule('bake').stageSettling(settling, bakeDeferral, { key, recipe, sourceRestParts, worldMatrices, generatedGeometryGenerators, stagedMaterialSnapshots, lightBake, state });
+      return agentSceneModule('bakeDeferred').stageSettling(settling, bakeDeferral, { key, recipe, sourceRestParts, worldMatrices, generatedGeometryGenerators, stagedMaterialSnapshots, lightBake, state });
     }
     // The first build of a scene still fails loudly. A later edit stays applied: the old bake no longer fits the edited parts, so it is dropped.
     const { baked, refusal } = agentSceneModule('bake').withStagedMaterials(stagedMaterialSnapshots, () => agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators));
@@ -2460,7 +2460,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     }
     state = stagedState;
     if (settling.pending || stagedState.settlingPlan) {
-      agentSceneModule('bake').adoptSettling(settling, stagedState.settlingPlan, finishSettledBake);
+      agentSceneModule('bakeDeferred').adoptSettling(settling, stagedState.settlingPlan, finishSettledBake);
     }
     if (incrementRevision) {
       revision++;
@@ -2471,7 +2471,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // The bake of the last edit is done: the scene's parts are staged again with its light, like a fresh build, and swapped in as a
   // topology change. A bake a limit stopped leaves the scene drawn without light and says why, as an edit that skips its bake does.
   function finishSettledBake(plan, outcome) {
-    const settled = agentSceneModule('bake').settledBake(plan, outcome, state.recipe);
+    const settled = agentSceneModule('bakeDeferred').settledBake(plan, outcome, state.recipe);
     lightBake = settled.lightBake;
     const { reflected, restParts } = stageRestParts(state.recipe, state.sourceRestParts, lightBake && { ...lightBake, reused: false }, state.graph);
     Object.assign(state, { restParts, bakeSkipped: settled.bakeSkipped, bakeReport: settled.bakeReport, reflectionReport: reflected ? reflected.report : null });
