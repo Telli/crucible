@@ -9,6 +9,7 @@ import { blockMedians, median, rotatedOrder, summarizeAfterWarmup, summarizeRoun
 const WARMUP_FRAMES = 20;
 const NANOSECONDS_PER_MILLISECOND = 1e6;
 const ONE_PIXEL = new Uint8Array(4);
+const SUN_TURN_RADIANS_PER_FRAME = 0.002;
 const OTHER_SEGMENT = 'opaque or other';
 const TIMED_METHODS = ['createShadowMap', 'updateLocalShadows', 'drawEnvironmentBackground', 'drawTranslucent', 'drawBlendBatches', 'resolveFrame'];
 
@@ -105,7 +106,7 @@ const SHADER_CUTS = [
   { name: 'cut-metallic-roughness-map', from: 'if (USES_METALLIC_ROUGHNESS_MAP) {', to: 'if (false) {' },
 ];
 
-window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, denseLods = false, denseLodsMinimumTriangles = undefined, experiment = null, sequence = null, profile = null }) {
+window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, denseLods = false, denseLodsMinimumTriangles = undefined, experiment = null, sequence = null, profile = null, cumulativeCuts = null }) {
   const canvas = document.querySelector('#viewport');
   const experiments = new Set(String(experiment ?? '').split(','));
   if (experiments.has('no-invariant')) {
@@ -142,7 +143,7 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
       return originalSource.call(this, shader, cutSource);
     };
   }
-  if (experiment === 'trivial-fragment' || experiment === 'overdraw') replaceColourShaders(false);
+  if (experiment === 'trivial-fragment') replaceColourShaders(false);
   if (experiment === 'trivial-both') replaceColourShaders(true);
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
@@ -153,20 +154,24 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
   ]);
   const asset = await loadGltf(model, { baseUrl: new URL('.', new URL(glbUrl, location.href)).href, sharedTextures: createSharedTextures(), ...(description.gltfOptions ?? {}) });
   const rendererOptions = withSceneFileRendererDefaults(description.renderer);
-  const shadowCascades = rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined;
   const lodStarted = performance.now();
   const renderedParts = denseLods ? addLodsToDenseParts(asset.parts, { pixels: width * height, minimumTriangles: denseLodsMinimumTriangles }) : asset.parts;
   const lodBuildMs = Number((performance.now() - lodStarted).toFixed(0));
-  const renderer = new CrucibleRenderer(canvas, renderedParts, {
-    ground: false, hdr: true, samples: 4, ...rendererOptions, shadowCascades,
+  const createRenderer = () => new CrucibleRenderer(canvas, renderedParts, {
+    ground: false, hdr: true, samples: 4, ...rendererOptions,
+    shadowCascades: rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined,
     environment: { ...(rendererOptions.environment ?? {}), map },
   });
+  if (cumulativeCuts) {
+    const cumulativeFrame = { exposure: description.exposure ?? 1, ...(description.frame ?? {}), eye: description.eye, target: description.target };
+    return { ...await measureCumulativeCuts({ createRenderer, canvas, frame: cumulativeFrame, ...cumulativeCuts }), lodBuildMs };
+  }
+  const renderer = createRenderer();
   const context = renderer.context;
   const timer = createSegmentTimer(context);
   // The renderer's own timer would open a query inside ours, and WebGL allows one at a time.
   renderer.gpuTimer = null;
   const frame = { exposure: description.exposure ?? 1, ...(description.frame ?? {}), eye: description.eye, target: description.target };
-  if (experiment === 'overdraw') return measureOverdraw({ renderer, context, canvas, frame });
   if (segmented || profile) {
     for (const methodName of TIMED_METHODS) wrapSegment(renderer, methodName, timer);
     if (renderer.shadowCascades) wrapSegment(renderer.shadowCascades, 'update', timer);
@@ -384,7 +389,7 @@ async function timeFrames({ renderer, context, canvas, timer, frame, frames, war
   for (let index = 0; index < warmupFrames + frames; index++) {
     const started = performance.now();
     timer.start(segmented ? 'setup before first pass' : 'whole frame');
-    renderer.render(frame);
+    renderer.render(typeof frame === 'function' ? frame(index) : frame);
     timer.endFrame();
     context.readPixels(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1, context.RGBA, context.UNSIGNED_BYTE, ONE_PIXEL);
     wall.push(performance.now() - started);
@@ -403,7 +408,7 @@ function totalOf(milliseconds) {
 
 // Every mode on one scale, in one page and one renderer: a cold run (to show whether the first frames cost more), then for each
 // camera `rounds` rounds that alternate the whole-frame query and the per-pass queries in rotating order.
-async function measureProfile({ renderer, context, canvas, timer, frame, cameras = [], rounds = 3, frames = 150, coldFrames = 300, coldBlockSize = 25 }) {
+async function measureProfile({ renderer, context, canvas, timer, frame, cameras = [], rounds = 3, frames = 150, coldFrames = 300, coldBlockSize = 25, movingSun = false }) {
   const cold = await timeFrames({ renderer, context, canvas, timer, frame, frames: coldFrames, warmupFrames: 0, segmented: false });
   const coldGpu = cold.gpu.map(totalOf);
   const coldStart = {
@@ -413,8 +418,18 @@ async function measureProfile({ renderer, context, canvas, timer, frame, cameras
     gpuAfterWarmup: summarizeAfterWarmup(coldGpu, WARMUP_FRAMES),
   };
   const perCamera = {};
-  for (const camera of cameras.length ? cameras : [{ name: 'scene', eye: frame.eye, target: frame.target }]) {
-    const cameraFrame = { ...frame, eye: camera.eye, target: camera.target };
+  const baseLightDirection = renderer.environment?.lightDirection ?? [-3, 6, 4];
+  // A sun that turns a little every frame makes Glaze redraw its shadow maps every frame, which a still frame never does.
+  const turningSun = index => {
+    const angle = index * SUN_TURN_RADIANS_PER_FRAME;
+    const [x, y, z] = baseLightDirection;
+    return [x * Math.cos(angle) - z * Math.sin(angle), y, x * Math.sin(angle) + z * Math.cos(angle)];
+  };
+  const cameraList = cameras.length ? cameras : [{ name: 'scene', eye: frame.eye, target: frame.target }];
+  const runs = cameraList.flatMap(camera => [{ name: camera.name, camera, movingSun: false }, ...(movingSun ? [{ name: camera.name + '-moving-sun', camera, movingSun: true }] : [])]);
+  for (const { name, camera, movingSun: sunTurns } of runs) {
+    const staticFrame = { ...frame, eye: camera.eye, target: camera.target };
+    const cameraFrame = sunTurns ? index => ({ ...staticFrame, environment: { ...(staticFrame.environment ?? {}), lightDirection: turningSun(index) } }) : staticFrame;
     const wholeGpu = [];
     const wholeWall = [];
     const segmentTotals = [];
@@ -438,7 +453,7 @@ async function measureProfile({ renderer, context, canvas, timer, frame, cameras
         }
       }
     }
-    perCamera[camera.name] = {
+    perCamera[name] = {
       eye: camera.eye,
       target: camera.target,
       wholeFrame: { gpuMs: summarizeRounds(wholeGpu), wallMs: summarizeRounds(wholeWall), roundGpuMedians: wholeGpu.map(value => Number(value.toFixed(3))) },
@@ -450,71 +465,4 @@ async function measureProfile({ renderer, context, canvas, timer, frame, cameras
     };
   }
   return { coldStart, perCamera, rounds, frames, warmupFrames: WARMUP_FRAMES };
-}
-
-// Depth complexity of the main colour pass: the colour shader is replaced by one that writes 1, the draws add into the
-// multisampled colour buffer (blend ONE, ONE), and the buffer is blended down and read back. With the depth test on the count is what
-// the frame shades in Glaze's draw order (cutout materials count whole, the replaced shader has no discard); with it off it is
-// every fragment the triangles produce.
-async function measureOverdraw({ renderer, context, canvas, frame }) {
-  const { width, height } = canvas;
-  renderer.drawEnvironmentBackground = () => false;
-  renderer.drawTranslucent = () => {};
-  renderer.drawBlendBatches = () => {};
-  const originalClear = context.clear.bind(context);
-  context.clear = mask => {
-    context.clearColor(0, 0, 0, 0);
-    return originalClear(mask);
-  };
-  let depthTestOn = true;
-  const drawIntoColourBuffer = () => context.getParameter(context.FRAMEBUFFER_BINDING) === renderer.multisampleFramebuffer;
-  for (const drawName of ['drawElementsInstanced', 'drawElements']) {
-    const originalDraw = context[drawName].bind(context);
-    context[drawName] = (...parameters) => {
-      if (drawIntoColourBuffer()) {
-        context.enable(context.BLEND);
-        context.blendFunc(context.ONE, context.ONE);
-        context.disable(context.SAMPLE_ALPHA_TO_COVERAGE);
-        if (depthTestOn) context.enable(context.DEPTH_TEST);
-        else context.disable(context.DEPTH_TEST);
-      }
-      return originalDraw(...parameters);
-    };
-  }
-  const counts = new Float32Array(width * height * 4);
-  const resolved = context.createFramebuffer();
-  const target = context.createRenderbuffer();
-  context.bindRenderbuffer(context.RENDERBUFFER, target);
-  context.renderbufferStorage(context.RENDERBUFFER, context.RGBA16F, width, height);
-  context.bindFramebuffer(context.FRAMEBUFFER, resolved);
-  context.framebufferRenderbuffer(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.RENDERBUFFER, target);
-  renderer.resolveFrame = () => {
-    context.bindFramebuffer(context.READ_FRAMEBUFFER, renderer.multisampleFramebuffer);
-    context.bindFramebuffer(context.DRAW_FRAMEBUFFER, resolved);
-    context.blitFramebuffer(0, 0, width, height, 0, 0, width, height, context.COLOR_BUFFER_BIT, context.NEAREST);
-    context.bindFramebuffer(context.READ_FRAMEBUFFER, resolved);
-    context.readPixels(0, 0, width, height, context.RGBA, context.FLOAT, counts);
-  };
-  const result = {};
-  for (const [name, withDepthTest] of [['depthTestOn', true], ['depthTestOff', false]]) {
-    depthTestOn = withDepthTest;
-    renderer.render(frame);
-    const perPixel = [];
-    for (let index = 0; index < counts.length; index += 4) perPixel.push(counts[index]);
-    const covered = perPixel.filter(value => value > 0);
-    const sorted = [...covered].sort((first, second) => first - second);
-    const percentile = fraction => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))] ?? 0;
-    const sum = perPixel.reduce((total, value) => total + value, 0);
-    result[name] = {
-      fragmentsPerPixel: Number((sum / perPixel.length).toFixed(2)),
-      fragmentsPerCoveredPixel: Number((sum / Math.max(1, covered.length)).toFixed(2)),
-      coveredFraction: Number((covered.length / perPixel.length).toFixed(4)),
-      p50: percentile(0.5),
-      p95: percentile(0.95),
-      p99: percentile(0.99),
-      max: sorted.at(-1) ?? 0,
-      shareOfPixelsAbove4: Number((covered.filter(value => value > 4).length / perPixel.length).toFixed(4)),
-    };
-  }
-  return { overdraw: result, canvas: [width, height], glError: context.getError(), ...describeRun(context, canvas, width, height, renderer) };
 }

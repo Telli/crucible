@@ -11,6 +11,21 @@ const ONE_PIXEL = new Uint8Array(4);
 
 window.measureThree = async function measureThree({ description, glbUrl, hdriUrl, frames = 200, width = 1280, height = 720, cameras = [], rounds = 1 }) {
   const canvas = document.querySelector('#viewport');
+  // Records every fragment shader three.js compiles, with its final source (defines written in), to count lines and translated lines.
+  const fragmentShaders = [];
+  const originalShaderSource = WebGL2RenderingContext.prototype.shaderSource;
+  WebGL2RenderingContext.prototype.shaderSource = function shaderSource(shader, source) {
+    if (source.includes('#define STANDARD') && source.includes('void main()') && !source.includes('gl_Position')) fragmentShaders.push({ shader, source, translated: null });
+    return originalShaderSource.call(this, shader, source);
+  };
+  // The translated source is only available right after the compile, before three.js deletes the shader.
+  const originalCompileShader = WebGL2RenderingContext.prototype.compileShader;
+  WebGL2RenderingContext.prototype.compileShader = function compileShader(shader) {
+    originalCompileShader.call(this, shader);
+    const entry = fragmentShaders.find(candidate => candidate.shader === shader);
+    const debugShaders = this.getExtension('WEBGL_debug_shaders');
+    if (entry && debugShaders) entry.translated = debugShaders.getTranslatedShaderSource(shader);
+  };
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
@@ -90,12 +105,24 @@ window.measureThree = async function measureThree({ description, glbUrl, hdriUrl
     perCamera[entry.name] = { wholeFrame: { gpuMs: summarizeRounds(gpuRounds), wallMs: summarizeRounds(wallRounds) } };
   }
   const first = Object.values(perCamera)[0].wholeFrame;
+  const physicalFragment = fragmentShaders.sort((left, right) => right.source.length - left.source.length)[0];
+  const translatedFragmentLines = physicalFragment?.translated ? physicalFragment.translated.split(String.fromCharCode(10)).length : null;
+  const physicalPrograms = renderer.info.programs.filter(program => !/PMREM|Background/.test(program.name));
+  const standardProgram = {
+    programName: 'largest material program (MeshStandardMaterial)',
+    programsCompiled: renderer.info.programs.length,
+    programNames: renderer.info.programs.map(program => program.name),
+    activeUniforms: physicalPrograms.length ? Math.max(...physicalPrograms.map(program => context.getProgramParameter(program.program, context.ACTIVE_UNIFORMS))) : null,
+    fragmentSourceLines: physicalFragment ? physicalFragment.source.split(String.fromCharCode(10)).length : null,
+    translatedFragmentLines,
+  };
   const debugInfo = context.getExtension('WEBGL_debug_renderer_info');
   return {
     ...counts,
     wallMedianMs: first.wallMs.median,
     gpuTotalMedianMs: first.gpuMs.median,
     perCamera,
+    standardProgram,
     rounds,
     centerPixel: Array.from(ONE_PIXEL),
     glRenderer: debugInfo ? context.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'unknown',
