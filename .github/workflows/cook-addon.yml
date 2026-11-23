@@ -382,6 +382,7 @@ on:
       - 'src/subsurface-shader.js'
       - 'src/sun-bounce.js'
       - 'src/surface-nets.js'
+      - 'src/tangent-encoding.js'
       - 'src/terrain-hole-cells.js'
       - 'src/terrain-paths.js'
       - 'src/terrain-sky.js'
