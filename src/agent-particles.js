@@ -17,7 +17,7 @@ const SPARK_PRESETS = Object.freeze({
   explosion: Object.freeze({ count: 800, speed: [6, 24], spread: 180, lifetime: [0.5, 2], size: [0.006, 0.014], drag: 0.9, emitter: Object.freeze({ shape: 'sphere', radius: 0.2 }) }),
 });
 const HAIR_FIELDS = ['type', 'node', 'surface', 'seed', 'count', 'length', 'segments', 'width', 'droop', 'lean', 'sway', 'swayRate'];
-const EMITTER_FIELDS = ['shape', 'position', 'halfExtents', 'radius', 'mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold'];
+const EMITTER_FIELDS = ['shape', 'position', 'halfExtents', 'radius', 'mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold', 'follow'];
 const EMITTER_SHAPES = ['point', 'box', 'sphere', 'disc', 'mesh'];
 const ORIENT_MODES = ['none', 'random', 'normal'];
 const SCALE_MODES = ['constant', 'shrink', 'grow'];
@@ -114,6 +114,21 @@ function assignEmitterRadius(input, emitter, shape, path) {
   }
 }
 
+const FOLLOW_ID_LIST_LIMIT = 20;
+
+// `follow` names the node whose animated or physics-baked transform carries the emitter (#2829).
+function normalizeFollow(input, emitter, shape, context, path) {
+  if (shape === 'mesh') {
+    throw invalidField(`${path}.follow`, input.follow, `left out on a mesh emitter, which takes its points from ${path}.mesh; use a point, box, sphere or disc emitter`);
+  }
+  if (typeof input.follow !== 'string' || !context.recipeNodes.has(input.follow)) {
+    const known = [...context.recipeNodes.keys()];
+    const more = known.length > FOLLOW_ID_LIST_LIMIT ? `, and ${known.length - FOLLOW_ID_LIST_LIMIT} more` : '';
+    throw invalidField(`${path}.follow`, input.follow, `the ID of a node in the recipe whose transform the emitter follows (known nodes: ${known.slice(0, FOLLOW_ID_LIST_LIMIT).join(', ') || 'none'}${more})`);
+  }
+  emitter.follow = input.follow;
+}
+
 function normalizeEmitter(input, context, path) {
   knownKeys(input, EMITTER_FIELDS, path);
   const shape = input.shape ?? 'point';
@@ -126,6 +141,7 @@ function normalizeEmitter(input, context, path) {
     halfExtents: input.halfExtents === undefined ? [0.5, 0.5, 0.5] : vectorOfThree(input.halfExtents, `${path}.halfExtents`, POSITION_LIMIT).map(Math.abs),
   };
   assignEmitterRadius(input, emitter, shape, path);
+  if (input.follow !== undefined) normalizeFollow(input, emitter, shape, context, path);
   if (shape === 'mesh') {
     normalizeMeshEmitter(input, emitter, context, path);
   } else {
@@ -414,7 +430,7 @@ function applyEmissionWindow(input, system, path) {
   const stop = finiteNumber(input.stop, `${path}.stop`, 0, 3600);
   const start = system.delay ?? 0;
   if (stop <= start) {
-    throw invalidField(`${path}.stop`, input.stop, `a time in seconds after the start (${start}), such as ${start + 2}`);
+    throw invalidField(`${path}.stop`, input.stop, `an absolute scene time in seconds, above start (${start}), such as ${start + 2} (stop is not a duration after start)`);
   }
   system.stop = stop;
 }
@@ -578,9 +594,18 @@ function followingSeaSource(emitter, sourceNode, sea, emitterPath) {
   });
 }
 
-function meshSourceOf(system, nodes, geometries, systemIndex, sea) {
+// A followed emitter reads the node's world matrix at each particle's birth time (#2829).
+function followedEmitter(system, emitter, follow, emitterPath) {
+  if (emitter.follow === system.node) {
+    throw invalidField(`${emitterPath}.follow`, emitter.follow, 'another node than the system node, whose own transform does not move its particles; follow the moving node and keep the system node at rest');
+  }
+  return { ...emitter, pose: time => follow.matrixAt(emitter.follow, time) };
+}
+
+function meshSourceOf(system, nodes, geometries, systemIndex, sea, follow) {
   const emitterPath = `particles.systems[${systemIndex}].emitter`;
   const emitter = system.emitter;
+  if (emitter.follow) return followedEmitter(system, emitter, follow, emitterPath);
   if (emitter.shape !== 'mesh') return emitter;
   const sourceNode = nodes.get(emitter.mesh);
   const followsSea = sea?.oceanTimeAt(sourceNode.geometry, 0) != null;
@@ -675,8 +700,8 @@ function nodeTransformProblems(particles, recipe) {
   return problems;
 }
 
-/** `sea` is `{ oceanTimeAt(geometryId, time), geometryAt(geometryId, oceanTime) }`: an emitter on a geometry that an oceanTime track drives follows that sea. */
-export function bakeAgentParticles(particles, recipe, geometries, sea) {
+/** `follow` is `{ matrixAt(nodeId, time) }`: the world matrix of a node at a scene time, for an emitter with `follow` (#2829). `sea` is `{ oceanTimeAt(geometryId, time), geometryAt(geometryId, oceanTime) }`: an emitter on a geometry that an oceanTime track drives follows that sea. */
+export function bakeAgentParticles(particles, recipe, geometries, sea, follow) {
   const nodes = new Map(recipe.nodes.map(node => [node.id, node]));
   const forces = { gravity: particles.gravity ?? DEFAULT_GRAVITY, wind: particles.wind ?? [0, 0, 0], fields: particles.fields ?? [] };
   let totalVertices = 0;
@@ -689,9 +714,9 @@ export function bakeAgentParticles(particles, recipe, geometries, sea) {
       const surfaceNode = nodes.get(system.surface);
       return prepareHair(system, node, surfaceNode, geometries.get(surfaceNode.geometry), forces);
     }
-    if (system.type === 'sparks') return prepareSparks(system, node, forces, meshSourceOf(system, nodes, geometries, systemIndex, sea));
+    if (system.type === 'sparks') return prepareSparks(system, node, forces, meshSourceOf(system, nodes, geometries, systemIndex, sea, follow));
     const templates = templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry));
-    return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex, sea));
+    return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex, sea, follow));
   });
   return Object.freeze({
     /** Warnings for a recipe that loads but does not do what its author likely meant. */

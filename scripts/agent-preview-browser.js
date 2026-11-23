@@ -37,7 +37,6 @@ import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
 import { sampleMotionAtZeroForGround } from './motion-ground-sample.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
-import { isLiveGeometry, isReindexedGeometry } from '../src/live-geometry.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
@@ -397,16 +396,6 @@ function syncShadowCascades(record) {
   }
 }
 
-// A textured scene took a new renderer for every pose that moved its sea, so each frame fitted its shadow cascades exactly. The
-// kept renderer holds the wider fits of a moving camera (cascaded-shadows.js chooseFit), which shade the textured land
-// differently, so it forgets them when the sea moves to a new time (#3038).
-function forgetShadowFitsOfMovedSea(record) {
-  const { scene, renderer } = record;
-  if (!record.rendererTextured || !renderer.shadowCascades || scene.motionTime === record.seaFitTime) return;
-  record.seaFitTime = scene.motionTime;
-  if (scene.parts.some(part => isReindexedGeometry(part.geometry))) renderer.shadowCascades.forgetFits();
-}
-
 function draw(record, time = 0, camera = record.scene.camera, frameOptions = {}) {
   // A heavy edit ranks its coplanar triangles right after it returns (#2905); a frame never draws them unranked.
   record.scene.settleFlush?.();
@@ -431,13 +420,13 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   } else {
     record.renderer.updateParts(record.scene.parts);
   }
-  // Cloth and a sea driven by an ocean time track rewrite their geometry in place, so a seek only uploads the new values.
-  for (const part of record.scene.parts) {
-    if (!isLiveGeometry(part.geometry)) continue;
-    const { positions, normals, skyVisibility, indices } = part.geometry;
-    updatePartVertices(record.renderer, part, positions, normals, { skyVisibility, ...(isReindexedGeometry(part.geometry) && { indices }) });
+  // Cloth rewrites its geometry in place, so a seek only uploads the new positions and normals.
+  if (agentSceneModuleLoaded('cloth')) {
+    const { isLiveClothGeometry } = agentSceneModule('cloth');
+    for (const part of record.scene.parts) {
+      if (isLiveClothGeometry(part.geometry)) updatePartVertices(record.renderer, part, part.geometry.positions, part.geometry.normals);
+    }
   }
-  forgetShadowFitsOfMovedSea(record);
   syncAutomaticGround(record);
   syncShadowCascades(record);
   syncSequenceTextures(record);

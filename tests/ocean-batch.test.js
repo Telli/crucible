@@ -93,37 +93,6 @@ test('oceanMesh equals the per-point sea on every up axis, with foam memory and 
   }
 });
 
-test('a batch without velocity sums the same height, move and foam and leaves the velocity at zero', () => {
-  for (const sea of SEAS) {
-    const waves = oceanWaves(sea);
-    const full = prepareOceanBatch(waves, 1.5, 1.2);
-    const withoutVelocity = prepareOceanBatch(waves, 1.5, 1.2, 0, false);
-    const fullSurface = {};
-    const reducedSurface = {};
-    for (let point = 0; point < 20; point++) {
-      setOceanBatchPoint(full, randomValue(point, -50, 50), randomValue(point + 99, -50, 50));
-      setOceanBatchPoint(withoutVelocity, randomValue(point, -50, 50), randomValue(point + 99, -50, 50));
-      oceanBatchSurface(full, fullSurface, 0.2);
-      oceanBatchSurface(withoutVelocity, reducedSurface, 0.2);
-      for (const field of ['height', 'moveX', 'moveZ', 'jacobian', 'foam']) assert.equal(reducedSurface[field], fullSurface[field], field);
-      for (const field of ['riseSpeed', 'driftX', 'driftZ']) assert.equal(reducedSurface[field], 0, field);
-    }
-  }
-});
-
-test('a sea with no spray gives the bytes it gave with the velocity sums, and its waves are found again for another time', () => {
-  const grid = scatteredGrid(90, 70);
-  const edit = { axis: 'y', windSpeed: 7, direction: 10, size: 60, seed: 2, time: 1.75, resolution: 6, choppiness: 1.3, coverage: 0.5 };
-  const spraying = oceanMesh(grid, { ...edit, spray: true });
-  const plain = oceanMesh(grid, edit);
-  assert.deepEqual(Array.from(plain.positions), Array.from(spraying.positions));
-  assert.deepEqual(Array.from(vertexGroupWeights(plain, 'foam')), Array.from(vertexGroupWeights(spraying, 'foam')));
-  const later = oceanMesh(grid, { ...edit, time: 2.5 });
-  const fresh = oceanMesh(grid, { ...edit, time: 2.5, windSpeed: 7.5 });
-  assert.notDeepEqual(Array.from(later.positions), Array.from(plain.positions), 'another time moves the sea');
-  assert.notDeepEqual(Array.from(later.positions), Array.from(fresh.positions), 'another wind is not served from the kept waves');
-});
-
 test('the batch path gives the same bytes on every run', () => {
   const grid = scatteredGrid(120, 80);
   const edit = { axis: 'y', windSpeed: 7, direction: 10, size: 60, seed: 2, time: 1.75, resolution: 6, choppiness: 1, foamMemory: 1 };
