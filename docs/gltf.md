@@ -73,6 +73,7 @@ Geometry contains `positions` and `normals` as `Float32Array` values, plus `indi
 The importer computes missing normals and normalizes supplied normals.
 It rejects non-finite attributes, invalid indices, singular transforms, and unusable normals.
 `geometry.uvs` preserves `TEXCOORD_0` as two floats per vertex.
+A primitive with a normal map also gets `geometry.tangents` (four floats per vertex): the file's `TANGENT` when it has a usable one, otherwise tangents generated from the UVs the map samples. [Material maps](material-maps.md) describes the frame and when the loader replaces an authored `TANGENT`.
 `geometry.colors` preserves opaque `COLOR_0` values as three linear RGB floats per vertex.
 
 Materials preserve linear `color`, `metallic`, `roughness`, and `emissiveColor` factors.
