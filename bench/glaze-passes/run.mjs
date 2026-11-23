@@ -7,6 +7,7 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
 const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const ANGLE_BACKEND = process.env.ANGLE_BACKEND ?? 'd3d11';
 // The fourth argument is JSON merged into the page options, e.g. '{"width":64,"height":36,"rendererOverrides":{"samples":1}}'.
 const [outputFile, directoryList, mode = 'segmented', overridesJson = '{}'] = process.argv.slice(2);
 const overrides = JSON.parse(overridesJson);
@@ -18,7 +19,7 @@ const serverUrl = `http://127.0.0.1:${server.httpServer.address().port}`;
 const browser = await chromium.launch({
   executablePath: CHROME,
   headless: true,
-  args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl', '--disable-renderer-backgrounding', '--enable-webgl-developer-extensions'],
+  args: [`--use-angle=${ANGLE_BACKEND}`, '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl', '--disable-renderer-backgrounding', '--enable-webgl-developer-extensions'],
 });
 const results = {};
 try {

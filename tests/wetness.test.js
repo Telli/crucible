@@ -135,3 +135,25 @@ test('wet mirror mode skips metal and flags the ground so the renderer can mirro
   assert.equal(wetMirrorSurface([flagged]).height, 0);
   assert.equal(wetMirrorSurface([road]), null);
 });
+
+test('the puddle edge fades over a few pixels, not a fixed few centimetres', () => {
+  const wet = createFragmentShader(new Set([...SHADER_FEATURES, WETNESS_FEATURE]));
+  assert.match(wet, /float fillEdge = clamp[(]4\.0 \* fwidth[(]fill[)], 0\.035, 0\.3[)];/);
+  assert.match(wet, /puddle = smoothstep[(]0\.0, fillEdge, fill[)]/);
+});
+
+test('the puddle film varies in depth and reflectance instead of one flat tone', () => {
+  const wet = createFragmentShader(new Set([...SHADER_FEATURES, WETNESS_FEATURE]));
+  assert.match(wet, /float puddleDepth = 0\.0;/);
+  assert.match(wet, /puddleDepth = smoothstep[(]0\.0, 0\.3, fill[)]/);
+  assert.match(wet, /float puddleSheen = mix[(]puddleDepth, wearNoise[(]vec3[(]worldPosition\.x \* 1\.7, 5\.1, worldPosition\.z \* 1\.7[)][)], 0\.6[)]/);
+  assert.match(wet, /metallic = mix[(]metallic, mix[(]0\.8, 0\.4, puddleSheen[)], puddle[)]/);
+});
+
+test('a damp surface is already near the gloss target, so wetness 0.5 shows a sheen', () => {
+  const wet = createFragmentShader(new Set([...SHADER_FEATURES, WETNESS_FEATURE]));
+  assert.match(wet, /wetSoak = 1\.0 - pow[(]1\.0 - wetnessState\.x, 3\.0[)]/);
+  assert.match(wet, /roughness = clamp[(]mix[(]roughness, 0\.42, wetGloss[)]/);
+  const gloss = (wetness) => 1 - (1 - wetnessResponse(wetness)) ** 3;
+  assert.ok(gloss(0.5) > 0.95);
+});
