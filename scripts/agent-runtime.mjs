@@ -77,6 +77,7 @@ import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
 import { GLB_EXPORT_NOTES } from '../src/glb-export-omissions.js';
 import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 import { previewDeadlineMilliseconds } from './preview-deadline.mjs';
+import { assertCapturedPngSize, captureClip } from './render-capture-size.mjs';
 import { realismReport, reviewTilingFindings } from './review-realism.mjs';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
@@ -1195,9 +1196,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const captureStarted = performance.now();
           const captured = await session.send('Page.captureScreenshot', { fromSurface: true,
             format: settings.kind === 'video' ? 'jpeg' : 'png',
-            ...(region ? { clip: { ...region, scale: 1 } } : {}),
+            clip: captureClip({ region, width, height }), captureBeyondViewport: true,
             ...(settings.kind === 'video' ? { quality: 95 } : { optimizeForSpeed: true }) });
           const captureBytes = Buffer.from(captured.data, 'base64');
+          if (settings.kind !== 'video') assertCapturedPngSize({ bytes: captureBytes, width: outputWidth, height: outputHeight });
           metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
           if (captureBytes.length > frameByteLimit) throw new Error(`Captured job frame exceeded ${frameByteLimit / 1024 ** 2} MiB.`);
           signal.throwIfAborted();
