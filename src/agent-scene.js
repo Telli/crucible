@@ -1502,7 +1502,7 @@ function stagePose(stagedState, time) {
   }
   const camera = sampled?.camera ? cameraPoseFrom(sampled.camera) : stagedState.recipe.camera;
   retainedMatrices(stagedState.parts);
-  const clothGeometries = withTerrainLod(sampledGeometries(stagedState, time, sampled), stagedState, graph, camera);
+  const clothGeometries = withTerrainLod(sampledGeometries(stagedState, time, sampled, camera), stagedState, graph, camera);
   // Staged last: a pose pending on a decoded asset must be committed or discarded, so nothing above may throw after it.
   const assetClips = stagedState.assetRuntime.animators.length ? agentSceneModule('assets').stageAssetClips(stagedState.assetRuntime, graph, time) : null;
   const movedLook = stagedState.motionSampler && agentSceneModule('motion').motionMovesLook(sampled) ? sampled : null;
@@ -1608,13 +1608,13 @@ function seasKeptInPlace(stagedState, geometries) {
 }
 
 // Cloth and particles replace the geometry of their own nodes at a sampled time; no node belongs to both.
-function sampledGeometries(stagedState, time, sampled) {
+function sampledGeometries(stagedState, time, sampled, camera) {
   if (time === null) {
     return null;
   }
   const geometries = oceanTimeGeometries(stagedState, sampled, time);
   for (const sampler of [stagedState.clothSampler, stagedState.particleSampler]) {
-    sampler?.sample(time)?.forEach((geometry, nodeId) => geometries.set(nodeId, geometry));
+    sampler?.sample(time, camera)?.forEach((geometry, nodeId) => geometries.set(nodeId, geometry));
   }
   return geometries.size ? geometries : null;
 }

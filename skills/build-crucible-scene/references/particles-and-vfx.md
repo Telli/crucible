@@ -41,9 +41,9 @@ particles, so use a node made for it, and give the emitter place through `emitte
 A system can validate and draw nothing. Check these before changing values:
 
 1. The time. A system with `start: 1.6` has no particle at the default `scene_look` time; pass `motionTime` between `start` and `endsAt` from the report.
-2. The card. A `plane` faces +Z and keeps its facing (there is no camera-facing billboard), so seen from the side it is edge-on. Set `doubleSided: true` on the material and `orient: "random"` on the system, or use a `box` or low-poly sphere.
+2. The card. A `plane` faces +Z and keeps its facing, so seen from the side it is edge-on. Set `orient: "billboard"` on the system and every card turns to the camera at the frame's `motionTime` (it follows an animated camera, in render jobs and `scene_look`, and costs no extra vertices); `spin` rolls the card in its own plane. Without it, set `doubleSided: true` and `orient: "random"`, or use a `box` or low-poly sphere.
 3. `scale: "grow"` starts every particle at size 0 and reaches full size at death; `"shrink"` does the reverse. A short life with `grow` is mostly tiny.
-4. `alpha` and `color` become vertex colours and `alpha` multiplies the colour, so a particle fades toward black and never becomes see-through. On an `alphaMode: "add"` material black adds nothing, so the fade works; on an opaque or `blend` one the particle turns black against the background.
+4. `alpha` and `color` become vertex colours and `alpha` multiplies the colour, so a particle fades toward black. On an `alphaMode: "add"` material black adds nothing, so the fade works; on an opaque or `blend` one the particle turns black against the background. For a see-through fade on a `blend` material add `fade: "opacity"` to the system (with `alpha`, such as `[0.6, 0]`): the colour keeps its brightness and the alpha becomes per-vertex opacity. It is refused on a node whose material is not `blend`, and the path tracer ignores it.
 5. `floor`. It stops a particle that is born above that height and reaches it; the particle then stays where it landed until it dies (with `bounce` above 0 it bounces instead). A particle born below `floor` ignores it. Combined with `scale: "shrink"` or an `alpha` fade, particles that landed vanish where they lie.
 6. Size. `size` is the scale of the node's geometry in metres: a unit `plane` with `size` 0.002 is 2 mm.
 
@@ -148,4 +148,3 @@ Point and spot lights scatter in it (at most 8, points first, no shadows, no lig
 
 - Smoke and fire simulation inside the MCP tools. `add-explosion` bakes a blast (flash, fire and smoke grid, sparks, dust, rubble; see `effects-and-feedback.md`). For a puff, use emitter particles with `scale: "grow"` or a noisy `localVolumes` sphere with `emission`.
 - Particles that follow a moving node: the emitter stays where `emitter.position` puts it in world space. Collision between particles, collision with a moving node and hair collision are not built either.
-- A camera-facing billboard particle and per-vertex alpha (a fade is a darkening; use `alphaMode: "add"`).
