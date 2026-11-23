@@ -20,6 +20,7 @@ Passes run in order on the finished frame: after depth of field, motion blur, li
 | `fragment` | GLSL ES 3.00 text that defines `vec4 userPass(vec2 uv)`. Helper functions and `const` values may come before it. 4096 bytes of code at most; comments and extra spaces are not counted (the text as sent may be up to 65536 bytes). |
 | `uniforms` | Named values. A number is a `float`; `[x, y]`, `[x, y, z]` and `[x, y, z, w]` are `vec2`, `vec3` and `vec4`; an int is `{ "type": "int", "value": 4 }`. |
 | `scale` | 0.05 to 1 (default 1). The pass renders at this fraction of the width and height, and whatever reads it enlarges it with nearest filtering. A `scale` of 0.25 on the last pass is a pixel-art downscale. |
+| `offset` | Optional `[x, y]` in pixels of this pass (`gl_FragCoord` sign), applied when the enlarged output is drawn to the next stage or the canvas so a snapped low-res pixel camera can carry a smooth sub-pixel residual. |
 | `objects` | Optional list of 1 to 16 names. A name is a part (as the object ID pass lists it) or the node id of a placed asset, which stands for every part of that asset; the names may resolve to at most 64 parts. `objectSlotAt(uv)` tells which of them is under a pixel. The preview and render jobs draw the object ID pass first when a pass lists parts. |
 | `needs` | Optional list of `normal`, `objectId`, `albedo`, `emission`. Each adds one exact input to the pass. |
 | `luts` | Optional palette textures, up to 4: `{ "palette": { "colors": ["#101820", "#f2aa4c"] } }`. |
