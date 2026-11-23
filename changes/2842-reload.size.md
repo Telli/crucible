@@ -1,0 +1,2 @@
+- scene:agent-scene: the recipeOnly build option adds two early returns (13 bytes gzip), which cut a Studio reload of a scene with large scans from 0.7 s to under 0.25 s.
+- goal:agent-scene: the same 13 bytes; the saving is a skipped ranking and floor-sky trace on a copy built only to read its recipe, which no smaller core can avoid.

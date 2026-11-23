@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAgentScene } from '../src/agent-scene.js';
 import { createStudioController } from '../src/studio.js';
+import { flushOrderOf } from '../src/depth-layer.js';
 import { sameRecipeValue } from '../src/studio-history-diff.js';
 
 // Written the way a file or an agent writes it: no defaults, so it is not the recipe the scene exports.
@@ -48,12 +49,42 @@ test('an in-place apply that throws leaves the built scene on screen, never a ha
   assert.ok(sameRecipeValue(guardedController.exportRecipe(), createAgentScene(fileRecipe(3)).exportRecipe()));
 });
 
-test('loading a file with another set of nodes builds a new scene', () => {
+test('loading a file with one more node and one fewer keeps the scene and the parts of the other nodes', () => {
   const controller = controllerOn(fileRecipe(0));
   const sceneBefore = controller.scene;
+  const groundBefore = sceneBefore.parts.find(part => part.name === 'ground');
   const bigger = fileRecipe(0);
   bigger.nodes.push({ id: 'extra', geometry: 'cube', material: 'paint', translation: [5, 0.5, 0] });
   controller.loadRecipe(bigger);
-  assert.notEqual(controller.scene, sceneBefore);
+  assert.equal(controller.scene, sceneBefore, 'the added node went in as an operation');
   assert.deepEqual(controller.exportRecipe().nodes.map(node => node.id), ['ground', 'hero', 'extra']);
+  assert.equal(controller.scene.parts.find(part => part.name === 'ground'), groundBefore);
+  assert.ok(sameRecipeValue(controller.exportRecipe(), createAgentScene(bigger).exportRecipe()), 'the scene holds what a fresh build of the file holds');
+  controller.loadRecipe(fileRecipe(0));
+  assert.equal(controller.scene, sceneBefore);
+  assert.deepEqual(controller.exportRecipe().nodes.map(node => node.id), ['ground', 'hero']);
+  controller.undo();
+  assert.deepEqual(controller.exportRecipe().nodes.map(node => node.id), ['ground', 'hero', 'extra']);
+});
+
+test('loading a file that changes a geometry still builds a new scene', () => {
+  const controller = controllerOn(fileRecipe(0));
+  const sceneBefore = controller.scene;
+  const changed = fileRecipe(0);
+  changed.geometries = [{ id: 'cube', type: 'sphere' }];
+  controller.loadRecipe(changed);
+  assert.ok(sameRecipeValue(controller.exportRecipe(), createAgentScene(changed).exportRecipe()));
+  assert.notEqual(controller.scene.parts.find(part => part.name === 'hero'), sceneBefore.parts.find(part => part.name === 'hero'));
+});
+
+test('the side build a load reads its recipe from does not stage its parts', () => {
+  const overlapping = fileRecipe(0);
+  overlapping.nodes.push({ id: 'sign', geometry: 'cube', material: 'paint', translation: [0, 0.5, 0], scale: [1, 1, 1.0001] });
+  overlapping.nodes.push({ id: 'twin', geometry: 'cube', material: 'paint', translation: [0, 0.5, 0], scale: [1, 1, 1] });
+  const full = createAgentScene(overlapping);
+  const recipeOnly = createAgentScene(overlapping, {}, { recipeOnly: true });
+  assert.ok(sameRecipeValue(recipeOnly.exportRecipe(), full.exportRecipe()), 'it still reads as the same recipe');
+  assert.equal(recipeOnly.parts.length, full.parts.length);
+  assert.ok(full.parts.some(part => flushOrderOf(part)), 'the scene on screen ranks its overlapping faces');
+  assert.equal(recipeOnly.parts.some(part => flushOrderOf(part)), false, 'the side build leaves them unranked');
 });

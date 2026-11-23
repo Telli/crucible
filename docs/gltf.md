@@ -73,6 +73,7 @@ Geometry contains `positions` and `normals` as `Float32Array` values, plus `indi
 The importer computes missing normals and normalizes supplied normals.
 It rejects non-finite attributes, invalid indices, singular transforms, and unusable normals.
 `geometry.uvs` preserves `TEXCOORD_0` as two floats per vertex.
+A primitive with a normal map also gets `geometry.tangents` (four floats per vertex): the file's `TANGENT` when it has a usable one, otherwise tangents generated from the UVs the map samples. [Material maps](material-maps.md) describes the frame and when the loader replaces an authored `TANGENT`.
 `geometry.colors` preserves opaque `COLOR_0` values as three linear RGB floats per vertex.
 
 Materials preserve linear `color`, `metallic`, `roughness`, and `emissiveColor` factors.
@@ -153,6 +154,8 @@ renderer.render(camera);
 
 Translation, rotation, and scale tracks are supported.
 The importer rejects animation poses that become singular or change triangle winding.
+
+To hide one instance of a crowd, set `visible = false` on its parts (all of an asset's `parts`) and skip `applyAnimation` for it. `renderer.updateParts` then draws it nowhere, casts no shadow, and does not check its matrix or skin pose, so a hidden part may keep a zero-scale matrix. A zero-scale matrix on a visible part is still refused with `Singular transform`; hide the part instead. A hidden part's material is still checked.
 
 The current source supports four-influence [GPU skinning](https://crucible.codepawl.com/skinning.md). GPU skinning is available from version `0.4.0`.
 

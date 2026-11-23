@@ -162,3 +162,31 @@ test('seeking to new sea frames keeps the ranks of the still parts and the stage
   scene.sampleMotion(1.25);
   assert.equal(scene.parts, parts, 'the same frame keeps its staged parts');
 });
+
+// #2806: a camera edit on a scene with a moving sea does no per-vertex work on the sea.
+test('a camera edit runs no ocean wave sum and leaves the sea vertices untouched', async () => {
+  const { registerModifierRunner } = await import('../src/mesh-modifiers.js');
+  const { oceanMesh } = await import('../src/mesh-ocean-modifier.js');
+  const countedRunner = (mesh, edit) => ({ mesh: oceanMesh(mesh, edit), result: {} });
+  let waveSums = 0;
+  registerModifierRunner('ocean', (mesh, edit) => {
+    waveSums++;
+    return countedRunner(mesh, edit);
+  });
+  try {
+    const scene = createAgentScene(seaRecipe());
+    scene.sampleMotion(1.5);
+    const sea = scene.parts[0];
+    const positions = positionsOf(scene);
+    const builtBefore = waveSums;
+    scene.apply([{ type: 'set-camera', eye: [25, 18, 30], target: [0, 0, 0] }], { expectedRevision: scene.revision });
+    scene.apply([{ type: 'set-camera', fov: 40 }], { expectedRevision: scene.revision });
+    assert.equal(waveSums, builtBefore, 'no ocean wave sum ran for the camera edits');
+    assert.equal(scene.parts[0], sea);
+    assert.deepEqual(positionsOf(scene), positions);
+    scene.sampleMotion(2.5);
+    assert.ok(waveSums > builtBefore, 'the counter does see a sea built at a new time');
+  } finally {
+    registerModifierRunner('ocean', countedRunner);
+  }
+});
