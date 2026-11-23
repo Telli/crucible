@@ -1,0 +1,1 @@
+- Clean up failed shaders and programs on `path-tracer-gpu` compile/link failure, revoke stale/disposed live-example blob URLs and escape example attributes in `docs-live`, prevent duplicate click listeners on repeated `mountButton` calls in `site-controls`, and harden `--base`, NUL/`..` `--jobs` paths, and null call-log content items (#2403).
