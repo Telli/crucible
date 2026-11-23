@@ -370,6 +370,9 @@ function createSolver(definition, position, prepared, resolveJoint) {
     const limits = createJointLimits(definition.limits, label, { root, middle }, prepared);
     const bendToward = definition.bendToward === undefined ? null : checkedDirection(definition.bendToward, `${label} bendToward`);
     if (definition.groundNormal !== undefined && typeof definition.groundNormal !== 'function') checkedVector(definition.groundNormal, `${label} groundNormal`);
+    if (definition.hingeFromPose !== undefined && typeof definition.hingeFromPose !== 'boolean') {
+      throw new TypeError(`${label} hingeFromPose must be a boolean.`);
+    }
     return {
       type: 'two-bone', label, weight, root, middle, end, target: definition.target, pole: definition.pole, limits, bendToward,
       groundNormal: definition.groundNormal,
@@ -377,6 +380,7 @@ function createSolver(definition, position, prepared, resolveJoint) {
       endUp: vec3.transformQuat(new Float64Array(3), [0, 1, 0], quat.invert(new Float64Array(4), prepared.restWorld.rotations[end])),
       restBend: restBendInParentFrame(prepared, root, middle, end),
       keepEndRotation: definition.keepEndRotation !== false,
+      hingeFromPose: definition.hingeFromPose === true,
     };
   }
   if (definition.type === 'aim') {
@@ -457,6 +461,29 @@ function createSolverContext(prepared, state, localRotations, localTranslations)
   return { state, prepared, localRotations, localTranslations, update, setWorldRotation };
 }
 
+function bendNormal(from, middle, to) {
+  const upper = vec3.subtract(new Float64Array(3), middle, from);
+  const lower = vec3.subtract(new Float64Array(3), to, middle);
+  const crossed = vec3.cross(new Float64Array(3), upper, lower);
+  const length = vec3.length(crossed);
+  if (length < NEAR_ZERO) return null;
+  return vec3.scale(crossed, crossed, 1 / length);
+}
+
+function alignBoneHinge(rotation, localHinge, boneAxis, targetNormal) {
+  if (!localHinge || !targetNormal) return rotation;
+  const worldHinge = vec3.transformQuat(new Float64Array(3), localHinge, rotation);
+  const projected = vec3.scaleAndAdd(new Float64Array(3), worldHinge, boneAxis, -vec3.dot(worldHinge, boneAxis));
+  const length = vec3.length(projected);
+  if (length < NEAR_ZERO) return rotation;
+  vec3.scale(projected, projected, 1 / length);
+  const dot = Math.max(-1, Math.min(1, vec3.dot(projected, targetNormal)));
+  const twist = new Float64Array(4);
+  if (dot < -1 + 1e-6) quat.setAxisAngle(twist, boneAxis, Math.PI);
+  else quat.rotationTo(twist, projected, targetNormal);
+  return quat.normalize(new Float64Array(4), quat.multiply(new Float64Array(4), twist, rotation));
+}
+
 /**
  * Analytic two-bone IK. Places the middle joint in the plane of the target and the pole (or of the current bend), then
  * turns the two upper joints with the shortest rotations, so twist already in the pose survives.
@@ -471,6 +498,15 @@ function solveTwoBone(solver, time, context) {
   const middlePosition = Float64Array.from(state.positions[solver.middle]);
   const startEnd = Float64Array.from(endPosition);
   const endRotation = Float64Array.from(state.rotations[solver.end]);
+  let rootHingeLocal = null;
+  let middleHingeLocal = null;
+  if (solver.hingeFromPose) {
+    const startHinge = bendNormal(rootPosition, middlePosition, startEnd);
+    if (startHinge) {
+      rootHingeLocal = vec3.transformQuat(new Float64Array(3), startHinge, quat.invert(new Float64Array(4), state.rotations[solver.root]));
+      middleHingeLocal = vec3.transformQuat(new Float64Array(3), startHinge, quat.invert(new Float64Array(4), state.rotations[solver.middle]));
+    }
+  }
   const upperLength = vec3.distance(rootPosition, middlePosition);
   const lowerLength = vec3.distance(middlePosition, startEnd);
   const toTarget = vec3.subtract(new Float64Array(3), target, rootPosition);
@@ -512,8 +548,11 @@ function solveTwoBone(solver, time, context) {
 
   const newRootRotation = quat.multiply(new Float64Array(4), rootTurn, state.rotations[solver.root]);
   const newMiddleRotation = quat.multiply(new Float64Array(4), middleTurn, quat.multiply(new Float64Array(4), rootTurn, state.rotations[solver.middle]));
-  setWorldRotation(solver.root, newRootRotation, weight);
-  setWorldRotation(solver.middle, newMiddleRotation, weight);
+  const solvedHinge = solver.hingeFromPose ? bendNormal(rootPosition, newMiddle, newEnd) : null;
+  const finalRootRotation = alignBoneHinge(newRootRotation, rootHingeLocal, upperTo, solvedHinge);
+  const finalMiddleRotation = alignBoneHinge(newMiddleRotation, middleHingeLocal, lowerTo, solvedHinge);
+  setWorldRotation(solver.root, finalRootRotation, weight);
+  setWorldRotation(solver.middle, finalMiddleRotation, weight);
   const limited = applyJointLimits(solver.limits, prepared, localRotations);
   if (limited.length) update();
   if (solver.keepEndRotation) setWorldRotation(solver.end, endRotation, weight);
