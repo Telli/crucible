@@ -16,6 +16,7 @@ import { runFitLook } from './agent-fit-look.mjs';
 import { FIT_LOOK_CAPABILITY_NOTE } from '../src/look-fit-notes.js';
 import { TREE_GROWTH_CAPABILITIES, VEGETATION_CAPABILITY_NOTE } from '../src/agent-vegetation-notes.js';
 import { CLUTTER_CAPABILITY_NOTE } from '../src/agent-clutter-notes.js';
+import { GRASS_CAPABILITY_NOTE } from '../src/agent-grass-notes.js';
 import { CROWD_CAPABILITY_NOTE } from '../src/agent-crowd-notes.js';
 import { SETTLE_CAPABILITY_NOTE } from '../src/settle-notes.js';
 import { FOLDED_APPLY_OPERATION_NOTES } from '../src/apply-operation-notes.js';
@@ -79,6 +80,7 @@ import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
 import { GLB_EXPORT_NOTES } from '../src/glb-export-omissions.js';
 import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 import { previewDeadlineMilliseconds } from './preview-deadline.mjs';
+import { assertCapturedPngSize, captureClip } from './render-capture-size.mjs';
 import { realismReport, reviewTilingFindings } from './review-realism.mjs';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
@@ -1197,9 +1199,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const captureStarted = performance.now();
           const captured = await session.send('Page.captureScreenshot', { fromSurface: true,
             format: settings.kind === 'video' ? 'jpeg' : 'png',
-            ...(region ? { clip: { ...region, scale: 1 } } : {}),
+            clip: captureClip({ region, width, height }), captureBeyondViewport: true,
             ...(settings.kind === 'video' ? { quality: 95 } : { optimizeForSpeed: true }) });
           const captureBytes = Buffer.from(captured.data, 'base64');
+          if (settings.kind !== 'video') assertCapturedPngSize({ bytes: captureBytes, width: outputWidth, height: outputHeight });
           metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
           if (captureBytes.length > frameByteLimit) throw new Error(`Captured job frame exceeded ${frameByteLimit / 1024 ** 2} MiB.`);
           signal.throwIfAborted();
@@ -1359,7 +1362,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return tierReport({ backend, nativeTracer: Boolean((await nativeTracerLocator.find()).tracer) });
       };
       return {
-        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, fitLook: FIT_LOOK_CAPABILITY_NOTE, treeGrowth: TREE_GROWTH_CAPABILITIES, clutter: CLUTTER_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, applyOperations: FOLDED_APPLY_OPERATION_NOTES, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES, textureSet: TEXTURE_SET_CAPABILITIES },
+        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, treeGrowth: TREE_GROWTH_CAPABILITIES, clutter: CLUTTER_CAPABILITY_NOTE, grass: GRASS_CAPABILITY_NOTE, fitLook: FIT_LOOK_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, applyOperations: FOLDED_APPLY_OPERATION_NOTES, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES, textureSet: TEXTURE_SET_CAPABILITIES },
         sceneLimits: SCENE_LIMITS,
         preview: { backend, memoryBudgetMiB: memory, maximumWidth: 1024, maximumHeight: 1024, maximumImageBytes: MAXIMUM_IMAGE_BYTES, maximumActiveScenes: SCENE_STORE_LIMITS.maxOpenScenes, maximumOpenSceneBytes: SCENE_STORE_LIMITS.maxOpenSceneBytes, maximumQueuedCalls: MAXIMUM_QUEUED_CALLS, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS },
         review: { ...REVIEW_LIMITS, backend, memoryBudgetMiB: memory, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS,

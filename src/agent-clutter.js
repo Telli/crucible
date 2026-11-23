@@ -1,7 +1,9 @@
-import { mat4 } from 'gl-matrix';
 import { createClutter, CLUTTER_PRESETS } from './clutter.js';
 import { createRecipeTerrain } from './agent-terrain.js';
 import { invalidField } from './field-error.js';
+import {
+  knownKeys, numberWithin, planePoint, boxCorners, normalizeExclusion, normalizeList, planePositionInGroup, exclusionTest, eyeInGroup, terrainGround, clampedArea,
+} from './recipe-ground-field.js';
 
 // Recipe clutter: a group node with a `clutter` field scatters pebbles, rocks, twigs and fallen leaves over a terrain node
 // or a flat area. It calls `createClutter` from the clutter addon with the terrain's own `heightAt`, so the recipe path and
@@ -14,42 +16,9 @@ export const CLUTTER_LIMITS = Object.freeze({
 });
 const LAYER_FIELDS = ['preset', 'terrain', 'area', 'density', 'seed', 'mask', 'exclude', 'slopeLimit', 'cullDistance'];
 const SHAPE_FIELDS = ['center', 'radius', 'min', 'max', 'feather'];
-const EXCLUSION_FIELDS = ['center', 'radius', 'min', 'max', 'node'];
 const ITEM_KINDS = ['pebbles', 'rocks', 'twigs', 'leaves'];
-const GROUND_EDGE_MARGIN = 0.5;
-const DEFAULT_GROUND_SIZE = 40;
 const SLOPE_STEP = 0.25;
 const PART_NAME = /^Clutter (pebbles|rocks|litter) (\d+),(\d+)$/;
-
-function knownKeys(value, allowed, path) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw invalidField(path, value, 'an object, such as {}', TypeError);
-  }
-  for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) throw invalidField(`${path}.${key}`, value[key], `no such field; use one of ${allowed.join(', ')}`, TypeError);
-  }
-}
-
-function numberWithin(value, minimum, maximum, path) {
-  if (!Number.isFinite(value) || value < minimum || value > maximum) {
-    throw invalidField(path, value, `a number from ${minimum} to ${maximum}, such as ${Math.min(Math.max(1, minimum), maximum)}`);
-  }
-  return value;
-}
-
-function planePoint(value, path) {
-  if (!Array.isArray(value) || value.length !== 2 || value.some(component => !Number.isFinite(component))) {
-    throw invalidField(path, value, '[x, z] in metres, such as [0, 0]', TypeError);
-  }
-  return [...value];
-}
-
-function boxCorners(value, path) {
-  const min = planePoint(value.min, `${path}.min`);
-  const max = planePoint(value.max, `${path}.max`);
-  if (max[0] <= min[0] || max[1] <= min[1]) throw invalidField(`${path}.max`, max, `[x, z] above min ${JSON.stringify(min)} on both axes`);
-  return { min, max };
-}
 
 function normalizeMaskShape(value, path) {
   knownKeys(value, SHAPE_FIELDS, path);
@@ -61,29 +30,6 @@ function normalizeMaskShape(value, path) {
   }
   result.feather = numberWithin(value.feather ?? 0, 0, 1000, `${path}.feather`);
   return result;
-}
-
-function normalizeExclusion(value, path) {
-  knownKeys(value, EXCLUSION_FIELDS, path);
-  if (value.min !== undefined || value.max !== undefined) {
-    if (value.center !== undefined || value.radius !== undefined || value.node !== undefined) {
-      throw invalidField(path, value, 'either the box form "min", "max" or the circle form "center", "radius", not both');
-    }
-    return boxCorners(value, path);
-  }
-  const radius = numberWithin(value.radius, 0.01, 2000, `${path}.radius`);
-  if (value.node !== undefined) {
-    if (typeof value.node !== 'string' || !value.node) throw invalidField(`${path}.node`, value.node, 'a node ID, such as "pond"', TypeError);
-    return { node: value.node, radius };
-  }
-  return { center: planePoint(value.center, `${path}.center`), radius };
-}
-
-function normalizeList(value, maximum, path, example, normalizeEntry) {
-  if (!Array.isArray(value) || value.length > maximum) {
-    throw invalidField(path, Array.isArray(value) ? `${value.length} entries` : value, `a list of at most ${maximum} entries, such as ${example}`);
-  }
-  return value.map((entry, index) => normalizeEntry(entry, `${path}[${index}]`));
 }
 
 function normalizeLayer(value, path) {
@@ -115,7 +61,7 @@ function normalizeLayer(value, path) {
 
 /** Validate the `clutter` field of a node (`node` is the whole node, which must be a group). Returns the canonical list kept in the recipe. */
 export function normalizeClutter(value, node) {
-  const conflict = node && ['geometry', 'skin', 'asset', 'vegetation'].find(field => node[field] !== undefined);
+  const conflict = node && ['geometry', 'skin', 'asset', 'vegetation', 'grass'].find(field => node[field] !== undefined);
   if (conflict) {
     throw invalidField(conflict, node[conflict], 'nothing, because a node that scatters clutter is a group; drop geometry, material, skin, asset and vegetation', TypeError);
   }
@@ -125,39 +71,12 @@ export function normalizeClutter(value, node) {
   return value.map((layer, index) => normalizeLayer(layer, `clutter[${index}]`));
 }
 
-function nodeWorldMatrix(nodes, node) {
-  const byId = new Map(nodes.map(candidate => [candidate.id, candidate]));
-  let matrix = mat4.fromRotationTranslationScale(mat4.create(), node.rotation, node.translation, node.scale);
-  let parent = node.parent === null ? null : byId.get(node.parent);
-  for (let depth = 0; parent && depth < 256; depth++) {
-    const local = mat4.fromRotationTranslationScale(mat4.create(), parent.rotation, parent.translation, parent.scale);
-    matrix = mat4.multiply(mat4.create(), local, matrix);
-    parent = parent.parent === null ? null : byId.get(parent.parent);
-  }
-  return matrix;
-}
-
 function groundOf(recipe, layer, path) {
-  if (layer.terrain === undefined) return null;
-  const ground = recipe.nodes.find(node => node.id === layer.terrain);
-  const definition = ground && recipe.geometries.find(geometry => geometry.id === ground.geometry);
-  if (definition?.type !== 'terrain') {
-    throw invalidField(`${path}.terrain`, layer.terrain, 'the ID of a node that draws a terrain geometry, such as "ground"; give the group node the same transform as the ground');
-  }
-  return { definition, terrain: createRecipeTerrain(definition) };
+  return layer.terrain === undefined ? null : terrainGround(recipe, layer.terrain, `${path}.terrain`, createRecipeTerrain);
 }
 
 function layerArea(layer, ground, path) {
-  const half = ground ? (ground.definition.size ?? DEFAULT_GROUND_SIZE) / 2 - GROUND_EDGE_MARGIN : Infinity;
-  const area = layer.area ?? { min: [-half, -half], max: [half, half] };
-  const clamped = {
-    minX: Math.max(area.min[0], -half), maxX: Math.min(area.max[0], half),
-    minZ: Math.max(area.min[1], -half), maxZ: Math.min(area.max[1], half),
-  };
-  if (clamped.maxX <= clamped.minX || clamped.maxZ <= clamped.minZ) {
-    throw invalidField(`${path}.area`, layer.area, `an area that overlaps the ground, which spans ${-half} to ${half} on x and z`);
-  }
-  return clamped;
+  return clampedArea(layer.area, ground, path);
 }
 
 function checkBudget(layer, area, path) {
@@ -170,13 +89,6 @@ function checkBudget(layer, area, path) {
   if (rate * reach > CLUTTER_LIMITS.maxItems) {
     throw invalidField(`${path}.density`, layer.density, `a density that keeps the items within cullDistance under ${CLUTTER_LIMITS.maxItems} (this plans about ${Math.round(rate * reach)}); lower density or cullDistance, or give a smaller area`);
   }
-}
-
-// The [x, z] of a node in the group's own space, which is where the area, mask and exclusions are measured.
-function planePositionInGroup(recipe, groupNode, nodeId) {
-  const target = recipe.nodes.find(node => node.id === nodeId);
-  const inGroup = mat4.multiply(mat4.create(), mat4.invert(mat4.create(), nodeWorldMatrix(recipe.nodes, groupNode)), nodeWorldMatrix(recipe.nodes, target));
-  return [inGroup[12], inGroup[14]];
 }
 
 function distanceOutsideBox(x, z, box) {
@@ -196,19 +108,6 @@ function maskCoverage(shapes) {
   };
 }
 
-function exclusionTest(recipe, groupNode, layer, path) {
-  const areas = layer.exclude.map((entry, index) => {
-    if (entry.min) return (x, z) => x >= entry.min[0] && x <= entry.max[0] && z >= entry.min[1] && z <= entry.max[1];
-    let center = entry.center;
-    if (entry.node) {
-      if (!recipe.nodes.some(node => node.id === entry.node)) throw invalidField(`${path}.exclude[${index}].node`, entry.node, 'the ID of a node in the recipe, such as "pond"');
-      center = planePositionInGroup(recipe, groupNode, entry.node);
-    }
-    return (x, z) => Math.hypot(x - center[0], z - center[1]) <= entry.radius;
-  });
-  return (x, z) => areas.some(test => test(x, z));
-}
-
 function steepness(terrainHeight, x, z) {
   const slopeX = terrainHeight(x + SLOPE_STEP, z) - terrainHeight(x - SLOPE_STEP, z);
   const slopeZ = terrainHeight(x, z + SLOPE_STEP) - terrainHeight(x, z - SLOPE_STEP);
@@ -222,7 +121,7 @@ export function clutterOptionsFor(recipe, groupNode, layer, path = 'clutter[0]')
   checkBudget(layer, area, path);
   const terrainHeight = ground ? ground.terrain.heightAt : () => 0;
   const covered = maskCoverage(layer.mask);
-  const excluded = exclusionTest(recipe, groupNode, layer, path);
+  const excluded = exclusionTest(recipe, groupNode, layer.exclude, path);
   const mask = (x, z) => {
     if (excluded(x, z) || (ground && ground.terrain.isHole(x, z))) return 0;
     if (ground && steepness(terrainHeight, x, z) > layer.slopeLimit) return 0;
@@ -231,16 +130,6 @@ export function clutterOptionsFor(recipe, groupNode, layer, path = 'clutter[0]')
   const preset = CLUTTER_PRESETS[layer.preset];
   const densities = Object.fromEntries(ITEM_KINDS.map(kind => [kind, preset[kind] * layer.density]));
   return { preset: layer.preset, area, terrainHeight, mask, seed: layer.seed, cullDistance: layer.cullDistance, ...densities };
-}
-
-function eyeInGroup(recipe, groupNode) {
-  const eye = recipe.camera?.eye ?? [0, 0, 0];
-  const inverse = mat4.invert(mat4.create(), nodeWorldMatrix(recipe.nodes, groupNode));
-  return [
-    inverse[0] * eye[0] + inverse[4] * eye[1] + inverse[8] * eye[2] + inverse[12],
-    inverse[1] * eye[0] + inverse[5] * eye[1] + inverse[9] * eye[2] + inverse[13],
-    inverse[2] * eye[0] + inverse[6] * eye[1] + inverse[10] * eye[2] + inverse[14],
-  ];
 }
 
 function groundDefinition(recipe, layer) {

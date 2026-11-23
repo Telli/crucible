@@ -42,6 +42,8 @@ A geometry with `tangents`, a `Float32Array` of four values per vertex (x, y, z,
 
 The glTF loader fills `geometry.tangents` for every primitive with a normal map: it reads `TANGENT` when the file has it, and otherwise generates tangents from the UVs the map samples (a unit tangent per triangle, weighted by the corner angle, summed per vertex and made perpendicular to the normal, the MikkTSpace method on a mesh already split at UV seams; it matches meshoptimizer's `Compatible` tangents in the test). A `TANGENT` that is not four finite values per vertex, or that a rotated or mirrored `KHR_texture_transform` no longer fits, is replaced by generated tangents with a note in `warnings`. A Draco `TANGENT` is regenerated. A primitive without the UVs the map samples carries no tangents.
 
+A normal map can hold detail finer than a pixel, such as the one-texel bevel around a mapped sphere. Besides widening the roughness, a shader with a normal map scales the direct specular by `1 / (1 + 32 * specularAntiAliasing * v)`, where `v` is the variance of the shading normal across the pixel plus half the Toksvig term of the filtered normal map. Sub-pixel detail then averages out instead of lighting one pixel per light along the silhouette. `specularAntiAliasing: 0` switches it off with the widening. A material without a normal map has the same shader text as before.
+
 Without `tangents` (recipe meshes, box-mapped materials, a primitive without UVs) the renderer derives an orthogonal tangent basis from position and UV screen derivatives, including mirrored UV handedness. Degenerate UVs retain the geometric normal because they have no tangent basis. Derivative tangents differ from authored tangent bases on curved meshes, which is why a map baked in MikkTSpace wants `tangents`. The path tracers still use their own frame.
 
 ## Descriptors and batching
@@ -193,7 +195,7 @@ Moss is shaded as its own material, not as a tint. Where it grows, roughness bec
 
 ## Splat layers
 
-A standard-tag material can carry `layers` (up to four `{ color, normal, roughness, height, scale, tint, triplanar }` entries built from `loadTextureSet`) and a `splat` rule object instead of these single maps. The layers are blended by slope, height and a weight mask, sampled in world space and packed into texture arrays and a weight mask on units 11 to 14. They replace `map`, `normalMap`, `metallicRoughnessMap` and `occlusionMap`, which must be absent, and parts batch only when `layers` and `splat` are the same objects. See [Terrain](https://github.com/codepawl/crucible/blob/main/docs/terrain.md).
+A standard-tag material can carry `layers` (up to four `{ color, normal, roughness, height, scale, tint, triplanar }` entries built from `loadTextureSet`) and a `splat` rule object instead of these single maps. The layers are blended by slope, height and a weight mask, sampled in world space and packed into texture arrays and a weight mask on units 11, 12, 14 and 17. They replace `map`, `normalMap`, `metallicRoughnessMap` and `occlusionMap`, which must be absent, and parts batch only when `layers` and `splat` are the same objects. See [Terrain](https://github.com/codepawl/crucible/blob/main/docs/terrain.md).
 
 ## Material layers
 
