@@ -1,6 +1,7 @@
 import { CLOSED_ROOM_SHARE, partMatrixLookup } from './closed-room.js';
 import { fittedClosedRoomShare, fittedRoomHasWalls } from './fitted-closed-room.js';
-import { buildWorld, cosineDirection, radicalInverse, sceneScale } from './light-bake.js';
+import { drainSteps } from './flush-search-runner.js';
+import { buildWorldSteps, cosineDirection, radicalInverse, sceneScale } from './light-bake.js';
 import { worldBounds } from './probe-trace.js';
 import { createTracer } from './ray-query.js';
 import { partDiffuseAlbedo } from './ground-bounce.js';
@@ -441,10 +442,23 @@ function applyProxySkyVisibility({ parts, occluders, floorIndices, everySurface,
  * through the occupancy grid instead (`report.method` 'proxy'). It reads no clock to decide anything else, and
  * the rays are a fixed set, so the same scene gives the same bytes.
  */
-export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors', sunDirection = null, largeScenes = 'skip', openScenes = 'skip' } = {}) {
+export function applyFloorSkyVisibility(parts, options = {}) {
+  return drainSteps(applyFloorSkyVisibilitySteps(parts, options));
+}
+
+// Vertices traced between two checkpoints of a trace run in slices (#3052): a vertex is a few hundred rays.
+const VERTICES_PER_CHECKPOINT = 4;
+
+/** applyFloorSkyVisibility as steps (#3052): the same answer, with a checkpoint every few vertices. The time limit does not count the pauses between slices. */
+export function* applyFloorSkyVisibilitySteps(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors', sunDirection = null, largeScenes = 'skip', openScenes = 'skip' } = {}) {
   if (openScenes !== 'skip' && openScenes !== 'proxy') throw new RangeError(`openScenes must be 'skip' or 'proxy', got ${openScenes}`);
   if (largeScenes !== 'skip' && largeScenes !== 'proxy') throw new RangeError(`largeScenes must be 'skip' or 'proxy', got ${largeScenes}`);
-  const started = performance.now();
+  let started = performance.now();
+  function* checkpoint() {
+    const pausedAt = performance.now();
+    yield;
+    started += performance.now() - pausedAt;
+  }
   const unchanged = (reason, fallbackReason = null) => ({ parts, report: { floors: [], texels: 0, rays: 0, seconds: (performance.now() - started) / 1000, method: null, fallbackReason, reason } });
   // A scene the triangle trace cannot take is left as it is ('skip', the default: the grid alone darkened the classroom against Cycles, #2771) or traced through the grid ('proxy').
   const tooLarge = (reason, detail) => (largeScenes === 'proxy' ? applyProxySkyVisibility(proxyInput, detail) : unchanged(reason, detail));
@@ -473,7 +487,7 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
   proxyInput = { parts, occluders, floorIndices, everySurface, strength, roomShare, started };
   let world;
   try {
-    world = buildWorld(occluders);
+    world = yield* buildWorldSteps(occluders);
   } catch (error) {
     // Only the bake's size limit sends the scene to the grid; any other error is a bug and must surface (#2771).
     if (!(error instanceof RangeError)) throw error;
@@ -506,8 +520,13 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
     const nearShares = new Float32Array(vertexCount);
     const sunlit = new Uint8Array(vertexCount);
     const centres = everySurface ? incidentCentres(builder.positions, indices, vertexCount) : null;
+    let verticesSinceCheckpoint = 0;
     for (const vertex of tracedVertices) {
       if (performance.now() - started > maxSeconds * 1000) return unchanged('passed maxSeconds');
+      if (++verticesSinceCheckpoint === VERTICES_PER_CHECKPOINT) {
+        verticesSinceCheckpoint = 0;
+        yield* checkpoint();
+      }
       const local = builder.positions.slice(vertex * 3, vertex * 3 + 3);
       const point = [0, 0, 0];
       for (let axis = 0; axis < 3; axis++) point[axis] = matrix[axis] * local[0] + matrix[4 + axis] * local[1] + matrix[8 + axis] * local[2] + matrix[12 + axis];
@@ -550,6 +569,7 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
     floors.push(floor);
     const albedo = partDiffuseAlbedo(part.material ?? {});
     tracedParts.push({ floor, skyVisibility, escapedShares, nearShares, sunlit, colors: cutGeometryResult.colors, tracedVertices, albedo });
+    yield* checkpoint();
   }
   // A closed room also gets the sky light its surfaces bounce on to each other (#1334): without it every point the window cannot see is as dark as a sealed room.
   const interiorFill = everySurface ? applyInteriorFill(tracedParts, 1 - roomShare) : 0;
@@ -582,8 +602,13 @@ function unitSunDirection(environment) {
  * turns it off. The recipe path (`createAgentScene`) and the reference harness both call this, so they draw the same frame.
  */
 export function applyDefaultFloorSky(parts, environment, options = {}) {
+  return drainSteps(applyDefaultFloorSkySteps(parts, environment, options));
+}
+
+/** applyDefaultFloorSky as steps (#3052). */
+export function* applyDefaultFloorSkySteps(parts, environment, options = {}) {
   if (environment?.floorSkyTrace === false || !environmentHasSun(environment)) return { parts, report: null };
-  return applyFloorSkyVisibility(parts, { onlyClosedRooms: true, surfaces: 'all', sunDirection: unitSunDirection(environment), ...options });
+  return yield* applyFloorSkyVisibilitySteps(parts, { onlyClosedRooms: true, surfaces: 'all', sunDirection: unitSunDirection(environment), ...options });
 }
 
 const defaultResults = new WeakMap();
@@ -614,6 +639,11 @@ function withOwnMatrices(resultParts, views, parts) {
 
 /** The recipe path's call: the default for these parts, this environment and the matrices they are drawn at, kept until one is replaced. */
 export function stageFloorSky(environment, parts, worldMatrixOf) {
+  return drainSteps(stageFloorSkySteps(environment, parts, worldMatrixOf));
+}
+
+/** stageFloorSky as steps (#3052): a settling bake runs it in slices ahead of the scene's own call, which then finds the kept result. */
+export function* stageFloorSkySteps(environment, parts, worldMatrixOf) {
   if (environment.floorSkyTrace === false) return parts;
   const { views, matrices } = partsAtMatrices(parts, worldMatrixOf);
   let byEnvironment = defaultResults.get(parts);
@@ -623,7 +653,7 @@ export function stageFloorSky(environment, parts, worldMatrixOf) {
   }
   const kept = byEnvironment.get(environment);
   if (kept && sameMatrices(kept.matrices, matrices)) return kept.result;
-  const traced = applyDefaultFloorSky(views, environment).parts;
+  const traced = (yield* applyDefaultFloorSkySteps(views, environment)).parts;
   const result = traced === views ? parts : Object.freeze(withOwnMatrices(traced, views, parts));
   byEnvironment.set(environment, { matrices, result });
   return result;

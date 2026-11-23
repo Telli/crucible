@@ -2483,12 +2483,22 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     }
     state = stagedState;
     if (settling.pending || stagedState.settlingPlan) {
-      agentSceneModule('bakeDeferred').adoptSettling(settling, stagedState.settlingPlan, finishSettledBake);
+      agentSceneModule('bakeDeferred').adoptSettling(settling, stagedState.settlingPlan, finishSettledBake, traceSettledFloorSky);
     }
     if (incrementRevision) {
       revision++;
     }
     return revision;
+  }
+
+  // The floor sky of the baked parts is traced in slices before the bake lands (#3052), so the landing finds it kept. The reflections come
+  // first, as they do at the landing, and are kept the same way.
+  function* traceSettledFloorSky(bakedParts) {
+    if (!agentSceneModuleActive('floorSky', requestedModules)) {
+      return;
+    }
+    const reflected = stageObjectReflections(state.recipe, state.sourceRestParts, bakedParts, state.graph);
+    yield* agentSceneModule('floorSky').stageFloorSkySteps(state.recipe.environment, reflected ? reflected.parts : bakedParts, name => state.graph.getNode(name).worldMatrix);
   }
 
   // The bake of the last edit is done: the scene's parts are staged again with its light, like a fresh build, and swapped in as a
