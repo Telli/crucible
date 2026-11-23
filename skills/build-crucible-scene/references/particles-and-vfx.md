@@ -6,6 +6,7 @@ Then read the task's section: [Spray, dust and sparks](#spray-dust-and-sparks), 
 [Fog and beams](#fog-and-beams) or [Not built yet](#not-built-yet).
 <!-- skill-navigation:end -->
 
+An explosion, blast or fireball is `add-explosion` (see `effects-and-feedback.md`), never a particle system or billboard cards; particles here are only an optional extra (sparks, debris) beside one.
 Calls follow the conventions in `look.md`. `tests/skill-examples.test.js` applies every block, so they stay valid.
 Field list: `scene_capabilities` topic `particles`. Full contract: `docs/physics.md` "Recipe particles and hair".
 The values below are starting points that validate; none was tuned by eye, so judge each with `scene_look` at a `motionTime` inside the burst.
