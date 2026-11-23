@@ -9,7 +9,7 @@ export const WETNESS_CODE = Object.freeze({
   declarations: `uniform vec3 wetnessState;
 uniform vec4 wetnessKeepOut[24];
 float wetBasin(vec3 position) {
-  vec3 plane = vec3(position.x * 0.3, 3.7, position.z * 0.3);
+  vec3 plane = vec3(position.x * 0.55, 3.7, position.z * 0.55);
   return 0.85 * wearNoise(plane) + 0.15 * wearNoise(plane * 2.3 + vec3(17.0));
 }
 // Distance in metres from the ground point to the nearest keep-out footprint (1000 when there is none).
@@ -25,15 +25,19 @@ float wetKeepOutDistance(vec3 position) {
 }
 `,
   worldSurface: `  if (!TAG_WATER && !TAG_FIRE && !TAG_SMOKE && wetnessState.x > 0.0) {
-    float wetPorosity = wetnessState.x * (1.0 - metallic) * mix(0.35, 1.0, roughness);
+    float wetSoak = 1.0 - (1.0 - wetnessState.x) * (1.0 - wetnessState.x);
+    float paintGuard = mix(1.0, 0.15, smoothstep(0.35, 0.65, max(color.r, max(color.g, color.b))));
+    float wetPorosity = wetnessState.x * (1.0 - metallic) * mix(0.35, 1.0, roughness) * paintGuard;
+    float wetGloss = wetSoak * (1.0 - metallic) * mix(0.5, 1.0, paintGuard);
+    float wetGrain = 0.7 * (wearNoise(worldPosition * 38.0) - 0.5) + 0.3 * (wearNoise(worldPosition * 5.0) - 0.5);
     color *= 1.0 - 0.8 * wetPorosity;
-    roughness = clamp(mix(roughness, 0.42, wetPorosity), 0.075, 1.0);
+    roughness = clamp(mix(roughness, 0.4, wetGloss) + wetGrain * 0.14 * wetGloss, 0.075, 1.0);
     splatCavity *= 1.0 - 0.4 * wetPorosity;
     float puddle = 0.0;
     if (wetnessState.y > 0.0) {
       float clearance = wetKeepOutDistance(worldPosition);
       float fill = wetBasin(worldPosition) - mix(0.72, 0.42, wetnessState.y) - 6.0 * worldPosition.y - 0.3 * (1.0 - smoothstep(0.2, 1.0, clearance));
-      puddle = smoothstep(0.0, 0.015, fill) * smoothstep(0.96, 0.995, geometricNormal.y) * (1.0 - metallic) * smoothstep(0.18, 0.2, clearance);
+      puddle = smoothstep(0.0, 0.035, fill) * smoothstep(0.96, 0.995, geometricNormal.y) * (1.0 - metallic) * smoothstep(0.18, 0.45, clearance) * paintGuard;
     }
     color *= 1.0 - 0.95 * puddle;
     metallic = mix(metallic, 0.6, puddle);
