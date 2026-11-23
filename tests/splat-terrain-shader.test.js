@@ -175,6 +175,7 @@ test('a cyan glass cube throws a shadow that loses more red than a white one on 
     assertWithinUnitBudget(cyan.audit);
     const cyanShadow = shadowedChannelRatios(cyan.pixels, lit.pixels);
     const whiteShadow = shadowedChannelRatios(white.pixels, lit.pixels);
+    context.diagnostic(`shadow pixels ${cyanShadow.changedPixels}; red kept under cyan glass ${cyanShadow.ratios[0].toFixed(3)}, under white glass ${whiteShadow.ratios[0].toFixed(3)}; green ${cyanShadow.ratios[1].toFixed(3)} and ${whiteShadow.ratios[1].toFixed(3)}`);
     assert.ok(cyanShadow.changedPixels > 60, `the glass shadow changed only ${cyanShadow.changedPixels} terrain pixels`);
     assert.ok(cyanShadow.ratios[0] < whiteShadow.ratios[0] - 0.05, `red keeps ${cyanShadow.ratios[0].toFixed(2)} under cyan glass and ${whiteShadow.ratios[0].toFixed(2)} under white glass: the shadow is not tinted`);
   });
