@@ -4,6 +4,7 @@
 // imports nothing from the renderer and a scene that never deforms a mesh does not carry it.
 import { markLiveGeometry } from './live-geometry.js';
 import { packNormalsWithTangents } from './tangent-encoding.js';
+import { forgetGeometryBoundingSphere } from './render-culling.js';
 
 function checkVertices(name, values, expectedLength, label) {
   if (!(values instanceof Float32Array) || values.length !== expectedLength) {
@@ -60,6 +61,7 @@ export function updatePartVertices(renderer, part, positions, normals) {
   }
   // The values changed in place under the same array, so no cache may keep a measurement of this geometry.
   markLiveGeometry(geometry);
+  forgetGeometryBoundingSphere(geometry);
   location.batch.bounds = boundingSphereOf(geometry.positions);
   renderer.shadowsDirty = true;
   return part;
