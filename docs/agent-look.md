@@ -390,4 +390,4 @@ JSON nesting has a maximum depth of 32, and look arrays have at most 16 entries.
 The helper normalizes bounded JSON while reusing the engine's lighting, effects, and volume validators.
 Session and transport code remain responsible for revisions, patches, checkpoint ownership, and rendering.
 
-A fitted look is applied with scene_apply; [fit the look to references](agent-fit-look.md) fits the parameters to reference colours.
+A fitted look is applied with scene_apply; [fit the look to references](https://crucible.codepawl.com/agent-fit-look.md) fits the parameters to reference colours.

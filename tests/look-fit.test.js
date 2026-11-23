@@ -229,3 +229,11 @@ test('runFitLook puts the recipe back when a render fails', async () => {
   await assert.rejects(runFitLook({ input: fitInput(2.2), invoke: preview.invoke, setViewport() {} }), /the preview lost its context/);
   assert.equal(preview.calls.at(-1).method, 'restoreRecipe');
 });
+
+test('the capabilities note names every parameter and the limits the code enforces', async () => {
+  const { FIT_LOOK_CAPABILITY_NOTE } = await import('../src/look-fit-notes.js');
+  const { FIT_PARAMETER_NAMES } = await import('../src/look-fit-parameters.js');
+  for (const name of FIT_PARAMETER_NAMES) assert.ok(FIT_LOOK_CAPABILITY_NOTE.includes(name), `${name} is in the note`);
+  assert.ok(FIT_LOOK_CAPABILITY_NOTE.includes(`at most ${FIT_LOOK_LIMITS.maximumRegions}`));
+  assert.ok(FIT_LOOK_CAPABILITY_NOTE.includes(`${FIT_LOOK_LIMITS.deadlineSeconds} second`));
+});
