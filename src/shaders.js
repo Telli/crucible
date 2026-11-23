@@ -151,9 +151,10 @@ void main() {
 #ifdef VERTEX_COLORS
   vertexTint = USES_CROWD ? vec3(1.0) : vertexColor.rgb;
 #ifdef VERTEX_ALPHA
-  // The fourth component is the COLOR_0 alpha of the glTF file here, never sky visibility or wear.
-  vertexOpacity = USES_CROWD ? 1.0 : vertexColor.a;
-  vertexSkyVisibility = 1.0;
+  // The fourth component packs two 10 bit levels, colour alpha * 1024 + sky visibility (packVertexAlpha in renderer.js).
+  float alphaLevel = floor(vertexColor.a / 1024.0);
+  vertexOpacity = USES_CROWD ? 1.0 : alphaLevel / 1023.0;
+  vertexSkyVisibility = USES_CROWD ? 1.0 : (vertexColor.a - alphaLevel * 1024.0) / 1023.0;
 #elif defined(SURFACE_WEAR)
   // A packed value of 2 or more carries the wear and dirt weights (material-wear.js); below 2 it is sky visibility.
   bool carriesWear = !USES_CROWD && vertexColor.a >= 2.0;

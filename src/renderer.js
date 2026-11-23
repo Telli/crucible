@@ -169,7 +169,7 @@ export function shaderFeaturesOfParts(parts) {
     if (TAG_SHADER_FEATURES.has(material.tag)) features.add(material.tag);
     // Without vertex colours the tint and sky visibility are the constants of the unbound attribute, so no varying carries them.
     if ([part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => geometry.colors || vertexAlpha(geometry))) features.add('vertexColors');
-    if ([part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => geometry.colorAlpha)) features.add('vertexAlpha');
+    if ([part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => hasVertexAlpha(geometry))) features.add('vertexAlpha');
   }
   return features;
 }
@@ -682,21 +682,37 @@ function interleaveUvSets(geometry) {
   return combined;
 }
 
-// The glTF COLOR_0 alpha, sky visibility, or the packed surface wear masks of a material with `wear`, rides in the fourth
-// component of the vertex colour attribute, so the attribute layout stays the same. A colour alpha wins: the shader's
-// vertexAlpha feature reads it as opacity, so a part that carries one does not also get baked sky visibility.
+// Sky visibility, or the packed surface wear masks of a material with `wear`, rides in the fourth component of the vertex
+// colour attribute, so the attribute layout stays the same (every vertex attribute slot is taken). The glTF COLOR_0 alpha
+// shares that component with sky visibility as two 10 bit levels. A part with wear masks keeps them and drops the alpha.
 function vertexAlpha(geometry) {
-  return geometry.colorAlpha ?? geometry.surfaceMasks ?? geometry.skyVisibility;
+  return geometry.surfaceMasks ?? geometry.colorAlpha ?? geometry.skyVisibility;
 }
 
-function interleaveColorsWithSkyVisibility(geometry) {
+function hasVertexAlpha(geometry) {
+  return Boolean(geometry.colorAlpha) && !geometry.surfaceMasks;
+}
+
+const VERTEX_ALPHA_LEVELS = 1023;
+
+/** colour alpha * 1024 + sky visibility, both rounded to 0..1023; exact in a float, and the vertexAlpha shader unpacks it. */
+export function packVertexAlpha(colorAlpha, skyVisibility) {
+  return Math.round(colorAlpha * VERTEX_ALPHA_LEVELS) * 1024 + Math.round((skyVisibility ?? 1) * VERTEX_ALPHA_LEVELS);
+}
+
+function vertexFourthComponent(geometry, vertex) {
+  if (hasVertexAlpha(geometry)) return packVertexAlpha(geometry.colorAlpha[vertex], geometry.skyVisibility?.[vertex]);
+  return vertexAlpha(geometry)[vertex];
+}
+
+export function interleaveColorsWithSkyVisibility(geometry) {
   const vertexCount = vertexAlpha(geometry).length;
   const combined = new Float32Array(vertexCount * 4);
   for (let vertex = 0; vertex < vertexCount; vertex++) {
     for (let channel = 0; channel < 3; channel++) {
       combined[vertex * 4 + channel] = geometry.colors ? geometry.colors[vertex * 3 + channel] : 1;
     }
-    combined[vertex * 4 + 3] = vertexAlpha(geometry)[vertex];
+    combined[vertex * 4 + 3] = vertexFourthComponent(geometry, vertex);
   }
   return combined;
 }

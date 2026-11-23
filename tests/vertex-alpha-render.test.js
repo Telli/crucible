@@ -7,19 +7,20 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withDevServerPage } from './helpers/dev-server-browser.js';
 
-const IMAGE_SIZE = 160;
-const MIDDLE_ROW = IMAGE_SIZE / 2;
+const IMAGE_WIDTH = 640;
+const IMAGE_HEIGHT = 360;
+const MIDDLE_ROW = IMAGE_HEIGHT / 2;
 
 async function drawStrip(page, withAlpha) {
-  const task = async ({ imageSize, withAlpha }) => {
+  const task = async ({ imageWidth, imageHeight, withAlpha }) => {
     const { CrucibleRenderer } = await import('/src/renderer.js');
     const canvas = document.createElement('canvas');
-    canvas.width = imageSize;
-    canvas.height = imageSize;
+    canvas.width = imageWidth;
+    canvas.height = imageHeight;
     document.body.append(canvas);
     const copy = document.createElement('canvas');
-    copy.width = imageSize;
-    copy.height = imageSize;
+    copy.width = imageWidth;
+    copy.height = imageHeight;
     const copyContext = copy.getContext('2d', { willReadFrequently: true });
     const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
     const wallGeometry = {
@@ -43,17 +44,24 @@ async function drawStrip(page, withAlpha) {
     const frame = { eye: [0, 0, 5], target: [0, 0, 0], fov: 40, up: [0, 1, 0], time: 0, wind: 0, exposure: 1, effects: {} };
     renderer.render(frame);
     renderer.render(frame);
-    copyContext.drawImage(canvas, 0, 0, imageSize, imageSize);
-    const pixels = Array.from(copyContext.getImageData(0, 0, imageSize, imageSize).data);
+    copyContext.drawImage(canvas, 0, 0, imageWidth, imageHeight);
+    const pixels = Array.from(copyContext.getImageData(0, 0, imageWidth, imageHeight).data);
+    copyContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    copyContext.fillRect(8, 8, 330, 52);
+    copyContext.fillStyle = '#ffffff';
+    copyContext.font = '20px sans-serif';
+    copyContext.fillText(withAlpha ? 'After: COLOR_0 alpha honoured' : 'Before: COLOR_0 alpha ignored', 16, 32);
+    copyContext.font = '16px sans-serif';
+    copyContext.fillText('Backend: SwiftShader (CPU)', 16, 52);
     const png = copy.toDataURL('image/png').split(',')[1];
     renderer.dispose();
     return { pixels, png };
   };
-  return page.evaluate(task, { imageSize: IMAGE_SIZE, withAlpha });
+  return page.evaluate(task, { imageWidth: IMAGE_WIDTH, imageHeight: IMAGE_HEIGHT, withAlpha });
 }
 
 function rowPixel(frame, column) {
-  const index = (MIDDLE_ROW * IMAGE_SIZE + column) * 4;
+  const index = (MIDDLE_ROW * IMAGE_WIDTH + column) * 4;
   return [frame.pixels[index], frame.pixels[index + 1], frame.pixels[index + 2]];
 }
 
@@ -61,9 +69,9 @@ test('an unlit blended strip fades with its COLOR_0 alpha and stays solid withou
   await withDevServerPage(testContext, async (page) => {
     const faded = await drawStrip(page, true);
     const solid = await drawStrip(page, false);
-    // At 40 degrees and distance 4 the strip spans columns 22 to 138 (half width 1.5); its core line is column 80, its edges 22 and 138.
-    const nearEdge = 26;
-    const core = 80;
+    // At 40 degrees, distance 4 and 16:9 the strip (half width 1.5) spans columns 135 to 505; its core line is column 320.
+    const nearEdge = 145;
+    const core = 320;
     assert.ok(rowPixel(solid, nearEdge)[0] > 200, 'without colorAlpha the strip edge is solid white');
     assert.ok(rowPixel(faded, nearEdge)[0] < 140, `with colorAlpha the strip edge shows the wall behind it, got ${rowPixel(faded, nearEdge)}`);
     assert.ok(rowPixel(faded, core)[0] > 200, 'the core of the strip stays opaque');
