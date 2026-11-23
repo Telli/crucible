@@ -7,6 +7,7 @@ import { createFragmentShader, fragmentShader, WETNESS_FEATURE, SHADER_FEATURES 
 import { normalizeAgentLook } from '../src/agent-look.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
 import { wetnessUniformValues, wetnessResponse, PUDDLE_SOURCES } from '../src/wetness.js';
+import { wetnessKeepOutBoxes, KEEP_OUT_LIMIT } from '../src/wetness-keep-out.js';
 
 function emptySession() {
   return createAgentScene({ format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] });
@@ -84,4 +85,30 @@ test('scene_capabilities names the wetness topic with the sources the validator 
   assert.deepEqual(topic.environment, ['environment.wetness', 'environment.puddles']);
   assert.deepEqual([...topic.puddles.from], PUDDLE_SOURCES);
   assert.match(topic.renderers, /path tracers ignore it/);
+});
+
+function partWithFootprint(minimumX, minimumZ, maximumX, maximumZ, matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) {
+  const positions = new Float32Array([minimumX, 0, minimumZ, maximumX, 0.01, maximumZ]);
+  return { geometry: { positions }, matrix };
+}
+
+test('keep-out boxes list thin parts at their world footprint and skip wide ones', () => {
+  const marking = partWithFootprint(-0.1, -5, 0.1, 5, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 3, 0, 2, 1]);
+  const road = partWithFootprint(-10, -20, 10, 20);
+  const { boxes, count } = wetnessKeepOutBoxes([road, marking]);
+  assert.equal(count, 1);
+  assert.deepEqual([...boxes.slice(0, 4)].map((value) => Math.round(value * 100) / 100), [2.9, -3, 3.1, 7]);
+});
+
+test('keep-out boxes stop at the shader limit and ignore parts that deform', () => {
+  const posts = Array.from({ length: KEEP_OUT_LIMIT + 5 }, (_, index) => partWithFootprint(index, 0, index + 0.2, 0.2));
+  assert.equal(wetnessKeepOutBoxes(posts).count, KEEP_OUT_LIMIT);
+  const skinned = { ...partWithFootprint(0, 0, 0.1, 0.1), skin: {} };
+  assert.equal(wetnessKeepOutBoxes([skinned]).count, 0);
+});
+
+test('the wet shader fades puddles out near keep-out boxes', () => {
+  const wet = createFragmentShader(new Set([...SHADER_FEATURES, WETNESS_FEATURE]));
+  assert.match(wet, /wetnessKeepOut\[24\]/);
+  assert.match(wet, /puddle \*= wetKeepOut\(worldPosition\)/);
 });

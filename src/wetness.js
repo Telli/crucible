@@ -48,7 +48,7 @@ export function wetnessResponse(wetness) {
 }
 
 /**
- * The three numbers the wetness shader reads: wetness, the puddle share of the surface, and the puddle source (0 is height).
+ *The three numbers the wetness shader reads: wetness, the puddle share of the surface, and a slot the renderer fills with its keep-out box count.
  * Both numbers follow wetnessResponse. Puddles need wet ground, so their share is the coverage scaled by it: damp ground gets a few, soaked ground many.
  */
 export function wetnessUniformValues(environment) {

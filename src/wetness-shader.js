@@ -1,26 +1,40 @@
 // The GLSL of environment wetness (src/wetness.js), spliced into the main fragment shader only when the scene is wet, so a dry
-// scene compiles the same program as before. wetnessState is (wetness, puddle share, puddle source).
-// Porous surfaces (not metal, rougher ones more) darken and lose roughness. A puddle is a flat, dark, glossy film on up-facing
-// ground, laid where a noise basin on the ground plane rises above a level that falls with world height, so water fills the
-// low spots first. Its normal points straight up and its roughness is the floor, so the sky reflects in it.
+// scene compiles the same program as before. wetnessState is (wetness response, puddle share, keep-out box count).
+// Porous surfaces (not metal, rougher ones more) darken and lose some roughness. A puddle is a flat, near-black, glossy film on
+// up-facing ground, laid where a smooth noise basin on the ground plane rises above a level that falls with world height, so water
+// fills the low spots first. It keeps clear of thin raised parts (src/wetness-keep-out.js). Its normal points straight up and its
+// roughness is the floor, so it mirrors the sky; a little metallic with a dark colour gives it the reflectance of water (about 0.02).
 
 export const WETNESS_CODE = Object.freeze({
   declarations: `uniform vec3 wetnessState;
+uniform vec4 wetnessKeepOut[24];
 float wetBasin(vec3 position) {
-  vec3 plane = vec3(position.x * 0.4, 3.7, position.z * 0.4);
-  return 0.65 * wearNoise(plane) + 0.35 * wearNoise(plane * 3.1 + vec3(17.0));
+  vec3 plane = vec3(position.x * 0.3, 3.7, position.z * 0.3);
+  return 0.85 * wearNoise(plane) + 0.15 * wearNoise(plane * 2.3 + vec3(17.0));
+}
+float wetKeepOut(vec3 position) {
+  float nearest = 1000.0;
+  for (int index = 0; index < 24; index++) {
+    if (float(index) >= wetnessState.z) break;
+    vec4 box = wetnessKeepOut[index];
+    vec2 outside = max(max(box.xy - position.xz, position.xz - box.zw), vec2(0.0));
+    nearest = min(nearest, length(outside));
+  }
+  return smoothstep(0.12, 0.25, nearest);
 }
 `,
   worldSurface: `  if (!TAG_WATER && !TAG_FIRE && !TAG_SMOKE && wetnessState.x > 0.0) {
     float wetPorosity = wetnessState.x * (1.0 - metallic) * mix(0.35, 1.0, roughness);
-    color *= 1.0 - 0.6 * wetPorosity;
-    roughness = clamp(roughness * (1.0 - 0.55 * wetPorosity), 0.075, 1.0);
+    color *= 1.0 - 0.72 * wetPorosity;
+    roughness = clamp(roughness * (1.0 - 0.3 * wetPorosity), 0.075, 1.0);
     float puddle = 0.0;
     if (wetnessState.y > 0.0) {
       float fill = wetBasin(worldPosition) - mix(0.72, 0.42, wetnessState.y) - 6.0 * worldPosition.y;
       puddle = smoothstep(0.0, 0.015, fill) * smoothstep(0.96, 0.995, geometricNormal.y) * (1.0 - metallic);
+      if (puddle > 0.0) puddle *= wetKeepOut(worldPosition);
     }
-    color *= 1.0 - 0.9 * puddle;
+    color *= 1.0 - 0.95 * puddle;
+    metallic = mix(metallic, 0.6, puddle);
     roughness = mix(roughness, 0.075, puddle);
     normal = normalize(mix(normal, vec3(0.0, 1.0, 0.0), puddle));
   }
