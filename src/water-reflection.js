@@ -57,6 +57,11 @@ function isSmoothSurface(material) {
   return !EXCLUDED_TAGS.has(material.tag) && isWaterLikeTransmission(material) && (material.roughness ?? 1) < WATER_BLUR_LIMIT_ROUGHNESS;
 }
 
+// Wet ground mirrors in its puddles whatever its dry roughness: any flat part that is not metal, liquid, foam, unlit, fire, smoke or floor.
+function isWetGround(material) {
+  return !EXCLUDED_TAGS.has(material.tag) && material.tag !== 'water' && (material.metallic ?? 0) < 0.5;
+}
+
 function isFlatSurface({ minimum, maximum }) {
   const wider = Math.max(maximum[0] - minimum[0], maximum[2] - minimum[2]);
   return wider > 0 && maximum[1] - minimum[1] <= wider * WATER_MAXIMUM_THICKNESS_RATIO;
@@ -68,7 +73,7 @@ function isFlatSurface({ minimum, maximum }) {
  * qualifying part sets the plane (its top); parts within a few centimetres of that height join it.
  * Returns `{ height, partIndices, footprint, sceneShare }`.
  */
-export function findWaterSurface(parts) {
+export function findWaterSurface(parts, { wet = false } = {}) {
   const bounds = parts.map(part => worldBounds(part));
   const sceneMinimum = [Infinity, Infinity, Infinity];
   const sceneMaximum = [-Infinity, -Infinity, -Infinity];
@@ -82,7 +87,8 @@ export function findWaterSurface(parts) {
   const candidates = [];
   parts.forEach((part, index) => {
     const share = sceneFootprint > 0 ? footprintOf(bounds[index]) / sceneFootprint : 0;
-    if (isSmoothSurface(part.material) && isFlatSurface(bounds[index]) && share >= WATER_MINIMUM_SCENE_SHARE) {
+    const qualifies = wet ? isWetGround(part.material) : isSmoothSurface(part.material);
+    if (qualifies && isFlatSurface(bounds[index]) && share >= WATER_MINIMUM_SCENE_SHARE) {
       candidates.push({ index, share, height: bounds[index].maximum[1], footprint: footprintOf(bounds[index]) });
     }
   });
@@ -122,6 +128,26 @@ export function applyWaterReflection(parts) {
   const marked = parts.map((part, index) => (flagged.has(index) ? Object.freeze({ ...part, material: withWaterReflectionFlag(part.material) }) : part));
   const report = { placed: true, height: surface.height, parts: surface.partIndices.length, footprint: surface.footprint, sceneShare: surface.sceneShare };
   return { parts: Object.freeze(marked), surface, report };
+}
+
+/**
+ * The parts of a wet scene (environment.wetness above 0 with puddles) that mirror in their puddles: the flat ground at the level of the
+ * largest flat part (wet mode of `findWaterSurface`), flagged like water so the renderer builds the mirror. The wetness shader sets the
+ * roughness that decides how much of the picture each pixel shows. Returns the parts as they came when no flat part qualifies.
+ */
+export function flagWetMirrorParts(parts) {
+  const surface = findWaterSurface(parts, { wet: true });
+  if (!surface) {
+    return parts;
+  }
+  const flagged = new Set(surface.partIndices);
+  return parts.map((part, index) => (flagged.has(index) ? Object.freeze({ ...part, material: withWaterReflectionFlag(part.material) }) : part));
+}
+
+/** The reflecting surface of parts `flagWetMirrorParts` marked, or null: the input of `attachWaterReflection`. */
+export function wetMirrorSurface(parts) {
+  const flagged = parts.filter(part => part.material?.[WATER_BATCH_FLAG] === true);
+  return flagged.length === 0 ? null : findWaterSurface(flagged, { wet: true });
 }
 
 registerShaderFeatureCode('waterReflection', Object.freeze({

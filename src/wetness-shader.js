@@ -3,7 +3,7 @@
 // Porous surfaces (not metal, rougher ones more) darken and lose some roughness. A puddle is a flat, near-black, glossy film on
 // up-facing ground, laid where a smooth noise basin on the ground plane rises above a level that falls with world height, so water
 // fills the low spots first. It keeps clear of thin raised parts (src/wetness-keep-out.js). Its normal points straight up and its
-// roughness is the floor, so it mirrors the sky; a little metallic with a dark colour gives it the reflectance of water (about 0.02).
+// roughness is the floor, so it mirrors the sky; a little metallic with a dark colour gives it the reflectance of water (about 0.02). The wet ground parts are flagged for the water mirror (src/water-reflection.js), whose weight and blur follow the roughness set here: the puddle shows a sharp mirror, the plain wet road a soft one.
 
 export const WETNESS_CODE = Object.freeze({
   declarations: `uniform vec3 wetnessState;
@@ -27,7 +27,7 @@ float wetKeepOutDistance(vec3 position) {
   worldSurface: `  if (!TAG_WATER && !TAG_FIRE && !TAG_SMOKE && wetnessState.x > 0.0) {
     float wetPorosity = wetnessState.x * (1.0 - metallic) * mix(0.35, 1.0, roughness);
     color *= 1.0 - 0.8 * wetPorosity;
-    roughness = clamp(roughness * (1.0 - 0.5 * wetPorosity), 0.075, 1.0);
+    roughness = clamp(mix(roughness, 0.42, wetPorosity), 0.075, 1.0);
     splatCavity *= 1.0 - 0.4 * wetPorosity;
     float puddle = 0.0;
     if (wetnessState.y > 0.0) {

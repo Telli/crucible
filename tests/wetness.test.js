@@ -8,6 +8,7 @@ import { normalizeAgentLook } from '../src/agent-look.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
 import { wetnessUniformValues, wetnessResponse, PUDDLE_SOURCES } from '../src/wetness.js';
 import { wetnessKeepOutBoxes, KEEP_OUT_LIMIT } from '../src/wetness-keep-out.js';
+import { findWaterSurface, flagWetMirrorParts, wetMirrorSurface } from '../src/water-reflection.js';
 
 function emptySession() {
   return createAgentScene({ format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] });
@@ -111,4 +112,26 @@ test('the wet shader fades puddles out near keep-out boxes', () => {
   const wet = createFragmentShader(new Set([...SHADER_FEATURES, WETNESS_FEATURE]));
   assert.match(wet, /wetnessKeepOut\[24\]/);
   assert.match(wet, /clearance = wetKeepOutDistance[(]worldPosition[)]/);
+});
+
+function groundPart(minimumX, minimumZ, maximumX, maximumZ, roughness = 0.95, metallic = 0) {
+  const positions = new Float32Array([minimumX, -0.1, minimumZ, maximumX, 0, maximumZ]);
+  const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  return { geometry: { positions }, matrix: identity, material: { roughness, metallic } };
+}
+
+test('wet mirror mode takes a rough flat ground part that a dry scene would leave out', () => {
+  const road = groundPart(-10, -20, 10, 20);
+  assert.equal(findWaterSurface([road]), null);
+  assert.equal(findWaterSurface([road], { wet: true }).height, 0);
+});
+
+test('wet mirror mode skips metal and flags the ground so the renderer can mirror it', () => {
+  const metalSheet = groundPart(-10, -20, 10, 20, 0.2, 1);
+  assert.equal(findWaterSurface([metalSheet], { wet: true }), null);
+  const road = groundPart(-10, -20, 10, 20);
+  const [flagged] = flagWetMirrorParts([road]);
+  assert.equal(flagged.material.waterReflection, true);
+  assert.equal(wetMirrorSurface([flagged]).height, 0);
+  assert.equal(wetMirrorSurface([road]), null);
 });

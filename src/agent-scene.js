@@ -2132,7 +2132,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   function stageRestParts(recipe, sourceRestParts, lightBakeResult, graph) {
     const baked = lightBakeResult?.parts ?? sourceRestParts;
     const reflected = stageObjectReflections(recipe, sourceRestParts, baked, graph);
-    return { reflected, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked, graph)), { rest: true }) };
+    return { reflected, restParts: stageWetMirror(recipe, stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked, graph)), { rest: true })) };
   }
 
   // bake.rebake: a frame sampled at a pose the bake was not traced at is lit by a bake of that pose, cached by its key.
@@ -2180,6 +2180,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     objectReflectionCache = agentSceneModule('reflections').stageObjectReflections(objectReflectionCache, recipe, sourceRestParts, drawnParts, graph, agentEnvironmentMap(recipe.environment));
     skippedReflections = objectReflectionCache.skipped;
     return objectReflectionCache.result;
+  }
+
+  // Wet ground with puddles mirrors the scene in them: the water mirror module flags the flat ground parts, and the host attaches the mirror.
+  function stageWetMirror(recipe, parts) {
+    const environment = recipe.environment;
+    return environment.wetness > 0 && environment.puddles && agentSceneModuleActive('waterReflection', requestedModules) ? agentSceneModule('waterReflection').flagWetMirrorParts(parts) : parts;
   }
 
   // A closed room a sun lights gets the sky each floor texel sees; the lazy module decides, keeps its result and honours environment.floorSkyTrace.
