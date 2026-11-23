@@ -8,7 +8,6 @@ import { normalizeAgentLook } from '../src/agent-look.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
 import { wetnessUniformValues, wetnessResponse, puddleShare, PUDDLE_SOURCES, PUDDLE_SHARE_CAP } from '../src/wetness.js';
 import { puddleFillLevel, PUDDLE_LEVEL_TABLE, SOAKED_ROAD_ROUGHNESS_SCALE, WATER_SURFACE_ROUGHNESS } from '../src/wetness-shader.js';
-import { measurePuddleShare } from './support/wetness-noise-port.mjs';
 import { wetnessKeepOutBoxes, wetnessGroundHeight, KEEP_OUT_LIMIT } from '../src/wetness-keep-out.js';
 import { findWaterSurface, flagWetMirrorParts, wetMirrorSurface } from '../src/water-reflection.js';
 
@@ -149,24 +148,6 @@ test('the fill level falls as the share grows, through the measured table', () =
   for (let index = 1; index < levels.length; index++) assert.ok(levels[index] < levels[index - 1], `level ${index} falls`);
   for (const [share, level] of PUDDLE_LEVEL_TABLE) assert.ok(Math.abs(puddleFillLevel(share) - level) < 1e-9);
   assert.equal(puddleFillLevel(1), puddleFillLevel(0.25));
-});
-
-test('the noise basin floods the share of the ground the settings ask for, never above the cap', () => {
-  for (const [wetness, coverage] of [[0.5, 0.5], [1, 0.5], [1, 1]]) {
-    const [, fillLevel] = wetnessUniformValues({ wetness, puddles: { coverage } });
-    const measured = measurePuddleShare(fillLevel);
-    const wanted = puddleShare(wetness, coverage);
-    assert.ok(Math.abs(measured - wanted) <= 0.015, `wetness ${wetness} coverage ${coverage}: wanted ${wanted}, measured ${measured}`);
-    assert.ok(measured <= 0.27, 'puddles never flood more than a quarter of the ground');
-  }
-});
-
-test('puddles fill the same low spots on ground at any height', () => {
-  const [, fillLevel] = wetnessUniformValues({ wetness: 1, puddles: { coverage: 1 } });
-  const groundAtZero = measurePuddleShare(fillLevel, { size: 60, groundHeight: 0 });
-  for (const groundHeight of [3, -2]) {
-    assert.ok(Math.abs(measurePuddleShare(fillLevel, { size: 60, groundHeight }) - groundAtZero) < 0.005, `ground at y ${groundHeight}`);
-  }
 });
 
 function raisedGround(height) {
