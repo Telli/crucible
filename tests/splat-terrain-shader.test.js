@@ -94,7 +94,8 @@ async function drawSplatTerrain(page, { withGrass, withEnvironment, withGlass = 
       const buffer = new Uint8Array(96 * 96 * 4);
       renderer.render({ eye: [1, 16, -1.1], target: [1, 0, -1], time: 0 });
       renderer.context.readPixels(0, 0, 96, 96, renderer.context.RGBA, renderer.context.UNSIGNED_BYTE, buffer);
-      pixels = Array.from(buffer);    } catch (error) {
+      pixels = Array.from(buffer);
+    } catch (error) {
       failure = error.message;
     }
     console.warn = originalWarn;
