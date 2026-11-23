@@ -73,3 +73,9 @@ test('an lcov with lines but no branch or function records fails the coverage ga
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test('check-change-note reports a clear message when --base has no ref after it', () => {
+  const result = spawnSync(process.execPath, [join(root, 'scripts', 'check-change-note.mjs'), '--base'], { encoding: 'utf8' });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /Pass a branch or commit after --base/);
+});

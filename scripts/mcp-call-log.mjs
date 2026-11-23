@@ -6,9 +6,9 @@ export const CALL_LOG_ENVIRONMENT_VARIABLE = 'MCP_LOG';
 function resultByteCount(result) {
   let total = 0;
   for (const item of result?.content ?? []) {
-    if (typeof item.text === 'string') {
+    if (typeof item?.text === 'string') {
       total += Buffer.byteLength(item.text);
-    } else if (typeof item.data === 'string') {
+    } else if (typeof item?.data === 'string') {
       total += item.data.length;
     }
   }

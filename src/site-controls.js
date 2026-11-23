@@ -32,7 +32,14 @@ const iconShapes = {
 
 // Turns an existing <button> in the page into a site button and returns an `update` function
 // for its label, icon and attributes. The surrounding website stays plain HTML.
+const mountedButtons = new WeakMap();
+
 export function mountButton(button, options = {}) {
+  const existing = mountedButtons.get(button);
+  if (existing) {
+    existing.update(options);
+    return existing;
+  }
   button.classList.add('site-button');
   button.type = 'button';
   let state = { label: button.textContent.trim(), ...options };
@@ -55,7 +62,9 @@ export function mountButton(button, options = {}) {
 
   button.addEventListener('click', event => state.onClick?.(event));
   update();
-  return { update };
+  const mounted = { update };
+  mountedButtons.set(button, mounted);
+  return mounted;
 }
 
 export function packageLogo(name) {

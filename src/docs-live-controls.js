@@ -89,3 +89,13 @@ export const frameControlScript = `
   }).observe(document.documentElement, { childList: true, subtree: true });
   addEventListener('load', enhanceRanges);
 `;
+
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+export function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, character => HTML_ESCAPES[character]);
+}
+
+export function revokeImportUrls(imports, revokeUrl = URL.revokeObjectURL) {
+  for (const url of Object.values(imports ?? {})) revokeUrl(url);
+}

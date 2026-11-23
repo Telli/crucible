@@ -32,18 +32,35 @@ function compileShader(gl, type, source) {
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    throw new Error(`The GPU path tracer shader did not compile: ${gl.getShaderInfoLog(shader)}`);
+    const info = gl.getShaderInfoLog(shader);
+    gl.deleteShader(shader);
+    throw new Error(`The GPU path tracer shader did not compile: ${info}`);
   }
   return shader;
 }
 
 function createProgram(gl, variant) {
   const program = gl.createProgram();
-  gl.attachShader(program, compileShader(gl, gl.VERTEX_SHADER, VERTEX_SOURCE));
-  gl.attachShader(program, compileShader(gl, gl.FRAGMENT_SHADER, buildFragmentSource(variant)));
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(`The GPU path tracer program did not link: ${gl.getProgramInfoLog(program)}`);
-  return program;
+  let vertexShader;
+  let fragmentShader;
+  try {
+    vertexShader = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SOURCE);
+    fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, buildFragmentSource(variant));
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      const info = gl.getProgramInfoLog(program);
+      throw new Error(`The GPU path tracer program did not link: ${info}`);
+    }
+    return program;
+  } catch (error) {
+    gl.deleteProgram(program);
+    throw error;
+  } finally {
+    if (vertexShader) gl.deleteShader(vertexShader);
+    if (fragmentShader) gl.deleteShader(fragmentShader);
+  }
 }
 
 // Textures and targets of the render in progress; the context and program outlive it (compiling the kernel takes seconds).
