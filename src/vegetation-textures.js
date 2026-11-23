@@ -6,15 +6,15 @@ import { FULL_TURN, clamp, createRandom, valueNoise } from './vegetation-geometr
 const TEXTURE_SIZE = 128;
 const descriptorCache = new Map();
 
-function createPixels(fillColor) {
-  const data = new Uint8ClampedArray(TEXTURE_SIZE * TEXTURE_SIZE * 4);
+function createPixels(fillColor, size = TEXTURE_SIZE) {
+  const data = new Uint8ClampedArray(size * size * 4);
   for (let offset = 0; offset < data.length; offset += 4) {
     data[offset] = fillColor[0];
     data[offset + 1] = fillColor[1];
     data[offset + 2] = fillColor[2];
     data[offset + 3] = 0;
   }
-  return { width: TEXTURE_SIZE, height: TEXTURE_SIZE, data };
+  return { width: size, height: size, data };
 }
 
 function compositePixel(pixels, x, y, color, coverage) {
@@ -85,6 +85,44 @@ function paintSprig(pixels, color, random) {
   paintLeaf(pixels, { baseX: 64, baseY: 44, angle: 0, length: 40, width: 25, color, shade: 1.05 });
 }
 
+// A twig cluster of real-sized leaves on a 256 px card (#3041). The card is about a meter tall, so a leaf of 19 to 29 px is 8 to 12 cm,
+// the size of an oak or birch leaf. A fan of stems from the base carries a jittered grid of leaves that point away from it, so the
+// card is mostly leaf (the old sprig was 22 percent opaque) and a few hundred leaves still cost one card.
+export const TWIG_TEXTURE_SIZE = 256;
+const TWIG_STEM_COUNT = 9;
+const TWIG_LEAF_SPACING = 10;
+// Leaves stay inside a ragged ellipse, so a card reads as a round cluster of leaves and not as a square with leaf texture.
+const TWIG_ENVELOPE_RADIUS = TWIG_TEXTURE_SIZE * 0.5 - 18;
+const TWIG_ENVELOPE_RAGGEDNESS = 16;
+
+function paintTwig(pixels, color, random) {
+  const baseX = TWIG_TEXTURE_SIZE / 2;
+  const baseY = TWIG_TEXTURE_SIZE - 2;
+  const stemColor = [color[0] * 0.55, color[1] * 0.5, color[2] * 0.4];
+  for (let stem = 0; stem < TWIG_STEM_COUNT; stem++) {
+    const spread = (stem / (TWIG_STEM_COUNT - 1) - 0.5) * 2.7;
+    let reach = 0;
+    const stemEnd = distance => [baseX + Math.sin(spread) * distance, baseY - Math.cos(spread) * distance];
+    while (reach < TWIG_TEXTURE_SIZE && Math.hypot(stemEnd(reach + 4)[0] - TWIG_TEXTURE_SIZE / 2, stemEnd(reach + 4)[1] - TWIG_TEXTURE_SIZE / 2) < TWIG_ENVELOPE_RADIUS) reach += 4;
+    paintStem(pixels, baseX, baseY, ...stemEnd(reach), stemColor);
+  }
+  const sites = [];
+  for (let y = TWIG_LEAF_SPACING / 2; y < TWIG_TEXTURE_SIZE; y += TWIG_LEAF_SPACING) {
+    for (let x = TWIG_LEAF_SPACING / 2; x < TWIG_TEXTURE_SIZE; x += TWIG_LEAF_SPACING) {
+      sites.push({ x: x + (random() - 0.5) * TWIG_LEAF_SPACING, y: y + (random() - 0.5) * TWIG_LEAF_SPACING, order: random() });
+    }
+  }
+  const clusterCenter = TWIG_TEXTURE_SIZE / 2;
+  const insideEnvelope = site => Math.hypot(site.x - clusterCenter, site.y - clusterCenter) < TWIG_ENVELOPE_RADIUS + (random() - 0.5) * 2 * TWIG_ENVELOPE_RAGGEDNESS;
+  sites.splice(0, sites.length, ...sites.filter(insideEnvelope));
+  sites.sort((first, second) => first.order - second.order);
+  for (const site of sites) {
+    const outward = Math.atan2(site.x - baseX, baseY - site.y);
+    const length = 19 + random() * 10;
+    paintLeaf(pixels, { baseX: site.x, baseY: site.y, angle: outward + (random() - 0.5) * 1.3, length, width: length * (0.5 + random() * 0.14), color, shade: 0.7 + random() * 0.5 });
+  }
+}
+
 function paintNeedleSpray(pixels, color, random) {
   const stemColor = [color[0] * 0.7, color[1] * 0.6, color[2] * 0.5];
   paintStem(pixels, 64, 126, 64, 6, stemColor);
@@ -132,6 +170,7 @@ function bleedColorIntoTransparentPixels(pixels, color) {
 
 const LEAF_PAINTERS = {
   sprig: paintSprig,
+  twig: paintTwig,
   needles: paintNeedleSpray,
   single: (pixels, color, random) => paintBlades(pixels, color, random, 1, 38),
   grass: (pixels, color, random) => paintBlades(pixels, color, random, 9, 7),
@@ -142,7 +181,7 @@ const LEAF_PAINTERS = {
 export function createLeafPixels(kind, color, seed = 1) {
   const painter = Object.hasOwn(LEAF_PAINTERS, kind) ? LEAF_PAINTERS[kind] : null;
   if (!painter) throw new RangeError(`Unknown leaf texture kind: ${kind}`);
-  const pixels = createPixels(color);
+  const pixels = createPixels(color, kind === 'twig' ? TWIG_TEXTURE_SIZE : TEXTURE_SIZE);
   painter(pixels, color, createRandom(seed));
   bleedColorIntoTransparentPixels(pixels, color);
   return pixels;

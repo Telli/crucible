@@ -47,6 +47,6 @@ test('scene_capabilities alphaModes lists exactly the modes the recipe schema ac
 
 test('scene_create rejects an alphaMode that scene_capabilities does not list', async context => {
   const { client } = await connectedClient(context);
-  const result = await client.callTool({ name: 'scene_create', arguments: { recipe: recipeWithAlphaMode('mask') } }).catch(error => ({ isError: true, content: error.message }));
+  const result = await client.callTool({ name: 'scene_create', arguments: { recipe: recipeWithAlphaMode('multiply') } }).catch(error => ({ isError: true, content: error.message }));
   assert.equal(result.isError, true);
 });

@@ -1,0 +1,1 @@
+- Add a tree from the Studio add menu by picking a preset picture, then tune its height, leaf density, season and seed from the inspector; the edits write the same `vegetation` field agents use (#2993).

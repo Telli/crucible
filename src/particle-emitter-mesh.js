@@ -1,5 +1,6 @@
 // A mesh as a particle emitter: points on its surface (weighted by triangle area), at its vertices, along its edges (weighted by length), or inside its volume.
 // A vertex group (one weight per vertex) narrows the surface, vertex and edge modes to where the group is painted; edges can also be limited to the sharp ones.
+// A region (an axis-aligned box in world space) limits every mode to the part of the mesh inside it (#2823).
 // Every sample draws from the particle's own generator, so the same seed gives the same points.
 
 export const EMITTER_MESH_MODES = Object.freeze(['surface', 'vertices', 'edges', 'volume']);
@@ -126,7 +127,7 @@ export function isInsideMesh(triangles, point) {
   return crossings % 2 === 1;
 }
 
-function volumeSampler(triangles, positions) {
+function volumeSampler(triangles, positions, bounds) {
   const minimum = [Infinity, Infinity, Infinity];
   const maximum = [-Infinity, -Infinity, -Infinity];
   for (let offset = 0; offset < positions.length; offset += 3) {
@@ -135,12 +136,93 @@ function volumeSampler(triangles, positions) {
       maximum[axis] = Math.max(maximum[axis], positions[offset + axis]);
     }
   }
+  if (bounds) {
+    for (let axis = 0; axis < 3; axis++) {
+      minimum[axis] = Math.max(minimum[axis], bounds.minimum[axis]);
+      maximum[axis] = Math.min(maximum[axis], bounds.maximum[axis]);
+      if (minimum[axis] > maximum[axis]) return null;
+    }
+  }
   return random => {
     for (let attempt = 0; attempt < MAX_VOLUME_TRIES; attempt++) {
       const point = [0, 1, 2].map(axis => minimum[axis] + (maximum[axis] - minimum[axis]) * random());
       if (isInsideMesh(triangles, point)) return { point, normal: null };
     }
     return null;
+  };
+}
+
+const MAX_REGION_TRIES = 24;
+
+/** The box `{ center, halfExtents }` as `{ minimum, maximum }` corners. */
+export function regionBounds(region) {
+  return {
+    minimum: region.center.map((value, axis) => value - region.halfExtents[axis]),
+    maximum: region.center.map((value, axis) => value + region.halfExtents[axis]),
+  };
+}
+
+function insideBounds(point, bounds) {
+  return [0, 1, 2].every(axis => point[axis] >= bounds.minimum[axis] && point[axis] <= bounds.maximum[axis]);
+}
+
+// The weights with every vertex outside the box set to 0 (a weight of 1 for the vertices inside when there is no group).
+function weightsInRegion(weights, positions, bounds) {
+  const vertexCount = positions.length / 3;
+  const inside = new Float32Array(vertexCount);
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
+    if (insideBounds(corner(positions, vertex), bounds)) inside[vertex] = weights ? weights[vertex] : 1;
+  }
+  return inside;
+}
+
+// Only the triangles whose own box meets the region can put a point in it.
+function trianglesNearRegion(triangles, bounds) {
+  return triangles.filter(triangle => [0, 1, 2].every(axis => {
+    const low = Math.min(triangle.a[axis], triangle.b[axis], triangle.c[axis]);
+    const high = Math.max(triangle.a[axis], triangle.b[axis], triangle.c[axis]);
+    return high >= bounds.minimum[axis] && low <= bounds.maximum[axis];
+  }));
+}
+
+// The part of the segment inside the box (slab method), or null when it misses.
+function clipSegment(start, end, bounds) {
+  let enter = 0;
+  let leave = 1;
+  for (let axis = 0; axis < 3; axis++) {
+    const delta = end[axis] - start[axis];
+    if (delta === 0) {
+      if (start[axis] < bounds.minimum[axis] || start[axis] > bounds.maximum[axis]) return null;
+      continue;
+    }
+    const first = (bounds.minimum[axis] - start[axis]) / delta;
+    const second = (bounds.maximum[axis] - start[axis]) / delta;
+    enter = Math.max(enter, Math.min(first, second));
+    leave = Math.min(leave, Math.max(first, second));
+  }
+  if (enter > leave) return null;
+  const at = fraction => [0, 1, 2].map(axis => start[axis] + (end[axis] - start[axis]) * fraction);
+  return { start: at(enter), end: at(leave) };
+}
+
+function clipEdgesToRegion(edges, bounds) {
+  const clipped = [];
+  for (const edge of edges) {
+    const piece = clipSegment(edge.start, edge.end, bounds);
+    if (piece) clipped.push({ ...edge, start: piece.start, end: piece.end, length: Math.hypot(...subtract(piece.end, piece.start)) });
+  }
+  return clipped;
+}
+
+// A sample that falls outside the box is drawn again; after MAX_REGION_TRIES the last one is moved onto the box, so every birth lands inside.
+function limitedToRegion(sampler, bounds) {
+  return random => {
+    let result = null;
+    for (let attempt = 0; attempt < MAX_REGION_TRIES; attempt++) {
+      result = sampler(random);
+      if (!result || insideBounds(result.point, bounds)) return result;
+    }
+    return { ...result, point: result.point.map((value, axis) => Math.min(Math.max(value, bounds.minimum[axis]), bounds.maximum[axis])) };
   };
 }
 
@@ -215,9 +297,10 @@ function isSharpEdge(edge, sharpAngle) {
   return Math.acos(cosine) * 180 / Math.PI > sharpAngle;
 }
 
-function edgeSampler(positions, indices, weights, sharpAngle) {
+function edgeSampler(positions, indices, weights, sharpAngle, bounds) {
   let edges = edgesOf(positions, indices, weights);
   if (sharpAngle !== null) edges = edges.filter(edge => isSharpEdge(edge, sharpAngle));
+  if (bounds) edges = clipEdgesToRegion(edges, bounds);
   const cumulative = [];
   let total = 0;
   for (const edge of edges) {
@@ -248,23 +331,27 @@ function edgeSampler(positions, indices, weights, sharpAngle) {
  * `sharpAngle` (degrees, edges mode only) keeps the edges that are open or bend more than that. `vectors` is an optional
  * per-vertex velocity (three floats per vertex, such as the ocean's spray) for the surface and vertices modes: each
  * sample then also returns `velocity`, interpolated across the triangle, and a surface sample returns the `weight` of the group at its point. `threshold` (0 to 1, default 0) drops the weights under it,
- * and on a surface every point must reach it too, so only the strongly painted part of the group emits. Returns null when the
+ * and on a surface every point must reach it too, so only the strongly painted part of the group emits. `region` (`{ center, halfExtents }`, a box in world space) keeps every sample inside it. Returns null when the
  * mesh cannot supply the mode (no area, no triangles, no edge left, or a group that weighs nothing).
  */
-export function createMeshSource(positions, normals, indices, mode, weights = null, sharpAngle = null, vectors = null, threshold = 0) {
+export function createMeshSource(positions, normals, indices, mode, weights = null, sharpAngle = null, vectors = null, threshold = 0, region = null) {
   const rawWeights = weights;
   weights = thresholded(weights, threshold);
+  const bounds = region ? regionBounds(region) : null;
+  if (bounds && mode === 'vertices') weights = weightsInRegion(weights, positions, bounds);
   const triangleCount = Math.floor(indices.length / 3);
   if (!triangleCount) return null;
   // Only the surface and volume modes draw from triangle records; building one per triangle of a big sea for every sampled ocean time cost seconds (#2823).
   const needsTriangles = mode === 'volume' || (mode !== 'vertices' && mode !== 'edges');
-  const triangles = needsTriangles ? trianglesOf(positions, indices, weights) : null;
+  const allTriangles = needsTriangles ? trianglesOf(positions, indices, weights) : null;
+  const triangles = bounds && mode === 'surface' ? trianglesNearRegion(allTriangles, bounds) : allTriangles;
   let sampler = null;
   if (mode === 'vertices') sampler = vertexSampler(positions, normals, weights, vectors);
-  else if (mode === 'edges') sampler = edgeSampler(positions, indices, weights, sharpAngle);
-  else if (mode === 'volume') sampler = volumeSampler(triangles, positions);
+  else if (mode === 'edges') sampler = edgeSampler(positions, indices, weights, sharpAngle, bounds);
+  else if (mode === 'volume') sampler = volumeSampler(triangles, positions, bounds);
   else sampler = surfaceSampler(triangles, mode === 'surface' ? vectors : null, rawWeights, threshold);
   if (!sampler) return null;
+  if (bounds && mode === 'surface') sampler = limitedToRegion(sampler, bounds);
   return Object.freeze({
     mode,
     triangleCount,

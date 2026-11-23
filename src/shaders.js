@@ -1,5 +1,7 @@
 import { blendOutputGlsl, withBlendCoverage } from './blend-output.js';
+import { WETNESS_CODE } from './wetness-shader.js';
 import { TANGENT_CODE_MINIMUM } from './tangent-encoding.js';
+import { UNBAKED_ALPHA_THRESHOLD, NORMAL_SPREAD_GAIN } from './normal-map-variance.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
 import { registeredFeatureCode, requireFeatureCode, registerShaderFeatureCode, registerSplatSupport, requireSplatSupport, layerTextureSupport, viewTransformShader, SPLAT_UNITS } from './shader-registry.js';
 
@@ -73,8 +75,8 @@ ${PACKED_COLOR_DECLARATION}
 export const TANGENT_FEATURE = 'tangents';
 // A normal map can hold detail finer than a pixel (the one-texel bevel at the rim of a mapped sphere). The widened roughness
 // below keeps the highlight from sparkling, but a thin ring of tilted normals still catches every light once per pixel.
-// The variance of the mapped normal across the pixel footprint therefore also lowers the direct specular, as detail that
-// averages out. The code exists only in a shader that has a normal map, so a shader without one keeps its exact text.
+// The spread of the normals each mip level averages (baked at upload, src/normal-map-variance.js) and the screen-space change
+// of the normal therefore also lower the direct specular, as detail that averages out. The code exists only in a shader that has a normal map, so a shader without one keeps its exact text.
 export const NORMAL_MAP_SPECULAR_FADE_STRENGTH = 32;
 const NORMAL_MAP_SPECULAR_CODE = {
   declarations: 'float normalMapSpecularFade = 1.0;\n',
@@ -82,7 +84,7 @@ const NORMAL_MAP_SPECULAR_CODE = {
   worldSurface: `  if (specularAntiAliasing > 0.0) {
     vec3 fadeNormalX = dFdx(normal);
     vec3 fadeNormalY = dFdy(normal);
-    float normalVariance = 0.5 * (dot(fadeNormalX, fadeNormalX) + dot(fadeNormalY, fadeNormalY)) + 0.5 * normalMapVariance;
+    float normalVariance = 0.5 * (dot(fadeNormalX, fadeNormalX) + dot(fadeNormalY, fadeNormalY)) + ${NORMAL_SPREAD_GAIN}.0 * normalMapSpread;
     normalMapSpecularFade = 1.0 / (1.0 + ${NORMAL_MAP_SPECULAR_FADE_STRENGTH}.0 * specularAntiAliasing * normalVariance);
   }
 `,
@@ -124,9 +126,9 @@ vec3 suppliedMappedNormal(vec3 normal) {
   vec3 bitangent = normalize(cross(normal, worldTangent.xyz)) * worldTangent.w;
   tangent = tangent / tangentLength * side;
   vec2 normalCoordinates = mapUV(hasNormalMap);
-  vec3 sampled = texture(normalMap, normalCoordinates${normalUv}).xyz * 2.0 - 1.0;
-  float filteredLength = clamp(length(sampled), 0.05, 1.0);
-  normalMapVariance = (1.0 - filteredLength) / filteredLength;
+  vec4 normalTexel = texture(normalMap, normalCoordinates${normalUv});
+  vec3 sampled = normalTexel.xyz * 2.0 - 1.0;
+  normalMapVariance = mappedNormalVariance(normalTexel);
   sampled.xy *= normalScale;
   vec3 mapped = mat3(tangent, bitangent, normal) * sampled;
   return dot(mapped, mapped) > 1e-12 ? normalize(mapped) : normal;
@@ -699,6 +701,15 @@ vec3 boxMappedNormal(vec3 normal) {
 // Toksvig variance: a normal map mip averages texels that disagree, so the filtered normal is shorter than 1.
 // The shortfall is the detail the pixel can no longer resolve, and it widens the highlight instead of sparkling.
 float normalMapVariance = 0.0;
+// The alpha of a normal map texel holds the spread of the normals its mip level averages, baked at upload (src/normal-map-variance.js):
+// the square root of one minus the mean unit-normal length. It feeds the specular fade below. A texture that was not baked
+// (precompressed, or updated in place) keeps alpha 1, so its spread reads 0 and only the stored normal length widens the highlight.
+float normalMapSpread = 0.0;
+float mappedNormalVariance(vec4 normalTexel) {
+  normalMapSpread = normalTexel.w > ${UNBAKED_ALPHA_THRESHOLD} ? 0.0 : normalTexel.w * normalTexel.w;
+  float storedLength = clamp(length(normalTexel.xyz * 2.0 - 1.0), 0.05, 1.0);
+  return (1.0 - storedLength) / storedLength;
+}
 ${featureCode("tangentFrame")}
 vec3 mappedNormal(vec3 normal) {
 ${featureCode("suppliedTangent")}  vec3 positionX = dFdx(worldPosition);
@@ -722,9 +733,9 @@ ${featureCode("suppliedTangent")}  vec3 positionX = dFdx(worldPosition);
   tangent = normalize(tangent);
   float handedness = dot(cross(normal, tangent), bitangent) < 0.0 ? -1.0 : 1.0;
   bitangent = normalize(cross(normal, tangent)) * handedness;
-  vec3 sampled = texture(normalMap, normalCoordinates${featureCode("normalUv")}).xyz * 2.0 - 1.0;
-  float filteredLength = clamp(length(sampled), 0.05, 1.0);
-  normalMapVariance = (1.0 - filteredLength) / filteredLength;
+  vec4 normalTexel = texture(normalMap, normalCoordinates${featureCode("normalUv")});
+  vec3 sampled = normalTexel.xyz * 2.0 - 1.0;
+  normalMapVariance = mappedNormalVariance(normalTexel);
   sampled.xy *= normalScale;
   vec3 mapped = mat3(tangent, bitangent, normal) * sampled;
   return dot(mapped, mapped) > 1e-12 ? normalize(mapped) : normal;
@@ -1079,6 +1090,8 @@ const SHADER_FEATURE_CONDITIONS = {
 // SwiftShader runs both sides of a choice between them for every pixel, so a renderer that only ever draws one of the two
 // compiles the other out: ENVIRONMENT_ENABLED is true, false, or the uniform when both are listed.
 export const LIGHT_SHADING_FEATURE = 'lightShading';
+// Environment wetness (wetness.js): its code joins the program only when the environment is wet, and it is not in SHADER_FEATURES.
+export const WETNESS_FEATURE = 'wetness';
 /** Renderer option values: 'full' is the default picture, 'light' leaves out costly terms for weak machines. */
 export const SHADING_MODES = Object.freeze(['full', 'light']);
 /** The light preset resolves at most this many MSAA samples (on SwiftShader 2 cost a third of 4 in the blend heavy scene). */
@@ -1136,7 +1149,7 @@ export function liquidPassDrawer() {
 function hasSeparateCode(feature) {
   if (feature in MODULE_FEATURES) return true;
   if (feature === TANGENT_FEATURE) return false;
-  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
+  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === WETNESS_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
   return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature) && feature !== VERTEX_OPACITY_FEATURE;
 }
 
@@ -1147,6 +1160,7 @@ function featureCodeSplicer(features) {
     if (!enabled.has(feature)) codes.push(stub);
   }
   if (WORLD_MATERIAL_FEATURES.some(feature => enabled.has(feature))) codes.push(requireFeatureCode('worldMaterials'));
+  if (enabled.has(WETNESS_FEATURE)) codes.push(WETNESS_CODE);
   if (enabled.has('normalMap')) codes.push(NORMAL_MAP_SPECULAR_CODE);
   if (enabled.has(TANGENT_FEATURE)) codes.push(tangentFragmentCode(enabled.has('normalMapTransform') ? requireFeatureCode('normalMapTransform').normalUv ?? '' : ''));
   codes.push(enabled.has('environmentMap') ? registeredFeatureCode.get('environmentMap') ?? ENVIRONMENT_STUB : ENVIRONMENT_STUB);

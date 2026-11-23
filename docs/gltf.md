@@ -36,6 +36,10 @@ The optional `signal` aborts those fetches.
 
 Mesh checks are off by default, because the counts cost load time (about 10 to 90 percent on the shipped showcase meshes, measured without textures). `checkMesh: true` adds one warning per primitive naming how many triangles repeat an earlier one (same corner positions and winding) and how many edges more than two triangles share. Both are judged by position, with vertices at the same spot treated as one, so a seam that repeats its vertices does not hide them; nothing is merged or rewritten. `keepDegenerateTriangles: true` keeps the repeated-index and zero-area triangles instead of dropping them (the warning still counts them). `strict: true` with `validator: await import('gltf-validator')` runs the Khronos glTF-Validator on the file bytes first and fails on any error, naming the first few; Crucible does not bundle the validator, and `strict` without it throws with that instruction.
 
+Through MCP, `scene_create_asset` takes `checkMesh: true` and returns the decoder's warnings, the mesh-check counts among them, in `assetWarnings` (they also show in `scene_inspect` diagnostics). The counts keep the 600,000-triangle limit per primitive. `strict` and `validator` are not offered there: a validator is code, and the tool takes none.
+
+To run the Khronos validator over real files, use `node scripts/validate-gltf.mjs [--validator <folder>] [file or folder ...]`. It loads each GLB with `strict` and `checkMesh` and prints one line per file (`pass` or `FAIL` with the first errors, and how many mesh-check warnings it got); with no path it checks the GLBs the repository ships. `gltf-validator` is a devDependency, never part of the core; `--validator` or `GLTF_VALIDATOR` names a package folder instead. The exit code is 0 when every file passes, 1 when one fails and 2 when the validator or the files are missing. Textures decode to a 1 x 1 stand-in there, so the run judges structure and meshes, not pixels.
+
 | Option | Default | Limit |
 | --- | ---: | --- |
 | `maxBytes` | 268,435,456 | Total encoded input and fetched external resources. |
