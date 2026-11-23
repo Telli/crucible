@@ -2112,7 +2112,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   function stageRestParts(recipe, sourceRestParts, lightBakeResult, graph) {
     const baked = lightBakeResult?.parts ?? sourceRestParts;
     const reflected = stageObjectReflections(recipe, sourceRestParts, baked, graph);
-    return { reflected, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked)), { rest: true }) };
+    return { reflected, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked, graph)), { rest: true }) };
   }
 
   // bake.rebake: a frame sampled at a pose the bake was not traced at is lit by a bake of that pose, cached by its key.
@@ -2163,8 +2163,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   }
 
   // A closed room a sun lights gets the sky each floor texel sees; the lazy module decides, keeps its result and honours environment.floorSkyTrace.
-  function stageFloorSky(recipe, parts) {
-    return agentSceneModuleActive('floorSky', requestedModules) ? agentSceneModule('floorSky').stageFloorSky(recipe.environment, parts) : parts;
+  function stageFloorSky(recipe, parts, graph) {
+    return agentSceneModuleActive('floorSky', requestedModules) ? agentSceneModule('floorSky').stageFloorSky(recipe.environment, parts, name => graph.getNode(name).worldMatrix) : parts;
   }
 
   // A scene that asks for no bake and looks like a closed room gets one diagnostic naming the bake. The ray test costs a
