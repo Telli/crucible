@@ -1,0 +1,2 @@
+- scene:agent-scene+lazy: 471 bytes gzip for a per-ray part box test, shared world triangles and an early exit that make the closed-room test of a 255k-triangle open scene 5 to 17 times faster (446-810 ms to 27-105 ms) with the same result, which every Studio edit that changes parts pays.
+- goal:scene:agent-scene+lazy: 471 bytes gzip, the same growth counted against the goal ceiling; it removes most of the 190-220 ms that kept Studio add, duplicate and reload over their 200 ms target.
