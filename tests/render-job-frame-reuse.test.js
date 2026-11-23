@@ -3,6 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { installCoplanarDiagnostics } from '../src/coplanar-overlap.js';
 import { previewHarness } from './support/preview-harness.mjs';
+import { createAgentScene } from '../src/agent-scene.js';
+import { isLiveGeometry, isReindexedGeometry } from '../src/live-geometry.js';
 
 // Issue 3038: every later frame of a render job rebuilt the renderer and searched the layout for coplanar faces again.
 
@@ -26,24 +28,97 @@ function seaWithTexturedBox() {
   };
 }
 
-test('frames that move only the sea of a textured scene keep the renderer and its textured batches', () => {
+test('frames that move only the sea of a textured scene keep the renderer, its batches and its parts', () => {
   const harness = previewHarness();
   const sessionId = 'sea-frames';
   harness.preview.create({ recipe: seaWithTexturedBox(), sessionId, backend: 'cpu', memoryBudgetMiB: 192 });
-  const renderersAfterCreate = harness.rendererOptions.length;
+  harness.preview.frame({ sessionId, motionTime: 0.5 });
+  const renderersAfterFirstFrame = harness.rendererOptions.length;
+  const replacementsAfterFirstFrame = harness.replacementCount();
+  const uploadsAfterFirstFrame = harness.vertexUploads().length;
   for (const motionTime of [1, 2, 3]) harness.preview.frame({ sessionId, motionTime });
-  assert.equal(harness.rendererOptions.length, renderersAfterCreate, 'no frame builds a new renderer');
-  assert.ok(harness.replacementCount() >= 3, 'each new sea is uploaded by replaceParts');
+  assert.equal(harness.rendererOptions.length, renderersAfterFirstFrame, 'no frame builds a new renderer');
+  assert.equal(harness.replacementCount(), replacementsAfterFirstFrame, 'no frame swaps the parts');
+  assert.equal(harness.vertexUploads().length - uploadsAfterFirstFrame, 3, 'each new sea is uploaded in place');
+  assert.ok(harness.vertexUploads().at(-1).indices, 'with its triangle indices, which follow the waves');
+});
+
+test('a sea part keeps its geometry across times and draws the values of a fresh scene', () => {
+  const recipe = seaWithTexturedBox();
+  recipe.materials[0].tag = 'water';
+  const scene = createAgentScene(recipe);
+  scene.sampleMotion(1);
+  const part = scene.parts.find(candidate => candidate.name === 'surface');
+  const geometry = part.geometry;
+  const topology = scene.topologyRevision;
+  assert.ok(isLiveGeometry(geometry) && isReindexedGeometry(geometry), 'the kept sea is marked live, with its indices');
+  const heldPositions = Array.from(geometry.positions);
+  scene.sampleMotion(2.5);
+  assert.equal(scene.parts.find(candidate => candidate.name === 'surface'), part, 'the same part');
+  assert.equal(scene.topologyRevision, topology, 'no topology change');
+  assert.notDeepEqual(Array.from(geometry.positions), heldPositions, 'the sea moved');
+  const fresh = createAgentScene(recipe);
+  fresh.sampleMotion(2.5);
+  const expected = fresh.parts.find(candidate => candidate.name === 'surface').geometry;
+  for (const field of ['positions', 'normals', 'indices', 'skyVisibility']) {
+    assert.ok(geometry[field], `the sea has ${field}`);
+    assert.deepEqual(Array.from(geometry[field]), Array.from(expected[field]), `${field} equal a scene seeked straight there`);
+  }
+  assert.deepEqual(Array.from(geometry.vertexGroups.foam), Array.from(expected.vertexGroups.foam));
+  scene.sampleMotion(1);
+  assert.deepEqual(Array.from(geometry.positions), heldPositions, 'a seek back reproduces the earlier frame');
+});
+
+test('a sea whose vertex count changes replaces the kept sea and swaps the parts', () => {
+  const recipe = seaWithTexturedBox();
+  const scene = createAgentScene(recipe);
+  scene.sampleMotion(1);
+  const kept = scene.parts.find(candidate => candidate.name === 'surface');
+  const topology = scene.topologyRevision;
+  const finer = { ...recipe.geometries[0], stack: [{ op: 'subdivide', levels: 3 }, recipe.geometries[0].stack[1]] };
+  scene.apply([{ type: 'remove-geometry', id: 'sea' }, { type: 'add-geometry', geometry: finer }], { expectedRevision: scene.revision });
+  scene.sampleMotion(1);
+  const replaced = scene.parts.find(candidate => candidate.name === 'surface');
+  assert.notEqual(replaced, kept, 'a new part');
+  assert.ok(replaced.geometry.positions.length > kept.geometry.positions.length, 'with more vertices');
+  assert.ok(scene.topologyRevision > topology, 'the renderer is told to swap');
+  const next = createAgentScene({ ...recipe, geometries: [finer, recipe.geometries[1]] });
+  next.sampleMotion(1);
+  assert.deepEqual(Array.from(replaced.geometry.positions), Array.from(next.parts.find(candidate => candidate.name === 'surface').geometry.positions));
 });
 
 test('a frame falls back to a new renderer when replaceParts refuses the change', () => {
   const harness = previewHarness();
   const sessionId = 'sea-refused';
-  harness.preview.create({ recipe: seaWithTexturedBox(), sessionId, backend: 'cpu', memoryBudgetMiB: 192 });
-  const renderersAfterCreate = harness.rendererOptions.length;
-  harness.rejectReplacement(true);
+  const recipe = seaWithTexturedBox();
+  harness.preview.create({ recipe, sessionId, backend: 'cpu', memoryBudgetMiB: 192 });
   harness.preview.frame({ sessionId, motionTime: 1 });
-  assert.equal(harness.rendererOptions.length, renderersAfterCreate + 1);
+  const renderersBefore = harness.rendererOptions.length;
+  const finer = { ...recipe.geometries[0], stack: [{ op: 'subdivide', levels: 3 }, recipe.geometries[0].stack[1]] };
+  harness.rejectReplacement(true);
+  const revision = harness.scene().revision;
+  harness.preview.applyLoaded({ sessionId, operations: [{ type: 'remove-geometry', id: 'sea' }, { type: 'add-geometry', geometry: finer }], expectedRevision: revision });
+  harness.preview.frame({ sessionId, motionTime: 2 });
+  assert.equal(harness.rendererOptions.length, renderersBefore + 1);
+});
+
+test('a kept renderer fits the cascades of each new sea time exactly, as the new renderer of a textured scene did', () => {
+  const harness = previewHarness();
+  const sessionId = 'sea-cascade-fits';
+  const recipe = seaWithTexturedBox();
+  recipe.environment = { shadowCascades: 3 };
+  harness.preview.create({ recipe, sessionId, backend: 'cpu', memoryBudgetMiB: 192 });
+  harness.preview.frame({ sessionId, motionTime: 0.5 });
+  const cascades = harness.rendererOptions.at(-1).shadowCascades;
+  const rendererCount = harness.rendererOptions.length;
+  assert.ok(cascades, 'the scene draws with cascades');
+  // A moving camera leaves a wider fit in a slice; a frame of the next time may not shade with it.
+  cascades.holds = [{ fit: 'wider', tight: 'tight' }];
+  harness.preview.frame({ sessionId, motionTime: 0.5 });
+  assert.equal(cascades.holds.length, 1, 'the same time keeps the fits, as a draw that moves no sea did');
+  harness.preview.frame({ sessionId, motionTime: 1.5 });
+  assert.equal(harness.rendererOptions.length, rendererCount, 'the renderer is kept');
+  assert.equal(cascades.holds.length, 0, 'a new sea time drops them');
 });
 
 function countingBatches(partCounter) {

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createEnvironmentMap, computeIrradianceCoefficients, evaluateIrradiance } from '../src/environment.js';
+import { markLiveGeometry } from '../src/live-geometry.js';
 import { findGroundSurface, groundBounceEnvironment, withGroundBounce } from '../src/ground-bounce.js';
 
 const WIDTH = 8;
@@ -90,6 +91,16 @@ test('an open scene with a floor gets one bounced map, the same object on every 
   const first = groundBounceEnvironment(parts, environment);
   assert.ok(first.map.irradianceSource);
   assert.equal(groundBounceEnvironment(parts, environment).map, first.map);
+});
+
+test('a floor rewritten in place is measured again: a sea that rises out of its first thin bounds stops being the ground', () => {
+  const parts = openScene();
+  markLiveGeometry(parts[0].geometry);
+  const environment = environmentOf(uniformSky(0.5));
+  assert.ok(groundBounceEnvironment(parts, environment).map.irradianceSource);
+  const positions = parts[0].geometry.positions;
+  for (let index = 1; index < positions.length; index += 3) positions[index] *= 400;
+  assert.equal(groundBounceEnvironment(parts, environment).map.irradianceSource, undefined);
 });
 
 test('a baked part, a closed room, no floor, no map or groundBounce false keep the environment', () => {

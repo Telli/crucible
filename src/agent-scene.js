@@ -43,6 +43,7 @@ function poseEditNodeIds(operations) {
 }
 export { normalizeAgentLook, resolveAgentShadow } from './agent-look.js';
 import { OWN_SECTIONS as NULLABLE_SECTION_OPERATIONS } from './agent-apply-report.js';
+import { markLiveGeometry } from './live-geometry.js';
 export { describeApplication } from './agent-apply-report.js';
 export {
   needsMeshBooleans, loadMeshBooleans, meshBooleansLoaded, setManifoldModuleLoader,
@@ -1549,6 +1550,64 @@ function oceanTimeGeometries(stagedState, sampled, time) {
   return geometries;
 }
 
+/** IDs of the nodes drawing a mesh whose ocean time a geometry track drives. */
+function oceanTrackNodeIds(recipe) {
+  const oceanGeometries = new Set((recipe.motion?.tracks ?? []).filter(track => track.kind === 'geometry' && track.property === 'oceanTime').map(track => track.id));
+  return new Set(recipe.nodes.filter(node => oceanGeometries.has(node.geometry)).map(node => node.id));
+}
+
+// What an ocean time moves in a sea geometry. The triangle indices move too: the diagonal of each quad follows the waves.
+const SEA_MOVING_FIELDS = ['positions', 'normals', 'skyVisibility', 'indices'];
+
+// True when the two seas differ only in what an ocean time moves: the same fields and vertex groups, the same array sizes and
+// types, and the same UVs, so the arrays of one can be overwritten with the other. Any other field (surface masks, colours) is
+// not known to stay put, so it sends the sea to the part swap.
+function seaOnlyMoved(live, next) {
+  const fields = Object.keys(next);
+  if (fields.length !== Object.keys(live).length || !fields.every(field => field in live && (SEA_MOVING_FIELDS.includes(field) || field === 'uvs' || field === 'vertexGroups'))) return false;
+  if (next.uvs && (live.uvs.length !== next.uvs.length || next.uvs.some((value, index) => value !== live.uvs[index]))) return false;
+  if (!SEA_MOVING_FIELDS.every(field => !next[field] || (live[field].length === next[field].length && live[field].constructor === next[field].constructor))) return false;
+  const groups = Object.keys(next.vertexGroups ?? {});
+  return groups.length === Object.keys(live.vertexGroups ?? {}).length && groups.every(name => live.vertexGroups[name]?.length === next.vertexGroups[name].length);
+}
+
+// A copy of a sea with its own moving arrays, which later times overwrite. The geometry a frame cache holds stays untouched.
+function liveSea(sea) {
+  const vertexGroups = sea.vertexGroups && Object.fromEntries(Object.entries(sea.vertexGroups).map(([name, weights]) => [name, weights.slice()]));
+  const copy = { ...sea, ...(vertexGroups && { vertexGroups }) };
+  for (const field of SEA_MOVING_FIELDS) {
+    if (sea[field]) copy[field] = sea[field].slice();
+  }
+  return markLiveGeometry(Object.freeze(copy), { reindexed: true });
+}
+
+/**
+ * Each sea an ocean time track drives keeps one geometry per node, so a renderer keeps its part and uploads new positions,
+ * normals, foam and triangle indices (updatePartVertices) instead of building a batch for every time. A sea that changed in any
+ * other way, such as its vertex or triangle count, replaces the kept one and the renderer swaps its parts as before.
+ */
+function seasKeptInPlace(stagedState, geometries) {
+  const seaNodeIds = oceanTrackNodeIds(stagedState.recipe);
+  const kept = stagedState.liveSeas ??= new Map();
+  let result = geometries;
+  for (const nodeId of seaNodeIds) {
+    const next = geometries.get(nodeId);
+    if (!next) continue;
+    const live = kept.get(nodeId);
+    if (live && seaOnlyMoved(live, next)) {
+      for (const field of SEA_MOVING_FIELDS) {
+        if (next[field]) live[field].set(next[field]);
+      }
+      for (const [name, weights] of Object.entries(next.vertexGroups ?? {})) live.vertexGroups[name].set(weights);
+    } else {
+      kept.set(nodeId, liveSea(next));
+    }
+    if (result === geometries) result = new Map(geometries);
+    result.set(nodeId, kept.get(nodeId));
+  }
+  return result;
+}
+
 // Cloth and particles replace the geometry of their own nodes at a sampled time; no node belongs to both.
 function sampledGeometries(stagedState, time, sampled, camera) {
   if (time === null) {
@@ -1713,7 +1772,7 @@ function publishPose(stagedState, pose) {
   stagedState.movedLook = pose.movedLook;
   stagedState.motionTime = pose.time;
   const previousParts = stagedState.parts;
-  const sampledParts = partsWithCloth(stagedState.restParts, pose.clothGeometries, previousParts);
+  const sampledParts = partsWithCloth(stagedState.restParts, pose.clothGeometries && seasKeptInPlace(stagedState, pose.clothGeometries), previousParts);
   // Ranked also when the parts did not change: staging an edit ranks the rest parts, so the drawn parts get their ranks back.
   stagedState.parts = stagedState.rankFlushParts ? stagedState.rankFlushParts(sampledParts) : sampledParts;
   return stagedState.parts !== previousParts;
@@ -2086,6 +2145,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       parts: restUnchanged ? state.parts : restParts, restParts,
       // A sea a wake deforms depends on the physics bake as well, so only frames built without one outlive the edit.
       oceanFrames: new Map([...(state?.oceanFrames ?? [])].filter(([, frame]) => !frame.wake)),
+      // The kept sea of each node outlives an edit too: every pose overwrites it with the sea it stages, and it is replaced when the layout differs.
+      liveSeas: new Map(state?.liveSeas ?? []),
       // Parts a pose replaces (cloth, particles, ocean) are new objects with no flush rank, so the pose ranks them again.
       rankFlushParts: parts => stageCoplanarOffsets(recipe, parts),
       bakeSkipped: skippedBake,
@@ -2238,11 +2299,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // still scene again, seconds per frame, so playback could not run.
   let flushCache = null;
   function partsToRank(recipe, parts) {
-    const movingNodes = new Set(recipe.particles?.systems.map(system => system.node) ?? []);
-    const oceanGeometries = new Set((recipe.motion?.tracks ?? []).filter(track => track.kind === 'geometry' && track.property === 'oceanTime').map(track => track.id));
-    for (const node of recipe.nodes) {
-      if (oceanGeometries.has(node.geometry)) movingNodes.add(node.id);
-    }
+    const movingNodes = new Set([...(recipe.particles?.systems.map(system => system.node) ?? []), ...oceanTrackNodeIds(recipe)]);
     // Scattered clutter and blade grass are left out as well: thousands of irregular stones and blades have no flush faces, and ranking them took seconds per edit.
     const clutterPrefixes = recipe.nodes.filter(node => node.clutter || node.grass).map(node => `${node.id}/`);
     if (movingNodes.size === 0 && clutterPrefixes.length === 0) {
