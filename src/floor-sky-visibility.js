@@ -586,7 +586,14 @@ export function applyDefaultFloorSky(parts, environment, options = {}) {
   return applyFloorSkyVisibility(parts, { onlyClosedRooms: true, surfaces: 'all', sunDirection: unitSunDirection(environment), ...options });
 }
 
+// Kept per parts list and per what the default reads from the environment (the sun's strength and direction), not per
+// environment object: an edit that never touches the environment still hands the scene a new copy of it (#2806).
+const DEFAULT_RESULTS_PER_PARTS = 8;
 const defaultResults = new WeakMap();
+
+function skyInputsKey(environment) {
+  return JSON.stringify([environmentHasSun(environment), unitSunDirection(environment)]);
+}
 
 // A retained part keeps the matrix it was drawn with until the commit writes the new pose into it, so a moved node is still
 // where it was while its scene is staged. The room test and the sky rays need it where it is going (#3064).
@@ -616,15 +623,17 @@ function withOwnMatrices(resultParts, views, parts) {
 export function stageFloorSky(environment, parts, worldMatrixOf) {
   if (environment.floorSkyTrace === false) return parts;
   const { views, matrices } = partsAtMatrices(parts, worldMatrixOf);
-  let byEnvironment = defaultResults.get(parts);
-  if (!byEnvironment) {
-    byEnvironment = new WeakMap();
-    defaultResults.set(parts, byEnvironment);
+  let bySun = defaultResults.get(parts);
+  if (!bySun) {
+    bySun = new Map();
+    defaultResults.set(parts, bySun);
   }
-  const kept = byEnvironment.get(environment);
+  const sunKey = skyInputsKey(environment);
+  const kept = bySun.get(sunKey);
   if (kept && sameMatrices(kept.matrices, matrices)) return kept.result;
   const traced = applyDefaultFloorSky(views, environment).parts;
   const result = traced === views ? parts : Object.freeze(withOwnMatrices(traced, views, parts));
-  byEnvironment.set(environment, { matrices, result });
+  if (bySun.size >= DEFAULT_RESULTS_PER_PARTS) bySun.delete(bySun.keys().next().value);
+  bySun.set(sunKey, { matrices, result });
   return result;
 }
