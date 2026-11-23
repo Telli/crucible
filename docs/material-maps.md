@@ -38,10 +38,11 @@ Occlusion uses `mix(1, R, occlusionStrength)`. It does not attenuate direct ligh
 Roughness retains the renderer's minimum of `0.075` and derivative-based specular filtering.
 
 `normalScale` contains two finite floats for X and Y. Negative values can invert either tangent axis.
-The renderer derives an orthogonal tangent basis from position and UV screen derivatives, including mirrored UV handedness.
-Degenerate UVs retain the geometric normal because they have no tangent basis.
+A geometry with `tangents`, a `Float32Array` of four values per vertex (x, y, z, handedness 1 or -1), shades its normal map with them. They follow glTF: the bitangent is `cross(normal, tangent) * handedness` and points up the image, against the glTF v axis, which runs down it. The tangent is transformed with the model and joint matrices, made perpendicular to the final normal, and its handedness flips on a mirrored node. A part with `tangents` and a `normalMap` is drawn by a program with the `tangents` feature, which reads the tangent from the fourth float of the normal attribute (no extra vertex attribute). A geometry whose `tangents` length does not match its vertices is refused with what to pass.
 
-Explicit vertex tangents are not consumed. Derivative tangents can differ from authored tangent bases on curved meshes.
+The glTF loader fills `geometry.tangents` for every primitive with a normal map: it reads `TANGENT` when the file has it, and otherwise generates tangents from the UVs the map samples (a unit tangent per triangle, weighted by the corner angle, summed per vertex and made perpendicular to the normal, the MikkTSpace method on a mesh already split at UV seams; it matches meshoptimizer's `Compatible` tangents in the test). A `TANGENT` that is not four finite values per vertex, or that a rotated or mirrored `KHR_texture_transform` no longer fits, is replaced by generated tangents with a note in `warnings`. A Draco `TANGENT` is regenerated. A primitive without the UVs the map samples carries no tangents.
+
+Without `tangents` (recipe meshes, box-mapped materials, a primitive without UVs) the renderer derives an orthogonal tangent basis from position and UV screen derivatives, including mirrored UV handedness. Degenerate UVs retain the geometric normal because they have no tangent basis. Derivative tangents differ from authored tangent bases on curved meshes, which is why a map baked in MikkTSpace wants `tangents`. The path tracers still use their own frame.
 
 ## Descriptors and batching
 
@@ -246,5 +247,5 @@ Unlit materials accept base and emissive maps only.
 Texture alpha is ignored for opaque materials, as required by glTF's opaque mode.
 
 This feature does not complete the full material system.
-Texture slots inside the layer extensions, node graphs, and authored tangent support remain missing.
+Texture slots inside the layer extensions and node graphs remain missing.
 GLB export of these material maps is outside this feature.
