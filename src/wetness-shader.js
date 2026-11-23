@@ -111,7 +111,7 @@ float wetKeepOutDistance(vec3 position) {
     normal = normalize(normal - groundTangent * stoneTilt.x - groundBitangent * stoneTilt.y);
     // The soaked road is a little more saturated (at most 1.2 times), and the soak band beside the shore is wetter and smoother.
     float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
-    color = mix(vec3(luminance), color, mix(1.0, 1.2, wetPorosity));
+    color = mix(vec3(luminance), color, mix(1.0, 1.2, wetPorosity * gritGround));
     color *= 1.0 - 0.2 * soakBand;
     roughness = mix(roughness, roughness * 0.75, soakBand);
     // Water: the bottom shows through the film, darker where it is deeper; the surface is flat and smooth, and the mirror does the rest.
