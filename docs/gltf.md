@@ -77,7 +77,7 @@ The importer computes missing normals and normalizes supplied normals.
 It rejects non-finite attributes, invalid indices, singular transforms, and unusable normals.
 `geometry.uvs` preserves `TEXCOORD_0` as two floats per vertex.
 A primitive with a normal map also gets `geometry.tangents` (four floats per vertex): the file's `TANGENT` when it has a usable one, otherwise tangents generated from the UVs the map samples. [Material maps](material-maps.md) describes the frame and when the loader replaces an authored `TANGENT`.
-`geometry.colors` preserves opaque `COLOR_0` values as three linear RGB floats per vertex.
+`geometry.colors` preserves the RGB of `COLOR_0` as three linear RGB floats per vertex. An RGBA `COLOR_0` with an alpha below one also fills `geometry.colorAlpha`, one float per vertex. The rasterizer multiplies it into the opacity of `blend` and `mask` materials, lit or unlit (so a `flatten: { unlit: true }` ribbon fades at its edges); an opaque material ignores it, as glTF says. The alpha shares the fourth vertex-colour component with baked sky visibility (two 10 bit levels), so both survive; a part with `surfaceMasks` (material wear) keeps those instead of the alpha, and the scene diagnostics warn with `vertex-alpha-dropped`. The path tracers do not read the alpha yet.
 
 Materials preserve linear `color`, `metallic`, `roughness`, and `emissiveColor` factors.
 `emission` contains the emissive intensity.
