@@ -68,7 +68,7 @@ const PART_FLAG_FIELDS = RENDER_FLAG_FIELDS.slice(1);
 // On an asset placement these two flags reach each part it expands to.
 const ASSET_PLACEMENT_FLAG_FIELDS = ['castShadow', 'receiveShadow'];
 const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'clutter', 'grass', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
-const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamColor', 'foamVeins', 'contactFoam', 'caustics', 'ripples', 'waterRamp', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
+const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'alphaCutoff', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamColor', 'foamVeins', 'contactFoam', 'caustics', 'ripples', 'waterRamp', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
 // Fields of an optional shader module join the list here, so the long list above stays a line each material feature does not rewrite.
@@ -308,6 +308,22 @@ function copyMaterialLayers(value, result) {
   if (result.toon > 0) agentSceneModule('lineArt');
 }
 
+/** alphaCutoff is the alpha below which a masked surface is cut out; it means nothing for other alpha modes, so it is refused there. */
+function applyAlphaCutoff(value, result) {
+  if (value.alphaCutoff === undefined) {
+    if (result.alphaMode === 'mask') result.alphaCutoff = 0.5;
+    return;
+  }
+  if (result.alphaMode !== 'mask') {
+    throw invalidField('alphaCutoff', value.alphaCutoff, `omitted, or set alphaMode to "mask" (alphaMode is "${result.alphaMode}")`);
+  }
+  finite(value.alphaCutoff, 'alphaCutoff');
+  if (value.alphaCutoff < 0 || value.alphaCutoff > 1) {
+    throw invalidField('alphaCutoff', value.alphaCutoff, 'a number from 0 to 1, such as 0.5');
+  }
+  result.alphaCutoff = value.alphaCutoff;
+}
+
 function materialFrom(value) {
   knownKeys(value, ['id', 'tag', ...MATERIAL_FIELDS, ...TEXTURE_SET_RECIPE_FIELDS], 'material');
   // A pattern or a catalog colour map brings its own colours, so the color field tints it and leaves it unchanged by default.
@@ -339,6 +355,7 @@ function materialFrom(value) {
   // The renderer ignores opacity on opaque surfaces, so any opacity below one means blending (additive stays additive).
   const graphHasOpacity = graphFactor('opacity', 0);
   result.alphaMode = (result.opacity < 1 || graphHasOpacity) && requestedAlphaMode === 'opaque' ? 'blend' : requestedAlphaMode;
+  applyAlphaCutoff(value, result);
   result.doubleSided = defaultValue(value.doubleSided, false);
   if (typeof result.doubleSided !== 'boolean') {
     throw invalidField('doubleSided', result.doubleSided, 'true or false', TypeError);
@@ -1282,7 +1299,7 @@ function geometryStats(records) {
 function batchSignature(material) {
   // Textures are fixed per renderer, so a changed pattern rebuilds it like a changed tag does.
   // Transmission moves a material to the pass that sees the opaque scene, which is fixed per renderer.
-  return `${material.tag}|${material.alphaMode}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${JSON.stringify(material.snippet)}${textureMapSignature(material)}`;
+  return `${material.tag}|${material.alphaMode}|${material.alphaCutoff}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${JSON.stringify(material.snippet)}${textureMapSignature(material)}`;
 }
 
 // A material's uvScale, uvOffset, uvRotation and worldScale are baked into the UVs of the geometry it draws, like glTF KHR_texture_transform.
