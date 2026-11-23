@@ -9,6 +9,7 @@ import { meshFromGeometry } from './mesh-convert.js';
 import { unwrapUv } from './mesh-uv.js';
 import { createImage, linearToSrgbByte } from './material-texture-kit.js';
 import { contentFingerprint, ownedCopy, retainedBytes } from './content-fingerprint.js';
+import { drainSteps } from './flush-search-runner.js';
 
 // Light bake: the light that bounces between surfaces, written into one lightmap texture per part. A part draws it
 // through its emissive map, so the renderer, its shaders and every scene without a bake stay exactly as they were.
@@ -1200,6 +1201,14 @@ export function rasterizeEntries(plan, settings) {
  * and `escaped` (the share of first rays that left the scene).
  */
 function gatherOnCpu(plan, settings, rasterized) {
+  return drainSteps(gatherOnCpuSteps(plan, settings, rasterized));
+}
+
+// Texels traced between two checkpoints of a bake that runs in slices.
+const TEXELS_PER_CHECKPOINT = 64;
+
+// gatherOnCpu as steps: each yield is a checkpoint where a sliced run may hand the thread back (#3052).
+function* gatherOnCpuSteps(plan, settings, rasterized) {
   const { parts, lights } = plan;
   const world = buildWorld(parts);
   const scale = sceneScale(world.positions);
@@ -1214,12 +1223,18 @@ function gatherOnCpu(plan, settings, rasterized) {
   const sum = [0, 0, 0];
   const point = [0, 0, 0];
   const normal = [0, 0, 0];
-  return rasterized.map(({ entry, resolution, positions, normals, covered }) => {
+  const gathered = [];
+  let sinceCheckpoint = 0;
+  for (const { entry, resolution, positions, normals, covered } of rasterized) {
     const light = new Float32Array(resolution * resolution * 3);
     const escaped = new Float32Array(resolution * resolution);
     for (let texel = 0; texel < resolution * resolution; texel++) {
       if (!covered[texel]) continue;
       checkBudget(plan, settings);
+      if (++sinceCheckpoint === TEXELS_PER_CHECKPOINT) {
+        sinceCheckpoint = 0;
+        yield;
+      }
       for (let axis = 0; axis < 3; axis++) {
         point[axis] = positions[texel * 3 + axis];
         normal[axis] = normals[texel * 3 + axis];
@@ -1227,8 +1242,9 @@ function gatherOnCpu(plan, settings, rasterized) {
       escaped[texel] = gather(point, normal, entry.index * 1_000_003 + texel, sum);
       light.set(sum, texel * 3);
     }
-    return { light, escaped };
-  });
+    gathered.push({ light, escaped });
+  }
+  return gathered;
 }
 
 /** Lightmaps and parts from the gathered light: albedo, smoothing, dilation, sky visibility and the baked copies of the parts. */
@@ -1278,9 +1294,20 @@ export function finishLightmaps(plan, settings, rasterized, gathered, sizes) {
 
 /** Traces a plan with the given settings (samples, bounces, texelsPerUnit, maxSeconds) and returns the baked parts and the report. */
 export function traceLightmaps(plan, tracedSettings) {
+  return drainSteps(traceLightmapsSteps(plan, tracedSettings));
+}
+
+/**
+ * traceLightmaps as steps (#3052): the same result, byte for byte, with a checkpoint every few dozen texels, so a caller can run
+ * it in slices. The time limit counts the time the steps run, not the time between two slices: `plan.started` moves forward by
+ * every pause.
+ */
+export function* traceLightmapsSteps(plan, tracedSettings) {
   const settings = { ...plan.settings, ...tracedSettings };
   if (settings.backend !== 'cpu') throw new TypeError(`Light bake backend "${settings.backend}" is asynchronous: use bakeLightmapsAsync from light-bake-gpu.js.`);
   const sizes = checkedBakeSize(plan, settings);
   const rasterized = rasterizeEntries(plan, settings);
-  return finishLightmaps(plan, settings, rasterized, gatherOnCpu(plan, settings, rasterized), sizes);
+  yield;
+  const gathered = yield* gatherOnCpuSteps(plan, settings, rasterized);
+  return finishLightmaps(plan, settings, rasterized, gathered, sizes);
 }
