@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createTree, resolveTreePreset } from '../src/vegetation.js';
-import { createLeafPixels, SPRAY_KINDS } from '../src/vegetation-textures.js';
+import { createCoverageMips, createLeafPixels, SPRAY_KINDS } from '../src/vegetation-textures.js';
 import { addLeafSurface, atlasCellRect } from '../src/vegetation-geometry.js';
 import { measureTreeLevels } from '../scripts/tree-proof-lib.mjs';
 
@@ -36,10 +36,6 @@ const CELL_SIZE = ATLAS_SIZE / 2;
 const MAXIMUM_HULL_FILL = 0.75;
 const MAXIMUM_MIP_DRIFT = 0.05;
 const SMALLEST_MIP_SIZE = 16;
-// Below 32 px a thin stalk is under one texel and an alpha test drops it whatever the painter does, so the alpha-tested share is held down to
-// 32 px and the mean alpha, which is what a coverage-preserving alpha test keeps, down to 16 px.
-const SMALLEST_TESTED_MIP_SIZE = 32;
-
 function cross(origin, first, second) {
   return (first[0] - origin[0]) * (second[1] - origin[1]) - (first[1] - origin[1]) * (second[0] - origin[0]);
 }
@@ -76,22 +72,13 @@ function sprayHullFill(pixels, cellIndex) {
   return opaquePoints.length / convexHullArea(opaquePoints);
 }
 
-// Opaque share and mean alpha of the alpha plane at each mip level from the full size down to 16 px, boxed down the way a GPU builds the chain.
-function coverageByMip(pixels) {
-  let alpha = Float32Array.from({ length: ATLAS_SIZE * ATLAS_SIZE }, (_, index) => pixels.data[index * 4 + 3]);
-  const levels = [];
-  for (let size = ATLAS_SIZE; size >= SMALLEST_MIP_SIZE; size /= 2) {
-    levels.push({ opaque: alpha.filter(value => value >= OPAQUE_ALPHA).length / alpha.length, mean: alpha.reduce((sum, value) => sum + value, 0) / alpha.length / 255 });
-    const half = size / 2;
-    const next = new Float32Array(half * half);
-    for (let y = 0; y < half; y++) {
-      for (let x = 0; x < half; x++) {
-        next[y * half + x] = (alpha[2 * y * size + 2 * x] + alpha[2 * y * size + 2 * x + 1] + alpha[(2 * y + 1) * size + 2 * x] + alpha[(2 * y + 1) * size + 2 * x + 1]) / 4;
-      }
-    }
-    alpha = next;
-  }
-  return levels;
+// Opaque share of the alpha plane at each mip level of the card's coverage-preserving chain, from the full size down to 16 px.
+function opaqueShareByMip(pixels) {
+  return createCoverageMips(pixels).filter(level => level.width >= SMALLEST_MIP_SIZE).map(level => {
+    let opaque = 0;
+    for (let offset = 3; offset < level.data.length; offset += 4) if (level.data[offset] >= OPAQUE_ALPHA) opaque++;
+    return opaque / (level.width * level.height);
+  });
 }
 
 for (const kind of SPRAY_KINDS) {
@@ -105,12 +92,9 @@ for (const kind of SPRAY_KINDS) {
         assert.ok(fill <= MAXIMUM_HULL_FILL, `${kind} seed ${seed} spray ${cell} is ${fill.toFixed(2)} opaque inside its hull; leave more gaps`);
         assert.ok(fill > 0.1, `${kind} seed ${seed} spray ${cell} is nearly empty`);
       }
-      const [full, ...smaller] = coverageByMip(atlas);
-      smaller.forEach((level, index) => {
-        const size = ATLAS_SIZE / 2 ** (index + 1);
-        assert.ok(Math.abs(level.mean - full.mean) <= MAXIMUM_MIP_DRIFT, `${kind} seed ${seed} mip ${index + 1} mean alpha is ${level.mean.toFixed(3)} against ${full.mean.toFixed(3)}`);
-        if (size < SMALLEST_TESTED_MIP_SIZE) return;
-        assert.ok(Math.abs(level.opaque - full.opaque) <= MAXIMUM_MIP_DRIFT, `${kind} seed ${seed} mip ${index + 1} is ${level.opaque.toFixed(3)} opaque against ${full.opaque.toFixed(3)}`);
+      const [full, ...smaller] = opaqueShareByMip(atlas);
+      smaller.forEach((share, level) => {
+        assert.ok(Math.abs(share - full) <= MAXIMUM_MIP_DRIFT, `${kind} seed ${seed} mip ${level + 1} is ${share.toFixed(3)} opaque against ${full.toFixed(3)}`);
       });
       // Compare the bytes in one step: a failing deepEqual on 256 KB of pixels prints a diff that can take gigabytes.
       assert.ok(Buffer.from(createLeafPixels(kind, SPRAY_COLOR, seed).data).equals(Buffer.from(atlas.data)), `${kind} painter is deterministic`);
