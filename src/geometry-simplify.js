@@ -9,7 +9,7 @@
 
 import { findNonFiniteVertex } from './triangle-math.js';
 
-const PER_VERTEX_ATTRIBUTES = [['normals', 3], ['uvs', 2], ['lightUvs', 2], ['colors', 3], ['skyVisibility', 1]];
+const PER_VERTEX_ATTRIBUTES = [['normals', 3], ['uvs', 2], ['lightUvs', 2], ['colors', 3], ['skyVisibility', 1], ['tangents', 4]];
 const MINIMUM_NORMAL_AGREEMENT = 0.2;
 const MINIMUM_TRIANGLES = 4;
 /** The most triangles and vertices one geometry may have: the edge map and the heap grow with them. */
