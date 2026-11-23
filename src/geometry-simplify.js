@@ -20,10 +20,12 @@ const MINIMUM_TRIANGLES = 4;
 /** A level counts as missed when it keeps more than this many times its target triangles (#2985). */
 export const SEAM_FALLBACK_OVERSHOOT = 1.25;
 /** The `blendSeams` choices of simplifyGeometry. */
+/** Under `blendSeams: 'auto'`, a geometry where this share of the vertices repeats the position of another (a seam copy) skips the never-blend pass, which would stall on it. */
+export const SEAM_HEAVY_SHARE = 0.3;
 export const BLEND_SEAMS_MODES = Object.freeze(['auto', 'never', 'always']);
 /** How much a uv or normal difference counts against a collapse across a seam, as a share of the bounds diagonal per unit of difference. */
-const SEAM_UV_WEIGHT = 0.05;
-const SEAM_NORMAL_WEIGHT = 0.05;
+const SEAM_UV_WEIGHT = 0.1;
+const SEAM_NORMAL_WEIGHT = 0.005;
 /** The most triangles and vertices one geometry may have: the edge map and the heap grow with them. */
 export const MAXIMUM_SIMPLIFY_TRIANGLES = 2000000;
 export const MAXIMUM_SIMPLIFY_VERTICES = 2000000;
@@ -317,11 +319,11 @@ function boundsDiagonal(positions) {
  * Without it every vertex is its own site and `corners` is the triangle list itself.
  */
 class Collapser {
-  constructor(geometry, { blendSeams = false } = {}) {
+  constructor(geometry, { blendSeams = false, weld: knownWeld = null } = {}) {
     this.geometry = geometry;
     this.blendSeams = blendSeams;
     this.sourceVertexCount = geometry.positions.length / 3;
-    const weld = blendSeams ? weldPositions(geometry.positions) : null;
+    const weld = blendSeams ? knownWeld ?? weldPositions(geometry.positions) : null;
     this.positions = weld ? weld.sitePositions : geometry.positions;
     this.vertexCount = this.positions.length / 3;
     this.triangles = weld ? Uint32Array.from(geometry.indices, vertex => weld.siteOfVertex[vertex]) : Uint32Array.from(geometry.indices);
@@ -628,9 +630,11 @@ export function simplifyGeometry(geometry, options) {
   validateBlendSeams(blendSeams);
   const inputTriangles = geometry.indices.length / 3;
   const allLevels = ratios.map((ratio, index) => index);
-  const keptLevels = blendSeams === 'always' ? new Map() : runLevels(new Collapser(geometry), ratios, inputTriangles, allLevels);
-  const missed = allLevels.filter(index => blendSeams === 'always' || (blendSeams === 'auto' && keptLevels.get(index).triangles > keptLevels.get(index).target * SEAM_FALLBACK_OVERSHOOT));
-  const blendedLevels = missed.length ? runLevels(new Collapser(geometry, { blendSeams: true }), ratios, inputTriangles, missed) : new Map();
+  const welded = blendSeams === 'auto' ? weldPositions(geometry.positions) : null;
+  const seamHeavy = welded !== null && welded.sitePositions.length / 3 < geometry.positions.length / 3 * (1 - SEAM_HEAVY_SHARE);
+  const keptLevels = blendSeams === 'always' || seamHeavy ? new Map() : runLevels(new Collapser(geometry), ratios, inputTriangles, allLevels);
+  const missed = allLevels.filter(index => blendSeams === 'always' || seamHeavy || (blendSeams === 'auto' && keptLevels.get(index).triangles > keptLevels.get(index).target * SEAM_FALLBACK_OVERSHOOT));
+  const blendedLevels = missed.length ? runLevels(new Collapser(geometry, { blendSeams: true, weld: welded }), ratios, inputTriangles, missed) : new Map();
   let largestError = 0;
   return allLevels.map(index => {
     const keepLevel = keptLevels.get(index);
