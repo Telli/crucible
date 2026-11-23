@@ -121,7 +121,7 @@ renderer.userPasses.set([{ name: 'soft', uniforms: { amount: 0.5 }, fragment: `
 renderer.userPasses.set([]); // remove them
 ```
 
-`set` can run every frame. New uniform values do not recompile; a new `fragment` compiles on the next frame. A compile or link error throws from that frame's `render` as an `Error` that carries the driver's log with line numbers mapped to your snippet. The same checks apply as for a recipe, so a snippet that works here works in a recipe.
+`set` can run every frame. New uniform values do not recompile; a new `fragment` compiles on the next frame. A compile or link error throws from that frame's `render` as an `Error` that carries the driver's log with line numbers mapped to your snippet. The same checks apply as for a recipe, so a snippet that works here works in a recipe. Passes that list `objects` or `needs` require `installRenderPasses(renderer)` first; `installUserPasses` then draws the needed render passes (including `objectId`) automatically before the lit frame inside `renderer.render(frame)` unless you already called `renderer.render({ ...frame, pass: 'objectId' })` right before it.
 
 ## Recipe and MCP
 
