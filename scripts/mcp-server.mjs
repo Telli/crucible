@@ -42,6 +42,7 @@ import { loadAskUserFixture, describeAskUserFixture } from './ask-user-fixture.m
 import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
 import { resolvePacksOption } from '../bin/crucible-pack-folder.mjs';
 import { FOLDED_APPLY_OPERATION_TYPES } from '../src/apply-operation-notes.js';
+import { FIT_PARAMETER_NAMES } from '../src/look-fit-parameters.js';
 
 describeSchemaInputsWithReceivedValues();
 
@@ -1019,7 +1020,7 @@ const destroy = { readOnlyHint: false, destructiveHint: true, idempotentHint: fa
 const TOOL_TITLES = {
   scene_capabilities: 'Scene capabilities', scene_create: 'Create scene', scene_asset_catalog: 'Asset catalog', scene_create_asset: 'Create scene from asset',
   scene_inspect: 'Inspect scene', scene_walkmap: 'Walkable map', mesh_inspect: 'Inspect meshes', mesh_edit: 'Edit mesh', mesh_stack: 'Set mesh modifiers',
-  scene_apply: 'Apply scene edits', scene_look: 'Look at scene', scene_ask_user: 'Ask the user to mark the scene', scene_ask_user_submit: 'Send marks from the inline view', scene_review: 'Review camera samples', scene_checkpoint: 'Save checkpoint',
+  scene_apply: 'Apply scene edits', scene_look: 'Look at scene', scene_fit_look: 'Fit the look to reference regions', scene_ask_user: 'Ask the user to mark the scene', scene_ask_user_submit: 'Send marks from the inline view', scene_review: 'Review camera samples', scene_checkpoint: 'Save checkpoint',
   scene_restore: 'Restore checkpoint', scene_release_checkpoint: 'Release checkpoint', scene_export_recipe: 'Export recipe', scene_export_glb: 'Export GLB', scene_export_web: 'Export web game',
   scene_dispose: 'Dispose scene', scene_render_submit: 'Submit render job', scene_render_status: 'Render job status', scene_render_cancel: 'Cancel render job',
   scene_render_result: 'Render job result', scene_render_release: 'Release render job',
@@ -1208,6 +1209,13 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     const metadata = findings ? lookMetadata : metadataWithoutFindings;
     return { content: [{ type: 'image', data, mimeType }, { type: 'text', text: JSON.stringify(metadata) }], structuredContent: metadata };
   });
+  const fitVector = z.tuple([z.number(), z.number(), z.number()]);
+  const fitRect = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+  register('scene_fit_look', 'Fit look parameters to reference colours: least squares over OKLab means of labelled regions, rendering candidates in the preview. Returns scene_apply operations and error per region before and after. The look is restored but the revision advances: use the returned one. Details: scene_capabilities topic fitLook.', z.strictObject({ ...sessionFields,
+    shots: z.array(z.strictObject({ id: z.string().max(48), camera: z.strictObject({ eye: fitVector.optional(), target: fitVector.optional(), fov: z.number().optional() }).optional() })).min(1).max(4),
+    regions: z.array(z.strictObject({ label: z.string().max(48), shot: z.string().max(48), rect: fitRect, exclude: z.array(fitRect).max(4).optional(), lab: fitVector, holdout: z.boolean().optional() })).min(1).max(32),
+    free: z.array(z.strictObject({ parameter: z.enum(FIT_PARAMETER_NAMES), min: z.number().optional(), max: z.number().optional(), start: z.number().optional() })).min(1).max(8),
+    maxIterations: z.number().int().min(1).max(8).optional(), width: z.number().int().min(64).max(512).optional(), height: z.number().int().min(64).max(512).optional() }), edit, async argumentsValue => jsonResult(await runtime.fitLook(argumentsValue)));
   const askUserTool = register('scene_ask_user', 'Open the view in the browser so the person pins points with notes; waits for Send. Use for a change hard to say in words. Returns marks with partId, point, normal, note, and the marked PNG. materialSharedWith: own material first. reviewFile: the text a review page saved, read instead of opening the browser.', z.strictObject({ ...sessionFields, reviewFile: z.string().max(16384).optional().describe('Text of the file a scene_export_web review page saved.'), prompt: z.string().max(200).optional().describe('Line shown above the picture.'), motionTime: z.number().min(0).max(3600).optional(), maxMarks: z.number().int().min(1).max(16).default(16), timeoutSeconds: z.number().int().min(10).max(900).default(300) }), askUser, async argumentsValue => {
     const { content, image, viewMeta } = await runtime.askUser(clientShowsApps ? { ...argumentsValue, inline: true } : argumentsValue);
     return { content: [...(image ? [{ type: 'image', data: image, mimeType: 'image/png' }] : []), { type: 'text', text: JSON.stringify(content) }], ...(viewMeta ? { _meta: { 'crucible/annotate': viewMeta } } : {}) };

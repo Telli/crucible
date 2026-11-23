@@ -44,7 +44,7 @@ async function connect(context, capabilities) {
 test('a host without MCP Apps gets the browser flow, the same tool list and no UI resource (#923)', async context => {
   const { client, record } = await connect(context);
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 25);
+  assert.equal(tools.length, 26);
   assert.equal(tools.find(tool => tool.name === 'scene_ask_user_submit'), undefined);
   assert.equal(tools.find(tool => tool.name === 'scene_ask_user')._meta, undefined);
   const result = await client.callTool({ name: 'scene_ask_user', arguments: {} });

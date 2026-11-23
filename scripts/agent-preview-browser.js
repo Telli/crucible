@@ -1450,6 +1450,20 @@ window.__agentPreview = {
     }
     return { diagnostics: viewProblems(record, record.scene.camera, undefined, { placement: true }) };
   },
+  // One candidate frame for scene_fit_look: edit the live scene, draw it, and return the PNG. The runtime puts the recipe back with
+  // restoreRecipe when the fit ends, so the caller's scene is unchanged apart from its revision counter.
+  fitLookFrame({ sessionId, operations }) {
+    const record = requireSession(sessionId);
+    if (record.asset) throw new TypeError('scene_fit_look supports procedural recipe scenes, not an imported asset scene.');
+    validatePreviewCamera(candidateCamera(record, operations));
+    record.scene.apply(operations, { expectedRevision: record.scene.revision });
+    return this.look({ sessionId });
+  },
+  restoreRecipe({ sessionId, recipe }) {
+    const record = requireSession(sessionId);
+    record.scene.restoreRecipe(recipe, { expectedRevision: record.scene.revision });
+    return mutationStatus(record);
+  },
   // One frame for scene_ask_user: the look, plus the camera it was drawn with so the marks can be turned into rays later.
   annotateFrame({ sessionId, motionTime }) {
     const frame = this.look({ sessionId, motionTime });
