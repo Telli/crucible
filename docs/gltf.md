@@ -154,6 +154,8 @@ renderer.render(camera);
 Translation, rotation, and scale tracks are supported.
 The importer rejects animation poses that become singular or change triangle winding.
 
+To hide one instance of a crowd, set `visible = false` on its parts (all of an asset's `parts`) and skip `applyAnimation` for it. `renderer.updateParts` then draws it nowhere, casts no shadow, and does not check its matrix or skin pose, so a hidden part may keep a zero-scale matrix. A zero-scale matrix on a visible part is still refused with `Singular transform`; hide the part instead. A hidden part's material is still checked.
+
 The current source supports four-influence [GPU skinning](https://crucible.codepawl.com/skinning.md). GPU skinning is available from version `0.4.0`.
 
 Negative skin weights, which three.js and Blender also accept, are clamped to 0 and each vertex is renormalised. A vertex left with no positive weight binds fully to joint 0. `warnings` names the primitive and counts the clamped weights. NaN and Infinity weights still fail.
