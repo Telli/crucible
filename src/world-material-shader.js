@@ -845,6 +845,8 @@ void mossMasks(vec3 normal, float amount, out float sharpMask, out float softMas
     float glintShape = pow(max(dot(normal, halfVector), 0.0), glintSharpness);
     float glintFresnel = 0.02 + 0.98 * pow(1.0 - max(dot(halfVector, viewDirection), 0.0), 5.0);
     radiance += vec3(1.0, 0.9, 0.7) * glintShape * (0.5 + 40.0 * glintFresnel) * 6.0 * keyResponse * (1.0 - waterFoam);
+    // The foam pixel was already lit through its foam albedo above, so its own lit add replaces that light instead of piling on it: foam never outshines a white diffuse surface under the same light.
+    radiance *= 1.0 - waterFoam;
     radiance += mix(vec3(0.85, 0.9, 0.95), waterContactColor, waterContactShare) * waterFoam * (max(dot(normal, normalize(lightDirection)), 0.0) * keyResponse + 0.35 * daylight * ambientIntensity);
     // foamColor tints everything the foam shows: its diffuse, its lit add and any light the foam pixel picked up on the way. White adds exactly zero, so the default is unchanged.
     radiance *= vec3(1.0) + (waterFoamColor - vec3(1.0)) * waterFoam * (1.0 - waterContactShare);

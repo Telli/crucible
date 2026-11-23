@@ -225,3 +225,13 @@ test('foamColor tints the foam through its own uniform, and leaving it out uploa
   assert.deepEqual(foamColorUploads([1, 1, 1]), foamColorUploads(undefined), 'white given equals the default');
   assert.deepEqual(foamColorUploads([0.8, 0.95, 1]), [0.8, 0.95, 1]);
 });
+
+test('foam light replaces the light the foam albedo already got, so foam never outshines a white diffuse surface', () => {
+  const shader = createFragmentShader(['water', 'vertexColors']);
+  const replaceLight = shader.indexOf('radiance *= 1.0 - waterFoam;');
+  const addFoamLight = shader.indexOf('radiance += mix(vec3(0.85, 0.9, 0.95), waterContactColor, waterContactShare) * waterFoam');
+  const tintFoam = shader.indexOf('radiance *= vec3(1.0) + (waterFoamColor - vec3(1.0))');
+  assert.ok(replaceLight > 0, 'the foam pixel drops the light it already had');
+  assert.ok(replaceLight < addFoamLight, 'the foam add comes after the drop, not before it');
+  assert.ok(addFoamLight < tintFoam, 'the tint scales the finished foam pixel');
+});
