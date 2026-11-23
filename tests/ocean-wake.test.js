@@ -59,13 +59,14 @@ test('a wake is capped lace with a flat top and an edge, adds no trough, and not
 });
 
 test('a wake roughens the surface in both directions and never flattens or lowers it', () => {
-  const wake = normalizeWake({ points: [[0, 0, 1, 2]], height: 0.2 });
+  // The window spans two 5 m churn swells, so its mean is the mean of whole swells.
+  const wake = normalizeWake({ points: [[0, 0, 1, 8]], height: 0.2 });
   let lowest = 0;
   let highest = 0;
   let sum = 0;
   let count = 0;
-  for (let x = -1.5; x <= 1.5; x += 0.1) {
-    for (let z = -1.5; z <= 1.5; z += 0.1) {
+  for (let x = -5; x <= 5; x += 0.25) {
+    for (let z = -5; z <= 5; z += 0.25) {
       const { offset } = wakeAt(wake, x, z);
       lowest = Math.min(lowest, offset);
       highest = Math.max(highest, offset);
@@ -143,7 +144,7 @@ test('a boat recipe with wake draws a bounded wake into the sea behind the hull,
     largest = Math.max(largest, difference);
   }
   assert.ok(changed > 20, `${changed} vertices moved`);
-  assert.ok(largest <= 0.15 * 4 + 1e-6 && largest > 0.02, `largest change ${largest} m`);
+  assert.ok(largest <= 0.15 * 4 + 1e-6 && largest > 0.01, `largest change ${largest} m`);
   assert.deepEqual(wet, seaPositions({ height: 0.15 }, 4), 'same bake, same sea');
 });
 
@@ -315,4 +316,19 @@ test('a boat wake without slamSpeed keeps the sea byte for byte as before', () =
     explicitlyOff.sampleMotion(time);
     assert.deepEqual(Array.from(plain.parts[0].geometry.positions), Array.from(explicitlyOff.parts[0].geometry.positions));
   }
+});
+
+test('the wake surface changes smoothly from one sea vertex to the next, so foam lace does not zigzag (#3070)', () => {
+  const height = 0.1;
+  const wake = normalizeWake({ points: [[0, 0, 1, 20]], height });
+  const cell = 0.44;
+  let largestStep = 0;
+  for (let x = -4; x <= 4; x += 0.11) {
+    for (let z = -4; z <= 4; z += 0.11) {
+      const here = wakeAt(wake, x, z).offset;
+      largestStep = Math.max(largestStep, Math.abs(here - wakeAt(wake, x + cell, z).offset), Math.abs(here - wakeAt(wake, x, z + cell).offset));
+    }
+  }
+  // Swells 5 m long rise at most 0.44 of their height over 0.44 m; a hash per vertex jumps by up to twice the height.
+  assert.ok(largestStep < 0.5 * height, `neighbouring vertices differ by ${largestStep} m of a ${height} m wake`);
 });

@@ -586,16 +586,54 @@ export function applyDefaultFloorSky(parts, environment, options = {}) {
   return applyFloorSkyVisibility(parts, { onlyClosedRooms: true, surfaces: 'all', sunDirection: unitSunDirection(environment), ...options });
 }
 
+// Kept per parts list and per what the default reads from the environment (the sun's strength and direction), not per
+// environment object: an edit that never touches the environment still hands the scene a new copy of it (#2806).
+const DEFAULT_RESULTS_PER_PARTS = 8;
 const defaultResults = new WeakMap();
 
-/** The recipe path's call: the default for these parts and this environment, kept until either is replaced. */
-export function stageFloorSky(environment, parts) {
+function skyInputsKey(environment) {
+  return JSON.stringify([environmentHasSun(environment), unitSunDirection(environment)]);
+}
+
+// A retained part keeps the matrix it was drawn with until the commit writes the new pose into it, so a moved node is still
+// where it was while its scene is staged. The room test and the sky rays need it where it is going (#3064).
+function partsAtMatrices(parts, worldMatrixOf) {
+  const matrices = parts.map(part => Float32Array.from(worldMatrixOf(part.name)));
+  const moved = parts.some((part, index) => matrices[index].some((value, element) => value !== part.matrix[element]));
+  const views = moved ? parts.map((part, index) => ({ ...part, matrix: matrices[index] })) : parts;
+  return { views, matrices };
+}
+
+function sameMatrices(first, second) {
+  return first.length === second.length && first.every((matrix, index) => matrix.every((value, element) => value === second[index][element]));
+}
+
+// Hands each part of the result back its own matrix array, which the commit keeps writing the pose into.
+function withOwnMatrices(resultParts, views, parts) {
+  const ownerOfName = new Map(parts.map(part => [part.name, part]));
+  const indexOfView = new Map(views.map((view, index) => [view, index]));
+  return resultParts.map(result => {
+    if (indexOfView.has(result)) return parts[indexOfView.get(result)];
+    const owner = ownerOfName.get(result.name);
+    return owner && result.matrix !== owner.matrix ? Object.freeze({ ...result, matrix: owner.matrix }) : result;
+  });
+}
+
+/** The recipe path's call: the default for these parts, this environment and the matrices they are drawn at, kept until one is replaced. */
+export function stageFloorSky(environment, parts, worldMatrixOf) {
   if (environment.floorSkyTrace === false) return parts;
-  let byEnvironment = defaultResults.get(parts);
-  if (!byEnvironment) {
-    byEnvironment = new WeakMap();
-    defaultResults.set(parts, byEnvironment);
+  const { views, matrices } = partsAtMatrices(parts, worldMatrixOf);
+  let bySun = defaultResults.get(parts);
+  if (!bySun) {
+    bySun = new Map();
+    defaultResults.set(parts, bySun);
   }
-  if (!byEnvironment.has(environment)) byEnvironment.set(environment, applyDefaultFloorSky(parts, environment).parts);
-  return byEnvironment.get(environment);
+  const sunKey = skyInputsKey(environment);
+  const kept = bySun.get(sunKey);
+  if (kept && sameMatrices(kept.matrices, matrices)) return kept.result;
+  const traced = applyDefaultFloorSky(views, environment).parts;
+  const result = traced === views ? parts : Object.freeze(withOwnMatrices(traced, views, parts));
+  if (bySun.size >= DEFAULT_RESULTS_PER_PARTS) bySun.delete(bySun.keys().next().value);
+  bySun.set(sunKey, { matrices, result });
+  return result;
 }

@@ -1,0 +1,1 @@
+- Studio applies a reloaded file, with a node added or removed, to the scene on screen instead of rebuilding it, and builds the side copy it reads the recipe from without ranking its parts, so an agent's reload of a scene with large scans takes a fraction of a second (#2842)

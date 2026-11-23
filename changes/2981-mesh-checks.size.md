@@ -1,0 +1,6 @@
+- entry:gltf+lazy: the opt-in mesh checks, the keep option and the strict-mode hook add about 1.9 KB gzip, almost all in a chunk (`gltf-mesh-checks.js`) that loads only when a call passes `checkMesh` or `strict`; the core keeps the option wiring only (about 300 bytes).
+- entry:model+lazy: same change as entry:gltf+lazy.
+- entry:streaming+lazy: same change as entry:gltf+lazy.
+- scene:gltf-box: the option wiring in the core (about 550 bytes gzip); the checks themselves load on demand.
+- scene:gltf-box+lazy: same change as entry:gltf+lazy.
+- goal:gltf-box: the wiring is what lets an agent ask for mesh counts and a validator pass without a larger core; the 1.4 KB of checks stay out of the bundle until asked for.
