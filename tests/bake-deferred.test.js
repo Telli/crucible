@@ -60,6 +60,8 @@ function reshapedRecipe(recipe) {
   // A changed geometry record is not a difference scene operations express, so the load builds a new scene.
   const blockGeometryId = reshaped.nodes.find(node => node.id === 'block').geometry;
   reshaped.geometries.find(geometry => geometry.id === blockGeometryId).type = 'sphere';
+  // The new scene's own bake is not what this recipe is for, and a room of spheres would bake for a long time.
+  delete reshaped.bake;
   return reshaped;
 }
 
