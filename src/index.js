@@ -10,7 +10,7 @@ export { createEnvironmentMap } from './environment.js';
 export { RENDER_PRESETS, planRenderSize, estimateFrameBytes } from './budget.js';
 
 export { assemblyOffset } from './assembly.js';
-export { cameraView, fitOrthographicHeight, fitPerspectiveDistance } from './camera.js';
+export { cameraView, fitOrthographicHeight, fitPerspectiveDistance, projectToScreen } from './camera.js';
 export { createCameraPath, fovFromFocalLength } from './camera-path.js';
 export { EFFECT_PRESETS, resolveEffects } from './effects.js';
 export { createAnimationClip, sampleAnimationClip, createAnimationPlayer } from './animation.js';
