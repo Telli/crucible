@@ -57,8 +57,9 @@ function recoloured(recipe) {
 
 function reshapedRecipe(recipe) {
   const reshaped = structuredClone(recipe);
-  reshaped.geometries.push({ id: 'ball', type: 'sphere' });
-  reshaped.nodes.find(node => node.id === 'block').geometry = 'ball';
+  // A changed geometry record is not a difference scene operations express, so the load builds a new scene.
+  const blockGeometryId = reshaped.nodes.find(node => node.id === 'block').geometry;
+  reshaped.geometries.find(geometry => geometry.id === blockGeometryId).type = 'sphere';
   return reshaped;
 }
 
