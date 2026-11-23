@@ -102,8 +102,8 @@ export const MATERIAL_GRAPH_NODES = Object.freeze({
   mapping: 'box (default) projects along object axes, no UVs; uv follows geometry UVs. size and axis only apply to box.',
 });
 
-// Recipe textures are opaque patterns, so cutout masking has nothing to cut.
-export const RECIPE_ALPHA_MODES = Object.freeze(['opaque', 'blend', 'add']);
+// mask cuts out where the base colour map alpha is under alphaCutoff (default 0.5).
+export const RECIPE_ALPHA_MODES = Object.freeze(['opaque', 'mask', 'blend', 'add']);
 
 // Named lighting setups (see lighting-setups.js) and the occlusion strength that recipes get when they set none.
 export const LIGHTING_SETUP_NAMES = Object.freeze(['daylight', 'overcast', 'sunset', 'studio']);

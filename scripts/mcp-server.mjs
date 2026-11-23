@@ -231,13 +231,14 @@ const materialFields = {
   emission: nonnegative.optional().describe('Emission multiplier. Backend checks Float32 radiance products.'),
   emissiveColor: z.tuple([nonnegative, nonnegative, nonnegative]).optional().describe('Independent linear RGB emission color.'),
   opacity: unit.optional().describe('Surface opacity. Any value below one draws the material blended (glass, windows, visors).'),
-  alphaMode: z.enum(RECIPE_ALPHA_MODES).optional().describe('blend draws after opaque geometry, sorted back to front; add adds its light to what is behind it.'),
+  alphaMode: z.enum(RECIPE_ALPHA_MODES).optional().describe('mask cuts out where the map alpha is under alphaCutoff (hard edge, crisp shadow); blend draws after opaque geometry, sorted back to front; add adds its light to what is behind it.'),
+  alphaCutoff: unit.optional().describe('With alphaMode mask only: alpha below this is cut out (0.5 default).'),
   doubleSided: z.boolean().optional().describe('Draw and light both faces (thin sheets, leaves, cloth).'),
   aov: z.union([unit, color]).optional(),
 };
 const materialTag = z.enum(['surface', 'unlit', 'liquid', 'foam', 'foliage', 'grass', 'water']).optional().describe('Surface kind; liquid, foam, foliage, grass and water change how it renders: see scene_capabilities materialTags and water.');
 const materialCore = coreOf(materialFields, ['color', 'metallic', 'roughness', 'emission', 'opacity']);
-const materialMore = 'More fields: tag, alphaMode, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics, foamEdge, foamWidth, foamVeins, contactFoam, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors, toonEdge; see scene_capabilities materialFields.';
+const materialMore = 'More fields: tag, alphaMode, alphaCutoff, doubleSided, emissiveColor, map, pattern, subsurface, snippet, wear, retro, waterPreset, absorption, turbidity, caustics, foamEdge, foamWidth, foamVeins, contactFoam, waterRamp and the layers clearcoat, clearcoatRoughness, transmission, thickness, ior, dispersion, attenuationColor, attenuationDistance, sheenColor, sheenRoughness, specular, specularColor, anisotropy, anisotropyRotation, iridescence, iridescenceIor, iridescenceThickness, toon, toonColors, toonEdge; see scene_capabilities materialFields.';
 const materialListed = (strictSchema, description, extraCore) => listed('materialFields', strictSchema, `${description} ${materialMore}`, { ...extraCore, ...materialCore });
 const liquidOptics = z.strictObject({
   thickness: z.number().min(0).max(100).optional().describe('Metres of liquid where it faces the camera.'),

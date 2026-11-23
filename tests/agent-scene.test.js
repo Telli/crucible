@@ -113,7 +113,7 @@ test('recipes author liquid, foam and blended glass with batch-safe material han
   const blended = session.parts.find(part => part.name === 'child').material;
   assert.notEqual(blended, finishMaterial, 'blending changes the batch, so the part is replaced');
   assert.equal(blended.alphaMode, 'blend');
-  assert.throws(() => session.apply([{ type: 'set-material', id: 'finish', alphaMode: 'mask' }], { expectedRevision: 2 }), /alphaMode/);
+  assert.throws(() => session.apply([{ type: 'set-material', id: 'finish', alphaMode: 'multiply' }], { expectedRevision: 2 }), /alphaMode/);
   assert.throws(() => session.apply([{ type: 'set-environment', environment: { liquid: { ior: 9 } } }], { expectedRevision: 2 }), /liquid\.ior/);
   assert.throws(() => session.apply([{ type: 'set-environment', environment: { liquid: { depth: 1 } } }], { expectedRevision: 2 }), /Unknown liquid/);
 });
@@ -650,7 +650,7 @@ test("recipe materials accept alphaMode 'add' and keep it when opacity is below 
   assert.equal(exported.materials.find(material => material.id === 'spark').alphaMode, 'add');
   assert.equal(exported.materials.find(material => material.id === 'faint spark').alphaMode, 'add');
   input.materials.push({ id: 'bad', color: [1, 1, 1], alphaMode: 'multiply' });
-  assert.throws(() => createAgentScene(input), /alphaMode: got .*; expected one of opaque, blend, add/);
+  assert.throws(() => createAgentScene(input), /alphaMode: got .*; expected one of opaque, mask, blend, add/);
 });
 
 function geometryBytes(session) {
@@ -765,4 +765,35 @@ test('field errors never print an empty list of choices', () => {
   const session = createAgentScene({ format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] });
   assert.throws(() => session.apply([{ type: 'add-node', node: { id: 'a', geometry: 'box', material: 'm' } }], { expectedRevision: 0 }),
     error => !/expected one of \./.test(error.message) && /none is defined yet/.test(error.message));
+});
+
+test('recipe materials cut out with alphaMode mask and a bounded alphaCutoff', () => {
+  const input = recipe();
+  input.materials.push({ id: 'leaf', color: [0.2, 0.6, 0.2], alphaMode: 'mask', alphaCutoff: 0.3 });
+  input.materials.push({ id: 'fence', color: [0.5, 0.4, 0.3], alphaMode: 'mask' });
+  const session = createAgentScene(input);
+  const exported = session.exportRecipe();
+  assert.equal(exported.materials.find(material => material.id === 'leaf').alphaCutoff, 0.3);
+  assert.equal(exported.materials.find(material => material.id === 'fence').alphaCutoff, 0.5, 'the default cutoff is 0.5');
+  assert.equal(exported.materials.find(material => material.id === 'finish').alphaCutoff, undefined, 'other materials carry no cutoff');
+  assert.equal(createAgentScene(exported).exportRecipe().materials.find(material => material.id === 'leaf').alphaCutoff, 0.3, 'the cutoff survives a round trip');
+  for (const alphaCutoff of [-0.1, 1.5]) {
+    assert.throws(() => createAgentScene({ ...input, materials: [{ id: 'bad', alphaMode: 'mask', alphaCutoff }] }), /alphaCutoff: got .*; expected a number from 0 to 1/);
+  }
+  assert.throws(() => createAgentScene({ ...input, materials: [{ id: 'bad', alphaCutoff: 0.5 }] }), /alphaCutoff: got 0.5; expected omitted, or set alphaMode to "mask"/);
+  assert.throws(() => createAgentScene({ ...input, materials: [{ id: 'bad', alphaMode: 'blend', alphaCutoff: 0.5 }] }), /alphaCutoff/);
+});
+
+test('a masked recipe material reaches the renderer with its cutoff and edits replace the batch', () => {
+  const input = recipe();
+  input.materials.push({ id: 'leaf', color: [0.2, 0.6, 0.2], alphaMode: 'mask', alphaCutoff: 0.3 });
+  input.nodes.push({ id: 'card', geometry: 'box', material: 'leaf' });
+  const session = createAgentScene(input);
+  const before = session.parts.find(part => part.name === 'card').material;
+  assert.equal(before.alphaMode, 'mask');
+  assert.equal(before.alphaCutoff, 0.3);
+  session.apply([{ type: 'set-material', id: 'leaf', alphaCutoff: 0.7 }], { expectedRevision: 0 });
+  const after = session.parts.find(part => part.name === 'card').material;
+  assert.equal(after.alphaCutoff, 0.7);
+  assert.notEqual(after, before, 'the cutoff is batch state, so the part is replaced');
 });
