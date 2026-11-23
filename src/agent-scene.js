@@ -2227,7 +2227,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       return { reflected: null, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, baked), { rest: true }) };
     }
     const reflected = stageObjectReflections(recipe, sourceRestParts, baked, graph);
-    return { reflected, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked, graph)), { rest: true }) };
+    return { reflected, restParts: stageWetMirror(recipe, stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked, graph)), { rest: true })) };
   }
 
   // bake.rebake: a frame sampled at a pose the bake was not traced at is lit by a bake of that pose, cached by its key.
@@ -2279,6 +2279,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     objectReflectionCache = agentSceneModule('reflections').stageObjectReflections(objectReflectionCache, recipe, sourceRestParts, drawnParts, graph, agentEnvironmentMap(recipe.environment));
     skippedReflections = objectReflectionCache.skipped;
     return objectReflectionCache.result;
+  }
+
+  // Wet ground with puddles mirrors the scene in them: the water mirror module flags the flat ground parts, and the host attaches the mirror.
+  function stageWetMirror(recipe, parts) {
+    const environment = recipe.environment;
+    return environment.wetness > 0 && environment.puddles && agentSceneModuleActive('waterReflection', requestedModules) ? agentSceneModule('waterReflection').flagWetMirrorParts(parts) : parts;
   }
 
   // A closed room a sun lights gets the sky each floor texel sees; the lazy module decides, keeps its result and honours environment.floorSkyTrace.
@@ -2785,7 +2791,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           knownKeys(operation, ['type', lookField], 'operation');
           const patch = operation[lookField];
           // Spot and area lights, cascades and sun links are absent from a recipe until it sets them.
-          const optionalFields = lookField === 'environment' ? ['ground', 'spotLights', 'areaLights', 'shadowCascades', 'localVolumes', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'hdri', 'keyFromHdri', 'sky'] : lookField === 'effects' ? postStepSupport.fields : lookField === 'shadow' ? ['hard'] : [];
+          const optionalFields = lookField === 'environment' ? ['ground', 'spotLights', 'areaLights', 'shadowCascades', 'localVolumes', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'hdri', 'keyFromHdri', 'sky', 'wetness', 'puddles'] : lookField === 'effects' ? postStepSupport.fields : lookField === 'shadow' ? ['hard'] : [];
           knownKeys(patch, [...Object.keys(candidate[lookField]), ...optionalFields], lookField);
           requireChange(Object.keys(patch).length > 0, operation, [...Object.keys(candidate[lookField]), ...optionalFields]);
           const { kept: keptPatch, cleared: clearedFields } = splitClearedLookPatch(lookField, patch);

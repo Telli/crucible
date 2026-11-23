@@ -23,6 +23,7 @@ const MODULE_LOADERS = {
   bake: () => import('./agent-bake.js'),
   bakeDeferred: () => import('./agent-bake-deferred.js'),
   reflections: () => import('./agent-reflections.js'),
+  waterReflection: () => import('./water-reflection.js'),
   patterns: () => import('./material-patterns.js'),
   relations: () => import('./agent-relations.js'),
   timeline: () => import('./film-timeline.js'),
@@ -101,6 +102,8 @@ const MODULE_MARKERS = {
   bakeDeferred: ['"bake":{'],
   // A metallic value of 0.5 or more may make a part reflective; the module skips a scene that has no smooth one.
   reflections: [/"metallic":(0\.[5-9]|1(?![0-9]))/],
+  // Wet ground mirrors the scene in its puddles through the water mirror (src/water-reflection.js).
+  waterReflection: ['"puddles":'],
   patterns: ['"pattern"'],
   relations: ['"relations":'],
   timeline: ['"timeline":{'],

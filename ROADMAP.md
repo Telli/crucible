@@ -65,6 +65,7 @@ Ideas that nobody is working on live here instead of as open issues, so the issu
 
 ### Agent surface
 
+- Rain-night wet streets: long vertical streak reflections of lights on soaked roads (from #2874)
 - Recipe performance budget with warnings and fixes (#2882)
 - scene_compare: compare a render with a reference photo (#2880)
 - Turntable preset for scene_review (#2878)
