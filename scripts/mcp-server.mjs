@@ -43,6 +43,7 @@ import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mj
 import { resolvePacksOption } from '../bin/crucible-pack-folder.mjs';
 import { FOLDED_APPLY_OPERATION_TYPES } from '../src/apply-operation-notes.js';
 import { FIT_PARAMETER_NAMES } from '../src/look-fit-parameters.js';
+import { REVIEW_CAMERA_FIELDS } from './agent-review.mjs';
 
 describeSchemaInputsWithReceivedValues();
 
@@ -1259,7 +1260,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
     shots: z.array(z.strictObject({
       label: z.string().max(48).optional(),
       ...reviewBranchField,
-      camera: z.strictObject(cameraFields).optional(),
+      camera: z.strictObject(coreOf(cameraFields, REVIEW_CAMERA_FIELDS)).optional(),
       animation: z.strictObject({ clip: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), time: z.number().min(0).max(3600) }).optional(),
       motionTime: z.number().min(0).max(3600).nullable().optional(),
       rendererTime: z.number().min(0).max(3600).optional(),

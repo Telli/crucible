@@ -3,7 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
+import { readFileSync } from 'node:fs';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
+import { REVIEW_CAMERA_FIELDS } from '../scripts/agent-review.mjs';
 import { AGENT_SCENE_CAPABILITIES, createAgentScene } from '../src/agent-scene.js';
 import { MATERIAL_PATTERN_TYPES } from '../src/agent-scene-capabilities.js';
 import { MESH_EDIT_OPERATIONS, STACK_OPERATIONS } from '../src/mesh-operations.js';
@@ -121,4 +123,15 @@ test('the effects and ambientOcclusion topics both give the ambient occlusion de
   const effectsText = JSON.stringify(await topic(client, 'effects'));
   assert.match(effectsText, /Default 0 \(off\) when unset/);
   assert.doesNotMatch(effectsText, /0\.7/);
+});
+
+test('scene_review camera schema matches the accepted review camera fields and materials skill documents mask mode', async context => {
+  const client = await connectClient(context);
+  const { tools } = await client.listTools();
+  const reviewTool = tools.find(tool => tool.name === 'scene_review');
+  const shotCameraProperties = reviewTool.inputSchema.properties.shots.items.properties.camera.properties;
+  assert.deepEqual(Object.keys(shotCameraProperties).sort(), [...REVIEW_CAMERA_FIELDS].sort());
+  const materialsSkill = readFileSync(new URL('../skills/build-crucible-scene/references/materials.md', import.meta.url), 'utf8');
+  assert.match(materialsSkill, /alphaCutoff/);
+  assert.doesNotMatch(materialsSkill, /has no `mask` mode/i);
 });
