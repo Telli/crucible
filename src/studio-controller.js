@@ -916,6 +916,9 @@ export function createStudioController({
     stopWatchingFlush();
     // A drag in progress belongs to the scene it began on.
     dragState = null;
+    if (currentScene !== scene) {
+      currentScene.cancelBake?.();
+    }
     currentScene = scene;
     showEditsBeforeTheirBake(scene);
     settleSelectionAndMotion();
@@ -2758,6 +2761,7 @@ export function createStudioController({
       return currentScene.exportRecipe();
     },
     dispose() {
+      currentScene.cancelBake?.();
       stopWatchingFlush();
       invalidateQuery();
     },

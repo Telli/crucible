@@ -2497,6 +2497,8 @@ export function createStudio(container, {
     if (contextLost) {
       throw new Error(CONTEXT_LOST_MESSAGE);
     }
+    // A still has the light a fresh build has, so a bake that is still running finishes first.
+    controller.settleBake();
     capturingStill = true;
     try {
       renderPass();

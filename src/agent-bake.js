@@ -9,6 +9,7 @@ import { placeProbes } from './reflection-probes.js';
 import { normalizeIrradianceGrid, placeIrradianceGrid, traceIrradianceGrid, withMeanRadiance } from './irradiance-grid.js';
 import { meanSkyRadiance } from './grid-medium.js';
 import { knownKeys, finiteNumber } from './agent-recipe-checks.js';
+import { environmentLinksLights } from './agent-look.js';
 import { BAKE_PRESETS, BAKE_RANGES, BAKE_MAXIMUM_SECONDS, BAKE_WORKER_MAXIMUM_SECONDS, BAKE_PRESET_PATH_WORK, BAKE_EXPLICIT_PATH_WORK_LIMIT } from './agent-scene-capabilities.js';
 
 const PRESET_SAMPLES_FLOOR = 16;
@@ -437,60 +438,70 @@ export function* deferredBakeSteps({ parts, snapshots, lighting, settings }) {
 }
 
 // The parts an edit shows while its bake runs, when the last light is kept: a part the edit left as it was keeps the part the
-// scene drew before (its baked light, floor sky and reflections), and a part it changed is drawn without light.
-function partsKeepingLastLight(sourceRestParts, previous) {
+// scene drew before (its baked light, floor sky and reflections). A part whose mesh changed, or whose material changed, is
+// drawn without light, because the old light has the old shape or the old colour in it.
+function partsKeepingLastLight(sourceRestParts, previous, unlitNames) {
   const previousSource = new Map(previous.sourceRestParts.map(part => [part.name, part]));
   const previousDrawn = new Map(previous.restParts.map(part => [part.name, part]));
-  return Object.freeze(sourceRestParts.map(part => (previousSource.get(part.name) === part ? previousDrawn.get(part.name) ?? part : part)));
+  return Object.freeze(sourceRestParts.map(part => (previousSource.get(part.name) === part && !unlitNames.has(part.name) ? previousDrawn.get(part.name) ?? part : part)));
+}
+
+function nodesOfChangedMaterials(recipe, stagedMaterialSnapshots) {
+  const changed = new Set();
+  for (const { id, holder, snapshot } of stagedMaterialSnapshots) {
+    const before = contentFingerprint(holder.snapshot);
+    if (before === null || before !== contentFingerprint(snapshot)) {
+      changed.add(id);
+    }
+  }
+  return new Set(recipe.nodes.filter(node => changed.has(node.material)).map(node => node.id));
 }
 
 /**
- * The bake of an edit that does not wait for it (#3052). `stage` answers like a bake that has not finished: the parts to show now
- * and a plan; `adopt` runs the plan of the edit that committed, in slices of a few milliseconds on the same thread, and drops
- * the plan of an edit that came before; `settle` finishes it now. A second edit that changes nothing the bake reads keeps the
- * running plan. `onSettled(plan, { baked, refusal })` is the scene's turn to swap the baked parts in.
+ * The bake of an edit that does not wait for it (#3052). `settling` is the scene's own record: `settling.pending` is the plan
+ * of the bake that is running. `stageSettling` answers like a bake that has not finished: the parts to show now and a plan. A
+ * second edit that changes nothing the bake reads keeps the running plan.
  */
-export function createSettlingBake() {
-  let pending = null;
-  return {
-    get pending() {
-      return pending !== null;
+export function stageSettling(settling, mode, { key, recipe, sourceRestParts, worldMatrices, generatedGeometryGenerators, stagedMaterialSnapshots, lightBake, state }) {
+  const keeps = settling.pending?.key === key && settling.pending.sourceRestParts === sourceRestParts;
+  const prepare = () => withStagedMaterials(stagedMaterialSnapshots, () => prepareDeferredBake(sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators));
+  const plan = keeps ? settling.pending : { key, sourceRestParts, prepared: prepare(), runner: null };
+  const keepsLastLight = mode === 'previous' && !environmentLinksLights(recipe.environment);
+  const parts = keepsLastLight ? partsKeepingLastLight(sourceRestParts, state, nodesOfChangedMaterials(recipe, stagedMaterialSnapshots)) : sourceRestParts;
+  return { pending: true, plan, parts, report: { ...lightBake?.report, pending: true }, reused: false };
+}
+
+/**
+ * Runs the plan of the edit that committed, in slices of a few milliseconds on the same thread, and drops the plan of an edit
+ * that came before. `onSettled(plan, outcome)` is the scene's turn to swap the baked parts in.
+ */
+export function adoptSettling(settling, plan, onSettled) {
+  if (plan === settling.pending) {
+    return;
+  }
+  settling.pending?.runner.cancel();
+  settling.pending = null;
+  if (!plan) {
+    return;
+  }
+  settling.pending = plan;
+  plan.runner = createFlushSearchRunner({
+    steps: deferredBakeSteps(plan.prepared),
+    onDone: outcome => {
+      settling.pending = null;
+      onSettled(plan, outcome);
     },
-    stage(key, sourceRestParts, lastReport, previous, keepLastLight, prepare) {
-      const keeps = pending?.key === key && pending.sourceRestParts === sourceRestParts;
-      const plan = keeps ? pending : { key, sourceRestParts, prepared: prepare(), runner: null };
-      const parts = keepLastLight ? partsKeepingLastLight(sourceRestParts, previous) : sourceRestParts;
-      return { pending: true, plan, parts, report: { ...lastReport, pending: true }, reused: false };
+    onFailure: () => {
+      settling.pending = null;
     },
-    adopt(plan, onSettled) {
-      if (plan === pending) {
-        return;
-      }
-      pending?.runner.cancel();
-      pending = null;
-      if (!plan) {
-        return;
-      }
-      pending = plan;
-      plan.runner = createFlushSearchRunner({
-        steps: deferredBakeSteps(plan.prepared),
-        onDone: outcome => {
-          pending = null;
-          onSettled(plan, outcome);
-        },
-        onFailure: () => {
-          pending = null;
-        },
-      });
-    },
-    settle() {
-      if (!pending) {
-        return false;
-      }
-      pending.runner.drain();
-      return true;
-    },
-  };
+  });
+}
+
+/** What the scene keeps once a plan's bake is done: the bake (null when a limit stopped it), why it was skipped and its report. */
+export function settledBake(plan, { baked, refusal }, recipe) {
+  const lightBake = baked ? { key: plan.key, currentKey: plan.key, sourceRestParts: plan.sourceRestParts, parts: baked.parts, report: baked.report } : null;
+  const report = baked ? withLocalVolumeReport({ ...baked.report, reused: false }, recipe.environment.localVolumes) : null;
+  return { lightBake, bakeSkipped: refusal ?? null, bakeReport: report };
 }
 
 // Only the lightmap trace has checkpoints inside it; the grid and the probes run as one step each.

@@ -54,6 +54,13 @@ function recoloured(recipe) {
   return changed;
 }
 
+function reshapedRecipe(recipe) {
+  const reshaped = structuredClone(recipe);
+  reshaped.geometries.push({ id: 'ball', type: 'sphere' });
+  reshaped.nodes.find(node => node.id === 'block').geometry = 'ball';
+  return reshaped;
+}
+
 function controllerWith(mode, onChange) {
   clearBakeReuse();
   return createStudioController({ scene: createAgentScene(bakedRoom()), viewportWidth: 800, viewportHeight: 600, bakeWhileSettling: mode, onChange });
@@ -107,12 +114,12 @@ test('a part whose mesh changed is drawn unbaked while the rest keep their light
   assert.deepEqual(bakedBytes(kept), freshBytes(kept.exportRecipe()));
 });
 
-test('a recolour shows at once with the light of the old colour, and the bake corrects it when it lands', () => {
+test('a recolour draws the parts of that material unlit at once, because their old light has the old colour in it', () => {
   const controller = controllerWith('previous');
-  const lightedBefore = lightedPartNames(controller.scene);
+  assert.ok(lightedPartNames(controller.scene).length > 1);
   controller.loadRecipe(recoloured(controller.exportRecipe()));
   assert.equal(controller.bakePending, true);
-  assert.deepEqual(lightedPartNames(controller.scene), lightedBefore);
+  assert.deepEqual(lightedPartNames(controller.scene), ['bulb'], 'only the lamp, which is not the recoloured material, keeps its light');
   controller.settleBake();
   assert.deepEqual(bakedBytes(controller.scene), freshBytes(controller.exportRecipe()));
 });
@@ -197,4 +204,18 @@ test('a bake a size limit stops comes back as a refusal, not an error nobody can
   const outcome = drainSteps(deferredBakeSteps(prepared));
   assert.match(outcome.refusal, /takes from 1 to/);
   assert.equal(outcome.baked, undefined);
+});
+
+test('disposing the controller, or loading a scene that replaces it, drops the bake nobody draws any more', () => {
+  const disposed = controllerWith('previous');
+  const disposedScene = disposed.scene;
+  disposed.loadRecipe(movedBlock(disposed.exportRecipe()));
+  assert.equal(disposedScene.bakePending, true);
+  disposed.dispose();
+  assert.equal(disposedScene.bakePending, false);
+  const replaced = controllerWith('previous');
+  const replacedScene = replaced.scene;
+  replaced.loadRecipe(movedBlock(replaced.exportRecipe()));
+  replaced.loadRecipe(reshapedRecipe(replaced.exportRecipe()));
+  assert.equal(replacedScene.bakePending, false, 'a recipe that needs a new scene builds it and drops the old one');
 });
