@@ -5,9 +5,9 @@ You say where the regions are and what colour each should be. The tool renders c
 
 ## What goes in
 
-- `shots`: one to four views, each with a `name` and an optional `camera` (`eye`, `target`, `up`, `fov` or `focalLength`). A shot without a camera uses the scene camera.
+- `shots`: one to four views, each with an `id` and an optional `camera` (`eye`, `target`, `up`, `fov` or `focalLength`). A shot without a camera uses the scene camera.
 - `regions`: one to 32 boxes. Each has a `label`, the `shot` it is measured in, a `rect` `[x0, y0, x1, y1]` in 0..1 image coordinates (y down), up to four `exclude` boxes inside it, and `lab`, the OKLab mean `[L, a, b]` of that region in the reference frame. `holdout: true` reports a region without fitting it, so you can see how well the fit carries over to a frame it never saw.
-- `parameters`: one to eight names with optional `min`, `max` and `start`. Without `start` the scene's own value is used.
+- `free`: one to eight entries, each a `parameter` name with optional `min`, `max` and `start`. Without `start` the scene's own value is used.
 - `maxIterations` (1 to 8, default 6) and `width` and `height` of the measuring renders (64 to 512, default 256 by 160).
 
 The tool reads no image files and no URLs. Measure the reference regions yourself and pass the means: OKLab is the Ottosson 2020 transform of linear sRGB, and a region's mean is taken over the middle 60 percent of its pixels by lightness, so a stray speck does not move it. The tool measures the render the same way.

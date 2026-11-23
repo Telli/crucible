@@ -20,9 +20,9 @@ async function connect(context, runtime) {
 }
 
 const validArguments = () => ({
-  shots: [{ name: 'coast', camera: { eye: [0, 2, 8], target: [0, 1, 0], fov: 45 } }],
+  shots: [{ id: 'coast', camera: { eye: [0, 2, 8], target: [0, 1, 0], fov: 45 } }],
   regions: [{ label: 'high sky', shot: 'coast', rect: [0.3, 0.02, 0.7, 0.15], lab: [0.72, -0.03, -0.08] }],
-  parameters: [{ name: 'keyIntensity', min: 0.5, max: 3 }],
+  free: [{ parameter: 'keyIntensity', min: 0.5, max: 3 }],
 });
 
 test('scene_fit_look passes the scene id and the arguments to the runtime and returns its result as JSON', async context => {
@@ -38,7 +38,7 @@ test('scene_fit_look passes the scene id and the arguments to the runtime and re
   const result = await client.callTool({ name: 'scene_fit_look', arguments: validArguments() });
   assert.equal(result.isError, undefined);
   assert.equal(calls[0].sessionId, 'scene-1');
-  assert.equal(calls[0].parameters[0].name, 'keyIntensity');
+  assert.equal(calls[0].free[0].parameter, 'keyIntensity');
   assert.equal(JSON.parse(result.content[0].text).revision, 12);
 });
 
@@ -48,7 +48,7 @@ test('scene_fit_look rejects unbounded counts, unknown parameters and extra fiel
   const region = validArguments().regions[0];
   const rejects = [
     { shots: [] },
-    { shots: Array.from({ length: 5 }, (_, index) => ({ name: `shot ${index}` })) },
+    { shots: Array.from({ length: 5 }, (_, index) => ({ id: `shot ${index}` })) },
     { regions: Array.from({ length: 33 }, (_, index) => ({ ...region, label: `region ${index}` })) },
     { regions: [{ ...region, rect: [0, 0, 1] }] },
     { regions: [{ ...region, imagePath: 'C:/reference.png' }] },

@@ -55,15 +55,15 @@ function normalizeCamera(camera, path) {
 }
 
 function normalizeShots(shots) {
-  const entries = requireList(shots, 'shots', 1, FIT_LOOK_LIMITS.maximumShots, '[{ "name": "coast", "camera": { "eye": [0, 2, 8], "target": [0, 1, 0] } }]');
+  const entries = requireList(shots, 'shots', 1, FIT_LOOK_LIMITS.maximumShots, '[{ "id": "coast", "camera": { "eye": [0, 2, 8], "target": [0, 1, 0] } }]');
   const names = new Set();
   return entries.map((shot, index) => {
     const path = `shots[${index}]`;
-    if (typeof shot?.name !== 'string' || !LABEL_PATTERN.test(shot.name) || names.has(shot.name)) {
-      throw invalidField(`${path}.name`, shot?.name, 'a name of 1 to 48 letters, digits, spaces, dots, dashes or underscores that no other shot uses, such as "coast"', TypeError);
+    if (typeof shot?.id !== 'string' || !LABEL_PATTERN.test(shot.id) || names.has(shot.id)) {
+      throw invalidField(`${path}.id`, shot?.id, 'an id of 1 to 48 letters, digits, spaces, dots, dashes or underscores that no other shot uses, such as "coast"', TypeError);
     }
-    names.add(shot.name);
-    return { name: shot.name, camera: normalizeCamera(shot.camera, `${path}.camera`) };
+    names.add(shot.id);
+    return { name: shot.id, camera: normalizeCamera(shot.camera, `${path}.camera`) };
   });
 }
 
@@ -94,34 +94,34 @@ function startValueFor(entry, definition, recipe, path) {
   if (held !== undefined) return Math.min(entry.max, Math.max(entry.min, held));
   if (definition.neutral !== undefined) return Math.min(entry.max, Math.max(entry.min, definition.neutral));
   if (definition.path[0] === 'sky') {
-    throw invalidField(`${path}.start`, undefined, `a start value, since the scene's sky does not set ${entry.name}`);
+    throw invalidField(`${path}.start`, undefined, `a start value, since the scene's sky does not set ${entry.parameter}`);
   }
   return (entry.min + entry.max) / 2;
 }
 
-function normalizeParameters(parameters, recipe) {
-  const entries = requireList(parameters, 'parameters', 1, FIT_LOOK_LIMITS.maximumParameters, '[{ "name": "sunElevation", "min": 3, "max": 40 }, { "name": "keyIntensity", "min": 0.5, "max": 3 }]');
+function normalizeParameters(free, recipe) {
+  const entries = requireList(free, 'free', 1, FIT_LOOK_LIMITS.maximumParameters, '[{ "parameter": "sunElevation", "min": 3, "max": 40 }, { "parameter": "keyIntensity", "min": 0.5, "max": 3 }]');
   const names = new Set();
   return entries.map((entry, index) => {
-    const path = `parameters[${index}]`;
-    const definition = fitParameterDefinition(entry?.name);
-    if (names.has(entry.name)) throw invalidField(`${path}.name`, entry.name, 'a parameter name listed once');
-    names.add(entry.name);
+    const path = `free[${index}]`;
+    const definition = fitParameterDefinition(entry?.parameter, `${path}.parameter`);
+    if (names.has(entry.parameter)) throw invalidField(`${path}.parameter`, entry.parameter, 'a parameter listed once');
+    names.add(entry.parameter);
     if (definition.path[0] === 'sky' && !recipeHasPhysicalSky(recipe)) {
-      throw invalidField(`${path}.name`, entry.name, 'a parameter the scene can move: it has no physical sky, so apply set-environment with a sky such as { "type": "physical", "sunElevation": 20 } first, or fit keyIntensity, ambientIntensity and the grade');
+      throw invalidField(`${path}.parameter`, entry.parameter, 'a parameter the scene can move: it has no physical sky, so apply set-environment with a sky such as { "type": "physical", "sunElevation": 20 } first, or fit keyIntensity, ambientIntensity and the grade');
     }
     const min = entry.min ?? definition.min;
     const max = entry.max ?? definition.max;
     if (!Number.isFinite(min) || !Number.isFinite(max) || min < definition.min || max > definition.max || min >= max) {
-      throw invalidField(`${path}.min/max`, [entry.min, entry.max], `min below max inside ${definition.min} to ${definition.max} for ${entry.name}`);
+      throw invalidField(`${path}.min/max`, [entry.min, entry.max], `min below max inside ${definition.min} to ${definition.max} for ${entry.parameter}`);
     }
-    const bounds = { name: entry.name, min, max, start: entry.start };
+    const bounds = { name: entry.parameter, min, max, start: entry.start };
     const start = startValueFor(bounds, definition, recipe, path);
     if (!Number.isFinite(start) || start < min || start > max) {
       throw invalidField(`${path}.start`, start, `a number from ${min} to ${max}`);
     }
     const prior = definition.neutral === undefined ? undefined : { value: Math.min(max, Math.max(min, definition.neutral)), weight: GRADE_PRIOR_WEIGHT };
-    return { name: entry.name, stage: definition.stage, min, max, start, ...(prior ? { prior } : {}) };
+    return { name: entry.parameter, stage: definition.stage, min, max, start, ...(prior ? { prior } : {}) };
   });
 }
 
@@ -139,7 +139,7 @@ function normalizeSize(input) {
 /** Checks the arguments of scene_fit_look against the scene's recipe and returns what the fit runs on. */
 export function normalizeFitLookInput(input, recipe) {
   if (input === null || typeof input !== 'object') {
-    throw invalidField('arguments', input, 'an object with shots, regions and parameters', TypeError);
+    throw invalidField('arguments', input, 'an object with shots, regions and free', TypeError);
   }
   const shots = normalizeShots(input.shots);
   const regions = normalizeRegions(input.regions, shots.map(shot => shot.name));
@@ -154,5 +154,5 @@ export function normalizeFitLookInput(input, recipe) {
   if (!Number.isInteger(maximumIterations) || maximumIterations < 1 || maximumIterations > FIT_LOOK_LIMITS.maximumIterations) {
     throw invalidField('maxIterations', maximumIterations, `an integer from 1 to ${FIT_LOOK_LIMITS.maximumIterations}`);
   }
-  return { shots, regions, parameters: normalizeParameters(input.parameters, recipe), maximumIterations, ...normalizeSize(input) };
+  return { shots, regions, parameters: normalizeParameters(input.free, recipe), maximumIterations, ...normalizeSize(input) };
 }

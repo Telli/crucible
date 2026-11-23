@@ -26,10 +26,10 @@ export const FIT_PARAMETERS = Object.freeze({
 
 export const FIT_PARAMETER_NAMES = Object.freeze(Object.keys(FIT_PARAMETERS));
 
-export function fitParameterDefinition(name) {
+export function fitParameterDefinition(name, path = 'free[].parameter') {
   const definition = Object.hasOwn(FIT_PARAMETERS, name) ? FIT_PARAMETERS[name] : undefined;
   if (!definition) {
-    throw invalidField('parameters[].name', name, `one of ${FIT_PARAMETER_NAMES.join(', ')}`, TypeError);
+    throw invalidField(path, name, `one of ${FIT_PARAMETER_NAMES.join(', ')}`, TypeError);
   }
   return definition;
 }

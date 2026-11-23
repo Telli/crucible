@@ -125,9 +125,9 @@ test('OKLab of white is lightness 1 and of black is 0, and a region outside the 
 
 const recipeWithSky = { camera: { eye: [0, 2, 8], target: [0, 1, 0], up: [0, 1, 0], fov: 45 }, environment: { keyIntensity: 1.2, sky: { type: 'physical', sunElevation: 20, turbidity: 3 } }, effects: { exposure: 1 } };
 const validInput = () => ({
-  shots: [{ name: 'coast' }],
+  shots: [{ id: 'coast' }],
   regions: [{ label: 'high sky', shot: 'coast', rect: [0.3, 0.02, 0.7, 0.15], lab: [0.72, -0.03, -0.08] }],
-  parameters: [{ name: 'sunElevation', min: 3, max: 40 }, { name: 'keyIntensity' }, { name: 'exposure' }],
+  free: [{ parameter: 'sunElevation', min: 3, max: 40 }, { parameter: 'keyIntensity' }, { parameter: 'exposure' }],
 });
 
 test('valid input is normalised: starts come from the recipe, the grade gets a neutral prior', () => {
@@ -146,14 +146,14 @@ test('boundary errors say what to pass', () => {
     [input => { input.regions[0].rect = [0.7, 0.1, 0.3, 0.2]; }, /regions\[0\]\.rect.*x0 < x1 and y0 < y1/],
     [input => { input.regions[0].lab = [3, 0, 0]; }, /regions\[0\]\.lab.*OKLab/],
     [input => { input.regions.push({ ...input.regions[0] }); }, /regions\[1\]\.label.*no other region uses/],
-    [input => { input.parameters[0].name = 'sunAngle'; }, /parameters\[\]\.name: got "sunAngle"; expected one of sunElevation/],
-    [input => { input.parameters[0].max = 95; }, /parameters\[0\]\.min\/max.*inside -10 to 90 for sunElevation/],
-    [input => { input.parameters[1].start = 99; }, /parameters\[1\]\.start.*from 0 to 20/],
-    [input => { input.parameters.push({ name: 'keyIntensity' }); }, /parameters\[3\]\.name.*listed once/],
+    [input => { input.free[0].parameter = 'sunAngle'; }, /free\[0\]\.parameter: got "sunAngle"; expected one of sunElevation/],
+    [input => { input.free[0].max = 95; }, /free\[0\]\.min\/max.*inside -10 to 90 for sunElevation/],
+    [input => { input.free[1].start = 99; }, /free\[1\]\.start.*from 0 to 20/],
+    [input => { input.free.push({ parameter: 'keyIntensity' }); }, /free\[3\]\.parameter.*listed once/],
     [input => { input.regions[0].holdout = true; }, /at least one region without holdout/],
     [input => { input.maxIterations = 40; }, /maxIterations: got 40; expected an integer from 1 to 8/],
     [input => { input.width = 5000; }, /width: got 5000; expected an integer from 64 to 512/],
-    [input => { input.shots.push({ name: 'beach' }); }, /only shots that at least one region measures/],
+    [input => { input.shots.push({ id: 'beach' }); }, /only shots that at least one region measures/],
     [input => { input.shots[0].camera = { zoom: 2 }; }, /shots\[0\]\.camera.*eye, target, up, fov, focalLength/],
     [input => { input.shots[0].camera = { fov: 40, focalLength: 35 }; }, /fov or focalLength, not both/],
   ];
@@ -202,8 +202,8 @@ function fakePreview({ failOnFrame } = {}) {
 
 function fitInput(truth) {
   const reference = measureRegion(fakeRender({ sunHeight: truth, haze: 0.6 }).sky, { rect: [0, 0, 1, 1] });
-  return { sessionId: '00000000-0000-4000-8000-000000000000', shots: [{ name: 'sky' }],
-    regions: [{ label: 'high sky', shot: 'sky', rect: [0, 0, 1, 1], lab: reference.lab }], parameters: [{ name: 'keyIntensity', min: 0, max: 4 }] };
+  return { sessionId: '00000000-0000-4000-8000-000000000000', shots: [{ id: 'sky' }],
+    regions: [{ label: 'high sky', shot: 'sky', rect: [0, 0, 1, 1], lab: reference.lab }], free: [{ parameter: 'keyIntensity', min: 0, max: 4 }] };
 }
 
 test('runFitLook renders each candidate through the preview, returns scene_apply operations and puts the recipe back', async () => {
