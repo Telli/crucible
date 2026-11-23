@@ -41,10 +41,10 @@ const splatSupport = {};
 /**
  * The texture units of the splat samplers. Unit 13 belongs to the tinted shadow map, a 2D sampler, so no splat sampler sits on
  * it: an array sampler there makes every draw fail (#2272) and the weight mask would replace the tint texture (#2688).
- * The packed array sits past unit 15, which WebGL2 allows up to MAX_COMBINED_TEXTURE_IMAGE_UNITS (at least 32) while the
- * fragment shader reads at most MAX_TEXTURE_IMAGE_UNITS samplers.
+ * The packed array sits on unit 17, past the irradiance grid on 16: WebGL2 allows units up to MAX_COMBINED_TEXTURE_IMAGE_UNITS
+ * (at least 32) while the fragment shader reads at most MAX_TEXTURE_IMAGE_UNITS samplers.
  */
-export const SPLAT_UNITS = Object.freeze({ splatColor: 11, splatNormal: 12, splatMask: 14, splatPacked: 16 });
+export const SPLAT_UNITS = Object.freeze({ splatColor: 11, splatNormal: 12, splatMask: 14, splatPacked: 17 });
 
 export function registerSplatSupport(functions) {
   Object.assign(splatSupport, functions);

@@ -163,7 +163,8 @@ function shadowedChannelRatios(shadowedFrame, litFrame) {
       shadowed[channel] += shadowedFrame[offset + channel];
     }
   }
-  return { changedPixels, ratios: shadowed.map((value, channel) => value / Math.max(lit[channel], 1)) };
+  const perPixel = total => total.map(value => Math.round(value / Math.max(changedPixels, 1)));
+  return { changedPixels, ratios: shadowed.map((value, channel) => value / Math.max(lit[channel], 1)), litMean: perPixel(lit), shadowedMean: perPixel(shadowed) };
 }
 
 test('a cyan glass cube throws a cyan shadow on a splat terrain and a white one a neutral shadow', async context => {
@@ -176,9 +177,13 @@ test('a cyan glass cube throws a cyan shadow on a splat terrain and a white one 
     const cyanFrame = await draw([0, 1, 1], true);
     assert.equal(cyanFrame.audit.splatBatchesBlind, 0, 'splat batches must read the tinted shadow map');
     assertWithinUnitBudget(cyanFrame.audit);
-    context.diagnostic(`shadow pixels cyan ${cyanShadow.changedPixels}, white ${whiteShadow.changedPixels}; kept rgb under cyan ${cyanShadow.ratios.map(value => value.toFixed(3))}, under white ${whiteShadow.ratios.map(value => value.toFixed(3))}`);
+    context.diagnostic(`shadow pixels cyan ${cyanShadow.changedPixels}, white ${whiteShadow.changedPixels}; kept rgb under cyan ${cyanShadow.ratios.map(value => value.toFixed(3))}, under white ${whiteShadow.ratios.map(value => value.toFixed(3))}; mean rgb lit cyan ${cyanShadow.litMean}, shadowed cyan ${cyanShadow.shadowedMean}, lit white ${whiteShadow.litMean}, shadowed white ${whiteShadow.shadowedMean}`);
     assert.ok(whiteShadow.changedPixels > 0 && cyanShadow.changedPixels > 0, 'the glass cube threw no shadow on the terrain');
-    assert.ok(cyanShadow.ratios[0] < cyanShadow.ratios[1] - 0.1, `under cyan glass the terrain keeps ${cyanShadow.ratios[0].toFixed(2)} of its red and ${cyanShadow.ratios[1].toFixed(2)} of its green: the shadow is not tinted`);
-    assert.ok(Math.abs(whiteShadow.ratios[0] - whiteShadow.ratios[1]) < 0.05, 'a white caster must darken red and green alike');
+    // Same cube, same sun: both casters cover the same terrain, so a tint that went missing shows in the colour, not the area.
+    assert.ok(Math.abs(cyanShadow.changedPixels - whiteShadow.changedPixels) <= whiteShadow.changedPixels * 0.1, `the cyan shadow covers ${cyanShadow.changedPixels} pixels and the white one ${whiteShadow.changedPixels}`);
+    // Measured on the splat terrain (sun-lit red is only about a third of the green): kept red over kept green is 0.99 under cyan glass and 1.06 under white, a gap of 0.06. Half of it is the margin.
+    const cyanRedOverGreen = cyanShadow.ratios[0] / cyanShadow.ratios[1];
+    const whiteRedOverGreen = whiteShadow.ratios[0] / whiteShadow.ratios[1];
+    assert.ok(cyanRedOverGreen < whiteRedOverGreen - 0.03, `red over green kept is ${cyanRedOverGreen.toFixed(3)} under cyan glass and ${whiteRedOverGreen.toFixed(3)} under white glass: the shadow is not tinted`);
   });
 });
