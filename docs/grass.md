@@ -93,6 +93,33 @@ Thin patches drop blades, so the default meadow builds about 12 % faster than th
 
 Set `memoryBudgetMiB` high enough for the grass geometry. Lower `density` or `cullDistance` for phones.
 
+## Recipes and MCP
+
+A group node with a `grass` field grows the same blades in a recipe, over a terrain node, with no baked GLB and none of the asset caps. Give the group node the same transform as the ground.
+
+```json
+{ "id": "meadow", "grass": { "ground": "hills", "preset": "meadow", "density": 180, "seed": 4, "polygon": [[-12, -10], [14, -8], [3, 15]], "exclude": [{ "node": "pond", "radius": 3 }] } }
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `ground` | required | The ID of a node that draws a terrain geometry. Blades stand on its height; its holes stay clear. |
+| `preset` | `meadow` | `meadow`, `lawn`, `savanna` or `wild`. |
+| `density` | the preset's | Blades per square metre near the camera, 1 to 1500. |
+| `height` | the preset's | `[minimum, maximum]` blade height in metres, 0.02 to 3. |
+| `dryness` | the preset's | 0 to 1. |
+| `seed` | `1` | The same seed gives the same blades. |
+| `area`, `polygon` | the whole ground | A `{ "min": [x, z], "max": [x, z] }` box and/or 3 to 64 `[x, z]` points; the field stays inside both and inside the ground. |
+| `exclude` | none | Up to 32 circles, boxes or `{ "node", "radius" }` that stay clear. |
+| `cullDistance` | `60` | Metres from the recipe camera `eye` inside which tiles are built, 5 to 200. |
+
+- The recipe calls `createGrass` with the terrain's own `heightAt`, so the addon gives the same blades for the same options.
+- Tiles and their level of detail come from the recipe camera `eye` when the scene is built or edited, never from the frame being drawn, so a seek or a camera track cannot change them. Move the camera with `set-camera` to grow the field for another viewpoint; each new eye builds the visible tiles again.
+- The blades keep the `grass` material tag and sway with `environment.wind`.
+- The parts become generated child nodes (`<node>/tile-<column>-<row>`), left out of `scene_inspect` nodes and `scene_export_recipe`. `scene_inspect` adds `grass`: per field the blades, tiles and triangles, in total and for each level of detail.
+- Limits: an area of at most 40000 square metres, at most 500000 blades and 1500000 triangles planned inside `cullDistance`, and `maxNodes` for the generated tiles. Each one throws an error that names the field to lower.
+- A node holds `grass` or `geometry`, `vegetation`, `clutter` and `asset`, never two of them. The vegetation scatter mix `grass` stays what it was: card clumps, at most 1000 instances.
+
 ## Limits
 
 - Blades are flat strips. Seen exactly edge-on they thin out. The Ghost of Tsushima view-space thickening is not implemented.

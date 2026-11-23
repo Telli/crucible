@@ -257,11 +257,15 @@ export function createGrass(options = {}) {
       tile.cache.plannedKeep = level.keep;
     }
     const builder = createMeshBuilder({ withColors: true });
+    let bladeCount = 0;
     for (const blade of tile.cache.blades) {
-      if (blade.keepKey < level.keep) addBlade(builder, blade, tile.tileX, tile.tileZ, level, settings);
+      if (blade.keepKey >= level.keep) continue;
+      addBlade(builder, blade, tile.tileX, tile.tileZ, level, settings);
+      bladeCount++;
     }
     if (builder.vertexCount === 0) return [];
-    return [{ name: `Grass tile ${tile.column},${tile.row}`, geometry: builder.build(), matrix: tileMatrix(tile), material, castShadow: settings.castShadow }];
+    // `level` and `bladeCount` let a host report the field per level of detail.
+    return [{ name: `Grass tile ${tile.column},${tile.row}`, geometry: builder.build(), matrix: tileMatrix(tile), material, castShadow: settings.castShadow, level: levelIndex, bladeCount }];
   }
 
   const field = createTileField({ ...settings, buildParts });

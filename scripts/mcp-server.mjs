@@ -41,6 +41,7 @@ import { annotateViewHtml, clientSupportsMcpApps, ANNOTATE_VIEW_URI, MCP_APPS_MI
 import { loadAskUserFixture, describeAskUserFixture } from './ask-user-fixture.mjs';
 import { MCP_OPTION_NAMES, mcpOptionSummary } from '../bin/crucible-mcp-flags.mjs';
 import { resolvePacksOption } from '../bin/crucible-pack-folder.mjs';
+import { FOLDED_APPLY_OPERATION_TYPES } from '../src/apply-operation-notes.js';
 
 describeSchemaInputsWithReceivedValues();
 
@@ -73,6 +74,7 @@ const relationList = z.array(z.record(z.string(), z.unknown())).max(8).describe(
 const placedAsset = z.record(z.string(), z.unknown()).describe('Catalog GLB placed at this group node: {id or name,materials,clip,drive}; see scene_capabilities placedAssets.').meta({ id: 'PlacedAsset' });
 const placedVegetation = z.record(z.string(), z.unknown()).describe('Trees at this group node: {species} for one, or {mix, scatter:{ground,...}} over a terrain node; see scene_capabilities vegetation.').meta({ id: 'PlacedVegetation' });
 const placedClutter = z.unknown();
+const placedGrass = z.unknown();
 // Left open here and checked by the scene (normalizeRayVisibility), whose errors say what to pass; the shape is in scene_capabilities renderFlags.
 const rayVisibility = z.unknown();
 const nodeFields = {
@@ -80,6 +82,7 @@ const nodeFields = {
   asset: placedAsset.optional(),
   vegetation: placedVegetation.optional(),
   clutter: placedClutter.optional(),
+  grass: placedGrass.optional(),
   skin: listed('skin', skinSpec, 'Bind this mesh node to an armature with automatic weights: { armature, maxInfluences, maxDistance }.', coreOf(skinSpec.shape, ['armature'])).optional(),
   decal: z.boolean().optional(),
   depthLayer: z.number().int().min(0).max(4).optional(),
@@ -931,21 +934,11 @@ const otherOperations = [
   z.strictObject({ type: z.literal('set-camera'), ...cameraFields, fStop: cameraFields.fStop.nullable().optional(), focusDistance: positive.nullable().optional() }),
   z.strictObject({ type: z.literal('set-motion'), motion: recipeMotionReference.nullable().optional(), removeTracks: z.array(z.record(z.string(), z.string())).min(1).max(64).optional().describe('Instead of motion: selectors { kind, id, property } of tracks to drop.') })
     .refine(operationBody => (operationBody.motion !== undefined) !== (operationBody.removeTracks !== undefined), { message: 'set-motion takes one of motion or removeTracks.' }),
-  z.strictObject({ type: z.literal('bake-motion'), nodes: z.array(identifier).min(1).max(32), start: nonnegative.optional(), end: nonnegative.optional(), step: positive.optional(), tolerance: z.record(z.string(), z.number()).optional() }),
-  z.strictObject({
-    type: z.literal('fracture-node'), node: identifier, cells: z.number().int().min(2).max(64), strength: positive,
-    seed: detail(0, 4294967295), impact: vector3.optional(), impactRadius: positive.optional(), density: positive.optional(), friction: nonnegative.optional(),
-  }).describe('Break a convex root node into glued physics pieces. Fields: scene_capabilities physics.'),
-  z.looseObject({ type: z.literal('add-explosion'), id: identifier, center: vector3, size: positive }).describe('Layered blast; more fields: scene_capabilities explosion.'),
-  z.strictObject({ type: z.literal('settle'), settle: z.record(z.string(), z.unknown()).describe('See scene_capabilities topic settle.') }),
-  z.strictObject({ type: z.literal('set-armatures'), armatures: armaturesReference.nullable() }),
-  z.strictObject({ type: z.literal('set-physics'), physics: z.record(z.string(), z.unknown()).nullable().describe('Same object as recipe.physics in scene_create.') }),
-  z.looseObject({ type: z.enum(['set-cloth', 'set-timeline', 'set-particles', 'set-bake', 'set-pixel-grid']) }).describe('One field named after the section (cloth, timeline, particles, bake, pixelGrid): the same object as in scene_create, or null to clear it.'),
-  z.strictObject({ type: z.literal('set-post-passes'), postPasses: z.array(z.record(z.string(), z.unknown())).nullable() }),
-  z.strictObject({ type: z.literal('set-game'), game: gameReference.nullable() }),
+  // Rarely used edits share one branch so every turn carries fewer schema bytes (#3047). The backend checks their fields
+  // and names the fix; scene_capabilities applyOperations lists them.
+  z.looseObject({ type: z.enum(FOLDED_APPLY_OPERATION_TYPES) }).describe('Fields sit beside type. Each one: scene_capabilities applyOperations.<type>.'),
   z.strictObject({ type: z.literal('set-environment'), environment: environmentListed }),
   z.strictObject({ type: z.literal('set-effects'), effects: effectsListed }),
-  z.strictObject({ type: z.literal('set-shadow'), shadow }),
   z.strictObject({ type: z.literal('set-root'), translation: vector3.optional(), rotation: quaternion.optional(), scale: z.tuple([positive, positive, positive]).optional() }),
   z.strictObject({ type: z.literal('set-asset-node'), id: identifier, translation: vector3.optional(), rotation: quaternion.optional(), scale: z.tuple([positive, positive, positive]).optional() }),
   z.strictObject({ type: z.literal('set-animation'), clip: z.number().int().min(0).nullable().optional(), time: nonnegative.optional() }),
@@ -953,7 +946,6 @@ const otherOperations = [
   z.strictObject({ type: z.literal('add-geometry'), geometry: geometryListed }),
   z.strictObject({ type: z.literal('remove-geometry'), id: identifier }),
   z.strictObject({ type: z.literal('add-material'), material: materialListed(z.strictObject({ id: identifier, tag: materialTag, ...materialFields }), 'New material.', { id: identifier, tag: materialTag }) }),
-  z.strictObject({ type: z.literal('remove-material'), id: identifier }),
 ];
 const operation = z.discriminatedUnion('type', [...nodeOperations(nodeFields, nodeRecord), ...otherOperations]);
 // The same schemas without the relations field, for the benchmark switch --relations off.
@@ -1269,7 +1261,7 @@ export function createAgentMcpServer(runtime, { version = packageMetadata.versio
   register('scene_restore', 'Restore a checkpoint atomically using the current revision. The checkpoint remains available and revision increments. Pass exactly one of checkpointId, revision or branch. With revision (last 4 kept), undo with no checkpoint. With branch, keep that branch (one revision) and drop all branches.', z.strictObject({ ...sessionFields, checkpointId: restoreCheckpointId, revision: z.number().int().min(0).optional(), ...restoreBranchField, expectedRevision }), edit, async argumentsValue => jsonResult(await runtime.restore(argumentsValue)));
   register('scene_release_checkpoint', 'Release one checkpoint slot. Released or foreign checkpoints fail.', z.strictObject(checkpointFields), destroy, async argumentsValue => jsonResult(await runtime.releaseCheckpoint(argumentsValue)));
   register('scene_export_recipe', 'Read a detached canonical JSON recipe for reproduction.', z.strictObject(sessionFields), readOnly, async argumentsValue => jsonResult(await runtime.exportRecipe(argumentsValue)));
-  register('scene_export_glb', 'Write the active scene as a GLB file in the configured jobs folder, under a server-chosen name (the result has the path, byte count and SHA-256). Needs --jobs. Exports the current pose with pattern and imported textures, skins, morph weights and IK as posed; omitted lists what it left out (topic export); motionTime seeks authored motion first. For an imported asset, clip adds that source clip (translation, rotation, scale and morph weight tracks) on the source skeleton, which needs no animation, node overrides or motion in the scene. At most eight files are kept, oldest removed first; the GLB is at most 32 MiB.', z.strictObject({ ...sessionFields, clip: z.union([z.number().int().min(0).max(255), z.string().min(1).max(256)]).optional().describe('Imported assets only: source clip index or name, as scene_asset_catalog lists.'), motionTime: z.number().min(0).max(3600).optional().describe('Seek authored motion (and IK) to this time before exporting. Leaves the preview there, like scene_look.'), maxTextureSize: z.number().int().min(1).max(4096).optional().describe('Largest texture side in pixels. Defaults to 2048.') }), edit, async argumentsValue => jsonResult(await runtime.exportGlb(argumentsValue)));
+  register('scene_export_glb', 'Write the active scene as a GLB file in the configured jobs folder, under a server-chosen name (the result has the path, byte count and SHA-256). Needs --jobs. Exports the current pose with pattern and imported textures, skins, morph weights and IK as posed, plus camera, lights and node tracks (one 30 fps clip); omitted lists what it left out (topic export); motionTime: one pose, no clip. For an imported asset, clip adds that source clip (translation, rotation, scale and morph weight tracks) on the source skeleton, which needs no animation, node overrides or motion in the scene. At most eight files are kept, oldest removed first; the GLB is at most 32 MiB.', z.strictObject({ ...sessionFields, clip: z.union([z.number().int().min(0).max(255), z.string().min(1).max(256)]).optional().describe('Imported assets only: source clip index or name, as scene_asset_catalog lists.'), motionTime: z.number().min(0).max(3600).optional().describe('Seek motion (and IK) to this time, export that pose with no clip. Leaves the preview there, like scene_look.'), maxTextureSize: z.number().int().min(1).max(4096).optional().describe('Largest texture side in pixels. Defaults to 2048.') }), edit, async argumentsValue => jsonResult(await runtime.exportGlb(argumentsValue)));
   register('scene_export_web', 'Write the scene with its game as a static web build in the jobs folder: index.html, game.json and engine/, which any static host serves with no server code. Needs --jobs and a game set with set-game. Procedural scenes only; the newest four builds are kept. review: true writes a page of the current view for a person to pin on a phone instead (no game); read its saved file with scene_ask_user reviewFile.', z.strictObject({ ...sessionFields, title: z.string().max(64).optional().describe('Page title.'), review: z.boolean().optional() }), edit, async argumentsValue => jsonResult(await runtime.exportWeb(argumentsValue)));
   register('scene_dispose', 'Dispose the active scene and its checkpoints, releasing renderer resources.', z.strictObject(sessionFields), destroy, async argumentsValue => jsonResult(await runtime.dispose(argumentsValue)));
   register('scene_render_submit', 'Start one asynchronous snapshot job in the configured private job store. Requires the current revision. Temporarily leases the preview renderer; does not change source revision or checkpoints.', z.strictObject({ ...sessionFields, expectedRevision, settings: renderSettings }), { ...edit, destructiveHint: false }, async argumentsValue => jsonResult(await runtime.submitJob(argumentsValue)));

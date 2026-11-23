@@ -8,6 +8,7 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { closeClientAndWaitForServerExit, repositoryRoot } from './helpers/mcp-server-session.js';
 
 import { collectExportBlob, createNativeTracerLocator, fetchNativeExport } from '../scripts/agent-native-trace.mjs';
 import {
@@ -321,7 +322,7 @@ async function renderClip(workDirectory, label, deltaSwitch) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverEntry, '--backend', 'cpu', '--memory', '768', '--jobs', join(workDirectory, `jobs-${label}`)],
-    cwd: workDirectory,
+    cwd: repositoryRoot,
     env: { ...process.env, JS67_NATIVE_EXPORT_DELTA: deltaSwitch },
     stderr: 'ignore',
   });
@@ -341,13 +342,13 @@ async function renderClip(workDirectory, label, deltaSwitch) {
       if (['completed', 'cancelled', 'failed'].includes(record.state)) break;
       await delay(200);
     }
-    assert.equal(record.state, 'completed', `the ${label} job ${record.state}: ${record.error ?? JSON.stringify(record)}`);
+    assert.equal(record.state, 'completed', `the ${label} job ${record.state}: ${record.reason ?? JSON.stringify(record)}`);
     const result = (await call('scene_render_result', { jobId, response_format: 'detailed' })).structuredContent;
     const videoPath = join(workDirectory, `${label}.mp4`);
     await copyFile(result.artifacts[0].path, videoPath);
     return { video: await readFile(videoPath), pathTracer: (result.metrics ?? record.metrics).pathTracer };
   } finally {
-    await client.close();
+    await closeClientAndWaitForServerExit(client, transport);
   }
 }
 
@@ -373,7 +374,7 @@ test('a native clip with moving particles is byte for byte the same video with t
       return;
     }
     const workDirectory = await mkdtemp(join(tmpdir(), 'crucible-export-delta-'));
-    context.after(() => rm(workDirectory, { recursive: true, force: true }));
+    context.after(() => rm(workDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
     const full = await renderClip(workDirectory, 'full', 'off');
     const delta = await renderClip(workDirectory, 'delta', 'on');
     if (full.pathTracer.backend !== 'native') {

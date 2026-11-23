@@ -181,6 +181,16 @@ The job metrics carry `metrics.wireframe`: `edges` (the count of each kind over 
 Output is bounded: a mesh contributes at most 200,000 edges and a frame at most 1,000,000. Fault edges are kept before regular ones, a part past the frame limit is left out and counted in `partsOmitted`, and a part with no polygon view (every triangle collapses) is counted in `partsSkipped`.
 The pass is 8-bit like the others, works with `png16` and `exr` and packs into a `multilayer` EXR. It shows rest geometry: skinning and morph targets are not applied to the edges.
 
+#### Use the pass from the library
+
+`import { withWireframe } from '@codepawlhq/crucible/addons/wireframe-pass'` draws the same edges for a renderer you drive yourself: `withWireframe(renderer, renderFrame, options)` runs `renderFrame`, which must draw one `wireframe` pass frame, and returns the report above. The render jobs always use the defaults.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `faults` | `true` | `false` draws boundary, non-manifold, flipped and degenerate edges as regular edges, for a film or a showcase where a model with split edges should not look broken. The report still counts them |
+| `color` | `[0.06, 0.07, 0.09]` | Three numbers from 0 to 1: the colour of regular edges, and of every edge when `faults` is `false` |
+| `halfWidth` | `0.7` | Half the line width in pixels, above 0 and at most 32, with the same reach as `color` |
+
 The lighting passes hold linear values above 1, so write them as `exr` (a `png` or `png16` file clamps at 1). They add back to the lit image: `diffuse + glossy + emission * exposure` is the radiance before fog, and with an open world the lit image is that radiance mixed toward the fog colour by `mist`, then tone mapped. `tests/lighting-passes.test.js` checks the sum against the beauty frame (mean difference under 1.5 display levels, under 2% of samples off by more than 4). Not covered: unlit parts, the editor floor, parts that a probe or irradiance grid changes after the sky term, and anything the lit image adds after the shader (bloom, grading, depth of field).
 
 `scene_render_result` metrics carry `objectNames`, the part name for ID 1, 2 and so on (the first 1000, with `objectNamesTruncated`), `objectNodes` (`{ "<node id>": [ids] }`: a placed asset with five parts is one node owning five IDs; the first 1000 nodes, with `objectNodesTruncated`), and `depthRangeMetres`.
@@ -233,6 +243,8 @@ Four optional settings, each off by default. A job without them writes the same 
 `png16` writes `render.png` (RGB, or RGBA with `transparent`; alpha is straight) and one PNG per pass. A depth pass is a 16-bit gray PNG holding the raw step 0 to 65535 over 100 m, an `objectId` pass is a 16-bit gray PNG of the ID (a scene with more than 65535 objects fails: use `exr`), and `albedo`, `normal` and `emission` are 16-bit RGB with the same values as the 8-bit pass.
 `exr` writes `render.exr` (half-float R, G, B and A when transparent; alpha stays premultiplied) and `render-<pass>.exr`. `depth` is one float32 channel `Z` in metres (the far limit, 100, is background), `objectId` one float32 channel `id` (0 is background), and `albedo`, `normal` and `emission` are half-float RGB. Files use ZIP compression and open in Blender, Nuke and OpenEXR tools.
 Passes in these formats are drawn into half-float targets, so albedo, normal and emission carry half-float precision, not the 8 bits of the default passes.
+Every screenshot frame is clipped to the requested size, and an image or still whose PNG comes back at another size fails with both sizes in the message instead of returning a cropped picture (#3120).
+
 The path tracer writes an 8-bit PNG of the whole frame: `transparent`, `format` and `region` are refused with `renderer`. H.264 has no alpha, so `transparent` and `format` are refused for video. 16-bit and EXR output need `EXT_color_buffer_float`; without it the job fails with a message that says to use `png`.
 A `png16` or `exr` frame is up to four times the 8-bit frame limit (48 MiB). A region with the browser H.264 encoder (`encoder: "nvenc"`) uses screenshot frames instead.
 

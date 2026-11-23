@@ -104,6 +104,23 @@ function rotationFromUp(normal, matrix) {
   matrix[8] = cosine + k * z * z;
 }
 
+// An emitter that follows a node (#2829): the emitter offset and the point inside the shape are in the node's local frame,
+// so the node's matrix at the birth time carries them (scale included) into world space. The launch direction turns with the
+// node's rotation, so a bow emitter shoots along the bow. After birth the particle is free in world space.
+function placeOnFollowedNode(matrix, offset, point, launch, launchSpeed, origin, velocity, index) {
+  const columnLengths = [0, 1, 2].map(column => Math.hypot(matrix[column * 4], matrix[column * 4 + 1], matrix[column * 4 + 2]) || 1);
+  for (let row = 0; row < 3; row++) {
+    let position = matrix[12 + row];
+    let launchComponent = 0;
+    for (let column = 0; column < 3; column++) {
+      position += matrix[column * 4 + row] * (offset[column] + point[column]);
+      launchComponent += matrix[column * 4 + row] / columnLengths[column] * launch[column] * launchSpeed;
+    }
+    origin[index * 3 + row] = position;
+    velocity[index * 3 + row] = launchComponent;
+  }
+}
+
 /**
  * Launch values of every particle. Each particle draws from its own generator in a fixed order, so changing `count`
  * never changes the particles that were already there.
@@ -123,7 +140,7 @@ export function createParticleLaunches(settings) {
   const spinAxis = new Float64Array(count * 3);
   const spinRate = new Float64Array(count);
   const spinStart = new Float64Array(count);
-  const orientation = orient === 'none' ? undefined : new Float64Array(count * 9);
+  const orientation = orient === 'none' || orient === 'billboard' ? undefined : new Float64Array(count * 9);
   const instancePick = instanceCount > 1 ? new Uint8Array(count) : undefined;
   for (let index = 0; index < count; index++) {
     const random = createGenerator(seed, index);
@@ -133,9 +150,13 @@ export function createParticleLaunches(settings) {
     const emission = emitter.shape === 'mesh' ? emitter.source.sample(random, birthTime) : { point: pointInEmitter(emitter, [random(), random(), random()]), normal: null };
     const launch = directionInCone(axis, spreadRadians, random(), random());
     const launchSpeed = between(speed, random());
-    for (let component = 0; component < 3; component++) {
-      origin[index * 3 + component] = emitter.position[component] + emission.point[component];
-      velocity[index * 3 + component] = launch[component] * launchSpeed + (emission.normal ? emission.normal[component] * normalSpeed : 0) + (emission.velocity ? emission.velocity[component] : 0);
+    if (emitter.pose) {
+      placeOnFollowedNode(emitter.pose(birthTime), emitter.position, emission.point, launch, launchSpeed, origin, velocity, index);
+    } else {
+      for (let component = 0; component < 3; component++) {
+        origin[index * 3 + component] = emitter.position[component] + emission.point[component];
+        velocity[index * 3 + component] = launch[component] * launchSpeed + (emission.normal ? emission.normal[component] * normalSpeed : 0) + (emission.velocity ? emission.velocity[component] : 0);
+      }
     }
     life[index] = between(lifetime, random());
     particleSize[index] = between(size, random());
@@ -156,6 +177,8 @@ export function createParticleLaunches(settings) {
   }
   const launches = {
     count, birth, life, origin, velocity, size: particleSize, spinAxis, spinRate, spinStart, orientation, instancePick,
+    // A billboard card turns to the camera when the mesh is built (buildParticleMesh), so it has no stored orientation.
+    billboard: orient === 'billboard',
     hasSpin: spin[0] !== 0 || spin[1] !== 0,
     // Seconds after which no particle is born (the end of the emission window); Infinity when the system has no `stop`.
     stop: settings.stop ?? Infinity,
@@ -435,6 +458,42 @@ function rotatedInto(matrix, source, sourceOffset, destination, destinationOffse
   }
 }
 
+/**
+ * Row-major rotation whose third column (the card normal, +Z of a plane) points from `position` to the camera eye and whose
+ * second column is the camera's up made perpendicular to it. Without a camera the card keeps its authored facing.
+ */
+export function facingMatrix(position, camera, matrix) {
+  if (!camera) {
+    matrix.set([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+    return matrix;
+  }
+  const normal = normalized([camera.eye[0] - position[0], camera.eye[1] - position[1], camera.eye[2] - position[2]]);
+  const up = camera.up ?? [0, 1, 0];
+  let right = cross(up, normal);
+  // Looking straight along the up vector leaves it no sideways direction; any perpendicular one will do.
+  if (Math.hypot(right[0], right[1], right[2]) < 1e-6) right = cross(Math.abs(normal[0]) < 0.9 ? [1, 0, 0] : [0, 0, 1], normal);
+  right = normalized(right);
+  const top = cross(normal, right);
+  for (let row = 0; row < 3; row++) {
+    matrix[row * 3] = right[row];
+    matrix[row * 3 + 1] = top[row];
+    matrix[row * 3 + 2] = normal[row];
+  }
+  return matrix;
+}
+
+// Turns the card by `angle` around its own normal: the first two columns rotate in their plane.
+function rollAroundNormal(matrix, angle) {
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  for (let row = 0; row < 3; row++) {
+    const first = matrix[row * 3];
+    const second = matrix[row * 3 + 1];
+    matrix[row * 3] = first * cosine + second * sine;
+    matrix[row * 3 + 1] = second * cosine - first * sine;
+  }
+}
+
 const IDENTITY = Object.freeze([1, 0, 0, 0, 1, 0, 0, 0, 1]);
 
 function multiplyMatrices(first, second, result) {
@@ -449,9 +508,12 @@ function multiplyMatrices(first, second, result) {
  * Copies a template mesh once per particle, scaled, spun and moved to the particle's world position. `template` is one
  * mesh or a list; with a list each particle draws the one `launches.instancePick` names. `look` may hold
  * `color` ([start, end] RGB) and `alpha` ([start, end]) over life; they become vertex colors, and alpha multiplies the
- * color, so a particle fades toward black (the renderer has no per-vertex alpha).
+ * color, so a particle fades toward black. With `look.fade === 'opacity'` the color keeps its brightness and the alpha goes to
+ * `vertexOpacity`, which a blend material draws as see-through. `camera` is `{ eye, up }` at `time`: a billboard
+ * card turns its +Z normal to the eye of that frame (a spin then rolls it around that normal), so the facing is a function of
+ * the time and the camera and never of the wall clock.
  */
-export function buildParticleMesh(template, launches, forces, scaleMode, time, look = {}) {
+export function buildParticleMesh(template, launches, forces, scaleMode, time, look = {}, camera = undefined) {
   const templates = Array.isArray(template) ? template : [template];
   const pickOf = index => launches.instancePick ? launches.instancePick[index] : 0;
   let totalVertices = 0;
@@ -466,30 +528,35 @@ export function buildParticleMesh(template, launches, forces, scaleMode, time, l
   const indices = new Uint32Array(totalIndices);
   const hasUvs = templates.every(entry => entry.uvs);
   const uvs = hasUvs ? new Float32Array(totalVertices * 2) : undefined;
+  const fadesOpacity = look.fade === 'opacity' && Boolean(look.alpha);
   const colors = look.color || look.alpha ? new Float32Array(totalVertices * 3) : undefined;
+  const vertexOpacity = fadesOpacity ? new Float32Array(totalVertices) : undefined;
   const state = { position: [0, 0, 0], scale: 0 };
   const spinMatrix = new Float64Array(9);
   const matrix = new Float64Array(9);
   const tint = [1, 1, 1];
-  const transformed = launches.hasSpin || Boolean(launches.orientation);
+  const transformed = launches.hasSpin || Boolean(launches.orientation) || launches.billboard;
   let vertexBase = 0;
   let indexBase = 0;
   for (let index = 0; index < launches.count; index++) {
     const picked = templates[pickOf(index)];
     const vertexCount = picked.positions.length / 3;
     particleStateAt(launches, index, forces, scaleMode, time, state);
-    if (transformed) {
+    if (launches.billboard) {
+      facingMatrix(state.position, camera, matrix);
+      if (launches.hasSpin) rollAroundNormal(matrix, state.angle);
+    } else if (transformed) {
       if (launches.hasSpin) rotationMatrix(launches.spinAxis.subarray(index * 3, index * 3 + 3), state.angle, spinMatrix);
       const base = launches.orientation ? launches.orientation.subarray(index * 9, index * 9 + 9) : IDENTITY;
       if (launches.hasSpin) multiplyMatrices(spinMatrix, base, matrix);
       else matrix.set(base);
     }
+    const alpha = look.alpha ? look.alpha[0] + (look.alpha[1] - look.alpha[0]) * state.fraction : 1;
     if (colors) {
-      const alpha = look.alpha ? look.alpha[0] + (look.alpha[1] - look.alpha[0]) * state.fraction : 1;
       for (let channel = 0; channel < 3; channel++) {
         const start = look.color ? look.color[0][channel] : 1;
         const end = look.color ? look.color[1][channel] : 1;
-        tint[channel] = (start + (end - start) * state.fraction) * alpha;
+        tint[channel] = (start + (end - start) * state.fraction) * (fadesOpacity ? 1 : alpha);
       }
     }
     for (let vertex = 0; vertex < vertexCount; vertex++) {
@@ -503,6 +570,7 @@ export function buildParticleMesh(template, launches, forces, scaleMode, time, l
         if (colors) colors[offset + component] = tint[component] * (picked.colors ? picked.colors[vertex * 3 + component] : 1);
       }
     }
+    if (vertexOpacity) vertexOpacity.fill(alpha, vertexBase, vertexBase + vertexCount);
     if (!transformed) normals.set(picked.normals, vertexBase * 3);
     uvs?.set(picked.uvs, vertexBase * 2);
     for (let corner = 0; corner < picked.indices.length; corner++) {
@@ -518,5 +586,6 @@ export function buildParticleMesh(template, launches, forces, scaleMode, time, l
   }
   if (uvs) result.uvs = uvs;
   if (colors) result.colors = colors;
+  if (vertexOpacity) result.vertexOpacity = vertexOpacity;
   return result;
 }
