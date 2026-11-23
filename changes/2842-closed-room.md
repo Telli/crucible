@@ -1,0 +1,1 @@
+Make the closed-room test in Studio edits several times faster by building the world triangles once and skipping parts a ray misses, with the same result (#2842).
