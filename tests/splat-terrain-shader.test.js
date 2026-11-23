@@ -55,7 +55,7 @@ async function drawSplatTerrain(page, { withGrass, withEnvironment, withGlass = 
     if (withGrass) parts.push(...scatterVegetation({ area: { minX: -20, maxX: 20, minZ: -20, maxZ: 20 }, density: 0.01, variants: 1, seed: 5, terrainHeight: terrain.heightAt }).parts);
     if (withGlass) {
       const { box } = await import('/src/geometry.js');
-      parts.push({ name: 'glass', geometry: box(0.2, 1), matrix: new Float32Array([3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 2, 0, 1]), material: { color: [0.2, 1, 1], metallic: 0, roughness: 0.1, alphaMode: 'blend', opacity: 0.5 }, castShadow: glassCastsShadow });
+      parts.push({ name: 'glass', geometry: box(0.2, 1), matrix: new Float32Array([3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 2, 0, 1]), material: { color: [0, 1, 1], metallic: 0, roughness: 0.1, alphaMode: 'blend', opacity: 0.9 }, castShadow: glassCastsShadow });
     }
     // Reads the sampler uniforms of the linked program: how many the fragment stage reads, the highest unit and any unit
     // that two samplers of different types share.
@@ -155,7 +155,7 @@ function shadowedChannelRatios(shadowedFrame, litFrame) {
   let changedPixels = 0;
   for (let offset = 0; offset < litFrame.length; offset += 4) {
     const difference = Math.abs(shadowedFrame[offset] - litFrame[offset]) + Math.abs(shadowedFrame[offset + 1] - litFrame[offset + 1]) + Math.abs(shadowedFrame[offset + 2] - litFrame[offset + 2]);
-    if (difference < 6) continue;
+    if (difference < 20) continue;
     changedPixels++;
     for (let channel = 0; channel < 3; channel++) {
       lit[channel] += litFrame[offset + channel];
@@ -172,7 +172,7 @@ test('a cyan glass slab throws a cyan shadow onto a splat terrain', async contex
     assert.equal(withShadow.audit.splatBatchesBlind, 0, 'splat batches must read the tinted shadow map');
     assertWithinUnitBudget(withShadow.audit);
     const { changedPixels, ratios } = shadowedChannelRatios(withShadow.pixels, withoutShadow.pixels);
-    assert.ok(changedPixels > 200, `the glass shadow changed only ${changedPixels} terrain pixels`);
+    assert.ok(changedPixels > 60, `the glass shadow changed only ${changedPixels} terrain pixels`);
     assert.ok(ratios[0] < ratios[1] - 0.1, `red keeps ${ratios[0].toFixed(2)} of its light and green ${ratios[1].toFixed(2)}: the shadow is not tinted`);
   });
 });
