@@ -37,7 +37,7 @@ import { createPackRegistry } from './agent-packs.mjs';
 import { VEGETATION_SCANS_PACK, fillVegetationScans, needsVegetationScans, vegetationScansFromPack } from '../src/agent-vegetation-scans.js';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
-import { AGENT_ASSET_LIMITS, configureAssetByteLimit, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
+import { AGENT_ASSET_LIMITS, MAX_CHECKED_TRIANGLES, configureAssetByteLimit, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { namesCatalogFiles, resolveAssetPlacementNames, namesCatalogSequences, resolveCatalogSequenceNames, namesCatalogTextureMaps, resolveTextureSetNames } from '../src/agent-asset-names.js';
 import { sequenceFrameIds, hasStreamedSequence } from '../src/agent-texture-sequence.js';
@@ -1374,6 +1374,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           maximumBytes: AGENT_ASSET_LIMITS.maxBytes, maximumAssets: AGENT_ASSET_LIMITS.maxAssets, maximumCombinedBytes: AGENT_ASSET_LIMITS.maxCombinedBytes,
           maximumVertices: AGENT_ASSET_LIMITS.maxVertices, maximumParts: AGENT_ASSET_LIMITS.maxParts, maximumTexturePixels: AGENT_ASSET_LIMITS.maxTexturePixels,
           maximumJoints: AGENT_ASSET_LIMITS.maxJoints, maximumClips: AGENT_ASSET_LIMITS.maxClips,
+          meshChecks: `scene_create_asset checkMesh: true adds assetWarnings to the result: per mesh, the triangles that repeat an earlier one and the edges more than two triangles share, judged by position. A mesh over ${MAX_CHECKED_TRIANGLES} triangles skips the counts and says so. Nothing is merged or rewritten. A full glTF-Validator run needs a validator, which is code, so it is not offered here.`,
           commands: ['set-root', 'set-asset-node', 'set-motion', 'set-animation', 'set-material', 'set-camera', 'set-environment', 'set-effects', 'set-shadow'],
         },
         packs: {
@@ -1426,14 +1427,14 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return { configured: true, ...(await rescannedCatalog()).list(), ...(packsRoot && { packs: (await packs()).list() }) };
       });
     },
-    createAsset({ recipe }) {
+    createAsset({ recipe, checkMesh = false }) {
       return enqueue(async () => {
         await requirePreviewRenderer();
         await pinNamedAssetRecipe(recipe);
         const bytes = await (await catalog()).read(recipe.assetId);
         await boot();
         const sessionId = randomUUID();
-        const result = await evaluate('createAsset', { recipe, data: bytes.toString('base64'), sessionId, memoryBudgetMiB: memory, backend, ...(await motionSources([recipe.motion])) });
+        const result = await evaluate('createAsset', { recipe, checkMesh, data: bytes.toString('base64'), sessionId, memoryBudgetMiB: memory, backend, ...(await motionSources([recipe.motion])) });
         registerCreatedScene(sessionId, result, false);
         return result;
       }, { recoversFailedRuntime: true });
