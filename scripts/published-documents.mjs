@@ -22,6 +22,7 @@ export const publishedDocuments = [
   'agent-scene.md',
   'mcp.md',
   'agent-look.md',
+  'agent-fit-look.md',
   'agent-asset.md',
   'agent-render-jobs.md',
   'agent-motion.md',

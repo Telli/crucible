@@ -14,7 +14,7 @@ import { CURVE_TEXT_LIMITS, AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS
 import { TEXTURE_SET_RECIPE_FIELDS, TEXTURE_MAP_FIELDS, UV_TRANSFORM_FIELDS } from './texture-set-fields.js';
 import { normalizeMaterialWear, geometryWithSurfaceMasks } from './material-wear.js';
 import { ALL_LIGHTS_MASK, MATERIAL_LAYER_FIELDS, validateMaterialLayers } from './material-layers.js';
-import { recipeDiagnostics, closedRoomDiagnostic } from './agent-diagnostics.js';
+import { recipeDiagnostics, closedRoomDiagnostic, droppedVertexAlphaDiagnostics } from './agent-diagnostics.js';
 import { closedRoomShare, CLOSED_ROOM_SHARE } from './closed-room.js';
 import { roomEdgeLeakDiagnostic } from './room-edge-leak.js';
 import { depthLayerOf, flushOrderOf, MAXIMUM_DEPTH_LAYER, setFlushOrder } from './depth-layer.js';
@@ -43,6 +43,7 @@ function poseEditNodeIds(operations) {
 }
 export { normalizeAgentLook, resolveAgentShadow } from './agent-look.js';
 import { OWN_SECTIONS as NULLABLE_SECTION_OPERATIONS } from './agent-apply-report.js';
+import { markLiveGeometry } from './live-geometry.js';
 export { describeApplication } from './agent-apply-report.js';
 export {
   needsMeshBooleans, loadMeshBooleans, meshBooleansLoaded, setManifoldModuleLoader,
@@ -64,8 +65,10 @@ const CAMERA_DEFAULTS = Object.freeze({ eye: [4, 3, 5], target: [0, 0, 0], up: [
 // Per-node render flags: `visible` hides a node and its children; the rest become renderer part flags of a mesh node.
 const RENDER_FLAG_FIELDS = ['visible', 'castShadow', 'receiveShadow', 'holdout', 'shadowCatcher', 'shadowOnly'];
 const PART_FLAG_FIELDS = RENDER_FLAG_FIELDS.slice(1);
-const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'clutter', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
-const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamVeins', 'contactFoam', 'caustics', 'ripples', 'waterRamp', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
+// On an asset placement these two flags reach each part it expands to.
+const ASSET_PLACEMENT_FLAG_FIELDS = ['castShadow', 'receiveShadow'];
+const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'clutter', 'grass', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
+const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'alphaCutoff', 'doubleSided', 'depthTest', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamColor', 'foamVeins', 'contactFoam', 'caustics', 'ripples', 'waterRamp', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
 // Fields of an optional shader module join the list here, so the long list above stays a line each material feature does not rewrite.
@@ -305,6 +308,22 @@ function copyMaterialLayers(value, result) {
   if (result.toon > 0) agentSceneModule('lineArt');
 }
 
+/** alphaCutoff is the alpha below which a masked surface is cut out; it means nothing for other alpha modes, so it is refused there. */
+function applyAlphaCutoff(value, result) {
+  if (value.alphaCutoff === undefined) {
+    if (result.alphaMode === 'mask') result.alphaCutoff = 0.5;
+    return;
+  }
+  if (result.alphaMode !== 'mask') {
+    throw invalidField('alphaCutoff', value.alphaCutoff, `omitted, or set alphaMode to "mask" (alphaMode is "${result.alphaMode}")`);
+  }
+  finite(value.alphaCutoff, 'alphaCutoff');
+  if (value.alphaCutoff < 0 || value.alphaCutoff > 1) {
+    throw invalidField('alphaCutoff', value.alphaCutoff, 'a number from 0 to 1, such as 0.5');
+  }
+  result.alphaCutoff = value.alphaCutoff;
+}
+
 function materialFrom(value) {
   knownKeys(value, ['id', 'tag', ...MATERIAL_FIELDS, ...TEXTURE_SET_RECIPE_FIELDS], 'material');
   // A pattern or a catalog colour map brings its own colours, so the color field tints it and leaves it unchanged by default.
@@ -336,9 +355,16 @@ function materialFrom(value) {
   // The renderer ignores opacity on opaque surfaces, so any opacity below one means blending (additive stays additive).
   const graphHasOpacity = graphFactor('opacity', 0);
   result.alphaMode = (result.opacity < 1 || graphHasOpacity) && requestedAlphaMode === 'opaque' ? 'blend' : requestedAlphaMode;
+  applyAlphaCutoff(value, result);
   result.doubleSided = defaultValue(value.doubleSided, false);
   if (typeof result.doubleSided !== 'boolean') {
     throw invalidField('doubleSided', result.doubleSided, 'true or false', TypeError);
+  }
+  if (value.depthTest !== undefined) {
+    if (typeof value.depthTest !== 'boolean') {
+      throw invalidField('depthTest', value.depthTest, 'true or false', TypeError);
+    }
+    result.depthTest = value.depthTest;
   }
   for (const field of ['metallic', 'roughness']) {
     finite(result[field], field);
@@ -425,6 +451,7 @@ function nodeFrom(value) {
   }
   if (value.vegetation !== undefined) result.vegetation = agentSceneModule('vegetation').normalizeVegetation(value.vegetation, value);
   if (value.clutter !== undefined) result.clutter = agentSceneModule('clutter').normalizeClutter(value.clutter, value);
+  if (value.grass !== undefined) result.grass = agentSceneModule('grass').normalizeGrass(value.grass, value);
   if (value.decal !== undefined && typeof value.decal !== 'boolean') {
     throw invalidField('decal', value.decal, 'true or false', TypeError);
   }
@@ -433,7 +460,8 @@ function nodeFrom(value) {
   }
   for (const flag of RENDER_FLAG_FIELDS) {
     if (value[flag] !== undefined && typeof value[flag] !== 'boolean') throw invalidField(flag, value[flag], 'true or false', TypeError);
-    if (flag !== 'visible' && value[flag] !== undefined && value.geometry === undefined) throw invalidField(flag, value[flag], 'a flag on a mesh node with geometry and material; remove it from group nodes', TypeError);
+    const placesAsset = value.asset !== undefined && ASSET_PLACEMENT_FLAG_FIELDS.includes(flag);
+    if (flag !== 'visible' && value[flag] !== undefined && value.geometry === undefined && !placesAsset) throw invalidField(flag, value[flag], 'a flag on a mesh node with geometry and material; remove it from group nodes', TypeError);
   }
   if (value.rayVisibility !== undefined) {
     if (value.geometry === undefined) throw invalidField('rayVisibility', value.rayVisibility, 'a field on a mesh node; remove it from group nodes', TypeError);
@@ -1107,7 +1135,7 @@ function checkLineNodeNames(recipe) {
   }
   // A group that draws nothing itself (an expanded instances node, a plain group) would do nothing without a sign.
   // A placed asset, vegetation and crowd nodes are groups too, but their parts name them in `group`.
-  const drawsNothing = recipe.nodes.find(node => Object.hasOwn(lines.nodes, node.id) && node.geometry === undefined && !node.asset && !node.vegetation && !node.clutter);
+  const drawsNothing = recipe.nodes.find(node => Object.hasOwn(lines.nodes, node.id) && node.geometry === undefined && !node.asset && !growsParts(node));
   if (drawsNothing) {
     const childIds = recipe.nodes.filter(node => node.parent === drawsNothing.id).map(node => node.id);
     throw invalidField(`environment.lines.nodes.${drawsNothing.id}`, drawsNothing.id, `the ID of a node that draws a part; ${JSON.stringify(drawsNothing.id)} is a group with no geometry of its own. ${childIds.length > 0 ? `Name its children instead, such as ${childIds.slice(0, 3).join(', ')}` : 'It has no children, so remove its entry from lines.nodes'}`);
@@ -1277,7 +1305,8 @@ function geometryStats(records) {
 function batchSignature(material) {
   // Textures are fixed per renderer, so a changed pattern rebuilds it like a changed tag does.
   // Transmission moves a material to the pass that sees the opaque scene, which is fixed per renderer.
-  return `${material.tag}|${material.alphaMode}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${JSON.stringify(material.snippet)}${textureMapSignature(material)}`;
+  // Snippet uniform values bind per draw, so only changing the compiled feature or mask needs a new handle (#3163).
+  return `${material.tag}|${material.alphaMode}|${material.alphaCutoff}|${material.opacity}|${material.transmission > 0}|${material.doubleSided}|${material.depthTest !== false}|${JSON.stringify(material.pattern ?? material.map ?? null)}|${material.snippet?.feature}|${material.snippet?.mask}${textureMapSignature(material)}`;
 }
 
 // A material's uvScale, uvOffset, uvRotation and worldScale are baked into the UVs of the geometry it draws, like glTF KHR_texture_transform.
@@ -1425,6 +1454,23 @@ function localTransformOf(node, sampled, simulated) {
   };
 }
 
+/**
+ * The world matrix of a node at a scene time: its animated or physics-baked local transform composed with its parents' (#2829).
+ * It reads the samplers only, so the same time gives the same matrix whatever was sampled before.
+ */
+function worldMatrixAt(stagedState, nodeId, time) {
+  const nodesById = new Map(stagedState.recipe.nodes.map(node => [node.id, node]));
+  const sampled = stagedState.motionSampler?.sample(time) ?? null;
+  const simulated = simulatedPose(stagedState, time);
+  const world = mat4.create();
+  const local = mat4.create();
+  for (let cursor = nodesById.get(nodeId), depth = 0; cursor && depth < 256; cursor = nodesById.get(cursor.parent), depth++) {
+    const { translation, rotation, scale } = localTransformOf(cursor, sampled, simulated);
+    mat4.multiply(world, mat4.fromRotationTranslationScale(local, rotation, translation, scale), world);
+  }
+  return world;
+}
+
 /** What a bake-motion operation samples: the committed scene's local node transforms at any time, without touching the pose. */
 function motionBakeSource(stagedState) {
   const nodesById = new Map(stagedState.recipe.nodes.map(node => [node.id, node]));
@@ -1481,7 +1527,7 @@ function stagePose(stagedState, time) {
   }
   const camera = sampled?.camera ? cameraPoseFrom(sampled.camera) : stagedState.recipe.camera;
   retainedMatrices(stagedState.parts);
-  const clothGeometries = withTerrainLod(sampledGeometries(stagedState, time, sampled), stagedState, graph, camera);
+  const clothGeometries = withTerrainLod(sampledGeometries(stagedState, time, sampled, camera), stagedState, graph, camera);
   // Staged last: a pose pending on a decoded asset must be committed or discarded, so nothing above may throw after it.
   const assetClips = stagedState.assetRuntime.animators.length ? agentSceneModule('assets').stageAssetClips(stagedState.assetRuntime, graph, time) : null;
   const movedLook = stagedState.motionSampler && agentSceneModule('motion').motionMovesLook(sampled) ? sampled : null;
@@ -1528,14 +1574,72 @@ function oceanTimeGeometries(stagedState, sampled, time) {
   return geometries;
 }
 
+/** IDs of the nodes drawing a mesh whose ocean time a geometry track drives. */
+function oceanTrackNodeIds(recipe) {
+  const oceanGeometries = new Set((recipe.motion?.tracks ?? []).filter(track => track.kind === 'geometry' && track.property === 'oceanTime').map(track => track.id));
+  return new Set(recipe.nodes.filter(node => oceanGeometries.has(node.geometry)).map(node => node.id));
+}
+
+// What an ocean time moves in a sea geometry. The triangle indices move too: the diagonal of each quad follows the waves.
+const SEA_MOVING_FIELDS = ['positions', 'normals', 'skyVisibility', 'indices'];
+
+// True when the two seas differ only in what an ocean time moves: the same fields and vertex groups, the same array sizes and
+// types, and the same UVs, so the arrays of one can be overwritten with the other. Any other field (surface masks, colours) is
+// not known to stay put, so it sends the sea to the part swap.
+function seaOnlyMoved(live, next) {
+  const fields = Object.keys(next);
+  if (fields.length !== Object.keys(live).length || !fields.every(field => field in live && (SEA_MOVING_FIELDS.includes(field) || field === 'uvs' || field === 'vertexGroups'))) return false;
+  if (next.uvs && (live.uvs.length !== next.uvs.length || next.uvs.some((value, index) => value !== live.uvs[index]))) return false;
+  if (!SEA_MOVING_FIELDS.every(field => !next[field] || (live[field].length === next[field].length && live[field].constructor === next[field].constructor))) return false;
+  const groups = Object.keys(next.vertexGroups ?? {});
+  return groups.length === Object.keys(live.vertexGroups ?? {}).length && groups.every(name => live.vertexGroups[name]?.length === next.vertexGroups[name].length);
+}
+
+// A copy of a sea with its own moving arrays, which later times overwrite. The geometry a frame cache holds stays untouched.
+function liveSea(sea) {
+  const vertexGroups = sea.vertexGroups && Object.fromEntries(Object.entries(sea.vertexGroups).map(([name, weights]) => [name, weights.slice()]));
+  const copy = { ...sea, ...(vertexGroups && { vertexGroups }) };
+  for (const field of SEA_MOVING_FIELDS) {
+    if (sea[field]) copy[field] = sea[field].slice();
+  }
+  return markLiveGeometry(Object.freeze(copy), { reindexed: true });
+}
+
+/**
+ * Each sea an ocean time track drives keeps one geometry per node, so a renderer keeps its part and uploads new positions,
+ * normals, foam and triangle indices (updatePartVertices) instead of building a batch for every time. A sea that changed in any
+ * other way, such as its vertex or triangle count, replaces the kept one and the renderer swaps its parts as before.
+ */
+function seasKeptInPlace(stagedState, geometries) {
+  const seaNodeIds = oceanTrackNodeIds(stagedState.recipe);
+  const kept = stagedState.liveSeas ??= new Map();
+  let result = geometries;
+  for (const nodeId of seaNodeIds) {
+    const next = geometries.get(nodeId);
+    if (!next) continue;
+    const live = kept.get(nodeId);
+    if (live && seaOnlyMoved(live, next)) {
+      for (const field of SEA_MOVING_FIELDS) {
+        if (next[field]) live[field].set(next[field]);
+      }
+      for (const [name, weights] of Object.entries(next.vertexGroups ?? {})) live.vertexGroups[name].set(weights);
+    } else {
+      kept.set(nodeId, liveSea(next));
+    }
+    if (result === geometries) result = new Map(geometries);
+    result.set(nodeId, kept.get(nodeId));
+  }
+  return result;
+}
+
 // Cloth and particles replace the geometry of their own nodes at a sampled time; no node belongs to both.
-function sampledGeometries(stagedState, time, sampled) {
+function sampledGeometries(stagedState, time, sampled, camera) {
   if (time === null) {
     return null;
   }
   const geometries = oceanTimeGeometries(stagedState, sampled, time);
   for (const sampler of [stagedState.clothSampler, stagedState.particleSampler]) {
-    sampler?.sample(time)?.forEach((geometry, nodeId) => geometries.set(nodeId, geometry));
+    sampler?.sample(time, camera)?.forEach((geometry, nodeId) => geometries.set(nodeId, geometry));
   }
   return geometries.size ? geometries : null;
 }
@@ -1692,7 +1796,7 @@ function publishPose(stagedState, pose) {
   stagedState.movedLook = pose.movedLook;
   stagedState.motionTime = pose.time;
   const previousParts = stagedState.parts;
-  const sampledParts = partsWithCloth(stagedState.restParts, pose.clothGeometries, previousParts);
+  const sampledParts = partsWithCloth(stagedState.restParts, pose.clothGeometries && seasKeptInPlace(stagedState, pose.clothGeometries), previousParts);
   // Ranked also when the parts did not change: staging an edit ranks the rest parts, so the drawn parts get their ranks back.
   stagedState.parts = stagedState.rankFlushParts ? stagedState.rankFlushParts(sampledParts) : sampledParts;
   return stagedState.parts !== previousParts;
@@ -1714,7 +1818,10 @@ function authoredRecipe(recipe) {
 }
 
 // Node keys whose values the recipe normalizer may rebuild or rewrite in place, so a shared node could not be read-only.
-const NODE_KEYS_NEEDING_OWN_COPY = ['assetPart', 'asset', 'vegetation', 'clutter', 'relations', 'skin', 'instances', 'armature'];
+// Node fields whose module generates part nodes at each edit; the last two scatter over a terrain from the camera eye.
+const GROWN_PART_FIELDS = ['vegetation', 'clutter', 'grass'];
+const growsParts = node => GROWN_PART_FIELDS.some(field => node[field]);
+const NODE_KEYS_NEEDING_OWN_COPY = ['assetPart', 'asset', 'vegetation', 'clutter', 'grass', 'relations', 'skin', 'instances', 'armature'];
 
 /**
  * A copy of the staged recipe for a batch of plain field edits that clones only what the batch can change: the touched
@@ -1801,6 +1908,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   let clothBake = null;
   let particleBake = null;
   let lightBake = null;
+  // Whether an edit of a built scene shows before its bake is done (#3052): null waits for it, 'previous' draws the last light
+  // meanwhile, 'none' draws no light. `settling.pending` is the plan of the bake that is running.
+  let bakeDeferral = options.deferBake ?? null;
+  const settling = { pending: null };
   // Why the last stage's rebake could not run (a size limit), for the staged state to report.
   let skippedBake = null;
   let skippedReflections = null;
@@ -1857,7 +1968,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // resident: the committed state's graph is moved in place instead of being built again.
   function canMoveStagedGraph(recipe, movedNodeIds, assetRuntime) {
     return Boolean(movedNodeIds && state && !state.poseGraph && assetRuntime === NO_ASSETS && !recipe.armatures &&
-      state.recipe.nodes.length === recipe.nodes.length && !recipe.nodes.some(node => node.relations?.length || node.assetPart || node.asset || node.vegetation || node.clutter));
+      state.recipe.nodes.length === recipe.nodes.length && !recipe.nodes.some(node => node.relations?.length || node.assetPart || node.asset || growsParts(node)));
   }
 
   function graphWithMovedNodes(recipe, movedNodeIds, localBounds) {
@@ -1881,10 +1992,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const plantedRuntime = recipe.nodes.some(node => node.vegetation)
       ? agentSceneModule('vegetation').expandVegetation(recipe, limits, assetOutputCache, placedRuntime, options.sequenceFrames)
       : placedRuntime;
-    // Scattered clutter travels the same channel and adds its own parts after the trees.
-    const assetRuntime = recipe.nodes.some(node => node.clutter)
-      ? agentSceneModule('clutter').expandClutter(recipe, limits, assetOutputCache, plantedRuntime)
-      : plantedRuntime;
+    // Scattered clutter and blade grass travel the same channel and add their parts after the trees.
+    let assetRuntime = plantedRuntime;
+    for (const [field, expand] of [['clutter', 'expandClutter'], ['grass', 'expandGrass']]) {
+      if (recipe.nodes.some(node => node[field])) assetRuntime = agentSceneModule(field)[expand](recipe, limits, assetOutputCache, assetRuntime);
+    }
     // Placed assets and grown vegetation add part nodes, so the part names are checked after the expansion, like the render binds them.
     if (recipe.environment.localVolumes) {
       const partNodeIds = recipe.nodes.filter(node => node.geometry !== undefined).map(node => node.id);
@@ -1993,6 +2105,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const graph = (reusesGraph ? graphWithMovedNodes(recipe, movedNodeIds, localBounds) : compile(recipe, geometries, localBounds, limits));
     const skinBindings = bindSkins({ recipe, graph, geometryRecords, cache: skinCache });
     const materialHandles = new Map();
+    const stagedMaterialSnapshots = [];
     for (const material of recipe.materials) {
       const snapshot = immutableMaterial(material);
       const preferredHandle = preferred?.materialHandles.get(material.id);
@@ -2002,6 +2115,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const assetOutput = assetRuntime.materialOutputs.get(material.id);
       const handle = assetOutput ? assetMaterialHandle(snapshot, assetOutput, preferredHandle, activeHandle) : existing ?? materialHandle(snapshot, material.map && agentSceneModule('assets').createTextureSequence(material.id, material.map, options.sequenceFrames), options.sequenceFrames);
       materialHandles.set(material.id, handle);
+      stagedMaterialSnapshots.push({ id: material.id, holder: handle.holder, snapshot });
     }
     const activeParts = new Map(state?.sourceRestParts.map(part => [part.name, part]) ?? []);
     const preferredParts = new Map(preferred?.sourceRestParts.map(part => [part.name, part]) ?? []);
@@ -2016,7 +2130,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const maskedGeometry = recipeMaterial.output.wear ? geometryWithSurfaceMasks(foamGeometry, recipeMaterial.output.wear, node.id) : foamGeometry;
       const geometry = geometryWithMaterialUvs(maskedGeometry, recipe, node.material, graph, node.id);
       // A graph with a vertexGroup node bakes with this mesh's weights, so its textures belong to the mesh.
-      const drawnMaterial = recipeMaterial.output.pattern?.graph ? agentSceneModule('patterns').materialViewForGeometry(recipeMaterial.output, geometry, node.id, recipeMaterial.holder.images) : recipeMaterial.output;
+      const drawnMaterial = recipeMaterial.output.pattern?.graph ? agentSceneModule('patterns').materialViewForGeometry(recipeMaterial.output, geometry, node.id, recipeMaterial.holder.images, graph.getNode(node.id).worldMatrix) : recipeMaterial.output;
       const fades = fadedNodeIds.has(node.id);
       const material = fades ? fadeMaterial(drawnMaterial, node.id) : drawnMaterial;
       const assetExtras = assetRuntime.partExtras.get(node.id);
@@ -2043,7 +2157,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const sameParts = state && state.sourceRestParts.length === nextParts.length &&
       state.sourceRestParts.every((part, index) => part === nextParts[index]);
     const sourceRestParts = sameParts ? state.sourceRestParts : Object.freeze(nextParts);
-    const lightBakeResult = stageLightBake(recipe, sourceRestParts, graph);
+    const lightBakeResult = stageLightBake(recipe, sourceRestParts, graph, stagedMaterialSnapshots);
     const { reflected, restParts } = stageRestParts(recipe, sourceRestParts, lightBakeResult, graph);
     // Unchanged rest parts start from the parts the last pose drew (#2730): a pose that samples the same sea, cloth or
     // particles keeps those parts, and only a pose that differs swaps them, which publishPose counts as a topology change.
@@ -2055,9 +2169,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       parts: restUnchanged ? state.parts : restParts, restParts,
       // A sea a wake deforms depends on the physics bake as well, so only frames built without one outlive the edit.
       oceanFrames: new Map([...(state?.oceanFrames ?? [])].filter(([, frame]) => !frame.wake)),
+      // The kept sea of each node outlives an edit too: every pose overwrites it with the sea it stages, and it is replaced when the layout differs.
+      liveSeas: new Map(state?.liveSeas ?? []),
       // Parts a pose replaces (cloth, particles, ocean) are new objects with no flush rank, so the pose ranks them again.
       rankFlushParts: parts => stageCoplanarOffsets(recipe, parts),
       bakeSkipped: skippedBake,
+      settlingPlan: lightBakeResult?.plan,
       reflectionSkipped: skippedReflections,
       bakeReport: lightBakeResult ? agentSceneModule('bake').withLocalVolumeReport({ ...lightBakeResult.report, reused: lightBakeResult.reused }, recipe.environment.localVolumes) : null,
       reflectionReport: reflected ? reflected.report : null,
@@ -2104,13 +2221,20 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // The bake no longer matches the frame: motion moved a light, the sun or a part off the pose it was traced at.
   // Only a scene with both a bake and motion pays for this check, and bake.rebake turns it off (it bakes each sampled pose).
   function staleBakeProblems() {
-    return lightBake && state.recipe.bake && state.motionSampler ? agentSceneModule('bake').staleBakeProblems(state, lightBake.key) : [];
+    return lightBake && state.recipe.bake && state.motionSampler && !settling.pending ? agentSceneModule('bake').staleBakeProblems(state, lightBake.key) : [];
   }
 
   function stageRestParts(recipe, sourceRestParts, lightBakeResult, graph) {
+    if (options.recipeOnly) {
+      return { restParts: sourceRestParts };
+    }
     const baked = lightBakeResult?.parts ?? sourceRestParts;
+    // Its floor sky and reflections wait for the real light while the edit's bake runs.
+    if (lightBakeResult?.pending) {
+      return { reflected: null, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, baked), { rest: true }) };
+    }
     const reflected = stageObjectReflections(recipe, sourceRestParts, baked, graph);
-    return { reflected, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked)), { rest: true }) };
+    return { reflected, restParts: stageWetMirror(recipe, stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked, graph)), { rest: true })) };
   }
 
   // bake.rebake: a frame sampled at a pose the bake was not traced at is lit by a bake of that pose, cached by its key.
@@ -2124,9 +2248,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   // A light bake costs seconds of ray tracing: it runs when the parts, the lights, the materials or the bake fields
   // change, and every other edit, seek or camera move reuses the last result.
-  function stageLightBake(recipe, sourceRestParts, graph) {
+  // `options.recipeOnly` builds the scene without its bake and without staging its parts (flush ranking, floor sky, reflections),
+  // for a scene made only to read its recipe.
+  function stageLightBake(recipe, sourceRestParts, graph, stagedMaterialSnapshots) {
     skippedBake = null;
-    if (!recipe.bake) {
+    if (!recipe.bake || options.recipeOnly) {
       return null;
     }
     const worldMatrices = new Map(sourceRestParts.map(part => [part.name, new Float32Array(graph.getNode(part.name).worldMatrix)]));
@@ -2136,8 +2262,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       lightBake.currentKey = key;
       return { ...lightBake, reused: true };
     }
+    if (bakeDeferral && state && !recipe.bake.rebake) {
+      return agentSceneModule('bakeDeferred').stageSettling(settling, bakeDeferral, { key, recipe, sourceRestParts, worldMatrices, generatedGeometryGenerators, stagedMaterialSnapshots, lightBake, state });
+    }
     // The first build of a scene still fails loudly. A later edit stays applied: the old bake no longer fits the edited parts, so it is dropped.
-    const { baked, refusal } = agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators);
+    const { baked, refusal } = agentSceneModule('bake').withStagedMaterials(stagedMaterialSnapshots, () => agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators));
     if (refusal) {
       lightBake = null;
       skippedBake = refusal;
@@ -2159,9 +2288,15 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     return objectReflectionCache.result;
   }
 
+  // Wet ground with puddles mirrors the scene in them: the water mirror module flags the flat ground parts, and the host attaches the mirror.
+  function stageWetMirror(recipe, parts) {
+    const environment = recipe.environment;
+    return environment.wetness > 0 && environment.puddles && agentSceneModuleActive('waterReflection', requestedModules) ? agentSceneModule('waterReflection').flagWetMirrorParts(parts) : parts;
+  }
+
   // A closed room a sun lights gets the sky each floor texel sees; the lazy module decides, keeps its result and honours environment.floorSkyTrace.
-  function stageFloorSky(recipe, parts) {
-    return agentSceneModuleActive('floorSky', requestedModules) ? agentSceneModule('floorSky').stageFloorSky(recipe.environment, parts) : parts;
+  function stageFloorSky(recipe, parts, graph) {
+    return agentSceneModuleActive('floorSky', requestedModules) ? agentSceneModule('floorSky').stageFloorSky(recipe.environment, parts, name => graph.getNode(name).worldMatrix) : parts;
   }
 
   // A scene that asks for no bake and looks like a closed room gets one diagnostic naming the bake. The ray test costs a
@@ -2194,13 +2329,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // still scene again, seconds per frame, so playback could not run.
   let flushCache = null;
   function partsToRank(recipe, parts) {
-    const movingNodes = new Set(recipe.particles?.systems.map(system => system.node) ?? []);
-    const oceanGeometries = new Set((recipe.motion?.tracks ?? []).filter(track => track.kind === 'geometry' && track.property === 'oceanTime').map(track => track.id));
-    for (const node of recipe.nodes) {
-      if (oceanGeometries.has(node.geometry)) movingNodes.add(node.id);
-    }
-    // Scattered clutter is left out as well: thousands of irregular stones have no flush faces, and ranking them took seconds per edit.
-    const clutterPrefixes = recipe.nodes.filter(node => node.clutter).map(node => `${node.id}/`);
+    const movingNodes = new Set([...(recipe.particles?.systems.map(system => system.node) ?? []), ...oceanTrackNodeIds(recipe)]);
+    // Scattered clutter and blade grass are left out as well: thousands of irregular stones and blades have no flush faces, and ranking them took seconds per edit.
+    const clutterPrefixes = recipe.nodes.filter(node => node.clutter || node.grass).map(node => `${node.id}/`);
     if (movingNodes.size === 0 && clutterPrefixes.length === 0) {
       return parts;
     }
@@ -2286,7 +2417,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   }
 
   function stageCoplanarOffsets(recipe, parts, { rest = false } = {}) {
-    if (!agentSceneModuleActive('coplanar', requestedModules)) {
+    if (options.recipeOnly || !agentSceneModuleActive('coplanar', requestedModules)) {
       return parts;
     }
     const coplanar = agentSceneModule('coplanar');
@@ -2402,7 +2533,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const emitterMeshes = new Set(recipe.particles.systems.map(system => system.emitter?.mesh));
     const involvedNodes = recipe.nodes.filter(node => emitterMeshes.has(node.id) || recipe.particles.systems.some(system => system.node === node.id));
     const oceanTracks = (recipe.motion?.tracks ?? []).filter(track => track.kind === 'geometry' && track.property === 'oceanTime');
-    const key = JSON.stringify([recipe.particles, involvedNodes, involvedNodes.map(node => geometryRecords.get(node.geometry).signature), oceanTracks]);
+    // An emitter that follows a node reads its animated transform, so the motion, the physics and the node tree are part of the key.
+    const followsNode = recipe.particles.systems.some(system => system.emitter?.follow);
+    const followedPose = followsNode ? [recipe.motion, recipe.physics, recipe.armatures, recipe.nodes.map(node => [node.id, node.parent, node.translation, node.rotation, node.scale])] : null;
+    const key = JSON.stringify([recipe.particles, involvedNodes, involvedNodes.map(node => geometryRecords.get(node.geometry).signature), oceanTracks, followedPose]);
     if (particleBake?.key !== key) {
       const geometries = new Map([...geometryRecords].map(([id, record]) => [id, record.geometry]));
       // An emitter on a sea with an oceanTime track samples the sea at the ocean time of each particle's birth (#2152).
@@ -2410,7 +2544,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         oceanTimeAt: (geometryId, time) => stagedState.motionSampler?.sample(time)?.geometries?.get(geometryId)?.oceanTime ?? null,
         geometryAt: (geometryId, oceanTime) => oceanTimeGeometry(recipe, stagedState.maxGeometryVertices, geometryId, oceanTime),
       };
-      particleBake = { key, sampler: agentSceneModule('particles').bakeAgentParticles(recipe.particles, recipe, geometries, sea) };
+      particleBake = { key, sampler: agentSceneModule('particles').bakeAgentParticles(recipe.particles, recipe, geometries, sea, { matrixAt: (nodeId, time) => worldMatrixAt(stagedState, nodeId, time) }) };
     }
     return particleBake.sampler;
   }
@@ -2443,10 +2577,38 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       }
     }
     state = stagedState;
+    if (settling.pending || stagedState.settlingPlan) {
+      agentSceneModule('bakeDeferred').adoptSettling(settling, stagedState.settlingPlan, finishSettledBake, stageSettledParts);
+    }
     if (incrementRevision) {
       revision++;
     }
     return revision;
+  }
+
+  // What the landing stages on the baked parts runs in slices before it (#3052), in the landing's order, so it finds each result kept:
+  // the reflections, the floor sky and the coplanar ranks.
+  function* stageSettledParts(bakedParts) {
+    const { recipe, graph } = state;
+    const reflected = stageObjectReflections(recipe, state.sourceRestParts, bakedParts, graph);
+    const sky = agentSceneModuleActive('floorSky', requestedModules) ? yield* agentSceneModule('floorSky').stageFloorSkySteps(recipe.environment, reflected ? reflected.parts : bakedParts, name => graph.getNode(name).worldMatrix) : reflected ? reflected.parts : bakedParts;
+    const linked = stageLightLinks(recipe, sky);
+    const rankedParts = partsToRank(recipe, linked);
+    if (agentSceneModuleActive('coplanar', requestedModules) && recipe.environment.resolveCoplanar !== false && !rankedLists().some(list => sameParts(list.rankedParts, rankedParts))) {
+      const coplanar = agentSceneModule('coplanar');
+      rankAndStage(coplanar, recipe, linked, true, yield* coplanar.resolveFlushPartsSteps(rankedParts));
+    }
+  }
+
+  // The bake of the last edit is done: the scene's parts are staged again with its light, like a fresh build, and swapped in as a
+  // topology change. A bake a limit stopped leaves the scene drawn without light and says why, as an edit that skips its bake does.
+  function finishSettledBake(plan, outcome) {
+    const settled = agentSceneModule('bakeDeferred').settledBake(plan, outcome, state.recipe);
+    lightBake = settled.lightBake;
+    const { reflected, restParts } = stageRestParts(state.recipe, state.sourceRestParts, lightBake && { ...lightBake, reused: false }, state.graph);
+    Object.assign(state, { restParts, bakeSkipped: settled.bakeSkipped, bakeReport: settled.bakeReport, reflectionReport: reflected ? reflected.report : null });
+    publishPose(state, state.poseGraph ? poseAtPlayhead(state) : stagePose(state, null));
+    topologyRevision++;
   }
 
   function expected(options) {
@@ -2479,6 +2641,25 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     },
     /** Ranks the near-coplanar triangles of a pending edit now, so a render or an export never misses an offset. Returns whether it had to. */
     settleFlush,
+    /** True while an edit shows before its light bake is done (#3052); the bake finishes on its own right after the edit. */
+    get bakePending() {
+      return Boolean(settling.pending);
+    },
+    /** Finishes the pending bake now, so a render or an export has the light a fresh build has. Returns whether it had to. */
+    settleBake() {
+      const waiting = Boolean(settling.pending);
+      settling.pending?.runner.drain();
+      return waiting;
+    },
+    /** Drops the pending bake of a scene nobody draws any more. */
+    cancelBake() {
+      settling.pending?.runner.cancel();
+      settling.pending = null;
+    },
+    /** null: an edit waits for its bake. 'previous': it shows at once with the last light. 'none': it shows at once with no light. */
+    setBakeDeferral(mode) {
+      bakeDeferral = mode;
+    },
     get camera() {
       return structuredClone(state.renderCamera);
     },
@@ -2617,7 +2798,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           knownKeys(operation, ['type', lookField], 'operation');
           const patch = operation[lookField];
           // Spot and area lights, cascades and sun links are absent from a recipe until it sets them.
-          const optionalFields = lookField === 'environment' ? ['ground', 'spotLights', 'areaLights', 'shadowCascades', 'localVolumes', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'hdri', 'keyFromHdri', 'sky'] : lookField === 'effects' ? postStepSupport.fields : lookField === 'shadow' ? ['hard'] : [];
+          const optionalFields = lookField === 'environment' ? ['ground', 'spotLights', 'areaLights', 'shadowCascades', 'localVolumes', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'hdri', 'keyFromHdri', 'sky', 'wetness', 'puddles'] : lookField === 'effects' ? postStepSupport.fields : lookField === 'shadow' ? ['hard'] : [];
           knownKeys(patch, [...Object.keys(candidate[lookField]), ...optionalFields], lookField);
           requireChange(Object.keys(patch).length > 0, operation, [...Object.keys(candidate[lookField]), ...optionalFields]);
           const { kept: keptPatch, cleared: clearedFields } = splitClearedLookPatch(lookField, patch);
@@ -2800,7 +2981,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         return result;
       });
       const resident = geometryStats(ownedGeometryRecords());
-      const diagnostics = [...recipeDiagnostics(state.recipe), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...(state.reflectionSkipped ? [agentSceneModule('reflections').reflectionSkippedDiagnostic(state.reflectionSkipped)] : []), ...coplanarProblems(), ...(agentSceneModuleLoaded('unsupportedPart') ? agentSceneModule('unsupportedPart').unsupportedPartProblems(state.parts, state.recipe, revision) : []), ...(state.particleSampler?.diagnostics() ?? []), ...(state.assetRuntime.animators.length ? agentSceneModule('assets').placedClipDiagnostics(state.assetRuntime) : [])];
+      const diagnostics = [...recipeDiagnostics(state.recipe), ...droppedVertexAlphaDiagnostics(state.parts), ...closedRoomProblems(), ...staleBakeProblems(), ...(state.bakeSkipped ? [agentSceneModule('bake').bakeSkippedDiagnostic(state.bakeSkipped)] : []),...(state.reflectionSkipped ? [agentSceneModule('reflections').reflectionSkippedDiagnostic(state.reflectionSkipped)] : []), ...coplanarProblems(), ...(agentSceneModuleLoaded('unsupportedPart') ? agentSceneModule('unsupportedPart').unsupportedPartProblems(state.parts, state.recipe, revision) : []), ...(state.particleSampler?.diagnostics() ?? []), ...(state.assetRuntime.animators.length ? agentSceneModule('assets').placedClipDiagnostics(state.assetRuntime) : [])];
       return {
         revision, topologyRevision,
         ...(state.recipe.motion?.ik?.length ? { motionIk: agentSceneModule('motion').compileAgentMotion(state.recipe.motion, state.recipe).sweepIk() } : {}),
@@ -2810,6 +2991,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         ...(state.particleSampler ? { particles: state.particleSampler.report() } : {}),
         ...(state.assetRuntime.vegetation ? { vegetation: state.assetRuntime.vegetation } : {}),
         ...(state.assetRuntime.clutter ? { clutter: state.assetRuntime.clutter } : {}),
+        ...(state.assetRuntime.grass ? { grass: state.assetRuntime.grass } : {}),
         ...(state.assetRuntime.placements.length ? { assets: agentSceneModule('assets').describeAssetPlacements(state.assetRuntime, state.graph, geometry => state.localBounds.get(geometry)) } : {}),
         ...(state.sequences.length ? { textureSequences: state.sequences.map(sequence => sequence.describe()) } : {}),
         ...(state.bakeReport ? { bake: state.bakeReport } : {}),
@@ -2835,6 +3017,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           areaLights: state.recipe.environment.areaLights?.length ?? 0,
           volumeFogDensity: state.recipe.environment.volumeFog.density,
           exposure: state.recipe.effects.exposure,
+          ...(state.recipe.effects.autoExposure ? { autoExposure: { ...state.recipe.effects.autoExposure, chosen: null } } : {}),
         },
         nodes, truncated: selected.length > nodes.length,
         ...(options.path === undefined ? {} : { path: pathQuery(options.path) }),

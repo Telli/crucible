@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { closeClientAndWaitForServerExit, repositoryRoot } from './helpers/mcp-server-session.js';
 
 // End to end: a real render job through the MCP server on a SwiftShader runtime, asked for the native backend while the
 // package is switched off (JS67_NATIVE_TRACER=off, the same answer as a missing package or an adapter without ray queries).
@@ -22,7 +23,7 @@ async function renderDemoRoom(requestedBackend, workDirectory) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverEntry, '--backend', 'cpu', '--memory', '384', '--jobs', join(workDirectory, `jobs-${requestedBackend}`)],
-    cwd: workDirectory,
+    cwd: repositoryRoot,
     env: { ...process.env, JS67_NATIVE_TRACER: 'off' },
     stderr: 'ignore',
   });
@@ -44,20 +45,20 @@ async function renderDemoRoom(requestedBackend, workDirectory) {
       if (['completed', 'cancelled', 'failed'].includes(record.state)) break;
       await delay(200);
     }
-    assert.equal(record.state, 'completed', record.error);
+    assert.equal(record.state, 'completed', record.reason);
     const result = (await call('scene_render_result', { jobId })).structuredContent;
     const imagePath = join(workDirectory, `${requestedBackend}.png`);
     await copyFile(result.artifacts[0].path, imagePath);
     return { png: await readFile(imagePath), report: (result.metrics ?? record.metrics).pathTracer };
   } finally {
-    await client.close();
+    await closeClientAndWaitForServerExit(client, transport);
   }
 }
 
 test('a native job without the native tracer runs the cpu backend with the same image and report fields',
   { skip: (!hasBuild && 'run npm run build:lib first') || (!hasBrowser && 'no Chrome'), timeout: 600000 }, async context => {
     const workDirectory = await mkdtemp(join(tmpdir(), 'crucible-native-fallback-'));
-    context.after(() => rm(workDirectory, { recursive: true, force: true }));
+    context.after(() => rm(workDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
     // The two renders share nothing (own server, own job folder, own image file), so they run side by side.
     const [cpu, native] = await Promise.all([renderDemoRoom('cpu', workDirectory), renderDemoRoom('native', workDirectory)]);
     assert.equal(native.report.backend, 'cpu');

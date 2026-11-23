@@ -100,7 +100,7 @@ test('a graph with the new nodes bakes on box mapping without UVs and counts tow
   assert.deepEqual(first.map.image.data, second.map.image.data);
   assert.throws(() => normalizeMaterialPattern({
     type: 'graph', resolution: 1024,
-    graph: Object.fromEntries(['color', 'roughness', 'metallic', 'height'].map(name => [name, { brick: { columns: 64, rows: 64, at: { mapping: { scale: 2, vector: { mapping: { scale: 2 } } } } } }])),
+    graph: Object.fromEntries(['color', 'roughness', 'metallic', 'height'].map(name => [name, { brick: { columns: 64 - 4 * ['color', 'roughness', 'metallic', 'height'].indexOf(name), rows: 64, at: { mapping: { scale: 2 + ['color', 'roughness', 'metallic', 'height'].indexOf(name), vector: { mapping: { scale: 10 + ['color', 'roughness', 'metallic', 'height'].indexOf(name) } } } } } }])),
   }), /work units per pixel|nodes/);
 });
 

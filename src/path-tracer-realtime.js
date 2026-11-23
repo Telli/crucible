@@ -74,7 +74,7 @@ export async function createRealtimeTracer(scene, rawOptions = {}) {
   const loadScene = nextTraceScene => {
     releaseResources(gl);
     traceScene = nextTraceScene;
-    const kernel = getKernel(sceneUsesSubsurface(traceScene.materials), false, options);
+    const kernel = getKernel(sceneUsesSubsurface(traceScene.materials), false, { ...options, vertexAlpha: Boolean(traceScene.vertexAlpha) });
     program = kernel.program;
     compileSeconds = kernel.compileSeconds;
     gl.useProgram(program);

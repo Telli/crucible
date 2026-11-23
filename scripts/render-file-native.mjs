@@ -187,6 +187,8 @@ async function main() {
     await page.waitForFunction(() => window.__fileSceneError || window.__scene?.parts, null, { timeout: 300000 });
     const loadError = await page.evaluate(() => window.__fileSceneError);
     if (loadError) throw new Error(`Scene file failed to load: ${loadError}`);
+    // The traced scene is packed only after the levels of detail are in, so the picture never depends on when they were made (#2985).
+    await page.evaluate(() => window.__scene.lodsReady);
     const loadSeconds = (performance.now() - loadStarted) / 1000;
     const packStarted = performance.now();
     const capacityRead = readNativeCapacity(tracer);

@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
+import { loadPreviewPage } from './agent-page-load.mjs';
 import { withSnapshotSkyColors } from './snapshot-sky-colors.mjs';
-import { previewCallTimeoutMs, recipeHasGridVolume, operationsAddGridVolume } from './agent-evaluation-timeout.mjs';
+import { previewCallTimeoutMs, recipeHasGridVolume, operationsAddGridVolume, assetDataBytes, slowAssetsNote } from './agent-evaluation-timeout.mjs';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { totalmem } from 'node:os';
@@ -11,10 +12,14 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import packageMetadata from '../package.json' with { type: 'json' };
 import { resolveLookView } from '../src/look-views.js';
+import { runFitLook } from './agent-fit-look.mjs';
+import { FIT_LOOK_CAPABILITY_NOTE } from '../src/look-fit-notes.js';
 import { TREE_GROWTH_CAPABILITIES, VEGETATION_CAPABILITY_NOTE } from '../src/agent-vegetation-notes.js';
 import { CLUTTER_CAPABILITY_NOTE } from '../src/agent-clutter-notes.js';
+import { GRASS_CAPABILITY_NOTE } from '../src/agent-grass-notes.js';
 import { CROWD_CAPABILITY_NOTE } from '../src/agent-crowd-notes.js';
 import { SETTLE_CAPABILITY_NOTE } from '../src/settle-notes.js';
+import { FOLDED_APPLY_OPERATION_NOTES } from '../src/apply-operation-notes.js';
 import { USER_PASS_CAPABILITIES } from '../src/user-pass.js';
 import { GAME_CAPABILITIES } from '../src/game-setup-notes.js';
 import { MESH_BLEND_CAPABILITIES } from '../src/mesh-blend.js';
@@ -34,7 +39,7 @@ import { createPackRegistry } from './agent-packs.mjs';
 import { VEGETATION_SCANS_PACK, fillVegetationScans, needsVegetationScans, vegetationScansFromPack } from '../src/agent-vegetation-scans.js';
 import { MAXIMUM_INSTALLED_PACKS, MAXIMUM_PACK_BYTES, MAXIMUM_PACK_FILES, MAXIMUM_PACK_FILE_BYTES, MAXIMUM_PACK_JSON_BYTES, MAXIMUM_PACK_ITEMS_PER_KIND, PACK_CONTENT_KINDS } from '../src/pack-manifest.js';
 import { geometryOnlyGlb } from './agent-query-asset.mjs';
-import { AGENT_ASSET_LIMITS, configureAssetByteLimit, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
+import { AGENT_ASSET_LIMITS, MAX_CHECKED_TRIANGLES, configureAssetByteLimit, assertCombinedAssetBytes, assertCombinedByteTotal, sceneAssetBytesLimitMessage } from '../src/agent-asset-limits.js';
 import { recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { namesCatalogFiles, resolveAssetPlacementNames, namesCatalogSequences, resolveCatalogSequenceNames, namesCatalogTextureMaps, resolveTextureSetNames } from '../src/agent-asset-names.js';
 import { sequenceFrameIds, hasStreamedSequence } from '../src/agent-texture-sequence.js';
@@ -75,13 +80,21 @@ import { sessionProblem, SCENE_STORE_LIMITS } from '../src/agent-errors.js';
 import { GLB_EXPORT_NOTES } from '../src/glb-export-omissions.js';
 import { MOTION_NOT_SET_HINT, recipeMoves } from '../src/motion-hint.js';
 import { previewDeadlineMilliseconds } from './preview-deadline.mjs';
+import { assertCapturedPngSize, captureClip } from './render-capture-size.mjs';
 import { realismReport, reviewTilingFindings } from './review-realism.mjs';
 
 const SCENE_LIMITS = AGENT_SCENE_DEFAULT_LIMITS;
 const MAXIMUM_IMAGE_BYTES = 1024 * 1024;
-const LOOK_STEP_SCALE = 0.75;
+// A PNG grows about with its pixel count, so the retry aims at the budget (with 10 percent to spare) instead of stepping a fixed 0.75: a 1024x640 look that is 1.3 MiB comes back at about 870 wide, not 768 (#3056).
+const LOOK_BUDGET_SPARE = 0.9;
+const LOOK_LARGEST_STEP_SCALE = 0.9;
+const LOOK_SMALLEST_STEP_SCALE = 0.5;
 const LOOK_MAXIMUM_STEP_DOWNS = 4;
 const LOOK_MINIMUM_SIDE = 64;
+function lookStepScale(encodedBytes) {
+  const aimed = Math.sqrt((MAXIMUM_IMAGE_BYTES * LOOK_BUDGET_SPARE) / encodedBytes);
+  return Math.min(LOOK_LARGEST_STEP_SCALE, Math.max(LOOK_SMALLEST_STEP_SCALE, aimed));
+}
 const MAXIMUM_MOTION_SOURCES = 4;
 // A path trace shares the machine with the person using it, so it takes half of the eight-thread ceiling.
 const PATH_TRACER_THREADS = 8;
@@ -519,6 +532,12 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     return totalBytes;
   }
 
+  /** The file name and byte length of each catalog asset a recipe or edit list places, for the error of a call that ran long. */
+  async function placedAssetSizes(value) {
+    const readyCatalog = await catalog();
+    return Promise.all(recipeAssetNeeds(value).map(({ id }) => readyCatalog.describeSize(id)));
+  }
+
   /** Bytes of the catalog assets a recipe or edit list places, base64 by asset id, for the page that decodes them. */
   async function placedAssetData(value) {
     await assertPlacedAssetsFitBeforeReading(value);
@@ -722,7 +741,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     try {
       await bootOnce();
     } catch (error) {
-      if (closing || !/page.goto|Timeout d+ms exceeded/i.test(String(error?.message))) throw error;
+      if (closing || !(error?.pageLoadTimeout || /page.goto|Timeout d+ms exceeded/i.test(String(error?.message)))) throw error;
       await bootOnce();
     }
   }
@@ -797,8 +816,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       page.on?.('console', message => {
         if (message.text().startsWith('Crucible kernel fallback')) console.error(message.text());
       });
-      await page.goto(origin);
-      await page.waitForFunction(() => Boolean(window.__agentPreview));
+      await loadPreviewPage(page, origin);
       await loadAddons();
       phase = 'ready';
     } catch (error) {
@@ -976,8 +994,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
       const origin = `http://127.0.0.1:${httpServer.address().port}`;
       await jobPage.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
       jobPage.setDefaultTimeout(15000);
-      await jobPage.goto(origin);
-      await jobPage.waitForFunction(() => Boolean(window.__agentPreview));
+      await loadPreviewPage(jobPage, origin);
       if (settings.kind === 'icons') {
         // Each icon is its own scene, created and disposed inside the job, so the shared dispose below has nothing left to release.
         const icons = await renderIconsInPage({ jobPage, jobId, settings, directory, signal, progress, assetData: placedAssetData, memoryBudgetMiB: memory, backend, tier: settings.quality });
@@ -1182,9 +1199,10 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const captureStarted = performance.now();
           const captured = await session.send('Page.captureScreenshot', { fromSurface: true,
             format: settings.kind === 'video' ? 'jpeg' : 'png',
-            ...(region ? { clip: { ...region, scale: 1 } } : {}),
+            clip: captureClip({ region, width, height }), captureBeyondViewport: true,
             ...(settings.kind === 'video' ? { quality: 95 } : { optimizeForSpeed: true }) });
           const captureBytes = Buffer.from(captured.data, 'base64');
+          if (settings.kind !== 'video') assertCapturedPngSize({ bytes: captureBytes, width: outputWidth, height: outputHeight });
           metrics.captureSeconds += (performance.now() - captureStarted) / 1000;
           if (captureBytes.length > frameByteLimit) throw new Error(`Captured job frame exceeded ${frameByteLimit / 1024 ** 2} MiB.`);
           signal.throwIfAborted();
@@ -1344,7 +1362,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return tierReport({ backend, nativeTracer: Boolean((await nativeTracerLocator.find()).tracer) });
       };
       return {
-        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, treeGrowth: TREE_GROWTH_CAPABILITIES, clutter: CLUTTER_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES, textureSet: TEXTURE_SET_CAPABILITIES },
+        scene: { ...AGENT_SCENE_CAPABILITIES, game: GAME_CAPABILITIES, postPasses: USER_PASS_CAPABILITIES, meshBlend: MESH_BLEND_CAPABILITIES, materialSnippet: MATERIAL_SNIPPET_CAPABILITIES, vegetation: VEGETATION_CAPABILITY_NOTE, treeGrowth: TREE_GROWTH_CAPABILITIES, clutter: CLUTTER_CAPABILITY_NOTE, grass: GRASS_CAPABILITY_NOTE, fitLook: FIT_LOOK_CAPABILITY_NOTE, crowd: CROWD_CAPABILITY_NOTE, settle: SETTLE_CAPABILITY_NOTE, applyOperations: FOLDED_APPLY_OPERATION_NOTES, textureSequence: TEXTURE_SEQUENCE_CAPABILITIES, textureSet: TEXTURE_SET_CAPABILITIES },
         sceneLimits: SCENE_LIMITS,
         preview: { backend, memoryBudgetMiB: memory, maximumWidth: 1024, maximumHeight: 1024, maximumImageBytes: MAXIMUM_IMAGE_BYTES, maximumActiveScenes: SCENE_STORE_LIMITS.maxOpenScenes, maximumOpenSceneBytes: SCENE_STORE_LIMITS.maxOpenSceneBytes, maximumQueuedCalls: MAXIMUM_QUEUED_CALLS, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS },
         review: { ...REVIEW_LIMITS, backend, memoryBudgetMiB: memory, evaluationTimeoutMs: EVALUATION_TIMEOUT_MS,
@@ -1358,6 +1376,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           maximumBytes: AGENT_ASSET_LIMITS.maxBytes, maximumAssets: AGENT_ASSET_LIMITS.maxAssets, maximumCombinedBytes: AGENT_ASSET_LIMITS.maxCombinedBytes,
           maximumVertices: AGENT_ASSET_LIMITS.maxVertices, maximumParts: AGENT_ASSET_LIMITS.maxParts, maximumTexturePixels: AGENT_ASSET_LIMITS.maxTexturePixels,
           maximumJoints: AGENT_ASSET_LIMITS.maxJoints, maximumClips: AGENT_ASSET_LIMITS.maxClips,
+          meshChecks: `scene_create_asset checkMesh: true adds assetWarnings to the result: per mesh, the triangles that repeat an earlier one and the edges more than two triangles share, judged by position. A mesh over ${MAX_CHECKED_TRIANGLES} triangles skips the counts and says so. Nothing is merged or rewritten. A full glTF-Validator run needs a validator, which is code, so it is not offered here.`,
           commands: ['set-root', 'set-asset-node', 'set-motion', 'set-animation', 'set-material', 'set-camera', 'set-environment', 'set-effects', 'set-shadow'],
         },
         packs: {
@@ -1385,7 +1404,11 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         await boot();
         const sessionId = randomUUID();
         const createInput ={ recipe, sessionId, memoryBudgetMiB: memory, backend, ...(await placedAssetData(recipe)) };
-        const result = await evaluate('create', createInput, page, previewCallTimeoutMs({ bakes: Boolean(recipe?.bake), addsGridVolume: recipeHasGridVolume(recipe), plainTimeoutMs: EVALUATION_TIMEOUT_MS, bakeTimeoutMs: BAKE_EVALUATION_TIMEOUT_MS }));
+        const createTimeoutMs = previewCallTimeoutMs({ bakes: Boolean(recipe?.bake), addsGridVolume: recipeHasGridVolume(recipe), plainTimeoutMs: EVALUATION_TIMEOUT_MS, bakeTimeoutMs: BAKE_EVALUATION_TIMEOUT_MS, assetBytes: assetDataBytes(createInput.assetData) });
+        const result = await evaluate('create', createInput, page, createTimeoutMs).catch(async error => {
+          if (error?.message?.startsWith('The preview operation')) error.message += slowAssetsNote(await placedAssetSizes(recipe));
+          throw error;
+        });
         registerCreatedScene(sessionId, result, Boolean(recipe?.bake));
         return result;
       }, { recoversFailedRuntime: true });
@@ -1406,14 +1429,14 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         return { configured: true, ...(await rescannedCatalog()).list(), ...(packsRoot && { packs: (await packs()).list() }) };
       });
     },
-    createAsset({ recipe }) {
+    createAsset({ recipe, checkMesh = false }) {
       return enqueue(async () => {
         await requirePreviewRenderer();
         await pinNamedAssetRecipe(recipe);
         const bytes = await (await catalog()).read(recipe.assetId);
         await boot();
         const sessionId = randomUUID();
-        const result = await evaluate('createAsset', { recipe, data: bytes.toString('base64'), sessionId, memoryBudgetMiB: memory, backend, ...(await motionSources([recipe.motion])) });
+        const result = await evaluate('createAsset', { recipe, checkMesh, data: bytes.toString('base64'), sessionId, memoryBudgetMiB: memory, backend, ...(await motionSources([recipe.motion])) });
         registerCreatedScene(sessionId, result, false);
         return result;
       }, { recoversFailedRuntime: true });
@@ -1506,18 +1529,32 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           if (step === LOOK_MAXIMUM_STEP_DOWNS) {
             throw new Error(`The PNG exceeds the 1 MiB image response budget even at ${stepWidth}x${stepHeight}. Simplify the scene's high-frequency textures or request a smaller preview.`);
           }
-          stepWidth = Math.max(LOOK_MINIMUM_SIDE, Math.floor(stepWidth * LOOK_STEP_SCALE));
-          stepHeight = Math.max(LOOK_MINIMUM_SIDE, Math.floor(stepHeight * LOOK_STEP_SCALE));
+          const stepScale = lookStepScale(Buffer.byteLength(result.data, 'base64'));
+          stepWidth = Math.max(LOOK_MINIMUM_SIDE, Math.floor(stepWidth * stepScale));
+          stepHeight = Math.max(LOOK_MINIMUM_SIDE, Math.floor(stepHeight * stepScale));
         }
         result.metadata.requestedWidth = width;
         result.metadata.requestedHeight = height;
         result.metadata.backend = backend;
-        if (stepWidth !== width || stepHeight !== height) {
+        const capped = stepWidth !== width || stepHeight !== height;
+        result.metadata.size = { requested: { width, height }, returned: { width: stepWidth, height: stepHeight }, capped, maximumBytes: MAXIMUM_IMAGE_BYTES };
+        if (capped) {
           result.metadata.returnedWidth = stepWidth;
           result.metadata.returnedHeight = stepHeight;
-          result.metadata.note = `The ${width}x${height} PNG was over the 1 MiB image response budget, so this is the ${stepWidth}x${stepHeight} render. Request that size or smaller to skip the retry.`;
+          result.metadata.note = `The ${width}x${height} PNG was over the 1 MiB image response budget, so this is the ${stepWidth}x${stepHeight} render. Request that size or smaller to skip the retry; the PNG limit is bytes, so a calmer scene keeps more pixels.`;
         }
         return result;
+      }));
+    },
+    // Fits look parameters to reference region colours (#2801). It holds the preview like a look, on the light GPU slot, and the
+    // fit stops at its evaluation and time limits with the best look it found; the scene's recipe is put back at the end.
+    fitLook(input) {
+      return gpuUnit('light', () => enqueue(async () => {
+        await requirePreviewRenderer();
+        requireSession(input.sessionId);
+        const result = await runFitLook({ input, invoke: (method, value) => invoke(method, value), setViewport: (width, height) => page.setViewportSize({ width, height }) });
+        const restored = await invoke('exportRecipe', { sessionId: input.sessionId });
+        return { ...result, revision: restored.revision, backend };
       }));
     },
     // Shows the current view in the person's own browser, waits for their pins and notes, and resolves each pin to a part and a
@@ -1669,8 +1706,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
           const origin = `http://127.0.0.1:${httpServer.address().port}`;
           await reviewPage.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
           reviewPage.setDefaultTimeout(15000);
-          await reviewPage.goto(origin);
-          await reviewPage.waitForFunction(() => Boolean(window.__agentPreview));
+          await loadPreviewPage(reviewPage, origin);
           await reviewEvaluate('reviewBegin', { width: settings.gridWidth, height: settings.gridHeight });
           session = await reviewPage.context().newCDPSession(reviewPage);
           const shots = [];

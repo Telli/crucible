@@ -39,8 +39,8 @@ function farthestFromSurface(mesh, surface) {
 }
 
 /**
- * Decimate a polygon mesh into levels. Returns [{ level, ratio, mesh, triangles, error, relativeError }], where
- * relativeError is the error over the diagonal of the input's bounds.
+ * Decimate a polygon mesh into levels. Returns [{ level, ratio, mesh, triangles, targetTriangles, error, relativeError, path }],
+ * where relativeError is the error over the diagonal of the input's bounds and path is 'decimate' (level 0 is 'input').
  */
 export function generateMeshLods(mesh, { ratios = DEFAULT_LOD_RATIOS } = {}) {
   checkRatios(ratios);
@@ -48,14 +48,14 @@ export function generateMeshLods(mesh, { ratios = DEFAULT_LOD_RATIOS } = {}) {
   const bounds = meshBounds(mesh);
   // A mesh whose vertices all coincide has no extent; 1 keeps relativeError a number (0), like the attribute levels.
   const diagonal = Math.hypot(...bounds.max.map((value, axis) => value - bounds.min[axis])) || 1;
-  const levels = [{ level: 0, ratio: 1, mesh, triangles: surface.triangleCount, error: 0, relativeError: 0 }];
+  const levels = [{ level: 0, ratio: 1, mesh, triangles: surface.triangleCount, error: 0, relativeError: 0, path: 'input' }];
   let previousRatio = 1;
   let previous = mesh;
   ratios.forEach((ratio, index) => {
     // Each level continues from the one before, so the work shrinks with the mesh.
     const reduced = decimateMesh(previous, { ratio: ratio / previousRatio });
     const error = farthestFromSurface(reduced.mesh, surface);
-    levels.push({ level: index + 1, ratio, mesh: reduced.mesh, triangles: reduced.triangles.after, error, relativeError: error / diagonal });
+    levels.push({ level: index + 1, ratio, mesh: reduced.mesh, triangles: reduced.triangles.after, targetTriangles: Math.ceil(surface.triangleCount * ratio), error, relativeError: error / diagonal, path: 'decimate' });
     previous = reduced.mesh;
     previousRatio = ratio;
   });
@@ -69,10 +69,12 @@ function hasPerVertexLook(geometry) {
 
 /**
  * Levels for a textured or coloured geometry: edge collapses that keep every vertex attribute as it was and never
- * touch a UV seam, a hard edge or an open border (see geometry-simplify.js). `error` is the quadric estimate of how
- * far the surface moved, in the geometry's units; `relativeError` is that over the bounds diagonal.
+ * touch a UV seam, a hard edge or an open border, and for a level that this leaves above 1.25 times its target, edge
+ * collapses across seams that take the closest uv and normal (see geometry-simplify.js, #2985). `error` is the quadric
+ * estimate of how far the surface moved, in the geometry's units; `relativeError` is that over the bounds diagonal;
+ * `targetTriangles` is the count asked for and `path` is 'keep' or 'blend', the simplifier that made the level.
  */
-function generateAttributeLods(geometry, { ratios }) {
+function generateAttributeLods(geometry, { ratios, blendSeams }) {
   checkRatios(ratios);
   const bounds = geometry.positions;
   const low = [Infinity, Infinity, Infinity];
@@ -84,20 +86,21 @@ function generateAttributeLods(geometry, { ratios }) {
     }
   }
   const diagonal = Math.hypot(...high.map((value, axis) => value - low[axis])) || 1;
-  const levels = [{ level: 0, ratio: 1, triangles: geometry.indices.length / 3, error: 0, relativeError: 0, geometry }];
-  simplifyGeometry(geometry, { ratios }).forEach((reduced, index) => {
-    levels.push({ level: index + 1, ratio: reduced.ratio, triangles: reduced.triangles, error: reduced.error, relativeError: reduced.error / diagonal, geometry: reduced.geometry });
+  const levels = [{ level: 0, ratio: 1, triangles: geometry.indices.length / 3, error: 0, relativeError: 0, path: 'input', geometry }];
+  simplifyGeometry(geometry, { ratios, blendSeams }).forEach((reduced, index) => {
+    levels.push({ level: index + 1, ratio: reduced.ratio, triangles: reduced.triangles, targetTriangles: reduced.target, error: reduced.error, relativeError: reduced.error / diagonal, path: reduced.path, geometry: reduced.geometry });
   });
   return levels;
 }
 
 /**
  * Levels for renderer geometry, such as a recipe part from generateMeshGeometry or an imported asset's part. Each
- * level carries a geometry made by extractRender, with edges sharper than `smoothAngle` degrees kept hard.
+ * level carries a geometry made by extractRender, with edges sharper than `smoothAngle` degrees kept hard. Geometry
+ * with per-vertex uvs or colours takes `blendSeams` ('auto', 'never' or 'always') for its seam handling.
  */
-export function generateGeometryLods(geometry, { ratios = DEFAULT_LOD_RATIOS, smoothAngle = 30 } = {}) {
+export function generateGeometryLods(geometry, { ratios = DEFAULT_LOD_RATIOS, smoothAngle = 30, blendSeams = 'auto' } = {}) {
   requireFiniteInRange('generateGeometryLods', 'smoothAngle', smoothAngle, 0, 180);
-  if (hasPerVertexLook(geometry)) return generateAttributeLods(geometry, { ratios });
+  if (hasPerVertexLook(geometry)) return generateAttributeLods(geometry, { ratios, blendSeams });
   const mesh = meshFromGeometry(geometry, { quads: false, tags: 'none' });
   return generateMeshLods(mesh, { ratios }).map(({ mesh: levelMesh, ...rest }) => ({
     ...rest,
@@ -135,6 +138,7 @@ export function generateAssetLods(asset, options = {}) {
       ratio: reports[0].ratio,
       triangles: reports.reduce((total, report) => total + report.triangles, 0),
       error: Math.max(...reports.map(report => report.error)),
+      paths: [...new Set(reports.map(report => report.path))],
       asset: { ...asset, parts: levelParts },
     };
   });

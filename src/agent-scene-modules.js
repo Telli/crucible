@@ -21,7 +21,9 @@ const MODULE_LOADERS = {
   cloth: () => import('./agent-cloth.js'),
   particles: () => import('./agent-particles.js'),
   bake: () => import('./agent-bake.js'),
+  bakeDeferred: () => import('./agent-bake-deferred.js'),
   reflections: () => import('./agent-reflections.js'),
+  waterReflection: () => import('./water-reflection.js'),
   patterns: () => import('./material-patterns.js'),
   relations: () => import('./agent-relations.js'),
   timeline: () => import('./film-timeline.js'),
@@ -42,6 +44,7 @@ const MODULE_LOADERS = {
   assets: () => import('./agent-scene-assets.js'),
   vegetation: () => import('./agent-vegetation.js'),
   clutter: () => import('./agent-clutter.js'),
+  grass: () => import('./agent-grass.js'),
   crowd: () => import('./agent-crowd.js'),
   lineArt: () => import('./line-art.js'),
   viewTransform: () => import('./view-transform-shader.js'),
@@ -96,8 +99,11 @@ const MODULE_MARKERS = {
   cloth: ['"cloth":{'],
   particles: ['"particles":{', '"add-explosion"'],
   bake: ['"bake":{'],
+  bakeDeferred: ['"bake":{'],
   // A metallic value of 0.5 or more may make a part reflective; the module skips a scene that has no smooth one.
   reflections: [/"metallic":(0\.[5-9]|1(?![0-9]))/],
+  // Wet ground mirrors the scene in its puddles through the water mirror (src/water-reflection.js).
+  waterReflection: ['"puddles":'],
   patterns: ['"pattern"'],
   relations: ['"relations":'],
   timeline: ['"timeline":{'],
@@ -122,6 +128,7 @@ const MODULE_MARKERS = {
   assets: ['"asset":{', '"sequence":{', /"(?:colorMap|normalMap|roughnessMap|metallicMap|occlusionMap|heightMap|textureSet)":"/],
   vegetation: ['"vegetation":{', '"wind":{'],
   clutter: ['"clutter":['],
+  grass: ['"grass":{'],
   crowd: ['"crowd":{'],
   lineArt: ['"lines":{', '"toon":'],
   viewTransform: ['"viewTransform":"agx"', '"viewTransform":"neutral"', '"viewTransform":"standard"', '"look":"'],
@@ -142,7 +149,7 @@ const MODULE_MARKERS = {
   volumeRamp: ['"emissionRamp"'],
   // Only a motionBlur object that sets a non-zero `objects` loads it; the common `"shutter":0` look does not.
   objectMotionBlur: [/"motionBlur":\{[^}]*"objects":(?!0[,}])/],
-  postSteps: [/"(?:colorBalance|glare|lensDistortion|stylize|composite)"|"(?:distortion|flash)":[\[{]|"add-explosion"/],
+  postSteps: [/"(?:colorBalance|glare|lensDistortion|stylize|composite|localToneMapping|autoExposure)"|"(?:distortion|flash)":[\[{]|"add-explosion"/],
 };
 
 /** Whether a recipe, operation list or edit list contains a boolean edit, which needs loadMeshBooleans() first. */

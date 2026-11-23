@@ -311,6 +311,11 @@ export class CascadedShadows {
     return hold.fit;
   }
 
+  /** Drops the wider fits the slices keep while the camera moves, so the next update fits every slice exactly, as on a new renderer. */
+  forgetFits() {
+    this.holds = [];
+  }
+
   /** Whether the main shader reads the cascades alone: volume fog and subsurface thickness still read the single map. */
   replacesSingleMap(renderer) {
     return !renderer.volumeShadowWanted && !renderer.shaderFeatures.has('subsurface');

@@ -3,7 +3,7 @@
 // next one. The iframe imports `crucible` through an import map whose entries are small modules that re-export the engine
 // this page already loaded, so the docs run the same build as the site and need no published package.
 import { highlightCode } from './code-highlight.js';
-import { frameControlScript, frameControlStyle } from './docs-live-controls.js';
+import { escapeHtml, frameControlScript, frameControlStyle, revokeImportUrls } from './docs-live-controls.js';
 
 // Every addon the package exports, loaded only when an example imports it (crucible/addons/<name>).
 const addonLoaders = import.meta.glob([
@@ -223,14 +223,18 @@ export function createLiveExample({ source, title, poster, file = 'main.js', asp
   root.className = 'live-example';
   root.dataset.example = exampleId;
   if (poster) root.dataset.media = poster;
+  const safePoster = poster ? escapeHtml(poster) : '';
+  const safeFile = escapeHtml(file);
+  const safeTitle = escapeHtml(title);
+  const safeAspect = escapeHtml(aspect);
   root.innerHTML = `
-    <div class="live-stage" style="aspect-ratio:${aspect}">
-      ${poster ? `<img class="live-poster" src="/docs-media/${poster}.webp" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''}
+    <div class="live-stage" style="aspect-ratio:${safeAspect}">
+      ${poster ? `<img class="live-poster" src="/docs-media/${safePoster}.webp" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ''}
       <button class="live-start" type="button">${icon('run')}Run example</button>
     </div>
     <pre class="live-console" aria-label="Console output" hidden></pre>
     <div class="live-toolbar">
-      <span class="live-file">${file}</span>
+      <span class="live-file">${safeFile}</span>
       <span class="live-status" role="status" aria-live="polite"></span>
       <button class="live-run" type="button" title="Run (Ctrl+Enter)">${icon('run')}Run</button>
       <button class="live-reset" type="button" disabled>${icon('reset')}Reset</button>
@@ -238,7 +242,7 @@ export function createLiveExample({ source, title, poster, file = 'main.js', asp
     </div>
     <div class="live-editor">
       <pre aria-hidden="true"><code class="hljs language-javascript"></code></pre>
-      <textarea spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Editable code for ${title}"></textarea>
+      <textarea spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Editable code for ${safeTitle}"></textarea>
     </div>`;
   const stage = root.querySelector('.live-stage');
   const startButton = root.querySelector('.live-start');
@@ -251,8 +255,15 @@ export function createLiveExample({ source, title, poster, file = 'main.js', asp
   editor.value = source;
   let frame = null;
   let running = false;
+  let disposed = false;
   let runTimer = 0;
   let runNumber = 0;
+
+  function clearStoredImports() {
+    if (!root.dataset.imports) return;
+    revokeImportUrls(JSON.parse(root.dataset.imports));
+    delete root.dataset.imports;
+  }
 
   function paintSource() {
     highlighted.innerHTML = `${highlightCode(editor.value, 'javascript')}\n`;
@@ -287,6 +298,7 @@ export function createLiveExample({ source, title, poster, file = 'main.js', asp
   }
 
   async function run() {
+    if (disposed) return;
     const thisRun = ++runNumber;
     running = true;
     clearConsole();
@@ -296,12 +308,15 @@ export function createLiveExample({ source, title, poster, file = 'main.js', asp
     try {
       imports = await importMapFor(editor.value);
     } catch (error) {
-      setStatus('error', error.message);
+      if (!disposed) setStatus('error', error.message);
       return;
     }
-    if (thisRun !== runNumber) return;
+    if (disposed || thisRun !== runNumber) {
+      revokeImportUrls(imports);
+      return;
+    }
     releaseFrame(frame);
-    for (const url of Object.values(root.dataset.imports ? JSON.parse(root.dataset.imports) : {})) URL.revokeObjectURL(url);
+    clearStoredImports();
     root.dataset.imports = JSON.stringify(imports);
     frame = document.createElement('iframe');
     frame.className = 'live-frame';
@@ -371,7 +386,11 @@ export function createLiveExample({ source, title, poster, file = 'main.js', asp
   }, { rootMargin: '400px 0px' });
   visibility.observe(root);
   function dispose() {
+    disposed = true;
+    root.dataset.disposed = 'true';
+    clearTimeout(runTimer);
     stop();
+    clearStoredImports();
     visibility.disconnect();
     messageHandlers.delete(exampleId);
   }
@@ -387,7 +406,7 @@ export function autoRunVisibleExamples(container) {
     for (const entry of entries) {
       if (!entry.isIntersecting) continue;
       const example = entry.target;
-      if (!example.classList.contains('is-running')) example.liveExample.run();
+      if (!example.dataset.disposed && !example.classList.contains('is-running')) example.liveExample.run();
     }
   }, { threshold: 0.35 });
   for (const example of container.querySelectorAll('.live-example')) starter.observe(example);

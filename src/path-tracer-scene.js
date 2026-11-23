@@ -196,10 +196,23 @@ export function resolveTexture(descriptor) {
 // A part without a mask is lit by every light.
 const ALL_LIGHTS = -1;
 
+// The tracer has no blending: a blended material whose vertices carry alpha cuts out at half, like a graph opacity output.
+const BLEND_CUTOUT = 0.5;
+
 // A graph opacity output is texture alpha on a blended material. The tracer has no blending, so it cuts out at half.
 function graphOpacityCutoff(material) {
   const graph = material.pattern?.type === 'graph' ? material.pattern.graph : null;
   return material.alphaMode === 'blend' && graph && Object.hasOwn(graph, 'opacity') ? 0.5 : 0;
+}
+
+// A blended or masked material reads the vertex alpha (glTF COLOR_0); an opaque one ignores it.
+function readsVertexAlpha(material) {
+  return material?.alphaMode === 'blend' || material?.alphaMode === 'mask';
+}
+
+/** True when a part carries COLOR_0 alpha that its material reads. */
+export function partUsesVertexAlpha(part, geometry = part.geometry) {
+  return Boolean(geometry?.colorAlpha) && readsVertexAlpha(part.material);
 }
 
 // The part's own material as the trace reads it: a water material becomes the dielectric it stands for, any other is unchanged.
@@ -207,7 +220,7 @@ function tracedMaterialOf(part) {
   return waterTraceMaterial(part.material ?? {});
 }
 
-function resolveMaterial(material) {
+function resolveMaterial(material, usesVertexAlpha = false) {
   const emissionColor = material.emissiveColor ?? material.color;
   const emissionStrength = material.emission ?? 0;
   return {
@@ -234,7 +247,7 @@ function resolveMaterial(material) {
     occlusionTexture: resolveTexture(material.occlusionMap),
     occlusionStrength: material.occlusionStrength ?? 1,
     lightMask: material.lightMask ?? ALL_LIGHTS,
-    alphaCutoff: material.alphaMode === 'mask' ? material.alphaCutoff ?? 0.5 : graphOpacityCutoff(material),
+    alphaCutoff: material.alphaMode === 'mask' ? material.alphaCutoff ?? 0.5 : graphOpacityCutoff(material) || (usesVertexAlpha ? BLEND_CUTOUT : 0),
   };
 }
 
@@ -269,6 +282,7 @@ function validateGeometry(part, geometry) {
   if (geometry.uvs && geometry.uvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one UV pair for every position.`);
   if (geometry.lightUvs && geometry.lightUvs.length !== vertexCount * 2) throw new RangeError(`${label} needs one lightUvs pair (TEXCOORD_1) for every position.`);
   if (geometry.colors && geometry.colors.length !== vertexCount * 3) throw new RangeError(`${label} needs one colour for every position.`);
+  if (geometry.colorAlpha && geometry.colorAlpha.length !== vertexCount) throw new RangeError(`${label} needs one colorAlpha for every position.`);
   if (geometry.lightUvs) requireFiniteNumbers(geometry.lightUvs, undefined, `${label} lightUvs`);
   if (geometry.uvs) requireFiniteNumbers(geometry.uvs, undefined, `${label} uvs`);
   if (geometry.colors) requireFiniteNumbers(geometry.colors, undefined, `${label} colors`);
@@ -317,7 +331,7 @@ function traceGeometry(part) {
   return boxProjectedGeometry(geometry, columnLengths(part.matrix ?? IDENTITY_MATRIX), boxMapScale, boxMapAxis);
 }
 
-function allocateWorld(vertexTotal, indexTotal, withSecondUvSet = false) {
+function allocateWorld(vertexTotal, indexTotal, withSecondUvSet = false, withVertexAlpha = false) {
   const secondUvSet = withSecondUvSet ? new Float32Array(vertexTotal * 2) : null;
   return {
     positions: new Float32Array(vertexTotal * 3),
@@ -328,6 +342,8 @@ function allocateWorld(vertexTotal, indexTotal, withSecondUvSet = false) {
     // The same array under the name the native packer reads (`uv1s`), so a native trace samples TEXCOORD_1 too.
     ...(secondUvSet ? { uv1s: secondUvSet } : {}),
     colors: new Float32Array(vertexTotal * 3).fill(1),
+    // COLOR_0 alpha per vertex, only when a blended or masked part has it (one float a vertex, 1 elsewhere).
+    vertexAlpha: withVertexAlpha ? new Float32Array(vertexTotal).fill(1) : null,
     indices: new Uint32Array(indexTotal),
     triangleMaterial: new Uint32Array(indexTotal / 3),
   };
@@ -360,6 +376,7 @@ function writeWorldPart(world, part, geometry, partIndex, vertexOffset, triangle
   if (geometry.uvs) world.uvs.set(geometry.uvs, (vertexOffset) * 2);
   if (geometry.lightUvs && world.uvs1) world.uvs1.set(geometry.lightUvs, vertexOffset * 2);
   if (geometry.colors) world.colors.set(geometry.colors, vertexOffset * 3);
+  if (world.vertexAlpha && partUsesVertexAlpha(part, geometry)) world.vertexAlpha.set(geometry.colorAlpha, vertexOffset);
   // A mirrored part keeps outward vertex normals, so its triangles swap their last two corners to keep the winding
   // (and the cross-product normal) outward too.
   const mirrored = mirrorsGeometry(matrix);
@@ -463,7 +480,7 @@ function flattenParts(parts, geometries = parts.map(traceGeometry), limits = res
   if (indexTotal / 3 > limits.unique) {
     throw new RangeError(flattenedLimitMessage(limits, indexTotal / 3, measureInstanceExpansion(parts, geometries)));
   }
-  const world = allocateWorld(vertexTotal, indexTotal, geometries.some(geometry => geometry.lightUvs));
+  const world = allocateWorld(vertexTotal, indexTotal, geometries.some(geometry => geometry.lightUvs), parts.some((part, index) => partUsesVertexAlpha(part, geometries[index])));
   let vertexOffset = 0;
   let triangleOffset = 0;
   parts.forEach((part, partIndex) => {
@@ -942,7 +959,8 @@ function boundingBoxOf(positions) {
 function buildInstancedTraceScene(parts, geometries, environment, localVolumes, limits) {
   requireInstancedCaps(parts, measureInstancedParts(parts, geometries), limits);
   const tracedPartMaterials = parts.map(tracedMaterialOf);
-  const traceMaterials = tracedPartMaterials.map(resolveMaterial);
+  // The instanced kernel reads no vertex alpha, so no material takes the vertex alpha cutout here.
+  const traceMaterials = tracedPartMaterials.map(material => resolveMaterial(material));
   const materials = tracedPartMaterials.map((material, index) => ({ ...material, ...traceMaterials[index] }));
   const geometryViews = new Map();
   const instances = parts.map((part, index) => instanceFor(part, geometries[index], index, materials[index], geometryViews));
@@ -997,6 +1015,86 @@ export async function buildTraceSceneForDevice(allParts, environment, gpuModule)
   return buildTraceScene(allParts, environment, options);
 }
 
+const VALID_TRACE_ENVIRONMENT_FIELDS = new Set([
+  'map', 'cameraIntensity', 'world', 'keyColor', 'keyIntensity', 'lightDirection',
+  'sunAngularRadius', 'sunMaxBounces', 'pointLights', 'spotLights', 'areaLights',
+  'fogColor', 'fogDensity', 'volumeFog', 'localVolumes', 'volumeTime', 'volumeShutter',
+  'ground', 'setup', 'hdri', 'keyFromHdri', 'environmentIntensity', 'environmentRotation',
+  'fillIntensity', 'ambientIntensity', 'daylight', 'skyTop', 'skyBottom', 'liquid',
+  'shadowCascades', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce',
+  'specularAntiAliasing', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'wind',
+  'sky', 'wetness', 'puddles', 'groundBounce', 'outdoorFill', 'roomBounce', 'explosionCenter',
+]);
+
+const ENVIRONMENT_FIELD_SUGGESTIONS = {
+  suncolor: 'keyColor',
+  suncolour: 'keyColor',
+  keycolour: 'keyColor',
+  lightcolor: 'keyColor',
+  lightcolour: 'keyColor',
+  sundirection: 'lightDirection',
+  sundir: 'lightDirection',
+  keydirection: 'lightDirection',
+  lightdir: 'lightDirection',
+  sunintensity: 'keyIntensity',
+  sunstrength: 'keyIntensity',
+  sunpower: 'keyIntensity',
+  keystrength: 'keyIntensity',
+  sunradius: 'sunAngularRadius',
+  sunsize: 'sunAngularRadius',
+  envmap: 'map',
+  environmentmap: 'map',
+  skymap: 'map',
+  skycolor: 'map',
+  background: 'world',
+  backgroundcolor: 'world',
+};
+
+function editDistance(source, target) {
+  const a = source.toLowerCase();
+  const b = target.toLowerCase();
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    let previous = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const nextPrevious = row[j];
+      const cost = a[i - 1] === b[j - 1] ? previous : Math.min(previous, row[j], row[j - 1]) + 1;
+      previous = nextPrevious;
+      row[j] = cost;
+    }
+  }
+  return row[b.length];
+}
+
+function suggestEnvironmentField(key) {
+  const alias = ENVIRONMENT_FIELD_SUGGESTIONS[key.toLowerCase()];
+  if (alias) return alias;
+  let bestField = null;
+  let bestDistance = Math.max(4, Math.floor(key.length / 2) + 1);
+  for (const candidate of VALID_TRACE_ENVIRONMENT_FIELDS) {
+    const distance = editDistance(key, candidate);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestField = candidate;
+    }
+  }
+  return bestField;
+}
+
+/** Rejects unknown `environment` fields so typos such as `sunColor` fail with the field the tracers read instead of tracing black. */
+export function validateTraceEnvironment(environment) {
+  if (!environment || typeof environment !== 'object') return;
+  for (const key of Object.keys(environment)) {
+    if (VALID_TRACE_ENVIRONMENT_FIELDS.has(key)) continue;
+    const suggestion = suggestEnvironmentField(key);
+    const hint = suggestion
+      ? `Pass "${suggestion}" instead (sun fields are keyColor, keyIntensity and lightDirection).`
+      : 'Pass valid fields such as keyColor, keyIntensity, lightDirection or map.';
+    throw new RangeError(`Unknown environment field "${key}" in path tracer scene. ${hint}`);
+  }
+}
+
 /**
  * Builds the scene a path trace reads. With `options.instancing` and at least one geometry shared by two parts, the result
  * holds `instances` instead of flattened triangles (see `buildInstancedTraceScene`); with no shared geometry, or without the
@@ -1009,6 +1107,7 @@ export async function buildTraceSceneForDevice(allParts, environment, gpuModule)
  * replaces the 1,024 parts of a flattened scene, and the 1,024 distinct geometries of an instanced one, for the native tracer.
  */
 export function buildTraceScene(allParts, environment = {}, options = {}) {
+  validateTraceEnvironment(environment);
   const limits = { ...resolveTriangleLimits(options), instances: resolveInstanceLimit(options), lights: resolveLightLimit(options), parts: resolvePartLimit(options) };
   const { volumes: localVolumes, boundsOnlyParts } = resolveTraceLocalVolumes(environment.localVolumes, allParts, environment.volumeTime ?? 0, environment.volumeShutter ?? 0);
   const shownParts = boundsOnlyParts.length ? allParts.filter(part => !boundsOnlyParts.includes(part)) : allParts;
@@ -1036,7 +1135,7 @@ export function buildTraceScene(allParts, environment = {}, options = {}) {
   return attachTracer({
     ...geometry,
     bvh,
-    materials: tracedPartMaterials.map(resolveMaterial),
+    materials: tracedPartMaterials.map((material, index) => resolveMaterial(material, partUsesVertexAlpha(parts[index]))),
     // The parts' own materials: the fields resolveMaterial leaves out, which the native "cycles" kernel shades.
     partMaterials: tracedPartMaterials,
     shadowOnlyParts: parts.some(part => part.shadowOnly === true) ? Uint8Array.from(parts, part => (part.shadowOnly === true ? 1 : 0)) : null,

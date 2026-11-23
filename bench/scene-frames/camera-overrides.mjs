@@ -2,7 +2,7 @@
 // (scripts/blender-demo-to-glb.py), whose own camera renders a flat frame (#2158). camera-overrides.json maps a scene name
 // to the eye and target that show the scene; the sweep applies it to scene.json before it renders.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 
 const OVERRIDES_URL = new URL('./camera-overrides.json', import.meta.url);
 
@@ -36,7 +36,7 @@ function readSceneFile(scenePath, directory) {
 
 // Rewrites <directory>/scene.json in place and returns true when the override changed it.
 export function applyCameraOverrideToDirectory(directory, overrides = loadCameraOverrides()) {
-  const scenePath = `${directory}/scene.json`;
+  const scenePath = join(directory, 'scene.json');
   const description = JSON.parse(readSceneFile(scenePath, directory));
   const updated = applyCameraOverride(description.id ?? basename(directory), description, overrides);
   if (updated === description) return false;

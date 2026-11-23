@@ -83,7 +83,8 @@ test('loading another scene while a search waits stops watching the old one', te
   const { dom, scene, studio } = mountQuietHeavyScene(testContext);
   studio.controller.addPrimitive('box');
   assert.equal(scene.flushPending, true);
-  studio.loadRecipe({ ...recipe(), nodes: [{ id: 'floor', geometry: 'box', material: 'paint', translation: [0, 0, 0], scale: [4, 0.1, 4] }] });
+  // A changed geometry is not a difference scene operations express, so the load builds a new scene.
+  studio.loadRecipe({ ...recipe(), geometries: [{ id: 'box', type: 'sphere' }], nodes: [{ id: 'floor', geometry: 'box', material: 'paint', translation: [0, 0, 0], scale: [4, 0.1, 4] }] });
   assert.notEqual(studio.controller.scene, scene, 'the recipe built a new scene');
   dom.runAnimationFrames(1000);
   dom.runTimers();
