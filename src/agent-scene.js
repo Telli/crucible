@@ -67,7 +67,7 @@ const RENDER_FLAG_FIELDS = ['visible', 'castShadow', 'receiveShadow', 'holdout',
 const PART_FLAG_FIELDS = RENDER_FLAG_FIELDS.slice(1);
 // On an asset placement these two flags reach each part it expands to.
 const ASSET_PLACEMENT_FLAG_FIELDS = ['castShadow', 'receiveShadow'];
-const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'clutter', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
+const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'clutter', 'grass', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
 const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'doubleSided', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamVeins', 'contactFoam', 'caustics', 'ripples', 'waterRamp', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
@@ -428,6 +428,7 @@ function nodeFrom(value) {
   }
   if (value.vegetation !== undefined) result.vegetation = agentSceneModule('vegetation').normalizeVegetation(value.vegetation, value);
   if (value.clutter !== undefined) result.clutter = agentSceneModule('clutter').normalizeClutter(value.clutter, value);
+  if (value.grass !== undefined) result.grass = agentSceneModule('grass').normalizeGrass(value.grass, value);
   if (value.decal !== undefined && typeof value.decal !== 'boolean') {
     throw invalidField('decal', value.decal, 'true or false', TypeError);
   }
@@ -1111,7 +1112,7 @@ function checkLineNodeNames(recipe) {
   }
   // A group that draws nothing itself (an expanded instances node, a plain group) would do nothing without a sign.
   // A placed asset, vegetation and crowd nodes are groups too, but their parts name them in `group`.
-  const drawsNothing = recipe.nodes.find(node => Object.hasOwn(lines.nodes, node.id) && node.geometry === undefined && !node.asset && !node.vegetation && !node.clutter);
+  const drawsNothing = recipe.nodes.find(node => Object.hasOwn(lines.nodes, node.id) && node.geometry === undefined && !node.asset && !node.vegetation && !node.clutter && !node.grass);
   if (drawsNothing) {
     const childIds = recipe.nodes.filter(node => node.parent === drawsNothing.id).map(node => node.id);
     throw invalidField(`environment.lines.nodes.${drawsNothing.id}`, drawsNothing.id, `the ID of a node that draws a part; ${JSON.stringify(drawsNothing.id)} is a group with no geometry of its own. ${childIds.length > 0 ? `Name its children instead, such as ${childIds.slice(0, 3).join(', ')}` : 'It has no children, so remove its entry from lines.nodes'}`);
@@ -1776,7 +1777,7 @@ function authoredRecipe(recipe) {
 }
 
 // Node keys whose values the recipe normalizer may rebuild or rewrite in place, so a shared node could not be read-only.
-const NODE_KEYS_NEEDING_OWN_COPY = ['assetPart', 'asset', 'vegetation', 'clutter', 'relations', 'skin', 'instances', 'armature'];
+const NODE_KEYS_NEEDING_OWN_COPY = ['assetPart', 'asset', 'vegetation', 'clutter', 'grass', 'relations', 'skin', 'instances', 'armature'];
 
 /**
  * A copy of the staged recipe for a batch of plain field edits that clones only what the batch can change: the touched
@@ -1919,7 +1920,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // resident: the committed state's graph is moved in place instead of being built again.
   function canMoveStagedGraph(recipe, movedNodeIds, assetRuntime) {
     return Boolean(movedNodeIds && state && !state.poseGraph && assetRuntime === NO_ASSETS && !recipe.armatures &&
-      state.recipe.nodes.length === recipe.nodes.length && !recipe.nodes.some(node => node.relations?.length || node.assetPart || node.asset || node.vegetation || node.clutter));
+      state.recipe.nodes.length === recipe.nodes.length && !recipe.nodes.some(node => node.relations?.length || node.assetPart || node.asset || node.vegetation || node.clutter || node.grass));
   }
 
   function graphWithMovedNodes(recipe, movedNodeIds, localBounds) {
@@ -1944,9 +1945,13 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       ? agentSceneModule('vegetation').expandVegetation(recipe, limits, assetOutputCache, placedRuntime, options.sequenceFrames)
       : placedRuntime;
     // Scattered clutter travels the same channel and adds its own parts after the trees.
-    const assetRuntime = recipe.nodes.some(node => node.clutter)
+    const scatteredRuntime = recipe.nodes.some(node => node.clutter)
       ? agentSceneModule('clutter').expandClutter(recipe, limits, assetOutputCache, plantedRuntime)
       : plantedRuntime;
+    // Blade grass travels the same channel and adds its tiles last.
+    const assetRuntime = recipe.nodes.some(node => node.grass)
+      ? agentSceneModule('grass').expandGrass(recipe, limits, assetOutputCache, scatteredRuntime)
+      : scatteredRuntime;
     // Placed assets and grown vegetation add part nodes, so the part names are checked after the expansion, like the render binds them.
     if (recipe.environment.localVolumes) {
       const partNodeIds = recipe.nodes.filter(node => node.geometry !== undefined).map(node => node.id);
@@ -2262,8 +2267,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   let flushCache = null;
   function partsToRank(recipe, parts) {
     const movingNodes = new Set([...(recipe.particles?.systems.map(system => system.node) ?? []), ...oceanTrackNodeIds(recipe)]);
-    // Scattered clutter is left out as well: thousands of irregular stones have no flush faces, and ranking them took seconds per edit.
-    const clutterPrefixes = recipe.nodes.filter(node => node.clutter).map(node => `${node.id}/`);
+    // Scattered clutter and blade grass are left out as well: thousands of irregular stones and blades have no flush faces, and ranking them took seconds per edit.
+    const clutterPrefixes = recipe.nodes.filter(node => node.clutter || node.grass).map(node => `${node.id}/`);
     if (movingNodes.size === 0 && clutterPrefixes.length === 0) {
       return parts;
     }
@@ -2873,6 +2878,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
         ...(state.particleSampler ? { particles: state.particleSampler.report() } : {}),
         ...(state.assetRuntime.vegetation ? { vegetation: state.assetRuntime.vegetation } : {}),
         ...(state.assetRuntime.clutter ? { clutter: state.assetRuntime.clutter } : {}),
+        ...(state.assetRuntime.grass ? { grass: state.assetRuntime.grass } : {}),
         ...(state.assetRuntime.placements.length ? { assets: agentSceneModule('assets').describeAssetPlacements(state.assetRuntime, state.graph, geometry => state.localBounds.get(geometry)) } : {}),
         ...(state.sequences.length ? { textureSequences: state.sequences.map(sequence => sequence.describe()) } : {}),
         ...(state.bakeReport ? { bake: state.bakeReport } : {}),
