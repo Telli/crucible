@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { closeClientAndWaitForServerExit, repositoryRoot } from './helpers/mcp-server-session.js';
 
 // End to end: a path traced render job has no raster frame and no object ID, depth or normal pass. It still reports the
 // part findings of its first frame, and one `findings-unavailable` entry says what it cannot report and why.
@@ -43,7 +44,7 @@ test('a path traced job reports part findings and says why exposure findings and
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [serverEntry, '--backend', 'cpu', '--memory', '384', '--jobs', join(workDirectory, 'jobs')],
-      cwd: workDirectory,
+      cwd: repositoryRoot,
       env: { ...process.env, JS67_NATIVE_TRACER: 'off' },
       stderr: 'ignore',
     });
@@ -84,6 +85,6 @@ test('a path traced job reports part findings and says why exposure findings and
       assert.equal(refused.isError, true);
       assert.match(refused.content[0].text, /no object ID, depth or normal pass/);
     } finally {
-      await client.close();
+      await closeClientAndWaitForServerExit(client, transport);
     }
   });
