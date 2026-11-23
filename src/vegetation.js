@@ -65,6 +65,7 @@ function lengthProfile(profile, progress) {
   if (profile === 'crown') return 0.62 + 0.38 * Math.sin(Math.PI * clamp(progress * 0.85 + 0.1, 0, 1));
   if (profile === 'cone') return 1 - 0.9 * progress;
   if (profile === 'umbrella') return 0.3 + 0.7 * progress;
+  if (profile === 'spreading') return 1 - 0.5 * progress;
   if (profile === 'column') return 0.8 + 0.2 * Math.sin(Math.PI * progress);
   return 1;
 }
@@ -122,6 +123,55 @@ function walkBranch(origin, direction, length, radius, parameters, random) {
   return { points, radii, length };
 }
 
+
+/**
+ * A crown envelope (Weber and Penn 1995, 4.6): the widest radius the crown may reach at each height, as fractions of the tree
+ * height. It starts at `base`, widens to `width` at `peak` (a fraction of the space above base) and narrows to the top, the
+ * two halves bent by `powerLow` and `powerHigh`.
+ */
+function insideEnvelope(point, envelope, height) {
+  const ratio = (point[1] / height - envelope.base) / (1 - envelope.base);
+  if (ratio < 0 || ratio > 1) return false;
+  const shape = ratio < envelope.peak
+    ? (ratio / envelope.peak) ** envelope.powerLow
+    : ((1 - ratio) / (1 - envelope.peak)) ** envelope.powerHigh;
+  return Math.hypot(point[0], point[2]) <= envelope.width * height * shape;
+}
+
+const ENVELOPE_CROSSING_STEPS = 8;
+// A branch whose first ring is already outside the envelope keeps only this share of its first step, as a stub.
+const OUTSIDE_STUB_SHARE = 0.15;
+
+function lerpPoint(from, to, amount) {
+  return from.map((value, axis) => lerp(value, to[axis], amount));
+}
+
+// A walked branch cut where it leaves the envelope: the rings inside it, then one ring on the boundary, found by bisection.
+// Without an envelope it is returned as it is.
+function pruneToEnvelope(branch, envelope, height) {
+  if (!envelope) return branch;
+  const { points, radii } = branch;
+  const firstOutside = points.findIndex((point, index) => index > 0 && !insideEnvelope(point, envelope, height));
+  if (firstOutside < 0) return branch;
+  const insideRings = firstOutside - 1;
+  const lastInside = points[insideRings];
+  let amount = OUTSIDE_STUB_SHARE;
+  if (insideEnvelope(lastInside, envelope, height)) {
+    let near = 0;
+    let far = 1;
+    for (let step = 0; step < ENVELOPE_CROSSING_STEPS; step++) {
+      const middle = (near + far) / 2;
+      if (insideEnvelope(lerpPoint(lastInside, points[firstOutside], middle), envelope, height)) near = middle;
+      else far = middle;
+    }
+    amount = near;
+  }
+  const ringCount = insideRings + 1;
+  const keptPoints = [...points.slice(0, ringCount), lerpPoint(lastInside, points[firstOutside], amount)];
+  const keptRadii = [...radii.slice(0, ringCount), lerp(radii[insideRings], radii[firstOutside], amount)];
+  return { ...branch, points: keptPoints, radii: keptRadii, length: branch.length * (insideRings + amount) / (points.length - 1) };
+}
+
 /**
  * The twigs a bare tree shows past its last branch level (#2826), one generation per entry of `preset.bareTwigs`. They
  * draw from their own random stream, so growing them leaves the leafy tree, its leaf sites and its crown exactly as they were.
@@ -139,7 +189,7 @@ function growTwigs(skeleton, preset, seed, generations = preset.bareTwigs) {
         const direction = sproutDirection(sample, slot, randomInRange(random, generation.angle));
         const length = parent.length * randomInRange(random, generation.lengthRatio);
         const walked = walkBranch(sample.position, direction, length, sample.radius * generation.radiusRatio, generation, random);
-        grown.push({ level: lastLevel + 1 + generationIndex, ...walked });
+        grown.push(pruneToEnvelope({ level: lastLevel + 1 + generationIndex, ...walked }, preset.envelope, skeleton.height));
       }
     }
     twigs.push(...grown);
@@ -295,8 +345,11 @@ function growSkeleton(preset, height, random, leafMode, seed) {
     for (const slot of createChildSlots(spec, random)) {
       if (twist) slot.azimuth += twist * slot.fraction;
       const sample = sampleBranch(branch, slot.fraction);
-      const direction = sproutDirection(sample, slot, randomInRange(random, spec.angle));
+      const drawnAngle = randomInRange(random, spec.angle);
       const progress = (slot.fraction - spec.start) / Math.max(spec.end - spec.start, 1e-6);
+      // A preset with `angleTop` leans its branches from `angle` at the first slot to `angleTop` at the last: steep limbs high up.
+      const angle = spec.angleTop === undefined ? drawnAngle : drawnAngle + (spec.angleTop - (spec.angle[0] + spec.angle[1]) / 2) * progress;
+      const direction = sproutDirection(sample, slot, angle);
       growBranch({
         origin: sample.position,
         direction,
@@ -309,7 +362,8 @@ function growSkeleton(preset, height, random, leafMode, seed) {
 
   function growBranch({ origin, direction, length, radius, level }) {
     const parameters = preset.levels[level];
-    const branch = { level, ...walkBranch(origin, direction, length, radius, parameters, random) };
+    const walked = { level, ...walkBranch(origin, direction, length, radius, parameters, random) };
+    const branch = level > 0 ? pruneToEnvelope(walked, preset.envelope, height) : walked;
     branches.push(branch);
     if (parameters.children) spawnChildren(branch, parameters.children, parameters.twist);
     if (level === lastLevel && !placeCrown) addLeafSites(branch);
@@ -326,7 +380,7 @@ function growSkeleton(preset, height, random, leafMode, seed) {
     level: 0,
   });
   const sites = placeCrown ? placeCrownLeafSites(branches, height, preset, seed) : leafSites;
-  return { branches, leafSites: sites, crown: describeCrown(sites) };
+  return { branches, height, leafSites: sites, crown: describeCrown(sites) };
 }
 
 function describeCrown(leafSites) {
@@ -731,7 +785,7 @@ export function resolveTreePreset({ species, preset, tree } = {}) {
   const presetLevels = named?.tree.levels ?? base.levels.length - 1;
   const overrides = mergeTreeGrowth(named?.tree ?? {}, tree === undefined ? {} : checkTreeGrowth(tree, presetLevels, growthError));
   if (Object.keys(overrides).length === 0 && !named?.height && !named?.leaf) return { species: baseSpecies, preset: base };
-  const grown = applyTreeGrowth(base, overrides, named?.height, named?.leaf);
+  const grown = applyTreeGrowth(base, overrides, named?.height, named?.leaf, named?.habit);
   const branches = maximumBranchCount(grown.levels);
   if (branches > MAX_TREE_BRANCHES) {
     throw new RangeError(`This tree could grow ${branches} branches, above the limit of ${MAX_TREE_BRANCHES}; lower tree.branches or tree.levels.`);

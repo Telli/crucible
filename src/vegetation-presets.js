@@ -63,17 +63,28 @@ const BIRCH_CROWN_LEAF = Object.freeze({
 export const TREE_PRESETS = Object.freeze({
   oak: Object.freeze({
     label: 'Oak', species: 'broadleaf', height: [9, 13], leaf: BROADLEAF_CROWN_LEAF,
-    tree: { crownShape: 'round', branches: [7, 4, 3], branchAngle: [68, 55, 50], lengthFalloff: [0.58, 0.5], gnarliness: [0.1, 0.22, 0.26, 0.28], leafSize: 0.64 },
+    // Half the height of trunk, then limbs that leave it nearly level at the bottom and steepen to the top, drooping a little, inside a
+    // flat-bottomed envelope that cuts the upper crown short, so the widest part of the crown sits in its lower third.
+    habit: { trunkLength: 0.5, angleTop: 14, profile: 'spreading', envelope: { base: 0.2, peak: 0.08, width: 0.5, powerLow: 0.3, powerHigh: 2 } },
+    tree: { branches: [12, 6, 3], branchAngle: [86, 55, 50], branchStart: [0.3], lengthFalloff: [1.1, 0.6], gnarliness: [0.1, 0.22, 0.26, 0.28], tropism: [0.02, -0.08, 0.04, 0], leafSize: 0.64, leafCount: 4 },
   }),
   ash: Object.freeze({
     label: 'Ash', species: 'broadleaf', height: [12, 16], leaf: BROADLEAF_CROWN_LEAF,
-    tree: { crownShape: 'round', branches: [9, 3, 3], branchAngle: [40, 42, 45], branchStart: [0.42], lengthFalloff: [0.44, 0.55], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 0.58 },
+    // A tall dome: limbs rise at the top (the lengthening profile of a round crown) inside an envelope that rounds it off.
+    habit: { envelope: { base: 0.2, peak: 0.45, width: 0.36, powerLow: 0.6, powerHigh: 0.8 } },
+    tree: { crownShape: 'round', branches: [9, 3, 3], branchAngle: [40, 42, 45], branchStart: [0.42], lengthFalloff: [0.44, 0.55], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 0.58, leafCount: 6 },
   }),
   aspen: Object.freeze({
     label: 'Aspen', species: 'birch', height: [11, 15], leaf: BIRCH_CROWN_LEAF,
-    tree: { crownShape: 'column', branches: [14, 3, 3], branchAngle: [38, 45, 50], branchStart: [0.45], lengthFalloff: [0.18, 0.5], gnarliness: [0.03, 0.1, 0.12, 0.14], tropism: [0.02, 0.1, 0, -0.08], leafSize: 0.78 },
+    // Narrow and open on a long clear trunk.
+    habit: { envelope: { base: 0.3, peak: 0.5, width: 0.2, powerLow: 0.7, powerHigh: 0.8 } },
+    tree: { crownShape: 'column', branches: [14, 3, 3], branchAngle: [38, 45, 50], branchStart: [0.45], lengthFalloff: [0.18, 0.5], gnarliness: [0.03, 0.1, 0.12, 0.14], tropism: [0.02, 0.1, 0, -0.08], leafSize: 0.78, leafCount: 3.5 },
   }),
-  birch: Object.freeze({ label: 'Birch', species: 'birch', tree: { leafSize: 0.82 }, leaf: BIRCH_CROWN_LEAF }),
+  // A narrow ovoid; the twigs hang because the birch leaf placement points them down.
+  birch: Object.freeze({
+    label: 'Birch', species: 'birch', tree: { leafSize: 0.82, leafCount: 3.5 }, leaf: BIRCH_CROWN_LEAF,
+    habit: { envelope: { base: 0.28, peak: 0.45, width: 0.24, powerLow: 0.7, powerHigh: 0.9 } },
+  }),
   pine: Object.freeze({
     label: 'Pine', species: 'conifer', height: [12, 17],
     tree: { crownShape: 'umbrella', branches: [44, 9], branchAngle: [74, 55], branchStart: [0.55, 0.2], lengthFalloff: [0.4, 0.35], gnarliness: [0.03, 0.12, 0.1], tropism: [0, 0.08, 0.04], leafStart: 0.4 },
@@ -250,18 +261,29 @@ export function maximumBranchCount(levels) {
   return total;
 }
 
+// A preset's habit (#3057) is what the public growth parameters do not reach: how far up the trunk runs (`trunkLength`, a fraction of
+// the height), how the first branches' angle changes from the lowest to the highest (`angleTop`, degrees), their length profile
+// and the `envelope` that prunes the crown. Keeping it in the preset leaves `scene_capabilities` as it was.
+function applyHabit(levels, { trunkLength, angleTop, profile }) {
+  if (trunkLength !== undefined) levels[0].lengthScale = trunkLength;
+  if (angleTop !== undefined) levels[0].children.angleTop = angleTop * DEGREES;
+  if (profile !== undefined) levels[0].children.profile = profile;
+}
+
 /**
  * A species preset with growth overrides applied: a new object, the base left untouched. `tree` must have passed
  * checkTreeGrowth; `height` is an optional [min, max] that replaces the species height range.
  */
-export function applyTreeGrowth(base, tree, height, leafOverride) {
+export function applyTreeGrowth(base, tree, height, leafOverride, habit) {
   const levels = resizeLevels(base.levels, tree.levels ?? base.levels.length - 1);
   levels.forEach((level, index) => {
     if (level.children) applySprouting(level.children, tree, index);
     applyShape(level, tree, index);
   });
+  if (habit) applyHabit(levels, habit);
+  // An explicit crown shape wins over the habit's own length profile.
   if (tree.crownShape) levels[0].children.profile = CROWN_PROFILES[tree.crownShape];
-  return { ...base, ...(height ? { height: [...height] } : {}), levels, leaf: applyLeaves(leafOverride ? { ...base.leaf, ...leafOverride } : base.leaf, tree), leafSiteLimit: MAX_TREE_LEAF_SITES };
+  return { ...base, ...(height ? { height: [...height] } : {}), levels, leaf: applyLeaves(leafOverride ? { ...base.leaf, ...leafOverride } : base.leaf, tree), leafSiteLimit: MAX_TREE_LEAF_SITES, ...(habit?.envelope ? { envelope: habit.envelope } : {}) };
 }
 
 /** What scene_capabilities lists for tree growth: presets with their base species, and every parameter with its range. */

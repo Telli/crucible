@@ -59,8 +59,8 @@ test('plain species grow the same geometry as before twig cards', () => {
 });
 
 test('mesh leaves of the presets grow the same geometry as before twig cards', () => {
-  assert.equal(geometryHash(createTree({ preset: 'oak', leaves: 'mesh' }, 4)), '25cbd2f93716');
-  assert.equal(geometryHash(createTree({ preset: 'birch', leaves: 'mesh' }, 4)), 'f97be1de5c39');
+  assert.equal(geometryHash(createTree({ preset: 'oak', leaves: 'mesh' }, 4)), '64c95f794d68');
+  assert.equal(geometryHash(createTree({ preset: 'birch', leaves: 'mesh' }, 4)), '20a18502b627');
 });
 
 for (const preset of ['oak', 'birch']) {
@@ -97,10 +97,10 @@ function foliageTriangles(options, seed = 4) {
 
 test('tree.leafCount scales the twigs per parent and so the leaf cards of a crowned tree', () => {
   for (const preset of ['oak', 'birch']) {
-    const sparse = foliageTriangles({ preset, tree: { leafCount: 2.5 } });
+    const sparse = foliageTriangles({ preset, tree: { leafCount: 1.5 } });
     const normal = foliageTriangles({ preset });
     const dense = foliageTriangles({ preset, tree: { leafCount: 10 } });
-    assert.ok(sparse < normal * 0.6, `${preset}: leafCount 2.5 gives ${sparse} triangles against ${normal}`);
+    assert.ok(sparse < normal * 0.6, `${preset}: leafCount 1.5 gives ${sparse} triangles against ${normal}`);
     assert.ok(dense > normal * 2, `${preset}: leafCount 10 gives ${dense} triangles against ${normal}`);
   }
 });

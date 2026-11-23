@@ -1,0 +1,90 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { createTree } from '../src/vegetation.js';
+import { TREE_PRESETS } from '../src/vegetation-presets.js';
+
+const CROWN_PRESETS = ['oak', 'ash', 'aspen', 'birch'];
+const FOLIAGE_TRIANGLE_LIMIT = 10000;
+
+function foliageGeometry(tree) {
+  return tree.levels[0].parts.find(part => part.role === 'foliage').geometry;
+}
+
+function hashTree(tree) {
+  const hash = createHash('sha256');
+  for (const level of tree.levels) {
+    for (const part of level.parts) {
+      hash.update(Buffer.from(new Float32Array(part.geometry.positions).buffer));
+      hash.update(Buffer.from(new Uint32Array(part.geometry.indices).buffer));
+    }
+  }
+  return hash.digest('hex');
+}
+
+// The widest horizontal reach of the foliage inside the lowest and the highest third of the crown, and the crown's height range.
+function crownThirds(tree) {
+  const { positions } = foliageGeometry(tree);
+  let lowest = Infinity;
+  let highest = -Infinity;
+  for (let index = 1; index < positions.length; index += 3) {
+    lowest = Math.min(lowest, positions[index]);
+    highest = Math.max(highest, positions[index]);
+  }
+  const reach = [0, 0, 0];
+  for (let index = 0; index < positions.length; index += 3) {
+    const third = Math.min(2, Math.floor((positions[index + 1] - lowest) / (highest - lowest) * 3));
+    reach[third] = Math.max(reach[third], Math.hypot(positions[index], positions[index + 2]));
+  }
+  return { reach, lowest, highest };
+}
+
+test('each crowned preset carries a pruning envelope inside its habit', () => {
+  for (const name of CROWN_PRESETS) {
+    const envelope = TREE_PRESETS[name].habit?.envelope;
+    assert.ok(envelope, `${name} needs habit.envelope`);
+    for (const field of ['base', 'peak', 'width', 'powerLow', 'powerHigh']) {
+      assert.ok(Number.isFinite(envelope[field]) && envelope[field] > 0, `${name} envelope.${field} must be a positive number`);
+    }
+  }
+});
+
+test('a crown stays inside its envelope and the upper crown is narrower than the lower', () => {
+  for (const name of CROWN_PRESETS) {
+    const { width } = TREE_PRESETS[name].habit.envelope;
+    for (const seed of [1, 2, 3]) {
+      const tree = createTree({ preset: name }, seed);
+      const { reach } = crownThirds(tree);
+      // Leaf cards reach past the twig tips by about half a card, so the envelope gets that margin.
+      assert.ok(Math.max(...reach) <= (width * tree.height) + 1.5, `${name} seed ${seed} reaches ${Math.max(...reach).toFixed(2)} m, past its envelope`);
+      if (name === 'oak' || name === 'ash') assert.ok(reach[2] < reach[0], `${name} seed ${seed}: the top third reaches ${reach[2].toFixed(2)} m, not narrower than the bottom third at ${reach[0].toFixed(2)} m`);
+    }
+  }
+});
+
+test('an oak keeps its widest reach in the lower two thirds of the crown, on a trunk of about half its height', () => {
+  for (const seed of [1, 2, 3, 4]) {
+    const tree = createTree({ preset: 'oak' }, seed);
+    const { reach, lowest } = crownThirds(tree);
+    assert.ok(reach[2] < 0.7 * Math.max(reach[0], reach[1]), `oak seed ${seed}: top third ${reach[2].toFixed(2)} m against ${Math.max(reach[0], reach[1]).toFixed(2)} m below`);
+    assert.ok(lowest > 0.03 * tree.height && lowest < 0.3 * tree.height, `oak seed ${seed}: the lowest leaf sits at ${(lowest / tree.height).toFixed(2)} of the height`);
+  }
+});
+
+test('crowned presets build the same bytes twice and keep their foliage under 10k triangles', () => {
+  for (const name of CROWN_PRESETS) {
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const first = createTree({ preset: name }, seed);
+      assert.equal(hashTree(createTree({ preset: name }, seed)), hashTree(first), `${name} seed ${seed} is not repeatable`);
+      const triangles = foliageGeometry(first).indices.length / 3;
+      assert.ok(triangles <= FOLIAGE_TRIANGLE_LIMIT, `${name} seed ${seed} has ${triangles} foliage triangles`);
+    }
+  }
+});
+
+test('plain species grow without an envelope', () => {
+  for (const species of ['broadleaf', 'birch', 'conifer', 'palm', 'bush']) {
+    const tree = createTree(species, 4);
+    assert.ok(foliageGeometry(tree).indices.length > 0);
+  }
+});
