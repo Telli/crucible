@@ -1123,7 +1123,7 @@ function hasSeparateCode(feature) {
   if (feature in MODULE_FEATURES) return true;
   if (feature === TANGENT_FEATURE) return false;
   if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
-  return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature);
+  return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature) && feature !== VERTEX_OPACITY_FEATURE;
 }
 
 function featureCodeSplicer(features) {
@@ -1161,9 +1161,33 @@ function vertexDefinitions(enabled) {
   ].join('\n');
 }
 
+/**
+ * Per-vertex opacity (particles with `fade: "opacity"`): the fourth vertex colour component becomes the alpha of a blend
+ * draw instead of sky visibility. It is not in SHADER_FEATURES and splices its few lines into the source only when a part
+ * asks for it, so every other shader keeps its source byte for byte.
+ */
+export const VERTEX_OPACITY_FEATURE = 'vertexOpacity';
+
+function spliceOnce(source, anchor, replacement) {
+  if (!source.includes(anchor)) throw new Error(`The shader source no longer contains "${anchor}", which the vertexOpacity feature splices around.`);
+  return source.replace(anchor, () => replacement);
+}
+
+function withVertexOpacityVertex(source) {
+  const declared = spliceOnce(source, '#version 300 es\n', '#version 300 es\nout float vertexOpacity;\n');
+  return spliceOnce(declared, '  gl_Position = viewProjection * world;', '  vertexOpacity = vertexColor.a;\n  vertexSkyVisibility = 1.0;\n  gl_Position = viewProjection * world;');
+}
+
+function withVertexOpacityFragment(source) {
+  const declared = spliceOnce(source, 'precision highp float;\n', 'precision highp float;\nin float vertexOpacity;\n');
+  return spliceOnce(declared, 'float alpha = materialOpacity * instanceOpacity * textureAlpha;', 'float alpha = materialOpacity * instanceOpacity * textureAlpha * vertexOpacity;');
+}
+
 /** The vertex shader for a set of features, listed as for createFragmentShader. */
 export function createVertexShader(features = SHADER_FEATURES) {
-  return vertexShaderSource(vertexDefinitions(new Set(features)), features);
+  const enabled = new Set(features);
+  const source = vertexShaderSource(vertexDefinitions(enabled), features);
+  return enabled.has(VERTEX_OPACITY_FEATURE) ? withVertexOpacityVertex(source) : source;
 }
 
 // Without skin and morph, which need their modules; the liquid pass draws rigid parts only.
@@ -1178,7 +1202,8 @@ export function createFragmentShader(features = SHADER_FEATURES) {
   // Not in SHADER_FEATURES: the preset is chosen by the renderer, so a shader built from every feature keeps the full look.
   lines.push(`#define LIGHT_SHADING ${enabled.has(LIGHT_SHADING_FEATURE) ? 'true' : 'false'}`);
   const source = buildFragmentShader(lines.join('\n'), featureCodeSplicer([...enabled]));
-  return enabled.has('alphaMode') ? withBlendCoverage(source) : source;
+  const withOpacity = enabled.has(VERTEX_OPACITY_FEATURE) ? withVertexOpacityFragment(source) : source;
+  return enabled.has('alphaMode') ? withBlendCoverage(withOpacity) : withOpacity;
 }
 
 export const fragmentShader = createFragmentShader();
