@@ -1,0 +1,1 @@
+- `loadGltf` takes three opt-in options: `checkMesh: true` counts duplicate triangles and non-manifold edges by position, `keepDegenerateTriangles: true` keeps degenerate triangles, and `strict: true` runs a supplied glTF-Validator (#2981)
