@@ -2292,6 +2292,8 @@ export function createStudio(container, {
     viewportSettingsForTier,
     agentPromptText,
     copyAgentPrompt,
+    // A host page (the desktop app) may offer its own built-in agent; the setup's AI agent step then offers its sign-in.
+    builtInAgent: globalThis.crucibleShell?.builtInAgent,
     onClose: () => {
       if (!preferences.setupDone) setPreference('setupDone', true);
     },
