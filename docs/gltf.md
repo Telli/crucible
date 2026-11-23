@@ -276,6 +276,8 @@ Lights from `KHR_lights_punctual` come back in `asset.lights` and are applied on
 
 A scene file whose GLB has no lights of its own, and whose `renderer.environment` names no key light, is lit by the HDRI's sun (#2761). `splitHdriSun` (`src/hdri.js`) takes the sun disc out of the map and turns its energy into the key light, with fill set to 0. The background still draws the disc. The sun then lights only the points it can reach, instead of reaching every point through the unshadowed sky term. On the Lone Monk courtyard this took the frame median from 183 to 110 and the darkest 5% from 114 to 47 (luma 0 to 255). Set `"hdriSun": false` in the scene file to keep the whole map and the renderer's default key. The native trace (`render-file-native.mjs`) always gets the whole map. Such a frame also fits the sun's shadow view to the scene (`sunShadowBounds`, as world scenes do since #1695), rather than using the 7 m studio box at the origin; a scene file's `renderer.shadowBounds` overrides it. A scene whose GLB has lights of its own is drawn as before.
 
+A scene file that lists its own `pointLights`, `spotLights` or emitting `areaLights` in `renderer.environment` (a portal emits nothing) is lit by them alone, as a GLB with `KHR_lights_punctual` is: the renderer's studio fill goes off, and so does the studio key, unless the file writes `keyIntensity`, `fillIntensity`, `lightDirection` or `keyColor` itself, which then wins (#2765). A scene file with no lights of its own keeps the studio key and fill. The HDRI sun of the previous paragraph still becomes the key when the file names no key.
+
 ## Verification
 
 `node --test tests/gltf.test.js` covers generated GLB triangles and the existing `exportGlb` roundtrip.
