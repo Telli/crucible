@@ -4,6 +4,7 @@ import { MINIMUM_SPOT_ANGLE, MAXIMUM_SPOT_ANGLE, spotAngleExpectation } from './
 import { mat4 } from 'gl-matrix';
 import { sceneBoundsOfParts } from './near-plane-fit.js';
 import { createLightingState, updateLightingState, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS, MAXIMUM_SPECULAR_ANTI_ALIASING } from './lighting.js';
+import { normalizeWetness, normalizePuddles } from './wetness.js';
 import { resolveEffects } from './effects.js';
 import { resolveVolumeFog } from './volumetric.js';
 import { resolveFogDetail } from './fog-field.js';
@@ -32,7 +33,7 @@ const MAX_LOOK_ARRAY_ENTRIES = Math.max(MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_A
 
 const ENVIRONMENT_FIELDS = [
   'world', 'ground', 'setup', 'hdri', 'keyFromHdri', 'environmentIntensity', 'environmentRotation', 'lightDirection', 'keyColor', 'keyIntensity', 'fillIntensity', 'ambientIntensity',
-  'daylight', 'pointLights', 'spotLights', 'areaLights', 'skyTop', 'skyBottom', 'fogColor', 'fogDensity', 'volumeFog', 'localVolumes', 'liquid', 'shadowCascades', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'wind', 'sky',
+  'daylight', 'pointLights', 'spotLights', 'areaLights', 'skyTop', 'skyBottom', 'fogColor', 'fogDensity', 'volumeFog', 'localVolumes', 'liquid', 'shadowCascades', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'wind', 'sky', 'wetness', 'puddles',
 ];
 const EFFECT_FIELDS = ['exposure', 'saturation', 'contrast', 'temperature', 'vignette', 'grain', 'ambientOcclusion', 'ambientOcclusionRadius', 'bloom', 'depthOfField', 'motionBlur'];
 const SHADOW_FIELDS = ['target', 'extent', 'distance', 'near', 'far', 'hard'];
@@ -351,6 +352,9 @@ function environmentFrom(input = {}) {
   if (input.specularAntiAliasing !== undefined) {
     environment.specularAntiAliasing = numberInRange(input.specularAntiAliasing, 0, MAXIMUM_SPECULAR_ANTI_ALIASING, 'environment.specularAntiAliasing');
   }
+  // Wet ground (src/wetness.js): wetness darkens porous surfaces and lowers their roughness, puddles pool sky-mirroring water; both are off when absent.
+  if (input.wetness !== undefined) environment.wetness = normalizeWetness(input.wetness);
+  if (input.puddles !== undefined) environment.puddles = normalizePuddles(input.puddles);
   // Outlines and line geometry; null clears them. The module checks the fields and loads on demand.
   if (input.lines !== undefined && input.lines !== null) {
     environment.lines = copiedJson(agentSceneModule('lineArt').resolveLineArt(input.lines));

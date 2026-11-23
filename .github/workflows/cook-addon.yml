@@ -420,6 +420,8 @@ on:
       - 'src/water-caustics.js'
       - 'src/water-mirror-glsl.js'
       - 'src/water-presets.js'
+      - 'src/wetness-shader.js'
+      - 'src/wetness.js'
       - 'src/world-material-shader.js'
       - 'tests/cook-dof-parity.test.js'
       - 'tests/cook-kernel-parity.test.js'

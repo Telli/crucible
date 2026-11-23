@@ -1,4 +1,5 @@
 import { blendOutputGlsl } from './blend-output.js';
+import { WETNESS_CODE } from './wetness-shader.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
 import { registeredFeatureCode, requireFeatureCode, registerShaderFeatureCode, registerSplatSupport, requireSplatSupport, layerTextureSupport, viewTransformShader, SPLAT_UNITS } from './shader-registry.js';
 
@@ -989,6 +990,8 @@ const SHADER_FEATURE_CONDITIONS = {
 // SwiftShader runs both sides of a choice between them for every pixel, so a renderer that only ever draws one of the two
 // compiles the other out: ENVIRONMENT_ENABLED is true, false, or the uniform when both are listed.
 export const LIGHT_SHADING_FEATURE = 'lightShading';
+// Environment wetness (wetness.js): its code joins the program only when the environment is wet, and it is not in SHADER_FEATURES.
+export const WETNESS_FEATURE = 'wetness';
 /** Renderer option values: 'full' is the default picture, 'light' leaves out costly terms for weak machines. */
 export const SHADING_MODES = Object.freeze(['full', 'light']);
 /** The light preset resolves at most this many MSAA samples (on SwiftShader 2 cost a third of 4 in the blend heavy scene). */
@@ -1045,7 +1048,7 @@ export function liquidPassDrawer() {
 
 function hasSeparateCode(feature) {
   if (feature in MODULE_FEATURES) return true;
-  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
+  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === WETNESS_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
   return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature);
 }
 
@@ -1056,6 +1059,7 @@ function featureCodeSplicer(features) {
     if (!enabled.has(feature)) codes.push(stub);
   }
   if (WORLD_MATERIAL_FEATURES.some(feature => enabled.has(feature))) codes.push(requireFeatureCode('worldMaterials'));
+  if (enabled.has(WETNESS_FEATURE)) codes.push(WETNESS_CODE);
   codes.push(enabled.has('environmentMap') ? registeredFeatureCode.get('environmentMap') ?? ENVIRONMENT_STUB : ENVIRONMENT_STUB);
   return slot => codes.map(code => code[slot] ?? '').join('');
 }

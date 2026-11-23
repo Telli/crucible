@@ -1,5 +1,6 @@
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS, shadowAtlasOverflowMessage } from './light-limits.js';
 import { lightShapeSupport } from './shader-registry.js';
+import { wetnessUniformValues } from './wetness.js';
 
 export { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS };
 export const DEFAULT_SPECULAR_ANTI_ALIASING = 1;
@@ -129,6 +130,8 @@ export function createLightingState() {
     fillIntensity: 1,
     ambientIntensity: 1,
     specularAntiAliasing: DEFAULT_SPECULAR_ANTI_ALIASING,
+    wetness: 0,
+    wetnessState: new Float32Array(3),
   };
 }
 
@@ -230,5 +233,7 @@ export function updateLightingState(state, environment, { world = false } = {}) 
   state.fillIntensity = fillIntensity;
   state.ambientIntensity = ambientIntensity;
   state.specularAntiAliasing = specularAntiAliasing;
+  state.wetnessState.set(wetnessUniformValues(environment));
+  state.wetness = state.wetnessState[0];
   return state;
 }
