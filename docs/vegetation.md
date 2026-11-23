@@ -114,6 +114,8 @@ The cards in `public/textures/leaves` are composited by `scripts/build-leaf-card
 
 ## Leaves: cards or mesh
 
+The oak, ash, aspen and birch presets put their leaf sites on the last two branch levels, keep more of them toward the crown's outside and turn each card up and outward, with a 256 px twig card (a round cluster of 8 to 12 cm leaves, about two thirds opaque) instead of crossed sprig cards. `createTree('broadleaf')` and the other plain species, and `leaves: 'mesh'`, grow exactly as before.
+
 `leaves: 'cards'` (default) uses an RGBA leaf texture (procedural, or scanned with `leafTextures`) (`material.map`) on crossed, slightly curved cards with the `foliage` tag (`grass` for grass cards), `alphaMode: 'mask'`, `alphaCutoff: 0.5` and `doubleSided: true`.
 Cards rely on the renderer's alpha masking with alpha-to-coverage under MSAA; with `samples: 1` their edges fall back to a hard cutout.
 Cards hold one face each and `doubleSided` draws the back. For the `foliage` and `grass` tags the fragment shader does not flip the normal on a back face, so the canopy-leaning shading normal lights both sides alike and the existing back-lighting term adds translucency.
@@ -215,7 +217,7 @@ Meshes and textures are built in plain JavaScript, so tests run in Node.
 ## Limits
 
 - Scanned bark and leaves in recipes need the `vegetation-scans` pack; the images of one node count toward the 64 MiB decoded limit of texture sequences (a scanned broadleaf is 12 MiB).
-- Cards need the renderer's alpha mask to look right. Without `leafTextures` the leaf textures are 128 px procedural sprigs that look flat from under a few metres; the scanned cards hold up to about 1 m. Palm fronds have no scanned card yet. The conifer card is a cedar spray, so it reads as a flat branch tip rather than separate needles.
+- Cards need the renderer's alpha mask to look right. Without `leafTextures` the broad-leaved tree presets (oak, ash, aspen, birch) draw 256 px twig cards of 8 to 12 cm leaves and the plain species keep 128 px procedural sprigs, which look flat from under a few metres; the scanned cards hold up to about 1 m. Palm fronds have no scanned card yet. The conifer card is a cedar spray, so it reads as a flat branch tip rather than separate needles.
 - Level changes pop unless `selectLevels` gets `fade`; level 2 crowns are blobs or crossed cards, and baked impostors exist only when asked for (see Impostors and cross-fade).
 - Species are fixed presets; there is no wind-bent skeleton or collision with other trees. Seasonal colour exists only in recipes (the `season` field), not in the addon call. A broadleaf from `createTree` also has `bareParts(levelIndex)`, the twigged bark to draw at that level in place of the level's parts once it has shed its leaves.
 - In recipes, tags `foliage` and `grass` accept a `tag` override on placed assets, so an imported tree sways; its leaf shading and alpha coverage stay those of the renderer.
