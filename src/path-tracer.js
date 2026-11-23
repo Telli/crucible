@@ -3,7 +3,7 @@ import { cameraFieldOfView, resolveThinLens } from './camera.js';
 import { fresnelSchlick } from './material-layers.js';
 import { pointLightFalloff } from './ray-query.js';
 import { profileGain } from './light-profile.js';
-import { buildTraceScene, buildTraceSceneForDevice, partUsesVertexAlpha, refuseLocalVolumes, SUN_ANGULAR_RADIUS, uniqueTriangleCount } from './path-tracer-scene.js';
+import { buildTraceScene, buildTraceSceneForDevice, partUsesVertexAlpha, refuseLocalVolumes, SUN_ANGULAR_RADIUS, uniqueTriangleCount, validateTraceEnvironment } from './path-tracer-scene.js';
 import { denoiseRadiance, estimateRelativeNoise } from './path-tracer-denoise.js';
 import { acesChannel, displayColor } from './view-transform.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
@@ -1178,7 +1178,12 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   const hasGridVolume = (environment?.localVolumes ?? []).some(volume => volume?.shape === 'grid');
   if (hasGridVolume && kernelMaterials && environment.volumeShutter > 0) notes.add('environment.volumeShutter is ignored for a grid volume: Cook draws the grid as it is at the frame time, with no motion blur from its velocity channel. Use backend "cpu" or "webgpu" for a blurred blast.');
   if ((environment?.localVolumes ?? []).some(volume => volume?.shape === 'grid' && volume.noiseAmount > 0)) notes.add('noiseAmount, noiseScale and noiseOctaves of a grid volume are ignored: only the rasterizer adds that fine detail on top of the grid, a trace reads the grid as it is.');
-  if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
+  const sunColor = Array.from(environment?.keyColor ?? [], channel => channel * (environment?.keyIntensity ?? 1));
+  const hasSun = sunColor.some(channel => channel > 0);
+  if (!environment?.map) {
+    notes.add('There is no environment map, so the sky is black and only the lights shine.');
+    if (!hasSun) notes.add('No sun is set: set keyColor, keyIntensity and lightDirection to add a sun.');
+  }
   if (environment?.fillIntensity > 0) notes.add('fillIntensity is ignored: the two fixed fill lights are rasterizer only. Add a point or area light, or raise environmentIntensity, to light the shadow side of a trace.');
   if (environment?.world === true) notes.add('world: true is ignored: the outdoor haze shading is rasterizer only, and a trace draws the environment map behind the picture and lights with it.');
   if (environment?.world === false && kernelMaterials) notes.add('world: false draws the flat background colour behind the picture in the CPU, "gpu" (WebGL) and "webgpu" tracers only: the native cycles kernel draws the environment map there, as it lights with it.');
@@ -1371,6 +1376,7 @@ function renderBandsInWorkers(scene, camera, options, buffers, shouldStop) {
  */
 export async function renderPathTracedImage({ parts, environment = {}, camera }, rawOptions = {}) {
   const options = normalizePathTracerOptions(rawOptions);
+  validateTraceEnvironment(environment);
   const started = performance.now();
   const shouldStop = () => {
     if ((performance.now() - started) / 1000 > options.maxSeconds) throw new Error(`The path trace passed its ${options.maxSeconds} second limit and was stopped.`);
