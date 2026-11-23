@@ -10,7 +10,7 @@
 // Photos are read from `<reference>/<preset>/`: `<preset>.jpg` and `credits.json` (URL, author, licence and
 // `treeHeightFraction`, the share of the photo height the tree fills). Photos are never part of the repository.
 // Every still gets a JSON of the same name with the recipe, camera, sun, size, backend and seed.
-// On the maintainer's machine run it as a light job: `bash ~/.agents/tools/gpu-lock.sh node scripts/tree-proof.mjs ...`.
+// On a shared machine run it through the GPU lock as a light job, so it does not compete with other renders.
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -95,7 +95,7 @@ async function waitForJob(call, jobId) {
   for (;;) {
     const record = (await call('scene_render_status', { jobId })).structuredContent;
     if (record.state === 'completed') return;
-    if (['cancelled', 'failed'].includes(record.state)) throw new Error(`Render job ${record.state}: ${record.error}`);
+    if (['cancelled', 'failed'].includes(record.state)) throw new Error(`Render job ${record.state}: ${record.reason}`);
     await delay(250);
   }
 }
