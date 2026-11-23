@@ -34,6 +34,8 @@ External requests use bounded streaming fetches.
 The optional `signal` aborts those fetches.
 `allowExternalResources: false` refuses every non-data resource uri with an error that names it, before any request. The MCP server decodes catalog files with it, so a file there carries its buffers and images as GLB or data URIs.
 
+Mesh checks are off by default, because the counts cost load time (about 10 to 90 percent on the shipped showcase meshes, measured without textures). `checkMesh: true` adds one warning per primitive naming how many triangles repeat an earlier one (same corner positions and winding) and how many edges more than two triangles share. Both are judged by position, with vertices at the same spot treated as one, so a seam that repeats its vertices does not hide them; nothing is merged or rewritten. `keepDegenerateTriangles: true` keeps the repeated-index and zero-area triangles instead of dropping them (the warning still counts them). `strict: true` with `validator: await import('gltf-validator')` runs the Khronos glTF-Validator on the file bytes first and fails on any error, naming the first few; Crucible does not bundle the validator, and `strict` without it throws with that instruction.
+
 | Option | Default | Limit |
 | --- | ---: | --- |
 | `maxBytes` | 268,435,456 | Total encoded input and fetched external resources. |
@@ -44,6 +46,7 @@ The optional `signal` aborts those fetches.
 | `maxTexturePixels` | 16,777,216 | Combined texture image pixels, checked from the file headers before decoding. Over the budget, the largest images are halved together until they fit, with base color and emission maps kept at twice the size of the normal, roughness and occlusion maps, and `asset.scaledTextures` lists each one as `{ name, from, to }` (also summarised in `asset.warnings`). |
 | `maxTextureImagePixels` | 67,108,864 | Hard ceiling for one image, checked before decoding. Larger images are rejected, never scaled. |
 | `maxJoints` | 4,096 | Joints declared by all skins; a skin worn by many primitives counts once. Pose copies count against `maxDecodedBytes`. |
+| `maxCheckedTriangles` | 600,000 | Most triangles of one primitive that `checkMesh` counts; a larger primitive skips the counts with a warning. |
 | `maxInstances` | 65,536 | Instances of one `EXT_mesh_gpu_instancing` node. |
 
 Every numeric limit must be a positive safe integer.
@@ -272,6 +275,8 @@ The bridge does not import cameras or scene environments into CrucibleRenderer. 
 Lights from `KHR_lights_punctual` come back in `asset.lights` and are applied only when the caller passes them on (see the extension table). A scene file (`scripts/render-media.mjs --scene file` and `scripts/render-file-native.mjs`) passes them on: the GLB's lights are its environment, and keys in the scene file's `renderer.environment` override them one by one.
 
 A scene file whose GLB has no lights of its own, and whose `renderer.environment` names no key light, is lit by the HDRI's sun (#2761). `splitHdriSun` (`src/hdri.js`) takes the sun disc out of the map and turns its energy into the key light, with fill set to 0. The background still draws the disc. The sun then lights only the points it can reach, instead of reaching every point through the unshadowed sky term. On the Lone Monk courtyard this took the frame median from 183 to 110 and the darkest 5% from 114 to 47 (luma 0 to 255). Set `"hdriSun": false` in the scene file to keep the whole map and the renderer's default key. The native trace (`render-file-native.mjs`) always gets the whole map. Such a frame also fits the sun's shadow view to the scene (`sunShadowBounds`, as world scenes do since #1695), rather than using the 7 m studio box at the origin; a scene file's `renderer.shadowBounds` overrides it. A scene whose GLB has lights of its own is drawn as before.
+
+A scene file that lists its own `pointLights`, `spotLights` or emitting `areaLights` in `renderer.environment` (a portal emits nothing) is lit by them alone, as a GLB with `KHR_lights_punctual` is: the renderer's studio fill goes off, and so does the studio key, unless the file writes `keyIntensity`, `fillIntensity`, `lightDirection` or `keyColor` itself, which then wins (#2765). A scene file with no lights of its own keeps the studio key and fill. The HDRI sun of the previous paragraph still becomes the key when the file names no key.
 
 ## Verification
 

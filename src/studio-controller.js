@@ -969,10 +969,14 @@ export function createStudioController({
     return (2 * distance * Math.tan((fieldOfViewDegrees * Math.PI) / 360)) / height;
   }
 
-  function projectWorldPoint(worldPoint) {
-    const coordinates = assertFiniteVector(worldPoint, 3, 'worldPoint');
+  // The camera matrices are built once, so a loop over a node's vertices does not read (and copy) the scene's environment for each point (#2842).
+  function worldPointProjector() {
     const { viewProjection } = cameraMatrices(viewCamera(), width / height, Boolean(currentScene.environment?.world));
-    return projectPointWithMatrix(viewProjection, coordinates, width, height);
+    return worldPoint => projectPointWithMatrix(viewProjection, assertFiniteVector(worldPoint, 3, 'worldPoint'), width, height);
+  }
+
+  function projectWorldPoint(worldPoint) {
+    return worldPointProjector()(worldPoint);
   }
 
   function screenRay(pixelX, pixelY) {
@@ -1195,12 +1199,13 @@ export function createStudioController({
     const stride = Math.max(1, Math.ceil(totalVertices / OUTLINE_VERTEX_BUDGET));
     const point = vec3.create();
     const screenPoints = [];
+    const projectPoint = worldPointProjector();
     for (const part of memberParts) {
       const positions = part.geometry.positions;
       for (let offset = 0; offset < positions.length; offset += 3 * stride) {
         vec3.set(point, positions[offset], positions[offset + 1], positions[offset + 2]);
         vec3.transformMat4(point, point, part.matrix);
-        const projected = projectWorldPoint([point[0], point[1], point[2]]);
+        const projected = projectPoint([point[0], point[1], point[2]]);
         if (!projected.visible) {
           return null;
         }
@@ -1269,13 +1274,14 @@ export function createStudioController({
     }
     const point = vec3.create();
     const triangles = [];
+    const projectPoint = worldPointProjector();
     for (const part of memberParts) {
       const positions = part.geometry.positions;
       const screen = new Float32Array((positions.length / 3) * 2);
       for (let vertex = 0; vertex < positions.length / 3; vertex += 1) {
         vec3.set(point, positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]);
         vec3.transformMat4(point, point, part.matrix);
-        const projected = projectWorldPoint([point[0], point[1], point[2]]);
+        const projected = projectPoint([point[0], point[1], point[2]]);
         if (!projected.visible) {
           return null;
         }

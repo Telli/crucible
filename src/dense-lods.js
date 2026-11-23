@@ -6,6 +6,7 @@ import { splitHdriSun } from './hdri.js';
 import { fitWorldShadowView } from './shadow-light.js';
 import { sceneBoundsOfParts } from './near-plane-fit.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS } from './light-limits.js';
+import { emittingAreaLights } from './area-light-portal.js';
 
 // Parts for a scene with more than one triangle per pixel (a scan, a sculpt), given `lods` so that each draws with the
 // fewest triangles whose error stays under `lodPixelError` pixels (#1163). On such a scene every pixel is shaded about
@@ -27,7 +28,24 @@ export function withSceneFileRendererDefaults(rendererOptions = {}) {
  * `renderer.environment` on top, key by key, so a scene file can still override the file's key light or light lists.
  */
 export function withSceneFileLights(fileLights = {}, sceneEnvironment = {}) {
-  return { ...fileLights, ...sceneEnvironment };
+  const merged = { ...fileLights, ...sceneEnvironment };
+  return { ...studioLightsOffForOwnLights(merged, sceneEnvironment), ...merged };
+}
+
+/** True when a scene file's own `renderer.environment` lists a point, spot or emitting area light (a portal emits nothing). */
+function hasOwnLocalLights(sceneEnvironment) {
+  return Boolean(sceneEnvironment.pointLights?.length || sceneEnvironment.spotLights?.length || emittingAreaLights(sceneEnvironment.areaLights).length);
+}
+
+/**
+ * A scene file that lists its own point, spot or area lights is lit by them, as a GLB with KHR_lights_punctual is: the
+ * renderer's studio fill goes off, and so does the studio key unless the file names a sun (`lightDirection` or
+ * `keyColor`). A `keyIntensity` or `fillIntensity` written in the file still wins (#2765).
+ */
+function studioLightsOffForOwnLights(merged, sceneEnvironment) {
+  if (!hasOwnLocalLights(sceneEnvironment)) return {};
+  const namesSun = merged.lightDirection !== undefined || merged.keyColor !== undefined;
+  return { ...(namesSun ? {} : { keyIntensity: 0 }), fillIntensity: 0 };
 }
 
 /**
@@ -64,11 +82,11 @@ export function showcaseEnvironment(fileLights, sceneEnvironment, map) {
  * comes back unchanged with `sunSplit` false.
  */
 export function sceneFileLighting(map, fileLights = {}, sceneEnvironment = {}, { hdriSun = true } = {}) {
-  const environment = withSceneFileLights(fileLights, sceneEnvironment);
-  const namesKey = ['lightDirection', 'keyColor', 'keyIntensity'].some(key => environment[key] !== undefined);
+  const written = { ...fileLights, ...sceneEnvironment };
+  const namesKey = ['lightDirection', 'keyColor', 'keyIntensity'].some(key => written[key] !== undefined);
   const split = hdriSun && map && !namesKey ? splitHdriSun(map) : null;
-  if (!split) return { environment, map, sunSplit: false };
-  return { environment: { ...split.environment, fillIntensity: 0, ...environment }, map: split.map, sunSplit: true };
+  if (!split) return { environment: withSceneFileLights(fileLights, sceneEnvironment), map, sunSplit: false };
+  return { environment: { ...split.environment, fillIntensity: 0, ...written }, map: split.map, sunSplit: true };
 }
 
 // A closed room a sun lights gets the sky each surface sees and the light its sunlit patches bounce, as recipe scenes do
