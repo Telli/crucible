@@ -122,11 +122,11 @@ test('updatePartVertices refuses sky visibility or indices that do not fit, befo
   assert.deepEqual(calls, [], 'no buffer was written');
 });
 
-test('geometryBoundingSphere measures the moved vertices again after updatePartVertices (#3038)', () => {
+test('updatePartVertices makes the next bounding sphere measure the new positions, as every near plane and shadow fit reads it (#3038)', () => {
   const { renderer, part, geometry } = fakeRenderer();
-  const sphereBefore = geometryBoundingSphere(geometry);
-  updatePartVertices(renderer, part, new Float32Array([0, 0, 40, 1, 0, 40, 0, 1, 40]));
-  const sphereAfter = geometryBoundingSphere(geometry);
-  assert.notEqual(sphereAfter, sphereBefore, 'the remembered sphere of the first pose is dropped');
-  assert.ok(Math.abs(sphereAfter.center[2] - 40) < 1e-6, `the sphere follows the new pose, centre z ${sphereAfter.center[2]}`);
+  const before = geometryBoundingSphere(geometry);
+  updatePartVertices(renderer, part, new Float32Array([0, 0, 50, 1, 0, 50, 0, 1, 50]));
+  const after = geometryBoundingSphere(geometry);
+  assert.notEqual(after, before);
+  assert.equal(after.maximum[2], 50);
 });

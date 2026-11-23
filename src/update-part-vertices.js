@@ -5,6 +5,7 @@
 import { markLiveGeometry } from './live-geometry.js';
 import { forgetGeometryBoundingSphere } from './render-culling.js';
 import { packNormalsWithTangents } from './tangent-encoding.js';
+import { forgetGeometryBoundingSphere } from './render-culling.js';
 
 function checkVertices(name, values, expectedLength, label) {
   if (!(values instanceof Float32Array) || values.length !== expectedLength) {
