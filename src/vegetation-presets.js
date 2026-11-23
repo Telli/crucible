@@ -37,28 +37,43 @@ export const TREE_PARAMETERS = Object.freeze({
 
 const CROWN_PROFILES = Object.freeze({ round: 'crown', cone: 'cone', column: 'column', umbrella: 'umbrella' });
 
-// The leaves of a tree preset with broad leaves (#3041): twig cards of real-sized leaves, on the last two branch levels, kept more
-// often toward the crown's outside and turned up and outward. A plain species keeps its sprig cards and its sites on the last level.
-const TWIG_CROWN_LEAF = Object.freeze({
+// `tree.leafCount` of a crowned tree is the twig density of the base species at 1: oak and ash grow the `bareTwigs` of broadleaf.
+export const LEAF_COUNT_REFERENCE = 5;
+
+// The leaves of a tree preset with broad leaves (#3041, #3057): twig cards of real-sized leaves on the twig generations, kept more
+// often toward the crown's outside, each pointing along its twig, turned outward and up (down for a birch). Oak and ash carry
+// them on the species `bareTwigs`; birch and aspen list their own twigs, since the birch species has none. A plain species keeps
+// its sprig cards and its sites on the last branch level.
+const BROADLEAF_CROWN_LEAF = Object.freeze({
   texture: 'twig',
-  placement: Object.freeze({ depth: 2, interiorKeep: 0.35, outwardTilt: 0.8, upTilt: 0.6, cardFan: 1 }),
+  placement: Object.freeze({ interiorKeep: 0, outwardTilt: 0.45, upTilt: 0.3 }),
+});
+
+const BIRCH_TWIGS = Object.freeze([
+  Object.freeze({ count: [3, 5], start: 0.2, end: 1, angle: [0.5, 0.9], lengthRatio: [0.9, 1.3], radiusRatio: 0.9, segments: 3, gnarl: 0.15, tropism: -0.3, tipRadius: 0.7 }),
+  Object.freeze({ count: [2, 3], start: 0.3, end: 1, angle: [0.5, 0.9], lengthRatio: [0.7, 1], radiusRatio: 0.85, segments: 2, gnarl: 0.15, tropism: -0.3, tipRadius: 0.6 }),
+]);
+
+const BIRCH_CROWN_LEAF = Object.freeze({
+  texture: 'twig',
+  placement: Object.freeze({ interiorKeep: 0.1, outwardTilt: 0.2, upTilt: -0.35, twigs: BIRCH_TWIGS }),
 });
 
 // Each preset is a small JSON object: the base species, an optional height range in metres and growth overrides.
 export const TREE_PRESETS = Object.freeze({
   oak: Object.freeze({
-    label: 'Oak', species: 'broadleaf', height: [9, 13], leaf: TWIG_CROWN_LEAF,
-    tree: { crownShape: 'round', branches: [7, 4, 3], branchAngle: [68, 55, 50], lengthFalloff: [0.58, 0.5], gnarliness: [0.1, 0.22, 0.26, 0.28], leafCount: 6 },
+    label: 'Oak', species: 'broadleaf', height: [9, 13], leaf: BROADLEAF_CROWN_LEAF,
+    tree: { crownShape: 'round', branches: [7, 4, 3], branchAngle: [68, 55, 50], lengthFalloff: [0.58, 0.5], gnarliness: [0.1, 0.22, 0.26, 0.28], leafSize: 0.64 },
   }),
   ash: Object.freeze({
-    label: 'Ash', species: 'broadleaf', height: [12, 16], leaf: TWIG_CROWN_LEAF,
-    tree: { crownShape: 'round', branches: [9, 3, 3], branchAngle: [40, 42, 45], branchStart: [0.42], lengthFalloff: [0.44, 0.55], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 0.85, leafCount: 5 },
+    label: 'Ash', species: 'broadleaf', height: [12, 16], leaf: BROADLEAF_CROWN_LEAF,
+    tree: { crownShape: 'round', branches: [9, 3, 3], branchAngle: [40, 42, 45], branchStart: [0.42], lengthFalloff: [0.44, 0.55], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 0.58 },
   }),
   aspen: Object.freeze({
-    label: 'Aspen', species: 'birch', height: [11, 15], leaf: TWIG_CROWN_LEAF,
-    tree: { crownShape: 'column', branches: [14, 3, 3], branchAngle: [38, 45, 50], branchStart: [0.45], lengthFalloff: [0.18, 0.5], gnarliness: [0.03, 0.1, 0.12, 0.14], tropism: [0.02, 0.1, 0, -0.08], leafSize: 0.75, leafCount: 6 },
+    label: 'Aspen', species: 'birch', height: [11, 15], leaf: BIRCH_CROWN_LEAF,
+    tree: { crownShape: 'column', branches: [14, 3, 3], branchAngle: [38, 45, 50], branchStart: [0.45], lengthFalloff: [0.18, 0.5], gnarliness: [0.03, 0.1, 0.12, 0.14], tropism: [0.02, 0.1, 0, -0.08], leafSize: 0.78 },
   }),
-  birch: Object.freeze({ label: 'Birch', species: 'birch', tree: {}, leaf: TWIG_CROWN_LEAF }),
+  birch: Object.freeze({ label: 'Birch', species: 'birch', tree: { leafSize: 0.82 }, leaf: BIRCH_CROWN_LEAF }),
   pine: Object.freeze({
     label: 'Pine', species: 'conifer', height: [12, 17],
     tree: { crownShape: 'umbrella', branches: [44, 9], branchAngle: [74, 55], branchStart: [0.55, 0.2], lengthFalloff: [0.4, 0.35], gnarliness: [0.03, 0.12, 0.1], tropism: [0, 0.08, 0.04], leafStart: 0.4 },
@@ -195,6 +210,9 @@ function applyLeaves(leaf, tree) {
   const result = { ...leaf };
   if (tree.leafCount !== undefined) result.sitesPerMeter = tree.leafCount;
   if (tree.leafStart !== undefined) result.start = tree.leafStart;
+  // A crowned tree carries its leaves on twigs (#3057): leafCount scales the twigs per parent, leafStart is where they begin.
+  if (leaf.placement && tree.leafCount !== undefined) result.placement = { ...result.placement, twigScale: tree.leafCount / LEAF_COUNT_REFERENCE };
+  if (leaf.placement && tree.leafStart !== undefined) result.placement = { ...result.placement, twigStart: tree.leafStart };
   if (tree.leafSize !== undefined) {
     result.meshLength = leaf.meshLength * tree.leafSize;
     result.meshWidth = leaf.meshWidth * tree.leafSize;

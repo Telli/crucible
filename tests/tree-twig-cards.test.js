@@ -43,7 +43,8 @@ test('broad-leaved tree presets carry twig cards and crown placement, plain spec
   for (const preset of ['oak', 'ash', 'aspen', 'birch']) {
     const { preset: grown } = resolveTreePreset({ preset });
     assert.equal(grown.leaf.texture, 'twig', preset);
-    assert.equal(grown.leaf.placement.depth, 2, preset);
+    assert.ok((grown.leaf.placement.twigs ?? grown.bareTwigs).length >= 1, `${preset} carries its leaves on twigs`);
+    assert.equal(grown.leaf.placement.cardFan, undefined, preset);
   }
   for (const species of ['broadleaf', 'birch', 'bush']) {
     const { preset: grown } = resolveTreePreset({ species });
@@ -54,11 +55,12 @@ test('broad-leaved tree presets carry twig cards and crown placement, plain spec
 
 test('plain species grow the same geometry as before twig cards', () => {
   assert.deepEqual(['broadleaf', 'birch', 'bush'].map(species => geometryHash(createTree(species, 4))), ['8d529c72e840', '6da290072153', '505a750a3783']);
+  assert.deepEqual(['conifer', 'palm'].map(species => geometryHash(createTree(species, 4))), ['87a8c307b9d2', '078273c7e5de']);
 });
 
 test('mesh leaves of the presets grow the same geometry as before twig cards', () => {
-  assert.equal(geometryHash(createTree({ preset: 'oak', leaves: 'mesh' }, 4)), '17a157e4cc5b');
-  assert.equal(geometryHash(createTree({ preset: 'birch', leaves: 'mesh' }, 4)), '0d0f4977de74');
+  assert.equal(geometryHash(createTree({ preset: 'oak', leaves: 'mesh' }, 4)), '25cbd2f93716');
+  assert.equal(geometryHash(createTree({ preset: 'birch', leaves: 'mesh' }, 4)), 'f97be1de5c39');
 });
 
 for (const preset of ['oak', 'birch']) {
@@ -86,4 +88,38 @@ test('crown placement keeps more leaf sites toward the outside of the crown than
   const median = distances[Math.floor(distances.length / 2)];
   const outerHalf = distances.filter(distance => distance >= median).reduce((sum, distance) => sum + distance, 0) / (distances.length / 2);
   assert.ok(outerHalf > median * 1.15, `the outer half of the cards sits at ${outerHalf.toFixed(2)} m against a median of ${median.toFixed(2)} m`);
+});
+
+function foliageTriangles(options, seed = 4) {
+  const foliage = createTree(options, seed).levels[0].parts.find(part => part.role === 'foliage');
+  return foliage.geometry.indices.length / 3;
+}
+
+test('tree.leafCount scales the twigs per parent and so the leaf cards of a crowned tree', () => {
+  for (const preset of ['oak', 'birch']) {
+    const sparse = foliageTriangles({ preset, tree: { leafCount: 2.5 } });
+    const normal = foliageTriangles({ preset });
+    const dense = foliageTriangles({ preset, tree: { leafCount: 10 } });
+    assert.ok(sparse < normal * 0.6, `${preset}: leafCount 2.5 gives ${sparse} triangles against ${normal}`);
+    assert.ok(dense > normal * 2, `${preset}: leafCount 10 gives ${dense} triangles against ${normal}`);
+  }
+});
+
+test('tree.leafStart moves where the twigs begin along their parent', () => {
+  const early = createTree({ preset: 'oak', tree: { leafStart: 0.05 } }, 4).levels[0].parts.find(part => part.role === 'foliage').geometry.positions;
+  const late = createTree({ preset: 'oak', tree: { leafStart: 0.9 } }, 4).levels[0].parts.find(part => part.role === 'foliage').geometry.positions;
+  assert.ok(!Buffer.from(early.buffer, early.byteOffset, early.byteLength).equals(Buffer.from(late.buffer, late.byteOffset, late.byteLength)), 'leafStart changes the crown');
+});
+
+test('a crowned tree whose twigs would pass the leaf site limit stops before growing them', () => {
+  assert.throws(
+    () => createTree({ preset: 'oak', tree: { levels: 3, branches: [20, 8, 6], leafCount: 20 } }, 4),
+    error => error instanceof RangeError && /at most 20000 leaf sites; lower tree.leafCount/.test(error.message),
+  );
+});
+
+test('crowned oak and ash leaf twigs are the twigs their bare tree shows', () => {
+  const oak = createTree({ preset: 'oak' }, 4);
+  const bare = oak.bareParts(0).find(part => part.role === 'bark').geometry.positions.length;
+  assert.ok(bare > oak.levels[0].parts.find(part => part.role === 'bark').geometry.positions.length, 'the bare tree adds its twigs to the bark');
 });
