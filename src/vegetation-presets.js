@@ -72,7 +72,7 @@ export const TREE_PRESETS = Object.freeze({
     label: 'Ash', species: 'broadleaf', height: [12, 16], leaf: BROADLEAF_CROWN_LEAF,
     // A tall dome: limbs rise at the top (the lengthening profile of a round crown) inside an envelope that rounds it off.
     habit: { envelope: { base: 0.2, peak: 0.45, width: 0.36, powerLow: 0.6, powerHigh: 0.8 } },
-    tree: { crownShape: 'round', branches: [9, 3, 3], branchAngle: [40, 42, 45], branchStart: [0.42], lengthFalloff: [0.44, 0.55], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 0.58, leafCount: 6 },
+    tree: { crownShape: 'round', branches: [9, 3, 3], branchAngle: [40, 42, 45], branchStart: [0.42], lengthFalloff: [0.44, 0.55], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 0.58, leafCount: 4 },
   }),
   aspen: Object.freeze({
     label: 'Aspen', species: 'birch', height: [11, 15], leaf: BIRCH_CROWN_LEAF,
@@ -82,7 +82,7 @@ export const TREE_PRESETS = Object.freeze({
   }),
   // A narrow ovoid; the twigs hang because the birch leaf placement points them down.
   birch: Object.freeze({
-    label: 'Birch', species: 'birch', tree: { leafSize: 0.82, leafCount: 3.5 }, leaf: BIRCH_CROWN_LEAF,
+    label: 'Birch', species: 'birch', tree: { leafSize: 0.82, leafCount: 1.2 }, leaf: BIRCH_CROWN_LEAF,
     habit: { envelope: { base: 0.28, peak: 0.45, width: 0.24, powerLow: 0.7, powerHigh: 0.9 } },
   }),
   pine: Object.freeze({
