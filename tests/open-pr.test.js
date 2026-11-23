@@ -124,7 +124,7 @@ describe('openPullRequest', () => {
   });
 
   test('stops with every finding listed and creates nothing when the checks fail', () => {
-    const services = makeServices({ body: 'Just some words.\nC:\\Users\\someone\\file' });
+    const services = makeServices({ body: `Just some words.\n${['C:', 'Users', 'someone', 'file'].join('\\')}` });
     assert.throws(() => openPullRequest(baseOptions, services), (error) => {
       assert.match(error.message, /local-path/);
       assert.match(error.message, /missing-issue-link/);
