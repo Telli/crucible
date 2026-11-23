@@ -84,6 +84,8 @@ export function meanDeltaE(errors) {
 /**
  * parameters: [{ name, stage, start, min, max, step?, prior?: { value, weight } }]
  * regions: [{ label, shot, rect, exclude?, lab, holdout? }]; holdout regions are reported but never fitted.
+ * render(values, { expired }) may return null when expired() turns true between shots: the evaluation is dropped and the fit
+ * stops with stoppedBy 'deadline'. The first evaluation never expires, so a result always exists.
  * Returns { values, history, before, after, evaluations, stoppedBy }.
  */
 export async function fitLook({
@@ -105,7 +107,8 @@ export async function fitLook({
   const toVector = values => parameters.map(parameter => (values[parameter.name] - parameter.min) / (parameter.max - parameter.min));
 
   async function measureAll(values) {
-    const images = await render(values);
+    const images = await render(values, { expired: () => evaluations > 1 && now() >= deadlineAt });
+    if (images === null) return null;
     const measured = {};
     for (const shot of shotNames) {
       if (!images[shot]) throw new Error(`render() returned no image for shot ${shot}`);
@@ -126,6 +129,11 @@ export async function fitLook({
     evaluations += 1;
     const values = toValues(vector);
     const measured = await measureAll(values);
+    if (measured === null) {
+      evaluations -= 1;
+      stoppedBy ??= 'deadline';
+      return null;
+    }
     const data = [];
     for (const region of training) {
       for (let channel = 0; channel < 3; channel++) {
@@ -142,6 +150,7 @@ export async function fitLook({
     const probe = [...current.vector];
     probe[index] += direction * step;
     const probed = await evaluate(probe);
+    if (probed === null) return null;
     return probed.rows.map((row, rowIndex) => (row.value - current.rows[rowIndex].value) / (direction * step));
   }
 
@@ -152,7 +161,9 @@ export async function fitLook({
       const columns = [];
       for (const index of freeIndices) {
         if (!budgetLeft()) return current;
-        columns.push(await probeColumn(current, index));
+        const column = await probeColumn(current, index);
+        if (column === null) return current;
+        columns.push(column);
       }
       const jacobian = current.rows.map((_, row) => columns.map(column => column[row]));
       const residuals = current.rows.map(row => row.value);
@@ -165,6 +176,7 @@ export async function fitLook({
           candidate[index] = Math.min(1, Math.max(0, candidate[index] + delta[column]));
         });
         const trial = await evaluate(candidate);
+        if (trial === null) return current;
         if (trial.cost < current.cost) {
           accepted = trial;
           damping = Math.max(MINIMUM_DAMPING, damping / 3);

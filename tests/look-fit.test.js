@@ -5,7 +5,7 @@ import { linearToOklab, srgbToLinear, measureRegion } from '../src/look-fit-colo
 import { normalizeFitLookInput } from '../src/look-fit-input.js';
 import { FIT_LOOK_LIMITS, fitOperationsForShot, fitPatchFromValues } from '../src/look-fit-parameters.js';
 import { encodePng } from '../scripts/agent-icon-png.mjs';
-import { runFitLook } from '../scripts/agent-fit-look.mjs';
+import { runFitLook, fitLookMessage } from '../scripts/agent-fit-look.mjs';
 
 const SIZE = 8;
 const TRUE_VALUES = { sunHeight: 1.4, haze: 0.6 };
@@ -236,4 +236,57 @@ test('the capabilities note names every parameter and the limits the code enforc
   for (const name of FIT_PARAMETER_NAMES) assert.ok(FIT_LOOK_CAPABILITY_NOTE.includes(name), `${name} is in the note`);
   assert.ok(FIT_LOOK_CAPABILITY_NOTE.includes(`at most ${FIT_LOOK_LIMITS.maximumRegions}`));
   assert.ok(FIT_LOOK_CAPABILITY_NOTE.includes(`${FIT_LOOK_LIMITS.deadlineSeconds} second`));
+});
+
+test('the deadline is checked between shots: a half-drawn evaluation is dropped and the overshoot is at most one shot', async () => {
+  const parameters = [physical('sunHeight', 0, 3, 0.5), physical('haze', 0, 2, 1.5)];
+  const regions = [...referenceRegions(), ...referenceRegions().map(region => ({ ...region, label: `${region.label} again`, shot: 'second' }))];
+  let clock = 0;
+  let shotRenders = 0;
+  const shotSeconds = 4;
+  async function slowRender(values, { expired }) {
+    const drawn = fakeRender(values);
+    const images = {};
+    for (const shot of ['sky', 'ground', 'second']) {
+      if (expired()) return null;
+      clock += shotSeconds;
+      shotRenders += 1;
+      images[shot] = drawn[shot] ?? drawn.sky;
+    }
+    return images;
+  }
+  const deadlineAt = 30;
+  const result = await fitLook({ parameters, regions, render: slowRender, deadlineAt, now: () => clock });
+  assert.equal(result.stoppedBy, 'deadline');
+  assert.ok(clock - deadlineAt <= shotSeconds, `overshot by ${clock - deadlineAt}`);
+  assert.ok(shotRenders > result.evaluations * 3 && shotRenders < result.evaluations * 3 + 3, 'a half-drawn evaluation was dropped and not counted');
+  assert.ok(Number.isFinite(result.after[0].deltaE), 'the result is still the best look found');
+});
+
+test('without a deadline the same inputs give the same result', async () => {
+  const parameters = [physical('sunHeight', 0, 3, 0.5), physical('haze', 0, 2, 1.5)];
+  const run = () => fitLook({ parameters, regions: referenceRegions(), render: async (values, context) => (context.expired() ? null : fakeRender(values)) });
+  assert.deepEqual(await run(), await run());
+});
+
+test('a limit that stops the fit is named in the message with the four ways to narrow it', async () => {
+  const clockStep = 20000;
+  let clock = 0;
+  const preview = fakePreview();
+  const input = { ...fitInput(2.2), shots: [{ id: 'sky' }, { id: 'again' }] };
+  input.regions = [input.regions[0], { ...input.regions[0], label: 'again', shot: 'again' }];
+  async function invoke(method, request) {
+    const response = await preview.invoke(method, request);
+    if (method === 'fitLookFrame') clock += clockStep;
+    return response;
+  }
+  const result = await runFitLook({ input, invoke, setViewport() {}, now: () => clock });
+  assert.equal(result.stoppedBy, 'deadline');
+  assert.equal(result.renders, 3, 'the second evaluation stopped before its second shot');
+  assert.equal(result.evaluations, 1);
+  for (const phrase of ['50 second limit', 'No step completed', 'start values', 'fewer free parameters', 'tighter min and max bounds', 'fewer regions or shots', 'smaller width and height']) {
+    assert.ok(result.message.includes(phrase), `message lacks "${phrase}": ${result.message}`);
+  }
+  assert.match(fitLookMessage('maximumEvaluations', 2), /100 evaluations.*2 step\(s\) completed/);
+  assert.doesNotMatch(fitLookMessage(null, 0), /narrow/);
 });

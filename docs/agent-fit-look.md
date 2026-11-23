@@ -28,7 +28,7 @@ Each name has a hard range; `min` and `max` may narrow it, never widen it. Physi
 - `values` and `startValues`.
 - `error.before` and `error.after`: the mean OKLab delta E over the fitted regions (and `holdoutMeanDeltaE` when some are held out), plus `error.regions` with each region's delta E before and after.
 - `history`: one entry per accepted step with its cost and values.
-- `evaluations` and `renders`, and `stoppedBy` (`maximumEvaluations` or `deadline`) when a limit cut the fit short. The result is still the best look found.
+- `evaluations` and `renders`, and `stoppedBy` (`maximumEvaluations` or `deadline`) when a limit cut the fit short. The result is still the best look found. A render is not started once the 50 seconds are up, between shots as well as between evaluations, so the fit ends within about one shot of the limit and drops the half-drawn evaluation. The `message` then names the limit, says when no step completed (the operations equal the start values), and lists the ways to narrow the fit: fewer free parameters, tighter bounds, fewer regions or shots, a smaller `width` and `height`.
 - `revision`: the scene's revision after the fit.
 
 ## What it changes

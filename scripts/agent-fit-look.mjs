@@ -51,6 +51,22 @@ function operationsFromPatch(patch) {
   ];
 }
 
+const BASE_MESSAGE = 'The scene was not changed. Apply the operations with scene_apply, then look at the result; regions with holdout: true were not fitted and show how well the fit carries over.';
+const LIMIT_SENTENCES = {
+  deadline: `The fit stopped at its ${FIT_LOOK_LIMITS.deadlineSeconds} second limit.`,
+  maximumEvaluations: `The fit stopped at its limit of ${FIT_LOOK_LIMITS.maximumEvaluations} evaluations.`,
+};
+const NARROW_HINTS = 'To finish within the limit, narrow the fit: pass fewer free parameters, tighter min and max bounds, fewer regions or shots, or a smaller width and height.';
+
+export function fitLookMessage(stoppedBy, completedSteps) {
+  if (!stoppedBy) return BASE_MESSAGE;
+  const limit = LIMIT_SENTENCES[stoppedBy] ?? `The fit stopped at a limit (${stoppedBy}).`;
+  const progress = completedSteps === 0
+    ? 'No step completed, so the operations carry the start values and nothing improved.'
+    : `${completedSteps} step(s) completed; the operations carry the best look found so far.`;
+  return `${limit} ${progress} ${NARROW_HINTS} ${BASE_MESSAGE}`;
+}
+
 export async function runFitLook({ input, invoke, setViewport, now = Date.now }) {
   const { sessionId } = input;
   const startedAt = now();
@@ -59,10 +75,11 @@ export async function runFitLook({ input, invoke, setViewport, now = Date.now })
   await setViewport(settings.width, settings.height);
   let renders = 0;
 
-  async function render(values) {
+  async function render(values, { expired }) {
     const patch = fitPatchFromValues(values, baseline.recipe);
     const images = {};
     for (const shot of settings.shots) {
+      if (expired()) return null;
       const operations = fitOperationsForShot({ camera: cameraOfShot(shot, baseline.recipe) }, patch);
       const frame = await invoke('fitLookFrame', { sessionId, operations });
       images[shot.name] = decodePng(Buffer.from(frame.data, 'base64'));
@@ -89,7 +106,7 @@ export async function runFitLook({ input, invoke, setViewport, now = Date.now })
   return {
     sessionId,
     sourceRevision: baseline.revision,
-    message: 'The scene was not changed. Apply the operations with scene_apply, then look at the result; regions with holdout: true were not fitted and show how well the fit carries over.',
+    message: fitLookMessage(fit.stoppedBy, fit.history.length - 1),
     operations: operationsFromPatch(patch),
     values: roundedValues(fit.values),
     startValues: roundedValues(fit.startValues),
