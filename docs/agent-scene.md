@@ -231,7 +231,7 @@ These make a material work on a mesh without UVs: box mapping (the default) proj
 
 Limits, checked while the recipe is read: at most 64 nodes in all outputs, depth 12 (the field expression limits), at most 8 ramp
 stops, `resolution` of 256, 512 or 1024, and a work budget of 30 million units, where a plain node costs 1, a `noise` octave 3
-and a `voronoi` 8, per pixel and per pixel of the texture. A heavy graph at 1024 can be over it; use 512. A graph that is over a
+and a `voronoi` 8, per pixel and per pixel of the texture. A heavy graph at 1024 can be over it; use 512. A node that appears more than once with the same content, such as one snow mask that gates colour, roughness and bump, is read once: it counts once toward the 64 nodes and the work budget, and its value is worked out once for each pixel and shared by every output (bump reads the height four times a pixel, so a mask under `height` is still worked out for each of those). A graph that is over a
 limit, holds an unknown operator or key, or holds any text other than the fixed names above is rejected with a message that
 names the problem. Baking the heaviest graph the budget allows took about 2 seconds in Node.
 
