@@ -315,8 +315,9 @@ function descendantIdsOf(nodes, rootId) {
 // A placed catalog scan draws as parts named `<node id>/<index>`, one per mesh of the file; they belong to that node.
 const SCAN_PART_SUFFIX = /\/\d+$/;
 
+// Grown vegetation and placed assets name their parts "<node>/0/bark" and carry the node id in `group`.
 function ownsPart(nodeIds, part) {
-  return nodeIds.has(part.name) || nodeIds.has(part.name.replace(SCAN_PART_SUFFIX, ''));
+  return nodeIds.has(part.name) || nodeIds.has(part.name.replace(SCAN_PART_SUFFIX, '')) || nodeIds.has(part.group);
 }
 
 function partClearanceAlongNormal(parts, excludedIds, worldNormal, nodes, worldMatrices) {

@@ -46,6 +46,14 @@ test('adding a tree writes a selected node whose vegetation field validates', as
   assert.equal(controller.canUndo, true);
 });
 
+test('a grown tree has bounds, so frame and the selection outline can find it', async () => {
+  const { controller, tools } = mountController();
+  const node = await addTree(tools, 'oak');
+  const bounds = controller.nodeBounds(node.id);
+  assert.ok(bounds, 'the tree node reports bounds');
+  assert.ok(bounds.size[1] > 3, 'the bounds cover the whole crown, not a trunk stub');
+});
+
 test('every preset of the picker plants a tree that grows', async () => {
   const { controller, tools } = mountController();
   for (const presetName of TREE_PRESET_NAMES) {

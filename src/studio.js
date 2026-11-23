@@ -1379,7 +1379,7 @@ export function createStudio(container, {
   };
   const treePicker = createElement(documentReference, 'div', { className: 'crucible-studio-tree-picker' });
   treePicker.hidden = true;
-  const addTreeButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Tree', attributes: { 'aria-expanded': 'false' } });
+  const addTreeButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Tree', dataset: { keepPopover: '' }, attributes: { 'aria-expanded': 'false' } });
   const pickTree = async presetName => {
     addPopover.hidePopover?.();
     treePicker.hidden = true;
@@ -1392,10 +1392,23 @@ export function createStudio(container, {
       announce(error.message);
     }
   };
+  // The menu is placed before the tree tiles exist, so opening them moves it up enough to keep their last row in the window.
+  const keepAddMenuInWindow = () => {
+    const view = documentReference.defaultView;
+    if (!view) return;
+    const overflow = addPopover.getBoundingClientRect().bottom - (view.innerHeight - 8);
+    if (overflow <= 0) return;
+    addPopover.style.top = `${Math.max(8, Math.round(addPopover.getBoundingClientRect().top - overflow))}px`;
+    addPopover.style.bottom = 'auto';
+  };
   addTreeButton.addEventListener('click', async () => {
     treePicker.hidden = !treePicker.hidden;
     addTreeButton.setAttribute('aria-expanded', treePicker.hidden ? 'false' : 'true');
-    if (treePicker.hidden || treePicker.childElementCount > 0) return;
+    if (treePicker.hidden) return;
+    if (treePicker.childElementCount > 0) {
+      keepAddMenuInWindow();
+      return;
+    }
     try {
       const treeTools = await loadTreeTools();
       const picker = treeTools.createTreePicker({
@@ -1405,6 +1418,11 @@ export function createStudio(container, {
         loadPictures: () => treeTools.renderPresetPictures({ documentReference, createAgentScene, loadAgentSceneModules, createRenderer, agentEnvironmentMap, fitAgentShadow, resolveAgentShadow }),
       });
       treePicker.append(picker.element);
+      keepAddMenuInWindow();
+      const ObserverClass = documentReference.defaultView?.ResizeObserver;
+      if (ObserverClass) {
+        new ObserverClass(keepAddMenuInWindow).observe(addPopover);
+      }
       await picker.load();
     } catch (error) {
       announce(error.message);
@@ -1488,7 +1506,7 @@ export function createStudio(container, {
   );
   for (const popoverElement of [newPopover, addPopover, exportPopover, editPopover, objectPopover, viewPopover, helpPopover]) {
     popoverElement.addEventListener('click', event => {
-      if (event.target.closest?.('button')) popoverElement.hidePopover?.();
+      if (event.target.closest?.('button') && !event.target.closest?.('[data-keep-popover]')) popoverElement.hidePopover?.();
     });
   }
 

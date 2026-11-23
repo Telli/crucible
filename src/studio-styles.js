@@ -550,6 +550,14 @@ export const STUDIO_CSS = `
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px;
 }
+.crucible-studio .crucible-studio-tree-seed button {
+  min-block-size: 30px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--studio-text) 7%, transparent);
+  color: var(--studio-text);
+}
+.crucible-studio .crucible-studio-tree-seed button:hover { background: color-mix(in srgb, var(--studio-text) 12%, transparent); }
 .crucible-studio-popover > button { gap: 9px; }
 .crucible-studio-popover > button[hidden] { display: none; }
 .crucible-studio-popover button {
