@@ -100,6 +100,9 @@ flat out mat3 boxNormalMatrix;
 #ifdef VERTEX_COLORS
 out vec3 vertexTint;
 out float vertexSkyVisibility;
+#ifdef VERTEX_ALPHA
+out float vertexOpacity;
+#endif
 #ifdef SURFACE_WEAR
 out vec2 vertexWear;
 #endif
@@ -147,7 +150,11 @@ void main() {
 #endif
 #ifdef VERTEX_COLORS
   vertexTint = USES_CROWD ? vec3(1.0) : vertexColor.rgb;
-#ifdef SURFACE_WEAR
+#ifdef VERTEX_ALPHA
+  // The fourth component is the COLOR_0 alpha of the glTF file here, never sky visibility or wear.
+  vertexOpacity = USES_CROWD ? 1.0 : vertexColor.a;
+  vertexSkyVisibility = 1.0;
+#elif defined(SURFACE_WEAR)
   // A packed value of 2 or more carries the wear and dirt weights (material-wear.js); below 2 it is sky visibility.
   bool carriesWear = !USES_CROWD && vertexColor.a >= 2.0;
   float maskBits = carriesWear ? vertexColor.a - 2.0 : 0.0;
@@ -321,9 +328,15 @@ uniform mat3 boxNormalMatrix;
 #ifdef VERTEX_COLORS
 in vec3 vertexTint;
 in float vertexSkyVisibility;
+#ifdef VERTEX_ALPHA
+in float vertexOpacity;
+#else
+const float vertexOpacity = 1.0;
+#endif
 #else
 const vec3 vertexTint = vec3(1.0);
 const float vertexSkyVisibility = 1.0;
+const float vertexOpacity = 1.0;
 #endif
 #if defined(VERTEX_COLORS) && defined(SURFACE_WEAR)
 in vec2 vertexWear;
@@ -682,7 +695,7 @@ ${featureCode("libraries")}
 ${featureCode("worldMossFunction")}// Opaque draws 1, mask resolves to a cutout (smooth coverage with MSAA), blend and add keep the fraction (per instance opacity times the batch one).
 float surfaceAlpha(float textureAlpha) {
   if (!USES_ALPHA_MODE) return 1.0;
-  float alpha = materialOpacity * instanceOpacity * textureAlpha;
+  float alpha = materialOpacity * instanceOpacity * textureAlpha * vertexOpacity;
   if (alphaMode > 1.5) return alpha;
   if (alphaToCoverage > 0.5) {
     float softness = max(fwidth(alpha), 0.0001);
@@ -996,7 +1009,7 @@ export const LIGHT_SHADING_MAXIMUM_SAMPLES = 2;
 export const ENVIRONMENT_FEATURES =Object.freeze(['environmentMap', 'studioLighting']);
 
 // Features that only the vertex shader reads: a part with a skeleton or morph targets.
-const VERTEX_ONLY_FEATURES = Object.freeze(['skin', 'morph', 'crowd', 'vertexColors', 'instanced']);
+const VERTEX_ONLY_FEATURES = Object.freeze(['skin', 'morph', 'crowd', 'vertexColors', 'vertexAlpha', 'instanced']);
 
 function environmentCondition(enabled) {
   const hasMap = enabled.has('environmentMap');
@@ -1066,7 +1079,7 @@ export const SHADER_FEATURES = Object.freeze([...Object.keys(SHADER_FEATURE_COND
 // choice between them whether or not the uniform picks it, so a renderer without those parts compiles them out.
 // The varyings that both shaders carry: per-vertex colours, and the per-instance values that a draw of one instance sets as uniforms.
 function interpolantDefines(enabled) {
-  return [['vertexColors', 'VERTEX_COLORS'], ['surfaceWear', 'SURFACE_WEAR'], ['instanced', 'INSTANCED'], [FRAGMENT_SHADOW_POSITION_FEATURE, 'SHADOW_IN_FRAGMENT']].filter(([feature]) => enabled.has(feature)).map(([, macro]) => `#define ${macro}`);
+  return [['vertexColors', 'VERTEX_COLORS'], ['vertexAlpha', 'VERTEX_ALPHA'], ['surfaceWear', 'SURFACE_WEAR'], ['instanced', 'INSTANCED'], [FRAGMENT_SHADOW_POSITION_FEATURE, 'SHADOW_IN_FRAGMENT']].filter(([feature]) => enabled.has(feature)).map(([, macro]) => `#define ${macro}`);
 }
 
 function vertexDefinitions(enabled) {

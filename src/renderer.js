@@ -169,6 +169,7 @@ export function shaderFeaturesOfParts(parts) {
     if (TAG_SHADER_FEATURES.has(material.tag)) features.add(material.tag);
     // Without vertex colours the tint and sky visibility are the constants of the unbound attribute, so no varying carries them.
     if ([part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => geometry.colors || vertexAlpha(geometry))) features.add('vertexColors');
+    if ([part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => geometry.colorAlpha)) features.add('vertexAlpha');
   }
   return features;
 }
@@ -681,10 +682,11 @@ function interleaveUvSets(geometry) {
   return combined;
 }
 
-// Sky visibility, or the packed surface wear masks of a material with `wear`, rides in the fourth component of the vertex
-// colour attribute, so the attribute layout stays the same.
+// The glTF COLOR_0 alpha, sky visibility, or the packed surface wear masks of a material with `wear`, rides in the fourth
+// component of the vertex colour attribute, so the attribute layout stays the same. A colour alpha wins: the shader's
+// vertexAlpha feature reads it as opacity, so a part that carries one does not also get baked sky visibility.
 function vertexAlpha(geometry) {
-  return geometry.surfaceMasks ?? geometry.skyVisibility;
+  return geometry.colorAlpha ?? geometry.surfaceMasks ?? geometry.skyVisibility;
 }
 
 function interleaveColorsWithSkyVisibility(geometry) {

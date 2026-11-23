@@ -33,7 +33,7 @@ const DEFAULT_LIMITS = Object.freeze({
 export const GLTF_CAPABILITIES = Object.freeze({
   formats: ['glb', 'gltf'],
   limits: DEFAULT_LIMITS,
-  supported: ['triangle meshes', 'world transforms', 'rigid node animations', 'four-influence skeletal skinning', 'joint node animations', 'relative POSITION/NORMAL morph targets', 'morph weight animations', 'PNG/JPEG/WebP base color textures', 'normal/occlusion/emissive/metallic-roughness textures', 'TEXCOORD_0', 'TEXCOORD_1 for every texture, the base color and layer maps included', 'clearcoat, clearcoat roughness, clearcoat normal, anisotropy, sheen color and sheen roughness textures', 'linear RGB vertex colors, with the alpha of RGBA colors ignored and reported in warnings','metallic roughness factors', 'emissive factors', 'alpha mask and blend modes', 'double-sided materials', 'KHR_mesh_quantization', 'KHR_materials_emissive_strength', 'KHR_materials_clearcoat, transmission, volume, ior, dispersion, specular, sheen, anisotropy and iridescence factors', 'KHR_texture_transform baked into UVs, with a normal map that differs by scale and offset applied in the shader', 'EXT_mesh_gpu_instancing expanded into parts', 'KHR_draco_mesh_compression with options.decoders.draco', 'EXT_meshopt_compression', 'KHR_texture_basisu with options.decoders.ktx2', 'EXT_texture_webp, with the PNG or JPEG fallback source when the browser cannot decode WebP', 'KHR_materials_unlit as the unlit material tag, with a base color map only', 'KHR_lights_punctual point and spot lights (up to eight each) and the first directional light, returned in lights as environment options'],
+  supported: ['triangle meshes', 'world transforms', 'rigid node animations', 'four-influence skeletal skinning', 'joint node animations', 'relative POSITION/NORMAL morph targets', 'morph weight animations', 'PNG/JPEG/WebP base color textures', 'normal/occlusion/emissive/metallic-roughness textures', 'TEXCOORD_0', 'TEXCOORD_1 for every texture, the base color and layer maps included', 'clearcoat, clearcoat roughness, clearcoat normal, anisotropy, sheen color and sheen roughness textures', 'linear RGB vertex colors, with the alpha of RGBA colors multiplying the opacity of blend and mask materials in the rasterizer','metallic roughness factors', 'emissive factors', 'alpha mask and blend modes', 'double-sided materials', 'KHR_mesh_quantization', 'KHR_materials_emissive_strength', 'KHR_materials_clearcoat, transmission, volume, ior, dispersion, specular, sheen, anisotropy and iridescence factors', 'KHR_texture_transform baked into UVs, with a normal map that differs by scale and offset applied in the shader', 'EXT_mesh_gpu_instancing expanded into parts', 'KHR_draco_mesh_compression with options.decoders.draco', 'EXT_meshopt_compression', 'KHR_texture_basisu with options.decoders.ktx2', 'EXT_texture_webp, with the PNG or JPEG fallback source when the browser cannot decode WebP', 'KHR_materials_unlit as the unlit material tag, with a base color map only', 'KHR_lights_punctual point and spot lights (up to eight each) and the first directional light, returned in lights as environment options'],
   // The primitive's own material is drawn; the other variants are not selectable.
   ignoredExtensions: ['KHR_materials_variants', 'KHR_materials_diffuse_roughness', 'EXT_materials_bump', 'EXT_texture_avif'],
   optionalExtensions: 'Any other optional extension is ignored and named in warnings. One listed in extensionsRequired that Crucible does not read is refused.',
@@ -913,7 +913,7 @@ function releaseDecodedGeometry(source, remainingUsers) {
   source.load = null;
 }
 
-async function convertGeometry(source, primitive, secondUvSet, onIgnoredVertexAlpha, onRepair, checkpoint) {
+async function convertGeometry(source, primitive, secondUvSet, onRepair, checkpoint) {
   const { position, normal, uv, uv1, color, skinIndex, skinWeight } = source.attributes;
   const zeroedBy = label => count => onRepair(`${count} non-finite ${label} value(s) were set to 0`);
   const positions = await copyAttributeZeroingNonFinite(position, 3, zeroedBy('POSITION'), checkpoint);
@@ -975,7 +975,11 @@ async function convertGeometry(source, primitive, secondUvSet, onIgnoredVertexAl
     if (!uv1 || uv1.count !== position.count) throw new Error('TEXCOORD_1 and POSITION counts must match.');
     geometry.lightUvs = await copyAttribute(uv1, 2, checkpoint);
   }
-  if (color) geometry.colors = await convertVertexColors(color, position.count, onIgnoredVertexAlpha, checkpoint);
+  if (color) {
+    const { colors, colorAlpha } = await convertVertexColors(color, position.count, checkpoint);
+    geometry.colors = colors;
+    if (colorAlpha) geometry.colorAlpha = colorAlpha;
+  }
   if (skinIndex) geometry.skinIndices = new Uint16Array(await copyAttribute(skinIndex, 4, checkpoint));
   if (skinWeight) geometry.skinWeights = await copyAttribute(skinWeight, 4, checkpoint);
   return geometry;
@@ -1147,25 +1151,30 @@ function worldMatrixOf(node, instanceMatrix, target) {
   return instanceMatrix ? target.multiplyMatrices(node.matrixWorld, instanceMatrix) : target.copy(node.matrixWorld);
 }
 
-/** Keeps the RGB of COLOR_0. The alpha of an RGBA attribute is dropped, and onIgnoredVertexAlpha hears of it when it is below one. */
-async function convertVertexColors(attribute, vertexCount, onIgnoredVertexAlpha, checkpoint) {
+/** Keeps the RGB of COLOR_0 and, when an RGBA attribute has an alpha below one, that alpha as colorAlpha. Returns { colors, colorAlpha }. */
+async function convertVertexColors(attribute, vertexCount, checkpoint) {
   if (attribute.count !== vertexCount || ![3, 4].includes(attribute.itemSize)) {
     throw new Error('COLOR_0 requires matching RGB or RGBA vertex values.');
   }
   const values = await copyAttribute(attribute, attribute.itemSize, checkpoint);
   const colors = new Float32Array(vertexCount * 3);
+  const colorAlpha = new Float32Array(vertexCount).fill(1);
   let alphaBelowOne = false;
   for (let vertex = 0; vertex < vertexCount; vertex++) {
     const offset = vertex * attribute.itemSize;
-    if (attribute.itemSize === 4 && values[offset + 3] < 1) alphaBelowOne = true;
+    if (attribute.itemSize === 4) {
+      const alpha = values[offset + 3];
+      if (alpha < 0 || alpha > 1) throw new Error('COLOR_0 alpha must be within zero and one.');
+      colorAlpha[vertex] = alpha;
+      if (alpha < 1) alphaBelowOne = true;
+    }
     for (let component = 0; component < 3; component++) {
       const value = values[offset + component];
       if (value < 0 || value > 1) throw new Error('COLOR_0 RGB values must be within zero and one.');
       colors[vertex * 3 + component] = value;
     }
   }
-  if (alphaBelowOne) onIgnoredVertexAlpha();
-  return colors;
+  return { colors, colorAlpha: alphaBelowOne ? colorAlpha : null };
 }
 
 /**
@@ -1309,7 +1318,6 @@ export async function parseGltf(data, options = {}) {
     const materials = new Map();
     const maps = options.sharedTextures?.descriptors ?? new Map();
     const nodes = [];
-    const meshNamesWithIgnoredAlpha = new Set();
     const lightNodes = [];
     const pendingTransform = new Matrix4();
     const pendingNodeMatrix = new Float32Array(16);
@@ -1359,7 +1367,7 @@ export async function parseGltf(data, options = {}) {
             };
             const { clampedWeights, boundToJointZero } = node.geometry.skinWeightRepairs ?? {};
             if (clampedWeights) onRepair(`${clampedWeights} negative skin weight(s) were clamped to 0${boundToJointZero ? `; ${boundToJointZero} vertex(es) bound to joint 0` : ''}`);
-            const converted = await convertGeometry(node.geometry, primitive, secondUvSet, () => meshNamesWithIgnoredAlpha.add(node.name), onRepair, checkpoint);
+            const converted = await convertGeometry(node.geometry, primitive, secondUvSet, onRepair, checkpoint);
             if (converted.uvs) bakeUvTransform(converted.uvs, uvTransform);
             geometries.set(geometryKey, converted);
           } catch (error) {
@@ -1430,9 +1438,6 @@ export async function parseGltf(data, options = {}) {
     }
     const { lights, warnings: lightWarnings } = readPunctualLights(document, lightNodes);
     warnings.push(...lightWarnings);
-    if (meshNamesWithIgnoredAlpha.size) {
-      warnings.push(`Ignored the alpha of RGBA COLOR_0 vertex colors in ${[...meshNamesWithIgnoredAlpha].join(', ')}; only the RGB is used.`);
-    }
     const sourceNodes = new Map();
     for (const node of nodes) {
       const index = node.association.nodes;
