@@ -33,13 +33,26 @@ function boundingSphereOf(positions) {
   return { center, radius: Math.sqrt(radiusSquared) };
 }
 
+// Sky visibility rides in the fourth channel of the colour attribute (renderer.js interleaves it with the colours), so a
+// change of it rewrites the whole interleaved buffer.
+function interleavedColors(geometry) {
+  const interleaved = new Float32Array(geometry.skyVisibility.length * 4);
+  for (let vertex = 0; vertex < geometry.skyVisibility.length; vertex++) {
+    for (let channel = 0; channel < 3; channel++) {
+      interleaved[vertex * 4 + channel] = geometry.colors ? geometry.colors[vertex * 3 + channel] : 1;
+    }
+    interleaved[vertex * 4 + 3] = geometry.skyVisibility[vertex];
+  }
+  return interleaved;
+}
+
 /**
- * Replace the vertex positions, and the normals when given, of a rigid part the renderer already holds. The vertex
- * count cannot change. The values are copied into the part's geometry, so the geometry stays the truth, and the
- * geometry is shared by every part that uses it. Skinned, morphed, crowd and level-of-detail parts are refused.
- * Returns the part.
+ * Replace the vertex positions, and the normals, sky visibility and triangle indices when given, of a rigid part the
+ * renderer already holds. The vertex and index counts cannot change, and sky visibility needs a geometry that has it and
+ * no surface masks. The values are copied into the part's geometry, so the geometry stays the truth, and the geometry is
+ * shared by every part that uses it. Skinned, morphed, crowd and level-of-detail parts are refused. Returns the part.
  */
-export function updatePartVertices(renderer, part, positions, normals) {
+export function updatePartVertices(renderer, part, positions, normals, { skyVisibility, indices } = {}) {
   const location = renderer.partLocations.get(part);
   if (!location) throw new Error(`Unknown part identity: ${part?.name}`);
   const geometry = location.geometry;
@@ -51,12 +64,31 @@ export function updatePartVertices(renderer, part, positions, normals) {
   if (normals !== undefined) checkVertices('normals', normals, geometry.normals.length, part.name);
   const buffers = renderer.geometryBuffers.get(geometry);
   const context = renderer.context;
+  if (skyVisibility) {
+    if (!geometry.skyVisibility || geometry.surfaceMasks || !buffers.has('colors')) throw new Error(`updatePartVertices skyVisibility needs a geometry with sky visibility and no surface masks: ${part.name}`);
+    if (!(skyVisibility instanceof Float32Array) || skyVisibility.length !== geometry.skyVisibility.length) throw new TypeError(`updatePartVertices skyVisibility must be a Float32Array of ${geometry.skyVisibility.length} numbers (1 per vertex of ${part.name}).`);
+  }
+  if (indices && (indices.constructor !== geometry.indices.constructor || indices.length !== geometry.indices.length)) {
+    throw new TypeError(`updatePartVertices indices must be a ${geometry.indices.constructor.name} of ${geometry.indices.length} numbers (the triangle count of ${part.name}).`);
+  }
   for (const [field, values] of [['positions', positions], ['normals', normals]]) {
     if (!values) continue;
     if (values !== geometry[field]) geometry[field].set(values);
     context.bindBuffer(context.ARRAY_BUFFER, buffers.get(field));
     // A geometry with tangents holds its normals packed with them, so a normal update writes the packed form.
     context.bufferSubData(context.ARRAY_BUFFER, 0, field === 'normals' && geometry.tangents ? packNormalsWithTangents(geometry.normals, geometry.tangents) : geometry[field]);
+  }
+  if (skyVisibility) {
+    if (skyVisibility !== geometry.skyVisibility) geometry.skyVisibility.set(skyVisibility);
+    context.bindBuffer(context.ARRAY_BUFFER, buffers.get('colors'));
+    context.bufferSubData(context.ARRAY_BUFFER, 0, interleavedColors(geometry));
+  }
+  if (indices) {
+    if (indices !== geometry.indices) geometry.indices.set(indices);
+    // The element binding belongs to the bound vertex array, so none may be bound while the buffer is written.
+    context.bindVertexArray(null);
+    context.bindBuffer(context.ELEMENT_ARRAY_BUFFER, buffers.get('indices'));
+    context.bufferSubData(context.ELEMENT_ARRAY_BUFFER, 0, geometry.indices);
   }
   // The values changed in place under the same array, so no cache may keep a measurement of this geometry.
   markLiveGeometry(geometry);

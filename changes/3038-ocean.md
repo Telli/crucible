@@ -1,0 +1,1 @@
+- A render job of a scene with a sea driven by an ocean time track now rewrites the sea in place for each frame instead of building and swapping a new mesh, which roughly halves the time per frame (#3038).
