@@ -549,6 +549,51 @@ function addCrownClumps(builder, skeleton, spec, mode, random, widthScale = 1) {
   }
 }
 
+function frondSegmentCount(setting) {
+  if (setting.leafKeep >= 0.8) return 8;
+  if (setting.leafKeep >= 0.25) return 5;
+  if (setting.leafKeep >= 0.12) return 3;
+  return 2;
+}
+
+// Curved V-folded frond ribbons along each palm frond rachis (#3051): replaces sparse perpendicular leaf cards with full pinnate fronds.
+function addFrondRibbons(builder, skeleton, spec, segments, random) {
+  for (const branch of skeleton.branches) {
+    if (branch.level !== 1) continue;
+    const frondWidth = branch.length * (spec.frondWidthRatio ?? 0.46);
+    const roll = (random() - 0.5) * 0.32;
+    const ringIndices = [];
+    for (let step = 0; step <= segments; step++) {
+      const progress = step / segments;
+      const sample = sampleBranch(branch, progress);
+      const frame = createLeafFrame(sample.direction, roll);
+      const { brightness, canopyNormal, tint } = crownShading(skeleton, sample.position);
+      const halfWidth = frondWidth * 0.5 * (0.85 + 0.15 * Math.sin(Math.PI * progress));
+      const stepBrightness = brightness * lerp(0.78, 1.12, progress);
+      const row = [-1, 0, 1].map((column) => {
+        const position = column === 0
+          ? sample.position
+          : addScaled(addScaled(sample.position, frame.right, column * halfWidth), frame.normal, -0.24 * halfWidth);
+        const ridgeNormal = normalized(addScaled(frame.normal, frame.right, column * 0.45));
+        const shading = normalized(addVectors(scaleVector(ridgeNormal, 0.65), scaleVector(canopyNormal, 0.35)));
+        const vertexColor = lerpVectors(LEAF_COLOR_BASE, LEAF_COLOR_TIP, progress).map((channel, index) => channel * stepBrightness * tint[index]);
+        return builder.addVertex(position, shading, (column + 1) / 2, 1 - progress, vertexColor);
+      });
+      ringIndices.push(row);
+    }
+    for (let step = 0; step < segments; step++) {
+      for (let column = 0; column < 2; column++) {
+        const a = ringIndices[step][column];
+        const b = ringIndices[step][column + 1];
+        const belowLeft = ringIndices[step + 1][column];
+        const belowRight = ringIndices[step + 1][column + 1];
+        builder.addTriangle(a, b, belowLeft);
+        builder.addTriangle(b, belowRight, belowLeft);
+      }
+    }
+  }
+}
+
 /**
  * Whether a far level draws crown clumps. Leaf cards keep their own card at the far levels (#3051); a tree of mesh leaves and a
  * bush, whose small crown is made of clumps, still merge their leaves into clumps there.
@@ -558,8 +603,8 @@ function drawsCrownClumps(setting, preset, mode) {
 }
 
 /**
- * The sites a far level draws a card on (#3051): the same share of the sites in every cell of the crown, and at least one in each
- * cell that has any. Taking every n-th site left the crown's centre and its lower part bare, since the sites there are few.
+ * The sites a far level draws a card on (#3051): the same share of the sites in every cell of the crown, carried across sparse
+ * gap cells so isolated edge cells do not inflate into blocky plates while dense lobes and the crown centre keep their share.
  */
 function pickFarSites(skeleton, keep) {
   const cellSize = skeleton.crown.radius / 2.1;
@@ -570,15 +615,23 @@ function pickFarSites(skeleton, keep) {
     cells.get(key).push(site);
   }
   const picked = [];
+  let carry = 0.5;
   for (const sites of cells.values()) {
-    const count = Math.max(1, Math.round(sites.length * keep));
+    const exact = sites.length * keep + carry;
+    const count = Math.floor(exact);
+    carry = exact - count;
     for (let index = 0; index < count; index++) picked.push(sites[Math.floor((index + 0.5) * sites.length / count)]);
   }
   return picked;
 }
 
 function buildFoliage(skeleton, preset, mode, levelSetting, random, levelIndex) {
-  // A species may tune a far level: a palm's fronds need more, smaller cards than a crown's twigs (#3051).
+  if (preset.leaf.frondRibbon && mode === 'cards') {
+    const builder = createMeshBuilder({ withColors: true });
+    addFrondRibbons(builder, skeleton, preset.leaf, frondSegmentCount(levelSetting), random);
+    return builder.build();
+  }
+  // A species may tune a far level (#3051).
   const setting = { ...levelSetting, ...preset.leaf.farCards?.[levelIndex] };
   const builder = createMeshBuilder({ withColors: true });
   if (setting.leafKeep === 0 || drawsCrownClumps(setting, preset, mode)) {
@@ -774,7 +827,8 @@ export function createTree(speciesOrOptions = 'broadleaf', seed = 1) {
   const levels = LEVEL_SETTINGS.map((setting, levelIndex) => {
     const levelRandom = createRandom(seed * 104729 + levelIndex);
     const foliageMaterial = clumpLevels[levelIndex] ? materials.crown : materials.foliage;
-    const barkGeometry = buildBark(skeleton, preset, setting, bark);
+    const barkSetting = preset.leaf.frondRibbon && leaves === 'cards' ? { ...setting, maximumBranchLevel: 0 } : setting;
+    const barkGeometry = buildBark(skeleton, preset, barkSetting, bark);
     const foliageGeometry = buildFoliage(skeleton, preset, leaves, setting, levelRandom, levelIndex);
     // Level 0 can drop to either thinner layer and level 1 to the second; the crown clumps of level 2 are thin enough.
     const shadowFoliage = clumpLevels[levelIndex] ? [] : buildShadowFoliage(skeleton, preset, leaves, seed, levelIndex);

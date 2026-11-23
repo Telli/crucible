@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTree } from '../src/vegetation.js';
+import { createLeafPixels } from '../src/vegetation-textures.js';
 import { crownSolidity } from '../scripts/tree-proof-lib.mjs';
 
 // The far levels keep each species' own leaf card and the width of level 1 (#3051).
@@ -103,7 +104,7 @@ const meanOf = (cards, property) => cards.reduce((sum, card) => sum + card[prope
 
 test('far cards stand alone: no two share a base, so none reads as a cross', () => {
   const MINIMUM_BASE_GAP = 0.01;
-  for (const preset of ['palm', 'pine']) {
+  for (const preset of ['pine']) {
     const tree = createTree({ preset }, 4);
     for (const level of [2, 3]) {
       const cards = cardsOf(tree, level);
@@ -137,11 +138,10 @@ test('the centre of a far crown holds at least the share of cards it holds at le
 
 // One tree's mean slope moves by about 0.05 with the seed, because a far level has a tenth of the cards, so the limit holds for the mean of
 // several seeds, which is what a forest of that species shows.
-test('far cards droop like level 1 on average over eight seeds, and a far palm keeps fine fronds', () => {
+test('far cards droop like level 1 on average over eight seeds', () => {
   const SLOPE_TOLERANCE = 0.05;
-  const PALM_LENGTH_FACTOR = 1.5;
   const SLOPE_SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
-  for (const preset of ['oak', 'ash', 'aspen', 'birch', 'palm']) {
+  for (const preset of ['oak', 'ash', 'aspen', 'birch']) {
     const differences = { 2: 0, 3: 0 };
     for (const seed of SLOPE_SEEDS) {
       const tree = createTree({ preset }, seed);
@@ -152,9 +152,46 @@ test('far cards droop like level 1 on average over eight seeds, and a far palm k
       assert.ok(Math.abs(differences[level]) <= SLOPE_TOLERANCE, `${preset} level ${level} cards point ${differences[level].toFixed(3)} off level 1 on average`);
     }
   }
+});
+
+test('a palm draws curved feathery 256 px frond ribbons cleanly across all four levels', () => {
+  const frond = createLeafPixels('frond', [66, 118, 40], 1);
+  assert.equal(frond.width, 256);
+  assert.equal(frond.height, 256);
+  assert.ok(Buffer.from(createLeafPixels('frond', [66, 118, 40], 1).data).equals(Buffer.from(frond.data)), 'frond texture is deterministic');
+  let opaque = 0;
+  for (let offset = 3; offset < frond.data.length; offset += 4) {
+    if (frond.data[offset] >= 128) opaque++;
+  }
+  const share = opaque / (frond.width * frond.height);
+  assert.ok(share >= 0.3 && share <= 0.75, `frond opaque share ${share.toFixed(3)} must read as feathery leaflets`);
+
   const palm = createTree({ preset: 'palm' }, 4);
-  const lengthFactor = meanOf(cardsOf(palm, 3), 'length') / meanOf(cardsOf(palm, 1), 'length');
-  assert.ok(lengthFactor <= PALM_LENGTH_FACTOR, `a level 3 frond is ${lengthFactor.toFixed(2)} times as long as at level 1`);
+  const foliageTris = palm.levels.map(level => level.parts[FOLIAGE_PART].geometry.indices.length / 3);
+  const barkTris = palm.levels.map(level => level.parts[0].geometry.indices.length / 3);
+  const totalTris = palm.levels.map(level => level.triangles);
+  for (let level = 0; level < 3; level++) {
+    assert.ok(foliageTris[level] > foliageTris[level + 1], `palm foliage tris did not fall: ${foliageTris}`);
+    assert.ok(totalTris[level] > totalTris[level + 1], `palm total tris did not fall: ${totalTris}`);
+    assert.ok(barkTris[level + 1] <= barkTris[level], `palm bark tris popped up: ${barkTris}`);
+  }
+  assert.ok(foliageTris[3] >= 100, `palm level 3 keeps full frond ribbons (${foliageTris[3]} tris)`);
+  for (let level = 0; level < 4; level++) {
+    assert.equal(palm.levels[level].parts[FOLIAGE_PART].material, palm.materials.foliage);
+  }
+  for (const seed of SEEDS) {
+    const seeded = createTree({ preset: 'palm' }, seed);
+    const nearWidth = foliageWidth(seeded, 1);
+    for (const level of [2, 3]) {
+      const ratio = foliageWidth(seeded, level) / nearWidth;
+      assert.ok(ratio <= 1.08 && ratio >= 1 / 1.08, `palm seed ${seed} level ${level} width ratio ${ratio.toFixed(3)}`);
+    }
+  }
+  const solidity = [0, 1, 2, 3].map(level => crownSolidity(palm, level));
+  for (let level = 0; level < solidity.length; level++) {
+    assert.ok(solidity[level] >= 0.55, `palm level ${level} solidity ${solidity[level].toFixed(2)} is too sparse`);
+    if (level > 0) assert.ok(Math.abs(solidity[level] - solidity[level - 1]) <= 0.08, `palm solidity jumped ${solidity[level - 1].toFixed(2)} -> ${solidity[level].toFixed(2)}`);
+  }
 });
 
 test('a twig-crown tree keeps its fanned pair at far levels, two cards to a site, so none stands edge-on', () => {

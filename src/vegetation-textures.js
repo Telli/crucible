@@ -89,6 +89,7 @@ function paintSprig(pixels, color, random) {
 // the size of an oak or birch leaf. A fan of stems from the base carries a jittered grid of leaves that point away from it, so the
 // card is mostly leaf (the old sprig was 22 percent opaque) and a few hundred leaves still cost one card.
 export const TWIG_TEXTURE_SIZE = 256;
+export const FROND_TEXTURE_SIZE = 256;
 const TWIG_STEM_COUNT = 9;
 const TWIG_LEAF_SPACING = 10;
 // Leaves stay inside a ragged ellipse, so a card reads as a round cluster of leaves and not as a square with leaf texture.
@@ -159,6 +160,32 @@ function paintClump(pixels, color, random) {
   }
 }
 
+// Complete tropical pinnate palm frond on a 256 px card: slender tapering rachis and feathery pointed leaflets (#3051).
+function paintFrond(pixels, color, random) {
+  const stemX = FROND_TEXTURE_SIZE / 2;
+  const stemColor = [color[0] * 1.15, color[1] * 1.08, color[2] * 0.72];
+  paintStem(pixels, stemX - 1, FROND_TEXTURE_SIZE - 1, stemX - 1, 14, stemColor);
+  paintStem(pixels, stemX, FROND_TEXTURE_SIZE - 1, stemX, 120, stemColor);
+  const pairs = 32;
+  for (let pair = 0; pair < pairs; pair++) {
+    const progress = 0.08 + (pair / (pairs - 1)) * 0.86;
+    const baseY = FROND_TEXTURE_SIZE - 1 - progress * (FROND_TEXTURE_SIZE - 16);
+    const envelope = Math.sin(Math.PI * Math.pow(clamp((progress - 0.05) / 0.93, 0, 1), 0.7));
+    const width = 5.6 + 3.0 * envelope;
+    for (const side of [-1, 1]) {
+      const angle = side * (1.34 - 0.92 * Math.pow(progress, 1.15) + (random() - 0.5) * 0.12);
+      const rawLength = (22 + 94 * envelope) * (0.92 + random() * 0.16);
+      const maxTop = (baseY - 4) / Math.max(0.15, Math.cos(Math.abs(angle)));
+      const length = Math.min(rawLength, maxTop);
+      const shade = 0.78 + 0.34 * envelope + (random() - 0.5) * 0.22;
+      paintLeaf(pixels, { baseX: stemX, baseY: baseY - (side > 0 ? 1.5 : 0), angle, length, width, color, shade });
+    }
+  }
+  for (const offset of [-0.18, 0, 0.18]) {
+    paintLeaf(pixels, { baseX: stemX, baseY: 24, angle: offset, length: 16 + random() * 4, width: 4.5, color, shade: 0.92 + random() * 0.16 });
+  }
+}
+
 function bleedColorIntoTransparentPixels(pixels, color) {
   for (let offset = 0; offset < pixels.data.length; offset += 4) {
     if (pixels.data[offset + 3] > 0) continue;
@@ -172,6 +199,7 @@ const LEAF_PAINTERS = {
   sprig: paintSprig,
   twig: paintTwig,
   needles: paintNeedleSpray,
+  frond: paintFrond,
   single: (pixels, color, random) => paintBlades(pixels, color, random, 1, 38),
   grass: (pixels, color, random) => paintBlades(pixels, color, random, 9, 7),
   clump: paintClump,
@@ -181,7 +209,8 @@ const LEAF_PAINTERS = {
 export function createLeafPixels(kind, color, seed = 1) {
   const painter = Object.hasOwn(LEAF_PAINTERS, kind) ? LEAF_PAINTERS[kind] : null;
   if (!painter) throw new RangeError(`Unknown leaf texture kind: ${kind}`);
-  const pixels = createPixels(color, kind === 'twig' ? TWIG_TEXTURE_SIZE : TEXTURE_SIZE);
+  const size = kind === 'twig' ? TWIG_TEXTURE_SIZE : kind === 'frond' ? FROND_TEXTURE_SIZE : TEXTURE_SIZE;
+  const pixels = createPixels(color, size);
   painter(pixels, color, createRandom(seed));
   bleedColorIntoTransparentPixels(pixels, color);
   return pixels;
