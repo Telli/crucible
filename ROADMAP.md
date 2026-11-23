@@ -72,6 +72,11 @@ Ideas that nobody is working on live here instead of as open issues, so the issu
 - Show the scene annotate view inline in chat apps through MCP Apps (#923)
 - MCP: open a saved recipe file and change one post-pass uniform (#2285)
 - Post passes: camera uniform, more than 64 motion keys, and scene_apply deleting a field (#2288)
+- Studio: lock user-edited nodes or properties so an agent cannot overwrite them, with accept/revert review for each agent pass
+- Studio: compare scene_apply branches directly in the 3D viewport (A/B or split view) and merge the chosen variant
+- Project style lock: pin reference assets and rules (bevel scale, palette, texel density, detail budget) so agent-built assets match one art direction
+- Spatial blockout to detail: place rough proxy boxes or guides in Studio for an agent to replace with fitted geometry
+- Studio: expose recipe geometry parameters and mesh_stack modifiers as live controls in Properties
 
 ### Games
 
@@ -115,6 +120,10 @@ Ideas that nobody is working on live here instead of as open issues, so the issu
 - Terrain: thermal and hydraulic erosion (#2864)
 - Export lathe geometry and a hide path from the standalone bundle (#2751)
 - Weld duplicate glTF vertices on load, remapping attributes, morph targets and skins (from #2981)
+- Recipe: node pivot (object origin) field so gizmos, hinges and animations rotate around the authored origin
+- Named snap sockets on recipe parts so both Studio gizmos and agents seat props and joints without gaps or interpenetration
+- Quad-flow retopology and external AI-mesh cleanup (auto-split parts, bottom or joint pivot, clean LODs) for imported GLBs
+- Single-node Blender round-trip: open a recipe node in Blender for sculpting or manual retopo and reload it in place without losing transforms, lighting or tracks
 
 ### Motion and simulation
 
