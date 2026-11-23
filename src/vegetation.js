@@ -586,7 +586,7 @@ function buildFoliage(skeleton, preset, mode, levelSetting, random, levelIndex) 
     return builder.build();
   }
   if (setting.tipScale !== undefined && mode === 'cards') {
-    // An oak (`farPair`) keeps its fanned pair, which lies like a leaf plate, at half the share of sites. Every other species
+    // A twig-crown tree (`farPair`) keeps its fanned pair, which lies like a leaf plate, at half the share of sites. Every other species
     // gets one card to a site: far away a crossed pair reads as a plus sign. The share of sites doubles with it, so the leaf area stays
     // that of level 1 either way.
     const fannedPair = Boolean(preset.leaf.farPair);

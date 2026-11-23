@@ -42,12 +42,13 @@ const CROWN_PROFILES = Object.freeze({ round: 'crown', cone: 'cone', column: 'co
 const TWIG_CROWN_LEAF = Object.freeze({
   texture: 'twig',
   placement: Object.freeze({ depth: 2, interiorKeep: 0.35, outwardTilt: 0.8, upTilt: 0.6, cardFan: 1 }),
+  farPair: true,
 });
 
 // Each preset is a small JSON object: the base species, an optional height range in metres and growth overrides.
 export const TREE_PRESETS = Object.freeze({
   oak: Object.freeze({
-    label: 'Oak', species: 'broadleaf', height: [9, 13], leaf: Object.freeze({ ...TWIG_CROWN_LEAF, farPair: true }),
+    label: 'Oak', species: 'broadleaf', height: [9, 13], leaf: TWIG_CROWN_LEAF,
     tree: { crownShape: 'round', branches: [7, 4, 3], branchAngle: [68, 55, 50], lengthFalloff: [0.58, 0.5], gnarliness: [0.1, 0.22, 0.26, 0.28], leafCount: 6 },
   }),
   ash: Object.freeze({

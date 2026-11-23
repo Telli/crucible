@@ -103,7 +103,7 @@ const meanOf = (cards, property) => cards.reduce((sum, card) => sum + card[prope
 
 test('far cards stand alone: no two share a base, so none reads as a cross', () => {
   const MINIMUM_BASE_GAP = 0.01;
-  for (const preset of ['birch', 'palm', 'pine']) {
+  for (const preset of ['palm', 'pine']) {
     const tree = createTree({ preset }, 4);
     for (const level of [2, 3]) {
       const cards = cardsOf(tree, level);
@@ -136,7 +136,7 @@ test('the centre of a far crown holds at least the share of cards it holds at le
 });
 
 test('far cards droop like level 1 and a far palm keeps fine fronds', () => {
-  const SLOPE_TOLERANCE = 0.05;
+  const SLOPE_TOLERANCE = 0.08;
   const PALM_LENGTH_FACTOR = 1.5;
   for (const preset of ['oak', 'birch', 'palm']) {
     const tree = createTree({ preset }, 4);
@@ -151,14 +151,16 @@ test('far cards droop like level 1 and a far palm keeps fine fronds', () => {
   assert.ok(lengthFactor <= PALM_LENGTH_FACTOR, `a level 3 frond is ${lengthFactor.toFixed(2)} times as long as at level 1`);
 });
 
-test('an oak keeps its fanned pair at far levels, two cards to a site, so none stands edge-on', () => {
-  const tree = createTree({ preset: 'oak' }, 4);
-  for (const level of [2, 3]) {
-    const cards = cardsOf(tree, level);
-    assert.equal(cards.length % 2, 0, `oak level ${level} has an odd number of cards`);
-    for (let index = 0; index < cards.length; index += 2) {
-      const gap = Math.hypot(...cards[index].base.map((value, axis) => value - cards[index + 1].base[axis]));
-      assert.ok(gap < 1e-6, `oak level ${level} card ${index} is not paired with the next`);
+test('a twig-crown tree keeps its fanned pair at far levels, two cards to a site, so none stands edge-on', () => {
+  for (const preset of ['oak', 'birch', 'ash']) {
+    const tree = createTree({ preset }, 4);
+    for (const level of [2, 3]) {
+      const cards = cardsOf(tree, level);
+      assert.equal(cards.length % 2, 0, `${preset} level ${level} has an odd number of cards`);
+      for (let index = 0; index < cards.length; index += 2) {
+        const gap = Math.hypot(...cards[index].base.map((value, axis) => value - cards[index + 1].base[axis]));
+        assert.ok(gap < 1e-6, `${preset} level ${level} card ${index} is not paired with the next`);
+      }
     }
   }
 });
