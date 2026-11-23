@@ -430,7 +430,7 @@ function applyEmissionWindow(input, system, path) {
   const stop = finiteNumber(input.stop, `${path}.stop`, 0, 3600);
   const start = system.delay ?? 0;
   if (stop <= start) {
-    throw invalidField(`${path}.stop`, input.stop, `a time in seconds after the start (${start}), such as ${start + 2}`);
+    throw invalidField(`${path}.stop`, input.stop, `an absolute scene time in seconds, above start (${start}), such as ${start + 2} (stop is not a duration after start)`);
   }
   system.stop = stop;
 }
