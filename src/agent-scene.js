@@ -2130,6 +2130,9 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   }
 
   function stageRestParts(recipe, sourceRestParts, lightBakeResult, graph) {
+    if (options.recipeOnly) {
+      return { restParts: sourceRestParts };
+    }
     const baked = lightBakeResult?.parts ?? sourceRestParts;
     const reflected = stageObjectReflections(recipe, sourceRestParts, baked, graph);
     return { reflected, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked, graph)), { rest: true }) };
@@ -2146,10 +2149,11 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   // A light bake costs seconds of ray tracing: it runs when the parts, the lights, the materials or the bake fields
   // change, and every other edit, seek or camera move reuses the last result.
-  // `options.skipLightBake` builds the scene without its bake, for a scene made only to read its recipe.
+  // `options.recipeOnly` builds the scene without its bake and without staging its parts (flush ranking, floor sky, reflections),
+  // for a scene made only to read its recipe.
   function stageLightBake(recipe, sourceRestParts, graph, stagedMaterialSnapshots) {
     skippedBake = null;
-    if (!recipe.bake || options.skipLightBake) {
+    if (!recipe.bake || options.recipeOnly) {
       return null;
     }
     const worldMatrices = new Map(sourceRestParts.map(part => [part.name, new Float32Array(graph.getNode(part.name).worldMatrix)]));
@@ -2309,7 +2313,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   }
 
   function stageCoplanarOffsets(recipe, parts, { rest = false } = {}) {
-    if (!agentSceneModuleActive('coplanar', requestedModules)) {
+    if (options.recipeOnly || !agentSceneModuleActive('coplanar', requestedModules)) {
       return parts;
     }
     const coplanar = agentSceneModule('coplanar');
