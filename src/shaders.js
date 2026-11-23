@@ -1109,7 +1109,7 @@ export function liquidPassDrawer() {
 function hasSeparateCode(feature) {
   if (feature in MODULE_FEATURES) return true;
   if (feature === TANGENT_FEATURE) return false;
-  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
+  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === WETNESS_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
   return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature);
 }
 
