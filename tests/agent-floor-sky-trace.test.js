@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createAgentScene } from '../src/agent-scene.js';
-import { applyDefaultFloorSky } from '../src/floor-sky-visibility.js';
+import { applyDefaultFloorSky, stageFloorSky } from '../src/floor-sky-visibility.js';
 
 // A closed room: a floor, four walls and a closed roof, lit by a sun.
 function room(environment = {}) {
@@ -74,4 +74,45 @@ test('a node moved in place gives the ground the geometry a build of the edited 
   for (const field of Object.keys(freshGround)) {
     assert.deepEqual(groundOf(edited)[field], freshGround[field], field);
   }
+});
+
+// #2806: a camera edit copies the environment, and the trace (seconds on a big scene) was run again for the copy.
+test('a camera edit keeps the traced ground of the room instead of tracing it again', () => {
+  const recipe = JSON.parse(readFileSync(new URL('./fixtures/demo-room.recipe.json', import.meta.url), 'utf8'));
+  delete recipe.bake;
+  recipe.nodes = recipe.nodes.filter(node => node.id !== 'organiser');
+  recipe.geometries = recipe.geometries.filter(geometry => geometry.id !== 'organiser');
+  const scene = createAgentScene(recipe);
+  const groundOf = () => scene.parts.find(part => part.name === 'ground');
+  const groundBefore = groundOf();
+  scene.apply([{ type: 'set-camera', fov: 40 }], { expectedRevision: scene.revision });
+  assert.equal(groundOf(), groundBefore, 'the ground is the same part with the same trace');
+  const turnedSun = { type: 'set-environment', environment: { lightDirection: [0.6, 0.7, 0.2] } };
+  scene.apply([turnedSun], { expectedRevision: scene.revision });
+  const fresh = createAgentScene(structuredClone(scene.exportRecipe()));
+  const freshGround = fresh.parts.find(part => part.name === 'ground').geometry;
+  for (const field of Object.keys(freshGround)) {
+    assert.deepEqual(groundOf().geometry[field], freshGround[field], `a turned sun is traced again: ${field}`);
+  }
+});
+
+// #2806: the lighthouse scene is open ground, so every camera edit ran the floor search over all its parts and found no room.
+test('the floor search runs once for the same parts and the same sun, however often the environment is copied', () => {
+  const open = room({ keyColor: [3, 3, 3] });
+  open.nodes = open.nodes.filter(node => node.id === 'floor' || node.id === 'roof-a');
+  const scene = createAgentScene(open);
+  let geometryReads = 0;
+  const parts = Object.freeze(scene.parts.map(part => ({
+    ...part,
+    geometry: new Proxy(part.geometry, { get(target, field) { geometryReads++; return target[field]; } }),
+  })));
+  const matrixOf = name => scene.parts.find(part => part.name === name).matrix;
+  const environment = { keyColor: [3, 3, 3], lightDirection: [0.2, 1, 0.1] };
+  assert.equal(stageFloorSky(environment, parts, matrixOf), parts, 'open ground comes back unchanged');
+  const readsForFirstSearch = geometryReads;
+  assert.ok(readsForFirstSearch > 0, 'the first call searches the parts');
+  assert.equal(stageFloorSky(structuredClone(environment), parts, matrixOf), parts);
+  assert.equal(geometryReads, readsForFirstSearch, 'a copy of the same environment reads no geometry');
+  stageFloorSky({ ...environment, lightDirection: [1, 1, 0] }, parts, matrixOf);
+  assert.ok(geometryReads > readsForFirstSearch, 'a turned sun is searched again');
 });
