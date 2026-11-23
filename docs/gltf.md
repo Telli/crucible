@@ -34,6 +34,8 @@ External requests use bounded streaming fetches.
 The optional `signal` aborts those fetches.
 `allowExternalResources: false` refuses every non-data resource uri with an error that names it, before any request. The MCP server decodes catalog files with it, so a file there carries its buffers and images as GLB or data URIs.
 
+Mesh checks are off by default, because the counts cost load time (about 10 to 90 percent on the shipped showcase meshes, measured without textures). `checkMesh: true` adds one warning per primitive naming how many triangles repeat an earlier one (same corner positions and winding) and how many edges more than two triangles share. Both are judged by position, with vertices at the same spot treated as one, so a seam that repeats its vertices does not hide them; nothing is merged or rewritten. `keepDegenerateTriangles: true` keeps the repeated-index and zero-area triangles instead of dropping them (the warning still counts them). `strict: true` with `validator: await import('gltf-validator')` runs the Khronos glTF-Validator on the file bytes first and fails on any error, naming the first few; Crucible does not bundle the validator, and `strict` without it throws with that instruction.
+
 | Option | Default | Limit |
 | --- | ---: | --- |
 | `maxBytes` | 268,435,456 | Total encoded input and fetched external resources. |
@@ -44,6 +46,7 @@ The optional `signal` aborts those fetches.
 | `maxTexturePixels` | 16,777,216 | Combined texture image pixels, checked from the file headers before decoding. Over the budget, the largest images are halved together until they fit, with base color and emission maps kept at twice the size of the normal, roughness and occlusion maps, and `asset.scaledTextures` lists each one as `{ name, from, to }` (also summarised in `asset.warnings`). |
 | `maxTextureImagePixels` | 67,108,864 | Hard ceiling for one image, checked before decoding. Larger images are rejected, never scaled. |
 | `maxJoints` | 4,096 | Joints declared by all skins; a skin worn by many primitives counts once. Pose copies count against `maxDecodedBytes`. |
+| `maxCheckedTriangles` | 600,000 | Most triangles of one primitive that `checkMesh` counts; a larger primitive skips the counts with a warning. |
 | `maxInstances` | 65,536 | Instances of one `EXT_mesh_gpu_instancing` node. |
 
 Every numeric limit must be a positive safe integer.
