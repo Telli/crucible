@@ -542,6 +542,11 @@ export function startFlushParts(parts, runnerOptions, options) {
   return createFlushSearchRunner({ ...runnerOptions, steps: resolveFlushSteps(parts, options) });
 }
 
+/** resolveFlushParts as steps (#3052), for a settling bake that ranks the baked parts in slices before it lands. */
+export function* resolveFlushPartsSteps(parts, options) {
+  return yield* resolveFlushSteps(parts, options);
+}
+
 /** Drops the ranks resolveFlushParts gave these parts, for a scene that switches the resolution off. */
 export function clearFlushParts(parts) {
   for (const part of parts) setFlushOrder(part, null);

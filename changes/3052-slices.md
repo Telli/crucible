@@ -1,0 +1,1 @@
+- The light bake of an edit that shows before its bake now settles without pausing the page: the unwrap, the BVH build, the last lightmap pass, the floor sky trace and the coplanar ranks run in slices, the result equals a fresh build byte for byte, and Studio shows a Baking light mark under the status pill while a bake is pending (#3052).
