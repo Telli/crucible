@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { closeClientAndWaitForServerExit, repositoryRoot } from './helpers/mcp-server-session.js';
 
 // End to end: a real render job through the MCP server on a SwiftShader runtime, asked for the native backend while the
 // package is switched off (JS67_NATIVE_TRACER=off, the same answer as a missing package or an adapter without ray queries).
@@ -22,7 +23,7 @@ async function renderDemoRoom(requestedBackend, workDirectory) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverEntry, '--backend', 'cpu', '--memory', '384', '--jobs', join(workDirectory, `jobs-${requestedBackend}`)],
-    cwd: workDirectory,
+    cwd: repositoryRoot,
     env: { ...process.env, JS67_NATIVE_TRACER: 'off' },
     stderr: 'ignore',
   });
@@ -50,7 +51,7 @@ async function renderDemoRoom(requestedBackend, workDirectory) {
     await copyFile(result.artifacts[0].path, imagePath);
     return { png: await readFile(imagePath), report: (result.metrics ?? record.metrics).pathTracer };
   } finally {
-    await client.close();
+    await closeClientAndWaitForServerExit(client, transport);
   }
 }
 

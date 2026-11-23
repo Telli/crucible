@@ -10,7 +10,7 @@ import { bakingContext, boundedArray, finiteNumber, knownKeys, rootNodeWithGeome
 
 const PARTICLES_FIELDS = ['gravity', 'wind', 'fields', 'systems'];
 const SYSTEM_TYPES = ['emitter', 'hair', 'sparks'];
-const EMITTER_SYSTEM_FIELDS = ['type', 'node', 'seed', 'count', 'rate', 'delay', 'start', 'stop', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'size', 'scale', 'drag', 'floor', 'bounce', 'friction', 'colliders', 'spin', 'color', 'alpha', 'instances', 'orient'];
+const EMITTER_SYSTEM_FIELDS = ['type', 'node', 'seed', 'count', 'rate', 'delay', 'start', 'stop', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'size', 'scale', 'drag', 'floor', 'bounce', 'friction', 'colliders', 'spin', 'color', 'alpha', 'fade', 'instances', 'orient'];
 const SPARK_SYSTEM_FIELDS = ['type', 'preset', 'node', 'seed', 'count', 'delay', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'position', 'size', 'drag', 'floor', 'bounce', 'temperature', 'intensity', 'shutter'];
 const SPARK_PRESETS = Object.freeze({
   // A blast: a few hundred sparks thrown in every direction from a small ball, fast, light enough for drag to pull them in, living 0.5 to 2 s.
@@ -19,7 +19,8 @@ const SPARK_PRESETS = Object.freeze({
 const HAIR_FIELDS = ['type', 'node', 'surface', 'seed', 'count', 'length', 'segments', 'width', 'droop', 'lean', 'sway', 'swayRate'];
 const EMITTER_FIELDS = ['shape', 'position', 'halfExtents', 'radius', 'mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold', 'follow'];
 const EMITTER_SHAPES = ['point', 'box', 'sphere', 'disc', 'mesh'];
-const ORIENT_MODES = ['none', 'random', 'normal'];
+const ORIENT_MODES = ['none', 'random', 'normal', 'billboard'];
+const FADE_MODES = ['darken', 'opacity'];
 const SCALE_MODES = ['constant', 'shrink', 'grow'];
 const DEFAULT_GRAVITY = Object.freeze([0, -9.81, 0]);
 // Defaults that read as debris: a bounce keeps 30 percent of the speed (the first release of collision stuck at 0 without colliders and had no default with them), friction 0.5.
@@ -248,6 +249,13 @@ function normalizeEmitterSystem(input, context, path) {
   if (input.spin !== undefined) system.spin = rangeOf(input.spin, `${path}.spin`, -100000, 100000);
   if (input.color !== undefined) system.color = normalizeColors(input.color, `${path}.color`);
   if (input.alpha !== undefined) system.alpha = normalizeAlpha(input.alpha, `${path}.alpha`);
+  if (input.fade !== undefined) {
+    if (!FADE_MODES.includes(input.fade)) throw invalidField(`${path}.fade`, input.fade, `one of ${FADE_MODES.join(', ')}`);
+    if (input.fade === 'opacity' && !system.alpha) {
+      throw invalidField(`${path}.fade`, input.fade, `"darken", or "opacity" together with ${path}.alpha, such as alpha [1, 0], because the fade needs the opacity to go from and to`);
+    }
+    if (input.fade === 'opacity') system.fade = 'opacity';
+  }
   if (input.colliders !== undefined) {
     system.colliders = normalizeColliders(input.colliders, context, `${path}.colliders`);
     if (system.colliders.includes(system.node)) {
@@ -617,13 +625,22 @@ function meshSourceOf(system, nodes, geometries, systemIndex, sea, follow) {
   return { ...emitter, source };
 }
 
+// `fade: "opacity"` writes the alpha curve to a per-vertex opacity, which only a blend material draws as see-through.
+function checkOpacityFade(system, node, recipe, systemIndex) {
+  if (system.fade !== 'opacity') return;
+  const material = recipe.materials.find(entry => entry.id === node.material);
+  if (material?.alphaMode !== 'blend') {
+    throw invalidField(`particles.systems[${systemIndex}].fade`, system.fade, `"darken", or give the material "${node.material}" of node "${system.node}" alphaMode "blend" (it is "${material?.alphaMode ?? 'opaque'}"), because opacity only fades a blend material`);
+  }
+}
+
 function prepareEmitter(system, node, templates, forces, colliders, emitter) {
   const systemForces = { ...forces, drag: system.drag, floor: system.floor, bounce: system.bounce ?? (colliders ? DEBRIS_BOUNCE : 0), friction: system.friction ?? DEBRIS_FRICTION, colliders };
   const launches = createParticleLaunches({ ...system, emitter, instanceCount: templates.length, spreadRadians: system.spread * Math.PI / 180, forces: systemForces });
   return {
     node,
     report: () => ({ node: system.node, type: 'emitter', particles: system.count, verticesPerParticle: Math.max(...templates.map(template => template.positions.length / 3)), ...lifeSummary(launches) }),
-    build: time => buildParticleMesh(templates, launches, systemForces, system.scale, time, system),
+    build: (time, camera) => buildParticleMesh(templates, launches, systemForces, system.scale, time, system, camera),
   };
 }
 
@@ -716,6 +733,7 @@ export function bakeAgentParticles(particles, recipe, geometries, sea, follow) {
     }
     if (system.type === 'sparks') return prepareSparks(system, node, forces, meshSourceOf(system, nodes, geometries, systemIndex, sea, follow));
     const templates = templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry));
+    checkOpacityFade(system, node, recipe, systemIndex);
     return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex, sea, follow));
   });
   return Object.freeze({
@@ -723,8 +741,9 @@ export function bakeAgentParticles(particles, recipe, geometries, sea, follow) {
     diagnostics() {
       return nodeTransformProblems(particles, recipe);
     },
-    sample(time) {
-      return new Map(prepared.map(({ node, build }) => [node.id, worldToNodeLocal(build(time), nodeMatrix(node))]));
+    /** `camera` is `{ eye, up }` at `time`: a billboard system turns each card toward its eye. */
+    sample(time, camera) {
+      return new Map(prepared.map(({ node, build }) => [node.id, worldToNodeLocal(build(time, camera), nodeMatrix(node))]));
     },
     /** Counts, vertices drawn and, for emitters, when each system peaks and ends: numbers an agent can read without a picture. */
     report() {

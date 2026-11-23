@@ -297,8 +297,31 @@ function checkLoopWork(tokens, loops, text, label) {
  *
  * options.label: names the snippet in messages. options.requiredFunction: { pattern, example } when the snippet must
  * define an entry function. options.maxBytes: lower than the default 4 KB to tighten the limit.
+ *
+ * The check is a pure function of the source and the options, so a passing result is kept: a camera edit on a scene with post
+ * passes validates the same fragment again, and that took about 5 ms on the lighthouse scene (#2806). A failure is never kept.
  */
 export function validateShaderSnippet(source, options = {}) {
+  const key = typeof source === 'string' ? validatedSnippetKey(source, options) : null;
+  const kept = key === null ? undefined : validatedSnippets.get(key);
+  if (kept) return { ...kept };
+  const result = checkShaderSnippet(source, options);
+  if (key !== null) {
+    if (validatedSnippets.size >= VALIDATED_SNIPPET_LIMIT) validatedSnippets.delete(validatedSnippets.keys().next().value);
+    validatedSnippets.set(key, result);
+  }
+  return { ...result };
+}
+
+const VALIDATED_SNIPPET_LIMIT = 64;
+const validatedSnippets = new Map();
+
+function validatedSnippetKey(source, options) {
+  const { label, requiredFunction, maxBytes } = options;
+  return JSON.stringify([label, maxBytes, requiredFunction?.pattern.source, requiredFunction?.pattern.flags, requiredFunction?.example, source]);
+}
+
+function checkShaderSnippet(source, options) {
   const label = options.label ?? 'Shader snippet';
   const maxBytes = Math.min(options.maxBytes ?? SNIPPET_LIMITS.maxBytes, SNIPPET_LIMITS.maxBytes);
   if (typeof source !== 'string' || source.trim() === '') {
