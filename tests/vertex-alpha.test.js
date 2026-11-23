@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { interleaveColorsWithSkyVisibility, shaderFeaturesOfParts } from '../src/renderer.js';
+import { interleaveColorsWithSkyVisibility, packVertexAlpha, shaderFeaturesOfParts } from '../src/renderer.js';
+import { droppedVertexAlphaDiagnostics } from '../src/agent-diagnostics.js';
 import { createFragmentShader, createVertexShader } from '../src/shaders.js';
 
 const TRIANGLE = { positions: new Float32Array(9), indices: new Uint32Array([0, 1, 2]) };
@@ -56,4 +57,27 @@ test('a part with wear masks keeps them over a colour alpha and does not take th
   const geometry = { ...TRIANGLE, colors: new Float32Array(9), colorAlpha: new Float32Array(3).fill(0.5), surfaceMasks: masks };
   assert.deepEqual(Array.from(interleaveColorsWithSkyVisibility(geometry)).filter((_, index) => index % 4 === 3), [2, 3, 4]);
   assert.ok(!shaderFeaturesOfParts([blendedPart(geometry, 'unlit')]).has('vertexAlpha'));
+});
+
+test('the packed alpha and sky visibility stay apart at every corner, and a value past 1 does not carry into the next alpha level (#2948)', () => {
+  for (const colorAlpha of [0, 1]) {
+    for (const skyVisibility of [0, 1]) {
+      const packed = Math.fround(packVertexAlpha(colorAlpha, skyVisibility));
+      assert.deepEqual(unpackLikeTheShader(packed), { alpha: colorAlpha, skyVisibility }, `alpha ${colorAlpha}, sky ${skyVisibility}`);
+    }
+  }
+  assert.deepEqual(unpackLikeTheShader(Math.fround(packVertexAlpha(0, 1.2))), { alpha: 0, skyVisibility: 1 });
+  assert.deepEqual(unpackLikeTheShader(Math.fround(packVertexAlpha(1.2, -0.1))), { alpha: 1, skyVisibility: 0 });
+});
+
+test('a part whose wear drops its vertex colour alpha gets a warning that names the part and the fix (#2948)', () => {
+  const dropped = { name: 'crate', geometry: { ...TRIANGLE, colorAlpha: new Float32Array(3).fill(0.5), surfaceMasks: new Float32Array([2, 3, 4]) } };
+  const kept = { name: 'glass', geometry: { ...TRIANGLE, colorAlpha: new Float32Array(3).fill(0.5) } };
+  const worn = { name: 'barrel', geometry: { ...TRIANGLE, surfaceMasks: new Float32Array([2, 3, 4]) } };
+  const problems = droppedVertexAlphaDiagnostics([dropped, kept, worn]);
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].kind, 'vertex-alpha-dropped');
+  assert.equal(problems[0].severity, 'warning');
+  assert.equal(problems[0].target, 'crate');
+  assert.match(problems[0].fix, /Remove wear/);
 });

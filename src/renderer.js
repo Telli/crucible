@@ -697,7 +697,12 @@ const VERTEX_ALPHA_LEVELS = 1023;
 
 /** colour alpha * 1024 + sky visibility, both rounded to 0..1023; exact in a float, and the vertexAlpha shader unpacks it. */
 export function packVertexAlpha(colorAlpha, skyVisibility) {
-  return Math.round(colorAlpha * VERTEX_ALPHA_LEVELS) * 1024 + Math.round((skyVisibility ?? 1) * VERTEX_ALPHA_LEVELS);
+  return vertexAlphaLevel(colorAlpha) * 1024 + vertexAlphaLevel(skyVisibility ?? 1);
+}
+
+// Clamped so a value just past 1 can never carry into the next alpha level.
+function vertexAlphaLevel(value) {
+  return Math.round(Math.min(Math.max(value, 0), 1) * VERTEX_ALPHA_LEVELS);
 }
 
 function vertexFourthComponent(geometry, vertex) {
