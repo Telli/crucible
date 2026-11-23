@@ -180,7 +180,14 @@ const FLAT_TRACE_RAY = `void traceRay(vec3 origin, vec3 direction, float limit, 
   }
 }`;
 
-const buildSource = (hasSubsurface, texelBake, blueNoise, lightImportance, radianceCache, lightTree, instanced) => `#version 300 es
+// One texel a triangle slot: the COLOR_0 alpha of its three corners. A scene with no blended or masked vertex alpha builds neither.
+const VERTEX_ALPHA_UNIFORM = 'uniform sampler2D uVertexAlpha;\n';
+const VERTEX_ALPHA_FUNCTION = `float vertexAlphaAtNearestHit() {
+  vec3 corners = fetchData(uVertexAlpha, nearestSlot).xyz;
+  return (1.0 - nearestU - nearestV) * corners.x + nearestU * corners.y + nearestV * corners.z;
+}`;
+
+const buildSource = (hasSubsurface, texelBake, blueNoise, lightImportance, radianceCache, lightTree, instanced, vertexAlpha) => `#version 300 es
 precision highp float;
 precision highp int;
 precision highp sampler2D;
@@ -209,7 +216,7 @@ const float DIELECTRIC_COAT_REFLECTANCE = 0.04;
 uniform sampler2D uNodes;
 ${instanced ? INSTANCE_UNIFORMS : ''}uniform sampler2D uTriangles;
 uniform sampler2D uMaterials;
-uniform sampler2D uLights;
+${vertexAlpha ? VERTEX_ALPHA_UNIFORM : ''}uniform sampler2D uLights;
 ${lightTree ? 'uniform sampler2D uLightTree;' : ''}
 uniform sampler2D uAtlas;
 uniform sampler2D uEnvironment;
@@ -452,6 +459,7 @@ bool mapReadsSecondUvSet(float mask, int bit) {
   return (int(mask) / bit) % 2 == 1;
 }
 
+${vertexAlpha ? VERTEX_ALPHA_FUNCTION : ""}
 /** Fills the hit globals from the triangle in \`nearestSlot\`; returns the alpha of the colour map. */
 float fillHit(vec3 origin, vec3 direction, float distance) {
   int base = nearestSlot * TRIANGLE_TEXELS;
@@ -501,6 +509,7 @@ float fillHit(vec3 origin, vec3 direction, float distance) {
     hitColor *= texel.rgb;
     alpha = texel.a;
   }
+${vertexAlpha ? "  alpha *= vertexAlphaAtNearestHit();" : ""}
   vec4 emissiveRectangle = fetchData(uMaterials, material + 9);
   if (emissiveRectangle.z > 0.0) hitEmission *= sampleAtlas(emissiveRectangle, flagsTwo.x, mapReadsSecondUvSet(flagsTwo.z, 8) ? secondUv : uv).rgb;
   vec4 surfaceRectangle = fetchData(uMaterials, material + 8);
@@ -580,7 +589,7 @@ bool occluded(vec3 origin, vec3 direction, float limit, int lightBit) {
     int material = nearestMaterialIndex() * MATERIAL_TEXELS;
     bool ownLamp = lightBit >= 0 && ((int(fetchData(uMaterials, material + 5).w) >> lightBit) & 1) == 1;
     float cutoff = fetchData(uMaterials, material + 3).z;
-    if (!ownLamp && (cutoff == 0.0 || alphaAtNearestHit() >= cutoff)) return true;
+    if (!ownLamp && (cutoff == 0.0 || alphaAtNearestHit()${vertexAlpha ? ' * vertexAlphaAtNearestHit()' : ''} >= cutoff)) return true;
     if (anyHit) {
       anyHit = false;
       continue;
@@ -1334,8 +1343,8 @@ ${radianceCache ? CACHE_OUTPUT : ''}
  * The kernel; `hasSubsurface` compiles in the random walk, which only scenes with a subsurface part need. `texelBake`
  * starts every path at a lightmap texel instead of the camera (see light-bake-gpu.js).
  */
-export function buildFragmentSource({ hasSubsurface = false, texelBake = false, blueNoise = false, lightImportance = false, radianceCache = false, lightTree = false, instanced = false } = {}) {
-  return buildSource(hasSubsurface, texelBake, blueNoise, lightImportance, radianceCache, lightTree, instanced);
+export function buildFragmentSource({ hasSubsurface = false, texelBake = false, blueNoise = false, lightImportance = false, radianceCache = false, lightTree = false, instanced = false, vertexAlpha = false } = {}) {
+  return buildSource(hasSubsurface, texelBake, blueNoise, lightImportance, radianceCache, lightTree, instanced, vertexAlpha);
 }
 
 export const FRAGMENT_SOURCE = buildFragmentSource();
