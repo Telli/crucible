@@ -284,7 +284,8 @@ export function createDepthFragmentShader(features = []) {
   if (!new Set(features).has('tintedShadows')) return code;
   return code
     .replace('precision highp float;', () => `precision highp float;\n${TINT_FRAGMENT_DECLARATIONS}`)
-    .replace('void main() {\n', () => TINT_FRAGMENT_BRANCH);
+    // A clip plane test (clip-planes.js) comes first, so a clipped caster tints nothing either.
+    .replace(/void main\(\) \{\n((?:  discardClipped\(\w+\);\n)?)/, (_start, clipTest) => TINT_FRAGMENT_BRANCH.replace('void main() {\n', (start) => start + clipTest));
 }
 
 export const benchmarkVertexShader = `#version 300 es
@@ -761,7 +762,7 @@ vec3 renderPassValue(vec3 color, vec3 normal, vec3 emission) {
 }
 
 void main() {
-#ifdef SHADOW_IN_FRAGMENT
+${featureCode("mainStart")}#ifdef SHADOW_IN_FRAGMENT
   shadowPosition = lightProjection * vec4(worldPosition, 1.0);
 #endif
   vec3 normal = normalize(worldNormal);
