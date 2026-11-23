@@ -3,6 +3,7 @@ import test from 'node:test';
 import { CrucibleRenderer } from '../src/renderer.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
 import { worldBounds } from '../src/probe-trace.js';
+import { geometryBoundingSphere } from '../src/render-culling.js';
 
 /** A WebGL2 stand-in that records buffer writes, with one rigid part already uploaded. */
 function fakeRenderer() {
@@ -119,4 +120,13 @@ test('updatePartVertices refuses sky visibility or indices that do not fit, befo
   geometry.surfaceMasks = new Float32Array(3);
   assert.throws(() => updatePartVertices(renderer, part, geometry.positions, undefined, { skyVisibility: new Float32Array(3) }), /no surface masks/);
   assert.deepEqual(calls, [], 'no buffer was written');
+});
+
+test('geometryBoundingSphere measures the moved vertices again after updatePartVertices (#3038)', () => {
+  const { renderer, part, geometry } = fakeRenderer();
+  const sphereBefore = geometryBoundingSphere(geometry);
+  updatePartVertices(renderer, part, new Float32Array([0, 0, 40, 1, 0, 40, 0, 1, 40]));
+  const sphereAfter = geometryBoundingSphere(geometry);
+  assert.notEqual(sphereAfter, sphereBefore, 'the remembered sphere of the first pose is dropped');
+  assert.ok(Math.abs(sphereAfter.center[2] - 40) < 1e-6, `the sphere follows the new pose, centre z ${sphereAfter.center[2]}`);
 });
