@@ -12,7 +12,8 @@ float wetBasin(vec3 position) {
   vec3 plane = vec3(position.x * 0.3, 3.7, position.z * 0.3);
   return 0.85 * wearNoise(plane) + 0.15 * wearNoise(plane * 2.3 + vec3(17.0));
 }
-float wetKeepOut(vec3 position) {
+// Distance in metres from the ground point to the nearest keep-out footprint (1000 when there is none).
+float wetKeepOutDistance(vec3 position) {
   float nearest = 1000.0;
   for (int index = 0; index < 24; index++) {
     if (float(index) >= wetnessState.z) break;
@@ -20,22 +21,24 @@ float wetKeepOut(vec3 position) {
     vec2 outside = max(max(box.xy - position.xz, position.xz - box.zw), vec2(0.0));
     nearest = min(nearest, length(outside));
   }
-  return smoothstep(0.12, 0.25, nearest);
+  return nearest;
 }
 `,
   worldSurface: `  if (!TAG_WATER && !TAG_FIRE && !TAG_SMOKE && wetnessState.x > 0.0) {
     float wetPorosity = wetnessState.x * (1.0 - metallic) * mix(0.35, 1.0, roughness);
-    color *= 1.0 - 0.72 * wetPorosity;
-    roughness = clamp(roughness * (1.0 - 0.3 * wetPorosity), 0.075, 1.0);
+    color *= 1.0 - 0.8 * wetPorosity;
+    roughness = clamp(roughness * (1.0 - 0.5 * wetPorosity), 0.075, 1.0);
+    splatCavity *= 1.0 - 0.4 * wetPorosity;
     float puddle = 0.0;
     if (wetnessState.y > 0.0) {
-      float fill = wetBasin(worldPosition) - mix(0.72, 0.42, wetnessState.y) - 6.0 * worldPosition.y;
-      puddle = smoothstep(0.0, 0.015, fill) * smoothstep(0.96, 0.995, geometricNormal.y) * (1.0 - metallic);
-      if (puddle > 0.0) puddle *= wetKeepOut(worldPosition);
+      float clearance = wetKeepOutDistance(worldPosition);
+      float fill = wetBasin(worldPosition) - mix(0.72, 0.42, wetnessState.y) - 6.0 * worldPosition.y - 0.3 * (1.0 - smoothstep(0.2, 1.0, clearance));
+      puddle = smoothstep(0.0, 0.015, fill) * smoothstep(0.96, 0.995, geometricNormal.y) * (1.0 - metallic) * smoothstep(0.18, 0.2, clearance);
     }
     color *= 1.0 - 0.95 * puddle;
     metallic = mix(metallic, 0.6, puddle);
-    roughness = mix(roughness, 0.075, puddle);
+    roughness = mix(roughness, 0.1, puddle);
+    splatCavity *= 1.0 - 0.7 * puddle;
     normal = normalize(mix(normal, vec3(0.0, 1.0, 0.0), puddle));
   }
 `,

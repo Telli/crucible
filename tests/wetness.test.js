@@ -110,5 +110,5 @@ test('keep-out boxes stop at the shader limit and ignore parts that deform', () 
 test('the wet shader fades puddles out near keep-out boxes', () => {
   const wet = createFragmentShader(new Set([...SHADER_FEATURES, WETNESS_FEATURE]));
   assert.match(wet, /wetnessKeepOut\[24\]/);
-  assert.match(wet, /puddle \*= wetKeepOut\(worldPosition\)/);
+  assert.match(wet, /clearance = wetKeepOutDistance[(]worldPosition[)]/);
 });
