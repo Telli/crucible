@@ -1,8 +1,9 @@
 // Re-encodes the textures of a GLB as KTX2 (KHR_texture_basisu), the way the dataset packs do (#2982).
 //
-//   node scripts/encode-glb-ktx2.mjs <input.glb> <output.glb> [--max-texture 2048] [--toktx <path>] [--threads 2]
+//   node scripts/encode-glb-ktx2.mjs <input.glb> <output.glb> [--max-texture 2048] [--toktx <path>] [--threads 2] [--quality default|high]
 //
 // Colour maps (base colour, emissive) and data maps (roughness, occlusion, ...) become ETC1S; normal maps become UASTC with RDO.
+// --quality high encodes base colour as UASTC with RDO instead of ETC1S: sharper small text, a larger file.
 // Every image gets a full mip chain and an edge that is a multiple of 4. Meshopt geometry stays byte for byte, and PNG, JPEG and
 // WebP sources are read (a WebP texture is found through EXT_texture_webp). KTX2 images already in the file are kept.
 // The encoder is `toktx` from KTX-Software (https://github.com/KhronosGroup/KTX-Software/releases), so the toolchain stays out of
@@ -19,6 +20,7 @@ import { readGlb, repackBufferViews, writeGlb } from './recode-glb-textures.mjs'
 export const KTX2_EXTENSION = 'KHR_texture_basisu';
 export const TOKTX_ADVICE = 'Install toktx from KTX-Software (https://github.com/KhronosGroup/KTX-Software/releases), then put it on PATH or pass --toktx <path to toktx>, or set CRUCIBLE_TOKTX.';
 
+export const QUALITIES = ['default', 'high'];
 const MAXIMUM_IMAGES = 256;
 const MAXIMUM_NORMAL_EDGE = 1024;
 const COLOUR_SLOTS = new Set(['baseColorTexture', 'emissiveTexture', 'sheenColorTexture', 'specularColorTexture']);
@@ -26,12 +28,19 @@ const NORMAL_SLOTS = new Set(['normalTexture', 'clearcoatNormalTexture']);
 // The packs' encodings: ETC1S for colour and data maps, UASTC with RDO and zstd for normal maps.
 export const ENCODER_ARGUMENTS = {
   colour: ['--encode', 'etc1s', '--clevel', '0', '--qlevel', '128', '--assign_oetf', 'srgb', '--assign_primaries', 'bt709'],
+  colourHigh: ['--encode', 'uastc', '--uastc_quality', '1', '--uastc_rdo_l', '2', '--zcmp', '18', '--assign_oetf', 'srgb', '--assign_primaries', 'bt709'],
   data: ['--encode', 'etc1s', '--clevel', '0', '--qlevel', '128', '--assign_oetf', 'linear', '--assign_primaries', 'none'],
   normal: ['--encode', 'uastc', '--uastc_quality', '1', '--uastc_rdo_l', '2', '--zcmp', '18', '--assign_oetf', 'linear', '--assign_primaries', 'none'],
 };
 
+/** The quality name, or an error that lists the valid ones. */
+export function requireQuality(quality) {
+  if (!QUALITIES.includes(quality)) throw new Error(`Unknown quality ${JSON.stringify(quality)}. Pass one of: ${QUALITIES.join(', ')}.`);
+  return quality;
+}
+
 export function parseArguments(argv) {
-  const options = { maxTexture: 2048, threads: 2, toktx: undefined };
+  const options = { maxTexture: 2048, threads: 2, toktx: undefined, quality: 'default' };
   const positional = [];
   for (let index = 0; index < argv.length; index++) {
     const name = argv[index];
@@ -41,8 +50,9 @@ export function parseArguments(argv) {
     }
     const value = argv[++index];
     if (name === '--toktx' && value) options.toktx = value;
+    else if (name === '--quality') options.quality = requireQuality(value);
     else if ((name === '--max-texture' || name === '--threads') && Number.isFinite(Number(value))) options[name === '--threads' ? 'threads' : 'maxTexture'] = Number(value);
-    else throw new Error(`Unknown or invalid option ${name}. Options: --max-texture <pixels>, --threads <count>, --toktx <path>.`);
+    else throw new Error(`Unknown or invalid option ${name}. Options: --max-texture <pixels>, --threads <count>, --toktx <path>, --quality ${QUALITIES.join('|')}.`);
   }
   requireFiniteInRange('encode-glb-ktx2', 'maxTexture', options.maxTexture, 4, 8192, true);
   requireFiniteInRange('encode-glb-ktx2', 'threads', options.threads, 1, 16, true);
@@ -159,9 +169,10 @@ function declareKtx2Textures(json, encodedImages) {
 
 /**
  * Returns { glb, images, imageBytesBefore, imageBytesAfter, inputBytes }. `encodeKtx2(png, kind)` returns (or resolves to) the KTX2 file for one
- * prepared PNG; kind is 'colour', 'data' or 'normal'. It is injectable so a test can run without toktx.
+ * prepared PNG; kind is 'colour', 'data', 'normal' or, for base colour at quality high, 'colourHigh'. It is injectable so a test can run without toktx.
  */
-export async function encodeGlbKtx2(buffer, { maxTexture = 2048, encodeKtx2 }) {
+export async function encodeGlbKtx2(buffer, { maxTexture = 2048, quality = 'default', encodeKtx2 }) {
+  requireQuality(quality);
   if (typeof encodeKtx2 !== 'function') throw new TypeError('encodeGlbKtx2 needs encodeKtx2(png, kind). Use createToktxEncoder(findToktx()).');
   const { json, binary } = readGlb(buffer);
   const images = json.images ?? [];
@@ -179,7 +190,7 @@ export async function encodeGlbKtx2(buffer, { maxTexture = 2048, encodeKtx2 }) {
     if (image.mimeType === 'image/ktx2') continue;
     const kind = kinds.get(imageIndex) ?? 'data';
     const edgeLimit = kind === 'normal' ? Math.min(maxTexture, MAXIMUM_NORMAL_EDGE) : maxTexture;
-    replacementByView.set(image.bufferView, await encodeKtx2(await prepareSourcePng(original, edgeLimit), kind));
+    replacementByView.set(image.bufferView, await encodeKtx2(await prepareSourcePng(original, edgeLimit), kind === 'colour' && quality === 'high' ? 'colourHigh' : kind));
     image.mimeType = 'image/ktx2';
     encodedImages.add(imageIndex);
   }
@@ -192,7 +203,7 @@ export async function encodeGlbKtx2(buffer, { maxTexture = 2048, encodeKtx2 }) {
 async function main() {
   const { input, output, options } = parseArguments(process.argv.slice(2));
   const encodeKtx2 = createToktxEncoder(findToktx(options.toktx), options.threads);
-  const result = await encodeGlbKtx2(readFileSync(input), { maxTexture: options.maxTexture, encodeKtx2 });
+  const result = await encodeGlbKtx2(readFileSync(input), { maxTexture: options.maxTexture, quality: options.quality, encodeKtx2 });
   writeFileSync(output, result.glb);
   console.log(JSON.stringify({ inputBytes: result.inputBytes, outputBytes: result.glb.length, images: result.images, imageBytesBefore: result.imageBytesBefore, imageBytesAfter: result.imageBytesAfter }));
 }

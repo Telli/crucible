@@ -100,7 +100,8 @@ test('a GLB without textures or with an image file next to it says what to pass'
 test('findToktx names the install advice, and parseArguments rejects unknown options', () => {
   assert.throws(() => findToktx(undefined, { PATH: '' }, '/nowhere'), error => error.message.includes(TOKTX_ADVICE) && /was not found/.test(error.message));
   assert.throws(() => findToktx('/nowhere/toktx', {}, '/nowhere'), /does not exist/);
-  assert.deepEqual(parseArguments(['a.glb', 'b.glb', '--max-texture', '1024', '--threads', '4']).options, { maxTexture: 1024, threads: 4, toktx: undefined });
+  assert.deepEqual(parseArguments(['a.glb', 'b.glb', '--max-texture', '1024', '--threads', '4']).options, { maxTexture: 1024, threads: 4, toktx: undefined, quality: 'default' });
+  assert.equal(parseArguments(['a.glb', 'b.glb', '--quality', 'high']).options.quality, 'high');
   assert.throws(() => parseArguments(['a.glb', 'b.glb', '--bogus', '1']), /Unknown or invalid option/);
   assert.throws(() => parseArguments(['a.glb']), /Pass <input.glb> and <output.glb>/);
 });
@@ -126,4 +127,24 @@ test('colour maps are tagged sRGB and data and normal maps linear', async () => 
   assert.equal(transferFunctionOf(await encode(png, 'colour')), TRANSFER_SRGB);
   assert.equal(transferFunctionOf(await encode(png, 'data')), TRANSFER_LINEAR);
   assert.equal(transferFunctionOf(await encode(png, 'normal')), TRANSFER_LINEAR);
+});
+
+test('--quality high encodes colour maps as UASTC and leaves data and normal maps alone', async () => {
+  const fixtures = { etc1s: await readFile(new URL('2d_etc1s.ktx2', FIXTURES)), uastc: await readFile(new URL('2d_uastc.ktx2', FIXTURES)) };
+  const kindsFor = async quality => {
+    const { calls, encodeKtx2 } = recordingEncoder(fixtures);
+    await encodeGlbKtx2(await buildGlb(), { quality, encodeKtx2 });
+    return calls.map(call => call.kind);
+  };
+  assert.deepEqual(await kindsFor('default'), ['colour', 'normal', 'data']);
+  assert.deepEqual(await kindsFor('high'), ['colourHigh', 'normal', 'data']);
+  const argumentsOf = kind => ENCODER_ARGUMENTS[kind];
+  assert.equal(argumentsOf('colourHigh')[argumentsOf('colourHigh').indexOf('--encode') + 1], 'uastc');
+  assert.equal(argumentsOf('colourHigh')[argumentsOf('colourHigh').indexOf('--assign_oetf') + 1], 'srgb');
+  assert.equal(argumentsOf('colour')[argumentsOf('colour').indexOf('--encode') + 1], 'etc1s');
+});
+
+test('an unknown quality names the valid values', async () => {
+  assert.throws(() => parseArguments(['a.glb', 'b.glb', '--quality', 'ultra']), /Pass one of: default, high/);
+  await assert.rejects(encodeGlbKtx2(await buildGlb(), { quality: 'ultra', encodeKtx2: () => Buffer.alloc(0) }), /Pass one of: default, high/);
 });
