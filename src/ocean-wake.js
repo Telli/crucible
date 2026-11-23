@@ -19,6 +19,8 @@ const SPREAD_PER_LIFETIME = 1.5;
 const FOAM_MASK_CAP = 0.6;
 const FOAM_GAIN = 1.1;
 const MINIMUM_STRENGTH = 0.01;
+// Radians per metre of the churn swells: a wavelength of 5 m, more than eleven cells of the 0.44 m sea mesh of the boat recipe.
+const CHURN_FREQUENCY = 2 * Math.PI / 5;
 
 function describe(value) {
   return Array.isArray(value) ? `an array of ${value.length}` : value === null ? 'null' : typeof value;
@@ -63,10 +65,16 @@ function checkedPoint(points, index, label) {
   return point.slice();
 }
 
-/** A repeatable value from -1 to 1 for one horizontal position: the same position always gives the same churn. */
-function churn(positionX, positionZ) {
-  const scrambled = Math.sin(positionX * 12.9898 + positionZ * 78.233) * 43758.5453;
-  return 2 * (scrambled - Math.floor(scrambled)) - 1;
+/**
+ * A repeatable value from -1 to 1 for one horizontal position: the same position always gives the same churn. It is two
+ * crossing swells about 5 m long, not a hash per position: a hash gave neighbouring sea vertices unrelated heights, so the
+ * surface normal the water shader aligns its foam lace to turned at random from one vertex to the next and the wake drew
+ * zigzag streaks (#3070). Swells keep the normal turning slowly, so the lace runs smoothly along the trail.
+ */
+export function wakeChurn(positionX, positionZ) {
+  const first = Math.sin(CHURN_FREQUENCY * (positionX + 0.7 * positionZ));
+  const second = Math.sin(CHURN_FREQUENCY * (-0.6 * positionX + positionZ) + 1.3);
+  return 0.5 * (first + second);
 }
 
 /** Foam (0 to 1) and surface offset in metres that a wake adds at one horizontal position. */
@@ -80,7 +88,7 @@ export function wakeAt(wake, positionX, positionZ) {
     foam = Math.max(foam, FOAM_MASK_CAP * Math.min(1, FOAM_GAIN * reach));
     weight = Math.max(weight, reach);
   }
-  return { foam: foam > 0.001 ? 0.5 + 0.5 * foam : 0, offset: weight > 0 ? wake.height * weight * churn(positionX, positionZ) : 0 };
+  return { foam: foam > 0.001 ? 0.5 + 0.5 * foam : 0, offset: weight > 0 ? wake.height * weight * wakeChurn(positionX, positionZ) : 0 };
 }
 
 /**

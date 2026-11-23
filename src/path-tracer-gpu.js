@@ -1,6 +1,6 @@
 import { resolveLightSelection } from './path-tracer-light-tree.js';
 import { buildFragmentSource, VERTEX_SOURCE } from './path-tracer-gpu-shader.js';
-import { gpuTriangleCapacity, packAtlas, packEnvironment, packLightTree, packLights, packMaterials, packNodes, packSubsurface, packTriangles, sceneUsesSubsurface } from './path-tracer-gpu-pack.js';
+import { gpuTriangleCapacity, packAtlas, packEnvironment, packLightTree, packLights, packMaterials, packNodes, packSubsurface, packTriangles, packVertexAlpha, sceneUsesSubsurface } from './path-tracer-gpu-pack.js';
 import { packInstancedScene } from './path-tracer-gpu-instance-pack.js';
 import { cameraBackgroundWords, isInstancedScene, MAX_GPU_TRACE_TRIANGLES, MAX_TRACE_TRIANGLES, uniqueTriangleCount } from './path-tracer-scene.js';
 
@@ -98,6 +98,8 @@ export function uploadScene(gl, program, scene, options = {}) {
   const materials = packMaterials(scene.materials, atlas, scene.shadowOnlyParts, scene.lampLightMasks);
   const floatTables = [['uNodes', nodes], ['uTriangles', triangles], ['uMaterials', materials], ['uLights', lights.table]];
   if (instanced) floatTables.push(['uInstances', instanced.instances]);
+  const vertexAlpha = instanced ? null : packVertexAlpha(scene);
+  if (vertexAlpha) floatTables.push(['uVertexAlpha', vertexAlpha]);
   if (sceneUsesSubsurface(scene.materials)) floatTables.push(['uSubsurface', packSubsurface(scene.materials)]);
   if (options.lightSelection === 'tree') floatTables.push(['uLightTree', packLightTree(scene.lights)]);
   let unit = 0;
@@ -236,6 +238,11 @@ export function gpuKernelCompileCount() {
   return kernelCompileCount;
 }
 
+/** The kernel options a scene decides: instanced copies, and COLOR_0 vertex alpha tables (a flattened scene only). */
+export function kernelSceneFlags(scene) {
+  return { instanced: isInstancedScene(scene), vertexAlpha: Boolean(scene.vertexAlpha) };
+}
+
 /** The kernel for a scene, compiled once per variant: a scene with a subsurface part gets the random walk, any other scene the plain kernel. */
 export function getKernel(hasSubsurface, texelBake = false, options = {}) {
   const { gl, programs } = getContext();
@@ -244,10 +251,11 @@ export function getKernel(hasSubsurface, texelBake = false, options = {}) {
   const lightTree = options.lightSelection === 'tree';
   const radianceCache = options.radianceCache === true;
   const instanced = options.instanced === true;
-  const key = `${hasSubsurface}:${texelBake}:${blueNoise}:${lightImportance}:${radianceCache}:${lightTree}${instanced ? ':instanced' : ''}`;
+  const vertexAlpha = options.vertexAlpha === true;
+  const key = `${hasSubsurface}:${texelBake}:${blueNoise}:${lightImportance}:${radianceCache}:${lightTree}${instanced ? ':instanced' : ''}${vertexAlpha ? ':vertex-alpha' : ''}`;
   if (!programs.has(key)) {
     const started = performance.now();
-    const program = createProgram(gl, { hasSubsurface, texelBake, blueNoise, lightImportance, radianceCache, lightTree, instanced });
+    const program = createProgram(gl, { hasSubsurface, texelBake, blueNoise, lightImportance, radianceCache, lightTree, instanced, vertexAlpha });
     gl.getProgramParameter(program, gl.LINK_STATUS);
     programs.set(key, { program, compileSeconds: (performance.now() - started) / 1000 });
     if (!texelBake) kernelCompileCount++;
@@ -305,7 +313,7 @@ export async function traceOnGpu(scene, camera, rawOptions, shouldStop) {
   const tiledOptions = await withBlueNoiseTile(rawOptions);
   const options = { ...tiledOptions, lightSelection: resolveLightSelection(tiledOptions.lightSelection, scene.lights) };
   const { gl, gpu } = getContext();
-  const { program, compileSeconds } = getKernel(sceneUsesSubsurface(scene.materials), false, { ...options, instanced: isInstancedScene(scene) });
+  const { program, compileSeconds } = getKernel(sceneUsesSubsurface(scene.materials), false, { ...options, ...kernelSceneFlags(scene) });
   const { width, height, samples } = options;
   gl.useProgram(program);
   const { lightCount } = uploadScene(gl, program, scene, options);
@@ -327,7 +335,7 @@ const TEXEL_ROW_WIDTH = 2048;
  */
 export async function traceTexelsOnGpu(scene, texels, options, shouldStop) {
   const { gl, gpu } = getContext();
-  const { program, compileSeconds } = getKernel(sceneUsesSubsurface(scene.materials), true, { instanced: isInstancedScene(scene) });
+  const { program, compileSeconds } = getKernel(sceneUsesSubsurface(scene.materials), true, kernelSceneFlags(scene));
   const { count, points, normals } = texels;
   const { samples, seed } = options;
   const width = Math.min(count, TEXEL_ROW_WIDTH);

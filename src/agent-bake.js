@@ -1,5 +1,6 @@
 import { invalidField } from './field-error.js';
-import { planLightmaps, estimateBake, traceLightmaps, clearUnwrapReuse, MAX_BAKE_TEXELS } from './light-bake.js';
+import { planLightmapsSteps, estimateBake, traceLightmaps, traceLightmapsSteps, clearUnwrapReuse, MAX_BAKE_TEXELS } from './light-bake.js';
+import { drainSteps } from './flush-search-runner.js';
 import { contentFingerprint, ownedCopy, retainedBytes } from './content-fingerprint.js';
 import { runKernel } from './kernel-offload.js';
 import { motionEnvironment } from './agent-motion.js';
@@ -287,15 +288,28 @@ export function bakeSecondsLimit() {
   return runsOnWorker() ? BAKE_WORKER_MAXIMUM_SECONDS : BAKE_MAXIMUM_SECONDS;
 }
 
-function traceWithAdvice(plan, used) {
+function* traceWithAdvice(plan, used) {
   try {
-    return traceLightmaps(plan, used);
+    return yield* withoutPauses(plan, traceLightmapsSteps(plan, used));
   } catch (error) {
     if (/passed maxSeconds/.test(error.message)) {
       throw new Error(timeLimitMessage(error, used));
     }
     throw error;
   }
+}
+
+// The time limit of a bake counts the time it runs. A bake run in slices is paused between two of them, and that time is not
+// charged: the plan's start moves forward by each pause.
+function* withoutPauses(plan, steps) {
+  let step = steps.next();
+  while (!step.done) {
+    const pausedAt = performance.now();
+    yield;
+    plan.started += performance.now() - pausedAt;
+    step = steps.next();
+  }
+  return step.value;
 }
 
 /**
@@ -305,9 +319,14 @@ function traceWithAdvice(plan, used) {
  * the same RangeError here as it would inline, and the worker sends it back with its message.
  */
 export function bakeChangedParts(snapshots, lighting, settings) {
-  const plan = planLightmaps(snapshots, lighting, { ...settings, maxSeconds: bakeSecondsLimit() });
+  return drainSteps(bakeChangedPartsSteps(snapshots, lighting, settings));
+}
+
+/** bakeChangedParts as steps (#3052): the same answer, with a checkpoint every few dozen texels for a bake run in slices. */
+export function* bakeChangedPartsSteps(snapshots, lighting, settings) {
+  const plan = yield* planLightmapsSteps(snapshots, lighting, { ...settings, maxSeconds: bakeSecondsLimit() });
   const { used, reduced, reduction } = fitSettingsToBudget(plan, settings);
-  const { parts, report } = traceWithAdvice(plan, used);
+  const { parts, report } = yield* traceWithAdvice(plan, used);
   return { changed: changedPartsOf(parts, snapshots), report, used, reduced, reduction };
 }
 
@@ -353,7 +372,7 @@ function localVolumesNotBakedWarning(skippedVolumes) {
   return `The bake leaves out ${names}: local volumes are drawn in the post pass, so an emissive volume does not light baked surfaces and no volume dims the baked light. Light the surfaces with a point light or an emissive part.`;
 }
 
-function traceAgentBake(parts, worldMatrices, environment, settings, generatedGeometryGenerators) {
+export function bakeInputs(parts, worldMatrices, environment, settings, generatedGeometryGenerators) {
   const sunScale = environment.keyIntensity ?? 1;
   const lighting = {
     pointLights: environment.pointLights,
@@ -376,9 +395,18 @@ function traceAgentBake(parts, worldMatrices, environment, settings, generatedGe
     material: { ...part.material },
     generatesGeometry: generatedGeometryGenerators.get(part.name) ?? false,
   }));
-  const outputs = reusedOrTraced(snapshots, lighting, settings, () => (settings.irradianceGrid
-    ? traceGridOutputs(snapshots, lighting, settings)
-    : traceLightmapOutputs(snapshots, lighting, settings)));
+  return { snapshots, lighting };
+}
+
+function traceAgentBake(parts, worldMatrices, environment, settings, generatedGeometryGenerators) {
+  const { snapshots, lighting } = bakeInputs(parts, worldMatrices, environment, settings, generatedGeometryGenerators);
+  const outputs = drainSteps(reusedOrTraced(snapshots, lighting, settings, function* traceInPlace() {
+    return settings.irradianceGrid ? traceGridOutputs(snapshots, lighting, settings) : traceLightmapOutputs(snapshots, lighting, settings);
+  }));
+  return placeOutputs(parts, outputs, settings);
+}
+
+export function placeOutputs(parts, outputs, settings) {
   return settings.irradianceGrid ? placeGridBake(parts, outputs, settings) : placeLightmapBake(parts, outputs, settings);
 }
 
@@ -390,12 +418,23 @@ const BAKE_REUSE_BYTES = 128 * 1024 * 1024;
 const bakeReuse = new Map();
 let tracedBakes = 0;
 
-function reusedOrTraced(snapshots, lighting, settings, trace) {
-  const key = contentFingerprint([snapshots, lighting, { ...settings, rebake: undefined }]);
+// One fingerprint per part, with a checkpoint between them, so a bake run in slices does not hash the whole scene in one turn (#3052). null when something cannot be read.
+function* bakeReuseKey(snapshots, lighting, settings) {
+  const fingerprints = [];
+  for (const snapshot of snapshots) {
+    fingerprints.push(contentFingerprint(snapshot));
+    yield;
+  }
+  fingerprints.push(contentFingerprint([lighting, { ...settings, rebake: undefined }]));
+  return fingerprints.includes(null) ? null : fingerprints.join('|');
+}
+
+export function* reusedOrTraced(snapshots, lighting, settings, trace) {
+  const key = yield* bakeReuseKey(snapshots, lighting, settings);
   if (key === null) {
     // Something the key cannot read (a function, a Set, a class instance): trace, and keep nothing a later bake might wrongly find.
     tracedBakes++;
-    return trace();
+    return yield* trace();
   }
   const reused = bakeReuse.get(key);
   if (reused) {
@@ -403,9 +442,11 @@ function reusedOrTraced(snapshots, lighting, settings, trace) {
     bakeReuse.set(key, reused);
     return ownedCopy(reused.outputs);
   }
-  const outputs = trace();
+  const outputs = yield* trace();
   tracedBakes++;
+  yield;
   const kept = ownedCopy(outputs);
+  yield;
   if (kept) {
     rememberBake(key, kept);
   }
@@ -446,6 +487,10 @@ export function clearBakeReuse() {
 
 function traceLightmapOutputs(snapshots, lighting, settings) {
   const kernelResult = runKernel('lightBake', [snapshots, lighting, settings], bakeChangedParts);
+  return lightmapOutputsFrom(kernelResult, snapshots, lighting, settings);
+}
+
+export function lightmapOutputsFrom(kernelResult, snapshots, lighting, settings) {
   // Probes see the unbaked parts, as the bake does, and are traced as a kernel of their own so a worker can take them too.
   const probeTrace = !settings.probes ? null
     : runKernel('probeTrace', [snapshots, lighting, settings.probes, { environment: lighting, maxSeconds: bakeSecondsLimit() }], traceProbes);
@@ -484,7 +529,7 @@ export function traceGridKernel(snapshots, lighting, options) {
 
 // bake.irradianceGrid: no lightmaps. Every part reads one baked grid of bounced light (the sun's lit patches included), and the
 // probes still run. Inside a worker session the trace runs on the worker (90 s); otherwise on the page's thread (20 s).
-function traceGridOutputs(snapshots, lighting, settings) {
+export function traceGridOutputs(snapshots, lighting, settings) {
   const gridOptions = {
     resolution: settings.irradianceGrid,
     samples: Math.max(GRID_MINIMUM_SAMPLES, Math.round(settings.samples / GRID_SAMPLES_SHARE)),

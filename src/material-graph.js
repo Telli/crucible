@@ -1,4 +1,4 @@
-import { MATERIAL_GRAPH_LIMITS, MATERIAL_GRAPH_OUTPUTS, MATERIAL_GRAPH_OPERATORS, MESH_MAP_NAMES } from './agent-scene-capabilities.js';
+import { MATERIAL_GRAPH_LIMITS, MATERIAL_GRAPH_OUTPUTS, MATERIAL_GRAPH_OPERATORS, MESH_MAP_NAMES, SURFACE_OUTPUTS, SURFACE_SPACES } from './agent-scene-capabilities.js';
 import { EMISSION_FRESNEL_IOR_RANGE } from './material-layers.js';
 import { clampUnit, smoothStep, wrapCell, hashCell, cellularNoise, smoothCellularDistance, linearToSrgbByte, createImage, normalMapFromHeightFunction } from './material-texture-kit.js';
 
@@ -770,9 +770,64 @@ export function graphMeshMapNames(graph) {
   return [...names];
 }
 
+// A surface node reads the slope, the up part of the normal or the height of the mesh at each texel. The host bakes
+// each distinct output, space and range into UV space (material-surface-map.js) and hands the maps in under the key
+// "surface:<output>|<space>|<range>", so the node reads it at the texel's own u and v.
+const SURFACE_COST = 2;
+export const SURFACE_KEY_PREFIX = 'surface:';
+const SURFACE_EXAMPLE = '{"surface":{"output":"slope","space":"world"}}';
+
+function readSurfaceRange(range, output) {
+  if (range === undefined) return undefined;
+  if (output !== 'height') throw graphError(`surface range only applies to output "height", not ${describeKey(output)}; slope and normalY are already 0 to 1.`);
+  const valid = Array.isArray(range) && range.length === 2 && range.every(value => typeof value === 'number' && Number.isFinite(value)) && range[0] < range[1];
+  if (!valid) throw graphError('surface range must be [low, high] in metres with low below high, such as {"surface":{"output":"height","range":[0,2]}}.');
+  return [range[0], range[1]];
+}
+
+function readSurfaceSettings(node) {
+  const settings = textureSettings(node, 'surface', ['output', 'space', 'range']);
+  const { output } = settings;
+  if (!SURFACE_OUTPUTS.includes(output)) throw graphError(`surface output must be one of ${SURFACE_OUTPUTS.join(', ')}, got ${describeKey(String(output))}, such as ${SURFACE_EXAMPLE}.`);
+  const space = settings.space ?? 'world';
+  if (!SURFACE_SPACES.includes(space)) throw graphError(`surface space must be one of ${SURFACE_SPACES.join(', ')}, got ${describeKey(String(space))}, such as ${SURFACE_EXAMPLE}.`);
+  const range = readSurfaceRange(settings.range, output);
+  return range ? { output, space, range } : { output, space };
+}
+
+/** The key a baked surface map is handed to the graph under, one per output, space and range. */
+export function surfaceMapKey({ output, space, range }) {
+  return `${SURFACE_KEY_PREFIX}${output}|${space}|${range ? range.join(',') : ''}`;
+}
+
+function compileSurface(node, state) {
+  const settings = readSurfaceSettings(node);
+  state.cost += SURFACE_COST;
+  if (!state.groups) return scalarValue(() => 0);
+  const map = state.groups.get(surfaceMapKey(settings));
+  if (!map) throw graphError(`surface ${describeKey(settings.output)} was not baked for this mesh. Bake the material through a part whose mesh has UVs.`);
+  return scalarValue((u, v) => sampleImageChannel(map, u, v, 0, byte => byte / 255));
+}
+
+/** The distinct `surface` settings a graph reads, in the order they first appear. */
+export function graphSurfaceSettings(graph) {
+  const found = new Map();
+  const visit = (value, depth) => {
+    if (!value || typeof value !== 'object' || depth > MATERIAL_GRAPH_LIMITS.maxDepth * 3) return;
+    if (!Array.isArray(value) && isPlainObject(value.surface)) {
+      const settings = readSurfaceSettings(value);
+      found.set(surfaceMapKey(settings), settings);
+    }
+    for (const child of Array.isArray(value) ? value : Object.values(value)) visit(child, depth + 1);
+  };
+  visit(graph, 0);
+  return [...found.values()];
+}
+
 const TEXTURE_COMPILERS = new Map([
   ['vertexGroup', compileVertexGroup],
   ['meshMap', compileMeshMap],
+  ['surface', compileSurface],
   ['image', compileImage], ['noise', compileNoise], ['whiteNoise', compileWhiteNoise], ['brick', compileBrick], ['voronoi', compileVoronoi], ['wave', compileWave], ['checker', compileChecker], ['gradient', compileGradient],
 ]);
 

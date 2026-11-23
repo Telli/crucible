@@ -92,3 +92,43 @@ test('the committed fast list names no file the full pass times as slow', () => 
   const slowListed = Object.keys(readFastTests()).filter(file => (fullPassTimings[file] ?? 0) >= 5000);
   assert.deepEqual(slowListed, [], `${FAST_TESTS_PATH} lists files that take 5000 ms or more where they run; regenerate it with npm run record:fast-tests.`);
 });
+
+const sourcesByPath = {
+  'tests/plain.test.js': "import assert from 'node:assert/strict';\nimport { helper } from './support/plain-helper.js';",
+  'tests/support/plain-helper.js': 'export const helper = 1;',
+  'tests/direct-browser.test.js': "const { chromium } = await import('playwright');",
+  'tests/through-helper.test.js': "import { open } from './support/browser-helper.js';",
+  'tests/support/browser-helper.js': "import { launchPage } from '../../scripts/page-launcher.mjs';",
+  'scripts/page-launcher.mjs': "export const args = ['--headless=new'];",
+  'tests/spawns-script.test.js': "const smoke = new URL('../scripts/smoke-thing.mjs', import.meta.url);",
+  'scripts/smoke-thing.mjs': "const executablePath = process.env.CHROME_PATH;",
+  'tests/mentions-only.test.js': "const note = 'path tracing and render jobs are only named here';",
+};
+const readFixtureSource = path => sourcesByPath[path] ?? null;
+const fixtureFiles = Object.keys(sourcesByPath).filter(file => file.endsWith('.test.js'));
+const fixtureTimings = Object.fromEntries(fixtureFiles.map(file => [file, 200]));
+
+test('a test that imports a browser helper, names a browser script or launches playwright is not a fast test', () => {
+  const { files, browserTests } = selectFastTests(fixtureTimings, fixtureFiles, { readSource: readFixtureSource });
+  assert.deepEqual(files, ['tests/mentions-only.test.js', 'tests/plain.test.js']);
+  assert.deepEqual(browserTests.map(entry => entry.file).sort(), ['tests/direct-browser.test.js', 'tests/spawns-script.test.js', 'tests/through-helper.test.js']);
+});
+
+test('the reason names the browser launcher and the import chain that leads to it', () => {
+  const { browserTests } = selectFastTests(fixtureTimings, fixtureFiles, { readSource: readFixtureSource });
+  const reason = browserTests.find(entry => entry.file === 'tests/through-helper.test.js').reason;
+  assert.match(reason, /starts Chrome/);
+  assert.match(reason, /tests\/through-helper\.test\.js -> tests\/support\/browser-helper\.js -> scripts\/page-launcher\.mjs/);
+});
+
+test('without a source reader nothing is dropped, so the browser check is opt in per caller', () => {
+  assert.deepEqual(selectFastTests(fixtureTimings, fixtureFiles).files, [...fixtureFiles].sort());
+});
+
+test('the committed fast list names no file that starts a browser', () => {
+  const listed = readFastTests();
+  const existingFiles = Object.keys(listed).filter(file => existsSync(file));
+  const { browserTests } = selectFastTests(listed, existingFiles, { thresholdMs: Infinity, budgetMs: Infinity, readSource: path => (existsSync(path) ? readFileSync(path, 'utf8') : null) });
+  const message = browserTests.map(entry => `${entry.file} ${entry.reason}`).join('\n');
+  assert.deepEqual(browserTests, [], `${FAST_TESTS_PATH} lists tests that start a browser; remove them or run npm run record:fast-tests:\n${message}`);
+});

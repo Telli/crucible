@@ -16,6 +16,7 @@ import { BRANCH_LIMITS, createBranchStore, printableLabel } from '../../src/agen
 import { sessionProblem, planSceneEviction, SCENE_STORE_LIMITS } from '../../src/agent-errors.js';
 import { imageLimitProblem } from '../../src/image-header.js';
 import { MOTION_NOT_SET_HINT, recipeMoves } from '../../src/motion-hint.js';
+import { isLiveGeometry, isReindexedGeometry } from '../../src/live-geometry.js';
 import { sampleMotionAtZeroForGround } from '../../scripts/motion-ground-sample.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../../src/texture-sequence-limits.js';
 import { AGENT_SCENE_DEFAULT_LIMITS, MEMORY_CEILING_MIB } from '../../src/agent-scene-capabilities.js';
@@ -37,6 +38,7 @@ export function previewHarness({ createImageBitmap = async () => { throw new Err
   let lost = false;
   let replacementError = false;
   let replacementCount = 0;
+  const vertexUploads = [];
   let currentRenderer;
   let currentScene;
   const renders = [];
@@ -106,6 +108,9 @@ export function previewHarness({ createImageBitmap = async () => { throw new Err
     applyProjection, applyCameraFields, mat4, fitAgentShadow, resolveAgentShadow, agentEnvironmentMap, BRANCH_LIMITS,
     // Line art needs a real renderer with render passes, so the fault-injected one gets a no-op install.
     agentSceneModule: name => (name === 'lineArt' ? { installLineArt: renderer => renderer } : name === 'userPass' ? { ...agentSceneModule(name), installUserPasses: renderer => renderer } : agentSceneModule(name)), agentSceneModuleLoaded, createBranchStore, printableLabel,
+    // The fault-injected renderer holds no buffers; an in-place vertex upload is only counted, with the vertex count it wrote.
+    isLiveGeometry, isReindexedGeometry,
+    updatePartVertices: (renderer, part, positions, normals, { skyVisibility, indices }) => { vertexUploads.push({ part: part.name, vertexCount: positions.length / 3, skyVisibility: Boolean(skyVisibility), indices: Boolean(indices) }); },
     CrucibleRenderer: FaultInjectedRenderer, skyOpenness: () => 1, fogSkyVisibility: () => null,
     // The fault-injected renderer has no floor part; the automatic floor is covered by agent-ground.test.js and the live smokes.
     agentGroundPlacement: () => null, createAgentGround: () => null, placeAgentGround: () => {}, FLOOR_COLOR: [0.22, 0.22, 0.21], groundBounceEnvironment: (parts, environment) => environment,
@@ -121,6 +126,7 @@ export function previewHarness({ createImageBitmap = async () => { throw new Err
     loseContext: () => { lost = true; },
     rejectReplacement: value => { replacementError = value; },
     replacementCount: () => replacementCount,
+    vertexUploads: () => vertexUploads,
     disableHdr: () => { currentRenderer.capabilities.hdr = false; },
     scene: () => currentScene, renders, tiles, rendererOptions,
   };

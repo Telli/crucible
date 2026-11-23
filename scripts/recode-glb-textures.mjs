@@ -98,22 +98,12 @@ export function declareWebpTextures(json) {
   json.extensionsRequired = [...new Set([...(json.extensionsRequired ?? []), 'EXT_texture_webp'])];
 }
 
-export async function recodeGlbTextures(buffer, options) {
-  const { json, binary } = readGlb(buffer);
-  const recodedByView = new Map();
-  let imageBytesBefore = 0;
-  for (const image of json.images ?? []) {
-    if (image.bufferView === undefined) continue;
-    const view = json.bufferViews[image.bufferView];
-    const original = binary.subarray(view.byteOffset ?? 0, (view.byteOffset ?? 0) + view.byteLength);
-    imageBytesBefore += original.length;
-    if (image.mimeType !== 'image/png' && image.mimeType !== 'image/jpeg') continue;
-    const converted = await recodeImage(original, options);
-    if (!converted) continue;
-    recodedByView.set(image.bufferView, converted);
-    image.mimeType = 'image/webp';
-  }
-
+/**
+ * Lays the first buffer out again with `replacementByView` (bufferView index to new bytes) swapped in, every view 4-byte aligned.
+ * Views of other buffers and the bytes a meshopt view owns are copied unchanged. Updates the views in `json` and returns the new
+ * binary chunk with the total size of the image views.
+ */
+export function repackBufferViews(json, binary, replacementByView) {
   const chunks = [];
   let offset = 0;
   const append = bytes => {
@@ -131,15 +121,34 @@ export async function recodeGlbTextures(buffer, options) {
   json.bufferViews.forEach((view, index) => {
     const { owner, buffer: bufferIndex } = dataRangeOf(view);
     if (bufferIndex !== 0) return;
-    const replacement = recodedByView.get(index);
+    const replacement = replacementByView.get(index);
     const bytes = replacement ?? binary.subarray(owner.byteOffset ?? 0, (owner.byteOffset ?? 0) + owner.byteLength);
     if (json.images?.some(image => image.bufferView === index)) imageBytesAfter += bytes.length;
     owner.byteOffset = append(bytes);
     owner.byteLength = bytes.length;
   });
 
+  return { packed: Buffer.concat(chunks), imageBytesAfter };
+}
+
+export async function recodeGlbTextures(buffer, options) {
+  const { json, binary } = readGlb(buffer);
+  const recodedByView = new Map();
+  let imageBytesBefore = 0;
+  for (const image of json.images ?? []) {
+    if (image.bufferView === undefined) continue;
+    const view = json.bufferViews[image.bufferView];
+    const original = binary.subarray(view.byteOffset ?? 0, (view.byteOffset ?? 0) + view.byteLength);
+    imageBytesBefore += original.length;
+    if (image.mimeType !== 'image/png' && image.mimeType !== 'image/jpeg') continue;
+    const converted = await recodeImage(original, options);
+    if (!converted) continue;
+    recodedByView.set(image.bufferView, converted);
+    image.mimeType = 'image/webp';
+  }
+
+  const { packed, imageBytesAfter } = repackBufferViews(json, binary, recodedByView);
   declareWebpTextures(json);
-  const packed = Buffer.concat(chunks);
   json.buffers[0].byteLength = packed.length;
   return { glb: writeGlb(json, packed), imageBytesBefore, imageBytesAfter, inputBytes: buffer.length };
 }

@@ -28,12 +28,14 @@ const DEFAULT_LIMITS = Object.freeze({
   maxTextureImagePixels: 67_108_864,
   maxJoints: 4096,
   maxInstances: 65_536,
+  // Most triangles of one primitive that get the duplicate-triangle and non-manifold-edge counts; a larger primitive skips them, with a warning.
+  maxCheckedTriangles: 600_000,
 });
 
 export const GLTF_CAPABILITIES = Object.freeze({
   formats: ['glb', 'gltf'],
   limits: DEFAULT_LIMITS,
-  supported: ['triangle meshes', 'world transforms', 'rigid node animations', 'four-influence skeletal skinning', 'joint node animations', 'relative POSITION/NORMAL morph targets', 'morph weight animations', 'PNG/JPEG/WebP base color textures', 'normal/occlusion/emissive/metallic-roughness textures', 'TEXCOORD_0', 'TANGENT for a normal map, with MikkTSpace-style tangents generated at load when a normal-mapped primitive has none', 'TEXCOORD_1 for every texture, the base color and layer maps included', 'clearcoat, clearcoat roughness, clearcoat normal, anisotropy, sheen color and sheen roughness textures', 'linear RGB vertex colors, with the alpha of RGBA colors ignored and reported in warnings','metallic roughness factors', 'emissive factors', 'alpha mask and blend modes', 'double-sided materials', 'KHR_mesh_quantization', 'KHR_materials_emissive_strength', 'KHR_materials_clearcoat, transmission, volume, ior, dispersion, specular, sheen, anisotropy and iridescence factors', 'KHR_texture_transform baked into UVs, with a normal map that differs by scale and offset applied in the shader', 'EXT_mesh_gpu_instancing expanded into parts', 'KHR_draco_mesh_compression with options.decoders.draco', 'EXT_meshopt_compression', 'KHR_texture_basisu with options.decoders.ktx2', 'EXT_texture_webp, with the PNG or JPEG fallback source when the browser cannot decode WebP', 'KHR_materials_unlit as the unlit material tag, with a base color map only', 'KHR_lights_punctual point and spot lights (up to eight each) and the first directional light, returned in lights as environment options'],
+  supported: ['triangle meshes', 'world transforms', 'rigid node animations', 'four-influence skeletal skinning', 'joint node animations', 'relative POSITION/NORMAL morph targets', 'morph weight animations', 'PNG/JPEG/WebP base color textures', 'normal/occlusion/emissive/metallic-roughness textures', 'TEXCOORD_0', 'TANGENT for a normal map, with MikkTSpace-style tangents generated at load when a normal-mapped primitive has none', 'TEXCOORD_1 for every texture, the base color and layer maps included', 'clearcoat, clearcoat roughness, clearcoat normal, anisotropy, sheen color and sheen roughness textures', 'linear RGB vertex colors, with the alpha of RGBA colors multiplying the opacity of blend and mask materials in the rasterizer','metallic roughness factors', 'emissive factors', 'alpha mask and blend modes', 'double-sided materials', 'KHR_mesh_quantization', 'KHR_materials_emissive_strength', 'KHR_materials_clearcoat, transmission, volume, ior, dispersion, specular, sheen, anisotropy and iridescence factors', 'KHR_texture_transform baked into UVs, with a normal map that differs by scale and offset applied in the shader', 'EXT_mesh_gpu_instancing expanded into parts', 'KHR_draco_mesh_compression with options.decoders.draco', 'EXT_meshopt_compression', 'KHR_texture_basisu with options.decoders.ktx2', 'EXT_texture_webp, with the PNG or JPEG fallback source when the browser cannot decode WebP', 'KHR_materials_unlit as the unlit material tag, with a base color map only', 'KHR_lights_punctual point and spot lights (up to eight each) and the first directional light, returned in lights as environment options'],
   // The primitive's own material is drawn; the other variants are not selectable.
   ignoredExtensions: ['KHR_materials_variants', 'KHR_materials_diffuse_roughness', 'EXT_materials_bump', 'EXT_texture_avif'],
   optionalExtensions: 'Any other optional extension is ignored and named in warnings. One listed in extensionsRequired that Crucible does not read is refused.',
@@ -897,7 +899,7 @@ class UnusablePrimitiveError extends Error {}
  * Drops the triangles that repeat a vertex or have zero area, in place and in their original order.
  * Returns the kept index view and how many of each kind were dropped; a mesh without such triangles comes back untouched.
  */
-async function dropDegenerateTriangles(positions, indices, checkpoint) {
+async function dropDegenerateTriangles(positions, indices, checkpoint, keepDegenerate = false) {
   let kept = 0;
   let repeatedIndex = 0;
   let zeroArea = 0;
@@ -906,11 +908,10 @@ async function dropDegenerateTriangles(positions, indices, checkpoint) {
       const corner = triangle * 3;
       if (indices[corner] === indices[corner + 1] || indices[corner + 1] === indices[corner + 2] || indices[corner] === indices[corner + 2]) {
         repeatedIndex++;
-        continue;
-      }
-      if (!(Math.hypot(...triangleAt(positions, indices, corner).cross) > 0)) {
+        if (!keepDegenerate) continue;
+      } else if (!(Math.hypot(...triangleAt(positions, indices, corner).cross) > 0)) {
         zeroArea++;
-        continue;
+        if (!keepDegenerate) continue;
       }
       if (kept !== corner) indices.copyWithin(kept, corner, corner + 3);
       kept += 3;
@@ -964,7 +965,7 @@ async function settleVertexTangents(geometry, normalMap, uvTransform, onRepair) 
   geometry.tangents = generateTangents(geometry.positions, geometry.normals, uvs, geometry.indices);
 }
 
-async function convertGeometry(source, primitive, secondUvSet, onIgnoredVertexAlpha, onRepair, checkpoint) {
+async function convertGeometry(source, primitive, secondUvSet, onRepair, checkpoint, meshChecks = {}) {
   const { position, normal, tangent, uv, uv1, color, skinIndex, skinWeight } = source.attributes;
   const zeroedBy = label => count => onRepair(`${count} non-finite ${label} value(s) were set to 0`);
   const positions = await copyAttributeZeroingNonFinite(position, 3, zeroedBy('POSITION'), checkpoint);
@@ -978,11 +979,21 @@ async function convertGeometry(source, primitive, secondUvSet, onIgnoredVertexAl
       allIndices[index] = value;
     }
   });
-  const { indices, repeatedIndex, zeroArea } = await dropDegenerateTriangles(positions, allIndices, checkpoint);
+  const { indices, repeatedIndex, zeroArea } = await dropDegenerateTriangles(positions, allIndices, checkpoint, meshChecks.keepDegenerateTriangles);
   if (normal && normal.count !== position.count) throw new Error('NORMAL and POSITION counts must match.');
   if (!indices.length) throw new UnusablePrimitiveError('every triangle has zero area');
   if (repeatedIndex || zeroArea) {
-    onRepair(`dropped ${repeatedIndex + zeroArea} degenerate triangle(s) of ${allIndices.length / 3} (${repeatedIndex} with a repeated index, ${zeroArea} with zero area)`);
+    const verb = meshChecks.keepDegenerateTriangles ? 'kept (keepDegenerateTriangles)' : 'dropped';
+    onRepair(`${verb} ${repeatedIndex + zeroArea} degenerate triangle(s) of ${allIndices.length / 3} (${repeatedIndex} with a repeated index, ${zeroArea} with zero area)`);
+  }
+  if (meshChecks.enabled) {
+    // Loaded only by a call that asks for the counts.
+    const { countMeshFindings, describeMeshFindings } = await import('./gltf-mesh-checks.js');
+    // Kept degenerate triangles are not surface: count only the triangles a default load keeps.
+    const surfaceIndices = meshChecks.keepDegenerateTriangles ? (await dropDegenerateTriangles(positions, indices.slice(), checkpoint)).indices : indices;
+    const findings = await countMeshFindings(positions, surfaceIndices, meshChecks.maxTriangles, checkpoint);
+    if (findings === null) meshChecks.onNote(`mesh checks skipped: ${surfaceIndices.length / 3} triangles is over maxCheckedTriangles (${meshChecks.maxTriangles}); raise it to count duplicate triangles and non-manifold edges`);
+    else if (describeMeshFindings(findings)) meshChecks.onNote(describeMeshFindings(findings));
   }
   const normals = normal ? await copyAttribute(normal, 3, checkpoint) : computeVertexNormals(positions, indices);
   const geometry = { positions, normals, indices };
@@ -1033,7 +1044,11 @@ async function convertGeometry(source, primitive, secondUvSet, onIgnoredVertexAl
     if (!uv1 || uv1.count !== position.count) throw new Error('TEXCOORD_1 and POSITION counts must match.');
     geometry.lightUvs = await copyAttribute(uv1, 2, checkpoint);
   }
-  if (color) geometry.colors = await convertVertexColors(color, position.count, onIgnoredVertexAlpha, checkpoint);
+  if (color) {
+    const { colors, colorAlpha } = await convertVertexColors(color, position.count, checkpoint);
+    geometry.colors = colors;
+    if (colorAlpha) geometry.colorAlpha = colorAlpha;
+  }
   if (skinIndex) geometry.skinIndices = new Uint16Array(await copyAttribute(skinIndex, 4, checkpoint));
   if (skinWeight) geometry.skinWeights = await copyAttribute(skinWeight, 4, checkpoint);
   return geometry;
@@ -1223,25 +1238,30 @@ function worldMatrixOf(node, instanceMatrix, target) {
   return instanceMatrix ? target.multiplyMatrices(node.matrixWorld, instanceMatrix) : target.copy(node.matrixWorld);
 }
 
-/** Keeps the RGB of COLOR_0. The alpha of an RGBA attribute is dropped, and onIgnoredVertexAlpha hears of it when it is below one. */
-async function convertVertexColors(attribute, vertexCount, onIgnoredVertexAlpha, checkpoint) {
+/** Keeps the RGB of COLOR_0 and, when an RGBA attribute has an alpha below one, that alpha as colorAlpha. Returns { colors, colorAlpha }. */
+async function convertVertexColors(attribute, vertexCount, checkpoint) {
   if (attribute.count !== vertexCount || ![3, 4].includes(attribute.itemSize)) {
     throw new Error('COLOR_0 requires matching RGB or RGBA vertex values.');
   }
   const values = await copyAttribute(attribute, attribute.itemSize, checkpoint);
   const colors = new Float32Array(vertexCount * 3);
+  const colorAlpha = new Float32Array(vertexCount).fill(1);
   let alphaBelowOne = false;
   for (let vertex = 0; vertex < vertexCount; vertex++) {
     const offset = vertex * attribute.itemSize;
-    if (attribute.itemSize === 4 && values[offset + 3] < 1) alphaBelowOne = true;
+    if (attribute.itemSize === 4) {
+      const alpha = values[offset + 3];
+      if (alpha < 0 || alpha > 1) throw new Error('COLOR_0 alpha must be within zero and one.');
+      colorAlpha[vertex] = alpha;
+      if (alpha < 1) alphaBelowOne = true;
+    }
     for (let component = 0; component < 3; component++) {
       const value = values[offset + component];
       if (value < 0 || value > 1) throw new Error('COLOR_0 RGB values must be within zero and one.');
       colors[vertex * 3 + component] = value;
     }
   }
-  if (alphaBelowOne) onIgnoredVertexAlpha();
-  return colors;
+  return { colors, colorAlpha: alphaBelowOne ? colorAlpha : null };
 }
 
 /**
@@ -1340,10 +1360,24 @@ export function createSharedTextures() {
   return Object.assign(new Map(), { descriptors: new Map() });
 }
 
+/** Hands the file to the caller's glTF-Validator; external resources load by the same rules as the loader's own. */
+async function runStrictValidator(data, options, limits) {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data);
+  async function fetchResource(uri) {
+    if (options.allowExternalResources === false || !options.baseUrl) throw new Error(`The validator asked for external uri "${uri}": pass baseUrl (and leave allowExternalResources on), or embed it (GLB or data URI).`);
+    const resolved = new URL(uri, options.baseUrl).href;
+    if (!/^(https?:|blob:)/.test(resolved)) throw new Error('Only HTTP, HTTPS, blob and embedded data resources are supported.');
+    return (await boundedFetch(resolved, limits.maxBytes, options.signal)).bytes;
+  }
+  const { assertValidatorPasses } = await import('./gltf-mesh-checks.js');
+  await assertValidatorPasses(options.validator, bytes, fetchResource);
+}
+
 /** Parse a bounded glTF 2.0 asset into CrucibleRenderer parts. Draco and KTX2 decoders come from options.decoders; meshopt decodes in a chunk that loads on demand, unless options.decoders.meshopt replaces it. */
 export async function parseGltf(data, options = {}) {
   const limits = limitsFor(options);
   const document = documentFrom(data, limits.maxBytes);
+  if (options.strict) await runStrictValidator(data, options, limits);
   validateDocumentReferences(document);
   const fallbackWarnings = await applyFallbacksTo(document);
   const decoders = options.decoders ?? {};
@@ -1385,7 +1419,6 @@ export async function parseGltf(data, options = {}) {
     const materials = new Map();
     const maps = options.sharedTextures?.descriptors ?? new Map();
     const nodes = [];
-    const meshNamesWithIgnoredAlpha = new Set();
     const lightNodes = [];
     const pendingTransform = new Matrix4();
     const pendingNodeMatrix = new Float32Array(16);
@@ -1435,7 +1468,12 @@ export async function parseGltf(data, options = {}) {
             };
             const { clampedWeights, boundToJointZero } = node.geometry.skinWeightRepairs ?? {};
             if (clampedWeights) onRepair(`${clampedWeights} negative skin weight(s) were clamped to 0${boundToJointZero ? `; ${boundToJointZero} vertex(es) bound to joint 0` : ''}`);
-            const converted = await convertGeometry(node.geometry, primitive, secondUvSet, () => meshNamesWithIgnoredAlpha.add(node.name), onRepair, checkpoint);
+            const onNote = reason => {
+              const warning = `Checked ${primitiveLabel(document, association.meshes, association.primitives)}: ${reason}.`;
+              if (!warnings.includes(warning)) warnings.push(warning);
+            };
+            const meshChecks = { enabled: options.checkMesh === true, maxTriangles: limits.maxCheckedTriangles, keepDegenerateTriangles: options.keepDegenerateTriangles === true, onNote };
+            const converted = await convertGeometry(node.geometry, primitive, secondUvSet, onRepair, checkpoint, meshChecks);
             if (converted.uvs) bakeUvTransform(converted.uvs, uvTransform);
             await settleVertexTangents(converted, material.normalMap, uvTransform, onRepair);
             geometries.set(geometryKey, converted);
@@ -1508,9 +1546,6 @@ export async function parseGltf(data, options = {}) {
     }
     const { lights, warnings: lightWarnings } = readPunctualLights(document, lightNodes);
     warnings.push(...lightWarnings);
-    if (meshNamesWithIgnoredAlpha.size) {
-      warnings.push(`Ignored the alpha of RGBA COLOR_0 vertex colors in ${[...meshNamesWithIgnoredAlpha].join(', ')}; only the RGB is used.`);
-    }
     const sourceNodes = new Map();
     for (const node of nodes) {
       const index = node.association.nodes;

@@ -37,6 +37,7 @@ import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, des
 // The grid is textured, and replaceParts takes a textured part only with this module loaded.
 import './replace-textured-parts.js';
 import { clearStudioDraft, createDraftNotice, DRAFT_SAVE_DELAY_MILLISECONDS, draftDiffersFrom, loadStudioDraft, saveStudioDraft } from './studio-draft.js';
+import { createBakeMark } from './studio-bake-mark.js';
 import { createPostPassNotice, createPostPassPlanner, installPostPasses, sceneHasPostPasses } from './studio-post-passes.js';
 import { CONTEXT_LOST_MESSAGE, createPausedPictureNotice, describeFrameFailure, watchContextLoss } from './studio-context-loss.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
@@ -1771,6 +1772,10 @@ export function createStudio(container, {
     documentReference,
     createIcon: iconName => createIcon(documentReference, iconName),
   });
+  const bakeMark = createBakeMark({
+    documentReference,
+    createIcon: iconName => createIcon(documentReference, iconName),
+  });
   const draftNotice = createDraftNotice({
     documentReference,
     createIcon: iconName => createIcon(documentReference, iconName),
@@ -1779,7 +1784,7 @@ export function createStudio(container, {
   });
   const stopWatchingDiagnostics = watchStudioDiagnostics(studioDiagnostics, { windowReference: documentReference.defaultView, canvas });
   const stopWatchingContextLoss = watchContextLoss(canvas, { onLost: pauseForContextLoss, onRestored: recoverFromContextLoss });
-  viewportElement.append(canvas, maskFilterSvg, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, dropOverlay, pausedNotice.element, postPassNotice.element, draftNotice.element);
+  viewportElement.append(canvas, maskFilterSvg, gizmoSvg, agentPresence.element, viewWidget.element, readout, hintBar, statusRegion, bakeMark.element, dropOverlay, pausedNotice.element, postPassNotice.element, draftNotice.element);
 
   // Right 4-Tab Inspector Dock (Modern Web Guidance: tabs pattern)
   const tabLabels = { node: 'Object', material: 'Material', look: 'Look', camera: 'Camera' };
@@ -2497,6 +2502,9 @@ export function createStudio(container, {
     if (contextLost) {
       throw new Error(CONTEXT_LOST_MESSAGE);
     }
+    // A still has the light a fresh build has, so a bake that is still running finishes first.
+    controller.settleBake();
+    bakeMark.show(controller.bakePending);
     capturingStill = true;
     try {
       renderPass();
@@ -4079,6 +4087,7 @@ export function createStudio(container, {
   }
 
   handleChange = detail => {
+    bakeMark.show(controller.bakePending);
     // The deferred near-coplanar search settled (#2905): the parts to draw changed with no edit, so the idle viewport redraws once.
     if (detail.kind === 'flush') {
       requestFrame();
