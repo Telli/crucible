@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
-import { KTX2_EXTENSION, TOKTX_ADVICE, encodeGlbKtx2, findToktx, imageKindsOf, parseArguments } from '../scripts/encode-glb-ktx2.mjs';
+import { ENCODER_ARGUMENTS, KTX2_EXTENSION, TOKTX_ADVICE, createToktxEncoder, encodeGlbKtx2, findToktx, imageKindsOf, parseArguments } from '../scripts/encode-glb-ktx2.mjs';
 import { readGlb, writeGlb } from '../scripts/recode-glb-textures.mjs';
 import { transcodeKtx2Glb } from '../scripts/agent-ktx2.mjs';
 
@@ -103,4 +103,27 @@ test('findToktx names the install advice, and parseArguments rejects unknown opt
   assert.deepEqual(parseArguments(['a.glb', 'b.glb', '--max-texture', '1024', '--threads', '4']).options, { maxTexture: 1024, threads: 4, toktx: undefined });
   assert.throws(() => parseArguments(['a.glb', 'b.glb', '--bogus', '1']), /Unknown or invalid option/);
   assert.throws(() => parseArguments(['a.glb']), /Pass <input.glb> and <output.glb>/);
+});
+
+// Transfer function byte of the first data format descriptor (KTX2 header: dfdByteOffset at 48; block header 8 bytes after the total size).
+const TRANSFER_SRGB = 2;
+const TRANSFER_LINEAR = 1;
+function transferFunctionOf(ktx2) {
+  return ktx2[ktx2.readUInt32LE(48) + 4 + 8 + 2];
+}
+
+test('colour maps are tagged sRGB and data and normal maps linear', async () => {
+  const oetfOf = kind => ENCODER_ARGUMENTS[kind][ENCODER_ARGUMENTS[kind].indexOf('--assign_oetf') + 1];
+  assert.deepEqual(['colour', 'data', 'normal'].map(oetfOf), ['srgb', 'linear', 'linear']);
+  let toktxPath;
+  try {
+    toktxPath = findToktx();
+  } catch {
+    return;
+  }
+  const encode = createToktxEncoder(toktxPath, 1);
+  const png = await solidImage(16, 16, 'png');
+  assert.equal(transferFunctionOf(await encode(png, 'colour')), TRANSFER_SRGB);
+  assert.equal(transferFunctionOf(await encode(png, 'data')), TRANSFER_LINEAR);
+  assert.equal(transferFunctionOf(await encode(png, 'normal')), TRANSFER_LINEAR);
 });

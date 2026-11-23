@@ -24,7 +24,7 @@ const MAXIMUM_NORMAL_EDGE = 1024;
 const COLOUR_SLOTS = new Set(['baseColorTexture', 'emissiveTexture', 'sheenColorTexture', 'specularColorTexture']);
 const NORMAL_SLOTS = new Set(['normalTexture', 'clearcoatNormalTexture']);
 // The packs' encodings: ETC1S for colour and data maps, UASTC with RDO and zstd for normal maps.
-const ENCODER_ARGUMENTS = {
+export const ENCODER_ARGUMENTS = {
   colour: ['--encode', 'etc1s', '--clevel', '0', '--qlevel', '128', '--assign_oetf', 'srgb', '--assign_primaries', 'bt709'],
   data: ['--encode', 'etc1s', '--clevel', '0', '--qlevel', '128', '--assign_oetf', 'linear', '--assign_primaries', 'none'],
   normal: ['--encode', 'uastc', '--uastc_quality', '1', '--uastc_rdo_l', '2', '--zcmp', '18', '--assign_oetf', 'linear', '--assign_primaries', 'none'],
