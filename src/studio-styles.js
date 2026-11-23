@@ -398,6 +398,32 @@ export const STUDIO_CSS = `
 .crucible-studio-pass-notice p { margin: 0; text-wrap: balance; }
 .crucible-studio-pass-notice .crucible-studio-icon { flex: none; color: var(--studio-accent); }
 
+/* Shown while an edit's light bake runs. It sits under the status pill, the one place the viewport keeps for state, and does not take clicks. */
+.crucible-studio-bake-mark {
+  position: absolute;
+  inset-inline-start: 50%;
+  inset-block-start: calc(var(--studio-top) + 38px);
+  transform: translateX(-50%);
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 15px;
+  color: var(--studio-text);
+  font-family: var(--studio-font);
+  font-size: 12px;
+  inline-size: max-content;
+  pointer-events: none;
+  z-index: 7;
+}
+.crucible-studio-bake-mark[hidden] { display: none; }
+.crucible-studio-bake-mark .crucible-studio-icon { flex: none; color: var(--studio-accent); }
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-bake-mark { inset-block-start: calc(var(--studio-edge) + 38px); }
+@media (prefers-reduced-motion: no-preference) {
+  .crucible-studio-bake-mark .crucible-studio-icon { animation: crucible-studio-bake-pulse 1.6s ease-in-out infinite; }
+  @keyframes crucible-studio-bake-pulse {
+    50% { opacity: 0.45; }
+  }
+}
+
 .crucible-studio-menubar {
   position: absolute;
   inset: var(--studio-edge) var(--studio-edge) auto;
