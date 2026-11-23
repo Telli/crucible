@@ -475,8 +475,12 @@ export function installUserPasses(renderer) {
     inputs.bind(context, pass, locations);
     const readsObjectIds = identifiers.length > 0 || Boolean(pass.needs?.includes('objectId'));
     if (readsObjectIds) {
+      const objectIdTexture = renderer.passSupport?.texture;
+      if (!objectIdTexture) {
+        throw new Error('A user pass with objects or needs: ["objectId"] requires the objectId pass first. Call renderer.render({ ...frame, pass: "objectId" }) before renderer.render(frame).');
+      }
       context.activeTexture(context.TEXTURE2);
-      context.bindTexture(context.TEXTURE_2D, renderer.passSupport.texture);
+      context.bindTexture(context.TEXTURE_2D, objectIdTexture);
       context.uniform1i(locations.sceneObjectIds, 2);
     }
     context.drawArrays(context.TRIANGLES, 0, 3);
@@ -587,11 +591,23 @@ export function installUserPasses(renderer) {
     inputs.prune(context, state.passes);
   }
 
-  // A pass that lists `needs` reads render passes drawn from this frame's camera, so they are drawn here, before the lit frame.
+  // A pass that lists `needs` or `objects` reads render passes drawn from this frame's camera, so they are drawn here before the lit frame unless the host already drew `objectId`.
+  let objectIdDrawn = false;
   const render = renderer.render;
   renderer.render = function renderWithPassInputs(frame, ...rest) {
-    const drawsLitFrame = state.passes.length > 0 && !frame.pass && !frame.reflectionTarget && !this.benchmark;
-    if (drawsLitFrame) inputs.draw(passFrame => render.call(this, passFrame, ...rest), frame, state.passes);
+    if (frame?.pass) {
+      const result = render.call(this, frame, ...rest);
+      objectIdDrawn = frame.pass === 'objectId';
+      return result;
+    }
+    const drawsLitFrame = state.passes.length > 0 && !frame?.reflectionTarget && !this.benchmark;
+    if (drawsLitFrame) {
+      try {
+        inputs.draw(passFrame => render.call(this, passFrame, ...rest), frame, state.passes, { objectIdDrawn });
+      } finally {
+        objectIdDrawn = false;
+      }
+    }
     return render.call(this, frame, ...rest);
   };
 
