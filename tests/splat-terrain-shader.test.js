@@ -55,7 +55,7 @@ async function drawSplatTerrain(page, { withGrass, withEnvironment, withGlass = 
     if (withGrass) parts.push(...scatterVegetation({ area: { minX: -20, maxX: 20, minZ: -20, maxZ: 20 }, density: 0.01, variants: 1, seed: 5, terrainHeight: terrain.heightAt }).parts);
     if (withGlass) {
       const { box } = await import('/src/geometry.js');
-      parts.push({ name: 'glass', geometry: box(0.2, 1), matrix: new Float32Array([4, 0, 0, 0, 0, 0.2, 0, 0, 0, 0, 4, 0, 0, 2.5, 0, 1]), material: { color: [0.2, 1, 1], metallic: 0, roughness: 0.1, alphaMode: 'blend', opacity: 0.5 }, castShadow: glassCastsShadow });
+      parts.push({ name: 'glass', geometry: box(0.2, 1), matrix: new Float32Array([3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 2, 0, 1]), material: { color: [0.2, 1, 1], metallic: 0, roughness: 0.1, alphaMode: 'blend', opacity: 0.5 }, castShadow: glassCastsShadow });
     }
     // Reads the sampler uniforms of the linked program: how many the fragment stage reads, the highest unit and any unit
     // that two samplers of different types share.
@@ -92,7 +92,7 @@ async function drawSplatTerrain(page, { withGrass, withEnvironment, withGlass = 
       audit = auditSamplerUnits(renderer.context, renderer.program);
       audit.splatBatchesBlind = renderer.batches?.filter(batch => batch.splat && batch.tintBlind).length ?? -1;
       const buffer = new Uint8Array(96 * 96 * 4);
-      renderer.render({ eye: [0, 12, 8], target: [0, 0, 0], time: 0 });
+      renderer.render({ eye: [1, 16, -1.1], target: [1, 0, -1], time: 0 });
       renderer.context.readPixels(0, 0, 96, 96, renderer.context.RGBA, renderer.context.UNSIGNED_BYTE, buffer);
       pixels = Array.from(buffer);    } catch (error) {
       failure = error.message;
