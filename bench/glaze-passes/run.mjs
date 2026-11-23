@@ -1,5 +1,6 @@
 // Times each Glaze pass on the GPU for scene files: node bench/glaze-passes/run.mjs <out.json> <scene-directory>[,<scene-directory>...] [whole]
 // Add '"capture":true' to the overrides to write one full frame per scene to <out.json>.<scene>.rgba (compare two with diff-frames.mjs).
+// Add '"profile":{"frames":150,"rounds":3,"cameras":[{"name":"courtyard","eye":[...],"target":[...]}]}' to time the whole frame and each pass on one scale; '"experiment":"overdraw"' counts fragments per pixel. '"engine":"three"' takes the same cameras and rounds.
 // A scene directory holds scene.json, scene.glb and sky.hdr as written for the Blender demo scenes (see src/file-scene.js).
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';

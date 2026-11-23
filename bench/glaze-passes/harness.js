@@ -4,17 +4,13 @@ import { createSharedTextures, loadGltf } from '../../src/gltf.js';
 import { loadHdri } from '../../src/hdri.js';
 import { addLodsToDenseParts, withSceneFileRendererDefaults } from '../../src/dense-lods.js';
 import { createCascadedShadows } from '../../src/cascaded-shadows.js';
+import { blockMedians, median, rotatedOrder, summarizeAfterWarmup, summarizeRounds } from './frame-statistics.mjs';
 
 const WARMUP_FRAMES = 20;
 const NANOSECONDS_PER_MILLISECOND = 1e6;
 const ONE_PIXEL = new Uint8Array(4);
 const OTHER_SEGMENT = 'opaque or other';
 const TIMED_METHODS = ['createShadowMap', 'updateLocalShadows', 'drawEnvironmentBackground', 'drawTranslucent', 'drawBlendBatches', 'resolveFrame'];
-
-function median(values) {
-  const sorted = [...values].sort((first, second) => first - second);
-  return sorted[Math.floor(sorted.length / 2)];
-}
 
 // One GPU timer query may run at a time, so the frame is cut into consecutive segments: each timed method closes the
 // segment that was open and opens its own, and the code after it belongs to the segment named OTHER_SEGMENT.
@@ -23,6 +19,7 @@ function createSegmentTimer(context) {
   if (!extension) throw new Error('This browser has no EXT_disjoint_timer_query_webgl2.');
   let open = null;
   let frameSegments = [];
+  let segmentsEnabled = true;
   const finishedFrames = [];
   return {
     start(name) {
@@ -62,12 +59,16 @@ function createSegmentTimer(context) {
       return ready;
     },
     pendingFrames: () => finishedFrames.length,
+    // With segments off the timed methods run untimed, so one query can cover the whole frame.
+    setSegmentsEnabled(enabled) { segmentsEnabled = enabled; },
+    segmentsEnabled: () => segmentsEnabled,
   };
 }
 
 function wrapSegment(owner, methodName, timer) {
   const original = owner[methodName].bind(owner);
   owner[methodName] = (...parameters) => {
+    if (!timer.segmentsEnabled()) return original(...parameters);
     timer.start(methodName);
     const result = original(...parameters);
     timer.start(OTHER_SEGMENT);
@@ -104,7 +105,7 @@ const SHADER_CUTS = [
   { name: 'cut-metallic-roughness-map', from: 'if (USES_METALLIC_ROUGHNESS_MAP) {', to: 'if (false) {' },
 ];
 
-window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, denseLods = false, denseLodsMinimumTriangles = undefined, experiment = null, sequence = null }) {
+window.measureScene = async function measureScene({ description, glbUrl, hdriUrl, frames = 200, capture = false, alternate = false, segmented = true, width = 1280, height = 720, rendererOverrides = {}, denseLods = false, denseLodsMinimumTriangles = undefined, experiment = null, sequence = null, profile = null }) {
   const canvas = document.querySelector('#viewport');
   const experiments = new Set(String(experiment ?? '').split(','));
   if (experiments.has('no-invariant')) {
@@ -141,7 +142,7 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
       return originalSource.call(this, shader, cutSource);
     };
   }
-  if (experiment === 'trivial-fragment') replaceColourShaders(false);
+  if (experiment === 'trivial-fragment' || experiment === 'overdraw') replaceColourShaders(false);
   if (experiment === 'trivial-both') replaceColourShaders(true);
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
@@ -165,6 +166,12 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
   // The renderer's own timer would open a query inside ours, and WebGL allows one at a time.
   renderer.gpuTimer = null;
   const frame = { exposure: description.exposure ?? 1, ...(description.frame ?? {}), eye: description.eye, target: description.target };
+  if (experiment === 'overdraw') return measureOverdraw({ renderer, context, canvas, frame });
+  if (segmented || profile) {
+    for (const methodName of TIMED_METHODS) wrapSegment(renderer, methodName, timer);
+    if (renderer.shadowCascades) wrapSegment(renderer.shadowCascades, 'update', timer);
+  }
+  if (profile) return { ...await measureProfile({ renderer, context, canvas, timer, frame, ...profile }), ...describeRun(context, canvas, width, height, renderer), lodBuildMs, drawCounts: countDrawCalls(renderer, context, frame) };
   if (experiment === 'discard') {
     // Vertex work only: the rasterizer throws every triangle away, so no pixel is shaded.
     const originalDraw = renderer.drawAlphaBatch.bind(renderer);
@@ -179,10 +186,6 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
     // The depth prepass alone: the colour draws are skipped, to price the prepass by itself.
     const shadeBatch = renderer.drawShadedBatch.bind(renderer);
     renderer.drawShadedBatch = (...parameters) => (prepassOnly ? undefined : shadeBatch(...parameters));
-  }
-  if (segmented) {
-    for (const methodName of TIMED_METHODS) wrapSegment(renderer, methodName, timer);
-    if (renderer.shadowCascades) wrapSegment(renderer.shadowCascades, 'update', timer);
   }
   const perSegment = {};
   const wallMilliseconds = [];
@@ -277,6 +280,7 @@ window.measureScene = async function measureScene({ description, glbUrl, hdriUrl
     sequenceTriangles,
     centerPixel: Array.from(ONE_PIXEL),
     glError: context.getError(),
+    ...describeRun(context, canvas, width, height, renderer),
   };
 };
 window.harnessReady = true;
@@ -343,4 +347,174 @@ async function captureSequence({ renderer, context, canvas, frame, eye, target, 
     await window.deliverFrame(index, btoa(binary));
   }
   return triangleCounts;
+}
+
+function describeRun(context, canvas, width, height, renderer) {
+  const debugInfo = context.getExtension('WEBGL_debug_renderer_info');
+  return {
+    glRenderer: debugInfo ? context.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'unknown',
+    resolution: [canvas.width, canvas.height],
+    requestedResolution: [width, height],
+    msaaSamples: renderer.samples ?? null,
+  };
+}
+
+// One frame counted the way the plain mode does: the draw calls and triangles Glaze sends after culling and level selection.
+function countDrawCalls(renderer, context, frame) {
+  const counts = { drawCalls: 0, triangles: 0 };
+  const originalDrawInstanced = context.drawElementsInstanced.bind(context);
+  context.drawElementsInstanced = (mode, count, type, offset, instances) => {
+    counts.drawCalls++;
+    counts.triangles += (count / 3) * instances;
+    return originalDrawInstanced(mode, count, type, offset, instances);
+  };
+  renderer.render(frame);
+  context.drawElementsInstanced = originalDrawInstanced;
+  return counts;
+}
+
+// Renders warm-up plus counted frames and returns, per frame, the GPU milliseconds (whole frame, or one entry per pass when
+// the timer's segments are on) and the wall milliseconds around render and a one pixel read back. Warm-up frames are included
+// so the caller decides what to drop. The same loop times every mode of the profile, which is what makes them comparable.
+async function timeFrames({ renderer, context, canvas, timer, frame, frames, warmupFrames = WARMUP_FRAMES, segmented }) {
+  const wall = [];
+  const gpu = [];
+  const collect = ready => ready.forEach(milliseconds => gpu.push(milliseconds));
+  timer.setSegmentsEnabled(segmented);
+  for (let index = 0; index < warmupFrames + frames; index++) {
+    const started = performance.now();
+    timer.start(segmented ? 'setup before first pass' : 'whole frame');
+    renderer.render(frame);
+    timer.endFrame();
+    context.readPixels(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1, context.RGBA, context.UNSIGNED_BYTE, ONE_PIXEL);
+    wall.push(performance.now() - started);
+    collect(timer.drain());
+  }
+  for (let attempt = 0; attempt < 200 && timer.pendingFrames(); attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    collect(timer.drain());
+  }
+  return { wall, gpu };
+}
+
+function totalOf(milliseconds) {
+  return Object.values(milliseconds).reduce((sum, value) => sum + value, 0);
+}
+
+// Every mode on one scale, in one page and one renderer: a cold run (to show whether the first frames cost more), then for each
+// camera `rounds` rounds that alternate the whole-frame query and the per-pass queries in rotating order.
+async function measureProfile({ renderer, context, canvas, timer, frame, cameras = [], rounds = 3, frames = 150, coldFrames = 300, coldBlockSize = 25 }) {
+  const cold = await timeFrames({ renderer, context, canvas, timer, frame, frames: coldFrames, warmupFrames: 0, segmented: false });
+  const coldGpu = cold.gpu.map(totalOf);
+  const coldStart = {
+    blockSize: coldBlockSize,
+    gpuBlockMediansMs: blockMedians(coldGpu, coldBlockSize),
+    wallBlockMediansMs: blockMedians(cold.wall, coldBlockSize),
+    gpuAfterWarmup: summarizeAfterWarmup(coldGpu, WARMUP_FRAMES),
+  };
+  const perCamera = {};
+  for (const camera of cameras.length ? cameras : [{ name: 'scene', eye: frame.eye, target: frame.target }]) {
+    const cameraFrame = { ...frame, eye: camera.eye, target: camera.target };
+    const wholeGpu = [];
+    const wholeWall = [];
+    const segmentTotals = [];
+    const segmentWall = [];
+    const segmentRounds = {};
+    for (let round = 0; round < rounds; round++) {
+      for (const mode of rotatedOrder(['whole', 'segmented'], round)) {
+        const segmented = mode === 'segmented';
+        const result = await timeFrames({ renderer, context, canvas, timer, frame: cameraFrame, frames, segmented });
+        const gpuFrames = result.gpu.slice(WARMUP_FRAMES);
+        const wallFrames = result.wall.slice(WARMUP_FRAMES);
+        if (!segmented) {
+          wholeGpu.push(median(gpuFrames.map(totalOf)));
+          wholeWall.push(median(wallFrames));
+          continue;
+        }
+        segmentTotals.push(median(gpuFrames.map(totalOf)));
+        segmentWall.push(median(wallFrames));
+        for (const name of new Set(gpuFrames.flatMap(milliseconds => Object.keys(milliseconds)))) {
+          (segmentRounds[name] ??= []).push(median(gpuFrames.map(milliseconds => milliseconds[name] ?? 0)));
+        }
+      }
+    }
+    perCamera[camera.name] = {
+      eye: camera.eye,
+      target: camera.target,
+      wholeFrame: { gpuMs: summarizeRounds(wholeGpu), wallMs: summarizeRounds(wholeWall), roundGpuMedians: wholeGpu.map(value => Number(value.toFixed(3))) },
+      perPass: {
+        gpuTotalMs: summarizeRounds(segmentTotals),
+        wallMs: summarizeRounds(segmentWall),
+        passMedianMs: Object.fromEntries(Object.entries(segmentRounds).map(([name, values]) => [name, summarizeRounds(values)])),
+      },
+    };
+  }
+  return { coldStart, perCamera, rounds, frames, warmupFrames: WARMUP_FRAMES };
+}
+
+// Depth complexity of the main colour pass: the colour shader is replaced by one that writes 1, the draws add into the
+// multisampled colour buffer (blend ONE, ONE), and the buffer is blended down and read back. With the depth test on the count is what
+// the frame shades in Glaze's draw order (cutout materials count whole, the replaced shader has no discard); with it off it is
+// every fragment the triangles produce.
+async function measureOverdraw({ renderer, context, canvas, frame }) {
+  const { width, height } = canvas;
+  renderer.drawEnvironmentBackground = () => false;
+  renderer.drawTranslucent = () => {};
+  renderer.drawBlendBatches = () => {};
+  const originalClear = context.clear.bind(context);
+  context.clear = mask => {
+    context.clearColor(0, 0, 0, 0);
+    return originalClear(mask);
+  };
+  let depthTestOn = true;
+  const drawIntoColourBuffer = () => context.getParameter(context.FRAMEBUFFER_BINDING) === renderer.multisampleFramebuffer;
+  for (const drawName of ['drawElementsInstanced', 'drawElements']) {
+    const originalDraw = context[drawName].bind(context);
+    context[drawName] = (...parameters) => {
+      if (drawIntoColourBuffer()) {
+        context.enable(context.BLEND);
+        context.blendFunc(context.ONE, context.ONE);
+        context.disable(context.SAMPLE_ALPHA_TO_COVERAGE);
+        if (depthTestOn) context.enable(context.DEPTH_TEST);
+        else context.disable(context.DEPTH_TEST);
+      }
+      return originalDraw(...parameters);
+    };
+  }
+  const counts = new Float32Array(width * height * 4);
+  const resolved = context.createFramebuffer();
+  const target = context.createRenderbuffer();
+  context.bindRenderbuffer(context.RENDERBUFFER, target);
+  context.renderbufferStorage(context.RENDERBUFFER, context.RGBA16F, width, height);
+  context.bindFramebuffer(context.FRAMEBUFFER, resolved);
+  context.framebufferRenderbuffer(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.RENDERBUFFER, target);
+  renderer.resolveFrame = () => {
+    context.bindFramebuffer(context.READ_FRAMEBUFFER, renderer.multisampleFramebuffer);
+    context.bindFramebuffer(context.DRAW_FRAMEBUFFER, resolved);
+    context.blitFramebuffer(0, 0, width, height, 0, 0, width, height, context.COLOR_BUFFER_BIT, context.NEAREST);
+    context.bindFramebuffer(context.READ_FRAMEBUFFER, resolved);
+    context.readPixels(0, 0, width, height, context.RGBA, context.FLOAT, counts);
+  };
+  const result = {};
+  for (const [name, withDepthTest] of [['depthTestOn', true], ['depthTestOff', false]]) {
+    depthTestOn = withDepthTest;
+    renderer.render(frame);
+    const perPixel = [];
+    for (let index = 0; index < counts.length; index += 4) perPixel.push(counts[index]);
+    const covered = perPixel.filter(value => value > 0);
+    const sorted = [...covered].sort((first, second) => first - second);
+    const percentile = fraction => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))] ?? 0;
+    const sum = perPixel.reduce((total, value) => total + value, 0);
+    result[name] = {
+      fragmentsPerPixel: Number((sum / perPixel.length).toFixed(2)),
+      fragmentsPerCoveredPixel: Number((sum / Math.max(1, covered.length)).toFixed(2)),
+      coveredFraction: Number((covered.length / perPixel.length).toFixed(4)),
+      p50: percentile(0.5),
+      p95: percentile(0.95),
+      p99: percentile(0.99),
+      max: sorted.at(-1) ?? 0,
+      shareOfPixelsAbove4: Number((covered.filter(value => value > 4).length / perPixel.length).toFixed(4)),
+    };
+  }
+  return { overdraw: result, canvas: [width, height], glError: context.getError(), ...describeRun(context, canvas, width, height, renderer) };
 }

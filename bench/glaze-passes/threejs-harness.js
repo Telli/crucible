@@ -3,17 +3,13 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { median, summarizeRounds } from './frame-statistics.mjs';
 
 const WARMUP_FRAMES = 20;
 const NANOSECONDS_PER_MILLISECOND = 1e6;
 const ONE_PIXEL = new Uint8Array(4);
 
-function median(values) {
-  const sorted = [...values].sort((first, second) => first - second);
-  return sorted[Math.floor(sorted.length / 2)];
-}
-
-window.measureThree = async function measureThree({ description, glbUrl, hdriUrl, frames = 200, width = 1280, height = 720 }) {
+window.measureThree = async function measureThree({ description, glbUrl, hdriUrl, frames = 200, width = 1280, height = 720, cameras = [], rounds = 1 }) {
   const canvas = document.querySelector('#viewport');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(1);
@@ -45,38 +41,65 @@ window.measureThree = async function measureThree({ description, glbUrl, hdriUrl
   camera.position.fromArray(description.eye);
   camera.lookAt(new THREE.Vector3().fromArray(description.target));
 
-  const wallMilliseconds = [];
-  const gpuMilliseconds = [];
-  const pending = [];
-  const drain = () => {
-    while (pending.length) {
-      const query = pending[0];
-      if (!context.getQueryParameter(query, context.QUERY_RESULT_AVAILABLE)) return;
-      pending.shift();
-      if (!context.getParameter(timerExtension.GPU_DISJOINT_EXT)) gpuMilliseconds.push(context.getQueryParameter(query, context.QUERY_RESULT) / NANOSECONDS_PER_MILLISECOND);
+  const timeRound = async () => {
+    const wallMilliseconds = [];
+    const gpuMilliseconds = [];
+    const pending = [];
+    const drain = () => {
+      while (pending.length) {
+        const query = pending[0];
+        if (!context.getQueryParameter(query, context.QUERY_RESULT_AVAILABLE)) return;
+        pending.shift();
+        const disjoint = context.getParameter(timerExtension.GPU_DISJOINT_EXT);
+        const milliseconds = context.getQueryParameter(query, context.QUERY_RESULT) / NANOSECONDS_PER_MILLISECOND;
+        context.deleteQuery(query);
+        if (!disjoint) gpuMilliseconds.push(milliseconds);
+      }
+    };
+    for (let index = 0; index < WARMUP_FRAMES + frames; index++) {
+      const started = performance.now();
+      const query = context.createQuery();
+      context.beginQuery(timerExtension.TIME_ELAPSED_EXT, query);
+      renderer.render(scene, camera);
+      context.endQuery(timerExtension.TIME_ELAPSED_EXT);
+      pending.push(query);
+      context.readPixels(Math.floor(width / 2), Math.floor(height / 2), 1, 1, context.RGBA, context.UNSIGNED_BYTE, ONE_PIXEL);
+      if (index >= WARMUP_FRAMES) wallMilliseconds.push(performance.now() - started);
+      drain();
     }
+    for (let attempt = 0; attempt < 200 && pending.length; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      drain();
+    }
+    return { gpuMedianMs: median(gpuMilliseconds.slice(WARMUP_FRAMES)), wallMedianMs: median(wallMilliseconds) };
   };
-  for (let index = 0; index < WARMUP_FRAMES + frames; index++) {
-    const started = performance.now();
-    const query = context.createQuery();
-    context.beginQuery(timerExtension.TIME_ELAPSED_EXT, query);
-    renderer.render(scene, camera);
-    context.endQuery(timerExtension.TIME_ELAPSED_EXT);
-    pending.push(query);
-    context.readPixels(Math.floor(width / 2), Math.floor(height / 2), 1, 1, context.RGBA, context.UNSIGNED_BYTE, ONE_PIXEL);
-    if (index >= WARMUP_FRAMES) wallMilliseconds.push(performance.now() - started);
-    drain();
+  const perCamera = {};
+  const cameraList = cameras.length ? cameras : [{ name: 'scene', eye: description.eye, target: description.target }];
+  let counts = null;
+  for (const entry of cameraList) {
+    camera.position.fromArray(entry.eye);
+    camera.lookAt(new THREE.Vector3().fromArray(entry.target));
+    const gpuRounds = [];
+    const wallRounds = [];
+    for (let round = 0; round < rounds; round++) {
+      const result = await timeRound();
+      gpuRounds.push(result.gpuMedianMs);
+      wallRounds.push(result.wallMedianMs);
+    }
+    counts ??= { drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles };
+    perCamera[entry.name] = { wholeFrame: { gpuMs: summarizeRounds(gpuRounds), wallMs: summarizeRounds(wallRounds) } };
   }
-  for (let attempt = 0; attempt < 200 && pending.length; attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 10));
-    drain();
-  }
+  const first = Object.values(perCamera)[0].wholeFrame;
+  const debugInfo = context.getExtension('WEBGL_debug_renderer_info');
   return {
-    drawCalls: renderer.info.render.calls,
-    triangles: renderer.info.render.triangles,
-    wallMedianMs: Number(median(wallMilliseconds).toFixed(3)),
-    gpuTotalMedianMs: Number(median(gpuMilliseconds.slice(WARMUP_FRAMES)).toFixed(3)),
+    ...counts,
+    wallMedianMs: first.wallMs.median,
+    gpuTotalMedianMs: first.gpuMs.median,
+    perCamera,
+    rounds,
     centerPixel: Array.from(ONE_PIXEL),
+    glRenderer: debugInfo ? context.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'unknown',
+    resolution: [canvas.width, canvas.height],
     glError: context.getError(),
   };
 };
