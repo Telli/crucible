@@ -16,6 +16,23 @@ import { estimateOutputBytes } from './agent-render-estimate.mjs';
 import { iconArtifactNames, normalizeIconSettings } from '../src/icon-sheet.js';
 
 const UUID =/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+// A job that throws an Error with an empty message, or a value that is not an Error, must still tell the agent what failed.
+function describeFailure(error) {
+  const message = typeof error === 'string' ? error : error?.message;
+  if (typeof message === 'string' && message.trim() !== '') return message;
+  return `Render job failed: the render stopped with no message (${describeThrownValue(error)}). Read the server's stderr for details, then call scene_render_submit again.`;
+}
+
+function describeThrownValue(error) {
+  if (error === null || error === undefined) return String(error);
+  if (typeof error !== 'object') return `${typeof error} ${JSON.stringify(error)}`;
+  try {
+    return `${error.name ?? 'object'} ${JSON.stringify(error)}`;
+  } catch {
+    return error.name ?? 'object';
+  }
+}
+
 const STATES = ['queued', 'running', 'finalizing', 'completed', 'cancelling', 'cancelled', 'failed', 'interrupted'];
 const TERMINAL = new Set(['completed', 'cancelled', 'failed', 'interrupted']);
 /** Hard ceiling on one job's elapsed time. The deadline below it grows with the job's frames and pixels. */
@@ -1278,7 +1295,7 @@ export async function createAgentRenderJobs({ root, run, acquireGpu, limits: inp
       if (controller.signal.aborted) throw controller.signal.reason;
       Object.assign(record, completedRecord);
     } catch (error) {
-      const failedRecord = { ...record, state: controller.signal.aborted && !job.failure ? 'cancelled' : 'failed', reason: String(job.failure ?? error?.message ?? error).slice(0, 2048), artifacts: [] };
+      const failedRecord = { ...record, state: controller.signal.aborted && !job.failure ? 'cancelled' : 'failed', reason: String(job.failure ?? describeFailure(error)).slice(0, 2048), artifacts: [] };
       try {
         const directory = await directoryFor(record.jobId);
         for (const filename of renamed) {
