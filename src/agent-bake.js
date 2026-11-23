@@ -1,5 +1,6 @@
 import { invalidField } from './field-error.js';
-import { planLightmaps, estimateBake, traceLightmaps, clearUnwrapReuse, MAX_BAKE_TEXELS } from './light-bake.js';
+import { planLightmaps, estimateBake, traceLightmaps, traceLightmapsSteps, clearUnwrapReuse, MAX_BAKE_TEXELS } from './light-bake.js';
+import { drainSteps, createFlushSearchRunner } from './flush-search-runner.js';
 import { contentFingerprint, ownedCopy, retainedBytes } from './content-fingerprint.js';
 import { runKernel } from './kernel-offload.js';
 import { motionEnvironment } from './agent-motion.js';
@@ -287,15 +288,28 @@ export function bakeSecondsLimit() {
   return runsOnWorker() ? BAKE_WORKER_MAXIMUM_SECONDS : BAKE_MAXIMUM_SECONDS;
 }
 
-function traceWithAdvice(plan, used) {
+function* traceWithAdvice(plan, used) {
   try {
-    return traceLightmaps(plan, used);
+    return yield* withoutPauses(plan, traceLightmapsSteps(plan, used));
   } catch (error) {
     if (/passed maxSeconds/.test(error.message)) {
       throw new Error(timeLimitMessage(error, used));
     }
     throw error;
   }
+}
+
+// The time limit of a bake counts the time it runs. A bake run in slices is paused between two of them, and that time is not
+// charged: the plan's start moves forward by each pause.
+function* withoutPauses(plan, steps) {
+  let step = steps.next();
+  while (!step.done) {
+    const pausedAt = performance.now();
+    yield;
+    plan.started += performance.now() - pausedAt;
+    step = steps.next();
+  }
+  return step.value;
 }
 
 /**
@@ -305,9 +319,15 @@ function traceWithAdvice(plan, used) {
  * the same RangeError here as it would inline, and the worker sends it back with its message.
  */
 export function bakeChangedParts(snapshots, lighting, settings) {
+  return drainSteps(bakeChangedPartsSteps(snapshots, lighting, settings));
+}
+
+/** bakeChangedParts as steps (#3052): the same answer, with a checkpoint every few dozen texels for a bake run in slices. */
+function* bakeChangedPartsSteps(snapshots, lighting, settings) {
   const plan = planLightmaps(snapshots, lighting, { ...settings, maxSeconds: bakeSecondsLimit() });
+  yield;
   const { used, reduced, reduction } = fitSettingsToBudget(plan, settings);
-  const { parts, report } = traceWithAdvice(plan, used);
+  const { parts, report } = yield* traceWithAdvice(plan, used);
   return { changed: changedPartsOf(parts, snapshots), report, used, reduced, reduction };
 }
 
@@ -353,7 +373,7 @@ function localVolumesNotBakedWarning(skippedVolumes) {
   return `The bake leaves out ${names}: local volumes are drawn in the post pass, so an emissive volume does not light baked surfaces and no volume dims the baked light. Light the surfaces with a point light or an emissive part.`;
 }
 
-function traceAgentBake(parts, worldMatrices, environment, settings, generatedGeometryGenerators) {
+function bakeInputs(parts, worldMatrices, environment, settings, generatedGeometryGenerators) {
   const sunScale = environment.keyIntensity ?? 1;
   const lighting = {
     pointLights: environment.pointLights,
@@ -376,10 +396,112 @@ function traceAgentBake(parts, worldMatrices, environment, settings, generatedGe
     material: { ...part.material },
     generatesGeometry: generatedGeometryGenerators.get(part.name) ?? false,
   }));
-  const outputs = reusedOrTraced(snapshots, lighting, settings, () => (settings.irradianceGrid
-    ? traceGridOutputs(snapshots, lighting, settings)
-    : traceLightmapOutputs(snapshots, lighting, settings)));
+  return { snapshots, lighting };
+}
+
+function traceAgentBake(parts, worldMatrices, environment, settings, generatedGeometryGenerators) {
+  const { snapshots, lighting } = bakeInputs(parts, worldMatrices, environment, settings, generatedGeometryGenerators);
+  const outputs = drainSteps(reusedOrTraced(snapshots, lighting, settings, function* traceInPlace() {
+    return settings.irradianceGrid ? traceGridOutputs(snapshots, lighting, settings) : traceLightmapOutputs(snapshots, lighting, settings);
+  }));
+  return placeOutputs(parts, outputs, settings);
+}
+
+function placeOutputs(parts, outputs, settings) {
   return settings.irradianceGrid ? placeGridBake(parts, outputs, settings) : placeLightmapBake(parts, outputs, settings);
+}
+
+/**
+ * Everything a bake reads, taken now: the snapshots copy each part's material, so the bake can run later (#3052), in slices,
+ * after the staged materials have gone back (see withStagedMaterials). Pass the result to `deferredBakeSteps`.
+ */
+export function prepareDeferredBake(parts, worldMatrices, environment, settings, generatedGeometryGenerators) {
+  return { parts, settings, ...bakeInputs(parts, worldMatrices, environment, settings, generatedGeometryGenerators) };
+}
+
+/**
+ * The bake of `prepareDeferredBake` as steps, for the runner of a scene whose edit shows before its bake is done. Returns
+ * `{ baked }`, the same as `bakeAgentParts`, or `{ refusal }` when a size or time limit stopped it, because nobody waits to
+ * read an error: the scene stays as it is, drawn without the bake.
+ */
+export function* deferredBakeSteps({ parts, snapshots, lighting, settings }) {
+  try {
+    const outputs = yield* reusedOrTraced(snapshots, lighting, settings, () => traceOutputsInSlices(snapshots, lighting, settings));
+    return { baked: placeOutputs(parts, outputs, settings) };
+  } catch (error) {
+    if (error instanceof RangeError || /passed maxSeconds/.test(error.message)) {
+      return { refusal: error.message };
+    }
+    throw error;
+  }
+}
+
+// The parts an edit shows while its bake runs, when the last light is kept: a part the edit left as it was keeps the part the
+// scene drew before (its baked light, floor sky and reflections), and a part it changed is drawn without light.
+function partsKeepingLastLight(sourceRestParts, previous) {
+  const previousSource = new Map(previous.sourceRestParts.map(part => [part.name, part]));
+  const previousDrawn = new Map(previous.restParts.map(part => [part.name, part]));
+  return Object.freeze(sourceRestParts.map(part => (previousSource.get(part.name) === part ? previousDrawn.get(part.name) ?? part : part)));
+}
+
+/**
+ * The bake of an edit that does not wait for it (#3052). `stage` answers like a bake that has not finished: the parts to show now
+ * and a plan; `adopt` runs the plan of the edit that committed, in slices of a few milliseconds on the same thread, and drops
+ * the plan of an edit that came before; `settle` finishes it now. A second edit that changes nothing the bake reads keeps the
+ * running plan. `onSettled(plan, { baked, refusal })` is the scene's turn to swap the baked parts in.
+ */
+export function createSettlingBake() {
+  let pending = null;
+  return {
+    get pending() {
+      return pending !== null;
+    },
+    stage(key, sourceRestParts, lastReport, previous, keepLastLight, prepare) {
+      const keeps = pending?.key === key && pending.sourceRestParts === sourceRestParts;
+      const plan = keeps ? pending : { key, sourceRestParts, prepared: prepare(), runner: null };
+      const parts = keepLastLight ? partsKeepingLastLight(sourceRestParts, previous) : sourceRestParts;
+      return { pending: true, plan, parts, report: { ...lastReport, pending: true }, reused: false };
+    },
+    adopt(plan, onSettled) {
+      if (plan === pending) {
+        return;
+      }
+      pending?.runner.cancel();
+      pending = null;
+      if (!plan) {
+        return;
+      }
+      pending = plan;
+      plan.runner = createFlushSearchRunner({
+        steps: deferredBakeSteps(plan.prepared),
+        onDone: outcome => {
+          pending = null;
+          onSettled(plan, outcome);
+        },
+        onFailure: () => {
+          pending = null;
+        },
+      });
+    },
+    settle() {
+      if (!pending) {
+        return false;
+      }
+      pending.runner.drain();
+      return true;
+    },
+  };
+}
+
+// Only the lightmap trace has checkpoints inside it; the grid and the probes run as one step each.
+function* traceOutputsInSlices(snapshots, lighting, settings) {
+  yield;
+  if (settings.irradianceGrid) {
+    return traceGridOutputs(snapshots, lighting, settings);
+  }
+  const kernelResult = yield* bakeChangedPartsSteps(snapshots, lighting, settings);
+  yield;
+  return lightmapOutputsFrom(kernelResult, snapshots, lighting, settings);
 }
 
 // What a bake traced, kept by the content it was traced from: a rebuilt scene (a Studio load, an agent edit that changes
@@ -390,12 +512,12 @@ const BAKE_REUSE_BYTES = 128 * 1024 * 1024;
 const bakeReuse = new Map();
 let tracedBakes = 0;
 
-function reusedOrTraced(snapshots, lighting, settings, trace) {
+function* reusedOrTraced(snapshots, lighting, settings, trace) {
   const key = contentFingerprint([snapshots, lighting, { ...settings, rebake: undefined }]);
   if (key === null) {
     // Something the key cannot read (a function, a Set, a class instance): trace, and keep nothing a later bake might wrongly find.
     tracedBakes++;
-    return trace();
+    return yield* trace();
   }
   const reused = bakeReuse.get(key);
   if (reused) {
@@ -403,7 +525,7 @@ function reusedOrTraced(snapshots, lighting, settings, trace) {
     bakeReuse.set(key, reused);
     return ownedCopy(reused.outputs);
   }
-  const outputs = trace();
+  const outputs = yield* trace();
   tracedBakes++;
   const kept = ownedCopy(outputs);
   if (kept) {
@@ -446,6 +568,10 @@ export function clearBakeReuse() {
 
 function traceLightmapOutputs(snapshots, lighting, settings) {
   const kernelResult = runKernel('lightBake', [snapshots, lighting, settings], bakeChangedParts);
+  return lightmapOutputsFrom(kernelResult, snapshots, lighting, settings);
+}
+
+function lightmapOutputsFrom(kernelResult, snapshots, lighting, settings) {
   // Probes see the unbaked parts, as the bake does, and are traced as a kernel of their own so a worker can take them too.
   const probeTrace = !settings.probes ? null
     : runKernel('probeTrace', [snapshots, lighting, settings.probes, { environment: lighting, maxSeconds: bakeSecondsLimit() }], traceProbes);

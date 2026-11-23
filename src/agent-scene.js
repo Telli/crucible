@@ -1801,6 +1801,10 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   let clothBake = null;
   let particleBake = null;
   let lightBake = null;
+  // Whether an edit of a built scene shows before its bake is done (#3052): null waits for it, 'previous' draws the last light
+  // meanwhile, 'none' draws no light. The settling bake is made when the first edit needs it.
+  let bakeDeferral = options.deferBake ?? null;
+  let settlingBake = null;
   // Why the last stage's rebake could not run (a size limit), for the staged state to report.
   let skippedBake = null;
   let skippedReflections = null;
@@ -2060,6 +2064,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       // Parts a pose replaces (cloth, particles, ocean) are new objects with no flush rank, so the pose ranks them again.
       rankFlushParts: parts => stageCoplanarOffsets(recipe, parts),
       bakeSkipped: skippedBake,
+      settlingBake: lightBakeResult?.plan ?? null,
       reflectionSkipped: skippedReflections,
       bakeReport: lightBakeResult ? agentSceneModule('bake').withLocalVolumeReport({ ...lightBakeResult.report, reused: lightBakeResult.reused }, recipe.environment.localVolumes) : null,
       reflectionReport: reflected ? reflected.report : null,
@@ -2106,11 +2111,16 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
   // The bake no longer matches the frame: motion moved a light, the sun or a part off the pose it was traced at.
   // Only a scene with both a bake and motion pays for this check, and bake.rebake turns it off (it bakes each sampled pose).
   function staleBakeProblems() {
-    return lightBake && state.recipe.bake && state.motionSampler ? agentSceneModule('bake').staleBakeProblems(state, lightBake.key) : [];
+    return lightBake && state.recipe.bake && state.motionSampler && !settlingBake?.pending ? agentSceneModule('bake').staleBakeProblems(state, lightBake.key) : [];
   }
 
   function stageRestParts(recipe, sourceRestParts, lightBakeResult, graph) {
     const baked = lightBakeResult?.parts ?? sourceRestParts;
+    // Its floor sky and reflections wait for the real light: while the edit's bake runs, and in a baked recipe built without its
+    // bake, which is only read for its recipe and then rebuilt or dropped.
+    if (lightBakeResult?.pending || (options.skipLightBake && recipe.bake)) {
+      return { reflected: null, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, baked), { rest: true }) };
+    }
     const reflected = stageObjectReflections(recipe, sourceRestParts, baked, graph);
     return { reflected, restParts: stageCoplanarOffsets(recipe, stageLightLinks(recipe, stageFloorSky(recipe, reflected ? reflected.parts : baked, graph)), { rest: true }) };
   }
@@ -2126,7 +2136,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
 
   // A light bake costs seconds of ray tracing: it runs when the parts, the lights, the materials or the bake fields
   // change, and every other edit, seek or camera move reuses the last result.
-  // `options.skipLightBake` builds the scene without its bake, for a scene made only to read its recipe.
+  // `options.skipLightBake` builds the scene without its bake, for a scene made only to read its recipe (a baked recipe then skips its floor sky too).
   function stageLightBake(recipe, sourceRestParts, graph, stagedMaterialSnapshots) {
     skippedBake = null;
     if (!recipe.bake || options.skipLightBake) {
@@ -2138,6 +2148,12 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     if (lightBake?.key === key && lightBake.sourceRestParts === sourceRestParts) {
       lightBake.currentKey = key;
       return { ...lightBake, reused: true };
+    }
+    if (bakeDeferral && state && !recipe.bake.rebake) {
+      const bake = agentSceneModule('bake');
+      settlingBake ??= bake.createSettlingBake();
+      const keepLastLight = bakeDeferral === 'previous' && !environmentLinksLights(recipe.environment);
+      return settlingBake.stage(key, sourceRestParts, lightBake?.report, state, keepLastLight, () => bake.withStagedMaterials(stagedMaterialSnapshots, () => bake.prepareDeferredBake(sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators)));
     }
     // The first build of a scene still fails loudly. A later edit stays applied: the old bake no longer fits the edited parts, so it is dropped.
     const { baked, refusal } = agentSceneModule('bake').withStagedMaterials(stagedMaterialSnapshots, () => agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators));
@@ -2446,10 +2462,25 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       }
     }
     state = stagedState;
+    settlingBake?.adopt(stagedState.settlingBake, finishSettledBake);
     if (incrementRevision) {
       revision++;
     }
     return revision;
+  }
+
+  // The bake of the last edit is done: the scene's parts are staged again with its light, like a fresh build, and swapped in as a
+  // topology change. A bake a limit stopped leaves the scene drawn without light and says why, as an edit that skips its bake does.
+  function finishSettledBake(plan, { baked, refusal }) {
+    lightBake = baked ? { key: plan.key, currentKey: plan.key, sourceRestParts: plan.sourceRestParts, parts: baked.parts, report: baked.report } : null;
+    const result = lightBake && { ...lightBake, reused: false };
+    const { reflected, restParts } = stageRestParts(state.recipe, state.sourceRestParts, result, state.graph);
+    state.restParts = restParts;
+    state.bakeSkipped = refusal ?? null;
+    state.bakeReport = result ? agentSceneModule('bake').withLocalVolumeReport({ ...result.report, reused: false }, state.recipe.environment.localVolumes) : null;
+    state.reflectionReport = reflected ? reflected.report : null;
+    publishPose(state, poseAtPlayhead(state));
+    topologyRevision++;
   }
 
   function expected(options) {
@@ -2482,6 +2513,21 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     },
     /** Ranks the near-coplanar triangles of a pending edit now, so a render or an export never misses an offset. Returns whether it had to. */
     settleFlush,
+    /** True while an edit shows before its light bake is done (#3052); the bake finishes on its own right after the edit. */
+    get bakePending() {
+      return Boolean(settlingBake?.pending);
+    },
+    /** Finishes the pending bake now, so a render or an export has the light a fresh build has. Returns whether it had to. */
+    settleBake() {
+      return Boolean(settlingBake?.settle());
+    },
+    /** null: an edit waits for its bake. 'previous': it shows at once with the last light. 'none': it shows at once with no light. */
+    setBakeDeferral(mode) {
+      if (mode !== null && mode !== 'previous' && mode !== 'none') {
+        throw invalidField('mode', mode, "null, 'previous' or 'none'");
+      }
+      bakeDeferral = mode;
+    },
     get camera() {
       return structuredClone(state.renderCamera);
     },
