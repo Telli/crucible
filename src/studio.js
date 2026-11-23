@@ -54,6 +54,7 @@ import {
 } from './studio-templates.js';
 import {
   createStudioController,
+  freeSpawnTranslation,
   hasAnimatedData,
   linearRgbToHex,
   quaternionToEulerDegrees,
@@ -1370,7 +1371,47 @@ export function createStudio(container, {
   addSpotLightButton.addEventListener('click', () => addLightFromMenu('spot', 'Spot lights'));
   addAreaLightButton.addEventListener('click', () => addLightFromMenu('area', 'Area lights'));
   const lightGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid', attributes: { role: 'group', 'aria-label': 'Lights' } }, addPointLightButton, addSpotLightButton, addAreaLightButton);
-  addPopover.append(...primitiveGrids, lightGrid);
+  // The trees load on first use: their picker draws one picture of each preset, and their code stays out of the core entry.
+  let treeToolsPromise = null;
+  const loadTreeTools = () => {
+    treeToolsPromise ??= import('./studio-trees.js');
+    return treeToolsPromise;
+  };
+  const treePicker = createElement(documentReference, 'div', { className: 'crucible-studio-tree-picker' });
+  treePicker.hidden = true;
+  const addTreeButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Tree', attributes: { 'aria-expanded': 'false' } });
+  const pickTree = async presetName => {
+    addPopover.hidePopover?.();
+    treePicker.hidden = true;
+    addTreeButton.setAttribute('aria-expanded', 'false');
+    try {
+      const treeTools = await loadTreeTools();
+      const created = await treeTools.addTree({ controller, loadAgentSceneModules, findFreeSpot: freeSpawnTranslation }, presetName);
+      announce(`Added ${created.label}`);
+    } catch (error) {
+      announce(error.message);
+    }
+  };
+  addTreeButton.addEventListener('click', async () => {
+    treePicker.hidden = !treePicker.hidden;
+    addTreeButton.setAttribute('aria-expanded', treePicker.hidden ? 'false' : 'true');
+    if (treePicker.hidden || treePicker.childElementCount > 0) return;
+    try {
+      const treeTools = await loadTreeTools();
+      const picker = treeTools.createTreePicker({
+        documentReference,
+        createElement,
+        onPick: pickTree,
+        loadPictures: () => treeTools.renderPresetPictures({ documentReference, createAgentScene, loadAgentSceneModules, createRenderer, agentEnvironmentMap, fitAgentShadow, resolveAgentShadow }),
+      });
+      treePicker.append(picker.element);
+      await picker.load();
+    } catch (error) {
+      announce(error.message);
+    }
+  });
+  const natureGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid', attributes: { role: 'group', 'aria-label': 'Nature' } }, addTreeButton);
+  addPopover.append(...primitiveGrids, lightGrid, natureGrid, treePicker);
 
   const syncStatusNote = createElement(documentReference, 'p', {
     className: 'crucible-studio-popover-note',
@@ -1849,6 +1890,26 @@ export function createStudio(container, {
     }
   }, { sensitivity: 0.01, minimumComponent: 0.02, lockToggle: true });
 
+  // The tree rows are built the first time a node that grows a tree is selected.
+  const treeSection = createElement(documentReference, 'div', { className: 'crucible-studio-tree-section' });
+  let treeInspector = null;
+  let treeInspectorLoading = false;
+  function syncTreeInspector(selectedNode) {
+    if (treeInspector) {
+      treeInspector.sync(selectedNode);
+      return;
+    }
+    if (!selectedNode?.vegetation || treeInspectorLoading) return;
+    treeInspectorLoading = true;
+    loadTreeTools().then(treeTools => {
+      treeInspector = treeTools.createTreeInspector({ documentReference, createElement, createSliderField, controller, announce });
+      treeSection.append(treeInspector.element);
+      treeInspector.sync(controller.exportRecipe().nodes.find(node => node.id === controller.selectedNodeId));
+    }).catch(error => announce(error.message)).finally(() => {
+      treeInspectorLoading = false;
+    });
+  }
+
   const nodePanelBody = createElement(
     documentReference,
     'div',
@@ -1859,6 +1920,7 @@ export function createStudio(container, {
     rotationRow.container,
     scaleRow.container,
     createElement(documentReference, 'div', { className: 'crucible-studio-chips' }, castShadowToggle, receiveShadowToggle),
+    treeSection,
   );
 
   // Tab 2: Material Panel
@@ -3347,6 +3409,7 @@ export function createStudio(container, {
     setRowLockedByTrack(positionRow, !controller.autoKey && animatedProperties.includes('translation'));
     setRowLockedByTrack(rotationRow, !controller.autoKey && animatedProperties.includes('rotation'));
     setRowLockedByTrack(scaleRow, !controller.autoKey && animatedProperties.includes('scale'));
+    syncTreeInspector(selectedNode);
 
     const boundMaterial = selectedNode?.material ? recipe.materials.find(material => material.id === selectedNode.material) : null;
     renderPaletteSwatches(recipe, boundMaterial?.id ?? null);

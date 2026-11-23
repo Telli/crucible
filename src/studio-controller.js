@@ -1772,12 +1772,16 @@ export function createStudioController({
         operation[flagField] = patch[flagField];
       }
     }
+    if (patch.vegetation !== undefined) {
+      operation.vegetation = patch.vegetation;
+    }
     const { operations, keyed } = operationsWithAutoKey(operation);
     applySceneOperations(operations);
     if (keyed) {
       settleSelectionAndMotion();
     }
-    notify({ kind: patch.parent !== undefined ? 'topology' : 'transform', nodeId, keyed });
+    const changesTopology = patch.parent !== undefined || patch.vegetation !== undefined;
+    notify({ kind: changesTopology ? 'topology' : 'transform', nodeId, keyed });
     return operation;
   }
 
@@ -2751,6 +2755,7 @@ export function createStudioController({
 }
 
 export {
+  freeSpawnTranslation,
   STUDIO_MATERIAL_PRESETS,
   STUDIO_PRIMITIVE_GROUPS,
   STUDIO_PRIMITIVES,
