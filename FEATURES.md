@@ -151,7 +151,7 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Surface: Bench
 - Reach: `/bench/studio/index.html?setup=off`
 - Source: `bench/studio/index.html`, `bench/studio/main.js`, `src/studio.js`, `src/studio-setup.js`
-- Ready: `Boolean(window.__studioPage?.renderer)`
+- Ready: `Boolean(window.__studioPage?.renderer) && !document.getElementById("studio-loading")`
 - Drive: `node scripts/drive.mjs shot studio`
 
 ### `bench-agent-modeling-look-harness`
