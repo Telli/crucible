@@ -1,4 +1,7 @@
 import { CLOSED_ROOM_MAXIMUM_TRIANGLES, CLOSED_ROOM_RAYS, CLOSED_ROOM_SHARE, fibonacciDirection, freeOrigin, hitsFrontFace, worldTriangles } from './closed-room.js';
+import { localBounds } from './flush-search.js';
+import { geometryNumber } from './flush-search-reuse.js';
+import { isLiveGeometry } from './live-geometry.js';
 
 // A closed-room test for rooms with a garden outside the window and heavy props inside. closedRoomShare (which the inspect
 // diagnostic uses) shoots from the middle of the bounds, so a lawn beside the room moves the start out of it, and it gives up
@@ -25,14 +28,8 @@ function lightestParts(parts) {
 
 // The middle of a part's local bounds, in world space.
 function partCentre(part, matrix) {
-  const { positions } = part.geometry;
-  const minimum = [Infinity, Infinity, Infinity];
-  const maximum = [-Infinity, -Infinity, -Infinity];
-  for (let index = 0; index < positions.length; index++) {
-    minimum[index % 3] = Math.min(minimum[index % 3], positions[index]);
-    maximum[index % 3] = Math.max(maximum[index % 3], positions[index]);
-  }
-  const middle = minimum.map((value, axis) => (value + maximum[axis]) / 2);
+  const local = localBounds(part.geometry);
+  const middle = [0, 1, 2].map(axis => (local[axis] + local[3 + axis]) / 2);
   return [0, 1, 2].map(axis => matrix[axis] * middle[0] + matrix[4 + axis] * middle[1] + matrix[8 + axis] * middle[2] + matrix[12 + axis]);
 }
 
@@ -61,12 +58,70 @@ function isOpaque(part) {
   return !['blend', 'add'].includes(part.material?.alphaMode);
 }
 
+// An edit changes a part or two and the room test runs again on all of them, so the world corners of a part are kept under its geometry and
+// the exact bits of its matrix: the same geometry at the same matrix has the same corners. The memory is bounded by a triangle count and
+// drops the part that was used longest ago. A live geometry (rewritten in place) is never kept.
+const KEPT_CORNER_TRIANGLES = 300_000;
+const keptCorners = new Map();
+let keptTriangles = 0;
+
+function matrixBitsKey(matrix) {
+  if (!(matrix instanceof Float32Array)) return null;
+  return Array.prototype.join.call(new Uint32Array(matrix.buffer, matrix.byteOffset, matrix.length), ',');
+}
+
+// The corners and bounds of one part, from worldTriangles itself so a kept part is the same bits as a fresh one.
+function keptPartCorners(part, matrix) {
+  const matrixKey = matrixBitsKey(matrix);
+  if (matrixKey === null || isLiveGeometry(part.geometry)) return worldTriangles([part], new Map([[part, matrix]]));
+  const key = `${geometryNumber(part.geometry)}|${matrixKey}`;
+  const kept = keptCorners.get(key);
+  if (kept) {
+    keptCorners.delete(key);
+    keptCorners.set(key, kept);
+    return kept;
+  }
+  const computed = worldTriangles([part], new Map([[part, matrix]]));
+  keptCorners.set(key, computed);
+  keptTriangles += computed.triangleCount;
+  while (keptTriangles > KEPT_CORNER_TRIANGLES && keptCorners.size > 1) {
+    const [oldestKey, oldest] = keptCorners.entries().next().value;
+    keptCorners.delete(oldestKey);
+    keptTriangles -= oldest.triangleCount;
+  }
+  return computed;
+}
+
+// worldTriangles over the parts, put together from the kept corners of each. Null in the same cases: no triangles, or over the budget.
+function keptWorldTriangles(parts, worldMatrices) {
+  const triangleCount = parts.reduce((sum, part) => sum + part.geometry.indices.length / 3, 0);
+  if (triangleCount === 0 || triangleCount > CLOSED_ROOM_MAXIMUM_TRIANGLES) return null;
+  const corners = new Float64Array(triangleCount * 9);
+  const minimum = [Infinity, Infinity, Infinity];
+  const maximum = [-Infinity, -Infinity, -Infinity];
+  const partBounds = [];
+  let write = 0;
+  for (const part of parts) {
+    const matrix = worldMatrices.get(part) ?? worldMatrices.get(part.name);
+    if (matrix === undefined) throw new Error(`No world matrix for part "${part.name}"; pass partMatrixLookup(parts) as worldMatrices.`);
+    const kept = part.geometry.indices.length === 0 ? { corners: new Float64Array(0), minimum: [Infinity, Infinity, Infinity], maximum: [-Infinity, -Infinity, -Infinity], triangleCount: 0 } : keptPartCorners(part, matrix);
+    corners.set(kept.corners, write);
+    write += kept.corners.length;
+    for (let axis = 0; axis < 3; axis++) {
+      minimum[axis] = Math.min(minimum[axis], kept.minimum[axis]);
+      maximum[axis] = Math.max(maximum[axis], kept.maximum[axis]);
+    }
+    partBounds.push({ minimum: kept.minimum, maximum: kept.maximum });
+  }
+  return { corners, triangleCount, partBounds, minimum, maximum };
+}
+
 /**
  * World triangles of the parts, built once: `entries` holds each part's triangle range and padded box, so a subset of the parts reuses
  * the same corner array. Null when worldTriangles gives none (no triangles, or over the triangle budget).
  */
 function prepareScene(parts, worldMatrices) {
-  const world = worldTriangles(parts, worldMatrices);
+  const world = keptWorldTriangles(parts, worldMatrices);
   if (!world) {
     return null;
   }
