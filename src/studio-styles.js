@@ -229,6 +229,8 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-gizmo [data-gizmo-hit="line"] { stroke-width: 22px !important; }
 .crucible-studio-gizmo [data-gizmo-hit="disc"] { stroke-width: 0 !important; }
+.crucible-studio-gizmo [data-gizmo-hit="ring"] { pointer-events: stroke; }
+.crucible-studio-gizmo [data-gizmo-ring] { pointer-events: none; }
 .crucible-studio-gizmo[data-hover-axis="x"] [data-gizmo-axis="x"],
 .crucible-studio-gizmo[data-hover-axis="y"] [data-gizmo-axis="y"],
 .crucible-studio-gizmo[data-hover-axis="z"] [data-gizmo-axis="z"],

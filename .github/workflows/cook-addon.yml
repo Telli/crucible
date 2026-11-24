@@ -203,6 +203,7 @@ on:
       - 'src/light-modules.js'
       - 'src/light-profile.js'
       - 'src/light-shapes.js'
+      - 'src/light-uniform-block.js'
       - 'src/lighting-setups.js'
       - 'src/lighting.js'
       - 'src/lighting-pass-shader.js'
