@@ -427,6 +427,7 @@ on:
       - 'src/view-transform-shader.js'
       - 'src/view-transform.js'
       - 'src/view-transform-inverse.js'
+      - 'src/voxel-terrain.js'
       - 'src/volume-emission-mask.js'
       - 'src/volume-grid-sequence.js'
       - 'src/volume-grid.js'
