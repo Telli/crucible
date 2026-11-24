@@ -25,6 +25,7 @@ const MODULE_LOADERS = {
   reflections: () => import('./agent-reflections.js'),
   waterReflection: () => import('./water-reflection.js'),
   patterns: () => import('./material-patterns.js'),
+  assetGraph: () => import('./asset-material-graph.js'),
   relations: () => import('./agent-relations.js'),
   timeline: () => import('./film-timeline.js'),
   layerShaders: () => import('./material-layer-shaders.js'),
@@ -106,6 +107,8 @@ const MODULE_MARKERS = {
   // Wet ground mirrors the scene in its puddles through the water mirror (src/water-reflection.js).
   waterReflection: ['"puddles":'],
   patterns: ['"pattern"'],
+  // Only a graph on a placed asset needs it: the placement's "pattern" comes after its "asset":{ in the JSON.
+  assetGraph: [/"asset":{[^]*"pattern"/],
   relations: ['"relations":'],
   timeline: ['"timeline":{'],
   layerShaders: ['"anisotropy"', '"iridescence"', '"fresnel"', '"emissionMask"', '"softEdge"'],

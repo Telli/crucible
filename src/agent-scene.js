@@ -2134,7 +2134,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const maskedGeometry = recipeMaterial.output.wear ? geometryWithSurfaceMasks(foamGeometry, recipeMaterial.output.wear, node.id) : foamGeometry;
       const geometry = geometryWithMaterialUvs(maskedGeometry, recipe, node.material, graph, node.id);
       // A graph with a vertexGroup node bakes with this mesh's weights, so its textures belong to the mesh.
-      const drawnMaterial = recipeMaterial.output.pattern?.graph ? agentSceneModule('patterns').materialViewForGeometry(recipeMaterial.output, geometry, node.id, recipeMaterial.holder.images, graph.getNode(node.id).worldMatrix) : recipeMaterial.output;
+      const drawnMaterial = recipeMaterial.output.assetGraph ? agentSceneModule('assetGraph').assetGraphView(recipeMaterial.output, geometry, node.id, graph.getNode(node.id).worldMatrix) : recipeMaterial.output.pattern?.graph ? agentSceneModule('patterns').materialViewForGeometry(recipeMaterial.output, geometry, node.id, recipeMaterial.holder.images, graph.getNode(node.id).worldMatrix) : recipeMaterial.output;
       const fades = fadedNodeIds.has(node.id);
       const material = fades ? fadeMaterial(drawnMaterial, node.id) : drawnMaterial;
       const assetExtras = assetRuntime.partExtras.get(node.id);

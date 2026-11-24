@@ -1,5 +1,5 @@
 import { MATERIAL_PATTERN_TYPES, MATERIAL_MAPPINGS } from './agent-scene-capabilities.js';
-import { bakeMaterialGraph, graphImageData, graphMeshMapNames, graphSurfaceSettings, graphVertexGroupNames, MESH_MAP_KEY_PREFIX, normalizeMaterialGraph, surfaceMapKey } from './material-graph.js';
+import { bakeMaterialGraph, graphBaseOutputs, graphImageData, graphMeshMapNames, graphSurfaceSettings, graphVertexGroupNames, MESH_MAP_KEY_PREFIX, normalizeMaterialGraph, surfaceMapKey } from './material-graph.js';
 import { meshMapForGeometry } from './mesh-map-bake.js';
 import { surfaceMap } from './material-surface-map.js';
 import { vertexGroupMap } from './material-vertex-group-map.js';
@@ -169,7 +169,7 @@ function checkedNumber(value, name, minimum, maximum) {
   return value;
 }
 
-function normalizeGraphPattern(value, mappingField) {
+function normalizeGraphPattern(value, mappingField, { allowBase = false } = {}) {
   for (const field of GRAPH_ONLY_FIELDS) {
     if (value[field] !== undefined) throw patternError(`of type graph does not take ${field}: the graph holds the colours and the noise seeds.`);
   }
@@ -178,6 +178,7 @@ function normalizeGraphPattern(value, mappingField) {
   const resolution = value.resolution ?? 512;
   if (!RESOLUTIONS.includes(resolution)) throw patternError(`resolution must be one of ${RESOLUTIONS.join(', ')}.`);
   const graph = normalizeMaterialGraph(value.graph, resolution);
+  if (!allowBase && graphBaseOutputs(graph).length > 0) throw patternError('uses a base node, which reads the imported textures of a placed asset part: put the graph in asset.materials[].pattern or asset.pattern, not on a recipe material.');
   if ((graphVertexGroupNames(graph).length > 0 || graphMeshMapNames(graph).length > 0 || graphSurfaceSettings(graph).length > 0) && mappingField.mapping !== 'uv') {
     throw patternError('uses a vertexGroup node, a meshMap node or a surface node, which reads the mesh in UV space: set "mapping": "uv" on the pattern (the mesh needs UVs).');
   }
@@ -193,7 +194,7 @@ function normalizeGraphPattern(value, mappingField) {
 }
 
 /** Validate a recipe pattern and fill in its defaults. A normalized pattern normalizes to itself. */
-export function normalizeMaterialPattern(value) {
+export function normalizeMaterialPattern(value, options = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw patternError(`must be an object such as { "type": "wood" }. Types: ${MATERIAL_PATTERN_TYPES.join(', ')}.`);
   const known = ['type', 'colors', 'size', 'count', 'bump', 'seed', 'axis', 'resolution', 'mapping', 'graph'];
   for (const key of Object.keys(value)) {
@@ -203,7 +204,7 @@ export function normalizeMaterialPattern(value) {
   if (!MATERIAL_MAPPINGS.includes(mapping)) throw patternError(`mapping must be one of ${MATERIAL_MAPPINGS.join(', ')}: box projects along the object axes, uv follows the geometry's UVs.`);
   // Box mapping is the default, so a preset that does not ask for UVs keeps exactly the shape it always had.
   const mappingField = mapping === 'uv' ? { mapping } : {};
-  if (value.type === GRAPH_TYPE) return normalizeGraphPattern(value, mappingField);
+  if (value.type === GRAPH_TYPE) return normalizeGraphPattern(value, mappingField, options);
   if (value.graph !== undefined) throw patternError('does not take graph unless its type is graph.');
   if (!Object.hasOwn(PATTERN_DEFAULTS, value.type ?? '')) throw patternError(`type must be one of ${MATERIAL_PATTERN_TYPES.join(', ')}.`);
   const defaults = PATTERN_DEFAULTS[value.type];
@@ -348,7 +349,7 @@ function surfaceSettingsOf(pattern) {
   return settings;
 }
 
-function groupMapsOf(pattern, geometry, nodeId, worldMatrix) {
+export function groupMapsOf(pattern, geometry, nodeId, worldMatrix) {
   const maps = {};
   for (const name of vertexGroupNamesOf(pattern)) maps[name] = vertexGroupMap(geometry, name, pattern.resolution, nodeId);
   for (const name of meshMapNamesOf(pattern)) maps[MESH_MAP_KEY_PREFIX + name] = meshMapForGeometry(geometry, name, pattern.resolution);

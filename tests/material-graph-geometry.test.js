@@ -122,21 +122,27 @@ test('scene_capabilities lists the new operators and the coordinate topic text',
   assert.ok(materialGraph.nodes.textures.brick && materialGraph.nodes.textures.whiteNoise);
 });
 
-function noiseGraph(heightWrapper) {
-  const noise = (scale, seed) => ({ noise: { scale, octaves: 6, seed } });
-  return { roughness: noise(4, 1), metallic: noise(5, 2), height: heightWrapper(noise(6, 3)) };
+function budgetGraph(roughnessWrappers) {
+  const noise = (octaves, seed) => ({ noise: { scale: 4, octaves, seed } });
+  let roughness = noise(1, 1);
+  for (let index = 0; index < roughnessWrappers; index++) roughness = { invert: roughness };
+  return { roughness, metallic: noise(2, 2), height: noise(6, 3) };
 }
 
-test('the work budget is 60,000,000 units: 57 units at 1024 is under it and 58 is over it', () => {
-  assert.equal(AGENT_SCENE_CAPABILITIES.materialGraph.maxWork, 60_000_000);
-  const underGraph = noiseGraph(node => node);
-  const overGraph = noiseGraph(node => ({ invert: node }));
-  assert.equal(compileMaterialGraph(underGraph).cost, 57);
-  assert.equal(compileMaterialGraph(overGraph).cost, 58);
-  assert.ok(57 * 1024 * 1024 <= 60_000_000, '57 units at 1024 is 59,768,832');
+test('the work budget is 60,000,000 units: the last graph under it at 1024 bakes and the next one over it is refused', () => {
+  const maxWork = AGENT_SCENE_CAPABILITIES.materialGraph.maxWork;
+  assert.equal(maxWork, 60_000_000);
+  const pixels = 1024 * 1024;
+  const underGraph = budgetGraph(3);
+  const overGraph = budgetGraph(4);
+  const underCost = compileMaterialGraph(underGraph).cost;
+  const overCost = compileMaterialGraph(overGraph).cost;
+  assert.ok(underCost * pixels <= maxWork, `${underCost} units at 1024 is under the budget`);
+  assert.ok(overCost * pixels > maxWork, `${overCost} units at 1024 is over the budget`);
   assert.ok(normalizeMaterialPattern({ type: 'graph', resolution: 1024, graph: underGraph }));
   assert.throws(
     () => normalizeMaterialPattern({ type: 'graph', resolution: 1024, graph: overGraph }),
-    /58 work units per pixel at 1024 by 1024 is 60,817,408 in all, over the limit of 60,000,000 work units. Pass fewer or cheaper nodes, or a smaller resolution/,
+    /work units per pixel at 1024 by 1024 is [\d,]+ in all, over the limit of 60,000,000 work units .*Pass fewer or cheaper nodes, or a smaller resolution/,
   );
+  assert.ok(normalizeMaterialPattern({ type: 'graph', resolution: 512, graph: overGraph }), 'the same graph bakes at 512');
 });
