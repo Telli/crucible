@@ -1,0 +1,2 @@
+- entry:coplanar-overlap: 776 bytes gzip for a flush pair search that reads only the parts an edit changed and their neighbours instead of every triangle of the scene (33 to 35 ms of each add in a 920k triangle scene, about 4 ms after).
+- scene:agent-scene+lazy: 1832 bytes gzip for the same search and for keeping each part's world triangles between edits in the closed-room test, which together take an add in Studio from 94-140 ms to 60-73 ms on a quiet machine in that scene.
