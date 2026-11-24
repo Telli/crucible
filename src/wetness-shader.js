@@ -20,8 +20,18 @@ export const WET_EDGE_STRIP_FROM = '0.05';
 export const WET_EDGE_STRIP_TO = '0.4';
 export const WET_DAMP_REACH = '0.04';
 export const WET_DAMP_DARKENING = '0.22';
-/** The shore is anti-aliased over at least this much depth (about 7 mm) and 2 pixel footprints, so no stone cuts it into single pixels. */
-export const WET_SHORE_MINIMUM_SOFTNESS = '0.0024';
+/**
+ * The shore is anti-aliased over at least this much depth (about 18 mm) and 2 pixel footprints of the smooth basin, and the stones move it by
+ * less than that (round 16: at 0.024 the stones were wider than the shore band and the rim was a dither of single dark pixels).
+ */
+export const WET_SHORE_MINIMUM_SOFTNESS = '0.006';
+export const WET_SHORE_STONE_BREAK = '0.003';
+/** The share of the shore band's darkening that the stone tops take off on average; a constant, because a per-pixel stone term stippled the band. */
+export const WET_SHORE_BAND_STONE_SHARE = '0.85';
+/** How much of the glint on the stone tops of the damp band stays (round 16: a lighter outline on far puddles). */
+export const WET_FRINGE_GLINT_STRENGTH = '0.15';
+/** The bed's grit and colour are flattened over the shore's first share of water: at the rim they already read as a smooth film. */
+export const WET_BED_FLATTEN_SHARE = Object.freeze(['0.0', '0.5']);
 /** The stone height range over which a stone top in the damp band turns glossy: none below the first, all above the second. */
 export const WET_FRINGE_GLINT_STONE = Object.freeze(['0.7', '0.85']);
 /**
@@ -170,10 +180,10 @@ float wetKeepOutDistance(vec3 position) {
       float detailFade = 1.0 - smoothstep(0.03, 0.12, pixelSize);
       float puddleDepth = wetBasin(worldPosition, detailFade) - wetnessState.y - 6.0 * (worldPosition.y - wetnessState.w) - 0.3 * (1.0 - smoothstep(0.2, 1.0, clearance));
       // The stones break the rim: the same height field that makes the road grit lets the tops of stones stay dry at the shore.
-      float stoneDepth = puddleDepth - 0.024 * (stoneHeight - 0.5);
+      float stoneDepth = puddleDepth - ${WET_SHORE_STONE_BREAK} * (stoneHeight - 0.5);
       float gate = smoothstep(0.996, 0.9995, geometricNormal.y) * (1.0 - metallic) * smoothstep(0.18, 0.45, clearance) * paintGuard;
       // The shore is anti-aliased on the whole depth, stones included: a stone term steeper than the basin would otherwise step across pixels.
-      float edgeWidth = max(2.0 * fwidth(stoneDepth), ${WET_SHORE_MINIMUM_SOFTNESS});
+      float edgeWidth = max(2.0 * fwidth(puddleDepth), ${WET_SHORE_MINIMUM_SOFTNESS});
       standing = smoothstep(-edgeWidth, edgeWidth, stoneDepth) * gate;
       interior = smoothstep(0.012, 0.06, puddleDepth);
       // Just outside the water the road is a damp band, darker than dry road and fading out over a few centimetres.
@@ -193,16 +203,17 @@ float wetKeepOutDistance(vec3 position) {
     // The soaked road is a little more saturated (at most 1.2 times); the soak band beside the shore is darker, the fringe darker and glossier.
     float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
     color = mix(vec3(luminance), color, mix(1.0, 1.2, wetPorosity * gritGround * (1.0 - standing)));
-    color *= (1.0 - 0.15 * soakBand) * (1.0 - ${WET_DAMP_DARKENING} * dampHalo) * (1.0 - ${WET_FRINGE_DARKENING} * shoreDarkening * (1.0 - 0.5 * stoneTop));
+    color *= (1.0 - 0.15 * soakBand) * (1.0 - ${WET_DAMP_DARKENING} * dampHalo) * (1.0 - ${WET_FRINGE_DARKENING} * shoreDarkening * ${WET_SHORE_BAND_STONE_SHARE});
     // A few stone tops in the damp band glint, and only seen at a grazing angle; the rest of the band keeps the road's satin finish.
     float fringeGlint = fringe * smoothstep(${WET_FRINGE_GLINT_STONE[0]}, ${WET_FRINGE_GLINT_STONE[1]}, stoneHeight) * smoothstep(0.55, 0.2, dot(geometricNormal, viewDirection));
-    roughness = mix(roughness, 0.26, fringeGlint * 0.6);
+    roughness = mix(roughness, 0.26, fringeGlint * ${WET_FRINGE_GLINT_STRENGTH});
     // Water: the bottom shows through the film, a little darker where it is deeper; the surface is flat, with a faint slow ripple, and the mirror does the rest.
     color *= mix(1.0, mix(${WATER_BED_TRANSMITTANCE.shore.toFixed(2)}, ${WATER_BED_TRANSMITTANCE.deep.toFixed(2)}, interior), standing);
     // Under still water the grit and the road's own tint hardly show: the scanned tone and the procedural stones flatten toward the bed's mean, the colour toward grey.
-    color *= mix(1.0, scanToneRatio / gritTone, standing * (1.0 - ${WATER_BED_GRIT_VISIBLE.toFixed(2)}));
+    float bedFlatten = smoothstep(${WET_BED_FLATTEN_SHARE[0]}, ${WET_BED_FLATTEN_SHARE[1]}, standing);
+    color *= mix(1.0, scanToneRatio / gritTone, bedFlatten * (1.0 - ${WATER_BED_GRIT_VISIBLE.toFixed(2)}));
     float bedTone = dot(color, vec3(0.2126, 0.7152, 0.0722));
-    color = mix(vec3(bedTone), color, mix(1.0, ${WATER_BED_COLOUR_KEPT.toFixed(2)}, standing));
+    color = mix(vec3(bedTone), color, mix(1.0, ${WATER_BED_COLOUR_KEPT.toFixed(2)}, bedFlatten));
     roughness = mix(roughness, ${WATER_SURFACE_ROUGHNESS.toFixed(2)}, standing);
     // The porous road shades its own ambient light; the bed under a clear film does not, so water takes no part in that shading.
     splatCavity *= 1.0 - 0.4 * wetPorosity * (1.0 - standing);

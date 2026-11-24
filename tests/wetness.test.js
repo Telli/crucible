@@ -182,7 +182,7 @@ test('only standing water mirrors: the road is set rough after the lighting and 
 test('the water edge is narrow and pixel-wide, and the interior is flat and smooth', () => {
   const wet = wetShaderSource();
   assert.ok(wet.includes('standing = smoothstep(-edgeWidth, edgeWidth, stoneDepth) * gate'));
-  assert.ok(wet.includes(`float edgeWidth = max(2.0 * fwidth(stoneDepth), ${wetShader.WET_SHORE_MINIMUM_SOFTNESS});`), 'the shore is anti-aliased over two pixels and never thinner than the minimum softness, so stones cannot cut it into single pixels');
+  assert.ok(wet.includes(`float edgeWidth = max(2.0 * fwidth(puddleDepth), ${wetShader.WET_SHORE_MINIMUM_SOFTNESS});`), 'the shore is anti-aliased over two pixels of the smooth basin and never thinner than the minimum softness, so stones cannot cut it into single pixels');
   assert.ok(Number(wetShader.WET_SHORE_MINIMUM_SOFTNESS) >= 0.002, 'the minimum softness is a few millimetres of ground');
   assert.ok(wet.includes('normal = normalize(mix(normal, normalize(vec3(wetRipple.x, 1.0, wetRipple.y)), standing));'));
   assert.ok(wet.includes('float gate = smoothstep(0.996, 0.9995, geometricNormal.y)'));
@@ -206,7 +206,7 @@ test('the water ripple is a faint slow tilt that moves with time and stays well 
 test('the soak band only darkens the road, so no bright ring of sky glints sits around a puddle', () => {
   const wet = wetShaderSource();
   assert.equal(wet.includes('roughness * 0.75'), false, 'a smoother soak band lit a halo of glints around the water');
-  assert.ok(wet.includes(`color *= (1.0 - 0.15 * soakBand) * (1.0 - ${wetShader.WET_DAMP_DARKENING} * dampHalo) * (1.0 - ${wetShader.WET_FRINGE_DARKENING} * shoreDarkening * (1.0 - 0.5 * stoneTop));`));
+  assert.ok(wet.includes(`color *= (1.0 - 0.15 * soakBand) * (1.0 - ${wetShader.WET_DAMP_DARKENING} * dampHalo) * (1.0 - ${wetShader.WET_FRINGE_DARKENING} * shoreDarkening * ${wetShader.WET_SHORE_BAND_STONE_SHARE});`));
 });
 
 // The fringe is the damp band just outside the water. A damp band is darker than the dry road beside it, never a bright outline.
@@ -215,11 +215,10 @@ function fringeColourMultiplier(depthOutsideRim, stoneHeight) {
     const t = Math.min(Math.max((value - low) / (high - low), 0), 1);
     return t * t * (3 - 2 * t);
   };
-  const stoneDepth = depthOutsideRim - 0.024 * (stoneHeight - 0.5);
+  const stoneDepth = depthOutsideRim - Number(wetShader.WET_SHORE_STONE_BREAK) * (stoneHeight - 0.5);
   const fringe = smooth(-Number(wetShader.WET_FRINGE_WIDTH), 0, stoneDepth);
-  const stoneTop = smooth(0.44, 0.6, stoneHeight);
   const halo = smooth(-Number(wetShader.WET_DAMP_REACH), 0, depthOutsideRim) ** 1.6;
-  return (1 - Number(wetShader.WET_DAMP_DARKENING) * halo) * (1 - Number(wetShader.WET_FRINGE_DARKENING) * fringe * (1 - 0.5 * stoneTop));
+  return (1 - Number(wetShader.WET_DAMP_DARKENING) * halo) * (1 - Number(wetShader.WET_FRINGE_DARKENING) * fringe * Number(wetShader.WET_SHORE_BAND_STONE_SHARE));
 }
 
 test('the damp fringe is darker than the road beside it and never brighter, and reaches only a few centimetres out', () => {
@@ -246,7 +245,7 @@ test('the grazing glints in the damp band are sparse: only the tallest stone top
   const [low, high] = wetShader.WET_FRINGE_GLINT_STONE.map(Number);
   assert.ok(low >= 0.65 && high > low && high <= 0.95, 'glint stones are the top of the height range');
   assert.ok(wet.includes('smoothstep(0.55, 0.2, dot(geometricNormal, viewDirection))'), 'a glint needs a grazing view');
-  assert.ok(wet.includes('roughness = mix(roughness, 0.26, fringeGlint * 0.6);'), 'a glint is satin, never a mirror');
+  assert.ok(wet.includes(`roughness = mix(roughness, 0.26, fringeGlint * ${wetShader.WET_FRINGE_GLINT_STRENGTH});`), 'a glint is satin, never a mirror');
 });
 
 test('the wet grit eases in from the first drop of wetness and never touches a dry road', () => {
@@ -324,4 +323,23 @@ test('standing water hides the bed grit and the road tint, and the shore keeps n
   assert.ok(wet.includes('mix(1.0, 1.2, wetPorosity * gritGround * (1.0 - standing))'), 'no extra saturation under water');
   assert.ok(wet.includes('waterEdgeCover = wetGroundFacing > 0.5'));
   assert.ok(createFragmentShader(['studioLighting', 'waterReflection']).includes('skyLight * max(mirrorWeight, waterEdgeCover)'));
+});
+
+test('the shore is a smooth anti-aliased edge: stones move it by less than its width, the band takes no per-pixel stone term (round 16)', () => {
+  const { WET_SHORE_MINIMUM_SOFTNESS, WET_SHORE_STONE_BREAK, WET_SHORE_BAND_STONE_SHARE, WET_FRINGE_GLINT_STRENGTH, WET_FRINGE_WIDTH, WET_BED_FLATTEN_SHARE } = wetShader;
+  assert.ok(Number(WET_SHORE_STONE_BREAK) <= Number(WET_SHORE_MINIMUM_SOFTNESS), 'a stone moves the shore by at most one anti-aliased edge width, so it cannot cut single pixels out of the rim');
+  assert.ok(Number(WET_SHORE_MINIMUM_SOFTNESS) >= 0.005, 'the edge is at least about 15 mm of ground wide');
+  assert.ok(Number(WET_SHORE_STONE_BREAK) < Number(WET_FRINGE_WIDTH) / 1.5, 'the stones are narrower than the damp band they would stipple');
+  assert.ok(Number(WET_FRINGE_GLINT_STRENGTH) <= 0.2, 'the damp band glints only faintly, so no light outline sits around a far puddle');
+  assert.ok(Number(WET_SHORE_BAND_STONE_SHARE) > 0 && Number(WET_SHORE_BAND_STONE_SHARE) <= 1);
+  assert.ok(Number(WET_BED_FLATTEN_SHARE[1]) <= 0.6, 'the bed grit is flat once half the pixel is water');
+  const wet = wetShaderSource();
+  assert.equal(wet.includes('shoreDarkening * (1.0 - 0.5 * stoneTop)'), false, 'a per-pixel stone term stippled the dark band');
+  assert.ok(wet.includes('float bedFlatten = smoothstep('), 'the bed flattens over the shore, not linearly with the water share');
+  // The band darkening across a shore pixel may not jump between neighbouring stones: sweep stone heights over the same depth.
+  for (const depth of [-0.012, -0.006, -0.002, 0, 0.002, 0.006]) {
+    const lowStone = fringeColourMultiplier(depth, 0.1);
+    const highStone = fringeColourMultiplier(depth, 0.9);
+    assert.ok(Math.abs(lowStone - highStone) < 0.15, 'two stones at the same depth differ by under 15 percent of the light (' + depth + ': ' + lowStone + ' against ' + highStone + ')');
+  }
 });
