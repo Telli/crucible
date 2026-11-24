@@ -80,10 +80,18 @@ function planIssue(payload) {
   requireItemNumber(issue, 'payload.issue');
   requireArrayField(issue, 'assignees', 'payload.issue');
   const plan = { addLabels: [], addAssignees: [] };
-  if (issue.assignees.length === 0) {
+  if (issue.assignees.length === 0 && !isOpenForNewcomers(issue)) {
     plan.addAssignees.push(MAINTAINER_LOGIN);
   }
   return plan;
+}
+
+// A starter issue stays unassigned so that newcomers can see nobody holds it.
+const NEWCOMER_LABELS = new Set(['good first issue', 'help wanted']);
+
+function isOpenForNewcomers(issue) {
+  const labels = Array.isArray(issue.labels) ? issue.labels : [];
+  return labels.some((label) => NEWCOMER_LABELS.has(typeof label === 'string' ? label : label?.name));
 }
 
 /** eventName is GITHUB_EVENT_NAME, payload the event JSON, linkedIssue `{ number, milestone, labels }` or undefined. */

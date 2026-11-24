@@ -178,7 +178,7 @@ test('graph and preset fields do not mix', () => {
 test('every capability operator compiles, and no other operator does', () => {
   const samples = {
     uv: { uv: 'u' }, image: { image: { asset: 'a'.repeat(64) } }, coord: { coord: 'object' }, mapping: { mapping: {} }, whiteNoise: { whiteNoise: {} }, brick: { brick: {} }, vec: { vec: [1, 2, 3] }, ramp: { ramp: { value: 0.5, stops: [[0, 0], [1, 1]] } },
-    fresnel: { fresnel: {} }, vertexGroup: { vertexGroup: { name: 'edge' } }, meshMap: { meshMap: { name: 'curvature' } }, surface: { surface: { output: 'slope' } }, noise: { noise: {} }, voronoi: { voronoi: {} }, wave: { wave: {} }, checker: { checker: {} }, gradient: { gradient: {} },
+    fresnel: { fresnel: {} }, vertexGroup: { vertexGroup: { name: 'edge' } }, meshMap: { meshMap: { name: 'curvature' } }, surface: { surface: { output: 'slope' } }, base: { base: { output: 'color' } }, noise: { noise: {} }, voronoi: { voronoi: {} }, wave: { wave: {} }, checker: { checker: {} }, gradient: { gradient: {} },
     layer: { layer: { base: [0, 0, 0], top: [1, 1, 1], mask: 0.5 } }, hue: { hue: { color: [1, 0, 0], shift: 0.1 } }, curve: { curve: { value: 0.5, points: [[0, 0], [1, 1]] } },
   };
   for (const name of MATERIAL_GRAPH_OPERATORS) {
@@ -327,4 +327,20 @@ test('a missing graph input names its field, and a unary operator on three numbe
   for (const [graph, message] of missing) assert.throws(() => compileMaterialGraph(graph), message);
   assert.throws(() => compileMaterialGraph({ color: { abs: [1, 2, 3] } }), /abs needs 1 argument, got a list of 3\. A list is read as the arguments; to pass a vector, wrap it: \{"abs": \[\[x, y, z\]\]\}/);
   assert.deepEqual(Object.keys(compileMaterialGraph({ color: { abs: [[1, -2, 3]] } }).outputs), ['color']);
+});
+
+test('noise and voronoi scales above 64 bake when the resolution resolves them, and fail with the range when it does not', () => {
+  const fine = { type: 'graph', graph: { height: { noise: { scale: 200, seed: 2 } } }, resolution: 1024 };
+  const accepted = normalizeMaterialPattern(fine);
+  assert.equal(accepted.graph.height.noise.scale, 200);
+  const baked = bakeMaterialPattern(accepted);
+  assert.ok(baked.height || baked.normalMap || baked.color, 'the fine noise bakes a texture');
+  assert.doesNotThrow(() => normalizeMaterialPattern({ type: 'graph', graph: { height: { voronoi: { scale: 256 } } }, resolution: 1024 }));
+  assert.throws(
+    () => normalizeMaterialPattern({ type: 'graph', graph: { height: { noise: { scale: 257 } } }, resolution: 1024 }),
+    error => /scale 257 is too fine for a 1024 by 1024 bake/.test(error.message) && /1 to 256/.test(error.message),
+  );
+  assert.throws(() => compileMaterialGraph({ height: { noise: { scale: 1025 } } }), error => /from 1 to 64, or up to 1024/.test(error.message));
+  assert.doesNotThrow(() => normalizeMaterialPattern({ type: 'graph', graph: { height: { noise: { scale: 64 } } }, resolution: 256 }));
+  assert.throws(() => normalizeMaterialPattern({ type: 'graph', graph: { height: { noise: { scale: 129 } } }, resolution: 512 }), error => /1 to 128/.test(error.message));
 });

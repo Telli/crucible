@@ -8,7 +8,8 @@
 // past the triangle budget come back in `unchecked`, and `truncated` says the pair budget ran out.
 
 import { drainSteps } from './flush-search-runner.js';
-import { entryStarts, partSignature, rememberSearch, reusableSearch, subTableOf, triangleIdsNearChanged } from './flush-search-reuse.js';
+import { isLiveGeometry } from './live-geometry.js';
+import { entryContaining, forgetSearch, matchRemembered, partSignature, rememberSearch, rememberedTriangleCount, reusedPairs, subTableOf, triangleIdsNearChanged } from './flush-search-reuse.js';
 
 /** Shared area under this share of the smaller triangle is edge contact or rounding, not a fight. */
 export const FLUSH_MINIMUM_AREA_SHARE = 1e-4;
@@ -35,6 +36,9 @@ const SWEEP_WORK_CAP = 256;
 const GRID_LEVEL_SCALE = 16;
 const GRID_LEVELS = 2;
 const CELL_SAMPLES = 4096;
+// A part's box is made from the corners of its local box, a triangle's from its own corners: the two differ by rounding, a few units in the last place.
+// This share of the scene's diagonal is far above that and far below any real gap.
+const PART_BOX_SLACK = 1e-6;
 // A JS Map holds at most 2^24 entries and throws a bare RangeError past it. The grid stops listing triangles at this many
 // native cells and is built again with cells twice as wide, up to MAXIMUM_GRID_COARSENINGS times.
 const MAXIMUM_GRID_ENTRIES = 16_000_000;
@@ -44,8 +48,10 @@ const DEFORMING_TAGS = new Set(['foliage', 'grass', 'water', 'fire', 'smoke']);
 
 const localBoundsByGeometry = new WeakMap();
 
+// A live geometry has its positions rewritten in place, so its bounds are measured again on every call.
 export function localBounds(geometry) {
-  let bounds = localBoundsByGeometry.get(geometry);
+  const live = isLiveGeometry(geometry);
+  let bounds = live ? undefined : localBoundsByGeometry.get(geometry);
   if (bounds) return bounds;
   bounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   const { positions } = geometry;
@@ -55,7 +61,7 @@ export function localBounds(geometry) {
       bounds[3 + axis] = Math.max(bounds[3 + axis], positions[offset + axis]);
     }
   }
-  localBoundsByGeometry.set(geometry, bounds);
+  if (!live) localBoundsByGeometry.set(geometry, bounds);
   return bounds;
 }
 
@@ -148,10 +154,8 @@ function withinTriangleBudget(parts, triangleBudget) {
   return { entries: kept, unchecked };
 }
 
-// World-space corners (9 numbers), unit normal (3), box (6) and area of every non-degenerate triangle, part after part.
-function* readTriangles(entries) {
-  const capacity = entries.reduce((sum, entry) => sum + entry.triangles, 0);
-  const table = {
+function newTriangleTable(capacity) {
+  return {
     count: 0,
     corners: new Float64Array(capacity * 9),
     normals: new Float64Array(capacity * 3),
@@ -159,57 +163,195 @@ function* readTriangles(entries) {
     areas: new Float64Array(capacity),
     owner: new Uint32Array(capacity),
     local: new Uint32Array(capacity),
+    starts: null,
+    loaded: null,
   };
+}
+
+// World-space corners (9 numbers), unit normal (3), box (6) and area of every non-degenerate triangle, part after part.
+// `starts` holds the first id of every entry and one more for the total; `loaded` flags the entries whose rows are filled in.
+function* readTriangles(entries) {
+  const capacity = entries.reduce((sum, entry) => sum + entry.triangles, 0);
+  const table = newTriangleTable(capacity);
+  table.starts = new Uint32Array(entries.length + 1);
+  table.loaded = new Uint8Array(entries.length).fill(1);
   for (let partIndex = 0; partIndex < entries.length; partIndex++) {
-    yield* readPartTriangles(table, entries[partIndex].part, partIndex);
+    table.count = yield* readPartTriangles(table, entries[partIndex].part, partIndex, table.count);
+    table.starts[partIndex + 1] = table.count;
   }
   return table;
 }
 
-function* readPartTriangles(table, part, partIndex) {
+// Writes the row of one triangle of a part at `row`, or leaves the row untouched and returns false when the triangle has no area. The
+// corners are worked out in `worldCorners` first: a row that stays free is the first row of the part after it, which may already be filled in.
+const worldCorners = new Float64Array(9);
+
+function writeTriangleRow(table, part, partIndex, triangle, row, flip) {
   const { positions, indices } = part.geometry;
   const matrix = part.matrix;
-  const flip = determinantSign(matrix);
   const { corners, normals, boxes } = table;
+  for (let corner = 0; corner < 3; corner++) {
+    const vertex = indices[triangle + corner] * 3;
+    const x = positions[vertex];
+    const y = positions[vertex + 1];
+    const z = positions[vertex + 2];
+    worldCorners[corner * 3] = matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12];
+    worldCorners[corner * 3 + 1] = matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13];
+    worldCorners[corner * 3 + 2] = matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14];
+  }
+  const edgeOneX = worldCorners[3] - worldCorners[0];
+  const edgeOneY = worldCorners[4] - worldCorners[1];
+  const edgeOneZ = worldCorners[5] - worldCorners[2];
+  const edgeTwoX = worldCorners[6] - worldCorners[0];
+  const edgeTwoY = worldCorners[7] - worldCorners[1];
+  const edgeTwoZ = worldCorners[8] - worldCorners[2];
+  const normalX = edgeOneY * edgeTwoZ - edgeOneZ * edgeTwoY;
+  const normalY = edgeOneZ * edgeTwoX - edgeOneX * edgeTwoZ;
+  const normalZ = edgeOneX * edgeTwoY - edgeOneY * edgeTwoX;
+  const length = Math.hypot(normalX, normalY, normalZ);
+  if (!(length > 1e-12)) return false;
+  const scale = flip / length;
+  normals[row * 3] = normalX * scale;
+  normals[row * 3 + 1] = normalY * scale;
+  normals[row * 3 + 2] = normalZ * scale;
+  corners.set(worldCorners, row * 9);
+  for (let axis = 0; axis < 3; axis++) {
+    const low = Math.min(worldCorners[axis], worldCorners[3 + axis], worldCorners[6 + axis]);
+    const high = Math.max(worldCorners[axis], worldCorners[3 + axis], worldCorners[6 + axis]);
+    boxes[row * 6 + axis] = low;
+    boxes[row * 6 + 3 + axis] = high;
+  }
+  table.areas[row] = length / 2;
+  table.owner[row] = partIndex;
+  table.local[row] = triangle / 3;
+  return true;
+}
+
+// Writes the rows of one part from `firstRow` on and returns the row after its last one.
+function* readPartTriangles(table, part, partIndex, firstRow) {
+  let row = firstRow;
+  const { indices } = part.geometry;
+  const flip = determinantSign(part.matrix);
   for (let triangle = 0; triangle < indices.length; triangle += 3) {
     if (triangle > 0 && triangle % (READ_CHECKPOINT_TRIANGLES * 3) === 0) yield;
-    const base = table.count * 9;
-    for (let corner = 0; corner < 3; corner++) {
-      const vertex = indices[triangle + corner] * 3;
-      const x = positions[vertex];
-      const y = positions[vertex + 1];
-      const z = positions[vertex + 2];
-      corners[base + corner * 3] = matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12];
-      corners[base + corner * 3 + 1] = matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13];
-      corners[base + corner * 3 + 2] = matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14];
-    }
-    const edgeOneX = corners[base + 3] - corners[base];
-    const edgeOneY = corners[base + 4] - corners[base + 1];
-    const edgeOneZ = corners[base + 5] - corners[base + 2];
-    const edgeTwoX = corners[base + 6] - corners[base];
-    const edgeTwoY = corners[base + 7] - corners[base + 1];
-    const edgeTwoZ = corners[base + 8] - corners[base + 2];
-    const normalX = edgeOneY * edgeTwoZ - edgeOneZ * edgeTwoY;
-    const normalY = edgeOneZ * edgeTwoX - edgeOneX * edgeTwoZ;
-    const normalZ = edgeOneX * edgeTwoY - edgeOneY * edgeTwoX;
-    const length = Math.hypot(normalX, normalY, normalZ);
-    if (!(length > 1e-12)) continue;
-    const id = table.count;
-    const scale = flip / length;
-    normals[id * 3] = normalX * scale;
-    normals[id * 3 + 1] = normalY * scale;
-    normals[id * 3 + 2] = normalZ * scale;
-    for (let axis = 0; axis < 3; axis++) {
-      const low = Math.min(corners[base + axis], corners[base + 3 + axis], corners[base + 6 + axis]);
-      const high = Math.max(corners[base + axis], corners[base + 3 + axis], corners[base + 6 + axis]);
-      boxes[id * 6 + axis] = low;
-      boxes[id * 6 + 3 + axis] = high;
-    }
-    table.areas[id] = length / 2;
-    table.owner[id] = partIndex;
-    table.local[id] = triangle / 3;
-    table.count++;
+    if (writeTriangleRow(table, part, partIndex, triangle, row, flip)) row++;
   }
+  return row;
+}
+
+// A part that changed since the last search is read on its own first, because how many triangles it keeps decides every id after it.
+function* readChangedParts(entries, match) {
+  const tables = new Map();
+  for (let index = 0; index < entries.length; index++) {
+    if (!match.changed[index]) continue;
+    const alone = newTriangleTable(entries[index].triangles);
+    alone.count = yield* readPartTriangles(alone, entries[index].part, index, 0);
+    tables.set(index, alone);
+  }
+  return tables;
+}
+
+function firstRows(entries, match, changedTables) {
+  const starts = new Uint32Array(entries.length + 1);
+  for (let index = 0; index < entries.length; index++) {
+    const count = match.changed[index] ? changedTables.get(index).count : rememberedTriangleCount(match, index);
+    starts[index + 1] = starts[index] + count;
+  }
+  return starts;
+}
+
+function copyRows(table, alone, firstRow) {
+  table.corners.set(alone.corners.subarray(0, alone.count * 9), firstRow * 9);
+  table.normals.set(alone.normals.subarray(0, alone.count * 3), firstRow * 3);
+  table.boxes.set(alone.boxes.subarray(0, alone.count * 6), firstRow * 6);
+  table.areas.set(alone.areas.subarray(0, alone.count), firstRow);
+  table.owner.set(alone.owner.subarray(0, alone.count), firstRow);
+  table.local.set(alone.local.subarray(0, alone.count), firstRow);
+}
+
+// Reads the rows of one more part into a table that is partly filled in. False when the part has other triangles than the last search
+// recorded for it, which only happens when geometry was rewritten in place without markLiveGeometry.
+function* loadEntry(table, entries, index) {
+  if (table.loaded[index]) return true;
+  const end = yield* readPartTriangles(table, entries[index].part, index, table.starts[index]);
+  table.loaded[index] = 1;
+  return end === table.starts[index + 1];
+}
+
+// Whether two world boxes are within `margin` of each other on every axis.
+function boundsNear(first, second, margin) {
+  for (let axis = 0; axis < 3; axis++) {
+    if (first[3 + axis] < second[axis] - margin || first[axis] > second[3 + axis] + margin) return false;
+  }
+  return true;
+}
+
+// The entries to read whole for a search that builds on the last one: the changed parts and the parts whose box is near one of them. A
+// triangle lies inside its part's box (up to rounding, which `margin` covers), so a part whose box is farther than `reach` from every
+// changed box has no triangle within `reach` of one.
+function entriesNearChanged(entries, match, margin) {
+  const wanted = new Uint8Array(entries.length);
+  const changedBounds = entries.filter((entry, index) => match.changed[index]).map(entry => entry.bounds);
+  entries.forEach((entry, index) => {
+    if (match.changed[index] || changedBounds.some(bounds => boundsNear(entry.bounds, bounds, margin))) wanted[index] = 1;
+  });
+  return wanted;
+}
+
+// The rows of the triangles that a pair kept from the last search joins are read one by one: the later steps (cuts, ranks) look at these
+// and at no other triangle of a part far from the edit. A part with a triangle of no area numbers its rows apart from its triangles, so
+// that part is read whole instead, and the rows to read one by one come back.
+function pairRowsToRead(entries, starts, pairs, wanted) {
+  const rows = [];
+  for (const pair of pairs) {
+    for (const row of [pair.first, pair.second]) {
+      const entry = entryContaining(starts, row);
+      if (wanted[entry]) continue;
+      if (starts[entry + 1] - starts[entry] === entries[entry].triangles) rows.push(row);
+      else wanted[entry] = 1;
+    }
+  }
+  return rows;
+}
+
+// Reads one row of a part that has no triangle of no area, where row and triangle have the same offset into the part.
+function readRow(table, entries, row) {
+  const entry = entryContaining(table.starts, row);
+  const part = entries[entry].part;
+  return writeTriangleRow(table, part, entry, (row - table.starts[entry]) * 3, row, determinantSign(part.matrix));
+}
+
+// The triangle table of a search that builds on the last one, with only the parts the edit can have changed and the triangles that a kept
+// pair joins read; every other triangle keeps its id but no row. Null when a part no longer matches what the last search recorded for it.
+function* readTrianglesForReuse(entries, match, margin) {
+  const changedTables = yield* readChangedParts(entries, match);
+  const starts = firstRows(entries, match, changedTables);
+  const table = newTriangleTable(starts[entries.length]);
+  table.count = starts[entries.length];
+  table.starts = starts;
+  table.loaded = new Uint8Array(entries.length);
+  for (let index = 0; index < entries.length; index++) table.owner.fill(index, starts[index], starts[index + 1]);
+  for (const [index, alone] of changedTables) {
+    copyRows(table, alone, starts[index]);
+    table.loaded[index] = 1;
+  }
+  const pairs = reusedPairs(match, starts);
+  const wanted = entriesNearChanged(entries, match, margin);
+  const pairRows = pairRowsToRead(entries, starts, pairs, wanted);
+  for (let index = 0; index < entries.length; index++) {
+    if (wanted[index] && !(yield* loadEntry(table, entries, index))) return null;
+  }
+  for (const row of pairRows) {
+    if (!table.loaded[entryContaining(starts, row)] && !readRow(table, entries, row)) return null;
+  }
+  return { table, reused: { pairs, testedPairs: match.previous.testedPairs, changed: match.changed, changedCount: match.changedCount } };
+}
+
+function* loadRemainingEntries(table, entries) {
+  for (let index = 0; index < entries.length; index++) {
+    if (!(yield* loadEntry(table, entries, index))) return false;
+  }
+  return true;
 }
 
 // Twice the median triangle extent: most triangles then touch a handful of cells.
@@ -599,12 +741,10 @@ export function findFlushPairs(parts, options) {
  * of them and go on later, and the result is the one findFlushPairs returns. Nothing outside the search is changed before it
  * returns, so a search that is dropped at a checkpoint leaves no trace; another search may run between two checkpoints.
  */
-export function* findFlushPairsSteps(parts, { triangleBudget = DEFAULT_TRIANGLE_BUDGET, pairBudget = DEFAULT_PAIR_BUDGET, testedPairLimit = MAXIMUM_TESTED_PAIRS } = {}) {
+export function* findFlushPairsSteps(parts, options = {}) {
+  const { triangleBudget = DEFAULT_TRIANGLE_BUDGET, pairBudget = DEFAULT_PAIR_BUDGET, testedPairLimit = MAXIMUM_TESTED_PAIRS } = options;
   const { entries, unchecked } = withinTriangleBudget(searchableParts(parts), triangleBudget);
   yield;
-  const table = yield* readTriangles(entries);
-  const result = { parts: entries.map(entry => entry.part), count: table.count, owner: table.owner, local: table.local, areas: table.areas, corners: table.corners, pairs: [], unchecked, truncated: false, searched: 0, testedPairs: 0 };
-  if (table.count < 2) return result;
   const sceneBounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   for (const { bounds } of entries) {
     for (let axis = 0; axis < 3; axis++) {
@@ -615,19 +755,30 @@ export function* findFlushPairsSteps(parts, { triangleBudget = DEFAULT_TRIANGLE_
   // No pair of parts spans more than the scene, so this is the widest gap any pair is tested with.
   const reach = nearTolerance(boundsDiagonal(sceneBounds));
   const signatures = entries.map(entry => partSignature(entry.part));
-  const starts = entryStarts(table, entries.length);
   const limitsKey = `${triangleBudget}|${pairBudget}|${testedPairLimit}`;
-  const reused = unchecked.length === 0 ? reusableSearch(signatures, starts, reach, limitsKey) : null;
-  const limits = { pairBudget, testedPairLimit };
+  const match = unchecked.length === 0 ? matchRemembered(signatures, reach, limitsKey) : null;
+  const reading = match ? yield* readTrianglesForReuse(entries, match, reach + PART_BOX_SLACK * boundsDiagonal(sceneBounds)) : null;
+  if (match && !reading) {
+    forgetSearch();
+    return yield* findFlushPairsSteps(parts, options);
+  }
+  const table = reading ? reading.table : yield* readTriangles(entries);
+  const reused = reading ? reading.reused : null;
+  const result = { parts: entries.map(entry => entry.part), count: table.count, owner: table.owner, local: table.local, areas: table.areas, corners: table.corners, pairs: [], unchecked, truncated: false, searched: 0, testedPairs: 0 };
+  if (table.count < 2) return result;
   yield;
-  if (!(reused && (yield* searchChangedParts(table, entries, reused, reach, limits, result)))) {
+  if (!(reused && (yield* searchChangedParts(table, entries, reused, reach, { pairBudget, testedPairLimit }, result)))) {
     result.pairs = [];
     result.truncated = false;
     delete result.truncatedAt;
-    yield* searchAllParts(table, entries, reach, limits, result);
+    if (!(yield* loadRemainingEntries(table, entries))) {
+      forgetSearch();
+      return yield* findFlushPairsSteps(parts, options);
+    }
+    yield* searchAllParts(table, entries, reach, { pairBudget, testedPairLimit }, result);
   }
   result.pairs.sort((first, second) => first.first - second.first || first.second - second.second);
-  rememberSearch({ signatures, starts, pairs: result.pairs, testedPairs: result.testedPairs, reach, complete: !result.truncated && unchecked.length === 0, limitsKey });
+  rememberSearch({ signatures, starts: table.starts, pairs: result.pairs, testedPairs: result.testedPairs, reach, complete: !result.truncated && unchecked.length === 0, limitsKey });
   return result;
 }
 

@@ -14,10 +14,10 @@ const CHECKPOINT_TRIANGLES = 8192;
 
 let remembered = null;
 let nextGeometryNumber = 1;
-let nextLiveStamp = 1;
 const geometryNumbers = new WeakMap();
 
-function geometryNumber(geometry) {
+/** A small number that stands for a geometry object, for keys of caches that must not keep the geometry alive. */
+export function geometryNumber(geometry) {
   let number = geometryNumbers.get(geometry);
   if (number === undefined) {
     number = nextGeometryNumber++;
@@ -25,7 +25,7 @@ function geometryNumber(geometry) {
   }
   return number;
 }
-
+let nextLiveStamp = 1;
 /**
  * What decides the pairs of one searched part (a rule for every writer of geometry: an edit in place of a geometry's
  * positions or indices must call markLiveGeometry, because this key is the geometry object): its geometry, its matrix and whether it shows both sides. A live geometry
@@ -38,12 +38,16 @@ export function partSignature(part) {
   return `${geometryNumber(part.geometry)}|${doubleSided}|${Array.prototype.join.call(part.matrix, ',')}`;
 }
 
-/** The id of the first triangle of every entry, and one more for the total, from the table's owner column. */
-export function entryStarts(table, entryCount) {
-  const starts = new Uint32Array(entryCount + 1);
-  for (let id = 0; id < table.count; id++) starts[table.owner[id] + 1]++;
-  for (let entry = 0; entry < entryCount; entry++) starts[entry + 1] += starts[entry];
-  return starts;
+/** The entry that owns the triangle with this id, from the id of the first triangle of every entry (and one more for the total). */
+export function entryContaining(starts, id) {
+  let low = 0;
+  let high = starts.length - 2;
+  while (low < high) {
+    const middle = (low + high + 1) >> 1;
+    if (starts[middle] <= id) low = middle;
+    else high = middle - 1;
+  }
+  return low;
 }
 
 /** Stores a finished search for the next one to build on; a search that hit a budget, or a very large one, is not kept. */
@@ -82,16 +86,7 @@ function remapPairs(previous, matches, starts) {
   matches.forEach((previousEntry, entry) => {
     if (previousEntry >= 0) newEntryOf[previousEntry] = entry;
   });
-  const entryOfId = id => {
-    let low = 0;
-    let high = newEntryOf.length - 1;
-    while (low < high) {
-      const middle = (low + high + 1) >> 1;
-      if (previous.starts[middle] <= id) low = middle;
-      else high = middle - 1;
-    }
-    return low;
-  };
+  const entryOfId = id => entryContaining(previous.starts, id);
   const remapped = [];
   for (const pair of previous.pairs) {
     const firstEntry = entryOfId(pair.first);
@@ -105,11 +100,12 @@ function remapPairs(previous, matches, starts) {
 }
 
 /**
- * What the last search still settles for these entries: `{ pairs, changed }` with the pairs between entries that stayed, in
- * this search's triangle ids, and a flag per entry that is new or moved. Null when nothing can be reused: no earlier search,
- * a different `reach` (which decides how far apart boxes are still tested) or set of budgets, or too many new parts to be worth it.
+ * What the last search still settles for these entries, from their signatures alone: `{ previous, matches, changed, changedCount }`
+ * with the matching entry of the last search for each entry (or -1) and a flag per entry that is new or moved. Null when nothing can
+ * be reused: no earlier search, a different `reach` (which decides how far apart boxes are still tested) or set of budgets, or too
+ * many new parts to be worth it.
  */
-export function reusableSearch(signatures, starts, reach, limitsKey) {
+export function matchRemembered(signatures, reach, limitsKey) {
   if (!remembered || remembered.reach !== reach || remembered.limitsKey !== limitsKey) return null;
   const matches = matchEntries(remembered.signatures, signatures);
   const changed = new Uint8Array(signatures.length);
@@ -121,7 +117,18 @@ export function reusableSearch(signatures, starts, reach, limitsKey) {
     }
   });
   if (changedCount > CHANGED_PART_LIMIT) return null;
-  return { pairs: remapPairs(remembered, matches, starts), testedPairs: remembered.testedPairs, changed, changedCount };
+  return { previous: remembered, matches, changed, changedCount };
+}
+
+/** The triangles an entry had in the last search: the same part with the same geometry and matrix has the same non-degenerate triangles. */
+export function rememberedTriangleCount(match, entry) {
+  const previousEntry = match.matches[entry];
+  return match.previous.starts[previousEntry + 1] - match.previous.starts[previousEntry];
+}
+
+/** The pairs of the last search between entries that stayed, in this search's triangle ids (`starts` holds the first id of every entry). */
+export function reusedPairs(match, starts) {
+  return remapPairs(match.previous, match.matches, starts);
 }
 
 /**
@@ -131,10 +138,18 @@ export function reusableSearch(signatures, starts, reach, limitsKey) {
 export function* triangleIdsNearChanged(table, entries, changed, reach) {
   const changedBounds = entries.filter((entry, index) => changed[index]).map(entry => entry.bounds);
   const ids = [];
-  const { boxes, owner } = table;
-  for (let id = 0; id < table.count; id++) {
-    if (id % CHECKPOINT_TRIANGLES === CHECKPOINT_TRIANGLES - 1) yield;
-    if (changed[owner[id]] || nearAnyBounds(boxes, id, changedBounds, reach)) ids.push(id);
+  const { boxes, starts, loaded } = table;
+  let sinceCheckpoint = 0;
+  for (let entry = 0; entry < entries.length; entry++) {
+    // A part whose triangles were never read cannot hold a triangle near a changed part: the search reads every part that could.
+    if (!loaded[entry]) continue;
+    for (let id = starts[entry]; id < starts[entry + 1]; id++) {
+      if (++sinceCheckpoint === CHECKPOINT_TRIANGLES) {
+        sinceCheckpoint = 0;
+        yield;
+      }
+      if (changed[entry] || nearAnyBounds(boxes, id, changedBounds, reach)) ids.push(id);
+    }
   }
   return Uint32Array.from(ids);
 }
