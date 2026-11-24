@@ -32,7 +32,7 @@ function resolveEmissionRampOnDemand(input, shape, label) {
 const MAX_LOOK_ARRAY_ENTRIES = Math.max(MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS);
 
 const ENVIRONMENT_FIELDS = [
-  'world', 'ground', 'setup', 'hdri', 'keyFromHdri', 'environmentIntensity', 'environmentRotation', 'lightDirection', 'keyColor', 'keyIntensity', 'fillIntensity', 'ambientIntensity',
+  'world', 'ground', 'setup', 'hdri', 'keyFromHdri', 'environmentIntensity', 'environmentRotation', 'lightDirection', 'keyColor', 'keyIntensity', 'fillIntensity', 'ambientIntensity', 'ambientColor', 'environmentDiffuseScale', 'skybox',
   'daylight', 'pointLights', 'spotLights', 'areaLights', 'skyTop', 'skyBottom', 'fogColor', 'fogDensity', 'volumeFog', 'localVolumes', 'liquid', 'shadowCascades', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'wind', 'sky', 'wetness', 'puddles',
 ];
 const EFFECT_FIELDS = ['exposure', 'saturation', 'contrast', 'temperature', 'vignette', 'grain', 'ambientOcclusion', 'ambientOcclusionRadius', 'bloom', 'depthOfField', 'motionBlur'];
@@ -341,6 +341,20 @@ function environmentFrom(input = {}) {
     }
     environment.floorSkyTrace = input.floorSkyTrace;
   }
+  // Flat diffuse light added to the environment's (a Roblox OutdoorAmbient) and a scale on all of the environment's diffuse light (EnvironmentDiffuseScale); both absent keeps the exported shape and the picture.
+  if (input.ambientColor !== undefined) {
+    environment.ambientColor = vectorInRange(input.ambientColor, 0, 10, 'environment.ambientColor');
+  }
+  if (input.environmentDiffuseScale !== undefined) {
+    environment.environmentDiffuseScale = numberInRange(input.environmentDiffuseScale, 0, 100, 'environment.environmentDiffuseScale');
+  }
+  // Six face images as the sky (src/skybox.js); the module checks the faces and loads on demand. null clears it.
+  if (input.skybox !== undefined && input.skybox !== null) {
+    if (input.hdri || input.sky) {
+      throw invalidField('environment.skybox', 'set beside hdri or sky', 'a skybox alone: it is the sky, so remove "hdri" or "sky", or remove "skybox"');
+    }
+    environment.skybox = copiedJson(agentSceneModule('skybox').resolveSkybox(input.skybox, invalidField));
+  }
   // Scales the light the sunlit patches of a sun-lit closed room bounce on (src/sun-bounce.js); 0 turns it off.
   if (input.sunBounce !== undefined) {
     if (!Number.isFinite(input.sunBounce) || input.sunBounce < 0) {
@@ -471,6 +485,9 @@ export function agentEnvironmentKey(environment) {
 
 /** The procedural environment map that lights a normalized environment; the same object returns while inputs hold. */
 export function agentEnvironmentMap(environment) {
+  if (environment.skybox) {
+    return agentSceneModule('skybox').createSkyboxMap(environment);
+  }
   if (environment.sky) {
     return agentSceneModule('physicalSky').createPhysicalSkyMap(environment);
   }
