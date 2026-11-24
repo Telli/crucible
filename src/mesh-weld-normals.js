@@ -6,21 +6,21 @@
 //
 // A plain average whitens steep faces: a cliff face welded to the flat tread under it reads as a gentle slope. So a
 // vertex that is itself steep leans STEEP_LEAN of the way from the welded average to the steepest normal at its
-// position (the one with the lowest y, the up axis the slope masks use). The lean fades in between a 50 and a 72
+// position (the one with the lowest y, the up axis the slope masks use). The lean fades in between a 50 and a 68
 // degree slope of the vertex's own normal, so a gentle face next to a cliff keeps the plain average and its snow does
-// not creep back from the crease (a vertex steeper than the mask limit has no snow to lose). Measured on the six snow
+// not creep back from the crease (a lean short of the full steepest normal left a light smear of snow inside dark cliff faces). Measured on the six snow
 // mountain tiles: snow on faces steeper than 72 degrees stays below the split-normal share, snow lost on gentle faces
-// is 0.9 percent of the baked area (2.1 with the lean on every vertex), and the stair steps drop by about 28 percent.
+// is 0.9 percent of the baked area (2.1 with the lean on every vertex), and the stair steps drop by about 22 percent.
 // Position grid for "the same position": 10 micrometres, far below any modelled detail, and exact for split vertices,
 // which copy their position bit for bit.
 const POSITION_GRID = 1e5;
 // Just under a right angle, so the exact 90 degrees of a box edge stays hard.
 const WELD_COSINE = 1e-3;
 // How far a welded normal leans toward the steepest normal at its position (0 is the plain average, 1 the steepest).
-const STEEP_LEAN = 0.7;
+const STEEP_LEAN = 1;
 // The slope (0 flat, 1 vertical) where the lean starts and where it is full, read from the vertex's own normal.
 const LEAN_FROM_SLOPE = 0.55;
-const LEAN_TO_SLOPE = 0.8;
+const LEAN_TO_SLOPE = 0.75;
 const RIGHT_ANGLE = Math.PI / 2;
 
 function smoothstep(from, to, value) {
