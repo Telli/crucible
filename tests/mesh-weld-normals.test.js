@@ -95,3 +95,29 @@ test('a crease under a right angle welds and one over it stays hard', () => {
   const overhang = twoVerticesAt(-50, 50);
   assert.deepEqual(Array.from(weldedMaskNormals(overhang)), Array.from(overhang.normals));
 });
+
+function tiltFromUpDegrees(array, vertex) {
+  const length = Math.hypot(array[vertex * 3], array[vertex * 3 + 1], array[vertex * 3 + 2]);
+  return (Math.acos(array[vertex * 3 + 1] / length) * 180) / Math.PI;
+}
+
+test('a steep face welded to a flat one stays steeper than their plain average', () => {
+  const cliffAndTread = twoVerticesAt(-80, 0);
+  const welded = weldedMaskNormals(cliffAndTread);
+  const tilt = tiltFromUpDegrees(welded, 0);
+  // The angle-weighted plain average of an 80 and a 0 degree normal leans about 56 degrees; the lean gives about 65.
+  assert.ok(tilt > 60, `the welded normal leans ${tilt.toFixed(1)} degrees, no steeper than the plain average of the two`);
+  assert.ok(tilt < 80, `the welded normal leans ${tilt.toFixed(1)} degrees, as steep as the cliff and no longer smooth`);
+  assert.deepEqual(Array.from(welded.subarray(0, 3)), Array.from(welded.subarray(3, 6)));
+});
+
+test('the slope mask stays high next to the crease on the steep side', () => {
+  const geometry = creasedGeometry();
+  const steepTilt = (80 * Math.PI) / 180;
+  const steep = [-Math.sin(steepTilt), Math.cos(steepTilt), 0];
+  geometry.normals = Float32Array.from([...steep, ...steep, ...steep, ...steep, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]);
+  const map = surfaceMap(geometry, { output: 'slope', space: 'object' }, RESOLUTION, 'mask');
+  const nearCrease = valueAt(map, SEAM_COLUMN - 1, RESOLUTION / 2);
+  // A plain average puts the crease at 40 degrees, a slope mask value of 113; the lean keeps it above 135.
+  assert.ok(nearCrease >= 135, `the steep face reads ${nearCrease} next to the crease, the snow creeps up the cliff`);
+});

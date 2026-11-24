@@ -3,12 +3,20 @@
 // as stair steps. Here every vertex takes the average of the normals at its position that bend away from its own by
 // less than a right angle, so a crease (terrain, a rock) reads as one smooth surface, while a real hard edge (the
 // exact 90 degrees of a cube) stays hard. The shading normals are never changed: this is a separate array for masks.
+//
+// A plain average whitens steep faces: a cliff face welded to the flat tread under it reads as a gentle slope. So each
+// welded normal leans STEEP_LEAN of the way to the steepest normal in its group (the one with the lowest y, the up
+// axis the slope masks use). Both ends are continuous across a crease, so the mask edge stays smooth, and steep faces
+// stay steep. Measured on the snow mountain tiles, 0.7 keeps the snow on faces steeper than the mask limit below
+// the split-normal share, and keeps the dark cliff faces of the close view, while the stair steps along the snow edge drop by about a third.
 
 // Position grid for "the same position": 10 micrometres, far below any modelled detail, and exact for split vertices,
 // which copy their position bit for bit.
 const POSITION_GRID = 1e5;
 // Just under a right angle, so the exact 90 degrees of a box edge stays hard.
 const WELD_COSINE = 1e-3;
+// How far a welded normal leans toward the steepest normal at its position (0 is the plain average, 1 the steepest).
+const STEEP_LEAN = 0.7;
 
 const weldedByGeometry = new WeakMap();
 
@@ -65,6 +73,9 @@ function weldGroup(group, normals, weights, welded) {
     let sumY = 0;
     let sumZ = 0;
     let matched = 0;
+    let steepestX = 0;
+    let steepestY = 2;
+    let steepestZ = 0;
     for (const other of group) {
       const dot = normals[vertex * 3] * normals[other * 3] + normals[vertex * 3 + 1] * normals[other * 3 + 1] + normals[vertex * 3 + 2] * normals[other * 3 + 2];
       const lengths = Math.hypot(normals[vertex * 3], normals[vertex * 3 + 1], normals[vertex * 3 + 2]) * Math.hypot(normals[other * 3], normals[other * 3 + 1], normals[other * 3 + 2]);
@@ -74,12 +85,23 @@ function weldGroup(group, normals, weights, welded) {
       sumX += normals[other * 3] * share;
       sumY += normals[other * 3 + 1] * share;
       sumZ += normals[other * 3 + 2] * share;
+      const unitLength = 1 / Math.hypot(normals[other * 3], normals[other * 3 + 1], normals[other * 3 + 2]);
+      if (normals[other * 3 + 1] * unitLength < steepestY) {
+        steepestX = normals[other * 3] * unitLength;
+        steepestY = normals[other * 3 + 1] * unitLength;
+        steepestZ = normals[other * 3 + 2] * unitLength;
+      }
     }
     const length = Math.hypot(sumX, sumY, sumZ);
     if (matched < 2 || length === 0) continue;
-    welded[vertex * 3] = sumX / length;
-    welded[vertex * 3 + 1] = sumY / length;
-    welded[vertex * 3 + 2] = sumZ / length;
+    const leanedX = (1 - STEEP_LEAN) * (sumX / length) + STEEP_LEAN * steepestX;
+    const leanedY = (1 - STEEP_LEAN) * (sumY / length) + STEEP_LEAN * steepestY;
+    const leanedZ = (1 - STEEP_LEAN) * (sumZ / length) + STEEP_LEAN * steepestZ;
+    const leanedLength = Math.hypot(leanedX, leanedY, leanedZ);
+    if (leanedLength === 0) continue;
+    welded[vertex * 3] = leanedX / leanedLength;
+    welded[vertex * 3 + 1] = leanedY / leanedLength;
+    welded[vertex * 3 + 2] = leanedZ / leanedLength;
   }
 }
 
