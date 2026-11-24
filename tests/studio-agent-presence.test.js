@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AGENT_COLORS, agentColor, assertAgentName, describeAgentEdit, diffRecipeNodes } from '../src/studio-agent-presence.js';
+import { AGENT_COLORS, agentColor, assertAgentName, createAgentPresence, describeAgentEdit, diffRecipeNodes } from '../src/studio-agent-presence.js';
 
 function makeRecipe() {
   return {
@@ -64,4 +64,27 @@ test('agentColor keeps one palette colour per name and spreads names over the pa
   for (const color of used) assert.ok(AGENT_COLORS.includes(color));
   assert.ok(used.size >= 3, `eight names share only ${used.size} colours`);
   assert.throws(() => agentColor(''), /agent name must be a string/);
+});
+
+test('the pointer asks for outlines only until it has its stops, and visits the same nodes as before (#2842)', () => {
+  const fakeElement = () => ({ dataset: {}, style: {}, children: [], setAttribute() {}, append() {}, set textContent(value) {} });
+  const documentReference = { createElement: fakeElement, createElementNS: fakeElement };
+  const nodeIds = Array.from({ length: 120 }, (_, index) => `node-${index}`);
+  const asked = [];
+  const controller = {
+    viewportWidth: 800,
+    viewportHeight: 600,
+    nodeOutline(nodeId) {
+      asked.push(nodeId);
+      const index = Number(nodeId.split('-')[1]);
+      return index % 2 === 0 ? [[0, 0], [10, 0], [0, 10]] : null;
+    },
+  };
+  const presence = createAgentPresence(documentReference, { controller, requestDraw() {} });
+  const stopCount = presence.show({ name: 'Claude', nodeIds });
+  assert.equal(stopCount, 8);
+  assert.equal(presence.activeNodeId, 'node-0');
+  assert.deepEqual(asked.slice(0, 15), nodeIds.slice(0, 15), 'outlines were asked in list order');
+  assert.ok(!asked.some(nodeId => Number(nodeId.split('-')[1]) > 14), 'the search ended at the eighth visible node, not at the end of the list');
+  presence.dispose();
 });

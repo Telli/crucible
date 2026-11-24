@@ -1524,12 +1524,27 @@ export class CrucibleRenderer {
     if (batch.parts.length !== 1) throw new RangeError(`setPartLods needs a part that is alone in its batch; ${part.name} is drawn with ${batch.parts.length - 1} others that share its geometry. Pass lods in the part when the renderer is built.`);
     if (!batch.cullable) throw new RangeError(`lods need rigid or swaying, opaque parts without assembly motion: ${part.name}`);
     validateLods(part, lods);
+    this.reserveLevelBytes(lods, batch);
     this.releaseLevelDraws(batch);
     const levelSet = createLevelSet(lods, batch.instanceCount);
     Object.assign(batch, levelSet);
     const sphere = geometryBoundingSphere(part.geometry);
     batch.bounds = { center: sphere.center, radius: sphere.radius + Math.max(...lods.map(level => level.error)) };
     levelSet.levelGeometries.forEach((geometryOfLevel, level) => this.levelDraw(batch, level));
+  }
+
+  /**
+   * Checks that the buffers of levels made after the first frame fit `memoryBudgetMiB` before any is uploaded: the geometry of each
+   * level above 0 that is not on the GPU yet and one instance buffer per level. A budget the caller did not set grows to hold them,
+   * as it does for replaceParts; one the caller set throws the budget error, and the part keeps the levels it has (#2985).
+   */
+  reserveLevelBytes(lods, batch) {
+    const levelBytes = lods.slice(1).reduce((total, level) => total + (this.geometryBuffers.has(level.geometry) ? 0 : geometryBufferBytes(level.geometry)) + batch.instanceData.byteLength, 0);
+    const frameBytes = estimateFrameBytes(this.canvas.width, this.canvas.height, this.samples, 2048, { hdr: this.hdr, bloom: !this.benchmark, depth: this.depth });
+    const peakBytes = frameBytes + this.textureBytes + this.geometryBytes + levelBytes;
+    if (peakBytes > this.memoryBudgetMiB * 1024 * 1024 && !this.growAutomaticBudgetTo(peakBytes)) {
+      throw memoryBudgetError(this.geometryBytes + levelBytes, this.textureBytes, frameBytes, this.memoryBudgetMiB, { maximumMemoryBudgetMiB: this.maximumMemoryBudgetMiB });
+    }
   }
 
   /** The instances of a batch that the camera can see, split by level; null when the whole batch draws as it is. */

@@ -1,0 +1,1 @@
+- Studio no longer looks up the outline of every changed object when an agent reloads a file: it stops at the eight objects the pointer visits, so a reload that changes a material used by 120 objects in a scene of 900k triangles takes about 100 ms less (#2842)
