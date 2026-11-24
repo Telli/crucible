@@ -7,7 +7,7 @@ import { createFragmentShader, fragmentShader, WETNESS_FEATURE, SHADER_FEATURES 
 import { normalizeAgentLook } from '../src/agent-look.js';
 import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
 import { wetnessUniformValues, wetnessResponse, puddleShare, PUDDLE_SOURCES, PUDDLE_SHARE_CAP } from '../src/wetness.js';
-import { puddleFillLevel, PUDDLE_LEVEL_TABLE, SOAKED_ROAD_ROUGHNESS_SCALE, WATER_SURFACE_ROUGHNESS } from '../src/wetness-shader.js';
+import { puddleFillLevel, PUDDLE_LEVEL_TABLE, SOAKED_ROAD_ROUGHNESS_SCALE, WATER_BED_TRANSMITTANCE, WATER_SURFACE_ROUGHNESS } from '../src/wetness-shader.js';
 import { wetnessKeepOutBoxes, wetnessGroundHeight, KEEP_OUT_LIMIT } from '../src/wetness-keep-out.js';
 import { findWaterSurface, flagWetMirrorParts, wetMirrorSurface } from '../src/water-reflection.js';
 import { wetStone } from './support/wetness-noise-port.mjs';
@@ -288,4 +288,14 @@ test('the wet darkening varies in patches on the ground only, and fades where a 
   assert.ok(wet.includes('wetPatch *= (1.0 - smoothstep(0.05, 0.2, pixelSize)) * wetGroundFacing;'));
   assert.ok(wet.includes('color *= 1.0 - 0.6 * patchyPorosity;'));
   assert.ok(wet.includes('float patchyPorosity = clamp(wetPorosity * (1.0 + 0.9 * wetPatch), 0.0, 1.0);'));
+});
+
+test('the bed under standing water keeps the wet road light: no second darkening, no ambient shading (round 14 path-trace check)', () => {
+  // A CPU path trace of the same puddle (water IOR 1.33 over wet asphalt) is about 3 times brighter than the round 13 shader, which darkened
+  // the bed to 0.35 and shaded its ambient light by 0.3 on top of the wet-road darkening; the bed now loses at most a tenth.
+  assert.ok(WATER_BED_TRANSMITTANCE.shore === 1 && WATER_BED_TRANSMITTANCE.deep >= 0.85, 'a clear film of water absorbs under 15 percent of the light');
+  const wet = wetShaderSource();
+  assert.ok(wet.includes(`color *= mix(1.0, mix(${WATER_BED_TRANSMITTANCE.shore.toFixed(2)}, ${WATER_BED_TRANSMITTANCE.deep.toFixed(2)}, interior), standing);`));
+  assert.ok(wet.includes('splatCavity *= 1.0 - 0.4 * wetPorosity * (1.0 - standing);'), 'water takes no part in the porous road shading');
+  assert.equal(wet.includes('splatCavity *= 1.0 - 0.7 * standing'), false);
 });

@@ -19,6 +19,12 @@ export const WET_DAMP_DARKENING = '0.22';
 export const WET_SHORE_MINIMUM_SOFTNESS = '0.0024';
 /** The stone height range over which a stone top in the damp band turns glossy: none below the first, all above the second. */
 export const WET_FRINGE_GLINT_STONE = Object.freeze(['0.7', '0.85']);
+/**
+ * How much of the road's wet albedo shows through the water film: 1 at the shore, down to the second value in the deep middle. Water a few
+ * centimetres deep absorbs almost nothing, and the road under it is already darkened once for being wet, so the bed keeps nearly all of that
+ * (round 14: the old 0.7 to 0.35 on top of the wet darkening left a third of the light a path trace gives the same puddle).
+ */
+export const WATER_BED_TRANSMITTANCE = Object.freeze({ shore: 1, deep: 0.9 });
 /** The roughness of the water surface. */
 export const WATER_SURFACE_ROUGHNESS = 0.04;
 
@@ -134,7 +140,6 @@ float wetKeepOutDistance(vec3 position) {
     float stoneRoughness = soakedRoughness * mix(1.0, 0.72, stoneTop * wetGloss * grainFade);
     stoneRoughness = sqrt(stoneRoughness * stoneRoughness + ((1.0 - stoneFades.x) * 0.015 + (1.0 - stoneFades.y) * 0.02 + (1.0 - stoneFades.z) * 0.03) * wetGloss);
     roughness = clamp(mix(softRoughness, stoneRoughness, gritGround), 0.075, 1.0);
-    splatCavity *= 1.0 - 0.4 * wetPorosity;
     float standing = 0.0;
     float soakBand = 0.0;
     float fringe = 0.0;
@@ -170,10 +175,11 @@ float wetKeepOutDistance(vec3 position) {
     // A few stone tops in the damp band glint, and only seen at a grazing angle; the rest of the band keeps the road's satin finish.
     float fringeGlint = fringe * smoothstep(${WET_FRINGE_GLINT_STONE[0]}, ${WET_FRINGE_GLINT_STONE[1]}, stoneHeight) * smoothstep(0.55, 0.2, dot(geometricNormal, viewDirection));
     roughness = mix(roughness, 0.26, fringeGlint * 0.6);
-    // Water: the bottom shows through the film, darker where it is deeper; the surface is flat, with a faint slow ripple, and the mirror does the rest.
-    color *= mix(1.0, mix(0.7, 0.35, interior), standing);
+    // Water: the bottom shows through the film, a little darker where it is deeper; the surface is flat, with a faint slow ripple, and the mirror does the rest.
+    color *= mix(1.0, mix(${WATER_BED_TRANSMITTANCE.shore.toFixed(2)}, ${WATER_BED_TRANSMITTANCE.deep.toFixed(2)}, interior), standing);
     roughness = mix(roughness, ${WATER_SURFACE_ROUGHNESS.toFixed(2)}, standing);
-    splatCavity *= 1.0 - 0.7 * standing;
+    // The porous road shades its own ambient light; the bed under a clear film does not, so water takes no part in that shading.
+    splatCavity *= 1.0 - 0.4 * wetPorosity * (1.0 - standing);
     vec2 wetRipple = vec2(sin(worldPosition.x * 2.3 + worldPosition.z * 1.3 + time * 0.5) + 0.6 * sin(worldPosition.x * 5.9 - worldPosition.z * 4.1 - time * 0.8),
       sin(worldPosition.z * 2.1 - worldPosition.x * 0.9 + time * 0.45) + 0.6 * sin(worldPosition.z * 6.3 + worldPosition.x * 3.7 - time * 0.7)) * 0.005;
     normal = normalize(mix(normal, normalize(vec3(wetRipple.x, 1.0, wetRipple.y)), standing));
