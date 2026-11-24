@@ -1270,6 +1270,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
     if (recipe.pixelGrid === null) delete recipe.pixelGrid;
     else recipe.pixelGrid = agentSceneModule('pixelGrid').normalizePixelGrid(recipe.pixelGrid);
   }
+  if (recipe.nodes.some(node => node.billboard)) agentSceneModule('textBillboard').checkBillboardMaterials(recipe);
   if (Object.hasOwn(recipe, 'game')) {
     if (recipe.game === null) delete recipe.game;
     else recipe.game = agentSceneModule('game').normalizeGameSetup(recipe.game, recipe.nodes);

@@ -179,3 +179,25 @@ test('billboard input is checked at the boundary', () => {
   assert.throws(() => createAgentScene(recipe({ nodes: [node({ size: [1, 1], tilt: 3 })] })), /billboard\.tilt/);
   assert.throws(() => createAgentScene(recipe({ nodes: [{ id: 'cube', geometry: 'block', material: 'tag', billboard: { size: [1, 1] } }] })), /plane/);
 });
+
+test('a billboard is hidden by a part in front of it unless alwaysOnTop is set (#3237)', () => {
+  const tagNode = billboard => ({ id: 'tag', geometry: 'sheet', material: 'tag-material', billboard, translation: [0, 1, 0] });
+  const scene = materialExtra => createAgentScene(recipe({
+    materials: [{ id: 'tag-material', tag: 'unlit', text: { content: 'Ana', width: 1, height: 0.25, background: [0, 0, 0] }, ...materialExtra }],
+    nodes: [{ id: 'wall', geometry: 'block', material: 'tag', translation: [0, 1, 2] }, tagNode(materialExtra.depthTest === false ? { size: [1, 0.25], alwaysOnTop: true } : { size: [1, 0.25] })],
+  }));
+  const hidden = scene({});
+  assert.notEqual(hidden.parts.find(part => part.name === 'tag').material.depthTest, false, 'the default tests depth, so the wall hides the tag');
+  const onTop = scene({ depthTest: false, alphaMode: 'blend' });
+  assert.equal(onTop.parts.find(part => part.name === 'tag').material.depthTest, false, 'alwaysOnTop draws through the wall');
+});
+
+test('alwaysOnTop and the material depthTest must agree, and the error says which to change', () => {
+  const build = (material, billboard) => createAgentScene(recipe({
+    materials: [{ id: 'm', tag: 'unlit', text: { content: 'A', width: 1, height: 0.25, background: [0, 0, 0] }, ...material }],
+    nodes: [{ id: 'tag', geometry: 'sheet', material: 'm', billboard }],
+  }));
+  assert.throws(() => build({}, { size: [1, 1], alwaysOnTop: true }), /alwaysOnTop[\s\S]*depthTest false and alphaMode "blend"/);
+  assert.throws(() => build({ depthTest: false, alphaMode: 'blend' }, { size: [1, 1] }), /depthTest[\s\S]*billboard\.alwaysOnTop true/);
+  assert.throws(() => build({}, { size: [1, 1], alwaysOnTop: 'yes' }), /billboard\.alwaysOnTop[\s\S]*true or false/);
+});

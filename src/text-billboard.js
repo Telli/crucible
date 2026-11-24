@@ -9,7 +9,7 @@ export const TEXT_BILLBOARD_LIMITS = Object.freeze({
   offset: Object.freeze([-10000, 10000]),
 });
 
-const BILLBOARD_FIELDS = ['size', 'screenHeight', 'offset'];
+const BILLBOARD_FIELDS = ['size', 'screenHeight', 'offset', 'alwaysOnTop'];
 const PLANE_TYPES = ['plane', 'grid'];
 
 function checkedNumber(path, value, [minimum, maximum], example) {
@@ -44,7 +44,28 @@ export function normalizeBillboard(value) {
   const offset = value.offset ?? [0, 0, 0];
   if (!Array.isArray(offset) || offset.length !== 3) throw invalidField('billboard.offset', offset, 'three numbers [x, y, z] in world metres, such as [0, 0.5, 0]', TypeError);
   result.offset = offset.map((component, index) => checkedNumber(`billboard.offset[${index}]`, component, TEXT_BILLBOARD_LIMITS.offset, 0.5));
+  if (value.alwaysOnTop !== undefined && typeof value.alwaysOnTop !== 'boolean') throw invalidField('billboard.alwaysOnTop', value.alwaysOnTop, 'true or false', TypeError);
+  if (value.alwaysOnTop) result.alwaysOnTop = true;
   return result;
+}
+
+/**
+ * A billboard is hidden by a part in front of it, like a Roblox BillboardGui, unless `alwaysOnTop` is set. Drawing through
+ * geometry is a material choice (depthTest false, which only blend materials honour), so the pair is checked here and an
+ * unpaired one is refused with the fix, instead of the tag silently drawing the other way.
+ */
+export function checkBillboardMaterials(recipe) {
+  for (const node of recipe.nodes.filter(candidate => candidate.billboard)) {
+    const material = recipe.materials.find(candidate => candidate.id === node.material);
+    if (!material) continue;
+    const throughParts = material.depthTest === false;
+    if (node.billboard.alwaysOnTop && !(throughParts && material.alphaMode !== 'opaque')) {
+      throw invalidField(`nodes.${node.id}.billboard.alwaysOnTop`, true, `a tag whose material ${material.id} sets depthTest false and alphaMode "blend" (only blend materials draw through parts); set both, or remove alwaysOnTop so a part in front hides the tag`);
+    }
+    if (!node.billboard.alwaysOnTop && throughParts) {
+      throw invalidField(`materials.${material.id}.depthTest`, false, `true or left out, because node ${node.id} is a billboard that a part in front hides; set billboard.alwaysOnTop true on the node to draw it through parts`);
+    }
+  }
 }
 
 // Metres the frame is tall at `distance` from the eye.
