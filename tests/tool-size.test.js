@@ -1,15 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { measureToolSizes, formatToolSizes } from '../scripts/tool-size.mjs';
+import { measureToolCost } from '../scripts/measure-tool-cost.mjs';
 
-test('tool sizes: the total equals the sum of the rows and rows are sorted largest first', async () => {
+test('tool sizes: the total and every row equal what npm run tool-cost measures', async () => {
+  const sizes = await measureToolSizes();
+  const cost = await measureToolCost();
+  assert.equal(sizes.totalBytes, cost.schemaTotal.bytes);
+  assert.equal(sizes.estimatedTokens, cost.schemaTotal.tokens);
+  assert.deepEqual(sizes.rows.map(row => [row.name, row.bytes]), cost.schemas.map(row => [row.name, row.bytes]));
+});
+
+test('tool sizes: rows are largest first and add up to the total within the commas between entries', async () => {
   const sizes = await measureToolSizes();
   assert.ok(sizes.rows.length > 20, 'expected every MCP tool to be listed');
-  assert.equal(sizes.totalBytes, sizes.rows.reduce((sum, row) => sum + row.bytes, 0));
   for (let index = 1; index < sizes.rows.length; index += 1) {
     assert.ok(sizes.rows[index - 1].bytes >= sizes.rows[index].bytes, `${sizes.rows[index].name} is out of order`);
   }
-  assert.equal(sizes.estimatedTokens, Math.ceil(sizes.totalBytes / 3.5));
+  const rowSum = sizes.rows.reduce((sum, row) => sum + row.bytes, 0);
+  assert.ok(sizes.totalBytes >= rowSum && sizes.totalBytes - rowSum <= sizes.rows.length + 1, `total ${sizes.totalBytes} vs rows ${rowSum}`);
 });
 
 test('tool sizes: the printed table has one line per tool and a total line', async () => {
