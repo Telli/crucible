@@ -20,6 +20,8 @@ const MODULE_LOADERS = {
   vehicleDamage: () => import('./vehicle-damage.js'),
   cloth: () => import('./agent-cloth.js'),
   particles: () => import('./agent-particles.js'),
+  textPanel: () => import('./text-panel.js'),
+  textBillboard: () => import('./text-billboard.js'),
   bake: () => import('./agent-bake.js'),
   bakeDeferred: () => import('./agent-bake-deferred.js'),
   reflections: () => import('./agent-reflections.js'),
@@ -101,6 +103,8 @@ const MODULE_MARKERS = {
   vehicleDamage: ['"type":"dented"'],
   cloth: ['"cloth":{'],
   particles: ['"particles":{', '"add-explosion"'],
+  textPanel: ['"text":{'],
+  textBillboard: ['"billboard":{'],
   bake: ['"bake":{'],
   bakeDeferred: ['"bake":{'],
   // A metallic value of 0.5 or more may make a part reflective; the module skips a scene that has no smooth one.
@@ -213,10 +217,16 @@ export async function loadAgentSceneModules(value) {
   await Promise.all(agentSceneModulesNeeded(value).map(loadModule));
 }
 
-/** Load every on-demand module, for hosts that run any recipe an agent writes. */
-export async function loadAllAgentSceneModules() {
+/** Load every on-demand module, for hosts that run any recipe an agent writes. `onModuleLoaded(loaded, total)` runs as each one arrives. */
+export async function loadAllAgentSceneModules({ onModuleLoaded } = {}) {
   hostLoadedEveryModule = true;
-  await Promise.all(Object.keys(MODULE_LOADERS).map(loadModule));
+  const names = Object.keys(MODULE_LOADERS);
+  let loaded = 0;
+  await Promise.all(names.map(async name => {
+    await loadModule(name);
+    loaded += 1;
+    onModuleLoaded?.(loaded, names.length);
+  }));
 }
 
 /** Entries that import a module statically register it here, so createAgentScene finds it without a load call. */

@@ -42,7 +42,7 @@ Blender 5.3 manual, read 2026-11-24. Studio at commit `71aa78ab5`. Status words:
 
 | Blender feature (default key) | Studio today | Note |
 | --- | --- | --- |
-| [Enter edit mode](https://docs.blender.org/manual/en/latest/editors/3dview/modes.html) (Tab) | Partial. `src/studio-keymap.js:47`, `src/studio-mesh-edit.js:205-209` | Only a `mesh` geometry with no modifier stack. A box or sphere is refused until slice 2 of #3262. |
+| [Enter edit mode](https://docs.blender.org/manual/en/latest/editors/3dview/modes.html) (Tab) | Partial. `src/studio-keymap.js`, `src/studio-mesh-edit.js` | A mesh, or any shape of the Add menu, which Tab turns into a mesh on the spot. A mesh with a modifier stack is still refused. |
 | [Vertex, edge, face modes](https://docs.blender.org/manual/en/latest/modeling/meshes/selecting/introduction.html) (1, 2, 3) | Has. `src/studio-keymap.js:55-57` | One mode at a time. No Shift for several modes, no Ctrl to expand. |
 | [Click and Shift+click pick](https://docs.blender.org/manual/en/latest/interface/selecting.html) | Has. `src/studio-mesh-edit.js:457`, `src/studio.js:4131` | Nearest vertex or edge, or the face under the pointer. |
 | [Select all, none, invert](https://docs.blender.org/manual/en/latest/modeling/meshes/selecting/introduction.html) (A, Alt+A, Ctrl+I) | Missing. No action in the `mesh` context | Select all is in slice 5. Invert is in no slice. |
@@ -93,7 +93,6 @@ Size: S is one small pull request, M is one pull request, L is several. A new me
 
 | # | Gap | Priority | Why | Size | Recipe | Issue |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Tab on a basic shape | must | Every model starts from a box or cylinder. | M | Supported | #3262 slice 2 |
 | 2 | Vertex and edge moves without the 19 limit | must | Moving a few loose vertices is the most common edit. | M | Engine, in PR #3278 | #3262, PR #3278 |
 | 3 | Box select, select all, rotate and scale with axis lock, G R S keys in edit mode | must | Used in every edit session. | M to L | Supported, vertex and edge forms need #3278 | #3262 slice 5 |
 | 4 | Extrude, inset, loop cut, bevel, delete | must | The five tools that turn a box into a shape. | M to L | Supported, picked edges need #3278 | #3262 slice 6 |
