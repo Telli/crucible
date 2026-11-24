@@ -2955,13 +2955,8 @@ export class CrucibleRenderer {
     this.context.uniform4fv(this.uniforms.clipPerMetre, clipPerMetreScratch);
   }
 
-  /** Draws additive batches that lie behind every shell into the opaque scene the shell reads; drawBlendBatches skips them. */
-  drawAdditiveBehindShells(liquids) {
-    const shells = liquids.filter(batch => batch.layerState[9] > 0);
-    const additive = this.batches.filter(batch => batch.alphaMode === 'add' && batchPass(batch) === 'opaque' && batch.depthTest !== false);
-    const behind = additiveBatchesBehindShells(this, additive, shells);
-    if (behind.length === 0) return;
-    this.additiveBehindShells = new Set(behind);
+  /** The liquid and foam pass may have switched program, texture unit 0 and the viewport; blend and add draws restore them. */
+  bindAlphaPassState() {
     const context = this.context;
     context.bindFramebuffer(context.FRAMEBUFFER, this.multisampleFramebuffer);
     context.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -2970,6 +2965,17 @@ export class CrucibleRenderer {
     context.activeTexture(context.TEXTURE0);
     context.bindTexture(context.TEXTURE_2D, this.shadowTexture);
     context.uniform1i(this.uniforms.shadowMap, 0);
+  }
+
+  /** Draws additive batches that lie behind every shell into the opaque scene the shell reads; drawBlendBatches skips them. */
+  drawAdditiveBehindShells(liquids) {
+    const shells = liquids.filter(batch => batch.layerState[9] > 0);
+    const additive = this.batches.filter(batch => batch.alphaMode === 'add' && batchPass(batch) === 'opaque' && batch.depthTest !== false);
+    const behind = additiveBatchesBehindShells(this, additive, shells);
+    if (behind.length === 0) return;
+    this.additiveBehindShells = new Set(behind);
+    const context = this.context;
+    this.bindAlphaPassState();
     context.enable(context.BLEND);
     context.blendFuncSeparate(context.SRC_ALPHA, context.ONE, context.ZERO, context.ONE);
     context.depthMask(false);
@@ -2994,13 +3000,7 @@ export class CrucibleRenderer {
     const addBatches = this.batches.filter(batch => batch.alphaMode === 'add' && batchPass(batch) === 'opaque' && !this.additiveBehindShells?.has(batch));
     if (blendBatches.length === 0 && addBatches.length === 0) return;
     // The liquid and foam pass may have switched program, texture unit 0 and the viewport.
-    context.bindFramebuffer(context.FRAMEBUFFER, this.multisampleFramebuffer);
-    context.viewport(0, 0, this.canvas.width, this.canvas.height);
-    context.enable(context.DEPTH_TEST);
-    context.useProgram(this.program);
-    context.activeTexture(context.TEXTURE0);
-    context.bindTexture(context.TEXTURE_2D, this.shadowTexture);
-    context.uniform1i(this.uniforms.shadowMap, 0);
+    this.bindAlphaPassState();
     const depthOrdered = blendBatches.filter(batch => batch.depthTest !== false);
     const overlayOrdered = blendBatches.filter(batch => batch.depthTest === false);
     const depthAddBatches = addBatches.filter(batch => batch.depthTest !== false);
