@@ -105,8 +105,7 @@ async function addGroundCover(asset, description, camera) {
   if (!entries.length) return {};
   const firstEye = camera ? camera.sample(0).eye : description.eye;
   asset.parts = [...asset.parts, ...groundCoverParts(asset.parts, entries, firstEye)];
-  const winds = entries.map(entry => entry.wind).filter(wind => wind !== undefined);
-  return winds.length ? { wind: Math.max(...winds) } : {};
+  return { wind: Math.max(...entries.map(entry => entry.wind)) };
 }
 
 async function start() {

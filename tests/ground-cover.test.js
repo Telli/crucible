@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { bladeAnglesToUp, meanOf } from './support/grass-stance.mjs';
 import { GROUND_COVER_LIMITS, groundCoverParts, normalizeGroundCover } from '../src/ground-cover.js';
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -74,4 +75,21 @@ test('the blade budget counts every entry together, before any is grown', () => 
   const started = performance.now();
   assert.throws(() => groundCoverParts(lawns, normalizeGroundCover(entries), [0, 3, 8]), /3072000 blades in all entries.*at most 2000000/);
   assert.ok(performance.now() - started < 1000, 'refused before growing any entry');
+});
+
+// A Blender export: the plane is built Z-up and the node matrix turns it into the Y-up lawn.
+function zUpLawnPart(half) {
+  const positions = new Float32Array([-half, -half, 0, half, -half, 0, half, half, 0, -half, half, 0]);
+  const turnedIntoYUp = new Float32Array([1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1]);
+  return { name: 'Lawn', geometry: { positions, indices: new Uint32Array([0, 1, 2, 0, 2, 3]) }, matrix: turnedIntoYUp, material: { tag: 'surface', color: [0.07, 0.17, 0.03] } };
+}
+
+test('blades stand up on a rotated GLB surface, wind included: the default wind does not lay a short lawn flat', () => {
+  const [entry] = normalizeGroundCover([{ surfaces: 'Lawn', length: 0.12, density: 300 }]);
+  const parts = groundCoverParts([zUpLawnPart(8)], [entry], [3.2, 0.9, 6]);
+  const still = bladeAnglesToUp(parts);
+  assert.ok(meanOf(still) < 20, `blades grown on a rotated surface lean ${meanOf(still)} degrees from world up`);
+  const windy = bladeAnglesToUp(parts, { strength: entry.wind });
+  assert.ok(meanOf(windy) < 25, `with the default wind the mean blade angle to world up is ${meanOf(windy)} degrees`);
+  assert.ok(meanOf(bladeAnglesToUp(parts, { strength: 0.3 })) > 40, 'the renderer default of 0.3 would bend 0.12 m blades far over');
 });

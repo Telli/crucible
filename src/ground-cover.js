@@ -13,6 +13,10 @@ const EDGE_MARGIN = 0.04;
 const CELLS_PER_SIDE = 128;
 // The farthest level of detail keeps this share of the blades, so no field can have fewer than area * density * this.
 const FARTHEST_KEEP = 0.12;
+// The grass wind moves a blade tip by metres, not by a share of its length. 0.3 is the renderer's default strength and suits the 0.6 m
+// meadow; a short lawn at 0.3 is bent flat (mean 47 degrees from vertical for 0.12 m blades), so the default strength follows the length.
+const DEFAULT_WIND_STRENGTH = 0.3;
+const WIND_REFERENCE_LENGTH = 0.6;
 
 function groundCoverError(path, got, expected) {
   return new TypeError(`environment.groundCover${path} is ${got}; pass ${expected}.`);
@@ -44,7 +48,9 @@ function normalizeEntry(entry, index) {
   if (color !== 'preset' && color !== 'surface' && !isColour) {
     throw groundCoverError(`${path}.color`, JSON.stringify(color), '"preset", "surface" (the surface material colour) or three linear RGB numbers from 0 to 1');
   }
-  return { surfaces, preset, density: entry.density, length: entry.length, color, wind: entry.wind, seed: entry.seed ?? 1 };
+  const bladeLength = entry.length ?? GRASS_PRESETS[preset].height[1];
+  const wind = entry.wind ?? DEFAULT_WIND_STRENGTH * Math.min(1, bladeLength / WIND_REFERENCE_LENGTH);
+  return { surfaces, preset, density: entry.density, length: entry.length, color, wind, seed: entry.seed ?? 1 };
 }
 
 /** Checks `environment.groundCover` and returns its entries with defaults filled in; no field means no grass. */
