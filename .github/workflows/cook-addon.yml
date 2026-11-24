@@ -383,6 +383,7 @@ on:
       - 'src/skeleton-pose.js'
       - 'src/sky-voxel-proxy.js'
       - 'src/skinning.js'
+      - 'src/skybox.js'
       - 'src/soft-body.js'
       - 'src/spot-angle-advice.js'
       - 'src/spring-bones.js'

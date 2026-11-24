@@ -30,11 +30,12 @@ function recordingContext(calls) {
 function fakeRenderer(context) {
   return {
     postStages: [], context, canvas: { width: 16, height: 9 }, hdr: false, depthTexture: 'depth',
-    inverseViewProjection: mat4.create(), viewForward: [0, 0, -1],
+    inverseViewProjection: mat4.create(), viewProjection: mat4.create(), viewForward: [0, 0, -1],
+    activeLightDirection: [0, 0, 1], lighting: { keyColor: [3, 2, 1] },
   };
 }
 
-const STAGE_NAMES = ['Distortion', 'Flash', 'Glare', 'Local tone mapping', 'Lens distortion', 'Color balance', 'Stylize', 'Composite'];
+const STAGE_NAMES = ['Distortion', 'Flash', 'Glare', 'Local tone mapping', 'Lens distortion', 'Color balance', 'Color correction', 'Sun rays', 'Stylize', 'Composite'];
 
 test('a look that names no step resolves exactly as before', async () => {
   await loadAgentSceneModules({});
@@ -87,13 +88,15 @@ test('each stage draws only for a frame that sets its step, and frees its target
   const context = recordingContext(calls);
   const renderer = installPostSteps(installCameraEffects(fakeRenderer(context)));
   assert.deepEqual(renderer.postStages.slice(2).map(stage => stage.name), STAGE_NAMES);
-  assert.equal(installPostSteps(renderer).postStages.length, 10);
+  assert.equal(installPostSteps(renderer).postStages.length, 12);
   const unset = { eye: [0, 1, 5], effects: {} };
-  const neutral = { eye: [0, 1, 5], effects: { colorBalance: {}, glare: {}, lensDistortion: {}, stylize: {}, composite: {} } };
+  const neutral = { eye: [0, 1, 5], effects: { colorBalance: {}, colorCorrection: { brightness: 0, contrast: 0, saturation: 0, tint: [1, 1, 1] }, sunRays: { intensity: 0 }, glare: {}, lensDistortion: {}, stylize: {}, composite: {} } };
   const named = [
     ['Glare', { glare: { streaks: 0.6 } }],
     ['Lens distortion', { lensDistortion: { distortion: 0.5, dispersion: 0.5 } }],
     ['Color balance', { colorBalance: { gain: [1.1, 1, 0.9] } }],
+    ['Color correction', { colorCorrection: { saturation: -0.5 } }],
+    ['Sun rays', { sunRays: { intensity: 0.5 } }],
     ['Stylize', { stylize: { posterize: 4 } }],
     ['Composite', { composite: { background: { color: [0.1, 0.2, 0.6] }, key: { luma: { low: 0.1, high: 0.4 } } } }],
   ];
@@ -106,8 +109,8 @@ test('each stage draws only for a frame that sets its step, and frees its target
     stage.releaseTargets(context);
     stage.dispose(context);
   }
-  assert.ok(calls.filter(call => call[0] === 'drawArrays').length === 5);
-  assert.ok(calls.filter(call => call[0] === 'deleteTexture').length === 5);
+  assert.ok(calls.filter(call => call[0] === 'drawArrays').length === 7);
+  assert.ok(calls.filter(call => call[0] === 'deleteTexture').length === 7);
 });
 
 test('a stylize step resolves its filters and a mask, and refuses bad input', () => {
@@ -321,4 +324,19 @@ test('a mask or user pass names a placed asset by its node id and gets every par
   assert.throws(() => objectIdentifierSlots(renderer, ['ghost']), /"ghost" is not a part in the frame/);
   const wide = { passSupport: { objectNames: () => [], objectNodes: () => ({ train: Array.from({ length: 40 }, (_, index) => index + 1) }) } };
   assert.equal(objectIdentifierSlots(wide, ['train']).identifiers.length, 40, 'a 40-part asset fits in one mask');
+});
+
+test('colorCorrection resolves with identity defaults and names the fix in each error', () => {
+  assert.deepEqual(resolvePostSteps({ colorCorrection: {} }).colorCorrection, { brightness: 0, contrast: 0, saturation: 0, tint: [1, 1, 1] });
+  assert.deepEqual(resolvePostSteps({ colorCorrection: { tint: [1, 0.9, 0.8], saturation: -0.2 } }).colorCorrection.tint, [1, 0.9, 0.8]);
+  assert.throws(() => resolvePostSteps({ colorCorrection: { brightness: 2 } }), /colorCorrection\.brightness is 2: pass a number from -1 to 1/);
+  assert.throws(() => resolvePostSteps({ colorCorrection: { tint: [1, 1] } }), /colorCorrection\.tint.*three numbers from 0 to 4/);
+  assert.throws(() => resolvePostSteps({ colorCorrection: { hue: 1 } }), /colorCorrection\.hue.*one of the fields brightness, contrast, saturation, tint/);
+});
+
+test('sunRays resolves with defaults and names the fix in each error', () => {
+  assert.deepEqual(resolvePostSteps({ sunRays: {} }).sunRays, { intensity: 0.25, spread: 1 });
+  assert.throws(() => resolvePostSteps({ sunRays: { intensity: 5 } }), /effects\.sunRays\.intensity is 5: pass a number from 0 to 4/);
+  assert.throws(() => resolvePostSteps({ sunRays: { spread: -1 } }), /effects\.sunRays\.spread is -1: pass a number from 0 to 1/);
+  assert.throws(() => resolvePostSteps({ sunRays: { color: 1 } }), /effects\.sunRays\.color.*one of the fields intensity, spread/);
 });
