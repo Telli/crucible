@@ -4264,12 +4264,14 @@ export function createStudio(container, {
       return;
     }
     meshEnterPending = true;
+    const pressedOnNodeId = controller.selectedNodeId;
     const editor = await loadMeshEditor();
-    const converted = editor.conversionOf(controller.selectedNodeId);
+    const converted = editor.conversionOf(pressedOnNodeId);
     if (converted) await loadAgentSceneModules({ geometries: [converted] }).catch(error => announce(error.message));
     if (!meshEnterPending) return;
     meshEnterPending = false;
-    if (editor.active) return;
+    // The generator code that was loaded belongs to the object Tab was pressed on: another selection by now gets nothing.
+    if (editor.active || controller.selectedNodeId !== pressedOnNodeId) return;
     editor.enter();
     syncUi();
     requestFrame();

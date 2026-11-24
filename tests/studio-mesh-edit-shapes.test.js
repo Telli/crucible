@@ -168,11 +168,12 @@ test('a parent, a child and the material stay with the object that turns into a 
 test('what edit mode cannot take says what the thing is and what to do instead, and changes nothing', () => {
   const cases = [
     { name: 'text', geometries: [{ id: 'words', type: 'text', text: 'Hi', size: 0.6, depth: 0.12 }], node: { id: 'other', geometry: 'words', material: 'grey' }, message: /Text cannot be edited.*properties panel/ },
-    { name: 'a group', geometries: [], node: { id: 'other' }, message: /no mesh to edit.*Select a shape or a mesh/ },
-    { name: 'a mesh with a modifier', geometries: [{ id: 'stacked', type: 'mesh', base: { type: 'box', bevel: 0 }, stack: [{ op: 'subdivide', levels: 1 }] }], node: { id: 'other', geometry: 'stacked', material: 'grey' }, message: /modifiers/ },
+    { name: 'a group', geometries: [], node: { id: 'other' }, children: [{ id: 'part-of-group', geometry: 'geo-hero', material: 'grey', parent: 'other' }], message: /is a group.*no mesh to edit.*Select a shape or a mesh/ },
+    { name: 'an empty object', geometries: [], node: { id: 'other' }, message: /is an empty object.*Select a shape or a mesh/ },
+    { name: 'a mesh with a modifier', geometries: [{ id: 'stacked', type: 'mesh', base: { type: 'box', bevel: 0 }, stack: [{ op: 'subdivide', levels: 1 }] }], node: { id: 'other', geometry: 'stacked', material: 'grey' }, message: /modifiers.*Add a plain shape from the Mesh group.*applied first/ },
   ];
-  for (const { name, geometries, node, message } of cases) {
-    const { controller, editor, messages } = mount(recipeOfShape('box', { extraNodes: [node], extraGeometries: geometries }));
+  for (const { name, geometries, node, children = [], message } of cases) {
+    const { controller, editor, messages } = mount(recipeOfShape('box', { extraNodes: [node, ...children], extraGeometries: geometries }));
     controller.selectNode('other');
     const before = controller.exportRecipe();
     const result = editor.enter();
@@ -200,9 +201,9 @@ async function settle(ticks = 300) {
   for (let tick = 0; tick < ticks; tick += 1) await new Promise(resolve => setImmediate(resolve));
 }
 
-function mountStudioWithBox(testContext) {
+function mountStudioWithBox(testContext, recipe = recipeOfShape('box')) {
   const dom = installStudioDom();
-  const studio = createStudio(dom.container, { recipe: recipeOfShape('box'), renderer: createFakeRenderer() });
+  const studio = createStudio(dom.container, { recipe, renderer: createFakeRenderer() });
   testContext.after(() => {
     studio.dispose();
     dom.uninstall();
@@ -250,4 +251,72 @@ test('Tab twice on a box before the editor has loaded converts nothing, and a th
   ui.press('Escape');
   assert.equal(ui.root.dataset.meshEdit, 'false');
   assert.equal(isLiveGeometry(ui.controller.scene.parts.find(part => part.name === 'hero').geometry), false);
+});
+
+test('undo in the middle of a drag cancels the drag and leaves edit mode with no error, no live mark and no stray geometry', () => {
+  const { controller, editor } = mount(recipeOfShape('box'));
+  const before = controller.exportRecipe();
+  editor.enter();
+  pickAnyFace(controller, editor);
+  const origin = controller.gizmoHandles().origin;
+  controller.beginGizmoDrag('screen', origin.x, origin.y);
+  controller.updateGizmoDrag(origin.x + 30, origin.y);
+  controller.undo();
+  editor.refresh();
+  assert.equal(editor.active, false, 'the box is back, so edit mode is over');
+  assert.doesNotThrow(() => {
+    controller.updateGizmoDrag(origin.x + 40, origin.y);
+    controller.endGizmoDrag();
+    editor.refresh();
+  });
+  assert.equal(controller.dragging, false);
+  assert.equal(isLiveGeometry(heroPart(controller).geometry), false);
+  assert.deepEqual(controller.exportRecipe(), before);
+});
+
+test('undoing a drag edit while another drag is running re-syncs the cage instead of leaving a stale one', () => {
+  const { controller, editor } = mount(recipeOfShape('box'));
+  editor.enter();
+  pickAnyFace(controller, editor);
+  dragSelection(controller);
+  const origin = controller.gizmoHandles().origin;
+  controller.beginGizmoDrag('screen', origin.x, origin.y);
+  controller.updateGizmoDrag(origin.x + 30, origin.y);
+  controller.undo();
+  editor.refresh();
+  assert.equal(controller.dragging, false);
+  assert.equal(editor.active, true, 'the mesh still exists');
+  assert.equal(editor.cage.mesh.positions.every(Number.isFinite), true);
+  assert.equal(isLiveGeometry(heroPart(controller).geometry), false);
+  assert.doesNotThrow(() => editor.pick(400, 300));
+});
+
+test('a child and keyframes on the transform stay with the object through the conversion and come back with undo', () => {
+  const child = { ...nodeOfShape('sphere', 'child'), geometry: 'geo-hero', parent: 'hero', translation: [0, 1, 0] };
+  const recipe = recipeOfShape('cylinder', { extraNodes: [child] });
+  recipe.motion = { duration: 2, loop: true, tracks: [{ kind: 'node', id: 'hero', property: 'translation', keyframes: [{ time: 0, value: recipe.nodes[0].translation }, { time: 1, value: [1, 1, 1] }] }] };
+  const { controller, editor } = mount(recipe);
+  const before = controller.exportRecipe();
+  editor.enter();
+  const converted = controller.exportRecipe();
+  assert.deepEqual(converted.motion, before.motion);
+  assert.deepEqual(converted.nodes.find(node => node.id === 'child'), before.nodes.find(node => node.id === 'child'));
+  controller.undo();
+  editor.refresh();
+  assert.deepEqual(controller.exportRecipe(), before);
+});
+
+test('a selection that changes while the editor loads leaves the object Tab was pressed on alone and enters nothing else', async testContext => {
+  const recipe = recipeOfShape('box', { extraNodes: [nodeOfShape('box', 'other')], extraGeometries: [{ id: 'geo-other', type: 'box', bevel: 0.04 }] });
+  const ui = mountStudioWithBox(testContext, recipe);
+  const before = ui.controller.exportRecipe();
+  ui.press('Tab');
+  ui.controller.selectNode('other');
+  await settle();
+  assert.equal(ui.root.dataset.meshEdit ?? 'false', 'false');
+  assert.deepEqual(ui.controller.exportRecipe(), before, 'neither box was converted');
+  ui.press('Tab');
+  await untilEditing(ui);
+  assert.equal(ui.controller.exportRecipe().nodes.find(node => node.id === 'other').geometry.endsWith('-mesh'), true, 'a fresh Tab acts on the new selection');
+  assert.equal(geometryOf(ui.controller, 'geo-hero').type, 'box');
 });

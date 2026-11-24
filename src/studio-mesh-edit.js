@@ -21,7 +21,7 @@ const EDGE_PICK_RADIUS_PIXELS = 10;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 const NEEDS_A_MESH = 'Edit mode needs a mesh geometry or a shape of the Add menu.';
-const NEEDS_NO_MODIFIERS = 'Edit mode does not work on a mesh with modifiers yet.';
+const NEEDS_NO_MODIFIERS = 'Edit mode does not work on a mesh with modifiers yet. Add a plain shape from the Mesh group and edit that, or have the modifiers applied first.';
 const LOG_IS_FULL = `This mesh already has ${MAX_LOG_ENTRIES} edits, the most one mesh holds, so it cannot take another move.`;
 const TOO_MANY_VERTICES = `Moving more than ${MAX_MASK_VERTICES} vertices that are not whole faces is not possible yet; select whole faces or fewer vertices.`;
 const MESH_CHANGED = 'Edit mode ended because this object uses a different mesh now.';
@@ -218,8 +218,16 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
   }
 
   // What a person can do instead is in each sentence: edit mode runs on a mesh, or on a shape of the Add menu that turns into one.
-  function refusalFor(geometrySpec) {
-    if (!geometrySpec) return 'This object has no mesh to edit: it is a light, a group or an imported file. Select a shape or a mesh.';
+  function kindOfObjectWithoutGeometry(recipe, nodeId) {
+    const node = recipe.nodes.find(candidate => candidate.id === nodeId);
+    if (!node) return recipe.lights?.some(light => light.id === nodeId) ? 'a light' : 'not an object of the scene';
+    if (node.asset) return 'an imported file';
+    if (recipe.nodes.some(candidate => candidate.parent === nodeId)) return 'a group';
+    return 'an empty object';
+  }
+
+  function refusalFor(geometrySpec, recipe, nodeId) {
+    if (!geometrySpec) return `This object is ${kindOfObjectWithoutGeometry(recipe, nodeId)}, which has no mesh to edit. Select a shape or a mesh.`;
     if ((geometrySpec.stack ?? []).length > 0) return NEEDS_NO_MODIFIERS;
     if (geometrySpec.type === 'text') return 'Text cannot be edited as a mesh yet. Change its words in the properties panel, or add a shape from the Mesh group.';
     if (geometrySpec.type !== 'mesh' && !CONVERTIBLE_PRIMITIVES.has(geometrySpec.type)) return NEEDS_A_MESH;
@@ -228,7 +236,7 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
 
   function loadCage(nodeId, selectedBefore) {
     const geometrySpec = geometrySpecOf(controller.exportRecipe(), nodeId);
-    const refusal = refusalFor(geometrySpec);
+    const refusal = refusalFor(geometrySpec, controller.exportRecipe(), nodeId);
     if (refusal) return refusal;
     if (geometrySpec.type !== 'mesh') return NEEDS_A_MESH;
     const part = controller.scene.parts.find(candidate => candidate.name === nodeId);
@@ -285,7 +293,8 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     if (state) return { ok: true };
     const nodeId = controller.selectedNodeId;
     if (!nodeId) return refuse('Select a mesh to edit it.');
-    const refusal = refusalFor(geometrySpecOf(controller.exportRecipe(), nodeId));
+    const recipe = controller.exportRecipe();
+    const refusal = refusalFor(geometrySpecOf(recipe, nodeId), recipe, nodeId);
     if (refusal) return refuse(refusal);
     giveNodeItsOwnMesh(nodeId);
     const loadFailure = loadCage(nodeId, []);
@@ -616,9 +625,27 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     cancel: cancelDrag,
   };
 
+  function sceneStillHoldsDraggedPart() {
+    return controller.selectedNodeId === state.nodeId && controller.scene.parts.find(candidate => candidate.name === state.nodeId) === state.part;
+  }
+
+  function cancelRunningDrag() {
+    if (controller.dragging) {
+      controller.cancelGizmoDrag();
+    } else {
+      cancelDrag();
+    }
+  }
+
   /** Reads the cage again after the scene changed under it (undo, redo, a load); the selection stays while its indices still fit. */
   function refresh() {
-    if (!state || drag) return;
+    if (!state) return;
+    if (drag) {
+      // A drag keeps its cage while the scene under it is the same one it began on. An undo, a redo or a load that replaced or
+      // removed the edited geometry puts the drag away first, then the cage is read again (or edit mode ends) below.
+      if (!sceneStillHoldsDraggedPart()) cancelRunningDrag();
+      if (drag) return;
+    }
     if (controller.selectedNodeId !== state.nodeId) {
       leave();
       return;
