@@ -245,7 +245,7 @@ Refused, each with a sentence that says what to do:
 
 Without `store`, or without `crypto.subtle`, the Import row is hidden and a dropped binary file gets one sentence saying so. A web pack of a scene that places an imported GLB carries the decoded geometry; a pack refuses a material that holds an imported image, as it does for any decoded image (see the pack message).
 
-The viewport draws a scene's volume fog. Post passes written as shader code and other render-only steps show in the MCP preview and in renders, not in the Studio viewport.
+The viewport draws a scene's volume fog and its post passes (see Post passes above). Render-only steps such as path tracing are not drawn in the viewport; they show in renders.
 
 ## Scenes with a large scan
 
