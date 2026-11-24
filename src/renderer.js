@@ -2034,6 +2034,8 @@ export class CrucibleRenderer {
       packInstance(location.batch.instanceData, location.index, part, location.normalMatrix);
       this.updateBatches.add(location.batch);
     }
+    // updateParts repacks the instances in place and keeps this.batches, so the shadow-miss check keys on this count too.
+    this.partsMoveCount = (this.partsMoveCount ?? 0) + 1;
     for (const batch of this.updateBatches) {
       this.context.bindBuffer(this.context.ARRAY_BUFFER, batch.instanceBuffer);
       this.context.bufferSubData(this.context.ARRAY_BUFFER, 0, batch.instanceData);
@@ -2237,10 +2239,10 @@ export class CrucibleRenderer {
   }
 
   // The studio shadow view (3.5 m round the origin) stays when a scene sets no shadowBounds target or extent. Returns that view when every
-  // caster lies outside it, else null; cached per batch list because the check walks every part.
+  // caster lies outside it, else null; cached per batch list, light direction and updateParts call because the check walks every part.
   studioShadowViewMissingCasters() {
     if (this.world || this.shadowBounds?.target !== undefined || this.shadowBounds?.extent !== undefined) return null;
-    const cacheKey = String(this.activeLightDirection);
+    const cacheKey = `${this.activeLightDirection}|${this.partsMoveCount ?? 0}`;
     if (this.studioShadowMissCache?.batches !== this.batches || this.studioShadowMissCache.cacheKey !== cacheKey) {
       const view = resolveShadowLight(false, this.activeLightDirection);
       const casters = this.batches.filter(batch => !batch.floor && batch.castShadow).flatMap(batch => batch.parts);
