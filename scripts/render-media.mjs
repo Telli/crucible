@@ -201,7 +201,7 @@ export async function renderMedia(values = process.argv.slice(2)) {
       server.on('error', reject);
       server.on('exit', (code) => { clearTimeout(timeout); reject(new Error(`Render server exited ${code}.`)); });
     });
-    const args = ['--enable-webgl', '--ignore-gpu-blocklist'];
+    const args = ['--enable-webgl', '--ignore-gpu-blocklist', '--disable-audio-output'];
     if (backend === 'cpu') args.push('--use-angle=swiftshader', '--enable-unsafe-swiftshader');
     else if (process.platform === 'darwin') args.push('--use-angle=metal', '--enable-gpu');
     browser = await chromium.launch({ headless: true, ...(existsSync(chrome) ? { executablePath: chrome } : {}), args });

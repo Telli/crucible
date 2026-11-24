@@ -801,7 +801,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         httpServer.listen(0, '127.0.0.1', resolve);
       });
       const origin = `http://127.0.0.1:${httpServer.address().port}`;
-      const args = ['--enable-webgl', '--ignore-gpu-blocklist', '--disable-renderer-backgrounding'];
+      const args = ['--enable-webgl', '--ignore-gpu-blocklist', '--disable-renderer-backgrounding', '--disable-audio-output'];
       if (backend === 'cpu') {
         args.push('--use-angle=swiftshader', '--enable-unsafe-swiftshader');
       }
