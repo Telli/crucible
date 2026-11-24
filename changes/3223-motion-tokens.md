@@ -1,0 +1,1 @@
+- The Studio agent pointer is placed by a compositor `translate` and glides only while it travels to a new object, so it stays on its object during an orbit; every Studio transition now reads shared `--studio-motion-*` tokens and the section chevron respects reduced motion (#3223).

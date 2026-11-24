@@ -25,6 +25,12 @@ export const STUDIO_CSS = `
   --studio-rail: 44px;
   --studio-bar-clear: 54px;
   --studio-shadow: 0 10px 28px rgb(0 0 0 / 0.26);
+  --studio-motion-press: 100ms;
+  --studio-motion-quick: var(--site-motion-quick, 110ms);
+  --studio-motion-base: var(--site-motion-base, 170ms);
+  --studio-motion-travel: 360ms;
+  --studio-ease-out: var(--site-ease-out, cubic-bezier(0.2, 0, 0, 1));
+  --studio-ease-in: cubic-bezier(0.4, 0, 1, 1);
   background: var(--studio-bg);
   color: var(--studio-text);
   font-family: var(--studio-font);
@@ -97,7 +103,15 @@ export const STUDIO_CSS = `
 }
 @media (prefers-reduced-motion: no-preference) {
   .crucible-studio button {
-    transition: background 140ms ease, color 140ms ease, opacity 140ms ease;
+    transition: background var(--studio-motion-quick) var(--studio-ease-out), color var(--studio-motion-quick) var(--studio-ease-out), opacity var(--studio-motion-quick) var(--studio-ease-out);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crucible-studio {
+    --studio-motion-press: 0ms;
+    --studio-motion-quick: 0ms;
+    --studio-motion-base: 0ms;
+    --studio-motion-travel: 0ms;
   }
 }
 @media (pointer: coarse) {
@@ -299,6 +313,8 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-agent-cursor {
   position: absolute;
+  inset: 0 auto auto 0;
+  translate: var(--studio-agent-x, 0px) var(--studio-agent-y, 0px);
   z-index: 3;
   display: flex;
   align-items: flex-start;
@@ -324,8 +340,8 @@ export const STUDIO_CSS = `
   white-space: nowrap;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .crucible-studio-agent-cursor {
-    transition: left 520ms cubic-bezier(0.2, 0, 0, 1), top 520ms cubic-bezier(0.2, 0, 0, 1);
+  .crucible-studio-agent-cursor[data-travelling="true"] {
+    transition: translate var(--studio-motion-travel) var(--studio-ease-out);
   }
 }
 .crucible-studio-drop-overlay {
@@ -764,7 +780,7 @@ export const STUDIO_CSS = `
   border-radius: 999px;
   background: var(--studio-accent);
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity var(--studio-motion-quick) var(--studio-ease-out);
 }
 .crucible-studio-grip:focus-visible::after,
 .crucible-studio-grip[data-dragging="true"]::after {
@@ -1395,7 +1411,10 @@ export const STUDIO_CSS = `
 .crucible-studio-property-title .crucible-studio-icon {
   inline-size: 14px;
   block-size: 14px;
-  transition: transform 120ms ease-out;
+  transition: transform var(--studio-motion-quick) var(--studio-ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .crucible-studio-property-title .crucible-studio-icon { transition: none; }
 }
 .crucible-studio-property-section[data-open="true"] .crucible-studio-property-title .crucible-studio-icon { transform: rotate(90deg); }
 .crucible-studio-property-rows {
@@ -1547,7 +1566,7 @@ export const STUDIO_CSS = `
   block-size: 13px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--studio-text) 70%, transparent);
-  transition: transform 120ms ease-out;
+  transition: transform var(--studio-motion-quick) var(--studio-ease-out);
 }
 .crucible-studio button.crucible-studio-switch[aria-checked="true"] {
   border-color: var(--studio-text);
@@ -2223,7 +2242,7 @@ export const STUDIO_CSS = `
 }
 .crucible-studio dialog button[hidden] { display: none; }
 @media (prefers-reduced-motion: no-preference) {
-  .crucible-studio-setup-card { transition: border-color 120ms ease, box-shadow 120ms ease; }
+  .crucible-studio-setup-card { transition: border-color var(--studio-motion-quick) var(--studio-ease-out), box-shadow var(--studio-motion-quick) var(--studio-ease-out); }
 }
 .crucible-studio-shortcuts {
   display: grid;

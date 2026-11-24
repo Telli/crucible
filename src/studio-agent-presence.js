@@ -6,6 +6,8 @@ const MAXIMUM_NAME_LENGTH = 40;
 const MAXIMUM_STOPS = 8;
 const STOP_MILLISECONDS = 1100;
 const LINGER_MILLISECONDS = 1600;
+// Matches --studio-motion-travel in studio-styles.js, plus a frame of slack so the style never outlives the travel.
+const TRAVEL_MILLISECONDS = 360 + 40;
 
 export const DEFAULT_AGENT_NAME = 'Agent';
 // Brand kit accent and status colours, plus the blue of the Z axis. Each is light enough for ink text.
@@ -106,12 +108,29 @@ export function createAgentPresence(documentReference, { controller, requestDraw
   let stopIndex = 0;
   let color = AGENT_COLORS[0];
   let timer = null;
+  let travelTimer = null;
+  let placedX = null;
+  let placedY = null;
 
   function activeNodeId() {
     return stops[stopIndex] ?? null;
   }
 
-  function place() {
+  function endTravel() {
+    clearTimeout(travelTimer);
+    travelTimer = null;
+    delete pointer.dataset.travelling;
+  }
+
+  function startTravel() {
+    clearTimeout(travelTimer);
+    pointer.dataset.travelling = 'true';
+    travelTimer = setTimeout(endTravel, TRAVEL_MILLISECONDS);
+  }
+
+  // The pointer is placed with the compositor-run `translate` property from two pixel values; only a travel to a new
+  // target eases it, so while the camera moves the pointer stays on its object instead of trailing it.
+  function placeAt(isTravel) {
     const nodeId = activeNodeId();
     if (!nodeId) {
       return null;
@@ -121,8 +140,17 @@ export function createAgentPresence(documentReference, { controller, requestDraw
       return null;
     }
     const centre = centreOf(outline);
-    pointer.style.left = `${((centre[0] / controller.viewportWidth) * 100).toFixed(2)}%`;
-    pointer.style.top = `${((centre[1] / controller.viewportHeight) * 100).toFixed(2)}%`;
+    const x = centre[0].toFixed(1);
+    const y = centre[1].toFixed(1);
+    if (x !== placedX || y !== placedY) {
+      if (!isTravel) {
+        endTravel();
+      }
+      pointer.style.setProperty('--studio-agent-x', `${x}px`);
+      pointer.style.setProperty('--studio-agent-y', `${y}px`);
+      placedX = x;
+      placedY = y;
+    }
     return outline;
   }
 
@@ -131,6 +159,9 @@ export function createAgentPresence(documentReference, { controller, requestDraw
     timer = null;
     stops = [];
     stopIndex = 0;
+    endTravel();
+    placedX = null;
+    placedY = null;
     pointer.hidden = true;
     pointer.dataset.nodeId = '';
     requestDraw();
@@ -139,7 +170,12 @@ export function createAgentPresence(documentReference, { controller, requestDraw
   function goToStop(index) {
     stopIndex = index;
     pointer.dataset.nodeId = activeNodeId();
-    pointer.hidden = place() === null;
+    // A pointer that is already on screen travels to the new target from where it stands; a hidden one appears in place.
+    const isTravel = !pointer.hidden;
+    if (isTravel) {
+      startTravel();
+    }
+    pointer.hidden = placeAt(isTravel) === null;
     requestDraw();
     const isLast = index >= stops.length - 1;
     timer = setTimeout(() => (isLast ? finish() : goToStop(index + 1)), isLast ? LINGER_MILLISECONDS : STOP_MILLISECONDS);
@@ -154,20 +190,21 @@ export function createAgentPresence(documentReference, { controller, requestDraw
       return color;
     },
     /** Called on every Studio frame: keeps the pointer on its object while the camera moves and returns the outline to draw. */
-    place,
+    place: () => placeAt(false),
     /** Walks the pointer over `nodeIds` in order, under `name`. A new call replaces a walk in progress. */
     show({ name, nodeIds }) {
       const label = assertAgentName(name);
       if (!Array.isArray(nodeIds) || nodeIds.some(nodeId => typeof nodeId !== 'string' || nodeId === '')) {
         throw new TypeError('nodeIds must be an array of node id strings.');
       }
-      finish();
+      clearTimeout(timer);
+      stops = [];
+      stopIndex = 0;
       nameTag.textContent = label;
       color = agentColor(label);
       pointer.style.color = color;
       nameTag.style.background = color;
       // The outline of a node costs a pass over its parts, so the search ends at the stops the pointer will visit (#2842).
-      stops = [];
       for (const nodeId of nodeIds) {
         if (stops.length >= MAXIMUM_STOPS) {
           break;
@@ -178,12 +215,15 @@ export function createAgentPresence(documentReference, { controller, requestDraw
       }
       if (stops.length > 0) {
         goToStop(0);
+      } else {
+        finish();
       }
       return stops.length;
     },
     hide: finish,
     dispose() {
       clearTimeout(timer);
+      clearTimeout(travelTimer);
     },
   };
 }

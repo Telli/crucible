@@ -1,6 +1,30 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import { AGENT_COLORS, agentColor, assertAgentName, createAgentPresence, describeAgentEdit, diffRecipeNodes } from '../src/studio-agent-presence.js';
+
+function makeFakeDocument() {
+  const fakeElement = () => ({
+    dataset: {},
+    style: { setProperty(name, value) { this[name] = value; } },
+    children: [],
+    setAttribute() {},
+    append() {},
+    set textContent(value) {},
+  });
+  return { createElement: fakeElement, createElementNS: fakeElement };
+}
+
+function makePresence(positions) {
+  const controller = {
+    viewportWidth: 800,
+    viewportHeight: 600,
+    nodeOutline: nodeId => {
+      const [x, y] = positions[nodeId];
+      return [[x, y], [x + 10, y], [x, y + 10]];
+    },
+  };
+  return createAgentPresence(makeFakeDocument(), { controller, requestDraw() {} });
+}
 
 function makeRecipe() {
   return {
@@ -67,8 +91,7 @@ test('agentColor keeps one palette colour per name and spreads names over the pa
 });
 
 test('the pointer asks for outlines only until it has its stops, and visits the same nodes as before (#2842)', () => {
-  const fakeElement = () => ({ dataset: {}, style: {}, children: [], setAttribute() {}, append() {}, set textContent(value) {} });
-  const documentReference = { createElement: fakeElement, createElementNS: fakeElement };
+  const documentReference = makeFakeDocument();
   const nodeIds = Array.from({ length: 120 }, (_, index) => `node-${index}`);
   const asked = [];
   const controller = {
@@ -87,4 +110,75 @@ test('the pointer asks for outlines only until it has its stops, and visits the 
   assert.deepEqual(asked.slice(0, 15), nodeIds.slice(0, 15), 'outlines were asked in list order');
   assert.ok(!asked.some(nodeId => Number(nodeId.split('-')[1]) > 14), 'the search ended at the eighth visible node, not at the end of the list');
   presence.dispose();
+});
+
+test('a new target writes the pointer position in pixels and turns the travelling state on (#3223)', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const positions = { hero: [100, 200], orb: [400, 300] };
+    const presence = makePresence(positions);
+    presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
+    const pointer = presence.element;
+    assert.equal(pointer.dataset.travelling, undefined, 'the first appearance snaps in place');
+    assert.equal(pointer.style['--studio-agent-x'], '103.3px');
+    assert.equal(pointer.style['--studio-agent-y'], '203.3px');
+    mock.timers.tick(1100);
+    assert.equal(presence.activeNodeId, 'orb');
+    assert.equal(pointer.dataset.travelling, 'true');
+    assert.equal(pointer.style['--studio-agent-x'], '403.3px');
+    mock.timers.tick(400);
+    assert.equal(pointer.dataset.travelling, undefined, 'the travel state ends after the travel time');
+    presence.dispose();
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('a camera follow update writes the position without the travelling state and ends a travel (#3223)', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const positions = { hero: [100, 200], orb: [400, 300] };
+    const presence = makePresence(positions);
+    presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
+    const pointer = presence.element;
+    presence.place();
+    assert.equal(pointer.dataset.travelling, undefined, 'a frame with the camera still starts no travel');
+    mock.timers.tick(1100);
+    presence.place();
+    assert.equal(pointer.dataset.travelling, 'true', 'a frame with the camera still keeps the travel going');
+    positions.orb = [450, 320];
+    presence.place();
+    assert.equal(pointer.dataset.travelling, undefined, 'a moved camera ends the travel so the pointer stays glued');
+    assert.equal(pointer.style['--studio-agent-x'], '453.3px');
+    assert.equal(pointer.style['--studio-agent-y'], '323.3px');
+    presence.dispose();
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('a second target during a travel keeps travelling and a walk shown while the pointer is up travels too (#3223)', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const positions = { hero: [100, 200], orb: [400, 300], lamp: [600, 100] };
+    const presence = makePresence(positions);
+    presence.show({ name: 'Claude', nodeIds: ['hero', 'orb', 'lamp'] });
+    const pointer = presence.element;
+    mock.timers.tick(1100);
+    mock.timers.tick(200);
+    assert.equal(pointer.dataset.travelling, 'true');
+    mock.timers.tick(900);
+    assert.equal(presence.activeNodeId, 'lamp');
+    assert.equal(pointer.dataset.travelling, 'true', 'the next target keeps the travel state');
+    assert.equal(pointer.style['--studio-agent-x'], '603.3px');
+    presence.show({ name: 'Claude', nodeIds: ['hero'] });
+    assert.equal(pointer.hidden, false, 'a new walk does not hide the pointer first');
+    assert.equal(pointer.dataset.travelling, 'true', 'it travels from where it stands');
+    assert.equal(pointer.style['--studio-agent-x'], '103.3px');
+    presence.hide();
+    assert.equal(pointer.dataset.travelling, undefined);
+    presence.dispose();
+  } finally {
+    mock.timers.reset();
+  }
 });
