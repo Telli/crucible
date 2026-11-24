@@ -27,7 +27,7 @@ const PARTICLE_PRESETS = Object.freeze({
   fire: Object.freeze({
     count: 300, rate: 90, lifetime: [0.5, 0.9], speed: [0.3, 0.9], size: [0.2, 0.35], spread: 12, drag: 1, orient: 'billboard', spin: [-40, 40],
     gravityScale: 0, acceleration: [0, 2.5, 0], emitter: { shape: 'disc', radius: 0.1 },
-    sizeOverLife: [[0, 0.5], [0.25, 1], [1, 0.1]], alpha: [[0, 0], [0.1, 1], [0.7, 0.6], [1, 0]],
+    sizeOverLife: [[0, 0.5], [0.25, 1], [1, 0.1]], alpha: [[0, 0], [0.1, 0.45], [0.7, 0.25], [1, 0]],
     color: [[0, [1, 0.92, 0.55]], [0.4, [1, 0.45, 0.08]], [1, [0.3, 0.03, 0]]],
   }),
   sparkles: Object.freeze({
