@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createAgentScene } from '../src/agent-scene.js';
+import { CrucibleRenderer, DEFAULT_TEXTURE_ANISOTROPY, configureTexture, textureDescriptorInfo } from '../src/renderer.js';
 import { layoutTextPanel, normalizeTextPanel, rasterizeTextPanel, textPanelTextureSize } from '../src/text-panel.js';
 
 const SIGN = { content: 'OPEN\nCoffee 24h', width: 2, height: 0.8, fontSize: 0.25, color: [1, 0.9, 0.6], background: [0.1, 0.05, 0.02], resolution: 128 };
@@ -200,4 +201,32 @@ test('alwaysOnTop and the material depthTest must agree, and the error says whic
   assert.throws(() => build({}, { size: [1, 1], alwaysOnTop: true }), /alwaysOnTop[\s\S]*depthTest false and alphaMode "blend"/);
   assert.throws(() => build({ depthTest: false, alphaMode: 'blend' }, { size: [1, 1] }), /depthTest[\s\S]*billboard\.alwaysOnTop true/);
   assert.throws(() => build({}, { size: [1, 1], alwaysOnTop: 'yes' }), /billboard\.alwaysOnTop[\s\S]*true or false/);
+});
+
+test('a text panel texture gets a mip chain, trilinear minification and anisotropic filtering, so a sign seen at a grazing angle stays sharp (#3237)', () => {
+  const scene = createAgentScene(recipe({
+    materials: [{ id: 'sign-material', tag: 'unlit', text: SIGN }],
+    nodes: [{ id: 'sign', geometry: 'sheet', material: 'sign-material' }],
+  }));
+  const descriptor = scene.parts.find(part => part.name === 'sign').material.map;
+  const info = textureDescriptorInfo(descriptor);
+  assert.equal(info.mipmaps, true, 'the descriptor names no filter, so the default trilinear mip chain applies');
+  assert.equal(info.minFilter, 9987);
+  assert.equal(info.magFilter, 9729);
+
+  const appliedLevels = [];
+  const renderer = Object.create(CrucibleRenderer.prototype);
+  renderer.maxAnisotropy = DEFAULT_TEXTURE_ANISOTROPY;
+  const generatedMipmaps = [];
+  renderer.context = {
+    TEXTURE_2D: 3553, TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243, TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240,
+    getExtension: () => ({ TEXTURE_MAX_ANISOTROPY_EXT: 34046, MAX_TEXTURE_MAX_ANISOTROPY_EXT: 34047 }),
+    getParameter: () => 16,
+    texParameteri() {},
+    generateMipmap: target => generatedMipmaps.push(target),
+    texParameterf: (target, name, value) => appliedLevels.push(value),
+  };
+  configureTexture(renderer, info);
+  assert.deepEqual(generatedMipmaps, [3553]);
+  assert.deepEqual(appliedLevels, [16]);
 });
