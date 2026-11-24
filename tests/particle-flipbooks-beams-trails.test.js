@@ -14,7 +14,7 @@ function track(id, from, to, duration = 4) {
 function recipeWith(systems, extra = {}) {
   return {
     format: 'crucible.scene', schemaVersion: 1,
-    geometries: [{ id: 'card', type: 'plane' }, { id: 'marker', type: 'box', bevel: 0 }],
+    geometries: [{ id: 'card', type: 'plane', segments: 1 }, { id: 'marker', type: 'box', bevel: 0 }],
     materials: [{ id: 'glow', color: [1, 1, 1], alphaMode: 'add' }, { id: 'soft', color: [1, 1, 1], alphaMode: 'blend' }],
     nodes: [
       { id: 'fx', geometry: 'card', material: 'glow' },
