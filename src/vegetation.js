@@ -396,12 +396,30 @@ function growSkeleton(preset, height, random, leafMode, seed) {
     }
   }
 
+  // A stem split (Weber and Penn 1995, 4.2): the trunk ends in a fork of limbs that leave it at `angle` and spread round it, so a
+  // broad crown has no central leader. Each limb is `lengthRatio` of the trunk long.
+  function spawnSplitLimbs(trunk, { count, angle, lengthRatio, radiusRatio }) {
+    const tip = sampleBranch(trunk, 1);
+    const firstAzimuth = random() * FULL_TURN;
+    for (let index = 0; index < count; index++) {
+      const azimuth = firstAzimuth + index / count * FULL_TURN + (random() - 0.5) * 0.5;
+      growBranch({
+        origin: tip.position,
+        direction: sproutDirection(tip, { azimuth }, angle * (0.85 + random() * 0.3)),
+        length: trunk.length * lengthRatio * (0.85 + random() * 0.3),
+        radius: tip.radius * radiusRatio,
+        level: 1,
+      });
+    }
+  }
+
   function growBranch({ origin, direction, length, radius, level }) {
     const parameters = preset.levels[level];
     const walked = { level, ...walkBranch(origin, direction, length, radius, parameters, random) };
     const branch = level > 0 ? pruneToEnvelope(walked, preset.envelope, height) : walked;
     branches.push(branch);
     if (parameters.children) spawnChildren(branch, parameters.children, parameters.twist);
+    if (level === 0 && parameters.split) spawnSplitLimbs(branch, parameters.split);
     if (level === lastLevel && !placeCrown) addLeafSites(branch);
   }
 

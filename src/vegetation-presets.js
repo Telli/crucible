@@ -75,25 +75,25 @@ export const TREE_PRESETS = Object.freeze({
     label: 'Oak', species: 'broadleaf', height: [9, 13], leaf: BROADLEAF_CROWN_LEAF,
     // Half the height of trunk, then limbs that leave it nearly level at the bottom and steepen to the top, drooping a little, inside a
     // flat-bottomed envelope that cuts the upper crown short, so the widest part of the crown sits in its lower third.
-    habit: { trunkLength: 0.5, angleTop: 14, profile: 'spreading', envelope: { base: 0.2, peak: 0.08, width: 0.5, powerLow: 0.3, powerHigh: 2 } },
-    tree: { branches: [12, 6, 3], branchAngle: [86, 55, 50], branchStart: [0.3], lengthFalloff: [1.1, 0.6], gnarliness: [0.1, 0.22, 0.26, 0.28], tropism: [0.02, -0.08, 0.04, 0], leafSize: 0.64, leafCount: 4 },
+    habit: { trunkLength: 0.5, angleTop: 30, profile: 'spreading', split: { count: 3, angle: 42, lengthRatio: 1.05, radiusRatio: 0.85 }, envelope: { base: 0.2, peak: 0.05, width: 0.5, powerLow: 0.3, powerHigh: 2 } },
+    tree: { branches: [12, 6, 3], branchAngle: [86, 55, 50], branchStart: [0.3], lengthFalloff: [1.1, 0.6], gnarliness: [0.1, 0.22, 0.26, 0.28], tropism: [0.02, -0.08, 0.04, 0], leafSize: 0.95, leafCount: 3.2 },
   }),
   ash: Object.freeze({
     label: 'Ash', species: 'broadleaf', height: [12, 16], leaf: BROADLEAF_CROWN_LEAF,
-    // A tall dome: limbs rise at the top (the lengthening profile of a round crown) inside an envelope that rounds it off.
-    habit: { envelope: { base: 0.2, peak: 0.45, width: 0.36, powerLow: 0.6, powerHigh: 0.8 } },
-    tree: { crownShape: 'round', branches: [9, 3, 3], branchAngle: [40, 42, 45], branchStart: [0.42], lengthFalloff: [0.44, 0.55], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 0.58, leafCount: 4 },
+    // A broad dome: the lowest limbs are the longest and the crown narrows upward inside an envelope that rounds it off.
+    habit: { profile: 'spreading', angleTop: 30, envelope: { base: 0.1, peak: 0.08, width: 0.45, powerLow: 0.4, powerHigh: 1.2 } },
+    tree: { branches: [9, 3, 3], branchAngle: [40, 42, 45], branchStart: [0.42], lengthFalloff: [0.44, 0.55], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 1.1, leafCount: 5 },
   }),
   aspen: Object.freeze({
     label: 'Aspen', species: 'birch', height: [11, 15], leaf: BIRCH_CROWN_LEAF,
-    // Narrow and open on a long clear trunk.
-    habit: { envelope: { base: 0.3, peak: 0.5, width: 0.2, powerLow: 0.7, powerHigh: 0.8 } },
-    tree: { crownShape: 'column', branches: [14, 3, 3], branchAngle: [38, 45, 50], branchStart: [0.45], lengthFalloff: [0.18, 0.5], gnarliness: [0.03, 0.1, 0.12, 0.14], tropism: [0.02, 0.1, 0, -0.08], leafSize: 0.78, leafCount: 3.5 },
+    // Open on a long clear trunk, its longest limbs low.
+    habit: { profile: 'spreading', angleTop: 30, envelope: { base: 0.2, peak: 0.1, width: 0.42, powerLow: 0.5, powerHigh: 1.1 } },
+    tree: { branches: [14, 3, 3], branchAngle: [38, 45, 50], branchStart: [0.45], lengthFalloff: [0.18, 0.5], gnarliness: [0.03, 0.1, 0.12, 0.14], tropism: [0.02, 0.1, 0, -0.08], leafSize: 1.6, leafCount: 6 },
   }),
   // A narrow ovoid; the twigs hang because the birch leaf placement points them down.
   birch: Object.freeze({
-    label: 'Birch', species: 'birch', tree: { leafSize: 0.82, leafCount: 1.2 }, leaf: BIRCH_CROWN_LEAF,
-    habit: { envelope: { base: 0.28, peak: 0.45, width: 0.24, powerLow: 0.7, powerHigh: 0.9 } },
+    label: 'Birch', species: 'birch', tree: { leafSize: 0.9, leafCount: 4 }, leaf: BIRCH_CROWN_LEAF,
+    habit: { profile: 'spreading', angleTop: 30, envelope: { base: 0.25, peak: 0.06, width: 0.3, powerLow: 0.5, powerHigh: 1.1 } },
   }),
   pine: Object.freeze({
     label: 'Pine', species: 'conifer', height: [12, 17], leaf: PINE_CROWN_LEAF,
@@ -273,9 +273,10 @@ export function maximumBranchCount(levels) {
 
 // A preset's habit (#3057) is what the public growth parameters do not reach: how far up the trunk runs (`trunkLength`, a fraction of
 // the height), how the first branches' angle changes from the lowest to the highest (`angleTop`, degrees), their length profile
-// and the `envelope` that prunes the crown. Keeping it in the preset leaves `scene_capabilities` as it was.
-function applyHabit(levels, { trunkLength, angleTop, profile }) {
+// the `split` of the trunk into limbs (`count`, `angle` in degrees, `lengthRatio`, `radiusRatio`) and the `envelope` that prunes the crown. Keeping it in the preset leaves `scene_capabilities` as it was.
+function applyHabit(levels, { trunkLength, angleTop, profile, split }) {
   if (trunkLength !== undefined) levels[0].lengthScale = trunkLength;
+  if (split !== undefined) levels[0].split = { ...split, angle: split.angle * DEGREES };
   if (angleTop !== undefined) levels[0].children.angleTop = angleTop * DEGREES;
   if (profile !== undefined) levels[0].children.profile = profile;
 }
