@@ -17,6 +17,10 @@ const MAX_LITERAL = 1e6;
 const MAX_SEED = 0x7fffffff;
 const MAX_REPORTED_KEY_LENGTH = 24;
 const NOISE_SCALE_LIMIT = 64;
+// noise and voronoi may go finer than 64 cells across a tile when the bake can resolve them: a scale above 64 needs a
+// resolution of at least FINE_SCALE_MIN_PIXELS pixels per cell, so 256 cells at 1024 and never above the hard limit.
+const FINE_SCALE_LIMIT = 1024;
+const FINE_SCALE_MIN_PIXELS = 4;
 const NOISE_OCTAVE_LIMIT = 6;
 // Work units. One unit is about 33 ns of one pixel on a 2024 desktop CPU in Node (a noise octave is 2.1 units); the
 // costs below are in hundredths of a unit, measured one node kind at a time (#3147, docs/agent-scene.md "Work budget").
@@ -78,6 +82,14 @@ function onlyKeys(node, allowed, label) {
 
 function integerInRange(value, minimum, maximum, label) {
   if (!Number.isInteger(value) || value < minimum || value > maximum) throw graphError(`${label} must be a whole number from ${minimum} to ${maximum}.`);
+  return value;
+}
+
+function fineScale(value, label, state) {
+  if (!Number.isInteger(value) || value < 1 || value > FINE_SCALE_LIMIT) {
+    throw graphError(`${label} must be a whole number from 1 to ${NOISE_SCALE_LIMIT}, or up to ${FINE_SCALE_LIMIT} when the bake resolution is at least ${FINE_SCALE_MIN_PIXELS} times the scale.`);
+  }
+  state.finestScale = Math.max(state.finestScale ?? 0, value);
   return value;
 }
 
@@ -301,7 +313,7 @@ const SEED_SHIFT_RANGE = 1024;
 
 function compileNoise(node, state, depth) {
   const settings = textureSettings(node, 'noise', ['scale', 'seed', 'octaves', 'kind', 'lacunarity', 'gain', 'tile', ...POSITION_FIELDS]);
-  const scale = integerInRange(settings.scale ?? 4, 1, NOISE_SCALE_LIMIT, 'noise scale');
+  const scale = fineScale(settings.scale ?? 4, 'noise scale', state);
   const seed = integerInRange(settings.seed ?? 0, 0, MAX_SEED, 'noise seed');
   const octaves = integerInRange(settings.octaves ?? 4, 1, NOISE_OCTAVE_LIMIT, 'noise octaves');
   const kind = oneOf(settings.kind ?? 'fbm', NOISE_KINDS, 'noise kind');
@@ -325,7 +337,7 @@ const VORONOI_SMOOTH_COST = 2375;
 
 function compileVoronoi(node, state, depth) {
   const settings = textureSettings(node, 'voronoi', ['scale', 'seed', 'output', 'jitter', 'smoothness', ...POSITION_FIELDS]);
-  const scale = integerInRange(settings.scale ?? 4, 1, NOISE_SCALE_LIMIT, 'voronoi scale');
+  const scale = fineScale(settings.scale ?? 4, 'voronoi scale', state);
   const seed = integerInRange(settings.seed ?? 0, 0, MAX_SEED, 'voronoi seed');
   const output = oneOf(settings.output ?? 'distance', VORONOI_OUTPUTS, 'voronoi output');
   const jitter = numberInRange(settings.jitter ?? 1, 0, 1, 'voronoi jitter');
@@ -1068,12 +1080,15 @@ export function compileMaterialGraph(graph, { size = 1, images, groups } = {}) {
     if (name === 'height') state.cost += bumpExtraCost(node, state, state.cost - costBefore);
     if (SCALAR_OUTPUTS.includes(name) && outputs[name].kind !== 'scalar') throw graphError(`${name} needs a number, not a vector.`);
   }
-  return { outputs, emissionFresnel, nodeCount: state.nodeCount, cost: (state.cost + PIXEL_COST) / COST_DENOMINATOR };
+  return { outputs, emissionFresnel, nodeCount: state.nodeCount, cost: (state.cost + PIXEL_COST) / COST_DENOMINATOR, finestScale: state.finestScale ?? 0 };
 }
 
 /** Throw when a graph is too costly to bake at this size. Called while normalizing, so a bad scene fails at once. */
 export function checkMaterialGraphWork(compiled, resolution) {
   integerInRange(resolution, 1, 16384, 'resolution');
+  if (compiled.finestScale > NOISE_SCALE_LIMIT && compiled.finestScale * FINE_SCALE_MIN_PIXELS > resolution) {
+    throw new RangeError(`Material graph: noise or voronoi scale ${compiled.finestScale} is too fine for a ${resolution} by ${resolution} bake; at this resolution scale allows 1 to ${Math.max(NOISE_SCALE_LIMIT, Math.floor(resolution / FINE_SCALE_MIN_PIXELS))}. Lower the scale or raise the resolution.`);
+  }
   const work = compiled.cost * resolution * resolution;
   if (work > MATERIAL_GRAPH_LIMITS.maxWork) {
     throw new RangeError(`Material graph: ${compiled.cost} work units per pixel at ${resolution} by ${resolution} is ${Math.round(work).toLocaleString('en-US')} in all, over the limit of ${MATERIAL_GRAPH_LIMITS.maxWork.toLocaleString('en-US')} work units (about ${Math.round(MATERIAL_GRAPH_LIMITS.maxWork * WORK_UNIT_NANOSECONDS / 1e9 * 10) / 10} s of baking). Pass fewer or cheaper nodes, or a smaller resolution (256, 512 or 1024).`);
