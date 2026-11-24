@@ -81,7 +81,7 @@ Files land at `pr-1234/<name>` on `evidence-pr-1234`; files already there stay. 
 For a look or feature change, one command renders the scene on the branch (and on `origin/main` with `--base`), writes labelled side-by-side stills and a clip with a JSON sidecar per file under `artifacts/<issue>/`, measures every frame and prints a PASS or FAIL checklist (also in `checks.json`): subject fully in frame with a margin, no blown highlights or crushed shadows, and no single-frame jump in luma or saturation over every frame of a clip. Paste the checklist into the pull request and push the pictures with the command above:
 
 ```sh
-bash ~/.agents/tools/gpu-lock.sh node scripts/evidence.mjs --issue 1234 --recipe scene.json --cameras cameras.json --subject -1,0,-1,1,2,1 --clip 0-29 --base origin/main
+node scripts/evidence.mjs --issue 1234 --recipe scene.json --cameras cameras.json --subject -1,0,-1,1,2,1 --clip 0-29 --base origin/main
 node scripts/evidence.mjs --issue 1234 --builtin bar        # a small built-in recipe to try it
 node scripts/evidence.mjs --issue 1234 --analyze <folder-of-frames>   # check frames you already have
 ```

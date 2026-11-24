@@ -8,7 +8,7 @@
 //   node scripts/evidence.mjs --issue 3269 --analyze <frames-folder> [--region left,top,right,bottom]   (checks frames already on disk)
 //
 // Render goes through scripts/render-media.mjs (--scene file --kind stills --frames), so it is the same path as every other render.
-// Run it through `bash ~/.agents/tools/gpu-lock.sh` on a shared machine. Exit code 1 when a branch check FAILS.
+// Run it under your GPU queue on a shared machine. Exit code 1 when a branch check FAILS.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
