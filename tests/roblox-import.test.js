@@ -340,7 +340,9 @@ const HOSTILE_INPUTS = {
   dashedName: { count: 16000000, build: count => `<roblox><Item class="Part"><Properties><string name="Name">${'-'.repeat(count)}x</string></Properties></Item></roblox>` },
 };
 const MINIMUM_MILLISECONDS = 5;
-const MAXIMUM_RATIO = 6;
+// The geometric middle of 4 (linear) and 16 (quadratic). At 6 a linear case failed on a loaded coverage runner: quotes at 4n,
+// a 16 MB string, took 6.6 times as long in three rounds running, as allocation and collection grow with the string (#3322).
+const MAXIMUM_RATIO = 8;
 // Stops repeating a measurement that is already far too slow. It is not a pass mark: coverage runs are several times slower than a
 // plain run, and the ratio and the count / 16 probe carry the linear-time check.
 const STOP_REPEATING_MILLISECONDS = 2000;
@@ -369,7 +371,7 @@ function bestMilliseconds(text, label, runs = 5) {
   return best;
 }
 
-test('hostile text is read in linear time: four times the input takes less than 6 times as long', () => {
+test('hostile text is read in linear time: four times the input takes less than 8 times as long', () => {
   const report = [];
   for (const [label, { count, build }] of Object.entries(HOSTILE_INPUTS)) {
     bestMilliseconds(build(count / 100), label, 1);
