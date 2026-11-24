@@ -18,7 +18,7 @@ Blender 5.3 manual, read 2026-11-24. Studio at commit `71aa78ab5`. Status words:
 | --- | --- | --- |
 | [Add menu](https://docs.blender.org/manual/en/latest/modeling/meshes/primitives.html) (Shift+A) | Has. `src/studio-keymap.js:26`, `src/studio-templates.js:5` | Eight mesh shapes, 3D text and three lights. No empty, camera or curve entry. |
 | [Click select, Shift+click adds](https://docs.blender.org/manual/en/latest/interface/selecting.html) | Partial. `src/studio-controller.js:1036`, `:1095` | One object at a time. A click replaces the selection. |
-| [Select all, none, invert](https://docs.blender.org/manual/en/latest/scene_layout/object/selecting.html) (A, Alt+A, Ctrl+I) | Missing. No such action in `src/studio-keymap.js:20-67` | Esc deselects. Needs multi-object selection (#2816, closed as not planned). |
+| [Select all, none, invert](https://docs.blender.org/manual/en/latest/scene_layout/object/selecting.html) (A, Alt+A, Ctrl+I) | Missing. No such action in `src/studio-keymap.js:20-67` | Esc deselects. Needs multi-object selection (#2816). |
 | [Box, circle, lasso select](https://docs.blender.org/manual/en/latest/interface/selecting.html) (B, C, Ctrl+right drag) | Missing. Search finds none | The object selecting page lists lasso as Ctrl+Alt+left drag; the interface page lists Ctrl+right drag. |
 | [Move, rotate, scale](https://docs.blender.org/manual/en/latest/scene_layout/object/editing/transform/move.html) (G, R, S) | Has. `src/studio-keymap.js:22-24`, `src/studio.js:3880` | The key picks the object up under the pointer. Handles work too. |
 | [Axis lock](https://docs.blender.org/manual/en/latest/scene_layout/object/editing/transform/control/axis_locking.html) (X, Y, Z) | Different. `src/studio.js:3924`, `src/studio-controller.js:1127` | Studio locks to the object's own axis and the same key frees it. Blender locks to the current transform orientation first. |
@@ -100,7 +100,7 @@ Size: S is one small pull request, M is one pull request, L is several. A new me
 | 5 | Edit cost and the 64 entry cap | must | Every tool use spends one of 64 entries. | M | Engine | #3262 slice 3, cap is an owner call |
 | 6 | Typed numbers and plane lock while holding | must | Exact sizes are daily work. | S to M | UI only | #3291 |
 | 7 | Modifier panel for the daily five | must | Mirror and subdivision are how most models are built. | M | Supported | #3292 |
-| 8 | Several objects selected at once | must in Blender terms | Layout, join and parenting need it. | L | UI only | #2816, closed as not planned and kept as a `ROADMAP.md` idea |
+| 8 | Several objects selected at once | must | Select all, box select, join and parenting in object mode all need it. | L | UI only | #2816 |
 | 9 | Loop, ring, linked, grow and shrink select | should | Loop select is the fastest way to pick a band. | M | UI only | #3293 |
 | 10 | Select none, invert, circle select in edit mode | should | Small, and they complete slice 5. | S | UI only | #3294 |
 | 11 | Dissolve, and merge of a picked set | should | Cleaning up topology. | M | Dissolve supported, merge needs engine work | #3295 |
@@ -117,7 +117,7 @@ Size: S is one small pull request, M is one pull request, L is several. A new me
 | 22 | Knife, edge slide, vertex slide, recalculate normals | could | Useful, each needs a new operation. | L | Engine work | `ROADMAP.md` idea |
 | 23 | Ruler, hide unselected, lasso | could | Small comforts. | S each | UI only | `ROADMAP.md` idea |
 
-Rows 1 to 5 belong to the edit mode work of #3262.
+Rows 1 to 5 belong to the edit mode work of #3262. Row 8 comes early in the order, right after rows 1 and 2, because the object mode rows for select all, box select, join and parent wait on it.
 
 ## What Studio does not copy
 
