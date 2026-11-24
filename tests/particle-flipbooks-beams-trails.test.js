@@ -153,3 +153,15 @@ test('smoke, fire and sparkles presets build bounded systems that rise or twinkl
   assert.equal(sparkles.positions.length / 3 % 30, 0, 'thirty sparkles, one card each');
   assert.throws(() => createAgentScene(recipeWith([{ node: 'fx', preset: 'smoke', count: 5000 }])), /count/);
 });
+
+// A particle frozen at a known age: its vertex colour is the colour curve at that age (the tint a surface material multiplies by).
+test('the colour curve reaches the vertex colour of a particle at a known age (#3240)', () => {
+  const stops = [[0, [1, 0, 0]], [0.5, [0, 1, 0]], [1, [0, 0, 1]]];
+  const recipe = recipeWith([{ node: 'fx', seed: 2, count: 1, lifetime: 4, speed: 0, size: 1, drag: 0, emitter: { shape: 'point' }, color: stops }]);
+  const colorAt = time => Array.from(sampled(recipe, time).colors.subarray(0, 3));
+  assertClose(colorAt(2), [0, 1, 0], 'half way through the life is the middle stop');
+  assertClose(colorAt(1), [0.5, 0.5, 0], 'a quarter in is half red and half green');
+  const preset = recipeWith([{ node: 'fx', preset: 'fire', count: 1, lifetime: 2, speed: 0, emitter: { shape: 'point' } }]);
+  const fire = Array.from(sampled(preset, 0.8).colors.subarray(0, 3));
+  assert.ok(fire[0] > fire[1] && fire[1] > fire[2], `fire is orange (red above green above blue), got [${fire.map(value => value.toFixed(3))}]`);
+});
