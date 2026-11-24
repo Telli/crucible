@@ -14,7 +14,11 @@ const FILL_DRIFT_MILLISECONDS = 120000;
 const FILL_EASE_EASING = 'cubic-bezier(0.1, 0.5, 0.2, 1)';
 const FILL_EASE_SHARE = 0.85;
 const FILL_DRIFT_SHARE = 0.97;
-const FILL_COMPLETE_MILLISECONDS = 200;
+const FILL_COMPLETE_MILLISECONDS = 90;
+const FILL_COMPLETE_REDUCED_MOTION_MILLISECONDS = 200;
+const FILL_LANDED_SCALE = 0.04;
+const STREAM_LANDING_MILLISECONDS = 800;
+const STREAM_SELECTOR = '.stream';
 const FILL_COMPLETE_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
 
 /**
@@ -61,7 +65,7 @@ function animateFill(loadingElement, stops, options) {
   if (!fillElement?.animate) {
     return;
   }
-  const start = currentFillScale(fillElement);
+  const start = Math.max(currentFillScale(fillElement), FILL_LANDED_SCALE);
   const keyframes = [{ scale: start, ...stops[0] }, ...stops.slice(1)].map(({ scale, ...keyframe }) => ({
     ...keyframe,
     transform: `scaleX(${Math.max(scale, start)})`,
@@ -101,16 +105,29 @@ export function reportStudioModulesLoaded(documentReference, loaded, total) {
   reportStudioLoadingProgress(documentReference, from + (to - from) * (Math.min(loaded, total) / total));
 }
 
-/** Fills the bar. */
+/** Fills the bar, while the stream still pours into it. */
 function completeStudioLoadingProgress(loadingElement) {
   loadingElement.style?.setProperty(PROGRESS_PROPERTY, '1');
-  animateFill(loadingElement, [{}, { scale: 1 }], { duration: FILL_COMPLETE_MILLISECONDS, easing: FILL_COMPLETE_EASING });
+  const reducedMotion = loadingElement.ownerDocument?.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+  const duration = reducedMotion ? FILL_COMPLETE_REDUCED_MOTION_MILLISECONDS : FILL_COMPLETE_MILLISECONDS;
+  animateFill(loadingElement, [{}, { scale: 1 }], { duration, easing: FILL_COMPLETE_EASING });
 }
 
 /**
- * Studio is ready: the loading state stops taking input, the bar fills (200 ms) while the stream thins and stops and the pot
- * rights itself (200 ms), then the loading state fades out (150 ms), 350 ms in all (300 ms with reduced motion, where only
- * the fill and the fade move). All of it starts now; the returned promise resolves when those animations end.
+ * Resolves once the stream has reached the bar. The fill stays hidden until then (the page's CSS), so a load that is ready sooner
+ * waits here and the bar never fills with nothing pouring into it.
+ */
+export function waitForStreamLanding(documentReference) {
+  const stream = documentReference.getElementById(STUDIO_LOADING_ELEMENT_ID)?.querySelector?.(STREAM_SELECTOR);
+  const pouring = stream?.getAnimations?.().find(animation => animation.animationName === 'studio-stream-in');
+  const remaining = pouring ? STREAM_LANDING_MILLISECONDS - Number(pouring.currentTime) : 0;
+  return remaining > 0 ? new Promise(resolve => setTimeout(resolve, remaining)) : Promise.resolve();
+}
+
+/**
+ * Studio is ready: the loading state stops taking input, the bar fills while the stream still pours (90 ms), the stream shortens
+ * into the lip and the sparks stop (80 ms), the pot rights itself (100 ms), then the loading state fades out (100 ms), 370 ms in
+ * all (300 ms with reduced motion, where only the fill and the fade move). All of it starts now; the returned promise resolves when those animations end.
  */
 export function windDownStudioLoading(documentReference) {
   const loadingElement = documentReference.getElementById(STUDIO_LOADING_ELEMENT_ID);
@@ -158,6 +175,7 @@ export function showStudioLoadingFailure(documentReference, error) {
  */
 export async function revealStudio({ studio, setupParameter, documentReference, requestFrame }) {
   await studio.ready;
+  await waitForStreamLanding(documentReference);
   const windDown = windDownStudioLoading(documentReference);
   await waitForNextPaint(requestFrame);
   await windDown;

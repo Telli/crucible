@@ -10,6 +10,7 @@ import {
   showStudioLoadingFailure,
   STUDIO_LOADING_MILESTONES,
   waitForNextPaint,
+  waitForStreamLanding,
   windDownStudioLoading,
 } from '../src/studio-boot.js';
 import { STUDIO_PREFERENCES_KEY } from '../src/studio-preferences.js';
@@ -160,7 +161,7 @@ const COMPOSITOR_PROPERTIES = new Set(['transform', 'opacity', 'animation-timing
 // A loading element with a fill that records the animations started on it. The fill stands where the last one ended.
 function createProgressPage() {
   const properties = new Map();
-  const state = { fillScale: 0.02, started: [], cancelled: 0 };
+  const state = { fillScale: 0.04, started: [], cancelled: 0 };
   const fillElement = {
     ownerDocument: {
       defaultView: { getComputedStyle: () => ({ transform: `matrix(${state.fillScale}, 0, 0, 1, 0, 0)` }) },
@@ -203,7 +204,8 @@ test('the stream is one static curved clip, wider at the lip than at the pool, w
   assert.ok(clip, 'the stream shape is a static clip-path');
   const topWidth = /^M(\d+) 0H(\d+)/.exec(clip[1]);
   assert.ok(Number(topWidth[2]) - Number(topWidth[1]) > 4, 'the stream is wide where it leaves the lip');
-  assert.match(clip[1], /Q\d+ 70 6 70Q4 70 4 68/, 'it ends rounded, 4 px wide, at the bar');
+  assert.match(clip[1], /8 70H4C/, 'it ends square, 4 px wide, with no rounded tip (owner: the round blob looks ugly)');
+  assert.ok(!/Q/.test(clip[1]), 'no curve is left at its end');
   assert.match(LOADING_STYLE, /[.]flow i [{][^}]*repeating-linear-gradient[(]transparent 0, color-mix[(]in srgb, var[(]--site-text[)] 24%, transparent[)] 4px, transparent 8px, color-mix[(]in srgb, var[(]--site-bg[)] 30%, transparent[)] 11px, transparent 14px[)],\s*var[(]--site-focus[)]/, 'soft lighter and deeper bands made of tokens over the molten colour');
   assert.match(LOADING_STYLE, /studio-stream-flow 0[.]7s linear infinite/);
   assert.match(LOADING_STYLE, /@keyframes studio-stream-flow [{] to [{] transform: translateY[(]14px[)]; [}] [}]/, 'the flow moves by exactly one band period of 14 px, so the loop is seamless');
@@ -215,14 +217,15 @@ test('the stream ends sunk into the bar, over the start of the fill, with no poo
   const lengthOf = (body, property) => Number(new RegExp(`(?:^|\\s)${property}: (-?[\\d.]+)(?:px)?;`).exec(body)[1]);
   const bar = rule('#studio-loading [.]progress');
   const stream = rule('#studio-loading [.]stream');
-  assert.match(LOADING_STYLE, /clip-path: path[(]"[^"]*Q8 70 6 70/, 'the clip ends where the box ends');
+  assert.match(LOADING_STYLE, /clip-path: path[(]"[^"]*8 70H4C/, 'the clip ends square where the box ends');
   const streamBottom = lengthOf(stream, 'top') + lengthOf(stream, 'height');
   assert.equal(streamBottom, lengthOf(bar, 'top') + 2, 'the stream ends 2 px inside the bar, so there is no gap');
   assert.ok(streamBottom < lengthOf(bar, 'top') + lengthOf(bar, 'height'), 'and it stops inside the bar height');
   const landingX = lengthOf(stream, 'left') + 6;
   assert.ok(landingX >= lengthOf(bar, 'left') && landingX <= lengthOf(bar, 'left') + 4, 'the stream lands at the left end of the bar, where the fill starts');
   assert.equal(lengthOf(bar, 'left') + lengthOf(bar, 'width'), 120, 'the bar still ends at the right edge of the group');
-  assert.match(stream, /z-index: 1;/, 'the stream is drawn over the bar');
+  assert.ok(Number(/z-index: (\d+);/.exec(stream)[1]) < Number(/z-index: (\d+);/.exec(bar)[1]), 'the bar is drawn over the stream, so the square end is hidden inside the fill and no cap shows');
+  assert.ok(Number(/z-index: (\d+);/.exec(rule('#studio-loading [.]spark'))[1]) > Number(/z-index: (\d+);/.exec(bar)[1]), 'the sparks are drawn over the bar');
 });
 
 test('four sparks are thrown up where the stream lands, short, out of step with each other, and animate only transform and opacity', () => {
@@ -257,7 +260,10 @@ test('four sparks are thrown up where the stream lands, short, out of step with 
   for (const duration of durations) {
     assert.ok((duration * gone) / 100 < 0.5, `a spark is visible for ${(duration * gone) / 100} s, under half a second`);
   }
-  assert.match(motionBlock, /data-state="done"\] [.]spark [{] animation: none; [}]/, 'the sparks stop in the first frame of the wind-down');
+  assert.match(motionBlock, /data-state="done"\] [.]spark [{] visibility: hidden; [}]/, 'the sparks are hidden once the stream starts to leave the bar');
+  const hideDelay = Number(/transition: visibility 0s linear ([\d.]+)s/.exec(spark)[1]);
+  const streamLeavesAt = Number(/studio-stream-out [\d.]+s ease-in ([\d.]+)s/.exec(motionBlock)[1]);
+  assert.equal(hideDelay, streamLeavesAt, 'the sparks go in the frame the stream starts to shorten, and not before the bar is full');
   assert.match(LOADING_STYLE, /data-state="error"\] :is[(][.]stream, [.]spark, [.]progress[)] [{] display: none; [}]/);
 });
 
@@ -283,7 +289,7 @@ test('the pour animates only transform and opacity, with the fill moved by scrip
       assert.ok(COMPOSITOR_PROPERTIES.has(property), `${name} animates ${property}`);
     }
   }
-  assert.ok(!/(?<![-\w])transition: /.test(LOADING_STYLE), 'no transitions: script and keyframes move the fill');
+  assert.deepEqual(LOADING_STYLE.match(/(?<![-\w])transition: [^;]+;/g), ['transition: visibility 0s linear 0.09s;'], 'the only transition is the spark switch-off, which moves nothing: script and keyframes move everything else');
   assert.match(LOADING_STYLE, /[.]fill [{][^}]*transform: scaleX[(]var[(]--progress/);
   assert.ok(!/will-change|<animate/.test(PAGE_HTML), 'no will-change and no SMIL');
   const clipPaths = LOADING_STYLE.match(/clip-path/g);
@@ -302,7 +308,7 @@ test('with reduced motion the pot and stream stand still, the fill still moves a
   for (const selector of ['stream', 'spark']) {
     assert.match(LOADING_STYLE, new RegExp(`[.]${selector} [{][^}]*opacity: 0;`), `the ${selector} is hidden until its animation shows it`);
   }
-  assert.match(motionBlock, /data-state="done"\] [{] animation-delay: 0[.]2s; [}]/);
+  assert.match(motionBlock, /data-state="done"\] [{] animation-delay: 0[.]27s; animation-duration: 0[.]1s; [}]/);
   assert.match(LOADING_STYLE, /data-state="done"\] [{] animation: studio-loader-fade 0[.]15s ease-out 0[.]15s both; pointer-events: none; [}]/, 'the hold is shorter with reduced motion');
 });
 
@@ -372,7 +378,7 @@ test('the bar fills in 200 ms only after Studio is ready, and the pour winds dow
   assert.equal(page.progress(), 1);
   const completion = page.state.started.at(-1);
   assert.equal(completion.target, 1);
-  assert.equal(completion.options.duration, 200);
+  assert.equal(completion.options.duration, 90, 'the bar completes in 90 ms, while the stream still pours');
   assert.equal(page.loadingElement.dataset.state, 'done', 'the stream and pot wind down as the bar fills');
   while (frames.length > 0) {
     frames.splice(0).forEach(callback => callback());
@@ -408,17 +414,24 @@ test('the page script reports every milestone, in rising order, at the step it n
   assert.ok(position('sceneFileLoaded') > pageScript.indexOf('await studio.loadExternalTextFile'));
 });
 
-test('the closing sequence adds at most 0.4 s, and the loading state passes input through from the moment of ready', () => {
-  const seconds = pattern => Number(pattern.exec(LOADING_STYLE)[1]);
-  const potRight = seconds(/studio-pot-right ([\d.]+)s/);
-  const streamOut = seconds(/studio-stream-out ([\d.]+)s/);
-  const fadeDuration = seconds(/studio-loader-fade ([\d.]+)s/);
-  const fadeDelayWithMotion = seconds(/data-state="done"\] [{] animation-delay: ([\d.]+)s/);
-  const fadeDelayReduced = seconds(/studio-loader-fade [\d.]+s ease-out ([\d.]+)s/);
-  assert.equal(potRight, streamOut, 'the pot and the stream move together');
-  assert.ok(fadeDelayWithMotion >= Math.max(potRight, streamOut), 'the fade starts as they finish');
-  assert.ok(fadeDelayWithMotion + fadeDuration <= 0.4, 'the added wait with motion is 0.4 s at most');
-  assert.ok(fadeDelayReduced + fadeDuration <= 0.3, 'the added wait with reduced motion is 0.3 s at most');
+test('the closing sequence runs fill, stream, pot, fade in that order, adds at most 0.4 s, and passes input through from the moment of ready', () => {
+  const motionBlock = LOADING_STYLE.slice(LOADING_STYLE.indexOf('@media (prefers-reduced-motion: no-preference) {'));
+  const timing = pattern => {
+    const match = pattern.exec(motionBlock);
+    return { duration: Number(match[1]), delay: Number(match[2]) };
+  };
+  const stream = timing(/studio-stream-out ([\d.]+)s ease-in ([\d.]+)s/);
+  const pot = timing(/studio-pot-right ([\d.]+)s var[(]--site-ease-out[)] ([\d.]+)s/);
+  const fade = /data-state="done"\] [{] animation-delay: ([\d.]+)s; animation-duration: ([\d.]+)s/.exec(motionBlock);
+  const fadeDelay = Number(fade[1]);
+  const fadeDuration = Number(fade[2]);
+  const fillSeconds = 0.09;
+  assert.ok(stream.delay >= fillSeconds, 'the stream keeps pouring until the fill is complete');
+  assert.ok(pot.delay >= stream.delay + stream.duration, 'the pot rights itself after the stream is back in the lip');
+  assert.ok(fadeDelay >= pot.delay + pot.duration, 'the contents fade after the pot is upright');
+  assert.ok(fadeDelay + fadeDuration <= 0.4, 'the added wait with motion is 0.4 s at most');
+  const fadeDelayReduced = Number(/studio-loader-fade [\d.]+s ease-out ([\d.]+)s/.exec(LOADING_STYLE)[1]);
+  assert.ok(fadeDelayReduced + 0.15 <= 0.3, 'the added wait with reduced motion is 0.3 s at most');
   assert.match(LOADING_STYLE, /data-state="done"\] [{][^}]*pointer-events: none/, 'the app underneath takes input at once');
 });
 
@@ -487,14 +500,39 @@ function keyframeOffsets(name) {
   }));
 }
 
-test('the stream shortens into the lip and is gone before the pot starts to right itself, so no streak is left behind', () => {
+test('the stream shortens into the lip before the pot starts to right itself, so no streak is left behind', () => {
   assert.match(LOADING_STYLE, /#studio-loading [.]stream [{][^}]*transform-origin: 6px 0;/, 'the stream is scaled about the lip, at its top');
   const streamGone = keyframeOffsets('stream-out').find(step => /opacity: 0/.test(step.declarations) && /scaleY[(]0[)]/.test(step.declarations));
   assert.ok(streamGone, 'the stream ends scaled to 0 along its length and transparent');
-  const potStays = keyframeOffsets('pot-right').find(step => /rotate[(]30deg[)]/.test(step.declarations) && step.offsets.length > 1);
-  assert.ok(potStays, 'the pot holds its tilt for the first part of the wind-down');
-  assert.ok(Math.min(...streamGone.offsets) < Math.max(...potStays.offsets), 'the stream is gone before the pot turns');
   assert.ok(!keyframeOffsets('stream-out').some(step => /scaleX/.test(step.declarations)), 'the stream is not thinned sideways, which leaves a streak in the air');
+  const potStart = keyframeOffsets('pot-right').find(step => step.offsets.includes(0));
+  assert.match(potStart.declarations, /rotate[(]30deg[)]/, 'the pot starts the wind-down still tipped (held through its delay)');
+});
+
+test('the fill stays hidden until the stream has landed, and the wind-down waits for the landing', async () => {
+  assert.match(LOADING_STYLE, /studio-fill-land 0[.]08s linear 0[.]72s both/, 'the fill appears as the stream arrives, from a 4 px start under the stream end');
+  assert.match(LOADING_STYLE, /@keyframes studio-fill-land [{] from [{] opacity: 0; [}] to [{] opacity: 1; [}] [}]/);
+  const motionBlock = LOADING_STYLE.slice(LOADING_STYLE.indexOf('@media (prefers-reduced-motion: no-preference) {'));
+  const streamIn = /studio-stream-in ([\d.]+)s var[(]--site-ease-out[)] ([\d.]+)s/.exec(motionBlock);
+  assert.ok(0.72 < Number(streamIn[1]) + Number(streamIn[2]), 'the fill appears before the stream has finished growing, and not before it is at the bar');
+  assert.ok(0.72 >= Number(streamIn[2]) + 0.2, 'and well after the stream starts to grow');
+  const page = createProgressPage();
+  let elapsed = 500;
+  page.loadingElement.querySelector = selector => (selector === '.stream' ? { getAnimations: () => [{ animationName: 'studio-stream-in', get currentTime() { return elapsed; } }] } : null);
+  const before = Date.now();
+  await waitForStreamLanding(page.documentReference);
+  assert.ok(Date.now() - before >= 250, 'a load that is ready at 0.5 s waits for the remaining 0.3 s of the pour');
+  elapsed = 900;
+  const waitedAgain = Date.now();
+  await waitForStreamLanding(page.documentReference);
+  assert.ok(Date.now() - waitedAgain < 100, 'a later ready does not wait');
+});
+
+test('with reduced motion the fill completes in 200 ms, and with motion in 90 ms while the stream still pours', () => {
+  const page = createProgressPage();
+  page.loadingElement.ownerDocument = { defaultView: { matchMedia: () => ({ matches: true }) } };
+  windDownStudioLoading(page.documentReference);
+  assert.equal(page.state.started.at(-1).options.duration, 200);
 });
 
 test('the bar moves in a step for each scene module that arrives, between the script step and the scene modules step, and never back', () => {
