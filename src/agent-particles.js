@@ -20,9 +20,9 @@ const TRAIL_FIELDS = ['type', 'node', 'follow', 'offset', 'lifetime', 'width', '
 // and fire on alphaMode "add". gravityScale 0 and a gentle acceleration lift them whatever the scene gravity is.
 const PARTICLE_PRESETS = Object.freeze({
   smoke: Object.freeze({
-    count: 200, rate: 40, lifetime: [2, 3.5], speed: [0.2, 0.6], size: [0.25, 0.45], spread: 18, drag: 0.6, orient: 'billboard', spin: [-25, 25],
+    count: 480, rate: 100, lifetime: [2.5, 4], speed: [0.2, 0.6], size: [0.2, 0.4], spread: 25, drag: 0.6, orient: 'billboard', spin: [-45, 45],
     gravityScale: 0, acceleration: [0, 0.8, 0], emitter: { shape: 'disc', radius: 0.08 }, fade: 'opacity',
-    sizeOverLife: [[0, 0.4], [1, 1.8]], alpha: [[0, 0], [0.12, 0.55], [1, 0]], color: [[0, [0.38, 0.38, 0.38]], [1, [0.12, 0.12, 0.12]]],
+    sizeOverLife: [[0, 0.5], [1, 3.2]], alpha: [[0, 0], [0.1, 0.3], [0.6, 0.2], [1, 0]], color: [[0, [0.38, 0.38, 0.38]], [1, [0.12, 0.12, 0.12]]],
   }),
   fire: Object.freeze({
     count: 200, rate: 45, lifetime: [0.5, 0.9], speed: [0.3, 0.9], size: [0.18, 0.3], spread: 12, drag: 1, orient: 'billboard', spin: [-40, 40],
