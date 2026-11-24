@@ -14,11 +14,16 @@ const gatedByMask = mask => ({
 });
 const costOf = graph => compileMaterialGraph(graph).cost;
 
-test('a mask used by colour, roughness and bump is costed once', () => {
+// Every graph pays the fixed per-pixel cost once (2.5 units).
+const PIXEL_COST = 2.5;
+
+test('a mask used by colour and roughness is costed once, and the bump still pays for each of its four reads', () => {
   const full = gatedByMask(MASK);
   const separate = ['color', 'roughness', 'height'].map(output => costOf({ [output]: full[output] }));
-  const maskCost = costOf({ height: MASK });
-  assert.equal(costOf(full), separate.reduce((sum, cost) => sum + cost, 0) - 2 * maskCost);
+  const maskCost = costOf({ roughness: MASK }) - PIXEL_COST;
+  // Colour and roughness share one evaluation of the mask. The height does not: its four shifted reads each work the mask out again.
+  const expected = separate.reduce((sum, cost) => sum + cost, 0) - maskCost - 2 * PIXEL_COST;
+  assert.ok(Math.abs(costOf(full) - expected) < 1e-9, `${costOf(full)} against ${expected}`);
 });
 
 test('a shared mask counts once toward the node limit', () => {
@@ -50,9 +55,9 @@ test('every output reads one evaluation of a shared mask per texel', () => {
 });
 
 test('the cost of a noise follows its octaves', () => {
-  const costWith = octaves => costOf({ height: { noise: { scale: 6, octaves } } });
-  assert.equal(costWith(4) - costWith(1), 9);
-  assert.equal(costWith(6) - costWith(2), 12);
+  const costWith = octaves => costOf({ roughness: { noise: { scale: 6, octaves } } });
+  assert.equal(Math.round((costWith(4) - costWith(1)) * 100), 570);
+  assert.equal(Math.round((costWith(6) - costWith(2)) * 100), 760);
 });
 
 test('a graph nested past the depth limit still fails with the nesting error', () => {
