@@ -4589,6 +4589,7 @@ export function createStudio(container, {
   // The last kind of input decides whether a menu animates: a menu opened from the keyboard is a shortcut and appears at once.
   // One keydown listener serves both, so the page keeps the single listener it always had.
   const onKeyDown = event => {
+    blockPageSelectAll(event);
     if (!isModifierKey(event.key)) root.dataset.input = 'keyboard';
     onWindowKeyDown(event);
   };
@@ -4596,14 +4597,13 @@ export function createStudio(container, {
     root.dataset.input = 'pointer';
   };
   // Select all is Studio's own, never the browser's: outside a text field it would highlight the page, in any mode and over any dialog.
-  const onSelectAllKeyDown = event => {
-    const isSelectAll = event.key.toLowerCase() === 'a' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
+  const blockPageSelectAll = event => {
+    const isSelectAll = event.key?.toLowerCase() === 'a' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
     if (!isSelectAll || !root.isConnected) return;
     const target = event.target;
     if (isEditableTarget(target, event.key) || target?.closest?.('.crucible-studio-selectable')) return;
     event.preventDefault();
   };
-  documentReference.addEventListener('keydown', onSelectAllKeyDown);
   documentReference.addEventListener('keydown', onKeyDown);
   documentReference.addEventListener('pointerdown', onPointerInput, true);
 
@@ -4829,7 +4829,6 @@ export function createStudio(container, {
       documentReference.removeEventListener('contextmenu', onModalContextMenu, true);
       documentReference.removeEventListener('click', onModalClick, true);
       documentReference.removeEventListener('pointerdown', onAnyPointerDown, true);
-      documentReference.removeEventListener('keydown', onSelectAllKeyDown);
       documentReference.removeEventListener('keydown', onKeyDown);
       documentReference.removeEventListener('pointerdown', onPointerInput, true);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);

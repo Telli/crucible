@@ -4653,3 +4653,15 @@ test('Maya and Cinema 4D navigate with Alt and a mouse button, and the Blender k
   drag(2, { x: 420, y: 300 });
   assert.notDeepEqual(ui.controller.scene.camera.target, targetBefore, 'the default right drag still pans, whatever the keymap');
 });
+
+test('select all is kept from the page outside a text field, in any mode, and left to a text field (#3328)', testContext => {
+  const ui = mountStudio(testContext);
+  const onButton = dispatch(ui.tool('select'), 'keydown', { key: 'a', ctrlKey: true });
+  assert.equal(onButton.defaultPrevented, true, 'the browser would highlight the page');
+  const withCommand = dispatch(ui.tool('select'), 'keydown', { key: 'A', metaKey: true });
+  assert.equal(withCommand.defaultPrevented, true);
+  const inField = dispatch(ui.label('Filter the scene list'), 'keydown', { key: 'a', ctrlKey: true });
+  assert.equal(inField.defaultPrevented, false, 'a field selects its own text');
+  const plain = dispatch(ui.tool('select'), 'keydown', { key: 'a' });
+  assert.equal(plain.defaultPrevented, false);
+});
