@@ -64,5 +64,14 @@ test('two builds of the same scene are identical', () => {
 });
 
 test('a field past the blade budget is refused before any frame', () => {
-  assert.throws(() => groundCoverParts([squarePart('Lawn', 400, 0)], normalizeGroundCover([{ surfaces: 'Lawn', density: 5000 }]), [0, 3, 8]), new RegExp(`fewer than ${GROUND_COVER_LIMITS.maxBlades}`));
+  assert.throws(() => groundCoverParts([squarePart('Lawn', 400, 0)], normalizeGroundCover([{ surfaces: 'Lawn', density: 5000 }]), [0, 3, 8]), new RegExp(`at most ${GROUND_COVER_LIMITS.maxBlades}`));
+});
+
+test('the blade budget counts every entry together, before any is grown', () => {
+  // Each lawn needs at least 80 * 80 * 500 * 0.12 = 384,000 blades, under the 2,000,000 limit; eight need 3,072,000.
+  const lawns = Array.from({ length: 8 }, (_, index) => squarePart(`Lawn${index}`, 40, 0));
+  const entries = lawns.map((_, index) => ({ surfaces: `Lawn${index}`, density: 500 }));
+  const started = performance.now();
+  assert.throws(() => groundCoverParts(lawns, normalizeGroundCover(entries), [0, 3, 8]), /3072000 blades in all entries.*at most 2000000/);
+  assert.ok(performance.now() - started < 1000, 'refused before growing any entry');
 });

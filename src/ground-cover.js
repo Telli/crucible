@@ -144,15 +144,12 @@ function surfaceColours(entry, surfaceParts) {
   return { tip, base: tip.map(channel => channel * 0.2), dry: tip.map(channel => Math.min(1, channel * 1.6 + 0.04)) };
 }
 
-// Refuses a field that cannot fit the budget before any tile is grown, since growing is what costs the time.
-function requireBladeBudget(area, density) {
-  const fewest = (area.maxX - area.minX) * (area.maxZ - area.minZ) * density * FARTHEST_KEEP;
-  if (fewest > GROUND_COVER_LIMITS.maxBlades) {
-    throw groundCoverError('', `at least ${Math.round(fewest)} blades`, `fewer than ${GROUND_COVER_LIMITS.maxBlades}: lower density or name a smaller surface`);
-  }
+// The fewest blades a field can have, so a field past the budget is refused before any tile is grown.
+function fewestBlades(area, density) {
+  return (area.maxX - area.minX) * (area.maxZ - area.minZ) * density * FARTHEST_KEEP;
 }
 
-function growEntry(entry, index, parts, eye) {
+function findSurface(entry, index, parts) {
   const surfaceParts = matchingParts(parts, entry.surfaces);
   if (!surfaceParts.length) {
     const known = [...new Set(parts.flatMap(part => [part.name, part.material?.name]).filter(Boolean))].slice(0, 12);
@@ -162,8 +159,12 @@ function growEntry(entry, index, parts, eye) {
   if (!surfaceTriangles.length || surfaceTriangles.length > GROUND_COVER_LIMITS.maxSurfaceTriangles) {
     throw groundCoverError(`[${index}].surfaces`, `${surfaceTriangles.length} upward triangles`, `surfaces with 1 to ${GROUND_COVER_LIMITS.maxSurfaceTriangles} upward triangles`);
   }
+  return { surfaceParts, surfaceTriangles, area: areaOf(surfaceTriangles) };
+}
+
+function growEntry(entry, surface, parts, eye) {
+  const { surfaceParts, surfaceTriangles, area } = surface;
   const surfaceSet = new Set(surfaceParts);
-  const area = areaOf(surfaceTriangles);
   const surfaceGrid = createTriangleGrid(surfaceTriangles, area);
   const standing = createTriangleGrid(parts.filter(part => !surfaceSet.has(part) && part.material?.tag !== 'grass').flatMap(worldTriangles), area);
   const surfaceHeight = (x, z) => {
@@ -175,7 +176,6 @@ function growEntry(entry, index, parts, eye) {
     return top;
   };
   const preset = GRASS_PRESETS[entry.preset];
-  requireBladeBudget(area, entry.density ?? preset.density);
   const length = entry.length ?? preset.height[1];
   const covered = (x, z, ground) => standing.at(x, z).some(triangle => {
     const height = heightInTriangle(triangle, x, z);
@@ -203,10 +203,16 @@ function growEntry(entry, index, parts, eye) {
  * the budget.
  */
 export function groundCoverParts(parts, entries, eye) {
-  const grown = entries.flatMap((entry, index) => growEntry(entry, index, parts, eye));
-  const blades = grown.reduce((total, part) => total + part.bladeCount, 0);
-  if (blades > GROUND_COVER_LIMITS.maxBlades) {
-    throw groundCoverError('', `${blades} blades`, `fewer than ${GROUND_COVER_LIMITS.maxBlades}: lower density or name a smaller surface`);
-  }
+  const surfaces = entries.map((entry, index) => findSurface(entry, index, parts));
+  const fewest = surfaces.reduce((total, surface, index) => total + fewestBlades(surface.area, entries[index].density ?? GRASS_PRESETS[entries[index].preset].density), 0);
+  requireBladeBudget(fewest);
+  const grown = entries.flatMap((entry, index) => growEntry(entry, surfaces[index], parts, eye));
+  requireBladeBudget(grown.reduce((total, part) => total + part.bladeCount, 0));
   return grown;
+}
+
+function requireBladeBudget(blades) {
+  if (blades > GROUND_COVER_LIMITS.maxBlades) {
+    throw groundCoverError('', `${Math.round(blades)} blades in all entries`, `at most ${GROUND_COVER_LIMITS.maxBlades} blades: lower density or name smaller surfaces`);
+  }
 }

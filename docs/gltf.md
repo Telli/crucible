@@ -314,4 +314,17 @@ The Draco and KTX2 tests use stand-in loaders, because no encoder is installed: 
 Chrome loading preserved its UVs, linear material factors, sampler values, and decoded image dimensions.
 Renderer integration owns the final textured rendering check.
 
-**Grass on named surfaces (#3290).** A scene file grows the grass of `src/grass.js` on parts of its GLB with `environment.groundCover`, in `scripts/render-media.mjs --scene file`: `{"environment":{"groundCover":[{"surfaces":"Lawn","preset":"lawn","length":0.12,"density":900,"color":"surface","wind":0.3,"seed":1}]}}`. `surfaces` is a node name, a material name or a list of them (the field is refused with the names the GLB has when none match). Blades stand on the upward faces of those parts, and skip any spot where another part stands within `length` above the surface, so a path or slab laid on the lawn has no blades through it. Optional: `preset` (`lawn` by default, or `meadow`, `savanna`, `wild`), `density` in blades per square metre, `length` in metres, `color` (`"preset"`, `"surface"` for the surface material colour, or three linear RGB numbers), `wind` 0 to 1 (the frame's `wind`, which a `frame.wind` overrides) and `seed`. The field is built once for the first camera frame and is seeded, so every frame of a shot and every rerender draws the same blades (two renders of one frame had the same PNG hash). A field needs at least 0.12 times its area times its density below 2,000,000 blades. Without the field nothing is loaded and the frame is byte-identical to before. Measured on a 16 m lawn at 900 per square metre: 182,561 blades in 1.18 M triangles, grown in 2.4 s. It is not drawn by `showcase.html`, only by the headless file-scene path.
+**Grass on named surfaces (#3290).** A scene file can grow grass on parts of its GLB. Add `environment.groundCover` to scene.json and render with `scripts/render-media.mjs --scene file`:
+
+```json
+{ "environment": { "groundCover": [{ "surfaces": "Lawn", "length": 0.12, "density": 900 }] } }
+```
+
+- `surfaces` is a node name, a material name, or a list of them. If none match, the error lists the names the GLB has.
+- Blades grow on the upward faces of those parts. They skip any spot where another part stands within `length` above the surface, so a path or slab on the lawn stays clear.
+- Optional fields: `preset` (`lawn` by default; also `meadow`, `savanna`, `wild`), `density` (blades per square metre), `length` (metres), `color` (`"preset"`, `"surface"` for the surface material colour, or three linear RGB numbers), `wind` (0 to 1; `frame.wind` overrides it) and `seed`.
+- The field is seeded and built once, for the first camera frame. Every frame and every rerender draws the same blades. The blades sway with the frame time, so a video shows the wind and a single frame at one time is always the same.
+- The limit is 2,000,000 blades for all entries together. Crucible estimates the lowest possible count for each entry (area times density times 0.12) and adds them up. If the total is over the limit, it refuses before it grows anything.
+- A scene without the field loads nothing and renders as before.
+- `showcase.html` does not draw it. It logs a warning and ignores the field.
+- Measured: a 16 m lawn at 900 blades per square metre has 182,561 blades and 1.18 million triangles, and takes 2.4 s to grow.
