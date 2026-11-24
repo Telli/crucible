@@ -215,18 +215,24 @@ export function formatProofTable(rows) {
 // and the size of the sky holes. These metrics read a crown mask normalised to CROWN_MASK_HEIGHT pixels tall:
 //   hullFill         opaque pixels over the pixels inside the convex hull of the crown (1 is a solid blob)
 //   bayShare         hull pixels that are empty and open to the sky outside (notches in the rim)
-//   skyHole          side of the largest enclosed sky hole over the crown height
+//   skyHole          side of the largest enclosed sky hole over the crown height (kept for history: the ragged rim of a crown
+//                    leaves specks that count as enclosed holes, so it reads high on a dense crown)
+//   interiorHole     side of the largest empty patch inside the hull pulled in by INTERIOR_INSET of the crown width, over the
+//                    crown height: a gap between branch tiers counts, rim specks do not
+//   interiorOpen     share of that inner hull that is empty: how much light shows through the inside
 //   widthOverHeight  crown width over crown height
 //   widestRow        height of the widest row above the crown base, 0 at the base and 1 at the top
 //   rowSolidity      the old row-span measure, for history only
 export const CROWN_MASK_HEIGHT = 256;
 // The crown ends at the lowest row that is still this share of the widest row; the trunk below it is dropped.
 const CROWN_BASE_SPAN_SHARE = 0.3;
+// The inner hull keeps the pixels at least this share of the crown width inside the hull edge.
+export const INTERIOR_INSET = 0.05;
 const WIDEST_ROW_TOLERANCE = 0.97;
 const WIDEST_ROW_SMOOTHING = 5;
 const FOUR_NEIGHBOURS = Object.freeze([[1, 0], [-1, 0], [0, 1], [0, -1]]);
-export const CROWN_METRIC_NAMES = Object.freeze(['hullFill', 'bayShare', 'skyHole', 'widthOverHeight', 'widestRow', 'rowSolidity']);
-export const BAND_METRIC_NAMES = Object.freeze(['hullFill', 'bayShare', 'skyHole', 'widthOverHeight', 'widestRow']);
+export const CROWN_METRIC_NAMES = Object.freeze(['hullFill', 'bayShare', 'skyHole', 'interiorHole', 'interiorOpen', 'widthOverHeight', 'widestRow', 'rowSolidity']);
+export const BAND_METRIC_NAMES = Object.freeze(['hullFill', 'bayShare', 'interiorHole', 'interiorOpen', 'widthOverHeight', 'widestRow']);
 
 function requireMask(mask, width, height) {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
@@ -371,6 +377,61 @@ function largestEnclosedHole(mask, width, height, openToSky) {
   return largest;
 }
 
+// The pixel centers inside the convex polygon and at least `inset` pixels from every edge of it.
+function insetHull(hull, width, height, inset) {
+  const inside = new Uint8Array(width * height);
+  if (hull.length < 3) return inside;
+  const edges = hull.map(([x1, y1], index) => {
+    const [x2, y2] = hull[(index + 1) % hull.length];
+    const length = Math.hypot(x2 - x1, y2 - y1) || 1;
+    return { x1, y1, normalX: (y2 - y1) / length, normalY: -(x2 - x1) / length };
+  });
+  // The hull is counter-clockwise in a y-down picture or clockwise in a y-up one; pick the sign that puts the centroid inside.
+  const centerX = hull.reduce((total, point) => total + point[0], 0) / hull.length;
+  const centerY = hull.reduce((total, point) => total + point[1], 0) / hull.length;
+  const sign = edges.every(edge => (centerX - edge.x1) * edge.normalX + (centerY - edge.y1) * edge.normalY >= 0) ? 1 : -1;
+  for (let row = 0; row < height; row++) {
+    for (let column = 0; column < width; column++) {
+      let nearest = Infinity;
+      for (const edge of edges) nearest = Math.min(nearest, sign * ((column + 0.5 - edge.x1) * edge.normalX + (row + 0.5 - edge.y1) * edge.normalY));
+      if (nearest >= inset) inside[row * width + column] = 1;
+    }
+  }
+  return inside;
+}
+
+// Interior light: the largest connected empty patch (side over `crownHeight`) and the empty share, both inside `inner`.
+function interiorLight(crown, inner, width, height) {
+  let innerPixels = 0;
+  let emptyPixels = 0;
+  let largest = 0;
+  const visited = new Uint8Array(width * height);
+  for (let pixel = 0; pixel < crown.length; pixel++) {
+    if (!inner[pixel]) continue;
+    innerPixels++;
+    if (crown[pixel]) continue;
+    emptyPixels++;
+    if (visited[pixel]) continue;
+    const queue = [pixel];
+    visited[pixel] = 1;
+    for (let head = 0; head < queue.length; head++) {
+      const column = queue[head] % width;
+      const row = (queue[head] - column) / width;
+      for (const [stepColumn, stepRow] of FOUR_NEIGHBOURS) {
+        const nextColumn = column + stepColumn;
+        const nextRow = row + stepRow;
+        if (nextColumn < 0 || nextRow < 0 || nextColumn >= width || nextRow >= height) continue;
+        const next = nextRow * width + nextColumn;
+        if (!inner[next] || crown[next] || visited[next]) continue;
+        visited[next] = 1;
+        queue.push(next);
+      }
+    }
+    largest = Math.max(largest, queue.length);
+  }
+  return { interiorHole: Math.sqrt(largest) / height, interiorOpen: innerPixels > 0 ? emptyPixels / innerPixels : 0 };
+}
+
 function widestRowHeight(spans) {
   const reach = WIDEST_ROW_SMOOTHING >> 1;
   const smoothed = spans.map((_, row) => {
@@ -407,7 +468,9 @@ export function crownMetrics(mask, width, height) {
     if (openToSky[pixel] && !crown[pixel]) bays++;
   }
   const spans = rowSpans(crown, crownWidth, crownHeight);
+  const inner = insetHull(hull, crownWidth, crownHeight, INTERIOR_INSET * crownWidth);
   return {
+    ...interiorLight(crown, inner, crownWidth, crownHeight),
     hullFill: points.length / hullPixels,
     bayShare: bays / hullPixels,
     skyHole: Math.sqrt(largestEnclosedHole(crown, crownWidth, crownHeight, openToSky)) / crownHeight,
@@ -579,24 +642,24 @@ export function bandFailures(metrics, band) {
 
 /** Rows of crown metrics (photo or model, each with `species`, `source` and optional `kind`) as aligned text. */
 export function formatCrownTable(rows) {
-  const header = ['species', 'source', 'kind', 'hull fill', 'bays', 'sky hole', 'w/h', 'widest', 'row-span'];
+  const header = ['species', 'source', 'kind', 'hull fill', 'bays', 'sky hole', 'in. hole', 'in. open', 'w/h', 'widest', 'row-span'];
   const lines = rows.map(row => [
     row.species, row.source, row.kind ?? 'leaf',
-    row.hullFill.toFixed(2), row.bayShare.toFixed(2), row.skyHole.toFixed(3), row.widthOverHeight.toFixed(2), row.widestRow.toFixed(2), row.rowSolidity.toFixed(2),
+    row.hullFill.toFixed(2), row.bayShare.toFixed(2), row.skyHole.toFixed(3), row.interiorHole.toFixed(3), row.interiorOpen.toFixed(3), row.widthOverHeight.toFixed(2), row.widestRow.toFixed(2), row.rowSolidity.toFixed(2),
   ]);
   const widths = header.map((title, column) => Math.max(title.length, ...lines.map(line => line[column].length)));
   const format = cells => cells.map((cell, column) => column < 3 ? cell.padEnd(widths[column]) : cell.padStart(widths[column])).join('  ');
   return [format(header), ...lines.map(format)].join('\n');
 }
 
-// The crown bands of the in-leaf reference photos, measured by `node scripts/tree-proof.mjs --crowns` on 2026-11-23 (CC0 and
+// The crown bands of the in-leaf reference photos, measured by `node scripts/tree-proof.mjs --crowns` on 2026-11-23, with the interior hole and interior light recomputed on 2026-11-24 by the same code (CC0 and
 // public-domain photos from Wikimedia Commons, three per species except aspen, which has two; the photos stay out of the
-// repository). Each entry is [lowest, highest] over the photos plus 10 percent of the spread. Aspen's bays and sky hole were
+// repository). Each entry is [lowest, highest] over the photos plus 10 percent of the spread. Aspen's bays and interior light were
 // widened by hand because two photos agree to the hundredth. Width over height and the widest row depend on the crop box, so
 // read them as rough. A model inside its band on all five metrics is as full and as open as a real tree of that species.
 export const PHOTO_BANDS = Object.freeze({
-  oak: Object.freeze({ hullFill: [0.76, 0.88], bayShare: [0.09, 0.19], skyHole: [0.03, 0.08], widthOverHeight: [1.15, 1.45], widestRow: [0.18, 0.28] }),
-  ash: Object.freeze({ hullFill: [0.78, 0.85], bayShare: [0.09, 0.16], skyHole: [0.07, 0.11], widthOverHeight: [0.99, 2.92], widestRow: [0.11, 0.19] }),
-  aspen: Object.freeze({ hullFill: [0.87, 0.91], bayShare: [0.06, 0.1], skyHole: [0.05, 0.065], widthOverHeight: [0.99, 1.39], widestRow: [0.18, 0.27] }),
-  birch: Object.freeze({ hullFill: [0.65, 0.73], bayShare: [0.21, 0.26], skyHole: [0.04, 0.08], widthOverHeight: [0.63, 1.4], widestRow: [0, 0.23] }),
+  oak: Object.freeze({ hullFill: [0.76, 0.88], bayShare: [0.09, 0.19], interiorHole: [0.11, 0.17], interiorOpen: [0.07, 0.14], widthOverHeight: [1.15, 1.45], widestRow: [0.18, 0.28] }),
+  ash: Object.freeze({ hullFill: [0.78, 0.85], bayShare: [0.09, 0.16], interiorHole: [0.1, 0.22], interiorOpen: [0.03, 0.22], widthOverHeight: [0.99, 2.92], widestRow: [0.11, 0.19] }),
+  aspen: Object.freeze({ hullFill: [0.87, 0.91], bayShare: [0.06, 0.1], interiorHole: [0.05, 0.12], interiorOpen: [0.02, 0.06], widthOverHeight: [0.99, 1.39], widestRow: [0.18, 0.27] }),
+  birch: Object.freeze({ hullFill: [0.65, 0.73], bayShare: [0.21, 0.26], interiorHole: [0.19, 0.4], interiorOpen: [0.14, 0.29], widthOverHeight: [0.63, 1.4], widestRow: [0, 0.23] }),
 });

@@ -81,7 +81,7 @@ test('level bounds cover the parts of that level, and the far crown is wider tha
 test('an oak measures four levels with the triangles of its geometry and a solidity between 0 and 1', () => {
   const rows = measureTreeLevels({ preset: 'oak', seed: 4, frameSize: 32 });
   assert.equal(rows.length, LEVEL_SETTINGS.length);
-  assert.deepEqual(rows.slice(0, 3).map(row => row.foliageTriangles), [9968, 3324, 1594]);
+  assert.deepEqual(rows.slice(0, 3).map(row => row.foliageTriangles), [9072, 3024, 1452]);
   for (const row of rows) assert.ok(row.solidity > 0 && row.solidity <= 1);
   assert.ok(rows[2].leafCentimeters[0] > rows[1].leafCentimeters[0], 'the far level paints the same card on bigger quads');
   const [shortest, longest] = rows[0].leafCentimeters;
@@ -125,6 +125,22 @@ test('an enclosed sky hole is measured by its side over the crown height', () =>
   const metrics = crownMetrics(mask, 200, 200);
   assert.ok(Math.abs(metrics.skyHole - 20 / 180) < 0.01, `sky hole ${metrics.skyHole}`);
   assert.ok(metrics.hullFill < 0.99 && metrics.bayShare < 0.02, 'a hole is not a bay');
+});
+
+test('specks of sky at the rim are not interior light, a gap inside the crown is', () => {
+  const ragged = discMask(200, 200, 100, 100, 90, 90);
+  // Enclosed holes of 6 pixels, a few pixels inside the rim: the ragged edge of a dense crown.
+  for (const angle of [0.4, 1.3, 2.2, 3.1, 4.0, 4.9]) {
+    clearSquare(ragged, 200, Math.round(100 + Math.cos(angle) * 86) - 3, Math.round(100 + Math.sin(angle) * 86) - 3, 6);
+  }
+  const edge = crownMetrics(ragged, 200, 200);
+  assert.ok(edge.skyHole > 0.02, `the old sky hole sees the specks: ${edge.skyHole}`);
+  assert.ok(edge.interiorHole < 0.01 && edge.interiorOpen < 0.005, `interior hole ${edge.interiorHole}, open ${edge.interiorOpen}`);
+  const gap = discMask(200, 200, 100, 100, 90, 90);
+  clearSquare(gap, 200, 80, 85, 40);
+  const inside = crownMetrics(gap, 200, 200);
+  assert.ok(Math.abs(inside.interiorHole - 40 / 180) < 0.02, `interior hole ${inside.interiorHole}`);
+  assert.ok(inside.interiorOpen > 0.04, `interior open ${inside.interiorOpen}`);
 });
 
 test('a notch open to the sky is a bay, not a sky hole', () => {
@@ -178,13 +194,13 @@ test('a photo crop must be four fractions inside the picture', async () => {
 });
 
 test('a photo band spans the in-leaf photos only, widened a little, and a bare photo does not move it', () => {
-  const leaf = { kind: 'leaf', hullFill: 0.8, bayShare: 0.1, skyHole: 0.02, widthOverHeight: 1.0, widestRow: 0.4 };
-  const other = { ...leaf, hullFill: 0.9, bayShare: 0.2, skyHole: 0.04, widthOverHeight: 1.2, widestRow: 0.5 };
+  const leaf = { kind: 'leaf', hullFill: 0.8, bayShare: 0.1, interiorHole: 0.02, interiorOpen: 0.05, widthOverHeight: 1.0, widestRow: 0.4 };
+  const other = { ...leaf, hullFill: 0.9, bayShare: 0.2, interiorHole: 0.04, interiorOpen: 0.1, widthOverHeight: 1.2, widestRow: 0.5 };
   const bare = { ...leaf, kind: 'bare', hullFill: 0.2 };
   const band = photoBand([leaf, other, bare], 0.1);
   assert.deepEqual(band.hullFill.map(value => Number(value.toFixed(3))), [0.79, 0.91]);
   assert.deepEqual(bandFailures(leaf, band), []);
-  assert.deepEqual(bandFailures({ ...leaf, hullFill: 0.7, skyHole: 0.09 }, band), ['hullFill', 'skyHole']);
+  assert.deepEqual(bandFailures({ ...leaf, hullFill: 0.7, interiorHole: 0.09 }, band), ['hullFill', 'interiorHole']);
   assert.throws(() => photoBand([bare]), /no in-leaf photo/);
 });
 
@@ -199,7 +215,7 @@ test('option A, the rejected oak crown, fails the oak photo band', () => {
   assert.equal(position, width * height);
   const metrics = crownMetrics(mask, width, height);
   const failures = bandFailures(metrics, PHOTO_BANDS.oak);
-  assert.ok(failures.includes('hullFill') && failures.includes('bayShare') && failures.includes('skyHole'), `option A failed only on ${failures.join(', ')}`);
+  assert.ok(failures.includes('hullFill') && failures.includes('bayShare'), `option A failed only on ${failures.join(', ')}`);
   const insideBand = Object.fromEntries(BAND_METRIC_NAMES.map(name => [name, (PHOTO_BANDS.oak[name][0] + PHOTO_BANDS.oak[name][1]) / 2]));
   assert.deepEqual(bandFailures(insideBand, PHOTO_BANDS.oak), []);
 });

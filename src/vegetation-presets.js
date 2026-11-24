@@ -56,7 +56,7 @@ const BIRCH_TWIGS = Object.freeze([
   Object.freeze({ count: [3, 5], start: 0.2, end: 1, angle: [0.5, 0.9], lengthRatio: [0.9, 1.3], radiusRatio: 0.9, segments: 3, gnarl: 0.15, tropism: -0.3, tipRadius: 0.7 }),
   Object.freeze({ count: [2, 3], start: 0.3, end: 1, angle: [0.5, 0.9], lengthRatio: [0.7, 1], radiusRatio: 0.85, segments: 2, gnarl: 0.15, tropism: -0.3, tipRadius: 0.6 }),
   // Pendulous end shoots: thin, short and pulled hard down, the hanging twigs a birch is known by.
-  Object.freeze({ count: [1, 2], start: 0.35, end: 1, angle: [0.4, 0.8], lengthRatio: [0.6, 0.9], radiusRatio: 0.7, segments: 3, gnarl: 0.1, tropism: -0.55, tipRadius: 0.5 }),
+  Object.freeze({ count: [3, 5], start: 0.3, end: 1, angle: [0.4, 0.8], lengthRatio: [0.7, 1.1], radiusRatio: 0.7, segments: 4, gnarl: 0.1, tropism: -0.6, tipRadius: 0.5 }),
 ]);
 
 // An aspen keeps the first two generations: its crown is open, and the hanging shoots would fill it.
@@ -84,26 +84,27 @@ const PINE_CROWN_LEAF = Object.freeze({
 export const TREE_PRESETS = Object.freeze({
   oak: Object.freeze({
     label: 'Oak', species: 'broadleaf', height: [9, 13], leaf: BROADLEAF_CROWN_LEAF,
-    // Half the height of trunk, then limbs that leave it nearly level at the bottom and steepen to the top, drooping a little, inside a
-    // flat-bottomed envelope that cuts the upper crown short, so the widest part of the crown sits in its lower third.
-    habit: { trunkLength: 0.5, angleTop: 30, profile: 'spreading', split: { count: 3, angle: 42, lengthRatio: 1.05, radiusRatio: 0.85 }, envelope: { base: 0.2, peak: 0.05, width: 0.5, powerLow: 0.3, powerHigh: 2 } },
-    tree: { branches: [12, 6, 3], branchAngle: [86, 55, 50], branchStart: [0.3], lengthFalloff: [1.1, 0.6], gnarliness: [0.1, 0.22, 0.26, 0.28], tropism: [0.02, -0.08, 0.04, 0], leafSize: 0.95, leafCount: 3.6 },
+    // Half the height of trunk, then limbs that leave it nearly level at the bottom and steepen to the top, inside a rounded dome
+    // envelope (the high half bends with a power under 1, so the top is a shoulder, not a cone) that is widest in the lower third.
+    habit: { trunkLength: 0.5, angleTop: 30, profile: 'spreading', split: { count: 3, angle: 42, lengthRatio: 1.05, radiusRatio: 0.85 }, envelope: { base: 0.2, peak: 0.14, width: 0.56, powerLow: 0.4, powerHigh: 0.55 } },
+    tree: { branches: [12, 5, 3], branchAngle: [86, 55, 50], branchStart: [0.3], lengthFalloff: [1.1, 0.6], gnarliness: [0.1, 0.22, 0.26, 0.28], tropism: [0.02, -0.08, 0.04, 0], leafSize: 1, leafCount: 3.15 },
   }),
   ash: Object.freeze({
     label: 'Ash', species: 'broadleaf', height: [12, 16], leaf: ASH_CROWN_LEAF,
-    // A broad dome: the lowest limbs are the longest and the crown narrows upward inside an envelope that rounds it off.
-    habit: { profile: 'spreading', angleTop: 30, envelope: { base: 0.08, peak: 0.01, width: 0.55, powerLow: 0.5, powerHigh: 1.7 } },
-    tree: { branches: [12, 4, 3], branchAngle: [50, 45, 45], branchStart: [0.3], lengthFalloff: [0.44, 0.55], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 1.1, leafCount: 5 },
+    // A spreading, decurrent habit: the trunk ends early in three wide limbs (no central leader), the lowest branches are as long as the
+    // trunk, and a wide rounded envelope keeps the crown wider than tall.
+    habit: { profile: 'spreading', trunkLength: 0.4, angleTop: 45, split: { count: 3, angle: 58, lengthRatio: 1.3, radiusRatio: 0.85 }, envelope: { base: 0.08, peak: 0.28, width: 0.74, powerLow: 0.5, powerHigh: 0.6 } },
+    tree: { branches: [12, 4, 3], branchAngle: [80, 50, 45], branchStart: [0.25], lengthFalloff: [1.0, 0.5], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 1.2, leafCount: 4.6 },
   }),
   aspen: Object.freeze({
     label: 'Aspen', species: 'birch', height: [11, 15], leaf: ASPEN_CROWN_LEAF,
-    // Open on a long clear trunk, its longest limbs low.
-    habit: { profile: 'spreading', angleTop: 30, envelope: { base: 0.3, peak: 0.25, width: 0.62, powerLow: 0.5, powerHigh: 0.9 } },
-    tree: { branches: [14, 3, 3], branchAngle: [60, 45, 50], branchStart: [0.55], lengthFalloff: [0.18, 0.5], gnarliness: [0.03, 0.1, 0.12, 0.14], tropism: [0.02, 0.1, 0, -0.08], leafSize: 1.15, leafCount: 5.5 },
+    // A full crown that starts low on the trunk: many limbs from a quarter of the way up, the longest ones in the middle.
+    habit: { profile: 'spreading', angleTop: 30, envelope: { base: 0.2, peak: 0.3, width: 0.43, powerLow: 0.6, powerHigh: 0.7 } },
+    tree: { branches: [20, 3, 3], branchAngle: [62, 45, 50], branchStart: [0.25], lengthFalloff: [0.4, 0.5], gnarliness: [0.03, 0.1, 0.12, 0.14], tropism: [0.02, 0.1, 0, -0.08], leafSize: 1.15, leafCount: 5.5 },
   }),
   // A narrow ovoid; the twigs hang because the birch leaf placement points them down.
   birch: Object.freeze({
-    label: 'Birch', species: 'birch', tree: { leafSize: 0.72, leafCount: 3 }, leaf: BIRCH_CROWN_LEAF,
+    label: 'Birch', species: 'birch', tree: { leafSize: 0.55, leafCount: 3 }, leaf: BIRCH_CROWN_LEAF,
     habit: { profile: 'spreading', angleTop: 30, envelope: { base: 0.25, peak: 0.06, width: 0.35, powerLow: 0.5, powerHigh: 1.1 } },
   }),
   pine: Object.freeze({

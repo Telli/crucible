@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Renders every tree preset beside a real summer photo of the species and prints the numbers that explain the gap (#3041).
 //
+//   (add --from-crown-edge to measure each --distances value from the crown's near edge instead of the trunk)
 //   node scripts/tree-proof.mjs --out artifacts/3041/proof [--reference artifacts/3041/reference] [--seed 4]
 //        [--presets oak,ash] [--tree '{"leafSize":0.85}'] [--distances 20,70] [--width 640] [--height 480] [--backend gpu|cpu] [--measure-only]
 //        [--sun behind|side|both]
@@ -46,11 +47,15 @@ const SHEET_LABEL_HEIGHT = 22;
 const FALLBACK_HEIGHT_FRACTION = 0.8;
 
 function parseArguments(argv) {
-  const options = { out: null, crowns: false, sun: 'behind', level: 0, reference: 'artifacts/3057/refs', seed: DEFAULT_SEED, presets: PRESET_NAMES, width: 640, height: 480, backend: 'gpu', measureOnly: false, tree: undefined, distances: undefined };
+  const options = { out: null, crowns: false, fromCrownEdge: false, sun: 'behind', level: 0, reference: 'artifacts/3057/refs', seed: DEFAULT_SEED, presets: PRESET_NAMES, width: 640, height: 480, backend: 'gpu', measureOnly: false, tree: undefined, distances: undefined };
   for (let index = 0; index < argv.length; index++) {
     const name = argv[index];
     if (name === '--measure-only') {
       options.measureOnly = true;
+      continue;
+    }
+    if (name === '--from-crown-edge') {
+      options.fromCrownEdge = true;
       continue;
     }
     if (name === '--crowns') {
@@ -70,7 +75,7 @@ function parseArguments(argv) {
     else if (name === '--backend') options.backend = value;
     else if (name === '--distances') options.distances = value.split(',').map(Number);
     else if (name === '--tree') options.tree = JSON.parse(value);
-    else throw new Error(`Unknown option ${name}; use --out, --reference, --seed, --presets, --tree, --distances, --width, --height, --backend, --sun, --level, --crowns or --measure-only.`);
+    else throw new Error(`Unknown option ${name}; use --out, --reference, --seed, --presets, --tree, --distances, --width, --height, --backend, --sun, --level, --crowns, --from-crown-edge or --measure-only.`);
   }
   if (options.crowns && options.presets === PRESET_NAMES) options.presets = [...CROWN_SPECIES];
   if (!options.out && !options.crowns) throw new Error('Pass --out <folder>, such as --out artifacts/3041/proof.');
@@ -236,8 +241,11 @@ async function main() {
     const heightFraction = credits?.treeHeightFraction ?? FALLBACK_HEIGHT_FRACTION;
     await mkdir(join(outputFolder, preset), { recursive: true });
     const suns = options.sun === 'both' ? ['behind', 'side'] : [options.sun];
+    // A broad crown reaches past 10 m from its trunk: with --from-crown-edge a probe distance is measured from the crown's near edge, so the camera stays outside it.
+    const crownBounds = levelBounds(tree, 0);
+    const edgeReach = options.fromCrownEdge ? Math.max(crownBounds.maximum[2], -crownBounds.minimum[2]) : 0;
     const plans = probes.flatMap(probe => suns.map((sun) => {
-      const recipe = buildRecipe({ preset, seed: options.seed, tree: options.tree, bounds: levelBounds(tree, probe.level), shadowHeight, distance: probe.distance, heightFraction, aspect: options.width / options.height, sun });
+      const recipe = buildRecipe({ preset, seed: options.seed, tree: options.tree, bounds: levelBounds(tree, probe.level), shadowHeight, distance: probe.distance + edgeReach, heightFraction, aspect: options.width / options.height, sun });
       const name = `${preset}-level${probe.level}-${probe.distance.toFixed(1)}m${sun === 'behind' ? '' : `-${sun}`}`;
       return {
         name, level: probe.level, distance: probe.distance, sun, recipe,

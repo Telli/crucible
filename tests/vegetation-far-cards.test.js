@@ -77,7 +77,7 @@ test('a bush and a tree of mesh leaves keep their crown clumps at the far levels
   const mesh = createTree({ preset: 'oak', leaves: 'mesh' }, 4);
   // 29 blobs of 80 triangles each at both far levels. The count follows the oak's crown cells, so it moved from 26 when the oak forked
   // (#3041); the pin moves again with the oak's habit.
-  assert.deepEqual([2, 3].map(level => mesh.levels[level].parts[FOLIAGE_PART].geometry.indices.length / 3), [2320, 2320]);
+  assert.deepEqual([2, 3].map(level => mesh.levels[level].parts[FOLIAGE_PART].geometry.indices.length / 3), [3360, 3360]);
 });
 
 // Cards of a leaf-card level, base row first. A plain species and the pine draw three rows of two vertices (six); a twig crown draws
