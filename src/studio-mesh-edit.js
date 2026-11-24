@@ -163,6 +163,14 @@ function triangleCountOf(mesh) {
   return triangles;
 }
 
+function logsShareTheirPrefix(first, second) {
+  const shared = Math.min(first.length, second.length);
+  for (let index = 0; index < shared; index += 1) {
+    if (first[index] !== second[index]) return false;
+  }
+  return true;
+}
+
 function uniqueGeometryId(recipe, wanted) {
   const taken = new Set((recipe.geometries ?? []).map(geometry => geometry.id));
   let candidate = wanted;
@@ -211,7 +219,7 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
       nodeId,
       geometryId: geometrySpec.id,
       editCount: edits.length,
-      logKey: `${edits.length}:${JSON.stringify(edits.at(-1) ?? null)}`,
+      logEntries: edits.map(entry => JSON.stringify(entry)),
       part,
       mesh,
       positions: Float32Array.from(mesh.positions),
@@ -221,11 +229,11 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
       mode: previous?.mode ?? 'face',
       selected: new Set(),
     };
-    // A pick is a number in this mesh, so it stays only on the log state it was made on (or after this editor's own move, which
-    // never changes the topology); an undo, a redo or an outside edit with the same counts may have renumbered everything.
+    // A pick is a number in this mesh, so it stays only while the cage has the same counts and the two logs agree up to the
+    // shorter one: an undo or a redo of a move keeps it, an edit that replaced an entry may have renumbered everything.
     const sameMesh = previous && previous.nodeId === nodeId && previous.geometryId === geometrySpec.id
       && previous.mesh.vertexCount === mesh.vertexCount && previous.mesh.edgeCount === mesh.edgeCount && previous.mesh.faceCount === mesh.faceCount;
-    if (sameMesh && (writingOwnEntry || previous.logKey === state.logKey)) state.selected = new Set(selectedBefore);
+    if (sameMesh && (writingOwnEntry || logsShareTheirPrefix(previous.logEntries, state.logEntries))) state.selected = new Set(selectedBefore);
     return null;
   }
 

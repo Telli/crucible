@@ -159,7 +159,7 @@ export const STUDIO_CSS = `
   height: 100%;
   pointer-events: none;
 }
-/* The cage of edit mode. A light line with a dark halo reads on every surface the viewport can show, in either theme; the far
+/* The cage of edit mode. A dark line with a light halo reads on every surface the viewport can show, in either theme; the far
    side of the mesh is the same line, quieter. The picked elements are the accent, drawn over the handles with a dark ring. */
 .crucible-studio-gizmo :is(.crucible-studio-cage-halo, .crucible-studio-cage-edges, .crucible-studio-cage-edges-far, .crucible-studio-cage-vertices-halo, .crucible-studio-cage-vertices, .crucible-studio-cage-vertices-far, .crucible-studio-cage-selected-halo) {
   fill: none;
@@ -167,33 +167,32 @@ export const STUDIO_CSS = `
   stroke-linejoin: round;
 }
 .crucible-studio-gizmo .crucible-studio-cage-halo {
-  stroke: var(--studio-trace-edge);
-  stroke-opacity: 0.4;
-  stroke-width: 3;
+  stroke: var(--studio-trace);
+  stroke-opacity: 0.9;
+  stroke-width: 3.6;
 }
 .crucible-studio-gizmo .crucible-studio-cage-edges {
-  stroke: var(--studio-trace);
-  stroke-opacity: 0.85;
-  stroke-width: 1;
+  stroke: var(--studio-trace-edge);
+  stroke-width: 1.2;
 }
 .crucible-studio-gizmo .crucible-studio-cage-edges-far {
-  stroke: var(--studio-trace);
-  stroke-opacity: 0.2;
+  stroke: var(--studio-trace-edge);
+  stroke-opacity: 0.3;
   stroke-width: 1;
 }
 .crucible-studio-gizmo .crucible-studio-cage-vertices-halo {
-  stroke: var(--studio-trace-edge);
-  stroke-opacity: 0.5;
-  stroke-width: 7.5;
+  stroke: var(--studio-trace);
+  stroke-opacity: 0.95;
+  stroke-width: 8;
 }
 .crucible-studio-gizmo .crucible-studio-cage-vertices {
-  stroke: var(--studio-trace);
-  stroke-width: 4.5;
+  stroke: var(--studio-trace-edge);
+  stroke-width: 5;
 }
 .crucible-studio-gizmo .crucible-studio-cage-vertices-far {
-  stroke: var(--studio-trace);
-  stroke-opacity: 0.25;
-  stroke-width: 3.5;
+  stroke: var(--studio-trace-edge);
+  stroke-opacity: 0.3;
+  stroke-width: 4;
 }
 .crucible-studio-gizmo .crucible-studio-cage-selected-halo {
   stroke: var(--studio-trace-edge);
@@ -783,12 +782,22 @@ export const STUDIO_CSS = `
 .crucible-studio-group[hidden] { display: none; }
 /* Edit mode's own group: set apart from the tools by room, in the accent while the mode is on. */
 .crucible-studio-group[data-mesh-group] { margin-block: 10px; }
-.crucible-studio-group[data-mesh-group] button { color: var(--studio-accent); }
 .crucible-studio-group[data-mesh-group] button[aria-pressed="true"] {
   background: color-mix(in srgb, var(--studio-accent) 28%, transparent);
+  color: var(--studio-accent);
 }
-.crucible-studio-group[data-mesh-group] button[data-mesh-mode][aria-pressed="false"] {
-  color: color-mix(in srgb, var(--studio-accent) 62%, var(--studio-muted));
+/* What the three mode icons draw over their square. */
+.crucible-studio-icon-dot {
+  stroke-width: 6;
+}
+.crucible-studio-icon-heavy {
+  stroke-width: 3.4;
+  stroke-linecap: butt;
+}
+.crucible-studio-icon-tint {
+  fill: currentColor;
+  fill-opacity: 0.35;
+  stroke: none;
 }
 
 .crucible-studio-dock {

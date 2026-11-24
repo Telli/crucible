@@ -29,7 +29,7 @@ import {
 } from './studio-preferences.js';
 import { createOutlineMask } from './studio-outline-mask.js';
 import { createPanelGrips } from './studio-panel-grips.js';
-import { STUDIO_BRAND_ICON_NAMES, studioIconPath } from './studio-icons.js';
+import { STUDIO_BRAND_ICON_NAMES, STUDIO_ICON_ACCENTS, studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
 import { createKeyMarkers } from './studio-timeline-keys.js';
 import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-properties.js';
@@ -180,6 +180,9 @@ function createIcon(documentReference, iconName) {
     icon.dataset.brand = 'true';
   }
   icon.append(createSvgElement(documentReference, 'path', { d: studioIconPath(iconName) }));
+  for (const { kind, path } of STUDIO_ICON_ACCENTS[iconName] ?? []) {
+    icon.append(createSvgElement(documentReference, 'path', { d: path, class: `crucible-studio-icon-${kind}` }));
+  }
   return icon;
 }
 
@@ -1815,10 +1818,11 @@ export function createStudio(container, {
   meshModeButtons.forEach(button => {
     button.addEventListener('click', () => chooseMeshMode(button.dataset.meshMode));
   });
-  const meshExitButton = createKeyedIconButton('check', () => `Leave edit mode (${keyLabel(keymap, 'mesh.leave')})`, { dataset: { meshExit: 'true' } });
-  meshExitButton.addEventListener('click', () => leaveMeshEdit());
+  // The object item is how edit mode ends: it is never the active one while the group is on screen.
+  const meshObjectButton = createKeyedIconButton('node', () => `Object mode (${keyLabel(keymap, 'mesh.leave')})`, { dataset: { meshObject: 'true' }, attributes: { 'aria-pressed': 'false' } });
+  meshObjectButton.addEventListener('click', () => leaveMeshEdit());
   // Shown only while edit mode is on, so the group itself says which mode the viewport is in.
-  const meshModeGroup = createElement(documentReference, 'div', { className: 'crucible-studio-group', hidden: true, dataset: { meshGroup: 'true' }, attributes: { role: 'group', 'aria-label': 'Mesh selection' } }, ...meshModeButtons, meshExitButton);
+  const meshModeGroup = createElement(documentReference, 'div', { className: 'crucible-studio-group', hidden: true, dataset: { meshGroup: 'true' }, attributes: { role: 'group', 'aria-label': 'Mesh selection' } }, meshObjectButton, ...meshModeButtons);
 
   const undoButton = createKeyedIconButton('undo', () => `Undo (${keyLabel(keymap, 'edit.undo')})`, { attributes: { 'aria-disabled': 'true' } });
   const redoButton = createKeyedIconButton('redo', () => `Redo (${keyLabel(keymap, 'edit.redo')})`, { attributes: { 'aria-disabled': 'true' } });

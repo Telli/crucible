@@ -567,10 +567,21 @@ test('the selection stays only while the mesh log is the one it was picked on', 
   const front = pickFront(controller, editor);
   editor.refresh();
   assert.deepEqual(editor.selection.indices, [front.face], 'nothing changed, so the pick stays');
-  controller.applyImportOperations([{ type: 'edit-mesh', geometry: 'shape', edits: [{ op: 'translate', select: { faces: [0] }, offset: [0, 0.1, 0] }] }], { detail: { kind: 'topology', nodeId: 'hero' } });
+  const translate = offset => [{ type: 'edit-mesh', geometry: 'shape', edits: [{ op: 'translate', select: { faces: [0] }, offset }] }];
+  controller.applyImportOperations(translate([0, 0.1, 0]), { detail: { kind: 'topology', nodeId: 'hero' } });
+  editor.refresh();
+  assert.deepEqual(editor.selection.indices, [front.face], 'a longer log with the same start and the same counts keeps the pick');
+  controller.undo();
+  editor.refresh();
+  assert.deepEqual(editor.selection.indices, [front.face], 'so does the undo back to the shorter log');
+  controller.redo();
+  editor.refresh();
+  assert.deepEqual(editor.selection.indices, [front.face], 'and the redo');
+  controller.undo();
+  controller.applyImportOperations(translate([0, 0.3, 0]), { detail: { kind: 'topology', nodeId: 'hero' } });
   editor.refresh();
   assert.equal(editor.cage.mesh.faceCount, 6, 'the same counts as before');
-  assert.deepEqual(editor.selection.indices, [], 'a changed log may have moved the numbers');
+  assert.deepEqual(editor.selection.indices, [], 'an entry replaced by another one may have moved the numbers');
 });
 
 test('the far side of the cage is drawn quiet and an element on the near side is picked before it', () => {
@@ -689,7 +700,7 @@ test('undo and redo inside edit mode stay in edit mode with the cage redrawn; th
   assert.equal(ui.root.dataset.meshEdit, 'true', 'undo does not leave edit mode');
   ui.studio.renderNow();
   assert.ok(ui.root.querySelector('.crucible-studio-cage-edges'), 'the cage is drawn for the restored mesh');
-  assert.equal(ui.root.querySelector('.crucible-studio-gizmo [data-gizmo-axis]'), null, 'the pick is gone with the undone move, and the handles of the whole object do not come back');
+  assert.ok(ui.root.querySelector('.crucible-studio-gizmo [data-gizmo-axis]'), 'the pick survives the undo, so the handles stay on it');
   ui.press('z', { ctrlKey: true, shiftKey: true });
   assert.equal(logOfShape(ui.controller).length, 1);
   assert.equal(ui.root.dataset.meshEdit, 'true', 'redo does not leave edit mode');
@@ -733,8 +744,10 @@ test('edit mode is shown by the toolbar group, a button that leaves it and the r
   assert.equal(ui.modeButton('vertex').getAttribute('aria-label'), 'Vertex 1');
   assert.equal(ui.modeButton('edge').getAttribute('aria-label'), 'Edge 2');
   assert.equal(ui.modeButton('face').getAttribute('aria-label'), 'Face 3');
-  const leave = byLabel(ui.root, 'Leave edit mode (Tab)');
-  assert.ok(leave, 'a button leaves edit mode and names its key');
+  const leave = byLabel(ui.root, 'Object mode (Tab)');
+  assert.ok(leave, 'the object item leaves edit mode and names its key');
+  assert.equal(leave.getAttribute('aria-pressed'), 'false');
+  assert.equal(group.children[0], leave, 'the group reads object, vertex, edge, face');
   assert.match(ui.root.querySelector('.crucible-studio-readout-selection').textContent, /^Edit faces/);
   ui.press('2');
   ui.studio.renderNow();
