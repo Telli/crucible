@@ -37,7 +37,7 @@ test('a water part that is not flat adds no volume and the list is capped at the
 test('the shader tints only where a water volume holds the surface', () => {
   const source = createFragmentShader(['water']);
   assert.ok(source.includes('float waterLevelAt(vec3 point)'));
-  assert.ok(source.includes('worldPosition.y < waterLevelAt(worldPosition)'));
+  assert.ok(source.includes('worldPosition.y < (waterSurfaceLevel = waterLevelAt(worldPosition))'));
   assert.ok(!source.includes('worldPosition.y < waterBody.x'), 'the level is no longer a global uniform');
   assert.ok(!createFragmentShader([]).includes('waterVolume'));
 });
@@ -53,4 +53,25 @@ test('dry ground below the water level keeps its colour while the beds under wat
   assert.ok(sampleShift(report, 'dryBelowHighLevelOnly') <= 1, 'dry patch below the high level only');
   assert.ok(sampleShift(report, 'lowBasinBed') > 20, 'the bed under the low water is tinted');
   assert.ok(sampleShift(report, 'highBasinBed') > 20, 'the bed under the high water is tinted');
+});
+
+test('sheets beyond the cap are reported once with how many were dropped', () => {
+  const sheets = Array.from({ length: WATER_VOLUME_LIMIT + 2 }, (_, index) => waterSheet([index * 20, index, 0], 6 + index, 6 + index));
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = message => warnings.push(message);
+  try {
+    findWaterBody(sheets);
+    findWaterBody(sheets);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 1, 'the per-frame call reports the same drop once');
+  assert.match(warnings[0], /2 water sheets beyond the 8 widest/);
+});
+
+test('the water volumes cost 10 uniform vectors: 8 footprints, 2 packed levels and the count', () => {
+  const source = createFragmentShader(['water']);
+  assert.ok(source.includes('uniform vec4 waterVolumes[8];'));
+  assert.ok(source.includes('uniform vec4 waterVolumeLevels[2];'));
 });

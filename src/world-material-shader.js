@@ -284,6 +284,17 @@ function cachedBounds(part) {
 // How many flat water parts the shader tints beneath, each inside its own horizontal footprint.
 export const WATER_VOLUME_LIMIT = 8;
 
+let warnedDroppedVolumeCount = 0;
+
+// findWaterBody runs every frame, so a given count of dropped sheets is reported once.
+function warnAboutDroppedVolumes(droppedCount) {
+  if (droppedCount <= 0 || droppedCount === warnedDroppedVolumeCount) {
+    return;
+  }
+  warnedDroppedVolumeCount = droppedCount;
+  console.warn(`Crucible: ${droppedCount} water sheet${droppedCount === 1 ? '' : 's'} beyond the ${WATER_VOLUME_LIMIT} widest keep no underwater tint. Merge small sheets or keep to ${WATER_VOLUME_LIMIT} flat water parts.`);
+}
+
 /**
  * The water body of a set of parts, or null: the largest flat part with the water tag sets the level (its top) and the optics.
  * `volumes` lists every flat water part (widest first, up to WATER_VOLUME_LIMIT) with its level and footprint: the tint under
@@ -314,6 +325,7 @@ export function findWaterBody(parts) {
   const { absorption, turbidity } = resolveWaterMaterial(best.material);
   // Only the widest bodies count: the shader holds a fixed number of volumes.
   volumes.sort((first, second) => second.footprint - first.footprint);
+  warnAboutDroppedVolumes(volumes.length - WATER_VOLUME_LIMIT);
   return { level: best.level, absorption, turbidity, refractive: best.refractive, caustics: best.material.caustics ?? null, volumes: volumes.slice(0, WATER_VOLUME_LIMIT) };
 }
 
@@ -348,7 +360,7 @@ function bindWaterVolumes(context, locations, volumes) {
     volumeLevels[index] = volume.level;
   });
   context.uniform4fv(locations.volumes, volumeExtents);
-  context.uniform1fv(locations.volumeLevels, volumeLevels);
+  context.uniform4fv(locations.volumeLevels, volumeLevels);
   context.uniform1i(locations.volumeCount, volumes.length);
 }
 
@@ -468,7 +480,7 @@ export const worldMaterialSlots = {
   // its own macro and keeps its filter.
   declarations: `uniform vec4 waterBody;
 uniform vec4 waterVolumes[${WATER_VOLUME_LIMIT}];
-uniform float waterVolumeLevels[${WATER_VOLUME_LIMIT}];
+uniform vec4 waterVolumeLevels[${WATER_VOLUME_LIMIT / 4}];
 uniform int waterVolumeCount;
 // The surface of the highest water volume whose footprint holds the point and lies above it, or a very low level when none does.
 float waterLevelAt(vec3 point) {
@@ -477,7 +489,7 @@ float waterLevelAt(vec3 point) {
     if (index >= waterVolumeCount) break;
     vec4 extent = waterVolumes[index];
     bool inside = point.x >= extent.x && point.x <= extent.z && point.z >= extent.y && point.z <= extent.w;
-    if (inside && point.y < waterVolumeLevels[index]) level = max(level, waterVolumeLevels[index]);
+    if (inside && point.y < waterVolumeLevels[index / 4][index % 4]) level = max(level, waterVolumeLevels[index / 4][index % 4]);
   }
   return level;
 }
@@ -609,12 +621,13 @@ float underwaterVisibility(float visibility, vec3 normal, float depth) {
   vec3 waterSunTransmittance = vec3(1.0);
   float waterScatterShare = 0.0;
   float waterShadowVisibility = 1.0;
+  float waterSurfaceLevel = 0.0;
   if (TAG_WATER) {
     // Only the light that enters the water and comes back is shadowed, and most of what the eye sees comes from deeper than
     // the shadow reaches, so a shadow on the surface is faint. The reflection mixed in later never sees the shadow.
     visibility = mix(visibility, 1.0, 0.7 + 0.2 * waterBody.y);
-  } else if (waterBody.z > 0.5 && worldPosition.y < waterLevelAt(worldPosition)) {
-    waterDepth = waterLevelAt(worldPosition) - worldPosition.y;
+  } else if (waterBody.z > 0.5 && worldPosition.y < (waterSurfaceLevel = waterLevelAt(worldPosition))) {
+    waterDepth = waterSurfaceLevel - worldPosition.y;
     waterTransmittance = exp(-waterAbsorption * waterDepth);
     visibility = underwaterVisibility(visibility, normal, waterDepth);
     waterShadowVisibility = visibility;
