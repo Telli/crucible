@@ -19,6 +19,9 @@ export const STUDIO_CSS = `
   --studio-ok: #5fc48a;
   /* A label's icon: the text colour one step toward the panel, clearly visible in both themes. */
   --studio-icon: color-mix(in srgb, var(--studio-text) 78%, var(--studio-panel));
+  /* Drawn over the viewport, which is dark in both themes: these two do not follow the theme. */
+  --studio-trace: #f1f0ec;
+  --studio-trace-edge: #17161a;
   --studio-font: Inter, system-ui, sans-serif;
   --studio-font-heading: 'Plus Jakarta Sans', Inter, system-ui, sans-serif;
   --studio-font-mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -277,10 +280,7 @@ export const STUDIO_CSS = `
 .crucible-studio-gizmo[data-hover-axis="yz"] [data-gizmo-axis="yz"] {
   fill-opacity: 0.6;
 }
-.crucible-studio-gizmo {
-  --studio-trace: #f1f0ec;
-  --studio-trace-edge: #17161a;
-}
+
 .crucible-studio-scene-mark {
   color: var(--studio-text);
   fill: none;
@@ -325,12 +325,32 @@ export const STUDIO_CSS = `
 .crucible-studio-silhouette-colour {
   flood-color: var(--studio-accent);
 }
+/* Both layers use the full accent with a ring of the viewport's own dark outside it, so the outline reads on light and
+   dark surfaces alike. The viewport is dark in both themes, so the ring takes the trace-edge dark and never the UI
+   theme's --studio-bg, which would glow pale on the floor in the light theme. The active object's outline is the
+   wider one (4 px against 2 px: the filters round the thin ring to 2 px, so 3 against 1.5 drew as 3 against 2). */
+.crucible-studio-silhouette-casing {
+  flood-color: var(--studio-trace-edge);
+}
 .crucible-studio-selection-outline {
   fill: none;
   stroke: var(--studio-accent);
-  stroke-width: 1.5;
+  stroke-width: 4;
   stroke-linejoin: round;
   pointer-events: none;
+}
+.crucible-studio-selection-outline[data-layer="others"] {
+  stroke-width: 2;
+}
+.crucible-studio-selection-outline-casing {
+  fill: none;
+  stroke: var(--studio-trace-edge);
+  stroke-width: 6;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.crucible-studio-selection-outline-casing[data-layer="others"] {
+  stroke-width: 4;
 }
 /* The axis widget stands at the top right of the viewport, beside the panel column. Floating, that is left of the
    Scene card, level with its top and one edge gap from it; --studio-gizmo-clear is the room the cards take. */
@@ -988,10 +1008,21 @@ export const STUDIO_CSS = `
   align-items: center;
   gap: 4px;
 }
-.crucible-studio-dock-title .crucible-studio-icon {
+.crucible-studio-dock-title .crucible-studio-icon,
+.crucible-studio-selection-count .crucible-studio-icon {
   inline-size: 15px;
   block-size: 15px;
 }
+.crucible-studio-selection-count {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--studio-font);
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--studio-muted);
+}
+.crucible-studio-selection-count[hidden] { display: none; }
 .crucible-studio-filter {
   position: relative;
   flex: none;
@@ -1046,8 +1077,12 @@ export const STUDIO_CSS = `
   padding: 0 2px 0 var(--studio-space-8);
   border-radius: 8px;
 }
+/* Every selected row is tinted; the active one, which the panels follow, more strongly. */
 .crucible-studio-tree-row[data-selected="true"] {
-  background: color-mix(in srgb, var(--studio-text) 11%, transparent);
+  background: color-mix(in srgb, var(--studio-text) 10%, transparent);
+}
+.crucible-studio-tree-row[data-active="true"] {
+  background: color-mix(in srgb, var(--studio-text) 18%, transparent);
 }
 @media (hover: hover) {
   .crucible-studio-tree-row:not([data-selected="true"]):hover {
