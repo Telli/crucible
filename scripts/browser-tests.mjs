@@ -21,6 +21,40 @@ const SCRIPT_EXTENSION = /\.(?:m?js|cjs)$/;
 const FOLLOWED_FOLDERS = /^(?:tests|scripts|src|bin|bench|packages)\//;
 const EXTENSIONS = ['', '.js', '.mjs', '.cjs'];
 
+const QUOTES = new Set(["'", '"', '`']);
+
+/**
+ * Returns the source with `//` line comments and block comments removed, so a word that appears only in a comment is not a launcher (#3219).
+ * A quote opens a string that the same quote closes (a single or double quote also ends at the line break), so `https://` inside a string stays.
+ */
+export function stripComments(sourceText) {
+  let output = '';
+  let index = 0;
+  while (index < sourceText.length) {
+    const character = sourceText[index];
+    const next = sourceText[index + 1];
+    if (character === '/' && next === '/') {
+      while (index < sourceText.length && sourceText[index] !== '\n') index += 1;
+    } else if (character === '/' && next === '*') {
+      const end = sourceText.indexOf('*/', index + 2);
+      index = end === -1 ? sourceText.length : end + 2;
+      output += ' ';
+    } else if (QUOTES.has(character)) {
+      const stringStart = index;
+      index += 1;
+      while (index < sourceText.length && sourceText[index] !== character && (character === '`' || sourceText[index] !== '\n')) {
+        index += sourceText[index] === '\\' ? 2 : 1;
+      }
+      index += 1;
+      output += sourceText.slice(stringStart, index);
+    } else {
+      output += character;
+      index += 1;
+    }
+  }
+  return output;
+}
+
 function resolveLocalFile(importerPath, specifier, fileExists) {
   const resolved = posix.normalize(posix.join(posix.dirname(importerPath), specifier));
   return EXTENSIONS.map(extension => resolved + extension).find(candidate => FOLLOWED_FOLDERS.test(candidate) && fileExists(candidate));
@@ -46,7 +80,7 @@ export function createBrowserDetector(readSource) {
   const nodes = new Map();
   function nodeFor(path) {
     if (!nodes.has(path)) {
-      const sourceText = read(path);
+      const sourceText = stripComments(read(path));
       nodes.set(path, {
         reason: LAUNCHER_MARKERS.find(({ pattern }) => pattern.test(sourceText))?.reason ?? null,
         next: localFilesNamedBy(sourceText, path, fileExists),
