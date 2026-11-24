@@ -5,6 +5,7 @@ import { fittedClosedRoomShare, fittedRoomHasWalls } from '../src/fitted-closed-
 import { partMatrixLookup } from '../src/closed-room.js';
 import { findFlushPairs } from '../src/flush-search.js';
 import { forgetSearch } from '../src/flush-search-reuse.js';
+import { markLiveGeometry } from '../src/live-geometry.js';
 
 // An edit that adds one part must not read the triangles of parts it cannot have changed (issue #2787), and everything it
 // returns must be what a search of a fresh copy of the same scene returns.
@@ -151,4 +152,62 @@ test('a part moved between two closed-room tests is traced at its new matrix', (
   const fresh = copiedParts(opened);
   assert.equal(after, fittedClosedRoomShare(fresh, partMatrixLookup(fresh)));
   assert.notEqual(after, before, 'lifting the ceiling away opens the room');
+});
+
+function withTrailingDegenerateTriangle(geometry) {
+  return { positions: geometry.positions, indices: Uint32Array.from([...geometry.indices, 0, 0, 1]) };
+}
+
+function withMiddleDegenerateTriangle(geometry) {
+  const indices = [...geometry.indices];
+  indices.splice(6, 0, 0, 0, 1);
+  return { positions: geometry.positions, indices: Uint32Array.from(indices) };
+}
+
+function rowsOf(result, row) {
+  return [result.owner[row], result.local[row], result.areas[row], [...result.corners.subarray(row * 9, row * 9 + 9)]];
+}
+
+function assertSameAsCold(incremental, edited) {
+  const fresh = copiedParts(edited);
+  forgetSearch();
+  const cold = findFlushPairs(fresh);
+  assert.deepEqual(pairsOf(incremental), pairsOf(cold));
+  assert.equal(incremental.count, cold.count);
+  for (const pair of incremental.pairs) {
+    for (const row of [pair.first, pair.second]) assert.deepEqual(rowsOf(incremental, row), rowsOf(cold, row));
+  }
+}
+
+test('a part added right after an unchanged part that ends in a zero-area triangle keeps its own first row', () => {
+  const base = part('base', sheetGeometry(2), placed(0, 0, 0));
+  const neighbour = part('neighbour', withTrailingDegenerateTriangle(sheetGeometry(2)), placed(2, 0, 0));
+  forgetSearch();
+  findFlushPairs([base, neighbour]);
+  const added = part('added', sheetGeometry(2), placed(0, 0.001, 0));
+  const edited = [base, neighbour, added];
+  const incremental = findFlushPairs(edited);
+  assert.ok(incremental.pairs.length > 0, 'the added sheet fights the base sheet');
+  assertSameAsCold(incremental, edited);
+});
+
+test('a zero-area triangle in the middle of an unchanged part does not disturb the part added after it', () => {
+  const base = part('base', sheetGeometry(2), placed(0, 0, 0));
+  const neighbour = part('neighbour', withMiddleDegenerateTriangle(sheetGeometry(2)), placed(2, 0, 0));
+  forgetSearch();
+  findFlushPairs([base, neighbour]);
+  const added = part('added', sheetGeometry(2), placed(0, 0.001, 0));
+  const edited = [base, neighbour, added];
+  assertSameAsCold(findFlushPairs(edited), edited);
+});
+
+test('the closed-room test measures the centre of a live geometry from its current positions', () => {
+  const box = boxGeometry();
+  const cloth = markLiveGeometry(boxGeometry());
+  const props = [1, 2, 3, 4, 5].map(index => part(`prop-${index}`, box, placed(index - 3, 0.5, 0, [0.3, 0.3, 0.3])));
+  const parts = roomParts([...props, part('cloth', cloth, placed(0, 0.5, 1))]);
+  const measure = list => [fittedClosedRoomShare(list, partMatrixLookup(list)), fittedRoomHasWalls(list, partMatrixLookup(list))];
+  measure(parts);
+  for (let offset = 0; offset < cloth.positions.length; offset += 3) cloth.positions[offset] += 500;
+  assert.deepEqual(measure(parts), measure(copiedParts(parts)));
 });

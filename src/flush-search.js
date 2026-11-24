@@ -8,6 +8,7 @@
 // past the triangle budget come back in `unchecked`, and `truncated` says the pair budget ran out.
 
 import { drainSteps } from './flush-search-runner.js';
+import { isLiveGeometry } from './live-geometry.js';
 import { entryContaining, forgetSearch, matchRemembered, partSignature, rememberSearch, rememberedTriangleCount, reusedPairs, subTableOf, triangleIdsNearChanged } from './flush-search-reuse.js';
 
 /** Shared area under this share of the smaller triangle is edge contact or rounding, not a fight. */
@@ -47,8 +48,10 @@ const DEFORMING_TAGS = new Set(['foliage', 'grass', 'water', 'fire', 'smoke']);
 
 const localBoundsByGeometry = new WeakMap();
 
+// A live geometry has its positions rewritten in place, so its bounds are measured again on every call.
 export function localBounds(geometry) {
-  let bounds = localBoundsByGeometry.get(geometry);
+  const live = isLiveGeometry(geometry);
+  let bounds = live ? undefined : localBoundsByGeometry.get(geometry);
   if (bounds) return bounds;
   bounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   const { positions } = geometry;
@@ -58,7 +61,7 @@ export function localBounds(geometry) {
       bounds[3 + axis] = Math.max(bounds[3 + axis], positions[offset + axis]);
     }
   }
-  localBoundsByGeometry.set(geometry, bounds);
+  if (!live) localBoundsByGeometry.set(geometry, bounds);
   return bounds;
 }
 
@@ -179,27 +182,29 @@ function* readTriangles(entries) {
   return table;
 }
 
-// Writes the row of one triangle of a part at `row`, or leaves the row free and returns false when the triangle has no area.
+// Writes the row of one triangle of a part at `row`, or leaves the row untouched and returns false when the triangle has no area. The
+// corners are worked out in `worldCorners` first: a row that stays free is the first row of the part after it, which may already be filled in.
+const worldCorners = new Float64Array(9);
+
 function writeTriangleRow(table, part, partIndex, triangle, row, flip) {
   const { positions, indices } = part.geometry;
   const matrix = part.matrix;
   const { corners, normals, boxes } = table;
-  const base = row * 9;
   for (let corner = 0; corner < 3; corner++) {
     const vertex = indices[triangle + corner] * 3;
     const x = positions[vertex];
     const y = positions[vertex + 1];
     const z = positions[vertex + 2];
-    corners[base + corner * 3] = matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12];
-    corners[base + corner * 3 + 1] = matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13];
-    corners[base + corner * 3 + 2] = matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14];
+    worldCorners[corner * 3] = matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12];
+    worldCorners[corner * 3 + 1] = matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13];
+    worldCorners[corner * 3 + 2] = matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14];
   }
-  const edgeOneX = corners[base + 3] - corners[base];
-  const edgeOneY = corners[base + 4] - corners[base + 1];
-  const edgeOneZ = corners[base + 5] - corners[base + 2];
-  const edgeTwoX = corners[base + 6] - corners[base];
-  const edgeTwoY = corners[base + 7] - corners[base + 1];
-  const edgeTwoZ = corners[base + 8] - corners[base + 2];
+  const edgeOneX = worldCorners[3] - worldCorners[0];
+  const edgeOneY = worldCorners[4] - worldCorners[1];
+  const edgeOneZ = worldCorners[5] - worldCorners[2];
+  const edgeTwoX = worldCorners[6] - worldCorners[0];
+  const edgeTwoY = worldCorners[7] - worldCorners[1];
+  const edgeTwoZ = worldCorners[8] - worldCorners[2];
   const normalX = edgeOneY * edgeTwoZ - edgeOneZ * edgeTwoY;
   const normalY = edgeOneZ * edgeTwoX - edgeOneX * edgeTwoZ;
   const normalZ = edgeOneX * edgeTwoY - edgeOneY * edgeTwoX;
@@ -209,9 +214,10 @@ function writeTriangleRow(table, part, partIndex, triangle, row, flip) {
   normals[row * 3] = normalX * scale;
   normals[row * 3 + 1] = normalY * scale;
   normals[row * 3 + 2] = normalZ * scale;
+  corners.set(worldCorners, row * 9);
   for (let axis = 0; axis < 3; axis++) {
-    const low = Math.min(corners[base + axis], corners[base + 3 + axis], corners[base + 6 + axis]);
-    const high = Math.max(corners[base + axis], corners[base + 3 + axis], corners[base + 6 + axis]);
+    const low = Math.min(worldCorners[axis], worldCorners[3 + axis], worldCorners[6 + axis]);
+    const high = Math.max(worldCorners[axis], worldCorners[3 + axis], worldCorners[6 + axis]);
     boxes[row * 6 + axis] = low;
     boxes[row * 6 + 3 + axis] = high;
   }
