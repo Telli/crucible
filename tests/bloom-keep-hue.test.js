@@ -10,9 +10,12 @@ import { createAgentRuntime } from '../scripts/agent-runtime.mjs';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
 import { resolveEffects } from '../src/effects.js';
 import { createPostFragment, KEEP_HUE_STEP, POST_STEPS } from '../src/post.js';
+import '../src/auto-exposure.js';
+import '../src/bloom-keep-hue.js';
+import '../src/linear-output-shader.js';
 import { decodePngPixels } from './support/png-pixels.mjs';
 
-// Bloom keeps the hue of an emissive part when asked (#3326): a bright red cube on a grey wall keeps a saturated face, and a scene that does not ask draws as before.
+// Bloom keeps the hue of an emissive part when asked (#3326): a bright red or blue cube on a grey wall keeps a saturated face and a halo of its own colour, and a scene that does not ask draws as before.
 
 test('keepHue is absent from resolved bloom unless it is true, so a scene that does not ask resolves as before', () => {
   assert.deepEqual(Object.keys(resolveEffects({ bloom: { strength: 0.5 } }).bloom), ['strength', 'threshold', 'radius']);
@@ -24,19 +27,33 @@ test('keepHue rejects anything but true or false and says what to pass', () => {
   assert.throws(() => resolveEffects({ bloom: { strength: 0.5, keepHue: 1 } }), /Bloom keepHue must be true or false, got 1\./);
 });
 
+test('keepHue builds together with auto exposure and linear output, and the exposure scales the emissive peak', () => {
+  const steps = [...POST_STEPS, KEEP_HUE_STEP, 'autoExposure'];
+  const source = createPostFragment(steps);
+  assert.match(source, /uniform float autoExposureScale;/);
+  assert.match(source, /uniform float bloomKeepHue;/);
+  assert.match(source, /float sourcePeak = max\(color\.r, max\(color\.g, color\.b\)\) \* autoExposureScale;/);
+  assert.doesNotThrow(() => createPostFragment([...steps, 'linearOutput']));
+  assert.match(createPostFragment([...POST_STEPS, KEEP_HUE_STEP]), /float sourcePeak = max\(color\.r, max\(color\.g, color\.b\)\);/);
+});
+
 test('only the keepHue program holds the keepHue code, every other post program keeps its source', () => {
   assert.doesNotMatch(createPostFragment(POST_STEPS), /bloomKeepHue/);
+  assert.doesNotMatch(createPostFragment([...POST_STEPS, 'autoExposure']), /bloomKeepHue/);
   assert.match(createPostFragment([...POST_STEPS, KEEP_HUE_STEP]), /uniform float bloomKeepHue;/);
 });
 
-const SIDE = 160;
+const WIDTH = 1080;
+const HEIGHT = 1920;
+const NAMES = ['red', 'blue', 'white'];
+const SOURCE_HUES = [0, 240, null];
 const directories = [];
 const sessions = new Map();
 async function server() {
   if (sessions.has('server')) return sessions.get('server');
   const directory = await mkdtemp(join(tmpdir(), 'crucible-bloom-keep-hue-'));
   directories.push(directory);
-  const runtime = createAgentRuntime({ backend: 'cpu', memory: 192, jobs: join(directory, 'jobs') });
+  const runtime = createAgentRuntime({ backend: 'cpu', memory: 512, jobs: join(directory, 'jobs') });
   const mcp = createAgentMcpServer(runtime);
   const client = new Client({ name: 'bloom-keep-hue-test', version: '1' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -52,32 +69,33 @@ after(async () => {
 });
 
 async function call(client, name, argumentsValue) {
-  const result = await client.callTool({ name, arguments: argumentsValue }, { timeout: 120000 });
+  const result = await client.callTool({ name, arguments: argumentsValue }, { timeout: 300000 });
   assert.equal(result.isError, undefined, result.content?.find(item => item.type === 'text')?.text);
   return result.structuredContent;
 }
 
-// A red emissive cube on a mid-grey wall. The base is a lit grey, which is the light on a neon face besides the glow that turned it pastel.
-async function renderCube(bloom) {
+// The #3326 scene: a red, a blue and a white emissive cube on a mid-grey wall at exposure 1. The base is a lit grey, which is the light on a neon face besides the glow that turned it pastel.
+async function renderCubes(bloom) {
   const { client } = await server();
+  const emissiveColors = [[1, 0, 0], [0, 0, 1], [1, 1, 1]];
   const recipe = {
     format: 'crucible.scene', schemaVersion: 1,
     geometries: [{ id: 'box', type: 'box', bevel: 0 }],
     materials: [
       { id: 'wall', color: [0.2, 0.2, 0.2], metallic: 0, roughness: 0.9 },
-      { id: 'neon', color: [0.6, 0.6, 0.6], metallic: 0, roughness: 0.5, emission: 8, emissiveColor: [1, 0.05, 0.05] },
+      ...emissiveColors.map((emissiveColor, index) => ({ id: NAMES[index], color: [0.6, 0.6, 0.6], metallic: 0, roughness: 0.5, emission: 8, emissiveColor })),
     ],
     nodes: [
-      { id: 'wall', geometry: 'box', material: 'wall', translation: [0, 0, -0.6], scale: [12, 12, 0.1] },
-      { id: 'cube', geometry: 'box', material: 'neon', translation: [0, 0, 0], scale: [1, 1, 1] },
+      { id: 'wall', geometry: 'box', material: 'wall', translation: [0, 0, -0.6], scale: [12, 14, 0.1] },
+      ...NAMES.map((name, index) => ({ id: name, geometry: 'box', material: name, translation: [index - 1, 0, 0], scale: [0.5, 0.5, 0.5] })),
     ],
-    camera: { eye: [0, 0, 6], target: [0, 0, 0], fov: 40 },
+    camera: { eye: [0, 0, 30], target: [0, 0, 0], fov: 11.3 },
     environment: { world: false, keyIntensity: 0, ambientIntensity: 0.65, ambientColor: [1, 1, 1], skyTop: [0.5, 0.5, 0.5], skyBottom: [0.5, 0.5, 0.5] },
     effects: bloom ? { exposure: 1, bloom } : { exposure: 1 },
   };
   const created = await call(client, 'scene_create', { recipe });
-  const submitted = await call(client, 'scene_render_submit', { sessionId: created.sessionId, expectedRevision: created.revision ?? 0, settings: { kind: 'image', width: SIDE, height: SIDE } });
-  for (let attempt = 0; attempt < 1200; attempt++) {
+  const submitted = await call(client, 'scene_render_submit', { sessionId: created.sessionId, expectedRevision: created.revision ?? 0, settings: { kind: 'image', width: WIDTH, height: HEIGHT } });
+  for (let attempt = 0; attempt < 3000; attempt++) {
     const record = await call(client, 'scene_render_status', { jobId: submitted.jobId });
     if (record.state === 'completed') break;
     assert.ok(!['cancelled', 'failed'].includes(record.state), JSON.stringify(record));
@@ -99,27 +117,99 @@ function saturationOf([red, green, blue]) {
 
 const lumaOf = ([red, green, blue]) => 0.2126 * red + 0.7152 * green + 0.0722 * blue;
 
-test('bloom with keepHue keeps the face saturated and the halo as bright, which plain bloom does not', { timeout: 300000 }, async () => {
-  const center = SIDE / 2;
-  const ringRow = center - Math.round(SIDE * 0.225) - 6;
-  const off = await renderCube(null);
-  const plain = await renderCube({ strength: 0.5, threshold: 1, radius: 4 });
-  const keeping = await renderCube({ strength: 0.5, threshold: 1, radius: 4, keepHue: true });
-  const plainFace = saturationOf(pixelAt(plain, center, center));
-  const keepingFace = saturationOf(pixelAt(keeping, center, center));
-  const plainRise = lumaOf(pixelAt(plain, center, ringRow)) - lumaOf(pixelAt(off, center, ringRow));
-  const keepingRise = lumaOf(pixelAt(keeping, center, ringRow)) - lumaOf(pixelAt(off, center, ringRow));
-  assert.ok(plainFace < 0.3, `plain bloom leaves a pastel face, saturation ${plainFace}`);
-  assert.ok(keepingFace >= 0.5, `keepHue keeps the face colour, saturation ${keepingFace}`);
-  assert.ok(plainRise >= 10, `the test scene needs a halo to compare, rise ${plainRise}`);
-  assert.ok(keepingRise >= plainRise - 15, `keepHue keeps the halo, rise ${keepingRise} against ${plainRise}`);
+function hueOf([red, green, blue]) {
+  const peak = Math.max(red, green, blue);
+  const spread = peak - Math.min(red, green, blue);
+  if (spread === 0) return 0;
+  const sector = peak === red ? ((green - blue) / spread + 6) % 6 : peak === green ? (blue - red) / spread + 2 : (red - green) / spread + 4;
+  return sector * 60;
+}
+
+const hueDistance = (first, second) => Math.min(Math.abs(first - second) % 360, 360 - (Math.abs(first - second) % 360));
+
+// The box of each cube in the bloom-off picture: the pixels that differ from the wall, split into three column bands.
+function cubeBoxes(off) {
+  const wall = pixelAt(off, 20, 20);
+  return NAMES.map((name, index) => {
+    const box = { left: WIDTH, right: -1, top: HEIGHT, bottom: -1 };
+    for (let row = 0; row < HEIGHT; row++) {
+      for (let column = index * 360; column < (index + 1) * 360; column++) {
+        const pixel = pixelAt(off, column, row);
+        if (Math.abs(lumaOf(pixel) - lumaOf(wall)) > 25 || Math.abs(pixel[0] - wall[0]) + Math.abs(pixel[2] - wall[2]) > 90) {
+          box.left = Math.min(box.left, column);
+          box.right = Math.max(box.right, column);
+          box.top = Math.min(box.top, row);
+          box.bottom = Math.max(box.bottom, row);
+        }
+      }
+    }
+    return box;
+  });
+}
+
+function averageOf(pixels) {
+  return pixels.reduce((sum, pixel) => sum.map((value, channel) => value + pixel[channel] / pixels.length), [0, 0, 0]);
+}
+
+// The #3326 numbers of one cube: the ring 8 px outside the box (rise in luma), the mean face saturation, the wall 200 px above the box (rise) and the hue of the light bloom added to the ring.
+function measureCube(off, on, box) {
+  const ringOn = [];
+  const ringOff = [];
+  const face = [];
+  for (let row = box.top - 8; row <= box.bottom + 8; row++) {
+    for (let column = box.left - 8; column <= box.right + 8; column++) {
+      const inside = column >= box.left && column <= box.right && row >= box.top && row <= box.bottom;
+      const onRing = !inside && (column < box.left - 7 || column > box.right + 7 || row < box.top - 7 || row > box.bottom + 7);
+      if (onRing) {
+        ringOn.push(pixelAt(on, column, row));
+        ringOff.push(pixelAt(off, column, row));
+      }
+      if (inside) face.push(pixelAt(on, column, row));
+    }
+  }
+  const middle = (box.left + box.right) >> 1;
+  const farOn = [];
+  const farOff = [];
+  for (let column = middle - 20; column <= middle + 20; column++) {
+    farOn.push(pixelAt(on, column, box.top - 200));
+    farOff.push(pixelAt(off, column, box.top - 200));
+  }
+  const meanOff = averageOf(ringOff);
+  const added = averageOf(ringOn).map((value, channel) => Math.max(0, value - meanOff[channel]));
+  return {
+    ringRise: lumaOf(averageOf(ringOn)) - lumaOf(meanOff),
+    faceSaturation: face.reduce((sum, pixel) => sum + saturationOf(pixel), 0) / face.length,
+    wallRise: lumaOf(averageOf(farOn)) - lumaOf(averageOf(farOff)),
+    addedHue: hueOf(added),
+  };
+}
+
+test('bloom with keepHue meets the #3326 targets on a red, a blue and a white cube, which plain bloom misses on face saturation', { timeout: 900000 }, async () => {
+  const bloom = { strength: 1, threshold: 1, radius: 16 };
+  const off = await renderCubes(null);
+  const boxes = cubeBoxes(off);
+  const plain = await renderCubes(bloom);
+  const keeping = await renderCubes({ ...bloom, keepHue: true });
+  NAMES.forEach((name, index) => {
+    const before = measureCube(off, plain, boxes[index]);
+    const after = measureCube(off, keeping, boxes[index]);
+    assert.ok(after.ringRise >= 30, `${name} ring rises at least 30 levels, got ${after.ringRise}`);
+    assert.ok(after.wallRise <= 10, `${name} wall 200 px away rises at most 10, got ${after.wallRise}`);
+    if (SOURCE_HUES[index] === null) {
+      assert.ok(after.faceSaturation < 0.1, `the white face stays white, got ${after.faceSaturation}`);
+      return;
+    }
+    assert.ok(before.faceSaturation < 0.3, `${name} plain bloom leaves a pastel face, saturation ${before.faceSaturation}`);
+    assert.ok(after.faceSaturation >= 0.5, `${name} keepHue keeps the face saturated, got ${after.faceSaturation}`);
+    assert.ok(hueDistance(after.addedHue, SOURCE_HUES[index]) <= 15, `${name} halo hue ${after.addedHue} is within 15 degrees of ${SOURCE_HUES[index]}`);
+  });
 });
 
-test('keepHue false draws the same pixels as no keepHue, and keepHue with bloom off changes nothing', { timeout: 300000 }, async () => {
-  const plain = await renderCube({ strength: 0.5, threshold: 1, radius: 4 });
-  const explicitFalse = await renderCube({ strength: 0.5, threshold: 1, radius: 4, keepHue: false });
+test('keepHue false draws the same pixels as no keepHue, and keepHue with bloom off changes nothing', { timeout: 900000 }, async () => {
+  const plain = await renderCubes({ strength: 0.5, threshold: 1, radius: 4 });
+  const explicitFalse = await renderCubes({ strength: 0.5, threshold: 1, radius: 4, keepHue: false });
   assert.deepEqual(explicitFalse.data, plain.data);
-  const offPlain = await renderCube({ strength: 0 });
-  const offKeeping = await renderCube({ strength: 0, keepHue: true });
+  const offPlain = await renderCubes({ strength: 0 });
+  const offKeeping = await renderCubes({ strength: 0, keepHue: true });
   assert.deepEqual(offKeeping.data, offPlain.data);
 });

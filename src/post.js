@@ -2,34 +2,8 @@ import { registeredFeatureCode, requireFeatureCode } from './shader-registry.js'
 
 export { fullscreenVertex } from './gl-program.js';
 
-// A marker step for a frame whose bloom asks for keepHue (#3326). Only its program holds the code below, so every other program has the source it had before.
+// A marker step for a frame whose bloom asks for keepHue (#3326). Its code lives in bloom-keep-hue.js, so a program without the step has the source it had before.
 export const KEEP_HUE_STEP = 'keepHue';
-// The grey part of a colour (its weakest channel) goes through the display curve as before and the colour on top of it keeps its channel ratio. A pixel already
-// brighter than 1 before bloom (the emissive part itself) keeps its ratio whole, so a lit grey base does not turn a neon face pastel.
-const KEEP_HUE_DECLARATIONS = `uniform float bloomKeepHue;
-vec3 toneCurve(vec3 color) { return clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0); }
-vec3 toneKeepingHue(vec3 radiance) {
-  float peak = max(radiance.r, max(radiance.g, radiance.b));
-  return peak > 0.0 ? radiance * (toneCurve(vec3(peak)).x / peak) : vec3(0.0);
-}
-vec3 toneKeepingChroma(vec3 radiance) {
-  float low = min(radiance.r, min(radiance.g, radiance.b));
-  float high = max(radiance.r, max(radiance.g, radiance.b));
-  vec3 position = high - low > 0.00001 ? (radiance - low) / (high - low) : vec3(0.0);
-  return mix(toneCurve(vec3(low)), toneCurve(vec3(high)), position);
-}
-`;
-const POST_BLOOM_LINE = "  if (POST_BLOOM) color += texture(bloomTexture, textureCoordinate).rgb * bloomStrength;\n";
-const POST_TONE_LINES = "    color = clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);\n    color = pow(color, vec3(1.0 / 2.2));\n";
-const KEEP_HUE_BLOOM_LINES = `  float sourcePeak = max(color.r, max(color.g, color.b));
-  vec3 bloomLight = POST_BLOOM ? texture(bloomTexture, textureCoordinate).rgb * bloomStrength : vec3(0.0);
-  color += bloomLight;
-`;
-const KEEP_HUE_TONE_LINES = `    vec3 plainColor = clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
-    float bloomPeak = max(bloomLight.r, max(bloomLight.g, bloomLight.b));
-    vec3 kept = mix(toneKeepingChroma(color), toneKeepingHue(color), smoothstep(0.8, 2.0, sourcePeak));
-    color = pow(mix(plainColor, kept, bloomPeak / (bloomPeak + 0.02)), vec3(1.0 / 2.2));
-`;
 
 // The main function of the post pass; the local volume composite before bloom swaps it for a smaller one.
 const POST_MAIN = `void main() {
@@ -291,17 +265,12 @@ export function createLocalVolumeCompositeFragment(motion = false, kind = 'both'
 // The post main with the code of the optional steps that change it; undefined leaves the main as it was.
 function postMainFor(enabledSteps) {
   if (!enabledSteps.has('linearOutput') && !enabledSteps.has('autoExposure') && !enabledSteps.has(KEEP_HUE_STEP)) return undefined;
-  let mainBody = enabledSteps.has(KEEP_HUE_STEP) ? keepHueMain() : POST_MAIN;
+  let mainBody = POST_MAIN;
   if (enabledSteps.has('autoExposure')) mainBody = requireFeatureCode('autoExposure').post(mainBody);
   if (enabledSteps.has('linearOutput')) mainBody = requireFeatureCode('linearOutput').post(mainBody);
+  // Last, because it matches the bloom and tone map lines that the two steps above leave in place.
+  if (enabledSteps.has(KEEP_HUE_STEP)) mainBody = requireFeatureCode('keepHue').post(mainBody);
   return mainBody;
-}
-
-// The post main whose bloom keeps hue: the keepHue code in front, the bloom add and the display curve swapped for their keepHue form.
-function keepHueMain() {
-  const swapped = POST_MAIN.replace(`${POST_BLOOM_LINE}`, KEEP_HUE_BLOOM_LINES).replace(`${POST_TONE_LINES}`, KEEP_HUE_TONE_LINES);
-  if (swapped === POST_MAIN || !swapped.includes('plainColor') || !swapped.includes('sourcePeak')) throw new Error('The post main no longer holds the bloom and display curve lines that keepHue replaces.');
-  return KEEP_HUE_DECLARATIONS + swapped;
 }
 
 /** The post pass with only the listed steps compiled in; every step is switched by its uniform, as before. */
