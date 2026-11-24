@@ -40,6 +40,22 @@ Each tool has its own handle shape, so the shape says what a drag will do: arrow
 
 One drag is one undo step, and undo leaves the viewport camera where you put it. Undo and redo of an edit, of adding or duplicating an object, and of deleting one change the scene already built instead of building it again, so a large scene stays responsive. That holds for putting a deleted object back into the middle of the list and for undoing a lens change too.
 
+## Edit a mesh
+
+Select an object whose geometry is a `mesh` and press **Tab**. Its cage appears over the picture: the polygon edges in pale lines, quieter on the far side of the mesh, with the vertices as dots in vertex mode. A group of three buttons joins the rail in the accent colour while you edit: vertex, edge or face, on **1**, **2** and **3**, with a button below them that leaves edit mode. The readout line at the bottom names the mode, and what you picked is drawn in the accent colour over the handles. Click picks the nearest vertex or edge or the face under the pointer; **Shift + click** adds or removes one; a click on nothing clears the selection. The move handles stand at the centre of the selection and work as they do for an object: drag an arrow or a square to move what you picked. **Esc** during a drag puts it back; with nothing selected, **Esc** or **Tab** leaves edit mode.
+
+A mesh is the shape of the edit log in the recipe (`type: "mesh"`, a `base` shape and `edits`), so what you do is written there, and undo, redo, save and agents all see it. One drag is one entry of the log: a `translate` of faces when what you moved is exactly some faces, else a `set_position` of the picked vertices. Moves are in the object's own space, so a turned or stretched object moves the way its mesh does. While you drag, the surface follows the pointer for a mesh that Studio can rewrite in place (no skin, shape keys or level-of-detail set); the edit is written when you let go.
+
+Not there yet, and said so on screen when you reach it:
+
+- Edit mode needs a mesh geometry. A box, sphere or any other shape cannot be entered yet.
+- A mesh holds at most 64 edits, and a move needs one. At the limit Studio refuses the drag before it starts.
+- A move of more than 19 vertices that are not whole faces cannot be written yet; pick whole faces, or fewer vertices.
+- A mesh with a modifier stack is refused. A mesh of more than 8,000 triangles draws only the picked elements, with a notice.
+- Rotate, scale, box select, extrude and the other tools come next.
+
+If another object uses the same geometry, entering edit mode first gives this object a geometry of its own, so the other one does not move with it. That is one undo step.
+
 ## Add an object or a light
 
 The add button on the rail and the one in the Scene head (or Shift+A) open the same menu, which follows the basics of Blender's Add menu in three groups:
@@ -91,6 +107,8 @@ The keys follow Blender where Studio has the same action. **Help ▸ Keyboard sh
 | Shift+D or Ctrl+D | Duplicate |
 | X, Delete or Backspace | Delete |
 | Esc | Deselect |
+| Tab | Edit the mesh of the selected object; Tab again leaves |
+| 1, 2, 3 | In edit mode: select vertices, edges or faces |
 | H, Alt+H | Hide the selection, show everything that is hidden |
 | Alt+G, Alt+R, Alt+S | Reset the position, rotation or scale of the selection |
 | Right click | Menu of the object under the pointer |
