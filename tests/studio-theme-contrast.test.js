@@ -82,10 +82,15 @@ for (const theme of ['light', 'dark']) {
     assert.ok(contrastRatio(colours[token], darkViewport) >= NON_TEXT_CONTRAST, `${token} against the dark viewport in the ${theme} theme.`);
   });
 
-  test(`${theme} theme: a selected Scene row marks its icon in a colour with 3:1 against the panel`, () => {
+  test(`${theme} theme: the icon of a selected or active Scene row has 3:1 against the tinted row it sits on`, () => {
     const token = tokenInDeclaration(STUDIO_CSS, '.crucible-studio-tree-row[data-selected="true"] .crucible-studio-tree-select .crucible-studio-icon', 'color');
     const colours = studioColours(theme);
-    assert.ok(contrastRatio(colours[token], colours['--studio-panel']) >= NON_TEXT_CONTRAST, `${token} against the panel in the ${theme} theme.`);
+    for (const state of ['selected', 'active']) {
+      const tintShare = Number(blockBody(STUDIO_CSS, `.crucible-studio-tree-row[data-${state}="true"]`).match(/var\(--studio-accent\) (\d+)%/u)?.[1]);
+      assert.ok(tintShare > 0, `The ${state} row is tinted in the accent.`);
+      const rowBackground = compositeOver({ channels: colours['--studio-accent'].channels, alpha: tintShare / 100 }, colours['--studio-panel']);
+      assert.ok(contrastRatio(colours[token], rowBackground) >= NON_TEXT_CONTRAST, `${token} against the ${state} row (${tintShare}% tint) in the ${theme} theme.`);
+    }
   });
 
   test(`${theme} theme: the colour swatch edge and the watch dot edge have 3:1 against their background`, () => {

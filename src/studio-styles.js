@@ -1071,14 +1071,14 @@ export const STUDIO_CSS = `
   padding: 0 2px 0 var(--studio-space-8);
   border-radius: 8px;
 }
-/* Every selected row is tinted in the accent, with its icon in the accent too (3:1 against the panel in both themes, which a tint alone cannot reach); the active one, which the panels follow, more strongly. No border. */
+/* Every selected row is tinted in the accent, with its icon in the accent too (3:1 against the panel in both themes, which a tint alone cannot reach; the active tint stays at 16% so the icon keeps 3:1 on it); the active one, which the panels follow, more strongly. No border. */
 .crucible-studio-tree-row[data-selected="true"] {
-  background: color-mix(in srgb, var(--studio-accent) 12%, transparent);
+  background: color-mix(in srgb, var(--studio-accent) 10%, transparent);
 }
 .crucible-studio-tree-row[data-selected="true"] .crucible-studio-tree-select .crucible-studio-icon { color: var(--studio-accent); }
 .crucible-studio-tree-row[data-selected="true"] .crucible-studio-tree-badge { stroke: var(--studio-accent); }
 .crucible-studio-tree-row[data-active="true"] {
-  background: color-mix(in srgb, var(--studio-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--studio-accent) 16%, transparent);
 }
 @media (hover: hover) {
   .crucible-studio-tree-row:not([data-selected="true"]):hover {
