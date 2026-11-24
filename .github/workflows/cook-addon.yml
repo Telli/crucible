@@ -149,6 +149,7 @@ on:
       - 'src/field-error.js'
       - 'src/field-mesh-inputs.js'
       - 'src/field-rotation.js'
+      - 'src/field-voronoi.js'
       - 'src/film-timeline.js'
       - 'src/fitted-closed-room.js'
       - 'src/floor-plan-layout.js'
