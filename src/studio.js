@@ -3211,6 +3211,7 @@ export function createStudio(container, {
   // UI Synchronization
   let lastTreeKey = '';
   let lastSwatchesKey = '';
+  let lastPressedMaterialId;
   let lastBookmarksKey = '';
   let lastParentOptionsKey = '';
 
@@ -3254,101 +3255,181 @@ export function createStudio(container, {
     selectInspectorTab(key === 'camera' ? 'camera' : 'look');
   }
 
+  // One Scene list row per node or scene object, kept between syncs: an edit builds only the rows whose content changed.
+  const outlinerRows = new Map();
+
+  function createNodeRow(node, depth, iconName) {
+    const badge = createIcon(documentReference, iconName);
+    badge.setAttribute('class', 'crucible-studio-icon crucible-studio-tree-badge');
+    badge.setAttribute('data-shape', iconName);
+    const selectButton = createElement(
+      documentReference,
+      'button',
+      { type: 'button', className: 'crucible-studio-tree-select', dataset: { hidden: node.visible === false ? 'true' : 'false' } },
+      badge,
+      createElement(documentReference, 'span', { className: 'crucible-studio-tree-label', textContent: node.label ?? node.id }),
+    );
+    selectButton.style.paddingLeft = `${4 + depth * 12}px`;
+    selectButton.addEventListener('click', () => selectNodeAndShowItsPanel(() => controller.selectNode(node.id)));
+    selectButton.addEventListener('contextmenu', event => {
+      event.preventDefault();
+      selectNodeAndShowItsPanel(() => controller.selectNode(node.id));
+      openObjectMenu(event.clientX, event.clientY);
+    });
+    selectButton.addEventListener('dblclick', () => {
+      controller.selectNode(node.id);
+      selectInspectorTab('node');
+      nodeLabelInput.focus();
+      nodeLabelInput.select();
+    });
+    const hidden = node.visible === false;
+    const eyeButton = createIconButton(documentReference, hidden ? 'eyeOff' : 'eye', `${hidden ? 'Show' : 'Hide'} ${node.label ?? node.id}`, {
+      className: 'crucible-studio-tree-eye',
+      dataset: { hidden: hidden ? 'true' : 'false' },
+    });
+    eyeButton.addEventListener('click', () => controller.updateNodeTransform(node.id, { visible: !(node.visible ?? true) }));
+    const element = createElement(
+      documentReference,
+      'div',
+      { className: 'crucible-studio-tree-row', dataset: { selected: 'false' }, attributes: { role: 'treeitem', 'aria-selected': 'false' } },
+      selectButton,
+      eyeButton,
+    );
+    return { element, badge, appliedFill: '' };
+  }
+
+  function setOutlinerRowSelected(row, selected) {
+    const selectedText = selected ? 'true' : 'false';
+    if (row.element.dataset.selected !== selectedText) {
+      row.element.dataset.selected = selectedText;
+      row.element.setAttribute('aria-selected', selectedText);
+    }
+  }
+
+  function setOutlinerRowFill(row, fill) {
+    if (row.appliedFill === fill) {
+      return;
+    }
+    row.appliedFill = fill;
+    row.badge.style.fill = fill;
+  }
+
+  // Puts the wanted rows in the list in order, moving or adding only the ones that are not already there.
+  function placeOutlinerRows(rowElements) {
+    rowElements.forEach((element, index) => {
+      const current = outlinerTree.children[index];
+      if (current === element) {
+        return;
+      }
+      if (current) {
+        current.before(element);
+      } else {
+        outlinerTree.append(element);
+      }
+    });
+    while (outlinerTree.children.length > rowElements.length) {
+      outlinerTree.lastElementChild.remove();
+    }
+  }
+
   function renderOutliner(recipe) {
     const queryText = outlinerSearch.value.trim().toLowerCase();
-    const materialsById = new Map(recipe.materials.map(material => [material.id, material]));
+    const materialColors = new Map(recipe.materials.map(material => [material.id, linearRgbToHex(material.color)]));
     const geometriesById = new Map(recipe.geometries.map(geometry => [geometry.id, geometry]));
     const ordered = depthSortedNodes(recipe.nodes).filter(({ node }) => {
       if (!queryText) return true;
       return (node.label ?? node.id).toLowerCase().includes(queryText) || node.id.toLowerCase().includes(queryText);
     });
     const sceneObjects = controller.listSceneObjects().filter(object => !queryText || object.label.toLowerCase().includes(queryText) || object.key.includes(queryText));
-    const objectKey = sceneObjects.map(object => `${object.key}:${object.label}`).join(',');
-    const treeKey = `${controller.selectedNodeId ?? ''}|${controller.selectedObjectKey ?? ''}|${objectKey}|${queryText}|${ordered.map(({ node, depth }) => `${depth}:${node.id}:${node.label ?? ''}:${node.visible ?? true}:${node.material ?? ''}:${treeIconName(node, geometriesById)}`).join('|')}`;
+    const wantedRows = [
+      ...sceneObjects.map(object => ({
+        rowKey: `object:${object.key}`,
+        contentKey: `${object.kind}:${object.label}`,
+        selected: object.key === controller.selectedObjectKey,
+        fill: '',
+        build: () => ({ element: createSceneObjectRow(object), badge: null, appliedFill: '' }),
+      })),
+      ...ordered.map(({ node, depth }) => {
+        const iconName = treeIconName(node, geometriesById);
+        return {
+          rowKey: `node:${node.id}`,
+          contentKey: `${depth}:${node.label ?? ''}:${node.visible ?? true}:${iconName}`,
+          selected: node.id === controller.selectedNodeId,
+          fill: node.material && materialColors.has(node.material) ? materialColors.get(node.material) : '',
+          build: () => createNodeRow(node, depth, iconName),
+        };
+      }),
+    ];
+    const treeKey = `${queryText}|${wantedRows.map(wanted => `${wanted.rowKey}:${wanted.contentKey}:${wanted.selected}:${wanted.fill}`).join('|')}`;
     if (treeKey === lastTreeKey) {
       return;
     }
     lastTreeKey = treeKey;
-    outlinerTree.replaceChildren(...sceneObjects.map(createSceneObjectRow), ...ordered.map(({ node, depth }) => {
-      const material = node.material ? materialsById.get(node.material) : null;
-      const selected = node.id === controller.selectedNodeId;
-      const iconName = treeIconName(node, geometriesById);
-      const badge = createIcon(documentReference, iconName);
-      badge.setAttribute('class', 'crucible-studio-icon crucible-studio-tree-badge');
-      badge.setAttribute('data-shape', iconName);
-      if (material) {
-        badge.style.fill = linearRgbToHex(material.color);
-      }
-      const selectButton = createElement(
-        documentReference,
-        'button',
-        { type: 'button', className: 'crucible-studio-tree-select', dataset: { hidden: node.visible === false ? 'true' : 'false' } },
-        badge,
-        createElement(documentReference, 'span', { className: 'crucible-studio-tree-label', textContent: node.label ?? node.id }),
-      );
-      selectButton.style.paddingLeft = `${4 + depth * 12}px`;
-      selectButton.addEventListener('click', () => selectNodeAndShowItsPanel(() => controller.selectNode(node.id)));
-      selectButton.addEventListener('contextmenu', event => {
-        event.preventDefault();
-        selectNodeAndShowItsPanel(() => controller.selectNode(node.id));
-        openObjectMenu(event.clientX, event.clientY);
-      });
-      selectButton.addEventListener('dblclick', () => {
-        controller.selectNode(node.id);
-        selectInspectorTab('node');
-        nodeLabelInput.focus();
-        nodeLabelInput.select();
-      });
-      const hidden = node.visible === false;
-      const eyeButton = createIconButton(documentReference, hidden ? 'eyeOff' : 'eye', `${hidden ? 'Show' : 'Hide'} ${node.label ?? node.id}`, {
-        className: 'crucible-studio-tree-eye',
-        dataset: { hidden: hidden ? 'true' : 'false' },
-      });
-      eyeButton.addEventListener('click', () => controller.updateNodeTransform(node.id, { visible: !(node.visible ?? true) }));
-      return createElement(
-        documentReference,
-        'div',
-        { className: 'crucible-studio-tree-row', dataset: { selected: selected ? 'true' : 'false' }, attributes: { role: 'treeitem', 'aria-selected': selected ? 'true' : 'false' } },
-        selectButton,
-        eyeButton,
-      );
-    }));
+    const previousRows = new Map(outlinerRows);
+    outlinerRows.clear();
+    for (const wanted of wantedRows) {
+      const previous = previousRows.get(wanted.rowKey);
+      const row = previous?.contentKey === wanted.contentKey ? previous : { ...wanted.build(), contentKey: wanted.contentKey };
+      setOutlinerRowSelected(row, wanted.selected);
+      if (row.badge) setOutlinerRowFill(row, wanted.fill);
+      outlinerRows.set(wanted.rowKey, row);
+    }
+    placeOutlinerRows([...outlinerRows.values()].map(row => row.element));
     fitTreeToWholeRows();
   }
 
+  // The swatches are rebuilt only when a material was added, removed or recoloured; moving the pressed state to another
+  // swatch touches two buttons. The strip scrolls to the pressed swatch at the end of the sync, only when it moved.
+  let swatchScrollWanted = false;
+
   function renderPaletteSwatches(recipe, boundMaterialId) {
-    const swatchesKey = `${boundMaterialId ?? ''}|${recipe.materials.map(material => `${material.id}:${linearRgbToHex(material.color)}`).join('|')}`;
-    if (swatchesKey === lastSwatchesKey) {
+    const swatchesKey = recipe.materials.map(material => `${material.id}:${linearRgbToHex(material.color)}`).join('|');
+    if (swatchesKey !== lastSwatchesKey) {
+      lastSwatchesKey = swatchesKey;
+      swatchScrollWanted = true;
+      swatchContainer.replaceChildren(...recipe.materials.map(material => {
+        const hex = linearRgbToHex(material.color);
+        const swatch = createElement(documentReference, 'button', {
+          type: 'button',
+          className: 'crucible-studio-swatch-btn',
+          title: material.id,
+          attributes: { 'aria-pressed': 'false', 'aria-label': `Material ${material.id}` },
+        });
+        swatch.style.background = hex;
+        swatch.addEventListener('click', () => {
+          if (controller.selectedNodeId) {
+            try {
+              controller.assignNodeMaterial(controller.selectedNodeId, material.id);
+            } catch {
+              // group node has no geometry; still open material tab
+            }
+          }
+          selectInspectorTab('material');
+        });
+        return swatch;
+      }));
+      lastPressedMaterialId = undefined;
+    }
+    if (boundMaterialId === lastPressedMaterialId) {
       return;
     }
-    lastSwatchesKey = swatchesKey;
-    swatchContainer.replaceChildren(...recipe.materials.map(material => {
-      const hex = linearRgbToHex(material.color);
-      const swatch = createElement(documentReference, 'button', {
-        type: 'button',
-        className: 'crucible-studio-swatch-btn',
-        title: material.id,
-        attributes: { 'aria-pressed': material.id === boundMaterialId ? 'true' : 'false', 'aria-label': `Material ${material.id}` },
-      });
-      swatch.style.background = hex;
-      swatch.addEventListener('click', () => {
-        if (controller.selectedNodeId) {
-          try {
-            controller.assignNodeMaterial(controller.selectedNodeId, material.id);
-          } catch {
-            // group node has no geometry; still open material tab
-          }
-        }
-        selectInspectorTab('material');
-      });
-      return swatch;
-    }));
-    scrollPressedSwatchIntoView();
-    fitTreeToWholeRows();
+    lastPressedMaterialId = boundMaterialId;
+    swatchScrollWanted = true;
+    recipe.materials.forEach((material, index) => {
+      const pressed = material.id === boundMaterialId ? 'true' : 'false';
+      const swatch = swatchContainer.children[index];
+      if (swatch.getAttribute('aria-pressed') !== pressed) {
+        swatch.setAttribute('aria-pressed', pressed);
+      }
+    });
   }
 
   // The strip is one row that scrolls sideways; the swatch of the selected node stays inside it.
   function scrollPressedSwatchIntoView() {
+    if (!swatchScrollWanted) {
+      return;
+    }
+    swatchScrollWanted = false;
     const pressedSwatch = [...swatchContainer.children].find(swatch => swatch.getAttribute('aria-pressed') === 'true');
     if (!pressedSwatch || !Number.isFinite(pressedSwatch.offsetLeft)) {
       return;
@@ -3363,22 +3444,62 @@ export function createStudio(container, {
   }
 
   // The Scene list shows whole rows only: when it scrolls, its rows grow by a pixel or two until a whole number of them fills it.
-  function fitTreeToWholeRows() {
+  // The row height and the list height come from one measurement that holds until the list or the fonts change size, so an
+  // edit decides from the row count and reads no layout.
+  let treeFitMeasure = null;
+  let appliedTreeRowSize = '';
+
+  function measureTreeFit() {
+    const view = documentReference.defaultView;
+    outlinerTree.style.removeProperty('--studio-tree-row-size');
+    appliedTreeRowSize = '';
+    const firstRow = outlinerTree.firstElementChild;
+    if (!firstRow || !(outlinerTree.clientHeight > 0)) {
+      return null;
+    }
+    const treeStyle = view.getComputedStyle(outlinerTree);
+    return {
+      clientHeight: outlinerTree.clientHeight,
+      paddingTop: parseFloat(treeStyle.paddingTop),
+      paddingBottom: parseFloat(treeStyle.paddingBottom),
+      rowPitch: firstRow.offsetHeight + TREE_ROW_GAP_PIXELS,
+    };
+  }
+
+  function setTreeRowSize(rowSize) {
+    if (rowSize === appliedTreeRowSize) {
+      return;
+    }
+    appliedTreeRowSize = rowSize;
+    if (rowSize) {
+      outlinerTree.style.setProperty('--studio-tree-row-size', rowSize);
+    } else {
+      outlinerTree.style.removeProperty('--studio-tree-row-size');
+    }
+  }
+
+  function fitTreeToWholeRows({ remeasure = false } = {}) {
     const view = documentReference.defaultView;
     if (!view?.getComputedStyle || !outlinerTree.style?.removeProperty) {
       return;
     }
-    outlinerTree.style.removeProperty('--studio-tree-row-size');
-    const firstRow = outlinerTree.firstElementChild;
-    if (!firstRow || !(outlinerTree.clientHeight > 0) || outlinerTree.scrollHeight <= outlinerTree.clientHeight) {
+    if (remeasure || !treeFitMeasure) {
+      treeFitMeasure = measureTreeFit();
+    }
+    if (!treeFitMeasure) {
       return;
     }
-    const treeStyle = view.getComputedStyle(outlinerTree);
-    const rowSpace = outlinerTree.clientHeight - parseFloat(treeStyle.paddingTop) - parseFloat(treeStyle.paddingBottom);
-    const rowPitch = firstRow.offsetHeight + TREE_ROW_GAP_PIXELS;
+    const { clientHeight, paddingTop, paddingBottom, rowPitch } = treeFitMeasure;
+    const rowCount = outlinerTree.children.length;
+    const contentHeight = paddingTop + paddingBottom + rowCount * rowPitch - TREE_ROW_GAP_PIXELS;
+    if (rowCount === 0 || contentHeight <= clientHeight) {
+      setTreeRowSize('');
+      return;
+    }
+    const rowSpace = clientHeight - paddingTop - paddingBottom;
     const wholeRows = Math.max(1, Math.floor((rowSpace + TREE_ROW_GAP_PIXELS) / rowPitch));
     const stretchedRowSize = (rowSpace + TREE_ROW_GAP_PIXELS) / wholeRows - TREE_ROW_GAP_PIXELS;
-    outlinerTree.style.setProperty('--studio-tree-row-size', `${stretchedRowSize}px`);
+    setTreeRowSize(`${stretchedRowSize}px`);
   }
 
   // A locked row says so with the keyframe mark beside its title, the mark the property panel puts on a driven field.
@@ -3532,6 +3653,7 @@ export function createStudio(container, {
     syncPropertyPanels();
     syncHintBar();
     syncFileBanner();
+    scrollPressedSwatchIntoView();
   }
 
   // Only the panel in view is redrawn: orbiting the viewport notifies a change many times a second.
@@ -4233,12 +4355,13 @@ export function createStudio(container, {
   if (typeof ResizeObserver === 'function') {
     resizeObserver = new ResizeObserver(() => {
       syncCompactLayout();
-      fitTreeToWholeRows();
+      fitTreeToWholeRows({ remeasure: true });
       requestFrame();
     });
     resizeObserver.observe(viewportElement);
     resizeObserver.observe(outlinerTree);
   }
+  documentReference.fonts?.addEventListener?.('loadingdone', () => fitTreeToWholeRows({ remeasure: true }));
   if (typeof IntersectionObserver === 'function') {
     intersectionObserver = new IntersectionObserver(entries => {
       isVisible = entries.some(entry => entry.isIntersecting);

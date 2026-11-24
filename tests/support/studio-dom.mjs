@@ -137,8 +137,8 @@ export class FakeNode {
   }
 
   before(...nodes) {
-    const siblings = this.parentNode.children;
     const adopted = this.parentNode.adoptChildren(nodes);
+    const siblings = this.parentNode.children;
     siblings.splice(siblings.indexOf(this), 0, ...adopted);
   }
 
