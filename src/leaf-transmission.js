@@ -21,6 +21,15 @@ const SHADOW_BIAS_LINE = '  float bias = shadowBiasPerSlope * clamp(sqrt(1.0 - c
 const SPECULAR_LINE = '  specular *= directSpecularGain;';
 /** The share of the sun's specular a foliage shader keeps (measured: 1 gave pale ghost clumps beside the sun, #2991). */
 export const FOLIAGE_SUN_SPECULAR_SCALE = 0.08;
+// Sky and ambient in the shade of the crown. The baked sky visibility goes close to zero deep in the crown and, with the dark core
+// colour, left the shadow side near black and the trunk merging into it. A foliage shader never takes less than this share.
+const OCCLUSION_LINE = '  occlusion *= splatCavity * vertexSkyVisibility;';
+/** The least sky visibility a foliage shader uses (measured: the 10th percentile leaf at 8 m rose from 31 to the photos' 37, #2991). */
+export const FOLIAGE_MIN_SKY_VISIBILITY = 0.4;
+// Bright leaves in a photo are pale and grey-green (saturation 0.15 to 0.30), not lime (0.65 and over): sky and haze on the leaf
+// and the camera's highlight roll-off take the colour out of the bright end. A foliage shader rolls highlights toward grey.
+const HIGHLIGHT_ANCHOR = '  if (USES_SHEEN) radiance = sheenLayer(';
+export const FOLIAGE_HIGHLIGHT_ROLL_OFF = Object.freeze({ start: 0.15, end: 0.8, amount: 0.6 });
 /** How many times the usual shadow bias a foliage shader uses for the sun (measured: the sunlit half of an oak crown gains 15 percent). */
 export const FOLIAGE_SHADOW_BIAS_SCALE = 8;
 
@@ -33,11 +42,13 @@ export const LEAF_TRANSMISSION_PARAMETERS = Object.freeze({
   towardSunWeight: 0.7,
   towardSunSharpness: 3.0,
   towardSunFloor: 0.35,
-  desaturation: 0.7,
-  filter: Object.freeze([0.95, 1.05, 0.5]),
+  desaturation: 0.45,
+  filter: Object.freeze([1.0, 1.05, 0.8]),
+  rimWeight: 0.35,
+  rimSharpness: 2.5,
 });
 
-const { strength, throughCrown, shadeGlow, behindWeight, towardSunWeight, towardSunSharpness, towardSunFloor, desaturation, filter } = LEAF_TRANSMISSION_PARAMETERS;
+const { strength, throughCrown, shadeGlow, behindWeight, towardSunWeight, towardSunSharpness, towardSunFloor, desaturation, filter, rimWeight, rimSharpness } = LEAF_TRANSMISSION_PARAMETERS;
 const glslFloat = value => (Number.isInteger(value) ? `${value}.0` : String(value));
 
 const LEAF_TRANSMISSION_CODE = `
@@ -49,7 +60,8 @@ vec3 leafTransmission(vec3 normal, vec3 viewDirection, vec3 lightDirection, vec3
   float towardSun = pow(max(dot(-viewDirection, lightDirection), 0.0), ${glslFloat(towardSunSharpness)});
   vec3 filtered = mix(vec3(dot(color, vec3(0.3, 0.59, 0.11))), color, ${glslFloat(desaturation)}) * vec3(${filter.map(glslFloat).join(', ')});
   float reach = mix(LEAF_THROUGH_CROWN, 1.0, visibility);
-  float glow = ${glslFloat(behindWeight)} * behind + ${glslFloat(towardSunWeight)} * towardSun * (${glslFloat(towardSunFloor)} + ${glslFloat(1 - towardSunFloor)} * behind);
+  float rim = pow(1.0 - abs(dot(normal, viewDirection)), ${glslFloat(rimSharpness)});
+  float glow = ${glslFloat(behindWeight)} * behind + ${glslFloat(towardSunWeight)} * towardSun * (${glslFloat(towardSunFloor)} + ${glslFloat(1 - towardSunFloor)} * behind + ${glslFloat(rimWeight)} * rim);
   return filtered * sunColor * (reach * LEAF_TRANSMISSION * glow + (1.0 - visibility) * LEAF_SHADE_GLOW);
 }
 `;
@@ -64,8 +76,18 @@ export function leafTransmissionReference({ normal, viewDirection, lightDirectio
   const towardSun = Math.max(-dot(viewDirection, lightDirection), 0) ** towardSunSharpness;
   const gray = color[0] * 0.3 + color[1] * 0.59 + color[2] * 0.11;
   const reach = throughCrown + (1 - throughCrown) * visibility;
-  const glow = behindWeight * behind + towardSunWeight * towardSun * (towardSunFloor + (1 - towardSunFloor) * behind);
+  const rim = (1 - Math.abs(dot(normal, viewDirection))) ** rimSharpness;
+  const glow = behindWeight * behind + towardSunWeight * towardSun * (towardSunFloor + (1 - towardSunFloor) * behind + rimWeight * rim);
   return color.map((channel, index) => (gray + (channel - gray) * desaturation) * filter[index] * (reach * strength * glow + (1 - visibility) * shadeGlow));
+}
+
+/** The roll-off of `FOLIAGE_HIGHLIGHT_ROLL_OFF` on plain linear RGB: bright radiance moves toward its own luminance. */
+export function foliageHighlightRollOffReference(radiance) {
+  const { start, end, amount } = FOLIAGE_HIGHLIGHT_ROLL_OFF;
+  const luminance = radiance[0] * 0.2126 + radiance[1] * 0.7152 + radiance[2] * 0.0722;
+  const position = Math.min(Math.max((luminance - start) / (end - start), 0), 1);
+  const share = amount * position * position * (3 - 2 * position);
+  return radiance.map(channel => channel + (luminance - channel) * share);
 }
 
 /**
@@ -92,7 +114,11 @@ export function addLeafTransmission(source) {
   if (!source.includes(FOLIAGE_ENABLED) || !source.includes(DEFINITION_ANCHOR) || !SUN_LINE.test(source)) return source;
   const withBias = source.replace(SHADOW_BIAS_LINE, () => `${SHADOW_BIAS_LINE.slice(0, -1)} * ${glslFloat(FOLIAGE_SHADOW_BIAS_SCALE)};`);
   const withSpecular = withBias.replace(SPECULAR_LINE, () => `${SPECULAR_LINE} if (TAG_FOLIAGE) specular *= ${glslFloat(FOLIAGE_SUN_SPECULAR_SCALE)};`);
-  const withDefinition = withSpecular.replace(DEFINITION_ANCHOR, () => LEAF_TRANSMISSION_CODE + DEFINITION_ANCHOR);
+  const withOcclusion = withSpecular.replace(OCCLUSION_LINE, () => `  occlusion *= splatCavity * (TAG_FOLIAGE ? max(vertexSkyVisibility, ${glslFloat(FOLIAGE_MIN_SKY_VISIBILITY)}) : vertexSkyVisibility);`);
+  const { start, end, amount } = FOLIAGE_HIGHLIGHT_ROLL_OFF;
+  const withRollOff = withOcclusion.replace(HIGHLIGHT_ANCHOR, () => `  if (TAG_FOLIAGE) radiance = mix(radiance, vec3(dot(radiance, vec3(0.2126, 0.7152, 0.0722))), ${glslFloat(amount)} * smoothstep(${glslFloat(start)}, ${glslFloat(end)}, dot(radiance, vec3(0.2126, 0.7152, 0.0722))));
+${HIGHLIGHT_ANCHOR}`);
+  const withDefinition = withRollOff.replace(DEFINITION_ANCHOR, () => LEAF_TRANSMISSION_CODE + DEFINITION_ANCHOR);
   return withDefinition.replace(SUN_LINE, (line, sunLink) => `${line}\n  if (TAG_FOLIAGE) radiance += leafTransmission(normal, viewDirection, normalize(lightDirection), keyColor * shadowTint${sunLink}, visibility, color);`);
 }
 

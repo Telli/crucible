@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createTree, resolveTreePreset } from '../src/vegetation.js';
 import { createFragmentShader } from '../src/shaders.js';
 import { crownBrightness, crownDepth, crownLightSettings, describeCrownShape, roundedCanopyNormal, roundedNormalSettings, tipTint } from '../src/foliage-shading.js';
-import { FOLIAGE_SHADOW_BIAS_SCALE, FOLIAGE_SUN_SPECULAR_SCALE, LEAF_TRANSMISSION_PARAMETERS, addLeafTransmission, foliageSunSpecularPeak, leafTransmissionReference } from '../src/leaf-transmission.js';
+import { FOLIAGE_HIGHLIGHT_ROLL_OFF, FOLIAGE_MIN_SKY_VISIBILITY, FOLIAGE_SHADOW_BIAS_SCALE, FOLIAGE_SUN_SPECULAR_SCALE, LEAF_TRANSMISSION_PARAMETERS, addLeafTransmission, foliageHighlightRollOffReference, foliageSunSpecularPeak, leafTransmissionReference } from '../src/leaf-transmission.js';
 
 function foliageOf(tree, levelIndex = 0) {
   return tree.levels[levelIndex].parts.find(part => part.role === 'foliage').geometry;
@@ -74,8 +74,9 @@ test('the leaves at the branch tips take a lighter, yellower tint', () => {
   assert.deepEqual(tipTint(0.5), [1, 1, 1], 'inside the crown nothing changes');
   const tip = tipTint(1);
   assert.ok(tip.every(channel => channel > 0.9));
-  assert.ok(tip[0] > 1.15 && tip[1] > 1.15, `red and green lift at the tip: ${tip}`);
-  assert.ok(tip[2] < tip[0] - 0.1, `blue lifts less than red, so the tip turns yellow-green: ${tip}`);
+  assert.ok(tip[0] > 1.08 && tip[1] > 1.08, `red and green lift at the tip: ${tip}`);
+  assert.ok(tip[2] < tip[0] - 0.03, `blue lifts less than red, so the tip turns slightly yellow-green: ${tip}`);
+  assert.ok((Math.max(...tip) - Math.min(...tip)) / Math.max(...tip) < 0.1, `the hue shift is capped (round 4 spread 0.25, the bright clumps read lime): ${tip}`);
   assert.ok(tipTint(0.9)[1] < tip[1] && tipTint(0.9)[1] > 1, 'the lift grows smoothly toward the hull');
 });
 
@@ -226,7 +227,7 @@ test('looking toward the sun, the white specular lobe on a foliage card stays a 
   assert.ok(whiteLobe < 0.1 * backLight[2], `the white lobe ${whiteLobe.toFixed(4)} lifts the blue of a hull leaf (${backLight[2].toFixed(4)}) by under 10 percent`);
   assert.ok(backLight[1] > 1.5 * backLight[2], 'the back-light itself stays green, not white');
   const unscaled = foliageSunSpecularPeak({ ...LOOKING_TOWARD_SUN, roughness: 0.85, scale: 1 });
-  assert.ok(unscaled > 0.25 * backLight[2], `without the scale the lobe (${unscaled.toFixed(4)}) would wash the blue by a quarter or more, the ghost`);
+  assert.ok(unscaled > 0.1 * backLight[2], `without the scale the lobe (${unscaled.toFixed(4)}) would lift the blue by over 10 percent, the ghost`);
 });
 
 test('a foliage shader keeps a small share of the sun specular, and no other shader changes', () => {
@@ -273,4 +274,39 @@ test('the clump speckle varies leaf colour within a clump without blotchy outlie
   const deviation = Math.sqrt(mean(outer.map(value => (value - average) ** 2))) / average;
   assert.ok(deviation > 0.16, `outermost leaves vary by ${(deviation * 100).toFixed(1)} percent (without the fine speckle it is 14.4)`);
   assert.ok(Math.max(...outer) < 2.5 * average && Math.min(...outer) > 0.2 * average, `no leaf is a blotchy outlier (measured ${(Math.min(...outer) / average).toFixed(2)} to ${(Math.max(...outer) / average).toFixed(2)} times the mean)`);
+});
+
+// Round 5: the bright end of a crown was lime (saturation 0.65 to 0.70 for the top tenth of leaf pixels, the photos 0.15 to 0.30), the
+// shadow side was near black, and nothing showed through the leaves at the rim of a crown with the sun behind it.
+test('bright foliage radiance rolls off toward grey, dim radiance and every other shader are left alone', () => {
+  const saturationOf = rgb => (Math.max(...rgb) - Math.min(...rgb)) / Math.max(...rgb);
+  const lime = [0.45, 0.8, 0.12];
+  const rolled = foliageHighlightRollOffReference(lime);
+  assert.ok(saturationOf(rolled) < 0.5 * saturationOf(lime), `a bright lime leaf goes from ${saturationOf(lime).toFixed(2)} to ${saturationOf(rolled).toFixed(2)}`);
+  assert.deepEqual(foliageHighlightRollOffReference([0.02, 0.05, 0.01]), [0.02, 0.05, 0.01], 'a dark leaf keeps its colour');
+  const luminanceOf = rgb => rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+  assert.ok(Math.abs(luminanceOf(rolled) - luminanceOf(lime)) < 1e-9, 'the roll-off moves colour, not brightness');
+  const plain = createFragmentShader(['foliage']);
+  const foliage = addLeafTransmission(plain);
+  assert.ok(foliage.includes(`${FOLIAGE_HIGHLIGHT_ROLL_OFF.amount} * smoothstep(${FOLIAGE_HIGHLIGHT_ROLL_OFF.start}, ${FOLIAGE_HIGHLIGHT_ROLL_OFF.end}`));
+  assert.equal(addLeafTransmission(createFragmentShader(['grass'])), createFragmentShader(['grass']));
+});
+
+test('a foliage shader never takes less sky than a set share, so the shadow side is not black', () => {
+  assert.ok(FOLIAGE_MIN_SKY_VISIBILITY >= 0.3 && FOLIAGE_MIN_SKY_VISIBILITY < 1, 'a floor, not a switch-off of the baked occlusion');
+  const plain = createFragmentShader(['foliage']);
+  const foliage = addLeafTransmission(plain);
+  assert.ok(foliage.includes(`max(vertexSkyVisibility, ${FOLIAGE_MIN_SKY_VISIBILITY})`));
+  assert.equal(plain.split('splatCavity * vertexSkyVisibility;').length - 1, 1, 'the plain shader keeps the baked value');
+  assert.equal(foliage.split('splatCavity * vertexSkyVisibility;').length - 1, 0);
+});
+
+test('with the sun behind, a leaf at the rim of the crown glows too, so thin edges show light coming through', () => {
+  const light = BACK_SUN.lightDirection.map(value => value / Math.hypot(...BACK_SUN.lightDirection));
+  const color = LEAF_COLOR;
+  const faceOn = mean(leafTransmissionReference({ normal: [0, 0, 1], viewDirection: [0, 0, 1], lightDirection: light, visibility: 1, color }));
+  const rim = mean(leafTransmissionReference({ normal: [1, 0, 0], viewDirection: [0, 0, 1], lightDirection: light, visibility: 1, color }));
+  const noRimTerm = LEAF_TRANSMISSION_PARAMETERS.towardSunWeight * LEAF_TRANSMISSION_PARAMETERS.towardSunFloor;
+  assert.ok(rim > 0.3 * faceOn, `a rim leaf glows ${rim.toFixed(3)} against ${faceOn.toFixed(3)} face on (round 4 had under 0.2)`);
+  assert.ok(LEAF_TRANSMISSION_PARAMETERS.rimWeight > 0 && noRimTerm > 0);
 });

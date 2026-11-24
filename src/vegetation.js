@@ -401,7 +401,7 @@ const CLUMP_VALUE_SPREAD = 0.16;
 const SPECKLE_CELL_DIVISOR = 9;
 const SPECKLE_VALUE_SPREAD = 0.34;
 const SPECKLE_WARMTH = 0.05;
-const CLUMP_WARMTH = [0.07, 0.03, -0.09];
+const CLUMP_WARMTH = [0.04, 0.02, -0.04];
 const INNER_COOLING = [-0.3, -0.08, 0.22];
 
 function crownTint(skeleton, position, distanceFraction) {
