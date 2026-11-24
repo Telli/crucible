@@ -379,6 +379,8 @@ vec3 hitPoint;
 vec3 hitNormal;
 vec3 hitColor;
 vec3 hitEmission;
+// Reflectance at normal incidence of the emission Fresnel factor, or -1 for none (the fraction of the emissive map flags).
+float hitEmissionFresnel;
 float hitMetallic;
 float hitRoughness;
 float hitClearcoat;
@@ -400,6 +402,12 @@ int wrapTexel(int index, int size, int mode) {
     return folded < size ? folded : 2 * size - 1 - folded;
   }
   return ((index % size) + size) % size;
+}
+
+// Schlick factor of the emission of the last hit, the same as fresnelSchlick in material-layers.js: 1 when the material has none.
+float emissionFresnelScale(float cosine) {
+  if (hitEmissionFresnel < 0.0) return 1.0;
+  return hitEmissionFresnel + (1.0 - hitEmissionFresnel) * pow(1.0 - clamp(cosine, 0.0, 1.0), 5.0);
 }
 
 vec4 sampleAtlas(vec4 rectangle, float flags, vec2 uv) {
@@ -494,6 +502,8 @@ float fillHit(vec3 origin, vec3 direction, float distance) {
   vec4 flagsTwo = fetchData(uMaterials, material + 5);
   hitColor = colorMetallic.rgb * vertexColor;
   hitEmission = emissionRoughness.rgb;
+  float emissionFresnelFraction = flagsTwo.x - floor(flagsTwo.x);
+  hitEmissionFresnel = emissionFresnelFraction > 0.0 ? 2.0 * emissionFresnelFraction - 1.0 : -1.0;
   hitMetallic = colorMetallic.w;
   hitRoughness = emissionRoughness.w;
   hitClearcoat = coating.x;
@@ -1262,7 +1272,7 @@ void tracePath(vec3 origin, vec3 startDirection, uint pixel, uint sampleIndex, b
         featureDepth = hitDistance;
         featuresRecorded = true;
       }
-      addRadiance(depth, throughput * hitEmission);
+      addRadiance(depth, throughput * hitEmission * emissionFresnelScale(dot(-direction, normal)));
       needsLights = !isGlass;
       if (needsLights) {
         prepareSurface(normal, -direction);
