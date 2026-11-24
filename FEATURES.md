@@ -153,6 +153,7 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `bench/studio/index.html`, `bench/studio/main.js`, `src/studio.js`, `src/studio-setup.js`
 - Ready: `Boolean(window.__studioPage?.renderer) && !document.getElementById("studio-loading")`
 - Drive: `node scripts/drive.mjs shot studio`
+- Check: `node scripts/studio-layout-audit.mjs` measures the spacing of this page, its menus and the setup dialog (`docs/studio.md`, "Spacing")
 
 ### `bench-agent-modeling-look-harness`
 - Name: agent-modeling look-harness
