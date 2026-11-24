@@ -1,3 +1,4 @@
+import { LIGHT_DATA_BLOCK, uniformBlockOf, disposeUniformBlocks } from './light-uniform-block.js';
 import { resolveBackground, clearColourFor } from './clear-colour.js';
 import { materialTags, registeredFeatureCode } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
@@ -12,7 +13,7 @@ import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetE
 import { applyProjection } from './camera.js';
 import { boundsGrownByParts, fittedNearPlane, sceneBoundsOfParts } from './near-plane-fit.js';
 import { installReversedDepth, prepareCameraRelativeProgram } from './reversed-depth.js';
-import { isBloomActive, resolveEffects } from './effects.js';
+import { bloomBlurPlan, isBloomActive, resolveEffects } from './effects.js';
 import { frameDiagnostics } from './frame-diagnostics.js';
 import { depthLayerOf, flushOrderOf, RANKS_PER_LAYER } from './depth-layer.js';
 import { createLightingState, updateLightingState } from './lighting.js';
@@ -329,10 +330,8 @@ const TINT_MAP_SIZE = 1024;
 // The shadow program's opaqueShadow sampler reads the sun map on this unit in the tint draw. Unit 0 would read the map while
 // the opaque pass renders into it, a feedback loop that drops every opaque shadow caster.
 const OPAQUE_SHADOW_UNIT = 2;
-const LIGHT_UNIFORMS = ['pointLightCount', 'pointLightPositions[0]', 'pointLightColors[0]', 'pointLightRadii[0]', 'pointLightShadowTiles[0]',
-  'spotLightCount', 'spotLightPositions[0]', 'spotLightColors[0]', 'spotLightDirections[0]', 'spotLightParameters[0]',
-  'areaLightCount', 'areaLightPositions[0]', 'areaLightColors[0]', 'areaLightNormals[0]', 'areaLightTangents[0]',
-  'localShadowAtlas', 'localShadowMatrices[0]', 'localShadowTexelAngles[0]', 'keyColor', 'fillIntensity', 'ambientIntensity', 'ambientColor', 'specularAntiAliasing'];
+// The light arrays are not here: they live in the LightData uniform block (light-uniform-block.js).
+const LIGHT_UNIFORMS = ['pointLightCount', 'spotLightCount', 'areaLightCount', 'localShadowAtlas', 'keyColor', 'fillIntensity', 'ambientIntensity', 'ambientColor', 'specularAntiAliasing'];
 const SPLAT_UNIFORMS = ['splatEnabled', 'splatColor', 'splatNormal', 'splatPacked', 'splatMask', 'splatLayer[0]', 'splatTint[0]', 'splatSlope[0]', 'splatHeightRange[0]', 'splatMaskChannel[0]', 'splatMaskInvert[0]', 'splatBlend', 'splatOptions', 'splatMaskBounds', 'splatVariation'];
 
 function validateMaterialMaps(material) {
@@ -2848,13 +2847,18 @@ export class CrucibleRenderer {
     context.viewport(0, 0, this.bloomWidth, this.bloomHeight);
     context.uniform1i(this.bloomUniforms.sourceTexture, 0);
     context.uniform1f(this.bloomUniforms.threshold, bloom.threshold);
-    for (let pass = 0; pass < 2; pass++) {
-      context.bindFramebuffer(context.FRAMEBUFFER, this.bloomTargets[pass].framebuffer);
-      context.activeTexture(context.TEXTURE0);
-      context.bindTexture(context.TEXTURE_2D, pass === 0 ? sourceTexture : this.bloomTargets[0].texture);
-      context.uniform1f(this.bloomUniforms.extract, pass === 0 ? 1 : 0);
-      context.uniform2f(this.bloomUniforms.texelDirection, pass === 0 ? bloom.radius / this.bloomWidth : 0, pass === 1 ? bloom.radius / this.bloomHeight : 0);
-      context.drawArrays(context.TRIANGLES, 0, 3);
+    // The first pair reads the frame and extracts the bright part; each later pair blurs the last result again. The glow always ends in target 1.
+    const { pairs, step } = bloomBlurPlan(bloom.radius);
+    for (let pair = 0; pair < pairs; pair++) {
+      for (let pass = 0; pass < 2; pass++) {
+        const first = pair === 0 && pass === 0;
+        context.bindFramebuffer(context.FRAMEBUFFER, this.bloomTargets[pass].framebuffer);
+        context.activeTexture(context.TEXTURE0);
+        context.bindTexture(context.TEXTURE_2D, first ? sourceTexture : this.bloomTargets[1 - pass].texture);
+        context.uniform1f(this.bloomUniforms.extract, first ? 1 : 0);
+        context.uniform2f(this.bloomUniforms.texelDirection, pass === 0 ? step / this.bloomWidth : 0, pass === 1 ? step / this.bloomHeight : 0);
+        context.drawArrays(context.TRIANGLES, 0, 3);
+      }
     }
   }
 
@@ -3217,9 +3221,6 @@ export class CrucibleRenderer {
     context.uniform1f(this.uniforms.inspection, inspection ? 1 : 0);
     context.uniform1f(this.uniforms.hdrEnabled, this.hdr ? 1 : 0);
     context.uniform1i(this.uniforms.pointLightCount, frame.reflectionTarget ? 0 : this.lighting.pointCount);
-    context.uniform4fv(this.uniforms['pointLightPositions[0]'], this.lighting.positions);
-    context.uniform4fv(this.uniforms['pointLightColors[0]'], this.lighting.colors);
-    context.uniform1fv(this.uniforms['pointLightRadii[0]'], this.lighting.radii);
     this.applyLocalLightUniforms(Boolean(frame.reflectionTarget));
     this.lighting.bind?.(this);
     context.uniform3fv(this.uniforms.keyColor, this.lighting.keyColor);
@@ -3303,20 +3304,28 @@ export class CrucibleRenderer {
     const context = this.context;
     const lighting = this.lighting;
     const uniforms = this.uniforms;
-    context.uniform1fv(uniforms['pointLightShadowTiles[0]'], lighting.pointShadows);
     context.uniform1i(uniforms.spotLightCount, withoutLights ? 0 : lighting.spotCount);
-    context.uniform4fv(uniforms['spotLightPositions[0]'], lighting.spotPositions);
-    context.uniform4fv(uniforms['spotLightColors[0]'], lighting.spotColors);
-    context.uniform4fv(uniforms['spotLightDirections[0]'], lighting.spotDirections);
-    context.uniform4fv(uniforms['spotLightParameters[0]'], lighting.spotParameters);
     context.uniform1i(uniforms.areaLightCount, withoutLights ? 0 : lighting.areaCount);
-    context.uniform4fv(uniforms['areaLightPositions[0]'], lighting.areaPositions);
-    context.uniform4fv(uniforms['areaLightColors[0]'], lighting.areaColors);
-    context.uniform4fv(uniforms['areaLightNormals[0]'], lighting.areaNormals);
-    context.uniform4fv(uniforms['areaLightTangents[0]'], lighting.areaTangents);
-    if (lighting.shadowCasters.length === 0 || !this.localShadowTexture) return;
-    context.uniformMatrix4fv(uniforms['localShadowMatrices[0]'], false, this.localShadowMatrices);
-    context.uniform1fv(uniforms['localShadowTexelAngles[0]'], this.localShadowTexelAngles);
+    const block = uniformBlockOf(this, LIGHT_DATA_BLOCK);
+    block.write('pointLightPositions', lighting.positions);
+    block.write('pointLightColors', lighting.colors);
+    block.write('pointLightRadii', lighting.radii);
+    block.write('pointLightShadowTiles', lighting.pointShadows);
+    block.write('spotLightPositions', lighting.spotPositions);
+    block.write('spotLightColors', lighting.spotColors);
+    block.write('spotLightDirections', lighting.spotDirections);
+    block.write('spotLightParameters', lighting.spotParameters);
+    block.write('areaLightPositions', lighting.areaPositions);
+    block.write('areaLightColors', lighting.areaColors);
+    block.write('areaLightNormals', lighting.areaNormals);
+    block.write('areaLightTangents', lighting.areaTangents);
+    const drawsLocalShadows = lighting.shadowCasters.length > 0 && this.localShadowTexture;
+    if (drawsLocalShadows) {
+      block.write('localShadowMatrices', this.localShadowMatrices);
+      block.write('localShadowTexelAngles', this.localShadowTexelAngles);
+    }
+    block.upload(this.program);
+    if (!drawsLocalShadows) return;
     context.activeTexture(context.TEXTURE0 + LOCAL_SHADOW_UNIT);
     context.bindTexture(context.TEXTURE_2D, this.localShadowTexture);
     context.uniform1i(uniforms.localShadowAtlas, LOCAL_SHADOW_UNIT);
@@ -3340,6 +3349,7 @@ export class CrucibleRenderer {
 
   dispose() {
     this.disposed = true;
+    disposeUniformBlocks(this);
     this.releasePendingConstruction();
     releaseStartedPrograms(this.context);
     this.fogFieldTexture?.dispose();
