@@ -4598,6 +4598,11 @@ export function createStudio(container, {
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   canvas.addEventListener('wheel', event => {
     event.preventDefault();
+    if (meshEditor?.circleSelecting) {
+      meshEditor.resizeCircleBrush(event.deltaY < 0 ? 1 : -1);
+      requestFrame();
+      return;
+    }
     stopFlight();
     controller.orbitCamera({ zoomScale: 1 + Math.max(-0.35, Math.min(0.35, event.deltaY * 0.0012)) });
   }, { passive: false });
@@ -4718,17 +4723,80 @@ export function createStudio(container, {
     requestFrame();
   }
 
-  // Esc puts a drag back, else clears the selection, else leaves edit mode.
+  // Esc puts a drag back, else ends circle select, else clears the selection, else leaves edit mode.
   function escapeMeshEdit() {
     if (controller.dragging) {
       controller.cancelGizmoDrag();
       pointerState = null;
+    } else if (meshEditor.circleSelecting) {
+      endCircleSelect();
     } else if (!meshEditor.clearSelection()) {
       meshEditor.leave();
     }
     syncUi();
     requestFrame();
   }
+
+  // Circle select (C): left drag paints the selection, middle drag or Shift paints the deselection, the wheel
+  // resizes the brush, right click or Esc ends it. The brush owns the viewport pointer until then, so the camera keys it.
+  let circlePaint = null;
+
+  function endCircleSelect() {
+    circlePaint = null;
+    meshEditor.endCircleSelect();
+    syncUi();
+    requestFrame();
+  }
+
+  function circleSelectOwnsPointer(event) {
+    if (!meshEditor?.circleSelecting || controller.dragging) return false;
+    return event.target === canvas || gizmoSvg.contains(event.target);
+  }
+
+  function paintCircleAt(event, deselect) {
+    const coordinates = localCoordinates(event);
+    meshEditor.paintCircle(coordinates.x, coordinates.y, { deselect });
+    syncUi();
+    requestFrame();
+  }
+
+  viewportElement.addEventListener('pointerdown', event => {
+    if (!circleSelectOwnsPointer(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const button = event.button ?? 0;
+    if (button === 2) return;
+    circlePaint = { pointerId: event.pointerId, deselect: button === 1 || event.shiftKey };
+    viewportElement.setPointerCapture?.(event.pointerId);
+    paintCircleAt(event, circlePaint.deselect);
+  }, true);
+
+  viewportElement.addEventListener('pointermove', event => {
+    if (!meshEditor?.circleSelecting) return;
+    if (circlePaint) {
+      paintCircleAt(event, circlePaint.deselect);
+      return;
+    }
+    const coordinates = localCoordinates(event);
+    meshEditor.moveCircle(coordinates.x, coordinates.y);
+    requestFrame();
+  });
+
+  const finishCirclePaint = event => {
+    if (circlePaint?.pointerId !== event.pointerId) return;
+    circlePaint = null;
+    viewportElement.releasePointerCapture?.(event.pointerId);
+  };
+  viewportElement.addEventListener('pointerup', finishCirclePaint);
+  viewportElement.addEventListener('pointercancel', finishCirclePaint);
+
+  // Right click leaves circle select instead of opening a menu.
+  viewportElement.addEventListener('contextmenu', event => {
+    if (!meshEditor?.circleSelecting) return;
+    event.preventDefault();
+    event.stopPropagation();
+    endCircleSelect();
+  }, true);
 
   function chooseMeshMode(mode) {
     meshEditor.setMode(mode);
@@ -4755,6 +4823,28 @@ export function createStudio(container, {
     'mesh.vertexMode': () => chooseMeshMode('vertex'),
     'mesh.edgeMode': () => chooseMeshMode('edge'),
     'mesh.faceMode': () => chooseMeshMode('face'),
+    // Alt+A and Ctrl+I have browser actions of their own (the menu bar, page info).
+    'mesh.selectNone': event => {
+      event.preventDefault();
+      meshEditor.selectNone();
+      syncUi();
+      requestFrame();
+    },
+    'mesh.invertSelection': event => {
+      event.preventDefault();
+      meshEditor.invertSelection();
+      syncUi();
+      requestFrame();
+    },
+    'mesh.circleSelect': () => {
+      if (meshEditor.circleSelecting) {
+        endCircleSelect();
+        return;
+      }
+      meshEditor.beginCircleSelect();
+      syncUi();
+      requestFrame();
+    },
     'mesh.noop': event => event.preventDefault(),
   };
 
