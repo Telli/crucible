@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +10,12 @@ import { writeSpinningBarScene } from './helpers/scene-file-frames.js';
 
 // Needs Chrome, so it is slower than the fast-test limit and stays out of that list. It renders on SwiftShader (--backend cpu), so
 // it needs no GPU and gives the same bytes on every run of the same machine.
+// scripts/render-media.mjs launches the installed Google Chrome at these paths; elsewhere (Linux CI) it has no browser to drive, so skip.
+const INSTALLED_CHROME = process.platform === 'darwin'
+  ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+  : 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const chromeMissing = !existsSync(INSTALLED_CHROME);
+
 const FRAME_ARGUMENTS = ['--scene', 'file', '--kind', 'stills', '--backend', 'cpu', '--width', '270', '--height', '480', '--fps', '30', '--frames', '0-3'];
 
 function renderRange({ config, camera, output }) {
@@ -23,7 +30,7 @@ async function hashesOf(folder) {
   return hashes;
 }
 
-test('a frame range writes numbered PNGs, blur changes them, and two runs give the same bytes', { timeout: 300000 }, async () => {
+test('a frame range writes numbered PNGs, blur changes them, and two runs give the same bytes', { skip: chromeMissing && 'needs Google Chrome installed where scripts/render-media.mjs looks for it', timeout: 300000 }, async () => {
   const folder = await mkdtemp(join(tmpdir(), 'frame-range-'));
   try {
     const sharp = await writeSpinningBarScene(join(folder, 'scene'), { name: 'sharp' });
