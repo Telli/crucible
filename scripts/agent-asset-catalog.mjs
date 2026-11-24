@@ -399,8 +399,9 @@ export function glbImageResidentMiB(bytes, document) {
   let total = 0;
   for (const image of images) {
     const view = views[image?.bufferView];
-    const start = binaryStart + (view?.byteOffset ?? 0);
-    if (!view || !(view.byteLength > 0) || start >= bytes.length) {
+    const byteOffset = view?.byteOffset ?? 0;
+    const start = binaryStart + byteOffset;
+    if (!view || !Number.isInteger(byteOffset) || byteOffset < 0 || !Number.isInteger(view.byteLength) || view.byteLength <= 0 || start >= bytes.length) {
       total += FALLBACK_IMAGE_MIB;
       continue;
     }

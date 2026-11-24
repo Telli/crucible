@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createAgentAssetCatalog, describeCatalogFile, glbImageResidentMiB, glbTriangleCount } from '../scripts/agent-asset-catalog.mjs';
 import { estimateRenderJob, sceneSizeFrom } from '../scripts/agent-render-estimate.mjs';
 import { normalizeJobSettings } from '../scripts/agent-render-jobs.mjs';
+import { readImageDimensions } from '../src/image-header.js';
 import { gridGlb } from './fixtures/grid-glb.js';
 
 const ASSET_ID = 'b'.repeat(64);
@@ -125,4 +126,25 @@ test('an image with no readable header or no buffer view counts the 4 MiB fallba
 test('the header read stays bounded: a view of megabytes is read for 16 KiB at most', () => {
   const large = glbWithImage(Buffer.concat([pngHeader(8, 8), Buffer.alloc(5 * 1048576)]));
   assert.ok(glbImageResidentMiB(large.bytes.subarray(0, large.bytes.length), large.document) < 0.001);
+});
+
+test('a view with a negative, fractional or non-numeric byteOffset counts the fallback', () => {
+  const image = glbWithImage(pngHeader(4096, 4096));
+  for (const byteOffset of [-4, 1.5, 'x', null, Number.NaN]) {
+    const document = { ...image.document, bufferViews: [{ buffer: 0, byteOffset, byteLength: 33 }] };
+    assert.equal(glbImageResidentMiB(image.bytes, document), byteOffset === null ? (4096 * 4096 * 4 * 4) / 3 / 1048576 : 4, String(byteOffset));
+  }
+});
+
+test('a JPEG frame header (SOF0) and a KTX2 header give their sizes', () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x04, 0x00, 0x02, 0x00, 0x01, 0x01, 0x11, 0x00]);
+  assert.deepEqual(readImageDimensions(jpeg), { width: 512, height: 1024 });
+  const jpegGlb = glbWithImage(jpeg);
+  assert.ok(Math.abs(glbImageResidentMiB(jpegGlb.bytes, jpegGlb.document) - (512 * 1024 * 4 * 4) / 3 / 1048576) < 0.001);
+  const ktx2 = Buffer.alloc(80);
+  Buffer.from([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a]).copy(ktx2);
+  ktx2.writeUInt32LE(2048, 20);
+  ktx2.writeUInt32LE(1024, 24);
+  const ktx2Glb = glbWithImage(ktx2);
+  assert.ok(Math.abs(glbImageResidentMiB(ktx2Glb.bytes, ktx2Glb.document) - (2048 * 1024 * 4 * 4) / 3 / 1048576) < 0.001);
 });
