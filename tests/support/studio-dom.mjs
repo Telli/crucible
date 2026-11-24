@@ -121,14 +121,18 @@ export class FakeNode {
         textNode.ownText = node;
         node = textNode;
       }
-      node.parentNode?.removeChild(node);
+      if (node.parentNode) {
+        node.parentNode.removeChild(node);
+        node.moves = (node.moves ?? 0) + 1;
+      }
       node.parentNode = this;
       return node;
     });
   }
 
   append(...nodes) {
-    this.children.push(...this.adoptChildren(nodes));
+    const adopted = this.adoptChildren(nodes);
+    this.children.push(...adopted);
   }
 
   appendChild(node) {
@@ -137,23 +141,56 @@ export class FakeNode {
   }
 
   before(...nodes) {
+    if (nodes.length === 1 && nodes[0] === this) return;
     const adopted = this.parentNode.adoptChildren(nodes);
     const siblings = this.parentNode.children;
     siblings.splice(siblings.indexOf(this), 0, ...adopted);
   }
 
   prepend(...nodes) {
-    this.children.unshift(...this.adoptChildren(nodes));
+    const adopted = this.adoptChildren(nodes);
+    this.children.unshift(...adopted);
   }
 
   replaceChildren(...nodes) {
-    for (const child of this.children) child.parentNode = null;
+    for (const child of this.children) {
+      this.blurWhenInside(child);
+      child.parentNode = null;
+    }
     this.children = [];
     this.ownText = '';
     this.append(...nodes);
   }
 
+  // A browser blurs the focused element when it, or an ancestor of it, leaves the document.
+  blurWhenInside(node) {
+    const focused = this.ownerDocument.activeElement;
+    if (focused && node.contains(focused)) this.ownerDocument.activeElement = this.ownerDocument.body;
+  }
+
+  contains(node) {
+    for (let current = node; current; current = current.parentNode) {
+      if (current === this) return true;
+    }
+    return false;
+  }
+
+  get nextElementSibling() {
+    const siblings = this.parentNode?.children ?? [];
+    return siblings[siblings.indexOf(this) + 1] ?? null;
+  }
+
+  insertBefore(node, reference) {
+    if (reference === null || reference === undefined) {
+      this.append(node);
+    } else if (node !== reference) {
+      reference.before(node);
+    }
+    return node;
+  }
+
   removeChild(node) {
+    this.blurWhenInside(node);
     this.children = this.children.filter(child => child !== node);
     node.parentNode = null;
     return node;

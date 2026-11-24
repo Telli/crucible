@@ -2,7 +2,7 @@ import './support/load-agent-scene-modules.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createStudio } from '../src/studio.js';
-import { FakeNode, createFakeRenderer, installStudioDom } from './support/studio-dom.mjs';
+import { FakeNode, byLabel, createFakeRenderer, dispatch, installStudioDom } from './support/studio-dom.mjs';
 
 function sceneRecipe() {
   return {
@@ -49,6 +49,7 @@ function mountPanel(testContext, { recipe = sceneRecipe(), sharedDom = null } = 
     root,
     tree: root.querySelector('.crucible-studio-tree'),
     swatchStrip: root.querySelector('.crucible-studio-swatches'),
+    search: byLabel(root, 'Filter the scene list'),
     nodeRows: () => root.querySelectorAll('.crucible-studio-tree-row').filter(row => row.dataset.sceneObject === undefined),
     rowByLabel: label => root.querySelectorAll('.crucible-studio-tree-row').find(row => row.querySelector('.crucible-studio-tree-label').textContent === label),
     swatches: () => root.querySelectorAll('.crucible-studio-swatch-btn'),
@@ -178,6 +179,10 @@ test('the Scene list measures its rows once, not once per edit', testContext => 
   assert.ok(parseFloat(properties.get('--studio-tree-row-size')) >= 28, 'the rows of a list that scrolls grow to fill whole rows');
   dom.observers.resize.find(observer => observer.observed.includes(panel.tree)).callback([]);
   assert.ok(measured.reads > readsAfterFirstFit, 'a resize measures again');
+  const readsAfterResize = measured.reads;
+  panel.search.value = 'orb';
+  dispatch(panel.search, 'input');
+  assert.ok(measured.reads > readsAfterResize, 'a list whose first row is another kind is measured again');
 });
 
 test('after a run of edits the Scene list and the swatches equal a freshly built panel', testContext => {
@@ -198,4 +203,153 @@ test('after a run of edits the Scene list and the swatches equal a freshly built
   const fresh = mountPanel(testContext, { recipe: panel.studio.exportRecipe(), sharedDom: panel.dom });
   fresh.studio.selectNode(controller.selectedNodeId);
   assert.equal(describePanel(panel), describePanel(fresh));
+});
+
+function manyNodesRecipe(count) {
+  const recipe = sceneRecipe();
+  recipe.nodes = Array.from({ length: count }, (unused, index) => ({ id: `n${index}`, geometry: 'cube', material: 'paint', translation: [index, 0.5, 0] }));
+  return recipe;
+}
+
+function movedRows(panel) {
+  return panel.nodeRows().filter(row => (row.moves ?? 0) > 0).map(rowLabel);
+}
+
+function resetMoves(panel) {
+  for (const row of panel.nodeRows()) row.moves = 0;
+}
+
+test('hiding or deleting a row detaches no other row', testContext => {
+  const panel = mountPanel(testContext, { recipe: manyNodesRecipe(8) });
+  resetMoves(panel);
+  panel.studio.controller.updateNodeTransform('n1', { visible: false });
+  assert.deepEqual(movedRows(panel), [], 'hiding n1 moved no row');
+  panel.studio.selectNode('n3');
+  panel.studio.controller.deleteSelected();
+  assert.equal(panel.nodeRows().length, 7);
+  assert.deepEqual(movedRows(panel), [], 'deleting n3 moved no row');
+});
+
+test('reparenting one row moves that row and its children only, and a reverse reload stays within the row count', testContext => {
+  const panel = mountPanel(testContext, { recipe: manyNodesRecipe(8) });
+  resetMoves(panel);
+  panel.studio.controller.updateNodeTransform('n1', { parent: 'n5' });
+  assert.deepEqual(movedRows(panel), [], 'the reparented row is rebuilt at its new depth, no other row moves');
+  assert.deepEqual(panel.nodeRows().map(rowLabel), ['n0', 'n2', 'n3', 'n4', 'n5', 'n1', 'n6', 'n7']);
+  resetMoves(panel);
+  const reversed = panel.studio.exportRecipe();
+  reversed.nodes.reverse();
+  panel.studio.controller.loadRecipe(reversed);
+  assert.ok(movedRows(panel).length <= 8);
+  assert.equal(panel.nodeRows().length, 8);
+});
+
+test('a focused row keeps focus across an add, a hide of another row and a selection change, and a rebuilt row gets it back', testContext => {
+  const panel = mountPanel(testContext, { recipe: manyNodesRecipe(6) });
+  const focusedButton = panel.rowByLabel('n4').querySelector('.crucible-studio-tree-select');
+  focusedButton.focus();
+  const controller = panel.studio.controller;
+  controller.addPrimitive('box');
+  assert.ok(panel.dom.document.activeElement === focusedButton, 'an add keeps focus');
+  controller.updateNodeTransform('n1', { visible: false });
+  assert.ok(panel.dom.document.activeElement === focusedButton, 'hiding another row keeps focus');
+  panel.studio.selectNode('n2');
+  assert.ok(panel.dom.document.activeElement === focusedButton, 'a selection change keeps focus');
+  controller.updateNodeTransform('n4', { visible: false });
+  const rebuiltButton = panel.rowByLabel('n4').querySelector('.crucible-studio-tree-select');
+  assert.ok(rebuiltButton !== focusedButton, 'the focused row itself was rebuilt');
+  assert.ok(panel.dom.document.activeElement === rebuiltButton, 'focus moved to the rebuilt row');
+});
+
+test('a click on a row after the rows shifted selects that row\'s node', testContext => {
+  const panel = mountPanel(testContext, { recipe: manyNodesRecipe(6) });
+  panel.studio.controller.updateNodeTransform('n1', { visible: false });
+  panel.studio.selectNode('n3');
+  panel.studio.controller.deleteSelected();
+  panel.studio.controller.updateNodeTransform('n5', { parent: 'n0' });
+  for (const label of ['n4', 'n5', 'n0']) {
+    panel.rowByLabel(label).querySelector('.crucible-studio-tree-select').click();
+    assert.equal(panel.studio.controller.selectedNodeId, label);
+  }
+});
+
+test('disposing Studio removes its font and window listeners', testContext => {
+  const dom = installDom(testContext);
+  const listeners = new Set();
+  dom.document.fonts = {
+    addEventListener: (type, listener) => listeners.add(listener),
+    removeEventListener: (type, listener) => listeners.delete(listener),
+  };
+  const panel = mountPanel(testContext, { sharedDom: dom });
+  assert.equal(listeners.size, 1);
+  panel.studio.dispose();
+  assert.equal(listeners.size, 0);
+  dom.mountedStudios.length = 0;
+});
+
+// A small seeded generator keeps the run the same every time.
+function seededRandom(seed) {
+  let state = seed;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function applyRandomEdit(panel, random, step) {
+  const controller = panel.studio.controller;
+  const recipe = panel.studio.exportRecipe();
+  const nodeIds = recipe.nodes.map(node => node.id);
+  const pick = list => list[Math.floor(random() * list.length)];
+  const operations = {
+    add: () => controller.addPrimitive(pick(['box', 'sphere'])),
+    select: () => panel.studio.selectNode(pick(nodeIds)),
+    hide: () => controller.updateNodeTransform(pick(nodeIds), { visible: random() < 0.5 }),
+    rename: () => controller.updateNodeTransform(pick(nodeIds), { label: `renamed-${step}` }),
+    reparent: () => controller.updateNodeTransform(pick(nodeIds), { parent: random() < 0.3 ? null : pick(nodeIds) }),
+    duplicate: () => controller.duplicateSelected(),
+    delete: () => controller.deleteSelected(),
+    undo: () => controller.undo(),
+    redo: () => controller.redo(),
+    recolour: () => controller.updateMaterial(pick(recipe.materials).id, { color: [random(), random(), random()] }),
+    newMaterial: () => controller.createMaterial({ color: [random(), random(), random()] }),
+    assign: () => controller.assignNodeMaterial(controller.selectedNodeId, pick(recipe.materials).id),
+    filter: () => {
+      panel.search.value = pick(['', 'n', 'e', 'renamed']);
+      dispatch(panel.search, 'input');
+    },
+    reload: () => {
+      const reordered = structuredClone(recipe);
+      reordered.nodes.sort(() => random() - 0.5);
+      controller.loadRecipe(reordered);
+    },
+  };
+  const name = pick(Object.keys(operations));
+  try {
+    operations[name]();
+  } catch {
+    // An edit the controller refuses (a cycle, no selection) changes nothing; the panel must still match.
+  }
+  return name;
+}
+
+test('across random edits the kept panel equals a freshly mounted one', testContext => {
+  const dom = installDom(testContext);
+  for (const seed of [11, 23, 37]) {
+    const random = seededRandom(seed);
+    const panel = mountPanel(testContext, { recipe: manyNodesRecipe(5), sharedDom: dom });
+    for (let step = 0; step < 80; step += 1) {
+      const operation = applyRandomEdit(panel, random, step);
+      // Mounting a panel is the slow part, so the comparison runs every fifth step and at the end.
+      if (step % 5 !== 4) continue;
+      const fresh = mountPanel(testContext, { recipe: panel.studio.exportRecipe(), sharedDom: panel.dom });
+      fresh.studio.selectNode(panel.studio.controller.selectedNodeId);
+      fresh.search.value = panel.search.value;
+      dispatch(fresh.search, 'input');
+      assert.equal(describePanel(panel), describePanel(fresh), `seed ${seed} step ${step} after ${operation}`);
+      fresh.studio.dispose();
+      panel.dom.mountedStudios.splice(panel.dom.mountedStudios.indexOf(fresh.studio), 1);
+      fresh.root.remove();
+    }
+  }
 });

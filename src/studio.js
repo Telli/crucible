@@ -3257,6 +3257,7 @@ export function createStudio(container, {
 
   // One Scene list row per node or scene object, kept between syncs: an edit builds only the rows whose content changed.
   const outlinerRows = new Map();
+  let lastTreeStructureKey = '';
 
   function createNodeRow(node, depth, iconName) {
     const badge = createIcon(documentReference, iconName);
@@ -3314,22 +3315,46 @@ export function createStudio(container, {
     row.badge.style.fill = fill;
   }
 
-  // Puts the wanted rows in the list in order, moving or adding only the ones that are not already there.
+  // Puts the wanted rows in the list in order. Stale rows leave first, then the rows are walked from the end and a row is
+  // moved only when the row after it is not the one wanted, so a row that keeps its place is never detached (it would lose
+  // keyboard focus and hover).
   function placeOutlinerRows(rowElements) {
-    rowElements.forEach((element, index) => {
-      const current = outlinerTree.children[index];
-      if (current === element) {
-        return;
+    const wanted = new Set(rowElements);
+    for (const child of [...outlinerTree.children]) {
+      if (!wanted.has(child)) {
+        child.remove();
       }
-      if (current) {
-        current.before(element);
-      } else {
-        outlinerTree.append(element);
-      }
-    });
-    while (outlinerTree.children.length > rowElements.length) {
-      outlinerTree.lastElementChild.remove();
     }
+    let following = null;
+    for (let index = rowElements.length - 1; index >= 0; index -= 1) {
+      const element = rowElements[index];
+      if (element.parentNode !== outlinerTree || element.nextElementSibling !== following) {
+        outlinerTree.insertBefore(element, following);
+      }
+      following = element;
+    }
+  }
+
+  // A rebuilt row is a new element: the button that had focus is found again by node id, so the keyboard stays where it was.
+  function focusedOutlinerButton() {
+    const active = documentReference.activeElement;
+    if (!active) {
+      return null;
+    }
+    for (const [rowKey, row] of outlinerRows) {
+      const buttonIndex = [...row.element.children].indexOf(active);
+      if (buttonIndex >= 0) {
+        return { rowKey, buttonIndex, element: active };
+      }
+    }
+    return null;
+  }
+
+  function restoreOutlinerFocus(focused) {
+    if (!focused || documentReference.activeElement === focused.element) {
+      return;
+    }
+    outlinerRows.get(focused.rowKey)?.element.children[focused.buttonIndex]?.focus();
   }
 
   function renderOutliner(recipe) {
@@ -3365,6 +3390,7 @@ export function createStudio(container, {
       return;
     }
     lastTreeKey = treeKey;
+    const focused = focusedOutlinerButton();
     const previousRows = new Map(outlinerRows);
     outlinerRows.clear();
     for (const wanted of wantedRows) {
@@ -3374,7 +3400,15 @@ export function createStudio(container, {
       if (row.badge) setOutlinerRowFill(row, wanted.fill);
       outlinerRows.set(wanted.rowKey, row);
     }
+    const structureKey = wantedRows.map(wanted => `${wanted.rowKey}:${wanted.contentKey}`).join('|');
+    if (structureKey === lastTreeStructureKey) {
+      return;
+    }
+    lastTreeStructureKey = structureKey;
     placeOutlinerRows([...outlinerRows.values()].map(row => row.element));
+    restoreOutlinerFocus(focused);
+    // Rebuilding the list used to start it from the top; the browser would otherwise keep the row it had snapped to.
+    outlinerTree.scrollTop = 0;
     fitTreeToWholeRows();
   }
 
@@ -3444,10 +3478,17 @@ export function createStudio(container, {
   }
 
   // The Scene list shows whole rows only: when it scrolls, its rows grow by a pixel or two until a whole number of them fills it.
-  // The row height and the list height come from one measurement that holds until the list or the fonts change size, so an
-  // edit decides from the row count and reads no layout.
+  // The natural row height comes from one measurement that holds until something that sets it changes: the list's own height
+  // (read live), the kind of the first row (a camera row or a node row), the fonts, the window size, or the first row's own
+  // size (watched). An edit that changes the rows then costs one read of the list's scroll height, taken after the rows are
+  // placed, which the next frame needs anyway.
   let treeFitMeasure = null;
   let appliedTreeRowSize = '';
+  let watchedFirstRow = null;
+
+  function isSceneObjectRow(row) {
+    return row.dataset.sceneObject !== undefined;
+  }
 
   function measureTreeFit() {
     const view = documentReference.defaultView;
@@ -3463,6 +3504,7 @@ export function createStudio(container, {
       paddingTop: parseFloat(treeStyle.paddingTop),
       paddingBottom: parseFloat(treeStyle.paddingBottom),
       rowPitch: firstRow.offsetHeight + TREE_ROW_GAP_PIXELS,
+      firstRowIsSceneObject: isSceneObjectRow(firstRow),
     };
   }
 
@@ -3478,28 +3520,49 @@ export function createStudio(container, {
     }
   }
 
+  // The first row's own size changes with the root font size even when the list's box does not.
+  function watchFirstTreeRow() {
+    const firstRow = outlinerTree.firstElementChild;
+    if (!resizeObserver || firstRow === watchedFirstRow) {
+      return;
+    }
+    if (watchedFirstRow) resizeObserver.unobserve?.(watchedFirstRow);
+    watchedFirstRow = firstRow;
+    if (firstRow) resizeObserver.observe(firstRow);
+  }
+
+  function treeFitMeasureIsCurrent() {
+    const firstRow = outlinerTree.firstElementChild;
+    return Boolean(treeFitMeasure)
+      && outlinerTree.clientHeight === treeFitMeasure.clientHeight
+      && isSceneObjectRow(firstRow) === treeFitMeasure.firstRowIsSceneObject;
+  }
+
   function fitTreeToWholeRows({ remeasure = false } = {}) {
     const view = documentReference.defaultView;
     if (!view?.getComputedStyle || !outlinerTree.style?.removeProperty) {
       return;
     }
-    if (remeasure || !treeFitMeasure) {
+    watchFirstTreeRow();
+    if (remeasure || !outlinerTree.firstElementChild || !treeFitMeasureIsCurrent()) {
       treeFitMeasure = measureTreeFit();
     }
     if (!treeFitMeasure) {
       return;
     }
-    const { clientHeight, paddingTop, paddingBottom, rowPitch } = treeFitMeasure;
-    const rowCount = outlinerTree.children.length;
-    const contentHeight = paddingTop + paddingBottom + rowCount * rowPitch - TREE_ROW_GAP_PIXELS;
-    if (rowCount === 0 || contentHeight <= clientHeight) {
+    if (outlinerTree.scrollHeight <= outlinerTree.clientHeight) {
       setTreeRowSize('');
       return;
     }
+    const { clientHeight, paddingTop, paddingBottom, rowPitch } = treeFitMeasure;
     const rowSpace = clientHeight - paddingTop - paddingBottom;
     const wholeRows = Math.max(1, Math.floor((rowSpace + TREE_ROW_GAP_PIXELS) / rowPitch));
     const stretchedRowSize = (rowSpace + TREE_ROW_GAP_PIXELS) / wholeRows - TREE_ROW_GAP_PIXELS;
     setTreeRowSize(`${stretchedRowSize}px`);
+  }
+
+  function refitTreeToWholeRows() {
+    fitTreeToWholeRows({ remeasure: true });
   }
 
   // A locked row says so with the keyframe mark beside its title, the mark the property panel puts on a driven field.
@@ -4355,13 +4418,14 @@ export function createStudio(container, {
   if (typeof ResizeObserver === 'function') {
     resizeObserver = new ResizeObserver(() => {
       syncCompactLayout();
-      fitTreeToWholeRows({ remeasure: true });
+      refitTreeToWholeRows();
       requestFrame();
     });
     resizeObserver.observe(viewportElement);
     resizeObserver.observe(outlinerTree);
   }
-  documentReference.fonts?.addEventListener?.('loadingdone', () => fitTreeToWholeRows({ remeasure: true }));
+  documentReference.fonts?.addEventListener?.('loadingdone', refitTreeToWholeRows);
+  documentReference.defaultView?.addEventListener?.('resize', refitTreeToWholeRows);
   if (typeof IntersectionObserver === 'function') {
     intersectionObserver = new IntersectionObserver(entries => {
       isVisible = entries.some(entry => entry.isIntersecting);
@@ -4456,6 +4520,8 @@ export function createStudio(container, {
       stopWatchingContextLoss();
       stopWatchingDiagnostics();
       pausedNotice.hide();
+      documentReference.fonts?.removeEventListener?.('loadingdone', refitTreeToWholeRows);
+      documentReference.defaultView?.removeEventListener?.('resize', refitTreeToWholeRows);
       resizeObserver?.disconnect();
       intersectionObserver?.disconnect();
       controller.dispose();
