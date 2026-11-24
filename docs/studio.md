@@ -42,7 +42,7 @@ One drag is one undo step, and undo leaves the viewport camera where you put it.
 
 ## Edit a mesh
 
-What Studio can and cannot do yet next to Blender is listed in [Studio and Blender](studio-blender-parity.md).
+What Studio can and cannot do yet next to Blender is listed in [Studio and Blender](https://github.com/codepawl/crucible/blob/main/docs/studio-blender-parity.md).
 
 Select an object whose geometry is a `mesh` and press **Tab**. Its cage appears over the picture: the polygon edges in pale lines, quieter on the far side of the mesh, with the vertices as dots in vertex mode. A group of three buttons joins the rail in the accent colour while you edit: vertex, edge or face, on **1**, **2** and **3**, with a button below them that leaves edit mode. The readout line at the bottom names the mode, and what you picked is drawn in the accent colour over the handles. Click picks the nearest vertex or edge or the face under the pointer; **Shift + click** adds or removes one; a click on nothing clears the selection. The move handles stand at the centre of the selection and work as they do for an object: drag an arrow or a square to move what you picked. **Esc** during a drag puts it back; with nothing selected, **Esc** or **Tab** leaves edit mode.
 
