@@ -34,7 +34,6 @@ export const STUDIO_CSS = `
   /* A menu leaves with an opacity fade alone, which carries no movement, so reduced motion keeps it. */
   --studio-motion-exit: 80ms;
   --studio-ease-out: var(--site-ease-out, cubic-bezier(0.2, 0, 0, 1));
-  --studio-ease-in: cubic-bezier(0.4, 0, 1, 1);
   background: var(--studio-bg);
   color: var(--studio-text);
   font-family: var(--studio-font);
@@ -559,7 +558,7 @@ export const STUDIO_CSS = `
     .crucible-studio-popover {
       opacity: 0;
       transform-origin: var(--studio-popover-origin, 0 0);
-      transition: opacity var(--studio-motion-exit) var(--studio-ease-in), display var(--studio-motion-exit) var(--studio-ease-in) allow-discrete, overlay var(--studio-motion-exit) var(--studio-ease-in) allow-discrete;
+      transition: opacity var(--studio-motion-exit) var(--studio-ease-out), display var(--studio-motion-exit) var(--studio-ease-out) allow-discrete, overlay var(--studio-motion-exit) var(--studio-ease-out) allow-discrete;
     }
     .crucible-studio-popover:popover-open {
       opacity: 1;
@@ -573,11 +572,13 @@ export const STUDIO_CSS = `
       }
     }
     .crucible-studio-menubar[data-switching] .crucible-studio-popover { transition: none; }
+    /* A menu opened from the keyboard is a shortcut: it appears at once, with no starting style playing. */
+    .crucible-studio[data-input="keyboard"] .crucible-studio-popover { transition: none; }
   }
   @media (prefers-reduced-motion: reduce) {
     .crucible-studio-popover {
       opacity: 0;
-      transition: opacity var(--studio-motion-fade) var(--studio-ease-in), display var(--studio-motion-fade) var(--studio-ease-in) allow-discrete, overlay var(--studio-motion-fade) var(--studio-ease-in) allow-discrete;
+      transition: opacity var(--studio-motion-fade) var(--studio-ease-out), display var(--studio-motion-fade) var(--studio-ease-out) allow-discrete, overlay var(--studio-motion-fade) var(--studio-ease-out) allow-discrete;
     }
     .crucible-studio-popover:popover-open {
       opacity: 1;
@@ -587,6 +588,7 @@ export const STUDIO_CSS = `
       .crucible-studio-popover:popover-open { opacity: 0; }
     }
     .crucible-studio-menubar[data-switching] .crucible-studio-popover { transition: none; }
+    .crucible-studio[data-input="keyboard"] .crucible-studio-popover { transition: none; }
   }
 }
 .crucible-studio-popover-grid {
@@ -1167,7 +1169,7 @@ export const STUDIO_CSS = `
     .crucible-studio-status {
       opacity: 0;
       translate: 0 -4px;
-      transition: opacity var(--studio-motion-quick) var(--studio-ease-in), translate var(--studio-motion-quick) var(--studio-ease-in);
+      transition: opacity var(--studio-motion-quick) var(--studio-ease-out), translate var(--studio-motion-quick) var(--studio-ease-out);
     }
     .crucible-studio-status[data-state="in"] {
       opacity: 1;
@@ -1184,7 +1186,7 @@ export const STUDIO_CSS = `
   @media (prefers-reduced-motion: reduce) {
     .crucible-studio-status {
       opacity: 0;
-      transition: opacity var(--studio-motion-fade) var(--studio-ease-in);
+      transition: opacity var(--studio-motion-fade) var(--studio-ease-out);
     }
     .crucible-studio-status[data-state="in"] {
       opacity: 1;

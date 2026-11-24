@@ -2,6 +2,7 @@ import './support/load-agent-scene-modules.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createStudio } from '../src/studio.js';
+import { STUDIO_CSS } from '../src/studio-styles.js';
 import { longestTransitionMilliseconds, popoverOpeningStyle } from '../src/studio-popover-motion.js';
 import { byText, createFakeRenderer, dispatch, installStudioDom } from './support/studio-dom.mjs';
 
@@ -165,7 +166,7 @@ test('disposing during an exit clears the exit timer too (#3223)', testContext =
   assert.equal(noticeTimerCount(dom), 0);
 });
 
-test('a hover switch between menubar menus marks the bar until two frames later, and a first open does not (#3223)', testContext => {
+test('a hover switch between menubar menus is marked only while it flushes style, and needs no frame (#3223)', testContext => {
   const { dom, root } = mountStudio(testContext);
   const menubar = root.querySelector('.crucible-studio-menubar');
   const viewPopover = root.querySelector('#crucible-studio-pop-view');
@@ -173,15 +174,98 @@ test('a hover switch between menubar menus marks the bar until two frames later,
   for (const popover of [viewPopover, editPopover]) {
     popover.matches = selector => selector === ':popover-open' && popover.popoverOpen;
   }
+  const markedWhenFlushed = [];
+  dom.document.defaultView.getComputedStyle = element => {
+    markedWhenFlushed.push([element.id, menubar.dataset.switching]);
+    return { opacity: '1' };
+  };
   dispatch(byText(root, 'Edit'), 'pointerenter');
-  assert.equal(menubar.dataset.switching, undefined, 'with no menu open nothing opens, and nothing is marked');
+  assert.deepEqual(markedWhenFlushed, [], 'with no menu open nothing switches');
   viewPopover.showPopover();
   dispatch(byText(root, 'Edit'), 'pointerenter');
-  assert.equal(menubar.dataset.switching, 'true');
   assert.equal(viewPopover.popoverOpen, false);
   assert.equal(editPopover.popoverOpen, true);
-  dom.runAnimationFrames(16);
-  assert.equal(menubar.dataset.switching, 'true', 'one frame is not enough: the new menu has not been styled yet');
-  dom.runAnimationFrames(32);
-  assert.equal(menubar.dataset.switching, undefined);
+  assert.deepEqual(markedWhenFlushed, [['crucible-studio-pop-edit', 'true']], 'the incoming menu is read while the bar is marked');
+  assert.equal(menubar.dataset.switching, undefined, 'the mark is gone in the same task');
+  assert.equal(dom.pendingAnimationFrameCount, 0, 'no frame is waiting to clear it');
+});
+
+test('the last input kind sits on the root: a key sets keyboard, a press sets pointer, a modifier changes nothing, dispose lets go (#3223)', testContext => {
+  const { dom, studio, root } = mountStudio(testContext);
+  assert.equal(root.dataset.input, undefined);
+  dispatch(dom.document, 'keydown', { key: 'a' });
+  assert.equal(root.dataset.input, 'keyboard');
+  dispatch(dom.document, 'pointerdown');
+  assert.equal(root.dataset.input, 'pointer');
+  for (const modifier of ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']) {
+    dispatch(dom.document, 'keydown', { key: modifier });
+    assert.equal(root.dataset.input, 'pointer', `${modifier} alone does not turn a click into a keyboard action`);
+  }
+  dispatch(dom.document, 'keydown', { key: 'ArrowRight' });
+  assert.equal(root.dataset.input, 'keyboard');
+  studio.dispose();
+  dispatch(dom.document, 'pointerdown');
+  assert.equal(root.dataset.input, 'keyboard', 'after dispose the listeners are gone');
+});
+
+test('announce with an empty message clears the box at once and leaves no timer (#3223)', async testContext => {
+  const { dom, root } = mountStudio(testContext);
+  answerTransitionDuration(dom, { out: '0.11s' });
+  const notice = root.querySelector('.crucible-studio-status');
+  clickAddMenuItem(root, 'Spot light');
+  assert.equal(notice.dataset.state, 'in');
+  const realParse = JSON.parse;
+  JSON.parse = () => {
+    throw new Error('');
+  };
+  try {
+    byText(root, 'Apply JSON').click();
+    await dom.settle();
+  } finally {
+    JSON.parse = realParse;
+  }
+  assert.equal(notice.textContent, '');
+  assert.equal(notice.dataset.state, undefined);
+  assert.equal(noticeTimerCount(dom), 0);
+});
+
+test('a popover with no opening style of its own gets the default: from the top left corner, 4px up (#3223)', () => {
+  assert.deepEqual(popoverOpeningStyle(), { origin: '0 0', shift: '0 -4px' });
+  assert.deepEqual(popoverOpeningStyle({}), popoverOpeningStyle({ beside: false, opensLeftward: false, opensUpward: false }));
+});
+
+test('the object menu writes its own opening style, down or up, and the tree flyout only fades (#3223)', testContext => {
+  const { root } = mountStudio(testContext);
+  const objectPopover = root.querySelector('#crucible-studio-pop-object');
+  const heroRow = root.querySelectorAll('.crucible-studio-tree-row').find(row => row.textContent.includes('hero'));
+  const viewport = heroRow.querySelector('.crucible-studio-tree-select');
+  dispatch(viewport, 'contextmenu', { clientX: 300, clientY: 200 });
+  assert.equal(objectPopover.popoverOpen, true, 'the context menu opened the object menu');
+  assert.equal(objectPopover.style.getPropertyValue('--studio-popover-origin'), '0 0');
+  assert.equal(objectPopover.style.getPropertyValue('--studio-popover-shift'), '0 -4px');
+  dispatch(viewport, 'contextmenu', { clientX: 300, clientY: 700 });
+  assert.equal(objectPopover.style.getPropertyValue('--studio-popover-origin'), '0 100%', 'in the lower half it hangs from the pointer and grows upward');
+  assert.equal(objectPopover.style.getPropertyValue('--studio-popover-shift'), '0 4px');
+  assert.ok(STUDIO_CSS.includes('--studio-popover-start-scale: none;'), 'the flyout starts at full size');
+  assert.ok(STUDIO_CSS.includes('--studio-popover-shift: none;'), 'and in place');
+});
+
+test('every popover is a descendant of the Studio root, and the menubar menus of the menubar, where the CSS selectors look (#3223)', testContext => {
+  const { root } = mountStudio(testContext);
+  const popovers = root.descendants().filter(element => element.getAttribute('popover') !== null);
+  assert.ok(popovers.length >= 8, `found ${popovers.length} popovers`);
+  const menubar = root.querySelector('.crucible-studio-menubar');
+  for (const popover of popovers) {
+    assert.ok(String(popover.className).split(/\s+/).includes('crucible-studio-popover'), `${popover.id || popover.className} carries the popover class`);
+    let ancestor = popover.parentNode;
+    let insideRoot = false;
+    while (ancestor) {
+      insideRoot ||= ancestor === root;
+      ancestor = ancestor.parentNode;
+    }
+    assert.ok(insideRoot, `${popover.id || popover.className} sits under the root`);
+  }
+  for (const id of ['new', 'edit', 'view', 'sync', 'help']) {
+    assert.equal(root.querySelector(`#crucible-studio-pop-${id}`).parentNode, menubar, `${id} is a child of the menubar`);
+  }
 });

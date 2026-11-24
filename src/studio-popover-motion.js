@@ -2,7 +2,7 @@
 const SHIFT_DISTANCE = '4px';
 
 /** The two custom properties the popover styles read, from the way the menu opened. */
-export function popoverOpeningStyle({ beside, opensLeftward, opensUpward }) {
+export function popoverOpeningStyle({ beside = false, opensLeftward = false, opensUpward = false } = {}) {
   const originX = opensLeftward ? '100%' : '0';
   const originY = opensUpward ? '100%' : '0';
   let shift = opensUpward ? `0 ${SHIFT_DISTANCE}` : `0 -${SHIFT_DISTANCE}`;
@@ -24,4 +24,11 @@ export function longestTransitionMilliseconds(transitionDuration) {
     longest = Math.max(longest, trimmed.endsWith('ms') ? amount : amount * 1000);
   }
   return longest;
+}
+
+const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'CapsLock', 'NumLock', 'ScrollLock', 'Fn', 'Hyper', 'Super', 'OS']);
+
+/** A key that only modifies the next input, so holding it during a click does not make that click a keyboard action. */
+export function isModifierKey(key) {
+  return MODIFIER_KEYS.has(key);
 }

@@ -38,7 +38,7 @@ import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, des
 import './replace-textured-parts.js';
 import { clearStudioDraft, createDraftNotice, DRAFT_SAVE_DELAY_MILLISECONDS, draftDiffersFrom, loadStudioDraft, saveStudioDraft } from './studio-draft.js';
 import { createBakeMark } from './studio-bake-mark.js';
-import { longestTransitionMilliseconds, popoverOpeningStyle } from './studio-popover-motion.js';
+import { isModifierKey, longestTransitionMilliseconds, popoverOpeningStyle } from './studio-popover-motion.js';
 import { createPostPassNotice, createPostPassPlanner, installPostPasses, sceneHasPostPasses } from './studio-post-passes.js';
 import { CONTEXT_LOST_MESSAGE, createPausedPictureNotice, describeFrameFailure, watchContextLoss } from './studio-context-loss.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
@@ -1244,6 +1244,9 @@ export function createStudio(container, {
     const opensUpward = clientY > windowHeight / 2;
     objectPopover.style.top = opensUpward ? 'auto' : `${Math.round(clientY)}px`;
     objectPopover.style.bottom = opensUpward ? `${Math.round(Math.max(8, windowHeight - clientY))}px` : 'auto';
+    const opening = popoverOpeningStyle({ opensUpward });
+    objectPopover.style.setProperty('--studio-popover-origin', opening.origin);
+    objectPopover.style.setProperty('--studio-popover-shift', opening.shift);
     objectPopover.showPopover?.();
   }
   function hideSelection() {
@@ -1595,16 +1598,15 @@ export function createStudio(container, {
     helpPopover,
   );
 
-  // A hover switch is instant: the bar says so while one menu hides and the next shows, until the next menu has had two frames.
-  let menuSwitchFrame = 0;
-  const markMenuSwitch = () => {
+  // A hover switch is instant: the bar says so while one menu hides and the next shows, a style read makes the browser
+  // settle both in that state, and the mark is gone in the same task, so no frame or throttled tab can leave it set.
+  const flushStyle = element => documentReference.defaultView?.getComputedStyle?.(element)?.opacity;
+  const switchMenubarMenu = (outgoingPopover, incomingPopover, showIncoming) => {
     menubarElement.dataset.switching = 'true';
-    cancelAnimationFrame(menuSwitchFrame);
-    menuSwitchFrame = requestAnimationFrame(() => {
-      menuSwitchFrame = requestAnimationFrame(() => {
-        delete menubarElement.dataset.switching;
-      });
-    });
+    outgoingPopover.hidePopover?.();
+    showIncoming();
+    flushStyle(incomingPopover);
+    delete menubarElement.dataset.switching;
   };
   // With one menu open, moving over the next one opens it, as a desktop menu bar does.
   const menuPairs = [[fileMenuButton, newPopover], [editMenuButton, editPopover], [viewMenuButton, viewPopover], [aiSyncMenuButton, aiSyncPopover], [helpMenuButton, helpPopover]];
@@ -1612,10 +1614,8 @@ export function createStudio(container, {
     menuButton.addEventListener('pointerenter', () => {
       const openPair = menuPairs.find(([, otherPopover]) => otherPopover !== menuPopover && otherPopover.matches?.(':popover-open'));
       if (openPair) {
-        markMenuSwitch();
-        openPair[1].hidePopover?.();
         fileMenuAnchor = menuButton === fileMenuButton ? fileMenuButton : fileMenuAnchor;
-        menuPopover.showPopover?.();
+        switchMenubarMenu(openPair[1], menuPopover, () => menuPopover.showPopover?.());
       }
     });
   }
@@ -1773,6 +1773,10 @@ export function createStudio(container, {
   function announce(message, durationMilliseconds = STATUS_DEFAULT_MILLISECONDS) {
     clearTimeout(statusTimer);
     clearTimeout(statusExitTimer);
+    if (!message) {
+      clearStatus();
+      return;
+    }
     statusRegion.textContent = message;
     statusRegion.dataset.state = 'in';
     statusTimer = setTimeout(hideStatus, durationMilliseconds);
@@ -4152,6 +4156,15 @@ export function createStudio(container, {
     keyHandlers[match.actionId](event, match.binding);
   };
   documentReference.addEventListener('keydown', onWindowKeyDown);
+  // The last kind of input decides whether a menu animates: a menu opened from the keyboard is a shortcut and appears at once.
+  const onKeyboardInput = event => {
+    if (!isModifierKey(event.key)) root.dataset.input = 'keyboard';
+  };
+  const onPointerInput = () => {
+    root.dataset.input = 'pointer';
+  };
+  documentReference.addEventListener('keydown', onKeyboardInput, true);
+  documentReference.addEventListener('pointerdown', onPointerInput, true);
 
   const onVisibilityChange = () => {
     if (!documentReference.hidden && isVisible) requestFrame();
@@ -4361,7 +4374,6 @@ export function createStudio(container, {
       clearTimeout(draftTimer);
       clearTimeout(statusTimer);
       clearTimeout(statusExitTimer);
-      if (menuSwitchFrame) cancelAnimationFrame(menuSwitchFrame);
       clearTimeout(awaitedProgramTimer);
       agentPresence.dispose();
       systemSchemeQuery?.removeEventListener?.('change', onSystemSchemeChange);
@@ -4372,6 +4384,8 @@ export function createStudio(container, {
       documentReference.removeEventListener('click', onModalClick, true);
       documentReference.removeEventListener('pointerdown', onAnyPointerDown, true);
       documentReference.removeEventListener('keydown', onWindowKeyDown);
+      documentReference.removeEventListener('keydown', onKeyboardInput, true);
+      documentReference.removeEventListener('pointerdown', onPointerInput, true);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
       documentReference.removeEventListener('visibilitychange', flushDraftWhenHidden);
       documentReference.defaultView?.removeEventListener?.('pagehide', flushDraftSave);

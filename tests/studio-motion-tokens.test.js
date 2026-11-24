@@ -211,8 +211,8 @@ test('menus fade and grow, the tree flyout only fades, and reduced motion keeps 
   assert.match(opening.body, /opacity var\(--studio-motion-quick\) var\(--studio-ease-out\)/);
   assert.match(opening.body, /scale var\(--studio-motion-quick\)/);
   const leaving = growing.find(rule => rule.selector === '.crucible-studio-popover' && /transition:/.test(rule.body));
-  assert.match(leaving.body, /opacity var\(--studio-motion-exit\) var\(--studio-ease-in\)/);
-  assert.match(leaving.body, /display var\(--studio-motion-exit\) var\(--studio-ease-in\) allow-discrete/);
+  assert.match(leaving.body, /opacity var\(--studio-motion-exit\) var\(--studio-ease-out\)/);
+  assert.match(leaving.body, /display var\(--studio-motion-exit\) var\(--studio-ease-out\) allow-discrete/);
   assert.match(leaving.body, /overlay var\(--studio-motion-exit\)/);
   assert.ok(!/scale|translate/.test(leaving.body), 'the closed style sets no scale or translate, so nothing jumps while it fades');
   const flyout = rules.find(rule => rule.selector === '.crucible-studio-popover.crucible-studio-tree-picker');
@@ -228,13 +228,22 @@ test('menus fade and grow, the tree flyout only fades, and reduced motion keeps 
   assert.ok(instant.every(rule => /transition:\s*none/.test(rule.body)));
 });
 
+test('a menu opened from the keyboard has no transition in either motion mode, and the ease-in token is gone (#3223)', () => {
+  const keyboardRules = parseRules(STUDIO_CSS).filter(rule => rule.selector === '.crucible-studio[data-input="keyboard"] .crucible-studio-popover');
+  assert.equal(keyboardRules.length, 2);
+  assert.ok(keyboardRules.some(rule => rule.conditions.some(condition => condition?.includes('no-preference'))));
+  assert.ok(keyboardRules.some(rule => rule.conditions.some(condition => condition?.includes('motion: reduce'))));
+  assert.ok(keyboardRules.every(rule => /transition:\s*none/.test(rule.body)));
+  assert.ok(!STUDIO_CSS.includes('--studio-ease-in'), 'nothing eases in on UI; the token waits for a use that needs it');
+});
+
 test('the notice fades and drops in with the individual translate, leaves faster, and keeps its centring transform (#3223)', () => {
   const rules = parseRules(STUDIO_CSS).filter(rule => rule.selector.startsWith('.crucible-studio-status') && rule.conditions.length > 0);
   const motion = rules.filter(rule => rule.conditions.some(condition => condition?.includes('no-preference')));
   const resting = motion.find(rule => rule.selector === '.crucible-studio-status');
   const shown = motion.find(rule => rule.selector === '.crucible-studio-status[data-state="in"]' && /transition/.test(rule.body));
   assert.match(resting.body, /translate: 0 -4px;/);
-  assert.match(resting.body, /opacity var\(--studio-motion-quick\) var\(--studio-ease-in\)/);
+  assert.match(resting.body, /opacity var\(--studio-motion-quick\) var\(--studio-ease-out\)/);
   assert.match(shown.body, /opacity var\(--studio-motion-base\) var\(--studio-ease-out\)/);
   assert.ok(motion.some(rule => /translate: 0 -6px;/.test(rule.body)), 'it enters from 6px up');
   const reduced = rules.filter(rule => rule.conditions.some(condition => condition?.includes('motion: reduce')));
