@@ -1,1 +1,1 @@
-- The Studio loading state is the Crucible pot pouring a curved stream of molten metal into a pool on a progress bar that keeps creeping with real load progress and fills only when Studio is ready, then fades out (#3275).
+- The Studio loading state is the Crucible pot pouring a curved stream of molten metal straight into a progress bar that keeps creeping with real load progress, with a few small sparks thrown up where it lands, and fills only when Studio is ready, then fades out (#3275).

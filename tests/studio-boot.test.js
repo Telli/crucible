@@ -152,7 +152,7 @@ test('the page script no longer imports the token stylesheet or opens the setup 
   assert.ok(pageScript.includes('revealStudio'));
 });
 
-// The pour: the pot tips, a curved stream leaves the lip into a pool, droplets hop and the bar fills. Only transform and opacity animate.
+// The pour: the pot tips, a curved stream leaves the lip into the bar, sparks hop where it lands and the bar fills. Only transform and opacity animate.
 const LOADING_STYLE = PAGE_HTML.slice(PAGE_HTML.indexOf('<style>'), PAGE_HTML.indexOf('</style>'));
 const KEYFRAME_BLOCKS = [...LOADING_STYLE.matchAll(/@keyframes (studio-[\w-]+) [{]([^\n]*)/g)];
 const COMPOSITOR_PROPERTIES = new Set(['transform', 'opacity', 'animation-timing-function']);
@@ -190,8 +190,10 @@ function createProgressPage() {
   return { loadingElement, documentReference, state, progress: () => Number(properties.get('--progress')) };
 }
 
-test('the loading element has a pot, a stream that leaves its lip into a pool, droplets and a fill in the bar', () => {
-  assert.match(PAGE_HTML, /<div class="pour">\s*<div class="stream"><div class="flow"><i><\/i><\/div><\/div>\s*<div class="pot">[\s\S]*mark-light[\s\S]*mark-dark[\s\S]*<\/div>\s*<div class="pool"><\/div>\s*<b class="ripple"><\/b>\s*(?:<i class="drop"><\/i>){2}\s*<div class="progress"><div class="fill"><\/div><\/div>/);
+test('the loading element has a pot, a stream that leaves its lip into the bar, a fill in the bar and four sparks, and no pool', () => {
+  assert.match(PAGE_HTML, /<div class="pour">\s*<div class="stream"><div class="flow"><i><\/i><\/div><\/div>\s*<div class="pot">[\s\S]*mark-light[\s\S]*mark-dark[\s\S]*<\/div>\s*<div class="progress"><div class="fill"><\/div><\/div>\s*(?:<i class="spark"><\/i>){4}\s*<\/div>/);
+  assert.ok(!/class="(?:pool|ripple|drop)"/.test(PAGE_HTML), 'no pool, ripple or droplets sit under the stream any more');
+  assert.ok(!/[.](?:pool|ripple|drop)\b/.test(LOADING_STYLE), 'no style is left for the pool, the ripple or the droplets');
   assert.match(PAGE_HTML, /<img class="mark mark-light" src="\/brand\/crucible-mark[.]svg"/, 'the pot is the brand mark file, not a redrawn copy');
   assert.ok(!PAGE_HTML.includes('class="body"'), 'no copy of the mark artwork sits in the page');
 });
@@ -201,28 +203,62 @@ test('the stream is one static curved clip, wider at the lip than at the pool, w
   assert.ok(clip, 'the stream shape is a static clip-path');
   const topWidth = /^M(\d+) 0H(\d+)/.exec(clip[1]);
   assert.ok(Number(topWidth[2]) - Number(topWidth[1]) > 4, 'the stream is wide where it leaves the lip');
-  assert.match(clip[1], /Q\d+ 66 6 66Q4 66 4 64/, 'it ends rounded, 4 px wide, at the pool');
+  assert.match(clip[1], /Q\d+ 70 6 70Q4 70 4 68/, 'it ends rounded, 4 px wide, at the bar');
   assert.match(LOADING_STYLE, /[.]flow i [{][^}]*repeating-linear-gradient[(]transparent 0, color-mix[(]in srgb, var[(]--site-text[)] 24%, transparent[)] 4px, transparent 8px, color-mix[(]in srgb, var[(]--site-bg[)] 30%, transparent[)] 11px, transparent 14px[)],\s*var[(]--site-focus[)]/, 'soft lighter and deeper bands made of tokens over the molten colour');
   assert.match(LOADING_STYLE, /studio-stream-flow 0[.]7s linear infinite/);
   assert.match(LOADING_STYLE, /@keyframes studio-stream-flow [{] to [{] transform: translateY[(]14px[)]; [}] [}]/, 'the flow moves by exactly one band period of 14 px, so the loop is seamless');
   assert.match(LOADING_STYLE, /studio-stream-sway 2[.]2s ease-in-out infinite alternate/);
 });
 
-test('the stream lands in the middle of the pool and the pool starts at the left end of the bar', () => {
+test('the stream ends sunk into the bar, over the start of the fill, with no pool between them', () => {
   const rule = selector => new RegExp(`${selector} [{]([^}]*)[}]`).exec(LOADING_STYLE)[1];
   const lengthOf = (body, property) => Number(new RegExp(`(?:^|\\s)${property}: (-?[\\d.]+)(?:px)?;`).exec(body)[1]);
-  const pool = rule('#studio-loading [.]pool');
   const bar = rule('#studio-loading [.]progress');
   const stream = rule('#studio-loading [.]stream');
-  const clip = /clip-path: path[(]"[^"]*Q8 66 6 66/.test(LOADING_STYLE);
-  assert.ok(clip);
+  assert.match(LOADING_STYLE, /clip-path: path[(]"[^"]*Q8 70 6 70/, 'the clip ends where the box ends');
+  const streamBottom = lengthOf(stream, 'top') + lengthOf(stream, 'height');
+  assert.equal(streamBottom, lengthOf(bar, 'top') + 2, 'the stream ends 2 px inside the bar, so there is no gap');
+  assert.ok(streamBottom < lengthOf(bar, 'top') + lengthOf(bar, 'height'), 'and it stops inside the bar height');
   const landingX = lengthOf(stream, 'left') + 6;
-  assert.equal(lengthOf(pool, 'left'), lengthOf(bar, 'left'), 'the pool and the bar start at the same x');
-  assert.equal(landingX, lengthOf(pool, 'left') + lengthOf(pool, 'width') / 2, 'the stream lands in the middle of the pool');
-  assert.equal(lengthOf(pool, 'top') + lengthOf(pool, 'height'), lengthOf(bar, 'top'), 'the pool sits on the bar');
-  assert.equal(lengthOf(stream, 'top') + lengthOf(stream, 'height'), lengthOf(pool, 'top') + 4, 'the stream ends inside the pool, its rounded end sunk into it');
-  const poolRatio = lengthOf(pool, 'width') / lengthOf(pool, 'height');
-  assert.ok(poolRatio >= 2.3 && poolRatio <= 3, 'the pool is a flat puddle, about 2.5 times wider than tall');
+  assert.ok(landingX >= lengthOf(bar, 'left') && landingX <= lengthOf(bar, 'left') + 4, 'the stream lands at the left end of the bar, where the fill starts');
+  assert.equal(lengthOf(bar, 'left') + lengthOf(bar, 'width'), 120, 'the bar still ends at the right edge of the group');
+  assert.match(stream, /z-index: 1;/, 'the stream is drawn over the bar');
+});
+
+test('four sparks are thrown up where the stream lands, short, out of step with each other, and animate only transform and opacity', () => {
+  const rule = selector => new RegExp(`${selector} [{]([^}]*)[}]`).exec(LOADING_STYLE)[1];
+  const lengthOf = (body, property) => Number(new RegExp(`(?:^|\\s)${property}: (-?[\\d.]+)(?:px)?;`).exec(body)[1]);
+  const spark = rule('#studio-loading [.]spark');
+  const stream = rule('#studio-loading [.]stream');
+  const bar = rule('#studio-loading [.]progress');
+  const landingX = lengthOf(stream, 'left') + 6;
+  assert.equal(lengthOf(spark, 'left') + lengthOf(spark, 'width') / 2, landingX, 'the sparks start at the stream end');
+  assert.ok(Math.abs(lengthOf(spark, 'top') + lengthOf(spark, 'height') - lengthOf(bar, 'top')) <= 1, 'and on the bar surface');
+  assert.ok(lengthOf(spark, 'width') <= 3, 'a spark is small');
+  assert.match(spark, /opacity: 0;/, 'a spark is hidden until its animation shows it');
+  assert.match(spark, /var[(]--site-focus[)]/, 'a spark is the lava token');
+  const block = KEYFRAME_BLOCKS.find(([, name]) => name === 'studio-spark')[2];
+  const lastVisible = [...block.matchAll(/(\d+)% [{] opacity: 1;/g)].map(match => Number(match[1])).at(-1);
+  const gone = Number(/(\d+)% [{] opacity: 0; transform: translate[(]var[(]--dx[)], 2px[)]; [}]/.exec(block)[1]);
+  assert.ok(gone > lastVisible, 'it fades out before the loop restarts');
+  const motionBlock = LOADING_STYLE.slice(LOADING_STYLE.indexOf('@media (prefers-reduced-motion: no-preference) {'));
+  const base = /studio-spark ([\d.]+)s linear infinite/.exec(motionBlock);
+  const durations = [];
+  const delays = [];
+  for (let index = 1; index <= 4; index += 1) {
+    const sparkRule = new RegExp(`[.]spark:nth-of-type\\(${index}\\) [{]([^}]*)[}]`).exec(motionBlock)[1];
+    durations.push(Number(/animation-duration: ([\d.]+)s/.exec(sparkRule)?.[1] ?? base[1]));
+    delays.push(Number(/animation-delay: ([\d.]+)s/.exec(sparkRule)[1]));
+    assert.ok(Math.abs(Number(/--dx: (-?\d+)px/.exec(sparkRule)[1])) <= 12 && Number(/--rise: (\d+)px/.exec(sparkRule)[1]) <= 10, 'the arcs are small');
+  }
+  assert.equal(new Set(durations).size, 4, 'each spark has its own period, so the loop never repeats in step');
+  assert.equal(new Set(delays).size, 4);
+  assert.ok(Math.min(...delays) >= 0.8, 'no spark starts before the stream has arrived');
+  for (const duration of durations) {
+    assert.ok((duration * gone) / 100 < 0.5, `a spark is visible for ${(duration * gone) / 100} s, under half a second`);
+  }
+  assert.match(motionBlock, /data-state="done"\] [.]spark [{] animation: none; [}]/, 'the sparks stop in the first frame of the wind-down');
+  assert.match(LOADING_STYLE, /data-state="error"\] :is[(][.]stream, [.]spark, [.]progress[)] [{] display: none; [}]/);
 });
 
 test('the whole group is scaled up by one transform and still fits a 360 px window', () => {
@@ -239,7 +275,7 @@ test('the whole group is scaled up by one transform and still fits a 360 px wind
 });
 
 test('the pour animates only transform and opacity, with the fill moved by script and no transition', () => {
-  assert.ok(KEYFRAME_BLOCKS.length >= 10, 'tilt, right, stream, sway, flow, pool, drop, fade and fill keyframes exist');
+  assert.ok(KEYFRAME_BLOCKS.length >= 9, 'tilt, right, stream, sway, flow, spark, fade and fill keyframes exist');
   for (const [, name, body] of KEYFRAME_BLOCKS) {
     const properties = [...body.matchAll(/([\w-]+): [^;]+;/g)].map(match => match[1]);
     assert.ok(properties.length > 0, name);
@@ -260,10 +296,10 @@ test('with reduced motion the pot and stream stand still, the fill still moves a
   const outsideMotionBlock = LOADING_STYLE.replace(motionBlock, '');
   const animationsOutside = [...outsideMotionBlock.matchAll(/(?<![-\w])animation: ([^;]+);/g)].map(match => match[1].split(' ')[0]);
   assert.deepEqual(animationsOutside, ['studio-fill-creep', 'studio-loader-fade', 'none'], 'only the fill, the closing fade and the error reset run without the no-preference query');
-  for (const name of ['pot-tilt', 'stream-in', 'stream-sway', 'stream-flow', 'pool-in', 'ripple', 'drop']) {
+  for (const name of ['pot-tilt', 'stream-in', 'stream-sway', 'stream-flow', 'spark']) {
     assert.ok(motionBlock.includes(`studio-${name}`), `${name} is inside the no-preference query`);
   }
-  for (const selector of ['stream', 'pool', 'ripple', 'drop']) {
+  for (const selector of ['stream', 'spark']) {
     assert.match(LOADING_STYLE, new RegExp(`[.]${selector} [{][^}]*opacity: 0;`), `the ${selector} is hidden until its animation shows it`);
   }
   assert.match(motionBlock, /data-state="done"\] [{] animation-delay: 0[.]2s; [}]/);
