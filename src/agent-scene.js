@@ -464,6 +464,8 @@ function nodeFrom(value) {
   if (value.billboard !== undefined) {
     if (value.geometry === undefined) throw invalidField('billboard', value.billboard, 'a field on a mesh node whose geometry is a plane; remove it from group nodes', TypeError);
     result.billboard = agentSceneModule('textBillboard').normalizeBillboard(value.billboard);
+    // A tag is a flat sheet that faces the camera: its shadow is a stray line on the ground, so it casts none unless castShadow is true.
+    if (value.castShadow === undefined && value.shadowOnly !== true) result.castShadow = false;
   }
   if (value.depthLayer !== undefined) {
     integer(value.depthLayer, 0, MAXIMUM_DEPTH_LAYER, 'depthLayer');

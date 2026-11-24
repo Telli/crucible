@@ -303,3 +303,19 @@ test('the default billboard placement follows a part that moves', () => {
   assert.ok(Math.abs(gapAt(0) - 0.2 * height) < 1e-3, `gap at 0 s ${gapAt(0)}`);
   assert.ok(Math.abs(gapAt(2) - 0.2 * height) < 5e-3, `gap at 2 s ${gapAt(2)}`);
 });
+
+test('a billboard casts no shadow unless castShadow is true, a sign on a face keeps the default (#3237)', () => {
+  const scene = createAgentScene(recipe({
+    nodes: [
+      { id: 'post', geometry: 'block', material: 'tag' },
+      { id: 'tag-default', parent: 'post', geometry: 'sheet', material: 'tag', billboard: { screenHeight: 0.03 } },
+      { id: 'tag-shadowed', parent: 'post', geometry: 'sheet', material: 'tag', billboard: { screenHeight: 0.03 }, castShadow: true },
+      { id: 'sign', parent: 'post', geometry: 'sheet', material: 'tag', decal: true },
+    ],
+  }));
+  const flagOf = name => scene.parts.find(part => part.name === name).castShadow;
+  assert.equal(flagOf('tag-default'), false);
+  assert.equal(flagOf('tag-shadowed'), true);
+  assert.notEqual(flagOf('sign'), false);
+  assert.notEqual(flagOf('post'), false);
+});
