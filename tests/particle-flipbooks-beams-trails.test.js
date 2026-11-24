@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene, loadPhysicsEngine } from '../src/agent-scene.js';
 import { curveAt, flipbookFrame, flipbookUv, normalizeCurve } from '../src/particle-curves.js';
+import { buildRibbonMesh } from '../src/particle-ribbons.js';
 
 test.before(() => loadPhysicsEngine({ buoyancy: true }));
 
@@ -164,4 +165,20 @@ test('the colour curve reaches the vertex colour of a particle at a known age (#
   const preset = recipeWith([{ node: 'fx', preset: 'fire', count: 1, lifetime: 2, speed: 0, emitter: { shape: 'point' } }]);
   const fire = Array.from(sampled(preset, 0.8).colors.subarray(0, 3));
   assert.ok(fire[0] > fire[1] && fire[1] > fire[2], `fire is orange (red above green above blue), got [${fire.map(value => value.toFixed(3))}]`);
+});
+
+test('a ribbon bend is mitred: a 90 degree corner keeps its width and no quad folds over (#3240)', () => {
+  const points = [[0, 0, 0], [1, 0, 0], [1, 1, 0]];
+  const mesh = buildRibbonMesh(points, [0.2, 0.2, 0.2], [1, 1, 1], [0, 0.5, 1], {}, { eye: [0, 0, 10] });
+  const corner = [0, 1, 2].map(axis => (mesh.positions[6 + axis] + mesh.positions[9 + axis]) / 2);
+  assertClose(corner, [1, 0, 0], 'the corner ring is centred on the point');
+  const half = Math.hypot(...[0, 1, 2].map(axis => mesh.positions[9 + axis] - mesh.positions[6 + axis])) / 2;
+  assert.ok(Math.abs(half - 0.1 * Math.SQRT2) < 1e-4, `the corner is mitred to width over the cosine of half the turn, got ${half}`);
+  const sideOf = quad => {
+    const [a, b, c] = [mesh.indices[quad * 6], mesh.indices[quad * 6 + 1], mesh.indices[quad * 6 + 2]];
+    const edge = (from, to) => [0, 1].map(axis => mesh.positions[to * 3 + axis] - mesh.positions[from * 3 + axis]);
+    const [first, second] = [edge(a, b), edge(a, c)];
+    return Math.sign(first[0] * second[1] - first[1] * second[0]);
+  };
+  assert.equal(sideOf(0), sideOf(1), 'both quads face the same way, so none folds over');
 });

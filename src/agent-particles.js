@@ -27,11 +27,11 @@ const PARTICLE_PRESETS = Object.freeze({
   fire: Object.freeze({
     count: 200, rate: 45, lifetime: [0.5, 0.9], speed: [0.3, 0.9], size: [0.18, 0.3], spread: 12, drag: 1, orient: 'billboard', spin: [-40, 40],
     gravityScale: 0, acceleration: [0, 2.5, 0], emitter: { shape: 'disc', radius: 0.1 },
-    sizeOverLife: [[0, 0.5], [0.25, 1], [1, 0.1]], alpha: [[0, 0], [0.1, 0.3], [0.7, 0.15], [1, 0]],
-    color: [[0, [1, 0.75, 0.3]], [0.4, [1, 0.35, 0.05]], [1, [0.25, 0.03, 0]]],
+    sizeOverLife: [[0, 0.5], [0.25, 1], [1, 0.1]], alpha: [[0, 0], [0.1, 0.22], [0.7, 0.1], [1, 0]],
+    color: [[0, [1, 0.7, 0.15]], [0.35, [1, 0.3, 0.03]], [1, [0.22, 0.02, 0]]],
   }),
   sparkles: Object.freeze({
-    count: 120, rate: 40, lifetime: [0.8, 1.6], speed: [0.1, 0.5], size: [0.03, 0.06], spread: 180, drag: 0.5, orient: 'billboard',
+    count: 240, rate: 80, lifetime: [0.8, 1.6], speed: [0.1, 0.5], size: [0.06, 0.12], spread: 180, drag: 0.5, orient: 'billboard',
     gravityScale: 0, emitter: { shape: 'sphere', radius: 0.4 },
     sizeOverLife: [[0, 0], [0.15, 1], [0.3, 0.4], [0.45, 1], [0.6, 0.4], [0.75, 1], [1, 0]],
     alpha: [[0, 0], [0.15, 1], [0.3, 0.25], [0.45, 1], [0.6, 0.25], [0.75, 1], [1, 0]],
