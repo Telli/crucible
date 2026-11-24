@@ -41,6 +41,7 @@ export const SPECIES = {
       cardSize: [1.05, 1.1], cardsPerSite: 2,
       // A broad crown lights like a dome: its cards take most of the crown's own normal (#2991).
       roundedNormals: { blend: 0.7, skyLift: 0.35 },
+      crownLight: { core: 0.26, hull: 1.45, exponent: 1.5 },
     },
   },
   birch: {
@@ -66,6 +67,8 @@ export const SPECIES = {
       cardSize: [0.8, 0.85], cardsPerSite: 2,
       // Birch leaves hang, so the crown's normal tilts up less than an oak's (#2991).
       roundedNormals: { blend: 0.65, skyLift: 0.2 },
+      // Birch leaf colour is already pale: a hull at the oak's multiple glows neon with the sun behind (measured, #2991).
+      crownLight: { core: 0.22, hull: 0.72, exponent: 1.4 },
     },
   },
   conifer: {

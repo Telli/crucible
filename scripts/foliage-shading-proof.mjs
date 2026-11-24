@@ -4,6 +4,7 @@
 //
 //   node scripts/foliage-shading-proof.mjs --out artifacts/2991/after [--reference artifacts/3057/refs] [--width 640] [--height 480]
 //        [--subjects oak,birch,forest] [--backend gpu|cpu]
+//        [--distances 8,30] [--suns behind,side] [--ground-color 0.3,0.3,0.3]
 //
 // Subjects: `oak` and `birch` (one preset tree, seed 4) and `forest` (200 oak trees). For each it renders four stills
 // (8 m and 30 m from the trunk, sun behind the tree and sun to the side) and puts them beside a photo from
@@ -25,10 +26,10 @@ const SEED = 4;
 const FOREST_AREA = 50;
 const FOREST_DENSITY = 0.02;
 const GROUND_SIZE = 400;
-const GRASS_COLOR = [0.16, 0.24, 0.07];
+const DEFAULT_GROUND_COLOR = [0.16, 0.24, 0.07];
 // `lightDirection` points toward the sun. The camera sits on +z and looks toward -z.
 const SUNS = Object.freeze({ behind: [0.12, 0.34, -0.93], side: [0.93, 0.34, 0.12] });
-const DISTANCES = Object.freeze([8, 30]);
+const DEFAULT_DISTANCES = Object.freeze([8, 30]);
 const SUBJECTS = Object.freeze({
   oak: { vegetation: { preset: 'oak', seed: SEED }, photoFolder: 'oak', height: null },
   birch: { vegetation: { preset: 'birch', seed: SEED }, photoFolder: 'birch', height: null },
@@ -39,7 +40,7 @@ const CELL_HEIGHT = 240;
 const LABEL_HEIGHT = 22;
 
 function parseArguments(argv) {
-  const options = { out: null, reference: 'artifacts/3057/refs', width: 640, height: 480, subjects: Object.keys(SUBJECTS), backend: 'gpu' };
+  const options = { out: null, reference: 'artifacts/3057/refs', width: 640, height: 480, subjects: Object.keys(SUBJECTS), backend: 'gpu', distances: [...DEFAULT_DISTANCES], suns: Object.keys(SUNS), groundColor: DEFAULT_GROUND_COLOR };
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index];
     const value = argv[index + 1];
@@ -50,12 +51,19 @@ function parseArguments(argv) {
     else if (name === '--height') options.height = Number(value);
     else if (name === '--subjects') options.subjects = value.split(',');
     else if (name === '--backend') options.backend = value;
-    else throw new Error(`Unknown option ${name}; use --out, --reference, --width, --height, --subjects or --backend.`);
+    else if (name === '--distances') options.distances = value.split(',').map(Number);
+    else if (name === '--suns') options.suns = value.split(',');
+    else if (name === '--ground-color') options.groundColor = value.split(',').map(Number);
+    else throw new Error(`Unknown option ${name}; use --out, --reference, --width, --height, --subjects, --backend, --distances, --suns or --ground-color.`);
   }
   if (!options.out) throw new Error('Pass --out <folder>, such as --out artifacts/2991/after.');
   for (const subject of options.subjects) {
     if (!SUBJECTS[subject]) throw new Error(`Unknown subject ${subject}; use ${Object.keys(SUBJECTS).join(', ')}.`);
   }
+  for (const sunName of options.suns) {
+    if (!SUNS[sunName]) throw new Error(`Unknown sun ${sunName}; use ${Object.keys(SUNS).join(', ')}.`);
+  }
+  if (options.groundColor.length !== 3 || options.groundColor.some(Number.isNaN)) throw new Error('--ground-color needs three numbers, such as --ground-color 0.3,0.3,0.3.');
   if (!['gpu', 'cpu'].includes(options.backend)) throw new Error('--backend must be gpu or cpu.');
   return options;
 }
@@ -68,7 +76,7 @@ function treeHeightOf(subjectName) {
   return bounds.maximum[1] - bounds.minimum[1];
 }
 
-function buildRecipe({ subjectName, distance, sunName, height }) {
+function buildRecipe({ subjectName, distance, sunName, height, groundColor }) {
   const isForest = subjectName === 'forest';
   const eyeZ = isForest ? FOREST_AREA + distance : distance;
   const eyeHeight = isForest ? 2 : height * 0.35;
@@ -81,7 +89,7 @@ function buildRecipe({ subjectName, distance, sunName, height }) {
     format: 'crucible.scene',
     schemaVersion: 1,
     geometries: [isForest ? { id: 'ground', type: 'terrain', size: 200, resolution: 64, seed: 3, amplitude: 1 } : { id: 'ground', type: 'box', bevel: 0 }],
-    materials: [{ id: 'soil', color: GRASS_COLOR, metallic: 0, roughness: 0.95 }],
+    materials: [{ id: 'soil', color: groundColor, metallic: 0, roughness: 0.95 }],
     nodes: [
       isForest ? { id: 'ground', geometry: 'ground', material: 'soil' } : { id: 'ground', geometry: 'ground', material: 'soil', translation: [0, -0.05, 0], scale: [GROUND_SIZE, 0.1, GROUND_SIZE] },
       { id: 'trees', vegetation: SUBJECTS[subjectName].vegetation },
@@ -163,12 +171,12 @@ async function main() {
   const bySubject = options.subjects.map((subjectName) => {
     const height = treeHeightOf(subjectName);
     const plans = [];
-    for (const distance of DISTANCES) {
-      for (const sunName of Object.keys(SUNS)) {
+    for (const distance of options.distances) {
+      for (const sunName of options.suns) {
         const name = `${subjectName}-${distance}m-${sunName}`;
         plans.push({
           name, distance, sunName, stillPath: join(outputFolder, `${name}.png`),
-          recipe: buildRecipe({ subjectName, distance, sunName, height }),
+          recipe: buildRecipe({ subjectName, distance, sunName, height, groundColor: options.groundColor }),
           description: { subject: subjectName, seed: SEED, distance, sun: SUNS[sunName], sunName, treeHeight: height },
         });
       }

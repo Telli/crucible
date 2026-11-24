@@ -57,7 +57,7 @@ export function roundedNormalSettings(leafSpec, fallbackBlend) {
 
 // Light new growth at the branch tips, a share of the leaves at the outside of the crown (depth above `TIP_START`).
 const TIP_START = 0.72;
-const TIP_LIGHTEN = 0.14;
+const TIP_LIGHTEN = 0.1;
 const TIP_NEW_GROWTH = [0.07, 0.05, -0.1];
 
 /** Colour multiplier of the outermost leaves: lighter and yellower, like the young leaves at a branch tip. */
@@ -65,4 +65,20 @@ export function tipTint(depth) {
   const tip = clamp((depth - TIP_START) / (1 - TIP_START), 0, 1);
   const smooth = tip * tip * (3 - 2 * tip);
   return TIP_NEW_GROWTH.map(shift => 1 + TIP_LIGHTEN * smooth + shift * smooth);
+}
+
+// How bright the leaves are from the centre of the crown to its hull, as a multiple of the species' leaf colour. Light reaches
+// the hull directly and the centre only through other leaves, so the hull is brighter than the leaf colour and the centre a good
+// deal darker, and `exponent` keeps the dark part to the inside: a crown reads as a lit shell around a shaded core.
+const DEFAULT_CROWN_LIGHT = Object.freeze({ core: 0.26, hull: 1.45, exponent: 1.5 });
+const SKY_SIDE_GAIN = 0.12;
+
+/** The species' crown light (`leaf.crownLight { core, hull, exponent }`), each number defaulting to the oak's. */
+export function crownLightSettings(leafSpec) {
+  return { ...DEFAULT_CROWN_LIGHT, ...(leafSpec.crownLight ?? {}) };
+}
+
+/** Leaf brightness at `depth` (0 centre, 1 hull) and `heightFraction` (0 bottom, 1 top of the crown). */
+export function crownBrightness(light, depth, heightFraction) {
+  return light.core + (light.hull - light.core) * depth ** light.exponent + SKY_SIDE_GAIN * heightFraction;
 }

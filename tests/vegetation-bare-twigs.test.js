@@ -33,7 +33,7 @@ test('trees in leaf keep the geometry they had before bare twigs existed (#2826)
   // The foliage's shading normals and colours are pinned apart, so a deliberate shading change (#2991 rounded crown normals, crown
   // depth, clump tint) updates these lines only.
   assert.equal(geometryHash(trees, ['normals'], 2, ['foliage']), '30d034f67c2327faa70ae428dbdc7be1e707b37f508c181dfaece4e97ba718e4');
-  assert.equal(geometryHash(trees, ['colors'], 2), '5126f184ae91363c3965ba6fd71a0920b76959e035b59fbec78afade379f8441');
+  assert.equal(geometryHash(trees, ['colors'], 2), 'f9e913cb82e1c2cde10f477945853170371dab8db024323e25ac6b4ed073a63e');
 });
 
 test('a bare broadleaf grows twigs past its last branch level, near the triangles of the tree in leaf', () => {

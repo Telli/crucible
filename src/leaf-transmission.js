@@ -11,10 +11,16 @@ import { shaderTransforms } from './shader-registry.js';
 const FOLIAGE_ENABLED = '#define TAG_FOLIAGE (surface.w == 4.0)';
 const SUN_LINE = /\n  vec3 radiance = illuminate\(normal, viewDirection, normalize\(lightDirection\), keyColor \* visibility \* shadowTint([^,]*), color, metallic, roughness\);/;
 const DEFINITION_ANCHOR = '\nvec3 toneMap(vec3 color) {';
+// The sun's shadow test of `shadowVisibility`: a leaf card is thin and its shading normal is the crown's, not its own, so at the
+// usual bias the sunlit flank of a crown shadows itself in specks. A foliage shader takes a larger bias; a leaf is a few
+// millimetres thick, so nothing floats off its shadow.
+const SHADOW_BIAS_LINE = '  float bias = shadowBiasPerSlope * clamp(sqrt(1.0 - cosine * cosine) / cosine, 0.25, 4.0);';
+/** How many times the usual shadow bias a foliage shader uses for the sun (measured: the sunlit half of an oak crown gains 15 percent). */
+export const FOLIAGE_SHADOW_BIAS_SCALE = 8;
 
 /** The numbers of the term; the shader and `leafTransmissionReference` both read them. */
 export const LEAF_TRANSMISSION_PARAMETERS = Object.freeze({
-  strength: 0.9,
+  strength: 0.8,
   throughCrown: 0.45,
   shadeGlow: 0.07,
   behindWeight: 0.3,
@@ -59,7 +65,8 @@ export function leafTransmissionReference({ normal, viewDirection, lightDirectio
 /** Adds leaf transmission to a fragment shader that draws foliage; every other source passes through unchanged. */
 export function addLeafTransmission(source) {
   if (!source.includes(FOLIAGE_ENABLED) || !source.includes(DEFINITION_ANCHOR) || !SUN_LINE.test(source)) return source;
-  const withDefinition = source.replace(DEFINITION_ANCHOR, () => LEAF_TRANSMISSION_CODE + DEFINITION_ANCHOR);
+  const withBias = source.replace(SHADOW_BIAS_LINE, () => `${SHADOW_BIAS_LINE.slice(0, -1)} * ${glslFloat(FOLIAGE_SHADOW_BIAS_SCALE)};`);
+  const withDefinition = withBias.replace(DEFINITION_ANCHOR, () => LEAF_TRANSMISSION_CODE + DEFINITION_ANCHOR);
   return withDefinition.replace(SUN_LINE, (line, sunLink) => `${line}\n  if (TAG_FOLIAGE) radiance += leafTransmission(normal, viewDirection, normalize(lightDirection), keyColor * shadowTint${sunLink}, visibility, color);`);
 }
 

@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTree, resolveTreePreset } from '../src/vegetation.js';
 import { createFragmentShader } from '../src/shaders.js';
-import { crownDepth, describeCrownShape, roundedCanopyNormal, roundedNormalSettings, tipTint } from '../src/foliage-shading.js';
-import { LEAF_TRANSMISSION_PARAMETERS, addLeafTransmission, leafTransmissionReference } from '../src/leaf-transmission.js';
+import { crownBrightness, crownDepth, crownLightSettings, describeCrownShape, roundedCanopyNormal, roundedNormalSettings, tipTint } from '../src/foliage-shading.js';
+import { FOLIAGE_SHADOW_BIAS_SCALE, LEAF_TRANSMISSION_PARAMETERS, addLeafTransmission, leafTransmissionReference } from '../src/leaf-transmission.js';
 
 function foliageOf(tree, levelIndex = 0) {
   return tree.levels[levelIndex].parts.find(part => part.role === 'foliage').geometry;
@@ -42,7 +42,7 @@ test('crown occlusion is baked: leaves deeper in the crown are darker than leave
       else if (depth > 0.85) outer.push(luminanceAt(geometry, index));
     });
     assert.ok(inner.length > 20 && outer.length > 20, `${name}: both shells need leaves (${inner.length}, ${outer.length})`);
-    assert.ok(mean(inner) < mean(outer) * 0.8, `${name}: inner luminance ${mean(inner).toFixed(3)} should be under 80% of outer ${mean(outer).toFixed(3)}`);
+    assert.ok(mean(inner) < mean(outer) * 0.5, `${name}: inner luminance ${mean(inner).toFixed(3)} should be under half of outer ${mean(outer).toFixed(3)} (round 1 measured 0.6)`);
   }
 });
 
@@ -157,4 +157,60 @@ test('the shader term reads the same numbers as the reference and exists only in
     assert.equal(addLeafTransmission(plain), plain, `shader with ${features.join(',') || 'no features'} is left alone`);
     assert.ok(!plain.includes('leafTransmission'));
   }
+});
+
+// The shading terms of a sunlit leaf on plain numbers: sun on the crown's own normal plus a constant sky share, scaled by the
+// leaf's baked colour. Light that reaches the sun-facing flank of a crown is a clear multiple of the light on the far flank.
+const SKY_SHARE = 0.25;
+
+function flankRadiance(geometry, sunDirection) {
+  const positions = vertexPositions(geometry);
+  const center = describeCrownShape(positions).center;
+  const sunSide = positions.map(position => position.reduce((sum, value, axis) => sum + (value - center[axis]) * sunDirection[axis], 0));
+  const lit = [];
+  const shaded = [];
+  positions.forEach((position, index) => {
+    const normal = [geometry.normals[index * 3], geometry.normals[index * 3 + 1], geometry.normals[index * 3 + 2]];
+    const sun = Math.max(normal[0] * sunDirection[0] + normal[1] * sunDirection[1] + normal[2] * sunDirection[2], 0);
+    const radiance = luminanceAt(geometry, index) * (SKY_SHARE + (1 - SKY_SHARE) * sun);
+    (sunSide[index] > 0 ? lit : shaded).push(radiance);
+  });
+  return { lit: mean(lit), shaded: mean(shaded) };
+}
+
+test('with the sun beside the tree the sun-facing flank of every crown is clearly brighter than the far flank', () => {
+  const sun = [0.93, 0.34, 0.12].map(value => value / Math.hypot(0.93, 0.34, 0.12));
+  for (const [name, grow] of TREES) {
+    const { lit, shaded } = flankRadiance(foliageOf(grow()), sun);
+    assert.ok(lit > 1.6 * shaded, `${name}: sun-facing flank ${lit.toFixed(3)} should be over 1.6 times the far flank ${shaded.toFixed(3)}`);
+    // The birch is toned down on purpose (its leaf colour is pale), so only the dark-leaved crowns pin the lit flank's level (round 1 measured 0.725).
+    if (name !== 'birch') assert.ok(lit > 0.74, `${name}: sun-facing flank radiance ${lit.toFixed(3)} should reach 0.74`);
+  }
+});
+
+test('the crown is a lit shell around a darker, cooler core', () => {
+  const light = crownLightSettings(createTreeLeafSpec('broadleaf'));
+  assert.ok(crownBrightness(light, 0.3, 0.5) < 0.6 * crownBrightness(light, 1, 0.5), 'a leaf at 30 percent depth is under 60 percent of a hull leaf');
+  assert.ok(crownBrightness(light, 1, 0.5) > 1.3, 'the hull is lit brighter than the leaf colour');
+});
+
+test('birch back-light is toned down against the oak: the same sun behind a pale birch hull leaf glows less than it used to', () => {
+  const glowAtHull = (species, hull) => {
+    const leaf = createTreeLeafSpec(species);
+    const color = leaf.foliageColor.map(value => value * 1.5 * hull);
+    return mean(leafTransmissionReference({ normal: [0, 0, 1], viewDirection: [0, 0, 1], lightDirection: [0, 0.3, -0.954].map(value => value / Math.hypot(0, 0.3, 0.954)), visibility: 1, color }));
+  };
+  const birchNow = glowAtHull('birch', crownLightSettings(createTreeLeafSpec('birch')).hull);
+  const birchBefore = glowAtHull('birch', 1.1);
+  const oakNow = glowAtHull('broadleaf', crownLightSettings(createTreeLeafSpec('broadleaf')).hull);
+  assert.ok(birchNow < 0.7 * birchBefore, `birch hull glow ${birchNow.toFixed(3)} against ${birchBefore.toFixed(3)} before`);
+  assert.ok(birchNow < 0.85 * oakNow, `birch ${birchNow.toFixed(3)} should glow less than oak ${oakNow.toFixed(3)} although its leaf colour is paler`);
+});
+
+test('a foliage shader tests the sun shadow with a larger bias so the sunlit flank does not shadow itself', () => {
+  const plain = createFragmentShader(['foliage']);
+  const foliage = addLeafTransmission(plain);
+  assert.ok(foliage.includes(`clamp(sqrt(1.0 - cosine * cosine) / cosine, 0.25, 4.0) * ${FOLIAGE_SHADOW_BIAS_SCALE}.0;`));
+  assert.ok(FOLIAGE_SHADOW_BIAS_SCALE > 1);
+  assert.equal(plain.split('shadowBiasPerSlope * clamp').length - 1, foliage.split('shadowBiasPerSlope * clamp').length - 1, 'no bias line is added or lost');
 });
