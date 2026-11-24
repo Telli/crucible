@@ -2315,7 +2315,7 @@ export const STUDIO_CSS = `
 .crucible-studio-setup-handle[data-size="small"]::before { inline-size: 8px; block-size: 8px; }
 .crucible-studio-setup-handle[data-size="medium"]::before { inline-size: 12px; block-size: 12px; }
 .crucible-studio-setup-handle[data-size="large"]::before { inline-size: 18px; block-size: 18px; }
-/* The AI agent step is one or two cards at the 16px step gap, wider than the 12px inside a card. A card has one inset on all
+/* The AI agent step is one or two cards at the 16px step gap, twice the 8px inside a card. A card has one inset on all
    four sides and a head row: its icon, its title and, for the built-in AI, its one control. The own agent's one action, the copy
    button, sits on the prompt box, so the text and the way to copy it are one thing. */
 .crucible-studio-setup-agent {
@@ -2326,7 +2326,7 @@ export const STUDIO_CSS = `
 .crucible-studio-setup-agent-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--studio-space-12);
+  gap: var(--studio-space-8);
   min-inline-size: 0;
   padding: var(--studio-space-16);
   border-radius: 10px;
