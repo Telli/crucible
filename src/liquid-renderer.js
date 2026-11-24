@@ -112,6 +112,8 @@ export function resolveSceneDepth(renderer, width, height) {
       context.deleteFramebuffer(framebuffer);
       renderer.renderTargets?.release('refractionDepth');
       renderer.refractionDepth = null;
+      // The back-face target is only built on top of this one, so it goes with it.
+      renderer.glassBackFaces?.release();
     };
     target = { texture, framebuffer, width, height, reversed, release };
     renderer.refractionDepth = target;
