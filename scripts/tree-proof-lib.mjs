@@ -22,6 +22,8 @@ export const PAINTED_LEAF_PIXELS = Object.freeze({
   sprig: Object.freeze([22, 40]),
   twig: Object.freeze([19, 29]),
   needles: Object.freeze([19, 34]),
+  pine: Object.freeze([18, 30]),
+  frond: Object.freeze([24, 115]),
   single: Object.freeze([96, 124]),
   clump: Object.freeze([24, 36]),
 });
@@ -90,7 +92,7 @@ export function paintedLeafLengthCentimeters({ texture, cardHeightMeters, leafSc
   const pixels = Object.hasOwn(PAINTED_LEAF_PIXELS, texture) ? PAINTED_LEAF_PIXELS[texture] : null;
   if (!pixels) throw new RangeError(`texture must be one of ${Object.keys(PAINTED_LEAF_PIXELS).join(', ')}; got ${texture}`);
   if (!(cardHeightMeters > 0)) throw new RangeError('cardHeightMeters must be a positive number of meters, such as 1.1');
-  const textureSize = texture === 'twig' ? TWIG_TEXTURE_PIXELS : LEAF_TEXTURE_PIXELS;
+  const textureSize = texture === 'twig' || texture === 'frond' || texture === 'pine' ? TWIG_TEXTURE_PIXELS : LEAF_TEXTURE_PIXELS;
   return pixels.map(length => length / textureSize * cardHeightMeters * leafScale * 100);
 }
 
@@ -175,13 +177,13 @@ export function measureTreeLevels({ preset, seed = DEFAULT_SEED, height, frameSi
   const leaf = grown.leaf;
   return tree.levels.map((level, index) => {
     const setting = LEVEL_SETTINGS[index];
-    const paintsLeaves = setting.leafKeep > 0 && leaf.cardSize && leaf.texture;
+    const paintsLeaves = setting.leafKeep > 0 && !(setting.clumps && leaf.farClumps) && leaf.cardSize && leaf.texture;
     return {
       preset, seed, level: index,
       foliageTriangles: trianglesOf(level.parts, 'foliage'),
       barkTriangles: trianglesOf(level.parts, 'bark'),
       solidity: crownSolidity(tree, index, frameSize === undefined ? {} : { frameSize }),
-      leafCentimeters: paintsLeaves ? paintedLeafLengthCentimeters({ texture: leaf.texture, cardHeightMeters: leaf.cardSize[1], leafScale: setting.leafScale }) : null,
+      leafCentimeters: paintsLeaves ? paintedLeafLengthCentimeters({ texture: leaf.texture, cardHeightMeters: leaf.cardSize[1], leafScale: leaf.frondRibbon ? 1 : leaf.farCards?.[index]?.leafScale ?? setting.leafScale }) : null,
     };
   });
 }

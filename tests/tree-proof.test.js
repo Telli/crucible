@@ -80,9 +80,9 @@ test('level bounds cover the parts of that level, and the far crown is wider tha
 test('an oak measures four levels with the triangles of its geometry and a solidity between 0 and 1', () => {
   const rows = measureTreeLevels({ preset: 'oak', seed: 4, frameSize: 32 });
   assert.equal(rows.length, LEVEL_SETTINGS.length);
-  assert.deepEqual(rows.slice(0, 3).map(row => row.foliageTriangles), [6128, 2048, 186]);
+  assert.deepEqual(rows.slice(0, 3).map(row => row.foliageTriangles), [6128, 2048, 984]);
   for (const row of rows) assert.ok(row.solidity > 0 && row.solidity <= 1);
-  assert.equal(rows[2].leafCentimeters, null);
+  assert.ok(rows[2].leafCentimeters[0] > rows[1].leafCentimeters[0], 'the far level paints the same card on bigger quads');
   const [shortest, longest] = rows[0].leafCentimeters;
   assert.ok(shortest > 6 && longest < 13, 'twig cards paint leaves of 6 to 12 cm, an oak leaf');
   assert.ok(rows[1].leafCentimeters[0] > shortest * 1.6);

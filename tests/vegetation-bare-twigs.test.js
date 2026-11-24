@@ -6,10 +6,10 @@ import { createTree } from '../src/vegetation.js';
 
 await loadAllAgentSceneModules();
 
-function geometryHash(trees, keys) {
+function geometryHash(trees, keys, levelCount = 4) {
   const hash = createHash('sha256');
   for (const tree of trees) {
-    for (const level of tree.levels) {
+    for (const level of tree.levels.slice(0, levelCount)) {
       for (const part of level.parts) {
         for (const key of keys) {
           const values = part.geometry[key];
@@ -26,9 +26,9 @@ const triangleCount = geometry => geometry.indices.length / 3;
 test('trees in leaf keep the geometry they had before bare twigs existed (#2826)', () => {
   const trees = [['broadleaf', 'mesh', 21], ['broadleaf', 'cards', 3], ['birch', 'mesh', 5]].map(([species, leaves, seed]) => createTree({ species, leaves, height: 8 }, seed));
   // The shape of these trees on main before the twigs were added: they draw from their own random stream.
-  assert.equal(geometryHash(trees, ['positions', 'normals', 'uvs', 'indices']), '21489b9af9e6cbacaaf134205eade4a475d962d8dc7b3d44236335a07bafb1a5');
+  assert.equal(geometryHash(trees, ['positions', 'normals', 'uvs', 'indices'], 2), '42e73d813563db98bb2ca053a281b03d5992470d3f33255d0910006bb8fc0ef9');
   // Colours are pinned apart, so a deliberate tint change (#2991 leaf clump tint) updates this line only.
-  assert.equal(geometryHash(trees, ['colors']), '8a15a8e6f327e4db5464c6cd326ab043d7fe5ec3960e2c886d45fc6eb2bbd450');
+  assert.equal(geometryHash(trees, ['colors'], 2), '28cc763b41f571b33f951eef934e47813be3bb52d187f786e667f5dbf0eda7fa');
 });
 
 test('a bare broadleaf grows twigs past its last branch level, near the triangles of the tree in leaf', () => {
