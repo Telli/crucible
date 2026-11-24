@@ -1414,11 +1414,13 @@ export function createStudio(container, {
   }
 
   /** Copies the prompt; when the browser refuses, shows it in the recipe dialog instead. Resolves true only when it was copied. */
-  async function copyAgentPrompt() {
+  async function copyAgentPrompt({ announceResult = true } = {}) {
     const promptText = agentPromptText();
     try {
       await navigator.clipboard.writeText(promptText);
-      announce('Copied AI prompt to clipboard');
+      if (announceResult) {
+        announce('Copied AI prompt to clipboard');
+      }
       return true;
     } catch {
       openImportDialog(promptText);

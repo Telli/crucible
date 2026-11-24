@@ -4380,6 +4380,12 @@ test('the built-in card names who is signed in when the host says so, and the ac
   await emailOnly.dom.settle();
   assert.equal(signInControl(emailOnly).textContent, 'Signed in as ada@example.com');
 
+  withHostAgent(testContext, { account: { signedIn: true } });
+  const anonymous = mountStudio(testContext);
+  anonymous.studio.openSetup();
+  await anonymous.dom.settle();
+  assert.equal(signInControl(anonymous).textContent, 'Signed in', 'no name and no email leaves the plain status');
+
   withHostAgent(testContext, { signedIn: true, account: { signedIn: false } });
   const signedOut = mountStudio(testContext);
   signedOut.studio.openSetup();
@@ -4541,6 +4547,7 @@ test('the agent step shows the prompt and the copy button says Copied with a che
   assert.ok(copied, 'the button shows Copied');
   assert.notEqual(iconPathOf(copied), copyIcon, 'with a check mark instead of the copy icon');
   assert.equal(ui.dom.clipboardTexts[0], prompt.value);
+  assert.equal(ui.status(), '', 'the button says it, so no status toast says it again (#3311)');
 });
 
 test('a blocked clipboard leaves the copy button as it was instead of saying Copied (#3311)', async testContext => {

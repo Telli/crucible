@@ -339,7 +339,8 @@ export function createStudioSetup({
   }
   showCopied(false);
   copyPromptButton.addEventListener('click', async () => {
-    showCopied(await copyAgentPrompt());
+    // The button shows Copied itself, so the status toast would say it twice.
+    showCopied(await copyAgentPrompt({ announceResult: false }));
   });
   const builtInCard = builtInAgent
     ? createAgentCard(documentReference, createElement, createIcon, {

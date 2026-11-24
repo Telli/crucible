@@ -2325,18 +2325,25 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-setup-agent-card {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--studio-space-12);
   min-inline-size: 0;
   padding: var(--studio-space-16);
-  border: 1px solid var(--studio-border);
   border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--studio-border);
   background: color-mix(in srgb, var(--studio-text) 6%, transparent);
+}
+/* The card's own button is a button on the card: the dialog's 7% wash is as light as the card, so it takes the prompt box's
+   fill and a muted outline, which stay clear of the card in both themes. */
+.crucible-studio dialog .crucible-studio-setup-agent-card button {
+  border: 1px solid var(--studio-muted);
+  background: var(--studio-bg);
+  color: var(--studio-text);
 }
 .crucible-studio-setup-agent-head {
   display: flex;
   align-items: center;
   gap: var(--studio-space-8);
-  min-block-size: 32px;
 }
 .crucible-studio-setup-agent-head > .crucible-studio-icon {
   flex: none;
@@ -2344,12 +2351,14 @@ export const STUDIO_CSS = `
   block-size: 20px;
 }
 .crucible-studio-setup-agent-title {
-  flex: 1 1 auto;
-  min-inline-size: 0;
+  flex: none;
   font-weight: 600;
+  white-space: nowrap;
+  line-height: 20px;
 }
 .crucible-studio-setup-sign-in {
   display: inline-flex;
+  margin-inline-start: auto;
   align-items: center;
   gap: var(--studio-space-8);
   min-inline-size: 0;
@@ -2375,7 +2384,7 @@ export const STUDIO_CSS = `
   border-radius: 6px;
   background: var(--studio-bg);
 }
-.crucible-studio-setup-prompt-box > button { min-inline-size: 8.5em; }
+.crucible-studio-setup-prompt-box > button { inline-size: 10em; }
 @media (max-width: 520px) {
   .crucible-studio-setup-prompt-box { grid-template-columns: minmax(0, 1fr); }
   .crucible-studio-setup-prompt-box > button { justify-self: start; }
