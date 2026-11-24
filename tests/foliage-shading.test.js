@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createTree, resolveTreePreset } from '../src/vegetation.js';
 import { createFragmentShader } from '../src/shaders.js';
 import { crownBrightness, crownDepth, crownLightSettings, describeCrownShape, roundedCanopyNormal, roundedNormalSettings, tipTint } from '../src/foliage-shading.js';
-import { FOLIAGE_HIGHLIGHT_ROLL_OFF, FOLIAGE_MIN_SKY_VISIBILITY, FOLIAGE_SHADOW_BIAS_SCALE, FOLIAGE_SUN_SPECULAR_SCALE, LEAF_TRANSMISSION_PARAMETERS, addLeafTransmission, foliageHighlightRollOffReference, foliageSunSpecularPeak, leafTransmissionReference } from '../src/leaf-transmission.js';
+import { FOLIAGE_HIGHLIGHT_ROLL_OFF, FOLIAGE_MIN_SKY_VISIBILITY, FOLIAGE_SHADOW_BIAS_SCALE, FOLIAGE_SUN_SPECULAR_SCALE, LEAF_TRANSMISSION_PARAMETERS, addLeafTransmission, foliageHighlightRollOffReference, foliageSkyVisibilityReference, foliageSunSpecularPeak, leafTransmissionReference } from '../src/leaf-transmission.js';
 
 function foliageOf(tree, levelIndex = 0) {
   return tree.levels[levelIndex].parts.find(part => part.role === 'foliage').geometry;
@@ -245,7 +245,7 @@ test('the crown light spans deep shade to sunlit hull: a bright hull, a dark cor
   for (const species of ['broadleaf', 'birch']) {
     const light = crownLightSettings(createTreeLeafSpec(species));
     const spread = crownBrightness(light, 1, 0.5) / crownBrightness(light, 0, 0.5);
-    assert.ok(spread > (species === 'birch' ? 5 : 10), `${species}: hull over core is ${spread.toFixed(1)} times (round 2 had 3 to 5, round 5 lifted the core for the shadow side: oak 20, birch 5.5)`);
+    assert.ok(spread > (species === 'birch' ? 5 : 15), `${species}: hull over core is ${spread.toFixed(1)} times (round 2 had 3 to 5, round 5 lifted the core for the shadow side: oak 20, birch 5.5; round 6 puts the oak bound back from 10 to 15)`);
   }
   assert.ok(crownBrightness(crownLightSettings(createTreeLeafSpec('broadleaf')), 1, 0.5) > 2.2, 'an oak hull leaf reaches a bright sunlit tail');
   const sun = [0.93, 0.34, 0.12].map(value => value / Math.hypot(0.93, 0.34, 0.12));
@@ -309,4 +309,35 @@ test('with the sun behind, a leaf at the rim of the crown glows too, so thin edg
   const noRimTerm = LEAF_TRANSMISSION_PARAMETERS.towardSunWeight * LEAF_TRANSMISSION_PARAMETERS.towardSunFloor;
   assert.ok(rim > 0.3 * faceOn, `a rim leaf glows ${rim.toFixed(3)} against ${faceOn.toFixed(3)} face on (round 4 had under 0.2)`);
   assert.ok(LEAF_TRANSMISSION_PARAMETERS.rimWeight > 0 && noRimTerm > 0);
+});
+
+// Round 6: with the sun behind, the round 5 glow read as milky grey-green ghost patches. It went through the highlight roll-off
+// (which moves bright radiance toward grey), took a desaturating filter and a sky floor that lifted the lit side as well.
+test('the glow keeps the leaf colour: saturated yellow-green, never grey or white, and brighter with more light', () => {
+  const light = BACK_SUN.lightDirection.map(value => value / Math.hypot(...BACK_SUN.lightDirection));
+  for (const scale of [0.4, 1, 3]) {
+    const color = LEAF_COLOR.map(value => value * scale);
+    const glow = leafTransmissionReference({ normal: [1, 0, 0], viewDirection: [0, 0, 1], lightDirection: light, visibility: 1, color });
+    const saturation = (Math.max(...glow) - Math.min(...glow)) / Math.max(...glow);
+    assert.ok(saturation > 0.5, `a glow of a leaf at ${scale} times its colour has saturation ${saturation.toFixed(2)}`);
+    assert.ok(glow[1] > glow[0] && glow[0] > glow[2], `the glow is yellow-green (green over red over blue): ${glow.map(value => value.toFixed(3))}`);
+    assert.ok(glow[0] > 0.9 * glow[1], `the glow is warm, red at least 0.9 of green (round 5 had 0.82): ${(glow[0] / glow[1]).toFixed(2)}`);
+  }
+});
+
+test('the glow is added after the highlight roll-off, so it is not pulled toward grey', () => {
+  const foliage = addLeafTransmission(createFragmentShader(['foliage']));
+  const rollOff = foliage.indexOf('if (TAG_FOLIAGE) radiance = mix(radiance');
+  const glow = foliage.indexOf('radiance += leafTransmission(');
+  assert.ok(rollOff > 0 && glow > rollOff, `roll-off at ${rollOff}, glow at ${glow}`);
+  assert.equal(foliage.split('radiance += leafTransmission(').length - 1, 1);
+});
+
+test('the sky floor lifts only the part of a leaf the sun does not reach, never the sunlit side', () => {
+  assert.equal(foliageSkyVisibilityReference(0.1, 1), 0.1, 'a sunlit leaf keeps its baked sky visibility');
+  assert.equal(foliageSkyVisibilityReference(0.1, 0), FOLIAGE_MIN_SKY_VISIBILITY, 'a leaf in shadow gets the floor');
+  assert.equal(foliageSkyVisibilityReference(0.9, 0), 0.9, 'a bright sky share is never lowered');
+  assert.ok(foliageSkyVisibilityReference(0.1, 0.5) > 0.1 && foliageSkyVisibilityReference(0.1, 0.5) < FOLIAGE_MIN_SKY_VISIBILITY);
+  const foliage = addLeafTransmission(createFragmentShader(['foliage']));
+  assert.ok(foliage.includes('1.0 - visibility) : vertexSkyVisibility'));
 });

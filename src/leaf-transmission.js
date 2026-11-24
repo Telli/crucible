@@ -29,7 +29,7 @@ export const FOLIAGE_MIN_SKY_VISIBILITY = 0.4;
 // Bright leaves in a photo are pale and grey-green (saturation 0.15 to 0.30), not lime (0.65 and over): sky and haze on the leaf
 // and the camera's highlight roll-off take the colour out of the bright end. A foliage shader rolls highlights toward grey.
 const HIGHLIGHT_ANCHOR = '  if (USES_SHEEN) radiance = sheenLayer(';
-export const FOLIAGE_HIGHLIGHT_ROLL_OFF = Object.freeze({ start: 0.15, end: 0.8, amount: 0.6 });
+export const FOLIAGE_HIGHLIGHT_ROLL_OFF = Object.freeze({ start: 0.1, end: 0.6, amount: 0.9 });
 /** How many times the usual shadow bias a foliage shader uses for the sun (measured: the sunlit half of an oak crown gains 15 percent). */
 export const FOLIAGE_SHADOW_BIAS_SCALE = 8;
 
@@ -42,13 +42,14 @@ export const LEAF_TRANSMISSION_PARAMETERS = Object.freeze({
   towardSunWeight: 0.7,
   towardSunSharpness: 3.0,
   towardSunFloor: 0.35,
-  desaturation: 0.45,
-  filter: Object.freeze([1.0, 1.05, 0.8]),
+  saturationBoost: 1.0,
+  filter: Object.freeze([1.35, 1.0, 0.6]),
   rimWeight: 0.35,
   rimSharpness: 2.5,
+  glowGreyShare: 0.35,
 });
 
-const { strength, throughCrown, shadeGlow, behindWeight, towardSunWeight, towardSunSharpness, towardSunFloor, desaturation, filter, rimWeight, rimSharpness } = LEAF_TRANSMISSION_PARAMETERS;
+const { strength, throughCrown, shadeGlow, behindWeight, towardSunWeight, towardSunSharpness, towardSunFloor, saturationBoost, filter, rimWeight, rimSharpness, glowGreyShare } = LEAF_TRANSMISSION_PARAMETERS;
 const glslFloat = value => (Number.isInteger(value) ? `${value}.0` : String(value));
 
 const LEAF_TRANSMISSION_CODE = `
@@ -58,11 +59,12 @@ const float LEAF_SHADE_GLOW = ${glslFloat(shadeGlow)};
 vec3 leafTransmission(vec3 normal, vec3 viewDirection, vec3 lightDirection, vec3 sunColor, float visibility, vec3 color) {
   float behind = max(-dot(normal, lightDirection), 0.0);
   float towardSun = pow(max(dot(-viewDirection, lightDirection), 0.0), ${glslFloat(towardSunSharpness)});
-  vec3 filtered = mix(vec3(dot(color, vec3(0.3, 0.59, 0.11))), color, ${glslFloat(desaturation)}) * vec3(${filter.map(glslFloat).join(', ')});
+  vec3 filtered = max(mix(vec3(dot(color, vec3(0.3, 0.59, 0.11))), color, ${glslFloat(saturationBoost)}), vec3(0.0)) * vec3(${filter.map(glslFloat).join(', ')});
   float reach = mix(LEAF_THROUGH_CROWN, 1.0, visibility);
   float rim = pow(1.0 - abs(dot(normal, viewDirection)), ${glslFloat(rimSharpness)});
   float glow = ${glslFloat(behindWeight)} * behind + ${glslFloat(towardSunWeight)} * towardSun * (${glslFloat(towardSunFloor)} + ${glslFloat(1 - towardSunFloor)} * behind + ${glslFloat(rimWeight)} * rim);
-  return filtered * sunColor * (reach * LEAF_TRANSMISSION * glow + (1.0 - visibility) * LEAF_SHADE_GLOW);
+  vec3 glowColor = filtered * sunColor * (reach * LEAF_TRANSMISSION * glow + (1.0 - visibility) * LEAF_SHADE_GLOW);
+  return mix(glowColor, vec3(dot(glowColor, vec3(0.2126, 0.7152, 0.0722))), ${glslFloat(glowGreyShare)});
 }
 `;
 
@@ -78,7 +80,15 @@ export function leafTransmissionReference({ normal, viewDirection, lightDirectio
   const reach = throughCrown + (1 - throughCrown) * visibility;
   const rim = (1 - Math.abs(dot(normal, viewDirection))) ** rimSharpness;
   const glow = behindWeight * behind + towardSunWeight * towardSun * (towardSunFloor + (1 - towardSunFloor) * behind + rimWeight * rim);
-  return color.map((channel, index) => (gray + (channel - gray) * desaturation) * filter[index] * (reach * strength * glow + (1 - visibility) * shadeGlow));
+  const glowColor = color.map((channel, index) => Math.max(gray + (channel - gray) * saturationBoost, 0) * filter[index] * (reach * strength * glow + (1 - visibility) * shadeGlow));
+  const glowGray = glowColor[0] * 0.2126 + glowColor[1] * 0.7152 + glowColor[2] * 0.0722;
+  return glowColor.map(channel => channel + (glowGray - channel) * glowGreyShare);
+}
+
+/** The sky visibility a foliage shader uses: the baked value in sun, lifted to the floor only as the sun is blocked (`sunVisibility` 0 in shadow, 1 in sun). */
+export function foliageSkyVisibilityReference(bakedVisibility, sunVisibility) {
+  const floored = Math.max(bakedVisibility, FOLIAGE_MIN_SKY_VISIBILITY);
+  return bakedVisibility + (floored - bakedVisibility) * (1 - sunVisibility);
 }
 
 /** The roll-off of `FOLIAGE_HIGHLIGHT_ROLL_OFF` on plain linear RGB: bright radiance moves toward its own luminance. */
@@ -114,12 +124,15 @@ export function addLeafTransmission(source) {
   if (!source.includes(FOLIAGE_ENABLED) || !source.includes(DEFINITION_ANCHOR) || !SUN_LINE.test(source)) return source;
   const withBias = source.replace(SHADOW_BIAS_LINE, () => `${SHADOW_BIAS_LINE.slice(0, -1)} * ${glslFloat(FOLIAGE_SHADOW_BIAS_SCALE)};`);
   const withSpecular = withBias.replace(SPECULAR_LINE, () => `${SPECULAR_LINE} if (TAG_FOLIAGE) specular *= ${glslFloat(FOLIAGE_SUN_SPECULAR_SCALE)};`);
-  const withOcclusion = withSpecular.replace(OCCLUSION_LINE, () => `  occlusion *= splatCavity * (TAG_FOLIAGE ? max(vertexSkyVisibility, ${glslFloat(FOLIAGE_MIN_SKY_VISIBILITY)}) : vertexSkyVisibility);`);
+  const withOcclusion = withSpecular.replace(OCCLUSION_LINE, () => `  occlusion *= splatCavity * (TAG_FOLIAGE ? mix(vertexSkyVisibility, max(vertexSkyVisibility, ${glslFloat(FOLIAGE_MIN_SKY_VISIBILITY)}), 1.0 - visibility) : vertexSkyVisibility);`);
   const { start, end, amount } = FOLIAGE_HIGHLIGHT_ROLL_OFF;
+  // The glow is added after the roll-off: the roll-off moves bright radiance toward grey, and a glow that went through it came out milky.
+  const sunLink = SUN_LINE.exec(source)[1];
   const withRollOff = withOcclusion.replace(HIGHLIGHT_ANCHOR, () => `  if (TAG_FOLIAGE) radiance = mix(radiance, vec3(dot(radiance, vec3(0.2126, 0.7152, 0.0722))), ${glslFloat(amount)} * smoothstep(${glslFloat(start)}, ${glslFloat(end)}, dot(radiance, vec3(0.2126, 0.7152, 0.0722))));
+  if (TAG_FOLIAGE) radiance += leafTransmission(normal, viewDirection, normalize(lightDirection), keyColor * shadowTint${sunLink}, visibility, color);
 ${HIGHLIGHT_ANCHOR}`);
   const withDefinition = withRollOff.replace(DEFINITION_ANCHOR, () => LEAF_TRANSMISSION_CODE + DEFINITION_ANCHOR);
-  return withDefinition.replace(SUN_LINE, (line, sunLink) => `${line}\n  if (TAG_FOLIAGE) radiance += leafTransmission(normal, viewDirection, normalize(lightDirection), keyColor * shadowTint${sunLink}, visibility, color);`);
+  return withDefinition;
 }
 
 shaderTransforms.push(addLeafTransmission);
