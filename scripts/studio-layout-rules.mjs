@@ -27,7 +27,7 @@ export const KINDS = Object.freeze({
 });
 
 // The elements whose text a person may select: text fields, and a block that opts in with the class. It is the same list as the
-// one rule in studio-styles.js that sets user-select: text, and tests/studio-selection.test.js keeps the two in step.
+// one rule in studio-styles.js that sets user-select: text, and tests/studio-text-selection.test.js keeps the two in step.
 export const SELECTABLE_SELECTOR = 'input, textarea, .crucible-studio-selectable, .crucible-studio-selectable *';
 
 const SIDES = Object.freeze(['top', 'right', 'bottom', 'left']);
