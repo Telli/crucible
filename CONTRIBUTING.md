@@ -28,6 +28,17 @@ The tests are in `tests/` and the guides are in `docs/`.
 
 Name the pull request `<imperative sentence> (#<issue>)`, such as `Add mesh bevel to mesh_edit (#412)`. Keep one change in each pull request.
 
+### Your first pull request
+
+Start with an issue labelled [`good first issue`](https://github.com/codepawl/crucible/labels/good%20first%20issue). Each one names the files to change and has a `Done when` list. None of them needs a GPU, Rust or Blender.
+
+1. Comment on the issue that you take it. A maintainer adds `status:in-progress`, so that nobody else starts it.
+2. Make the change and one test that fails without it.
+3. Run `node --test tests/<area>.test.js` for the area you changed, then `npm run preflight -- --skip-tests`.
+4. Open the pull request with `node scripts/open-pr.mjs`. Copy the `Done when` list of the issue into it and tick what you did.
+
+After you open it, a bot leaves one comment about the format. It is a hint, not a review. A maintainer reviews the diff, answers within about 7 days and merges it when the checks pass. If you are stuck, ask on the issue. The release notes thank every outside contributor by name.
+
 ### Open the pull request
 One command opens a pull request that passes the `PR metadata` check on its first run. Write the description to a file first (what changed, `Closes #N`, `## How I checked it`, `## Evidence`):
 

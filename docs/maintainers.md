@@ -1,5 +1,25 @@
 # Maintainers
 
+## From contributor to maintainer
+
+Each step adds one kind of access. A maintainer offers the next step on the contributor's last merged pull request.
+
+| Step | Who | What they can do |
+| --- | --- | --- |
+| Contributor | Anyone with a merged pull request | Take issues, open pull requests, answer in Discussions |
+| Triager | About 5 merged pull requests, and help on issues or Discussions | Label and close issues, add `status:in-progress`, ask for missing `Done when` lists |
+| Maintainer | Steady work over several releases, and reviews other people's pull requests | Write access: review and merge pull requests, run the GPU and person checks, cut releases |
+
+Look changes (`hold:look-approval`) and the `needs-owner-decision` label stay with the owner at every step.
+
+## Starter issues
+
+Keep about 10 open issues labelled `good first issue`. Each one names the files to change, has a `Done when` list and needs no GPU, Rust or Blender. Label `help wanted` on larger issues that have an agreed design and no owner. When a starter issue is taken or closed, label a new one.
+
+## Credit
+
+Every release note ends with a line that thanks each outside contributor whose pull request was merged in that release, by GitHub handle. Repeat the thanks in the release post on the project's X account.
+
 ## Automated first pass
 
 A workflow, `.github/workflows/claude-triage.yml`, has Claude look at every new issue and pull request from someone outside the team. It checks the format against `CONTRIBUTING.md` and the templates, looks for anything unsafe in a pull request, and leaves one comment that it updates in place. Its prompt is `.github/claude/triage-prompt.md`.
