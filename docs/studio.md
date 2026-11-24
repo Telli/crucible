@@ -42,15 +42,15 @@ One drag is one undo step, and undo leaves the viewport camera where you put it.
 
 ## Add an object or a light
 
-The add button on the rail and the one in the Scene head (or Shift+A) open the same menu. The shapes come in three groups, then the lights (point, spot and area):
+The add button on the rail and the one in the Scene head (or Shift+A) open the same menu, which follows the basics of Blender's Add menu in three groups:
 
-| Group | Shapes |
+| Group | Entries |
 | --- | --- |
-| Solids | box, sphere, icosphere, cylinder, cone, torus, capsule, dome, pyramid, prism, hexagon, wedge, pipe, arch, gem |
-| Flat shapes | plane, disc, ring, star, heart, 3D text |
-| Swept and grown shapes | vase, bowl, spring, knot, stairs, terrain |
+| Mesh | plane, box, circle, sphere, icosphere, cylinder, cone, torus |
+| Text | 3D text |
+| Light | point, spot and area |
 
-Each shape is an ordinary recipe geometry, so an agent can keep editing it: a ring is a `circle` with `innerRadius`, a vase and a capsule are a `lathe`, a star, a heart, a prism, a wedge and stairs are an `extrude`, a spring and a knot are a `tube` along a path, and a pyramid, a dome, a pipe, a bowl and a gem are a `mesh` around a `lathe` with a `smoothAngle` that keeps their edges hard. A new shape is about a metre wide and rests on the ground. A menu that opens low on the screen grows upward, so it stays inside the window.
+Each shape is an ordinary recipe geometry, so an agent can keep editing it: a circle is a `circle` geometry, and the rest are `plane`, `box`, `sphere`, `icoSphere`, `cylinder`, `cone`, `torus` and `text`. A new shape is about a metre wide and rests on the ground. A menu that opens low on the screen grows upward, so it stays inside the window. People build everything else from these, and an agent can still write any other geometry (`extrude`, `lathe`, `tube`, `terrain` and the rest) into the recipe: a scene that holds one opens, shows in the Scene list, selects and moves like any other object.
 
 ## Camera and lights in the Scene list
 
