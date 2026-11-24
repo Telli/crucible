@@ -1,8 +1,9 @@
 // Screen-space march of a refracted ray against the opaque scene's depth. Glass refracts the picture behind it, but a picture has no
 // distance: to know which surface the bent ray reaches, the liquid pass marches the ray through the depth buffer of the opaque pass,
 // finds the first step that lies behind the stored surface, narrows it with a binary search and reads the colour at that pixel.
-// A ray that leaves the screen, or never goes behind anything (the sky), misses; the shader then reads the scene a short fixed
-// reach along the ray instead (SCENE_REACH_PER_THICKNESS in glass-ball-lens.js).
+// A ray that leaves the screen, or never goes behind anything (the sky), misses; the shader then reads the scene at the last point of the
+// ray that is still on the screen: the sky it ends in, or the picture's edge. Only a ray that never reaches the screen at all falls back
+// to a short fixed reach along it (SCENE_REACH_PER_THICKNESS in glass-ball-lens.js).
 // The GLSL below follows the JavaScript reference line by line, so a test of the reference covers the shader.
 
 /** The march samples this many points along the ray, spaced closer together near its start. */
@@ -38,7 +39,8 @@ function pointAlong(origin, direction, distance) {
 /**
  * Marches a ray through a depth buffer.
  * `project(point)` returns { x, y, depth } (screen position 0..1, buffer depth) or null behind the camera; `sceneDepth(x, y)` returns the
- * stored depth at a screen position. Returns { distance, x, y } at the first surface the ray goes behind, or null on a miss.
+ * stored depth at a screen position. Returns { hit: true, distance, x, y } at the first surface the ray goes behind. A miss returns
+ * { hit: false, x, y } at the last point of the ray that was on the screen (null when not even the first step is on the screen).
  */
 export function marchSceneDepth({ origin, direction, maximumDistance, project, sceneDepth, reversed, steps = MARCH_STEPS, refineSteps = REFINE_STEPS }) {
   const probe = distance => {
@@ -47,10 +49,11 @@ export function marchSceneDepth({ origin, direction, maximumDistance, project, s
     return { x: projected.x, y: projected.y, behind: isBehindSurface(projected.depth, sceneDepth(projected.x, projected.y), reversed) };
   };
   let previousDistance = 0;
+  let lastOnScreen = null;
   for (let step = 1; step <= steps; step++) {
     const distance = marchDistance(step, steps, maximumDistance);
     const current = probe(distance);
-    if (!current) return null;
+    if (!current) return lastOnScreen;
     if (current.behind) {
       let nearDistance = previousDistance;
       let farDistance = distance;
@@ -65,26 +68,29 @@ export function marchSceneDepth({ origin, direction, maximumDistance, project, s
           nearDistance = middleDistance;
         }
       }
-      return { distance: farDistance, x: hit.x, y: hit.y };
+      return { hit: true, distance: farDistance, x: hit.x, y: hit.y };
     }
     previousDistance = distance;
+    lastOnScreen = { hit: false, x: current.x, y: current.y };
   }
-  return null;
+  return lastOnScreen;
 }
 
 /**
- * Where on the screen the shader reads the opaque colour for a glass fragment: the marched hit, or, when the march misses, the point
- * `fallbackReach` metres along the ray (null when that point is behind the camera, where the shader keeps the fragment's own position).
+ * Where on the screen the shader reads the opaque colour for a glass fragment: the marched hit; on a miss, the last point of the ray still
+ * on the screen; when not even the first step is on the screen, the point `fallbackReach` metres along the ray (null when that point
+ * is behind the camera, where the shader keeps the fragment's own position).
  */
 export function refractedScreenPosition({ origin, direction, maximumDistance, fallbackReach, project, sceneDepth, reversed }) {
   const hit = marchSceneDepth({ origin, direction, maximumDistance, project, sceneDepth, reversed });
-  if (hit) return { x: hit.x, y: hit.y, marched: true };
+  if (hit) return { x: hit.x, y: hit.y, marched: hit.hit };
   const fallback = project(pointAlong(origin, direction, fallbackReach));
   return fallback ? { x: fallback.x, y: fallback.y, marched: false } : null;
 }
 
-// Returns the screen position of the hit (xy) and 1 in z, or z = 0 for a miss. `sceneDepth` holds the opaque pass's depth, in the
-// buffer's own convention: depthMapping.z is 1 for a reversed buffer.
+// Returns the screen position of the hit (xy) and 1 in z; on a miss the last on-screen position and 0.5 in z; z = 0 when not even the
+// first step is on the screen. `sceneDepth` holds the opaque pass's depth, in the buffer's own convention: depthMapping.z is 1 for a
+// reversed buffer.
 export const glassDepthMarchGlsl = `
 const int MARCH_STEPS = ${MARCH_STEPS};
 const int REFINE_STEPS = ${REFINE_STEPS};
@@ -110,13 +116,14 @@ bool marchIsBehind(vec3 point, out vec2 screenPosition, out bool onScreen) {
 
 vec3 marchSceneDepth(vec3 origin, vec3 direction, float maximumDistance) {
   float previousDistance = 0.0;
+  vec3 lastOnScreen = vec3(0.0);
   for (int stepIndex = 1; stepIndex <= MARCH_STEPS; stepIndex++) {
     float fraction = float(stepIndex) / float(MARCH_STEPS);
     float rayDistance = maximumDistance * fraction * fraction;
     vec2 position;
     bool onScreen;
     bool behind = marchIsBehind(origin + direction * rayDistance, position, onScreen);
-    if (!onScreen) return vec3(0.0);
+    if (!onScreen) return lastOnScreen;
     if (behind) {
       float nearDistance = previousDistance;
       float farDistance = rayDistance;
@@ -135,7 +142,8 @@ vec3 marchSceneDepth(vec3 origin, vec3 direction, float maximumDistance) {
       return vec3(hit, 1.0);
     }
     previousDistance = rayDistance;
+    lastOnScreen = vec3(position, 0.5);
   }
-  return vec3(0.0);
+  return lastOnScreen;
 }
 `;

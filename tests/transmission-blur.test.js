@@ -10,10 +10,16 @@ import '../src/liquid-shader.js';
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} is not ${expected}`);
 const glassBatch = (roughness, indexOfRefraction = 1.5, transmission = 1) => ({ layerState: { 9: transmission, 10: indexOfRefraction }, parts: [{ material: { roughness } }] });
 
-test('the blur level is log2 of the larger side times roughness, and follows the three.js mapping at glass IOR', () => {
-  close(transmissionBlurLevel(0.5, 1.5, 1024, 512), 5);
+test('the blur level is log2 of the larger side times the microfacet width (roughness squared) at glass IOR', () => {
+  close(transmissionBlurLevel(0.5, 1.5, 1024, 512), 2.5);
   close(transmissionBlurLevel(1, 2.4, 1024, 512), 10);
-  close(transmissionBlurLevel(0.25, 1.5, 512, 1024), 2.5);
+  close(transmissionBlurLevel(0.25, 1.5, 512, 1024), 0.625);
+});
+
+test('a glTF cornea of roughness 0.076 stays sharp: its blur is far below a mip, where a linear roughness blurred it by three quarters of one', () => {
+  const corneaLevel = transmissionBlurLevel(0.0759494, 1.5, 960, 540);
+  assert.ok(corneaLevel < 0.1, `the cornea blurs ${corneaLevel} mips`);
+  assert.equal(batchesNeedRefractionMips([glassBatch(0.0759494)], 960, 540), false, 'no mip chain for the cornea');
 });
 
 test('an index of refraction of 1 gives no blur and the share is capped at the glass index', () => {

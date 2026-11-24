@@ -144,7 +144,7 @@ void main() {
   float transmissionShare = glassState.x * (1.0 - metallic);
   float indexOfRefraction = glass ? glassState.y : liquidOptics.y;
   // Glass bends the ray where it enters and where it leaves (a ball lens), then the ray is marched against the opaque depth to the surface
-  // it reaches. A liquid bends it once and reads the scene one thickness along. A march that misses reads the scene a short reach along the ray.
+  // it reaches. A liquid bends it once and reads the scene one thickness along. A march that misses reads the scene where the ray last was on the screen.
   float thickness = glass ? glassState.z : liquidOptics.x * mix(0.15, 1.0, facing);
   vec3 bent = refract(-viewDirection, normal, 1.0 / indexOfRefraction);
   vec3 samplePosition = worldPosition + bent * thickness;
@@ -162,7 +162,7 @@ void main() {
   }
   vec4 projected = viewProjection * vec4(samplePosition, 1.0);
   vec2 refracted = projected.w > 0.0 ? projected.xy / projected.w * 0.5 + 0.5 : screen;
-  if (depthHit.z > 0.5) refracted = depthHit.xy;
+  if (depthHit.z > 0.25) refracted = depthHit.xy;
   refracted = clamp(mix(screen, refracted, glass ? 1.0 : liquidOptics.z), vec2(0.001), vec2(0.999));
   // Rough glass reads a blurrier level of the scene's mip chain; a scene without one (or a liquid) reads the sharp image.
   float blurLevel = glass ? transmissionBlurLevel(roughness, indexOfRefraction, resolution) : 0.0;
