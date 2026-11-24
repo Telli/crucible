@@ -14,7 +14,7 @@ import { applyProjection } from './camera.js';
 import { boundsGrownByParts, fittedNearPlane, sceneBoundsOfParts } from './near-plane-fit.js';
 import { installReversedDepth, prepareCameraRelativeProgram } from './reversed-depth.js';
 import { bloomBlurPlan, isBloomActive, resolveEffects } from './effects.js';
-import { frameDiagnostics } from './frame-diagnostics.js';
+import { frameDiagnostics, everyCasterOutsideShadowView } from './frame-diagnostics.js';
 import { depthLayerOf, flushOrderOf, RANKS_PER_LAYER } from './depth-layer.js';
 import { createLightingState, updateLightingState } from './lighting.js';
 import { RenderTargetLedger } from './render-target-ledger.js';
@@ -331,7 +331,7 @@ const TINT_MAP_SIZE = 1024;
 // the opaque pass renders into it, a feedback loop that drops every opaque shadow caster.
 const OPAQUE_SHADOW_UNIT = 2;
 // The light arrays are not here: they live in the LightData uniform block (light-uniform-block.js).
-const LIGHT_UNIFORMS = ['pointLightCount', 'spotLightCount', 'areaLightCount', 'localShadowAtlas', 'keyColor', 'fillIntensity', 'ambientIntensity', 'ambientColor', 'specularAntiAliasing'];
+const LIGHT_UNIFORMS = ['pointLightCount', 'spotLightCount', 'areaLightCount', 'localShadowAtlas', 'keyColor', 'fillIntensity', 'ambientIntensity', 'ambientColor', 'ambientGroundDelta', 'ambientMix', 'specularAntiAliasing'];
 const SPLAT_UNIFORMS = ['splatEnabled', 'splatColor', 'splatNormal', 'splatPacked', 'splatMask', 'splatLayer[0]', 'splatTint[0]', 'splatSlope[0]', 'splatHeightRange[0]', 'splatMaskChannel[0]', 'splatMaskInvert[0]', 'splatBlend', 'splatOptions', 'splatMaskBounds', 'splatVariation'];
 
 function validateMaterialMaps(material) {
@@ -2238,6 +2238,21 @@ export class CrucibleRenderer {
     return fitWorldShadowView(sceneBoundsOfParts(casters));
   }
 
+  // The studio shadow view (3.5 m round the origin) stays when a scene sets no shadowBounds target or extent. Returns that view when every
+  // caster lies outside it, else null; cached per batch list because the check walks every part.
+  studioShadowViewMissingCasters() {
+    if (this.world || this.shadowBounds?.target !== undefined || this.shadowBounds?.extent !== undefined) return null;
+    if (this.studioShadowMissCache?.batches !== this.batches) {
+      const view = resolveShadowLight(false, null);
+      const casters = this.batches.filter(batch => !batch.floor && batch.castShadow).flatMap(batch => batch.parts);
+      // A skinned, morphed or crowd part has no fixed box, so one of them means the answer is unknown and nothing warns.
+      const boxes = casters.map(part => sceneBoundsOfParts([part]));
+      const missed = !boxes.includes(null) && everyCasterOutsideShadowView(boxes, view);
+      this.studioShadowMissCache = { batches: this.batches, view: missed ? view : null };
+    }
+    return this.studioShadowMissCache.view;
+  }
+
   drawShadowCasters(lightMatrix = this.lightProjection, resolution = null, mainMap = false) {
     const context = this.context;
     context.useProgram(this.depthProgram);
@@ -3160,7 +3175,7 @@ export class CrucibleRenderer {
     // The shadow view follows the sun, so a moved sun redraws the map.
     const lightChanged = String(this.activeLightDirection) !== String(environment.lightDirection);
     this.activeLightDirection = environment.lightDirection;
-    this.diagnostics = frameDiagnostics({ world: this.world, depth: this.depth, effects, requestedEffects: frame.effects, requestedExposure: frame.exposure, lightDirection: environment.lightDirection, shadowBounds: this.shadowBounds, coplanarProblems: this.coplanarDiagnostics?.(this.batches), skinProblems: deformationSupport.reflectedSkinDiagnostics?.(this.partLocations) });
+    this.diagnostics = frameDiagnostics({ world: this.world, depth: this.depth, effects, requestedEffects: frame.effects, requestedExposure: frame.exposure, lightDirection: environment.lightDirection, shadowBounds: this.shadowBounds, shadowViewMissesCasters: this.studioShadowViewMissingCasters(), coplanarProblems: this.coplanarDiagnostics?.(this.batches), skinProblems: deformationSupport.reflectedSkinDiagnostics?.(this.partLocations) });
     const start = performance.now();
     const context = this.context;
     this.beginGpuTiming();
@@ -3227,6 +3242,8 @@ export class CrucibleRenderer {
     context.uniform1f(this.uniforms.fillIntensity, this.lighting.fillIntensity);
     context.uniform1f(this.uniforms.ambientIntensity, this.lighting.ambientIntensity);
     context.uniform3fv(this.uniforms.ambientColor, this.lighting.ambientColor);
+    context.uniform3fv(this.uniforms.ambientGroundDelta, this.lighting.ambientGroundDelta);
+    context.uniform1f(this.uniforms.ambientMix, this.lighting.ambientMix);
     context.uniform1f(this.uniforms.specularAntiAliasing, this.lighting.specularAntiAliasing);
     if (this.lighting.wetness > 0) this.bindWetness();
     context.uniform1f(this.uniforms.time, frame.time ?? 0);
@@ -3319,6 +3336,7 @@ export class CrucibleRenderer {
     block.write('areaLightColors', lighting.areaColors);
     block.write('areaLightNormals', lighting.areaNormals);
     block.write('areaLightTangents', lighting.areaTangents);
+    block.write('fillLightColors', lighting.fillColors);
     const drawsLocalShadows = lighting.shadowCasters.length > 0 && this.localShadowTexture;
     if (drawsLocalShadows) {
       block.write('localShadowMatrices', this.localShadowMatrices);

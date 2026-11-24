@@ -52,8 +52,28 @@ function unsupportedEffectProblems(requestedEffects, frameExposure) {
   return problems;
 }
 
-export function frameDiagnostics({ world, depth, effects, requestedEffects = null, requestedExposure, lightDirection, shadowBounds, coplanarProblems = null, skinProblems = null }) {
+/**
+ * True when every caster's bounding box lies outside the circle the default studio shadow view covers round its target, which no
+ * light direction can bring back into the view. `casterBounds` is a list of { minimum, maximum } boxes.
+ */
+export function everyCasterOutsideShadowView(casterBounds, view) {
+  if (casterBounds.length === 0) return false;
+  const reach = view.extent * Math.SQRT2;
+  return casterBounds.every(bounds => {
+    const nearest = bounds.minimum.map((low, axis) => Math.max(low - view.target[axis], 0, view.target[axis] - bounds.maximum[axis]));
+    return Math.hypot(...nearest) > reach;
+  });
+}
+
+function shadowViewMissesCastersProblem(view) {
+  return warning('shadow-view-misses-casters', 'shadowBounds',
+    `Every shadow caster lies outside the default shadow view (${view.extent} m round [${view.target.map(value => +value.toFixed(2)).join(', ')}]), so the scene casts no shadows.`,
+    'Pass renderer.shadowBounds: { target, extent } round the casters, such as the middle of the set and half its width.');
+}
+
+export function frameDiagnostics({ world, depth, effects, requestedEffects = null, requestedExposure, lightDirection, shadowBounds, shadowViewMissesCasters = null, coplanarProblems = null, skinProblems = null }) {
   const problems = unsupportedEffectProblems(requestedEffects, requestedExposure);
+  if (shadowViewMissesCasters) problems.push(shadowViewMissesCastersProblem(shadowViewMissesCasters));
   if (effects.ambientOcclusion > 0 && !depth) {
     problems.push(warning('ambient-occlusion-without-depth', 'effects.ambientOcclusion',
       `ambientOcclusion is ${effects.ambientOcclusion} but the renderer has no depth, so the pass is skipped.`,
