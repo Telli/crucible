@@ -2102,13 +2102,15 @@ export class CrucibleRenderer {
   /**
    * The instances of a batch that can land in a shadow map, split by level. An instance outside the light's frustum
    * writes nothing. With an orthographic light and a known map size, the level follows the world size of one texel,
-   * so a tree far smaller than a texel uses its coarsest level. Null when the whole batch draws as it is.
+   * so a tree far smaller than a texel uses its coarsest level. Only shadowLods choose shadow levels: a batch with just
+   * lods casts from level 0, so a part draws the same shadow, and the same pixels, with and without its camera levels (#3189).
+   * Null when the whole batch draws as it is.
    */
   selectShadowInstances(batch, levelSet, lightMatrix, resolution) {
     if (!this.culling || !batch.cullable) return null;
     const planes = extractFrustumPlanes(lightMatrix, this.shadowFrustumPlanes ??= new Float32Array(24));
     const isOrthographic = lightMatrix[3] === 0 && lightMatrix[7] === 0 && lightMatrix[11] === 0 && lightMatrix[15] === 1;
-    const selectsLevels = Boolean(resolution) && isOrthographic && levelSet.levelErrors.length > 1;
+    const selectsLevels = Boolean(resolution) && isOrthographic && levelSet !== batch && levelSet.levelErrors.length > 1;
     // Texels per world unit along the map's x axis; an orthographic matrix has depth 1 everywhere.
     const texelsPerUnit = selectsLevels ? Math.hypot(lightMatrix[0], lightMatrix[4], lightMatrix[8]) * resolution / 2 : 0;
     return selectInstances(levelSet.selection, {

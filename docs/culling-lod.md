@@ -14,7 +14,7 @@ What is not culled, because its bounding sphere would not hold or because it dra
 `foliage` and `grass` sway in the wind but by a known amount, so they are culled and take levels like rigid parts: the bound of each instance grows by 0.56 times the wind strength (the farthest `windOffset` in the vertex shader moves a vertex per unit of strength).
 - Parts with an `assembly`.
 - Alpha-blended, `liquid` and `foam` batches.
-- The shadow passes. A caster outside the view can still shadow the view, so shadow maps draw every caster.
+- The shadow passes. A caster outside the view can still shadow the view, so shadow maps draw every caster. A part that has `lods` but no `shadowLods` casts from level 0, so giving a part levels never changes its shadow (#3189).
 
 Pass `culling: false` to the `CrucibleRenderer` options to turn it off, for example to compare a picture.
 
