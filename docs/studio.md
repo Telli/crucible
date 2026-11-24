@@ -162,7 +162,7 @@ The setup is five steps, one page each, named in a row at the top with an icon a
 
 Finishing, skipping or pressing Esc marks it done. Choices are the Settings preferences, so nothing is stored twice. All five steps share one grid cell, so the dialog is as tall as the tallest step (capped at the window height minus 48 pixels, then it scrolls inside) and never changes size between steps; a step with one block fills the cell.
 
-Studio never opens the setup by itself, so tests, capture scripts and embedders get no modal. A host calls `studio.openSetup()`, usually when `studio.setupDone` is false. **Help ▸ Set up Studio…** opens it again. The development page opens it on a first visit, and `?setup=off` turns that off.
+Studio never opens the setup by itself, so tests, capture scripts and embedders get no modal. A host calls `studio.openSetup()`, usually when `studio.setupDone` is false. **Help ▸ Set up Studio…** opens it again. The development page opens it on a first visit, and `?setup=off` turns that off. The development page paints its theme background and a loading state (the Crucible mark over a short progress bar) from the first frame, before any script has loaded; a saved Light or Dark theme is applied before that paint, and the bar stands still when the system asks for reduced motion. The setup opens only after Studio is ready and its first frame has painted, so it appears over the drawn app. When the page fails to start, the loading state turns into the error message with an icon.
 
 ## Mount the Studio in an app
 
