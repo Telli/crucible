@@ -139,3 +139,32 @@ test('waitForDraw gives up after its bound instead of hanging on a fence that ne
   await waitForDraw({ TIMEOUT_EXPIRED: 6, fenceSync: () => ({}), flush() {}, clientWaitSync: () => 6, deleteSync() { deleted = true; } }, () => (clock += 500));
   assert.equal(deleted, true);
 });
+
+// Waiting on a fence after every tile left a software GL queue idle and made a lightmap bake 40 percent slower than gl.finish() (#2833).
+test('cheap tiles queue up and share one fence wait instead of one wait per tile', async () => {
+  const secondsPerPixel = 1e-6;
+  let clock = 0;
+  let gpuDoneAt = 0;
+  let fences = 0;
+  const gl = createMockGl();
+  gl.scissor = (x, y, w, h) => {
+    gl.lastScissor = { x, y, w, h };
+  };
+  gl.drawArrays = () => {
+    const { w, h } = gl.lastScissor;
+    gl.tiles.push({ ...gl.lastScissor });
+    gpuDoneAt = Math.max(gpuDoneAt, clock) + w * h * secondsPerPixel;
+  };
+  gl.fenceSync = () => {
+    fences++;
+    return {};
+  };
+  gl.clientWaitSync = () => {
+    clock += 0.001;
+    return clock >= gpuDoneAt ? 7 : 6;
+  };
+  const band = createBandState(256, 64, () => clock * 1000);
+  await drawOneSample(gl, {}, 256, 256, 0, band, () => {});
+  assert.ok(gl.tiles.length >= 16, `only ${gl.tiles.length} tiles were drawn`);
+  assert.ok(fences * 3 <= gl.tiles.length, `${fences} fence waits for ${gl.tiles.length} tiles`);
+});

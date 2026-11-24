@@ -292,10 +292,15 @@ export function releaseResources(gl) {
 
 /** The band size, tile width and the last turn given to the page, kept from one sample to the next. */
 export function createBandState(height, tileWidth = MAX_TILE_WIDTH, now = () => performance.now()) {
-  return { bandRows: Math.min(height, 32), tileWidth, now, lastYield: now() };
+  return { bandRows: Math.min(height, 32), tileWidth, now, lastYield: now(), queuedPixels: 0, queuedSince: 0, pixelsPerSecond: 0 };
 }
 
 const FENCE_POLL_LIMIT_SECONDS = 10;
+// Polls that only give the page a message turn before the wait backs off to timers. On software GL the draw runs on the
+// same cores as the page, and a poll loop that never sleeps made 780 polls per small tile and slowed a bake by 20 to 80 percent.
+export const FENCE_BUSY_POLLS = 3;
+const FENCE_SLEEP_MILLISECONDS = 2;
+const sleepBriefly = () => new Promise(resolve => setTimeout(resolve, FENCE_SLEEP_MILLISECONDS));
 // A message turn, not setTimeout(0): browsers hold nested timeouts to 4 ms, which added seconds to a 1080x1920 trace.
 const yieldToPage = typeof MessageChannel === 'function'
   ? () => new Promise(resolve => {
@@ -328,10 +333,30 @@ export async function waitForDraw(gl, now = () => performance.now()) {
   gl.flush();
   const deadline = now() + FENCE_POLL_LIMIT_SECONDS * 1000;
   try {
-    while (gl.clientWaitSync(fence, 0, 0) === gl.TIMEOUT_EXPIRED && now() < deadline) await yieldToPage();
+    for (let polls = 0; gl.clientWaitSync(fence, 0, 0) === gl.TIMEOUT_EXPIRED && now() < deadline; polls++) {
+      await (polls < FENCE_BUSY_POLLS ? yieldToPage() : sleepBriefly());
+    }
   } finally {
     gl.deleteSync(fence);
   }
+}
+
+// Waiting for the GPU after every tile leaves it idle while the page polls, which cost a software GL bake of small tiles about
+// 40 percent against the old gl.finish() that never waited there. So tiles queue up, and the wait comes once the queue holds
+// about DRAW_SECONDS_TARGET of work at the last measured speed (or at once while the speed is still unknown).
+function shouldWaitForQueue(band) {
+  if (!band.pixelsPerSecond) return true;
+  return band.queuedPixels / band.pixelsPerSecond >= DRAW_SECONDS_TARGET;
+}
+
+async function settleQueue(gl, band, tileWidth, maxBandRows, now) {
+  await waitForDraw(gl, now);
+  const seconds = (now() - band.queuedSince) / 1000;
+  // Pace by pixels per second, so the narrow tile at the right edge of a row does not read as a cheap draw.
+  band.pixelsPerSecond = band.queuedPixels / Math.max(seconds, 1e-4);
+  band.queuedPixels = 0;
+  const wantedRows = Math.round((DRAW_SECONDS_TARGET * band.pixelsPerSecond) / tileWidth);
+  band.bandRows = Math.max(MINIMUM_BAND_ROWS, Math.min(maxBandRows, band.bandRows * 2, wantedRows));
 }
 
 /** Draws one sample of every pixel in bounded 2D tiles that take about DRAW_SECONDS_TARGET each, yielding between tiles. */
@@ -352,15 +377,11 @@ export async function drawOneSample(gl, program, width, height, sample, band, sh
       rowStart += rows;
       for (let colStart = 0; colStart < width; colStart += tileWidth) {
         const cols = Math.min(tileWidth, width - colStart);
-        const started = now();
+        if (band.queuedPixels === 0) band.queuedSince = now();
         gl.scissor(colStart, firstRow, cols, rows);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
-        await waitForDraw(gl, now);
-        const seconds = (now() - started) / 1000;
-        // Pace by pixels per second, so the narrow tile at the right edge of a row does not read as a cheap draw.
-        const pixelsPerSecond = (cols * rows) / Math.max(seconds, 1e-4);
-        const wantedRows = Math.round((DRAW_SECONDS_TARGET * pixelsPerSecond) / tileWidth);
-        band.bandRows = Math.max(MINIMUM_BAND_ROWS, Math.min(maxBandRows, band.bandRows * 2, wantedRows));
+        band.queuedPixels += cols * rows;
+        if (shouldWaitForQueue(band)) await settleQueue(gl, band, tileWidth, maxBandRows, now);
         shouldStop();
         if ((now() - band.lastYield) / 1000 > YIELD_SECONDS) {
           await nextTask();
