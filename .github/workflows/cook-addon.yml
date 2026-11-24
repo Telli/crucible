@@ -199,6 +199,7 @@ on:
       - 'src/lamp-mesh.js'
       - 'src/leaf-transmission.js'
       - 'src/light-linking.js'
+      - 'src/light-parenting.js'
       - 'src/light-modules.js'
       - 'src/light-profile.js'
       - 'src/light-shapes.js'
