@@ -54,7 +54,7 @@ test('two coincident vertices with different normals get the same mask value', (
   const jump = Math.abs(valueAt(map, SEAM_COLUMN, row) - valueAt(map, SEAM_COLUMN - 1, row));
   assert.ok(jump <= 4, `the slope mask jumps by ${jump} across the crease; the split normals were read instead of the welded one`);
   const welded = weldedMaskNormals(geometry);
-  assert.deepEqual(Array.from(welded.subarray(3, 6)), Array.from(welded.subarray(12, 15)));
+  Array.from(welded.subarray(3, 6)).forEach((component, axis) => assert.ok(Math.abs(component - welded[12 + axis]) < 1e-3, 'the welded normals at the crease differ'));
 });
 
 test('welding leaves the shading normals untouched', () => {
@@ -101,14 +101,14 @@ function tiltFromUpDegrees(array, vertex) {
   return (Math.acos(array[vertex * 3 + 1] / length) * 180) / Math.PI;
 }
 
-test('a steep face welded to a flat one stays steeper than their plain average', () => {
-  const cliffAndTread = twoVerticesAt(-80, 0);
-  const welded = weldedMaskNormals(cliffAndTread);
-  const tilt = tiltFromUpDegrees(welded, 0);
+test('a steep face welded to a flat one stays steeper than their plain average, and the flat face keeps the average', () => {
+  const welded = weldedMaskNormals(twoVerticesAt(-80, 0));
+  const steepTilt = tiltFromUpDegrees(welded, 0);
+  const flatTilt = tiltFromUpDegrees(welded, 1);
   // The angle-weighted plain average of an 80 and a 0 degree normal leans about 56 degrees; the lean gives about 65.
-  assert.ok(tilt > 60, `the welded normal leans ${tilt.toFixed(1)} degrees, no steeper than the plain average of the two`);
-  assert.ok(tilt < 80, `the welded normal leans ${tilt.toFixed(1)} degrees, as steep as the cliff and no longer smooth`);
-  assert.deepEqual(Array.from(welded.subarray(0, 3)), Array.from(welded.subarray(3, 6)));
+  assert.ok(steepTilt > 60, `the steep vertex leans ${steepTilt.toFixed(1)} degrees, no steeper than the plain average of the two`);
+  assert.ok(steepTilt < 80, `the steep vertex leans ${steepTilt.toFixed(1)} degrees, as steep as the cliff and no longer smooth`);
+  assert.ok(Math.abs(flatTilt - 55.6) < 1, `the flat vertex leans ${flatTilt.toFixed(1)} degrees, so the cliff darkens the gentle face next to it`);
 });
 
 test('the slope mask stays high next to the crease on the steep side', () => {

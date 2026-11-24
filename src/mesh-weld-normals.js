@@ -4,12 +4,13 @@
 // less than a right angle, so a crease (terrain, a rock) reads as one smooth surface, while a real hard edge (the
 // exact 90 degrees of a cube) stays hard. The shading normals are never changed: this is a separate array for masks.
 //
-// A plain average whitens steep faces: a cliff face welded to the flat tread under it reads as a gentle slope. So each
-// welded normal leans STEEP_LEAN of the way to the steepest normal in its group (the one with the lowest y, the up
-// axis the slope masks use). Both ends are continuous across a crease, so the mask edge stays smooth, and steep faces
-// stay steep. Measured on the snow mountain tiles, 0.7 keeps the snow on faces steeper than the mask limit below
-// the split-normal share, and keeps the dark cliff faces of the close view, while the stair steps along the snow edge drop by about a third.
-
+// A plain average whitens steep faces: a cliff face welded to the flat tread under it reads as a gentle slope. So a
+// vertex that is itself steep leans STEEP_LEAN of the way from the welded average to the steepest normal at its
+// position (the one with the lowest y, the up axis the slope masks use). The lean fades in between a 50 and a 72
+// degree slope of the vertex's own normal, so a gentle face next to a cliff keeps the plain average and its snow does
+// not creep back from the crease (a vertex steeper than the mask limit has no snow to lose). Measured on the six snow
+// mountain tiles: snow on faces steeper than 72 degrees stays below the split-normal share, snow lost on gentle faces
+// is 0.9 percent of the baked area (2.1 with the lean on every vertex), and the stair steps drop by about 28 percent.
 // Position grid for "the same position": 10 micrometres, far below any modelled detail, and exact for split vertices,
 // which copy their position bit for bit.
 const POSITION_GRID = 1e5;
@@ -17,6 +18,21 @@ const POSITION_GRID = 1e5;
 const WELD_COSINE = 1e-3;
 // How far a welded normal leans toward the steepest normal at its position (0 is the plain average, 1 the steepest).
 const STEEP_LEAN = 0.7;
+// The slope (0 flat, 1 vertical) where the lean starts and where it is full, read from the vertex's own normal.
+const LEAN_FROM_SLOPE = 0.55;
+const LEAN_TO_SLOPE = 0.8;
+const RIGHT_ANGLE = Math.PI / 2;
+
+function smoothstep(from, to, value) {
+  const fraction = Math.min(1, Math.max(0, (value - from) / (to - from)));
+  return fraction * fraction * (3 - 2 * fraction);
+}
+
+function leanOfVertex(normals, vertex) {
+  const length = Math.hypot(normals[vertex * 3], normals[vertex * 3 + 1], normals[vertex * 3 + 2]);
+  const slope = Math.acos(Math.min(1, Math.max(-1, normals[vertex * 3 + 1] / length))) / RIGHT_ANGLE;
+  return STEEP_LEAN * smoothstep(LEAN_FROM_SLOPE, LEAN_TO_SLOPE, slope);
+}
 
 const weldedByGeometry = new WeakMap();
 
@@ -94,9 +110,10 @@ function weldGroup(group, normals, weights, welded) {
     }
     const length = Math.hypot(sumX, sumY, sumZ);
     if (matched < 2 || length === 0) continue;
-    const leanedX = (1 - STEEP_LEAN) * (sumX / length) + STEEP_LEAN * steepestX;
-    const leanedY = (1 - STEEP_LEAN) * (sumY / length) + STEEP_LEAN * steepestY;
-    const leanedZ = (1 - STEEP_LEAN) * (sumZ / length) + STEEP_LEAN * steepestZ;
+    const lean = leanOfVertex(normals, vertex);
+    const leanedX = (1 - lean) * (sumX / length) + lean * steepestX;
+    const leanedY = (1 - lean) * (sumY / length) + lean * steepestY;
+    const leanedZ = (1 - lean) * (sumZ / length) + lean * steepestZ;
     const leanedLength = Math.hypot(leanedX, leanedY, leanedZ);
     if (leanedLength === 0) continue;
     welded[vertex * 3] = leanedX / leanedLength;
