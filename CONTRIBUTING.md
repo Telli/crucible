@@ -78,7 +78,7 @@ node scripts/push-evidence.mjs 1234 artifacts/before.png artifacts/after.png
 
 Files land at `pr-1234/<name>` on `evidence-pr-1234`; files already there stay. Pictures and clips (png, jpg, gif, webp, mp4, webm) up to 20 MB, from inside the repository or the temp folder. Add `--dry-run` to see the links first. Put the same picture or clip in the change note when the change is visible.
 
-For a look or feature change, one command renders the scene on the branch (and on `origin/main` with `--base`), writes labelled side-by-side stills and a clip with a JSON sidecar per file under `artifacts/<issue>/`, measures every frame and prints a PASS or FAIL checklist (also in `checks.json`): subject fully in frame with a margin, no blown highlights or crushed shadows, and no single-frame jump in luma or saturation over every frame of a clip. Paste the checklist into the pull request and push the pictures with the command above:
+For a look or feature change, one command renders the scene on the branch (and on `origin/main` with `--base`), writes labelled side-by-side stills and a clip with a JSON sidecar per file under `artifacts/<issue>/`, measures every frame and prints a PASS or FAIL checklist (also in `checks.json`): subject fully in frame with a margin, no blown highlights or crushed shadows, and no single-frame jump over 5 levels in luma or saturation over every frame of a clip (a smaller step above 3 times the median is printed as a note, not a failure). Paste the checklist into the pull request and push the pictures with the command above:
 
 ```sh
 node scripts/evidence.mjs --issue 1234 --recipe scene.json --cameras cameras.json --subject -1,0,-1,1,2,1 --clip 0-29 --base origin/main

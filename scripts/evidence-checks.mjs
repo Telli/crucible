@@ -3,10 +3,10 @@
 
 /** A single-frame step above this many levels (0 to 255) is a jump, whatever the rest of the clip does. */
 export const DEFAULT_JUMP_LEVELS = 5;
-/** A step above this many times the clip's median step is a jump too, once it is also above MINIMUM_RELATIVE_JUMP_LEVELS (2 levels). */
+/** A step above this many times the clip's median step is only a note (never a FAIL) once it is also above MINIMUM_NOTE_LEVELS. */
 export const DEFAULT_JUMP_MEDIAN_FACTOR = 3;
-/** Below this many levels a step is rounding noise, so a perfectly still clip (median step 0) does not flag rounding. */
-export const MINIMUM_RELATIVE_JUMP_LEVELS = 2;
+/** Below this many levels a step above the median factor is rounding noise and is not even noted. */
+export const MINIMUM_NOTE_LEVELS = 2;
 /** The subject box must stay at least this many pixels from every frame edge. */
 export const DEFAULT_MINIMUM_MARGIN_PIXELS = 8;
 /** At most this share of the subject box may be pure white (blown) or pure black (crushed). */
@@ -72,22 +72,23 @@ function median(values) {
 }
 
 /**
- * Every frame whose value differs from the frame before by more than `levels`, or by more than `medianFactor` times the clip's
- * median step (and more than two levels). `values[i]` belongs to frame `firstFrame + i`. A 2-frame dropout shows as two jumps, one
- * into it and one out of it; `dropouts` pairs them.
+ * Every frame whose value differs from the frame before by more than `levels` (a jump: it FAILS a check). A smaller step that is
+ * above `medianFactor` times the clip's median step, and above two levels, is only a note. `values[i]` belongs to frame
+ * `firstFrame + i`. A 2-frame dropout shows as two jumps, one into it and one out of it; `dropouts` pairs them.
  */
 export function findJumps(values, { levels = DEFAULT_JUMP_LEVELS, medianFactor = DEFAULT_JUMP_MEDIAN_FACTOR, firstFrame = 0 } = {}) {
   const steps = [];
   for (let index = 1; index < values.length; index += 1) steps.push(Math.abs(values[index] - values[index - 1]));
   const medianStep = median(steps);
   const jumps = [];
+  const notes = [];
   for (let index = 1; index < values.length; index += 1) {
     const step = steps[index - 1];
-    const aboveLevels = step > levels;
-    const aboveMedian = step > medianFactor * medianStep && step > MINIMUM_RELATIVE_JUMP_LEVELS;
-    if (aboveLevels || aboveMedian) jumps.push({ frame: firstFrame + index, from: values[index - 1], to: values[index], step });
+    const entry = { frame: firstFrame + index, from: values[index - 1], to: values[index], step };
+    if (step > levels) jumps.push(entry);
+    else if (step > medianFactor * medianStep && step > MINIMUM_NOTE_LEVELS) notes.push(entry);
   }
-  return { jumps, medianStep, dropouts: pairDropouts(jumps) };
+  return { jumps, notes, medianStep, dropouts: pairDropouts(jumps) };
 }
 
 /** A jump one way followed within a few frames by a jump back the other way: the frames between are a dropout or a flash. */
@@ -190,14 +191,25 @@ export function checkClipping(metricsPerFrame, { maximumShare = DEFAULT_CLIPPING
   };
 }
 
-/** PASS when neither mean luma nor mean saturation jumps between frames; the detail names each jump frame and its levels. */
+/** "frame 7" for a one-frame dropout, "frames 7-8" for a longer one. */
+export function describeDropout({ firstFrame, lastFrame }) {
+  return firstFrame === lastFrame ? `frame ${firstFrame}` : `frames ${firstFrame}-${lastFrame}`;
+}
+
+/**
+ * PASS when neither mean luma nor mean saturation jumps more than the limit between frames; the detail names each jump frame and its
+ * levels, each dropout once, and (without failing) any smaller step above 3 times the median step.
+ */
 export function checkContinuity(metricsPerFrame, { firstFrame = 0, ...jumpOptions } = {}) {
   const lumaResult = findJumps(metricsPerFrame.map(metrics => metrics.meanLuma), { ...jumpOptions, firstFrame });
   const saturationResult = findJumps(metricsPerFrame.map(metrics => metrics.meanSaturation), { ...jumpOptions, firstFrame });
-  const describe = (name, result) => result.jumps.map(jump => `${name} frame ${jump.frame}: ${jump.from.toFixed(1)} to ${jump.to.toFixed(1)} (${jump.step.toFixed(1)} levels)`);
-  const lines = [...describe('luma', lumaResult), ...describe('saturation', saturationResult)];
-  const dropouts = [...lumaResult.dropouts, ...saturationResult.dropouts];
+  const describe = (name, entries) => entries.map(entry => `${name} frame ${entry.frame}: ${entry.from.toFixed(1)} to ${entry.to.toFixed(1)} (${entry.step.toFixed(1)} levels)`);
+  const lines = [...describe('luma', lumaResult.jumps), ...describe('saturation', saturationResult.jumps)];
+  const noteLines = [...describe('luma', lumaResult.notes), ...describe('saturation', saturationResult.notes)];
+  const dropouts = [...new Map([...lumaResult.dropouts, ...saturationResult.dropouts].map(dropout => [describeDropout(dropout), dropout])).values()];
   const pass = lines.length === 0;
-  const dropoutText = dropouts.length ? `; dropout frames ${dropouts.map(({ firstFrame: first, lastFrame: last }) => (first === last ? first : `${first}-${last}`)).join(', ')}` : '';
-  return { pass, luma: lumaResult, saturation: saturationResult, dropouts, detail: pass ? `no single-frame jump over ${metricsPerFrame.length} frames (median luma step ${lumaResult.medianStep.toFixed(2)})` : `${lines.join('; ')}${dropoutText}` };
+  const dropoutText = dropouts.length ? `; dropout ${dropouts.map(describeDropout).join(', ')}` : '';
+  const noteText = noteLines.length ? ` (note, not a failure: ${noteLines.join('; ')})` : '';
+  const detail = pass ? `no single-frame jump over ${jumpOptions.levels ?? DEFAULT_JUMP_LEVELS} levels in ${metricsPerFrame.length} frames (median luma step ${lumaResult.medianStep.toFixed(2)})${noteText}` : `${lines.join('; ')}${dropoutText}${noteText}`;
+  return { pass, luma: lumaResult, saturation: saturationResult, dropouts, detail };
 }

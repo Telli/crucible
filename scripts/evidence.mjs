@@ -15,7 +15,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync,
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import sharp from 'sharp';
-import { parseFrameRange } from './render-media.mjs';
+import { MAXIMUM_FRAME_RANGE_COUNT, parseFrameRange } from './render-media.mjs';
 import { checkClipping, checkContinuity, checkFraming, clipBoxToFrame, DEFAULT_CLIPPING_SHARE, DEFAULT_MINIMUM_MARGIN_PIXELS, frameMetrics, projectBounds } from './evidence-checks.mjs';
 import { spinningBarGlb } from '../tests/fixtures/spinning-bar-glb.js';
 
@@ -33,10 +33,45 @@ export function parseArguments(argv) {
     }
     options[name] = argv[index + 1];
   }
-  if (!options.issue) throw new Error('Pass --issue <number>: the files go to artifacts/<issue>/.');
+  if (!/^[1-9]\d*$/.test(options.issue ?? '')) throw new Error(`--issue must be a positive whole number such as 3269 (the files go to artifacts/<issue>/), got "${options.issue ?? ''}".`);
   if (!options.analyze && !options.recipe && !options.builtin) throw new Error('Pass --recipe <scene.json> with --cameras <cameras.json>, or --builtin bar, or --analyze <frames-folder>.');
   if (options.builtin && options.builtin !== 'bar') throw new Error(`Unknown built-in recipe "${options.builtin}". The only one is "bar".`);
   return options;
+}
+
+/** A numeric option inside [minimum, maximum]; a bad value names the option, what was given and what to pass. */
+function numberOption(options, name, fallback, { minimum, maximum, integer = false }) {
+  const text = options[name];
+  if (text === undefined) return fallback;
+  const value = Number(text);
+  const valid = text.trim() !== '' && Number.isFinite(value) && value >= minimum && value <= maximum && (!integer || Number.isInteger(value));
+  if (!valid) throw new Error(`--${name} must be ${integer ? 'a whole number' : 'a number'} from ${minimum} to ${maximum}, got "${text}". Pass for example --${name} ${fallback}.`);
+  return value;
+}
+
+/** "first-last" or one frame number; the error names --clip. */
+function clipOption(text) {
+  try {
+    return parseFrameRange(text);
+  } catch (error) {
+    throw new Error(`--clip must be a first and last frame such as 0-29 (or one frame such as 12), at most ${MAXIMUM_FRAME_RANGE_COUNT} frames, got "${text}". ${error.message}`);
+  }
+}
+
+/** Every numeric option of a render run, validated before anything renders. */
+export function readPlan(options) {
+  const backend = options.backend ?? 'gpu';
+  if (!['gpu', 'cpu'].includes(backend)) throw new Error(`--backend must be gpu or cpu, got "${backend}". Pass --backend gpu.`);
+  return {
+    fps: numberOption(options, 'fps', 30, { minimum: 1, maximum: 60, integer: true }),
+    width: numberOption(options, 'width', 480, { minimum: 64, maximum: 4096, integer: true }),
+    height: numberOption(options, 'height', 270, { minimum: 64, maximum: 4096, integer: true }),
+    backend,
+    margin: numberOption(options, 'margin', DEFAULT_MINIMUM_MARGIN_PIXELS, { minimum: 0, maximum: 1000 }),
+    clippingShare: numberOption(options, 'clipping-share', DEFAULT_CLIPPING_SHARE, { minimum: 0, maximum: 1 }),
+    stillFrame: numberOption(options, 'still-frame', 0, { minimum: 0, maximum: MAXIMUM_FRAME_RANGE_COUNT * 100, integer: true }),
+    clipRange: options.clip === undefined ? null : clipOption(options.clip),
+  };
 }
 
 function numbers(text, count, name) {
@@ -77,21 +112,23 @@ function resolveBase(base) {
   if (existsSync(join(resolve(base), 'scripts/render-media.mjs'))) return { root: resolve(base), cleanup: () => {} };
   const sha = git(REPOSITORY_ROOT, 'rev-parse', '--verify', `${base}^{commit}`);
   if (!sha) throw new Error(`--base "${base}" is neither a checkout containing scripts/render-media.mjs nor a git ref. Pass a worktree path or a ref such as origin/main.`);
-  const root = join(REPOSITORY_ROOT, '.claude/worktrees', `evidence-base-${sha.slice(0, 9)}`);
-  if (!existsSync(root)) {
-    const added = spawnSync('git', ['-C', REPOSITORY_ROOT, 'worktree', 'add', '--detach', root, sha], { encoding: 'utf8' });
-    if (added.status !== 0) throw new Error(`Could not check out ${base}: ${added.stderr}`);
-  }
+  // One folder per run, so two runs at once never remove each other's checkout.
+  const root = join(REPOSITORY_ROOT, '.claude/worktrees', `evidence-base-${sha.slice(0, 9)}-${process.pid}-${Date.now()}`);
   const modules = join(root, 'node_modules');
-  if (!existsSync(modules)) symlinkSync(join(REPOSITORY_ROOT, 'node_modules'), modules, 'junction');
-  return {
-    root,
-    cleanup: () => {
-      // Unlink the junction first so removing the worktree can never reach the shared node_modules.
-      try { unlinkSync(modules); } catch { /* already gone */ }
-      spawnSync('git', ['-C', REPOSITORY_ROOT, 'worktree', 'remove', '--force', root], { encoding: 'utf8' });
-    },
+  const cleanup = () => {
+    // Unlink the junction first so removing the worktree can never reach the shared node_modules.
+    try { unlinkSync(modules); } catch { /* already gone */ }
+    spawnSync('git', ['-C', REPOSITORY_ROOT, 'worktree', 'remove', '--force', root], { encoding: 'utf8' });
   };
+  const added = spawnSync('git', ['-C', REPOSITORY_ROOT, 'worktree', 'add', '--detach', root, sha], { encoding: 'utf8' });
+  if (added.status !== 0) throw new Error(`Could not check out ${base}: ${added.stderr}`);
+  try {
+    symlinkSync(join(REPOSITORY_ROOT, 'node_modules'), modules, 'junction');
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  return { root, cleanup };
 }
 
 function framePathOf(folder, frame, last) {
@@ -166,18 +203,39 @@ function printChecklist(items, gatedScopePrefix) {
   }
 }
 
+/** The frames of a folder as { frame, file }, numbered by the digits before ".png" and sorted numerically; other files are ignored. */
+export function listFrames(folder) {
+  if (!existsSync(folder)) throw new Error(`--analyze folder "${folder}" does not exist. Pass the folder that holds the frame PNGs, such as artifacts/3269/branch/front.`);
+  const frames = [];
+  for (const name of readdirSync(folder)) {
+    const match = /(\d+)\.png$/i.exec(name);
+    if (match) frames.push({ frame: Number(match[1]), file: join(folder, name) });
+  }
+  return frames.sort((first, second) => first.frame - second.frame);
+}
+
 async function analyzeFolder(options) {
   const folder = resolve(options.analyze);
-  const files = readdirSync(folder).filter(name => /\.png$/i.test(name)).sort().map(name => join(folder, name));
-  if (files.length < 2) throw new Error(`--analyze needs a folder with at least 2 PNG frames, found ${files.length} in ${folder}.`);
-  const size = await sharp(files[0]).metadata();
-  const region = options.region ? (([left, top, right, bottom]) => ({ left, top, right, bottom }))(numbers(options.region, 4, 'region')) : null;
+  const frames = listFrames(folder);
+  if (frames.length < 2) throw new Error(`--analyze needs a folder with at least 2 PNG frames named with a frame number (frame-0007.png), found ${frames.length} in ${folder}.`);
+  const size = await sharp(frames[0].file).metadata();
+  let region = null;
+  if (options.region) {
+    const [left, top, right, bottom] = numbers(options.region, 4, 'region');
+    if (left < 0 || top < 0 || right > size.width || bottom > size.height || right <= left || bottom <= top) {
+      throw new Error(`--region "${options.region}" must be left,top,right,bottom inside the ${size.width} by ${size.height} frame, with right and bottom larger than left and top. Pass for example --region 0,0,${size.width},${size.height}.`);
+    }
+    region = { left, top, right, bottom };
+  }
+  const clippingShare = numberOption(options, 'clipping-share', DEFAULT_CLIPPING_SHARE, { minimum: 0, maximum: 1 });
   const metrics = [];
-  for (const file of files) metrics.push(frameMetrics(await decode(file), region ? clipBoxToFrame(region, size.width, size.height) : null));
+  for (const { file } of frames) metrics.push(frameMetrics(await decode(file), region));
+  const firstFrame = frames[0].frame;
+  const clipping = checkClipping(metrics, { maximumShare: clippingShare, firstFrame });
   const items = [
-    item('no blown highlights', 'frames', checkClipping(metrics, { maximumShare: Number(options['clipping-share'] ?? DEFAULT_CLIPPING_SHARE) }).highlights),
-    item('no crushed shadows', 'frames', checkClipping(metrics, { maximumShare: Number(options['clipping-share'] ?? DEFAULT_CLIPPING_SHARE) }).shadows),
-    item(`every frame steady (${files.length} frames)`, 'frames', checkContinuity(metrics)),
+    item('no blown highlights', 'frames', clipping.highlights),
+    item('no crushed shadows', 'frames', clipping.shadows),
+    item(`every frame steady (${frames.length} frames)`, 'frames', checkContinuity(metrics, { firstFrame })),
   ];
   printChecklist(items, 'frames');
   return items.some(entry => entry.status === 'FAIL') ? 1 : 0;
@@ -198,24 +256,22 @@ export async function main(argv) {
   }
   const subjectNumbers = options.subject ? numbers(options.subject, 6, 'subject') : null;
   const subject = builtin?.subject ?? (subjectNumbers ? { min: subjectNumbers.slice(0, 3), max: subjectNumbers.slice(3) } : null);
-  const plan = { fps: Number(options.fps ?? 30), width: Number(options.width ?? 480), height: Number(options.height ?? 270), backend: options.backend ?? 'gpu' };
-  const margin = Number(options.margin ?? DEFAULT_MINIMUM_MARGIN_PIXELS);
-  const clippingShare = Number(options['clipping-share'] ?? DEFAULT_CLIPPING_SHARE);
-  const clip = options.clip ?? (builtin ? '0-29' : null);
-  const clipRange = clip ? parseFrameRange(clip) : null;
+  const { margin, clippingShare, stillFrame, clipRange: requestedClip, ...plan } = readPlan(options);
+  const clipRange = requestedClip ?? (builtin ? parseFrameRange('0-29') : null);
+  const clip = clipRange ? `${clipRange.first}-${clipRange.last}` : null;
   const clipCamera = options['clip-camera'] ?? cameraNames[0];
-  const stillFrame = Number(options['still-frame'] ?? 0);
+  if (!cameraNames.includes(clipCamera)) throw new Error(`--clip-camera "${clipCamera}" is not one of the cameras being rendered (${cameraNames.join(', ')}). Pass one of those names.`);
   const fov = description.frame?.fov ?? 45;
 
   const branchName = git(REPOSITORY_ROOT, 'rev-parse', '--abbrev-ref', 'HEAD');
   const sides = [{ name: 'branch', label: `branch ${branchName === 'HEAD' ? '' : `${branchName} `}${git(REPOSITORY_ROOT, 'rev-parse', '--short', 'HEAD')}`.replace('  ', ' '), root: REPOSITORY_ROOT, cleanup: () => {} }];
-  if (options.base) {
-    const base = resolveBase(options.base);
-    sides.unshift({ name: 'base', label: `base ${options.base.includes('/') && !existsSync(options.base) ? options.base : git(base.root, 'rev-parse', '--short', 'HEAD')}`, ...base });
-  }
   const checklist = [];
   const perCamera = {};
   try {
+    if (options.base) {
+      const base = resolveBase(options.base);
+      sides.unshift({ name: 'base', label: `base ${options.base.includes('/') && !existsSync(options.base) ? options.base : git(base.root, 'rev-parse', '--short', 'HEAD')}`, ...base });
+    }
     for (const side of sides) {
       for (const name of cameraNames) {
         const camera = { ...cameras[name], fov };

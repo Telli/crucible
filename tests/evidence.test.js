@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { main } from '../scripts/evidence.mjs';
-import { boxMargins, checkClipping, checkContinuity, checkFraming, clipBoxToFrame, findJumps, frameMetrics, projectBounds } from '../scripts/evidence-checks.mjs';
+import { listFrames, main, parseArguments, readPlan } from '../scripts/evidence.mjs';
+import { boxMargins, checkClipping, checkContinuity, checkFraming, clipBoxToFrame, describeDropout, findJumps, frameMetrics, projectBounds } from '../scripts/evidence-checks.mjs';
 
 const WIDTH = 40;
 const HEIGHT = 40;
@@ -58,11 +58,64 @@ test('a 2-frame dropout in the middle of a clip FAILS the continuity check and n
   assert.match(result.detail, /dropout frames 7-8/);
 });
 
-test('a step above 3 times the median step is a jump even under 5 levels', () => {
-  const values = Array.from({ length: 20 }, (_, index) => index * 0.2);
-  values[10] += 3;
-  for (let index = 11; index < 20; index += 1) values[index] += 3;
-  assert.deepEqual(findJumps(values).jumps.map(jump => jump.frame), [10]);
+const metricsOf = (luma, saturation) => ({ meanLuma: luma, meanSaturation: saturation, blownShare: 0, crushedShare: 0, pixelCount: 1 });
+
+test('the absolute threshold: a single-frame jump of 6 levels FAILS and one of 4 PASSES', () => {
+  const clip = jump => Array.from({ length: 12 }, (_, index) => metricsOf(100 + (index >= 6 ? jump : 0), 40));
+  const failing = checkContinuity(clip(6));
+  assert.equal(failing.pass, false);
+  assert.deepEqual(failing.luma.jumps.map(entry => entry.frame), [6]);
+  assert.equal(checkContinuity(clip(4)).pass, true);
+});
+
+test('a step above 3 times the median step but at most 5 levels is a note, not a failure', () => {
+  const values = Array.from({ length: 20 }, (_, index) => index * 0.2 + (index >= 10 ? 4 : 0));
+  const result = findJumps(values);
+  assert.deepEqual(result.jumps, []);
+  assert.deepEqual(result.notes.map(entry => entry.frame), [10]);
+  const continuity = checkContinuity(values.map(value => metricsOf(value, 40)));
+  assert.equal(continuity.pass, true);
+  assert.match(continuity.detail, /note, not a failure: luma frame 10/);
+});
+
+test('a steady clip whose saturation settles by 2 levels in its first frames PASSES (the cpu bar clip)', () => {
+  const saturation = [35.05, 37.24, 36.82, 36.61, 36.46, 36.1];
+  const result = checkContinuity(saturation.map(value => metricsOf(150, value)));
+  assert.equal(result.pass, true);
+  assert.deepEqual(result.saturation.jumps, []);
+});
+
+test('a saturation jump in coloured frames FAILS and is named as saturation', () => {
+  const colourFrame = colour => ({ data: Uint8Array.from({ length: 16 }, (_, index) => (index % 4 === 3 ? 255 : colour[index % 4])), width: 2, height: 2 });
+  const frames = Array.from({ length: 10 }, (_, index) => frameMetrics(colourFrame(index === 5 ? [160, 120, 120] : [160, 120, 40])));
+  assert.ok(Math.abs(frames[0].meanLuma - frames[5].meanLuma) < 12);
+  const result = checkContinuity(frames);
+  assert.equal(result.pass, false);
+  assert.ok(result.saturation.jumps.some(entry => entry.frame === 5));
+  assert.match(result.detail, /saturation frame 5/);
+});
+
+test('a dropout seen by luma and saturation is printed once, and a one-frame dropout reads "frame 7"', () => {
+  const dropped = new Set([7, 8]);
+  const both = Array.from({ length: 16 }, (_, index) => (dropped.has(index) ? metricsOf(30, 150) : metricsOf(120, 40)));
+  const result = checkContinuity(both);
+  assert.equal(result.dropouts.length, 1);
+  assert.equal(result.detail.match(/dropout/g).length, 1);
+  assert.match(result.detail, /dropout frames 7-8/);
+  assert.equal(describeDropout({ firstFrame: 7, lastFrame: 7 }), 'frame 7');
+  assert.equal(describeDropout({ firstFrame: 7, lastFrame: 8 }), 'frames 7-8');
+  const single = checkContinuity(Array.from({ length: 12 }, (_, index) => metricsOf(index === 7 ? 30 : 120, 40)));
+  assert.match(single.detail, /dropout frame 7(?!-)/);
+});
+
+test('focal length and aspect: a known point lands on its expected pixel in a non-square frame', () => {
+  const point = { min: [2, 1, 0], max: [2, 1, 0] };
+  const ninety = projectBounds(point, { eye: [0, 0, 10], target: [0, 0, 0], fov: 90 }, 200, 100);
+  assert.ok(Math.abs(ninety.left - 110) < 1e-9, `x ${ninety.left}`);
+  assert.ok(Math.abs(ninety.top - 45) < 1e-9, `y ${ninety.top}`);
+  const sixty = projectBounds({ min: [5, 0, 0], max: [5, 0, 0] }, { eye: [0, 0, 10], target: [0, 0, 0], fov: 60 }, 200, 100);
+  assert.ok(Math.abs(sixty.left - (100 + (50 / Math.tan(Math.PI / 6)) * 0.5)) < 1e-9, `x ${sixty.left}`);
+  assert.ok(Math.abs(sixty.top - 50) < 1e-9);
 });
 
 test('a subject cut by the frame edge FAILS the framing check with its margin', () => {
@@ -125,6 +178,68 @@ test('--analyze exits 1 on a folder of frames with a 2-frame dropout and 0 on a 
     }
     assert.equal(await main(['--issue', '1', '--analyze', join(folder, 'steady')]), 0);
     assert.equal(await main(['--issue', '1', '--analyze', join(folder, 'dropout')]), 1);
+  } finally {
+    console.log = originalLog;
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test('every numeric option rejects a bad value with an error naming the option and what to pass', () => {
+  const bad = [
+    [{ margin: 'abc' }, /--margin must be a number from 0 to 1000, got "abc"\. Pass for example --margin 8/],
+    [{ margin: '-1' }, /--margin must be/],
+    [{ fps: '0' }, /--fps must be a whole number from 1 to 60, got "0"/],
+    [{ fps: '29.5' }, /--fps must be a whole number/],
+    [{ width: 'wide' }, /--width must be a whole number from 64 to 4096, got "wide"/],
+    [{ height: '' }, /--height must be a whole number from 64 to 4096, got ""/],
+    [{ 'still-frame': '-2' }, /--still-frame must be a whole number/],
+    [{ 'clipping-share': '2' }, /--clipping-share must be a number from 0 to 1, got "2"/],
+    [{ clip: '9-3' }, /--clip must be a first and last frame such as 0-29.*"9-3"/],
+    [{ clip: 'abc' }, /--clip must be a first and last frame/],
+    [{ backend: 'tpu' }, /--backend must be gpu or cpu, got "tpu"/],
+  ];
+  for (const [options, message] of bad) assert.throws(() => readPlan(options), message, JSON.stringify(options));
+  const good = readPlan({ margin: '12', fps: '24', clip: '0-29', 'still-frame': '3' });
+  assert.equal(good.margin, 12);
+  assert.equal(good.fps, 24);
+  assert.equal(good.stillFrame, 3);
+  assert.equal(good.clipRange.count, 30);
+  assert.equal(readPlan({}).margin, 8);
+});
+
+test('--issue must be a positive whole number', () => {
+  for (const issue of ['abc', '0', '-3', '3.5', '']) assert.throws(() => parseArguments(['--issue', issue, '--builtin', 'bar']), /--issue must be a positive whole number/, issue);
+  assert.equal(parseArguments(['--issue', '3269', '--builtin', 'bar']).issue, '3269');
+});
+
+test('an unknown --clip-camera is an error that lists the cameras', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'evidence-camera-'));
+  try {
+    await assert.rejects(main(['--issue', '1', '--builtin', 'bar', '--clip-camera', 'nope', '--out', folder]), /--clip-camera "nope" is not one of the cameras being rendered \(front, wide\)/);
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+});
+
+test('--analyze numbers frames by the digits in their names, sorts them numerically, ignores other files and checks --region', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'evidence-names-'));
+  const lines = [];
+  const originalLog = console.log;
+  console.log = line => lines.push(line);
+  try {
+    const level = frame => (frame === 6 || frame === 7 ? 20 : 120);
+    for (let frame = 2; frame <= 13; frame += 1) {
+      await sharp({ create: { width: 16, height: 16, channels: 3, background: { r: level(frame), g: level(frame), b: level(frame) } } }).png().toFile(join(folder, `frame-${frame}.png`));
+    }
+    await sharp({ create: { width: 16, height: 16, channels: 3, background: '#ffffff' } }).png().toFile(join(folder, 'readme.png'));
+    await writeFile(join(folder, 'notes.txt'), 'not a frame');
+    assert.deepEqual(listFrames(folder).map(entry => entry.frame), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    assert.equal(await main(['--issue', '1', '--analyze', folder]), 1);
+    assert.match(lines.join('\n'), /luma frame 6: 120\.0 to 20\.0/);
+    assert.match(lines.join('\n'), /dropout frames 6-7/);
+    await assert.rejects(main(['--issue', '1', '--analyze', folder, '--region', '0,0,99,99']), /--region "0,0,99,99" must be left,top,right,bottom inside the 16 by 16 frame/);
+    assert.equal(await main(['--issue', '1', '--analyze', folder, '--region', '4,4,12,12']), 1);
+    await assert.rejects(main(['--issue', '1', '--analyze', join(folder, 'missing')]), /does not exist\. Pass the folder that holds the frame PNGs/);
   } finally {
     console.log = originalLog;
     await rm(folder, { recursive: true, force: true });
