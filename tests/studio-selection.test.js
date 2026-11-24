@@ -1,0 +1,356 @@
+import './support/load-agent-scene-modules.mjs';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createAgentScene } from '../src/agent-scene.js';
+import { STUDIO_CSS } from '../src/studio-styles.js';
+import { DEFAULT_KEYMAP_ACTIONS, resolveKeymapPreset, KEYMAP_PRESET_IDS } from '../src/studio-keymap.js';
+import { createStudio, createStudioController } from '../src/studio.js';
+import { createFakeRenderer, dispatch, installStudioDom } from './support/studio-dom.mjs';
+
+function makeRecipe() {
+  return {
+    format: 'crucible.scene',
+    schemaVersion: 1,
+    geometries: [
+      { id: 'floor', type: 'box', bevel: 0 },
+      { id: 'cube', type: 'box', bevel: 0.04 },
+      { id: 'sphere', type: 'sphere', segments: 16, rings: 12 },
+    ],
+    materials: [
+      { id: 'stone', tag: 'surface', color: [0.3, 0.32, 0.35], roughness: 0.8, metallic: 0 },
+      { id: 'paint', tag: 'surface', color: [0.8, 0.25, 0.2], roughness: 0.4, metallic: 0.1 },
+    ],
+    nodes: [
+      { id: 'ground', geometry: 'floor', material: 'stone', translation: [0, -0.2, 0], scale: [10, 0.4, 10] },
+      { id: 'hero', geometry: 'cube', material: 'paint', translation: [0, 0.5, 0] },
+      { id: 'orb', geometry: 'sphere', material: 'paint', translation: [2.2, 0.5, 0], scale: [0.5, 0.5, 0.5] },
+      { id: 'hat', geometry: 'cube', material: 'paint', parent: 'hero', translation: [0, 1, 0], scale: [0.4, 0.2, 0.4] },
+      { id: 'ghost', geometry: 'cube', material: 'paint', translation: [-2.2, 0.5, 0], visible: false },
+    ],
+    camera: { eye: [0, 2, 6], target: [0, 0.5, 0], up: [0, 1, 0], fov: 45, near: 0.1, far: 100 },
+    environment: { setup: 'studio', lightDirection: [-2, 5, 3] },
+  };
+}
+
+function makeController(options = {}) {
+  return createStudioController({ scene: createAgentScene(makeRecipe()), viewportWidth: 800, viewportHeight: 600, ...options });
+}
+
+test('selectNodes replaces, adds, toggles and removes, and the active node follows the rules', () => {
+  const controller = makeController();
+  assert.deepEqual(controller.selectNodes(['hero', 'orb']), ['hero', 'orb']);
+  assert.equal(controller.selectedNodeId, 'orb', 'the last one of a replace is active');
+  controller.selectNodes(['ground'], { mode: 'add' });
+  assert.deepEqual(controller.selectedNodeIds, ['hero', 'orb', 'ground']);
+  assert.equal(controller.selectedNodeId, 'ground');
+  controller.selectNodes(['hero'], { mode: 'add' });
+  assert.deepEqual(controller.selectedNodeIds, ['orb', 'ground', 'hero'], 'adding a selected one again makes it the last and the active one');
+  assert.equal(controller.selectedNodeId, 'hero');
+  controller.selectNodes(['orb'], { mode: 'toggle' });
+  assert.deepEqual(controller.selectedNodeIds, ['ground', 'hero']);
+  assert.equal(controller.selectedNodeId, 'hero', 'taking out a node that is not active keeps the active one');
+  controller.selectNodes(['hero'], { mode: 'toggle' });
+  assert.deepEqual(controller.selectedNodeIds, ['ground']);
+  assert.equal(controller.selectedNodeId, 'ground', 'taking out the active node leaves the last one still selected active');
+  controller.selectNodes(['orb', 'hat'], { mode: 'toggle' });
+  assert.deepEqual(controller.selectedNodeIds, ['ground', 'orb', 'hat']);
+  assert.equal(controller.selectedNodeId, 'hat');
+  controller.selectNodes(['hat', 'ground'], { mode: 'remove' });
+  assert.deepEqual(controller.selectedNodeIds, ['orb']);
+  assert.equal(controller.selectedNodeId, 'orb');
+  controller.selectNodes(['ground', 'hero', 'orb'], { active: 'hero' });
+  assert.equal(controller.selectedNodeId, 'hero', 'active names the active node');
+  assert.deepEqual(controller.selectedNodeIds, ['ground', 'hero', 'orb'], 'and does not reorder the set');
+  controller.selectNodes([]);
+  assert.deepEqual(controller.selectedNodeIds, []);
+  assert.equal(controller.selectedNodeId, null);
+});
+
+test('selectedNodeIds is a copy, and selectNode and the getter behave as before', () => {
+  const controller = makeController();
+  assert.equal(controller.selectedNodeId, 'ground', 'the first mesh starts selected');
+  assert.deepEqual(controller.selectedNodeIds, ['ground']);
+  controller.selectNodes(['hero', 'orb']);
+  controller.selectedNodeIds.push('ground');
+  assert.deepEqual(controller.selectedNodeIds, ['hero', 'orb'], 'changing the copy changes nothing');
+  assert.equal(controller.selectNode('hat'), 'hat');
+  assert.deepEqual(controller.selectedNodeIds, ['hat'], 'selectNode replaces the whole set');
+  assert.equal(controller.selectNode(null), null);
+  assert.deepEqual(controller.selectedNodeIds, []);
+  assert.throws(() => controller.selectNode('missing'), /Unknown node "missing"/);
+  assert.throws(() => controller.selectNode(7), /node ID string or null/);
+});
+
+test('lights and the camera are exclusive with nodes', () => {
+  const controller = makeController();
+  controller.selectNodes(['hero', 'orb']);
+  controller.selectSceneObject('sun');
+  assert.deepEqual(controller.selectedNodeIds, []);
+  assert.equal(controller.selectedNodeId, null);
+  assert.equal(controller.selectedObjectKey, 'sun');
+  controller.selectNodes(['hero'], { mode: 'add' });
+  assert.equal(controller.selectedObjectKey, null, 'picking a node leaves the sun');
+  assert.deepEqual(controller.selectedNodeIds, ['hero']);
+  controller.addSceneLight('point');
+  assert.deepEqual(controller.selectedNodeIds, []);
+  assert.equal(controller.selectedObjectKey, 'point:0');
+  controller.selectNodes(['hero', 'orb'], { mode: 'toggle' });
+  assert.equal(controller.selectedObjectKey, null);
+  assert.deepEqual(controller.selectedNodeIds, ['hero', 'orb']);
+});
+
+test('selectAll skips hidden nodes and keeps the active one, and invertSelection swaps the sets', () => {
+  const controller = makeController();
+  controller.selectNodes(['hero', 'orb'], { active: 'hero' });
+  const everyone = controller.selectAll();
+  assert.deepEqual([...everyone].sort(), ['ground', 'hat', 'hero', 'orb'], 'the hidden ghost stays out');
+  assert.equal(controller.selectedNodeId, 'hero', 'select all keeps the active node');
+  controller.selectNodes(['hero', 'orb']);
+  assert.deepEqual([...controller.invertSelection()].sort(), ['ground', 'hat']);
+  assert.equal(controller.selectedNodeId, 'hat', 'the last node of an inverted set is active');
+  controller.selectAll();
+  assert.deepEqual(controller.invertSelection(), []);
+  assert.equal(controller.selectedNodeId, null);
+});
+
+test('selectionRoots drops a node whose ancestor is selected too', () => {
+  const controller = makeController();
+  controller.selectNodes(['hat', 'hero', 'orb']);
+  assert.deepEqual(controller.selectionRoots(), ['hero', 'orb']);
+  controller.selectNodes(['hat', 'orb']);
+  assert.deepEqual(controller.selectionRoots(), ['hat', 'orb'], 'a child alone is its own root');
+  controller.selectNodes([]);
+  assert.deepEqual(controller.selectionRoots(), []);
+});
+
+test('undo and redo restore the whole set and the active node', () => {
+  const controller = makeController();
+  controller.selectNodes(['hero', 'orb'], { active: 'hero' });
+  controller.updateNodeTransform('hero', { translation: [1, 0.5, 0] });
+  controller.selectNodes(['ground']);
+  controller.undo();
+  assert.deepEqual(controller.selectedNodeIds, ['hero', 'orb']);
+  assert.equal(controller.selectedNodeId, 'hero');
+  controller.redo();
+  assert.deepEqual(controller.selectedNodeIds, ['ground']);
+  assert.equal(controller.selectedNodeId, 'ground');
+});
+
+test('a node that is deleted, by delete or by undo, leaves the set', () => {
+  const controller = makeController();
+  controller.selectNodes(['hero', 'orb']);
+  controller.deleteSelected();
+  assert.deepEqual(controller.selectedNodeIds, [], 'nothing is left selected after a delete, so a second Delete cannot hit a node nobody picked');
+  assert.equal(controller.selectedNodeId, null);
+  controller.undo();
+  assert.deepEqual(controller.selectedNodeIds, ['hero', 'orb'], 'undo brings the node and the set back');
+  controller.redo();
+  assert.deepEqual(controller.selectedNodeIds, [], 'redo takes the node out again and restores the set it was undone with');
+  const added = controller.addPrimitive('box');
+  controller.selectNodes([added.id, 'hero']);
+  controller.undo();
+  assert.ok(!controller.selectedNodeIds.includes(added.id), 'a node an undo removes is never selected');
+  controller.selectNodes(['ground', 'hat']);
+  controller.loadRecipe({ ...makeRecipe(), nodes: makeRecipe().nodes.filter(node => node.id !== 'hat') });
+  assert.deepEqual(controller.selectedNodeIds, ['ground'], 'a node a new recipe lacks falls out of the set');
+  assert.equal(controller.selectedNodeId, 'ground');
+});
+
+test('pickAt takes a mode, and a click on empty space clears only a replacing selection', () => {
+  const controller = makeController();
+  const heroPoint = controller.projectWorldPoint([0, 0.5, 0]);
+  const orbPoint = controller.projectWorldPoint([2.2, 0.5, 0]);
+  controller.pickAt(heroPoint.x, heroPoint.y);
+  assert.deepEqual(controller.selectedNodeIds, ['hero']);
+  controller.pickAt(orbPoint.x, orbPoint.y, { mode: 'toggle' });
+  assert.deepEqual(controller.selectedNodeIds, ['hero', 'orb']);
+  assert.equal(controller.selectedNodeId, 'orb');
+  controller.pickAt(12, 12, { mode: 'toggle' });
+  assert.deepEqual(controller.selectedNodeIds, ['hero', 'orb'], 'an empty click that toggles keeps the selection');
+  controller.pickAt(orbPoint.x, orbPoint.y, { mode: 'toggle' });
+  assert.deepEqual(controller.selectedNodeIds, ['hero']);
+  controller.pickAt(orbPoint.x, orbPoint.y);
+  assert.deepEqual(controller.selectedNodeIds, ['orb'], 'a plain pick replaces');
+  controller.pickAt(12, 12);
+  assert.deepEqual(controller.selectedNodeIds, []);
+  assert.throws(() => controller.pickAt(1, 1, { mode: 'swap' }), /Unknown selection mode "swap"/);
+});
+
+test('onChange details carry the whole selection', () => {
+  const details = [];
+  const controller = makeController({ onChange: detail => details.push(detail) });
+  controller.selectNodes(['hero', 'orb']);
+  const last = details.at(-1);
+  assert.equal(last.kind, 'selection');
+  assert.deepEqual(last.selectedNodeIds, ['hero', 'orb']);
+  assert.equal(last.selectedNodeId, 'orb');
+});
+
+test('selectNodes names what it was given wrong and what to pass instead', () => {
+  const controller = makeController();
+  assert.throws(() => controller.selectNodes('hero'), /array of node ID strings/);
+  assert.throws(() => controller.selectNodes(['hero', 4]), /array of node ID strings/);
+  assert.throws(() => controller.selectNodes(['hero', 'missing']), /Unknown node "missing"/);
+  assert.throws(() => controller.selectNodes(['hero'], { mode: 'swap' }), /Unknown selection mode "swap". Use one of replace, add, toggle, remove/);
+  assert.throws(() => controller.selectNodes(['hero'], { active: 'orb' }), /Active node "orb" is not in the selection/);
+  assert.throws(() => controller.selectNodes(['hero'], { active: 3 }), /active must be a node ID string/);
+  assert.deepEqual(controller.selectedNodeIds, ['ground'], 'a refused call changes nothing');
+});
+
+test('the outline has an active layer and a layer for the rest, and one selection keeps its single layer', () => {
+  const controller = makeController();
+  controller.selectNode('hero');
+  const single = controller.selectionSilhouetteLayers();
+  assert.ok(single.active.length >= 6 && single.othersExist === false);
+  assert.deepEqual(controller.selectionSilhouette(), single.active, 'a single selection has the one outline it had');
+  controller.selectNodes(['hero', 'orb', 'ground'], { active: 'orb' });
+  const layers = controller.selectionSilhouetteLayers();
+  assert.ok(layers.active.length > 0 && layers.others.length > 0);
+  assert.equal(layers.activeExists && layers.othersExist, true);
+  assert.equal(controller.selectionSilhouette().length, layers.active.length + layers.others.length, 'the union is both layers');
+  const hulls = controller.selectionOutlineLayers();
+  assert.equal(hulls.filter(layer => layer.active).length, 1);
+  assert.equal(hulls.length, 3);
+  controller.selectNodes([]);
+  assert.equal(controller.selectionSilhouette(), null);
+  assert.deepEqual(controller.selectionOutlineLayers(), []);
+});
+
+test('the default keymap binds select all, none and invert, and no preset loses them or breaks', () => {
+  const byId = Object.fromEntries(DEFAULT_KEYMAP_ACTIONS.map(item => [item.id, item.bindings]));
+  assert.deepEqual(byId['select.all'], [{ key: 'a', shift: false }]);
+  assert.deepEqual(byId['select.none'], [{ code: 'KeyA', alt: true }], 'by code, so Option+A on a Mac matches');
+  assert.deepEqual(byId['select.invert'], [{ key: 'i', ctrl: true }]);
+  for (const presetId of KEYMAP_PRESET_IDS) {
+    const keymap = resolveKeymapPreset(presetId);
+    assert.ok(keymap.actions.some(item => item.id === 'select.all' && item.bindings.length === 1), `${presetId} keeps select all`);
+  }
+});
+
+test('the stylesheet draws the rest of the selection at half the accent', () => {
+  assert.match(STUDIO_CSS, /\.crucible-studio-silhouette-colour\[data-layer="others"\]\s*{\s*flood-color: color-mix\(in srgb, var\(--studio-accent\) 50%, transparent\);/);
+  assert.match(STUDIO_CSS, /\.crucible-studio-selection-outline\[data-layer="others"\]\s*{\s*stroke: color-mix\(in srgb, var\(--studio-accent\) 50%, transparent\);/);
+});
+
+function mountStudio(testContext) {
+  const dom = installStudioDom();
+  const renderer = createFakeRenderer();
+  const studio = createStudio(dom.container, { recipe: makeRecipe(), renderer });
+  testContext.after(() => {
+    studio.dispose();
+    dom.uninstall();
+  });
+  const root = dom.container.firstElementChild;
+  const viewport = root.querySelector('.crucible-studio-viewport');
+  viewport.box = { left: 40, top: 30, width: 800, height: 600, right: 840, bottom: 630 };
+  studio.renderNow();
+  const canvas = viewport.querySelector('canvas');
+  const gizmo = viewport.querySelector('.crucible-studio-gizmo');
+  const controller = studio.controller;
+  const click = (worldPoint, modifiers = {}) => {
+    const point = Array.isArray(worldPoint) ? controller.projectWorldPoint(worldPoint) : worldPoint;
+    const position = { clientX: point.x + 40, clientY: point.y + 30 };
+    dispatch(canvas, 'pointerdown', { ...position, ...modifiers });
+    dispatch(canvas, 'pointerup', { ...position, ...modifiers });
+  };
+  const pressKey = (key, properties = {}, target = dom.document) => dispatch(target, 'keydown', { key, ...properties });
+  return { dom, studio, controller, root, canvas, gizmo, click, pressKey };
+}
+
+const HERO = [0, 0.5, 0];
+const ORB = [2.2, 0.5, 0];
+const GROUND_EDGE = [3.5, -0.2, 2.5];
+
+test('in the viewport a plain click replaces, Shift or Ctrl toggles, and empty space clears', testContext => {
+  const ui = mountStudio(testContext);
+  ui.click(HERO);
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hero']);
+  ui.click(ORB, { shiftKey: true });
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hero', 'orb']);
+  assert.equal(ui.controller.selectedNodeId, 'orb', 'the object Shift+click added is active');
+  ui.click(GROUND_EDGE, { ctrlKey: true });
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hero', 'orb', 'ground'], 'Ctrl+click does the same');
+  ui.click(ORB, { metaKey: true });
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hero', 'ground'], 'Command+click on a selected object takes it out');
+  ui.click({ x: 12, y: 12 }, { shiftKey: true });
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hero', 'ground'], 'Shift+click on empty space keeps the selection');
+  ui.click(HERO);
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hero'], 'a plain click replaces');
+  ui.click({ x: 12, y: 12 });
+  assert.deepEqual(ui.controller.selectedNodeIds, [], 'a click on empty space clears');
+});
+
+test('the outline of three selected objects has two strengths, the active one on top', testContext => {
+  const ui = mountStudio(testContext);
+  ui.controller.selectNodes(['hero', 'orb', 'ground'], { active: 'orb' });
+  ui.studio.renderNow();
+  const paths = ui.gizmo.querySelectorAll('.crucible-studio-selection-silhouette');
+  assert.deepEqual(paths.map(path => path.getAttribute('data-layer')), ['others', 'active'], 'the rest first, the active one over it');
+  const filters = ui.gizmo.descendants().filter(element => element.tagName.toLowerCase() === 'filter');
+  assert.equal(new Set(filters.map(filter => filter.getAttribute('id'))).size, 2, 'each layer has its own filter');
+  assert.deepEqual(paths.map(path => path.getAttribute('filter')), filters.map(filter => `url(#${filter.getAttribute('id')})`));
+  const colours = ui.gizmo.querySelectorAll('.crucible-studio-silhouette-colour');
+  assert.deepEqual(colours.map(colour => colour.getAttribute('data-layer')).sort(), ['active', 'others']);
+  ui.controller.selectNode('hero');
+  ui.studio.renderNow();
+  assert.deepEqual(ui.gizmo.querySelectorAll('.crucible-studio-selection-silhouette').map(path => path.getAttribute('data-layer')), ['active']);
+});
+
+test('A, Alt+A and Ctrl+I select all, none and invert, and do nothing while a field has the keys', testContext => {
+  const ui = mountStudio(testContext);
+  ui.pressKey('a');
+  assert.deepEqual([...ui.controller.selectedNodeIds].sort(), ['ground', 'hat', 'hero', 'orb']);
+  const held = ui.pressKey('a', { altKey: true, code: 'KeyA' });
+  assert.equal(held.defaultPrevented, true, 'Alt+A is taken from the browser');
+  assert.deepEqual(ui.controller.selectedNodeIds, []);
+  ui.controller.selectNodes(['hero']);
+  const inverted = ui.pressKey('i', { ctrlKey: true });
+  assert.equal(inverted.defaultPrevented, true);
+  assert.deepEqual([...ui.controller.selectedNodeIds].sort(), ['ground', 'hat', 'orb']);
+  ui.pressKey('å', { altKey: true, code: 'KeyA' });
+  assert.deepEqual(ui.controller.selectedNodeIds, [], 'Option+A on a Mac types a different letter and still matches by code');
+  const field = ui.root.querySelectorAll('input').find(input => input.type === 'text' || input.type === undefined || input.type === '');
+  assert.ok(field, 'the Properties panel has a text field');
+  ui.controller.selectNodes(['hero']);
+  dispatch(field, 'keydown', { key: 'a' });
+  dispatch(field, 'keydown', { key: 'a', altKey: true, code: 'KeyA' });
+  dispatch(field, 'keydown', { key: 'i', ctrlKey: true });
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hero'], 'typing in a field changes no selection');
+  ui.pressKey('a', { shiftKey: true });
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hero'], 'Shift+A still opens the Add menu, not select all');
+});
+
+test('the Properties head counts the selection from two objects on', testContext => {
+  const ui = mountStudio(testContext);
+  const count = ui.root.querySelector('.crucible-studio-selection-count');
+  assert.ok(count, 'the head has a count');
+  ui.controller.selectNode('hero');
+  assert.equal(count.hidden, true, 'one selected object needs no count');
+  ui.controller.selectNodes(['orb', 'ground'], { mode: 'add' });
+  assert.equal(count.hidden, false);
+  assert.equal(count.textContent, '3 selected');
+  assert.ok(count.querySelector('.crucible-studio-icon'), 'an icon leads the count');
+  ui.controller.selectNodes(['orb'], { mode: 'remove' });
+  assert.equal(count.textContent, '2 selected');
+  ui.controller.selectNode(null);
+  assert.equal(count.hidden, true);
+});
+
+test('the shortcuts list has a row for select all, none and invert', testContext => {
+  const ui = mountStudio(testContext);
+  ui.pressKey('?');
+  const text = ui.root.textContent;
+  assert.match(text, /A \/ Alt\+A \/ Ctrl\+I/);
+  assert.match(text, /Select all \/ none \/ invert/);
+});
+
+test('the embedder API selects several nodes', testContext => {
+  const ui = mountStudio(testContext);
+  assert.deepEqual(ui.studio.selectNodes(['hero', 'orb']), ['hero', 'orb']);
+  assert.deepEqual(ui.studio.selectedNodeIds, ['hero', 'orb']);
+  assert.deepEqual([...ui.studio.selectAll()].sort(), ['ground', 'hat', 'hero', 'orb']);
+  assert.deepEqual(ui.studio.invertSelection(), []);
+  const heroPoint = ui.controller.projectWorldPoint(HERO);
+  ui.studio.pickAt(heroPoint.x, heroPoint.y, { mode: 'add' });
+  assert.deepEqual(ui.studio.selectedNodeIds, ['hero']);
+});

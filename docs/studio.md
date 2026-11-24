@@ -94,6 +94,12 @@ Select a light in the Scene list and the Look tab lists what the agent can set o
 
 A field that a motion track or driver animates is locked, shown in the muted color and marked with a keyframe diamond named "Animated by a track": edit its keyframes instead. A keyed object's Position, Rotation and Scale are editable with Auto-key on, where an edit writes the key at the playhead, and locked with it off. When an agent changes the scene file, Studio reloads it and the controls show the new values. Not shown yet: a light's `ies` profile, `affects` links and `lines`. In code, `controller.updateSceneLight(key, patch, { recordUndo })`, `controller.updateSceneCamera(patch)` and `controller.describeSceneObject(key)` do the same, and the rows come from the table in `src/studio-properties.js`, so a later area adds rows and no panel code.
 
+## Selecting several objects
+
+Click an object to select it. Shift+click (or Ctrl or Command+click) adds an object to the selection, or takes it out if it is already in; the one you added last is the **active** object. A click on empty space clears the selection, and Shift+click on empty space leaves it alone. Select all (A) takes every visible object, Select none (Alt+A) clears the selection and Invert (Ctrl+I) swaps selected and not selected.
+
+Every selected object has an outline: the active one in the full accent colour, the others at half strength. A selection too dense for the shape outline (past 8,000 triangles) is drawn by the mask in one strength. The Properties card, the handles, the readout and every action (move, delete, duplicate, hide, keyframes) still work on the active object only, and the Properties head says how many are selected. Tab edits the mesh of the active object.
+
 ## Keys
 
 The keys follow Blender where Studio has the same action. **Help ▸ Keyboard shortcuts** (or **?**) lists them all.
@@ -109,6 +115,7 @@ The keys follow Blender where Studio has the same action. **Help ▸ Keyboard sh
 | Shift+D or Ctrl+D | Duplicate |
 | X, Delete or Backspace | Delete |
 | Esc | Deselect |
+| A, Alt+A, Ctrl+I | Select all, select none, invert the selection |
 | Tab | Edit the mesh of the selected object; Tab again leaves |
 | 1, 2, 3 | In edit mode: select vertices, edges or faces |
 | H, Alt+H | Hide the selection, show everything that is hidden |
@@ -153,6 +160,9 @@ A right click on an object, in the viewport or in the Scene list, selects it and
 | Hide the selection | H | Ctrl+H | H |
 | Show all | Alt+H | Ctrl+Shift+H | Alt+H |
 | Deselect | Esc | Esc | Ctrl+Shift+A, Esc |
+| Select all | A | A | A |
+| Select none | Alt+A | Alt+A | Alt+A |
+| Invert the selection | Ctrl+I | Ctrl+I | Ctrl+I |
 | Frame the selection | F, . | F | O, S |
 | Show or hide Properties | N | Ctrl+A | Shift+F5 |
 | Insert a keyframe | I, K | S | F9 |
@@ -380,9 +390,12 @@ const scene = createAgentScene(recipe);
 const controller = createStudioController({ scene, viewportWidth: 960, viewportHeight: 540 });
 
 controller.pickAt(480, 270);
+controller.pickAt(300, 200, { mode: 'toggle' }); // adds the object there, or takes it out
 controller.saveBookmark('Front');
 controller.setSunAngles({ azimuthDegrees: -40, elevationDegrees: 52 });
 ```
+
+The selection is an ordered set of node ids and one active id. `controller.selectedNodeId` is the active id (or `null`), `controller.selectedNodeIds` a copy of the set, and `controller.selectNode(id)` still replaces the selection with one node. `controller.selectNodes(ids, { mode, active })` changes the set: `mode` is `'replace'` (the default), `'add'`, `'toggle'` or `'remove'`, and `active` names the active node, which must be selected afterwards (otherwise the last node that joined, or the last one left, is active). `controller.selectAll()` and `controller.invertSelection()` skip hidden nodes, and `controller.selectionRoots()` lists the selected nodes that have no selected ancestor, which is what a move or a delete has to act on so that a child is not handled twice. `controller.pickAt(x, y, { mode })` takes the same modes. A light or the camera is never selected together with nodes. A node that is deleted, or that an undo removes, leaves the set, and an undo step restores the set and the active node. `onChange` details carry `selectedNodeIds` beside `selectedNodeId`.
 
 `controller.gizmoHandles()` returns the pivot, the object's world axes (`basis`) and the screen points of each handle. `controller.selectionSilhouette()` returns the selected object's triangles on screen as a flat list of x, y pairs (six numbers a triangle), which the viewport fills and outlines, and `null` above 8,000 triangles; `controller.selectionMaskSource()` returns the parts of such a dense selection with the matrix that projects each one, for the mask canvas; `controller.selectionOutline()` returns the hull polygon around it. The silhouette and the hull return `null` when nothing is selected or part of the object is behind the camera. `controller.frameSelectionPose()` returns the camera that frames the selection without moving anything, and `controller.moveViewportCamera(patch)` moves the camera without an undo step.
 

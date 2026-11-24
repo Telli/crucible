@@ -317,12 +317,19 @@ export const STUDIO_CSS = `
 .crucible-studio-silhouette-colour {
   flood-color: var(--studio-accent);
 }
+/* The active object is drawn at the full accent; the rest of the selection at half of it, so the two read apart. */
+.crucible-studio-silhouette-colour[data-layer="others"] {
+  flood-color: color-mix(in srgb, var(--studio-accent) 50%, transparent);
+}
 .crucible-studio-selection-outline {
   fill: none;
   stroke: var(--studio-accent);
   stroke-width: 1.5;
   stroke-linejoin: round;
   pointer-events: none;
+}
+.crucible-studio-selection-outline[data-layer="others"] {
+  stroke: color-mix(in srgb, var(--studio-accent) 50%, transparent);
 }
 /* The axis widget stands at the top right of the viewport, beside the panel column. Floating, that is left of the
    Scene card, level with its top and one edge gap from it; --studio-gizmo-clear is the room the cards take. */
@@ -976,10 +983,21 @@ export const STUDIO_CSS = `
   align-items: center;
   gap: 4px;
 }
-.crucible-studio-dock-title .crucible-studio-icon {
+.crucible-studio-dock-title .crucible-studio-icon,
+.crucible-studio-selection-count .crucible-studio-icon {
   inline-size: 15px;
   block-size: 15px;
 }
+.crucible-studio-selection-count {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--studio-font);
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--studio-muted);
+}
+.crucible-studio-selection-count[hidden] { display: none; }
 .crucible-studio-filter {
   position: relative;
   flex: none;
