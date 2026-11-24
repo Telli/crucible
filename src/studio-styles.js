@@ -2039,14 +2039,14 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-settings {
   display: grid;
-  gap: 2px;
+  gap: var(--studio-space-4);
   font-size: 12.5px;
 }
 .crucible-studio-setting {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--studio-space-4);
   min-block-size: 34px;
 }
 .crucible-studio-setting select {
