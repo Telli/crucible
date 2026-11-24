@@ -24,7 +24,7 @@ import { USER_PASS_CAPABILITIES } from '../src/user-pass.js';
 import { GAME_CAPABILITIES } from '../src/game-setup-notes.js';
 import { MESH_BLEND_CAPABILITIES } from '../src/mesh-blend.js';
 import { MATERIAL_SNIPPET_CAPABILITIES } from '../src/material-snippet.js';
-import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, maximumMemoryMiB, memoryRangeError, BAKE_WORKER_MAXIMUM_SECONDS, MAXIMUM_SQUARE_JOB_SIDE, MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE, MAXIMUM_STILLS_FRAMES } from '../src/agent-scene-capabilities.js';
+import { AGENT_SCENE_CAPABILITIES, AGENT_SCENE_DEFAULT_LIMITS, RENDER_PASS_NAMES, RENDER_PASS_DEPTH_RANGE, VIDEO_ENCODERS, MAXIMUM_VIDEO_SECONDS, MAXIMUM_JOB_FPS, MAXIMUM_JOB_FRAMES, MAXIMUM_JOB_SIDE, MAXIMUM_JOB_PIXELS, MAXIMUM_SEQUENCE_JOB_SIDE, MAXIMUM_SEQUENCE_JOB_PIXELS, maximumMemoryMiB, memoryRangeError, agentMemoryBudgetMessage, BAKE_WORKER_MAXIMUM_SECONDS, MAXIMUM_SQUARE_JOB_SIDE, MAXIMUM_SQUARE_SEQUENCE_JOB_SIDE, MAXIMUM_STILLS_FRAMES } from '../src/agent-scene-capabilities.js';
 import { PATH_TRACER_CAPABILITIES } from '../src/path-tracer-capabilities.js';
 import { chooseDenoiser, finishWithOidn } from './agent-path-trace-denoise.mjs';
 import { createNativeSequence } from './agent-native-sequence.mjs';
@@ -939,6 +939,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
         }),
       ]);
     } catch (error) {
+      if (typeof error?.message === 'string') error.message = agentMemoryBudgetMessage(error.message, { memory, maximumMemory });
       if (timedOut) {
         if (target === page) {
           forgetAllSessions();
