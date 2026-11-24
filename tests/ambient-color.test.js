@@ -1,5 +1,6 @@
 import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { normalizeAgentLook } from '../src/agent-look.js';
 import { createLightingState, updateLightingState } from '../src/lighting.js';
@@ -32,13 +33,21 @@ test('a recipe without ambientColor or a diffuse scale keeps its shape and its u
   assert.equal(calls.irradiance[0], Math.fround(0.1));
 });
 
-test('ambientColor adds to the constant diffuse term and the diffuse scale multiplies the diffuse light only', () => {
+test('ambientColor stays out of the diffuse light and the diffuse scale multiplies the diffuse light only', () => {
   const environment = environmentFor({ ambientColor: [0.3, 0.2, 0.1], environmentDiffuseScale: 0.5 });
-  const calls = uploadedUniforms(updateLightingState(createLightingState(), environment));
-  assert.deepEqual(calls.bounce.map(value => Number(value.toFixed(4))), [0.3, 0.2, 0.1]);
+  const lighting = updateLightingState(createLightingState(), environment);
+  assert.deepEqual(Array.from(lighting.ambientColor).map(value => Number(value.toFixed(4))), [0.3, 0.2, 0.1]);
+  const calls = uploadedUniforms(lighting);
+  assert.deepEqual(calls.bounce, [0, 0, 0], 'the fill is not a bounce: adding it to the irradiance lit sunlit ground as well as shadow');
   assert.deepEqual(calls.frame, [1, 0, 1]);
-  assert.ok(Math.abs(calls.irradiance[0] - 0.4) < 1e-6);
-  assert.ok(Math.abs(calls.irradiance[3] - 0.1) < 1e-6);
+  assert.equal(calls.irradiance[0], Math.fround(0.1));
+});
+
+test('the main shader weights the ambientColor fill by the key light so it tints shadow and leaves lit surfaces alone', () => {
+  const source = readFileSync(new URL('../src/shaders.js', import.meta.url), 'utf8');
+  assert.match(source, /uniform vec3 ambientColor;/);
+  assert.match(source, /float keyReach = visibility \* smoothstep\(0\.0, 0\.4, dot\(normal, normalize\(lightDirection\)\)\)/);
+  assert.match(source, /radiance \+= ambientColor \* color \* \(1\.0 - metallic\) \* occlusion \* ambientIntensity \* \(1\.0 - keyReach\);/);
 });
 
 test('ambientColor and environmentDiffuseScale errors name the field and the range', () => {

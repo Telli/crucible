@@ -59,3 +59,20 @@ test('a skybox normalizes, replaces the sky, and every face error names the fix'
   assert.throws(() => normalizeAgentLook({ environment: { skybox: { ...skybox, front: 'https://example.com/front.png' } } }), /environment\.skybox\.front.*no URLs/);
   assert.throws(() => normalizeAgentLook({ environment: { skybox, sky: { type: 'physical' } } }), /remove "hdri" or "sky"/);
 });
+
+test('a face is sampled smoothly: a gradient crosses the map with no stair-steps and no jump at the face edge', () => {
+  const size = 16;
+  const data = new Uint8ClampedArray(size * size * 4);
+  for (let row = 0; row < size; row++) {
+    for (let column = 0; column < size; column++) data.set([Math.round(column / (size - 1) * 255), 0, 0, 255], (row * size + column) * 4);
+  }
+  for (const face of SKYBOX_FACES) registerSkyboxFace(idFor(face), face === 'front' ? { width: size, height: size, data } : solidFace([0, 0, 0]));
+  const map = createSkyboxMap({ skybox, environmentIntensity: 1, environmentRotation: 0 });
+  const row = map.height / 2;
+  let largestStep = 0;
+  for (let column = map.width / 2 - 200; column < map.width / 2 + 200; column++) {
+    largestStep = Math.max(largestStep, Math.abs(map.data[(row * map.width + column + 1) * 3] - map.data[(row * map.width + column) * 3]));
+  }
+  assert.ok(largestStep < 0.01, `the red channel moved by ${largestStep} between two neighbouring map columns; nearest sampling of 16 texels moves it by about 0.06`);
+  assert.ok(map.width >= 2048, 'the map is large enough that a face is not blown up more than a few times');
+});

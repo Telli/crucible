@@ -225,7 +225,7 @@ const OPAQUE_SHADOW_UNIT = 2;
 const LIGHT_UNIFORMS = ['pointLightCount', 'pointLightPositions[0]', 'pointLightColors[0]', 'pointLightRadii[0]', 'pointLightShadowTiles[0]',
   'spotLightCount', 'spotLightPositions[0]', 'spotLightColors[0]', 'spotLightDirections[0]', 'spotLightParameters[0]',
   'areaLightCount', 'areaLightPositions[0]', 'areaLightColors[0]', 'areaLightNormals[0]', 'areaLightTangents[0]',
-  'localShadowAtlas', 'localShadowMatrices[0]', 'localShadowTexelAngles[0]', 'keyColor', 'fillIntensity', 'ambientIntensity', 'specularAntiAliasing'];
+  'localShadowAtlas', 'localShadowMatrices[0]', 'localShadowTexelAngles[0]', 'keyColor', 'fillIntensity', 'ambientIntensity', 'ambientColor', 'specularAntiAliasing'];
 const SPLAT_UNIFORMS = ['splatEnabled', 'splatColor', 'splatNormal', 'splatPacked', 'splatMask', 'splatLayer[0]', 'splatTint[0]', 'splatSlope[0]', 'splatHeightRange[0]', 'splatMaskChannel[0]', 'splatMaskInvert[0]', 'splatBlend', 'splatOptions', 'splatMaskBounds', 'splatVariation'];
 
 function validateMaterialMaps(material) {
@@ -2494,11 +2494,10 @@ export class CrucibleRenderer {
     const context = this.context;
     const coefficients = this.environmentResources.irradiance;
     const bounced = withBounce ? map.irradianceWithBounce?.(coefficients) : null;
-    // environment.ambientColor adds to the constant term of the diffuse light (the slot a room's bounce uses) and
-    // environment.environmentDiffuseScale scales the diffuse light; the specular light and a probe are left alone.
-    const { ambientColor, environmentDiffuseScale } = withBounce ? this.lighting : { ambientColor: [0, 0, 0], environmentDiffuseScale: 1 };
-    const irradiance = Float32Array.from(bounced ?? coefficients);
-    for (let channel = 0; channel < 3; channel++) irradiance[channel] += ambientColor[channel];
+    // environment.environmentDiffuseScale scales the diffuse light; the specular light and a probe are left alone. environment.ambientColor is
+    // not added here: it is a shadow fill the main shader weights by the key light's shadow (keyReach in src/shaders.js).
+    const environmentDiffuseScale = withBounce ? this.lighting.environmentDiffuseScale : 1;
+    const irradiance = bounced ?? coefficients;
     if (uniforms['environmentIrradiance[0]']) context.uniform3fv(uniforms['environmentIrradiance[0]'], irradiance);
     if (uniforms.environmentBounce) context.uniform3f(uniforms.environmentBounce, irradiance[0] - coefficients[0], irradiance[1] - coefficients[1], irradiance[2] - coefficients[2]);
     if (uniforms.environmentDiffuseFrame) context.uniform3f(uniforms.environmentDiffuseFrame, Math.cos(map.rotation), Math.sin(map.rotation), map.intensity * environmentDiffuseScale);
@@ -3143,6 +3142,7 @@ export class CrucibleRenderer {
     context.uniform3fv(this.uniforms.keyColor, this.lighting.keyColor);
     context.uniform1f(this.uniforms.fillIntensity, this.lighting.fillIntensity);
     context.uniform1f(this.uniforms.ambientIntensity, this.lighting.ambientIntensity);
+    context.uniform3fv(this.uniforms.ambientColor, this.lighting.ambientColor);
     context.uniform1f(this.uniforms.specularAntiAliasing, this.lighting.specularAntiAliasing);
     if (this.lighting.wetness > 0) this.bindWetness();
     context.uniform1f(this.uniforms.time, frame.time ?? 0);

@@ -84,7 +84,7 @@ function resolveColorCorrection(input) {
 // effects.sunRays: a screen-space radial shaft pass (#3235). Each pixel marches toward the sun's screen position and counts how many
 // samples see open sky in the depth buffer, so a tree, a mast or a wall in front of the sun breaks the glow into beams. It adds the key
 // light's colour scaled by that share, strongest near the sun. Fixed sample count and a fixed per-pixel offset: no history, so a seek repeats.
-const SUN_RAY_SAMPLES = 48;
+const SUN_RAY_SAMPLES = 32;
 const SUN_RAY_FIELDS = ['intensity', 'spread'];
 const SUN_RAY_RANGES = Object.freeze({
   intensity: [0, 4, 'how much light the rays add, 0 for none, such as 0.25', 0.25],
@@ -278,35 +278,72 @@ void main() {
 export const colorCorrectionFragment = `${sharedFragmentHeader}
 uniform vec3 tint;
 uniform vec3 gradeControls;
+// Oklab (Ottosson 2020), so saturation moves the chroma of a colour and leaves its lightness and hue alone.
+vec3 linearToOklab(vec3 color) {
+  vec3 cone = pow(max(mat3(0.4122214708, 0.2119034982, 0.0883024619, 0.5363325363, 0.6806995451, 0.2817188376, 0.0514459929, 0.1073969566, 0.6299787005) * color, vec3(1e-9)), vec3(1.0 / 3.0));
+  return mat3(0.2104542553, 1.9779984951, 0.0259040371, 0.7936177850, -2.4285922050, 0.7827717662, -0.0040720468, 0.4505937099, -0.8086757660) * cone;
+}
+vec3 oklabToLinear(vec3 lab) {
+  vec3 cone = mat3(1.0, 1.0, 1.0, 0.3963377774, -0.1055613458, -0.0894841775, 0.2158037573, -0.0638541728, -1.2914855480) * lab;
+  return mat3(4.0767416621, -1.2684380046, -0.0041960863, -3.3077115913, 2.6097574011, -0.7034186147, 0.2309699292, -0.3413193965, 1.7076147010) * (cone * cone * cone);
+}
 void main() {
   vec4 source = texture(sourceTexture, textureCoordinate);
-  // Tint, then brightness in stops of two, then contrast about middle grey, then saturation about the Rec. 709 luminance.
+  // Tint, then brightness in stops of two, then contrast about middle grey, then saturation as a chroma scale in Oklab.
   vec3 graded = max(source.rgb, vec3(0.0)) * tint * exp2(gradeControls.x * 2.0);
   graded = ${COLOR_CORRECTION_MIDDLE_GREY.toFixed(2)} * pow(graded / ${COLOR_CORRECTION_MIDDLE_GREY.toFixed(2)}, vec3(1.0 + gradeControls.y));
-  float luminance = dot(graded, vec3(0.2126, 0.7152, 0.0722));
-  outputColor = vec4(mix(vec3(luminance), graded, 1.0 + gradeControls.z), source.a);
+  if (gradeControls.z != 0.0) {
+    vec3 lab = linearToOklab(graded);
+    float chroma = length(lab.yz);
+    // Vibrance: colours that are already vivid gain less, so a green does not run to the edge of the gamut.
+    float gain = gradeControls.z > 0.0 ? 1.0 + gradeControls.z * (1.0 - smoothstep(0.04, 0.22, chroma)) : 1.0 + gradeControls.z;
+    vec3 scaled = oklabToLinear(vec3(lab.x, lab.yz * gain));
+    // A channel pushed toward zero would clip and shift the hue: pull the colour back toward the grey of the same lightness until its lowest
+    // channel keeps a fifth of the grey's, so a saturated green stays a green and does not run to the edge of the gamut.
+    vec3 grey = oklabToLinear(vec3(lab.x, 0.0, 0.0));
+    float greyLowest = min(grey.r, min(grey.g, grey.b));
+    float lowest = min(scaled.r, min(scaled.g, scaled.b));
+    float keepLowest = 0.2 * greyLowest;
+    graded = lowest < keepLowest ? mix(scaled, grey, (keepLowest - lowest) / max(greyLowest - lowest, 1e-6)) : scaled;
+  }
+  outputColor = vec4(graded, source.a);
 }`;
 
 export const sunRaysFragment = `${sharedFragmentHeader}
 uniform vec2 sunPosition;
 uniform vec3 rayColor;
 uniform vec2 rayControls;
+// Radial blur of the light the sun sends past the geometry (GPU Gems 3, ch. 13). A sample counts only where the depth buffer shows open sky,
+// weighted by how near the sun's disc it is, so a ray from a pixel is bright when its line to the sun is clear and dark behind a trunk or a crown.
+// The pass only adds light: where nothing sees the sun it leaves the frame as it was, so there is no dark halo.
 void main() {
   vec4 source = texture(sourceTexture, textureCoordinate);
-  vec2 toSun = sunPosition - textureCoordinate;
   float aspect = resolution.x / resolution.y;
-  float distanceToSun = length(toSun * vec2(aspect, 1.0));
-  // The ray runs a share of the way to the sun; a fixed offset per pixel breaks up the banding of the 48 taps.
-  vec2 step = toSun * mix(0.15, 1.0, rayControls.y) / ${SUN_RAY_SAMPLES}.0;
+  vec2 toSun = sunPosition - textureCoordinate;
+  float reach = mix(0.35, 1.0, rayControls.y);
+  vec2 step = toSun * reach / ${SUN_RAY_SAMPLES}.0;
+  float discScale = 1.0 / (0.06 + 0.1 * rayControls.y);
+  discScale *= discScale;
   vec2 position = textureCoordinate + step * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-  float open = 0.0;
+  float gathered = 0.0;
+  float weight = 1.0;
+  float totalWeight = 0.0;
+  vec2 aspectScale = vec2(aspect, 1.0);
+  vec2 depthSize = vec2(textureSize(sceneDepth, 0));
+  ivec2 lastTexel = ivec2(depthSize) - 1;
   for (int index = 0; index < ${SUN_RAY_SAMPLES}; index++) {
     position += step;
-    bool onScreen = all(greaterThanEqual(position, vec2(0.0))) && all(lessThanEqual(position, vec2(1.0)));
-    open += (!onScreen || texture(sceneDepth, position).r >= 0.99999) ? 1.0 : 0.0;
+    // A sample off screen reads the nearest edge texel of the depth buffer.
+    float depth = texelFetch(sceneDepth, clamp(ivec2(position * depthSize), ivec2(0), lastTexel), 0).r;
+    vec2 fromSun = (position - sunPosition) * aspectScale;
+    float glow = 0.04 + 1.0 / (1.0 + dot(fromSun, fromSun) * discScale * 4.0);
+    gathered += depth >= 0.99999 ? glow * weight : 0.0;
+    totalWeight += weight;
+    weight *= 0.985;
   }
-  float reach = max(1.0 - distanceToSun / (0.3 + rayControls.y), 0.0);
-  outputColor = vec4(source.rgb + rayColor * rayControls.x * (open / ${SUN_RAY_SAMPLES}.0) * reach * reach, source.a);
+  vec2 fromSunPixel = (textureCoordinate - sunPosition) * vec2(aspect, 1.0);
+  float falloff = exp(-length(fromSunPixel) / (0.35 + 0.6 * rayControls.y));
+  outputColor = vec4(source.rgb + rayColor * rayControls.x * gathered / totalWeight * falloff, source.a);
 }`;
 
 export const stylizeFragment = `${sharedFragmentHeader}

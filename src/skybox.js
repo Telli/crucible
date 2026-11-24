@@ -7,8 +7,8 @@ import { createEnvironmentMap } from './environment.js';
 
 export const SKYBOX_FACES = Object.freeze(['front', 'back', 'left', 'right', 'up', 'down']);
 const ASSET_ID = /^[a-f0-9]{64}$/;
-const MAP_WIDTH = 1024;
-const MAP_HEIGHT = 512;
+const MAP_WIDTH = 2048;
+const MAP_HEIGHT = 1024;
 
 const registeredFaces = new Map();
 const builtMaps = new Map();
@@ -63,11 +63,23 @@ export function skyboxFaceLookup(x, y, z) {
   return { face, u: (sideways / major + 1) / 2, v: (downward / major + 1) / 2 };
 }
 
+// Bilinear in linear light, clamped to the face's own edge texels. Nearest sampling left stair-steps along every edge of a face.
 function sampleFace(image, u, v, target, offset) {
-  const column = Math.min(image.width - 1, Math.max(0, Math.floor(u * image.width)));
-  const row = Math.min(image.height - 1, Math.max(0, Math.floor(v * image.height)));
-  const texel = (row * image.width + column) * 4;
-  for (let channel = 0; channel < 3; channel++) target[offset + channel] = srgbToLinear(image.data[texel + channel]);
+  const x = Math.min(image.width - 1, Math.max(0, u * image.width - 0.5));
+  const y = Math.min(image.height - 1, Math.max(0, v * image.height - 0.5));
+  const column = Math.min(image.width - 2, Math.floor(x));
+  const row = Math.min(image.height - 2, Math.floor(y));
+  const nextColumn = image.width > 1 ? column + 1 : column;
+  const nextRow = image.height > 1 ? row + 1 : row;
+  const shareX = x - column;
+  const shareY = y - row;
+  for (let channel = 0; channel < 3; channel++) {
+    const topLeft = srgbToLinear(image.data[(row * image.width + column) * 4 + channel]);
+    const topRight = srgbToLinear(image.data[(row * image.width + nextColumn) * 4 + channel]);
+    const bottomLeft = srgbToLinear(image.data[(nextRow * image.width + column) * 4 + channel]);
+    const bottomRight = srgbToLinear(image.data[(nextRow * image.width + nextColumn) * 4 + channel]);
+    target[offset + channel] = (topLeft * (1 - shareX) + topRight * shareX) * (1 - shareY) + (bottomLeft * (1 - shareX) + bottomRight * shareX) * shareY;
+  }
 }
 
 /** The equirectangular map of a skybox's registered faces. The same object returns while the faces and the settings hold. */

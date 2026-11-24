@@ -340,3 +340,18 @@ test('sunRays resolves with defaults and names the fix in each error', () => {
   assert.throws(() => resolvePostSteps({ sunRays: { spread: -1 } }), /effects\.sunRays\.spread is -1: pass a number from 0 to 1/);
   assert.throws(() => resolvePostSteps({ sunRays: { color: 1 } }), /effects\.sunRays\.color.*one of the fields intensity, spread/);
 });
+
+test('colour correction scales saturation as Oklab chroma and keeps every channel off the clip', async () => {
+  const { colorCorrectionFragment } = await import('../src/post-steps.js');
+  assert.match(colorCorrectionFragment, /vec3 linearToOklab/, 'saturation moves chroma in Oklab, not a mix with luminance that pushes greens past the gamut');
+  assert.match(colorCorrectionFragment, /smoothstep\(0\.04, 0\.22, chroma\)/, 'vivid colours gain less');
+  assert.match(colorCorrectionFragment, /keepLowest = 0\.2 \* greyLowest/, 'a colour is pulled toward its grey before a channel clips');
+  assert.doesNotMatch(colorCorrectionFragment, /mix\(vec3\(luminance\), graded/);
+});
+
+test('sun rays gather the sun disc through open sky and only ever add light', async () => {
+  const { sunRaysFragment } = await import('../src/post-steps.js');
+  assert.match(sunRaysFragment, /gathered \+= depth >= 0\.99999 \? glow \* weight : 0\.0;/, 'a tap counts only where the depth buffer shows open sky, weighted by its nearness to the sun');
+  assert.match(sunRaysFragment, /source\.rgb \+ rayColor \* rayControls\.x \* gathered \/ totalWeight \* falloff/, 'the result is the frame plus the rays: never a subtraction, so no dark halo');
+  assert.match(sunRaysFragment, /vec2 step = toSun \* reach/, 'every ray runs toward the sun');
+});
