@@ -86,3 +86,21 @@ export function fitView(parts, direction, centre, width, height, margin) {
   }
   throw new Error('fitView did not settle; check the direction and the margin.');
 }
+
+/**
+ * The lowest elevation, from `lowestElevation` upwards in 2 degree steps, at which a view around `yawDegrees` that fits
+ * the parts (see fitView) fills at least `minimumHeightShare` of the frame height. A steeper view looks more like a map
+ * and uses more of a tall frame. Returns the view and its height share.
+ */
+export function fitSteepView(parts, yawDegrees, centre, width, height, margin, { minimumHeightShare, lowestElevation = 40 }) {
+  const yaw = yawDegrees * Math.PI / 180;
+  for (let elevationDegrees = lowestElevation; elevationDegrees <= 88; elevationDegrees += 2) {
+    const elevation = elevationDegrees * Math.PI / 180;
+    const direction = [Math.sin(yaw) * Math.cos(elevation), Math.sin(elevation), Math.cos(yaw) * Math.cos(elevation)];
+    const view = fitView(parts, direction, centre, width, height, margin);
+    const { top, bottom } = screenMargins(parts, view, width, height);
+    const heightShare = (bottom - top) / height;
+    if (heightShare >= minimumHeightShare) return { view, heightShare, elevationDegrees };
+  }
+  throw new Error(`No elevation up to 88 degrees gives a height share of ${minimumHeightShare}; use a smaller margin or a different yaw.`);
+}
