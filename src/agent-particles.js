@@ -7,6 +7,7 @@ import { SPARK_DEFAULTS, SPARK_LIMITS, SPARK_VERTICES, buildSparkMesh } from './
 import { EMITTER_MESH_MODES, createMeshSource } from './particle-emitter-mesh.js';
 import { colorChannelCurves, isColorStops, normalizeColorStops, normalizeCurve, normalizeFlipbook } from './particle-curves.js';
 import { RIBBON_LIMITS, beamEndpoints, buildBeamMesh, buildTrailMesh } from './particle-ribbons.js';
+import { grid } from './geometry.js';
 import { invalidField } from './field-error.js';
 import { bakingContext, boundedArray, finiteNumber, knownKeys, rootNodeWithGeometry, vectorOfThree } from './agent-recipe-checks.js';
 
@@ -21,7 +22,7 @@ const TRAIL_FIELDS = ['type', 'node', 'follow', 'offset', 'lifetime', 'width', '
 const PARTICLE_PRESETS = Object.freeze({
   smoke: Object.freeze({
     count: 480, rate: 100, lifetime: [2.5, 4], speed: [0.2, 0.6], size: [0.2, 0.4], spread: 25, drag: 0.6, orient: 'billboard', spin: [-45, 45],
-    gravityScale: 0, acceleration: [0, 0.8, 0], emitter: { shape: 'disc', radius: 0.08 }, fade: 'opacity',
+    gravityScale: 0, acceleration: [0, 0.8, 0], emitter: { shape: 'disc', radius: 0.08 },
     sizeOverLife: [[0, 0.5], [1, 3.2]], alpha: [[0, 0], [0.1, 0.3], [0.6, 0.2], [1, 0]], color: [[0, [0.38, 0.38, 0.38]], [1, [0.12, 0.12, 0.12]]],
   }),
   fire: Object.freeze({
@@ -619,6 +620,14 @@ function checkVertexBudget(verticesPerItem, count, totalVertices, nodeId, recipe
 }
 
 // The geometries a particle can be: the listed instance nodes, or else the system node's own.
+// A preset draws camera-facing cards, so a plane or grid node whose geometry names no `segments` is drawn as one quad (4 vertices) instead of the
+// default 17 by 17 grid: the preset counts of hundreds of cards then fit the vertex budget with no extra setting. A `segments` the recipe gives wins.
+function templateOf(system, node, recipe, geometries) {
+  const definition = recipe.geometries.find(entry => entry.id === node.geometry);
+  const isDefaultPlane = (definition?.type === 'plane' || definition?.type === 'grid') && definition.segments === undefined;
+  return system.preset && isDefaultPlane ? grid(1) : geometries.get(node.geometry);
+}
+
 function templateNodeIds(system) {
   return system.instances ?? [system.node];
 }
@@ -770,6 +779,13 @@ function colorCurveOf(color) {
   return colorChannelCurves(isColorStops(color) ? color : [[0, color[0]], [1, color[1]]]);
 }
 
+// Smoke fades by opacity when its material blends, and darkens otherwise, so the preset works on any material with nothing set.
+function withPresetFade(system, node, recipe) {
+  if (system.preset !== 'smoke' || system.fade) return system;
+  const material = recipe.materials.find(entry => entry.id === node.material);
+  return material?.alphaMode === 'blend' ? { ...system, fade: 'opacity' } : system;
+}
+
 function prepareBeam(system, node, follow) {
   const ribbon = { ...system, colorCurve: colorCurveOf(system.color) };
   return {
@@ -899,7 +915,7 @@ export function bakeAgentParticles(particles, recipe, geometries, sea, follow) {
   let totalVertices = 0;
   const prepared = particles.systems.map((system, systemIndex) => {
     const node = nodes.get(system.node);
-    const verticesPerItem = system.type === 'beam' || system.type === 'trail' ? (system.segments + 1) * 2 : system.type === 'sparks' ? SPARK_VERTICES : system.type === 'hair' ? (system.segments + 1) * HAIR_LIMITS.ringSides : Math.max(...templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry).positions.length / 3));
+    const verticesPerItem = system.type === 'beam' || system.type === 'trail' ? (system.segments + 1) * 2 : system.type === 'sparks' ? SPARK_VERTICES : system.type === 'hair' ? (system.segments + 1) * HAIR_LIMITS.ringSides : Math.max(...templateNodeIds(system).map(nodeId => templateOf(system, nodes.get(nodeId), recipe, geometries).positions.length / 3));
     const itemCount = system.count ?? 1;
     totalVertices += verticesPerItem * itemCount;
     checkVertexBudget(verticesPerItem, itemCount, totalVertices, system.node, recipe);
@@ -912,9 +928,9 @@ export function bakeAgentParticles(particles, recipe, geometries, sea, follow) {
       return prepareHair(system, node, surfaceNode, geometries.get(surfaceNode.geometry), forces);
     }
     if (system.type === 'sparks') return prepareSparks(system, node, forces, meshSourceOf(system, nodes, geometries, systemIndex, sea, follow));
-    const templates = templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry));
+    const templates = templateNodeIds(system).map(nodeId => templateOf(system, nodes.get(nodeId), recipe, geometries));
     checkOpacityFade(system, node, recipe, systemIndex);
-    return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex, sea, follow));
+    return prepareEmitter(withPresetFade(system, node, recipe), node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex, sea, follow));
   });
   return Object.freeze({
     /** Warnings for a recipe that loads but does not do what its author likely meant. */

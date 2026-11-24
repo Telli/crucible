@@ -14,7 +14,7 @@ function track(id, from, to, duration = 4) {
 function recipeWith(systems, extra = {}) {
   return {
     format: 'crucible.scene', schemaVersion: 1,
-    geometries: [{ id: 'card', type: 'plane', segments: 1 }, { id: 'marker', type: 'box', bevel: 0 }],
+    geometries: [{ id: 'card', type: 'plane' }, { id: 'marker', type: 'box', bevel: 0 }],
     materials: [{ id: 'glow', color: [1, 1, 1], alphaMode: 'add' }, { id: 'soft', color: [1, 1, 1], alphaMode: 'blend' }],
     nodes: [
       { id: 'fx', geometry: 'card', material: 'glow' },
@@ -181,4 +181,21 @@ test('a ribbon bend is mitred: a 90 degree corner keeps its width and no quad fo
     return Math.sign(first[0] * second[1] - first[1] * second[0]);
   };
   assert.equal(sideOf(0), sideOf(1), 'both quads face the same way, so none folds over');
+});
+
+// An agent gives a plane and a preset and nothing else: every preset must fit the vertex budget with its own defaults (#3240).
+for (const preset of ['smoke', 'fire', 'sparkles']) {
+  test(`the ${preset} preset fits the vertex budget on a default plane with no extra setting`, () => {
+    const scene = createAgentScene(recipeWith([{ node: 'fx', preset }]));
+    scene.sampleMotion(1);
+    const vertices = scene.parts.find(part => part.name === 'fx').geometry.positions.length / 3;
+    assert.ok(vertices <= 100000, `${preset} drew ${vertices} vertices`);
+    assert.equal(vertices % 4, 0, 'each card is one quad of 4 vertices');
+  });
+}
+
+test('a segments value the recipe gives wins over the preset card', () => {
+  const recipe = recipeWith([{ node: 'fx', preset: 'smoke' }]);
+  recipe.geometries[0] = { id: 'card', type: 'plane', segments: 16 };
+  assert.throws(() => createAgentScene(recipe), /vertices/);
 });

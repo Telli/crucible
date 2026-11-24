@@ -809,9 +809,9 @@ Liquid: keep `addons/spume` playback and do not add a browser solver. Spume play
 
 All of these are closed-form in the time asked, so a seek or a frame-range render repeats exactly and the same seed gives the same positions.
 
-- `flipbook: { rows, columns, frames, fps, loop }` on an emitter system shows one cell of the material `map` per particle (cell 0 top left, left to right then down). Without `fps` the sheet plays once across each particle's life. The system node needs UVs, so use a plane with one segment.
+- `flipbook: { rows, columns, frames, fps, loop }` on an emitter system shows one cell of the material `map` per particle (cell 0 top left, left to right then down). Without `fps` the sheet plays once across each particle's life. The system node needs UVs, so use a plane; a plane with `segments: 1` is the cheapest card.
 - `sizeOverLife`, `alpha` and `color` take a number, `[start, end]` or up to 8 `[time, value]` stops (`[time, [r, g, b]]` for colour), time 0 to 1 over the life. `gravityScale` and `acceleration` shape one system's fall or rise.
-- `preset: "smoke" | "fire" | "sparkles"` fills the fields the system leaves out. Smoke wants an `alphaMode: "blend"` material (it fades by opacity), fire and sparkles an `alphaMode: "add"` one, all on a plane with a soft round map. Rain is a separate feature.
+- `preset: "smoke" | "fire" | "sparkles"` fills the fields the system leaves out. Smoke wants an `alphaMode: "blend"` material (it fades by opacity), fire and sparkles an `alphaMode: "add"` one, all on a plane with a soft round map. Rain is a separate feature. A plane or grid node with no `segments` is drawn as one quad by a preset, so the preset counts fit the vertex budget; a `segments` you give wins.
 - `type: "beam"`: `{ node, from, to, width, segments, curve, scroll, repeat, color, alpha, fade }`. `from` and `to` are node IDs or `{ node, offset }`; the strip follows their animated poses and turns around its axis to face the camera. `curve` lifts the middle of a bow, `scroll` moves the texture along it in `u` per second.
 - `type: "trail"`: `{ node, follow, offset, lifetime, segments, width, alpha, color, repeat, fade }`. Ring `i` reads the pose of `follow` at `time - lifetime * i / segments`, so frame N never depends on earlier frames; ages before time 0 are hidden.
 
