@@ -1920,6 +1920,7 @@ export const STUDIO_CSS = `
 .crucible-studio dialog h2 .crucible-studio-icon {
   inline-size: 18px;
   block-size: 18px;
+  stroke-width: 1.9;
   translate: 0 1px;
 }
 .crucible-studio dialog h2 {

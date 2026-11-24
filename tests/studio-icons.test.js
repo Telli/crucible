@@ -159,3 +159,9 @@ test('the icon colour is a mix of existing tokens and the status icons and secti
   assert.ok(STUDIO_CSS.includes('.crucible-studio-property-title .crucible-studio-section-icon { color: var(--studio-icon); stroke-width: 2; }'));
   assert.ok(STUDIO_CSS.includes('.crucible-studio-status .crucible-studio-icon { color: var(--studio-icon); }'));
 });
+
+test('every dialog title icon has one size and one stroke weight', () => {
+  const ruleStart = STUDIO_CSS.indexOf('.crucible-studio dialog h2 .crucible-studio-icon {');
+  const rule = STUDIO_CSS.slice(ruleStart, STUDIO_CSS.indexOf('}', ruleStart));
+  assert.ok(rule.includes('inline-size: 18px;') && rule.includes('block-size: 18px;') && rule.includes('stroke-width: 1.9;'));
+});
