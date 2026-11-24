@@ -25,6 +25,7 @@ const NEEDS_NO_MODIFIERS = 'Edit mode does not work on a mesh with modifiers yet
 const LOG_IS_FULL = `This mesh already has ${MAX_LOG_ENTRIES} edits, the most one mesh holds, so it cannot take another move.`;
 const TOO_MANY_VERTICES = `Moving more than ${MAX_MASK_VERTICES} vertices that are not whole faces is not possible yet; select whole faces or fewer vertices.`;
 const MESH_CHANGED = 'Edit mode ended because this object uses a different mesh now.';
+const EDIT_MODE_HINT = 'Edit mode: pick a vertex, edge or face.';
 const TOO_LARGE_TO_DRAW = `This mesh has more than ${CAGE_TRIANGLE_BUDGET.toLocaleString('en-US')} triangles, so only the selection is drawn.`;
 
 function indexMask(vertices) {
@@ -188,6 +189,8 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
   let drag = null;
   // True while this editor writes its own entry: the mesh it reads back has the same topology, so the pick stays.
   let writingOwnEntry = false;
+  // True from entering edit mode until the first pick selects something: the hint goes away with that pick.
+  let hintShowing = false;
 
   function refuse(message) {
     announce(message);
@@ -263,12 +266,18 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     if (loadFailure) return refuse(loadFailure);
     controller.setTool('translate');
     controller.setElementSession(session);
-    if (state.tooLarge) announce(TOO_LARGE_TO_DRAW);
+    if (state.tooLarge) {
+      announce(TOO_LARGE_TO_DRAW);
+    } else {
+      announce(EDIT_MODE_HINT);
+      hintShowing = true;
+    }
     return { ok: true };
   }
 
   function leave() {
     if (!state) return;
+    hintShowing = false;
     // The controller drag goes first, through the session, so the cage, the buffers and the pointer state are put back.
     if (controller.dragging) controller.cancelGizmoDrag();
     cancelDrag();
@@ -464,6 +473,10 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
       state.selected.add(hit);
     }
     controller.setTool('translate');
+    if (hintShowing && state.selected.size > 0) {
+      hintShowing = false;
+      announce('');
+    }
     return hit;
   }
 

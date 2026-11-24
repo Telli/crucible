@@ -56,7 +56,7 @@ export const STUDIO_ICON_PATHS = Object.freeze({
   speed: 'M4 17a8 8 0 1 1 16 0M12 17l4-5M12 17h.01',
   // Edit mode selection: the same square each time; what is picked is drawn on top of it (STUDIO_ICON_ACCENTS).
   meshVertex: 'M5 5h14v14H5z',
-  meshEdge: 'M5 5v14h14V5',
+  meshEdge: 'M19 5v14H5V5z',
   meshFace: 'M5 19V5h14v14z',
   tierLight: 'M4 4h6.5v6.5H4zM13.5 4H20v6.5h-6.5zM4 13.5h6.5V20H4zM13.5 13.5H20V20h-6.5z',
   tierBalanced: 'M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z',
@@ -76,7 +76,7 @@ export const STUDIO_ICON_PATHS = Object.freeze({
  */
 export const STUDIO_ICON_ACCENTS = Object.freeze({
   meshVertex: Object.freeze([Object.freeze({ kind: 'dot', path: 'M19 5h.01' })]),
-  meshEdge: Object.freeze([Object.freeze({ kind: 'heavy', path: 'M5 5h14' })]),
+  meshEdge: Object.freeze([Object.freeze({ kind: 'heavy', path: 'M5 5v14' }), Object.freeze({ kind: 'dot', path: 'M5 5h.01M5 19h.01' })]),
   meshFace: Object.freeze([Object.freeze({ kind: 'tint', path: 'M5 5h14v14H5z' })]),
 });
 

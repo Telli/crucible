@@ -4340,7 +4340,7 @@ export function createStudio(container, {
     if (!meshEnterPending) return;
     meshEnterPending = false;
     if (editor.active) return;
-    if (editor.enter().ok) announce('Edit mode: pick a vertex, edge or face.');
+    editor.enter();
     syncUi();
     requestFrame();
   }

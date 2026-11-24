@@ -304,7 +304,7 @@ test('a move of more than 19 vertices that are not whole faces is refused when t
   assert.equal(controller.dragging, false);
   assert.throws(() => planMeshMove(mesh, Array.from({ length: 20 }, (unused, index) => index * 2), [0, 1, 0]), /more than 19/);
   assert.equal(planMeshMove(mesh, Array.from({ length: 19 }, (unused, index) => index * 2), [0, 1, 0]).op, 'set_position');
-  assert.equal(messages.length, 0);
+  assert.deepEqual(messages, ['Edit mode: pick a vertex, edge or face.', ''], 'only the hint and its dismissal were announced');
 });
 
 test('a mesh whose log is full refuses a move at the start of the drag', () => {
@@ -770,4 +770,18 @@ test('the selection outline of the node is not drawn while edit mode is on', asy
   ui.press('Tab');
   ui.studio.renderNow();
   assert.notEqual(outlineOf(), null, 'and it comes back when edit mode ends');
+});
+
+test('the edit mode hint goes away with the first pick that selects something', () => {
+  const { controller, editor, messages } = mount();
+  editor.enter();
+  assert.equal(messages.at(-1), 'Edit mode: pick a vertex, edge or face.');
+  const corner = vertexAt(controller, [0.5, 0.5, 0.5]);
+  editor.setMode('vertex');
+  const cornerPixel = pixelOfVertex(controller, corner);
+  editor.pick(cornerPixel.x, cornerPixel.y);
+  assert.equal(messages.at(-1), '', 'the first selection clears the hint');
+  const countAfterFirstPick = messages.length;
+  editor.pick(cornerPixel.x, cornerPixel.y, { additive: true });
+  assert.equal(messages.length, countAfterFirstPick, 'later picks say nothing');
 });

@@ -780,8 +780,11 @@ export const STUDIO_CSS = `
   gap: 6px;
 }
 .crucible-studio-group[hidden] { display: none; }
-/* Edit mode's own group: set apart from the tools by room, in the accent while the mode is on. */
-.crucible-studio-group[data-mesh-group] { margin-block: 10px; }
+/* Edit mode's own group: set apart from the tools by room around it and read as one unit by the tight spacing inside, in the accent while the mode is on. */
+.crucible-studio-group[data-mesh-group] {
+  margin-block: 10px;
+  gap: 2px;
+}
 .crucible-studio-group[data-mesh-group] button[aria-pressed="true"] {
   background: color-mix(in srgb, var(--studio-accent) 28%, transparent);
   color: var(--studio-accent);
