@@ -335,6 +335,41 @@ export async function readCatalogFile(directory, filename, { enforceImageLimits 
   }
 }
 
+const TRIANGLE_LIST_MODE = 4;
+const TRIANGLE_STRIP_MODE = 5;
+const TRIANGLE_FAN_MODE = 6;
+
+function primitiveTriangles(primitive, accessors) {
+  const mode = primitive?.mode ?? TRIANGLE_LIST_MODE;
+  const indexCount = accessors[primitive?.indices]?.count;
+  const vertexCount = accessors[primitive?.attributes?.POSITION]?.count;
+  const elementCount = Number.isInteger(indexCount) ? indexCount : vertexCount;
+  if (!Number.isInteger(elementCount) || elementCount < 3) return 0;
+  if (mode === TRIANGLE_LIST_MODE) return Math.floor(elementCount / 3);
+  if (mode === TRIANGLE_STRIP_MODE || mode === TRIANGLE_FAN_MODE) return elementCount - 2;
+  return 0;
+}
+
+/**
+ * Triangles a placed copy of the GLB draws, read from the glTF accessor counts alone (no buffer is decoded): each mesh counts once per
+ * node that uses it, or once when no node does. Compressed meshes are decoded before the catalog stores them, so their counts are real.
+ */
+export function glbTriangleCount(document) {
+  const accessors = Array.isArray(document.accessors) ? document.accessors : [];
+  const meshes = Array.isArray(document.meshes) ? document.meshes : [];
+  const nodes = Array.isArray(document.nodes) ? document.nodes : [];
+  const usesPerMesh = new Array(meshes.length).fill(0);
+  for (const node of nodes) {
+    if (Number.isInteger(node?.mesh) && node.mesh >= 0 && node.mesh < meshes.length) usesPerMesh[node.mesh] += 1;
+  }
+  let total = 0;
+  meshes.forEach((mesh, meshIndex) => {
+    const meshTriangles = (Array.isArray(mesh?.primitives) ? mesh.primitives : []).reduce((sum, primitive) => sum + primitiveTriangles(primitive, accessors), 0);
+    total += meshTriangles * Math.max(1, usesPerMesh[meshIndex]);
+  });
+  return total;
+}
+
 /** The catalog record of a file read by readCatalogFile; `name` is what the agent sees. */
 export function describeCatalogFile(name, { bytes, document, assetId, imageFormat, lookKind }) {
   if (lookKind) return Object.freeze({ assetId, name, bytes: bytes.length, kind: lookKind });
@@ -346,6 +381,7 @@ export function describeCatalogFile(name, { bytes, document, assetId, imageForma
     meshes: document.meshes?.length ?? 0,
     skins: document.skins?.length ?? 0,
     images: document.images?.length ?? 0,
+    triangles: glbTriangleCount(document),
     animationCount: animations.length,
     animationsTruncated: animations.length > 16,
     animations: animations.slice(0, 16).map((animation, index) => ({ index, name: clipDisplayName(animation, index).slice(0, 80) })),
@@ -601,7 +637,7 @@ export async function createAgentAssetCatalog(root, packFiles = [], { keepKtx2 =
     async describeSize(assetId) {
       const entry = await lookupEntry(assetId);
       if (!entry) throw new Error(`Unknown asset ID ${String(assetId).slice(0, 12)}. Call scene_asset_catalog and pass an assetId it lists.`);
-      return { name: entry.metadata.name, bytes: entry.metadata.bytes };
+      return { name: entry.metadata.name, bytes: entry.metadata.bytes, triangles: entry.metadata.triangles ?? 0, images: entry.metadata.images ?? 0 };
     },
     async read(assetId, { transcodeKtx2 = false } = {}) {
       const entry = await lookupEntry(assetId);
