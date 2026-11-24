@@ -344,6 +344,15 @@ const MAXIMUM_RATIO = 6;
 // Stops repeating a measurement that is already far too slow. It is not a pass mark: coverage runs are several times slower than a
 // plain run, and the ratio and the count / 16 probe carry the linear-time check.
 const STOP_REPEATING_MILLISECONDS = 2000;
+// The count / 16 probe is compared with plain text of the same length timed at the same moment, so a loaded or coverage run slows
+// both alike. A linear parse stays within a few times the plain text; a quadratic one was 50 to 10,000 times slower when planted.
+const PROBE_TIMES_BASELINE = 25;
+const PROBE_FLOOR_MILLISECONDS = 20;
+
+function plainTextOfLength(length) {
+  const wrapper = '<roblox></roblox>';
+  return `<roblox>${'a'.repeat(Math.max(0, length - wrapper.length))}</roblox>`;
+}
 
 function bestMilliseconds(text, label, runs = 5) {
   let best = Infinity;
@@ -364,8 +373,11 @@ test('hostile text is read in linear time: four times the input takes less than 
   const report = [];
   for (const [label, { count, build }] of Object.entries(HOSTILE_INPUTS)) {
     bestMilliseconds(build(count / 100), label, 1);
-    const probe = bestMilliseconds(build(count / 16), label, 1);
-    assert.ok(probe < 100, `${label}: ${probe.toFixed(0)} ms for count / 16 is far above linear; the parser is super-linear on this input`);
+    const probeText = build(count / 16);
+    const probe = bestMilliseconds(probeText, label, 3);
+    const baseline = bestMilliseconds(plainTextOfLength(probeText.length), 'plain text', 3);
+    const probeLimit = Math.max(PROBE_TIMES_BASELINE * baseline, PROBE_FLOOR_MILLISECONDS);
+    assert.ok(probe < probeLimit, `${label}: ${probe.toFixed(0)} ms for count / 16 against ${baseline.toFixed(1)} ms for plain text of the same length is far above linear; the parser is super-linear on this input`);
     // Another process can slow every run of one measurement. A linear parser fails the ratio only by that bad luck, so a case is
     // measured up to three times and passes when any round stays under the limit; a quadratic parser gives about 16 in every round.
     let small = 0;
