@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { bladeAnglesToUp, meanOf } from './support/grass-stance.mjs';
 import { GROUND_COVER_LIMITS, groundCoverParts, normalizeGroundCover } from '../src/ground-cover.js';
+import { groupParts } from '../src/renderer.js';
+import { batchWindStrength } from '../src/wind-strength.js';
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -84,12 +86,30 @@ function zUpLawnPart(half) {
   return { name: 'Lawn', geometry: { positions, indices: new Uint32Array([0, 1, 2, 0, 2, 3]) }, matrix: turnedIntoYUp, material: { tag: 'surface', color: [0.07, 0.17, 0.03] } };
 }
 
-test('blades stand up on a rotated GLB surface, wind included: the default wind does not lay a short lawn flat', () => {
+test('blades stand up on a rotated GLB surface (Z-up GLB, no wind)', () => {
   const [entry] = normalizeGroundCover([{ surfaces: 'Lawn', length: 0.12, density: 300 }]);
   const parts = groundCoverParts([zUpLawnPart(8)], [entry], [3.2, 0.9, 6]);
-  const still = bladeAnglesToUp(parts);
-  assert.ok(meanOf(still) < 20, `blades grown on a rotated surface lean ${meanOf(still)} degrees from world up`);
-  const windy = bladeAnglesToUp(parts, { strength: entry.wind });
+  assert.ok(meanOf(bladeAnglesToUp(parts)) < 20, 'blades grown on a rotated surface lean less than 20 degrees from world up');
+});
+
+test('ground-cover blades feel a length-scaled wind while a tree in the same scene keeps the scene wind', () => {
+  const [entry] = normalizeGroundCover([{ surfaces: 'Lawn', length: 0.12, density: 300 }]);
+  const grass = groundCoverParts([zUpLawnPart(8)], [entry], [3.2, 0.9, 6]);
+  const tree = { name: 'Tree', geometry: { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) }, matrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]), material: { tag: 'foliage', color: [0.1, 0.3, 0.1], roughness: 0.8, metallic: 0, emission: 0 } };
+  const sceneWind = 0.3;
+  const batches = groupParts([tree, ...grass]);
+  const treeBatch = batches.find(batch => batch.some(part => part.material.tag === 'foliage'));
+  const grassBatch = batches.find(batch => batch.some(part => part.material.tag === 'grass'));
+  assert.equal(batchWindStrength(sceneWind, treeBatch[0].material), sceneWind, 'a tree keeps the scene wind');
+  assert.ok(Math.abs(batchWindStrength(sceneWind, grassBatch[0].material) - 0.06) < 1e-9, 'a 0.12 m lawn feels 0.3 * 0.12 / 0.6');
+  const windy = bladeAnglesToUp(grass, { strength: batchWindStrength(sceneWind, grassBatch[0].material) });
   assert.ok(meanOf(windy) < 25, `with the default wind the mean blade angle to world up is ${meanOf(windy)} degrees`);
-  assert.ok(meanOf(bladeAnglesToUp(parts, { strength: 0.3 })) > 40, 'the renderer default of 0.3 would bend 0.12 m blades far over');
+  assert.ok(meanOf(bladeAnglesToUp(grass, { strength: sceneWind })) > 40, 'the unscaled scene wind would bend 0.12 m blades far over');
+});
+
+test('parts that share a mesh but differ in wind share draw as separate batches', () => {
+  const geometry = { positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint32Array([0, 1, 2]) };
+  const grassPart = windScale => ({ name: 'Grass', geometry, matrix: IDENTITY, material: { tag: 'grass', color: [1, 1, 1], roughness: 0.8, metallic: 0, emission: 0, ...(windScale === undefined ? {} : { windScale }) } });
+  assert.equal(normalizeGroundCover([{ surfaces: 'Lawn', length: 0.12, wind: 0 }])[0].windScale, 0);
+  assert.equal(groupParts([grassPart(0.2), grassPart(1), grassPart(undefined)]).length, 3);
 });

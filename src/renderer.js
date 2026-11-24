@@ -3,6 +3,7 @@ import { materialTags, registeredFeatureCode } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
 import { packNormalsWithTangents, validateGeometryTangents } from './tangent-encoding.js';
+import { batchWindStrength } from './wind-strength.js';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, WETNESS_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, VERTEX_OPACITY_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, TANGENT_FEATURE, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
 import { postFragment, createPostFragment, GRID_MOTION_STEP, GRID_DETAIL_STEP, NOISE_OCTAVES_STEP, localVolumeKindSteps, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
 import { createGlazeBackend } from './glaze-backend.js';
@@ -678,7 +679,7 @@ function createPartGrouper(batching) {
     }
     let materialTail = materialKeyTails.get(part.material);
     if (!materialTail) {
-      materialTail = [renderPass(part.material), ...materialAlphaState(part.material), part.material.aovMap ?? null, part.material.transmissionMap ?? null, ...(part.material.aov ?? ZERO_VECTOR)];
+      materialTail = [renderPass(part.material), part.material.windScale ?? null, ...materialAlphaState(part.material), part.material.aovMap ?? null, part.material.transmissionMap ?? null, ...(part.material.aov ?? ZERO_VECTOR)];
       materialKeyTails.set(part.material, materialTail);
     }
     const values = [batching ? part.geometry : part, ...materialValues, part.skin ?? null, part.material.snippet, part.crowd ?? null, part.morph ?? null, castsShadow(part), receivesShadow(part), compositeModeOf(part), part.shadowOnly === true, depthLayerOf(part), flushOrderOf(part), part.lods ?? null, part.shadowLods ?? null, isMirroredMatrix(part.matrix), part.clipPlanes ?? null, ...materialTail];
@@ -3006,6 +3007,16 @@ export class CrucibleRenderer {
     if (this.shaderFeatures.has('boxMapScale')) context.uniformMatrix3fv(this.uniforms.boxNormalMatrix, false, data.subarray(16, 25));
   }
 
+  // A batch whose material has `windScale` feels a share of the frame wind (ground-cover grass); the batch after it gets the frame wind back.
+  // Batches without a scale never write the uniform, so a scene without one draws exactly as before.
+  bindBatchWind(batch) {
+    const material = batch.parts?.[0]?.material;
+    const scale = material?.windScale;
+    if (scale === undefined && !this.windScaledBatch) return;
+    this.windScaledBatch = scale !== undefined;
+    this.context.uniform1f(this.uniforms.wind, batchWindStrength(this.frameWind, material));
+  }
+
   drawBatch(batch, textured = false, selection = null, levelSet = batch) {
     if (this.hasMorphs) {
       const uniforms = textured ? this.uniforms : this.depthMorphUniforms;
@@ -3067,6 +3078,7 @@ export class CrucibleRenderer {
       this.context.uniform1i(this.uniforms.boxMapAxis, batch.mapState[13]);
       if (this.shaderFeatures?.has('splat')) requireSplatSupport().bind(this, batch.splat);
       layerTextureSupport.bind?.(this, batch.mapState, layers, batch);
+      this.bindBatchWind(batch);
       this.context.uniform1f(this.uniforms.hasLightMap, batch.lightMapTexture ? 1 : 0);
       if (batch.lightMapTexture) {
         this.context.activeTexture(this.context.TEXTURE0 + LIGHT_MAP_UNIT);
@@ -3234,7 +3246,9 @@ export class CrucibleRenderer {
     context.uniform1f(this.uniforms.specularAntiAliasing, this.lighting.specularAntiAliasing);
     if (this.lighting.wetness > 0) this.bindWetness();
     context.uniform1f(this.uniforms.time, frame.time ?? 0);
-    context.uniform1f(this.uniforms.wind, frame.wind ?? 0.3);
+    this.frameWind = frame.wind ?? 0.3;
+    this.windScaledBatch = false;
+    context.uniform1f(this.uniforms.wind, this.frameWind);
     context.uniform1f(this.uniforms.worldMode, this.world ? 1 : 0);
     context.uniform1f(this.uniforms.daylight, environment.daylight);
     context.uniform3fv(this.uniforms.lightDirection, environment.lightDirection);
