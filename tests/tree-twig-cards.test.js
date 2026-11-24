@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createTree, resolveTreePreset } from '../src/vegetation.js';
+import { LEVEL_SETTINGS } from '../src/vegetation-species.js';
 import { createCoverageMips, createLeafPixels, SPRAY_KINDS } from '../src/vegetation-textures.js';
 import { addLeafSurface, atlasCellRect } from '../src/vegetation-geometry.js';
 import { BAND_METRIC_NAMES, PHOTO_BANDS, bandFailures, growTree, measureTreeLevels, modelCrownMetrics } from '../scripts/tree-proof-lib.mjs';
@@ -227,4 +228,15 @@ test('crowned oak and ash leaf twigs are the twigs their bare tree shows', () =>
   const oak = createTree({ preset: 'oak' }, 4);
   const bare = oak.bareParts(0).find(part => part.role === 'bark').geometry.positions.length;
   assert.ok(bare > oak.levels[0].parts.find(part => part.role === 'bark').geometry.positions.length, 'the bare tree adds its twigs to the bark');
+});
+
+// Leaf twigs are three-sided sticks under the near level's cards (#3057); a far level draws one quad per card and no stick.
+test('leaf twigs are drawn at level 0 only, so the far levels keep their bark triangles', () => {
+  assert.deepEqual(LEVEL_SETTINGS.map(setting => Boolean(setting.leafTwigs)), [true, false, false, false]);
+  for (const preset of ['oak', 'ash', 'aspen', 'birch']) {
+    const tree = createTree({ preset }, 4);
+    const barkTriangles = tree.levels.map(level => level.parts.filter(part => part.role === 'bark').reduce((total, part) => total + part.geometry.indices.length / 3, 0));
+    assert.ok(barkTriangles[0] > 4 * barkTriangles[1], `${preset} bark triangles per level: ${barkTriangles.join(', ')}`);
+    assert.ok(barkTriangles[1] <= 2500, `${preset} level 1 draws ${barkTriangles[1]} bark triangles`);
+  }
 });

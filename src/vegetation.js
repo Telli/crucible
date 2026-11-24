@@ -481,7 +481,8 @@ function buildBark(skeleton, preset, setting, bark) {
     }
     addTube(builder, points, radii, sides, bark.tileSize, [1, 1, 1], { worldScaleUv: bark.scanned });
   }
-  for (const twig of skeleton.leafTwigs ?? []) {
+  // Only the near level draws them: past it a leaf card is one quad, and a stick under it is under a pixel wide.
+  for (const twig of setting.leafTwigs ? skeleton.leafTwigs ?? [] : []) {
     if (twig.level > maximumLevel) continue;
     const { points, radii } = thinnedRings(twig.points, twig.radii, LEAF_TWIG_RING_STRIDE);
     addTube(builder, points, radii, LEAF_TWIG_SIDES, bark.tileSize, [1, 1, 1], { worldScaleUv: bark.scanned });

@@ -133,7 +133,7 @@ export const SPECIES = {
 
 /** Level of detail: sides and leaf density multipliers per level, and default switch distances in meters. */
 export const LEVEL_SETTINGS = [
-  { sideScale: 1, leafKeep: 1, leafScale: 1, maximumBranchLevel: Infinity },
+  { sideScale: 1, leafKeep: 1, leafScale: 1, maximumBranchLevel: Infinity, leafTwigs: true },
   { sideScale: 0.6, leafKeep: 0.34, leafScale: 1.7, maximumBranchLevel: -1 },
   // The far levels (#3051) keep the species' own leaf card on fewer, bigger quads. Each covers the leaf area of level 1 (keep
   // times scale squared stays near 1), and `tipScale` keeps its tip where a level 1 card's tip is, so a crown keeps its width.
