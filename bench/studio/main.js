@@ -1,7 +1,7 @@
 import '../../src/brand-fonts.css';
 import { loadAllAgentSceneModules } from '../../src/agent-scene.js';
 import { createStudio } from '../../src/studio.js';
-import { reportStudioLoadingProgress, revealStudio, showStudioLoadingFailure, STUDIO_LOADING_MILESTONES } from '../../src/studio-boot.js';
+import { reportStudioLoadingProgress, reportStudioModulesLoaded, revealStudio, showStudioLoadingFailure, STUDIO_LOADING_MILESTONES } from '../../src/studio-boot.js';
 import { createCatalogHooks } from './catalog-hooks.js';
 
 // ?catalog=<folder> names a same-origin folder that holds a scene's catalog files by the id the recipe uses:
@@ -46,7 +46,7 @@ async function mountStudioPage() {
   }
   reportProgress('modulesLoaded');
   const parameters = new URLSearchParams(window.location.search);
-  await loadAllAgentSceneModules();
+  await loadAllAgentSceneModules({ onModuleLoaded: (loaded, total) => reportStudioModulesLoaded(document, loaded, total) });
   reportProgress('sceneModulesLoaded');
   const studio = createStudio(root, { catalog: catalogHooksFor(parameters.get('catalog'), parameters.get('catalogStore')) });
   reportProgress('studioCreated');

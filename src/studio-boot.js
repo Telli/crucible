@@ -91,6 +91,16 @@ export function reportStudioLoadingProgress(documentReference, value) {
   );
 }
 
+/**
+ * Moves the fill from the step after the script (0.35) toward the step after the scene modules (0.55) as each of the modules
+ * arrives, so a slow load shows the bar moving in as many steps as there are modules, not in one jump when the last one lands.
+ */
+export function reportStudioModulesLoaded(documentReference, loaded, total) {
+  const from = STUDIO_LOADING_MILESTONES.modulesLoaded;
+  const to = STUDIO_LOADING_MILESTONES.sceneModulesLoaded;
+  reportStudioLoadingProgress(documentReference, from + (to - from) * (Math.min(loaded, total) / total));
+}
+
 /** Fills the bar. */
 function completeStudioLoadingProgress(loadingElement) {
   loadingElement.style?.setProperty(PROGRESS_PROPERTY, '1');

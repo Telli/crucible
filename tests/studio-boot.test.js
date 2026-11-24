@@ -5,6 +5,7 @@ import {
   creepTargetAfter,
   driftTargetAfter,
   reportStudioLoadingProgress,
+  reportStudioModulesLoaded,
   revealStudio,
   showStudioLoadingFailure,
   STUDIO_LOADING_MILESTONES,
@@ -14,6 +15,7 @@ import {
 import { STUDIO_PREFERENCES_KEY } from '../src/studio-preferences.js';
 
 const PAGE_HTML = await readFile(new URL('../bench/studio/index.html', import.meta.url), 'utf8');
+const TOKENS_CSS = await readFile(new URL('../src/site-tokens.css', import.meta.url), 'utf8');
 
 // A page with a loading element, and a frame clock the test advances by hand.
 function createFakePage() {
@@ -136,7 +138,7 @@ test('the page HTML paints the theme and the loading state before any module scr
   assert.ok(PAGE_HTML.includes(`localStorage.getItem('${STUDIO_PREFERENCES_KEY}')`), 'the inline script reads the key Studio saves its theme under');
   assert.match(PAGE_HTML, /background: var\(--site-bg\)/);
   assert.match(PAGE_HTML, /role="status"/);
-  assert.match(PAGE_HTML, /[.]progress [{][^}]*background: color-mix[(]in srgb, var[(]--site-text[)] 22%, transparent[)]/, 'the track is the text token at 22 percent, which stays visible on the paper and on the dark background');
+  assert.match(PAGE_HTML, /[.]progress [{][^}]*background: color-mix[(]in srgb, var[(]--site-text[)] \d+%, transparent[)]/, 'the track is the text token mixed with transparent (its strength is pinned by the contrast test)');
   assert.match(PAGE_HTML, /[.]fill [{][^}]*background: var[(]--site-focus[)]/, 'the fill is the accent token of each theme (it replaced the moving segment of the first loading bar)');
   assert.match(PAGE_HTML, /prefers-reduced-motion: no-preference/);
   assert.match(PAGE_HTML, /data-loading-message/);
@@ -364,8 +366,8 @@ test('the page script reports every milestone, in rising order, at the step it n
   const reported = [...pageScript.matchAll(/reportProgress\('(\w+)'\)/g)].map(match => match[1]);
   assert.deepEqual(reported, Object.keys(STUDIO_LOADING_MILESTONES));
   const position = name => pageScript.indexOf(`reportProgress('${name}')`);
-  assert.ok(position('modulesLoaded') < pageScript.indexOf('await loadAllAgentSceneModules()'));
-  assert.ok(position('sceneModulesLoaded') > pageScript.indexOf('await loadAllAgentSceneModules()'));
+  assert.ok(position('modulesLoaded') < pageScript.indexOf('await loadAllAgentSceneModules('));
+  assert.ok(position('sceneModulesLoaded') > pageScript.indexOf('await loadAllAgentSceneModules('));
   assert.ok(position('studioCreated') > pageScript.indexOf('createStudio(root'));
   assert.ok(position('sceneFileLoaded') > pageScript.indexOf('await studio.loadExternalTextFile'));
 });
@@ -413,4 +415,78 @@ test('past the long ease the fill drifts on, slowly and linearly, and stays belo
   assert.ok(driftTargetAfter(0.97) <= 0.97 && driftTargetAfter(2) <= 0.97, 'past the last step the cap holds');
   assert.match(LOADING_STYLE, /studio-fill-creep 150s linear both/);
   assert.match(LOADING_STYLE, /20% [{] transform: scaleX\(0[.]3\); [}] 100% [{] transform: scaleX\(0[.]34\); [}]/, 'before the first step the CSS creep also drifts on, below 0.35');
+});
+
+function tokenColors(blockStart) {
+  const tokensText = TOKENS_CSS.slice(TOKENS_CSS.indexOf(blockStart));
+  const read = name => {
+    const hex = new RegExp(`--site-${name}: #([0-9a-f]{6})`).exec(tokensText)[1];
+    return [0, 2, 4].map(index => parseInt(hex.slice(index, index + 2), 16) / 255);
+  };
+  return { page: read('bg'), text: read('text') };
+}
+
+function contrastRatio(first, second) {
+  const linear = channel => (channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+  const luminance = ([red, green, blue]) => 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
+  const [lighter, darker] = [luminance(first), luminance(second)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+test('the unfilled track keeps at least 2:1 against the page in both themes, using only the text and page tokens', () => {
+  const share = Number(/[.]progress [{][^}]*color-mix[(]in srgb, var[(]--site-text[)] (\d+)%, transparent[)]/.exec(PAGE_HTML)[1]) / 100;
+  for (const [theme, blockStart] of [['light', ':root {'], ['dark', '[data-theme="dark"] {']]) {
+    const { page, text: textColor } = tokenColors(blockStart);
+    const track = textColor.map((channel, index) => channel * share + page[index] * (1 - share));
+    assert.ok(contrastRatio(track, page) >= 2, `the ${theme} track reads at ${contrastRatio(track, page).toFixed(2)}:1`);
+  }
+  assert.ok(!/[.]progress [{][^}]*#[0-9a-f]{3,8}/i.test(PAGE_HTML), 'the track has no colour of its own');
+});
+
+function keyframeOffsets(name) {
+  const body = KEYFRAME_BLOCKS.find(block => block[1] === `studio-${name}`)[2];
+  return [...body.matchAll(/((?:from|to|\d+%)(?:, ?(?:from|to|\d+%))*) [{] ([^}]*) [}]/g)].map(match => ({
+    offsets: match[1].split(/, ?/).map(offset => (offset === 'from' ? 0 : offset === 'to' ? 100 : Number(offset.slice(0, -1)))),
+    declarations: match[2],
+  }));
+}
+
+test('the stream shortens into the lip and is gone before the pot starts to right itself, so no streak is left behind', () => {
+  assert.match(LOADING_STYLE, /#studio-loading [.]stream [{][^}]*transform-origin: 6px 0;/, 'the stream is scaled about the lip, at its top');
+  const streamGone = keyframeOffsets('stream-out').find(step => /opacity: 0/.test(step.declarations) && /scaleY[(]0[)]/.test(step.declarations));
+  assert.ok(streamGone, 'the stream ends scaled to 0 along its length and transparent');
+  const potStays = keyframeOffsets('pot-right').find(step => /rotate[(]30deg[)]/.test(step.declarations) && step.offsets.length > 1);
+  assert.ok(potStays, 'the pot holds its tilt for the first part of the wind-down');
+  assert.ok(Math.min(...streamGone.offsets) < Math.max(...potStays.offsets), 'the stream is gone before the pot turns');
+  assert.ok(!keyframeOffsets('stream-out').some(step => /scaleX/.test(step.declarations)), 'the stream is not thinned sideways, which leaves a streak in the air');
+});
+
+test('the bar moves in a step for each scene module that arrives, between the script step and the scene modules step, and never back', () => {
+  const page = createProgressPage();
+  reportStudioLoadingProgress(page.documentReference, STUDIO_LOADING_MILESTONES.modulesLoaded);
+  const total = 50;
+  const seen = [];
+  for (let loaded = 1; loaded <= total; loaded += 1) {
+    reportStudioModulesLoaded(page.documentReference, loaded, total);
+    seen.push(page.progress());
+  }
+  assert.equal(new Set(seen).size, total, 'every module moves the bar to a new place');
+  assert.deepEqual([...seen].sort((first, second) => first - second), seen, 'the bar only moves forward');
+  assert.ok(seen[0] > STUDIO_LOADING_MILESTONES.modulesLoaded && seen[0] < 0.4, 'the first module moves it a little');
+  assert.ok(Math.abs(seen.at(-1) - STUDIO_LOADING_MILESTONES.sceneModulesLoaded) < 1e-9, 'the last module lands on the scene modules step');
+  reportStudioModulesLoaded(page.documentReference, 1, total);
+  assert.equal(page.progress(), seen.at(-1), 'a late report never moves the bar back');
+});
+
+test('the page script reports each module as it loads, and loadAllAgentSceneModules calls back once per module with a running count', async () => {
+  const pageScript = await readFile(new URL('../bench/studio/main.js', import.meta.url), 'utf8');
+  assert.match(pageScript, /loadAllAgentSceneModules[(][{] onModuleLoaded: [(]loaded, total[)] => reportStudioModulesLoaded[(]document, loaded, total[)] [}][)]/);
+  const { loadAllAgentSceneModules } = await import('../src/agent-scene-modules.js');
+  const counts = [];
+  const totals = new Set();
+  await loadAllAgentSceneModules({ onModuleLoaded: (loaded, total) => { counts.push(loaded); totals.add(total); } });
+  assert.equal(totals.size, 1);
+  assert.deepEqual(counts, Array.from({ length: counts.length }, (unused, index) => index + 1), 'the count rises by one each time');
+  assert.equal(counts.at(-1), [...totals][0], 'the last call reports every module loaded');
+  await loadAllAgentSceneModules();
 });
