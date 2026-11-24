@@ -2257,7 +2257,7 @@ export class CrucibleRenderer {
     context.polygonOffset(1, 1);
     for (const batch of this.batches) {
       if (batch.floor || !batch.castShadow) continue;
-      const fades = batch.tintedShadow && Boolean(batch.parts?.[0]?.opacityScale);
+      const fades = batch.tintedShadow && Boolean(batch.parts?.some(part => part.opacityScale));
       if (batch.tintedShadow && (mainMap && this.tintedShadowsActive || batch.alphaMode === 'blend' && batch.parts[0].castShadow !== true && !fades)) continue;
       if (this.depthShaderFeatures?.has(FADING_SHADOWS_FEATURE)) context.uniform1f(this.depthAlphaUniforms.shadowDither, fades ? 1 : 0);
       const levelSet = batch.shadowLevels ?? batch;
