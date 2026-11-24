@@ -1,0 +1,1 @@
+- The oak forks at half height into three limbs (a Weber-Penn stem split, `habit.split`) so it reads as a broad dome with low limbs and no central leader; oak, ash, aspen and birch carry denser, larger twig cards, and each species crown is checked against the photo band of its species (#3041, #3057)
