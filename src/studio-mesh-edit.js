@@ -20,7 +20,7 @@ const VERTEX_PICK_RADIUS_PIXELS = 14;
 const EDGE_PICK_RADIUS_PIXELS = 10;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
-const NEEDS_A_MESH = 'Edit mode needs a mesh geometry for now; turning a shape into a mesh comes next.';
+const NEEDS_A_MESH = 'Edit mode needs a mesh geometry or a shape of the Add menu.';
 const NEEDS_NO_MODIFIERS = 'Edit mode does not work on a mesh with modifiers yet.';
 const LOG_IS_FULL = `This mesh already has ${MAX_LOG_ENTRIES} edits, the most one mesh holds, so it cannot take another move.`;
 const TOO_MANY_VERTICES = `Moving more than ${MAX_MASK_VERTICES} vertices that are not whole faces is not possible yet; select whole faces or fewer vertices.`;
@@ -172,6 +172,21 @@ function logsShareTheirPrefix(first, second) {
   return true;
 }
 
+// The shapes of the Add menu's Mesh group turn into a mesh on the first Tab. A box and a cylinder lose their bevel on the way:
+// as a mesh the bevel is hundreds of tiny faces (a box of 6 faces becomes 1,482), which nobody can pick one by one. A written 0 is
+// needed: without a bevel field the shape builds with its default one.
+// A plane is written back by the recipe as a grid.
+const CONVERTIBLE_PRIMITIVES = new Set(['plane', 'grid', 'box', 'circle', 'sphere', 'icoSphere', 'cylinder', 'cone', 'torus']);
+const PRIMITIVES_WITHOUT_BEVEL = new Set(['box', 'cylinder']);
+
+/** The mesh geometry a shape becomes in edit mode: its own description as the base, or null for a geometry that is no such shape. */
+export function meshGeometryOfPrimitive(geometrySpec) {
+  if (!geometrySpec || !CONVERTIBLE_PRIMITIVES.has(geometrySpec.type)) return null;
+  const { id, ...base } = structuredClone(geometrySpec);
+  if (PRIMITIVES_WITHOUT_BEVEL.has(base.type)) base.bevel = 0;
+  return { type: 'mesh', base };
+}
+
 function uniqueGeometryId(recipe, wanted) {
   const taken = new Set((recipe.geometries ?? []).map(geometry => geometry.id));
   let candidate = wanted;
@@ -202,9 +217,12 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     return recipe.geometries?.find(candidate => candidate.id === node?.geometry) ?? null;
   }
 
+  // What a person can do instead is in each sentence: edit mode runs on a mesh, or on a shape of the Add menu that turns into one.
   function refusalFor(geometrySpec) {
-    if (!geometrySpec || geometrySpec.type !== 'mesh') return NEEDS_A_MESH;
+    if (!geometrySpec) return 'This object has no mesh to edit: it is a light, a group or an imported file. Select a shape or a mesh.';
     if ((geometrySpec.stack ?? []).length > 0) return NEEDS_NO_MODIFIERS;
+    if (geometrySpec.type === 'text') return 'Text cannot be edited as a mesh yet. Change its words in the properties panel, or add a shape from the Mesh group.';
+    if (geometrySpec.type !== 'mesh' && !CONVERTIBLE_PRIMITIVES.has(geometrySpec.type)) return NEEDS_A_MESH;
     return null;
   }
 
@@ -212,6 +230,7 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     const geometrySpec = geometrySpecOf(controller.exportRecipe(), nodeId);
     const refusal = refusalFor(geometrySpec);
     if (refusal) return refusal;
+    if (geometrySpec.type !== 'mesh') return NEEDS_A_MESH;
     const part = controller.scene.parts.find(candidate => candidate.name === nodeId);
     const source = part ? meshEditSourceOf(part.geometry) : null;
     if (!source) return NEEDS_A_MESH;
@@ -240,19 +259,26 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     return null;
   }
 
-  // A geometry another node uses is copied for this node first: the preview writes into the geometry's buffers, and the edit
-  // log belongs to the geometry, so the twin would move too.
-  function giveNodeItsOwnGeometry(nodeId) {
+  // The geometry of the node becomes a mesh of its own before the first edit, in one scene change (one undo step). A geometry
+  // another node uses is copied: the preview writes into the geometry's buffers and the edit log belongs to the geometry, so the
+  // twin would move too. A shape becomes the mesh of its own description; the shape itself goes when nothing else uses it.
+  function giveNodeItsOwnMesh(nodeId) {
     const recipe = controller.exportRecipe();
     const node = recipe.nodes.find(candidate => candidate.id === nodeId);
-    const sharing = recipe.nodes.filter(candidate => candidate.geometry === node.geometry).length > 1;
-    if (!sharing) return;
     const spec = recipe.geometries.find(candidate => candidate.id === node.geometry);
-    const ownId = uniqueGeometryId(recipe, `${spec.id}-${nodeId}`);
-    controller.applyImportOperations(
-      [{ type: 'add-geometry', geometry: { ...structuredClone(spec), id: ownId } }, { type: 'set-node', id: nodeId, geometry: ownId }],
-      { detail: { kind: 'topology', nodeId } },
-    );
+    const sharing = recipe.nodes.filter(candidate => candidate.geometry === node.geometry).length > 1;
+    const converted = meshGeometryOfPrimitive(spec);
+    if (!sharing && !converted) return;
+    const ownId = uniqueGeometryId(recipe, converted ? `${spec.id}-mesh` : `${spec.id}-${nodeId}`);
+    const ownGeometry = converted ?? structuredClone(spec);
+    const operations = [{ type: 'add-geometry', geometry: { ...ownGeometry, id: ownId } }, { type: 'set-node', id: nodeId, geometry: ownId }];
+    if (converted && !sharing) operations.push({ type: 'remove-geometry', id: spec.id });
+    controller.applyImportOperations(operations, { detail: { kind: 'topology', nodeId } });
+  }
+
+  // The mesh the node would become on Tab, or null: Studio loads the code that builds it before it calls enter().
+  function conversionOf(nodeId) {
+    return meshGeometryOfPrimitive(geometrySpecOf(controller.exportRecipe(), nodeId));
   }
 
   function enter() {
@@ -261,7 +287,7 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     if (!nodeId) return refuse('Select a mesh to edit it.');
     const refusal = refusalFor(geometrySpecOf(controller.exportRecipe(), nodeId));
     if (refusal) return refuse(refusal);
-    giveNodeItsOwnGeometry(nodeId);
+    giveNodeItsOwnMesh(nodeId);
     const loadFailure = loadCage(nodeId, []);
     if (loadFailure) return refuse(loadFailure);
     controller.setTool('translate');
@@ -687,6 +713,7 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     get nodeId() { return state?.nodeId ?? null; },
     get selection() { return state ? { mode: state.mode, indices: [...state.selected].sort((first, second) => first - second) } : null; },
     get cage() { return state ? { positions: state.positions, mesh: state.mesh, tooLarge: state.tooLarge, editCount: state.editCount } : null; },
+    conversionOf,
     enter,
     leave,
     setMode,

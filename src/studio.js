@@ -4265,6 +4265,8 @@ export function createStudio(container, {
     }
     meshEnterPending = true;
     const editor = await loadMeshEditor();
+    const converted = editor.conversionOf(controller.selectedNodeId);
+    if (converted) await loadAgentSceneModules({ geometries: [converted] }).catch(error => announce(error.message));
     if (!meshEnterPending) return;
     meshEnterPending = false;
     if (editor.active) return;

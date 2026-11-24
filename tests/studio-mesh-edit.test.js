@@ -17,7 +17,7 @@ function recipeOf({ base = { type: 'box', bevel: 0 }, edits, nodes } = {}) {
     format: 'crucible.scene',
     schemaVersion: 1,
     materials: [{ id: 'grey', color: [0.6, 0.6, 0.6] }],
-    geometries: [{ id: 'shape', type: 'mesh', base, ...(edits ? { edits } : {}) }, { id: 'ball', type: 'sphere' }],
+    geometries: [{ id: 'shape', type: 'mesh', base, ...(edits ? { edits } : {}) }, { id: 'words', type: 'text', text: 'Hi', size: 0.6, depth: 0.12 }],
     nodes: nodes ?? [{ id: 'hero', geometry: 'shape', material: 'grey' }],
     camera: CAMERA,
   };
@@ -101,8 +101,8 @@ function logOf(controller) {
   return controller.exportRecipe().geometries.find(geometry => geometry.id === 'shape').edits ?? [];
 }
 
-test('Tab enters edit mode on a mesh node and leaves it; a primitive says edit mode needs a mesh', () => {
-  const { controller, editor, messages } = mount(recipeOf({ nodes: [{ id: 'hero', geometry: 'shape', material: 'grey' }, { id: 'plain', geometry: 'ball', material: 'grey', translation: [3, 0, 0] }] }));
+test('Tab enters edit mode on a mesh node and leaves it; text says what to do instead', () => {
+  const { controller, editor, messages } = mount(recipeOf({ nodes: [{ id: 'hero', geometry: 'shape', material: 'grey' }, { id: 'plain', geometry: 'words', material: 'grey', translation: [3, 0, 0] }] }));
   assert.equal(editor.enter().ok, true);
   assert.equal(editor.active, true);
   assert.equal(editor.mode, 'face');
@@ -112,7 +112,7 @@ test('Tab enters edit mode on a mesh node and leaves it; a primitive says edit m
   controller.selectNode('plain');
   const refused = editor.enter();
   assert.equal(refused.ok, false);
-  assert.match(messages.at(-1), /needs a mesh/);
+  assert.match(messages.at(-1), /Text cannot be edited/);
   assert.equal(editor.active, false);
 });
 
@@ -387,7 +387,7 @@ const VIEWPORT_BOX = { left: 40, top: 30, width: 800, height: 600, right: 840, b
 
 function mountStudioWithMesh(testContext) {
   const dom = installStudioDom();
-  const recipe = recipeOf({ nodes: [{ id: 'hero', geometry: 'shape', material: 'grey' }, { id: 'plain', geometry: 'ball', material: 'grey', translation: [3, 0, 0] }] });
+  const recipe = recipeOf({ nodes: [{ id: 'hero', geometry: 'shape', material: 'grey' }, { id: 'plain', geometry: 'words', material: 'grey', translation: [3, 0, 0] }] });
   const studio = createStudio(dom.container, { recipe, renderer: createFakeRenderer() });
   testContext.after(() => {
     studio.dispose();
@@ -460,15 +460,15 @@ test('Esc with nothing selected leaves edit mode; with a face selected it clears
   assert.equal(ui.root.dataset.meshEdit, 'false');
 });
 
-test('Tab on a shape that is not a mesh says edit mode needs a mesh and changes nothing', async testContext => {
+test('Tab on text says it cannot be edited and changes nothing', async testContext => {
   const ui = mountStudioWithMesh(testContext);
   ui.controller.selectNode('plain');
   const recipeBefore = ui.controller.exportRecipe();
   ui.press('Tab');
-  for (let attempt = 0; attempt < 2000 && !/needs a mesh/.test(ui.status()); attempt += 1) {
+  for (let attempt = 0; attempt < 2000 && !/Text cannot be edited/.test(ui.status()); attempt += 1) {
     await new Promise(resolve => setImmediate(resolve)); // the fake DOM replaces setTimeout
   }
-  assert.match(ui.status(), /needs a mesh geometry/);
+  assert.match(ui.status(), /Text cannot be edited/);
   assert.equal(ui.root.dataset.meshEdit, 'false');
   assert.deepEqual(ui.controller.exportRecipe(), recipeBefore);
 });
