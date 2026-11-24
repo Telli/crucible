@@ -10,9 +10,9 @@ export const MINIMUM_RADIUS_PER_THICKNESS = 0.5;
 export const MAXIMUM_RADIUS_PER_THICKNESS = 1000;
 
 /**
- * How far behind the exit point the shader reads the scene, in thicknesses. The liquid pass has the opaque colour but not its depth, so the
- * real distance to the backdrop is unknown; a quarter of the thickness (half a radius of a ball) keeps what sits close behind the glass
- * upright and magnified. Something much further behind would invert in a real ball lens and does not here.
+ * How far behind the exit point the shader reads the scene when the depth march misses (the ray leaves the screen or reaches the sky), in
+ * thicknesses. A quarter of the thickness (half a radius of a ball) keeps what sits close behind the glass upright and magnified.
+ * A march that hits (glass-depth-march.js) replaces this guess with the real surface.
  */
 export const SCENE_REACH_PER_THICKNESS = 0.25;
 
@@ -59,7 +59,20 @@ export function ballLensExit({ position, normal, viewDirection, indexOfRefractio
   return { exitPosition, direction, samplePosition: add(exitPosition, scale(direction, thickness * SCENE_REACH_PER_THICKNESS)) };
 }
 
+/**
+ * The share of the refracted picture that covers the scene: the alpha of a blended glass material, raised by the transmission share.
+ * Light that passes through glass replaces what lies behind it, so a refracted picture drawn at low alpha would leave an unrefracted
+ * ghost of the same scene underneath (a glTF cornea authored with alpha 0.25 and transmission 1 would show only a quarter of its refraction).
+ */
+export function glassOutputCoverage(alpha, transmissionShare) {
+  return alpha + (1 - alpha) * transmissionShare;
+}
+
 export const ballLensGlsl = `
+float glassOutputCoverage(float alpha, float transmissionShare) {
+  return alpha + (1.0 - alpha) * transmissionShare;
+}
+
 const float MINIMUM_RADIUS_PER_THICKNESS = ${MINIMUM_RADIUS_PER_THICKNESS.toFixed(1)};
 const float MAXIMUM_RADIUS_PER_THICKNESS = ${MAXIMUM_RADIUS_PER_THICKNESS.toFixed(1)};
 const float SCENE_REACH_PER_THICKNESS = ${SCENE_REACH_PER_THICKNESS.toFixed(2)};
@@ -69,18 +82,17 @@ float curvatureRadius(float positionStep, float normalStep, float thickness) {
   return min(max(radius, thickness * MINIMUM_RADIUS_PER_THICKNESS), thickness * MAXIMUM_RADIUS_PER_THICKNESS);
 }
 
-// The point the scene is read at after the view ray crosses a glass body of this thickness (see glass-ball-lens.js).
-vec3 ballLensSamplePosition(vec3 position, vec3 normal, vec3 viewDirection, float indexOfRefraction, float radius, float thickness) {
+// Where the view ray leaves a glass body of this thickness and in which direction (see glass-ball-lens.js, ballLensExit).
+void ballLensRay(vec3 position, vec3 normal, vec3 viewDirection, float indexOfRefraction, float radius, float thickness, out vec3 exitPosition, out vec3 direction) {
   vec3 incident = -viewDirection;
   vec3 inside = refract(incident, normal, 1.0 / indexOfRefraction);
   if (dot(inside, inside) < 0.5) inside = incident;
   float cosineInside = max(-dot(inside, normal), 1e-3);
   float sphereChord = 2.0 * radius * cosineInside;
   float slabChord = thickness / cosineInside;
-  vec3 exitPosition = position + inside * min(sphereChord, slabChord);
+  exitPosition = position + inside * min(sphereChord, slabChord);
   vec3 facingBack = sphereChord <= slabChord ? -normalize(exitPosition - (position - normal * radius)) : normal;
-  vec3 direction = refract(inside, facingBack, indexOfRefraction);
+  direction = refract(inside, facingBack, indexOfRefraction);
   if (dot(direction, direction) < 0.5) direction = inside;
-  return exitPosition + direction * thickness * SCENE_REACH_PER_THICKNESS;
 }
 `;

@@ -67,9 +67,9 @@ test('curvature radius follows the position over normal step and is clamped to t
 
 test('the liquid program carries the ball lens and the coverage; the default program does not', () => {
   const liquid = liquidFragmentSource();
-  assert.match(liquid, /ballLensSamplePosition/);
+  assert.match(liquid, /ballLensRay/);
   assert.match(liquid, /glassCoverage/);
-  assert.doesNotMatch(createFragmentShader(new Set()), /ballLensSamplePosition|glassCoverage/);
+  assert.doesNotMatch(createFragmentShader(new Set()), /ballLensRay|glassCoverage/);
 });
 
 const boxPositions = new Float32Array([0, 0, 0, 2, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 0.5, 2, 0, 0.5, 2, 1, 0.5, 0, 1, 0.5]);
@@ -101,6 +101,18 @@ test('an explicit KHR_materials_volume thickness, zero included, is kept and an 
   assert.equal(cap.mediumContinues, true, 'an open cap has none');
   assert.equal(materialWithDerivedThickness(glass, {}, geometry, cache), derived, 'meshes of one size share one material copy');
   assert.equal(glass.thickness, 0, 'the shared material is not changed');
+});
+
+test('an explicit thickness always wins over the derived one, on a closed shell and on an open cap', () => {
+  const volume = { extensions: { KHR_materials_volume: { thicknessFactor: 0.3 } } };
+  const glass = { transmission: 1, thickness: 0.3 };
+  const cache = new Map();
+  const shell = materialWithDerivedThickness(glass, volume, { positions: boxPositions, indices: boxIndices }, cache);
+  const cap = materialWithDerivedThickness(glass, volume, { positions: capPositions, indices: capIndices }, cache);
+  assert.equal(shell.thickness, 0.3, 'the derived value for this shell would be 0.5');
+  assert.equal(cap.thickness, 0.3, 'the derived value for this cap would be 1');
+  assert.equal(shell.mediumContinues, undefined, 'an explicit thickness leaves the medium flag alone');
+  assert.equal(shell, glass, 'the material is not copied');
 });
 
 test('transmission wins over alpha blend: the part draws in the liquid pass and its alpha becomes coverage', () => {

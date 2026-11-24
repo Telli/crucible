@@ -172,6 +172,7 @@ on:
       - 'src/game-setup.js'
       - 'src/gas-sim.js'
       - 'src/glass-ball-lens.js'
+      - 'src/glass-depth-march.js'
       - 'src/geometry-normals.js'
       - 'src/geometry-simplify.js'
       - 'src/geometry.js'
