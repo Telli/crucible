@@ -245,7 +245,7 @@ test('the crown light spans deep shade to sunlit hull: a bright hull, a dark cor
   for (const species of ['broadleaf', 'birch']) {
     const light = crownLightSettings(createTreeLeafSpec(species));
     const spread = crownBrightness(light, 1, 0.5) / crownBrightness(light, 0, 0.5);
-    assert.ok(spread > 6, `${species}: hull over core is ${spread.toFixed(1)} times (round 2 had 3 to 5)`);
+    assert.ok(spread > (species === 'birch' ? 5 : 10), `${species}: hull over core is ${spread.toFixed(1)} times (round 2 had 3 to 5, round 5 lifted the core for the shadow side: oak 20, birch 5.5)`);
   }
   assert.ok(crownBrightness(crownLightSettings(createTreeLeafSpec('broadleaf')), 1, 0.5) > 2.2, 'an oak hull leaf reaches a bright sunlit tail');
   const sun = [0.93, 0.34, 0.12].map(value => value / Math.hypot(0.93, 0.34, 0.12));
