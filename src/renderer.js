@@ -30,7 +30,7 @@ import { canUseCompactColor, respecifyColorTargets } from './compact-color.js';
 import { TranslucentOrder } from './translucent-order.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
 import { countDraws } from './draw-counter.js';
-import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope, sunShadowMapSize } from './shadow-light.js';
+import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope, sunShadowMapSize, writeShadowLightMatrix } from './shadow-light.js';
 import { CLIP_PLANES_FEATURE, MAX_CLIP_PLANES, packClipPlanes, clipPlaneLocations, bindClipPlanes, clipPlanesChanged } from './clip-planes.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
 import { bakeNormalMapVariance } from './normal-map-variance.js';
@@ -2102,9 +2102,7 @@ export class CrucibleRenderer {
     }
     const resolvedLight = resolveShadowLight(this.world, this.activeLightDirection, this.shadowBounds, this.fittedWorldShadowView());
     const light = resolvedLight.hard ? registeredFeatureCode.get('hardShadows').snapView(resolvedLight, mapSize) : resolvedLight;
-    const lightView = mat4.lookAt(mat4.create(), light.eye, light.target, light.up ?? [0, 1, 0]);
-    mat4.ortho(this.lightProjection, -light.extent, light.extent, -light.extent, light.extent, light.near, light.far);
-    mat4.multiply(this.lightProjection, this.lightProjection, lightView);
+    writeShadowLightMatrix(this.lightProjection, light);
     context.viewport(0, 0, mapSize, mapSize);
     context.enable(context.DEPTH_TEST);
     context.enable(context.CULL_FACE);
@@ -2242,13 +2240,14 @@ export class CrucibleRenderer {
   // caster lies outside it, else null; cached per batch list because the check walks every part.
   studioShadowViewMissingCasters() {
     if (this.world || this.shadowBounds?.target !== undefined || this.shadowBounds?.extent !== undefined) return null;
-    if (this.studioShadowMissCache?.batches !== this.batches) {
-      const view = resolveShadowLight(false, null);
+    const cacheKey = String(this.activeLightDirection);
+    if (this.studioShadowMissCache?.batches !== this.batches || this.studioShadowMissCache.cacheKey !== cacheKey) {
+      const view = resolveShadowLight(false, this.activeLightDirection);
       const casters = this.batches.filter(batch => !batch.floor && batch.castShadow).flatMap(batch => batch.parts);
       // A skinned, morphed or crowd part has no fixed box, so one of them means the answer is unknown and nothing warns.
       const boxes = casters.map(part => sceneBoundsOfParts([part]));
-      const missed = !boxes.includes(null) && everyCasterOutsideShadowView(boxes, view);
-      this.studioShadowMissCache = { batches: this.batches, view: missed ? view : null };
+      const missed = !boxes.includes(null) && everyCasterOutsideShadowView(boxes, writeShadowLightMatrix(mat4.create(), view));
+      this.studioShadowMissCache = { batches: this.batches, cacheKey, view: missed ? view : null };
     }
     return this.studioShadowMissCache.view;
   }

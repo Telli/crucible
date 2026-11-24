@@ -13,7 +13,8 @@ import { normalizeAgentLook } from '../src/agent-look.js';
 import { createLightingState, updateLightingState } from '../src/lighting.js';
 import { DEFAULT_FILL_COLORS } from '../src/ambient-light.js';
 import { everyCasterOutsideShadowView, frameDiagnostics } from '../src/frame-diagnostics.js';
-import { resolveShadowLight } from '../src/shadow-light.js';
+import { mat4 } from 'gl-matrix';
+import { resolveShadowLight, writeShadowLightMatrix } from '../src/shadow-light.js';
 
 // #3284: a flat ambient colour in place of the HDRI diffuse light, fill light colours, and the studio shadow view that misses a far set.
 
@@ -55,13 +56,17 @@ test('fillColor, ambientColor and ambientMix errors say what to pass', () => {
   assert.throws(() => environmentFor({ ambientMix: 1 }), /needs environment\.ambientColor: pass \[r, g, b\]/);
 });
 
-test('the studio shadow view reports a set whose casters all lie outside it, and names shadowBounds', () => {
-  const view = resolveShadowLight(false, null);
+test('the studio shadow view reports a set whose casters all lie outside the shadow box, and names shadowBounds', () => {
+  const overheadSun = [0.05, 1, 0.05];
+  const view = resolveShadowLight(false, overheadSun);
+  const matrix = writeShadowLightMatrix(mat4.create(), view);
   const near = { minimum: [-1, 0, -1], maximum: [1, 2, 1] };
   const far = { minimum: [20, 0, 20], maximum: [22, 2, 22] };
-  assert.equal(everyCasterOutsideShadowView([far], view), true);
-  assert.equal(everyCasterOutsideShadowView([far, near], view), false, 'one caster inside keeps some shadow');
-  assert.equal(everyCasterOutsideShadowView([], view), false);
+  const straightAbove = { minimum: [-0.5, 6.5, -0.5], maximum: [0.5, 7.5, 0.5] };
+  assert.equal(everyCasterOutsideShadowView([far], matrix), true);
+  assert.equal(everyCasterOutsideShadowView([far, near], matrix), false, 'one caster inside keeps some shadow');
+  assert.equal(everyCasterOutsideShadowView([straightAbove], matrix), false, 'a caster straight above the target is inside the box of an overhead sun');
+  assert.equal(everyCasterOutsideShadowView([], matrix), false);
   const problems = frameDiagnostics({ world: false, depth: false, effects: {}, shadowViewMissesCasters: view });
   assert.equal(problems.length, 1);
   assert.equal(problems[0].kind, 'shadow-view-misses-casters');

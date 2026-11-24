@@ -53,16 +53,28 @@ function unsupportedEffectProblems(requestedEffects, frameExposure) {
 }
 
 /**
- * True when every caster's bounding box lies outside the circle the default studio shadow view covers round its target, which no
- * light direction can bring back into the view. `casterBounds` is a list of { minimum, maximum } boxes.
+ * True when every caster's bounding box lies wholly outside the box the sun's shadow map draws (`lightMatrix`, from
+ * writeShadowLightMatrix), so none of them can shadow anything. `casterBounds` is a list of { minimum, maximum } boxes.
  */
-export function everyCasterOutsideShadowView(casterBounds, view) {
+export function everyCasterOutsideShadowView(casterBounds, lightMatrix) {
   if (casterBounds.length === 0) return false;
-  const reach = view.extent * Math.SQRT2;
-  return casterBounds.every(bounds => {
-    const nearest = bounds.minimum.map((low, axis) => Math.max(low - view.target[axis], 0, view.target[axis] - bounds.maximum[axis]));
-    return Math.hypot(...nearest) > reach;
-  });
+  return casterBounds.every(bounds => boxOutsideClipVolume(bounds, lightMatrix));
+}
+
+// A box is outside when all eight corners are past the same clip plane (conservative: a box that straddles a corner stays "inside").
+function boxOutsideClipVolume(bounds, matrix) {
+  const outsideCounts = new Array(6).fill(0);
+  for (let corner = 0; corner < 8; corner++) {
+    const x = corner & 1 ? bounds.maximum[0] : bounds.minimum[0];
+    const y = corner & 2 ? bounds.maximum[1] : bounds.minimum[1];
+    const z = corner & 4 ? bounds.maximum[2] : bounds.minimum[2];
+    const clip = [0, 1, 2, 3].map(row => matrix[row] * x + matrix[row + 4] * y + matrix[row + 8] * z + matrix[row + 12]);
+    for (let axis = 0; axis < 3; axis++) {
+      if (clip[axis] < -clip[3]) outsideCounts[axis * 2]++;
+      if (clip[axis] > clip[3]) outsideCounts[axis * 2 + 1]++;
+    }
+  }
+  return outsideCounts.some(count => count === 8);
 }
 
 function shadowViewMissesCastersProblem(view) {
