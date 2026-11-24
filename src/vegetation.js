@@ -317,6 +317,42 @@ function placeCrownLeafSites(branches, height, preset, seed) {
   return leafSites;
 }
 
+/**
+ * The leaf sites of a preset whose `leaf.placement` has a `depth` (the pine, #3041): on the last `depth` branch levels, kept more
+ * often the nearer they sit to the crown's outside, and turned up and outward like the leaves of a real crown.
+ */
+function placeBranchLevelLeafSites(branches, preset, random) {
+  const spec = preset.leaf;
+  const { depth, interiorKeep, outwardTilt, upTilt } = spec.placement;
+  const firstLevel = preset.levels.length - depth;
+  const limit = treeLeafSiteLimit(preset);
+  const candidates = [];
+  for (const branch of branches) {
+    if (branch.level < firstLevel || branch.level < 1) continue;
+    const count = Math.max(2, Math.round(branch.length * spec.sitesPerMeter));
+    if (candidates.length + count > limit * CROWN_CANDIDATE_HEADROOM) throw tooManyLeafSites(limit);
+    for (let index = 0; index < count; index++) {
+      candidates.push(sampleBranch(branch, lerp(spec.start, 1, index / (count - 1))));
+    }
+  }
+  const center = scaleVector(candidates.reduce((sum, sample) => addVectors(sum, sample.position), [0, 0, 0]), 1 / candidates.length);
+  const distances = candidates.map(sample => vectorLength(subtractVectors(sample.position, center)));
+  const reach = [...distances].sort((first, second) => first - second)[Math.floor(distances.length * 0.9)] || 1;
+  const leafSites = [];
+  candidates.forEach((sample, index) => {
+    const outside = clamp(distances[index] / reach, 0, 1);
+    if (random() > interiorKeep + (1 - interiorKeep) * outside * outside * (3 - 2 * outside)) return;
+    const outward = normalized(subtractVectors(sample.position, center));
+    const direction = normalized(addVectors(
+      addVectors(scaleVector(outward, outwardTilt), scaleVector(WORLD_UP, upTilt)),
+      addVectors(scaleVector(sample.direction, 0.3), scaleVector(randomUnitOffset(random), 0.25)),
+    ));
+    leafSites.push({ position: sample.position, direction, scale: 0.8 + random() * 0.45, roll: (random() - 0.5) * 0.8 });
+  });
+  if (leafSites.length > limit) throw tooManyLeafSites(limit);
+  return leafSites;
+}
+
 function growSkeleton(preset, height, random, leafMode, seed) {
   const placeCrown = Boolean(preset.leaf.placement) && leafMode === 'cards';
   const lastLevel = preset.levels.length - 1;
@@ -379,7 +415,9 @@ function growSkeleton(preset, height, random, leafMode, seed) {
     radius: height * preset.trunkRadiusRatio,
     level: 0,
   });
-  const sites = placeCrown ? placeCrownLeafSites(branches, height, preset, seed) : leafSites;
+  const sites = !placeCrown ? leafSites
+    : preset.leaf.placement.depth === undefined ? placeCrownLeafSites(branches, height, preset, seed)
+      : placeBranchLevelLeafSites(branches, preset, random);
   return { branches, height, leafSites: sites, crown: describeCrown(sites) };
 }
 
@@ -533,22 +571,35 @@ function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
 }
 
 // A crown placement paints its twig texture as a 2 x 2 atlas of spray variants (#3057): each card draws one cell, picked by
-// its variant index. A plain species draws the whole texture.
+// its variant index. A plain species and the pine's fanned placement draw the whole texture.
 const FULL_TEXTURE_RECT = Object.freeze({ minU: 0, minV: 0, maxU: 1, maxV: 1 });
 function cardUvRect(crowned, variantIndex) {
   return crowned ? atlasCellRect(variantIndex) : FULL_TEXTURE_RECT;
 }
 
-function addCards(builder, skeleton, spec, site, scale, random, variantIndex = 0) {
+/** Whether a card draws a spray cell as two flat triangles: a twig crown (#3057), not a placement on branch levels (`depth`, the pine). */
+function drawsSprayCards(spec) {
+  return Boolean(spec.placement) && spec.placement.depth === undefined;
+}
+
+// `tipScale` (a far level, #3051) pulls a bigger card back along its direction so its tip stays where the tip of a card of that scale
+// would be: the far card fills the crown inward and leaves its width alone.
+function addCards(builder, skeleton, spec, site, scale, random, variantIndex = 0, { tipScale = scale, cardCount = spec.cardsPerSite } = {}) {
+  const pullBack = spec.cardSize[1] * site.scale * (scale - tipScale);
+  const origin = addScaled(site.position, site.direction, -pullBack);
   const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position);
   const firstRoll = (random() - 0.5) * 0.6;
-  // A crown placement (#3057) draws each card as two flat triangles; a plain species keeps its three-row, drooping card.
-  const crowned = Boolean(spec.placement);
-  // Crossed pairs turn each card a quarter turn from the last.
-  for (let index = 0; index < spec.cardsPerSite; index++) {
-    const roll = firstRoll + index * (Math.PI / 2 + (random() - 0.5) * 0.5);
+  // A twig crown (#3057) draws each card as two flat triangles; a plain species keeps its three-row, drooping card.
+  const crowned = drawsSprayCards(spec);
+  // Crossed pairs turn each card a quarter turn from the last; the pine's placement (#3041) fans them a little around the same
+  // upward, outward plate, so every card lies like a leaf and none stands edge-on.
+  const fan = spec.placement?.cardFan;
+  for (let index = 0; index < cardCount; index++) {
+    const roll = fan === undefined
+      ? firstRoll + index * (Math.PI / 2 + (random() - 0.5) * 0.5)
+      : firstRoll + (index - (cardCount - 1) / 2) * fan;
     addLeafSurface(builder, {
-      origin: site.position,
+      origin,
       frame: createLeafFrame(site.direction, roll),
       length: spec.cardSize[1] * site.scale * scale,
       width: spec.cardSize[0] * site.scale * scale,
@@ -636,10 +687,105 @@ function addCrownClumps(builder, skeleton, spec, mode, random, widthScale = 1) {
   }
 }
 
-function buildFoliage(skeleton, preset, mode, setting, random) {
+function frondSegmentCount(setting) {
+  if (setting.leafKeep >= 0.8) return 8;
+  if (setting.leafKeep >= 0.25) return 5;
+  if (setting.leafKeep >= 0.12) return 3;
+  return 2;
+}
+
+// Curved V-folded frond ribbons along each palm frond rachis (#3051): replaces sparse perpendicular leaf cards with full pinnate fronds.
+function addFrondRibbons(builder, skeleton, spec, segments, random) {
+  for (const branch of skeleton.branches) {
+    if (branch.level !== 1) continue;
+    const frondWidth = branch.length * (spec.frondWidthRatio ?? 0.46);
+    const roll = (random() - 0.5) * 0.32;
+    const ringIndices = [];
+    for (let step = 0; step <= segments; step++) {
+      const progress = step / segments;
+      const sample = sampleBranch(branch, progress);
+      const frame = createLeafFrame(sample.direction, roll);
+      const { brightness, canopyNormal, tint } = crownShading(skeleton, sample.position);
+      const halfWidth = frondWidth * 0.5 * (0.85 + 0.15 * Math.sin(Math.PI * progress));
+      const stepBrightness = brightness * lerp(0.78, 1.12, progress);
+      const row = [-1, 0, 1].map((column) => {
+        const position = column === 0
+          ? sample.position
+          : addScaled(addScaled(sample.position, frame.right, column * halfWidth), frame.normal, -0.24 * halfWidth);
+        const ridgeNormal = normalized(addScaled(frame.normal, frame.right, column * 0.45));
+        const shading = normalized(addVectors(scaleVector(ridgeNormal, 0.65), scaleVector(canopyNormal, 0.35)));
+        const vertexColor = lerpVectors(LEAF_COLOR_BASE, LEAF_COLOR_TIP, progress).map((channel, index) => channel * stepBrightness * tint[index]);
+        return builder.addVertex(position, shading, (column + 1) / 2, 1 - progress, vertexColor);
+      });
+      ringIndices.push(row);
+    }
+    for (let step = 0; step < segments; step++) {
+      for (let column = 0; column < 2; column++) {
+        const a = ringIndices[step][column];
+        const b = ringIndices[step][column + 1];
+        const belowLeft = ringIndices[step + 1][column];
+        const belowRight = ringIndices[step + 1][column + 1];
+        builder.addTriangle(a, b, belowLeft);
+        builder.addTriangle(b, belowRight, belowLeft);
+      }
+    }
+  }
+}
+
+/**
+ * Whether a far level draws crown clumps. Leaf cards keep their own card at the far levels (#3051); a tree of mesh leaves and a
+ * bush, whose small crown is made of clumps, still merge their leaves into clumps there.
+ */
+function drawsCrownClumps(setting, preset, mode) {
+  return Boolean(setting.clumps) && (mode === 'mesh' || Boolean(preset.leaf.farClumps));
+}
+
+/**
+ * The sites a far level draws a card on (#3051): the same share of the sites in every cell of the crown, carried across sparse
+ * gap cells so isolated edge cells do not inflate into blocky plates while dense lobes and the crown centre keep their share.
+ */
+function pickFarSites(skeleton, keep) {
+  const cellSize = skeleton.crown.radius / 2.1;
+  const cells = new Map();
+  for (const site of skeleton.leafSites) {
+    const key = site.position.map(value => Math.floor(value / cellSize)).join(',');
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(site);
+  }
+  const picked = [];
+  let carry = 0.5;
+  for (const sites of cells.values()) {
+    const exact = sites.length * keep + carry;
+    const count = Math.floor(exact);
+    carry = exact - count;
+    for (let index = 0; index < count; index++) picked.push(sites[Math.floor((index + 0.5) * sites.length / count)]);
+  }
+  return picked;
+}
+
+function buildFoliage(skeleton, preset, mode, levelSetting, random, levelIndex) {
+  if (preset.leaf.frondRibbon && mode === 'cards') {
+    const builder = createMeshBuilder({ withColors: true });
+    addFrondRibbons(builder, skeleton, preset.leaf, frondSegmentCount(levelSetting), random);
+    return builder.build();
+  }
+  // A species may tune a far level (#3051).
+  const setting = { ...levelSetting, ...preset.leaf.farCards?.[levelIndex] };
   const builder = createMeshBuilder({ withColors: true });
-  if (setting.leafKeep === 0) {
-    addCrownClumps(builder, skeleton, preset.leaf, mode, random, setting.crownScale);
+  if (setting.leafKeep === 0 || drawsCrownClumps(setting, preset, mode)) {
+    addCrownClumps(builder, skeleton, preset.leaf, mode, random, setting.clumps?.crownScale);
+    return builder.build();
+  }
+  if (setting.tipScale !== undefined && mode === 'cards') {
+    // A twig-crown tree (`farPair`) keeps its fanned pair, which lies like a leaf plate, at half the share of sites. Every other species
+    // gets one card to a site: far away a crossed pair reads as a plus sign. The share of sites doubles with it, so the leaf area stays
+    // that of level 1 either way.
+    const fannedPair = Boolean(preset.leaf.farPair);
+    const cardCount = fannedPair ? preset.leaf.cardsPerSite : 1;
+    const keep = Math.min(1, fannedPair ? setting.leafKeep : setting.leafKeep * preset.leaf.cardsPerSite);
+    pickFarSites(skeleton, keep).forEach((site, index) => {
+      addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random, index, { tipScale: setting.tipScale, cardCount });
+    });
     return builder.build();
   }
   const stride = Math.round(1 / setting.leafKeep);
@@ -704,7 +850,7 @@ function createMaterials(preset, mode, scannedBark, scannedLeaves) {
 // tree that is only measured or exported costs nothing extra, and a forest of distinct trees pays for the ones drawn.
 // A level's mean is taken over the leaf its vertices stand for, not over the vertices, because a clump has few vertices for a lot of leaf.
 
-function bakeCrownSkyVisibility(levels, species) {
+function bakeCrownSkyVisibility(levels, species, clumpLevels) {
   const foliageOf = level => level.parts[1].geometry;
   const coverageOf = geometry => vertexCoverage(geometry.positions, geometry.indices);
   let field = null;
@@ -712,7 +858,8 @@ function bakeCrownSkyVisibility(levels, species) {
     const part = level.parts[1];
     const { geometry } = part;
     if (geometry.positions.length === 0) continue;
-    const gain = TREE_LEVEL_GAINS[species]?.[levelIndex];
+    // The gains were fitted to crown clumps; a level of leaf cards is area-matched to level 1 and needs none.
+    const gain = clumpLevels[levelIndex] ? TREE_LEVEL_GAINS[species]?.[levelIndex] : undefined;
     if (gain) {
       const colorGain = gain.color * leafAreaCorrection(geometry, foliageOf(levels[0]), gain.area, TREE_LEVEL_GAINS[species].areaExponent);
       if (part.material.map) geometry.colors = geometry.colors.map(channel => channel * colorGain);
@@ -816,13 +963,15 @@ export function createTree(speciesOrOptions = 'broadleaf', seed = 1) {
   const materials = createMaterials(preset, leaves, scannedBark, scannedLeaves);
   const shadowTrunk = buildShadowTrunk(skeleton, preset, bark);
   const thinnedShadowTrunk = buildThinnedShadowTrunk(skeleton, preset, bark, shadowTrunk);
+  const clumpLevels = LEVEL_SETTINGS.map(setting => setting.leafKeep === 0 || drawsCrownClumps(setting, preset, leaves));
   const levels = LEVEL_SETTINGS.map((setting, levelIndex) => {
     const levelRandom = createRandom(seed * 104729 + levelIndex);
-    const foliageMaterial = setting.leafKeep === 0 ? materials.crown : materials.foliage;
-    const barkGeometry = buildBark(skeleton, preset, setting, bark);
-    const foliageGeometry = buildFoliage(skeleton, preset, leaves, setting, levelRandom);
+    const foliageMaterial = clumpLevels[levelIndex] ? materials.crown : materials.foliage;
+    const barkSetting = preset.leaf.frondRibbon && leaves === 'cards' ? { ...setting, maximumBranchLevel: 0 } : setting;
+    const barkGeometry = buildBark(skeleton, preset, barkSetting, bark);
+    const foliageGeometry = buildFoliage(skeleton, preset, leaves, setting, levelRandom, levelIndex);
     // Level 0 can drop to either thinner layer and level 1 to the second; the crown clumps of level 2 are thin enough.
-    const shadowFoliage = setting.leafKeep === 0 ? [] : buildShadowFoliage(skeleton, preset, leaves, seed, levelIndex);
+    const shadowFoliage = clumpLevels[levelIndex] ? [] : buildShadowFoliage(skeleton, preset, leaves, seed, levelIndex);
     return describeLevel([
       { role: 'bark', geometry: barkGeometry, material: materials.bark, tintable: false, shadowLods: [{ geometry: barkGeometry, error: 0 }, shadowTrunk, thinnedShadowTrunk] },
       {
@@ -831,7 +980,7 @@ export function createTree(speciesOrOptions = 'broadleaf', seed = 1) {
       },
     ]);
   });
-  bakeCrownSkyVisibility(levels, species);
+  bakeCrownSkyVisibility(levels, species, clumpLevels);
   const bareParts = preset.bareTwigs ? createBareParts(skeleton, preset, seed, bark, materials, [shadowTrunk, thinnedShadowTrunk]) : null;
   return {
     kind: 'tree', species, ...(options.preset === undefined ? {} : { preset: options.preset }), seed, height, leaves, levels, materials,

@@ -1,4 +1,7 @@
-import { blendOutputGlsl } from './blend-output.js';
+import { blendOutputGlsl, withBlendCoverage } from './blend-output.js';
+import { WETNESS_CODE } from './wetness-shader.js';
+import { TANGENT_CODE_MINIMUM } from './tangent-encoding.js';
+import { UNBAKED_ALPHA_THRESHOLD, NORMAL_SPREAD_GAIN } from './normal-map-variance.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
 import { registeredFeatureCode, requireFeatureCode, registerShaderFeatureCode, registerSplatSupport, requireSplatSupport, layerTextureSupport, viewTransformShader, SPLAT_UNITS } from './shader-registry.js';
 
@@ -65,14 +68,88 @@ layout(location=7) in vec4 instanceNormalMiddle;
 ${PACKED_COLOR_DECLARATION}
 #define instanceNormal mat3(instanceNormalHead.xyz, vec3(instanceNormalHead.w, instanceNormalMiddle.xy), vec3(instanceNormalMiddle.zw, instanceNormalTail.x))`;
 
+/**
+ * The geometry feature for vertex tangents (a normal map on a geometry with `tangents`). It is not in SHADER_FEATURES: a shader
+ * built without it keeps the exact text it had before, and the renderer adds it for the parts that carry tangents.
+ */
+export const TANGENT_FEATURE = 'tangents';
+// A normal map can hold detail finer than a pixel (the one-texel bevel at the rim of a mapped sphere). The widened roughness
+// below keeps the highlight from sparkling, but a thin ring of tilted normals still catches every light once per pixel.
+// The spread of the normals each mip level averages (baked at upload, src/normal-map-variance.js) and the screen-space change
+// of the normal therefore also lower the direct specular, as detail that averages out. The code exists only in a shader that has a normal map, so a shader without one keeps its exact text.
+export const NORMAL_MAP_SPECULAR_FADE_STRENGTH = 32;
+const NORMAL_MAP_SPECULAR_CODE = {
+  declarations: 'float normalMapSpecularFade = 1.0;\n',
+  illuminateSpecular: '  specular *= normalMapSpecularFade;\n',
+  worldSurface: `  if (specularAntiAliasing > 0.0) {
+    vec3 fadeNormalX = dFdx(normal);
+    vec3 fadeNormalY = dFdy(normal);
+    float normalVariance = 0.5 * (dot(fadeNormalX, fadeNormalX) + dot(fadeNormalY, fadeNormalY)) + ${NORMAL_SPREAD_GAIN}.0 * normalMapSpread;
+    normalMapSpecularFade = 1.0 / (1.0 + ${NORMAL_MAP_SPECULAR_FADE_STRENGTH}.0 * specularAntiAliasing * normalVariance);
+  }
+`,
+};
+const TANGENT_ABSENT = { normalDeclaration: 'layout(location=1) in vec3 normal;\n', varying: '', mainStart: '', transform: '' };
+
+// The tangent code rides in the fourth float of the normal attribute (src/tangent-encoding.js has the encoder and the same angle
+// basis). A direction transforms with the model and joint matrices, not with the normal matrix, and its handedness flips with a mirrored model.
+const TANGENT_VERTEX_CODE = {
+  normalDeclaration: 'layout(location=1) in vec4 normalAndTangentCode;\n',
+  varying: 'out vec4 worldTangent;\n',
+  mainStart: '  vec3 normal = normalAndTangentCode.xyz;\n',
+  transform: `  worldTangent = vec4(0.0);
+  if (abs(normalAndTangentCode.w) > ${TANGENT_CODE_MINIMUM}) {
+    vec3 unitNormal = normalize(normal);
+    vec3 helper = abs(unitNormal.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 referenceFirst = normalize(cross(helper, unitNormal));
+    vec3 referenceSecond = cross(unitNormal, referenceFirst);
+    float tangentAngle = abs(normalAndTangentCode.w) - ${2 + Math.PI};
+    vec3 localTangent = cos(tangentAngle) * referenceFirst + sin(tangentAngle) * referenceSecond;
+    mat3 directionMatrix = mat3(instanceMatrix) * ((USES_SKIN || USES_CROWD) ? mat3(deformation) : mat3(1.0));
+    float mirror = determinant(directionMatrix) < 0.0 ? -1.0 : 1.0;
+    worldTangent = vec4(directionMatrix * localTangent, (normalAndTangentCode.w < 0.0 ? -1.0 : 1.0) * mirror);
+  }
+`,
+};
+
+// Fragment side: the interpolated tangent frame replaces the screen-derivative one where the vertices carry tangents. A vertex without
+// one leaves worldTangent at zero, so a draw that mixes geometries with and without tangents still shades each correctly.
+function tangentFragmentCode(normalUv) {
+  return {
+  declarations: 'in vec4 worldTangent;\n',
+  tangentFrame: `// A glTF frame: bitangent = cross(normal, tangent) * handedness. The back face of a double-sided surface flips tangent and bitangent with the normal.
+vec3 suppliedMappedNormal(vec3 normal) {
+  vec3 tangent = worldTangent.xyz - normal * dot(normal, worldTangent.xyz);
+  float tangentLength = length(tangent);
+  if (tangentLength < 1e-6) return vec3(0.0);
+  float side = dot(normal, worldNormal) < 0.0 ? -1.0 : 1.0;
+  vec3 bitangent = normalize(cross(normal, worldTangent.xyz)) * worldTangent.w;
+  tangent = tangent / tangentLength * side;
+  vec2 normalCoordinates = mapUV(hasNormalMap);
+  vec4 normalTexel = texture(normalMap, normalCoordinates${normalUv});
+  vec3 sampled = normalTexel.xyz * 2.0 - 1.0;
+  normalMapVariance = mappedNormalVariance(normalTexel);
+  sampled.xy *= normalScale;
+  vec3 mapped = mat3(tangent, bitangent, normal) * sampled;
+  return dot(mapped, mapped) > 1e-12 ? normalize(mapped) : normal;
+}
+`,
+  suppliedTangent: `  if (worldTangent.w != 0.0) {
+    vec3 supplied = suppliedMappedNormal(normal);
+    if (dot(supplied, supplied) > 0.0) return supplied;
+  }
+`,
+  };
+}
+
 function vertexShaderSource(definitions, features) {
   const retro = new Set(features).has('retro') ? requireFeatureCode('retro') : {};
+  const tangent = new Set(features).has(TANGENT_FEATURE) ? TANGENT_VERTEX_CODE : TANGENT_ABSENT;
   return `#version 300 es
 ${definitions}
 precision highp float;
 layout(location=0) in vec3 position;
-layout(location=1) in vec3 normal;
-layout(location=2) in mat4 instanceMatrix;
+${tangent.normalDeclaration}layout(location=2) in mat4 instanceMatrix;
 ${PACKED_NORMAL_AND_COLOR_DECLARATIONS}
 layout(location=10) in vec4 instanceSurface;
 layout(location=11) in vec3 assemblyOffset;
@@ -90,7 +167,7 @@ uniform float explosionProgress;
 uniform vec3 explosionCenter;
 uniform float assemblyAmount;
 out vec3 worldPosition, worldNormal;
-#ifdef INSTANCED
+${tangent.varying}#ifdef INSTANCED
 flat out vec3 baseColor;
 flat out vec4 surface;
 flat out vec4 instanceEmission;
@@ -100,6 +177,9 @@ flat out mat3 boxNormalMatrix;
 #ifdef VERTEX_COLORS
 out vec3 vertexTint;
 out float vertexSkyVisibility;
+#ifdef VERTEX_ALPHA
+out float vertexOpacity;
+#endif
 #ifdef SURFACE_WEAR
 out vec2 vertexWear;
 #endif
@@ -113,7 +193,7 @@ ${skinningShader(features)}
 ${morphingShader(features)}
 ${windShader(features)}
 void main() {
-  // A crowd batch reads its joints and weights from the colour attribute, which then carries no tint.
+${tangent.mainStart}  // A crowd batch reads its joints and weights from the colour attribute, which then carries no tint.
   vec2 uv = uvSets.xy;
   mat4 deformation = USES_CROWD ? crowdTransform() : (USES_SKIN ? skinTransform() : mat4(1.0));
   vec4 world = instanceMatrix * deformation * vec4(USES_MORPH ? morphedPosition(position) : position, 1.0);
@@ -129,7 +209,7 @@ void main() {
   vec3 localNormal = USES_MORPH ? morphedNormal(normal) : normal;
   vec3 deformedNormal = (USES_SKIN || USES_CROWD) ? transpose(inverse(mat3(deformation))) * localNormal : localNormal;
   worldNormal = normalize(instanceNormal * deformedNormal);
-  // Metres along the object's own axes: a pattern follows its node and ignores scale.
+${tangent.transform}  // Metres along the object's own axes: a pattern follows its node and ignores scale.
   if (${new Set(features).has('boxMapScale') || new Set(features).has('emissionMask')}) {
   boxPosition = (USES_MORPH ? morphedPosition(position) : position) * vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
   boxNormal = deformedNormal;
@@ -147,7 +227,12 @@ void main() {
 #endif
 #ifdef VERTEX_COLORS
   vertexTint = USES_CROWD ? vec3(1.0) : vertexColor.rgb;
-#ifdef SURFACE_WEAR
+#ifdef VERTEX_ALPHA
+  // The fourth component packs two 10 bit levels, colour alpha * 1024 + sky visibility (packVertexAlpha in renderer.js).
+  float alphaLevel = floor(vertexColor.a / 1024.0);
+  vertexOpacity = USES_CROWD ? 1.0 : alphaLevel / 1023.0;
+  vertexSkyVisibility = USES_CROWD ? 1.0 : (vertexColor.a - alphaLevel * 1024.0) / 1023.0;
+#elif defined(SURFACE_WEAR)
   // A packed value of 2 or more carries the wear and dirt weights (material-wear.js); below 2 it is sky visibility.
   bool carriesWear = !USES_CROWD && vertexColor.a >= 2.0;
   float maskBits = carriesWear ? vertexColor.a - 2.0 : 0.0;
@@ -276,7 +361,8 @@ export function createDepthFragmentShader(features = []) {
   if (!new Set(features).has('tintedShadows')) return code;
   return code
     .replace('precision highp float;', () => `precision highp float;\n${TINT_FRAGMENT_DECLARATIONS}`)
-    .replace('void main() {\n', () => TINT_FRAGMENT_BRANCH);
+    // A clip plane test (clip-planes.js) comes first, so a clipped caster tints nothing either.
+    .replace(/void main\(\) \{\n((?:  discardClipped\(\w+\);\n)?)/, (_start, clipTest) => TINT_FRAGMENT_BRANCH.replace('void main() {\n', (start) => start + clipTest));
 }
 
 export const benchmarkVertexShader = `#version 300 es
@@ -321,9 +407,15 @@ uniform mat3 boxNormalMatrix;
 #ifdef VERTEX_COLORS
 in vec3 vertexTint;
 in float vertexSkyVisibility;
+#ifdef VERTEX_ALPHA
+in float vertexOpacity;
+#else
+const float vertexOpacity = 1.0;
+#endif
 #else
 const vec3 vertexTint = vec3(1.0);
 const float vertexSkyVisibility = 1.0;
+const float vertexOpacity = 1.0;
 #endif
 #if defined(VERTEX_COLORS) && defined(SURFACE_WEAR)
 in vec2 vertexWear;
@@ -609,9 +701,18 @@ vec3 boxMappedNormal(vec3 normal) {
 // Toksvig variance: a normal map mip averages texels that disagree, so the filtered normal is shorter than 1.
 // The shortfall is the detail the pixel can no longer resolve, and it widens the highlight instead of sparkling.
 float normalMapVariance = 0.0;
-
+// The alpha of a normal map texel holds the spread of the normals its mip level averages, baked at upload (src/normal-map-variance.js):
+// the square root of one minus the mean unit-normal length. It feeds the specular fade below. A texture that was not baked
+// (precompressed, or updated in place) keeps alpha 1, so its spread reads 0 and only the stored normal length widens the highlight.
+float normalMapSpread = 0.0;
+float mappedNormalVariance(vec4 normalTexel) {
+  normalMapSpread = normalTexel.w > ${UNBAKED_ALPHA_THRESHOLD} ? 0.0 : normalTexel.w * normalTexel.w;
+  float storedLength = clamp(length(normalTexel.xyz * 2.0 - 1.0), 0.05, 1.0);
+  return (1.0 - storedLength) / storedLength;
+}
+${featureCode("tangentFrame")}
 vec3 mappedNormal(vec3 normal) {
-  vec3 positionX = dFdx(worldPosition);
+${featureCode("suppliedTangent")}  vec3 positionX = dFdx(worldPosition);
   vec3 positionY = dFdy(worldPosition);
   vec2 normalCoordinates = mapUV(hasNormalMap);
   vec2 uvX = dFdx(normalCoordinates);
@@ -632,9 +733,9 @@ vec3 mappedNormal(vec3 normal) {
   tangent = normalize(tangent);
   float handedness = dot(cross(normal, tangent), bitangent) < 0.0 ? -1.0 : 1.0;
   bitangent = normalize(cross(normal, tangent)) * handedness;
-  vec3 sampled = texture(normalMap, normalCoordinates${featureCode("normalUv")}).xyz * 2.0 - 1.0;
-  float filteredLength = clamp(length(sampled), 0.05, 1.0);
-  normalMapVariance = (1.0 - filteredLength) / filteredLength;
+  vec4 normalTexel = texture(normalMap, normalCoordinates${featureCode("normalUv")});
+  vec3 sampled = normalTexel.xyz * 2.0 - 1.0;
+  normalMapVariance = mappedNormalVariance(normalTexel);
   sampled.xy *= normalScale;
   vec3 mapped = mat3(tangent, bitangent, normal) * sampled;
   return dot(mapped, mapped) > 1e-12 ? normalize(mapped) : normal;
@@ -682,7 +783,7 @@ ${featureCode("libraries")}
 ${featureCode("worldMossFunction")}// Opaque draws 1, mask resolves to a cutout (smooth coverage with MSAA), blend and add keep the fraction (per instance opacity times the batch one).
 float surfaceAlpha(float textureAlpha) {
   if (!USES_ALPHA_MODE) return 1.0;
-  float alpha = materialOpacity * instanceOpacity * textureAlpha;
+  float alpha = materialOpacity * instanceOpacity * textureAlpha * vertexOpacity;
   if (alphaMode > 1.5) return alpha;
   if (alphaToCoverage > 0.5) {
     float softness = max(fwidth(alpha), 0.0001);
@@ -747,7 +848,7 @@ vec3 renderPassValue(vec3 color, vec3 normal, vec3 emission) {
 }
 
 void main() {
-#ifdef SHADOW_IN_FRAGMENT
+${featureCode("mainStart")}#ifdef SHADOW_IN_FRAGMENT
   shadowPosition = lightProjection * vec4(worldPosition, 1.0);
 #endif
   vec3 normal = normalize(worldNormal);
@@ -989,6 +1090,8 @@ const SHADER_FEATURE_CONDITIONS = {
 // SwiftShader runs both sides of a choice between them for every pixel, so a renderer that only ever draws one of the two
 // compiles the other out: ENVIRONMENT_ENABLED is true, false, or the uniform when both are listed.
 export const LIGHT_SHADING_FEATURE = 'lightShading';
+// Environment wetness (wetness.js): its code joins the program only when the environment is wet, and it is not in SHADER_FEATURES.
+export const WETNESS_FEATURE = 'wetness';
 /** Renderer option values: 'full' is the default picture, 'light' leaves out costly terms for weak machines. */
 export const SHADING_MODES = Object.freeze(['full', 'light']);
 /** The light preset resolves at most this many MSAA samples (on SwiftShader 2 cost a third of 4 in the blend heavy scene). */
@@ -996,7 +1099,7 @@ export const LIGHT_SHADING_MAXIMUM_SAMPLES = 2;
 export const ENVIRONMENT_FEATURES =Object.freeze(['environmentMap', 'studioLighting']);
 
 // Features that only the vertex shader reads: a part with a skeleton or morph targets.
-const VERTEX_ONLY_FEATURES = Object.freeze(['skin', 'morph', 'crowd', 'vertexColors', 'instanced']);
+const VERTEX_ONLY_FEATURES = Object.freeze(['skin', 'morph', 'crowd', 'vertexColors', 'vertexAlpha', 'instanced']);
 
 function environmentCondition(enabled) {
   const hasMap = enabled.has('environmentMap');
@@ -1045,8 +1148,9 @@ export function liquidPassDrawer() {
 
 function hasSeparateCode(feature) {
   if (feature in MODULE_FEATURES) return true;
-  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
-  return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature);
+  if (feature === TANGENT_FEATURE) return false;
+  if (feature in SHADER_FEATURE_CONDITIONS || feature === LIGHT_SHADING_FEATURE || feature === WETNESS_FEATURE || feature === FRAGMENT_SHADOW_POSITION_FEATURE) return false;
+  return !ENVIRONMENT_FEATURES.includes(feature) && !VERTEX_ONLY_FEATURES.includes(feature) && feature !== VERTEX_OPACITY_FEATURE;
 }
 
 function featureCodeSplicer(features) {
@@ -1056,6 +1160,9 @@ function featureCodeSplicer(features) {
     if (!enabled.has(feature)) codes.push(stub);
   }
   if (WORLD_MATERIAL_FEATURES.some(feature => enabled.has(feature))) codes.push(requireFeatureCode('worldMaterials'));
+  if (enabled.has(WETNESS_FEATURE)) codes.push(WETNESS_CODE);
+  if (enabled.has('normalMap')) codes.push(NORMAL_MAP_SPECULAR_CODE);
+  if (enabled.has(TANGENT_FEATURE)) codes.push(tangentFragmentCode(enabled.has('normalMapTransform') ? requireFeatureCode('normalMapTransform').normalUv ?? '' : ''));
   codes.push(enabled.has('environmentMap') ? registeredFeatureCode.get('environmentMap') ?? ENVIRONMENT_STUB : ENVIRONMENT_STUB);
   return slot => codes.map(code => code[slot] ?? '').join('');
 }
@@ -1066,7 +1173,7 @@ export const SHADER_FEATURES = Object.freeze([...Object.keys(SHADER_FEATURE_COND
 // choice between them whether or not the uniform picks it, so a renderer without those parts compiles them out.
 // The varyings that both shaders carry: per-vertex colours, and the per-instance values that a draw of one instance sets as uniforms.
 function interpolantDefines(enabled) {
-  return [['vertexColors', 'VERTEX_COLORS'], ['surfaceWear', 'SURFACE_WEAR'], ['instanced', 'INSTANCED'], [FRAGMENT_SHADOW_POSITION_FEATURE, 'SHADOW_IN_FRAGMENT']].filter(([feature]) => enabled.has(feature)).map(([, macro]) => `#define ${macro}`);
+  return [['vertexColors', 'VERTEX_COLORS'], ['vertexAlpha', 'VERTEX_ALPHA'], ['surfaceWear', 'SURFACE_WEAR'], ['instanced', 'INSTANCED'], [FRAGMENT_SHADOW_POSITION_FEATURE, 'SHADOW_IN_FRAGMENT']].filter(([feature]) => enabled.has(feature)).map(([, macro]) => `#define ${macro}`);
 }
 
 function vertexDefinitions(enabled) {
@@ -1082,9 +1189,33 @@ function vertexDefinitions(enabled) {
   ].join('\n');
 }
 
+/**
+ * Per-vertex opacity (particles with `fade: "opacity"`): the fourth vertex colour component becomes the alpha of a blend
+ * draw instead of sky visibility. It is not in SHADER_FEATURES and splices its few lines into the source only when a part
+ * asks for it, so every other shader keeps its source byte for byte.
+ */
+export const VERTEX_OPACITY_FEATURE = 'vertexOpacity';
+
+function spliceOnce(source, anchor, replacement) {
+  if (!source.includes(anchor)) throw new Error(`The shader source no longer contains "${anchor}", which the vertexOpacity feature splices around.`);
+  return source.replace(anchor, () => replacement);
+}
+
+function withVertexOpacityVertex(source) {
+  const declared = spliceOnce(source, '#version 300 es\n', '#version 300 es\nout float vertexOpacity;\n');
+  return spliceOnce(declared, '  gl_Position = viewProjection * world;', '  vertexOpacity = vertexColor.a;\n  vertexSkyVisibility = 1.0;\n  gl_Position = viewProjection * world;');
+}
+
+// The alpha line already multiplies by vertexOpacity (1 unless a glTF COLOR_0 alpha is read), so only the input changes.
+function withVertexOpacityFragment(source) {
+  return spliceOnce(source, '#ifdef VERTEX_ALPHA\nin float vertexOpacity;\n#else\nconst float vertexOpacity = 1.0;\n#endif', 'in float vertexOpacity;');
+}
+
 /** The vertex shader for a set of features, listed as for createFragmentShader. */
 export function createVertexShader(features = SHADER_FEATURES) {
-  return vertexShaderSource(vertexDefinitions(new Set(features)), features);
+  const enabled = new Set(features);
+  const source = vertexShaderSource(vertexDefinitions(enabled), features);
+  return enabled.has(VERTEX_OPACITY_FEATURE) ? withVertexOpacityVertex(source) : source;
 }
 
 // Without skin and morph, which need their modules; the liquid pass draws rigid parts only.
@@ -1098,7 +1229,9 @@ export function createFragmentShader(features = SHADER_FEATURES) {
   lines.push(`#define ENVIRONMENT_ENABLED ${environmentCondition(enabled)}`);
   // Not in SHADER_FEATURES: the preset is chosen by the renderer, so a shader built from every feature keeps the full look.
   lines.push(`#define LIGHT_SHADING ${enabled.has(LIGHT_SHADING_FEATURE) ? 'true' : 'false'}`);
-  return buildFragmentShader(lines.join('\n'), featureCodeSplicer([...enabled]));
+  const source = buildFragmentShader(lines.join('\n'), featureCodeSplicer([...enabled]));
+  const withOpacity = enabled.has(VERTEX_OPACITY_FEATURE) ? withVertexOpacityFragment(source) : source;
+  return enabled.has('alphaMode') ? withBlendCoverage(withOpacity) : withOpacity;
 }
 
 export const fragmentShader = createFragmentShader();

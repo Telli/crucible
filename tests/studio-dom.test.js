@@ -4263,6 +4263,68 @@ test('the Help menu reopens the setup and the Agent group copies the same prompt
   assert.match(ui.dom.clipboardTexts[0], /Edit Crucible scene/);
 });
 
+/** A host page that offers a built-in agent, as the desktop app does through window.crucibleShell. */
+function withHostAgent(testContext, { signedIn = false, signInAnswer = { signedIn: true } } = {}) {
+  const calls = [];
+  let resolveSignIn;
+  globalThis.crucibleShell = {
+    builtInAgent: {
+      isSignedIn: async () => signedIn,
+      signIn: () => {
+        calls.push('signIn');
+        return new Promise(resolve => { resolveSignIn = () => resolve(signInAnswer); });
+      },
+    },
+  };
+  testContext.after(() => { delete globalThis.crucibleShell; });
+  return { calls, finishSignIn: () => resolveSignIn() };
+}
+
+test("the AI agent step offers a host's built-in agent sign-in above the prompt (#3155)", async testContext => {
+  const host = withHostAgent(testContext);
+  const ui = mountStudio(testContext);
+  ui.studio.openSetup();
+  const signIn = setupButton(ui, 'Sign in for the built-in AI');
+  assert.ok(signIn, 'the step offers the sign-in when a host provides one');
+  assert.ok(setupButton(ui, 'Copy an agent prompt'), "the prompt for an agent of one's own stays");
+  signIn.click();
+  assert.equal(signIn.dataset.state, 'waiting');
+  assert.equal(signIn.disabled, true);
+  assert.deepEqual(host.calls, ['signIn']);
+  host.finishSignIn();
+  await ui.dom.settle();
+  assert.equal(signIn.dataset.state, 'signed-in');
+  assert.equal(signIn.textContent, 'Signed in to the built-in AI');
+});
+
+test('a host that is already signed in shows the step as signed in (#3155)', async testContext => {
+  withHostAgent(testContext, { signedIn: true });
+  const signedInUi = mountStudio(testContext);
+  signedInUi.studio.openSetup();
+  await signedInUi.dom.settle();
+  assert.ok(setupButton(signedInUi, 'Signed in to the built-in AI'));
+});
+
+test('a refused sign-in returns the button to its first state, so it can be tried again (#3155)', async testContext => {
+  const host = withHostAgent(testContext, { signInAnswer: { signedIn: false } });
+  const ui = mountStudio(testContext);
+  ui.studio.openSetup();
+  const signIn = setupButton(ui, 'Sign in for the built-in AI');
+  signIn.click();
+  host.finishSignIn();
+  await ui.dom.settle();
+  assert.equal(signIn.dataset.state, 'signed-out');
+  assert.equal(signIn.disabled, false);
+});
+
+test("without a host the AI agent step has only the prompt for an agent of one's own (#3155)", testContext => {
+  const ui = mountStudio(testContext);
+  ui.studio.openSetup();
+  assert.equal(setupButton(ui, 'Sign in for the built-in AI'), undefined);
+  assert.equal(ui.root.querySelector('.crucible-studio-setup-sign-in'), null);
+  assert.ok(setupButton(ui, 'Copy an agent prompt'));
+});
+
 test('Reset in Settings keeps the setup marked done (#2847)', testContext => {
   const ui = mountStudio(testContext);
   ui.studio.setPreference('setupDone', true);

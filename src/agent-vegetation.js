@@ -137,7 +137,7 @@ function normalizeTreeGrowth(tree, vegetation) {
 
 /** Validate the `vegetation` field of a node (`node` is the whole node, which must be a group). Returns the canonical form kept in the recipe. */
 export function normalizeVegetation(value, node) {
-  const conflict = node && ['geometry', 'skin', 'asset'].find(field => node[field] !== undefined);
+  const conflict = node && ['geometry', 'skin', 'asset', 'grass'].find(field => node[field] !== undefined);
   if (conflict) {
     throw invalidField(conflict, node[conflict], 'nothing, because a node that grows vegetation is a group; drop geometry, material, skin and asset', TypeError);
   }

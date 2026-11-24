@@ -1,4 +1,7 @@
 // Frame time, draw calls, picture and culling checks of the GPU crowd path: npm run benchmark:crowd [-- --cpu | --gpu] [--counts 100,500] [--frames 10]
+// --skinned <url> --counts 100,1000 [--hidden-every n]: skinned glTF instances posed one asset each, with the pose / updateParts / draw split (#3001).
+// --skinned <url> --crowd: the same instances through createCrowdPartsFromGltf (one palette, one batch per material).
+// --skinned <url> --picture <seconds> [--picture-dir <folder>]: one instance, crowd path against applyAnimation, with RMSE (and stills in the folder).
 // --cpu uses SwiftShader (the path a headless agent has); the default is the machine's GPU. Prints one JSON object.
 import { writeFile } from 'node:fs/promises';
 import { constants, setPriority } from 'node:os';
@@ -14,8 +17,17 @@ const counts = (countsFlag >= 0 ? flags[countsFlag + 1] : '100,500').split(',').
 const framesFlag = flags.indexOf('--frames');
 const frames = framesFlag >= 0 ? Number(flags[framesFlag + 1]) : 10;
 const instanceCounts = flags.includes('--instances') ? flags[flags.indexOf('--instances') + 1].split(',').map(Number) : [];
-const width = 1280;
-const height = 720;
+const skinnedFlag = flags.indexOf('--skinned');
+const skinnedUrl = skinnedFlag >= 0 ? flags[skinnedFlag + 1] : null;
+const hiddenFlag = flags.indexOf('--hidden-every');
+const hiddenEvery = hiddenFlag >= 0 ? Number(flags[hiddenFlag + 1]) : 0;
+const crowdPath = flags.includes('--crowd');
+const pictureFlag = flags.indexOf('--picture');
+const pictureSeconds = pictureFlag >= 0 ? Number(flags[pictureFlag + 1]) : null;
+const pictureDirFlag = flags.indexOf('--picture-dir');
+const pictureDirectory = pictureDirFlag >= 0 ? flags[pictureDirFlag + 1] : null;
+const width = skinnedUrl ? 480 : 1280;
+const height = skinnedUrl ? 270 : 720;
 
 const browserArguments = ['--enable-webgl', '--ignore-gpu-blocklist', '--disable-renderer-backgrounding'];
 if (useCpu) browserArguments.push('--use-angle=swiftshader', '--enable-unsafe-swiftshader');
@@ -31,7 +43,7 @@ async function runTask(request) {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     if (process.env.CROWD_NO_CULL) await page.addInitScript('globalThis.CROWD_NO_CULL = true');
-    await page.goto(url);
+    await page.goto(url, { timeout: 120000 });
     await page.waitForFunction(() => window.runCrowd);
     const result = await page.evaluate(task => window.runCrowd(task), request);
     if (errors.length) throw new Error(errors.join('\n'));
@@ -41,6 +53,26 @@ async function runTask(request) {
   }
 }
 
+if (skinnedUrl) {
+  // --skinned <url of a .glb the dev server serves>: one parsed asset per instance, split into pose, updateParts and draw. Skips the other tasks.
+  const skinnedReport = { backend: useCpu ? 'swiftshader' : 'gpu', width, height, frames, model: skinnedUrl, skinned: [] };
+  try {
+    if (pictureSeconds !== null) {
+      const picture = await runTask({ task: 'gltfPicture', modelUrl: skinnedUrl, clipName: 'Run', seconds: pictureSeconds, dump: Boolean(pictureDirectory) });
+      if (picture.dumps) {
+        for (const [name, dataUrl] of Object.entries(picture.dumps)) await writeFile(`${pictureDirectory}/${name}-${pictureSeconds}.png`, Buffer.from(dataUrl.split(',')[1], 'base64'));
+        delete picture.dumps;
+      }
+      skinnedReport.picture = picture;
+    } else {
+      for (const count of counts) skinnedReport.skinned.push(await runTask({ task: 'skinned', modelUrl: skinnedUrl, count, frames, hiddenEvery, crowd: crowdPath }));
+    }
+  } finally {
+    await server.close();
+  }
+  console.log(JSON.stringify(skinnedReport, null, 1));
+  process.exit(0);
+}
 const report = { backend: useCpu ? 'swiftshader' : 'gpu', width, height, frames };
 try {
   report.pictures = await runTask({ task: 'pictures', dump: Boolean(process.env.CROWD_DUMP) });

@@ -2,7 +2,8 @@ import { resolveBackground, clearColourFor } from './clear-colour.js';
 import { materialTags, registeredFeatureCode } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
-import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
+import { packNormalsWithTangents, validateGeometryTangents } from './tangent-encoding.js';
+import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, WETNESS_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, VERTEX_OPACITY_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, TANGENT_FEATURE, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
 import { postFragment, createPostFragment, GRID_MOTION_STEP, GRID_DETAIL_STEP, NOISE_OCTAVES_STEP, localVolumeKindSteps, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
 import { createGlazeBackend } from './glaze-backend.js';
 import { fullscreenVertex, compileProgram, ProgramNotReady, isLinkComplete, setPreparing, releaseStartedPrograms } from './gl-program.js';
@@ -22,11 +23,15 @@ import { requireEnvironmentSupport, DEFAULT_SUN_ANGULAR_RADIUS } from './environ
 import { materialLayerState, materialLayerValue } from './material-layers.js';
 import { MaterialSnapshot } from './material-snapshot.js';
 import { wearUniformValues } from './material-wear.js';
+import { wetnessKeepOutBoxes, wetnessGroundHeight } from './wetness-keep-out.js';
 import { fittedFogDensity } from './fog-fit.js';
 import { canUseCompactColor, respecifyColorTargets } from './compact-color.js';
 import { InstanceSelection, extractFrustumPlanes, geometryBoundingSphere, selectInstances } from './render-culling.js';
+import { countDraws } from './draw-counter.js';
 import { fitWorldShadowView, resolveShadowLight, shadowBiasPerSlope, sunShadowMapSize } from './shadow-light.js';
+import { CLIP_PLANES_FEATURE, MAX_CLIP_PLANES, packClipPlanes, clipPlaneLocations, bindClipPlanes, clipPlanesChanged } from './clip-planes.js';
 import { MAX_MORPH_TARGETS, requireFeatureCode, deformationSupport, requireDeformationSupport, texturedReplaceSupport, textureUpdateSupport } from './shader-registry.js';
+import { bakeNormalMapVariance } from './normal-map-variance.js';
 
 // Liquid and foam see the resolved opaque scene, so they draw in their own pass after it.
 const TRANSLUCENT_TAGS = new Set(['liquid', 'foam']);
@@ -89,7 +94,7 @@ const DEFORMING_TAGS = new Set(['foliage', 'grass', 'water', 'fire', 'smoke']);
 // strength, so they can be culled and given levels like rigid parts.
 const SWAY_REACH_PER_STRENGTH = 0.56;
 
-const POST_UNIFORMS = ['transparent', 'frameTexture', 'bloomTexture', 'bloomStrength', 'hdrEnabled', 'grade', 'vignette', 'grainAmount', 'resolution', 'monochrome', 'fade', 'cinematic', 'time', 'volumeExplosion', 'explosionProgress', 'inverseViewProjection', 'eye', 'sceneDepth', 'volumeShadowMap', 'volumeLightProjection', 'volumeLightDirection', 'volumeLightColor', 'volumeDensity', 'volumeMinimum', 'volumeMaximum', 'volumeColor', 'volumeAmbient', 'volumeDrift', 'volumeSteps', 'volumeAnisotropy', 'volumeShadowAmbient', 'volumeGridFog', 'volumeNoiseAmount', 'volumeNoiseScale', 'volumeHeightFalloff', 'volumeMaxDistance', 'volumeField', 'volumeProfile', 'volumeFlowStrength', 'volumeFlowPeriod', 'volumeLightCount', 'volumeLightPositions[0]', 'volumeLightColors[0]', 'volumeLightDirections[0]', 'volumeLightCones[0]', 'fogSkyVisibility', 'orthographic', 'occlusionTexture', 'occlusionStrength', 'occlusionTexel'];
+const POST_UNIFORMS = ['transparent', 'frameTexture', 'bloomTexture', 'bloomStrength', 'hdrEnabled', 'grade', 'vignette', 'grainAmount', 'resolution', 'monochrome', 'fade', 'cinematic', 'time', 'volumeExplosion', 'explosionProgress', 'inverseViewProjection', 'eye', 'sceneDepth', 'volumeShadowMap', 'volumeLightProjection', 'volumeLightDirection', 'volumeLightColor', 'volumeDensity', 'volumeMinimum', 'volumeMaximum', 'volumeColor', 'volumeAmbient', 'volumeDrift', 'volumeSteps', 'volumeAnisotropy', 'volumeShadowAmbient', 'volumeGridFog', 'volumeNoiseAmount', 'volumeNoiseScale', 'volumeHeightFalloff', 'volumeMaxDistance', 'volumeField', 'volumeProfile', 'volumeFlowStrength', 'volumeFlowPeriod', 'volumeLightCount', 'volumeLightPositions[0]', 'volumeLightColors[0]', 'volumeLightDirections[0]', 'volumeLightCones[0]', 'fogSkyVisibility', 'orthographic', 'occlusionTexture', 'occlusionStrength', 'occlusionTexel', 'autoExposureScale'];
 
 function postUniformLocations(context, program) {
   return Object.fromEntries(POST_UNIFORMS.map(name => [name, context.getUniformLocation(program, name)]));
@@ -97,7 +102,7 @@ function postUniformLocations(context, program) {
 
 const MAP_SHADER_FEATURES = ['baseMap', 'normalMap', 'metallicRoughnessMap', 'occlusionMap', 'emissiveMap'];
 // Part or material fields that name their shader feature and switch it on when set.
-const PRESENT_SHADER_FEATURES = ['skin', 'crowd', 'morph', 'lightMap', 'waterReflection', 'retro', 'waterGlint'];
+const PRESENT_SHADER_FEATURES = ['skin', 'crowd', 'morph', 'lightMap', 'waterReflection', 'retro', 'waterGlint', CLIP_PLANES_FEATURE];
 // Material fields that name their shader feature and switch it on above zero.
 const POSITIVE_SHADER_FEATURES = ['moss', 'anisotropy', 'iridescence', 'toon', 'boxMapScale', 'emissionFresnel', 'softEdge'];
 // Tags whose look the main fragment shader draws with code that other tags never reach.
@@ -110,6 +115,7 @@ function shaderFeaturesOfLighting(lighting) {
   if (lighting.shadowCasters.length > 0) features.push('localShadows');
   if (lighting.extraFeatures) features.push(...lighting.extraFeatures);
   if (lighting.fillIntensity > 0) features.push('fill');
+  if (lighting.wetness > 0) features.push(WETNESS_FEATURE);
   return features;
 }
 
@@ -169,6 +175,11 @@ export function shaderFeaturesOfParts(parts) {
     if (TAG_SHADER_FEATURES.has(material.tag)) features.add(material.tag);
     // Without vertex colours the tint and sky visibility are the constants of the unbound attribute, so no varying carries them.
     if ([part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => geometry.colors || vertexAlpha(geometry))) features.add('vertexColors');
+    // Particles that fade by opacity carry it in the fourth colour component; the shader reads it as the alpha of a blend draw.
+    if (part.geometry.vertexOpacity) features.add(VERTEX_OPACITY_FEATURE);
+    else if ([part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => hasVertexAlpha(geometry))) features.add('vertexAlpha');
+    // Vertex tangents replace the screen-derivative frame of a normal map; a box-mapped material projects its map and has no UV frame.
+    if (material.normalMap && !material.boxMapScale && [part.geometry, ...(part.lods ?? []).map(level => level.geometry)].some(geometry => geometry.tangents)) features.add(TANGENT_FEATURE);
   }
   return features;
 }
@@ -205,7 +216,7 @@ const ENVIRONMENT_BRDF_UNIT = 10;
 const LOCAL_SHADOW_UNIT = 15;
 // Tinted shadows: one half float map holds the colour of the light that blended and transmissive casters let through (rgb)
 // and the depth of the nearest one (alpha). Units 0 to 15 are all taken somewhere, and 13 is the one only a part with three
-// layer textures or splat layers also reads, so those parts are blind to the tint (batch.tintBlind).
+// layer textures also reads, so those parts are blind to the tint (batch.tintBlind). Splat layers keep off it (SPLAT_UNITS).
 const TINT_UNIT = 13;
 const TINT_MAP_SIZE = 1024;
 // The shadow program's opaqueShadow sampler reads the sun map on this unit in the tint draw. Unit 0 would read the map while
@@ -256,7 +267,7 @@ function materialMapState(material) {
   const occlusionStrength = material.occlusionStrength ?? 1;
   if (material.layers || material.splat) requireSplatSupport().validate(material);
   if (material.layers && PROCEDURAL_MATERIAL_TAGS.has(material.tag)) throw new Error('Splat layers require a standard PBR material tag.');
-  return [...MATERIAL_MAPS.map(field => material[field] ?? null), normalScale[0], normalScale[1], occlusionStrength, ...mossState(material), material.boxMapScale ?? 0, material.boxMapAxis ?? 1, ...lightMapState(material), material.layers ?? null, material.splat ?? null, material.layerMaps ?? null, material.environmentProbe ?? null, material.waterReflection ?? null, material.irradianceGrid ?? null, material.wear ?? null, material.foamEdge ?? null, material.foamWidth ?? null, material.foamVeins ?? null, material.contactFoam ?? null, material.waterRamp ?? null, material.ripples ?? null];
+  return [...MATERIAL_MAPS.map(field => material[field] ?? null), normalScale[0], normalScale[1], occlusionStrength, ...mossState(material), material.boxMapScale ?? 0, material.boxMapAxis ?? 1, ...lightMapState(material), material.layers ?? null, material.splat ?? null, material.layerMaps ?? null, material.environmentProbe ?? null, material.waterReflection ?? null, material.irradianceGrid ?? null, material.wear ?? null, material.foamEdge ?? null, material.foamWidth ?? null, material.foamColor ?? null, material.foamVeins ?? null, material.contactFoam ?? null, material.waterRamp ?? null, material.ripples ?? null];
 }
 
 // A baked light map reads the second UV set, so it is only drawn for parts that cannot be skinned or morphed.
@@ -276,6 +287,7 @@ function validateAlphaMaterial(material) {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) throw new Error(`${field} must be a number within zero and one.`);
   }
   if (material.doubleSided !== undefined && typeof material.doubleSided !== 'boolean') throw new TypeError('doubleSided must be a boolean');
+  if (material.depthTest !== undefined && typeof material.depthTest !== 'boolean') throw new TypeError('depthTest must be a boolean');
 }
 
 /** Opacity of one instance: blend and add parts carry it per instance, so it never splits a batch. A part's `opacityScale.value` (0 to 1) multiplies it. */
@@ -290,7 +302,7 @@ function materialAlphaState(material) {
   const alphaMode = material.alphaMode ?? 'opaque';
   const alphaCutoff = alphaMode === 'mask' ? material.alphaCutoff ?? 0.5 : 0;
   const opacity = alphaMode === 'mask' ? (material.opacity ?? 1) + (material.opacityBias ?? 0) : 1;
-  return [alphaMode, alphaCutoff, opacity, material.doubleSided === true, material.retro, material.waterGlint];
+  return [alphaMode, alphaCutoff, opacity, material.doubleSided === true, material.retro, material.waterGlint, material.depthTest !== false];
 }
 
 // A decal or depth layer draws with a scoped polygon offset so it wins against the surface it lies on (z-fighting).
@@ -356,9 +368,10 @@ function finiteVector(value, size) {
   return true;
 }
 
-function validateTransform(part, normalMatrix = mat3.create()) {
-  if (!finiteVector(part.matrix, 16)) throw new Error(`Invalid transform: ${part.name}`);
-  if (!mat3.normalFromMat4(normalMatrix, part.matrix) || !finiteVector(normalMatrix, 9)) throw new Error(`Singular transform: ${part.name}`);
+/** A hidden part packs zeros instead of its matrix, so its matrix is not checked; its material still is. */
+function validateTransform(part, normalMatrix = mat3.create(), hidden = false) {
+  if (!hidden && !finiteVector(part.matrix, 16)) throw new Error(`Invalid transform: ${part.name}`);
+  if (!hidden && (!mat3.normalFromMat4(normalMatrix, part.matrix) || !finiteVector(normalMatrix, 9))) throw new Error(`Singular transform: ${part.name}. Hide a part with part.visible = false.`);
   // An absent emissive colour or assembly offset packs as the base colour or zero, which need no second check.
   const material = part.material;
   const assembly = part.assembly;
@@ -507,19 +520,21 @@ const hasSkinData = part => Boolean(part.skin || part.geometry.skinIndices || pa
 const hasMorphData = part => Boolean(part.morph || part.geometry.morphTargets !== undefined);
 
 function validatePartForGrouping(part, morphInfos) {
-  validateTransform(part);
+  const hidden = isHidden(part);
+  validateTransform(part, undefined, hidden);
   validatePartFlags(part);
+  if (part.clipPlanes !== undefined) packClipPlanes(part.clipPlanes, new Float32Array(MAX_CLIP_PLANES * 4), `Part "${part.name}" clipPlanes`);
   if (hasSkinData(part)) {
     const { validateSkinGeometry, validateSkinPose } = skinSupport();
     validateSkinGeometry(part.geometry, part.skin);
-    if (part.skin) validateSkinPose(part.skin, part.geometry, part.matrix);
+    if (part.skin && !hidden) validateSkinPose(part.skin, part.geometry, part.matrix);
   }
   if (part.skin && PROCEDURAL_MATERIAL_TAGS.has(part.material.tag)) throw new Error('Skinned parts require a standard material tag.');
   if (hasMorphData(part)) {
     const { validateMorphGeometry, validateMorphPose, validateMorphTransform } = morphSupport();
     if (!morphInfos.has(part.geometry)) morphInfos.set(part.geometry, validateMorphGeometry(part.geometry, part.morph));
     else validateMorphPose(part.morph, morphInfos.get(part.geometry));
-    if (part.morph) validateMorphTransform(part.morph, morphInfos.get(part.geometry), part.matrix, part.skin);
+    if (part.morph && !hidden) validateMorphTransform(part.morph, morphInfos.get(part.geometry), part.matrix, part.skin);
   }
   if (part.morph && PROCEDURAL_MATERIAL_TAGS.has(part.material.tag)) throw new Error('Morphed parts require a standard material tag.');
 }
@@ -558,7 +573,7 @@ function createPartGrouper(batching) {
       materialTail = [renderPass(part.material), ...materialAlphaState(part.material), part.material.aovMap ?? null, part.material.transmissionMap ?? null, ...(part.material.aov ?? ZERO_VECTOR)];
       materialKeyTails.set(part.material, materialTail);
     }
-    const values = [batching ? part.geometry : part, ...materialValues, part.skin ?? null, part.material.snippet, part.crowd ?? null, part.morph ?? null, castsShadow(part), receivesShadow(part), compositeModeOf(part), part.shadowOnly === true, depthLayerOf(part), flushOrderOf(part), part.lods ?? null, part.shadowLods ?? null, isMirroredMatrix(part.matrix), ...materialTail];
+    const values = [batching ? part.geometry : part, ...materialValues, part.skin ?? null, part.material.snippet, part.crowd ?? null, part.morph ?? null, castsShadow(part), receivesShadow(part), compositeModeOf(part), part.shadowOnly === true, depthLayerOf(part), flushOrderOf(part), part.lods ?? null, part.shadowLods ?? null, isMirroredMatrix(part.matrix), part.clipPlanes ?? null, ...materialTail];
     const key = values.map(numberOf).join(',');
     let batch = batchesByKey.get(key);
     if (!batch) {
@@ -622,15 +637,20 @@ export function groupWorld(previous, parts, groundPart, batching, retainedUnchan
 }
 
 // Sampler state and mipmaps of the texture bound to TEXTURE_2D, once its level 0 is uploaded. Needs only the renderer's context and applyAnisotropy.
-export function configureTexture(renderer, info) {
+// `bakesNormalVariance` marks a normal map: its mip chain is built from the texels with the spread of each level in alpha (src/normal-map-variance.js).
+export function configureTexture(renderer, info, { bakesNormalVariance = false } = {}) {
   const context = renderer.context;
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, info.wrapS);
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_T, info.wrapT);
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, info.minFilter);
   context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, info.magFilter);
   if (info.mipmaps) {
-    if (info.mipLevels) uploadProvidedMipLevels(context, info);
-    else context.generateMipmap(context.TEXTURE_2D);
+    if (info.mipLevels) {
+      uploadProvidedMipLevels(context, info);
+    } else {
+      const baked = bakesNormalVariance && bakeNormalMapVariance(context, context.getParameter(context.TEXTURE_BINDING_2D), info.width, info.height);
+      if (!baked) context.generateMipmap(context.TEXTURE_2D);
+    }
     if (filtersSmoothly(info)) renderer.applyAnisotropy(context.TEXTURE_2D);
   }
 }
@@ -701,25 +721,48 @@ function interleaveUvSets(geometry) {
 }
 
 // Sky visibility, or the packed surface wear masks of a material with `wear`, rides in the fourth component of the vertex
-// colour attribute, so the attribute layout stays the same.
+// colour attribute, so the attribute layout stays the same (every vertex attribute slot is taken). The glTF COLOR_0 alpha
+// shares that component with sky visibility as two 10 bit levels. A part with wear masks keeps them and drops the alpha.
 function vertexAlpha(geometry) {
-  return geometry.surfaceMasks ?? geometry.skyVisibility;
+  return geometry.surfaceMasks ?? geometry.vertexOpacity ?? geometry.colorAlpha ?? geometry.skyVisibility;
 }
 
-function interleaveColorsWithSkyVisibility(geometry) {
+function hasVertexAlpha(geometry) {
+  return Boolean(geometry.colorAlpha) && !geometry.surfaceMasks;
+}
+
+const VERTEX_ALPHA_LEVELS = 1023;
+
+/** colour alpha * 1024 + sky visibility, both rounded to 0..1023; exact in a float, and the vertexAlpha shader unpacks it. */
+export function packVertexAlpha(colorAlpha, skyVisibility) {
+  return vertexAlphaLevel(colorAlpha) * 1024 + vertexAlphaLevel(skyVisibility ?? 1);
+}
+
+// Clamped so a value just past 1 can never carry into the next alpha level.
+function vertexAlphaLevel(value) {
+  return Math.round(Math.min(Math.max(value, 0), 1) * VERTEX_ALPHA_LEVELS);
+}
+
+function vertexFourthComponent(geometry, vertex) {
+  if (hasVertexAlpha(geometry)) return packVertexAlpha(geometry.colorAlpha[vertex], geometry.skyVisibility?.[vertex]);
+  return vertexAlpha(geometry)[vertex];
+}
+
+export function interleaveColorsWithSkyVisibility(geometry) {
   const vertexCount = vertexAlpha(geometry).length;
   const combined = new Float32Array(vertexCount * 4);
   for (let vertex = 0; vertex < vertexCount; vertex++) {
     for (let channel = 0; channel < 3; channel++) {
       combined[vertex * 4 + channel] = geometry.colors ? geometry.colors[vertex * 3 + channel] : 1;
     }
-    combined[vertex * 4 + 3] = vertexAlpha(geometry)[vertex];
+    combined[vertex * 4 + 3] = vertexFourthComponent(geometry, vertex);
   }
   return combined;
 }
 
 function geometryBufferBytes(geometry) {
-  const plainBytes = ['positions', 'normals', 'colors', 'indices'].reduce((total, field) => total + (geometry[field]?.byteLength ?? 0), uvBufferBytes(geometry));
+  const tangentBytes = geometry.tangents ? geometry.positions.length / 3 * 4 : 0;
+  const plainBytes = ['positions', 'normals', 'colors', 'indices'].reduce((total, field) => total + (geometry[field]?.byteLength ?? 0), uvBufferBytes(geometry) + tangentBytes);
   if (!vertexAlpha(geometry)) return plainBytes;
   return plainBytes - (geometry.colors?.byteLength ?? 0) + vertexAlpha(geometry).length * 16;
 }
@@ -767,7 +810,7 @@ export function samplesForDensity(parts, canvas, pixelRatio, samples, denseSampl
 }
 
 export class CrucibleRenderer {
-  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, compactColor = true, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', exactFrames = false, deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB, maxAnisotropy = DEFAULT_TEXTURE_ANISOTROPY } = {}) {
+  constructor(canvas, parts, { batching = true, pixelRatio = 1.5, benchmark = false, world = false, ground = true, transparent = false, samples = 4, denseSamples = null, hdr = false, compactColor = true, depth = false, memoryBudgetMiB, environment = {}, shadowBounds = {}, shadowCascades = null, clipPlanes = null, culling = true, lodPixelError = 1, createGpuTimer = null, skyOpenness = null, fogSkyVisibility = null, shading = 'full', viewTransform = 'aces', look = null, resolveCoplanar = false, reversedDepth = 'auto', exactFrames = false, deferProgramLink = false, deferEnvironmentPrefilter = false, background = null, maximumMemoryBudgetMiB, maxAnisotropy = DEFAULT_TEXTURE_ANISOTROPY } = {}) {
     this.background = background ? resolveBackground(background) : null;
     this.canvas = canvas;
     this.sceneParts = parts;
@@ -784,6 +827,8 @@ export class CrucibleRenderer {
     this.gpuTimer = undefined;
     /** Milliseconds the GPU took for a recent frame, when `createGpuTimer` is given. */
     this.gpuMilliseconds = null;
+    /** Cost of the last `render()`: draw calls, triangles drawn, planned bytes and the GPU time of a recent frame (docs/learn/renderer-reference.md). */
+    this.stats = { drawCalls: 0, trianglesDrawn: 0, geometryBytes: 0, textureBytes: 0, gpuTimeMs: null };
     this.culling = culling;
     // A NaN or negative error would pick the coarsest level everywhere without a word (#2403).
     if (typeof lodPixelError !== 'number' || !(lodPixelError >= 0)) throw new TypeError(`lodPixelError must be a number of 0 or more pixels, got ${lodPixelError}.`);
@@ -820,6 +865,8 @@ export class CrucibleRenderer {
     this.diagnostics = [];
     this.activeLightDirection = environment.lightDirection ?? [-3, 6, 4];
     this.shadowCascades = shadowCascades;
+    this.clipPlaneValues = new Float32Array(MAX_CLIP_PLANES * 4);
+    this.clipPlaneCount = clipPlanes === null ? 0 : packClipPlanes(clipPlanes, this.clipPlaneValues, 'clipPlanes');
     this.renderTargets = new RenderTargetLedger();
     // The constructor options are the default; a frame's environment (a recipe's viewTransform and look) overrides them.
     this.defaultViewTransform = viewTransform;
@@ -944,6 +991,7 @@ export class CrucibleRenderer {
     this.shaderFeatures.add(environment.map ? 'environmentMap' : 'studioLighting');
     shaderFeaturesOfLighting(this.lighting).forEach(feature => this.shaderFeatures.add(feature));
     if (shading === 'light') this.shaderFeatures.add(LIGHT_SHADING_FEATURE);
+    if (clipPlanes !== null) this.shaderFeatures.add(CLIP_PLANES_FEATURE);
     this.shaderFeatures.add(FRAGMENT_SHADOW_POSITION_FEATURE);
     if (shadowCascades) this.shaderFeatures.add(shadowCascades.shaderFeature);
     if (shadowBounds?.hard) this.addHardShadowFeature(shadowCascades);
@@ -952,9 +1000,11 @@ export class CrucibleRenderer {
     this.tintedShadowsActive = this.shaderFeatures.has('tintedShadows');
     // The camera-relative vertex line is part of the first compile, so reversed depth does not compile the main program twice.
     if (reversedDepthWanted) prepareCameraRelativeProgram(this);
+    // The shadow program keeps the features it was built with: tint and the rest are set up once, at construction.
+    this.depthShaderFeatures = new Set(this.shaderFeatures);
     const pending = {
       main: this.startMainProgram(),
-      depth: this.backend.startProgram(createDepthVertexShader(this.shaderFeatures), createDepthFragmentShader(this.shaderFeatures)),
+      depth: this.backend.startProgram(createDepthVertexShader(this.depthShaderFeatures), createDepthFragmentShader(this.depthShaderFeatures)),
     };
     if (!benchmark) {
       pending.post = this.backend.startProgram(fullscreenVertex, this.withViewTransform(postFragment, 'post'));
@@ -978,8 +1028,7 @@ export class CrucibleRenderer {
     const benchmark = this.benchmark;
     this.finishMainProgram(pending.main);
     this.depthProgram = this.backend.finishProgram(pending.depth);
-    this.depthSkinUniforms = Object.fromEntries(SKIN_UNIFORMS.map(name => [name, this.context.getUniformLocation(this.depthProgram, name)]));
-    this.depthMorphUniforms = Object.fromEntries(MORPH_UNIFORMS.map(name => [name, this.context.getUniformLocation(this.depthProgram, name)]));
+    this.readDepthProgramLocations();
     if (!benchmark) {
       this.postProgram = this.backend.finishProgram(pending.post);
       this.skyProgram = this.backend.finishProgram(pending.sky);
@@ -989,10 +1038,6 @@ export class CrucibleRenderer {
       this.bloomUniforms = Object.fromEntries(['sourceTexture', 'texelDirection', 'threshold', 'extract'].map(name => [name, this.context.getUniformLocation(this.bloomProgram, name)]));
       this.skyUniforms = Object.fromEntries(['skyTop', 'skyBottom', 'sunDirection', 'inverseViewProjection', 'eye', 'time', 'daylight', 'hdrEnabled'].map((name) => [name, this.context.getUniformLocation(this.skyProgram, name)]));
     }
-    this.depthAlphaUniforms = Object.fromEntries(DEPTH_ALPHA_UNIFORMS.map(name => [name, this.context.getUniformLocation(this.depthProgram, name)]));
-    this.depthUniform = this.context.getUniformLocation(this.depthProgram, 'lightProjection');
-    this.depthAssemblyUniform = this.context.getUniformLocation(this.depthProgram, 'assemblyAmount');
-    this.depthWindUniforms = { time: this.context.getUniformLocation(this.depthProgram, 'time'), wind: this.context.getUniformLocation(this.depthProgram, 'wind') };
     this.partCount = parts.length;
     this.triangles = parts.reduce((total, part) => total + part.geometry.indices.length / 3, 0);
     this.whiteTexture = this.createTexture(null);
@@ -1015,6 +1060,34 @@ export class CrucibleRenderer {
     this.createShadowMap();
     if (this.reversedDepthMode !== false && !benchmark) installReversedDepth(this, this.reversedDepthMode);
     if (!deferFrameTargets) this.allocateInitialTargets();
+  }
+
+  // The uniform locations of the shadow (depth) program. Read once at construction and again when the program is rebuilt.
+  readDepthProgramLocations() {
+    const context = this.context;
+    const program = this.depthProgram;
+    this.depthSkinUniforms = Object.fromEntries(SKIN_UNIFORMS.map(name => [name, context.getUniformLocation(program, name)]));
+    this.depthMorphUniforms = Object.fromEntries(MORPH_UNIFORMS.map(name => [name, context.getUniformLocation(program, name)]));
+    this.depthAlphaUniforms = Object.fromEntries(DEPTH_ALPHA_UNIFORMS.map(name => [name, context.getUniformLocation(program, name)]));
+    this.depthUniform = context.getUniformLocation(program, 'lightProjection');
+    this.depthClipLocations = clipPlaneLocations(context, program);
+    this.depthAssemblyUniform = context.getUniformLocation(program, 'assemblyAmount');
+    this.depthWindUniforms = { time: context.getUniformLocation(program, 'time'), wind: context.getUniformLocation(program, 'wind') };
+  }
+
+  // Compiles the shadow program again with the clip plane test added, for a clip plane that arrived after construction.
+  rebuildDepthProgram() {
+    const context = this.context;
+    const previousProgram = this.depthProgram;
+    this.depthShaderFeatures.add(CLIP_PLANES_FEATURE);
+    const pending = this.backend.startProgram(createDepthVertexShader(this.depthShaderFeatures), createDepthFragmentShader(this.depthShaderFeatures));
+    this.depthProgram = this.backend.finishProgram(pending);
+    this.readDepthProgramLocations();
+    context.useProgram(this.depthProgram);
+    context.uniform1i(this.depthSkinUniforms.skinInfluences, 6);
+    context.uniform1i(this.depthSkinUniforms.jointPalette, 7);
+    context.uniform1i(this.depthMorphUniforms.morphTargets, 8);
+    context.deleteProgram(previousProgram);
   }
 
   // The size plan and the frame targets: the largest driver calls of construction, so a page that awaits programsReady() takes them in a task of their own.
@@ -1160,7 +1233,8 @@ export class CrucibleRenderer {
 
   finishMainProgram(pendingProgram) {
     this.program = this.backend.finishProgram(pendingProgram);
-    this.uniforms = Object.fromEntries(['materialDielectric', 'materialEmissionFresnel', 'materialSoftEdge', 'materialCoat', 'materialSheen', 'materialAnisotropy', 'materialIridescence', 'lightLinkMask', 'boxMapScale', 'boxMapAxis', 'lightMap', 'lightMapScale', 'hasLightMap', 'viewProjection', 'flushBias', 'clipPerMetre', 'lightProjection', 'eye', 'armorColor', 'armorSurface', 'exposure', 'inspection', 'shadowMap', 'shadowBiasPerSlope', ...MAP_UNIFORMS, ...MAP_FLAGS, ...SKIN_UNIFORMS, ...MORPH_UNIFORMS, 'normalScale', 'occlusionStrength', 'materialMoss', 'wearEnabled', 'wearMetal', 'wearDirt', 'wearShape', 'wearDirtShape', ...SPLAT_UNIFORMS, 'hdrEnabled', 'time', 'wind', 'worldMode', 'daylight', 'fogColor', 'lightDirection', 'fogDensity', 'waterRipple', 'rippleTime', 'explosionProgress', 'explosionCenter', 'assemblyAmount', 'renderPassMode', 'renderPassDepthRange', 'renderPassObjectBase', 'baseColor', 'surface', 'instanceEmission', 'instanceOpacity', 'boxNormalMatrix', 'shadowBlind', 'compositeMode', 'tintShadowMap', 'tintBlind', ...ALPHA_UNIFORMS].map((name) => [name, this.context.getUniformLocation(this.program, name)]));
+    this.uniforms = Object.fromEntries(['materialDielectric', 'materialEmissionFresnel', 'materialSoftEdge', 'materialCoat', 'materialSheen', 'materialAnisotropy', 'materialIridescence', 'lightLinkMask', 'boxMapScale', 'boxMapAxis', 'lightMap', 'lightMapScale', 'hasLightMap', 'viewProjection', 'flushBias', 'clipPerMetre', 'lightProjection', 'eye', 'armorColor', 'armorSurface', 'exposure', 'inspection', 'shadowMap', 'shadowBiasPerSlope', ...MAP_UNIFORMS, ...MAP_FLAGS, ...SKIN_UNIFORMS, ...MORPH_UNIFORMS, 'normalScale', 'occlusionStrength', 'materialMoss', 'wetnessState', 'wetnessKeepOut[0]', 'wearEnabled', 'wearMetal', 'wearDirt', 'wearShape', 'wearDirtShape', ...SPLAT_UNIFORMS, 'hdrEnabled', 'time', 'wind', 'worldMode', 'daylight', 'fogColor', 'lightDirection', 'fogDensity', 'waterRipple', 'rippleTime', 'explosionProgress', 'explosionCenter', 'assemblyAmount', 'renderPassMode', 'renderPassDepthRange', 'renderPassObjectBase', 'baseColor', 'surface', 'instanceEmission', 'instanceOpacity', 'boxNormalMatrix', 'shadowBlind', 'compositeMode', 'tintShadowMap', 'tintBlind', ...ALPHA_UNIFORMS].map((name) => [name, this.context.getUniformLocation(this.program, name)]));
+    Object.assign(this.uniforms, clipPlaneLocations(this.context, this.program));
     for (const name of LIGHT_UNIFORMS) {
       this.uniforms[name] = this.context.getUniformLocation(this.program, name);
     }
@@ -1221,10 +1295,11 @@ export class CrucibleRenderer {
     const descriptors = source.flatMap(item => (item?.material ? materialMapState(item.material).slice(0, 5) : [item]));
     // The slicing code loads on demand, so a renderer that never preloads does not carry it.
     const { preloadRendererTextures } = await import('./texture-upload.js');
-    await preloadRendererTextures(this, descriptors, options);
+    const normalMaps = new Set(source.flatMap(item => (item?.material ? [materialMapState(item.material)[1]] : [])).filter(Boolean));
+    await preloadRendererTextures(this, descriptors, { ...options, normalMaps });
   }
 
-  createTexture(map) {
+  createTexture(map, isNormalMap = false) {
     if (this.textures.has(map)) return this.textures.get(map);
     const context = this.context;
     const texture = context.createTexture();
@@ -1238,7 +1313,7 @@ export class CrucibleRenderer {
         const info = textureDescriptorInfo(map, context.getParameter(context.MAX_TEXTURE_SIZE));
         if (map.image.compressed) map.image.compressed.upload(context);
         else context.texImage2D(context.TEXTURE_2D, 0, map.colorSpace === 'linear' ? context.RGBA8 : context.SRGB8_ALPHA8, context.RGBA, context.UNSIGNED_BYTE, map.image);
-        configureTexture(this, info);
+        configureTexture(this, info, { bakesNormalVariance: isNormalMap && !map.image.compressed && map.colorSpace === 'linear' });
       } else {
         context.texImage2D(context.TEXTURE_2D, 0, context.RGBA8, 1, 1, 0, context.RGBA, context.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
         context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
@@ -1274,6 +1349,13 @@ export class CrucibleRenderer {
     if (missing.length === 0) return;
     missing.forEach(feature => this.shaderFeatures.add(feature));
     try {
+      // The shadow program carries the clip test too, so it is compiled again with the main one.
+      if (missing.includes(CLIP_PLANES_FEATURE)) {
+        this.rebuildDepthProgram();
+        // The liquid pass builds its program again on its next draw, with the plane test.
+        if (this.liquidProgram) this.context.deleteProgram(this.liquidProgram);
+        this.liquidProgram = null;
+      }
       this.rebuildMainProgram();
     } catch (error) {
       // A program that is still linking (ProgramNotReady) leaves the old main program in place. Forget the features, so the draw that comes back asks for them again
@@ -1309,6 +1391,18 @@ export class CrucibleRenderer {
     }
   }
 
+  // The wet shader's uniforms: the wetness state and the ground footprints of the thin parts that keep puddles away.
+  bindWetness() {
+    if (this.wetnessKeepOutParts !== this.fitParts) {
+      this.wetnessKeepOutParts = this.fitParts;
+      this.wetnessKeepOut = wetnessKeepOutBoxes(this.fitParts ?? []);
+      this.wetnessGroundHeight = wetnessGroundHeight(this.fitParts ?? []);
+    }
+    const [wetness, fillLevel] = this.lighting.wetnessState;
+    this.context.uniform4f(this.uniforms.wetnessState, wetness, fillLevel, this.wetnessKeepOut.count, this.wetnessGroundHeight);
+    this.context.uniform4fv(this.uniforms['wetnessKeepOut[0]'], this.wetnessKeepOut.boxes);
+  }
+
   /** Sets the surface wear uniforms of a batch; a material without wear turns the term off. */
   bindSurfaceWear(wear) {
     const { context, uniforms } = this;
@@ -1324,13 +1418,14 @@ export class CrucibleRenderer {
   /** Binds the geometry's vertex buffers and attributes into the bound vertex array. */
   bindGeometryAttributes(geometry, material) {
     const context = this.context;
+    if (geometry.tangents !== undefined) validateGeometryTangents(geometry.tangents, geometry.positions.length / 3);
     let geometryBuffers = this.geometryBuffers.get(geometry);
     if (!geometryBuffers) {
       geometryBuffers = new Map();
       for (const field of ['positions', 'normals', 'uvs', 'colors', 'indices', 'crowdPacked']) {
         if (geometry[field]) {
           const target = field === 'indices' ? context.ELEMENT_ARRAY_BUFFER : context.ARRAY_BUFFER;
-          const values = field === 'uvs' && geometry.lightUvs ? interleaveUvSets(geometry) : geometry[field];
+          const values = field === 'uvs' && geometry.lightUvs ? interleaveUvSets(geometry) : field === 'normals' && geometry.tangents ? packNormalsWithTangents(geometry.normals, geometry.tangents) : geometry[field];
           geometryBuffers.set(field, this.uploadBuffer(target, field === 'colors' && vertexAlpha(geometry) ? interleaveColorsWithSkyVisibility(geometry) : values));
         }
       }
@@ -1338,10 +1433,11 @@ export class CrucibleRenderer {
       if (geometry.lightUvs && !geometry.uvs) geometryBuffers.set('uvs', this.uploadBuffer(context.ARRAY_BUFFER, interleaveUvSets(geometry)));
       this.geometryBuffers.set(geometry, geometryBuffers);
     }
-    for (const [location, field] of [[0, 'positions'], [1, 'normals']]) {
+    // A geometry with tangents keeps each tangent code in the fourth float of its normal (src/tangent-encoding.js).
+    for (const [location, field, size] of [[0, 'positions', 3], [1, 'normals', geometry.tangents ? 4 : 3]]) {
       context.bindBuffer(context.ARRAY_BUFFER, geometryBuffers.get(field));
       context.enableVertexAttribArray(location);
-      context.vertexAttribPointer(location, 3, context.FLOAT, false, 0, 0);
+      context.vertexAttribPointer(location, size, context.FLOAT, false, 0, 0);
     }
     if (geometry.lightUvs && geometry.lightUvs.length !== geometry.positions.length / 3 * 2) throw new Error('Geometry lightUvs count must match the vertex count.');
     if (geometry.uvs || geometry.lightUvs) {
@@ -1437,6 +1533,26 @@ export class CrucibleRenderer {
     }
   }
 
+  /**
+   * Gives a part that was built without `lods` its levels now, for levels made after the first frame (#2985). The part must
+   * be alone in its batch (a scan is) and may take lods; `lods` follows the rules of the `lods` field: level 0 is the part's own
+   * geometry and the errors do not decrease. Culling picks among the levels from the next frame on.
+   */
+  setPartLods(part, lods) {
+    const location = this.partLocations.get(part);
+    if (!location) throw new RangeError(`setPartLods needs a part this renderer draws: ${part?.name ?? '?'}.`);
+    const batch = location.batch;
+    if (batch.parts.length !== 1) throw new RangeError(`setPartLods needs a part that is alone in its batch; ${part.name} is drawn with ${batch.parts.length - 1} others that share its geometry. Pass lods in the part when the renderer is built.`);
+    if (!batch.cullable) throw new RangeError(`lods need rigid or swaying, opaque parts without assembly motion: ${part.name}`);
+    validateLods(part, lods);
+    this.releaseLevelDraws(batch);
+    const levelSet = createLevelSet(lods, batch.instanceCount);
+    Object.assign(batch, levelSet);
+    const sphere = geometryBoundingSphere(part.geometry);
+    batch.bounds = { center: sphere.center, radius: sphere.radius + Math.max(...lods.map(level => level.error)) };
+    levelSet.levelGeometries.forEach((geometryOfLevel, level) => this.levelDraw(batch, level));
+  }
+
   /** The instances of a batch that the camera can see, split by level; null when the whole batch draws as it is. */
   selectBatchInstances(batch) {
     if (!this.culling || !batch.cullable) return null;
@@ -1500,7 +1616,7 @@ export class CrucibleRenderer {
     context.bindVertexArray(null);
     const map = parts[0].material.map ?? null;
     const mapState = materialMapState(parts[0].material);
-    const textures = mapState.slice(0, 5).map(descriptor => this.createTexture(descriptor));
+    const textures = mapState.slice(0, 5).map((descriptor, index) => this.createTexture(descriptor, index === 1));
     const splat = parts[0].material.layers ? requireSplatSupport().createResources(this, parts[0].material, requireSplatSupport()) : null;
     const lightMapTexture = mapState[14] ? this.createTexture(mapState[14]) : null;
     if (lightMapTexture && (parts[0].skin || parts[0].morph || !geometry.lightUvs)) throw new Error('A light map needs lightUvs on rigid geometry, with no skin or morph.');
@@ -1512,10 +1628,10 @@ export class CrucibleRenderer {
     const morph = parts[0].morph ?? null;
     const morphTexture = morph ? this.createMorphTexture(geometry, morph) : null;
     const morphWeights = morph ? new Float32Array(morph.weights) : null;
-    const [alphaMode, alphaCutoff, opacity, doubleSided, retro, waterGlint] = materialAlphaState(parts[0].material);
+    const [alphaMode, alphaCutoff, opacity, doubleSided, retro, waterGlint, depthTest] = materialAlphaState(parts[0].material);
     const layerState = materialLayerState(parts[0].material);
     const culling = this.createCullingState(parts);
-    const batch = { ...culling, alphaMode, alphaCutoff, opacity, doubleSided, retro, waterGlint, mirrored: isMirroredMatrix(parts[0].matrix), layerState, wear: parts[0].material.wear ?? null, parts: [...parts], vertexArray, instanceBuffer, instanceData, textures, mapState, splat, lightMapTexture, texture: textures[0], map, skin, skinTexture, influenceTexture, crowd, crowdTexture, morph, morphTexture, morphWeights, indexCount: flushOrder?.indices.length ?? geometry.indices.length, instanceCount: parts.length, floor: parts[0].material.tag === 'floor', castShadow: castsShadow(parts[0]), tintedShadow: castsTintedShadow(parts[0]), tintBlind: Boolean(splat) || Object.keys(parts[0].material.layerMaps ?? {}).length >= 3, receivesShadow: receivesShadow(parts[0]), compositeMode: compositeModeOf(parts[0]), depthLayer: depthLayerOf(parts[0]), flushOrder, flushIndexBuffer, pass: partPass(parts[0]) };
+    const batch = { ...culling, alphaMode, alphaCutoff, opacity, doubleSided, retro, waterGlint, depthTest, mirrored: isMirroredMatrix(parts[0].matrix), layerState, wear: parts[0].material.wear ?? null, parts: [...parts], vertexArray, instanceBuffer, instanceData, textures, mapState, splat, lightMapTexture, texture: textures[0], map, skin, skinTexture, influenceTexture, crowd, crowdTexture, morph, morphTexture, morphWeights, indexCount: flushOrder?.indices.length ?? geometry.indices.length, instanceCount: parts.length, floor: parts[0].material.tag === 'floor', castShadow: castsShadow(parts[0]), tintedShadow: castsTintedShadow(parts[0]), tintBlind: Object.keys(parts[0].material.layerMaps ?? {}).length >= 3, receivesShadow: receivesShadow(parts[0]), compositeMode: compositeModeOf(parts[0]), depthLayer: depthLayerOf(parts[0]), flushOrder, flushIndexBuffer, pass: partPass(parts[0]), clipPlanes: parts[0].clipPlanes ?? null };
     if (parts[0].lods) culling.levelGeometries.forEach((geometryOfLevel, level) => this.levelDraw(batch, level));
     culling.shadowLevels?.levelGeometries.forEach((geometryOfLevel, level) => this.levelDraw(batch, level, batch.shadowLevels));
     parts.forEach((part, index) => this.partLocations.set(part, { batch, index, geometry: part.geometry, map, mapState, layerState, skin, jointMatrices: skin?.jointMatrices, skinIndices: geometry.skinIndices, skinWeights: geometry.skinWeights, morph, morphWeights: morph?.weights, morphTargets: geometry.morphTargets, normalMatrix: mat3.create(), committedMatrix: batch.instanceData.subarray(index * INSTANCE_STRIDE, index * INSTANCE_STRIDE + 16) }));
@@ -1570,9 +1686,10 @@ export class CrucibleRenderer {
       const mapState = materialMapState(first.material);
       const sameParts = batch?.parts.length === group.length && batch.parts.every((part, index) => part === group[index]);
       const alphaState = materialAlphaState(first.material);
-      const sameState = location?.geometry === first.geometry && batch?.castShadow === castsShadow(first) && batch.receivesShadow === receivesShadow(first) && batch.compositeMode === compositeModeOf(first) && (batch.depthLayer ?? 0) === depthLayerOf(first) && (batch.flushOrder ?? null) === flushOrderOf(first) &&
+      // A batch keeps its winding: a group that flipped sign with the same members is a new batch, or the update would regroup forever (#3059).
+      const sameState = location?.geometry === first.geometry && batch?.castShadow === castsShadow(first) && batch.mirrored === isMirroredMatrix(first.matrix) && batch.receivesShadow === receivesShadow(first) && batch.compositeMode === compositeModeOf(first) && (batch.depthLayer ?? 0) === depthLayerOf(first) && (batch.flushOrder ?? null) === flushOrderOf(first) &&
         batch.floor === (first.material.tag === 'floor') && batchPass(batch) === partPass(first) &&
-        [batch.alphaMode, batch.alphaCutoff, batch.opacity, batch.doubleSided, batch.retro, batch.waterGlint].every((value, index) => value === alphaState[index]) &&
+        [batch.alphaMode, batch.alphaCutoff, batch.opacity, batch.doubleSided, batch.retro, batch.waterGlint, batch.depthTest !== false].every((value, index) => value === alphaState[index]) &&
         batch.mapState.every((value, index) => value === mapState[index]) &&
         batch.layerState.every((value, index) => value === layerStateOf(first.material)[index]);
       if (sameParts && sameState) {
@@ -1738,30 +1855,33 @@ export class CrucibleRenderer {
       if (castsShadow(part) !== location.batch.castShadow) throw new Error(`Shadow casting changes require a new renderer: ${part.name}`);
       if (receivesShadow(part) !== location.batch.receivesShadow || (part.shadowOnly === true) !== (batchPass(location.batch) === 'shadowOnly') || compositeModeOf(part) !== location.batch.compositeMode) throw new Error(`receiveShadow, holdout, shadowCatcher and shadowOnly changes require replaceParts: ${part.name}`);
       if (depthLayerOf(part) !== (location.batch.depthLayer ?? 0)) throw new Error(`depthLayer changes require replaceParts: ${part.name}`);
+      if ((part.clipPlanes ?? null) !== (location.batch.clipPlanes ?? null)) throw new Error(`Giving a part another clipPlanes array requires replaceParts: ${part.name}. Fix: edit the planes of the same array in place.`);
       // A material whose fields still equal the ones that passed the full checks below needs none of them again.
       const materialUnchanged = location.materialSnapshot?.matches(part.material) === true;
       if (!materialUnchanged) {
         const alphaState = materialAlphaState(part.material);
-        const batchAlphaState = [location.batch.alphaMode, location.batch.alphaCutoff, location.batch.opacity, location.batch.doubleSided, location.batch.retro, location.batch.waterGlint];
-        if (alphaState.some((value, index) => value !== batchAlphaState[index])) throw new Error(`Alpha mode, cutoff, double-sided, retro and mask opacity changes require a new renderer: set them when the part is made (blend and add opacity may change): ${part.name}`);
+        const batchAlphaState = [location.batch.alphaMode, location.batch.alphaCutoff, location.batch.opacity, location.batch.doubleSided, location.batch.retro, location.batch.waterGlint, location.batch.depthTest !== false];
+        if (alphaState.some((value, index) => value !== batchAlphaState[index])) throw new Error(`Alpha mode, cutoff, double-sided, depthTest, retro and mask opacity changes require a new renderer: set them when the part is made (blend and add opacity may change): ${part.name}`);
       }
       if (part.geometry !== location.geometry) throw new Error(`Geometry changes require a new renderer: ${part.name}`);
-      if (isMirroredMatrix(part.matrix) !== Boolean(location.batch.mirrored)) mirrorChanged = true;
+      // A hidden part packs zeros, so its matrix (often a zero scale) says nothing about winding, and neither is checked.
+      const hidden = isHidden(part);
+      if (!hidden && isMirroredMatrix(part.matrix) !== Boolean(location.batch.mirrored)) mirrorChanged = true;
       if (!materialUnchanged && partPass(part) !== batchPass(location.batch)) throw new Error(`Moving a part into or out of the liquid or foam pass requires replaceParts: ${part.name}`);
       if ((part.skin ?? null) !== location.skin || part.skin?.jointMatrices !== location.jointMatrices || part.geometry.skinIndices !== location.skinIndices || part.geometry.skinWeights !== location.skinWeights) throw new Error(`Skin identity changes require a new renderer: ${part.name}`);
       if (part.skin) {
         if (PROCEDURAL_MATERIAL_TAGS.has(part.material.tag)) throw new Error('Skinned parts require a standard material tag.');
-        if (checks) skinSupport().validateSkinPose(part.skin, part.geometry, part.matrix);
+        if (checks && !hidden) skinSupport().validateSkinPose(part.skin, part.geometry, part.matrix);
         this.updateSkins.add(location.batch.skinTexture);
       }
       if ((part.morph ?? null) !== (location.morph ?? null) || part.morph?.weights !== location.morphWeights || part.geometry.morphTargets !== location.morphTargets) throw new Error(`Morph identity changes require a new renderer: ${part.name}`);
       if (part.morph) {
         if (PROCEDURAL_MATERIAL_TAGS.has(part.material.tag)) throw new Error('Morphed parts require a standard material tag.');
-        if (checks) morphSupport().validateMorphTransform(part.morph, location.batch.morphTexture.info, part.matrix, part.skin);
+        if (checks && !hidden) morphSupport().validateMorphTransform(part.morph, location.batch.morphTexture.info, part.matrix, part.skin);
         this.updateMorphs.add(part.morph);
       }
       if (materialUnchanged) {
-        validateTransform(part, location.normalMatrix);
+        validateTransform(part, location.normalMatrix, hidden);
         continue;
       }
       if ((part.material.map ?? null) !== location.map) throw new Error(`Texture map changes require a new renderer: ${part.name}`);
@@ -1774,7 +1894,7 @@ export class CrucibleRenderer {
       const [lightMapDescriptor, lightMapScale] = lightMapState(part.material);
       if (lightMapDescriptor !== (mapState[14] ?? null) || lightMapScale !== (mapState[15] ?? 0) || (part.material.layerMaps ?? null) !== (mapState[18] ?? null)) throw new Error(`Light map and layer texture changes require a new renderer: ${part.name}`);
       if (normalScale[0] !== mapState[5] || normalScale[1] !== mapState[6] || (part.material.occlusionStrength ?? 1) !== mapState[7] || mossState(part.material).some((value, index) => value !== mapState[8 + index]) || materialLayerState(part.material).some((value, index) => value !== location.layerState[index])) throw new Error(`Material map or scale changes require a new renderer: ${part.name}`);
-      validateTransform(part, location.normalMatrix);
+      validateTransform(part, location.normalMatrix, hidden);
       location.materialSnapshot = MaterialSnapshot.of(part.material);
     }
     // A part moved toward the camera may leave the box the near plane is fitted to, and the plane would cut it (#2403). Growing the
@@ -1789,7 +1909,7 @@ export class CrucibleRenderer {
     // A palette upload also changes consumers absent from the submitted part list.
     if (checks && this.updateSkins.size) {
       for (const [part, location] of this.partLocations) {
-        if (!location.skin || !this.updateSkins.has(location.batch.skinTexture) || this.updatePartIdentities.has(part)) continue;
+        if (!location.skin || !this.updateSkins.has(location.batch.skinTexture) || this.updatePartIdentities.has(part) || isHidden(part)) continue;
         const committedMatrix = location.committedMatrix ?? location.batch.instanceData.subarray(location.index * INSTANCE_STRIDE, location.index * INSTANCE_STRIDE + 16);
         skinSupport().validateSkinPose(location.skin, location.geometry, committedMatrix);
       }
@@ -1798,7 +1918,7 @@ export class CrucibleRenderer {
     // Nothing is shared when the update carries no morph and no skin.
     if (checks && (this.updateMorphs.size || this.updateSkins.size)) {
       for (const [part, location] of this.partLocations) {
-        if (!location.morph || this.updatePartIdentities.has(part)) continue;
+        if (!location.morph || this.updatePartIdentities.has(part) || isHidden(part)) continue;
         if (!this.updateMorphs.has(location.morph) && !this.updateSkins.has(location.batch.skinTexture)) continue;
         const committedMatrix = location.committedMatrix ?? location.batch.instanceData.subarray(location.index * INSTANCE_STRIDE, location.index * INSTANCE_STRIDE + 16);
         morphSupport().validateMorphTransform(location.morph, location.batch.morphTexture.info, committedMatrix, location.skin);
@@ -2457,6 +2577,7 @@ export class CrucibleRenderer {
     if (fogSky) steps.push('sky');
     if (frame.volumeExplosion) steps.push('explosion');
     if (frame.linearOutput) steps.push(requireFeatureCode('linearOutput').step(this, frame));
+    if (this.autoExposureScale != null) steps.push('autoExposure');
     const gradesColor = effects.saturation !== 1 || effects.contrast !== 1 || effects.temperature !== 0;
     const finishes = gradesColor || (frame.monochrome ?? 0) !== 0 || Boolean(frame.cinematic) || effects.vignette !== 0 || effects.grain !== 0;
     if (finishes) steps.push('finish');
@@ -2484,6 +2605,16 @@ export class CrucibleRenderer {
     return variant;
   }
 
+  // effects.autoExposure (src/auto-exposure.js) meters the frame and sets the factor the post pass scales it by; null when it is off.
+  meterAutoExposure(frame, sourceTexture) {
+    if (frame.effects?.autoExposure === undefined) {
+      this.autoExposure = null;
+      this.autoExposureScale = null;
+      return;
+    }
+    this.autoExposureScale = requireFeatureCode('autoExposure').measure(this, frame, sourceTexture);
+  }
+
   // The fog step leaves the last frame's texture on a mipmapped filter. The stages and bloom read before this frame's
   // mip chain exists, so on that filter they would sample the previous frame's blurred levels: a ghost after a seek.
   restoreSingleLevelFiltering() {
@@ -2508,6 +2639,7 @@ export class CrucibleRenderer {
     if (isBloomActive(effects)) this.drawBloom(effects.bloom, sourceTexture);
     const occluded = effects.ambientOcclusion > 0 && Boolean(this.depthTexture);
     if (occluded) this.drawAmbientOcclusion(frame, effects);
+    this.meterAutoExposure(frame, sourceTexture);
     // A frame that names an outputFramebuffer (src/float-output.js) draws its final pass there, not on the canvas.
     context.bindFramebuffer(context.FRAMEBUFFER, frame.outputFramebuffer ?? null);
     context.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -2546,6 +2678,7 @@ export class CrucibleRenderer {
     context.bindTexture(context.TEXTURE_2D, occluded ? this.occlusionTarget.texture : this.whiteTexture);
     context.uniform1i(post.uniforms.occlusionTexture, 4);
     context.uniform1f(post.uniforms.occlusionStrength, occluded ? effects.ambientOcclusion : 0);
+    if (this.autoExposureScale != null) context.uniform1f(post.uniforms.autoExposureScale, this.autoExposureScale);
     context.uniform2f(post.uniforms.occlusionTexel, 1 / Math.ceil(this.canvas.width / 2), 1 / Math.ceil(this.canvas.height / 2));
     context.uniform1f(post.uniforms.transparent, this.transparent ? 1 : 0);
     context.uniform1f(post.uniforms.hdrEnabled, this.hdr ? 1 : 0);
@@ -2618,6 +2751,7 @@ export class CrucibleRenderer {
   /** Culling, cutout and opacity state for one batch, in the color pass (textured) or the shadow depth pass. */
   applyAlphaState(batch, textured) {
     const context = this.context;
+    if (this.shaderFeatures?.has(CLIP_PLANES_FEATURE) && !this.benchmark) bindClipPlanes(this, batch, textured ? this.uniforms : this.depthClipLocations);
     // The shadow depth pass (not textured) draws both faces. A single-sided terrain edge, leaf card or open shell seen from
     // behind would otherwise write no depth, and the sun would pass through it.
     if (batch.doubleSided || !textured) {
@@ -2723,23 +2857,42 @@ export class CrucibleRenderer {
       return total / batch.instanceCount;
     };
     const ordered = blendBatches.map(batch => ({ batch, distance: distance(batch) })).sort((first, second) => second.distance - first.distance);
+    const depthOrdered = ordered.filter(({ batch }) => batch.depthTest !== false);
+    const overlayOrdered = ordered.filter(({ batch }) => batch.depthTest === false);
+    const depthAddBatches = addBatches.filter(batch => batch.depthTest !== false);
+    const overlayAddBatches = addBatches.filter(batch => batch.depthTest === false);
     // Fully opaque texels (most of a baked scene exported as BLEND) draw first as a cutout that writes depth, so they hide
     // whatever lies behind them in any draw order. The blend pass below then shades only the translucent texels (depth LESS).
-    for (const { batch } of ordered) {
+    for (const { batch } of depthOrdered) {
       if (blendBatchDrawsCutoutFirst(batch)) this.drawAlphaBatch({ ...batch, alphaMode: 'mask', alphaCutoff: 0.999 }, true);
     }
     context.enable(context.BLEND);
     // The program writes a blended part premultiplied, so its specular is not faded by alpha (blend-output.js).
     context.blendFuncSeparate(context[BLEND_FACTORS.sourceColor], context[BLEND_FACTORS.destinationColor], context[BLEND_FACTORS.sourceAlpha], context[BLEND_FACTORS.destinationAlpha]);
     context.depthMask(false);
-    for (const { batch } of ordered) {
+    for (const { batch } of depthOrdered) {
       this.uploadSortedInstances(batch, eye);
       this.drawAlphaBatch(batch, true);
     }
-    if (addBatches.length > 0) {
+    if (depthAddBatches.length > 0) {
       // Source colour times opacity is added to the frame; the destination alpha is kept.
       context.blendFuncSeparate(context.SRC_ALPHA, context.ONE, context.ZERO, context.ONE);
-      for (const batch of addBatches) this.drawAlphaBatch(batch, true);
+      for (const batch of depthAddBatches) this.drawAlphaBatch(batch, true);
+    }
+    if (overlayOrdered.length > 0 || overlayAddBatches.length > 0) {
+      context.disable(context.DEPTH_TEST);
+      if (overlayOrdered.length > 0) {
+        context.blendFuncSeparate(context[BLEND_FACTORS.sourceColor], context[BLEND_FACTORS.destinationColor], context[BLEND_FACTORS.sourceAlpha], context[BLEND_FACTORS.destinationAlpha]);
+        for (const { batch } of overlayOrdered) {
+          this.uploadSortedInstances(batch, eye);
+          this.drawAlphaBatch(batch, true);
+        }
+      }
+      if (overlayAddBatches.length > 0) {
+        context.blendFuncSeparate(context.SRC_ALPHA, context.ONE, context.ZERO, context.ONE);
+        for (const batch of overlayAddBatches) this.drawAlphaBatch(batch, true);
+      }
+      context.enable(context.DEPTH_TEST);
     }
     context.depthMask(true);
     this.applyDepthRank(0);
@@ -2858,6 +3011,19 @@ export class CrucibleRenderer {
   }
 
   /**
+   * Sets the world-space planes that cut every part without clipPlanes of its own, until the next call. Each plane is
+   * { normal: [x, y, z], constant }, and a point p stays when dot(normal, p) + constant is 0 or more. Pass at most 4, or [] to cut nothing.
+   * Call it between renders to animate a cut. The renderer needs `clipPlanes` in its options, or a part with clipPlanes, so its shaders have the code.
+   */
+  setClipPlanes(planes) {
+    if (!this.shaderFeatures?.has(CLIP_PLANES_FEATURE)) throw new Error('This renderer has no clip plane code. Fix: pass clipPlanes: [] in the renderer options (or give a part clipPlanes) so the shaders include it.');
+    const packed = new Float32Array(MAX_CLIP_PLANES * 4);
+    const count = packClipPlanes(planes, packed, 'clipPlanes');
+    this.clipPlaneValues.set(packed);
+    this.clipPlaneCount = count;
+  }
+
+  /**
    * Sets the fog's density and velocity field (see docs/volumetric.md) until it is replaced or cleared with null. It wins over
    * a field in the constructor's or the frame's volumeFog. The same size is written into the existing texture on the next frame.
    */
@@ -2866,6 +3032,21 @@ export class CrucibleRenderer {
   }
 
   render(frame) {
+    // The water mirror is part of a frame, not a frame: it neither counts draws nor replaces the stats.
+    const draws = frame.reflectionTarget ? null : countDraws(this.context);
+    try {
+      this.renderFrame(frame);
+    } finally {
+      draws?.release();
+    }
+    if (draws) this.publishStats(draws.counters);
+  }
+
+  publishStats({ drawCalls, triangles }) {
+    this.stats = { drawCalls, trianglesDrawn: triangles, geometryBytes: this.geometryBytes, textureBytes: this.textureBytes, gpuTimeMs: this.gpuMilliseconds };
+  }
+
+  renderFrame(frame) {
     this.localEmissionMaskReady = false;
     if (frame.pass === undefined && !frame.reflectionTarget && (frame.environment?.localVolumes ?? this.environment?.localVolumes)?.length > 0) {
       this.localEmissionMaskReady = requireFeatureCode('volumeFog').support.drawEmissionMask(this, frame);
@@ -2900,7 +3081,7 @@ export class CrucibleRenderer {
     const assemblyAmount = Math.max(0, Math.min(1, frame.assemblyAmount ?? 0));
     // Swaying foliage moves every frame, so its shadow map is redrawn whenever time or wind changes.
     const windChanged = this.updateWindState(frame);
-    const casterChanged = this.assemblyAmount !== assemblyAmount || this.shadowsDirty || windChanged || lightChanged;
+    const casterChanged = this.assemblyAmount !== assemblyAmount || this.shadowsDirty || windChanged || lightChanged || (this.shaderFeatures.has(CLIP_PLANES_FEATURE) && clipPlanesChanged(this));
     this.requireFeatureNames(shaderFeaturesOfLighting(this.lighting));
     const passMode = this.preparePass(frame);
     this.renderingPass = passMode > 0;
@@ -2963,6 +3144,7 @@ export class CrucibleRenderer {
     context.uniform1f(this.uniforms.fillIntensity, this.lighting.fillIntensity);
     context.uniform1f(this.uniforms.ambientIntensity, this.lighting.ambientIntensity);
     context.uniform1f(this.uniforms.specularAntiAliasing, this.lighting.specularAntiAliasing);
+    if (this.lighting.wetness > 0) this.bindWetness();
     context.uniform1f(this.uniforms.time, frame.time ?? 0);
     context.uniform1f(this.uniforms.wind, frame.wind ?? 0.3);
     context.uniform1f(this.uniforms.worldMode, this.world ? 1 : 0);

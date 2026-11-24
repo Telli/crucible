@@ -10,16 +10,17 @@ import { bakingContext, boundedArray, finiteNumber, knownKeys, rootNodeWithGeome
 
 const PARTICLES_FIELDS = ['gravity', 'wind', 'fields', 'systems'];
 const SYSTEM_TYPES = ['emitter', 'hair', 'sparks'];
-const EMITTER_SYSTEM_FIELDS = ['type', 'node', 'seed', 'count', 'rate', 'delay', 'start', 'stop', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'size', 'scale', 'drag', 'floor', 'bounce', 'friction', 'colliders', 'spin', 'color', 'alpha', 'instances', 'orient'];
+const EMITTER_SYSTEM_FIELDS = ['type', 'node', 'seed', 'count', 'rate', 'delay', 'start', 'stop', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'size', 'scale', 'drag', 'floor', 'bounce', 'friction', 'colliders', 'spin', 'color', 'alpha', 'fade', 'instances', 'orient'];
 const SPARK_SYSTEM_FIELDS = ['type', 'preset', 'node', 'seed', 'count', 'delay', 'lifetime', 'speed', 'direction', 'spread', 'emitter', 'position', 'size', 'drag', 'floor', 'bounce', 'temperature', 'intensity', 'shutter'];
 const SPARK_PRESETS = Object.freeze({
   // A blast: a few hundred sparks thrown in every direction from a small ball, fast, light enough for drag to pull them in, living 0.5 to 2 s.
   explosion: Object.freeze({ count: 800, speed: [6, 24], spread: 180, lifetime: [0.5, 2], size: [0.006, 0.014], drag: 0.9, emitter: Object.freeze({ shape: 'sphere', radius: 0.2 }) }),
 });
 const HAIR_FIELDS = ['type', 'node', 'surface', 'seed', 'count', 'length', 'segments', 'width', 'droop', 'lean', 'sway', 'swayRate'];
-const EMITTER_FIELDS = ['shape', 'position', 'halfExtents', 'radius', 'mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold'];
+const EMITTER_FIELDS = ['shape', 'position', 'halfExtents', 'radius', 'mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold', 'region', 'follow'];
 const EMITTER_SHAPES = ['point', 'box', 'sphere', 'disc', 'mesh'];
-const ORIENT_MODES = ['none', 'random', 'normal'];
+const ORIENT_MODES = ['none', 'random', 'normal', 'billboard'];
+const FADE_MODES = ['darken', 'opacity'];
 const SCALE_MODES = ['constant', 'shrink', 'grow'];
 const DEFAULT_GRAVITY = Object.freeze([0, -9.81, 0]);
 // Defaults that read as debris: a bounce keeps 30 percent of the speed (the first release of collision stuck at 0 without colliders and had no default with them), friction 0.5.
@@ -76,6 +77,23 @@ function normalizeMeshEmitter(input, emitter, context, path) {
     emitter.groupThreshold = finiteNumber(input.groupThreshold, `${path}.groupThreshold`, 0, 1);
   }
   normalizeVelocitySource(input, emitter, from, path);
+  if (input.region !== undefined) emitter.region = normalizeRegion(input.region, `${path}.region`);
+}
+
+// `region` is a box in world space: births come only from the part of the mesh inside it (#2823).
+function normalizeRegion(input, path) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw invalidField(path, input, 'an object { center: [x, y, z], halfExtents: [x, y, z] }, such as { "center": [0, 0, 0], "halfExtents": [10, 5, 10] }', TypeError);
+  }
+  knownKeys(input, ['center', 'halfExtents'], path);
+  const center = vectorOfThree(input.center, `${path}.center`, POSITION_LIMIT);
+  const halfExtents = vectorOfThree(input.halfExtents, `${path}.halfExtents`, POSITION_LIMIT);
+  halfExtents.forEach((extent, axis) => {
+    if (!(extent > 0)) {
+      throw invalidField(`${path}.halfExtents[${axis}]`, extent, `a number above 0 and up to ${POSITION_LIMIT}, such as 10 (half the size of the box along that axis)`);
+    }
+  });
+  return { center, halfExtents };
 }
 
 // `velocityFrom` names a "vector:<name>" point attribute of the emitter mesh (the ocean's `spray`): each particle also leaves with that velocity.
@@ -114,6 +132,21 @@ function assignEmitterRadius(input, emitter, shape, path) {
   }
 }
 
+const FOLLOW_ID_LIST_LIMIT = 20;
+
+// `follow` names the node whose animated or physics-baked transform carries the emitter (#2829).
+function normalizeFollow(input, emitter, shape, context, path) {
+  if (shape === 'mesh') {
+    throw invalidField(`${path}.follow`, input.follow, `left out on a mesh emitter, which takes its points from ${path}.mesh; use a point, box, sphere or disc emitter`);
+  }
+  if (typeof input.follow !== 'string' || !context.recipeNodes.has(input.follow)) {
+    const known = [...context.recipeNodes.keys()];
+    const more = known.length > FOLLOW_ID_LIST_LIMIT ? `, and ${known.length - FOLLOW_ID_LIST_LIMIT} more` : '';
+    throw invalidField(`${path}.follow`, input.follow, `the ID of a node in the recipe whose transform the emitter follows (known nodes: ${known.slice(0, FOLLOW_ID_LIST_LIMIT).join(', ') || 'none'}${more})`);
+  }
+  emitter.follow = input.follow;
+}
+
 function normalizeEmitter(input, context, path) {
   knownKeys(input, EMITTER_FIELDS, path);
   const shape = input.shape ?? 'point';
@@ -126,10 +159,11 @@ function normalizeEmitter(input, context, path) {
     halfExtents: input.halfExtents === undefined ? [0.5, 0.5, 0.5] : vectorOfThree(input.halfExtents, `${path}.halfExtents`, POSITION_LIMIT).map(Math.abs),
   };
   assignEmitterRadius(input, emitter, shape, path);
+  if (input.follow !== undefined) normalizeFollow(input, emitter, shape, context, path);
   if (shape === 'mesh') {
     normalizeMeshEmitter(input, emitter, context, path);
   } else {
-    for (const field of ['mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold']) {
+    for (const field of ['mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold', 'region']) {
       if (input[field] !== undefined) throw invalidField(`${path}.${field}`, input[field], `left out unless ${path}.shape is "mesh"`);
     }
   }
@@ -232,6 +266,13 @@ function normalizeEmitterSystem(input, context, path) {
   if (input.spin !== undefined) system.spin = rangeOf(input.spin, `${path}.spin`, -100000, 100000);
   if (input.color !== undefined) system.color = normalizeColors(input.color, `${path}.color`);
   if (input.alpha !== undefined) system.alpha = normalizeAlpha(input.alpha, `${path}.alpha`);
+  if (input.fade !== undefined) {
+    if (!FADE_MODES.includes(input.fade)) throw invalidField(`${path}.fade`, input.fade, `one of ${FADE_MODES.join(', ')}`);
+    if (input.fade === 'opacity' && !system.alpha) {
+      throw invalidField(`${path}.fade`, input.fade, `"darken", or "opacity" together with ${path}.alpha, such as alpha [1, 0], because the fade needs the opacity to go from and to`);
+    }
+    if (input.fade === 'opacity') system.fade = 'opacity';
+  }
   if (input.colliders !== undefined) {
     system.colliders = normalizeColliders(input.colliders, context, `${path}.colliders`);
     if (system.colliders.includes(system.node)) {
@@ -414,7 +455,7 @@ function applyEmissionWindow(input, system, path) {
   const stop = finiteNumber(input.stop, `${path}.stop`, 0, 3600);
   const start = system.delay ?? 0;
   if (stop <= start) {
-    throw invalidField(`${path}.stop`, input.stop, `a time in seconds after the start (${start}), such as ${start + 2}`);
+    throw invalidField(`${path}.stop`, input.stop, `an absolute scene time in seconds, above start (${start}), such as ${start + 2} (stop is not a duration after start)`);
   }
   system.stop = stop;
 }
@@ -519,6 +560,10 @@ function velocityVectorOf(emitter, geometry, matrix, emitterPath) {
 
 // A sea whose oceanTime a motion track drives is sampled at the ocean time of each particle's birth, rounded to this step (seconds of ocean time).
 const OCEAN_TIME_STEP = 1 / 24;
+// A clip of this many ocean-time steps (5 s) is what the sea bake budget is sized for.
+const OCEAN_BAKE_REFERENCE_STEPS = 120;
+// Vertex-steps (sea vertices times ocean times built) one emitter may spend; each costs about 0.1 ms, so this stays near 10 s (#2823).
+export const OCEAN_BAKE_VERTEX_STEPS = 3_000_000;
 // How many steps either side of a birth to look when the sea has no spray at that moment.
 const OCEAN_TIME_SEARCH_STEPS = 96;
 
@@ -527,30 +572,44 @@ function meshSourceFrom(emitter, geometry, sourceNode, emitterPath) {
   const weights = emitter.group ? vertexGroupOf(emitter, geometry, emitterPath) : null;
   const sharpAngle = emitter.sharpAngle ?? null;
   const vectors = emitter.velocityFrom ? velocityVectorOf(emitter, geometry, nodeMatrix(sourceNode), emitterPath) : null;
-  const source = createMeshSource(world.positions, world.normals, geometry.indices, emitter.from, weights, sharpAngle, vectors, emitter.groupThreshold ?? 0);
-  if (source && source.triangleCount > PARTICLE_LIMITS.maxEmitterTriangles) {
+  const source = createMeshSource(world.positions, world.normals, geometry.indices, emitter.from, weights, sharpAngle, vectors, emitter.groupThreshold ?? 0, emitter.region ?? null);
+  // A vertices emitter keeps no per-triangle records, so the geometry's own vertex limit is the bound there (#2823).
+  if (source && emitter.from !== 'vertices' && source.triangleCount > PARTICLE_LIMITS.maxEmitterTriangles) {
     throw invalidField(`${emitterPath}.mesh`, `${source.triangleCount} triangles on node ${emitter.mesh}`, `a mesh with at most ${PARTICLE_LIMITS.maxEmitterTriangles} triangles, such as a simpler proxy mesh`);
   }
   return source;
 }
 
 function emptySourceError(emitter, emitterPath, detail) {
+  if (emitter.region) {
+    detail += `; emitter.region (center ${emitter.region.center.join(', ')}, halfExtents ${emitter.region.halfExtents.join(', ')}) holds no part of the mesh: move ${emitterPath}.region.center onto the mesh or raise its halfExtents`;
+  }
   const groupNote = emitter.group ? ` and some weight in vertex group "${emitter.group}"` : '';
   return invalidField(`${emitterPath}.mesh`, emitter.mesh, `a node whose mesh has triangles with some area${groupNote}, because emitter.from is "${emitter.from}"${detail}`);
 }
 
 // The source of a sea that an oceanTime track moves: each particle takes its point from the sea as it is when the particle is born.
+/** Whole ocean-time steps between two built seas: 1 up to a sea of about 25,000 vertices, more for a bigger one so a 5 s clip stays inside OCEAN_BAKE_VERTEX_STEPS. */
+export function oceanBakeStride(vertexCount) {
+  return Math.max(1, Math.ceil(vertexCount * OCEAN_BAKE_REFERENCE_STEPS / OCEAN_BAKE_VERTEX_STEPS));
+}
+
 function followingSeaSource(emitter, sourceNode, sea, emitterPath) {
   const frames = new Map();
+  let stride = null;
   const sourceAt = step => {
     if (!frames.has(step)) {
       const geometry = sea.geometryAt(sourceNode.geometry, step * OCEAN_TIME_STEP);
+      stride ??= oceanBakeStride(geometry.positions.length / 3);
       frames.set(step, meshSourceFrom(emitter, geometry, sourceNode, emitterPath));
     }
     return frames.get(step);
   };
-  const nearestSource = step => {
-    for (let distance = 0; distance <= OCEAN_TIME_SEARCH_STEPS; distance++) {
+  const nearestSource = rawStep => {
+    // The first sea built tells the stride; every step after it is a multiple of it, so a big sea is built at fewer ocean times.
+    if (stride === null) sourceAt(rawStep);
+    const step = Math.round(rawStep / stride) * stride;
+    for (let distance = 0; distance <= OCEAN_TIME_SEARCH_STEPS; distance += stride) {
       const source = sourceAt(step + distance) ?? sourceAt(step - distance);
       if (source) return source;
     }
@@ -563,9 +622,18 @@ function followingSeaSource(emitter, sourceNode, sea, emitterPath) {
   });
 }
 
-function meshSourceOf(system, nodes, geometries, systemIndex, sea) {
+// A followed emitter reads the node's world matrix at each particle's birth time (#2829).
+function followedEmitter(system, emitter, follow, emitterPath) {
+  if (emitter.follow === system.node) {
+    throw invalidField(`${emitterPath}.follow`, emitter.follow, 'another node than the system node, whose own transform does not move its particles; follow the moving node and keep the system node at rest');
+  }
+  return { ...emitter, pose: time => follow.matrixAt(emitter.follow, time) };
+}
+
+function meshSourceOf(system, nodes, geometries, systemIndex, sea, follow) {
   const emitterPath = `particles.systems[${systemIndex}].emitter`;
   const emitter = system.emitter;
+  if (emitter.follow) return followedEmitter(system, emitter, follow, emitterPath);
   if (emitter.shape !== 'mesh') return emitter;
   const sourceNode = nodes.get(emitter.mesh);
   const followsSea = sea?.oceanTimeAt(sourceNode.geometry, 0) != null;
@@ -577,13 +645,22 @@ function meshSourceOf(system, nodes, geometries, systemIndex, sea) {
   return { ...emitter, source };
 }
 
+// `fade: "opacity"` writes the alpha curve to a per-vertex opacity, which only a blend material draws as see-through.
+function checkOpacityFade(system, node, recipe, systemIndex) {
+  if (system.fade !== 'opacity') return;
+  const material = recipe.materials.find(entry => entry.id === node.material);
+  if (material?.alphaMode !== 'blend') {
+    throw invalidField(`particles.systems[${systemIndex}].fade`, system.fade, `"darken", or give the material "${node.material}" of node "${system.node}" alphaMode "blend" (it is "${material?.alphaMode ?? 'opaque'}"), because opacity only fades a blend material`);
+  }
+}
+
 function prepareEmitter(system, node, templates, forces, colliders, emitter) {
   const systemForces = { ...forces, drag: system.drag, floor: system.floor, bounce: system.bounce ?? (colliders ? DEBRIS_BOUNCE : 0), friction: system.friction ?? DEBRIS_FRICTION, colliders };
   const launches = createParticleLaunches({ ...system, emitter, instanceCount: templates.length, spreadRadians: system.spread * Math.PI / 180, forces: systemForces });
   return {
     node,
     report: () => ({ node: system.node, type: 'emitter', particles: system.count, verticesPerParticle: Math.max(...templates.map(template => template.positions.length / 3)), ...lifeSummary(launches) }),
-    build: time => buildParticleMesh(templates, launches, systemForces, system.scale, time, system),
+    build: (time, camera) => buildParticleMesh(templates, launches, systemForces, system.scale, time, system, camera),
   };
 }
 
@@ -660,8 +737,8 @@ function nodeTransformProblems(particles, recipe) {
   return problems;
 }
 
-/** `sea` is `{ oceanTimeAt(geometryId, time), geometryAt(geometryId, oceanTime) }`: an emitter on a geometry that an oceanTime track drives follows that sea. */
-export function bakeAgentParticles(particles, recipe, geometries, sea) {
+/** `follow` is `{ matrixAt(nodeId, time) }`: the world matrix of a node at a scene time, for an emitter with `follow` (#2829). `sea` is `{ oceanTimeAt(geometryId, time), geometryAt(geometryId, oceanTime) }`: an emitter on a geometry that an oceanTime track drives follows that sea. */
+export function bakeAgentParticles(particles, recipe, geometries, sea, follow) {
   const nodes = new Map(recipe.nodes.map(node => [node.id, node]));
   const forces = { gravity: particles.gravity ?? DEFAULT_GRAVITY, wind: particles.wind ?? [0, 0, 0], fields: particles.fields ?? [] };
   let totalVertices = 0;
@@ -674,17 +751,19 @@ export function bakeAgentParticles(particles, recipe, geometries, sea) {
       const surfaceNode = nodes.get(system.surface);
       return prepareHair(system, node, surfaceNode, geometries.get(surfaceNode.geometry), forces);
     }
-    if (system.type === 'sparks') return prepareSparks(system, node, forces, meshSourceOf(system, nodes, geometries, systemIndex, sea));
+    if (system.type === 'sparks') return prepareSparks(system, node, forces, meshSourceOf(system, nodes, geometries, systemIndex, sea, follow));
     const templates = templateNodeIds(system).map(nodeId => geometries.get(nodes.get(nodeId).geometry));
-    return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex, sea));
+    checkOpacityFade(system, node, recipe, systemIndex);
+    return prepareEmitter(system, node, templates, forces, collisionSurfaceOf(system, nodes, geometries), meshSourceOf(system, nodes, geometries, systemIndex, sea, follow));
   });
   return Object.freeze({
     /** Warnings for a recipe that loads but does not do what its author likely meant. */
     diagnostics() {
       return nodeTransformProblems(particles, recipe);
     },
-    sample(time) {
-      return new Map(prepared.map(({ node, build }) => [node.id, worldToNodeLocal(build(time), nodeMatrix(node))]));
+    /** `camera` is `{ eye, up }` at `time`: a billboard system turns each card toward its eye. */
+    sample(time, camera) {
+      return new Map(prepared.map(({ node, build }) => [node.id, worldToNodeLocal(build(time, camera), nodeMatrix(node))]));
     },
     /** Counts, vertices drawn and, for emitters, when each system peaks and ends: numbers an agent can read without a picture. */
     report() {

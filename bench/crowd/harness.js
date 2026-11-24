@@ -4,7 +4,7 @@ import { parseGltf } from '../../src/gltf.js';
 import { clipFromGltfAnimation, createAssetPose } from '../../src/skeleton-pose.js';
 import { createCrowd } from '../../src/retarget.js';
 import { CrucibleRenderer } from '../../src/renderer.js';
-import { bakeCrowdPalette, createCrowdParts, createCrowdRig } from '../../src/crowd-skinning.js';
+import { bakeCrowdPalette, createCrowdParts, createCrowdPartsFromGltf, createCrowdRig } from '../../src/crowd-skinning.js';
 
 const ROBOT_URL = '/tests/fixtures/RobotExpressive.glb';
 const ONE_PIXEL = new Uint8Array(4);
@@ -197,10 +197,150 @@ async function checkCulling(canvas) {
   return result;
 }
 
+function hashPixels(data) {
+  let hash = 2166136261;
+  for (let index = 0; index < data.length; index++) hash = Math.imul(hash ^ data[index], 16777619) >>> 0;
+  return hash.toString(16);
+}
+
+/**
+ * One parsed glTF asset per instance, each posed at a staggered clip time (the issue #3001 case), timed as pose, updateParts and draw.
+ * `hiddenEvery: n` hides every nth instance with `part.visible = false`; `frameHash` is an FNV hash of the last frame's pixels.
+ */
+async function measureSkinnedInstances(canvas, { modelUrl, clipName = 'Run', count, frames, spacing = 3, hiddenEvery = 0, checks = true, crowd = false }) {
+  if (crowd) return measureGltfCrowd(canvas, { modelUrl, clipName, count, frames, spacing });
+  const bytes = await (await fetch(modelUrl)).arrayBuffer();
+  const assets = [];
+  const parts = [];
+  for (let index = 0; index < count; index++) {
+    const asset = await parseGltf(bytes.slice(0), { maxVertices: 500000 });
+    assets.push(asset);
+    parts.push(...asset.parts);
+  }
+  const clipIndex = assets[0].animations.findIndex(animation => animation.name === clipName);
+  const duration = assets[0].animations[clipIndex].duration;
+  const columns = Math.ceil(Math.sqrt(count));
+  const placements = assets.map((_, index) => mat4.fromTranslation(mat4.create(), [(index % columns - columns / 2) * spacing, 0, (Math.floor(index / columns) - columns / 2) * spacing]));
+  const hidden = index => hiddenEvery > 0 && index % hiddenEvery === 0;
+  const renderer = new CrucibleRenderer(canvas, parts, { ground: true, hdr: false, samples: 1, pixelRatio: 1, memoryBudgetMiB: 8192 });
+  renderer.resize();
+  const frame = { ...cameraFor(columns, spacing, 4, true), time: 0, exposure: 1, effects: {} };
+  const timings = { pose: [], update: [], draw: [] };
+  let frameHash = null;
+  for (let step = 0; step < frames + 2; step++) {
+    const poseStarted = performance.now();
+    assets.forEach((asset, index) => {
+      for (const part of asset.parts) part.visible = !hidden(index);
+      if (hidden(index)) return;
+      asset.applyAnimation((step / 60 + (index / count) * duration) % duration, clipIndex, { checks });
+      for (const part of asset.parts) mat4.multiply(part.matrix, placements[index], part.matrix);
+    });
+    const updateStarted = performance.now();
+    renderer.updateParts(parts, { checks });
+    const drawStarted = performance.now();
+    renderer.render(frame);
+    finish(renderer);
+    const drawEnded = performance.now();
+    if (step >= 2) {
+      timings.pose.push(updateStarted - poseStarted);
+      timings.update.push(drawStarted - updateStarted);
+      timings.draw.push(drawEnded - drawStarted);
+    }
+    if (step === frames + 1) frameHash = hashPixels(readImage(canvas));
+  }
+  const median = values => [...values].sort((first, second) => first - second)[Math.floor(values.length / 2)];
+  const result = { count, hiddenEvery, poseMs: median(timings.pose), updatePartsMs: median(timings.update), drawMs: median(timings.draw), frameHash };
+  renderer.dispose();
+  assets.forEach(asset => asset.dispose());
+  return result;
+}
+
+/**
+ * The same instances as measureSkinnedInstances through createCrowdPartsFromGltf: one parse, one palette, one batch per material.
+ * Pose is `setTime` (no per-asset pose). `drawCalls` counts instanced draws in the last frame.
+ */
+async function measureGltfCrowd(canvas, { modelUrl, clipName, count, frames, spacing }) {
+  const bytes = await (await fetch(modelUrl)).arrayBuffer();
+  const asset = await parseGltf(bytes, { maxVertices: 500000 });
+  const clipIndex = asset.animations.findIndex(animation => animation.name === clipName);
+  const duration = asset.animations[clipIndex].duration;
+  const columns = Math.ceil(Math.sqrt(count));
+  const instances = Array.from({ length: count }, (_, index) => ({
+    matrix: mat4.fromTranslation(mat4.create(), [(index % columns - columns / 2) * spacing, 0, (Math.floor(index / columns) - columns / 2) * spacing]),
+    phase: (index / count) * duration,
+  }));
+  const bakeStarted = performance.now();
+  const set = createCrowdPartsFromGltf(asset, instances, { clip: clipIndex, lods: false });
+  const bakeMs = performance.now() - bakeStarted;
+  const renderer = new CrucibleRenderer(canvas, set.parts, { ground: true, hdr: false, samples: 1, pixelRatio: 1, memoryBudgetMiB: 8192 });
+  renderer.resize();
+  const frame = { ...cameraFor(columns, spacing, 4, true), time: 0, exposure: 1, effects: {} };
+  const timings = { pose: [], update: [], draw: [] };
+  let frameHash = null;
+  let drawCalls = 0;
+  for (let step = 0; step < frames + 2; step++) {
+    const poseStarted = performance.now();
+    set.setTime(step / 60);
+    const updateStarted = performance.now();
+    renderer.updateParts(set.parts);
+    const drawStarted = performance.now();
+    counters.drawCalls = 0;
+    renderer.render(frame);
+    finish(renderer);
+    const drawEnded = performance.now();
+    drawCalls = counters.drawCalls;
+    if (step >= 2) {
+      timings.pose.push(updateStarted - poseStarted);
+      timings.update.push(drawStarted - updateStarted);
+      timings.draw.push(drawEnded - drawStarted);
+    }
+    if (step === frames + 1) frameHash = hashPixels(readImage(canvas));
+  }
+  const median = values => [...values].sort((first, second) => first - second)[Math.floor(values.length / 2)];
+  const result = { count, crowd: true, bakeMs, drawCalls, poseMs: median(timings.pose), updatePartsMs: median(timings.update), drawMs: median(timings.draw), frameHash };
+  renderer.dispose();
+  asset.dispose();
+  return result;
+}
+
+/** One instance through the crowd path against the same asset posed by applyAnimation at the same clip time. */
+async function checkGltfPicture(canvas, { modelUrl, clipName, seconds, dump = false }) {
+  const bytes = await (await fetch(modelUrl)).arrayBuffer();
+  const reference = await parseGltf(bytes.slice(0), { maxVertices: 500000 });
+  const clipIndex = reference.animations.findIndex(animation => animation.name === clipName);
+  const crowdAsset = await parseGltf(bytes.slice(0), { maxVertices: 500000 });
+  const set = createCrowdPartsFromGltf(crowdAsset, [{ matrix: mat4.create() }], { clip: clipIndex, lods: false });
+  const frame = { ...cameraFor(1, 3, set.palette.bounds.radius, false), time: 0, exposure: 1, effects: {} };
+  reference.applyAnimation(seconds, clipIndex);
+  const referenceRenderer = new CrucibleRenderer(canvas, reference.parts, { ground: true, hdr: false, samples: 1, pixelRatio: 1, memoryBudgetMiB: 512 });
+  referenceRenderer.resize();
+  referenceRenderer.render(frame);
+  const referenceImage = Uint8ClampedArray.from(readImage(canvas));
+  referenceRenderer.dispose();
+  const crowdRenderer = new CrucibleRenderer(canvas, set.parts, { ground: true, hdr: false, samples: 1, pixelRatio: 1, memoryBudgetMiB: 512, culling: false });
+  crowdRenderer.resize();
+  set.setTime(seconds);
+  crowdRenderer.updateParts(set.parts);
+  crowdRenderer.render(frame);
+  const crowdImage = Uint8ClampedArray.from(readImage(canvas));
+  crowdRenderer.dispose();
+  let squared = 0;
+  for (let index = 0; index < referenceImage.length; index += 4) {
+    for (let channel = 0; channel < 3; channel++) squared += (referenceImage[index + channel] - crowdImage[index + channel]) ** 2;
+  }
+  const rmse = Math.sqrt(squared / (referenceImage.length / 4 * 3));
+  const position = seconds / set.palette.frameStep;
+  const onFrame = Math.abs(position - Math.round(position)) < 1e-6;
+  const dumps = dump ? { reference: imageUrl(referenceImage, canvas), crowd: imageUrl(crowdImage, canvas) } : null;
+  return { seconds, onFrame, frameStep: set.palette.frameStep, rmse, ...compareImages(referenceImage, crowdImage), dumps };
+}
+
 window.runCrowd = async (request) => {
   const canvas = document.querySelector('canvas');
   if (request.task === 'measure') return measureCrowd(canvas, request);
   if (request.task === 'instances') return measureInstances(canvas, request);
+  if (request.task === 'skinned') return measureSkinnedInstances(canvas, request);
+  if (request.task === 'gltfPicture') return checkGltfPicture(canvas, request);
   if (request.task === 'pictures') return checkPictures(canvas, request.dump);
   if (request.task === 'culling') return checkCulling(canvas);
   throw new Error(`Unknown task ${request.task}`);

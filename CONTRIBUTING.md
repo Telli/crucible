@@ -26,13 +26,13 @@ The tests are in `tests/` and the guides are in `docs/`.
 5. Add a change note (see [Change notes](#change-notes)). Do not edit `CHANGELOG.md`: two pull requests that edit it conflict on GitHub.
 6. Run `npm run preflight`, then open the pull request with `node scripts/open-pr.mjs` (see [Open the pull request](#open-the-pull-request)). The template asks what changed and how you checked it.
 
-Name the pull request `<imperative sentence> (#<issue>)`, such as `Add mesh bevel to scene_edit_mesh (#412)`. Keep one change in each pull request.
+Name the pull request `<imperative sentence> (#<issue>)`, such as `Add mesh bevel to mesh_edit (#412)`. Keep one change in each pull request.
 
 ### Open the pull request
 One command opens a pull request that passes the `PR metadata` check on its first run. Write the description to a file first (what changed, `Closes #N`, `## How I checked it`, `## Evidence`):
 
 ```sh
-node scripts/open-pr.mjs --title "Add mesh bevel to scene_edit_mesh (#412)" --body-file artifacts/pr-body.md --labels enhancement,goal:capable --milestone "0 Measure" --evidence artifacts/before.png artifacts/after.png
+node scripts/open-pr.mjs --title "Add mesh bevel to mesh_edit (#412)" --body-file artifacts/pr-body.md --labels enhancement,goal:capable --milestone "0 Measure" --evidence artifacts/before.png artifacts/after.png
 ```
 
 It runs the metadata checks locally on the description and the files changed against `origin/main` (pictures passed with `--evidence` count as evidence) and stops with every finding and its fix. It refuses an empty description or `-`. Then it pushes the branch if needed, runs one `gh pr create`, pushes the evidence with `push-evidence.mjs`, adds the pictures under `## Evidence` and reads the stored description back to check it. `--base <branch>` changes the base, and `--dry-run` prints the commands and the final description without writing anything on GitHub.

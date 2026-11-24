@@ -158,7 +158,7 @@ The setup is five steps, one page each, named in a row at the top with an icon a
 - **Performance.** One row of four cards with an icon that reads as a pixel grid getting finer (Light, Balanced, Sharp) and a loop for Automatic. Each tier shows its pixel ratio and anti-aliasing on this screen; Automatic names the tier it took and the graphics card and cores it found.
 - **Modelling.** Move snap, rotate snap, handle size and start workspace, each row led by an icon and the workspace chips by the workspace's own icon.
 - **Keys.** Three cards, Blender, Maya and Cinema 4D, each with the program's logo and four of its real keys (Move, Rotate, Scale, Frame) read from the keymap, so the difference is shown.
-- **AI agent.** The prompt the **Agent** menu copies, beside a chat mark, and a button that copies it.
+- **AI agent.** The prompt the **Agent** menu copies, beside a chat mark, and a button that copies it. When the page runs inside a host that offers its own built-in agent (`window.crucibleShell.builtInAgent`, with async `isSignedIn()` and `signIn()`; `signIn()` resolves to `{ signedIn }`), a sign-in button sits above the prompt and shows when it is waiting and when it is signed in. It never blocks: Skip still closes the setup, and the prompt stays the route for an agent of your own.
 
 Finishing, skipping or pressing Esc marks it done. Choices are the Settings preferences, so nothing is stored twice. All five steps share one grid cell, so the dialog is as tall as the tallest step (capped at the window height minus 48 pixels, then it scrolls inside) and never changes size between steps; a step with one block fills the cell.
 
@@ -209,7 +209,9 @@ await studio.ready;
 - The unsaved mark follows every edit of the scene, camera rows, lens chips and view chips included. Orbiting, zooming and panning are navigation and do not set it. Picking a mesh while the Sun, a light or the camera is selected leaves the Look or Camera tab for the mesh's own tab (Material, or Object from the camera).
 - Studio keeps the scene you are editing as a draft in the browser's `localStorage` (a moment after the edits pause; skipped when the recipe is above about 2 MB, which also drops the older draft). Save, New and Open clear it. When Studio starts and a draft differs from the scene that opened, a notice offers **Restore** (the draft comes back as one undo step) or **Discard**; the first edit made while it is on offer counts as carrying on with the current scene, so the notice closes and the draft follows the new work. A host with no storage gets no draft.
 - `studio.loadExternalTextFile(text)`, the Open dialog and the recipe JSON dialog load catalog files the same way. `studio.openRecipe(recipe)` does it for a recipe object; `studio.loadRecipe(recipe)` stays synchronous and expects the files to be loaded already.
+- A recipe with a light `bake` bakes at most once per load, and not at all when nothing the bake reads changed: the copy Studio builds on the side to learn the file's recipe skips the bake, and the bake it traced before is kept by content (see "What is reused" in `light-bake.md`). Moving a node or changing a material colour still traces again.
 - Without the function a scene needs, the scene on screen stays as it was and the status line says which file is missing and which function to pass.
+- A recipe with a boolean mesh edit (`"op": "boolean"`) loads the Manifold library first, in every one of those paths and for the recipe passed to `createStudio`, and only when a recipe needs it. Studio finds it with `import('manifold-3d')`, so install the optional peer `manifold-3d`. A host that serves it from elsewhere calls `setManifoldModuleLoader(() => import('/vendor/manifold.js'))` from `crucible/addons/agent-scene`, before opening the scene. When the library cannot load, the scene on screen stays as it was and the status line names the install command.
 - Studio loads no Draco or KTX2 decoder. Serve a GLB that uses neither.
 
 ### Hooks
@@ -247,6 +249,8 @@ The viewport draws a scene's volume fog. Post passes written as shader code and 
 
 ## Scenes with a large scan
 
+An edit of a baked scene shows before its light bake is done (issue #3052; [light bake](https://crucible.codepawl.com/light-bake.md#an-edit-that-shows-before-its-bake-issue-3052)). `createStudioController` takes `bakeWhileSettling`: `'previous'` (the default) draws the last light on the parts the edit left alone, `'none'` draws no light until the bake lands, `'wait'` keeps the edit waiting for its bake. `controller.bakePending` tells the page a bake is out of date, and `controller.settleBake()` finishes it before a still or an export. The controller watches `scene.bakePending` with the same 32 ms timer as the flush search and calls `onChange` once with `{ kind: 'flush' }` when the bake lands. While a bake is pending Studio shows a small sun icon with the words Baking light under the status pill, announced once to screen readers, with its pulse off under `prefers-reduced-motion`; it goes when the bake lands.
+
 An edit of a scene that holds 100,000 or more triangles to rank returns at once and ranks the near-coplanar faces right after, in slices of about 8 ms (see [the agent scene](agent-scene.md)). The viewport draws on demand, so the controller watches `scene.flushPending` with one 32 ms timer while a search waits, and when it ends the controller calls `onChange` once with `{ kind: 'flush' }`. Studio answers with one redraw and no panel update. Nothing is scheduled while no search waits, and `dispose()` and a change of scene stop the timer.
 
 Parts that arrive after the renderer was built can need a shader feature its main program left out: the first duplicate of an object makes two parts share one batch, which needs the instanced code. The driver takes about 190 ms to link that program. A scheduled frame does not wait for it: the viewport keeps its last picture, Studio asks the driver every 8 ms whether the program is linked (`KHR_parallel_shader_compile`), and draws the waiting scene when it is. `renderNow()` and a still wait for the driver instead, because their caller reads the canvas. Only the main program is deferred this way; a program that a pass builds on its first draw still links inside that frame.
@@ -260,6 +264,56 @@ When an agent edits the scene, Studio shows a pointer with the agent's name, the
 - `studio.showAgentEdit({ name, nodeIds })` points at objects directly, for a host that hears about each agent step as it happens.
 
 Each agent gets its own colour, picked from its name out of five brand colours, so two agents are easy to tell apart; the pointer, the name tag and the outline share it. The pointer keeps to its object while you orbit, visits at most eight objects for one edit, and with reduced motion it steps from object to object without gliding.
+
+## Chat with an agent through the host
+
+Some people want one window: type to the agent inside the app that shows Studio and watch it edit the scene. Studio ships no model client, no chat panel and no key handling, so this adds zero bytes to it. The app that embeds Studio (the host) owns the chat and the agent, and Studio shows the result. Keeping your own agent app beside Studio works as before.
+
+A trial host proved the path with what Studio has today: a message typed in the app reached an agent command-line tool the person was already signed in to, the agent edited the open scene through the Crucible MCP server, and Studio showed each edit with the agent pointer about a second after it was made. The contract below comes from that trial and needs nothing new from Studio. The trial ran steps 1 and 3 to 7 and the rules for the agent. `stop` and steps 2, 8 and 9 are read from Studio's code and no host has run them yet.
+
+### What the host owns
+
+| Part | Rule |
+|---|---|
+| The chat panel | The host draws it outside the Studio container and styles it with the brand tokens. Studio has no slot for it yet. |
+| The agent | The host starts and stops it. An agent command-line tool with the Crucible MCP server is one way; a model API called from the host is another. |
+| Keys and tokens | They stay in the host's secure storage or in the agent tool's own sign-in. Never in the page, in browser storage or in the scene recipe. |
+| The scene file | The host reads and writes it. The page never gets a file path it can open by itself. |
+
+### Messages between the panel and the host
+
+The panel talks to the host over whatever channel the host has (an IPC bridge in a desktop app). Three messages are enough:
+
+| Message | Direction | Fields |
+|---|---|---|
+| `send` | panel to host | `prompt`, a string. The host answers `{ started: true }`, or `{ started: false, reason }` when a run is in progress or no scene file is open. One run at a time. |
+| `stop` | panel to host | None. The host ends the run and every process it started for it. Edits already made stay in the scene. |
+| `event` | host to panel | `{ kind: 'text', text }` for each piece of the reply, `{ kind: 'step', toolName }` when the agent calls a tool, `{ kind: 'scene-written', toolName }` after an edit is in the scene file, `{ kind: 'done', failed, seconds }` and `{ kind: 'error', text }`. |
+
+The host accepts `send` and `stop` only from its own page, and passes the prompt to the agent as one argument, never through a shell.
+
+### One run, step by step
+
+1. **Wait for the scene.** `studio.ready` covers the recipe passed to `createStudio`. A page that opens the scene file afterwards (from a URL or a dialog) must wait for that load too. Start a run only when the file name shows in the top bar, or `studio.exportRecipe()` lists the scene's nodes.
+2. **Put the person's edits in the file.** The agent opens the scene from the file, so unsaved edits in Studio are not in it. Before a run the host writes `studio.exportRecipe()` to the file, or refuses to start while the scene is dirty (`onDirtyChange` reports it). A load of the agent's edit replaces what is on screen without asking, and an edit the person makes during a run never reaches the agent's session, so the host locks editing while a run is in progress or tells the person their edits will be replaced.
+3. **Open the file in the agent's session before the agent's first tool call**, so the agent edits the open scene and does not build a new one. With the MCP server this is one `scene_create` call with the file's recipe. A request the host adds to the agent's session carries the same `_meta` envelope as the agent client's own requests, or the server refuses it.
+4. **Write the exported form once.** The recipe the session exports spells out defaults a hand-written file leaves out, so the first export differs from the file in every node. Write it to the file once at open and load it with `agent: false`. After that, each step differs by what the agent changed.
+5. **After each tool call that changes the scene, export and write the file before the agent sees the tool's answer.** The MCP server keeps the scene in memory and writes no file; `scene_export_recipe` returns the recipe. The tools that change the scene return a new revision: `scene_create`, `scene_create_asset`, `scene_apply`, `scene_restore`, `mesh_edit` and `mesh_stack`. Write the file in one move (a temporary file, then a rename).
+6. **Show the step.** Call `studio.loadExternalTextFile(text, { agent: true, filePath, fileName })` with the text just written. Studio finds what changed, moves the pointer there and announces it ("Agent edited cushion"). Pass the same `filePath` and `fileName` on every load: a load without `filePath` clears the watched file, the green dot and the Save target. Pass `agent: { name }` to name the agent.
+7. **One load at a time, in the order written.** Await each load before the next. Two edits can be written closer together than one load takes.
+8. **Respect a paused reload.** While `studio.shouldAutoReloadExternal()` is false, keep the newest text and ask again on a timer: Studio sends no event when the person turns reload back on.
+9. **Report a load that fails.** `loadExternalTextFile` rejects when the recipe cannot be loaded, and the scene on screen stays what it was. Send the message to the panel as an `error` event.
+
+`studio.showAgentEdit({ name, nodeIds })` points at objects without a load, for a host that already applied the change another way.
+
+### Keep the agent to the scene
+
+An agent command-line tool started by the host should see only the scene tools:
+
+- Start it in an empty folder, with only the Crucible MCP server configured and its built-in file and shell tools off.
+- Do not load the person's own instructions or settings for that tool into the run. They change how the agent talks and what it may do.
+- Tell it in the first line of the prompt that the scene is already open and that it should not create a new one.
+- Small edits, one visible change each, give the person a pointer per step.
 
 ## Diagnostics
 

@@ -3,7 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
+import { readFileSync } from 'node:fs';
 import { createAgentMcpServer } from '../scripts/mcp-server.mjs';
+import { REVIEW_CAMERA_FIELDS } from '../scripts/agent-review.mjs';
 import { AGENT_SCENE_CAPABILITIES, createAgentScene } from '../src/agent-scene.js';
 import { MATERIAL_PATTERN_TYPES } from '../src/agent-scene-capabilities.js';
 import { MESH_EDIT_OPERATIONS, STACK_OPERATIONS } from '../src/mesh-operations.js';
@@ -47,7 +49,7 @@ test('every alphaMode that scene_capabilities lists is accepted by the validator
   for (const alphaMode of listed) {
     assert.doesNotThrow(() => createAgentScene(recipeWithMaterial({ alphaMode })), `alphaMode ${alphaMode}`);
   }
-  assert.throws(() => createAgentScene(recipeWithMaterial({ alphaMode: 'multiply' })), /opaque, blend, add/);
+  assert.throws(() => createAgentScene(recipeWithMaterial({ alphaMode: 'multiply' })), /opaque, mask, blend, add/);
 });
 
 test('the material schema topic takes the alphaModes scene_capabilities lists', async context => {
@@ -102,4 +104,34 @@ test('particle stop is described as an absolute time in scene_capabilities', asy
   const answer = await topic(client, 'particles');
   assert.match(JSON.stringify(answer), /stop \(an absolute time in seconds/);
   assert.doesNotMatch(JSON.stringify(answer), /stop \(seconds, after start/);
+});
+
+
+test('a rejected particle stop says it is an absolute scene time, not a duration after start', () => {
+  const recipe = { format: 'crucible.scene', schemaVersion: 1,
+    geometries: [{ id: 'dot', type: 'box' }], materials: [{ id: 'paint', color: [1, 1, 1] }],
+    nodes: [{ id: 'spark', geometry: 'dot', material: 'paint' }],
+    particles: { systems: [{ node: 'spark', count: 4, rate: 2, lifetime: 0.5, speed: [1, 2], size: 1, start: 1.5, stop: 0.2 }] } };
+  assert.throws(() => createAgentScene(recipe), /\.stop: got 0\.2; expected an absolute scene time in seconds, above start \(1\.5\), such as 3\.5 \(stop is not a duration after start\)/);
+});
+
+test('the effects and ambientOcclusion topics both give the ambient occlusion default the code uses (0, off)', async context => {
+  const client = await connectClient(context);
+  assert.equal(AGENT_SCENE_CAPABILITIES.ambientOcclusion.default, 0);
+  const ambientOcclusionTopic = await topic(client, 'ambientOcclusion');
+  assert.equal(ambientOcclusionTopic.value.default, 0);
+  const effectsText = JSON.stringify(await topic(client, 'effects'));
+  assert.match(effectsText, /Default 0 \(off\) when unset/);
+  assert.doesNotMatch(effectsText, /0\.7/);
+});
+
+test('scene_review camera schema matches the accepted review camera fields and materials skill documents mask mode', async context => {
+  const client = await connectClient(context);
+  const { tools } = await client.listTools();
+  const reviewTool = tools.find(tool => tool.name === 'scene_review');
+  const shotCameraProperties = reviewTool.inputSchema.properties.shots.items.properties.camera.properties;
+  assert.deepEqual(Object.keys(shotCameraProperties).sort(), [...REVIEW_CAMERA_FIELDS].sort());
+  const materialsSkill = readFileSync(new URL('../skills/build-crucible-scene/references/materials.md', import.meta.url), 'utf8');
+  assert.match(materialsSkill, /alphaCutoff/);
+  assert.doesNotMatch(materialsSkill, /has no `mask` mode/i);
 });

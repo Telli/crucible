@@ -513,6 +513,113 @@ test('a compressed KTX2 format Crucible does not upload fails with a clear messa
   await assert.rejects(parseGltf(ktx2BaseColorDocument(8), { decoders: { ktx2: loader } }), /does not upload/);
 });
 
+function ktx2HeaderChunk(size) {
+  const header = new Uint8Array(80);
+  header.set([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a]);
+  new DataView(header.buffer).setUint32(20, size, true);
+  new DataView(header.buffer).setUint32(24, size, true);
+  return header;
+}
+
+test('KTX2 decode prefers parse with an owned buffer copy and falls back to load when parse is absent', async context => {
+  mockImageBitmap(context);
+  const texture = compressedKtx2Texture(8);
+  const header = ktx2HeaderChunk(8);
+  const seenBuffers = [];
+  let loadCalls = 0;
+  const loaderWithParse = {
+    workerConfig: { bptcSupported: true },
+    parse(buffer, onLoad) {
+      seenBuffers.push(buffer);
+      // Simulate worker transfer detaching/clearing the passed ArrayBuffer.
+      new Uint8Array(buffer).fill(0);
+      onLoad(texture);
+    },
+    load(url, onLoad) {
+      loadCalls++;
+      onLoad(texture);
+    },
+  };
+  const glbBytes = new Uint8Array(ktx2BaseColorDocument(8));
+  const snapshot = new Uint8Array(glbBytes);
+  const asset = await parseGltf(glbBytes.buffer, { decoders: { ktx2: loaderWithParse } });
+  assert.equal(seenBuffers.length, 1);
+  assert.notEqual(seenBuffers[0], glbBytes.buffer);
+  assert.equal(loadCalls, 0);
+  assert.deepEqual(glbBytes, snapshot);
+  assert.equal(asset.parts[0].material.map.image.compressed.name, 'bc7');
+
+  const fallbackLoader = ktx2LoaderReturning(texture, { bptcSupported: true });
+  await parseGltf(ktx2BaseColorDocument(8), { decoders: { ktx2: fallbackLoader } });
+});
+
+test('KTX2 decode dispatches all unique textures across a GLB concurrently and shares in-flight images', async context => {
+  mockImageBitmap(context);
+  const texture = compressedKtx2Texture(8);
+  const header = ktx2HeaderChunk(8);
+  const glb = triangleDocument({
+    extraChunks: [header, header, header],
+    edit: document => {
+      document.images = [
+        { bufferView: 2, mimeType: 'image/ktx2' },
+        { bufferView: 3, mimeType: 'image/ktx2' },
+        { bufferView: 4, mimeType: 'image/ktx2' },
+      ];
+      document.textures = [
+        { extensions: { KHR_texture_basisu: { source: 0 } } },
+        { extensions: { KHR_texture_basisu: { source: 1 } } },
+        { extensions: { KHR_texture_basisu: { source: 2 } } },
+        { extensions: { KHR_texture_basisu: { source: 0 } } },
+      ];
+      document.materials = [
+        {
+          pbrMetallicRoughness: {
+            baseColorTexture: { index: 0 },
+            metallicRoughnessTexture: { index: 1 },
+          },
+          normalTexture: { index: 2 },
+        },
+        {
+          pbrMetallicRoughness: {
+            baseColorTexture: { index: 3 },
+          },
+        },
+      ];
+      document.meshes.push({ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 }, material: 1 }] });
+      document.nodes.push({ mesh: 1 });
+      document.scenes[0].nodes.push(1);
+      document.extensionsUsed = ['KHR_texture_basisu'];
+      document.extensionsRequired = ['KHR_texture_basisu'];
+    },
+  });
+  const pending = [];
+  let settling = false;
+  const record = (onLoad) => {
+    if (settling) onLoad(texture);
+    else pending.push(() => onLoad(texture));
+  };
+  const loader = {
+    workerConfig: { bptcSupported: true },
+    parse(buffer, onLoad) {
+      record(onLoad);
+    },
+    load(url, onLoad) {
+      record(onLoad);
+    },
+  };
+  const promise = parseGltf(glb, { decoders: { ktx2: loader } });
+  // Wait long enough for cooperative slices and microtasks without resolving any transcode yet.
+  for (let tick = 0; tick < 10 && pending.length < 3; tick++) {
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  const initialDispatched = pending.length;
+  settling = true;
+  while (pending.length) pending.shift()();
+  const asset = await promise;
+  assert.equal(initialDispatched, 3, `all 3 distinct KTX2 images should dispatch in parallel (got ${initialDispatched})`);
+  assert.equal(asset.parts.length, 2);
+});
+
 // A 2 by 2 image whose four texels differ, with its pixels attached the way a decoded image carries them.
 function patternBitmap() {
   const data = new Uint8Array([10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255, 40, 0, 0, 255]);

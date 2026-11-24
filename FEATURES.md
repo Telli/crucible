@@ -387,6 +387,13 @@ optional `Ready` expression the driver waits for, and `Drive`.
 - Source: `scripts/mcp-server.mjs:976`
 - Drive: none: needs an MCP client (`npm run mcp`)
 
+### `scene_fit_look`
+- Name: Fit look parameters to reference colours by bounded least squares over OKLab region means
+- Surface: MCP
+- Reach: MCP tool `scene_fit_look`
+- Source: `scripts/mcp-server.mjs:1211`
+- Drive: none: needs an MCP client (`npm run mcp`)
+
 ### `scene_review`
 - Name: Compare one to four independent camera or motion samples in one labeled PNG grid
 - Surface: MCP

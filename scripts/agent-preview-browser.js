@@ -27,15 +27,18 @@ import { agentGroundPlacement, createAgentGround, placeAgentGround, FLOOR_COLOR 
 import { groundBounceEnvironment } from '../src/ground-bounce.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
 import { parseGltf } from '../src/gltf.js';
+import { createPreviewKtx2Decoder } from './agent-preview-ktx2.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { clipDisplayName, resolveClipIndex } from '../src/clip-name.js';
 import { exportGlb } from '../src/export.js';
 import { omittedFromGlb } from '../src/glb-export-omissions.js';
+import { bakeMovingPartTracks, hasBakedNodeTracks, motionClip } from '../src/glb-export-motion.js';
 import { matrixFrame } from '../src/export-skeleton.js';
 import '../src/texture-update.js';
 import { staleRevisionMessage } from '../src/agent-errors.js';
 import { sampleMotionAtZeroForGround } from './motion-ground-sample.js';
 import { updatePartVertices } from '../src/update-part-vertices.js';
+import { isLiveGeometry, isReindexedGeometry } from '../src/live-geometry.js';
 import { rasterOptionsFor } from './agent-render-quality.mjs';
 import { hasPatternTextures } from './agent-preview-textures.js';
 import { TEXTURE_SEQUENCE_LIMITS } from '../src/texture-sequence-limits.js';
@@ -395,6 +398,16 @@ function syncShadowCascades(record) {
   }
 }
 
+// A textured scene took a new renderer for every pose that moved its sea, so each frame fitted its shadow cascades exactly. The
+// kept renderer holds the wider fits of a moving camera (cascaded-shadows.js chooseFit), which shade the textured land
+// differently, so it forgets them when the sea moves to a new time (#3038).
+function forgetShadowFitsOfMovedSea(record) {
+  const { scene, renderer } = record;
+  if (!record.rendererTextured || !renderer.shadowCascades || scene.motionTime === record.seaFitTime) return;
+  record.seaFitTime = scene.motionTime;
+  if (scene.parts.some(part => isReindexedGeometry(part.geometry))) renderer.shadowCascades.forgetFits();
+}
+
 function draw(record, time = 0, camera = record.scene.camera, frameOptions = {}) {
   // A heavy edit ranks its coplanar triangles right after it returns (#2905); a frame never draws them unranked.
   record.scene.settleFlush?.();
@@ -419,13 +432,13 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   } else {
     record.renderer.updateParts(record.scene.parts);
   }
-  // Cloth rewrites its geometry in place, so a seek only uploads the new positions and normals.
-  if (agentSceneModuleLoaded('cloth')) {
-    const { isLiveClothGeometry } = agentSceneModule('cloth');
-    for (const part of record.scene.parts) {
-      if (isLiveClothGeometry(part.geometry)) updatePartVertices(record.renderer, part, part.geometry.positions, part.geometry.normals);
-    }
+  // Cloth and a sea driven by an ocean time track rewrite their geometry in place, so a seek only uploads the new values.
+  for (const part of record.scene.parts) {
+    if (!isLiveGeometry(part.geometry)) continue;
+    const { positions, normals, skyVisibility, indices } = part.geometry;
+    updatePartVertices(record.renderer, part, positions, normals, { skyVisibility, ...(isReindexedGeometry(part.geometry) && { indices }) });
   }
+  forgetShadowFitsOfMovedSea(record);
   syncAutomaticGround(record);
   syncShadowCascades(record);
   syncSequenceTextures(record);
@@ -449,7 +462,7 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   const frame = { ...camera, environment: litEnvironment(record.scene.parts, environment, Boolean(record.renderer.groundPart)), effects, exposure: effects.exposure, time, lines: environment.lines, ...windFrame(environment), ...renderOptions, effects: effectsWithFStop(renderOptions.effects ?? effects, camera) };
   // Object motion blur, a mask by parts and a user pass with `objects` all read the object ID pass.
   let needsObjectIds = Boolean(objectMotion) || postPasses.some(pass => pass.objects);
-  if (effects.colorBalance || effects.glare || effects.lensDistortion || effects.stylize || effects.composite) {
+  if (effects.colorBalance || effects.glare || effects.lensDistortion || effects.stylize || effects.composite || effects.localToneMapping) {
     const postSteps = agentSceneModule('postSteps');
     postSteps.installPostSteps(record.renderer);
     needsObjectIds ||= postSteps.usesObjectMask(postSteps.resolvePostSteps(frame.effects));
@@ -485,6 +498,15 @@ function syncMeshBlend(record) {
 }
 
 const PROFILE_FRAME_SECONDS = 1 / 60;
+
+// effects.autoExposure picks its exposure from a drawn frame, so scene_inspect draws one at time 0 and reports what the meter chose.
+function reportChosenExposure(record, inspection) {
+  const autoExposure = inspection.look?.autoExposure;
+  if (!autoExposure || !record.renderer) return;
+  draw(record, 0);
+  const chosen = record.renderer.autoExposure;
+  if (chosen) autoExposure.chosen = { exposure: chosen.exposure, target: chosen.target, meteredLuminance: chosen.luminance };
+}
 
 // What the scene costs to draw as it stands: frame time over real frames at the preview size, the draw calls and triangles
 // the GPU receives in one frame, the texture memory the renderer holds and the nodes with the most triangles.
@@ -619,6 +641,11 @@ function initializeRenderer(scene, { memoryBudgetMiB, backend, transparent = fal
     // Every preview and job frame is read back or exported, so none may draw with the fallback post program of a build in flight (#1767).
     exactFrames: true,
   }))), null, coplanarCarryFor(scene));
+  // Wet ground with puddles mirrors the scene in them: the parts the scene flagged get the mirror picture (src/water-reflection.js).
+  if (agentSceneModuleLoaded('waterReflection')) {
+    const water = agentSceneModule('waterReflection');
+    water.attachWaterReflection(renderer, water.wetMirrorSurface(scene.parts));
+  }
   // Outlines, toon light and polylines draw only for a frame that carries environment.lines; user passes run last, on the finished frame.
   // Mesh blend installs before line art, so its stage runs first and the lines draw over the blended colour; it blends only the
   // parts whose nodes carry `blend` (syncMeshBlend), so a recipe without it draws as before.
@@ -693,12 +720,26 @@ setPhysicsModuleLoader(() => import(/* @vite-ignore */ new URL('/vendor/rapier.j
 // synchronous. The boolean engine is WebAssembly and loads asynchronously, once, only for calls that need it.
 
 let queryOnly;
+let gpuKtx2Decoder = null;
+let rgbaKtx2Decoder = null;
 const ASSET_DECODE_LIMITS = agentAssetDecodeOptions();
+const ASSET_DECODE_LIMITS_WITH_MESH_CHECKS = agentAssetDecodeOptions({ checkMesh: true });
+
+function previewKtx2Decoder(preferRgba = false) {
+  if (preferRgba) return (rgbaKtx2Decoder ??= createPreviewKtx2Decoder({ preferRgba: true }));
+  return (gpuKtx2Decoder ??= createPreviewKtx2Decoder());
+}
 
 // An agent cannot pass loadGltf options, so a limit error names the catalog limits instead of "Fix: pass { ... }".
-async function parseCatalogAsset(buffer) {
+async function parseCatalogAsset(buffer, { checkMesh = false } = {}) {
+  const options = checkMesh ? ASSET_DECODE_LIMITS_WITH_MESH_CHECKS : ASSET_DECODE_LIMITS;
   try {
-    return await parseGltf(buffer, ASSET_DECODE_LIMITS);
+    try {
+      return await parseGltf(buffer, { ...options, decoders: { ktx2: previewKtx2Decoder() } });
+    } catch (error) {
+      if (!/cannot be resampled to a shared KHR_texture_transform/.test(String(error?.message))) throw error;
+      return await parseGltf(buffer, { ...options, decoders: { ktx2: previewKtx2Decoder(true) } });
+    }
   } catch (error) {
     throw withCatalogLimitAdvice(error);
   }
@@ -819,10 +860,29 @@ function seekForExport(record, motionTime) {
 }
 
 // The scene's parts already carry the current pose, including IK and node overrides, so skinned parts export it as is.
-function posedExport(record) {
-  const rig = record.scene.rigExport?.() ?? { nodes: [], clips: [] };
-  const options = rig.nodes.length ? rig : {};
-  return { parts: record.scene.parts.map(withoutRoundoffShear), options: { ...options, nodePaths: nodePathsOf(record.scene.exportRecipe().nodes) } };
+// Without a motionTime the recipe's node tracks are baked into one clip with the bone clip, and the camera and the point
+// and spot lights are written beside the parts. `written` tells omittedFromGlb what the file now carries.
+function posedExport(record, { bakeMotion }) {
+  const { scene } = record;
+  const recipe = scene.exportRecipe();
+  const rig = scene.rigExport?.() ?? { nodes: [], clips: [] };
+  const options = rig.nodes.length ? { ...rig } : {};
+  const written = { boneIds: rig.clips.length ? rig.nodes.map(node => node.id) : [] };
+  if (bakeMotion && hasBakedNodeTracks(recipe)) {
+    const clip = motionClip(recipe.motion, bakeMovingPartTracks(scene, recipe.motion), rig.clips[0]);
+    if (clip) options.clips = [clip];
+    written.nodeTracks = true;
+  }
+  if (recipe.camera) {
+    options.camera = scene.camera;
+    written.camera = true;
+  }
+  const { pointLights = [], spotLights = [] } = recipe.environment ?? {};
+  if (pointLights.length || spotLights.length) {
+    options.lights = { pointLights, spotLights };
+    written.lights = true;
+  }
+  return { parts: scene.parts.map(withoutRoundoffShear), options: { ...options, nodePaths: nodePathsOf(recipe.nodes) }, written };
 }
 
 /** "parent > child" for each node that has a parent, so an export error says where the node sits. */
@@ -869,7 +929,7 @@ function clipExport(record, clipReference) {
   const clip = { ...sourceClip, name, tracks: [...sourceClip.tracks, ...weightTracksFromGltfAnimation(animation)] };
   // Edited parts export their edited geometry on the source part's own matrix, skin and morph.
   const parts = asset.parts.map((part, index) => scene.parts[index].geometry === part.geometry ? part : { ...part, geometry: scene.parts[index].geometry });
-  return { parts, options: { nodes: asset.nodes, clips: [clip] } };
+  return { parts, options: { nodes: asset.nodes, clips: [clip] }, written: { boneIds: asset.nodes.map(node => node.id) } };
 }
 
 function bytesToBase64(bytes) {
@@ -1285,8 +1345,10 @@ window.__agentPreview = {
     try {
       // Labels, mesh reports and motion read the on-demand modules on any asset, not only one with mesh edits.
       await loadAllAgentSceneModules();
-      asset = await parseCatalogAsset(bytes.buffer);
-      return createPreview(createAgentAssetScene(asset, input.recipe, { sources: await decodeMotionSources(input.sources) }), input, asset);
+      asset = await parseCatalogAsset(bytes.buffer, { checkMesh: input.checkMesh === true });
+      const preview = createPreview(createAgentAssetScene(asset, input.recipe, { sources: await decodeMotionSources(input.sources) }), input, asset);
+      // The decoder's warnings, with the mesh-check counts among them, come back only when the caller asked for the checks.
+      return input.checkMesh === true ? { ...preview, assetWarnings: asset.warnings } : preview;
     } catch (error) {
       asset?.dispose();
       throw error;
@@ -1296,6 +1358,7 @@ window.__agentPreview = {
     const frames = profileFrameCount({ profile, profileFrames: requestedFrames });
     const record = requireSession(sessionId);
     const inspection = { sessionId, ...record.scene.inspect(options), kernels: kernelReport() };
+    reportChosenExposure(record, inspection);
     return profile ? { ...inspection, profile: profileScene(record, frames) } : inspection;
   },
   inspectMeshes({ sessionId, ...options }) {
@@ -1416,6 +1479,20 @@ window.__agentPreview = {
     }
     return { diagnostics: viewProblems(record, record.scene.camera, undefined, { placement: true }) };
   },
+  // One candidate frame for scene_fit_look: edit the live scene, draw it, and return the PNG. The runtime puts the recipe back with
+  // restoreRecipe when the fit ends, so the caller's scene is unchanged apart from its revision counter.
+  fitLookFrame({ sessionId, operations }) {
+    const record = requireSession(sessionId);
+    if (record.asset) throw new TypeError('scene_fit_look supports procedural recipe scenes, not an imported asset scene.');
+    validatePreviewCamera(candidateCamera(record, operations));
+    record.scene.apply(operations, { expectedRevision: record.scene.revision });
+    return this.look({ sessionId });
+  },
+  restoreRecipe({ sessionId, recipe }) {
+    const record = requireSession(sessionId);
+    record.scene.restoreRecipe(recipe, { expectedRevision: record.scene.revision });
+    return mutationStatus(record);
+  },
   // One frame for scene_ask_user: the look, plus the camera it was drawn with so the marks can be turned into rays later.
   annotateFrame({ sessionId, motionTime }) {
     const frame = this.look({ sessionId, motionTime });
@@ -1531,14 +1608,14 @@ window.__agentPreview = {
   exportGlb({ sessionId, clip, motionTime, maxTextureSize, maximumBytes }) {
     const record = requireSession(sessionId);
     if (motionTime !== undefined) seekForExport(record, motionTime);
-    const { parts, options } = clip === undefined ? posedExport(record) : clipExport(record, clip);
+    const { parts, options, written } = clip === undefined ? posedExport(record, { bakeMotion: motionTime === undefined }) : clipExport(record, clip);
     const binary = exportGlb(parts, { ...options, ...(maxTextureSize === undefined ? {} : { maxTextureSize }) });
     if (binary.byteLength > maximumBytes) {
       throw new RangeError(`The GLB is ${binary.byteLength} bytes, above the ${maximumBytes} byte limit. Lower maxTextureSize or simplify the scene.`);
     }
     return { sessionId, revision: record.scene.revision, bytes: binary.byteLength,
       parts: parts.length, clips: options.clips?.length ?? 0,
-      omitted: omittedFromGlb(record.scene.exportRecipe(), options.clips?.length ? (options.nodes ?? []).map(node => node.id) : []), data: bytesToBase64(new Uint8Array(binary)) };
+      omitted: omittedFromGlb(record.scene.exportRecipe(), written), data: bytesToBase64(new Uint8Array(binary)) };
   },
   dispose({ sessionId }) {
     releaseRecord(lookupSession(sessionId));

@@ -315,8 +315,9 @@ function descendantIdsOf(nodes, rootId) {
 // A placed catalog scan draws as parts named `<node id>/<index>`, one per mesh of the file; they belong to that node.
 const SCAN_PART_SUFFIX = /\/\d+$/;
 
+// Grown vegetation and placed assets name their parts "<node>/0/bark" and carry the node id in `group`.
 function ownsPart(nodeIds, part) {
-  return nodeIds.has(part.name) || nodeIds.has(part.name.replace(SCAN_PART_SUFFIX, ''));
+  return nodeIds.has(part.name) || nodeIds.has(part.name.replace(SCAN_PART_SUFFIX, '')) || nodeIds.has(part.group);
 }
 
 function partClearanceAlongNormal(parts, excludedIds, worldNormal, nodes, worldMatrices) {
@@ -636,8 +637,13 @@ export function createStudioController({
   maxHistory = 32,
   onChange,
   measureOperation = (name, operation) => operation(),
+  bakeWhileSettling = 'previous',
 } = {}) {
+  if (!['previous', 'none', 'wait'].includes(bakeWhileSettling)) {
+    throw new RangeError(`bakeWhileSettling must be 'previous', 'none' or 'wait', got ${JSON.stringify(bakeWhileSettling)}.`);
+  }
   let currentScene = validateSceneHandle(initialScene);
+  showEditsBeforeTheirBake(currentScene);
   let moveSnapStep = TRANSLATION_SNAP_STEP;
   let rotateSnapDegrees = ROTATION_SNAP_DEGREES;
   let gizmoPixels = GIZMO_SCREEN_PIXELS;
@@ -691,17 +697,27 @@ export function createStudioController({
   let flushTimer = null;
 
   function watchPendingFlush() {
-    if (flushTimer !== null || !currentScene.flushPending) {
+    if (flushTimer !== null || !isSettling()) {
       return;
     }
     flushTimer = setTimeout(() => {
       flushTimer = null;
-      if (currentScene.flushPending) {
+      if (isSettling()) {
         watchPendingFlush();
       } else {
         notify({ kind: 'flush' });
       }
     }, FLUSH_WATCH_MILLISECONDS);
+  }
+
+  // An edit of a baked scene shows before its light bake is done (#3052): 'previous' draws the last light meanwhile, 'none' draws
+  // none, 'wait' keeps the edit waiting for its bake. The viewport is told once when the bake lands, like a deferred flush search.
+  function showEditsBeforeTheirBake(scene) {
+    scene.setBakeDeferral?.(bakeWhileSettling === 'wait' ? null : bakeWhileSettling);
+  }
+
+  function isSettling() {
+    return currentScene.flushPending || Boolean(currentScene.bakePending);
   }
 
   function stopWatchingFlush() {
@@ -901,17 +917,23 @@ export function createStudioController({
     stopWatchingFlush();
     // A drag in progress belongs to the scene it began on.
     dragState = null;
+    if (currentScene !== scene) {
+      currentScene.cancelBake?.();
+    }
     currentScene = scene;
+    showEditsBeforeTheirBake(scene);
     settleSelectionAndMotion();
   }
 
   // A recipe from a file or an agent leaves out the fields the scene fills in, so it is built once on the side to learn the
-  // recipe it stands for. When the scene on screen differs from that only by what scene operations can set, they are applied
+  // recipe it stands for. When the scene on screen differs from that only by what scene operations can set or add or remove, they are applied
   // there and the parts, and the textures the renderer holds for them, stay (#2842). Otherwise the built scene is the new one.
+  // The side build is recipe only: no light bake and no staging of its parts, which cost seconds on a scene of scans and which
+  // the operations pay once on the scene on screen. A candidate that has to be installed is built again in full.
   function loadRecipeKeepingScene(recipeInput) {
-    const candidate = createAgentScene(recipeInput, {}, scenePoolOptions());
-    if (!restoreRecipeInPlace(currentScene.exportRecipe(), candidate.exportRecipe())) {
-      installScene(candidate);
+    const candidate = createAgentScene(recipeInput, {}, { ...scenePoolOptions(), recipeOnly: true });
+    if (!restoreRecipeInPlace(currentScene.exportRecipe(), candidate.exportRecipe(), { allowRecordChanges: true })) {
+      installScene(createAgentScene(recipeInput, {}, scenePoolOptions()));
     }
   }
 
@@ -967,10 +989,14 @@ export function createStudioController({
     return (2 * distance * Math.tan((fieldOfViewDegrees * Math.PI) / 360)) / height;
   }
 
-  function projectWorldPoint(worldPoint) {
-    const coordinates = assertFiniteVector(worldPoint, 3, 'worldPoint');
+  // The camera matrices are built once, so a loop over a node's vertices does not read (and copy) the scene's environment for each point (#2842).
+  function worldPointProjector() {
     const { viewProjection } = cameraMatrices(viewCamera(), width / height, Boolean(currentScene.environment?.world));
-    return projectPointWithMatrix(viewProjection, coordinates, width, height);
+    return worldPoint => projectPointWithMatrix(viewProjection, assertFiniteVector(worldPoint, 3, 'worldPoint'), width, height);
+  }
+
+  function projectWorldPoint(worldPoint) {
+    return worldPointProjector()(worldPoint);
   }
 
   function screenRay(pixelX, pixelY) {
@@ -1193,12 +1219,13 @@ export function createStudioController({
     const stride = Math.max(1, Math.ceil(totalVertices / OUTLINE_VERTEX_BUDGET));
     const point = vec3.create();
     const screenPoints = [];
+    const projectPoint = worldPointProjector();
     for (const part of memberParts) {
       const positions = part.geometry.positions;
       for (let offset = 0; offset < positions.length; offset += 3 * stride) {
         vec3.set(point, positions[offset], positions[offset + 1], positions[offset + 2]);
         vec3.transformMat4(point, point, part.matrix);
-        const projected = projectWorldPoint([point[0], point[1], point[2]]);
+        const projected = projectPoint([point[0], point[1], point[2]]);
         if (!projected.visible) {
           return null;
         }
@@ -1267,13 +1294,14 @@ export function createStudioController({
     }
     const point = vec3.create();
     const triangles = [];
+    const projectPoint = worldPointProjector();
     for (const part of memberParts) {
       const positions = part.geometry.positions;
       const screen = new Float32Array((positions.length / 3) * 2);
       for (let vertex = 0; vertex < positions.length / 3; vertex += 1) {
         vec3.set(point, positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]);
         vec3.transformMat4(point, point, part.matrix);
-        const projected = projectWorldPoint([point[0], point[1], point[2]]);
+        const projected = projectPoint([point[0], point[1], point[2]]);
         if (!projected.visible) {
           return null;
         }
@@ -1764,12 +1792,16 @@ export function createStudioController({
         operation[flagField] = patch[flagField];
       }
     }
+    if (patch.vegetation !== undefined) {
+      operation.vegetation = patch.vegetation;
+    }
     const { operations, keyed } = operationsWithAutoKey(operation);
     applySceneOperations(operations);
     if (keyed) {
       settleSelectionAndMotion();
     }
-    notify({ kind: patch.parent !== undefined ? 'topology' : 'transform', nodeId, keyed });
+    const changesTopology = patch.parent !== undefined || patch.vegetation !== undefined;
+    notify({ kind: changesTopology ? 'topology' : 'transform', nodeId, keyed });
     return operation;
   }
 
@@ -2644,6 +2676,10 @@ export function createStudioController({
     get scene() { return currentScene; },
     get viewCamera() { return viewCamera(); },
     get cameraDriven() { return cameraIsDriven(); },
+    /** True while an edit shows before its light bake is done; the viewport is told (kind 'flush') when it lands. */
+    get bakePending() { return Boolean(currentScene.bakePending); },
+    /** Finishes the pending light bake now, so a still or an export has the light a fresh build has. Returns whether it had to. */
+    settleBake() { return Boolean(currentScene.settleBake?.()); },
     get freeView() { return Boolean(freeViewPose) && cameraIsDriven(); },
     lookThroughSceneCamera,
     get selectedNodeId() { return selectedNodeId; },
@@ -2736,6 +2772,7 @@ export function createStudioController({
       return currentScene.exportRecipe();
     },
     dispose() {
+      currentScene.cancelBake?.();
       stopWatchingFlush();
       invalidateQuery();
     },
@@ -2743,6 +2780,7 @@ export function createStudioController({
 }
 
 export {
+  freeSpawnTranslation,
   STUDIO_MATERIAL_PRESETS,
   STUDIO_PRIMITIVE_GROUPS,
   STUDIO_PRIMITIVES,

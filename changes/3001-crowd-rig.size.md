@@ -1,0 +1,1 @@
+- entry:crowd-skinning: 1000 skinned glTF instances go from about 250 ms a frame to under 10 ms, so a 650 byte addon entry point is worth it

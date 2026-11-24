@@ -1,6 +1,7 @@
 import { CLOSED_ROOM_SHARE, partMatrixLookup } from './closed-room.js';
 import { fittedClosedRoomShare, fittedRoomHasWalls } from './fitted-closed-room.js';
-import { buildWorld, cosineDirection, radicalInverse, sceneScale } from './light-bake.js';
+import { drainSteps } from './flush-search-runner.js';
+import { buildWorldSteps, cosineDirection, radicalInverse, sceneScale } from './light-bake.js';
 import { worldBounds } from './probe-trace.js';
 import { createTracer } from './ray-query.js';
 import { partDiffuseAlbedo } from './ground-bounce.js';
@@ -258,20 +259,34 @@ function worldNormalOf(matrix, positions, corners) {
   return normal.map(value => value / length);
 }
 
+// Vertices, triangles or cut pieces the cut goes through between two checkpoints of a trace run in slices (#3052).
+const CUT_ITEMS_PER_CHECKPOINT = 1000;
+
 /**
  * Cuts the upward-facing triangles of a geometry (every triangle with `onlyUpward` false), by their longest edge while a world edge is longer than `maximumEdge`,
  * and leaves the others as they are. Returns the new arrays and which vertices belong to a cut triangle.
  */
-function cutGeometry(geometry, matrix, maximumEdge, onlyUpward = true) {
+function* cutGeometrySteps(geometry, matrix, maximumEdge, onlyUpward, checkpoint) {
+  let itemsSinceCheckpoint = 0;
   const builder = createMeshBuilder(geometry);
   const indices = [];
   const tracedVertices = new Set();
   const midpoints = new Map();
   const sourceIndex = vertexData => builder.addVertex(vertexData.position, vertexData.normal, vertexData.uv, vertexData.color);
   const inputVertices = [];
-  for (let index = 0; index < geometry.positions.length / 3; index++) inputVertices.push(builder.readVertex(index));
+  for (let index = 0; index < geometry.positions.length / 3; index++) {
+    inputVertices.push(builder.readVertex(index));
+    if (++itemsSinceCheckpoint === CUT_ITEMS_PER_CHECKPOINT) {
+      itemsSinceCheckpoint = 0;
+      yield* checkpoint();
+    }
+  }
   const cutWork = [];
   for (let corner = 0; corner < geometry.indices.length; corner += 3) {
+    if (++itemsSinceCheckpoint === CUT_ITEMS_PER_CHECKPOINT) {
+      itemsSinceCheckpoint = 0;
+      yield* checkpoint();
+    }
     const triangle = [0, 1, 2].map(slot => geometry.indices[corner + slot]);
     const normal = worldNormalOf(matrix, geometry.positions, triangle);
     if (!onlyUpward || normal[1] >= UPWARD_NORMAL) {
@@ -282,6 +297,10 @@ function cutGeometry(geometry, matrix, maximumEdge, onlyUpward = true) {
   }
   const lengthBetween = (first, second) => worldEdgeLength(matrix, [...first.position, ...second.position], 0, 1);
   while (cutWork.length > 0) {
+    if (++itemsSinceCheckpoint === CUT_ITEMS_PER_CHECKPOINT) {
+      itemsSinceCheckpoint = 0;
+      yield* checkpoint();
+    }
     const corners = cutWork.pop();
     const edgeLengths = [lengthBetween(corners[0], corners[1]), lengthBetween(corners[1], corners[2]), lengthBetween(corners[2], corners[0])];
     const longest = edgeLengths.indexOf(Math.max(...edgeLengths));
@@ -441,23 +460,39 @@ function applyProxySkyVisibility({ parts, occluders, floorIndices, everySurface,
  * through the occupancy grid instead (`report.method` 'proxy'). It reads no clock to decide anything else, and
  * the rays are a fixed set, so the same scene gives the same bytes.
  */
-export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors', sunDirection = null, largeScenes = 'skip', openScenes = 'skip' } = {}) {
+export function applyFloorSkyVisibility(parts, options = {}) {
+  return drainSteps(applyFloorSkyVisibilitySteps(parts, options));
+}
+
+// Vertices traced between two checkpoints of a trace run in slices (#3052): a vertex is a few hundred rays.
+const VERTICES_PER_CHECKPOINT = 4;
+
+/** applyFloorSkyVisibility as steps (#3052): the same answer, with a checkpoint every few vertices. The time limit does not count the pauses between slices. */
+export function* applyFloorSkyVisibilitySteps(parts, { raysPerTexel = FLOOR_SKY_RAYS, maximumTexels = FLOOR_SKY_MAXIMUM_TEXELS, maxSeconds = FLOOR_SKY_MAXIMUM_SECONDS, maximumRays = FLOOR_SKY_MAXIMUM_RAYS, strength: requestedStrength, includeClosedRooms = false, onlyClosedRooms = false, surfaces = 'floors', sunDirection = null, largeScenes = 'skip', openScenes = 'skip' } = {}) {
   if (openScenes !== 'skip' && openScenes !== 'proxy') throw new RangeError(`openScenes must be 'skip' or 'proxy', got ${openScenes}`);
   if (largeScenes !== 'skip' && largeScenes !== 'proxy') throw new RangeError(`largeScenes must be 'skip' or 'proxy', got ${largeScenes}`);
-  const started = performance.now();
+  let started = performance.now();
+  function* checkpoint() {
+    const pausedAt = performance.now();
+    yield;
+    started += performance.now() - pausedAt;
+  }
   const unchanged = (reason, fallbackReason = null) => ({ parts, report: { floors: [], texels: 0, rays: 0, seconds: (performance.now() - started) / 1000, method: null, fallbackReason, reason } });
   // A scene the triangle trace cannot take is left as it is ('skip', the default: the grid alone darkened the classroom against Cycles, #2771) or traced through the grid ('proxy').
   const tooLarge = (reason, detail) => (largeScenes === 'proxy' ? applyProxySkyVisibility(proxyInput, detail) : unchanged(reason, detail));
   let proxyInput = null;
   const floorIndices = findFloorParts(parts);
   if (floorIndices.length === 0) return unchanged('no floor');
+  yield* checkpoint();
   // Every opaque part blocks sky, floors included: a floor above another one (a gallery, a bridge) hides it, and a floor never
   // blocks its own texels because the rays leave from its top face.
   const occluders = parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode));
   if (occluders.length < 2) return unchanged('nothing above the floor');
   // A closed room has no sky to see: its walls and lamps give the light, and the shader's room term already handles it.
   // The fitted test leaves out a lawn beside the room and heavy props, as the sun bounce does.
+  yield* checkpoint();
   const roomShare = fittedClosedRoomShare(parts, partMatrixLookup(parts));
+  yield* checkpoint();
   const closedRoom = roomShare !== null && roomShare >= CLOSED_ROOM_SHARE;
   if (closedRoom && !includeClosedRooms && !onlyClosedRooms) return unchanged('closed room');
   // Open ground gets light back from sunlit facades and streets that a sky trace does not hold, so it comes out too dark.
@@ -467,13 +502,14 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
   }
   // The walls, ceiling and props are traced as well only in a room that has walls all round: a roof on columns reads as closed to the ray test above, but its floor keeps the light it had.
   const everySurface = surfaces === 'all' && closedRoom && fittedRoomHasWalls(parts, partMatrixLookup(parts));
+  yield* checkpoint();
   const strength = requestedStrength ?? (onlyClosedRooms ? (everySurface ? ROOM_SURFACE_SKY_STRENGTH : FLOOR_SKY_ROOM_STRENGTH) : FLOOR_SKY_STRENGTH);
   // With every surface, every face of every part is cut (a ceiling slab counts as a floor, so its room side needs the cut too).
   const cutPartIndices = everySurface ? parts.map((part, index) => index).filter(index => floorIndices.includes(index) || (isFloorMaterial(parts[index].material) && hasPlainMesh(parts[index]))) : floorIndices;
   proxyInput = { parts, occluders, floorIndices, everySurface, strength, roomShare, started };
   let world;
   try {
-    world = buildWorld(occluders);
+    world = yield* buildWorldSteps(occluders);
   } catch (error) {
     // Only the bake's size limit sends the scene to the grid; any other error is a bug and must surface (#2771).
     if (!(error instanceof RangeError)) throw error;
@@ -498,7 +534,7 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
   for (const index of cutPartIndices) {
     const part = parts[index];
     const { geometry, matrix } = part;
-    const { builder, indices, tracedVertices } = cutGeometry(geometry, matrix, maximumEdge, !everySurface);
+    const { builder, indices, tracedVertices } = yield* cutGeometrySteps(geometry, matrix, maximumEdge, !everySurface, checkpoint);
     if (totalRays + tracedVertices.size * raysPerTexel > maximumRays) return tooLarge('too many rays', `more than ${maximumRays} rays for ${cutPartIndices.length} parts`);
     const vertexCount = builder.positions.length / 3;
     const skyVisibility = new Float32Array(vertexCount).fill(1);
@@ -506,8 +542,13 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
     const nearShares = new Float32Array(vertexCount);
     const sunlit = new Uint8Array(vertexCount);
     const centres = everySurface ? incidentCentres(builder.positions, indices, vertexCount) : null;
+    let verticesSinceCheckpoint = 0;
     for (const vertex of tracedVertices) {
       if (performance.now() - started > maxSeconds * 1000) return unchanged('passed maxSeconds');
+      if (++verticesSinceCheckpoint === VERTICES_PER_CHECKPOINT) {
+        verticesSinceCheckpoint = 0;
+        yield* checkpoint();
+      }
       const local = builder.positions.slice(vertex * 3, vertex * 3 + 3);
       const point = [0, 0, 0];
       for (let axis = 0; axis < 3; axis++) point[axis] = matrix[axis] * local[0] + matrix[4 + axis] * local[1] + matrix[8 + axis] * local[2] + matrix[12 + axis];
@@ -550,6 +591,7 @@ export function applyFloorSkyVisibility(parts, { raysPerTexel = FLOOR_SKY_RAYS, 
     floors.push(floor);
     const albedo = partDiffuseAlbedo(part.material ?? {});
     tracedParts.push({ floor, skyVisibility, escapedShares, nearShares, sunlit, colors: cutGeometryResult.colors, tracedVertices, albedo });
+    yield* checkpoint();
   }
   // A closed room also gets the sky light its surfaces bounce on to each other (#1334): without it every point the window cannot see is as dark as a sealed room.
   const interiorFill = everySurface ? applyInteriorFill(tracedParts, 1 - roomShare) : 0;
@@ -582,20 +624,68 @@ function unitSunDirection(environment) {
  * turns it off. The recipe path (`createAgentScene`) and the reference harness both call this, so they draw the same frame.
  */
 export function applyDefaultFloorSky(parts, environment, options = {}) {
-  if (environment?.floorSkyTrace === false || !environmentHasSun(environment)) return { parts, report: null };
-  return applyFloorSkyVisibility(parts, { onlyClosedRooms: true, surfaces: 'all', sunDirection: unitSunDirection(environment), ...options });
+  return drainSteps(applyDefaultFloorSkySteps(parts, environment, options));
 }
 
+/** applyDefaultFloorSky as steps (#3052). */
+export function* applyDefaultFloorSkySteps(parts, environment, options = {}) {
+  if (environment?.floorSkyTrace === false || !environmentHasSun(environment)) return { parts, report: null };
+  return yield* applyFloorSkyVisibilitySteps(parts, { onlyClosedRooms: true, surfaces: 'all', sunDirection: unitSunDirection(environment), ...options });
+}
+
+// Kept per parts list and per what the default reads from the environment (the sun's strength and direction), not per
+// environment object: an edit that never touches the environment still hands the scene a new copy of it (#2806).
+const DEFAULT_RESULTS_PER_PARTS = 8;
 const defaultResults = new WeakMap();
 
-/** The recipe path's call: the default for these parts and this environment, kept until either is replaced. */
-export function stageFloorSky(environment, parts) {
+function skyInputsKey(environment) {
+  return JSON.stringify([environmentHasSun(environment), unitSunDirection(environment)]);
+}
+
+// A retained part keeps the matrix it was drawn with until the commit writes the new pose into it, so a moved node is still
+// where it was while its scene is staged. The room test and the sky rays need it where it is going (#3064).
+function partsAtMatrices(parts, worldMatrixOf) {
+  const matrices = parts.map(part => Float32Array.from(worldMatrixOf(part.name)));
+  const moved = parts.some((part, index) => matrices[index].some((value, element) => value !== part.matrix[element]));
+  const views = moved ? parts.map((part, index) => ({ ...part, matrix: matrices[index] })) : parts;
+  return { views, matrices };
+}
+
+function sameMatrices(first, second) {
+  return first.length === second.length && first.every((matrix, index) => matrix.every((value, element) => value === second[index][element]));
+}
+
+// Hands each part of the result back its own matrix array, which the commit keeps writing the pose into.
+function withOwnMatrices(resultParts, views, parts) {
+  const ownerOfName = new Map(parts.map(part => [part.name, part]));
+  const indexOfView = new Map(views.map((view, index) => [view, index]));
+  return resultParts.map(result => {
+    if (indexOfView.has(result)) return parts[indexOfView.get(result)];
+    const owner = ownerOfName.get(result.name);
+    return owner && result.matrix !== owner.matrix ? Object.freeze({ ...result, matrix: owner.matrix }) : result;
+  });
+}
+
+/** The recipe path's call: the default for these parts, this environment and the matrices they are drawn at, kept until one is replaced. */
+export function stageFloorSky(environment, parts, worldMatrixOf) {
+  return drainSteps(stageFloorSkySteps(environment, parts, worldMatrixOf));
+}
+
+/** stageFloorSky as steps (#3052): a settling bake runs it in slices ahead of the scene's own call, which then finds the kept result. */
+export function* stageFloorSkySteps(environment, parts, worldMatrixOf) {
   if (environment.floorSkyTrace === false) return parts;
-  let byEnvironment = defaultResults.get(parts);
-  if (!byEnvironment) {
-    byEnvironment = new WeakMap();
-    defaultResults.set(parts, byEnvironment);
+  const { views, matrices } = partsAtMatrices(parts, worldMatrixOf);
+  let bySun = defaultResults.get(parts);
+  if (!bySun) {
+    bySun = new Map();
+    defaultResults.set(parts, bySun);
   }
-  if (!byEnvironment.has(environment)) byEnvironment.set(environment, applyDefaultFloorSky(parts, environment).parts);
-  return byEnvironment.get(environment);
+  const sunKey = skyInputsKey(environment);
+  const kept = bySun.get(sunKey);
+  if (kept && sameMatrices(kept.matrices, matrices)) return kept.result;
+  const traced = (yield* applyDefaultFloorSkySteps(views, environment)).parts;
+  const result = traced === views ? parts : Object.freeze(withOwnMatrices(traced, views, parts));
+  if (bySun.size >= DEFAULT_RESULTS_PER_PARTS) bySun.delete(bySun.keys().next().value);
+  bySun.set(sunKey, { matrices, result });
+  return result;
 }

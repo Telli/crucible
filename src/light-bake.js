@@ -1,13 +1,16 @@
 import { invalidField } from './field-error.js';
 import { emittingAreaLights } from './area-light-portal.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS, MAX_AREA_LIGHTS } from './light-limits.js';
-import { buildTriangleBvh } from './triangle-bvh.js';
+import { buildTriangleBvhSteps } from './triangle-bvh.js';
 import { readTriangle } from './triangle-math.js';
 import { createTracer, pointLightFalloff } from './ray-query.js';
 import { extractRender } from './mesh-render.js';
 import { meshFromGeometry } from './mesh-convert.js';
 import { unwrapUv } from './mesh-uv.js';
 import { createImage, linearToSrgbByte } from './material-texture-kit.js';
+import { contentFingerprint, ownedCopy, retainedBytes } from './content-fingerprint.js';
+import { drainSteps } from './flush-search-runner.js';
+import { boundsHoldPoint } from './lamp-mesh.js';
 
 // Light bake: the light that bounces between surfaces, written into one lightmap texture per part. A part draws it
 // through its emissive map, so the renderer, its shaders and every scene without a bake stay exactly as they were.
@@ -169,20 +172,6 @@ function emittersAroundPoint(position, parts) {
   return surrounds.some(Boolean) ? Uint8Array.from(surrounds, flag => (flag ? 1 : 0)) : null;
 }
 
-function boundsHoldPoint({ geometry, matrix }, point) {
-  const minimum = [Infinity, Infinity, Infinity];
-  const maximum = [-Infinity, -Infinity, -Infinity];
-  const source = geometry.positions;
-  for (let vertex = 0; vertex < source.length; vertex += 3) {
-    for (let axis = 0; axis < 3; axis++) {
-      const transformed = matrix[axis] * source[vertex] + matrix[4 + axis] * source[vertex + 1] + matrix[8 + axis] * source[vertex + 2] + matrix[12 + axis];
-      minimum[axis] = Math.min(minimum[axis], transformed);
-      maximum[axis] = Math.max(maximum[axis], transformed);
-    }
-  }
-  return [0, 1, 2].every(axis => point[axis] >= minimum[axis] && point[axis] <= maximum[axis]);
-}
-
 function lightReaches(light, owner) {
   return light.reach === null || light.reach[owner] === 1;
 }
@@ -289,6 +278,11 @@ export function emittedRadiance(material) {
 
 /** All parts in world space as one triangle soup: positions, indices, and the part each triangle belongs to. */
 export function buildWorld(parts) {
+  return drainSteps(buildWorldSteps(parts));
+}
+
+/** buildWorld as steps (#3052): a checkpoint after each part's triangles are placed, and inside the hierarchy build. */
+export function* buildWorldSteps(parts) {
   let vertexTotal = 0;
   let indexTotal = 0;
   for (const part of parts) {
@@ -301,7 +295,7 @@ export function buildWorld(parts) {
   const triangleOwner = new Uint32Array(indexTotal / 3);
   let vertexOffset = 0;
   let triangleOffset = 0;
-  parts.forEach((part, partIndex) => {
+  for (const [partIndex, part] of parts.entries()) {
     const { matrix } = part;
     const source = part.geometry.positions;
     for (let vertex = 0; vertex < source.length / 3; vertex++) {
@@ -317,8 +311,9 @@ export function buildWorld(parts) {
     triangleOwner.fill(partIndex, triangleOffset, triangleOffset + part.geometry.indices.length / 3);
     vertexOffset += source.length / 3;
     triangleOffset += part.geometry.indices.length / 3;
-  });
-  return { positions, indices, triangleOwner, bvh: buildTriangleBvh(positions, indices) };
+    yield;
+  }
+  return { positions, indices, triangleOwner, bvh: yield* buildTriangleBvhSteps(positions, indices) };
 }
 
 export function sceneScale(positions) {
@@ -714,6 +709,59 @@ function unwrapPart(geometry, scale, margin, slot, twoSided) {
   return withBackFacesInPlace(unwrap(withBackFaces(geometry, placement.offset), scale, margin), placement);
 }
 
+// An unwrap depends only on the geometry's content, the axis scale, the chart margin and the two flags, so it is kept by
+// those and found again when a scene is rebuilt or a node is moved or recoloured (the margin is part of the key: it follows the area).
+const UNWRAP_REUSE_ENTRIES = 256;
+const UNWRAP_REUSE_BYTES = 96 * 1024 * 1024;
+const unwrapReuse = new Map();
+let computedUnwraps = 0;
+
+function reusedUnwrap(geometry, scale, margin, slot, twoSided) {
+  const fingerprint = contentFingerprint(geometry);
+  if (fingerprint === null) {
+    computedUnwraps++;
+    return unwrapPart(geometry, scale, margin, slot, twoSided);
+  }
+  const key = [slot, twoSided, scaleKey(scale), margin, fingerprint].join('|');
+  const reused = unwrapReuse.get(key);
+  if (reused) {
+    unwrapReuse.delete(key);
+    unwrapReuse.set(key, reused);
+    return ownedCopy(reused.unwrapped);
+  }
+  const unwrapped = unwrapPart(geometry, scale, margin, slot, twoSided);
+  computedUnwraps++;
+  const kept = ownedCopy(unwrapped);
+  if (!kept) {
+    return unwrapped;
+  }
+  unwrapReuse.set(key, { unwrapped: kept, bytes: retainedBytes(kept) });
+  let total = [...unwrapReuse.values()].reduce((sum, entry) => sum + entry.bytes, 0);
+  for (const [oldestKey, entry] of unwrapReuse) {
+    if (unwrapReuse.size <= UNWRAP_REUSE_ENTRIES && total <= UNWRAP_REUSE_BYTES) {
+      break;
+    }
+    unwrapReuse.delete(oldestKey);
+    total -= entry.bytes;
+  }
+  return unwrapped;
+}
+
+/** How many unwraps were computed (not reused) since the module loaded. */
+export function unwrapsComputed() {
+  return computedUnwraps;
+}
+
+/** What the unwrap reuse cache holds now. */
+export function unwrapReuseStats() {
+  return { entries: unwrapReuse.size, bytes: [...unwrapReuse.values()].reduce((sum, entry) => sum + entry.bytes, 0), maximumEntries: UNWRAP_REUSE_ENTRIES, maximumBytes: UNWRAP_REUSE_BYTES };
+}
+
+/** Forgets every kept unwrap. */
+export function clearUnwrapReuse() {
+  unwrapReuse.clear();
+}
+
 /** Leaves the part single-sided once its back faces are real triangles, so no face is drawn twice. */
 function withoutDoubleSided(part) {
   return { ...part, material: { ...part.material, doubleSided: false } };
@@ -876,10 +924,14 @@ function worldFaceNormal(worldCorner, vertexNormals, firstVertex, matrix) {
 }
 
 /** Fills texels outside every chart from covered neighbours, so bilinear sampling at a chart edge reads real light. */
-function dilate(radiance, covered, resolution) {
+// Rows of texels the smoothing and the dilation go through between two checkpoints of a bake run in slices (#3052).
+const ROWS_PER_CHECKPOINT = 16;
+
+function* dilateSteps(radiance, covered, resolution) {
   for (let pass = 0; pass < DILATION_PASSES; pass++) {
     const additions = [];
     for (let row = 0; row < resolution; row++) {
+      if (row % ROWS_PER_CHECKPOINT === 0) yield;
       for (let column = 0; column < resolution; column++) {
         if (covered[row * resolution + column]) continue;
         const sum = [0, 0, 0];
@@ -906,10 +958,12 @@ function dilate(radiance, covered, resolution) {
 }
 
 /** Groups the covered texels into cubes of one smoothing radius, so a texel finds its neighbours in the world and not only in its own chart. */
-function groupTexelsByCell(covered, positions, cellSize) {
+function* groupTexelsByCell(covered, positions, cellSize) {
   const cells = new Map();
+  let grouped = 0;
   for (let texel = 0; texel < covered.length; texel++) {
     if (!covered[texel]) continue;
+    if (grouped++ % SMOOTHED_TEXELS_PER_CHECKPOINT === 0) yield;
     const key = cellKey(Math.floor(positions[texel * 3] / cellSize), Math.floor(positions[texel * 3 + 1] / cellSize), Math.floor(positions[texel * 3 + 2] / cellSize));
     if (!cells.has(key)) cells.set(key, []);
     cells.get(key).push(texel);
@@ -967,14 +1021,23 @@ function surfaceNeighbours(center, cells, positions, normals, settings) {
  * of a chart seam are smoothed over the same patch and a curved mesh keeps no step where its charts meet. Same input, same bytes.
  */
 export function smoothTexels(arrays, covered, positions, normals, resolution, spacing) {
+  return drainSteps(smoothTexelsSteps(arrays, covered, positions, normals, resolution, spacing));
+}
+
+// Texels smoothed between two checkpoints of a bake run in slices (#3052).
+const SMOOTHED_TEXELS_PER_CHECKPOINT = 256;
+
+function* smoothTexelsSteps(arrays, covered, positions, normals, resolution, spacing) {
   const radius = SMOOTH_RADIUS_TEXELS * spacing;
   const settings = { cellSize: radius, radiusSquared: radius * radius, sigmaSquared: (SMOOTH_SIGMA_TEXELS * spacing) ** 2, planeTolerance: spacing * SMOOTH_PLANE_TEXELS };
-  const cells = groupTexelsByCell(covered, positions, radius);
+  const cells = yield* groupTexelsByCell(covered, positions, radius);
   let sources = arrays;
   for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
     const results = sources.map(source => new Float32Array(source.length));
+    let smoothed = 0;
     for (let center = 0; center < resolution * resolution; center++) {
       if (!covered[center]) continue;
+      if (smoothed++ % SMOOTHED_TEXELS_PER_CHECKPOINT === 0) yield;
       const nearby = surfaceNeighbours(center, cells, positions, normals, settings);
       let weightSum = 0;
       for (const { weight } of nearby) weightSum += weight;
@@ -1076,6 +1139,11 @@ function createSkyVisibilityGatherer({ tracer, offset, samples }) {
  * machine. Pass the plan and the final settings to `traceLightmaps`.
  */
 export function planLightmaps(parts, lighting, options = {}) {
+  return drainSteps(planLightmapsSteps(parts, lighting, options));
+}
+
+/** planLightmaps as steps (#3052): a checkpoint after each part is unwrapped. */
+export function* planLightmapsSteps(parts, lighting, options = {}) {
   const settings = normalizeBakeOptions(options);
   const lights = normalizeLights(lighting);
   const maximumParts = settings.backend !== 'cpu' ? MAX_GPU_BAKE_PARTS : MAX_BAKE_PARTS;
@@ -1088,11 +1156,11 @@ export function planLightmaps(parts, lighting, options = {}) {
   const secondSetCache = new Map();
   const entries = [];
   const skipped = [];
-  parts.forEach((part, index) => {
+  for (const [index, part] of parts.entries()) {
     const reason = skipReason(part);
     if (reason) {
       skipped.push({ name: part.name, reason });
-      return;
+      continue;
     }
     const slot = usesLightMapSlot(part.material);
     const scale = partAxisScale(part.matrix);
@@ -1103,10 +1171,11 @@ export function planLightmaps(parts, lighting, options = {}) {
     const key = `${scaleKey(scale)}|${twoSided}`;
     const area = worldTriangleArea(part) * (twoSided ? 2 : 1);
     if (!unwraps.has(key)) {
-      unwraps.set(key, unwrapPart(part.geometry, scale, chartMargin(area, settings), slot, twoSided));
+      unwraps.set(key, reusedUnwrap(part.geometry, scale, chartMargin(area, settings), slot, twoSided));
     }
     entries.push({ part, index, unwrapped: unwraps.get(key), area, slot, twoSided });
-  });
+    yield;
+  }
   return { parts, lights, settings, started, entries, skipped };
 }
 
@@ -1135,10 +1204,18 @@ export function checkBudget(plan, settings) {
 
 /** Where every texel of every bakeable part sits in the world: the same input to the CPU and the GPU tracer. */
 export function rasterizeEntries(plan, settings) {
-  return plan.entries.map((entry) => {
+  return drainSteps(rasterizeEntriesSteps(plan, settings));
+}
+
+/** rasterizeEntries as steps (#3052): a checkpoint after each part. */
+export function* rasterizeEntriesSteps(plan, settings) {
+  const rasterized = [];
+  for (const entry of plan.entries) {
     const resolution = lightmapResolution(entry.area, entry.unwrapped.utilization, settings);
-    return { entry, resolution, ...rasterizeTexels(entry.unwrapped.geometry, entry.part.matrix, resolution) };
-  });
+    rasterized.push({ entry, resolution, ...rasterizeTexels(entry.unwrapped.geometry, entry.part.matrix, resolution) });
+    yield;
+  }
+  return rasterized;
 }
 
 /**
@@ -1146,11 +1223,20 @@ export function rasterizeEntries(plan, settings) {
  * and `escaped` (the share of first rays that left the scene).
  */
 function gatherOnCpu(plan, settings, rasterized) {
+  return drainSteps(gatherOnCpuSteps(plan, settings, rasterized));
+}
+
+// Texels traced between two checkpoints of a bake that runs in slices.
+const TEXELS_PER_CHECKPOINT = 64;
+
+// gatherOnCpu as steps: each yield is a checkpoint where a sliced run may hand the thread back (#3052).
+function* gatherOnCpuSteps(plan, settings, rasterized) {
   const { parts, lights } = plan;
-  const world = buildWorld(parts);
+  const world = yield* buildWorldSteps(parts);
   const scale = sceneScale(world.positions);
   const offset = scale * 1e-4;
   const tracer = createTracer(world);
+  yield;
   const directIrradiance = createDirectIrradiance(tracer, withReach(lights, parts), offset, scale);
   const albedoOfPart = parts.map(part => diffuseAlbedo(part.material));
   const emissionOfPart = parts.map(part => emittedRadiance(part.material));
@@ -1160,12 +1246,18 @@ function gatherOnCpu(plan, settings, rasterized) {
   const sum = [0, 0, 0];
   const point = [0, 0, 0];
   const normal = [0, 0, 0];
-  return rasterized.map(({ entry, resolution, positions, normals, covered }) => {
+  const gathered = [];
+  let sinceCheckpoint = 0;
+  for (const { entry, resolution, positions, normals, covered } of rasterized) {
     const light = new Float32Array(resolution * resolution * 3);
     const escaped = new Float32Array(resolution * resolution);
     for (let texel = 0; texel < resolution * resolution; texel++) {
       if (!covered[texel]) continue;
       checkBudget(plan, settings);
+      if (++sinceCheckpoint === TEXELS_PER_CHECKPOINT) {
+        sinceCheckpoint = 0;
+        yield;
+      }
       for (let axis = 0; axis < 3; axis++) {
         point[axis] = positions[texel * 3 + axis];
         normal[axis] = normals[texel * 3 + axis];
@@ -1173,15 +1265,21 @@ function gatherOnCpu(plan, settings, rasterized) {
       escaped[texel] = gather(point, normal, entry.index * 1_000_003 + texel, sum);
       light.set(sum, texel * 3);
     }
-    return { light, escaped };
-  });
+    gathered.push({ light, escaped });
+  }
+  return gathered;
 }
 
 /** Lightmaps and parts from the gathered light: albedo, smoothing, dilation, sky visibility and the baked copies of the parts. */
 export function finishLightmaps(plan, settings, rasterized, gathered, sizes) {
+  return drainSteps(finishLightmapsSteps(plan, settings, rasterized, gathered, sizes));
+}
+
+/** finishLightmaps as steps (#3052): a checkpoint after each part. */
+export function* finishLightmapsSteps(plan, settings, rasterized, gathered, sizes) {
   const baked = plan.parts.slice();
   const partReports = [];
-  rasterized.forEach(({ entry, resolution, positions, normals, covered, nearestDistance }, entryNumber) => {
+  for (const [entryNumber, { entry, resolution, positions, normals, covered, nearestDistance }] of rasterized.entries()) {
     const { part, index, unwrapped, area, slot, twoSided } = entry;
     const { light, escaped } = gathered[entryNumber];
     const albedo = diffuseAlbedo(part.material);
@@ -1207,26 +1305,42 @@ export function finishLightmaps(plan, settings, rasterized, gathered, sizes) {
     const meanSkyVisibility = skyTexels > 0 ? skySum / skyTexels : 1;
     partReports.push({ name: part.name, resolution, peak, skyVisibility: meanSkyVisibility });
     const sealed = meanSkyVisibility < SKY_VISIBLE_ENOUGH && !part.material.occlusionMap;
-    if (peak <= 0 && !sealed) return;
+    if (peak <= 0 && !sealed) {
+      yield;
+      continue;
+    }
     let bakedResult = part;
     const spacing = Math.sqrt(area / Math.max(skyTexels, 1));
-    const [smoothRadiance, smoothSkyVisibility] = smoothTexels([radiance, skyVisibility], covered, positions, normals, resolution, spacing);
-    if (sealed) dilate(smoothSkyVisibility, covered.slice(), resolution);
-    dilate(smoothRadiance, covered, resolution);
+    yield;
+    const [smoothRadiance, smoothSkyVisibility] = yield* smoothTexelsSteps([radiance, skyVisibility], covered, positions, normals, resolution, spacing);
+    if (sealed) yield* dilateSteps(smoothSkyVisibility, covered.slice(), resolution);
+    yield* dilateSteps(smoothRadiance, covered, resolution);
+    yield;
     const smoothPeak = smoothRadiance.reduce((largest, value) => Math.max(largest, value), 0);
     if (smoothPeak > 0) bakedResult = (slot ? lightMappedPart : bakedPart)(part, unwrapped.geometry, lightmapTexture(smoothRadiance, resolution, smoothPeak), smoothPeak);
     if (sealed) bakedResult = skyVisibilityPart(bakedResult, unwrapped.geometry, skyVisibilityTexture(smoothSkyVisibility, resolution), slot);
     baked[index] = twoSided && bakedResult !== part ? withoutDoubleSided(bakedResult) : bakedResult;
-  });
+    yield;
+  }
   const report = { parts: partReports, skipped: plan.skipped, texels: sizes.texels, rayWork: sizes.rayWork, backend: settings.backend, seconds: (performance.now() - plan.started) / 1000 };
   return { parts: baked, report };
 }
 
 /** Traces a plan with the given settings (samples, bounces, texelsPerUnit, maxSeconds) and returns the baked parts and the report. */
 export function traceLightmaps(plan, tracedSettings) {
+  return drainSteps(traceLightmapsSteps(plan, tracedSettings));
+}
+
+/**
+ * traceLightmaps as steps (#3052): the same result, byte for byte, with a checkpoint every few dozen texels, so a caller can run
+ * it in slices. The time limit counts the time the steps run, not the time between two slices: `plan.started` moves forward by
+ * every pause.
+ */
+export function* traceLightmapsSteps(plan, tracedSettings) {
   const settings = { ...plan.settings, ...tracedSettings };
   if (settings.backend !== 'cpu') throw new TypeError(`Light bake backend "${settings.backend}" is asynchronous: use bakeLightmapsAsync from light-bake-gpu.js.`);
   const sizes = checkedBakeSize(plan, settings);
-  const rasterized = rasterizeEntries(plan, settings);
-  return finishLightmaps(plan, settings, rasterized, gatherOnCpu(plan, settings, rasterized), sizes);
+  const rasterized = yield* rasterizeEntriesSteps(plan, settings);
+  const gathered = yield* gatherOnCpuSteps(plan, settings, rasterized);
+  return yield* finishLightmapsSteps(plan, settings, rasterized, gathered, sizes);
 }

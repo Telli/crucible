@@ -6,6 +6,7 @@ import { splitHdriSun } from './hdri.js';
 import { fitWorldShadowView } from './shadow-light.js';
 import { sceneBoundsOfParts } from './near-plane-fit.js';
 import { MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS } from './light-limits.js';
+import { emittingAreaLights } from './area-light-portal.js';
 
 // Parts for a scene with more than one triangle per pixel (a scan, a sculpt), given `lods` so that each draws with the
 // fewest triangles whose error stays under `lodPixelError` pixels (#1163). On such a scene every pixel is shaded about
@@ -27,7 +28,24 @@ export function withSceneFileRendererDefaults(rendererOptions = {}) {
  * `renderer.environment` on top, key by key, so a scene file can still override the file's key light or light lists.
  */
 export function withSceneFileLights(fileLights = {}, sceneEnvironment = {}) {
-  return { ...fileLights, ...sceneEnvironment };
+  const merged = { ...fileLights, ...sceneEnvironment };
+  return { ...studioLightsOffForOwnLights(merged, sceneEnvironment), ...merged };
+}
+
+/** True when a scene file's own `renderer.environment` lists a point, spot or emitting area light (a portal emits nothing). */
+function hasOwnLocalLights(sceneEnvironment) {
+  return Boolean(sceneEnvironment.pointLights?.length || sceneEnvironment.spotLights?.length || emittingAreaLights(sceneEnvironment.areaLights).length);
+}
+
+/**
+ * A scene file that lists its own point, spot or area lights is lit by them, as a GLB with KHR_lights_punctual is: the
+ * renderer's studio fill goes off, and so does the studio key unless the file names a sun (`lightDirection` or
+ * `keyColor`). A `keyIntensity` or `fillIntensity` written in the file still wins (#2765).
+ */
+function studioLightsOffForOwnLights(merged, sceneEnvironment) {
+  if (!hasOwnLocalLights(sceneEnvironment)) return {};
+  const namesSun = merged.lightDirection !== undefined || merged.keyColor !== undefined;
+  return { ...(namesSun ? {} : { keyIntensity: 0 }), fillIntensity: 0 };
 }
 
 /**
@@ -64,11 +82,11 @@ export function showcaseEnvironment(fileLights, sceneEnvironment, map) {
  * comes back unchanged with `sunSplit` false.
  */
 export function sceneFileLighting(map, fileLights = {}, sceneEnvironment = {}, { hdriSun = true } = {}) {
-  const environment = withSceneFileLights(fileLights, sceneEnvironment);
-  const namesKey = ['lightDirection', 'keyColor', 'keyIntensity'].some(key => environment[key] !== undefined);
+  const written = { ...fileLights, ...sceneEnvironment };
+  const namesKey = ['lightDirection', 'keyColor', 'keyIntensity'].some(key => written[key] !== undefined);
   const split = hdriSun && map && !namesKey ? splitHdriSun(map) : null;
-  if (!split) return { environment, map, sunSplit: false };
-  return { environment: { ...split.environment, fillIntensity: 0, ...environment }, map: split.map, sunSplit: true };
+  if (!split) return { environment: withSceneFileLights(fileLights, sceneEnvironment), map, sunSplit: false };
+  return { environment: { ...split.environment, fillIntensity: 0, ...written }, map: split.map, sunSplit: true };
 }
 
 // A closed room a sun lights gets the sky each surface sees and the light its sunlit patches bounce, as recipe scenes do
@@ -92,25 +110,47 @@ export function trianglesPerPixel(parts, pixels) {
   return triangles / pixels;
 }
 
-/**
- * Returns `parts` with `lods` on every part that has at least `minimumTriangles` triangles and may take levels, when
- * the scene is denser than `minimumTrianglesPerPixel`; otherwise returns `parts` itself. Parts that share a geometry
- * share its levels and so one batch; a part that already has `lods` keeps them. The levels keep uvs and colours.
- */
-export function addLodsToDenseParts(parts, { pixels, minimumTrianglesPerPixel = DENSE_TRIANGLES_PER_PIXEL, minimumTriangles = DEFAULT_MINIMUM_TRIANGLES, ratios = DEFAULT_LOD_RATIOS } = {}) {
+/** The parts that would take levels: dense scene, at least `minimumTriangles`, not past the simplifier's limit, may take lods. Empty for a sparse scene. */
+function partsThatTakeDenseLods(parts, { pixels, minimumTrianglesPerPixel = DENSE_TRIANGLES_PER_PIXEL, minimumTriangles = DEFAULT_MINIMUM_TRIANGLES, ratios = DEFAULT_LOD_RATIOS } = {}) {
   if (!Array.isArray(parts)) throw new TypeError('parts must be the array of parts that goes to CrucibleRenderer.');
   // Checked here so bad ratios fail on a sparse scene too, not only on the frame a scene turns dense.
   checkRatios(ratios);
   requireFiniteInRange('addLodsToDenseParts', 'minimumTrianglesPerPixel', minimumTrianglesPerPixel, 0, 1e9);
   requireFiniteInRange('addLodsToDenseParts', 'minimumTriangles', minimumTriangles, 0, 1e9);
-  if (trianglesPerPixel(parts, pixels) <= minimumTrianglesPerPixel) return parts;
+  if (trianglesPerPixel(parts, pixels) <= minimumTrianglesPerPixel) return [];
+  return parts.filter(part => {
+    const triangles = part.geometry.indices.length / 3;
+    return !part.lods && triangles >= minimumTriangles && triangles <= MAXIMUM_SIMPLIFY_TRIANGLES && partTakesLods(part);
+  });
+}
+
+/**
+ * Returns `parts` with `lods` on every part that has at least `minimumTriangles` triangles and may take levels, when
+ * the scene is denser than `minimumTrianglesPerPixel`; otherwise returns `parts` itself. Parts that share a geometry
+ * share its levels and so one batch; a part that already has `lods` keeps them. The levels keep uvs and colours.
+ * The levels are made before this returns, so a frame drawn from the result is the same every time. A viewer that
+ * should not wait for them uses `planDenseLods` and src/deferred-lods.js.
+ */
+export function addLodsToDenseParts(parts, options = {}) {
+  const taking = new Set(partsThatTakeDenseLods(parts, options));
+  if (!taking.size) return parts;
+  const ratios = options.ratios ?? DEFAULT_LOD_RATIOS;
   const levelsByGeometry = new Map();
   return parts.map(part => {
-    const triangles = part.geometry.indices.length / 3;
-    if (part.lods || triangles < minimumTriangles || triangles > MAXIMUM_SIMPLIFY_TRIANGLES || !partTakesLods(part)) return part;
+    if (!taking.has(part)) return part;
     if (!levelsByGeometry.has(part.geometry)) levelsByGeometry.set(part.geometry, generateGeometryLods(part.geometry, { ratios }));
     return { ...part, lods: levelsByGeometry.get(part.geometry) };
   });
+}
+
+/**
+ * What addLodsToDenseParts would do, without doing it: `{ parts, geometries, ratios }` where `parts` are the parts that
+ * would take levels and `geometries` are their distinct geometries (parts that share one share its levels). Both are empty
+ * for a sparse scene. Use it to draw the first frame from level 0 and make the levels afterwards (src/deferred-lods.js).
+ */
+export function planDenseLods(parts, options = {}) {
+  const taking = partsThatTakeDenseLods(parts, options);
+  return { parts: taking, geometries: [...new Set(taking.map(part => part.geometry))], ratios: options.ratios ?? DEFAULT_LOD_RATIOS };
 }
 
 /**
@@ -119,12 +159,22 @@ export function addLodsToDenseParts(parts, { pixels, minimumTrianglesPerPixel = 
  * can keep every triangle of a dense scan.
  */
 export function partsForRendererOptions(parts, canvas, rendererOptions = {}) {
-  const { denseLods = true, pixelRatio = 1.5 } = rendererOptions;
+  const pixels = denseLodPixels('partsForRendererOptions', canvas, rendererOptions);
+  return pixels === null ? parts : addLodsToDenseParts(parts, { pixels });
+}
+
+/** planDenseLods for a scene file's renderer options, the way partsForRendererOptions reads them; an empty plan when `denseLods` is false. */
+export function planLodsForRendererOptions(parts, canvas, rendererOptions = {}) {
+  const pixels = denseLodPixels('planLodsForRendererOptions', canvas, rendererOptions);
+  return pixels === null ? { parts: [], geometries: [], ratios: DEFAULT_LOD_RATIOS } : planDenseLods(parts, { pixels });
+}
+
+/** The canvas pixels the renderer options imply, or null when `denseLods` is false. */
+function denseLodPixels(label, canvas, { denseLods = true, pixelRatio = 1.5 }) {
   if (typeof denseLods !== 'boolean') throw new TypeError('renderer.denseLods must be true or false.');
-  if (!denseLods) return parts;
-  requireFiniteInRange('partsForRendererOptions', 'pixelRatio', pixelRatio, 0.1, 16);
-  const pixels = Math.max(1, canvas.clientWidth) * Math.max(1, canvas.clientHeight) * pixelRatio * pixelRatio;
-  return addLodsToDenseParts(parts, { pixels });
+  if (!denseLods) return null;
+  requireFiniteInRange(label, 'pixelRatio', pixelRatio, 0.1, 16);
+  return Math.max(1, canvas.clientWidth) * Math.max(1, canvas.clientHeight) * pixelRatio * pixelRatio;
 }
 
 /**

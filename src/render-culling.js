@@ -12,6 +12,11 @@ export const DEFAULT_LOD_PIXEL_ERROR = 1;
 
 const boundingSpheres = new WeakMap();
 
+/** Drops the remembered sphere of a geometry whose positions were rewritten in place, so the next ask measures them again. */
+export function forgetGeometryBoundingSphere(geometry) {
+  boundingSpheres.delete(geometry);
+}
+
 /** Smallest sphere around the geometry's vertices that is centred on the middle of their bounding box. */
 export function geometryBoundingSphere(geometry) {
   const cached = boundingSpheres.get(geometry);

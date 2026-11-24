@@ -1,5 +1,6 @@
 // Times each Glaze pass on the GPU for scene files: node bench/glaze-passes/run.mjs <out.json> <scene-directory>[,<scene-directory>...] [whole]
 // Add '"capture":true' to the overrides to write one full frame per scene to <out.json>.<scene>.rgba (compare two with diff-frames.mjs).
+// Add '"profile":{"frames":150,"rounds":3,"cameras":[{"name":"courtyard","eye":[...],"target":[...]}]}' to time the whole frame and each pass on one scale. '"engine":"three"' takes the same cameras and rounds.
 // A scene directory holds scene.json, scene.glb and sky.hdr as written for the Blender demo scenes (see src/file-scene.js).
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
@@ -7,6 +8,7 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
 const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const ANGLE_BACKEND = process.env.ANGLE_BACKEND ?? 'd3d11';
 // The fourth argument is JSON merged into the page options, e.g. '{"width":64,"height":36,"rendererOverrides":{"samples":1}}'.
 const [outputFile, directoryList, mode = 'segmented', overridesJson = '{}'] = process.argv.slice(2);
 const overrides = JSON.parse(overridesJson);
@@ -18,7 +20,7 @@ const serverUrl = `http://127.0.0.1:${server.httpServer.address().port}`;
 const browser = await chromium.launch({
   executablePath: CHROME,
   headless: true,
-  args: ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl', '--disable-renderer-backgrounding', '--enable-webgl-developer-extensions'],
+  args: [`--use-angle=${ANGLE_BACKEND}`, '--enable-gpu', '--ignore-gpu-blocklist', '--enable-webgl', '--disable-renderer-backgrounding', '--enable-webgl-developer-extensions'],
 });
 const results = {};
 try {

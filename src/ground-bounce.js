@@ -1,6 +1,7 @@
 import { computeIrradianceCoefficients, createEnvironmentMap, evaluateIrradiance } from './environment.js'
 import { CLOSED_ROOM_SHARE, closedRoomShare, partMatrixLookup } from './closed-room.js'
 import { worldBounds } from './probe-trace.js'
+import { isLiveGeometry } from './live-geometry.js'
 import { emittingAreaLights } from './area-light-portal.js'
 
 // The ground of a scene is its floor: a part that spans the scene (the same test as the automatic floor of agent scenes),
@@ -131,9 +132,15 @@ function isClosedRoom(parts) {
 // answer is kept for as long as the same parts array (of the same length) is asked about.
 const groundOfParts = new WeakMap()
 
+// A part whose vertices are rewritten in place (a sea, cloth) keeps its parts array while its bounds move, so the answers
+// kept per parts array would go stale: they are measured again for every call while such a part is drawn.
+function hasLivePart(parts) {
+  return parts.some(part => isLiveGeometry(part.geometry))
+}
+
 function groundOf(parts, automaticAlbedo) {
   const key = JSON.stringify([parts.length, automaticAlbedo])
-  const remembered = groundOfParts.get(parts)
+  const remembered = hasLivePart(parts) ? null : groundOfParts.get(parts)
   if (remembered?.key === key) {
     return remembered.ground
   }
@@ -268,7 +275,7 @@ function hasKeyLight(environment) {
 const roomOfParts = new WeakMap()
 
 function roomOf(parts) {
-  const remembered = roomOfParts.get(parts)
+  const remembered = hasLivePart(parts) ? null : roomOfParts.get(parts)
   if (remembered?.length === parts.length) {
     return remembered.room
   }
@@ -332,7 +339,7 @@ const OUTDOOR_MINIMUM_ALBEDO = 0.2
 const openAirOfParts = new WeakMap()
 
 function isOpenAir(parts) {
-  const remembered = openAirOfParts.get(parts)
+  const remembered = hasLivePart(parts) ? null : openAirOfParts.get(parts)
   if (remembered?.length === parts.length) {
     return remembered.openAir
   }

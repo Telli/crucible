@@ -4,21 +4,33 @@
 // Usage: node scripts/fast-tests.mjs [--threshold-ms 500] [--budget-ms 120000]
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createBrowserDetector, readRepositorySource } from './browser-tests.mjs';
 import { importsFile } from './import-specifiers.mjs';
 import { isMainModule, listTestFiles, repositoryRoot, runTestFiles } from './test-run.mjs';
 
 export const DEFAULT_THRESHOLD_MS = 1000;
 export const DEFAULT_BUDGET_MS = 120000;
 export const FAST_TESTS_PATH = 'config/fast-tests.json';
+export const TEST_TIMINGS_PATH = 'config/test-timings.json';
+// A file the full pass (measured on CI, where its tests run) times at or above this is never "fast", whatever the recorded list says.
+export const SLOW_IN_FULL_PASS_MS = 5000;
 // Guard tests always run, even when the recorded timings omit them or call them slow: a new src file missing from cook-addon.yml paths fails CI otherwise (#2938).
 export const GUARD_TEST_PATTERN = /^tests\/addon-job-paths[^/]*\.test\.js$/;
 
 // Picks the files recorded under `thresholdMs`, fastest first, until their recorded times add up to `budgetMs`.
 // Files missing from `existingFiles` (renamed or deleted since the timings were recorded) are dropped.
-export function selectFastTests(timings, existingFiles, { thresholdMs = DEFAULT_THRESHOLD_MS, budgetMs = DEFAULT_BUDGET_MS } = {}) {
+// With `readSource` (path to text, or null), a file that starts a browser is dropped too and listed in `browserTests` with its reason (#3139).
+export function selectFastTests(timings, existingFiles, { thresholdMs = DEFAULT_THRESHOLD_MS, budgetMs = DEFAULT_BUDGET_MS, fullPassTimings = {}, readSource = null } = {}) {
   const existing = new Set(existingFiles);
+  const browserReason = readSource ? createBrowserDetector(readSource) : () => null;
+  const browserTests = [];
   const candidates = Object.entries(timings)
-    .filter(([file, milliseconds]) => existing.has(file) && milliseconds < thresholdMs)
+    .filter(([file, milliseconds]) => existing.has(file) && milliseconds < thresholdMs && !((fullPassTimings[file] ?? 0) >= SLOW_IN_FULL_PASS_MS))
+    .filter(([file]) => {
+      const reason = browserReason(file);
+      if (reason) browserTests.push({ file, reason });
+      return !reason;
+    })
     .sort(([firstFile, firstMs], [secondFile, secondMs]) => firstMs - secondMs || firstFile.localeCompare(secondFile));
   const files = [];
   let recordedMilliseconds = 0;
@@ -28,7 +40,7 @@ export function selectFastTests(timings, existingFiles, { thresholdMs = DEFAULT_
     recordedMilliseconds += milliseconds;
   }
   const guardFiles = existingFiles.filter(file => GUARD_TEST_PATTERN.test(file));
-  return { files: [...new Set([...files, ...guardFiles])].sort(), recordedMilliseconds };
+  return { files: [...new Set([...files, ...guardFiles])].sort(), recordedMilliseconds, browserTests };
 }
 
 // The native Cook tests are recorded at 0 ms on CI, where they skip for lack of a GPU or the built addon, but they run for real here.
@@ -36,10 +48,21 @@ export function usesNativeAddon(sourceText, importerPath = 'tests/example.test.j
   return importsFile(sourceText, importerPath, 'tests/support/cook.js');
 }
 
+// Keeps the files that start no browser, so neither the recorder nor the pass runs Chrome beside hundreds of other files (#3139).
+export function withoutBrowserTests(testFiles, readSource = readRepositorySource()) {
+  const browserReason = createBrowserDetector(readSource);
+  return testFiles.filter(file => !browserReason(file));
+}
+
 export function readFastTests(folder = repositoryRoot) {
   const path = join(folder, FAST_TESTS_PATH);
   if (!existsSync(path)) return null;
   return JSON.parse(readFileSync(path, 'utf8'));
+}
+
+function readFullPassTimings(folder = repositoryRoot) {
+  const path = join(folder, TEST_TIMINGS_PATH);
+  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
 }
 
 function numberAfter(arguments_, flag, fallback) {
@@ -58,7 +81,8 @@ function main(arguments_) {
   }
   const thresholdMs = numberAfter(arguments_, '--threshold-ms', DEFAULT_THRESHOLD_MS);
   const budgetMs = numberAfter(arguments_, '--budget-ms', DEFAULT_BUDGET_MS);
-  const { files, recordedMilliseconds } = selectFastTests(timings, listTestFiles().filter(file => !usesNativeAddon(readFileSync(join(repositoryRoot, file), 'utf8'), file)), { thresholdMs, budgetMs });
+  const { files, recordedMilliseconds, browserTests } = selectFastTests(timings, listTestFiles().filter(file => !usesNativeAddon(readFileSync(join(repositoryRoot, file), 'utf8'), file)), { thresholdMs, budgetMs, fullPassTimings: readFullPassTimings(), readSource: readRepositorySource() });
+  for (const { file, reason } of browserTests) console.log(`Not running ${file} in the fast pass: it ${reason}. Browser tests run in the full pass (npm test) and on CI.`);
   if (files.length === 0) {
     console.log(`No test file is recorded under ${thresholdMs} ms in ${FAST_TESTS_PATH}; nothing to run.`);
     return;

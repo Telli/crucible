@@ -32,6 +32,8 @@ test('resolveJobRoot keeps a plain folder and a folder that does not exist yet',
   assert.equal(resolveJobRoot(directory), directory);
   const notYetCreated = join(directory, 'later');
   assert.equal(resolveJobRoot(notYetCreated), notYetCreated);
+  assert.equal(resolveJobRoot(join(directory, 'nested', '..', 'later')), notYetCreated);
+  assert.throws(() => resolveJobRoot(join(directory, 'bad\0path')), /explicit absolute directory/);
   assert.throws(() => resolveJobRoot('relative/jobs'), /absolute/);
 });
 

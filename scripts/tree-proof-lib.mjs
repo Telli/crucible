@@ -18,6 +18,7 @@ export const HORIZON_ELEVATION_LIMIT = 0.25;
 const SOLIDITY_FRAME_SIZE = 128;
 const LEAF_TEXTURE_PIXELS = 128;
 const TWIG_TEXTURE_PIXELS = 256;
+const LARGE_TEXTURE_KINDS = ['twig', 'frond', 'pine'];
 
 // Painted leaf length in pixels of the 128 px leaf texture, as (shortest, longest) of the painters in
 // src/vegetation-textures.js: a sprig paints 22 to 32 px leaves and a 40 px tip leaf, a twig of the 256 px card 19 to 29 px leaves, a needle spray 19 to 34 px needles,
@@ -26,6 +27,8 @@ export const PAINTED_LEAF_PIXELS = Object.freeze({
   sprig: Object.freeze([22, 40]),
   twig: Object.freeze([19, 29]),
   needles: Object.freeze([19, 34]),
+  pine: Object.freeze([18, 30]),
+  frond: Object.freeze([24, 115]),
   single: Object.freeze([96, 124]),
   clump: Object.freeze([24, 36]),
 });
@@ -95,7 +98,7 @@ export function paintedLeafLengthCentimeters({ texture, cardHeightMeters, leafSc
   const pixels = Object.hasOwn(PAINTED_LEAF_PIXELS, textureKind) ? PAINTED_LEAF_PIXELS[textureKind] : null;
   if (!pixels) throw new RangeError(`texture must be one of ${Object.keys(PAINTED_LEAF_PIXELS).join(', ')}; got ${texture}`);
   if (!(cardHeightMeters > 0)) throw new RangeError('cardHeightMeters must be a positive number of meters, such as 1.1');
-  const textureSize = textureKind === 'twig' ? TWIG_TEXTURE_PIXELS : LEAF_TEXTURE_PIXELS;
+  const textureSize = LARGE_TEXTURE_KINDS.includes(textureKind) ? TWIG_TEXTURE_PIXELS : LEAF_TEXTURE_PIXELS;
   return pixels.map(length => length / textureSize * cardHeightMeters * leafScale * 100);
 }
 
@@ -180,13 +183,13 @@ export function measureTreeLevels({ preset, seed = DEFAULT_SEED, height, frameSi
   const leaf = grown.leaf;
   return tree.levels.map((level, index) => {
     const setting = LEVEL_SETTINGS[index];
-    const paintsLeaves = setting.leafKeep > 0 && leaf.cardSize && leaf.texture;
+    const paintsLeaves = setting.leafKeep > 0 && !(setting.clumps && leaf.farClumps) && leaf.cardSize && leaf.texture;
     return {
       preset, seed, level: index,
       foliageTriangles: trianglesOf(level.parts, 'foliage'),
       barkTriangles: trianglesOf(level.parts, 'bark'),
       solidity: crownSolidity(tree, index, frameSize === undefined ? {} : { frameSize }),
-      leafCentimeters: paintsLeaves ? paintedLeafLengthCentimeters({ texture: leaf.texture, cardHeightMeters: leaf.cardSize[1], leafScale: setting.leafScale }) : null,
+      leafCentimeters: paintsLeaves ? paintedLeafLengthCentimeters({ texture: leaf.texture, cardHeightMeters: leaf.cardSize[1], leafScale: leaf.frondRibbon ? 1 : leaf.farCards?.[index]?.leafScale ?? setting.leafScale }) : null,
     };
   });
 }

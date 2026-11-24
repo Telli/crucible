@@ -148,3 +148,13 @@ export function assetDiagnostics({ assetId, warnings = [], skinnedParts, jointCo
   }
   return problems;
 }
+
+/**
+ * Parts whose mesh carries a COLOR_0 alpha that the renderer drops, because a material with `wear` uses the same vertex
+ * component for its masks (see `hasVertexAlpha` in renderer.js).
+ */
+export function droppedVertexAlphaDiagnostics(parts) {
+  return parts.filter(part => part.geometry?.colorAlpha && part.geometry.surfaceMasks).map(part => diagnostic('vertex-alpha-dropped', 'warning', part.name,
+    `Part ${part.name} has a vertex colour alpha, but its material uses wear, so the alpha is ignored and the part draws opaque.`,
+    'Remove wear from the material to keep the alpha, or give the part a material without wear.'));
+}

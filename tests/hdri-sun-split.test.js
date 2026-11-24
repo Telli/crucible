@@ -151,3 +151,12 @@ test('splitHdriSun leaves the glare around the sun in the map, so the background
   const filled = split.map.data[(centreRow * WIDTH + centreColumn) * 3];
   assert.ok(filled > SKY[0] + 5 && filled < 30, `filled with ${filled}`);
 });
+
+test('a scene file with its own area light still takes the HDRI sun as its key, and that light is not zeroed by the studio default (#2765)', () => {
+  const panel = { position: [0, 3, 0], direction: [0, -1, 0], width: 2, height: 2, intensity: 20 };
+  const lit = sceneFileLighting(skyMap(), {}, { areaLights: [panel] });
+  assert.equal(lit.sunSplit, true);
+  assert.ok(lit.environment.keyIntensity > 0);
+  assert.equal(lit.environment.fillIntensity, 0);
+  assert.deepEqual(lit.environment.areaLights, [panel]);
+});
