@@ -78,3 +78,20 @@ test('a mesh without normals has nothing to weld', () => {
   assert.equal(weldedMaskNormals(bare), undefined);
   assert.ok(surfaceMap(bare, { output: 'slope', space: 'object' }, RESOLUTION, 'mask'));
 });
+
+function twoVerticesAt(firstAngleDegrees, secondAngleDegrees) {
+  const normalAt = degrees => [Math.sin((degrees * Math.PI) / 180), Math.cos((degrees * Math.PI) / 180), 0];
+  return {
+    positions: Float32Array.from([0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1]),
+    normals: Float32Array.from([...normalAt(firstAngleDegrees), ...normalAt(secondAngleDegrees), ...normalAt(0), ...normalAt(0), ...normalAt(0), ...normalAt(0)]),
+    indices: Uint32Array.from([0, 2, 3, 1, 4, 5]),
+  };
+}
+
+test('a crease under a right angle welds and one over it stays hard', () => {
+  const steep = twoVerticesAt(-40, 40);
+  const steepWelded = weldedMaskNormals(steep);
+  assert.deepEqual(Array.from(steepWelded.subarray(0, 3)), Array.from(steepWelded.subarray(3, 6)));
+  const overhang = twoVerticesAt(-50, 50);
+  assert.deepEqual(Array.from(weldedMaskNormals(overhang)), Array.from(overhang.normals));
+});

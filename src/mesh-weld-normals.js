@@ -1,14 +1,14 @@
 // A normal for reading a mask (slope, up-facing share), welded by position. A mesh splits a vertex wherever its shading
 // normal jumps, so two vertices at one position carry two normals and a mask read from them follows the crease lines
 // as stair steps. Here every vertex takes the average of the normals at its position that bend away from its own by
-// less than WELD_ANGLE, so a gentle crease (terrain, a rock) reads as one smooth surface, while a real hard edge (the
-// 90 degrees of a cube) stays hard. The shading normals are never changed: this is a separate array for masks.
+// less than a right angle, so a crease (terrain, a rock) reads as one smooth surface, while a real hard edge (the
+// exact 90 degrees of a cube) stays hard. The shading normals are never changed: this is a separate array for masks.
 
 // Position grid for "the same position": 10 micrometres, far below any modelled detail, and exact for split vertices,
 // which copy their position bit for bit.
 const POSITION_GRID = 1e5;
-const WELD_ANGLE = Math.PI / 3;
-const WELD_COSINE = Math.cos(WELD_ANGLE);
+// Just under a right angle, so the exact 90 degrees of a box edge stays hard.
+const WELD_COSINE = 1e-3;
 
 const weldedByGeometry = new WeakMap();
 
@@ -85,7 +85,7 @@ function weldGroup(group, normals, weights, welded) {
 
 /**
  * The vertex normals of a render geometry welded by position, for slope and up-facing masks: vertices at one position
- * share the angle-weighted average of their normals that lie within 60 degrees of their own. A vertex alone at its
+ * share the angle-weighted average of their normals that lie within 90 degrees of their own. A vertex alone at its
  * position, or whose position-mates all carry the same normal, keeps its normal bit for bit, so a mesh without
  * creases gets back `geometry.normals` itself. Returns undefined for a geometry without normals. Cached per geometry;
  * the cost is one pass over the triangles and one over the vertices, and the answer depends only on the mesh.
