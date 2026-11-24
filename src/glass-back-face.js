@@ -35,8 +35,11 @@ export function backFaceExit({ position, normal, viewDirection, indexOfRefractio
   const outward = backNormal(hit.x, hit.y);
   if (!outward || Math.hypot(...outward) < 0.5) return null;
   const exitPosition = add(position, scale(inside, hit.distance));
-  // The normal given to the second refraction faces back into the glass; total internal reflection keeps the inside direction.
-  const direction = normalize(refractDirection(inside, scale(normalize(outward), -1), indexOfRefraction) ?? inside);
+  // The normal given to the second refraction faces back into the glass.
+  const refracted = refractDirection(inside, scale(normalize(outward), -1), indexOfRefraction);
+  // Total internal reflection at the exit: the ray does not leave here, so the caller keeps the ball lens estimate.
+  if (!refracted) return null;
+  const direction = normalize(refracted);
   return { exitPosition, direction };
 }
 
@@ -49,7 +52,7 @@ uniform float glassBackEnabled;
 uniform float glassBackPass;
 const float BACK_REACH_PER_THICKNESS = ${BACK_REACH_PER_THICKNESS.toFixed(1)};
 
-// False when the inside ray finds no back face; the caller then keeps the thickness heuristic.
+// False when the inside ray finds no back face or is totally reflected at the exit; the caller then keeps the thickness heuristic.
 bool glassBackFaceRay(vec3 position, vec3 normal, vec3 viewDirection, float indexOfRefraction, float thickness, out vec3 exitPosition, out vec3 direction) {
   vec3 incident = -viewDirection;
   vec3 inside = refract(incident, normal, 1.0 / indexOfRefraction);
@@ -61,7 +64,7 @@ bool glassBackFaceRay(vec3 position, vec3 normal, vec3 viewDirection, float inde
   vec3 outward = encoded.xyz * 2.0 - 1.0;
   exitPosition = position + inside * hit.w;
   direction = refract(inside, -normalize(outward), indexOfRefraction);
-  if (dot(direction, direction) < 0.5) direction = inside;
+  if (dot(direction, direction) < 0.5) return false;
   direction = normalize(direction);
   return true;
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { backFaceExit, drawsBackFaces, glassBackFaceGlsl } from '../src/glass-back-face.js';
+import { BACK_REACH_PER_THICKNESS, backFaceExit, drawsBackFaces, glassBackFaceGlsl } from '../src/glass-back-face.js';
 import { ballLensExit, refractDirection } from '../src/glass-ball-lens.js';
 import { liquidFragmentSource } from '../src/shaders.js';
 import '../src/liquid-shader.js';
@@ -66,6 +66,14 @@ test('a ray that finds no back face returns null so the shader keeps the thickne
   assert.equal(empty, null);
 });
 
+test('a grazing exit that is totally internally reflected returns null so the ball lens path is used', () => {
+  // The inside ray meets the back face at 60 degrees, past the glass critical angle (41.8 degrees).
+  const grazingNormal = [0, Math.sin(Math.PI / 3), Math.cos(Math.PI / 3)];
+  const found = backFaceExit({ position: [0, 0, 0.3], normal: [0, 0, 1], viewDirection: [0, 0, 1], indexOfRefraction: 1.5, thickness: 1.2, project, backDepth: () => project([0, 0, -0.3]).depth, backNormal: () => grazingNormal, reversed: false });
+  assert.equal(found, null);
+  assert.equal(refractDirection([0, 0, -1], grazingNormal.map(value => -value), 1.5), null, 'the same normal and ray are in total internal reflection');
+});
+
 test('only closed transmissive parts draw back faces; a cap with a continuing medium keeps the open-cap path', () => {
   assert.equal(drawsBackFaces({ transmission: 1, thickness: 0.4, mediumContinues: false }), true);
   assert.equal(drawsBackFaces({ transmission: 1, thickness: 0.4, mediumContinues: true }), false);
@@ -73,8 +81,17 @@ test('only closed transmissive parts draw back faces; a cap with a continuing me
   assert.equal(drawsBackFaces({ transmission: 1, thickness: 0, mediumContinues: false }), false);
 });
 
-test('the liquid shader reads the back-face exit after the ball lens estimate', () => {
+test('the shader carries the reference constants and the same exit math, in the same order', () => {
   const source = liquidFragmentSource();
   assert.ok(source.includes(glassBackFaceGlsl));
+  assert.ok(glassBackFaceGlsl.includes(`BACK_REACH_PER_THICKNESS = ${BACK_REACH_PER_THICKNESS.toFixed(1)}`));
+  // Same steps as backFaceExit: reach of the march, hit distance along the inside ray, the inward (negated) outward normal, TIR leaves the heuristic.
+  const steps = ['inside = refract(incident, normal, 1.0 / indexOfRefraction)', 'thickness * BACK_REACH_PER_THICKNESS', 'encoded.xyz * 2.0 - 1.0', 'exitPosition = position + inside * hit.w', 'refract(inside, -normalize(outward), indexOfRefraction)', 'if (dot(direction, direction) < 0.5) return false;'];
+  let cursor = -1;
+  for (const step of steps) {
+    const next = glassBackFaceGlsl.indexOf(step, cursor + 1);
+    assert.ok(next > cursor, `missing or out of order: ${step}`);
+    cursor = next;
+  }
   assert.ok(source.indexOf('glassBackFaceRay(worldPosition') > source.indexOf('ballLensRay(worldPosition'));
 });
