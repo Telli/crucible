@@ -535,7 +535,7 @@ export function createAgentRuntime({ kernelWorkers = true, backend = 'gpu', brow
     for (const { id } of needs) {
       const described = await readyCatalog.describeSize(id);
       assetFileBytes += described.bytes;
-      byAssetId.set(id, { triangles: described.triangles ?? 0, textures: described.images ?? 0 });
+      byAssetId.set(id, { triangles: described.triangles ?? 0, textures: described.images ?? 0, textureMiB: described.textureMiB ?? (described.images ?? 0) * 4 });
     }
     return { assetFileBytes, byAssetId };
   }

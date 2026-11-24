@@ -108,6 +108,7 @@ export function sceneSizeFrom(inspection, recipe, { assetFileBytes = 0, byAssetI
   // The placed files are read from their glTF accessor counts: the inspection holds no triangles of an asset it has not loaded, so a large GLB would count as nothing.
   const placedAssetTriangles = placements.reduce((total, placement) => total + (byAssetId.get(placement.assetId)?.triangles ?? 0), 0);
   const placedAssetTextures = [...new Set(placements.map(placement => placement.assetId))].reduce((total, assetId) => total + (byAssetId.get(assetId)?.textures ?? 0), 0);
+  const assetTextureMiB = [...new Set(placements.map(placement => placement.assetId))].reduce((total, assetId) => total + (byAssetId.get(assetId)?.textureMiB ?? 0), 0);
   return {
     parts: inspection?.counts?.parts ?? 0,
     assetParts: placements.reduce((total, placement) => total + (placement.parts ?? 0), 0),
@@ -119,6 +120,8 @@ export function sceneSizeFrom(inspection, recipe, { assetFileBytes = 0, byAssetI
     listedTriangles,
     materials: inspection?.counts?.materials ?? 0,
     textures: textureCount(recipe) + placedAssetTextures,
+    // Present only when placed files hold images: their resident size from the image headers, which peakMemoryMiB uses instead of a flat figure per image.
+    ...(placedAssetTextures > 0 ? { assetTextures: placedAssetTextures, assetTextureMiB: round(assetTextureMiB, 1) } : {}),
     lights: (look.pointLights ?? 0) + (look.spotLights ?? 0) + (look.areaLights ?? 0) + 1,
   };
 }
@@ -166,7 +169,7 @@ function rasterFrameSeconds({ size, settings }) {
 
 function peakMemoryMiB({ size, settings }) {
   const sceneMiB = Math.min(COST_MODEL.maximumSceneExtraMiB, size.parts * COST_MODEL.extraMiBPerPart + (size.triangles / 1000) * COST_MODEL.extraMiBPerThousandTriangles);
-  return COST_MODEL.nodeBaseMiB + sceneMiB + size.textures * COST_MODEL.miBPerTexture
+  return COST_MODEL.nodeBaseMiB + sceneMiB + (size.textures - (size.assetTextures ?? 0)) * COST_MODEL.miBPerTexture + (size.assetTextureMiB ?? 0)
     + (settings.renderer ? COST_MODEL.pathTracerExtraMiB : 0) + (settings.width * settings.height * COST_MODEL.nodeBytesPerPixel) / MIB;
 }
 
