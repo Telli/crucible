@@ -320,47 +320,67 @@ test('counts and sizes are bounded', () => {
   assert.match(result.warnings[0], /20 point lights.*at most 16/);
 });
 
-// Hostile inputs, each built from a size `count`. A reader with a backtracking pattern takes time in proportion to count squared, so
-// four times the input would take about 16 times as long; a linear reader takes about 4 times as long. The test compares the two
-// timings, which a slow or loaded machine scales equally, instead of a fixed number of milliseconds.
+// Hostile inputs. Each case has its own size `count`, chosen so the current parser takes 25 to 65 ms at that size on the machine that
+// calibrated it; the test fails if a case runs under 5 ms at `count`, because then the timing says nothing (raise the count).
+// A reader with a backtracking pattern takes time in proportion to count squared, so four times the input takes about 16 times as long;
+// a linear reader about 4 times. The test compares the two timings, which a slow or loaded machine scales equally, instead of a
+// fixed number of milliseconds. A quadratic parser would need minutes at these sizes, so a first timing at count / 16 stops it early.
 const HOSTILE_INPUTS = {
-  bangs: count => '!'.repeat(count * 8),
-  bangsInsideTag: count => `<roblox ${'!'.repeat(count * 8)}`,
-  bangsInsideAttributes: count => `<roblox ${'! '.repeat(count * 4)}>`,
-  comments: count => '<!--'.repeat(count),
-  cdata: count => '<![CDATA[a'.repeat(count),
-  instructions: count => '<?'.repeat(count),
-  doctypes: count => '<!DOCTYPE'.repeat(count),
-  ampersands: count => `<roblox>${'&a'.repeat(count * 4)}</roblox>`,
-  longEntity: count => `<roblox>${'&'.repeat(count * 4)}${'a'.repeat(count * 4)}</roblox>`,
-  quotes: count => `<roblox a="${'"'.repeat(1000)}${"'".repeat(count * 8)}`,
-  dashedName: count => `<roblox><Item class="Part"><Properties><string name="Name">${'-'.repeat(count * 8)}x</string></Properties></Item></roblox>`,
+  bangs: { count: 16000000, build: count => '!'.repeat(count) },
+  bangsInsideTag: { count: 8000000, build: count => `<roblox ${'!'.repeat(count)}` },
+  bangsInsideAttributes: { count: 3600000, build: count => `<roblox ${'! '.repeat(count)}>` },
+  comments: { count: 2000000, build: count => '<!--'.repeat(count) },
+  cdata: { count: 1600000, build: count => '<![CDATA[a'.repeat(count) },
+  instructions: { count: 4000000, build: count => '<?'.repeat(count) },
+  doctypes: { count: 1600000, build: count => '<!DOCTYPE'.repeat(count) },
+  ampersands: { count: 560000, build: count => `<roblox>${'&a'.repeat(count)}</roblox>` },
+  longEntity: { count: 640000, build: count => `<roblox>${'&'.repeat(count)}${'a'.repeat(count)}</roblox>` },
+  quotes: { count: 16000000, build: count => `<roblox a="${'"'.repeat(1000)}${"'".repeat(count)}` },
+  dashedName: { count: 16000000, build: count => `<roblox><Item class="Part"><Properties><string name="Name">${'-'.repeat(count)}x</string></Properties></Item></roblox>` },
 };
+const MINIMUM_MILLISECONDS = 5;
+const MAXIMUM_RATIO = 6;
+const BACKSTOP_MILLISECONDS = 2000;
 
-function bestMilliseconds(text, label) {
+function bestMilliseconds(text, label, runs = 5) {
   let best = Infinity;
-  for (let run = 0; run < 3; run++) {
+  for (let run = 0; run < runs; run++) {
     const started = process.hrtime.bigint();
     try {
-      importRoblox(text, { maxBytes: 64 * 1024 * 1024 });
+      importRoblox(text, { maxBytes: 256 * 1024 * 1024 });
     } catch (error) {
       assert.ok(error instanceof RobloxImportError, `${label} fails with a RobloxImportError, not ${error}`);
     }
     best = Math.min(best, Number(process.hrtime.bigint() - started) / 1e6);
-    if (best > 2000) break;
+    if (best > BACKSTOP_MILLISECONDS) break;
   }
   return best;
 }
 
-test('hostile text is read in linear time: four times the input takes less than 8 times as long, and under 2 s', () => {
-  const count = 25000;
-  for (const [label, build] of Object.entries(HOSTILE_INPUTS)) {
-    bestMilliseconds(build(count / 10), label);
-    const small = Math.max(bestMilliseconds(build(count), label), 5);
-    const large = bestMilliseconds(build(count * 4), label);
-    assert.ok(large / small < 8, `${label}: ${large.toFixed(1)} ms at 4n against ${small.toFixed(1)} ms at n is a ratio of ${(large / small).toFixed(1)}, not linear`);
-    assert.ok(large < 2000, `${label} took ${large.toFixed(0)} ms for the 4n input`);
+test('hostile text is read in linear time: four times the input takes less than 6 times as long, and under 2 s', () => {
+  const report = [];
+  for (const [label, { count, build }] of Object.entries(HOSTILE_INPUTS)) {
+    bestMilliseconds(build(count / 100), label, 1);
+    const probe = bestMilliseconds(build(count / 16), label, 1);
+    assert.ok(probe < 100, `${label}: ${probe.toFixed(0)} ms for count / 16 is far above linear; the parser is super-linear on this input`);
+    // Another process can slow every run of one measurement. A linear parser fails the ratio only by that bad luck, so a case is
+    // measured up to three times and passes when any round stays under the limit; a quadratic parser gives about 16 in every round.
+    let small = 0;
+    let large = 0;
+    let ratio = Infinity;
+    const smallText = build(count);
+    const largeText = build(count * 4);
+    for (let round = 0; round < 3 && ratio >= MAXIMUM_RATIO; round++) {
+      small = bestMilliseconds(smallText, label);
+      assert.ok(small >= MINIMUM_MILLISECONDS, `${label}: only ${small.toFixed(1)} ms at count ${count}, too fast to compare; raise its count in HOSTILE_INPUTS`);
+      large = bestMilliseconds(largeText, label);
+      ratio = large / small;
+    }
+    report.push(`${label} n=${count} ${small.toFixed(1)} ms, 4n ${large.toFixed(1)} ms, ratio ${ratio.toFixed(2)}`);
+    assert.ok(ratio < MAXIMUM_RATIO, `${label}: ${large.toFixed(1)} ms at 4n against ${small.toFixed(1)} ms at n is a ratio of ${ratio.toFixed(1)}, not linear`);
+    assert.ok(large < BACKSTOP_MILLISECONDS, `${label} took ${large.toFixed(0)} ms for the 4n input`);
   }
+  if (process.env.HOSTILE_REPORT) console.log(report.join(String.fromCharCode(10)));
 });
 
 test('the import is deterministic: the same text gives the same recipe, byte for byte, and names follow the document order', async () => {
