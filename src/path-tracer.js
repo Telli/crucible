@@ -3,7 +3,7 @@ import { cameraFieldOfView, resolveThinLens } from './camera.js';
 import { fresnelSchlick } from './material-layers.js';
 import { pointLightFalloff } from './ray-query.js';
 import { profileGain } from './light-profile.js';
-import { buildTraceScene, buildTraceSceneForDevice, refuseLocalVolumes, SUN_ANGULAR_RADIUS, uniqueTriangleCount } from './path-tracer-scene.js';
+import { buildTraceScene, buildTraceSceneForDevice, partUsesVertexAlpha, refuseLocalVolumes, SUN_ANGULAR_RADIUS, uniqueTriangleCount, validateTraceEnvironment } from './path-tracer-scene.js';
 import { denoiseRadiance, estimateRelativeNoise } from './path-tracer-denoise.js';
 import { acesChannel, displayColor } from './view-transform.js';
 import { VIEW_TRANSFORM_NAMES } from './view-transform-names.js';
@@ -66,6 +66,12 @@ function hasSplitLayerMap(material) {
   const coatIsSplit = Boolean(maps.clearcoatTexture) && material.clearcoatRoughness > 0 && maps.clearcoatTexture.image !== maps.clearcoatRoughnessTexture?.image;
   const sheenIsSplit = Boolean(maps.sheenColorTexture) && material.sheenRoughness > 0 && maps.sheenColorTexture.image !== maps.sheenRoughnessTexture?.image;
   return coatIsSplit || sheenIsSplit;
+}
+
+// The CPU and WebGL tracers read COLOR_0 alpha (a blend part cuts out at half, a mask part adds it to the cutoff test); the others do not.
+function vertexAlphaNote(backend, kernelMaterials, alphaMode) {
+  if (kernelMaterials || backend === 'webgpu') return 'COLOR_0 vertex alpha is ignored: only the CPU and "gpu" (WebGL) tracers read it. Use one of those backends to trace it.';
+  return alphaMode === 'mask' ? 'COLOR_0 vertex alpha is multiplied into the alpha tested against the cutoff.' : 'COLOR_0 vertex alpha on a blended material is traced as a cutout at 0.5.';
 }
 
 function hasGraphOpacity(material) {
@@ -328,7 +334,7 @@ const CORNER_WEIGHTS = new Float64Array(3);
 
 /** Interpolates the surface at a hit: position, facing-corrected normal is left to the caller, colour and alpha. */
 function fillHit(scene, triangleId, originX, originY, originZ, directionX, directionY, directionZ, distance, hit) {
-  const { positions, normals, uvs, uvs1, colors, indices } = scene;
+  const { positions, normals, uvs, uvs1, colors, vertexAlpha, indices } = scene;
   const first = indices[triangleId * 3];
   const second = indices[triangleId * 3 + 1];
   const third = indices[triangleId * 3 + 2];
@@ -407,6 +413,8 @@ function fillHit(scene, triangleId, originX, originY, originZ, directionX, direc
     hit.color[2] *= hit.texel[2];
     alpha = hit.texel[3];
   }
+  // COLOR_0 alpha, interpolated at the hit; the scene holds it only for blended and masked parts.
+  if (vertexAlpha) alpha *= firstWeight * vertexAlpha[first] + secondWeight * vertexAlpha[second] + thirdWeight * vertexAlpha[third];
   hit.emission[0] = material.emission[0];
   hit.emission[1] = material.emission[1];
   hit.emission[2] = material.emission[2];
@@ -1170,7 +1178,12 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
   const hasGridVolume = (environment?.localVolumes ?? []).some(volume => volume?.shape === 'grid');
   if (hasGridVolume && kernelMaterials && environment.volumeShutter > 0) notes.add('environment.volumeShutter is ignored for a grid volume: Cook draws the grid as it is at the frame time, with no motion blur from its velocity channel. Use backend "cpu" or "webgpu" for a blurred blast.');
   if ((environment?.localVolumes ?? []).some(volume => volume?.shape === 'grid' && volume.noiseAmount > 0)) notes.add('noiseAmount, noiseScale and noiseOctaves of a grid volume are ignored: only the rasterizer adds that fine detail on top of the grid, a trace reads the grid as it is.');
-  if (!environment?.map) notes.add('There is no environment map, so the sky is black and only the lights shine.');
+  const sunColor = Array.from(environment?.keyColor ?? [], channel => channel * (environment?.keyIntensity ?? 1));
+  const hasSun = sunColor.some(channel => channel > 0);
+  if (!environment?.map) {
+    notes.add('There is no environment map, so the sky is black and only the lights shine.');
+    if (!hasSun) notes.add('No sun is set: set keyColor, keyIntensity and lightDirection to add a sun.');
+  }
   if (environment?.fillIntensity > 0) notes.add('fillIntensity is ignored: the two fixed fill lights are rasterizer only. Add a point or area light, or raise environmentIntensity, to light the shadow side of a trace.');
   if (environment?.world === true) notes.add('world: true is ignored: the outdoor haze shading is rasterizer only, and a trace draws the environment map behind the picture and lights with it.');
   if (environment?.world === false && kernelMaterials) notes.add('world: false draws the flat background colour behind the picture in the CPU, "gpu" (WebGL) and "webgpu" tracers only: the native cycles kernel draws the environment map there, as it lights with it.');
@@ -1179,6 +1192,7 @@ export function describeIgnoredFeatures(parts, environment, backend = 'cpu', { k
     const material = part.material ?? {};
     for (const note of describeUntracedWater(part)) notes.add(note);
     if (material.tag === 'water' && backend === 'gpu') notes.add('The depth tint under a thin water sheet is not drawn: the CPU, WebGPU and native cycles tracers add an absorbing medium under it, the WebGL tracer draws the water clear.');
+    if (partUsesVertexAlpha(part)) notes.add(vertexAlphaNote(backend, kernelMaterials, material.alphaMode));
     for (const field of IGNORED_MAP_FIELDS) if (material[field]) notes.add(`${field} is ignored.`);
     if (material.occlusionMap && (kernelMaterials || backend !== 'cpu')) notes.add(kernelMaterials ? 'occlusionMap is ignored by the native cycles kernel: its material record has no occlusion slot (codepawl/cook#71). Use backend "cpu" to trace it.' : `occlusionMap is ignored by the ${backend} tracer: only the CPU tracer reads it. Use backend "cpu" to trace it.`);
     if (material.tag && material.tag !== 'surface' && material.tag !== 'water') notes.add(`${material.tag} materials are traced as plain surfaces.`);
@@ -1362,6 +1376,7 @@ function renderBandsInWorkers(scene, camera, options, buffers, shouldStop) {
  */
 export async function renderPathTracedImage({ parts, environment = {}, camera }, rawOptions = {}) {
   const options = normalizePathTracerOptions(rawOptions);
+  validateTraceEnvironment(environment);
   const started = performance.now();
   const shouldStop = () => {
     if ((performance.now() - started) / 1000 > options.maxSeconds) throw new Error(`The path trace passed its ${options.maxSeconds} second limit and was stopped.`);

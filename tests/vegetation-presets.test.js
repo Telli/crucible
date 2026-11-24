@@ -20,7 +20,7 @@ function throwsWith(action, pattern) {
 
 test('a species with no overrides and a preset with none grow exactly the species tree', () => {
   assert.deepEqual(geometryOf(createTree({ species: 'broadleaf', tree: {} }, 4)), geometryOf(createTree('broadleaf', 4)));
-  assert.deepEqual(geometryOf(createTree({ preset: 'birch' }, 4)), geometryOf(createTree('birch', 4)));
+  assert.deepEqual(geometryOf(createTree({ preset: 'palm' }, 4)), geometryOf(createTree('palm', 4)));
   const preset = createTree({ preset: 'pine' }, 4);
   assert.equal(preset.species, 'conifer');
   assert.equal(preset.preset, 'pine');

@@ -149,13 +149,21 @@ through its depth. `"\n"` starts a new line 1.2 em lower. `size` is the em heigh
 | `height` | 5 | 0.25 to 2000 | Top to base in metres, measured before the base is cut. |
 | `flatBase` | 0.6 | 0 to 1 | 0 keeps a round underside; 1 cuts it flat the furthest. The base always sits on y = 0. |
 | `resolution` | 48 (128 with `levels`) | whole, 16 to 96 (16 to 160 with `levels`) | Cells along the longest side; it sets the triangle count. |
-| `levels` | none | 1 to 4 of `{count, sizeRatio}`, 1000 lobes in all | Grows a tower: the first level is the dome layout (`count` 1 to 48 lobes), and each later level puts its lobes on the surface of the level before. `sizeRatio` (0.02 to 2) is the lobe size as a share of the first level's. `puffs` is not used with levels. |
+| `levels` | none | 1 to 4 of `{count, sizeRatio, softness}`, 1000 lobes in all | Grows a tower: the first level is the dome layout (`count` 1 to 48 lobes), and each later level puts its lobes on the surface of the level before. `sizeRatio` (0.02 to 2) is the lobe size as a share of the first level's. `puffs` is not used with levels. |
 | `upBias` | 0.5 | 0 to 1, with `levels` | 0 grows lobes in every direction; 1 never grows them downward. |
 | `unionSoftness` | 0.14 (0.3 with `levels`) | 0.02 to 1 | The blend between lobes as a share of lobe radius; with levels each level blends by its own radius. Lower is tighter. |
 
 A scene geometry takes the same fields with `"type": "cloud"` (see `scene_capabilities` `cloud`). A bad value throws an error that names the field and the accepted range. Lobes are stretched with the box, so a tall or flat cloud has taller or flatter puffs.
 
 With `levels` such as `[{"count": 7, "sizeRatio": 1}, {"count": 60, "sizeRatio": 0.35}, {"count": 680, "sizeRatio": 0.12}]` the cloud becomes a tower covered in rounded lobes. Normals come from the gradient of the blended field at each vertex, not from the mesh faces, so toon steps follow the lobes without fine rings. Later levels find their neighbours in a grid, so 680 bumps cost little per sample; three such towers at `resolution` 128 take about 2.3 s together. A mesh over 150000 faces is refused with the resolution to pass instead.
+
+A level may set its own `softness` (0.02 to 1, a share of its lobe radius). Without it the level takes the cloud's `unionSoftness`, so a recipe that leaves it out builds the same bytes as before. A small `softness` such as 0.1 on the last level keeps its bumps crisp while the big lobes under it stay soft at 0.5.
+
+Three wide cumulus over a sea, each with a flat base and three levels of lobes, soft on the big ones and a little crisper on the small ones (a `softness` per level), shaded with six toon steps (`toonColors`, darkest to lightest) from blue-grey in the shade to warm white in the sun, are in [`recipes/cumulus-towers.json`](https://crucible.codepawl.com/recipes/cumulus-towers.json). A still of it, rendered by Crucible:
+
+![Three cumulus towers over the sea](https://crucible.codepawl.com/recipes/cumulus-towers.webp)
+
+The scene needs a lowered ambient light (`ambientIntensity` 0.3) so the shaded side keeps the dark tone instead of the sky's blue, and a sun in front of the camera so the lit tones face it.
 
 For a sky with many clouds, keep `resolution` at 48 or lower and repeat a few cloud shapes with a node's `instances` (see [agent-scene.md](agent-scene.md)) instead of building one mesh per cloud. Triangles grow with the square of `resolution`.
 

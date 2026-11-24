@@ -227,7 +227,7 @@ test('scene_create takes every motion track kind the backend lists', async () =>
   assert.deepEqual([...MOTION_TRACK_KINDS], ['node', 'material', 'camera', 'morph', 'geometry', 'light', 'sun', 'environment', 'effects']);
   await withRoundTripClient(async client => {
     const wrongKind = await call(client, 'scene_create', { recipe: oneBoxRecipe({ motion: { duration: 1, tracks: [{ kind: 'sky', id: 'a', property: 'x', keyframes: [{ time: 0, value: 0 }] }] } }) });
-    assert.match(wrongKind.text, new RegExp(`Kinds: ${MOTION_TRACK_KINDS.join(', ')}\.`));
+    assert.match(wrongKind.text, new RegExp(`Kinds: ${MOTION_TRACK_KINDS.join(', ')}\\.`));
   });
 });
 

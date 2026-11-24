@@ -7,7 +7,7 @@
 import { copyFile, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -41,10 +41,20 @@ function runNode(scriptAndArguments, label) {
 
 // ---------- Blender demo scenes (Cook) ----------
 
-async function downloadTo(url, destination) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Download of ${url} failed with HTTP ${response.status}.`);
-  await writeFile(destination, Buffer.from(await response.arrayBuffer()));
+async function downloadDemoArchive(sourceName, cacheFolder, destination) {
+  const source = DEMO_SOURCES[sourceName];
+  const parsed = new URL(source?.url ?? '');
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'download.blender.org') {
+    throw new Error(`Untrusted demo source for ${sourceName}.`);
+  }
+  const safeRoot = `${resolve(cacheFolder)}${sep}`;
+  const safeTarget = resolve(destination);
+  if (!safeTarget.startsWith(safeRoot)) {
+    throw new Error(`Refusing to write outside cache folder: ${safeTarget}`);
+  }
+  const response = await fetch(parsed.href);
+  if (!response.ok) throw new Error(`Download of ${parsed.href} failed with HTTP ${response.status}.`);
+  await writeFile(safeTarget, Buffer.from(await response.arrayBuffer()));
 }
 
 async function findBlendFile(folder) {
@@ -68,7 +78,7 @@ async function prepareDemoGlb(sourceName, cacheFolder) {
   if (existsSync(join(sourceFolder, 'scene.glb'))) return sourceFolder;
   await mkdir(sourceFolder, { recursive: true });
   const downloaded = join(sourceFolder, source.zipped ? `${sourceName}.zip` : `${sourceName}.blend`);
-  if (!existsSync(downloaded)) await downloadTo(source.url, downloaded);
+  if (!existsSync(downloaded)) await downloadDemoArchive(sourceName, cacheFolder, downloaded);
   if (source.zipped) {
     await mkdir(join(sourceFolder, 'unzipped'), { recursive: true });
     unzip(downloaded, join(sourceFolder, 'unzipped'));

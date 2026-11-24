@@ -3,18 +3,29 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { median, summarizeRounds } from './frame-statistics.mjs';
 
 const WARMUP_FRAMES = 20;
 const NANOSECONDS_PER_MILLISECOND = 1e6;
 const ONE_PIXEL = new Uint8Array(4);
 
-function median(values) {
-  const sorted = [...values].sort((first, second) => first - second);
-  return sorted[Math.floor(sorted.length / 2)];
-}
-
-window.measureThree = async function measureThree({ description, glbUrl, hdriUrl, frames = 200, width = 1280, height = 720 }) {
+window.measureThree = async function measureThree({ description, glbUrl, hdriUrl, frames = 200, width = 1280, height = 720, cameras = [], rounds = 1 }) {
   const canvas = document.querySelector('#viewport');
+  // Records every fragment shader three.js compiles, with its final source (defines written in), to count lines and translated lines.
+  const fragmentShaders = [];
+  const originalShaderSource = WebGL2RenderingContext.prototype.shaderSource;
+  WebGL2RenderingContext.prototype.shaderSource = function shaderSource(shader, source) {
+    if (source.includes('#define STANDARD') && source.includes('void main()') && !source.includes('gl_Position')) fragmentShaders.push({ shader, source, translated: null });
+    return originalShaderSource.call(this, shader, source);
+  };
+  // The translated source is only available right after the compile, before three.js deletes the shader.
+  const originalCompileShader = WebGL2RenderingContext.prototype.compileShader;
+  WebGL2RenderingContext.prototype.compileShader = function compileShader(shader) {
+    originalCompileShader.call(this, shader);
+    const entry = fragmentShaders.find(candidate => candidate.shader === shader);
+    const debugShaders = this.getExtension('WEBGL_debug_shaders');
+    if (entry && debugShaders) entry.translated = debugShaders.getTranslatedShaderSource(shader);
+  };
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(1);
   renderer.setSize(width, height, false);
@@ -45,38 +56,77 @@ window.measureThree = async function measureThree({ description, glbUrl, hdriUrl
   camera.position.fromArray(description.eye);
   camera.lookAt(new THREE.Vector3().fromArray(description.target));
 
-  const wallMilliseconds = [];
-  const gpuMilliseconds = [];
-  const pending = [];
-  const drain = () => {
-    while (pending.length) {
-      const query = pending[0];
-      if (!context.getQueryParameter(query, context.QUERY_RESULT_AVAILABLE)) return;
-      pending.shift();
-      if (!context.getParameter(timerExtension.GPU_DISJOINT_EXT)) gpuMilliseconds.push(context.getQueryParameter(query, context.QUERY_RESULT) / NANOSECONDS_PER_MILLISECOND);
+  const timeRound = async () => {
+    const wallMilliseconds = [];
+    const gpuMilliseconds = [];
+    const pending = [];
+    const drain = () => {
+      while (pending.length) {
+        const query = pending[0];
+        if (!context.getQueryParameter(query, context.QUERY_RESULT_AVAILABLE)) return;
+        pending.shift();
+        const disjoint = context.getParameter(timerExtension.GPU_DISJOINT_EXT);
+        const milliseconds = context.getQueryParameter(query, context.QUERY_RESULT) / NANOSECONDS_PER_MILLISECOND;
+        context.deleteQuery(query);
+        if (!disjoint) gpuMilliseconds.push(milliseconds);
+      }
+    };
+    for (let index = 0; index < WARMUP_FRAMES + frames; index++) {
+      const started = performance.now();
+      const query = context.createQuery();
+      context.beginQuery(timerExtension.TIME_ELAPSED_EXT, query);
+      renderer.render(scene, camera);
+      context.endQuery(timerExtension.TIME_ELAPSED_EXT);
+      pending.push(query);
+      context.readPixels(Math.floor(width / 2), Math.floor(height / 2), 1, 1, context.RGBA, context.UNSIGNED_BYTE, ONE_PIXEL);
+      if (index >= WARMUP_FRAMES) wallMilliseconds.push(performance.now() - started);
+      drain();
     }
+    for (let attempt = 0; attempt < 200 && pending.length; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      drain();
+    }
+    return { gpuMedianMs: median(gpuMilliseconds.slice(WARMUP_FRAMES)), wallMedianMs: median(wallMilliseconds) };
   };
-  for (let index = 0; index < WARMUP_FRAMES + frames; index++) {
-    const started = performance.now();
-    const query = context.createQuery();
-    context.beginQuery(timerExtension.TIME_ELAPSED_EXT, query);
-    renderer.render(scene, camera);
-    context.endQuery(timerExtension.TIME_ELAPSED_EXT);
-    pending.push(query);
-    context.readPixels(Math.floor(width / 2), Math.floor(height / 2), 1, 1, context.RGBA, context.UNSIGNED_BYTE, ONE_PIXEL);
-    if (index >= WARMUP_FRAMES) wallMilliseconds.push(performance.now() - started);
-    drain();
+  const perCamera = {};
+  const cameraList = cameras.length ? cameras : [{ name: 'scene', eye: description.eye, target: description.target }];
+  let counts = null;
+  for (const entry of cameraList) {
+    camera.position.fromArray(entry.eye);
+    camera.lookAt(new THREE.Vector3().fromArray(entry.target));
+    const gpuRounds = [];
+    const wallRounds = [];
+    for (let round = 0; round < rounds; round++) {
+      const result = await timeRound();
+      gpuRounds.push(result.gpuMedianMs);
+      wallRounds.push(result.wallMedianMs);
+    }
+    counts ??= { drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles };
+    perCamera[entry.name] = { wholeFrame: { gpuMs: summarizeRounds(gpuRounds), wallMs: summarizeRounds(wallRounds) } };
   }
-  for (let attempt = 0; attempt < 200 && pending.length; attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 10));
-    drain();
-  }
+  const first = Object.values(perCamera)[0].wholeFrame;
+  const physicalFragment = fragmentShaders.sort((left, right) => right.source.length - left.source.length)[0];
+  const translatedFragmentLines = physicalFragment?.translated ? physicalFragment.translated.split(String.fromCharCode(10)).length : null;
+  const physicalPrograms = renderer.info.programs.filter(program => !/PMREM|Background/.test(program.name));
+  const standardProgram = {
+    programName: 'largest material program (MeshStandardMaterial)',
+    programsCompiled: renderer.info.programs.length,
+    programNames: renderer.info.programs.map(program => program.name),
+    activeUniforms: physicalPrograms.length ? Math.max(...physicalPrograms.map(program => context.getProgramParameter(program.program, context.ACTIVE_UNIFORMS))) : null,
+    fragmentSourceLines: physicalFragment ? physicalFragment.source.split(String.fromCharCode(10)).length : null,
+    translatedFragmentLines,
+  };
+  const debugInfo = context.getExtension('WEBGL_debug_renderer_info');
   return {
-    drawCalls: renderer.info.render.calls,
-    triangles: renderer.info.render.triangles,
-    wallMedianMs: Number(median(wallMilliseconds).toFixed(3)),
-    gpuTotalMedianMs: Number(median(gpuMilliseconds.slice(WARMUP_FRAMES)).toFixed(3)),
+    ...counts,
+    wallMedianMs: first.wallMs.median,
+    gpuTotalMedianMs: first.gpuMs.median,
+    perCamera,
+    standardProgram,
+    rounds,
     centerPixel: Array.from(ONE_PIXEL),
+    glRenderer: debugInfo ? context.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'unknown',
+    resolution: [canvas.width, canvas.height],
     glError: context.getError(),
   };
 };

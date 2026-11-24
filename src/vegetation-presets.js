@@ -37,24 +37,42 @@ export const TREE_PARAMETERS = Object.freeze({
 
 const CROWN_PROFILES = Object.freeze({ round: 'crown', cone: 'cone', column: 'column', umbrella: 'umbrella' });
 
+// The leaves of a tree preset with broad leaves (#3041): twig cards of real-sized leaves, on the last two branch levels, kept more
+// often toward the crown's outside and turned up and outward. A plain species keeps its sprig cards and its sites on the last level.
+const TWIG_CROWN_LEAF = Object.freeze({
+  texture: 'twig',
+  placement: Object.freeze({ depth: 2, interiorKeep: 0.35, outwardTilt: 0.8, upTilt: 0.6, cardFan: 1 }),
+  farPair: true,
+});
+
+// Tufted Scots pine clusters on layered crown shoots, sharing the fanned crown placement cleanly at far levels (#3051).
+const PINE_CROWN_LEAF = Object.freeze({
+  texture: 'pine',
+  color: Object.freeze([56, 102, 48]),
+  cardSize: Object.freeze([1.08, 1.08]),
+  placement: Object.freeze({ depth: 2, interiorKeep: 0.35, outwardTilt: 0.85, upTilt: 0.45, cardFan: 0.9 }),
+  farPair: true,
+  farCards: Object.freeze({}),
+});
+
 // Each preset is a small JSON object: the base species, an optional height range in metres and growth overrides.
 export const TREE_PRESETS = Object.freeze({
   oak: Object.freeze({
-    label: 'Oak', species: 'broadleaf', height: [9, 13],
+    label: 'Oak', species: 'broadleaf', height: [9, 13], leaf: TWIG_CROWN_LEAF,
     tree: { crownShape: 'round', branches: [7, 4, 3], branchAngle: [68, 55, 50], lengthFalloff: [0.58, 0.5], gnarliness: [0.1, 0.22, 0.26, 0.28], leafCount: 6 },
   }),
   ash: Object.freeze({
-    label: 'Ash', species: 'broadleaf', height: [12, 16],
+    label: 'Ash', species: 'broadleaf', height: [12, 16], leaf: TWIG_CROWN_LEAF,
     tree: { crownShape: 'round', branches: [9, 3, 3], branchAngle: [40, 42, 45], branchStart: [0.42], lengthFalloff: [0.44, 0.55], gnarliness: [0.05, 0.1, 0.14, 0.18], tropism: [0.02, 0.12, 0.06, 0], leafSize: 0.85, leafCount: 5 },
   }),
   aspen: Object.freeze({
-    label: 'Aspen', species: 'birch', height: [11, 15],
+    label: 'Aspen', species: 'birch', height: [11, 15], leaf: TWIG_CROWN_LEAF,
     tree: { crownShape: 'column', branches: [14, 3, 3], branchAngle: [38, 45, 50], branchStart: [0.45], lengthFalloff: [0.18, 0.5], gnarliness: [0.03, 0.1, 0.12, 0.14], tropism: [0.02, 0.1, 0, -0.08], leafSize: 0.75, leafCount: 6 },
   }),
-  birch: Object.freeze({ label: 'Birch', species: 'birch', tree: {} }),
+  birch: Object.freeze({ label: 'Birch', species: 'birch', tree: {}, leaf: TWIG_CROWN_LEAF }),
   pine: Object.freeze({
-    label: 'Pine', species: 'conifer', height: [12, 17],
-    tree: { crownShape: 'umbrella', branches: [44, 9], branchAngle: [74, 55], branchStart: [0.55, 0.2], lengthFalloff: [0.4, 0.35], gnarliness: [0.03, 0.12, 0.1], tropism: [0, 0.08, 0.04], leafStart: 0.4 },
+    label: 'Pine', species: 'conifer', height: [12, 17], leaf: PINE_CROWN_LEAF,
+    tree: { crownShape: 'round', branches: [30, 5], branchAngle: [78, 52], branchStart: [0.34, 0.18], lengthFalloff: [0.42, 0.44], gnarliness: [0.03, 0.14, 0.14], tropism: [0, -0.02, 0.01], leafStart: 0.2, leafCount: 2.8 },
   }),
   palm: Object.freeze({ label: 'Palm', species: 'palm', tree: {} }),
   bush: Object.freeze({ label: 'Bush', species: 'bush', tree: {} }),
@@ -229,14 +247,14 @@ export function maximumBranchCount(levels) {
  * A species preset with growth overrides applied: a new object, the base left untouched. `tree` must have passed
  * checkTreeGrowth; `height` is an optional [min, max] that replaces the species height range.
  */
-export function applyTreeGrowth(base, tree, height) {
+export function applyTreeGrowth(base, tree, height, leafOverride) {
   const levels = resizeLevels(base.levels, tree.levels ?? base.levels.length - 1);
   levels.forEach((level, index) => {
     if (level.children) applySprouting(level.children, tree, index);
     applyShape(level, tree, index);
   });
   if (tree.crownShape) levels[0].children.profile = CROWN_PROFILES[tree.crownShape];
-  return { ...base, ...(height ? { height: [...height] } : {}), levels, leaf: applyLeaves(base.leaf, tree), leafSiteLimit: MAX_TREE_LEAF_SITES };
+  return { ...base, ...(height ? { height: [...height] } : {}), levels, leaf: applyLeaves(leafOverride ? { ...base.leaf, ...leafOverride } : base.leaf, tree), leafSiteLimit: MAX_TREE_LEAF_SITES };
 }
 
 /** What scene_capabilities lists for tree growth: presets with their base species, and every parameter with its range. */

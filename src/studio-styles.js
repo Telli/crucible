@@ -398,6 +398,32 @@ export const STUDIO_CSS = `
 .crucible-studio-pass-notice p { margin: 0; text-wrap: balance; }
 .crucible-studio-pass-notice .crucible-studio-icon { flex: none; color: var(--studio-accent); }
 
+/* Shown while an edit's light bake runs. It sits under the status pill, the one place the viewport keeps for state, and does not take clicks. */
+.crucible-studio-bake-mark {
+  position: absolute;
+  inset-inline-start: 50%;
+  inset-block-start: calc(var(--studio-top) + 38px);
+  transform: translateX(-50%);
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 15px;
+  color: var(--studio-text);
+  font-family: var(--studio-font);
+  font-size: 12px;
+  inline-size: max-content;
+  pointer-events: none;
+  z-index: 7;
+}
+.crucible-studio-bake-mark[hidden] { display: none; }
+.crucible-studio-bake-mark .crucible-studio-icon { flex: none; color: var(--studio-accent); }
+.crucible-studio[data-floating="false"]:not([data-compact="true"]) .crucible-studio-bake-mark { inset-block-start: calc(var(--studio-edge) + 38px); }
+@media (prefers-reduced-motion: no-preference) {
+  .crucible-studio-bake-mark .crucible-studio-icon { animation: crucible-studio-bake-pulse 1.6s ease-in-out infinite; }
+  @keyframes crucible-studio-bake-pulse {
+    50% { opacity: 0.45; }
+  }
+}
+
 .crucible-studio-menubar {
   position: absolute;
   inset: var(--studio-edge) var(--studio-edge) auto;
@@ -521,6 +547,41 @@ export const STUDIO_CSS = `
 .crucible-studio-popover-grid + .crucible-studio-popover-grid { margin-block-start: 10px; }
 #crucible-studio-pop-add { max-width: 348px; max-block-size: calc(100dvh - 16px); overflow-y: auto; }
 #crucible-studio-pop-add .crucible-studio-popover-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.crucible-studio-popover.crucible-studio-tree-picker {
+  max-block-size: calc(100dvh - 16px);
+  max-inline-size: none;
+  overflow-y: auto;
+}
+#crucible-studio-pop-add .crucible-studio-tree-picker .crucible-studio-popover-grid { grid-template-columns: repeat(3, 104px); }
+.crucible-studio-popover button[aria-expanded="true"] { background: color-mix(in srgb, var(--studio-text) 8%, transparent); }
+.crucible-studio-popover button.crucible-studio-tree-tile {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 4px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--studio-muted);
+}
+.crucible-studio-popover button.crucible-studio-tree-tile:hover,
+.crucible-studio-popover button.crucible-studio-tree-tile:focus-visible { color: var(--studio-text); }
+.crucible-studio-tree-picture {
+  inline-size: 96px;
+  block-size: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--studio-surface);
+}
+.crucible-studio-tree-picture[hidden] { display: block; visibility: hidden; }
+.crucible-studio-tree-section { display: grid; }
+.crucible-studio-tree-section[hidden], .crucible-studio-tree-controls[hidden] { display: none; }
+.crucible-studio-tree-controls { display: grid; gap: 14px; }
+.crucible-studio-tree-controls > .crucible-studio-field-head { margin-block-end: -8px; }
+.crucible-studio-tree-seed {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
 .crucible-studio-popover > button { gap: 9px; }
 .crucible-studio-popover > button[hidden] { display: none; }
 .crucible-studio-popover button {
@@ -2116,7 +2177,9 @@ export const STUDIO_CSS = `
   align-items: start;
   gap: 12px;
 }
-.crucible-studio-setup-agent > button { grid-column: 2; justify-self: start; }
+.crucible-studio-setup-agent > button,
+.crucible-studio-setup-agent > textarea { grid-column: 2; justify-self: start; }
+.crucible-studio-setup-agent > textarea { justify-self: stretch; }
 .crucible-studio-setup-agent-mark {
   display: grid;
   place-items: center;

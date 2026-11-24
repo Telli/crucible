@@ -233,3 +233,37 @@ export function fitPerspectiveDistance(bounds, view, aspect, padding = 1.15) {
   }
   return distance;
 }
+
+/**
+ * Projects a 3D world `point` `[x, y, z]` into 2D screen coordinates `{ x, y, depth, inFront }` using the same view and
+ * `applyProjection` setup as `renderer.render(frame)` (`x` left-to-right, `y` top-to-bottom in pixels, `depth` forward distance from the eye).
+ */
+export function projectToScreen(frame, point, width, height, { world = false } = {}) {
+  requireNonDegenerateView(frame, 'Project');
+  if (!point || point.length !== 3 || !Array.from(point).every(value => typeof value === 'number' && Number.isFinite(value))) {
+    throw new RangeError('Project point must be three finite numbers.');
+  }
+  requirePositiveFinite(width, 'width');
+  requirePositiveFinite(height, 'height');
+  const aspect = width / height;
+  const view = mat4.lookAt(mat4.create(), frame.eye, frame.target, frame.up ?? [0, 1, 0]);
+  const projection = mat4.create();
+  mat4.perspective(projection, world ? Math.PI / 4 : Math.PI / 5.5, aspect, 0.1, world ? 600 : 100);
+  applyProjection(projection, frame, aspect, { world });
+  const [px, py, pz] = point;
+  const vx = view[0] * px + view[4] * py + view[8] * pz + view[12];
+  const vy = view[1] * px + view[5] * py + view[9] * pz + view[13];
+  const vz = view[2] * px + view[6] * py + view[10] * pz + view[14];
+  const vw = view[3] * px + view[7] * py + view[11] * pz + view[15];
+  const clipX = projection[0] * vx + projection[4] * vy + projection[8] * vz + projection[12] * vw;
+  const clipY = projection[1] * vx + projection[5] * vy + projection[9] * vz + projection[13] * vw;
+  const clipW = projection[3] * vx + projection[7] * vy + projection[11] * vz + projection[15] * vw;
+  const ndcX = clipX / clipW;
+  const ndcY = clipY / clipW;
+  return {
+    x: (ndcX * 0.5 + 0.5) * width,
+    y: (0.5 - ndcY * 0.5) * height,
+    depth: -vz,
+    inFront: vz < 0,
+  };
+}

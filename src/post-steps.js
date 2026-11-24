@@ -1,4 +1,5 @@
 import { postStepSupport } from './shader-registry.js';
+import { resolveAutoExposure } from './auto-exposure.js';
 import { createStage, sharedFragmentHeader } from './camera-effects.js';
 import { numberInRange, groupOf, onlyKeys, triple } from './post-fields.js';
 import { resolveDistortion, resolveFlash, createDistortionStage, createFlashStage } from './post-air.js';
@@ -21,6 +22,14 @@ const FOG_SAMPLES = 32;
 const MAXIMUM_KUWAHARA_RADIUS = 8;
 // Longest lateral color offset at the image corner at full dispersion, as a fraction of the distance from the center.
 const MAXIMUM_DISPERSION = 0.03;
+
+// Local tone mapping works on the blur of the frame at a radius that is a fraction of its height; the taps read a mip level, so the cost does not grow with the radius.
+const LOCAL_TONE_TAPS = 24;
+const LOCAL_TONE_PIVOT = 0.18;
+// The most the base of a shadow is lifted, in natural-log units (2 stops), so deep blacks stay black.
+const LOCAL_TONE_MAXIMUM_LIFT = 1.386;
+// How round the knee between the untouched midtones and the compressed tail is, in squared natural-log units; the shader and localToneMappedLog read the same number.
+const LOCAL_TONE_KNEE_SOFTNESS = 0.04;
 
 const NEUTRAL = Object.freeze({ lift: [0, 0, 0], gamma: [1, 1, 1], gain: [1, 1, 1] });
 
@@ -138,6 +147,19 @@ function resolveLensDistortion(input) {
   };
 }
 
+function resolveLocalToneMapping(input) {
+  const group = groupOf(input, 'localToneMapping');
+  onlyKeys(group, ['strength', 'highlightContrast', 'shadowContrast', 'detail', 'blurRadius', 'midtoneRange'], 'localToneMapping');
+  return {
+    strength: numberInRange(group.strength, 0.4, 0, 1, 'localToneMapping.strength'),
+    highlightContrast: numberInRange(group.highlightContrast, 0.6, 0, 1, 'localToneMapping.highlightContrast'),
+    shadowContrast: numberInRange(group.shadowContrast, 0.6, 0, 1, 'localToneMapping.shadowContrast'),
+    detail: numberInRange(group.detail, 1, 0, 2, 'localToneMapping.detail'),
+    blurRadius: numberInRange(group.blurRadius, 0.08, 0.01, 0.25, 'localToneMapping.blurRadius'),
+    midtoneRange: numberInRange(group.midtoneRange, 1.5, 0, 4, 'localToneMapping.midtoneRange'),
+  };
+}
+
 /** The named steps an effects input sets, resolved with their defaults. A step the input leaves out stays out of the result. */
 export function resolvePostSteps(effects) {
   const resolved = {};
@@ -148,6 +170,8 @@ export function resolvePostSteps(effects) {
   if (effects.lensDistortion !== undefined) resolved.lensDistortion = resolveLensDistortion(effects.lensDistortion);
   if (effects.stylize !== undefined) resolved.stylize = resolveStylize(effects.stylize);
   if (effects.composite !== undefined) resolved.composite = resolveComposite(effects.composite);
+  if (effects.localToneMapping !== undefined) resolved.localToneMapping = resolveLocalToneMapping(effects.localToneMapping);
+  if (effects.autoExposure !== undefined) resolved.autoExposure = resolveAutoExposure(effects.autoExposure);
   refuseMaskWithLensDistortion(resolved);
   return resolved;
 }
@@ -168,7 +192,7 @@ function refuseMaskWithLensDistortion(resolved) {
 }
 
 // Registers what the look needs: the field names it accepts and how to resolve them (src/shader-registry.js).
-postStepSupport.fields = ['distortion', 'flash', 'colorBalance', 'glare', 'lensDistortion', 'stylize', 'composite'];
+postStepSupport.fields = ['distortion', 'flash', 'colorBalance', 'glare', 'lensDistortion', 'stylize', 'composite', 'localToneMapping', 'autoExposure'];
 postStepSupport.resolve = resolvePostSteps;
 
 export const colorBalanceFragment = `${sharedFragmentHeader}
@@ -345,6 +369,73 @@ void main() {
     texture(sourceTexture, blue / vec2(aspect, 1.0) * 0.5 + 0.5).b, center.a);
 }`;
 
+// Local exposure (as in UE5, where a contrast scale of 1 leaves a range alone and less than 1 compresses it): the frame splits into a base, a bilateral blur of log luminance whose taps stop at edges so a bright sky does not
+// bleed into the grass beside it, and the detail left over. The base is pulled toward middle grey, highlights and shadows each by their own
+// amount, and the detail is added back, so a low sun's sky and the shaded ground both fit in one frame without flattening texture.
+export const localToneMappingFragment = `${sharedFragmentHeader}
+uniform float strength;
+uniform float highlightContrast;
+uniform float shadowContrast;
+uniform float detailGain;
+uniform float radiusPixels;
+uniform float baseLod;
+uniform float kneeLog;
+float logLuminance(vec3 color) {
+  return log(max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 0.0001));
+}
+void main() {
+  vec4 source = texture(sourceTexture, textureCoordinate);
+  float centerLog = logLuminance(source.rgb);
+  // The pixel's own brightness is a tap of weight 1, so the base is continuous across an edge and never empty.
+  float sum = centerLog;
+  float weightSum = 1.0;
+  for (int index = 0; index < ${LOCAL_TONE_TAPS}; index++) {
+    float ring = sqrt((float(index) + 0.5) / ${LOCAL_TONE_TAPS}.0);
+    float angle = float(index) * 2.3999632;
+    vec2 offset = vec2(cos(angle), sin(angle)) * ring * radiusPixels / resolution;
+    float tapLog = logLuminance(textureLod(sourceTexture, textureCoordinate + offset, baseLod).rgb);
+    float difference = tapLog - centerLog;
+    // Spatial falloff times an edge stop: taps more than about a stop and a half away in brightness barely count.
+    float weight = (1.0 - ring * ring * 0.8) * exp(-difference * difference / 0.5);
+    sum += tapLog * weight;
+    weightSum += weight;
+  }
+  float pivot = log(${LOCAL_TONE_PIVOT});
+  float baseLog = sum / weightSum;
+  float detailLog = centerLog - baseLog;
+  // Only what lies past the knee on either side of middle grey is compressed, so the midtones keep their contrast and the picture does not go flat. A smooth
+  // knee has no kink for the eye to find, and the lift of a shadow is capped so the darkest parts stay dark.
+  float offset = baseLog - pivot;
+  float highTail = offset - kneeLog;
+  float lowTail = -offset - kneeLog;
+  float highExcess = 0.5 * (highTail + sqrt(highTail * highTail + ${LOCAL_TONE_KNEE_SOFTNESS}));
+  float lowExcess = 0.5 * (lowTail + sqrt(lowTail * lowTail + ${LOCAL_TONE_KNEE_SOFTNESS}));
+  float highDrop = highExcess * (1.0 - mix(1.0, highlightContrast, strength));
+  float lowWanted = lowExcess * (1.0 - mix(1.0, shadowContrast, strength));
+  float lowLift = ${LOCAL_TONE_MAXIMUM_LIFT} * tanh(lowWanted / ${LOCAL_TONE_MAXIMUM_LIFT});
+  float mappedLog = pivot + offset - highDrop + lowLift + detailLog * detailGain;
+  // The gain is one number for all three channels, so hue and saturation of the pixel stay as rendered.
+  outputColor = vec4(source.rgb * exp(mappedLog - centerLog), source.a);
+}`;
+
+function kneeTail(distancePastKnee) {
+  return 0.5 * (distancePastKnee + Math.sqrt(distancePastKnee * distancePastKnee + LOCAL_TONE_KNEE_SOFTNESS));
+}
+
+/**
+ * The curve of the local tone mapping shader on one pixel, for tests and tools: natural-log luminances in, the mapped natural-log luminance out. `settings` is a resolved localToneMapping group.
+ * Only the base past the knee (`midtoneRange` stops either side of middle grey) is compressed, a shadow's lift is capped, and the detail is added back.
+ */
+export function localToneMappedLog(baseLog, detailLog, settings) {
+  const pivot = Math.log(LOCAL_TONE_PIVOT);
+  const offset = baseLog - pivot;
+  const kneeLog = settings.midtoneRange * Math.LN2;
+  const highDrop = kneeTail(offset - kneeLog) * (1 - (1 + (settings.highlightContrast - 1) * settings.strength));
+  const lowWanted = kneeTail(-offset - kneeLog) * (1 - (1 + (settings.shadowContrast - 1) * settings.strength));
+  const lowLift = LOCAL_TONE_MAXIMUM_LIFT * Math.tanh(lowWanted / LOCAL_TONE_MAXIMUM_LIFT);
+  return pivot + offset - highDrop + lowLift + detailLog * settings.detail;
+}
+
 // The renderer resolves only the core effects, so a stage reads its group from the frame's own effects.
 function stepsOf(frame) {
   return resolvePostSteps(frame.effects ?? {});
@@ -493,6 +584,55 @@ function createLensDistortionStage() {
   });
 }
 
+// Strength 0, or contrasts and detail all at 1 (which leave the frame as it is), draws nothing.
+function isLocalToneMappingActive(localToneMapping) {
+  if (!localToneMapping || localToneMapping.strength === 0) return false;
+  return localToneMapping.highlightContrast !== 1 || localToneMapping.shadowContrast !== 1 || localToneMapping.detail !== 1;
+}
+
+function createLocalToneMappingStage() {
+  const stage = createStage({
+    name: 'Local tone mapping',
+    fragment: localToneMappingFragment,
+    uniformNames: ['strength', 'highlightContrast', 'shadowContrast', 'detailGain', 'radiusPixels', 'baseLod', 'kneeLog'],
+    isActive: (effects, frame) => isLocalToneMappingActive(stepsOf(frame).localToneMapping),
+    setUniforms(context, uniforms, renderer, frame) {
+      const { localToneMapping } = stepsOf(frame);
+      context.uniform1f(uniforms.strength, localToneMapping.strength);
+      context.uniform1f(uniforms.highlightContrast, localToneMapping.highlightContrast);
+      context.uniform1f(uniforms.shadowContrast, localToneMapping.shadowContrast);
+      context.uniform1f(uniforms.detailGain, localToneMapping.detail);
+      const radiusPixels = localToneMapping.blurRadius * renderer.canvas.height;
+      context.uniform1f(uniforms.radiusPixels, radiusPixels);
+      context.uniform1f(uniforms.kneeLog, localToneMapping.midtoneRange * Math.LN2);
+      context.uniform1f(uniforms.baseLod, Math.max(0, Math.log2(radiusPixels / 3)));
+    },
+  });
+  // The base reads blurred levels of the frame, so the frame gets a mip chain for this draw and goes back to one level after it.
+  return {
+    ...stage,
+    apply(renderer, frame, effects, sourceTexture) {
+      // Without a float frame (a benchmark renderer, or no float buffers) the picture is already clamped, so the step stays off.
+      if (!renderer.hdr) return null;
+      const context = renderer.context;
+      const active = isLocalToneMappingActive(stepsOf(frame).localToneMapping);
+      if (active) {
+        context.activeTexture(context.TEXTURE0);
+        context.bindTexture(context.TEXTURE_2D, sourceTexture);
+        context.generateMipmap(context.TEXTURE_2D);
+        context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR_MIPMAP_LINEAR);
+      }
+      const result = stage.apply(renderer, frame, effects, sourceTexture);
+      if (active) {
+        context.activeTexture(context.TEXTURE0);
+        context.bindTexture(context.TEXTURE_2D, sourceTexture);
+        context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
+      }
+      return result;
+    },
+  };
+}
+
 /**
  * Adds the air distortion and flash steps (post-air.js), glare, lens distortion, color balance, the stylize filters and the composite key to a renderer, after any depth of field and motion blur it has, in that
  * order. Like them it needs `depth: true`. Each stage runs only for a frame whose effects set it. A step with a `mask` by
@@ -500,7 +640,7 @@ function createLensDistortionStage() {
  */
 export function installPostSteps(renderer) {
   if (!renderer.postStages.some(stage => stage.name === 'Glare')) {
-    renderer.postStages.push(createDistortionStage(stepsOf), createFlashStage(stepsOf), createGlareStage(), createLensDistortionStage(), createColorBalanceStage(), createStylizeStage(), createCompositeStage());
+    renderer.postStages.push(createDistortionStage(stepsOf), createFlashStage(stepsOf), createGlareStage(), createLocalToneMappingStage(), createLensDistortionStage(), createColorBalanceStage(), createStylizeStage(), createCompositeStage());
   }
   return renderer;
 }

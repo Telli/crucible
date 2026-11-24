@@ -115,3 +115,13 @@ test('the summary skips lines that parse as JSON but are not call records', asyn
   }
   assert.equal(notes.length, 4);
 });
+
+test('call logger skips null items in tool content without throwing', async context => {
+  const logPath = await temporaryLogPath(context);
+  const { createCallLogger } = await import('../scripts/mcp-call-log.mjs');
+  const logCall = createCallLogger(logPath, { now: () => 10, clock: () => new Date('2026-11-23T00:00:00Z') });
+  const result = await logCall('scene_inspect', async () => ({ content: [null, { type: 'text', text: 'ok' }] }));
+  assert.equal(result.content.length, 2);
+  const record = JSON.parse(readFileSync(logPath, 'utf8').trim());
+  assert.equal(record.resultBytes, 2);
+});

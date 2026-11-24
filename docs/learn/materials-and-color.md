@@ -121,6 +121,8 @@ The glTF addon makes these descriptors for you when it loads a GLB file. Reuse o
 
 `material.doubleSided` (default false) turns off back-face culling and lights both faces. Use it for leaves, paper and cloth.
 
+`material.depthTest` (default true) can be set to `false` on `'add'` or `'blend'` materials to draw overlays (light beams, laser lines, X-ray guides) on top of opaque geometry after the depth-tested blend passes without testing the depth buffer.
+
 > **Warning:** `alphaMode`, `doubleSided` and the texture descriptors are batch state. `updateParts` cannot change them. Make a new renderer to change them. `updateParts` can change `color`, `metallic`, `roughness`, `emission`, `emissiveColor` and the matrix.
 
 ## Material tags

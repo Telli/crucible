@@ -25,7 +25,7 @@ test('denoise takes a boolean or a name and keeps the boolean the tracer reports
 test('denoise "oidn" leaves the colour as traced and returns the feature images for the caller', async () => {
   const quad = { name: 'floor', geometry: { positions: new Float32Array([-4, 0, -4, 4, 0, -4, 4, 0, 4, -4, 0, 4]), normals: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]), indices: new Uint32Array([0, 2, 1, 0, 3, 2]) },
     matrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]), material: { tag: 'surface', color: [0.8, 0.8, 0.8], metallic: 0, roughness: 0.5 } };
-  const scene = { parts: [quad], environment: { skyColor: [0.5, 0.6, 0.8] }, camera: { eye: [0, 3, 0], target: [0, 0, 0], up: [0, 0, -1], fov: 40 } };
+  const scene = { parts: [quad], environment: {}, camera: { eye: [0, 3, 0], target: [0, 0, 0], up: [0, 0, -1], fov: 40 } };
   const options = { width: 16, height: 16, samples: 4, bounces: 1, threads: 1 };
   const external = await renderPathTracedImage(scene, { ...options, denoise: 'oidn' });
   const none = await renderPathTracedImage(scene, { ...options, denoise: false });

@@ -1,0 +1,1 @@
+- Light bake now shares `boundsHoldPoint` from `lamp-mesh` instead of keeping its own copy (#2353).

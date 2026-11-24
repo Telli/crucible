@@ -411,14 +411,14 @@ test('linear RGB and normalized Uint8 vertex colors become shared Float32 RGB ge
   }
 });
 
-test('RGBA vertex colors with alpha below one keep their RGB and warn that the alpha is ignored', async () => {
+test('RGBA vertex colors with alpha below one keep their RGB and the alpha as geometry.colorAlpha', async () => {
   const colors = new Float32Array([1, 0, 0, 1, 0, 1, 0, 0.5, 0, 0, 1, 0.25]);
   const asset = await parseGltf(triangleAsset((document, append) => {
     document.meshes[0].primitives[0].attributes.COLOR_0 = append(colors, 'VEC4');
   }));
   assert.deepEqual(Array.from(asset.parts[0].geometry.colors), [1, 0, 0, 0, 1, 0, 0, 0, 1]);
-  assert.equal(asset.warnings.length, 1);
-  assert.match(asset.warnings[0], /alpha of RGBA COLOR_0/);
+  assert.deepEqual(Array.from(asset.parts[0].geometry.colorAlpha), [1, 0.5, 0.25]);
+  assert.deepEqual(asset.warnings, []);
   asset.dispose();
 });
 
@@ -428,6 +428,7 @@ test('RGBA vertex colors that are fully opaque load without a warning', async ()
     document.meshes[0].primitives[0].attributes.COLOR_0 = append(colors, 'VEC4');
   }));
   assert.deepEqual(asset.warnings, []);
+  assert.equal(asset.parts[0].geometry.colorAlpha, undefined);
   asset.dispose();
 });
 
