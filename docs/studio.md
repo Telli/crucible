@@ -243,7 +243,7 @@ Refused, each with a sentence that says what to do:
 - an image with nothing selected, or whose material takes a pattern or a map sequence;
 - any other file type. A scene.json still opens with Open or a drop.
 
-Without `store`, or without `crypto.subtle`, the Import row is hidden and a dropped binary file gets one sentence saying so. A web pack of a scene that places an imported GLB carries the decoded geometry; a pack refuses a material that holds an imported image, as it does for any decoded image (see the pack message).
+Without `store`, or without `crypto.subtle`, the Import row is hidden and a dropped binary file gets one sentence saying so. A web pack of a scene that places an imported GLB carries the decoded geometry and its colour, and one with an imported image on a material carries the decoded pixels. Only `crucible pack` on the command line refuses a material that holds a catalog image, because it cannot read the catalog; its message says to export the web pack from Studio.
 
 The viewport draws a scene's volume fog and its post passes (see Post passes above). Render-only steps such as path tracing are not drawn in the viewport; they show in renders.
 
