@@ -664,7 +664,7 @@ const GIZMO_HIT_TIP_RADIUS = 16;
 const GIZMO_HIT_ORIGIN_RADIUS = 13;
 
 // The unseen areas go in first, so every drawn handle lies above them and a press on a drawn handle is still its own.
-function appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool) {
+function appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool, clearRadius = null) {
   const hitAttributes = axis => ({ fill: 'none', stroke: 'transparent', 'data-gizmo-axis': axis, 'data-gizmo-hit': 'line' });
   const hitDisc = (point, radius, axis) => createSvgElement(documentReference, 'circle', {
     cx: point.x.toFixed(1),
@@ -685,53 +685,116 @@ function appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool) {
     return;
   }
   const origin = handles.origin;
+  const cleared = clearRadius !== null;
+  const centreAxis = tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen';
+  if (cleared) {
+    // Only the ring answers for the centre, so a click inside it still picks the element under it.
+    gizmoSvg.append(createSvgElement(documentReference, 'circle', {
+      cx: origin.x.toFixed(1),
+      cy: origin.y.toFixed(1),
+      r: clearedRingRadius(clearRadius).toFixed(1),
+      fill: 'none',
+      'stroke-width': String(EDIT_RING_HIT_HALF_WIDTH * 2),
+      'data-gizmo-axis': centreAxis,
+      'data-gizmo-hit': 'ring',
+    }));
+  }
   for (const axis of AXIS_NAMES) {
     const tip = handles.axes[axis];
     if (!tip.visible) continue;
-    gizmoSvg.append(
-      createSvgElement(documentReference, 'line', {
-        x1: origin.x.toFixed(1),
-        y1: origin.y.toFixed(1),
-        x2: tip.x.toFixed(1),
-        y2: tip.y.toFixed(1),
-        'stroke-linecap': 'round',
-        ...hitAttributes(axis),
-      }),
-      hitDisc(tip, GIZMO_HIT_TIP_RADIUS, axis),
-    );
+    // In edit mode the answering line starts and ends where the drawn arrow does, with a flat end, so the gap stays a gap.
+    const { start, end } = clearedArrow(origin, tip, clearRadius);
+    gizmoSvg.append(createSvgElement(documentReference, 'line', {
+      x1: start.x.toFixed(1),
+      y1: start.y.toFixed(1),
+      x2: end.x.toFixed(1),
+      y2: end.y.toFixed(1),
+      'stroke-linecap': cleared ? 'butt' : 'round',
+      ...hitAttributes(axis),
+    }));
+    if (!cleared) {
+      gizmoSvg.append(hitDisc(tip, GIZMO_HIT_TIP_RADIUS, axis));
+    }
   }
-  gizmoSvg.append(hitDisc(origin, GIZMO_HIT_ORIGIN_RADIUS, tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen'));
+  if (!cleared) {
+    gizmoSvg.append(hitDisc(origin, GIZMO_HIT_ORIGIN_RADIUS, centreAxis));
+  }
 }
 
-// In mesh edit mode the move handles leave the picked element's middle clear, as Blender's do: the centre dot is not drawn (the
-// centre still drags on the screen plane), each shaft starts this far from the centre (the element's reach plus a gap), but never
-// gives up more than this share of its length, so the arrow stays a handle on a large pick too, and each plane square slides
-// outward along its two axes by the same distances.
-const EDIT_CLEARANCE_GAP = 12;
-const EDIT_CLEARANCE_MAXIMUM_SHARE = 0.6;
+/** The answering discs of the arrow tips in edit mode; they go in after the plane squares, so a tip wins where a square lies over it. */
+function appendClearedTipHitAreas(documentReference, gizmoSvg, handles, clearRadius) {
+  for (const axis of AXIS_NAMES) {
+    const tip = handles.axes[axis];
+    if (!tip.visible) continue;
+    const { end } = clearedArrow(handles.origin, tip, clearRadius);
+    gizmoSvg.append(createSvgElement(documentReference, 'circle', {
+      cx: end.x.toFixed(1),
+      cy: end.y.toFixed(1),
+      r: String(GIZMO_HIT_TIP_RADIUS),
+      fill: 'transparent',
+      stroke: 'none',
+      'data-gizmo-axis': axis,
+      'data-gizmo-hit': 'disc',
+    }));
+  }
+}
 
-/** Where a shaft from the origin to the tip starts once the middle is clear; the origin itself when nothing is cleared. */
-export function clearedShaftStart(origin, tip, clearRadius) {
+// In mesh edit mode the move handles leave the picked element's middle clear, as Blender's do. The centre dot gives way to a thin ring
+// (the free-move circle) at the clearance, and each arrow moves out whole, start and tip, by the pick's screen reach plus a gap,
+// so it keeps its drawn length. The move stops at a cap: past it the arrow may lie over a big pick, which is the limit of this design.
+const EDIT_CLEARANCE_GAP = 12;
+// The ring sits further out than the arrows start; its answering band begins 14 px from a vertex, the reach of a vertex pick.
+const EDIT_RING_GAP = 20;
+const EDIT_CLEARANCE_CAP = 100;
+// A ring's answering band is this far to each side of the ring: with the gap above, a vertex keeps its whole 14 px pick area.
+const EDIT_RING_HIT_HALF_WIDTH = 6;
+// A plane square thinner than this on screen, in pixels across its narrow side, is hidden: a pointer cannot be aimed at less (a 30 px square seen at 8 degrees).
+const PLANE_SQUARE_MINIMUM_THICKNESS = 4;
+
+function clearedDistance(clearRadius) {
+  return Math.min(clearRadius + EDIT_CLEARANCE_GAP, EDIT_CLEARANCE_CAP);
+}
+
+/** The radius of the free-move ring around the pick, in pixels. */
+export function clearedRingRadius(clearRadius) {
+  return Math.min(clearRadius + EDIT_RING_GAP, EDIT_CLEARANCE_CAP);
+}
+
+/** An arrow from the origin to the tip moved outward along itself by the cleared distance, same length; unchanged when nothing is cleared. */
+export function clearedArrow(origin, tip, clearRadius) {
   const length = Math.hypot(tip.x - origin.x, tip.y - origin.y);
   if (clearRadius === null || length < 1e-3) {
-    return origin;
+    return { start: origin, end: tip };
   }
-  const skipped = Math.min(clearRadius + EDIT_CLEARANCE_GAP, length * EDIT_CLEARANCE_MAXIMUM_SHARE);
-  const share = skipped / length;
-  return { x: origin.x + (tip.x - origin.x) * share, y: origin.y + (tip.y - origin.y) * share };
+  const share = clearedDistance(clearRadius) / length;
+  const shift = { x: (tip.x - origin.x) * share, y: (tip.y - origin.y) * share };
+  return { start: { x: origin.x + shift.x, y: origin.y + shift.y }, end: { x: tip.x + shift.x, y: tip.y + shift.y } };
 }
 
 const PLANE_AXIS_NAMES = Object.freeze({ xy: ['x', 'y'], xz: ['x', 'z'], yz: ['y', 'z'] });
 
-// A plane square seen at a slant has its two axes pointing nearly opposite ways on screen, so the two shifts partly cancel and the
-// square would stay on the pick. The shifts then grow, by this step and up to this many times, until the square is as far out as the arrows start.
+/** How many pixels across a plane square is at its narrowest on screen (its area over its longer side). */
+export function planeSquareThickness(corners) {
+  const first = { x: corners[1].x - corners[0].x, y: corners[1].y - corners[0].y };
+  const second = { x: corners[3].x - corners[0].x, y: corners[3].y - corners[0].y };
+  const longest = Math.max(Math.hypot(first.x, first.y), Math.hypot(second.x, second.y));
+  return longest < 1e-3 ? 0 : Math.abs(first.x * second.y - first.y * second.x) / longest;
+}
+
+/** True when the square is too thin to aim at, as when its two axes lie almost along one line on screen. */
+export function planeSquareIsTooThin(corners) {
+  return planeSquareThickness(corners) < PLANE_SQUARE_MINIMUM_THICKNESS;
+}
+
+// Two axes that point nearly opposite ways on screen make the two shifts partly cancel and the square would stay on the pick. The
+// shifts then grow, by this step and up to this many times, until the square is as far out as the arrows start.
 const PLANE_SHIFT_GROWTH_STEP = 0.25;
 const PLANE_SHIFT_MAXIMUM_GROWTH = 3;
 
 /** The corners of a plane square moved outward along its two axes by what each arrow skips; the corners themselves when nothing is cleared. */
 export function clearedPlaneCorners(corners, origin, axisTips, clearRadius) {
   const shifts = axisTips.map(tip => {
-    const start = clearedShaftStart(origin, tip, clearRadius);
+    const { start } = clearedArrow(origin, tip, clearRadius);
     return { x: start.x - origin.x, y: start.y - origin.y };
   });
   const wantedDistance = Math.max(...shifts.map(shift => Math.hypot(shift.x, shift.y)));
@@ -788,7 +851,7 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
   }
 
   if (!controller.dragging) {
-    appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool);
+    appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool, clearRadius);
   }
 
   if (tool === 'rotate') {
@@ -830,6 +893,7 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
     for (const planeAxis of ['xy', 'xz', 'yz']) {
       const planeCorners = handles.planes[planeAxis];
       if (!planeCorners || planeCorners.some(point => !point.visible)) continue;
+      if (cleared && planeSquareIsTooThin(planeCorners)) continue;
       const corners = cleared ? clearedPlaneCorners(planeCorners, origin, PLANE_AXIS_NAMES[planeAxis].map(axis => handles.axes[axis]), clearRadius) : planeCorners;
       gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
         points: corners.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '),
@@ -840,17 +904,22 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
         'data-gizmo-axis': planeAxis,
       }));
     }
+    if (cleared && !controller.dragging) {
+      appendClearedTipHitAreas(documentReference, gizmoSvg, handles, clearRadius);
+    }
   }
 
   for (const axis of AXIS_NAMES) {
-    const tip = handles.axes[axis];
-    if (!tip.visible) continue;
-    const shaftStart = cleared ? clearedShaftStart(origin, tip, clearRadius) : origin;
+    const handleTip = handles.axes[axis];
+    if (!handleTip.visible) continue;
+    const arrow = clearedArrow(origin, handleTip, clearRadius);
+    const shaftStart = arrow.start;
+    const tip = arrow.end;
     gizmoSvg.append(createSvgElement(documentReference, 'line', {
       x1: shaftStart.x.toFixed(1),
       y1: shaftStart.y.toFixed(1),
-      x2: tip.x.toFixed(1),
-      y2: tip.y.toFixed(1),
+      x2: arrow.end.x.toFixed(1),
+      y2: arrow.end.y.toFixed(1),
       stroke: AXIS_COLORS[axis],
       'stroke-width': '3',
       'stroke-linecap': 'round',
@@ -869,7 +938,7 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
         'data-gizmo-axis': axis,
       }));
     } else {
-      const arrowPoints = tool === 'translate' ? arrowHeadPoints(origin, tip) : null;
+      const arrowPoints = tool === 'translate' ? arrowHeadPoints(shaftStart, tip) : null;
       const handleAttributes = { fill: AXIS_COLORS[axis], stroke: 'none', 'stroke-linejoin': 'round', 'data-gizmo-axis': axis };
       gizmoSvg.append(arrowPoints
         ? createSvgElement(documentReference, 'polygon', { points: arrowPoints, 'data-gizmo-shape': 'arrow', ...handleAttributes })
@@ -877,7 +946,9 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
     }
   }
 
+  const centreAxis = tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen';
   if (cleared) {
+    appendFreeMoveRing(documentReference, gizmoSvg, origin, clearedRingRadius(clearRadius), centreAxis);
     return;
   }
   gizmoSvg.append(createSvgElement(documentReference, 'circle', {
@@ -887,8 +958,18 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
     fill: tool === 'snap' ? '#5fc48a' : 'var(--studio-text)',
     stroke: 'var(--studio-bg)',
     'stroke-width': '2',
-    'data-gizmo-axis': tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen',
+    'data-gizmo-axis': centreAxis,
   }));
+}
+
+// The free-move ring of edit mode: a thin line in the text colour over a wider one in the background colour, so it reads on light and
+// dark surfaces in both themes. Only the answering ring (appendGizmoHitAreas) takes the pointer; the drawn one lets clicks through to the pick.
+function appendFreeMoveRing(documentReference, gizmoSvg, origin, radius, axis) {
+  const ringAttributes = { cx: origin.x.toFixed(1), cy: origin.y.toFixed(1), r: radius.toFixed(1), fill: 'none', 'data-gizmo-ring': 'drawn' };
+  gizmoSvg.append(
+    createSvgElement(documentReference, 'circle', { ...ringAttributes, stroke: 'var(--studio-bg)', 'stroke-opacity': '0.7', 'stroke-width': '4' }),
+    createSvgElement(documentReference, 'circle', { ...ringAttributes, stroke: 'var(--studio-text)', 'stroke-width': '1.5', 'data-gizmo-axis': axis }),
+  );
 }
 
 const SCENE_OBJECT_MARK_RADIUS = 13;

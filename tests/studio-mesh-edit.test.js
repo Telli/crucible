@@ -5,7 +5,7 @@ import { mat4 } from 'gl-matrix';
 import { createAgentScene } from '../src/agent-scene.js';
 import { meshEditSourceOf } from '../src/agent-mesh.js';
 import { isLiveGeometry, markLiveGeometry } from '../src/live-geometry.js';
-import { clearedPlaneCorners, clearedShaftStart, createStudio, createStudioController } from '../src/studio.js';
+import { clearedArrow, clearedPlaneCorners, clearedRingRadius, createStudio, planeSquareIsTooThin, createStudioController } from '../src/studio.js';
 import { byDataset, byLabel, createFakeRenderer, dispatch, installStudioDom } from './support/studio-dom.mjs';
 import { CAGE_TRIANGLE_BUDGET, MAX_LOG_ENTRIES, MAX_MASK_VERTICES, createMeshEditor, planMeshMove, previewNormalsOf } from '../src/studio-mesh-edit.js';
 import { DEFAULT_KEYMAP_ACTIONS, findKeymapAction, resolveKeymap } from '../src/studio-keymap.js';
@@ -905,13 +905,15 @@ test('clearedPlaneCorners slides a square outward by what each of its two arrows
   assert.ok(nearest >= 24, `axes that point nearly opposite still leave the square as far out as the arrows start (${nearest.toFixed(1)} px)`);
 });
 
-test('clearedShaftStart skips the picked reach plus a gap, never more than 60 percent of the shaft, and nothing in object mode', () => {
+test('clearedArrow moves a whole arrow outward by the picked reach plus a gap up to a cap, keeps its length, and leaves object mode alone', () => {
   const origin = { x: 100, y: 100 };
   const tip = { x: 100, y: 20 };
-  assert.deepEqual(clearedShaftStart(origin, tip, null), origin);
-  assert.deepEqual(clearedShaftStart(origin, tip, 0), { x: 100, y: 88 }, 'one vertex still gets the gap');
-  assert.deepEqual(clearedShaftStart(origin, tip, 12), { x: 100, y: 76 });
-  assert.deepEqual(clearedShaftStart(origin, tip, 500), { x: 100, y: 52 });
+  assert.deepEqual(clearedArrow(origin, tip, null), { start: origin, end: tip });
+  assert.deepEqual(clearedArrow(origin, tip, 0), { start: { x: 100, y: 88 }, end: { x: 100, y: 8 } }, 'one vertex still gets the gap, and the tip moves with the start');
+  assert.deepEqual(clearedArrow(origin, tip, 30), { start: { x: 100, y: 58 }, end: { x: 100, y: -22 } });
+  assert.deepEqual(clearedArrow(origin, tip, 500), { start: { x: 100, y: 0 }, end: { x: 100, y: -80 } }, 'the move stops at 100 px, however big the pick');
+  assert.equal(clearedRingRadius(0), 20, 'a vertex: the ring is 20 px out');
+  assert.equal(clearedRingRadius(500), 100);
 });
 
 test('Tab on a part that comes from an imported file says so and starts no edit', () => {
@@ -926,4 +928,161 @@ test('Tab on a part that comes from an imported file says so and starts no edit'
   assert.equal(result.message, 'This object is an imported file, which has no mesh to edit. Select a shape or a mesh.');
   assert.deepEqual(messages, [result.message]);
   assert.equal(editor.active, false);
+});
+
+// What a pointer finds on the drawn handles, from the same stacking order the browser uses: the later element in the tree is on top.
+function pointInPolygon(point, corners) {
+  let inside = false;
+  for (let index = 0, previous = corners.length - 1; index < corners.length; previous = index, index += 1) {
+    const first = corners[index];
+    const second = corners[previous];
+    if ((first.y > point.y) !== (second.y > point.y) && point.x < ((second.x - first.x) * (point.y - first.y)) / (second.y - first.y) + first.x) inside = !inside;
+  }
+  return inside;
+}
+
+// A line with flat ends and this half width, as the browser hit-tests a stroke with a butt cap.
+function withinFlatEndedLine(point, line, halfWidth) {
+  const [startX, startY, endX, endY] = ['x1', 'y1', 'x2', 'y2'].map(name => Number(line.getAttribute(name)));
+  const length = Math.hypot(endX - startX, endY - startY);
+  const along = ((point.x - startX) * (endX - startX) + (point.y - startY) * (endY - startY)) / length;
+  const across = Math.abs((point.x - startX) * (endY - startY) - (point.y - startY) * (endX - startX)) / length;
+  return along >= 0 && along <= length && across <= halfWidth;
+}
+
+function topHandleAt(root, point) {
+  let found = null;
+  for (const node of root.querySelector('.crucible-studio-gizmo').querySelectorAll('[data-gizmo-axis]')) {
+    if (node.getAttribute('data-gizmo-ring') !== null) continue;
+    const kind = node.getAttribute('data-gizmo-hit');
+    let hit = false;
+    if (node.tagName === 'CIRCLE' && kind === 'ring') {
+      const distance = Math.hypot(point.x - Number(node.getAttribute('cx')), point.y - Number(node.getAttribute('cy')));
+      hit = Math.abs(distance - Number(node.getAttribute('r'))) <= Number(node.getAttribute('stroke-width')) / 2;
+    } else if (node.tagName === 'CIRCLE') {
+      hit = node.getAttribute('fill') !== 'none' && Math.hypot(point.x - Number(node.getAttribute('cx')), point.y - Number(node.getAttribute('cy'))) <= Number(node.getAttribute('r'));
+    } else if (node.tagName === 'LINE') {
+      hit = kind === 'line' ? withinFlatEndedLine(point, node, 11) : distanceFromPointToSegment(point, node) <= 1.5;
+    } else if (node.tagName === 'POLYGON') {
+      hit = pointInPolygon(point, cornersOf(node));
+    }
+    if (hit) found = node.getAttribute('data-gizmo-axis');
+  }
+  return found;
+}
+
+const SMALL_FACE = point => point[2] > 0.49 && point[0] > -1e-6 && point[0] < 0.126 && point[1] > -1e-6 && point[1] < 0.126;
+
+test('in edit mode the answering line of an axis starts and ends where the drawn arrow does, so a click in the gap starts nothing', async testContext => {
+  const ui = mountStudioOnShape(testContext, { type: 'box', bevel: 0, subdivisions: 8 });
+  await pickFaceThrough(ui, SMALL_FACE);
+  const origin = ui.controller.gizmoHandles().origin;
+  const answering = ui.root.querySelectorAll('[data-gizmo-hit="line"]');
+  const shafts = drawnHandles(ui.root).shafts;
+  assert.ok(shafts.length >= 2);
+  for (const shaft of shafts) {
+    const axis = shaft.getAttribute('data-gizmo-axis');
+    const line = answering.find(candidate => candidate.getAttribute('data-gizmo-axis') === axis);
+    for (const name of ['x1', 'y1', 'x2', 'y2']) assert.equal(line.getAttribute(name), shaft.getAttribute(name), `the ${axis} answering line shares ${name} with the drawn shaft`);
+    assert.equal(line.getAttribute('stroke-linecap'), 'butt', 'a flat end, so the answering area does not reach back into the gap');
+    const start = { x: Number(shaft.getAttribute('x1')), y: Number(shaft.getAttribute('y1')) };
+    const halfway = { x: (origin.x + start.x) / 2, y: (origin.y + start.y) / 2 };
+    assert.notEqual(topHandleAt(ui.root, halfway), axis, 'the gap between the pick and the arrow is not the arrow');
+  }
+});
+
+test('the middle of a large face is free: no disc over it, only a thin ring around the pick that moves it in the screen plane', async testContext => {
+  const ui = mountStudioOnShape(testContext, { type: 'box', bevel: 0 });
+  await pickFaceThrough(ui, point => point[2] > 0.49);
+  const origin = ui.controller.gizmoHandles().origin;
+  const svg = ui.root.querySelector('.crucible-studio-gizmo');
+  assert.equal(svg.querySelectorAll('[data-gizmo-hit="disc"]').filter(disc => disc.getAttribute('r') === '13').length, 0, 'the 13 px centre disc is gone');
+  const answering = svg.querySelectorAll('[data-gizmo-hit="ring"]');
+  assert.equal(answering.length, 1);
+  assert.equal(answering[0].getAttribute('data-gizmo-axis'), 'screen');
+  assert.equal(Number(answering[0].getAttribute('r')), clearedRingRadius(1e9), 'a big pick puts the ring at the cap');
+  assert.ok(Number(answering[0].getAttribute('stroke-width')) <= 22);
+  const drawn = svg.querySelectorAll('[data-gizmo-ring="drawn"]');
+  assert.equal(drawn.length, 2, 'a pale line under a thin line in the text colour');
+  for (const circle of drawn) assert.match(circle.getAttribute('stroke'), /^var\(--studio-(bg|text)\)$/);
+  assert.equal(topHandleAt(ui.root, origin), null, 'a click at the middle of the face reaches the mesh and picks');
+  assert.equal(topHandleAt(ui.root, { x: origin.x + 40, y: origin.y + 30 }), null, 'so does one inside the ring');
+  const ringRadius = clearedRingRadius(1e9);
+  assert.equal(topHandleAt(ui.root, { x: origin.x - ringRadius, y: origin.y }), 'screen', 'the ring itself takes the press');
+  ui.controller.beginGizmoDrag('screen', origin.x - ringRadius, origin.y);
+  const moved = ui.controller.updateGizmoDrag(origin.x - ringRadius + 30, origin.y - 20).elementDelta;
+  ui.controller.endGizmoDrag();
+  assert.ok(Math.hypot(...moved) > 1e-3, 'dragging the ring moved the pick');
+});
+
+test('a vertex keeps the 10 px around it clear of the ring and of every handle (the arrows start 12 px out)', async testContext => {
+  const ui = mountStudioOnShape(testContext, { type: 'box', bevel: 0 });
+  ui.press('Tab');
+  await untilEditing(ui);
+  ui.press('1');
+  const pixel = pixelOfVertex(ui.controller, vertexAt(ui.controller, [0.5, 0.5, 0.5]));
+  const down = { clientX: VIEWPORT_BOX.left + pixel.x, clientY: VIEWPORT_BOX.top + pixel.y };
+  dispatch(ui.viewport.querySelector('canvas'), 'pointerdown', down);
+  dispatch(ui.viewport, 'pointerup', down);
+  ui.studio.renderNow();
+  const origin = ui.controller.gizmoHandles().origin;
+  for (let angle = 0; angle < 360; angle += 15) {
+    for (const distance of [0, 5, 10]) {
+      const point = { x: origin.x + Math.cos(angle * Math.PI / 180) * distance, y: origin.y + Math.sin(angle * Math.PI / 180) * distance };
+      assert.equal(topHandleAt(ui.root, point), null, `${distance} px from the vertex at ${angle} degrees picks the vertex`);
+    }
+  }
+});
+
+test('the tip of an arrow wins over a plane square that lies over it, in the views that foreshorten an axis', async testContext => {
+  const ui = mountStudioOnShape(testContext, { type: 'box', bevel: 0, subdivisions: 8 });
+  await pickFaceThrough(ui, SMALL_FACE);
+  let lost = 0;
+  let sampled = 0;
+  for (const preset of ['top', 'front', 'right']) {
+    ui.controller.setCameraViewPreset(preset);
+    ui.studio.renderNow();
+    for (const disc of ui.root.querySelectorAll('[data-gizmo-hit="disc"]')) {
+      const [centreX, centreY, radius] = ['cx', 'cy', 'r'].map(name => Number(disc.getAttribute(name)));
+      for (let offsetX = -radius; offsetX <= radius; offsetX += 2) {
+        for (let offsetY = -radius; offsetY <= radius; offsetY += 2) {
+          if (Math.hypot(offsetX, offsetY) > radius) continue;
+          sampled += 1;
+          if (['xy', 'xz', 'yz'].includes(topHandleAt(ui.root, { x: centreX + offsetX, y: centreY + offsetY }))) lost += 1;
+        }
+      }
+    }
+  }
+  assert.ok(sampled > 300, 'tips were sampled');
+  assert.equal(lost, 0, 'no sample point of a tip disc goes to a plane square');
+});
+
+test('a plane square whose two axes lie almost along one line on screen is hidden in edit mode, and still drawn in object mode', async testContext => {
+  const ui = mountStudioOnShape(testContext, { type: 'box', bevel: 0, subdivisions: 8 });
+  ui.controller.setCameraViewPreset('front');
+  ui.controller.orbitCamera({ deltaAzimuth: Math.PI / 4 });
+  ui.studio.renderNow();
+  const handles = ui.controller.gizmoHandles();
+  const thin = Object.entries(handles.planes).filter(([, corners]) => corners && corners.every(point => point.visible) && planeSquareIsTooThin(corners)).map(([name]) => name);
+  assert.ok(thin.length > 0, 'this view has a square seen edge on');
+  const objectModeSquares = drawnHandles(ui.root).planes.map(square => square.getAttribute('data-gizmo-axis'));
+  for (const name of thin) assert.ok(objectModeSquares.includes(name), 'object mode keeps drawing it');
+  await pickFaceThrough(ui, point => point[2] > 0.49);
+  const editSquares = drawnHandles(ui.root).planes;
+  for (const name of thin) assert.equal(editSquares.some(square => square.getAttribute('data-gizmo-axis') === name), false, `the ${name} square is hidden`);
+  assert.ok(editSquares.length > 0, 'the squares that can be aimed at stay');
+  assert.equal(planeSquareIsTooThin([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 3 }, { x: 0, y: 3 }]), true);
+  assert.equal(planeSquareIsTooThin([{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 5 }, { x: 0, y: 5 }]), false);
+});
+
+test('the arrows keep their drawn length in edit mode while the clearance is under the cap', async testContext => {
+  const ui = mountStudioOnShape(testContext, { type: 'box', bevel: 0, subdivisions: 8 });
+  await pickFaceThrough(ui, SMALL_FACE);
+  const handles = ui.controller.gizmoHandles();
+  for (const shaft of drawnHandles(ui.root).shafts) {
+    const axis = shaft.getAttribute('data-gizmo-axis');
+    const [startX, startY, endX, endY] = ['x1', 'y1', 'x2', 'y2'].map(name => Number(shaft.getAttribute(name)));
+    const normalLength = Math.hypot(handles.axes[axis].x - handles.origin.x, handles.axes[axis].y - handles.origin.y);
+    assert.ok(Math.abs(Math.hypot(endX - startX, endY - startY) - normalLength) < 0.2, `the ${axis} arrow is as long as in object mode`);
+  }
 });
