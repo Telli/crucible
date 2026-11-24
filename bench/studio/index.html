@@ -43,6 +43,12 @@
         place-content: center;
         justify-items: center;
         gap: 28px;
+      }
+      body:has(#studio-loading)::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: 9;
         background: var(--site-bg);
       }
       #studio-loading .pour {

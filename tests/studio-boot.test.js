@@ -384,6 +384,17 @@ test('the closing sequence adds at most 0.4 s, and the loading state passes inpu
   assert.match(LOADING_STYLE, /data-state="done"\] [{][^}]*pointer-events: none/, 'the app underneath takes input at once');
 });
 
+test('the fade never thins the opaque panel: the panel sits under the loading state and goes with it in the same frame', () => {
+  const panelRule = /body:has[(]#studio-loading[)]::before [{]([^}]*)[}]/.exec(LOADING_STYLE);
+  assert.ok(panelRule, 'the panel is drawn by the page while the loading element exists');
+  assert.match(panelRule[1], /position: fixed; ?\s*inset: 0/s, 'it covers the whole window');
+  assert.match(panelRule[1], /background: var[(]--site-bg[)]/, 'it is the theme background token');
+  const zIndex = index => Number(new RegExp(index + '[^}]*z-index: (\\d+)', 's').exec(LOADING_STYLE)?.[1]);
+  assert.ok(zIndex('body:has') < zIndex('#studio-loading [{]'), 'the loading content stays above the panel');
+  const loadingRule = /#studio-loading [{]([^}]*)[}]/.exec(LOADING_STYLE)[1];
+  assert.doesNotMatch(loadingRule, /background/, 'the faded element has no background of its own, so the fade shows the panel and never the app');
+});
+
 test('past the long ease the fill drifts on, slowly and linearly, and stays below the next step', () => {
   const page = createProgressPage();
   const milestones = Object.values(STUDIO_LOADING_MILESTONES);
