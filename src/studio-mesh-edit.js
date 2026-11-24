@@ -8,6 +8,7 @@ import { mat4 } from 'gl-matrix';
 import { gatherRenderPositions } from './mesh-render.js';
 import { meshEditSourceOf } from './agent-mesh.js';
 import { roundVector } from './studio-controller.js';
+import { isLiveGeometry, unmarkLiveGeometry } from './live-geometry.js';
 import { updatePartVertices } from './update-part-vertices.js';
 
 export const MESH_SELECTION_MODES = Object.freeze(['vertex', 'edge', 'face']);
@@ -17,13 +18,13 @@ export const MAX_LOG_ENTRIES = 64;
 export const CAGE_TRIANGLE_BUDGET = 8000;
 const VERTEX_PICK_RADIUS_PIXELS = 14;
 const EDGE_PICK_RADIUS_PIXELS = 10;
-const MINIMUM_MOVE = 1e-6;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 const NEEDS_A_MESH = 'Edit mode needs a mesh geometry for now; turning a shape into a mesh comes next.';
 const NEEDS_NO_MODIFIERS = 'Edit mode does not work on a mesh with modifiers yet.';
 const LOG_IS_FULL = `This mesh already has ${MAX_LOG_ENTRIES} edits, the most one mesh holds, so it cannot take another move.`;
 const TOO_MANY_VERTICES = `Moving more than ${MAX_MASK_VERTICES} vertices that are not whole faces is not possible yet; select whole faces or fewer vertices.`;
+const MESH_CHANGED = 'Edit mode ended because this object uses a different mesh now.';
 const TOO_LARGE_TO_DRAW = `This mesh has more than ${CAGE_TRIANGLE_BUDGET.toLocaleString('en-US')} triangles, so only the selection is drawn.`;
 
 function indexMask(vertices) {
@@ -115,6 +116,45 @@ function rayTriangleDistance(origin, direction, cornerA, cornerB, cornerC) {
   return distance > 0 ? distance : null;
 }
 
+/**
+ * Smooth normals for a drag preview: the area weighted sum of the triangles that share each render vertex, so a cube whose
+ * corners are split per face stays flat and a shared vertex is averaged. Writes into `normals` (3 per vertex) and returns it;
+ * the release builds the real ones.
+ */
+export function previewNormalsOf(indices, positions, normals) {
+  normals.fill(0);
+  for (let corner = 0; corner + 2 < indices.length; corner += 3) {
+    const first = indices[corner] * 3;
+    const second = indices[corner + 1] * 3;
+    const third = indices[corner + 2] * 3;
+    const edgeOneX = positions[second] - positions[first];
+    const edgeOneY = positions[second + 1] - positions[first + 1];
+    const edgeOneZ = positions[second + 2] - positions[first + 2];
+    const edgeTwoX = positions[third] - positions[first];
+    const edgeTwoY = positions[third + 1] - positions[first + 1];
+    const edgeTwoZ = positions[third + 2] - positions[first + 2];
+    const crossX = edgeOneY * edgeTwoZ - edgeOneZ * edgeTwoY;
+    const crossY = edgeOneZ * edgeTwoX - edgeOneX * edgeTwoZ;
+    const crossZ = edgeOneX * edgeTwoY - edgeOneY * edgeTwoX;
+    for (const vertexOffset of [first, second, third]) {
+      normals[vertexOffset] += crossX;
+      normals[vertexOffset + 1] += crossY;
+      normals[vertexOffset + 2] += crossZ;
+    }
+  }
+  for (let offset = 0; offset < normals.length; offset += 3) {
+    const length = Math.hypot(normals[offset], normals[offset + 1], normals[offset + 2]);
+    if (length < 1e-12) {
+      normals[offset + 1] = 1;
+    } else {
+      normals[offset] /= length;
+      normals[offset + 1] /= length;
+      normals[offset + 2] /= length;
+    }
+  }
+  return normals;
+}
+
 function triangleCountOf(mesh) {
   let triangles = 0;
   for (let face = 0; face < mesh.faceCount; face += 1) {
@@ -138,6 +178,8 @@ function uniqueGeometryId(recipe, wanted) {
 export function createMeshEditor({ controller, announce = () => {}, getRenderer = () => null, updatePart = updatePartVertices } = {}) {
   let state = null;
   let drag = null;
+  // True while this editor writes its own entry: the mesh it reads back has the same topology, so the pick stays.
+  let writingOwnEntry = false;
 
   function refuse(message) {
     announce(message);
@@ -164,10 +206,12 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     if (!source) return NEEDS_A_MESH;
     const mesh = source.mesh;
     const previous = state;
+    const edits = geometrySpec.edits ?? [];
     state = {
       nodeId,
       geometryId: geometrySpec.id,
-      editCount: (geometrySpec.edits ?? []).length,
+      editCount: edits.length,
+      logKey: `${edits.length}:${JSON.stringify(edits.at(-1) ?? null)}`,
       part,
       mesh,
       positions: Float32Array.from(mesh.positions),
@@ -177,9 +221,11 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
       mode: previous?.mode ?? 'face',
       selected: new Set(),
     };
-    const sameTopology = previous && previous.nodeId === nodeId
+    // A pick is a number in this mesh, so it stays only on the log state it was made on (or after this editor's own move, which
+    // never changes the topology); an undo, a redo or an outside edit with the same counts may have renumbered everything.
+    const sameMesh = previous && previous.nodeId === nodeId && previous.geometryId === geometrySpec.id
       && previous.mesh.vertexCount === mesh.vertexCount && previous.mesh.edgeCount === mesh.edgeCount && previous.mesh.faceCount === mesh.faceCount;
-    if (sameTopology) state.selected = new Set(selectedBefore);
+    if (sameMesh && (writingOwnEntry || previous.logKey === state.logKey)) state.selected = new Set(selectedBefore);
     return null;
   }
 
@@ -215,6 +261,8 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
 
   function leave() {
     if (!state) return;
+    // The controller drag goes first, through the session, so the cage, the buffers and the pointer state are put back.
+    if (controller.dragging) controller.cancelGizmoDrag();
     cancelDrag();
     state = null;
     controller.setElementSession(null);
@@ -274,6 +322,7 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     const screenX = new Float32Array(vertexCount);
     const screenY = new Float32Array(vertexCount);
     const visible = new Uint8Array(vertexCount);
+    const { nearVertex, nearEdge } = nearSideOf();
     for (let vertex = 0; vertex < vertexCount; vertex += 1) {
       const world = transformPoint(matrix, state.positions[vertex * 3], state.positions[vertex * 3 + 1], state.positions[vertex * 3 + 2]);
       const point = project(world);
@@ -281,38 +330,83 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
       screenY[vertex] = point.y;
       visible[vertex] = point.visible ? 1 : 0;
     }
-    return { screenX, screenY, visible };
+    return { screenX, screenY, visible, nearVertex, nearEdge };
+  }
+
+  // A vertex or an edge is on the far side when every face that uses it faces away from the camera.
+  function nearSideOf() {
+    const { mesh, positions } = state;
+    const nearVertex = new Uint8Array(mesh.vertexCount);
+    const nearEdge = new Uint8Array(mesh.edgeCount);
+    const inverse = mat4.invert(mat4.create(), state.part.matrix);
+    if (!inverse) {
+      nearVertex.fill(1);
+      nearEdge.fill(1);
+      return { nearVertex, nearEdge };
+    }
+    const camera = controller.viewCamera;
+    const eye = transformPoint(inverse, ...camera.eye);
+    const forward = transformDirection(inverse, camera.target[0] - camera.eye[0], camera.target[1] - camera.eye[1], camera.target[2] - camera.eye[2]);
+    const orthographic = camera.projection === 'orthographic';
+    const mirrored = mat4.determinant(state.part.matrix) < 0;
+    for (let face = 0; face < mesh.faceCount; face += 1) {
+      const first = mesh.faceOffsets[face];
+      const end = mesh.faceOffsets[face + 1];
+      let normalX = 0;
+      let normalY = 0;
+      let normalZ = 0;
+      for (let corner = first; corner < end; corner += 1) {
+        const current = mesh.cornerVertices[corner] * 3;
+        const following = mesh.cornerVertices[corner + 1 < end ? corner + 1 : first] * 3;
+        normalX += (positions[current + 1] - positions[following + 1]) * (positions[current + 2] + positions[following + 2]);
+        normalY += (positions[current + 2] - positions[following + 2]) * (positions[current] + positions[following]);
+        normalZ += (positions[current] - positions[following]) * (positions[current + 1] + positions[following + 1]);
+      }
+      const anchor = mesh.cornerVertices[first] * 3;
+      const towardX = orthographic ? -forward[0] : eye[0] - positions[anchor];
+      const towardY = orthographic ? -forward[1] : eye[1] - positions[anchor + 1];
+      const towardZ = orthographic ? -forward[2] : eye[2] - positions[anchor + 2];
+      const facing = normalX * towardX + normalY * towardY + normalZ * towardZ;
+      if (mirrored ? facing >= 0 : facing <= 0) continue;
+      for (let corner = first; corner < end; corner += 1) {
+        nearVertex[mesh.cornerVertices[corner]] = 1;
+        nearEdge[mesh.cornerEdges[corner]] = 1;
+      }
+    }
+    return { nearVertex, nearEdge };
   }
 
   function nearestVertex(pixelX, pixelY, projected) {
-    let best = null;
-    let bestDistance = VERTEX_PICK_RADIUS_PIXELS ** 2;
+    const best = { near: null, far: null };
+    const bestDistance = { near: VERTEX_PICK_RADIUS_PIXELS ** 2, far: VERTEX_PICK_RADIUS_PIXELS ** 2 };
     for (let vertex = 0; vertex < state.mesh.vertexCount; vertex += 1) {
       if (!projected.visible[vertex]) continue;
       const distance = (projected.screenX[vertex] - pixelX) ** 2 + (projected.screenY[vertex] - pixelY) ** 2;
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        best = vertex;
+      const side = projected.nearVertex[vertex] ? 'near' : 'far';
+      if (distance < bestDistance[side]) {
+        bestDistance[side] = distance;
+        best[side] = vertex;
       }
     }
-    return best;
+    return best.near ?? best.far;
   }
 
   function nearestEdge(pixelX, pixelY, projected) {
-    let best = null;
-    let bestDistance = EDGE_PICK_RADIUS_PIXELS ** 2;
+    const best = { near: null, far: null };
+    const bestDistance = { near: EDGE_PICK_RADIUS_PIXELS ** 2, far: EDGE_PICK_RADIUS_PIXELS ** 2 };
     const { edgeVertices } = state.mesh;
     for (let edge = 0; edge < state.mesh.edgeCount; edge += 1) {
       const start = edgeVertices[edge * 2];
       const end = edgeVertices[edge * 2 + 1];
       if (!projected.visible[start] || !projected.visible[end]) continue;
       const distance = distanceToSegmentSquared(pixelX, pixelY, projected.screenX[start], projected.screenY[start], projected.screenX[end], projected.screenY[end]);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        best = edge;
+      const side = projected.nearEdge[edge] ? 'near' : 'far';
+      if (distance < bestDistance[side]) {
+        bestDistance[side] = distance;
+        best[side] = edge;
       }
     }
-    return best;
+    return best.near ?? best.far;
   }
 
   function faceUnderPointer(pixelX, pixelY) {
@@ -379,7 +473,8 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     if (!drag.previewing) return;
     try {
       gatherRenderPositions({ positions: state.positions }, state.renderVertexSource, drag.renderPositions);
-      updatePart(getRenderer(), state.part, drag.renderPositions);
+      previewNormalsOf(state.part.geometry.indices, drag.renderPositions, drag.renderNormals);
+      updatePart(getRenderer(), state.part, drag.renderPositions, drag.renderNormals);
     } catch {
       // A part the renderer cannot rewrite in place (skinned, morphed, LOD) keeps its look; only the cage moves.
       drag.previewing = false;
@@ -393,11 +488,13 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     });
     if (drag.previewing) {
       try {
-        updatePart(getRenderer(), state.part, drag.originalRenderPositions);
+        updatePart(getRenderer(), state.part, drag.originalRenderPositions, drag.originalRenderNormals);
       } catch {
         drag.previewing = false;
       }
     }
+    // The preview marked the geometry live (its values change in place); its values are final again, so caches may measure it.
+    if (!drag.wasLive) unmarkLiveGeometry(state.part.geometry);
   }
 
   function cancelDrag() {
@@ -423,8 +520,11 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
       basePositions,
       localDelta: [0, 0, 0],
       previewing,
+      wasLive: isLiveGeometry(state.part.geometry),
       renderPositions: previewing ? new Float32Array(state.part.geometry.positions.length) : null,
+      renderNormals: previewing ? new Float32Array(state.part.geometry.normals.length) : null,
       originalRenderPositions: previewing ? Float32Array.from(state.part.geometry.positions) : null,
+      originalRenderNormals: previewing ? Float32Array.from(state.part.geometry.normals) : null,
     };
   }
 
@@ -447,8 +547,10 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     const { vertices, localDelta } = drag;
     restoreDraggedPositions();
     drag = null;
-    if (!changed || Math.hypot(...localDelta) < MINIMUM_MOVE) return;
+    // A move below the rounding step would be an entry that moves nothing and takes one of the 64 slots.
+    if (!changed || roundVector(localDelta).every(component => component === 0)) return;
     const { nodeId, geometryId } = state;
+    writingOwnEntry = true;
     try {
       const edit = planMeshMove(state.mesh, vertices, localDelta);
       controller.applyImportOperations([{ type: 'edit-mesh', geometry: geometryId, edits: [edit] }], { detail: { kind: 'topology', nodeId } });
@@ -456,6 +558,7 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
       announce(error.message);
     }
     refresh();
+    writingOwnEntry = false;
   }
 
   const session = {
@@ -473,6 +576,11 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
       leave();
       return;
     }
+    if (geometrySpecOf(controller.exportRecipe(), state.nodeId)?.id !== state.geometryId) {
+      announce(MESH_CHANGED);
+      leave();
+      return;
+    }
     const loadFailure = loadCage(state.nodeId, [...state.selected]);
     if (loadFailure) {
       announce(loadFailure);
@@ -480,10 +588,11 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     }
   }
 
-  // The stroke and fill of these paths come from the stylesheet (`--studio-*` tokens), so the cage follows the theme.
+  // The stroke and fill of these paths come from the stylesheet (`--studio-*` tokens), so the cage follows the theme. `layer` says
+  // whether a path goes under the move handles or over them: picked vertices and edges go over, or the handles' centre dot hides them.
   function cagePaths() {
     if (!state) return [];
-    const { screenX, screenY, visible } = projectCage();
+    const { screenX, screenY, visible, nearVertex, nearEdge } = projectCage();
     const { mesh } = state;
     const paths = [];
     const point = vertex => `${screenX[vertex].toFixed(1)} ${screenY[vertex].toFixed(1)}`;
@@ -494,13 +603,25 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     };
     const dot = vertex => (visible[vertex] ? `M${point(vertex)}h0` : '');
     if (!state.tooLarge) {
-      let edges = '';
-      for (let edge = 0; edge < mesh.edgeCount; edge += 1) edges += edgeSegment(edge);
-      paths.push({ className: 'crucible-studio-cage-edges', pathData: edges });
+      let nearEdges = '';
+      let farEdges = '';
+      for (let edge = 0; edge < mesh.edgeCount; edge += 1) {
+        if (nearEdge[edge]) nearEdges += edgeSegment(edge);
+        else farEdges += edgeSegment(edge);
+      }
+      paths.push({ className: 'crucible-studio-cage-halo', pathData: nearEdges, layer: 'under' });
+      paths.push({ className: 'crucible-studio-cage-edges-far', pathData: farEdges, layer: 'under' });
+      paths.push({ className: 'crucible-studio-cage-edges', pathData: nearEdges, layer: 'under' });
       if (state.mode === 'vertex') {
-        let dots = '';
-        for (let vertex = 0; vertex < mesh.vertexCount; vertex += 1) dots += dot(vertex);
-        paths.push({ className: 'crucible-studio-cage-vertices', pathData: dots });
+        let nearDots = '';
+        let farDots = '';
+        for (let vertex = 0; vertex < mesh.vertexCount; vertex += 1) {
+          if (nearVertex[vertex]) nearDots += dot(vertex);
+          else farDots += dot(vertex);
+        }
+        paths.push({ className: 'crucible-studio-cage-vertices-halo', pathData: nearDots, layer: 'under' });
+        paths.push({ className: 'crucible-studio-cage-vertices-far', pathData: farDots, layer: 'under' });
+        paths.push({ className: 'crucible-studio-cage-vertices', pathData: nearDots, layer: 'under' });
       }
     }
     let selectedShape = '';
@@ -515,21 +636,28 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
         if (corners.every(vertex => visible[vertex])) selectedShape += `M${corners.map(point).join('L')}Z`;
       }
     }
-    paths.push({ className: `crucible-studio-cage-selected crucible-studio-cage-selected-${state.mode}`, pathData: selectedShape });
+    if (state.mode === 'face') {
+      paths.push({ className: 'crucible-studio-cage-selected crucible-studio-cage-selected-face', pathData: selectedShape, layer: 'under' });
+    } else {
+      paths.push({ className: `crucible-studio-cage-selected-halo crucible-studio-cage-selected-halo-${state.mode}`, pathData: selectedShape, layer: 'over' });
+      paths.push({ className: `crucible-studio-cage-selected crucible-studio-cage-selected-${state.mode}`, pathData: selectedShape, layer: 'over' });
+    }
     return paths;
   }
 
-  // The cage goes under the move handles, which are already in the svg.
+  // The cage goes under the move handles, which are already in the svg; the picked vertices and edges go over them.
   function draw(documentReference, svg) {
-    const elements = [];
-    for (const { className, pathData } of cagePaths()) {
+    const under = [];
+    const over = [];
+    for (const { className, pathData, layer } of cagePaths()) {
       if (pathData === '') continue;
       const path = documentReference.createElementNS(SVG_NAMESPACE, 'path');
       path.setAttribute('class', className);
       path.setAttribute('d', pathData);
-      elements.push(path);
+      (layer === 'over' ? over : under).push(path);
     }
-    svg.prepend(...elements);
+    svg.prepend(...under);
+    svg.append(...over);
   }
 
   return Object.freeze({

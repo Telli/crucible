@@ -701,15 +701,15 @@ function appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool) {
   gizmoSvg.append(hitDisc(origin, GIZMO_HIT_ORIGIN_RADIUS, tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen'));
 }
 
-function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask) {
+function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, { hideSelectionOutline = false } = {}) {
   gizmoSvg.replaceChildren();
   const width = controller.viewportWidth;
   const height = controller.viewportHeight;
   gizmoSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  const silhouette = controller.selectionSilhouette();
+  const silhouette = hideSelectionOutline ? null : controller.selectionSilhouette();
   // A dense selection is drawn by the mask; the hull below is only for when the mask cannot draw (no WebGL2).
-  const maskDrawn = outlineMask.draw(silhouette ? null : controller.selectionMaskSource(), width, height);
-  const outline = silhouette || maskDrawn ? null : controller.selectionOutline();
+  const maskDrawn = outlineMask.draw(silhouette || hideSelectionOutline ? null : controller.selectionMaskSource(), width, height);
+  const outline = silhouette || maskDrawn || hideSelectionOutline ? null : controller.selectionOutline();
   if (silhouette) {
     appendSelectionSilhouette(documentReference, gizmoSvg, silhouette);
   } else if (outline) {
@@ -1801,19 +1801,24 @@ export function createStudio(container, {
     });
   });
 
+  const MESH_MODE_PLURALS = Object.freeze({ vertex: 'vertices', edge: 'edges', face: 'faces' });
+  let shownMeshMode = null;
   const MESH_MODES = Object.freeze([
-    { mode: 'vertex', icon: 'meshVertex', label: 'Vertices', action: 'mesh.vertexMode' },
-    { mode: 'edge', icon: 'meshEdge', label: 'Edges', action: 'mesh.edgeMode' },
-    { mode: 'face', icon: 'meshFace', label: 'Faces', action: 'mesh.faceMode' },
+    { mode: 'vertex', icon: 'meshVertex', label: 'Vertex', action: 'mesh.vertexMode' },
+    { mode: 'edge', icon: 'meshEdge', label: 'Edge', action: 'mesh.edgeMode' },
+    { mode: 'face', icon: 'meshFace', label: 'Face', action: 'mesh.faceMode' },
   ]);
-  const meshModeButtons = MESH_MODES.map(({ mode, icon, label, action }) => createKeyedIconButton(icon, () => `${label} (${keyLabel(keymap, action)})`, {
+  const meshModeButtons = MESH_MODES.map(({ mode, icon, label, action }) => createKeyedIconButton(icon, () => `${label} ${keyLabel(keymap, action)}`, {
     dataset: { meshMode: mode },
     attributes: { 'aria-pressed': 'false' },
   }));
   meshModeButtons.forEach(button => {
     button.addEventListener('click', () => chooseMeshMode(button.dataset.meshMode));
   });
-  const meshModeGroup = createElement(documentReference, 'div', { className: 'crucible-studio-group', hidden: true, attributes: { role: 'group', 'aria-label': 'Mesh selection' } }, ...meshModeButtons);
+  const meshExitButton = createKeyedIconButton('check', () => `Leave edit mode (${keyLabel(keymap, 'mesh.leave')})`, { dataset: { meshExit: 'true' } });
+  meshExitButton.addEventListener('click', () => leaveMeshEdit());
+  // Shown only while edit mode is on, so the group itself says which mode the viewport is in.
+  const meshModeGroup = createElement(documentReference, 'div', { className: 'crucible-studio-group', hidden: true, dataset: { meshGroup: 'true' }, attributes: { role: 'group', 'aria-label': 'Mesh selection' } }, ...meshModeButtons, meshExitButton);
 
   const undoButton = createKeyedIconButton('undo', () => `Undo (${keyLabel(keymap, 'edit.undo')})`, { attributes: { 'aria-disabled': 'true' } });
   const redoButton = createKeyedIconButton('redo', () => `Redo (${keyLabel(keymap, 'edit.redo')})`, { attributes: { 'aria-disabled': 'true' } });
@@ -2698,6 +2703,11 @@ export function createStudio(container, {
 
   // Measured only after a change: the bounds walk every vertex of the selection.
   function describeSelection() {
+    const described = describeSelectedObject();
+    return described !== '' && meshEditor?.active ? `Edit ${MESH_MODE_PLURALS[meshEditor.mode]}, ${described}` : described;
+  }
+
+  function describeSelectedObject() {
     const selectedId = controller.selectedNodeId;
     const bounds = selectedId ? controller.nodeBounds(selectedId) : null;
     if (!bounds) {
@@ -3178,7 +3188,7 @@ export function createStudio(container, {
     try {
       syncViewportDimensions();
       drawSceneFrame();
-      renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask);
+      renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, { hideSelectionOutline: Boolean(meshEditor?.active) });
       if (!capturingStill) {
         renderSceneObjectMarks(documentReference, gizmoSvg, controller);
       }
@@ -3696,6 +3706,11 @@ export function createStudio(container, {
     const editingMesh = Boolean(meshEditor?.active);
     root.dataset.meshEdit = editingMesh ? 'true' : 'false';
     meshModeGroup.hidden = !editingMesh;
+    const meshMode = editingMesh ? meshEditor.mode : null;
+    if (meshMode !== shownMeshMode) {
+      shownMeshMode = meshMode;
+      selectionReadoutStale = true;
+    }
     meshModeButtons.forEach(button => button.setAttribute('aria-pressed', editingMesh && button.dataset.meshMode === meshEditor.mode ? 'true' : 'false'));
     undoButton.setAttribute('aria-disabled', controller.canUndo ? 'false' : 'true');
     redoButton.setAttribute('aria-disabled', controller.canRedo ? 'false' : 'true');
@@ -4308,8 +4323,18 @@ export function createStudio(container, {
     return meshEditorLoad;
   }
 
+  // The second Tab pressed while the editor is still loading takes the first one back.
+  let meshEnterPending = false;
+
   async function enterMeshEdit() {
+    if (meshEnterPending) {
+      meshEnterPending = false;
+      return;
+    }
+    meshEnterPending = true;
     const editor = await loadMeshEditor();
+    if (!meshEnterPending) return;
+    meshEnterPending = false;
     if (editor.active) return;
     if (editor.enter().ok) announce('Edit mode: pick a vertex, edge or face.');
     syncUi();
@@ -4317,6 +4342,7 @@ export function createStudio(container, {
   }
 
   function leaveMeshEdit() {
+    if (controller.dragging) pointerState = null;
     meshEditor?.leave();
     syncUi();
     requestFrame();

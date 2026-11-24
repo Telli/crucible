@@ -159,29 +159,59 @@ export const STUDIO_CSS = `
   height: 100%;
   pointer-events: none;
 }
-/* The cage of edit mode: edges, the vertices in vertex mode and the picked elements, in the theme's own tokens. */
-.crucible-studio-gizmo .crucible-studio-cage-edges {
+/* The cage of edit mode. A light line with a dark halo reads on every surface the viewport can show, in either theme; the far
+   side of the mesh is the same line, quieter. The picked elements are the accent, drawn over the handles with a dark ring. */
+.crucible-studio-gizmo :is(.crucible-studio-cage-halo, .crucible-studio-cage-edges, .crucible-studio-cage-edges-far, .crucible-studio-cage-vertices-halo, .crucible-studio-cage-vertices, .crucible-studio-cage-vertices-far, .crucible-studio-cage-selected-halo) {
   fill: none;
-  stroke: color-mix(in srgb, var(--studio-text) 55%, transparent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.crucible-studio-gizmo .crucible-studio-cage-halo {
+  stroke: var(--studio-trace-edge);
+  stroke-opacity: 0.4;
+  stroke-width: 3;
+}
+.crucible-studio-gizmo .crucible-studio-cage-edges {
+  stroke: var(--studio-trace);
+  stroke-opacity: 0.85;
   stroke-width: 1;
 }
-.crucible-studio-gizmo .crucible-studio-cage-vertices {
-  fill: none;
-  stroke: color-mix(in srgb, var(--studio-text) 80%, transparent);
-  stroke-width: 5;
-  stroke-linecap: round;
+.crucible-studio-gizmo .crucible-studio-cage-edges-far {
+  stroke: var(--studio-trace);
+  stroke-opacity: 0.2;
+  stroke-width: 1;
 }
+.crucible-studio-gizmo .crucible-studio-cage-vertices-halo {
+  stroke: var(--studio-trace-edge);
+  stroke-opacity: 0.5;
+  stroke-width: 7.5;
+}
+.crucible-studio-gizmo .crucible-studio-cage-vertices {
+  stroke: var(--studio-trace);
+  stroke-width: 4.5;
+}
+.crucible-studio-gizmo .crucible-studio-cage-vertices-far {
+  stroke: var(--studio-trace);
+  stroke-opacity: 0.25;
+  stroke-width: 3.5;
+}
+.crucible-studio-gizmo .crucible-studio-cage-selected-halo {
+  stroke: var(--studio-trace-edge);
+  stroke-opacity: 0.7;
+}
+.crucible-studio-gizmo .crucible-studio-cage-selected-halo-vertex { stroke-width: 17; }
+.crucible-studio-gizmo .crucible-studio-cage-selected-halo-edge { stroke-width: 7.5; }
 .crucible-studio-gizmo .crucible-studio-cage-selected {
   fill: none;
   stroke: var(--studio-accent);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2.5;
 }
-.crucible-studio-gizmo .crucible-studio-cage-selected-vertex { stroke-width: 9; }
+.crucible-studio-gizmo .crucible-studio-cage-selected-vertex { stroke-width: 12; }
+.crucible-studio-gizmo .crucible-studio-cage-selected-edge { stroke-width: 4; }
 .crucible-studio-gizmo .crucible-studio-cage-selected-face {
-  fill: color-mix(in srgb, var(--studio-accent) 32%, transparent);
-  stroke-width: 1.5;
+  fill: color-mix(in srgb, var(--studio-accent) 46%, transparent);
+  stroke-width: 2;
 }
 .crucible-studio-gizmo [data-gizmo-axis] {
   pointer-events: all;
@@ -749,6 +779,16 @@ export const STUDIO_CSS = `
   flex-direction: column;
   align-items: center;
   gap: 6px;
+}
+.crucible-studio-group[hidden] { display: none; }
+/* Edit mode's own group: set apart from the tools by room, in the accent while the mode is on. */
+.crucible-studio-group[data-mesh-group] { margin-block: 10px; }
+.crucible-studio-group[data-mesh-group] button { color: var(--studio-accent); }
+.crucible-studio-group[data-mesh-group] button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--studio-accent) 28%, transparent);
+}
+.crucible-studio-group[data-mesh-group] button[data-mesh-mode][aria-pressed="false"] {
+  color: color-mix(in srgb, var(--studio-accent) 62%, var(--studio-muted));
 }
 
 .crucible-studio-dock {

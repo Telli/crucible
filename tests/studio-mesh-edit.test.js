@@ -4,9 +4,10 @@ import test from 'node:test';
 import { mat4 } from 'gl-matrix';
 import { createAgentScene } from '../src/agent-scene.js';
 import { meshEditSourceOf } from '../src/agent-mesh.js';
+import { isLiveGeometry, markLiveGeometry } from '../src/live-geometry.js';
 import { createStudio, createStudioController } from '../src/studio.js';
 import { byDataset, byLabel, createFakeRenderer, dispatch, installStudioDom } from './support/studio-dom.mjs';
-import { CAGE_TRIANGLE_BUDGET, MAX_LOG_ENTRIES, MAX_MASK_VERTICES, createMeshEditor, planMeshMove } from '../src/studio-mesh-edit.js';
+import { CAGE_TRIANGLE_BUDGET, MAX_LOG_ENTRIES, MAX_MASK_VERTICES, createMeshEditor, planMeshMove, previewNormalsOf } from '../src/studio-mesh-edit.js';
 import { DEFAULT_KEYMAP_ACTIONS, findKeymapAction, resolveKeymap } from '../src/studio-keymap.js';
 
 const CAMERA = { eye: [0.8, 1.4, 4.5], target: [0, 0, 0], up: [0, 1, 0], fov: 45, near: 0.1, far: 100 };
@@ -29,8 +30,10 @@ function mount(recipe = recipeOf()) {
   const previews = [];
   // The renderer cannot be built without a canvas: this writer does what updatePartVertices does to the geometry, so the
   // restore after a drag is checked on real buffers.
-  const updatePart = (renderer, part, positions) => {
+  const updatePart = (renderer, part, positions, normals) => {
     part.geometry.positions.set(positions);
+    if (normals) part.geometry.normals.set(normals);
+    markLiveGeometry(part.geometry);
     previews.push(Float32Array.from(positions));
   };
   const editor = createMeshEditor({ controller, announce: message => messages.push(message), getRenderer: () => ({}), updatePart });
@@ -361,7 +364,8 @@ test('the cage draws the polygon edges, the vertices in vertex mode and the sele
   assert.equal(faceLayers.includes('crucible-studio-cage-vertices'), false);
   editor.setMode('vertex');
   assert.ok(editor.cagePaths().some(path => path.className === 'crucible-studio-cage-vertices'));
-  assert.equal(editor.cagePaths().find(path => path.className === 'crucible-studio-cage-edges').pathData.split('M').length - 1, 12);
+  const edgePaths = editor.cagePaths().filter(path => path.className === 'crucible-studio-cage-edges' || path.className === 'crucible-studio-cage-edges-far');
+  assert.equal(edgePaths.reduce((total, path) => total + path.pathData.split('M').length - 1, 0), 12);
 });
 
 test('the mesh keymap context binds Tab, Esc and 1 2 3, and stays out of the way of the normal keys', () => {
@@ -414,7 +418,7 @@ test('Tab enters edit mode on a selected mesh; 1, 2, 3 switch the mode; X and De
   assert.equal(tab.defaultPrevented, true);
   await untilEditing(ui);
   assert.equal(ui.modeButton('face').getAttribute('aria-pressed'), 'true');
-  assert.equal(ui.modeButton('vertex').getAttribute('aria-label'), 'Vertices (1)');
+  assert.equal(ui.modeButton('vertex').getAttribute('aria-label'), 'Vertex 1');
   assert.equal(byLabel(ui.root, 'Mesh selection').hidden, false);
   for (const [key, mode] of [['1', 'vertex'], ['2', 'edge'], ['3', 'face']]) {
     ui.press(key);
@@ -467,4 +471,290 @@ test('Tab on a shape that is not a mesh says edit mode needs a mesh and changes 
   assert.match(ui.status(), /needs a mesh geometry/);
   assert.equal(ui.root.dataset.meshEdit, 'false');
   assert.deepEqual(ui.controller.exportRecipe(), recipeBefore);
+});
+
+// Review round 2: leaving mid-drag, no-op drags, the live flag, the double Tab, the selection across a changed log, the
+// rounding, the keys that pass through, the far side of the cage, undo inside edit mode and the preview normals.
+function dragThroughSession(controller, deltaX, deltaY) {
+  const origin = controller.gizmoHandles().origin;
+  controller.beginGizmoDrag('screen', origin.x, origin.y);
+  controller.updateGizmoDrag(origin.x + deltaX, origin.y + deltaY);
+}
+
+function pickFront(controller, editor) {
+  const front = faceOf(controller, point => point[2] > 0.49);
+  const centre = pixelOfFaceCentre(controller, front.corners);
+  editor.pick(centre.x, centre.y);
+  return front;
+}
+
+test('leaving edit mode in the middle of a drag cancels the drag first: cage, buffers and recipe are as before and the pointer moves throw nothing', () => {
+  const { controller, editor } = mount();
+  editor.enter();
+  pickFront(controller, editor);
+  const recipeBefore = controller.exportRecipe();
+  const renderBefore = Float32Array.from(heroPart(controller).geometry.positions);
+  const cageBefore = Float32Array.from(editor.cage.positions);
+  dragThroughSession(controller, 40, -25);
+  assert.equal(controller.dragging, true);
+  editor.leave();
+  assert.equal(controller.dragging, false, 'the controller drag ended with the edit mode');
+  assert.doesNotThrow(() => controller.updateGizmoDrag(10, 10));
+  assert.deepEqual(Array.from(heroPart(controller).geometry.positions), Array.from(renderBefore));
+  assert.deepEqual(controller.exportRecipe(), recipeBefore);
+  assert.equal(cageBefore.length > 0, true);
+  assert.equal(controller.canUndo, false);
+});
+
+test('a drag smaller than the rounding step writes nothing, not an entry that moves by 0', () => {
+  const { controller, editor } = mount();
+  editor.enter();
+  pickFront(controller, editor);
+  dragThroughSession(controller, 0.004, 0);
+  controller.endGizmoDrag();
+  assert.equal(logOf(controller).length, 0);
+  assert.equal(controller.canUndo, false);
+  dragThroughSession(controller, 60, 0);
+  controller.endGizmoDrag();
+  assert.equal(logOf(controller).length, 1, 'a real drag still writes its entry');
+});
+
+test('the offset of an entry is rounded to 0.0001', () => {
+  const { controller, editor } = mount();
+  editor.enter();
+  pickFront(controller, editor);
+  dragThroughSession(controller, 37.3, -21.9);
+  controller.endGizmoDrag();
+  const { offset } = logOf(controller)[0];
+  assert.ok(offset.some(component => component !== 0));
+  for (const component of offset) assert.equal(component, Math.round(component * 1e4) / 1e4);
+});
+
+test('a cancelled preview takes the live mark off the geometry, but leaves a mark that was there before the drag', () => {
+  const { controller, editor } = mount();
+  editor.enter();
+  pickFront(controller, editor);
+  const geometry = heroPart(controller).geometry;
+  assert.equal(isLiveGeometry(geometry), false);
+  dragThroughSession(controller, 40, -25);
+  assert.equal(isLiveGeometry(geometry), true, 'while previewing, caches skip the geometry');
+  controller.cancelGizmoDrag();
+  assert.equal(isLiveGeometry(geometry), false, 'after Esc the caches may measure it again');
+  markLiveGeometry(geometry);
+  dragThroughSession(controller, 40, -25);
+  controller.cancelGizmoDrag();
+  assert.equal(isLiveGeometry(geometry), true, 'a geometry that was live before is not touched');
+});
+
+test('after leave() the handles move the node again and no element session is left', () => {
+  const { controller, editor } = mount();
+  editor.enter();
+  pickFront(controller, editor);
+  editor.leave();
+  const translationBefore = controller.exportRecipe().nodes[0].translation ?? [0, 0, 0];
+  const origin = controller.gizmoHandles().origin;
+  controller.beginGizmoDrag('screen', origin.x, origin.y);
+  controller.updateGizmoDrag(origin.x + 60, origin.y);
+  controller.endGizmoDrag();
+  const recipe = controller.exportRecipe();
+  assert.notDeepEqual(recipe.nodes[0].translation ?? [0, 0, 0], translationBefore, 'the node moved');
+  assert.equal(logOf(controller).length, 0, 'the mesh log is untouched');
+});
+
+test('the selection stays only while the mesh log is the one it was picked on', () => {
+  const { controller, editor } = mount();
+  editor.enter();
+  const front = pickFront(controller, editor);
+  editor.refresh();
+  assert.deepEqual(editor.selection.indices, [front.face], 'nothing changed, so the pick stays');
+  controller.applyImportOperations([{ type: 'edit-mesh', geometry: 'shape', edits: [{ op: 'translate', select: { faces: [0] }, offset: [0, 0.1, 0] }] }], { detail: { kind: 'topology', nodeId: 'hero' } });
+  editor.refresh();
+  assert.equal(editor.cage.mesh.faceCount, 6, 'the same counts as before');
+  assert.deepEqual(editor.selection.indices, [], 'a changed log may have moved the numbers');
+});
+
+test('the far side of the cage is drawn quiet and an element on the near side is picked before it', () => {
+  const faceOnCamera = { eye: [0, 0, 4.5], target: [0, 0, 0], up: [0, 1, 0], fov: 45, near: 0.1, far: 100 };
+  const { controller, editor } = mount({ ...recipeOf(), camera: faceOnCamera });
+  editor.enter();
+  const pathOf = className => editor.cagePaths().find(path => path.className === className)?.pathData ?? '';
+  const segments = pathData => pathData.split('M').length - 1;
+  assert.equal(segments(pathOf('crucible-studio-cage-edges')), 4, 'the four edges of the front face are near');
+  assert.equal(segments(pathOf('crucible-studio-cage-edges-far')), 8, 'the back face and the edges that run to it only touch faces turned away');
+  editor.setMode('vertex');
+  assert.equal(segments(pathOf('crucible-studio-cage-vertices-far')), 4);
+  const near = vertexAt(controller, [0.5, 0.5, 0.5]);
+  const far = vertexAt(controller, [0.5, 0.5, -0.5]);
+  const nearPixel = pixelOfVertex(controller, near);
+  const farPixel = pixelOfVertex(controller, far);
+  const click = { x: nearPixel.x + (farPixel.x - nearPixel.x) * 0.52, y: nearPixel.y + (farPixel.y - nearPixel.y) * 0.52 };
+  const distance = (first, second) => Math.hypot(first.x - second.x, first.y - second.y);
+  assert.ok(distance(click, nearPixel) < 14 && distance(click, farPixel) < distance(click, nearPixel), 'the far vertex is the closer one to this click');
+  assert.equal(editor.pick(click.x, click.y), near);
+});
+
+test('selected vertices and edges are drawn over the handles with a ring, selected faces under them', () => {
+  const { controller, editor } = mount();
+  editor.enter();
+  const front = pickFront(controller, editor);
+  const layerOf = className => editor.cagePaths().find(path => path.className.includes(className))?.layer;
+  assert.equal(layerOf('cage-selected-face'), 'under');
+  editor.setMode('vertex');
+  assert.equal(editor.selection.indices.length, 4);
+  assert.equal(layerOf('cage-selected-vertex'), 'over');
+  assert.equal(layerOf('cage-selected-halo'), 'over');
+  assert.ok(front.corners.length === 4);
+  editor.setMode('edge');
+  assert.equal(layerOf('cage-selected-edge'), 'over');
+});
+
+test('the preview writes new normals with the positions and puts the old ones back on Esc', () => {
+  const { controller, editor } = mount();
+  editor.enter();
+  pickFront(controller, editor);
+  const geometry = heroPart(controller).geometry;
+  const normalsBefore = Float32Array.from(geometry.normals);
+  dragThroughSession(controller, 0, -60);
+  assert.notDeepEqual(Array.from(geometry.normals), Array.from(normalsBefore), 'the lit surface follows the drag');
+  for (let vertex = 0; vertex < geometry.normals.length / 3; vertex += 1) {
+    const length = Math.hypot(geometry.normals[vertex * 3], geometry.normals[vertex * 3 + 1], geometry.normals[vertex * 3 + 2]);
+    assert.ok(Math.abs(length - 1) < 1e-4, 'unit normals');
+  }
+  controller.cancelGizmoDrag();
+  assert.deepEqual(Array.from(geometry.normals), Array.from(normalsBefore));
+});
+
+test('the preview normals of a flat shaded cube equal what the surface builder gives a cube moved by the same amount', () => {
+  const normals = previewNormalsOf(Uint16Array.from([0, 1, 2, 0, 2, 3]), Float32Array.from([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]), new Float32Array(12));
+  assert.deepEqual(Array.from(normals), [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
+});
+
+async function settle(ticks = 300) {
+  for (let tick = 0; tick < ticks; tick += 1) await new Promise(resolve => setImmediate(resolve));
+}
+
+test('Tab twice before the editor has loaded cancels the entry, and a third Tab enters', async testContext => {
+  const ui = mountStudioWithMesh(testContext);
+  ui.press('Tab');
+  ui.press('Tab');
+  await settle();
+  assert.equal(ui.root.dataset.meshEdit ?? 'false', 'false');
+  ui.press('Tab');
+  await untilEditing(ui);
+});
+
+test('Tab in the middle of a drag leaves edit mode and ends the drag without an error', async testContext => {
+  const ui = mountStudioWithMesh(testContext);
+  ui.press('Tab');
+  await untilEditing(ui);
+  const front = ui.controller.projectWorldPoint([0, 0, 0.5]);
+  const down = { clientX: VIEWPORT_BOX.left + front.x, clientY: VIEWPORT_BOX.top + front.y };
+  dispatch(ui.viewport.querySelector('canvas'), 'pointerdown', down);
+  dispatch(ui.viewport, 'pointerup', down);
+  dragThroughSession(ui.controller, 40, -25);
+  ui.press('Tab');
+  assert.equal(ui.root.dataset.meshEdit, 'false');
+  assert.equal(ui.controller.dragging, false);
+  assert.doesNotThrow(() => ui.controller.updateGizmoDrag(5, 5));
+  assert.equal(logOfShape(ui.controller).length, 0);
+});
+
+function logOfShape(controller) {
+  return controller.exportRecipe().geometries.find(geometry => geometry.id === 'shape').edits ?? [];
+}
+
+async function pickFrontThroughStudio(ui) {
+  ui.press('Tab');
+  await untilEditing(ui);
+  const front = ui.controller.projectWorldPoint([0, 0, 0.5]);
+  const down = { clientX: VIEWPORT_BOX.left + front.x, clientY: VIEWPORT_BOX.top + front.y };
+  dispatch(ui.viewport.querySelector('canvas'), 'pointerdown', down);
+  dispatch(ui.viewport, 'pointerup', down);
+}
+
+function ownShapeId(controller) {
+  return controller.exportRecipe().nodes.find(node => node.id === 'hero').geometry;
+}
+
+test('undo and redo inside edit mode stay in edit mode with the cage redrawn; the view keys and 1, 3 after leaving still work', async testContext => {
+  const ui = mountStudioWithMesh(testContext);
+  await pickFrontThroughStudio(ui);
+  ui.studio.renderNow();
+  assert.ok(ui.root.querySelector('.crucible-studio-cage-selected-face'));
+  dragThroughSession(ui.controller, 0, -60);
+  ui.controller.endGizmoDrag();
+  assert.equal(logOfShape(ui.controller).length, 1);
+  ui.press('z', { ctrlKey: true });
+  assert.equal(logOfShape(ui.controller).length, 0);
+  assert.equal(ui.root.dataset.meshEdit, 'true', 'undo does not leave edit mode');
+  ui.studio.renderNow();
+  assert.ok(ui.root.querySelector('.crucible-studio-cage-edges'), 'the cage is drawn for the restored mesh');
+  assert.equal(ui.root.querySelector('.crucible-studio-gizmo [data-gizmo-axis]'), null, 'the pick is gone with the undone move, and the handles of the whole object do not come back');
+  ui.press('z', { ctrlKey: true, shiftKey: true });
+  assert.equal(logOfShape(ui.controller).length, 1);
+  assert.equal(ui.root.dataset.meshEdit, 'true', 'redo does not leave edit mode');
+  const eyeBefore = [...ui.controller.viewCamera.eye];
+  ui.press('7');
+  assert.notDeepEqual([...ui.controller.viewCamera.eye], eyeBefore, 'the top view key works in edit mode');
+  const projectionBefore = ui.controller.viewCamera.projection;
+  ui.press('5');
+  assert.notEqual(ui.controller.viewCamera.projection, projectionBefore, 'the projection key works in edit mode');
+  ui.press('Tab');
+  assert.equal(ui.root.dataset.meshEdit, 'false');
+  const topEye = [...ui.controller.viewCamera.eye];
+  ui.press('1');
+  assert.notDeepEqual([...ui.controller.viewCamera.eye], topEye, '1 is the front view again');
+  const frontEye = [...ui.controller.viewCamera.eye];
+  ui.press('3');
+  assert.notDeepEqual([...ui.controller.viewCamera.eye], frontEye, '3 is the right view again');
+});
+
+test('undo of the step that made the geometry the node own leaves edit mode with one sentence', async testContext => {
+  const ui = mountStudioWithMesh(testContext);
+  const twin = recipeOf({ nodes: [{ id: 'hero', geometry: 'shape', material: 'grey' }, { id: 'twin', geometry: 'shape', material: 'grey', translation: [3, 0, 0] }] });
+  ui.controller.loadRecipe(twin, { recordUndo: false });
+  ui.controller.selectNode('hero');
+  ui.press('Tab');
+  await untilEditing(ui);
+  assert.notEqual(ownShapeId(ui.controller), 'shape');
+  ui.press('z', { ctrlKey: true });
+  assert.equal(ownShapeId(ui.controller), 'shape');
+  assert.equal(ui.root.dataset.meshEdit, 'false');
+  assert.match(ui.status(), /Edit mode ended/);
+});
+
+test('edit mode is shown by the toolbar group, a button that leaves it and the readout line, and nowhere else', async testContext => {
+  const ui = mountStudioWithMesh(testContext);
+  const group = byLabel(ui.root, 'Mesh selection');
+  assert.equal(group.hidden, true);
+  await pickFrontThroughStudio(ui);
+  ui.studio.renderNow();
+  assert.equal(group.hidden, false);
+  assert.equal(ui.modeButton('vertex').getAttribute('aria-label'), 'Vertex 1');
+  assert.equal(ui.modeButton('edge').getAttribute('aria-label'), 'Edge 2');
+  assert.equal(ui.modeButton('face').getAttribute('aria-label'), 'Face 3');
+  const leave = byLabel(ui.root, 'Leave edit mode (Tab)');
+  assert.ok(leave, 'a button leaves edit mode and names its key');
+  assert.match(ui.root.querySelector('.crucible-studio-readout-selection').textContent, /^Edit faces/);
+  ui.press('2');
+  ui.studio.renderNow();
+  assert.match(ui.root.querySelector('.crucible-studio-readout-selection').textContent, /^Edit edges/);
+  leave.click();
+  assert.equal(ui.root.dataset.meshEdit, 'false');
+  assert.equal(group.hidden, true);
+  ui.studio.renderNow();
+  assert.doesNotMatch(ui.root.querySelector('.crucible-studio-readout-selection').textContent, /^Edit /);
+});
+
+test('the selection outline of the node is not drawn while edit mode is on', async testContext => {
+  const ui = mountStudioWithMesh(testContext);
+  ui.studio.renderNow();
+  const outlineOf = () => ui.root.querySelector('.crucible-studio-selection-silhouette') ?? ui.root.querySelector('.crucible-studio-selection-outline');
+  assert.notEqual(outlineOf(), null, 'outside edit mode the selected node has its outline');
+  await pickFrontThroughStudio(ui);
+  ui.studio.renderNow();
+  assert.equal(outlineOf(), null);
+  ui.press('Tab');
+  ui.studio.renderNow();
+  assert.notEqual(outlineOf(), null, 'and it comes back when edit mode ends');
 });
