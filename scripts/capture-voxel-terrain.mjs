@@ -11,8 +11,8 @@ import { constants, setPriority } from 'node:os';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { createVoxelTerrain } from '../src/voxel-terrain.js';
-import { fitSteepView } from './voxel-camera.mjs';
-import { DIRT, makeLandscape } from './voxel-landscape.mjs';
+import { fitSteepView, projectPoint } from './voxel-camera.mjs';
+import { makeLandscape } from './voxel-landscape.mjs';
 
 setPriority(0, constants.priority.PRIORITY_BELOW_NORMAL);
 const folder = process.argv[2];
@@ -22,7 +22,9 @@ const HEIGHT = 1920;
 const MARGIN = 50;
 const MINIMUM_HEIGHT_SHARE = 0.55;
 const GRID = [80, 40, 128];
-const PALETTE = ['grass', 'rock', 'sand', 'water', 'dirt'];
+const SHORE_EYE = (process.env.SHORE_EYE ?? '154,47,157').split(',').map(Number);
+const SHORE_TARGET = (process.env.SHORE_TARGET ?? '48,6,118').split(',').map(Number);
+const PALETTE = ['grass', 'rock', 'sand', 'water'];
 const CENTRE = [40, 10, 64];
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'silent' });
 await server.listen();
@@ -38,23 +40,28 @@ try {
   await page.goto(`${serverUrl}/voxel.html`);
   const smoothing = Number(process.env.SMOOTHING ?? 1);
   const edges = process.env.EDGES ?? 'closed';
-  const { occupancy, materials } = makeLandscape(GRID, { deepMaterial: DIRT });
+  const { occupancy, materials } = makeLandscape(GRID);
   const { parts } = createVoxelTerrain({ grid: GRID, cellSize: 1, palette: PALETTE, occupancy, materials, smoothing, edges });
   const fitOptions = { minimumHeightShare: MINIMUM_HEIGHT_SHARE };
   const views = {
     wide: fitSteepView(parts, 20, CENTRE, WIDTH, HEIGHT, MARGIN, fitOptions).view,
     slope: fitSteepView(parts, -25, CENTRE, WIDTH, HEIGHT, MARGIN, fitOptions).view,
-    shore: { eye: [118, 62, 196], target: [38, 4, 94] },
+    shore: { eye: SHORE_EYE, target: SHORE_TARGET },
   };
-  const results = await page.evaluate(async ({ smoothing, edges, views, grid, palette, deepMaterial }) => {
+  const results = await page.evaluate(async ({ smoothing, edges, views, grid, palette }) => {
     await import('/src/world-material-shader.js');
     const { CrucibleRenderer } = await import('/src/renderer.js');
     const { createVoxelTerrain } = await import('/src/voxel-terrain.js');
     const { makeLandscape } = await import('/scripts/voxel-landscape.mjs');
-    const { occupancy, materials } = makeLandscape(grid, { deepMaterial });
+    const { occupancy, materials } = makeLandscape(grid);
     const terrain = createVoxelTerrain({ grid, cellSize: 1, palette, occupancy, materials, smoothing, edges });
+    // The renderer tints any surface below the water level by the water's absorption, which would turn the lower side walls
+    // teal. The stills switch the absorption off so a wall shows its own colour.
+    for (const part of terrain.parts) if (part.material.tag === 'water') Object.assign(part.material, { absorption: [0, 0, 0], turbidity: 0 });
     const canvas = document.querySelector('canvas');
-    const environment = { lightDirection: [-4, 5, 3], daylight: 1, fogDensity: 0.0004 };
+    // The sun comes from the side the camera looks from, so both side walls it can see are lit.
+    const sunFor = name => (name === 'slope' ? [-3, 5, 4] : [3, 5, 4]);
+    const environmentFor = name => ({ lightDirection: sunFor(name), daylight: 1, fogDensity: 0.0004 });
     const readPixels = () => {
       const copy = document.createElement('canvas');
       copy.width = canvas.width;
@@ -67,7 +74,7 @@ try {
     const withLandscape = {};
     const renderer = new CrucibleRenderer(canvas, terrain.parts, { hdr: true, depth: true, world: true, ground: false, pixelRatio: 1, samples: 4 });
     for (const [name, view] of Object.entries(views)) {
-      renderer.render({ ...view, time: 1, environment });
+      renderer.render({ ...view, time: 1, environment: environmentFor(name) });
       pictures[name] = canvas.toDataURL('image/png');
       withLandscape[name] = readPixels();
     }
@@ -76,7 +83,7 @@ try {
     const empty = new CrucibleRenderer(canvas, [], { hdr: true, depth: true, world: true, ground: false, pixelRatio: 1, samples: 4 });
     const boxes = {};
     for (const [name, view] of Object.entries(views)) {
-      empty.render({ ...view, time: 1, environment });
+      empty.render({ ...view, time: 1, environment: environmentFor(name) });
       const background = readPixels();
       const box = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
       for (let pixel = 0; pixel < background.length / 4; pixel++) {
@@ -93,13 +100,81 @@ try {
       boxes[name] = box;
     }
     empty.dispose();
-    return { pictures, boxes };
-  }, { smoothing, edges, views, grid: GRID, palette: PALETTE, deepMaterial: DIRT });
+    // The wall faces are the pixels that change when the wall triangles (listed last in the index buffer) are left out.
+    const [landPart, ...otherParts] = terrain.parts;
+    const topIndices = landPart.geometry.indices.subarray(0, landPart.geometry.indices.length - terrain.stats.wallTriangles * 3);
+    const topOnly = new CrucibleRenderer(canvas, [{ ...landPart, geometry: { ...landPart.geometry, indices: topIndices } }, ...otherParts], { hdr: true, depth: true, world: true, ground: false, pixelRatio: 1, samples: 4 });
+    const walls = {};
+    const distance = (first, firstOffset, second, secondOffset) => Math.abs(first[firstOffset] - second[secondOffset]) + Math.abs(first[firstOffset + 1] - second[secondOffset + 1]) + Math.abs(first[firstOffset + 2] - second[secondOffset + 2]);
+    const toLab = ([red, green, blue]) => {
+      const linear = [red, green, blue].map(value => { const unit = value / 255; return unit <= 0.04045 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4; });
+      const x = (0.4124 * linear[0] + 0.3576 * linear[1] + 0.1805 * linear[2]) / 0.95047;
+      const y = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+      const z = (0.0193 * linear[0] + 0.1192 * linear[1] + 0.9505 * linear[2]) / 1.08883;
+      const f = value => (value > 0.008856 ? Math.cbrt(value) : 7.787 * value + 16 / 116);
+      return { lightness: 116 * f(y) - 16, a: 500 * (f(x) - f(y)), b: 200 * (f(y) - f(z)) };
+    };
+    for (const [name, view] of Object.entries(views)) {
+      topOnly.render({ ...view, time: 1, environment: environmentFor(name) });
+      const top = readPixels();
+      const full = withLandscape[name];
+      const sum = [0, 0, 0];
+      let count = 0;
+      const isWall = new Uint8Array(canvas.width * canvas.height);
+      for (let pixel = 0; pixel < isWall.length; pixel++) {
+        if (distance(full, pixel * 4, top, pixel * 4) > 24) isWall[pixel] = 1;
+      }
+      // The colour is averaged over the wall pixels that are 3 px or more inside the wall, so anti-aliased edges do not count.
+      const inside = (x, y) => x >= 0 && y >= 0 && x < canvas.width && y < canvas.height && isWall[y * canvas.width + x] === 1;
+      for (let pixel = 0; pixel < isWall.length; pixel++) {
+        const x = pixel % canvas.width;
+        const y = Math.floor(pixel / canvas.width);
+        if (!isWall[pixel] || ![[-3, 0], [3, 0], [0, -3], [0, 3]].every(([stepX, stepY]) => inside(x + stepX, y + stepY))) continue;
+        for (let channel = 0; channel < 3; channel++) sum[channel] += full[pixel * 4 + channel];
+        count++;
+      }
+      // Width of the change from top colour to wall colour, down every column where the wall starts under visible top surface.
+      const widths = [];
+      for (let x = 0; x < canvas.width; x++) {
+        for (let y = 10; y < canvas.height - 10; y++) {
+          const index = y * canvas.width + x;
+          if (!isWall[index] || isWall[index - canvas.width]) continue;
+          const above = ((y - 8) * canvas.width + x) * 4;
+          const below = ((y + 8) * canvas.width + x) * 4;
+          if (!isWall[(y + 8) * canvas.width + x] || isWall[(y - 8) * canvas.width + x]) continue;
+          const span = [0, 1, 2].map(channel => full[below + channel] - full[above + channel]);
+          const spanLength = Math.hypot(...span);
+          if (spanLength < 40) continue;
+          let width = 0;
+          for (let row = y - 8; row <= y + 8; row++) {
+            const offset = (row * canvas.width + x) * 4;
+            const fraction = [0, 1, 2].reduce((total, channel) => total + (full[offset + channel] - full[above + channel]) * span[channel], 0) / (spanLength * spanLength);
+            if (fraction > 0.1 && fraction < 0.9) width++;
+          }
+          widths.push(width);
+          break;
+        }
+      }
+      widths.sort((first, second) => first - second);
+      const mean = sum.map(value => value / Math.max(1, count));
+      walls[name] = { pixels: count, mean, lab: toLab(mean), transitionWidth: widths.length ? widths[Math.floor(widths.length / 2)] : null, columns: widths.length };
+    }
+    topOnly.dispose();
+    return { pictures, boxes, walls };
+  }, { smoothing, edges, views, grid: GRID, palette: PALETTE });
   await mkdir(folder, { recursive: true });
   for (const [name, image] of Object.entries(results.pictures)) await writeFile(`${folder}/${name}.png`, Buffer.from(image.split(',')[1], 'base64'));
   for (const [name, box] of Object.entries(results.boxes)) {
     const share = (box.bottom - box.top + 1) / HEIGHT;
     console.log(`${name} (pixels): left ${box.left}, right ${WIDTH - 1 - box.right}, top ${box.top}, bottom ${HEIGHT - 1 - box.bottom}, height share ${(share * 100).toFixed(1)}%`);
+  }
+  const corners = [0, GRID[0]].flatMap(x => [0, GRID[2]].map(z => [x, 0, z]));
+  const nearest = corners.reduce((best, corner) => (Math.hypot(...corner.map((value, axis) => value - views.shore.eye[axis])) < Math.hypot(...best.map((value, axis) => value - views.shore.eye[axis])) ? corner : best));
+  const [cornerX, cornerY] = projectPoint(nearest, views.shore, WIDTH, HEIGHT);
+  console.log(`shore near corner at pixel (${cornerX.toFixed(0)}, ${cornerY.toFixed(0)}): margins left ${cornerX.toFixed(0)}, right ${(WIDTH - cornerX).toFixed(0)}, bottom ${(HEIGHT - cornerY).toFixed(0)}`);
+  for (const [name, wall] of Object.entries(results.walls)) {
+    const [red, green, blue] = wall.mean.map(Math.round);
+    console.log(`${name} wall: ${wall.pixels} px, mean RGB ${red} ${green} ${blue}, R-B ${red - blue}, Lab a* ${wall.lab.a.toFixed(1)}, L ${wall.lab.lightness.toFixed(0)}, top-to-wall change ${wall.transitionWidth} px (median of ${wall.columns} columns)`);
   }
   console.log('written', Object.keys(results.pictures).join(', '));
 } finally {

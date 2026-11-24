@@ -190,3 +190,27 @@ test('a pond has one flat water level, with no surface climbing the bank', () =>
   const spread = Math.max(...heights) - Math.min(...heights);
   assert.ok(spread < 0.05, `water heights spread over ${spread.toFixed(2)} cells`);
 });
+
+test('closed edges give the side walls one flat earth colour and leave the top surface its own colours', () => {
+  const closed = createVoxelTerrain(landscapeInput({ edges: 'closed' }));
+  const open = createVoxelTerrain(landscapeInput({ edges: 'open' }));
+  assert.equal(open.stats.wallTriangles, 0);
+  assert.ok(closed.stats.wallTriangles > 0, 'a closed landscape has wall triangles');
+  const { colors, indices } = closed.parts[0].geometry;
+  const wallStart = indices.length - closed.stats.wallTriangles * 3;
+  const wallVertices = new Set(indices.subarray(wallStart));
+  const topVertices = new Set(indices.subarray(0, wallStart));
+  const [first] = wallVertices;
+  const earth = [colors[first * 3], colors[first * 3 + 1], colors[first * 3 + 2]];
+  assert.ok(earth[0] > earth[1] && earth[1] > earth[2], `earth is warm, got ${earth}`);
+  for (const vertex of wallVertices) {
+    assert.deepEqual([colors[vertex * 3], colors[vertex * 3 + 1], colors[vertex * 3 + 2]], earth, 'every wall vertex has the earth colour');
+    assert.equal(topVertices.has(vertex), false, 'a wall vertex is not shared with the top surface');
+  }
+  for (const vertex of topVertices) {
+    const matches = [0, 1, 2].every(channel => colors[vertex * 3 + channel] === earth[channel]);
+    assert.equal(matches, false, 'a top vertex does not get the earth colour');
+  }
+  const { normals } = closed.parts[0].geometry;
+  for (const vertex of wallVertices) assert.ok(Math.abs(normals[vertex * 3 + 1]) < 0.75 || normals[vertex * 3 + 1] < 0, 'wall normals do not face up');
+});

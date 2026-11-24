@@ -1,12 +1,10 @@
 // A deterministic voxel landscape for tests, the timing script and the still: hills, a lake, a sandy shore and rocky peaks.
-// Material indexes follow the default palette: 0 grass, 1 rock, 2 sand, 3 water; 4 is dirt for palettes that add it.
-// deepMaterial is what the ground is made of more than 3 cells below the surface (it shows on the side walls of a closed landscape).
+// Material indexes follow the default palette: 0 grass, 1 rock, 2 sand, 3 water.
 
 export const GRASS = 0;
 export const ROCK = 1;
 export const SAND = 2;
 export const WATER = 3;
-export const DIRT = 4;
 
 function heightAt(column, row, grid) {
   const x = column / grid[0];
@@ -17,7 +15,7 @@ function heightAt(column, row, grid) {
   return grid[1] * (0.34 + 0.16 * ridge + 0.5 * mountain - 0.3 * lake);
 }
 
-export function makeLandscape(grid, { deepMaterial = ROCK } = {}) {
+export function makeLandscape(grid) {
   const [cellsX, cellsY, cellsZ] = grid;
   const occupancy = new Float32Array(cellsX * cellsY * cellsZ);
   const materials = new Uint8Array(occupancy.length);
@@ -32,8 +30,7 @@ export function makeLandscape(grid, { deepMaterial = ROCK } = {}) {
           // The cell the ground ends in is partly full, as in Roblox terrain, so heights are finer than one cell.
           occupancy[cell] = Math.min(1, top - y);
           const depth = top - y;
-          if (depth > 3) materials[cell] = deepMaterial;
-          else if (slope > 1.1 || top > grid[1] * 0.62) materials[cell] = ROCK;
+          if (depth > 3 || slope > 1.1 || top > grid[1] * 0.62) materials[cell] = ROCK;
           else if (top < waterLevel + 2.5) materials[cell] = SAND;
           else materials[cell] = GRASS;
         } else if (y <= waterLevel) {

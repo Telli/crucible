@@ -26,6 +26,11 @@ const LAND_MATERIAL = Object.freeze({ tag: 'surface', color: [1, 1, 1], metallic
 const WATER_MATERIAL = Object.freeze({ tag: 'water', color: [0.02, 0.2, 0.24], metallic: 0.2, roughness: 0.06, emission: 0 });
 const EDGE_MODES = ['open', 'closed'];
 const SADDLE_FIX_HINT = 'Raise smoothing, or fill the single-cell diagonal contact in the occupancy.';
+// Closed edges: the side walls and base get one flat earth colour (linear RGB), cut hard from the top surface colours.
+const WALL_COLOR = Object.freeze([0.2, 0.062, 0.016]);
+const WALL_SNAP = 0.75;
+const WALL_TOLERANCE = 0.02;
+const WALL_STEEPNESS = 0.5;
 const COLOR_WINDOW = 2;
 const COLOR_KERNEL_RADIUS = 1.5;
 const COLOR_FALLBACK_RADIUS = 3;
@@ -367,6 +372,18 @@ function clampToBounds(positions, { grid, cellSize, origin }) {
   }
 }
 
+// Closed edges: the rounded shoulder where the surface meets a side of the box is pressed flat onto that side (and onto the
+// base), so the wall is a true plane and the line where it meets the top surface follows the surface instead of a cell grid.
+function snapToWalls(positions, { grid, cellSize, origin }) {
+  for (let offset = 0; offset < positions.length; offset++) {
+    const axis = offset % 3;
+    const low = origin[axis];
+    const high = origin[axis] + grid[axis] * cellSize;
+    if (positions[offset] - low <= WALL_SNAP * cellSize) positions[offset] = low;
+    else if (axis !== 1 && high - positions[offset] <= WALL_SNAP * cellSize) positions[offset] = high;
+  }
+}
+
 function landPart(input, layout, paddedOrigin) {
   const { grid, palette, occupancy, materials, smoothing, edges, cellSize } = input;
   const solid = paddedField(grid, layout, edges, cell => (materials[cell] === palette.waterIndex ? 0 : occupancy[cell]));
@@ -375,10 +392,88 @@ function landPart(input, layout, paddedOrigin) {
   if (mesh.quads.length === 0) return null;
   const compact = compactMesh(mesh, () => true);
   clampToBounds(compact.positions, input);
+  if (edges === 'closed') snapToWalls(compact.positions, input);
   const normals = normalsOf(compact.positions, blurred, layout, cellSize, paddedOrigin);
   const { colors, dominant } = vertexColors(compact.positions, input, layout, paddedOrigin);
-  const geometry = geometryOf(compact, normals, planarUvs(compact.positions), colors);
-  return { part: { name: 'Voxel terrain', geometry, matrix: identityMatrix(), material: { ...LAND_MATERIAL } }, dominant };
+  const walled = edges === 'closed' ? splitWalls(compact, normals, colors, dominant, input) : { positions: compact.positions, normals, colors, dominant, indices: compact.indices, wallTriangles: 0 };
+  const geometry = geometryOf({ positions: walled.positions, indices: walled.indices }, walled.normals, planarUvs(walled.positions), walled.colors);
+  return { part: { name: 'Voxel terrain', geometry, matrix: identityMatrix(), material: { ...LAND_MATERIAL } }, dominant: walled.dominant, wallTriangles: walled.wallTriangles };
+}
+
+// A triangle that lies near one side of the grid box (or its base) and faces that side is a wall face. Wall triangles get their
+// own copies of their vertices with the earth colour and are listed last in the index buffer, so a wall never shares a
+// vertex, and therefore never blends colour, with the top surface.
+function splitWalls(compact, normals, colors, dominant, { grid, cellSize, origin }) {
+  const positions = Float32Array.from(compact.positions);
+  const { indices } = compact;
+  const tolerance = WALL_TOLERANCE * cellSize;
+  const onSide = (vertex, axis, side) => Math.abs(positions[vertex * 3 + axis] - (side === 0 ? origin[axis] : origin[axis] + grid[axis] * cellSize)) <= tolerance;
+  const planes = [[0, 0], [0, 1], [1, 0], [2, 0], [2, 1]];
+  const faceDirection = triangle => {
+    const corner = index => [0, 1, 2].map(axis => positions[indices[triangle * 3 + index] * 3 + axis]);
+    const [first, second, third] = [corner(0), corner(1), corner(2)];
+    const edgeA = second.map((value, axis) => value - first[axis]);
+    const edgeB = third.map((value, axis) => value - first[axis]);
+    const normal = [edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1], edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2], edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]];
+    const length = Math.hypot(...normal) || 1;
+    return normal.map(component => Math.abs(component) / length);
+  };
+  // A wall triangle lies close to one side of the box and faces that side (a rounded top rim, which faces up, stays top).
+  const planeOf = triangle => {
+    const direction = faceDirection(triangle);
+    return planes.findIndex(([axis, side]) => direction[axis] >= WALL_STEEPNESS && [0, 1, 2].every(corner => onSide(indices[triangle * 3 + corner], axis, side)));
+  };
+  const topIndices = [];
+  const wallIndices = [];
+  const wallPlanes = [];
+  for (let triangle = 0; triangle < indices.length / 3; triangle++) {
+    const plane = planeOf(triangle);
+    const target = plane >= 0 ? wallIndices : topIndices;
+    if (plane >= 0) wallPlanes.push(plane);
+    for (let corner = 0; corner < 3; corner++) target.push(indices[triangle * 3 + corner]);
+  }
+  const vertexCount = positions.length / 3;
+  const copyOf = new Map();
+  const extra = [];
+  const wallCopies = wallIndices.map(vertex => {
+    if (!copyOf.has(vertex)) {
+      copyOf.set(vertex, vertexCount + extra.length);
+      extra.push(vertex);
+    }
+    return copyOf.get(vertex);
+  });
+  const total = vertexCount + extra.length;
+  const widen = (source, width) => {
+    const result = new Float32Array(total * width);
+    result.set(source);
+    extra.forEach((vertex, slot) => result.set(source.subarray(vertex * width, vertex * width + width), (vertexCount + slot) * width));
+    return result;
+  };
+  const wallColors = widen(colors, 3);
+  extra.forEach((vertex, slot) => wallColors.set(WALL_COLOR, (vertexCount + slot) * 3));
+  // A wall is flat: each copy takes the outward direction of the wall faces that use it, not a normal blended with the top.
+  const wallNormals = widen(normals, 3);
+  extra.forEach((vertex, slot) => wallNormals.fill(0, (vertexCount + slot) * 3, (vertexCount + slot) * 3 + 3));
+  wallCopies.forEach((copy, position) => {
+    const [axis, side] = planes[wallPlanes[Math.floor(position / 3)]];
+    wallNormals[copy * 3 + axis] += side === 0 ? -1 : 1;
+  });
+  extra.forEach((vertex, slot) => {
+    const offset = (vertexCount + slot) * 3;
+    const length = Math.hypot(wallNormals[offset], wallNormals[offset + 1], wallNormals[offset + 2]) || 1;
+    for (let channel = 0; channel < 3; channel++) wallNormals[offset + channel] /= length;
+  });
+  const wallDominant = new Uint8Array(total);
+  wallDominant.set(dominant);
+  extra.forEach((vertex, slot) => { wallDominant[vertexCount + slot] = dominant[vertex]; });
+  return {
+    positions: widen(positions, 3),
+    normals: wallNormals,
+    colors: wallColors,
+    dominant: wallDominant,
+    indices: Uint32Array.from([...topIndices, ...wallCopies]),
+    wallTriangles: wallIndices.length / 3,
+  };
 }
 
 // A ground cell that is only partly full has no room for the water that lies against it, because a cell holds one
@@ -499,5 +594,5 @@ export function createVoxelTerrain(input) {
   const bounds = { min: [...origin], max: origin.map((value, axis) => value + grid[axis] * cellSize) };
   const vertexTotal = parts.reduce((total, part) => total + part.geometry.positions.length / 3, 0);
   const triangleTotal = parts.reduce((total, part) => total + part.geometry.indices.length / 3, 0);
-  return { parts, materialIds: land?.dominant ?? new Uint8Array(0), palette: normalized.palette.names, bounds, stats: { vertices: vertexTotal, triangles: triangleTotal, milliseconds: performance.now() - started } };
+  return { parts, materialIds: land?.dominant ?? new Uint8Array(0), palette: normalized.palette.names, bounds, stats: { vertices: vertexTotal, triangles: triangleTotal, wallTriangles: land?.wallTriangles ?? 0, milliseconds: performance.now() - started } };
 }
