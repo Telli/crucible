@@ -547,6 +547,41 @@ export const STUDIO_CSS = `
 .crucible-studio-popover-grid + .crucible-studio-popover-grid { margin-block-start: 10px; }
 #crucible-studio-pop-add { max-width: 348px; max-block-size: calc(100dvh - 16px); overflow-y: auto; }
 #crucible-studio-pop-add .crucible-studio-popover-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.crucible-studio-popover.crucible-studio-tree-picker {
+  max-block-size: calc(100dvh - 16px);
+  max-inline-size: none;
+  overflow-y: auto;
+}
+#crucible-studio-pop-add .crucible-studio-tree-picker .crucible-studio-popover-grid { grid-template-columns: repeat(3, 104px); }
+.crucible-studio-popover button[aria-expanded="true"] { background: color-mix(in srgb, var(--studio-text) 8%, transparent); }
+.crucible-studio-popover button.crucible-studio-tree-tile {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 4px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--studio-muted);
+}
+.crucible-studio-popover button.crucible-studio-tree-tile:hover,
+.crucible-studio-popover button.crucible-studio-tree-tile:focus-visible { color: var(--studio-text); }
+.crucible-studio-tree-picture {
+  inline-size: 96px;
+  block-size: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--studio-surface);
+}
+.crucible-studio-tree-picture[hidden] { display: block; visibility: hidden; }
+.crucible-studio-tree-section { display: grid; }
+.crucible-studio-tree-section[hidden], .crucible-studio-tree-controls[hidden] { display: none; }
+.crucible-studio-tree-controls { display: grid; gap: 14px; }
+.crucible-studio-tree-controls > .crucible-studio-field-head { margin-block-end: -8px; }
+.crucible-studio-tree-seed {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
 .crucible-studio-popover > button { gap: 9px; }
 .crucible-studio-popover > button[hidden] { display: none; }
 .crucible-studio-popover button {
@@ -2142,7 +2177,9 @@ export const STUDIO_CSS = `
   align-items: start;
   gap: 12px;
 }
-.crucible-studio-setup-agent > button { grid-column: 2; justify-self: start; }
+.crucible-studio-setup-agent > button,
+.crucible-studio-setup-agent > textarea { grid-column: 2; justify-self: start; }
+.crucible-studio-setup-agent > textarea { justify-self: stretch; }
 .crucible-studio-setup-agent-mark {
   display: grid;
   place-items: center;

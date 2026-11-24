@@ -27,6 +27,7 @@ import { agentGroundPlacement, createAgentGround, placeAgentGround, FLOOR_COLOR 
 import { groundBounceEnvironment } from '../src/ground-bounce.js';
 import { createAgentAssetScene } from '../src/agent-asset.js';
 import { parseGltf } from '../src/gltf.js';
+import { createPreviewKtx2Decoder } from './agent-preview-ktx2.js';
 import { assetCopyKey, recipeAssetNeeds } from '../src/agent-scene-assets.js';
 import { clipDisplayName, resolveClipIndex } from '../src/clip-name.js';
 import { exportGlb } from '../src/export.js';
@@ -461,7 +462,7 @@ function draw(record, time = 0, camera = record.scene.camera, frameOptions = {})
   const frame = { ...camera, environment: litEnvironment(record.scene.parts, environment, Boolean(record.renderer.groundPart)), effects, exposure: effects.exposure, time, lines: environment.lines, ...windFrame(environment), ...renderOptions, effects: effectsWithFStop(renderOptions.effects ?? effects, camera) };
   // Object motion blur, a mask by parts and a user pass with `objects` all read the object ID pass.
   let needsObjectIds = Boolean(objectMotion) || postPasses.some(pass => pass.objects);
-  if (effects.colorBalance || effects.glare || effects.lensDistortion || effects.stylize || effects.composite) {
+  if (effects.colorBalance || effects.glare || effects.lensDistortion || effects.stylize || effects.composite || effects.localToneMapping) {
     const postSteps = agentSceneModule('postSteps');
     postSteps.installPostSteps(record.renderer);
     needsObjectIds ||= postSteps.usesObjectMask(postSteps.resolvePostSteps(frame.effects));
@@ -497,6 +498,15 @@ function syncMeshBlend(record) {
 }
 
 const PROFILE_FRAME_SECONDS = 1 / 60;
+
+// effects.autoExposure picks its exposure from a drawn frame, so scene_inspect draws one at time 0 and reports what the meter chose.
+function reportChosenExposure(record, inspection) {
+  const autoExposure = inspection.look?.autoExposure;
+  if (!autoExposure || !record.renderer) return;
+  draw(record, 0);
+  const chosen = record.renderer.autoExposure;
+  if (chosen) autoExposure.chosen = { exposure: chosen.exposure, target: chosen.target, meteredLuminance: chosen.luminance };
+}
 
 // What the scene costs to draw as it stands: frame time over real frames at the preview size, the draw calls and triangles
 // the GPU receives in one frame, the texture memory the renderer holds and the nodes with the most triangles.
@@ -710,12 +720,26 @@ setPhysicsModuleLoader(() => import(/* @vite-ignore */ new URL('/vendor/rapier.j
 // synchronous. The boolean engine is WebAssembly and loads asynchronously, once, only for calls that need it.
 
 let queryOnly;
+let gpuKtx2Decoder = null;
+let rgbaKtx2Decoder = null;
 const ASSET_DECODE_LIMITS = agentAssetDecodeOptions();
+const ASSET_DECODE_LIMITS_WITH_MESH_CHECKS = agentAssetDecodeOptions({ checkMesh: true });
+
+function previewKtx2Decoder(preferRgba = false) {
+  if (preferRgba) return (rgbaKtx2Decoder ??= createPreviewKtx2Decoder({ preferRgba: true }));
+  return (gpuKtx2Decoder ??= createPreviewKtx2Decoder());
+}
 
 // An agent cannot pass loadGltf options, so a limit error names the catalog limits instead of "Fix: pass { ... }".
-async function parseCatalogAsset(buffer) {
+async function parseCatalogAsset(buffer, { checkMesh = false } = {}) {
+  const options = checkMesh ? ASSET_DECODE_LIMITS_WITH_MESH_CHECKS : ASSET_DECODE_LIMITS;
   try {
-    return await parseGltf(buffer, ASSET_DECODE_LIMITS);
+    try {
+      return await parseGltf(buffer, { ...options, decoders: { ktx2: previewKtx2Decoder() } });
+    } catch (error) {
+      if (!/cannot be resampled to a shared KHR_texture_transform/.test(String(error?.message))) throw error;
+      return await parseGltf(buffer, { ...options, decoders: { ktx2: previewKtx2Decoder(true) } });
+    }
   } catch (error) {
     throw withCatalogLimitAdvice(error);
   }
@@ -1321,8 +1345,10 @@ window.__agentPreview = {
     try {
       // Labels, mesh reports and motion read the on-demand modules on any asset, not only one with mesh edits.
       await loadAllAgentSceneModules();
-      asset = await parseCatalogAsset(bytes.buffer);
-      return createPreview(createAgentAssetScene(asset, input.recipe, { sources: await decodeMotionSources(input.sources) }), input, asset);
+      asset = await parseCatalogAsset(bytes.buffer, { checkMesh: input.checkMesh === true });
+      const preview = createPreview(createAgentAssetScene(asset, input.recipe, { sources: await decodeMotionSources(input.sources) }), input, asset);
+      // The decoder's warnings, with the mesh-check counts among them, come back only when the caller asked for the checks.
+      return input.checkMesh === true ? { ...preview, assetWarnings: asset.warnings } : preview;
     } catch (error) {
       asset?.dispose();
       throw error;
@@ -1332,6 +1358,7 @@ window.__agentPreview = {
     const frames = profileFrameCount({ profile, profileFrames: requestedFrames });
     const record = requireSession(sessionId);
     const inspection = { sessionId, ...record.scene.inspect(options), kernels: kernelReport() };
+    reportChosenExposure(record, inspection);
     return profile ? { ...inspection, profile: profileScene(record, frames) } : inspection;
   },
   inspectMeshes({ sessionId, ...options }) {
@@ -1451,6 +1478,20 @@ window.__agentPreview = {
       record.scene.sampleMotion(motionTime);
     }
     return { diagnostics: viewProblems(record, record.scene.camera, undefined, { placement: true }) };
+  },
+  // One candidate frame for scene_fit_look: edit the live scene, draw it, and return the PNG. The runtime puts the recipe back with
+  // restoreRecipe when the fit ends, so the caller's scene is unchanged apart from its revision counter.
+  fitLookFrame({ sessionId, operations }) {
+    const record = requireSession(sessionId);
+    if (record.asset) throw new TypeError('scene_fit_look supports procedural recipe scenes, not an imported asset scene.');
+    validatePreviewCamera(candidateCamera(record, operations));
+    record.scene.apply(operations, { expectedRevision: record.scene.revision });
+    return this.look({ sessionId });
+  },
+  restoreRecipe({ sessionId, recipe }) {
+    const record = requireSession(sessionId);
+    record.scene.restoreRecipe(recipe, { expectedRevision: record.scene.revision });
+    return mutationStatus(record);
   },
   // One frame for scene_ask_user: the look, plus the camera it was drawn with so the marks can be turned into rays later.
   annotateFrame({ sessionId, motionTime }) {

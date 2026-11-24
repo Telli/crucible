@@ -83,6 +83,7 @@ export const SPECIES = {
       sitesPerMeter: 3, start: 0.1, upBias: 0.15,
       meshLength: 0.7, meshWidth: 0.36, meshPerSite: 1, meshSpread: 0, profile: FIR_SPRAY, droop: 0.18, fold: 0.1,
       cardSize: [0.95, 0.95], cardsPerSite: 2,
+      farCards: { 2: { leafKeep: 0.14, leafScale: 2.45 }, 3: { leafKeep: 0.072, leafScale: 3.15 } },
     },
   },
   palm: {
@@ -94,14 +95,14 @@ export const SPECIES = {
     sides: [10, 4, 3, 3],
     levels: [
       { segments: 12, gnarl: 0.015, tropism: 0.0, tipRadius: 0.62, lean: 0.14,
-        children: { count: [11, 14], start: 1, end: 1, angle: [0.2, 1.75], lengthRatio: [0.36, 0.46], radiusRatio: 0.1 } },
-      { segments: 8, gnarl: 0.015, tropism: -0.42, tipRadius: 0.3, pairedLeaves: true },
+        children: { count: [16, 20], start: 1, end: 1, angle: [0.22, 1.48], lengthRatio: [0.46, 0.58], radiusRatio: 0.1 } },
+      { segments: 8, gnarl: 0.015, tropism: -0.24, tipRadius: 0.3, pairedLeaves: true },
     ],
     leaf: {
-      texture: 'single', color: [70, 118, 40], foliageColor: [0.1, 0.27, 0.04], tint: [1.05, 1, 0.9],
+      texture: 'frond', color: [66, 118, 40], foliageColor: [0.1, 0.27, 0.04], tint: [1.05, 1, 0.9],
       sitesPerMeter: 7, start: 0.14, upBias: 0.0,
       meshLength: 0.95, meshWidth: 0.16, meshPerSite: 1, meshSpread: 0, profile: NARROW_LEAF, droop: 0.35, fold: 0.1,
-      cardSize: [0.28, 1.1], cardsPerSite: 1,
+      cardSize: [1.3, 3.6], cardsPerSite: 1, frondRibbon: true, frondWidthRatio: 0.42,
     },
   },
   bush: {
@@ -125,7 +126,7 @@ export const SPECIES = {
       sitesPerMeter: 9, start: 0.1, upBias: 0.3,
       meshLength: 0.22, meshWidth: 0.14, meshPerSite: 3, meshSpread: 0.9, profile: OVATE_LEAF, droop: 0.25, fold: 0.12,
       // The bush's small clumps keep some of the crown's normal, or a sun in front overshoots level 0 (issue #432).
-      cardSize: [0.4, 0.42], cardsPerSite: 2, clumpScale: 0.5, clumpCanopyBlend: 0.3,
+      cardSize: [0.4, 0.42], cardsPerSite: 2, clumpScale: 0.5, clumpCanopyBlend: 0.3, farClumps: true,
     },
   },
 };
@@ -134,9 +135,12 @@ export const SPECIES = {
 export const LEVEL_SETTINGS = [
   { sideScale: 1, leafKeep: 1, leafScale: 1, maximumBranchLevel: Infinity },
   { sideScale: 0.6, leafKeep: 0.34, leafScale: 1.7, maximumBranchLevel: -1 },
-  { sideScale: 0.4, leafKeep: 0, leafScale: 1, maximumBranchLevel: 1 },
-  // Far level: `pointStride` keeps every n-th ring of a branch above the trunk and `crownScale` widens the crown clumps,
-  // so it keeps the trunk, its first branches and the width of the crown in far fewer triangles.
-  { sideScale: 0.25, leafKeep: 0, leafScale: 1, maximumBranchLevel: 1, pointStride: 3, crownScale: 1.5 },
+  // The far levels (#3051) keep the species' own leaf card on fewer, bigger quads. Each covers the leaf area of level 1 (keep
+  // times scale squared stays near 1), and `tipScale` keeps its tip where a level 1 card's tip is, so a crown keeps its width.
+  // `clumps` is what a bush and a tree of mesh leaves draw instead: crown clumps, widened by `crownScale`.
+  { sideScale: 0.4, leafKeep: 0.16, leafScale: 2.35, tipScale: 1.65, maximumBranchLevel: 1, clumps: { crownScale: 1 } },
+  // Far level: `pointStride` keeps every n-th ring of a branch above the trunk, so it keeps the trunk and its first branches in
+  // far fewer triangles.
+  { sideScale: 0.25, leafKeep: 0.11, leafScale: 2.8, tipScale: 1.7, maximumBranchLevel: 1, pointStride: 3, clumps: { crownScale: 1.5 } },
 ];
 export const TREE_LEVEL_DISTANCES = [38, 95, 150];

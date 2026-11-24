@@ -40,18 +40,18 @@ The tree has four levels of detail, each listing parts with a `role`, `geometry`
 | --- | --- | --- |
 | 0 | Full skeleton, every leaf site | up to 38 m |
 | 1 | Twigs dropped, fewer sides, one third of the leaves 1.7 times larger | 38 to 95 m |
-| 2 | Trunk and main limbs, crown as merged clumps (low-poly blobs or crossed cards) | 95 to 150 m |
-| 3 | The same with a third of the rings on each limb, three or four sides and crown clumps 1.5 times wider | beyond 150 m |
+| 2 | Trunk and main limbs; leaf cards keep each species' own card (`frond` ribbons on palms, crown clumps only on bushes and mesh leaves) | 95 to 150 m |
+| 3 | Thinned bark (a third of the limb rings, 3–4 sides) and fewer, wider species cards (clumps 1.5 times wider on bushes and mesh trees) | beyond 150 m |
 
 Measured triangle counts for seed 4 (level 0 / 1 / 2 / 3):
 
 | Species | `cards` | `mesh` |
 | --- | --- | --- |
-| broadleaf | 5.8k / 1.8k / 0.5k / 0.3k | 24.0k / 7.9k / 3.2k / 3.0k |
-| birch | 7.9k / 2.3k / 0.6k / 0.4k | 21.9k / 7.0k / 2.8k / 2.6k |
-| conifer | 18.5k / 4.7k / 2.2k / 0.9k | 63.9k / 19.8k / 3.4k / 2.2k |
-| palm | 3.8k / 1.0k / 0.9k / 0.4k | 11.8k / 3.7k / 2.9k / 2.4k |
-| bush | 3.1k / 1.1k / 0.4k / 0.2k | 10.9k / 3.7k / 1.8k / 1.8k |
+| broadleaf | 5.8k / 1.8k / 0.7k / 0.4k | 24.0k / 7.9k / 3.2k / 3.0k |
+| birch | 7.9k / 2.3k / 0.9k / 0.5k | 21.9k / 7.0k / 2.8k / 2.6k |
+| conifer | 18.5k / 4.7k / 3.1k / 1.4k | 63.9k / 19.8k / 3.4k / 2.2k |
+| palm | 0.8k / 0.5k / 0.3k / 0.2k | 20.3k / 6.5k / 3.4k / 2.8k |
+| bush | 3.1k / 1.1k / 0.4k / 0.2k | 10.9k / 3.7k / 1.9k / 1.8k |
 
 In the shadow map, foliage has its own thinner layers (`shadowLods` on the foliage part: a third of the leaves 1.7 times larger, then an eighth 2.8 times larger), and the bark has a trunk with half the sides and one with a third of the rings. The renderer picks one by the size of a shadow texel.
 
@@ -113,6 +113,8 @@ const forest = scatterVegetation({ area, leafTextures, barkTextures, seed: 11 })
 The cards in `public/textures/leaves` are composited by `scripts/build-leaf-cards.py` from three CC0 ambientCG leaf atlases (beech LeafSet024 for broadleaf and birch, LeafSet022 for bush, cedar sprays LeafSet019 for conifer): it cuts every leaf from its atlas, lays leaves alternately along a curved twig (or sprays into a narrow branch tip), rotates the normal vectors with each leaf, and bleeds colour into the transparent pixels so mipmaps have no dark fringe. Each card is 512 px, about 40 to 90 KB in WebP.
 
 ## Leaves: cards or mesh
+
+The oak, ash, aspen and birch presets put their leaf sites on the last two branch levels, keep more of them toward the crown's outside and turn each card up and outward, with a 256 px twig card (a round cluster of 8 to 12 cm leaves, about two thirds opaque) instead of crossed sprig cards. `createTree('broadleaf')` and the other plain species, and `leaves: 'mesh'`, grow exactly as before.
 
 `leaves: 'cards'` (default) uses an RGBA leaf texture (procedural, or scanned with `leafTextures`) (`material.map`) on crossed, slightly curved cards with the `foliage` tag (`grass` for grass cards), `alphaMode: 'mask'`, `alphaCutoff: 0.5` and `doubleSided: true`.
 Cards rely on the renderer's alpha masking with alpha-to-coverage under MSAA; with `samples: 1` their edges fall back to a hard cutout.
@@ -215,7 +217,7 @@ Meshes and textures are built in plain JavaScript, so tests run in Node.
 ## Limits
 
 - Scanned bark and leaves in recipes need the `vegetation-scans` pack; the images of one node count toward the 64 MiB decoded limit of texture sequences (a scanned broadleaf is 12 MiB).
-- Cards need the renderer's alpha mask to look right. Without `leafTextures` the leaf textures are 128 px procedural sprigs that look flat from under a few metres; the scanned cards hold up to about 1 m. Palm fronds have no scanned card yet. The conifer card is a cedar spray, so it reads as a flat branch tip rather than separate needles.
+- Cards need the renderer's alpha mask to look right. Without `leafTextures` the broad-leaved tree presets (oak, ash, aspen, birch) draw 256 px twig cards of 8 to 12 cm leaves and the plain species keep 128 px procedural sprigs, which look flat from under a few metres; the scanned cards hold up to about 1 m. Palm fronds have no scanned card yet. The conifer card is a cedar spray, so it reads as a flat branch tip rather than separate needles.
 - Level changes pop unless `selectLevels` gets `fade`; level 2 crowns are blobs or crossed cards, and baked impostors exist only when asked for (see Impostors and cross-fade).
 - Species are fixed presets; there is no wind-bent skeleton or collision with other trees. Seasonal colour exists only in recipes (the `season` field), not in the addon call. A broadleaf from `createTree` also has `bareParts(levelIndex)`, the twigged bark to draw at that level in place of the level's parts once it has shed its leaves.
 - In recipes, tags `foliage` and `grass` accept a `tag` override on placed assets, so an imported tree sways; its leaf shading and alpha coverage stay those of the renderer.

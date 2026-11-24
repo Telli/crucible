@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { box } from '../src/geometry.js';
+import { boundsHoldPoint } from '../src/lamp-mesh.js';
 import { buildTraceScene } from '../src/path-tracer-scene.js';
 import { LAMP_LIGHTS_SLOT, packMaterials } from '../src/path-tracer-gpu-pack.js';
 import { MATERIAL_TEXELS } from '../src/path-tracer-gpu-shader.js';
@@ -35,4 +37,19 @@ test('the material table carries the lamp bits of each part for the kernel', () 
   const table = packMaterials(scene.materials, { placements: new Map() }, scene.shadowOnlyParts, scene.lampLightMasks);
   assert.equal(table.data[0 * MATERIAL_TEXELS * 4 + LAMP_LIGHTS_SLOT], 0);
   assert.equal(table.data[1 * MATERIAL_TEXELS * 4 + LAMP_LIGHTS_SLOT], 1 << POINT_FIRST_BIT);
+});
+
+test('boundsHoldPoint handles default identity matrix, transformed bounds, edges, and outside points', () => {
+  const unit = { geometry: box(0, 1) };
+  assert.equal(boundsHoldPoint(unit, [0, 0, 0]), true);
+  assert.equal(boundsHoldPoint(unit, [0.5, 0.5, 0.5]), true);
+  assert.equal(boundsHoldPoint(unit, [0.51, 0, 0]), false);
+  assert.equal(boundsHoldPoint(bulb, LAMP_POSITION), true);
+  assert.equal(boundsHoldPoint(bulb, [0, 2.21, 0]), false);
+});
+
+test('light-bake reuses boundsHoldPoint from lamp-mesh without duplicating it', () => {
+  const source = readFileSync(new URL('../src/light-bake.js', import.meta.url), 'utf8');
+  assert.match(source, /import\s*\{\s*boundsHoldPoint\s*\}\s*from\s*'\.\/lamp-mesh\.js'/);
+  assert.equal(/function\s+boundsHoldPoint\b/.test(source), false);
 });

@@ -17,7 +17,8 @@ Field lists and ranges: `scene_capabilities` topics `materialFields`, `materialL
 | `metallic`, `roughness` | 0 to 1 | The renderer keeps a roughness floor of 0.075. |
 | `emission` | 0 or more | A multiplier. `emissiveColor` is its own linear RGB, each channel 0 or more. |
 | `opacity` | 0 to 1 | Below 1 on an opaque material turns it into `blend`. |
-| `alphaMode` | `opaque`, `blend`, `add` | `add` adds its light to what is behind it (sparks, beams); a recipe has no `mask` mode. |
+| `alphaMode` | `opaque`, `mask`, `blend`, `add` | `mask` cuts out where map alpha times `opacity` is below `alphaCutoff` (`0.5` default); `add` adds its light to what is behind it (sparks, beams). |
+| `alphaCutoff` | 0 to 1 (default `0.5`) | Used only with `alphaMode: "mask"`; rejects other alpha modes. |
 | `doubleSided` | `true` or `false` | Thin sheets, leaves, cards. |
 
 Starting values, then judge with `scene_look`:
@@ -141,7 +142,7 @@ fade each along the beam. Point and spot lights also scatter in `volumeFog` (up 
 
 ## Editing materials and imports
 
-- `set-material` takes colour, `metallic`, `roughness`, `emission`, `emissiveColor`, `opacity`, `alphaMode`, `doubleSided`, `pattern`, `map`, `subsurface`, `snippet`, water fields and the layer fields. It rejects `tag` (the error lists the fields it takes). To change a tag, `add-material` a new one and `set-node` onto it.
+- `set-material` takes colour, `metallic`, `roughness`, `emission`, `emissiveColor`, `opacity`, `alphaMode`, `alphaCutoff`, `doubleSided`, `pattern`, `map`, `subsurface`, `snippet`, water fields and the layer fields. It rejects `tag` (the error lists the fields it takes). To change a tag, `add-material` a new one and `set-node` onto it.
 - A textured import (GLB placement): the `asset.materials` override multiplies its `color` into the texture, it does not replace the texture. To recolour, tint with `color` (a dark texture stays dark), or flatten with `asset.flatten.color`, which paints every material of the placement one colour and drops the textures; a named override still wins.
 - Flush faces are ranked automatically, so a flicker needs no fix. To choose which of two flush nodes wins (a sticker on a surface), set `decal: true` on the top one, or `depthLayer` 1 to 4 to stack several (see `light.md`).
 

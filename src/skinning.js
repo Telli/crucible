@@ -354,3 +354,55 @@ export function skinnedWorldBounds(geometry, pose, worldMatrix) {
   }
   return { minimum, maximum };
 }
+
+/**
+ * Computes world-space vertex positions `[x0, y0, z0, ...]` for `part` at its current pose (applying linear-blend skinning
+ * with normalized per-vertex weights when `part.skin` and skin attributes are present). Reuses `output` when given.
+ */
+export function posedVertexPositions(part, output) {
+  const positions = part?.geometry?.positions;
+  const worldMatrix = part?.matrix;
+  if (!positions || typeof positions.length !== 'number' || positions.length % 3 !== 0) {
+    throw new TypeError('posedVertexPositions requires part.geometry.positions with three coordinates per vertex.');
+  }
+  if (!worldMatrix || worldMatrix.length !== 16) {
+    throw new TypeError('posedVertexPositions requires part.matrix with 16 elements.');
+  }
+  const target = output === undefined ? new Float32Array(positions.length) : output;
+  if (!(target instanceof Float32Array) || target.length < positions.length) {
+    throw new RangeError(`posedVertexPositions output must be a Float32Array of length at least ${positions.length}.`);
+  }
+  const vertexCount = positions.length / 3;
+  const palette = part.skin?.jointMatrices;
+  const { skinIndices, skinWeights } = part.geometry;
+  const skinned = Boolean(palette && skinIndices && skinWeights);
+  if (skinned && (skinIndices.length !== vertexCount * 4 || skinWeights.length !== vertexCount * 4)) {
+    throw new RangeError('posedVertexPositions requires four skin indices and weights per vertex.');
+  }
+  const blended = skinned ? new Float32Array(16) : null;
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
+    const offset = vertex * 3;
+    let matrix = worldMatrix;
+    if (skinned) {
+      blended.fill(0);
+      const influenceBase = vertex * 4;
+      let weightTotal = 0;
+      for (let slot = 0; slot < 4; slot++) weightTotal += skinWeights[influenceBase + slot];
+      if (weightTotal <= 0) throw new RangeError('Skin vertex weights must have a positive total.');
+      for (let slot = 0; slot < 4; slot++) {
+        const weight = skinWeights[influenceBase + slot] / weightTotal;
+        if (weight === 0) continue;
+        const jointOffset = skinIndices[influenceBase + slot] * 16;
+        for (let element = 0; element < 16; element++) blended[element] += weight * palette[jointOffset + element];
+      }
+      matrix = mat4.multiply(blended, worldMatrix, blended);
+    }
+    const x = positions[offset];
+    const y = positions[offset + 1];
+    const z = positions[offset + 2];
+    target[offset] = matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12];
+    target[offset + 1] = matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13];
+    target[offset + 2] = matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14];
+  }
+  return target;
+}

@@ -87,7 +87,7 @@ export async function uploadTextureInSlices(context, texture, internalFormat, im
 }
 
 /** CrucibleRenderer.preloadTextures: uploads each descriptor larger than maximumBytes in bands, then records it where createTexture looks. */
-export async function preloadRendererTextures(renderer, descriptors, { maximumBytes = TEXTURE_SLICE_BYTES, checkpoint = createSlicer() } = {}) {
+export async function preloadRendererTextures(renderer, descriptors, { maximumBytes = TEXTURE_SLICE_BYTES, checkpoint = createSlicer(), normalMaps = new Set() } = {}) {
   const context = renderer.context;
   const maximumSize = context.getParameter(context.MAX_TEXTURE_SIZE);
   for (const map of new Set(descriptors)) {
@@ -104,7 +104,7 @@ export async function preloadRendererTextures(renderer, descriptors, { maximumBy
       }
       const previousBinding = context.getParameter(context.TEXTURE_BINDING_2D);
       context.bindTexture(context.TEXTURE_2D, texture);
-      configureTexture(renderer, info);
+      configureTexture(renderer, info, { bakesNormalVariance: normalMaps.has(map) });
       context.bindTexture(context.TEXTURE_2D, previousBinding);
       renderer.textures.set(map, texture);
     } catch (error) {

@@ -1015,6 +1015,86 @@ export async function buildTraceSceneForDevice(allParts, environment, gpuModule)
   return buildTraceScene(allParts, environment, options);
 }
 
+const VALID_TRACE_ENVIRONMENT_FIELDS = new Set([
+  'map', 'cameraIntensity', 'world', 'keyColor', 'keyIntensity', 'lightDirection',
+  'sunAngularRadius', 'sunMaxBounces', 'pointLights', 'spotLights', 'areaLights',
+  'fogColor', 'fogDensity', 'volumeFog', 'localVolumes', 'volumeTime', 'volumeShutter',
+  'ground', 'setup', 'hdri', 'keyFromHdri', 'environmentIntensity', 'environmentRotation',
+  'fillIntensity', 'ambientIntensity', 'daylight', 'skyTop', 'skyBottom', 'liquid',
+  'shadowCascades', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce',
+  'specularAntiAliasing', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'wind',
+  'sky', 'wetness', 'puddles', 'groundBounce', 'outdoorFill', 'roomBounce', 'explosionCenter',
+]);
+
+const ENVIRONMENT_FIELD_SUGGESTIONS = {
+  suncolor: 'keyColor',
+  suncolour: 'keyColor',
+  keycolour: 'keyColor',
+  lightcolor: 'keyColor',
+  lightcolour: 'keyColor',
+  sundirection: 'lightDirection',
+  sundir: 'lightDirection',
+  keydirection: 'lightDirection',
+  lightdir: 'lightDirection',
+  sunintensity: 'keyIntensity',
+  sunstrength: 'keyIntensity',
+  sunpower: 'keyIntensity',
+  keystrength: 'keyIntensity',
+  sunradius: 'sunAngularRadius',
+  sunsize: 'sunAngularRadius',
+  envmap: 'map',
+  environmentmap: 'map',
+  skymap: 'map',
+  skycolor: 'map',
+  background: 'world',
+  backgroundcolor: 'world',
+};
+
+function editDistance(source, target) {
+  const a = source.toLowerCase();
+  const b = target.toLowerCase();
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    let previous = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const nextPrevious = row[j];
+      const cost = a[i - 1] === b[j - 1] ? previous : Math.min(previous, row[j], row[j - 1]) + 1;
+      previous = nextPrevious;
+      row[j] = cost;
+    }
+  }
+  return row[b.length];
+}
+
+function suggestEnvironmentField(key) {
+  const alias = ENVIRONMENT_FIELD_SUGGESTIONS[key.toLowerCase()];
+  if (alias) return alias;
+  let bestField = null;
+  let bestDistance = Math.max(4, Math.floor(key.length / 2) + 1);
+  for (const candidate of VALID_TRACE_ENVIRONMENT_FIELDS) {
+    const distance = editDistance(key, candidate);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestField = candidate;
+    }
+  }
+  return bestField;
+}
+
+/** Rejects unknown `environment` fields so typos such as `sunColor` fail with the field the tracers read instead of tracing black. */
+export function validateTraceEnvironment(environment) {
+  if (!environment || typeof environment !== 'object') return;
+  for (const key of Object.keys(environment)) {
+    if (VALID_TRACE_ENVIRONMENT_FIELDS.has(key)) continue;
+    const suggestion = suggestEnvironmentField(key);
+    const hint = suggestion
+      ? `Pass "${suggestion}" instead (sun fields are keyColor, keyIntensity and lightDirection).`
+      : 'Pass valid fields such as keyColor, keyIntensity, lightDirection or map.';
+    throw new RangeError(`Unknown environment field "${key}" in path tracer scene. ${hint}`);
+  }
+}
+
 /**
  * Builds the scene a path trace reads. With `options.instancing` and at least one geometry shared by two parts, the result
  * holds `instances` instead of flattened triangles (see `buildInstancedTraceScene`); with no shared geometry, or without the
@@ -1027,6 +1107,7 @@ export async function buildTraceSceneForDevice(allParts, environment, gpuModule)
  * replaces the 1,024 parts of a flattened scene, and the 1,024 distinct geometries of an instanced one, for the native tracer.
  */
 export function buildTraceScene(allParts, environment = {}, options = {}) {
+  validateTraceEnvironment(environment);
   const limits = { ...resolveTriangleLimits(options), instances: resolveInstanceLimit(options), lights: resolveLightLimit(options), parts: resolvePartLimit(options) };
   const { volumes: localVolumes, boundsOnlyParts } = resolveTraceLocalVolumes(environment.localVolumes, allParts, environment.volumeTime ?? 0, environment.volumeShutter ?? 0);
   const shownParts = boundsOnlyParts.length ? allParts.filter(part => !boundsOnlyParts.includes(part)) : allParts;

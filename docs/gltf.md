@@ -33,8 +33,13 @@ HTTP, HTTPS, blob URLs, and base64 data URIs are supported. A data URI must hold
 External requests use bounded streaming fetches.
 The optional `signal` aborts those fetches.
 `allowExternalResources: false` refuses every non-data resource uri with an error that names it, before any request. The MCP server decodes catalog files with it, so a file there carries its buffers and images as GLB or data URIs.
+`textures: false` skips texture image decoding while keeping material factors, so textured files parse in Node for geometry, skeleton and pose checks.
 
 Mesh checks are off by default, because the counts cost load time (about 10 to 90 percent on the shipped showcase meshes, measured without textures). `checkMesh: true` adds one warning per primitive naming how many triangles repeat an earlier one (same corner positions and winding) and how many edges more than two triangles share. Both are judged by position, with vertices at the same spot treated as one, so a seam that repeats its vertices does not hide them; nothing is merged or rewritten. `keepDegenerateTriangles: true` keeps the repeated-index and zero-area triangles instead of dropping them (the warning still counts them). `strict: true` with `validator: await import('gltf-validator')` runs the Khronos glTF-Validator on the file bytes first and fails on any error, naming the first few; Crucible does not bundle the validator, and `strict` without it throws with that instruction.
+
+Through MCP, `scene_create_asset` takes `checkMesh: true` and returns the decoder's warnings, the mesh-check counts among them, in `assetWarnings` (they also show in `scene_inspect` diagnostics). The counts keep the 600,000-triangle limit per primitive. `strict` and `validator` are not offered there: a validator is code, and the tool takes none.
+
+To run the Khronos validator over real files, use `node scripts/validate-gltf.mjs [--validator <folder>] [file or folder ...]`. It loads each GLB with `strict` and `checkMesh` and prints one line per file (`pass` or `FAIL` with the first errors, and how many mesh-check warnings it got); with no path it checks the GLBs the repository ships. `gltf-validator` is a devDependency, never part of the core; `--validator` or `GLTF_VALIDATOR` names a package folder instead. The exit code is 0 when every file passes, 1 when one fails and 2 when the validator or the files are missing. Textures decode to a 1 x 1 stand-in there, so the run judges structure and meshes, not pixels.
 
 | Option | Default | Limit |
 | --- | ---: | --- |
@@ -280,7 +285,7 @@ node scripts/encode-glb-ktx2.mjs scan.glb scan-ktx2.glb [--max-texture 2048] [--
 - Every image gets a full mip chain and both edges are rounded to a multiple of 4.
 - PNG, JPEG and WebP images are read (a WebP texture is found through `EXT_texture_webp`, which is dropped once nothing uses it). Images that are already KTX2 stay. Meshopt geometry is copied byte for byte.
 - `toktx` comes from `--toktx`, then `CRUCIBLE_TOKTX`, then `~/.local/bin/ktx-software`, then `PATH`. Without it the script stops and says where to get it.
-- The file needs a KTX2 decoder to load (see above). The MCP server still turns KTX2 images into PNG on the way to the preview page ([mcp.md](mcp.md)); keeping them compressed there is not done yet.
+- The file needs a KTX2 decoder to load (see above). The MCP server keeps KTX2 textures GPU-compressed on the preview and realtime render path using the Basis transcoder bundled by `three`, and falls back to RGBA8 or PNG automatically when the WebGL context lacks compression, a shared texture transform needs resampling, or a path tracer, light bake or web export runs ([mcp.md](mcp.md)); unchanged KTX2 textures also stay compressed on `exportGlb`.
 
 ### Instancing limits
 

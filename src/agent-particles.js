@@ -17,7 +17,7 @@ const SPARK_PRESETS = Object.freeze({
   explosion: Object.freeze({ count: 800, speed: [6, 24], spread: 180, lifetime: [0.5, 2], size: [0.006, 0.014], drag: 0.9, emitter: Object.freeze({ shape: 'sphere', radius: 0.2 }) }),
 });
 const HAIR_FIELDS = ['type', 'node', 'surface', 'seed', 'count', 'length', 'segments', 'width', 'droop', 'lean', 'sway', 'swayRate'];
-const EMITTER_FIELDS = ['shape', 'position', 'halfExtents', 'radius', 'mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold', 'follow'];
+const EMITTER_FIELDS = ['shape', 'position', 'halfExtents', 'radius', 'mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold', 'region', 'follow'];
 const EMITTER_SHAPES = ['point', 'box', 'sphere', 'disc', 'mesh'];
 const ORIENT_MODES = ['none', 'random', 'normal', 'billboard'];
 const FADE_MODES = ['darken', 'opacity'];
@@ -77,6 +77,23 @@ function normalizeMeshEmitter(input, emitter, context, path) {
     emitter.groupThreshold = finiteNumber(input.groupThreshold, `${path}.groupThreshold`, 0, 1);
   }
   normalizeVelocitySource(input, emitter, from, path);
+  if (input.region !== undefined) emitter.region = normalizeRegion(input.region, `${path}.region`);
+}
+
+// `region` is a box in world space: births come only from the part of the mesh inside it (#2823).
+function normalizeRegion(input, path) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw invalidField(path, input, 'an object { center: [x, y, z], halfExtents: [x, y, z] }, such as { "center": [0, 0, 0], "halfExtents": [10, 5, 10] }', TypeError);
+  }
+  knownKeys(input, ['center', 'halfExtents'], path);
+  const center = vectorOfThree(input.center, `${path}.center`, POSITION_LIMIT);
+  const halfExtents = vectorOfThree(input.halfExtents, `${path}.halfExtents`, POSITION_LIMIT);
+  halfExtents.forEach((extent, axis) => {
+    if (!(extent > 0)) {
+      throw invalidField(`${path}.halfExtents[${axis}]`, extent, `a number above 0 and up to ${POSITION_LIMIT}, such as 10 (half the size of the box along that axis)`);
+    }
+  });
+  return { center, halfExtents };
 }
 
 // `velocityFrom` names a "vector:<name>" point attribute of the emitter mesh (the ocean's `spray`): each particle also leaves with that velocity.
@@ -146,7 +163,7 @@ function normalizeEmitter(input, context, path) {
   if (shape === 'mesh') {
     normalizeMeshEmitter(input, emitter, context, path);
   } else {
-    for (const field of ['mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold']) {
+    for (const field of ['mesh', 'from', 'group', 'sharpAngle', 'normalSpeed', 'velocityFrom', 'velocityScale', 'groupThreshold', 'region']) {
       if (input[field] !== undefined) throw invalidField(`${path}.${field}`, input[field], `left out unless ${path}.shape is "mesh"`);
     }
   }
@@ -555,7 +572,7 @@ function meshSourceFrom(emitter, geometry, sourceNode, emitterPath) {
   const weights = emitter.group ? vertexGroupOf(emitter, geometry, emitterPath) : null;
   const sharpAngle = emitter.sharpAngle ?? null;
   const vectors = emitter.velocityFrom ? velocityVectorOf(emitter, geometry, nodeMatrix(sourceNode), emitterPath) : null;
-  const source = createMeshSource(world.positions, world.normals, geometry.indices, emitter.from, weights, sharpAngle, vectors, emitter.groupThreshold ?? 0);
+  const source = createMeshSource(world.positions, world.normals, geometry.indices, emitter.from, weights, sharpAngle, vectors, emitter.groupThreshold ?? 0, emitter.region ?? null);
   // A vertices emitter keeps no per-triangle records, so the geometry's own vertex limit is the bound there (#2823).
   if (source && emitter.from !== 'vertices' && source.triangleCount > PARTICLE_LIMITS.maxEmitterTriangles) {
     throw invalidField(`${emitterPath}.mesh`, `${source.triangleCount} triangles on node ${emitter.mesh}`, `a mesh with at most ${PARTICLE_LIMITS.maxEmitterTriangles} triangles, such as a simpler proxy mesh`);
@@ -564,6 +581,9 @@ function meshSourceFrom(emitter, geometry, sourceNode, emitterPath) {
 }
 
 function emptySourceError(emitter, emitterPath, detail) {
+  if (emitter.region) {
+    detail += `; emitter.region (center ${emitter.region.center.join(', ')}, halfExtents ${emitter.region.halfExtents.join(', ')}) holds no part of the mesh: move ${emitterPath}.region.center onto the mesh or raise its halfExtents`;
+  }
   const groupNote = emitter.group ? ` and some weight in vertex group "${emitter.group}"` : '';
   return invalidField(`${emitterPath}.mesh`, emitter.mesh, `a node whose mesh has triangles with some area${groupNote}, because emitter.from is "${emitter.from}"${detail}`);
 }

@@ -1404,21 +1404,29 @@ export const CLOTH_SCENES = {
 // framing, so they score against the suite's stored Cycles array. They are a set of their own and never reach baseline.json.
 const KTX2_ASSET_DIRECTORY = 'artifacts/ktx2/AnisotropyBarnLamp';
 const BASIS_TRANSCODER_PATH = '/node_modules/three/examples/jsm/libs/basis/';
+let cachedKtx2Decoder = null;
+
+function sharedKtx2Decoder() {
+  if (!cachedKtx2Decoder) {
+    const loader = new KTX2Loader().setTranscoderPath(BASIS_TRANSCODER_PATH);
+    const workerConfig = ktx2WorkerConfigFor(document.createElement('canvas').getContext('webgl2'));
+    loader.workerConfig = workerConfig;
+    cachedKtx2Decoder = { loader, workerConfig };
+  }
+  return cachedKtx2Decoder;
+}
 
 // Loads one variant the way an app does and returns the asset with the format of the context that decoded it.
 export async function loadBarnLampVariant(directoryName) {
   const url = `/${KTX2_ASSET_DIRECTORY}/${directoryName}/AnisotropyBarnLamp.gltf`;
   const decoders = {};
-  let loader = null;
   let workerConfig = null;
   if (directoryName === 'ktx2') {
-    loader = new KTX2Loader().setTranscoderPath(BASIS_TRANSCODER_PATH);
-    workerConfig = ktx2WorkerConfigFor(document.createElement('canvas').getContext('webgl2'));
-    loader.workerConfig = workerConfig;
-    decoders.ktx2 = loader;
+    const cached = sharedKtx2Decoder();
+    workerConfig = cached.workerConfig;
+    decoders.ktx2 = cached.loader;
   }
   const asset = await loadGltf(url, { decoders });
-  loader?.dispose();
   return { asset, workerConfig, url };
 }
 
@@ -1433,14 +1441,8 @@ export async function loadScannedObjectVariant(variant) {
   const url = new URLSearchParams(location.search).get(variant);
   if (!url) throw new Error(`Add &${variant}=<url of the GLB> to the page address.`);
   const decoders = {};
-  let loader = null;
-  if (variant === 'ktx2') {
-    loader = new KTX2Loader().setTranscoderPath(BASIS_TRANSCODER_PATH);
-    loader.workerConfig = ktx2WorkerConfigFor(document.createElement('canvas').getContext('webgl2'));
-    decoders.ktx2 = loader;
-  }
+  if (variant === 'ktx2') decoders.ktx2 = sharedKtx2Decoder().loader;
   const asset = await loadGltf(url, { decoders });
-  loader?.dispose();
   return { asset, url };
 }
 

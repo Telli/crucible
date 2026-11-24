@@ -1,5 +1,5 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 /**
  * Resolves the --jobs folder once at startup. The flag is set by the person who starts the server, never by a tool call, so a
@@ -9,13 +9,14 @@ import { isAbsolute } from 'node:path';
  */
 export function resolveJobRoot(jobRoot) {
   if (jobRoot === undefined) return undefined;
-  if (typeof jobRoot !== 'string' || !isAbsolute(jobRoot)) {
+  if (typeof jobRoot !== 'string' || jobRoot.includes('\0') || !isAbsolute(jobRoot)) {
     throw new TypeError('Job root must be an explicit absolute directory path.');
   }
-  if (!existsSync(jobRoot)) return jobRoot;
+  const normalized = resolve(jobRoot);
+  if (!existsSync(normalized)) return normalized;
   let resolved;
   try {
-    resolved = realpathSync(jobRoot);
+    resolved = realpathSync(normalized);
     if (!statSync(resolved).isDirectory()) throw new Error('not a directory');
   } catch (error) {
     throw new Error(`--jobs ${jobRoot} cannot be used (${error.message}). Pass the real, existing directory path, not a link to something else.`);

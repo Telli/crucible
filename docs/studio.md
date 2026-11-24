@@ -158,7 +158,7 @@ The setup is five steps, one page each, named in a row at the top with an icon a
 - **Performance.** One row of four cards with an icon that reads as a pixel grid getting finer (Light, Balanced, Sharp) and a loop for Automatic. Each tier shows its pixel ratio and anti-aliasing on this screen; Automatic names the tier it took and the graphics card and cores it found.
 - **Modelling.** Move snap, rotate snap, handle size and start workspace, each row led by an icon and the workspace chips by the workspace's own icon.
 - **Keys.** Three cards, Blender, Maya and Cinema 4D, each with the program's logo and four of its real keys (Move, Rotate, Scale, Frame) read from the keymap, so the difference is shown.
-- **AI agent.** The prompt the **Agent** menu copies, beside a chat mark, and a button that copies it.
+- **AI agent.** The prompt the **Agent** menu copies, beside a chat mark, and a button that copies it. When the page runs inside a host that offers its own built-in agent (`window.crucibleShell.builtInAgent`, with async `isSignedIn()` and `signIn()`; `signIn()` resolves to `{ signedIn }`), a sign-in button sits above the prompt and shows when it is waiting and when it is signed in. It never blocks: Skip still closes the setup, and the prompt stays the route for an agent of your own.
 
 Finishing, skipping or pressing Esc marks it done. Choices are the Settings preferences, so nothing is stored twice. All five steps share one grid cell, so the dialog is as tall as the tallest step (capped at the window height minus 48 pixels, then it scrolls inside) and never changes size between steps; a step with one block fills the cell.
 
