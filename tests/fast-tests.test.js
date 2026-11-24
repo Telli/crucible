@@ -142,12 +142,14 @@ test('a regular expression with slashes is not read as a comment, so a real laun
     'tests/url-pattern.test.js': "const pattern = /https?:\\/\\//; const page = await import('playwright');",
     'tests/class-slashes.test.js': "const pattern = /[//]/;\nimport { chromium } from 'playwright';",
     'tests/division.test.js': "const half = total / 2; // playwright is not used\n",
+    'tests/regex-after-paren.test.js': "if (ready) /a\\/\\//.test(url); import('playwright');",
   };
   const browserReason = createBrowserDetector(path => sources[path] ?? null);
   assert.match(browserReason('tests/escaped-slashes.test.js'), /launches a browser through playwright/);
   assert.match(browserReason('tests/url-pattern.test.js'), /launches a browser through playwright/);
   assert.match(browserReason('tests/class-slashes.test.js'), /launches a browser through playwright/);
   assert.equal(browserReason('tests/division.test.js'), null);
+  assert.match(browserReason('tests/regex-after-paren.test.js'), /launches a browser through playwright/);
 });
 
 test('without a source reader nothing is dropped, so the browser check is opt in per caller', () => {
