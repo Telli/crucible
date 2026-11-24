@@ -190,6 +190,6 @@ export function applySkyOcclusionGrid(parts, options = {}) {
   const { data, ...summary } = grid;
   return {
     parts: placeIrradianceGrid(parts, { ...grid, skyOnly: true, meanRadiance: () => [0, 0, 0] }),
-    report: { ...summary, coveredShare: covered / grid.nodes, reason: null },
+    report: { ...summary, coveredShare: covered / grid.nodes, coarsened: grid.cellSize > (options.cellSize ?? SKY_OCCLUSION_CELL_SIZE) * 1.0001, reason: null },
   };
 }

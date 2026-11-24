@@ -67,3 +67,35 @@ test('a file scene takes the grid only when environment.skyOcclusion is true', a
   assert.ok(on.parts[0].material.irradianceGrid);
   assert.ok(on.skyOcclusionReport.nodes > 0);
 });
+
+test('the fog is lit by a baked grid but not by a sky-only one, so its shader state is the same with the flag on and off', async () => {
+  const { fogIsLitByGrid } = await import('../src/fog-shader.js');
+  const parts = canopyStreetParts();
+  const occluded = applySkyOcclusionGrid(parts).parts;
+  assert.equal(fogIsLitByGrid(parts), false);
+  assert.equal(fogIsLitByGrid(occluded), false);
+  const baked = parts.map(part => ({ ...part, material: { ...part.material, irradianceGrid: { size: [2, 2, 2] } } }));
+  assert.equal(fogIsLitByGrid(baked), true);
+});
+
+test('the grid scales the sky light term only: the sun and point lights never read occlusion, and the grid adds no light', async () => {
+  const { createFragmentShader, SHADER_FEATURES } = await import('../src/shaders.js');
+  const { evaluateIrradianceGrid } = await import('../src/irradiance-grid.js');
+  const source = createFragmentShader([...SHADER_FEATURES, 'irradianceGrid']);
+  const lines = source.split('\n');
+  const gridOcclusion = lines.findIndex(line => line.includes('occlusion *= min(irradianceGridValue.a, 1.0)'));
+  const skyLight = lines.findIndex(line => line.includes('radiance += environmentLighting('));
+  assert.ok(gridOcclusion > 0 && gridOcclusion < skyLight, 'the grid scales occlusion before the HDRI light is added');
+  const directLights = lines.filter(line => /illuminate\(/.test(line) && !line.startsWith('vec3 illuminate'));
+  assert.ok(directLights.length > 0);
+  assert.deepEqual(directLights.filter(line => /\bocclusion\b/.test(line)), []);
+  const grid = applySkyOcclusionGrid(canopyStreetParts()).parts[0].material.irradianceGrid;
+  assert.deepEqual(evaluateIrradianceGrid(grid, [0, 1, -6], [0, -1, 0]), [0, 0, 0]);
+});
+
+test('the report says when the cells had to grow past the requested size', () => {
+  assert.equal(applySkyOcclusionGrid(canopyStreetParts()).report.coarsened, false);
+  const coarse = applySkyOcclusionGrid(canopyStreetParts(), { maximumNodes: 200 }).report;
+  assert.equal(coarse.coarsened, true);
+  assert.ok(coarse.cellSize > 2);
+});

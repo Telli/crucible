@@ -100,9 +100,16 @@ export async function withFileSceneInteriorLight(parts, environment, floorSkyOpt
   // Opt-in (#3289): the sky light under canopies and eaves, from a grid traced once here. It goes last so the sun bounce sees the plain parts.
   const { applySkyOcclusionGrid } = await import('./sky-occlusion-grid.js');
   const occluded = applySkyOcclusionGrid(lit.parts, floorSkyOptions.skyOcclusion);
-  if (occluded.report.reason) console.warn(`Sky occlusion left out (${occluded.report.reason}).`);
+  if (occluded.report.reason) console.warn(`Sky occlusion left out: ${SKY_OCCLUSION_REASONS[occluded.report.reason] ?? occluded.report.reason}.`);
+  if (occluded.report.coarsened) console.warn(`Sky occlusion cells grew to ${occluded.report.cellSize.toFixed(2)} m so the grid stays within its node limit; canopy edges will look softer.`);
   return { ...lit, parts: occluded.parts, skyOcclusionReport: occluded.report };
 }
+
+const SKY_OCCLUSION_REASONS = Object.freeze({
+  'baked light': 'a part already carries a light map or an irradiance grid, and that baked light wins',
+  'no parts': 'the scene has no parts',
+  'too large or too slow to trace': 'the scene has too many triangles or the trace ran past its time limit',
+});
 
 async function withFileSceneSunLight(parts, environment, floorSkyOptions) {
   const { applyDefaultFloorSky, environmentHasSun, withSunBounce } = await import('./floor-sky-visibility.js');
