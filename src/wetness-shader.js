@@ -16,14 +16,13 @@ export const WET_FRINGE_DARKENING = '0.06';
 export const WET_SOAK_BAND_DARKENING = '0.10';
 /** The wet edge darkens the road gradually over this much depth (about 9 cm), easing in, and is gone across the shore's anti-aliased edge (round 17: a 0.38 dark band 3.6 cm wide read as an ink outline). */
 export const WET_SHORE_BAND_REACH = '0.03';
-/** The soft damp gradient outside the dark band: how far it reaches (about 12 cm) and how much it darkens the road next to the band. */
 /** Across the shore's anti-aliased edge the damp band stays fully dark until this share of the pixel is water, then fades into the bed. */
 export const WET_SHORE_BAND_HOLD = '0.0';
 /** The share of a pixel under water over which the sky's glossy highlight is taken off the puddle's edge: none below the first, all above the second. */
 export const WET_EDGE_STRIP_FROM = '0.3';
 export const WET_EDGE_STRIP_TO = '0.7';
-export const WET_DAMP_REACH = '0.04';
-export const WET_DAMP_DARKENING = '0.22';
+/** The footprint (metres, longest axis) over which the fine basin noise fades out: all of it below the first, none above the second. */
+export const WET_DETAIL_FADE = Object.freeze(['0.01', '0.04']);
 /**
  * The shore is anti-aliased over at least this much depth (about 18 mm) and 2 pixel footprints of the smooth basin, and the stones move it by
  * less than that (round 16: at 0.024 the stones were wider than the shore band and the rim was a dither of single dark pixels).
@@ -177,11 +176,11 @@ float wetKeepOutDistance(vec3 position) {
     float soakBand = 0.0;
     float fringe = 0.0;
     float shoreDarkening = 0.0;
-    float dampHalo = 0.0;
     float interior = 0.0;
     if (wetnessState.y > 0.0) {
       float clearance = wetKeepOutDistance(worldPosition);
-      float detailFade = 1.0 - smoothstep(0.03, 0.12, pixelSize);
+      // The fine noise has a period of about 17 cm, so it needs a pixel footprint well under half of that along both axes: at a grazing angle the long axis decides (round 18: the geometric mean kept it on for far puddles and aliased their outline into stairs).
+      float detailFade = 1.0 - smoothstep(${WET_DETAIL_FADE[0]}, ${WET_DETAIL_FADE[1]}, max(length(dFdx(worldPosition)), length(dFdy(worldPosition))));
       float puddleDepth = wetBasin(worldPosition, detailFade) - wetnessState.y - 6.0 * (worldPosition.y - wetnessState.w) - 0.3 * (1.0 - smoothstep(0.2, 1.0, clearance));
       // The stones break the rim: the same height field that makes the road grit lets the tops of stones stay dry at the shore.
       float stoneDepth = puddleDepth - ${WET_SHORE_STONE_BREAK} * (stoneHeight - 0.5);
@@ -194,7 +193,6 @@ float wetKeepOutDistance(vec3 position) {
       fringe = smoothstep(-${WET_FRINGE_WIDTH}, 0.0, stoneDepth) * gate * (1.0 - standing);
       // The band keeps its darkening across the anti-aliased edge and gives way to the bed only once most of the pixel is water, so no light line outlines a puddle.
       shoreDarkening = pow(smoothstep(-${WET_SHORE_BAND_REACH}, 0.0, stoneDepth), 1.5) * gate * (1.0 - smoothstep(${WET_SHORE_BAND_HOLD}, 1.0, standing));
-      float dampHalo = pow(smoothstep(-${WET_DAMP_REACH}, 0.0, puddleDepth), 1.6) * gate * (1.0 - standing);
       soakBand = smoothstep(-0.10, 0.0, puddleDepth) * gate * (1.0 - standing);
     }
     wetStanding = standing;
@@ -207,7 +205,7 @@ float wetKeepOutDistance(vec3 position) {
     // The soaked road is a little more saturated (at most 1.2 times); the soak band beside the shore is darker, the fringe darker and glossier.
     float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
     color = mix(vec3(luminance), color, mix(1.0, 1.2, wetPorosity * gritGround * (1.0 - standing)));
-    color *= (1.0 - ${WET_SOAK_BAND_DARKENING} * soakBand) * (1.0 - ${WET_DAMP_DARKENING} * dampHalo) * (1.0 - ${WET_FRINGE_DARKENING} * shoreDarkening * ${WET_SHORE_BAND_STONE_SHARE});
+    color *= (1.0 - ${WET_SOAK_BAND_DARKENING} * soakBand) * (1.0 - ${WET_FRINGE_DARKENING} * shoreDarkening * ${WET_SHORE_BAND_STONE_SHARE});
     // A few stone tops in the damp band glint, and only seen at a grazing angle; the rest of the band keeps the road's satin finish.
     float fringeGlint = fringe * grainFade * smoothstep(${WET_FRINGE_GLINT_STONE[0]}, ${WET_FRINGE_GLINT_STONE[1]}, stoneHeight) * smoothstep(0.55, 0.2, dot(geometricNormal, viewDirection));
     roughness = mix(roughness, 0.26, fringeGlint * ${WET_FRINGE_GLINT_STRENGTH});

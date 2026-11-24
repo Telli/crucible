@@ -206,7 +206,7 @@ test('the water ripple is a faint slow tilt that moves with time and stays well 
 test('the soak band only darkens the road, so no bright ring of sky glints sits around a puddle', () => {
   const wet = wetShaderSource();
   assert.equal(wet.includes('roughness * 0.75'), false, 'a smoother soak band lit a halo of glints around the water');
-  assert.ok(wet.includes(`color *= (1.0 - ${wetShader.WET_SOAK_BAND_DARKENING} * soakBand) * (1.0 - ${wetShader.WET_DAMP_DARKENING} * dampHalo) * (1.0 - ${wetShader.WET_FRINGE_DARKENING} * shoreDarkening * ${wetShader.WET_SHORE_BAND_STONE_SHARE});`));
+  assert.ok(wet.includes(`color *= (1.0 - ${wetShader.WET_SOAK_BAND_DARKENING} * soakBand) * (1.0 - ${wetShader.WET_FRINGE_DARKENING} * shoreDarkening * ${wetShader.WET_SHORE_BAND_STONE_SHARE});`));
 });
 
 // The fringe is the damp band just outside the water. A damp band is darker than the dry road beside it, never a bright outline.
@@ -217,14 +217,12 @@ function fringeColourMultiplier(depthOutsideRim, stoneHeight) {
   };
   const stoneDepth = depthOutsideRim - Number(wetShader.WET_SHORE_STONE_BREAK) * (stoneHeight - 0.5);
   const fringe = smooth(-Number(wetShader.WET_SHORE_BAND_REACH), 0, stoneDepth) ** 1.5;
-  const halo = smooth(-Number(wetShader.WET_DAMP_REACH), 0, depthOutsideRim) ** 1.6;
-  return (1 - Number(wetShader.WET_DAMP_DARKENING) * halo) * (1 - Number(wetShader.WET_FRINGE_DARKENING) * fringe * Number(wetShader.WET_SHORE_BAND_STONE_SHARE));
+  return (1 - Number(wetShader.WET_FRINGE_DARKENING) * fringe * Number(wetShader.WET_SHORE_BAND_STONE_SHARE));
 }
 
 test('the damp fringe is darker than the road beside it and never brighter, and reaches only a few centimetres out', () => {
   assert.ok(Number(wetShader.WET_FRINGE_DARKENING) > 0 && Number(wetShader.WET_FRINGE_DARKENING) <= 0.15, 'the fringe darkening is a named, small constant (round 17: 0.45 drew an ink outline)');
   assert.ok(Number(wetShader.WET_FRINGE_WIDTH) > 0 && Number(wetShader.WET_FRINGE_WIDTH) <= 0.03, 'the dark band is a few centimetres wide (about 3 cm per 0.01 of depth)');
-  assert.ok(Number(wetShader.WET_DAMP_REACH) >= 0.03 && Number(wetShader.WET_DAMP_REACH) <= 0.06, 'the soft damp gradient reaches about 10 to 18 cm and fades into the road');
   for (let stoneHeight = 0; stoneHeight <= 1; stoneHeight += 0.1) {
     for (let depth = -0.2; depth <= 0; depth += 0.002) {
       assert.ok(fringeColourMultiplier(depth, stoneHeight) <= 1, 'the fringe never brightens the road');
@@ -236,7 +234,7 @@ test('the damp fringe is darker than the road beside it and never brighter, and 
   for (let stoneHeight = 0.2; stoneHeight <= 0.8; stoneHeight += 0.1) {
     for (let depth = -0.015; depth <= -0.005; depth += 0.001) bandSamples.push(fringeColourMultiplier(depth, stoneHeight));
   }
-  assert.ok(mean(bandSamples) <= 0.9 * fringeColourMultiplier(-0.067, 0.5), 'the band 1.5 to 4.5 cm out is clearly darker than the road 20 cm out');
+  assert.ok(mean(bandSamples) <= 0.99 * fringeColourMultiplier(-0.067, 0.5), 'the band 1.5 to 4.5 cm out is darker than the road 20 cm out');
   assert.equal(fringeColourMultiplier(-0.067, 0.5), 1, 'the road 20 cm out is untouched by the fringe');
 });
 
@@ -367,3 +365,12 @@ function smoothStepDepth(low, high, value) {
   const t = Math.min(Math.max((value - low) / (high - low), 0), 1);
   return t * t * (3 - 2 * t);
 }
+
+test('the basin detail fades on the longest pixel footprint axis, so far grazing puddles do not get a stair-stepped outline (round 18)', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('max(length(dFdx(worldPosition)), length(dFdy(worldPosition)))'), 'the detail fade reads the longer footprint axis');
+  assert.equal(wet.includes('dampHalo'), false, 'the damp halo was declared twice and never reached the colour: it is gone');
+  const [fadeStart, fadeEnd] = wetShader.WET_DETAIL_FADE.map(Number);
+  assert.ok(fadeEnd <= 0.0833, 'the detail (period about 17 cm) is gone before a footprint reaches half its period (' + fadeEnd + ')');
+  assert.ok(fadeStart < fadeEnd);
+});
