@@ -98,9 +98,10 @@ test('a graph with the new nodes bakes on box mapping without UVs and counts tow
   assert.ok(first.map && first.normalMap);
   assert.ok(first.boxMapScale > 0);
   assert.deepEqual(first.map.image.data, second.map.image.data);
+  // Four smooth Voronoi outputs cost about 25 units a pixel each, which is over the 60 million budget at 1024 by 1024.
   assert.throws(() => normalizeMaterialPattern({
     type: 'graph', resolution: 1024,
-    graph: Object.fromEntries(['color', 'roughness', 'metallic', 'height'].map(name => [name, { brick: { columns: 64 - 4 * ['color', 'roughness', 'metallic', 'height'].indexOf(name), rows: 64, at: { mapping: { scale: 2 + ['color', 'roughness', 'metallic', 'height'].indexOf(name), vector: { mapping: { scale: 10 + ['color', 'roughness', 'metallic', 'height'].indexOf(name) } } } } } }])),
+    graph: Object.fromEntries(['color', 'roughness', 'metallic', 'height'].map(name => [name, { voronoi: { scale: 8, output: 'smoothF1' } }])),
   }), /work units per pixel|nodes/);
 });
 

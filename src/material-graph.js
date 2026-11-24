@@ -18,9 +18,24 @@ const MAX_SEED = 0x7fffffff;
 const MAX_REPORTED_KEY_LENGTH = 24;
 const NOISE_SCALE_LIMIT = 64;
 const NOISE_OCTAVE_LIMIT = 6;
-// Work units per pixel for the nodes that cost more than a plain operator.
-const VORONOI_COST = 8;
-const NOISE_COST_PER_OCTAVE = 3;
+// Work units. One unit is about 33 ns of one pixel on a 2024 desktop CPU in Node (a noise octave is 2.1 units); the
+// costs below are in hundredths of a unit, measured one node kind at a time (#3147, docs/agent-scene.md "Work budget").
+// maxWork then reads as a time budget: 60 million units is about 2 s of baking. A plain operator costs NODE_COST.
+export const WORK_UNIT_NANOSECONDS = 33;
+const NODE_COST = 10;
+const RAMP_COST = 375;
+const HUE_COST = 625;
+const CURVE_COST = 250;
+const LAYER_COST = 225;
+// normalMapFromHeightFunction reads the height field four times a pixel and normalizes the slope in between.
+const BUMP_HEIGHT_READS = 4;
+const BUMP_NORMALIZE_COST = 250;
+// A vector node (a colour) runs its operation once for each of three channels, and the bake writes each pixel's channels.
+const VECTOR_NODE_COST = 200;
+const PIXEL_COST = 250;
+const COST_DENOMINATOR = 100;
+const VORONOI_COST = 750;
+const NOISE_COST_PER_OCTAVE = 190;
 
 function graphError(message) {
   return new TypeError(`Material graph: ${message}`);
@@ -133,7 +148,7 @@ function compileCoordinates(node) {
 }
 
 const WARP_STRENGTH_LIMIT = 4;
-const WARP_COST = 2;
+const WARP_COST = 250;
 // The fields every texture node that reads a position takes: where it samples ("at") and what pushes that spot around ("warp").
 const POSITION_FIELDS = ['at', 'warp'];
 
@@ -306,7 +321,7 @@ function compileNoise(node, state, depth) {
 // cells, so the cracks of mud, cobbles and leather; f2 is the distance to the second nearest point; smoothF1 is F1 with
 // the hard minimum smoothed (Blender's Smooth F1), so cells melt into organic blobs; cell is one random value per cell.
 const VORONOI_OUTPUTS = ['distance', 'edge', 'cell', 'f2', 'f2MinusF1', 'smoothF1'];
-const VORONOI_SMOOTH_COST = 22;
+const VORONOI_SMOOTH_COST = 2375;
 
 function compileVoronoi(node, state, depth) {
   const settings = textureSettings(node, 'voronoi', ['scale', 'seed', 'output', 'jitter', 'smoothness', ...POSITION_FIELDS]);
@@ -407,7 +422,7 @@ function compileRamp(node, state, depth) {
     }
     return valueOf(stops[stops.length - 1]);
   };
-  state.cost += 2;
+  state.cost += RAMP_COST;
   return stops[0].isVector ? vectorValue(channelRamp(0), channelRamp(1), channelRamp(2)) : scalarValue(channelRamp(0));
 }
 
@@ -442,6 +457,7 @@ function compileLayer(node, state, depth) {
   for (const required of ['base', 'top', 'mask']) {
     if (settings[required] === undefined) throw graphError(`layer needs "${required}".`);
   }
+  state.cost += LAYER_COST;
   const edge = settings.edge ?? 0.5;
   const softness = settings.softness ?? 0.1;
   if (!finiteLiteral(edge) || !finiteLiteral(softness) || softness < 0) throw graphError('layer edge is a number and softness a number from 0.');
@@ -485,7 +501,7 @@ function compileHue(node, state, depth) {
   const color = compileNode(settings.color, state, depth + 1, 'hue "color"');
   if (color.kind !== 'vector') throw graphError('hue "color" needs a colour such as [r, g, b].');
   const shift = compileScalarInput(settings.shift ?? 0, state, depth, 'hue "shift"');
-  state.cost += 4;
+  state.cost += HUE_COST;
   const [red, green, blue] = color.parts;
   // The three channels read the same pixel in a row, so the last result is kept instead of converting three times.
   let lastU = NaN;
@@ -523,7 +539,7 @@ function compileCurve(node, state, depth) {
     }
     return points[points.length - 1][1];
   };
-  state.cost += 2;
+  state.cost += CURVE_COST;
   return liftComponentwise([compileNode(settings.value, state, depth + 1, 'curve "value"')], remap);
 }
 
@@ -567,7 +583,7 @@ function compileMapping(node, state, depth) {
 }
 
 const BRICK_OUTPUTS = ['mortar', 'edge', 'cell'];
-const BRICK_COST = 4;
+const BRICK_COST = 25;
 
 // Blender's Brick Texture, laid in a running bond. Whole columns and an even number of rows keep it tileable.
 function compileBrick(node, state, depth) {
@@ -615,7 +631,7 @@ function compileWhiteNoise(node, state, depth) {
 }
 
 const IMAGE_OUTPUTS = ['color', 'alpha'];
-const IMAGE_COST = 4;
+const IMAGE_COST = 1000;
 const IMAGE_ASSET_PATTERN = /^[a-f0-9]{64}$/;
 
 const srgbToLinear = byte => {
@@ -706,7 +722,7 @@ function splitEmissionFresnel(node) {
 // names into a weight map in UV space for one mesh (material-vertex-group-map.js) and bakes the graph with those maps, so
 // the node reads its weight at the texel's own u and v. Validating a graph needs no mesh, so without maps only the name
 // is checked; a pattern with the node must use uv mapping, since box mapping has no u and v to match.
-const VERTEX_GROUP_COST = 2;
+const VERTEX_GROUP_COST = 120;
 const VERTEX_GROUP_NAME_LIMIT = 128;
 
 function readVertexGroupName(node) {
@@ -741,7 +757,7 @@ export function graphVertexGroupNames(graph) {
 
 // A mesh map (curvature, ao, thickness) is baked per texel from the mesh by mesh-map-bake.js and handed in with the
 // vertex group maps under the key "meshMap:<name>", so the node reads it at the texel's own u and v.
-const MESH_MAP_COST = 2;
+const MESH_MAP_COST = 120;
 export const MESH_MAP_KEY_PREFIX = 'meshMap:';
 
 function readMeshMapName(node) {
@@ -774,7 +790,7 @@ export function graphMeshMapNames(graph) {
 // A surface node reads the slope, the up part of the normal or the height of the mesh at each texel. The host bakes
 // each distinct output, space and range into UV space (material-surface-map.js) and hands the maps in under the key
 // "surface:<output>|<space>|<range>", so the node reads it at the texel's own u and v.
-const SURFACE_COST = 2;
+const SURFACE_COST = 120;
 export const SURFACE_KEY_PREFIX = 'surface:';
 const SURFACE_EXAMPLE = '{"surface":{"output":"slope","space":"world"}}';
 
@@ -924,8 +940,14 @@ function compileNode(node, state, depth, field) {
 
 // `field` names where the node sits (such as 'hue "color"'), so a missing or wrong input says which one it is (#2403).
 function compileNodeAt(node, state, depth, field) {
+  const compiled = compileUnpricedNode(node, state, depth, field);
+  if (compiled.kind === 'vector') state.cost += VECTOR_NODE_COST;
+  return compiled;
+}
+
+function compileUnpricedNode(node, state, depth, field) {
   state.nodeCount++;
-  state.cost++;
+  state.cost += NODE_COST;
   if (state.nodeCount > MATERIAL_GRAPH_LIMITS.maxNodes) throw graphError(`more than ${MATERIAL_GRAPH_LIMITS.maxNodes} nodes.`);
   if (depth > MATERIAL_GRAPH_LIMITS.maxDepth) throw graphError(`nesting deeper than ${MATERIAL_GRAPH_LIMITS.maxDepth}.`);
   if (typeof node === 'number') {
@@ -960,6 +982,17 @@ function compileNodeAt(node, state, depth, field) {
 
 const SCALAR_OUTPUTS = ['roughness', 'metallic', 'height', 'opacity', 'clearcoat', 'transmission'];
 
+// The bump reads the height field four times a pixel, each at a shifted spot, so a node shared with another output is worked
+// out again for each read. The graph's total already holds the height once, at what it added beyond the nodes the other
+// outputs share (`addedCost`); the bump pays for four standalone reads of the whole height field, plus the normalize.
+function bumpExtraCost(heightNode, state, addedCost) {
+  const alone = { ...state, nodeCount: 0, cost: 0, shared: undefined };
+  const { ids, repeated } = countRepeatedStructures(heightNode);
+  alone.shared = { ids, repeated, compiled: new Map() };
+  compileNode(heightNode, alone, 0, 'output "height"');
+  return BUMP_HEIGHT_READS * alone.cost - addedCost + BUMP_NORMALIZE_COST;
+}
+
 /**
  * Check a graph and compile each output. `size` is the metres one texture tile covers, which object and world coordinates report. Limits on nodes, depth and work per pixel are enforced here, before any
  * pixel is evaluated. Returns { outputs: { name: compiled }, emissionFresnel (an IOR, or undefined), nodeCount, cost }.
@@ -981,10 +1014,12 @@ export function compileMaterialGraph(graph, { size = 1, images, groups } = {}) {
       node = split.base;
       emissionFresnel = split.ior;
     }
+    const costBefore = state.cost;
     outputs[name] = compileNode(node, state, 0, `output "${name}"`);
+    if (name === 'height') state.cost += bumpExtraCost(node, state, state.cost - costBefore);
     if (SCALAR_OUTPUTS.includes(name) && outputs[name].kind !== 'scalar') throw graphError(`${name} needs a number, not a vector.`);
   }
-  return { outputs, emissionFresnel, nodeCount: state.nodeCount, cost: state.cost };
+  return { outputs, emissionFresnel, nodeCount: state.nodeCount, cost: (state.cost + PIXEL_COST) / COST_DENOMINATOR };
 }
 
 /** Throw when a graph is too costly to bake at this size. Called while normalizing, so a bad scene fails at once. */
@@ -992,7 +1027,7 @@ export function checkMaterialGraphWork(compiled, resolution) {
   integerInRange(resolution, 1, 16384, 'resolution');
   const work = compiled.cost * resolution * resolution;
   if (work > MATERIAL_GRAPH_LIMITS.maxWork) {
-    throw new RangeError(`Material graph: ${compiled.cost} work units per pixel at ${resolution} by ${resolution} is over the limit of ${MATERIAL_GRAPH_LIMITS.maxWork}. Use fewer nodes or a smaller resolution.`);
+    throw new RangeError(`Material graph: ${compiled.cost} work units per pixel at ${resolution} by ${resolution} is over the limit of ${MATERIAL_GRAPH_LIMITS.maxWork} (about ${Math.round(MATERIAL_GRAPH_LIMITS.maxWork * WORK_UNIT_NANOSECONDS / 1e9 * 10) / 10} s of baking). Use fewer nodes or a smaller resolution.`);
   }
 }
 
