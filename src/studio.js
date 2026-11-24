@@ -112,7 +112,7 @@ const STUDIO_WORKSPACES = Object.freeze([
   Object.freeze({ id: 'animate', label: 'Animate', icon: 'play', tabs: Object.freeze(['camera', 'node']) }),
 ]);
 const DEFAULT_CLEARCOAT_ROUGHNESS = 0.08;
-const PRIMITIVE_LABELS =Object.freeze({ icoSphere: 'Icosphere' });
+const PRIMITIVE_LABELS = Object.freeze({ icoSphere: 'Icosphere', disc: 'Circle' });
 const primitiveLabel = primitiveType => PRIMITIVE_LABELS[primitiveType] ?? primitiveType[0].toUpperCase() + primitiveType.slice(1);
 const TREE_ICON_BY_GEOMETRY = Object.freeze({
   circle: 'plane',
@@ -1360,7 +1360,7 @@ export function createStudio(container, {
     });
     return addPrimitiveButton;
   };
-  // The shapes come in groups with a gap between them and no captions; a screen reader hears each group's name.
+  // The shapes come in groups (Mesh, Text, then Light) with a gap between them and no captions; a screen reader hears each group's name.
   const primitiveGrids = STUDIO_PRIMITIVE_GROUPS.map(group => createElement(
     documentReference,
     'div',
@@ -1387,7 +1387,7 @@ export function createStudio(container, {
   addPointLightButton.addEventListener('click', () => addLightFromMenu('point', 'Point lights'));
   addSpotLightButton.addEventListener('click', () => addLightFromMenu('spot', 'Spot lights'));
   addAreaLightButton.addEventListener('click', () => addLightFromMenu('area', 'Area lights'));
-  const lightGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid', attributes: { role: 'group', 'aria-label': 'Lights' } }, addPointLightButton, addSpotLightButton, addAreaLightButton);
+  const lightGrid = createElement(documentReference, 'div', { className: 'crucible-studio-popover-grid', attributes: { role: 'group', 'aria-label': 'Light' } }, addPointLightButton, addSpotLightButton, addAreaLightButton);
   // The tree controls of the inspector load the first time a node that grows a tree is selected, so their code stays out of the core entry.
   let treeToolsPromise = null;
   const loadTreeTools = () => {
