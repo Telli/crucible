@@ -149,8 +149,10 @@ export const STUDIO_ACTION_ICONS = Object.freeze({
 
 /** Puts an action's icon before the label of its button and marks the button; the label stays its accessible name. */
 export function leadWithActionIcon(button, icon, iconName) {
+  const label = button.ownerDocument.createElement('span');
+  label.textContent = button.textContent;
   button.dataset.actionIcon = iconName;
-  button.prepend(icon);
+  button.replaceChildren(icon, label);
   return button;
 }
 
