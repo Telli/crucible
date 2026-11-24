@@ -3,7 +3,7 @@
 // studio-layout-rules.mjs: unequal insets around the content of a padded container, a gap or padding off the spacing
 // scale, or a gap between groups smaller than the gap inside one. Every failure names the selector, the numbers and the fix.
 //
-//   node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover] [--records file.json]
+//   node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover|dialog] [--records file.json]
 //
 // Without --origin it starts a Vite dev server on a free port and stops it (by its own PID) at the end. Screens: the Studio
 // page, each of its popover menus, and the five steps of the setup dialog, each in the dark and the light theme at 1280 by 720.
@@ -12,7 +12,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { findSpacingProblems } from './studio-layout-rules.mjs';
+import { SELECTABLE_SELECTOR, findSelectionProblems, findSpacingProblems } from './studio-layout-rules.mjs';
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 const STUDIO_PAGE = '/bench/studio/index.html?setup=off';
@@ -21,7 +21,7 @@ const PREFERENCES_KEY = 'crucible-studio-preferences';
 const THEMES = ['dark', 'light'];
 const VIEWPORT = { width: 1280, height: 720 };
 const SERVER_START_TIMEOUT_MS = 60000;
-const USAGE = 'Usage: node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover] [--records file.json]';
+const USAGE = 'Usage: node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover|dialog] [--records file.json]';
 const CHROME_PATH = process.env.CHROME_PATH ?? (process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : undefined);
 const GPU_ARGUMENTS = ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--disable-audio-output'];
 const SOFTWARE_ARGUMENTS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-webgl', '--ignore-gpu-blocklist', '--disable-audio-output'];
@@ -35,7 +35,7 @@ export const ALLOWLIST = Object.freeze([
 ]);
 
 // Runs inside the page. Returns one record per visible element under `rootElement`; the rules read them in Node.
-function collectSpacingRecords(rootElement) {
+function collectSpacingRecords(rootElement, selectableSelector) {
   const skippedSelector = '.crucible-studio-setup-preview, svg, canvas';
   const pixels = value => {
     const number = parseFloat(value);
@@ -61,6 +61,15 @@ function collectSpacingRecords(rootElement) {
     const parentOwn = parent ? Array.from(parent.classList).slice(0, 1).map(name => `.${name}`).join('') : '';
     return `${parentOwn} > ${element.localName}`.trim();
   };
+  const pathOf = element => {
+    const parts = [];
+    for (let current = element; current && current !== rootElement.parentElement && parts.length < 4; current = current.parentElement) {
+      const firstClass = current.classList[0];
+      parts.unshift(firstClass ? `${current.localName}.${firstClass}` : current.localName);
+    }
+    return parts.join(' > ');
+  };
+  const ownTextOf = element => Array.from(element.childNodes).filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent).join('').trim().slice(0, 40);
   const elements = [rootElement, ...rootElement.querySelectorAll('*')].filter(element => !element.closest(skippedSelector) && isVisible(element));
   return elements.map(element => {
     const style = getComputedStyle(element);
@@ -85,7 +94,8 @@ function collectSpacingRecords(rootElement) {
     const visibleEdge = (pixels(style.borderTopWidth) > 0 && !isClear(style.borderTopColor)) || !isClear(style.backgroundColor) || style.backgroundImage !== 'none';
     const uniformPadding = padded && new Set(Object.values(padding)).size === 1;
     const childGaps = children.map(ownGap).filter(Boolean).map(gap => Math.max(gap.row, gap.column));
-    return { selector: describe(element), gaps: ownGap(element), padding, insets, visibleEdge, uniformPadding, childGap: childGaps.length ? Math.max(...childGaps) : 0 };
+    const selection = { path: pathOf(element), ownText: ownTextOf(element), userSelect: style.userSelect, selectable: element.matches(selectableSelector) };
+    return { ...selection, selector: describe(element), gaps: ownGap(element), padding, insets, visibleEdge, uniformPadding, childGap: childGaps.length ? Math.max(...childGaps) : 0 };
   });
 }
 
@@ -172,7 +182,7 @@ export async function openStudio(browser, origin, theme, extraCss = '') {
 }
 
 function measure(page, selector) {
-  return page.evaluate(`(${collectSpacingRecords.toString()})(document.querySelector(${JSON.stringify(selector)}))`);
+  return page.evaluate(`(${collectSpacingRecords.toString()})(document.querySelector(${JSON.stringify(selector)}), ${JSON.stringify(SELECTABLE_SELECTOR)})`);
 }
 
 async function measureScreens(page, theme, only) {
@@ -185,6 +195,15 @@ async function measureScreens(page, theme, only) {
       await page.waitForTimeout(250);
       screens.push({ name: `${identifier} (${theme})`, records: await measure(page, `#${identifier}`) });
       await page.evaluate(id => document.getElementById(id).hidePopover(), identifier);
+    }
+  }
+  if (!only || only === 'dialog') {
+    const titles = await page.evaluate(() => Array.from(document.querySelectorAll('.crucible-studio dialog:not(.crucible-studio-setup-dialog)')).map(dialog => dialog.querySelector('h2')?.id).filter(Boolean));
+    for (const title of titles) {
+      await page.evaluate(identifier => document.getElementById(identifier).closest('dialog').showModal(), title);
+      await page.waitForTimeout(250);
+      screens.push({ name: `${title.replace('crucible-studio-', '')} dialog (${theme})`, records: await measure(page, `dialog:has(#${title})`), selectionOnly: true });
+      await page.evaluate(identifier => document.getElementById(identifier).closest('dialog').close(), title);
     }
   }
   if (!only || only === 'setup') {
@@ -200,6 +219,20 @@ async function measureScreens(page, theme, only) {
     await page.evaluate(() => document.querySelector('dialog.crucible-studio-setup-dialog').close());
   }
   return screens;
+}
+
+export async function runSelectionBehavior({ origin } = {}) {
+  const server = origin ? { origin, stop: () => {} } : await startDevServer();
+  const browser = await launchBrowser();
+  try {
+    const { context, page } = await openStudio(browser, server.origin, 'dark');
+    const checks = await probeSelectionBehavior(page);
+    await context.close();
+    return checks;
+  } finally {
+    await browser.close();
+    server.stop();
+  }
 }
 
 // `extraCss` is added to the page before measuring: the test uses it to seed a spacing mistake the audit must catch.
@@ -229,8 +262,9 @@ export function summarize(screens, allowlist = ALLOWLIST) {
   const merged = new Map();
   const allowedMerged = new Map();
   for (const screen of screens) {
-    const { findings, allowed } = findSpacingProblems(screen.records, { allowlist });
-    for (const [list, target] of [[findings, merged], [allowed, allowedMerged]]) {
+    const spacing = screen.selectionOnly ? { findings: [], allowed: [] } : findSpacingProblems(screen.records, { allowlist });
+    const findings = [...spacing.findings, ...findSelectionProblems(screen.records)];
+    for (const [list, target] of [[findings, merged], [spacing.allowed, allowedMerged]]) {
       for (const problem of list) {
         const key = `${problem.kind}|${problem.selector}|${problem.detail}|${problem.message}`;
         const entry = target.get(key) ?? { ...problem, surfaces: new Set() };
@@ -251,17 +285,109 @@ function countBySurface(findings) {
   return counts;
 }
 
+// What a person gets when they try to select: the text the browser reports selected after each gesture. Chrome must report
+// nothing for a drag, a double click and select all over the chrome, and the text itself inside a field or an opted-in block.
+export async function probeSelectionBehavior(page) {
+  const selectedText = () => page.evaluate(() => {
+    const field = document.activeElement;
+    const inField = field?.matches?.('input, textarea') ? field.value.slice(field.selectionStart, field.selectionEnd) : '';
+    return inField || getSelection().toString();
+  });
+  const clearSelection = () => page.evaluate(() => getSelection().removeAllRanges());
+  const checks = [];
+  const record = async (name, expectation) => {
+    const text = await selectedText();
+    checks.push({ name, selected: text.length, passed: expectation === 'none' ? text.length === 0 : text.length > 0 });
+    await clearSelection();
+  };
+  const dragAcross = async box => {
+    await page.mouse.move(box.left, box.top);
+    await page.mouse.down();
+    await page.mouse.move(box.right, box.bottom, { steps: 10 });
+    await page.mouse.up();
+  };
+  const boxOf = selector => page.evaluate(selection => {
+    const box = document.querySelector(selection).getBoundingClientRect();
+    return { left: box.left + 6, top: box.top + 6, right: box.right - 6, bottom: box.bottom - 6 };
+  }, selector);
+
+  await dragAcross({ left: 2, top: 2, right: VIEWPORT.width - 2, bottom: VIEWPORT.height - 2 });
+  await record('main screen: drag across the whole window', 'none');
+  await dragAcross({ left: VIEWPORT.width / 2, top: VIEWPORT.height / 2, right: VIEWPORT.width / 2 - 150, bottom: VIEWPORT.height / 2 - 100 });
+  await record('main screen: drag that starts on the canvas', 'none');
+  await page.locator('.crucible-studio button:visible').filter({ hasText: /\w/ }).first().dblclick();
+  await record('main screen: double click on a label', 'none');
+  await page.keyboard.press('Control+a');
+  await record('main screen: Ctrl+A', 'none');
+
+  await page.locator('.crucible-studio-tree-label').first().dblclick();
+  await record('scene list: double click on a row', 'none');
+  await dragAcross(await boxOf('.crucible-studio-tree-section'));
+  await record('scene list: drag across the rows', 'none');
+  await page.keyboard.press('Control+a');
+  await record('scene list: Ctrl+A', 'none');
+
+  await page.keyboard.press('Control+,');
+  await page.waitForSelector('dialog.crucible-studio-settings-dialog[open]');
+  await page.waitForTimeout(300);
+  await dragAcross(await boxOf('dialog.crucible-studio-settings-dialog'));
+  await record('Settings dialog: drag across the dialog', 'none');
+  await page.locator('dialog.crucible-studio-settings-dialog label').first().dblclick();
+  await record('Settings dialog: double click on a label', 'none');
+  await page.keyboard.press('Control+a');
+  await record('Settings dialog: Ctrl+A', 'none');
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close()));
+
+  await page.evaluate(() => {
+    const dialog = document.getElementById('crucible-studio-json-title').closest('dialog');
+    dialog.querySelector('textarea').value = '{"crucible": "scene"}';
+    dialog.showModal();
+  });
+  await page.waitForTimeout(250);
+  await page.locator('textarea[aria-label="Scene recipe JSON"]').click();
+  await page.keyboard.press('Control+a');
+  await record('Recipe JSON dialog: Ctrl+A inside the text', 'text');
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close()));
+
+  const selectAllPrevented = selector => page.evaluate(target => {
+    const event = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true });
+    document.querySelector(target).dispatchEvent(event);
+    return event.defaultPrevented;
+  }, selector);
+  const outsideField = await selectAllPrevented('.crucible-studio');
+  checks.push({ name: 'Ctrl+A outside a field has its browser default prevented', selected: outsideField ? 0 : 1, passed: outsideField });
+  const insideField = await selectAllPrevented('textarea[aria-label="Scene recipe JSON"]');
+  checks.push({ name: 'Ctrl+A inside a field keeps its browser default', selected: insideField ? 1 : 0, passed: !insideField });
+
+  await page.evaluate(() => {
+    const block = document.createElement('pre');
+    block.className = 'crucible-studio-selectable';
+    block.id = 'selection-probe';
+    block.style.cssText = 'position: fixed; inset: 8px auto auto 8px; z-index: 2147483647; margin: 0';
+    block.textContent = 'copy me';
+    document.querySelector('.crucible-studio').append(block);
+  });
+  await page.locator('#selection-probe').dblclick();
+  await record('a block with crucible-studio-selectable: double click', 'text');
+  await page.evaluate(() => document.getElementById('selection-probe').remove());
+  return checks;
+}
+
 async function main() {
   const flags = parseArguments(process.argv.slice(2));
   const screens = await runAudit({ origin: flags.origin, only: flags.only });
   if (flags.records) writeFileSync(flags.records, JSON.stringify(screens));
   const { findings, allowed } = summarize(screens);
+  const behavior = flags.only ? [] : await runSelectionBehavior({ origin: flags.origin });
+  for (const check of behavior.filter(item => !item.passed)) findings.push({ kind: 'selectable-chrome', message: `behaviour: ${check.name} left ${check.selected} characters selected where the rule says otherwise.`, surfaces: ['behaviour'] });
   const bySurface = countBySurface(findings);
   if (flags.json) {
     console.log(JSON.stringify({ screens: screens.length, failures: findings.length, bySurface, findings, allowlist: ALLOWLIST, allowlistUsed: allowed }, null, 2));
   } else {
     for (const finding of findings) console.log(`[${finding.kind}] ${finding.message}\n    seen on: ${finding.surfaces.join(', ')}`);
     console.log(`\nStudio layout audit: ${screens.length} screens, ${findings.length} failures (${Object.entries(bySurface).map(([surface, count]) => `${surface} ${count}`).join(', ') || 'none'}).`);
+    for (const screen of screens) console.log(`  selection read ${screen.name}: ${screen.records.filter(record => record.ownText).length} elements with text, ${screen.records.filter(record => record.selectable).length} on the allowed list`);
+    for (const check of behavior) console.log(`  selection ${check.passed ? 'ok  ' : 'FAIL'} ${check.name}: ${check.selected} characters`);
     console.log(`Allowlist: ${ALLOWLIST.length} declared, ${allowed.length} used.`);
     for (const entry of ALLOWLIST) console.log(`  ${entry.kind} ${entry.selector}: ${entry.reason}`);
   }

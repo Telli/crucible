@@ -50,8 +50,13 @@ export const STUDIO_CSS = `
 .crucible-studio[data-theme="light"] { color-scheme: light; }
 .crucible-studio[data-theme="dark"] { color-scheme: dark; }
 .crucible-studio * { box-sizing: border-box; }
+/* Nothing in Studio is selectable by click or drag. This is the whole list of what is: text fields, and a block that a person
+   copies from, which opts in with the class crucible-studio-selectable. A dialog is named because the browser's own stylesheet
+   makes a modal dialog selectable, which the root's none does not override. */
+.crucible-studio dialog { user-select: none; }
 .crucible-studio input,
-.crucible-studio textarea { user-select: text; }
+.crucible-studio textarea,
+.crucible-studio-selectable { user-select: text; }
 
 .crucible-studio button,
 .crucible-studio select,
@@ -2355,7 +2360,6 @@ export const STUDIO_CSS = `
   line-height: 1.5;
   overflow: auto;
   resize: none;
-  user-select: text;
 }
 .crucible-studio-setup-actions { align-items: center; margin-top: 10px; }
 .crucible-studio dialog button.crucible-studio-setup-skip {

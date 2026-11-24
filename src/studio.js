@@ -4595,6 +4595,15 @@ export function createStudio(container, {
   const onPointerInput = () => {
     root.dataset.input = 'pointer';
   };
+  // Select all is Studio's own, never the browser's: outside a text field it would highlight the page, in any mode and over any dialog.
+  const onSelectAllKeyDown = event => {
+    const isSelectAll = event.key.toLowerCase() === 'a' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
+    if (!isSelectAll || !root.isConnected) return;
+    const target = event.target;
+    if (isEditableTarget(target, event.key) || target?.closest?.('.crucible-studio-selectable')) return;
+    event.preventDefault();
+  };
+  documentReference.addEventListener('keydown', onSelectAllKeyDown);
   documentReference.addEventListener('keydown', onKeyDown);
   documentReference.addEventListener('pointerdown', onPointerInput, true);
 
@@ -4820,6 +4829,7 @@ export function createStudio(container, {
       documentReference.removeEventListener('contextmenu', onModalContextMenu, true);
       documentReference.removeEventListener('click', onModalClick, true);
       documentReference.removeEventListener('pointerdown', onAnyPointerDown, true);
+      documentReference.removeEventListener('keydown', onSelectAllKeyDown);
       documentReference.removeEventListener('keydown', onKeyDown);
       documentReference.removeEventListener('pointerdown', onPointerInput, true);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
