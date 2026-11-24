@@ -2534,7 +2534,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const involvedNodes = recipe.nodes.filter(node => emitterMeshes.has(node.id) || recipe.particles.systems.some(system => system.node === node.id));
     const oceanTracks = (recipe.motion?.tracks ?? []).filter(track => track.kind === 'geometry' && track.property === 'oceanTime');
     // An emitter that follows a node reads its animated transform, so the motion, the physics and the node tree are part of the key.
-    const followsNode = recipe.particles.systems.some(system => system.emitter?.follow);
+    const followsNode = recipe.particles.systems.some(system => system.emitter?.follow || system.type === 'beam' || system.type === 'trail');
     const followedPose = followsNode ? [recipe.motion, recipe.physics, recipe.armatures, recipe.nodes.map(node => [node.id, node.parent, node.translation, node.rotation, node.scale])] : null;
     const key = JSON.stringify([recipe.particles, involvedNodes, involvedNodes.map(node => geometryRecords.get(node.geometry).signature), oceanTracks, followedPose]);
     if (particleBake?.key !== key) {
