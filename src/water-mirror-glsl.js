@@ -21,6 +21,11 @@ const BLUR_DOWN = '0.0045';
 export const waterMirrorUniformsGlsl = `// 1 where the surface is standing water on wet ground: a still film that mirrors crisply (no ripple shake, four taps one pixel wide).
 #define WATER_MIRROR_SHARPNESS
 float waterMirrorSharpness = 0.0;
+// 1 where the light under the surface is what the Fresnel reflection leaves (wet ground), 0 for a lake, which keeps its look.
+float waterBedFresnelShare = 0.0;
+// How much of the pixel along a puddle's edge is water (0 for a lake): the sky's glossy highlight is taken off the whole edge, not only where the mirror shows,
+// or the half-wet rim of a puddle seen at a grazing angle draws a bright outline.
+float waterEdgeCover = 0.0;
 uniform sampler2D waterReflection;
 uniform mat4 waterReflectionMatrix;
 uniform vec2 waterClip;

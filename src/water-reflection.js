@@ -37,6 +37,16 @@ export const WATER_MIRROR_MINIMUM_PIXEL_RADIUS = 5;
 // How the picture is treated before it reaches the surface (see afterEmission). Fresnel starts at the reflectance of water.
 const FRESNEL_BASE = '0.02';
 const REFLECTION_GAIN = '1.0';
+
+/** The share of light a still water surface reflects when seen at a cosine of the angle to the normal (the GLSL of afterEmission, in JS). */
+export function waterFresnelReflectance(viewCosine) {
+  return Number(FRESNEL_BASE) + (1 - Number(FRESNEL_BASE)) * (1 - Math.min(Math.max(viewCosine, 0), 1)) ** 5;
+}
+
+/** What is left for the bed under wet ground: the light the surface does not reflect. */
+export function waterBedShare(viewCosine) {
+  return 1 - waterFresnelReflectance(viewCosine);
+}
 // Geometry below this height above the water plane is left out of the reflection, so the lake bed never covers the sky.
 const CLIP_MARGIN = 0.05;
 const WATER_BATCH_FLAG = 'waterReflection';
@@ -174,7 +184,7 @@ registerShaderFeatureCode('waterReflection', Object.freeze({
     vec3 mirrored = waterMirrorColor(worldPosition, roughness);
     float fresnelWeight = (${FRESNEL_BASE} + (1.0 - ${FRESNEL_BASE}) * pow(1.0 - max(viewDirection.y, 0.0), 5.0)) * mirrorWeight;
     vec3 skyLight = ENVIRONMENT_ENABLED ? environmentLighting(normal, specularNormal, baseReflectance, viewDirection, reflect(-viewDirection, specularNormal), vec3(0.0), metallic, roughness, occlusion, ambientIntensity, skyReflection) : vec3(0.0);
-    radiance = ENVIRONMENT_ENABLED ? max(radiance - skyLight * mirrorWeight, vec3(0.0)) + mirrored * ${REFLECTION_GAIN} * fresnelWeight : mix(radiance, mirrored * ${REFLECTION_GAIN}, fresnelWeight);
+    radiance = ENVIRONMENT_ENABLED ? max(radiance - skyLight * max(mirrorWeight, waterEdgeCover), vec3(0.0)) * (1.0 - fresnelWeight * waterBedFresnelShare) + mirrored * ${REFLECTION_GAIN} * fresnelWeight : mix(radiance, mirrored * ${REFLECTION_GAIN}, fresnelWeight);
   }
 `,
 }));

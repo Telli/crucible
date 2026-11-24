@@ -11,6 +11,7 @@ import { puddleFillLevel, PUDDLE_LEVEL_TABLE, SOAKED_ROAD_ROUGHNESS_SCALE, WATER
 import { wetnessKeepOutBoxes, wetnessGroundHeight, KEEP_OUT_LIMIT } from '../src/wetness-keep-out.js';
 import { findWaterSurface, flagWetMirrorParts, wetMirrorSurface } from '../src/water-reflection.js';
 import { wetStone } from './support/wetness-noise-port.mjs';
+import * as waterReflectionModule from '../src/water-reflection.js';
 import * as wetShader from '../src/wetness-shader.js';
 
 function emptySession() {
@@ -173,7 +174,7 @@ test('the shader measures the water depth from the ground height, not from world
 
 test('only standing water mirrors: the road is set rough after the lighting and the water smooth', () => {
   const wet = wetShaderSource();
-  assert.ok(wet.includes(`roughness = wetStanding > 0.99 ? ${WATER_SURFACE_ROUGHNESS.toFixed(2)} : mix(0.5, 0.35, wetStanding);`));
+  assert.ok(wet.includes(`roughness = mix(0.5, ${WATER_SURFACE_ROUGHNESS.toFixed(2)}, smoothstep(${wetShader.WATER_RIM_MIRROR_START}, 1.0, wetStanding));`), 'the mirror fades in over the anti-aliased edge');
   assert.ok(wet.includes(`roughness * ${SOAKED_ROAD_ROUGHNESS_SCALE.toFixed(2)}`));
   assert.ok(WATER_SURFACE_ROUGHNESS < 0.1 && SOAKED_ROAD_ROUGHNESS_SCALE > 0.5, 'water is a mirror, soaked road is satin');
 });
@@ -205,7 +206,7 @@ test('the water ripple is a faint slow tilt that moves with time and stays well 
 test('the soak band only darkens the road, so no bright ring of sky glints sits around a puddle', () => {
   const wet = wetShaderSource();
   assert.equal(wet.includes('roughness * 0.75'), false, 'a smoother soak band lit a halo of glints around the water');
-  assert.ok(wet.includes(`color *= (1.0 - 0.15 * soakBand) * (1.0 - ${wetShader.WET_DAMP_DARKENING} * dampHalo) * (1.0 - ${wetShader.WET_FRINGE_DARKENING} * fringe * (1.0 - 0.5 * stoneTop));`));
+  assert.ok(wet.includes(`color *= (1.0 - 0.15 * soakBand) * (1.0 - ${wetShader.WET_DAMP_DARKENING} * dampHalo) * (1.0 - ${wetShader.WET_FRINGE_DARKENING} * shoreDarkening * (1.0 - 0.5 * stoneTop));`));
 });
 
 // The fringe is the damp band just outside the water. A damp band is darker than the dry road beside it, never a bright outline.
@@ -298,4 +299,29 @@ test('the bed under standing water keeps the wet road light: no second darkening
   assert.ok(wet.includes(`color *= mix(1.0, mix(${WATER_BED_TRANSMITTANCE.shore.toFixed(2)}, ${WATER_BED_TRANSMITTANCE.deep.toFixed(2)}, interior), standing);`));
   assert.ok(wet.includes('splatCavity *= 1.0 - 0.4 * wetPorosity * (1.0 - standing);'), 'water takes no part in the porous road shading');
   assert.equal(wet.includes('splatCavity *= 1.0 - 0.7 * standing'), false);
+});
+
+test('wet ground keeps the light the water surface does not reflect: bed share is one minus Fresnel (round 15)', () => {
+  const { waterBedShare, waterFresnelReflectance } = waterReflectionModule;
+  assert.equal(typeof waterBedShare, 'function', 'water-reflection.js exports the bed share');
+  for (const viewCosine of [0.05, 0.25, 0.447, 0.8, 1]) {
+    assert.ok(Math.abs(waterBedShare(viewCosine) + waterFresnelReflectance(viewCosine) - 1) < 1e-12, 'reflected plus transmitted is all the light');
+  }
+  assert.ok(waterBedShare(0.447) > 0.92 && waterBedShare(0.447) < 0.94, 'the 1.6 m eye over a puddle 3.2 m away loses about 7 percent to the mirror');
+  assert.ok(waterBedShare(0.05) < 0.6, 'at a grazing angle the mirror takes over from the bed');
+  assert.ok(waterBedShare(1) > 0.97, 'looking straight down the bed is nearly all there is');
+  const source = createFragmentShader(['studioLighting', 'waterReflection']);
+  assert.ok(source.includes('* (1.0 - fresnelWeight * waterBedFresnelShare)'), 'the bed is weighted by what Fresnel leaves');
+  assert.ok(source.includes('float waterBedFresnelShare = 0.0;'), 'a lake sets no bed share, so it keeps its look');
+});
+
+test('standing water hides the bed grit and the road tint, and the shore keeps no sky highlight (round 15 path-trace check)', () => {
+  const { WATER_BED_GRIT_VISIBLE, WATER_BED_COLOUR_KEPT, WET_EDGE_STRIP_FROM, WET_EDGE_STRIP_TO } = wetShader;
+  assert.ok(WATER_BED_GRIT_VISIBLE <= 0.25, 'under a film of water at most a quarter of the grit contrast shows');
+  assert.ok(WATER_BED_COLOUR_KEPT <= 0.35, 'the olive of the scanned asphalt is mostly gone under water');
+  assert.ok(Number(WET_EDGE_STRIP_FROM) < Number(WET_EDGE_STRIP_TO) && Number(WET_EDGE_STRIP_TO) <= 0.5, 'the edge loses its sky highlight before the mirror fades in');
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('mix(1.0, 1.2, wetPorosity * gritGround * (1.0 - standing))'), 'no extra saturation under water');
+  assert.ok(wet.includes('waterEdgeCover = wetGroundFacing > 0.5'));
+  assert.ok(createFragmentShader(['studioLighting', 'waterReflection']).includes('skyLight * max(mirrorWeight, waterEdgeCover)'));
 });
