@@ -5,7 +5,7 @@ import { mat4 } from 'gl-matrix';
 import { createAgentScene } from '../src/agent-scene.js';
 import { meshEditSourceOf } from '../src/agent-mesh.js';
 import { isLiveGeometry, markLiveGeometry } from '../src/live-geometry.js';
-import { clearedShaftStart, createStudio, createStudioController } from '../src/studio.js';
+import { clearedPlaneCorners, clearedShaftStart, createStudio, createStudioController } from '../src/studio.js';
 import { byDataset, byLabel, createFakeRenderer, dispatch, installStudioDom } from './support/studio-dom.mjs';
 import { CAGE_TRIANGLE_BUDGET, MAX_LOG_ENTRIES, MAX_MASK_VERTICES, createMeshEditor, planMeshMove, previewNormalsOf } from '../src/studio-mesh-edit.js';
 import { DEFAULT_KEYMAP_ACTIONS, findKeymapAction, resolveKeymap } from '../src/studio-keymap.js';
@@ -837,14 +837,19 @@ async function pickFaceThrough(ui, predicate) {
   return { centre, reach };
 }
 
-test('a small pick keeps the middle clear: no plane squares or centre dot, and no shaft crosses the picked face', async testContext => {
+test('a small pick keeps the middle clear: no centre dot, the plane squares and shafts all start outside the picked face', async testContext => {
   const ui = mountStudioOnShape(testContext, { type: 'box', bevel: 0, subdivisions: 8 });
   const { centre, reach } = await pickFaceThrough(ui, point => point[2] > 0.49 && point[0] > -1e-6 && point[0] < 0.126 && point[1] > -1e-6 && point[1] < 0.126);
   assert.ok(reach < 30, `the face is small on screen (${reach.toFixed(1)} px from its middle to a corner)`);
   const handles = drawnHandles(ui.root);
-  assert.equal(handles.planes.length, 0, 'the plane squares would sit on the face');
+  assert.equal(handles.planes.length, 3, 'the three plane squares stay');
   assert.equal(handles.centreDots.length, 0, 'the centre dot would sit on the face');
   assert.ok(handles.shafts.length >= 2, 'the arrows stay');
+  for (const square of handles.planes) {
+    for (const corner of cornersOf(square)) {
+      assert.ok(Math.hypot(corner.x - centre.x, corner.y - centre.y) >= reach, `a corner of the ${square.getAttribute('data-gizmo-axis')} square lies outside the face`);
+    }
+  }
   for (const shaft of handles.shafts) {
     assert.ok(distanceFromPointToSegment(centre, shaft) >= reach, `the ${shaft.getAttribute('data-gizmo-axis')} shaft starts outside the face`);
   }
@@ -857,13 +862,47 @@ test('a large pick also keeps the middle clear, with the arrows cut short of the
   const { reach } = await pickFaceThrough(ui, point => point[2] > 0.49);
   assert.ok(reach > 60, `the face is large on screen (${reach.toFixed(1)} px)`);
   const handles = drawnHandles(ui.root);
-  assert.equal(handles.planes.length, 0);
+  assert.equal(handles.planes.length, 3);
   assert.equal(handles.centreDots.length, 0);
   assert.ok(handles.shafts.length >= 2);
   const origin = ui.controller.gizmoHandles().origin;
   for (const shaft of handles.shafts) {
     assert.ok(distanceFromPointToSegment(origin, shaft) > 0, 'a shaft starts away from the middle');
   }
+});
+
+function cornersOf(polygon) {
+  return polygon.getAttribute('points').split(' ').map(pair => {
+    const [x, y] = pair.split(',').map(Number);
+    return { x, y };
+  });
+}
+
+test('a drag on a plane square in edit mode moves the pick in that plane only', async testContext => {
+  const ui = mountStudioOnShape(testContext, { type: 'box', bevel: 0, subdivisions: 8 });
+  await pickFaceThrough(ui, point => point[2] > 0.49 && point[0] > -1e-6 && point[0] < 0.126 && point[1] > -1e-6 && point[1] < 0.126);
+  const square = drawnHandles(ui.root).planes.find(candidate => candidate.getAttribute('data-gizmo-axis') === 'xy');
+  assert.ok(square, 'the xy square is drawn');
+  const corners = cornersOf(square);
+  const middle = { x: corners.reduce((sum, corner) => sum + corner.x, 0) / corners.length, y: corners.reduce((sum, corner) => sum + corner.y, 0) / corners.length };
+  ui.controller.beginGizmoDrag('xy', middle.x, middle.y);
+  const moved = ui.controller.updateGizmoDrag(middle.x + 30, middle.y - 20).elementDelta;
+  ui.controller.endGizmoDrag();
+  assert.ok(Math.hypot(moved[0], moved[1]) > 1e-3, 'the pick moved');
+  assert.ok(Math.abs(moved[2]) < 1e-9, `it stayed in the xy plane (z moved ${moved[2]})`);
+});
+
+test('clearedPlaneCorners slides a square outward by what each of its two arrows skips, and leaves it alone in object mode', () => {
+  const origin = { x: 100, y: 100 };
+  const corners = [origin, { x: 110, y: 100 }, { x: 110, y: 90 }, { x: 100, y: 90 }];
+  const tips = [{ x: 180, y: 100 }, { x: 100, y: 20 }];
+  assert.deepEqual(clearedPlaneCorners(corners, origin, tips, null), corners);
+  const moved = clearedPlaneCorners(corners, origin, tips, 12);
+  assert.deepEqual(moved[0], { x: 124, y: 76 }, 'the corner on the pick moved 24 along x and 24 along y');
+  assert.deepEqual(moved[2], { x: 134, y: 66 });
+  const slanted = clearedPlaneCorners(corners, origin, [{ x: 100, y: 20 }, { x: 60, y: 160 }], 12);
+  const nearest = Math.min(...slanted.map(corner => Math.hypot(corner.x - origin.x, corner.y - origin.y)));
+  assert.ok(nearest >= 24, `axes that point nearly opposite still leave the square as far out as the arrows start (${nearest.toFixed(1)} px)`);
 });
 
 test('clearedShaftStart skips the picked reach plus a gap, never more than 60 percent of the shaft, and nothing in object mode', () => {

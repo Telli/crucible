@@ -703,9 +703,10 @@ function appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool) {
   gizmoSvg.append(hitDisc(origin, GIZMO_HIT_ORIGIN_RADIUS, tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen'));
 }
 
-// In mesh edit mode the move handles leave the picked element's middle clear, as Blender's do: the plane squares and the centre dot
-// are not drawn (the centre still drags on the screen plane), and each shaft starts this far from the centre (the element's reach
-// plus a gap), but never gives up more than this share of its length, so the arrow stays a handle on a large pick too.
+// In mesh edit mode the move handles leave the picked element's middle clear, as Blender's do: the centre dot is not drawn (the
+// centre still drags on the screen plane), each shaft starts this far from the centre (the element's reach plus a gap), but never
+// gives up more than this share of its length, so the arrow stays a handle on a large pick too, and each plane square slides
+// outward along its two axes by the same distances.
 const EDIT_CLEARANCE_GAP = 12;
 const EDIT_CLEARANCE_MAXIMUM_SHARE = 0.6;
 
@@ -718,6 +719,34 @@ export function clearedShaftStart(origin, tip, clearRadius) {
   const skipped = Math.min(clearRadius + EDIT_CLEARANCE_GAP, length * EDIT_CLEARANCE_MAXIMUM_SHARE);
   const share = skipped / length;
   return { x: origin.x + (tip.x - origin.x) * share, y: origin.y + (tip.y - origin.y) * share };
+}
+
+const PLANE_AXIS_NAMES = Object.freeze({ xy: ['x', 'y'], xz: ['x', 'z'], yz: ['y', 'z'] });
+
+// A plane square seen at a slant has its two axes pointing nearly opposite ways on screen, so the two shifts partly cancel and the
+// square would stay on the pick. The shifts then grow, by this step and up to this many times, until the square is as far out as the arrows start.
+const PLANE_SHIFT_GROWTH_STEP = 0.25;
+const PLANE_SHIFT_MAXIMUM_GROWTH = 3;
+
+/** The corners of a plane square moved outward along its two axes by what each arrow skips; the corners themselves when nothing is cleared. */
+export function clearedPlaneCorners(corners, origin, axisTips, clearRadius) {
+  const shifts = axisTips.map(tip => {
+    const start = clearedShaftStart(origin, tip, clearRadius);
+    return { x: start.x - origin.x, y: start.y - origin.y };
+  });
+  const wantedDistance = Math.max(...shifts.map(shift => Math.hypot(shift.x, shift.y)));
+  const shiftBy = growth => corners.map(corner => ({
+    ...corner,
+    x: corner.x + growth * shifts.reduce((sum, shift) => sum + shift.x, 0),
+    y: corner.y + growth * shifts.reduce((sum, shift) => sum + shift.y, 0),
+  }));
+  let growth = 1;
+  let moved = shiftBy(growth);
+  while (growth < PLANE_SHIFT_MAXIMUM_GROWTH && Math.min(...moved.map(corner => Math.hypot(corner.x - origin.x, corner.y - origin.y))) < wantedDistance) {
+    growth += PLANE_SHIFT_GROWTH_STEP;
+    moved = shiftBy(growth);
+  }
+  return moved;
 }
 
 function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, { hideSelectionOutline = false, clearRadius = null } = {}) {
@@ -796,11 +825,12 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
   // clearRadius is null in object mode, which keeps every handle exactly as it was.
   const cleared = clearRadius !== null;
 
-  if (tool === 'translate' && !cleared) {
+  if (tool === 'translate') {
     const planeColors = { xy: '#5ea8ff', xz: '#5fc48a', yz: '#ee7a6c' };
     for (const planeAxis of ['xy', 'xz', 'yz']) {
-      const corners = handles.planes[planeAxis];
-      if (!corners || corners.some(point => !point.visible)) continue;
+      const planeCorners = handles.planes[planeAxis];
+      if (!planeCorners || planeCorners.some(point => !point.visible)) continue;
+      const corners = cleared ? clearedPlaneCorners(planeCorners, origin, PLANE_AXIS_NAMES[planeAxis].map(axis => handles.axes[axis]), clearRadius) : planeCorners;
       gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
         points: corners.map(point => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' '),
         fill: planeColors[planeAxis],
