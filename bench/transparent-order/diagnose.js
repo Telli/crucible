@@ -159,3 +159,48 @@ window.runOrbit = async function runOrbit({ label = '', frames = 60, paneCount =
   }
   return { image: sheet.toDataURL('image/png').split(',')[1], frames, orderChangeFrames, spuriousFlipFrames, swappedPairs, framesOutOfViewDepthOrder, sampleOrders: orders.slice(0, 2), sampleIdeals: ideals.slice(0, 2) };
 };
+
+// Frame by frame orbit for stills and video: window.startOrbit sets the renderer up, window.renderOrbitFrame(index) draws one
+// frame and returns its picture with the draw order read from the data uploaded before each blended draw.
+window.startOrbit = function startOrbit({ paneCount = 9, width = 1080, height = 1920 } = {}) {
+  const canvas = document.querySelector('canvas');
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const recipe = glassRecipe(paneCount, 3);
+  const paneByDepthKey = new Map(recipe.nodes.map((node, index) => [Math.round(node.translation[2] * 1000), index]));
+  const { renderer, environment } = createRenderer(canvas, paneCount, 3);
+  const context = renderer.context;
+  const state = { canvas, recipe, renderer, environment, drawnPanes: [] };
+  let lastUpload = null;
+  let boundBuffer = null;
+  let uploadedBuffer = null;
+  const originalBind = context.bindBuffer.bind(context);
+  context.bindBuffer = (target, buffer) => {
+    boundBuffer = buffer;
+    return originalBind(target, buffer);
+  };
+  const originalUpload = context.bufferSubData.bind(context);
+  context.bufferSubData = (target, offset, data, start, length) => {
+    uploadedBuffer = boundBuffer;
+    lastUpload = start === undefined ? data : data.subarray(start, start + length);
+    return start === undefined ? originalUpload(target, offset, data) : originalUpload(target, offset, data, start, length);
+  };
+  const originalDraw = renderer.drawAlphaBatch.bind(renderer);
+  renderer.drawAlphaBatch = (batch, textured, culled) => {
+    const source = uploadedBuffer === batch.instanceBuffer && lastUpload ? lastUpload : batch.instanceData;
+    for (let slot = 0; slot < batch.instanceCount; slot++) state.drawnPanes.push(paneByDepthKey.get(Math.round(source[slot * STRIDE + 14] * 1000)));
+    return originalDraw(batch, textured, culled);
+  };
+  window.orbitState = state;
+  return true;
+};
+
+window.renderOrbitFrame = function renderOrbitFrame(frame) {
+  const { canvas, recipe, renderer, environment } = window.orbitState;
+  const angle = -0.35 + frame * 0.05;
+  window.orbitState.drawnPanes = [];
+  renderer.render({ ...cameraAt(angle), environment, time: 0, exposure: 1 });
+  const view = viewMatrixAt(angle);
+  const ideal = recipe.nodes.map((node, index) => [index, paneViewDepth(node, view)]).sort((first, second) => first[1] - second[1]).map(pair => pair[0]);
+  return { image: canvas.toDataURL('image/png').split(',')[1], order: window.orbitState.drawnPanes.join(''), ideal: ideal.join('') };
+};

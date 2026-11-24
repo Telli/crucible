@@ -22,6 +22,17 @@ try {
     const { image } = await page.evaluate(label => window.runStill({ label: label }));
     await writeFile(`${outputPrefix}.png`, Buffer.from(image, 'base64'));
     console.log(`wrote ${outputPrefix}.png`);
+  } else if (mode === 'frames') {
+    await page.setViewportSize({ width: 1080, height: 1920 });
+    await page.evaluate(() => window.startOrbit({ width: 1080, height: 1920 }));
+    const orders = [];
+    for (let frame = 0; frame < 60; frame++) {
+      const { image, order, ideal } = await page.evaluate(index => window.renderOrbitFrame(index), frame);
+      await writeFile(`${outputPrefix}-${String(frame).padStart(2, '0')}.png`, Buffer.from(image, 'base64'));
+      orders.push({ frame, order, ideal });
+    }
+    await writeFile(`${outputPrefix}-orders.json`, JSON.stringify(orders));
+    console.log(`wrote ${orders.length} frames`);
   } else if (mode === 'diagnose' || mode === 'orbit') {
     const runner = mode === 'diagnose' ? 'runDiagnose' : 'runOrbit';
     const { image, ...numbers } = await page.evaluate(([name, label]) => window[name]({ label }), [runner, process.env.STILL_LABEL ?? '']);
