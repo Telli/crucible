@@ -2438,10 +2438,12 @@ test('the rail keeps scene tools above one line and the show and hide switches b
   const ui = mountStudio(testContext);
   const toolbar = ui.root.querySelector('.crucible-studio-toolbar');
   const rows = toolbar.children.map(child => child.getAttribute('role') === 'separator' ? 'line' : child.getAttribute('aria-label'));
-  assert.deepEqual(rows, ['Transform tool', 'Edit the scene', 'line', 'Show or hide']);
+  // The mesh selection modes are in the rail but hidden until edit mode starts.
+  assert.deepEqual(rows, ['Transform tool', 'Mesh selection', 'Edit the scene', 'line', 'Show or hide']);
+  assert.equal(toolbar.children[1].hidden, true);
   const below = toolbar.children.at(-1).children.map(button => button.getAttribute('aria-label'));
   assert.deepEqual(below, ['Show or hide the grid', 'Show or hide the panels']);
-  const above = toolbar.children[1].children.map(button => button.dataset.icon);
+  const above = toolbar.children[2].children.map(button => button.dataset.icon);
   assert.deepEqual(above, ['add', 'undo', 'redo']);
 });
 

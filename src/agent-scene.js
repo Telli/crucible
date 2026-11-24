@@ -67,7 +67,7 @@ const RENDER_FLAG_FIELDS = ['visible', 'castShadow', 'receiveShadow', 'holdout',
 const PART_FLAG_FIELDS = RENDER_FLAG_FIELDS.slice(1);
 // On an asset placement these two flags reach each part it expands to.
 const ASSET_PLACEMENT_FLAG_FIELDS = ['castShadow', 'receiveShadow'];
-const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'clutter', 'grass', 'decal', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
+const NODE_FIELDS = ['translation', 'rotation', 'scale', 'parent', 'label', 'geometry', 'material', 'skin', 'relations', 'asset', 'vegetation', 'clutter', 'grass', 'decal', 'faceImages', 'depthLayer', 'blend', 'rayVisibility', ...RENDER_FLAG_FIELDS];
 const MATERIAL_FIELDS = ['color', 'metallic', 'roughness', 'emission', 'emissiveColor', 'opacity', 'alphaMode', 'alphaCutoff', 'doubleSided', 'depthTest', 'pattern', 'map', 'subsurface', 'snippet', 'waterPreset', 'absorption', 'turbidity', 'foamEdge', 'foamWidth', 'foamColor', 'foamVeins', 'contactFoam', 'caustics', 'ripples', 'waterRamp', 'aov', 'wear', 'retro', 'emissionMask', 'toonColors', ...MATERIAL_LAYER_FIELDS];
 const PATTERN_TEXTURE_FIELDS = ['map', 'normalMap', 'metallicRoughnessMap', 'emissiveMap', 'layerMaps', 'transmissionMap', 'aovMap', 'emissionFresnel', 'boxMapScale', 'boxMapAxis'];
 const CAMERA_FIELDS = [...Object.keys(CAMERA_DEFAULTS), ...CAMERA_LENS_FIELDS];
@@ -806,6 +806,10 @@ function fragmentEstimate(value, scope) {
   return geometryEstimate(source, { definitions: scope.definitions, chain: [] }) + 16 * cells;
 }
 
+function hasFaceImages(nodes) {
+  return Array.isArray(nodes) && nodes.some(node => node?.faceImages !== undefined);
+}
+
 function hasInstancedNodes(nodes) {
   return !Array.isArray(nodes) || nodes.some(node => node && typeof node === 'object' && Object.hasOwn(node, 'instances'));
 }
@@ -1177,6 +1181,7 @@ function normalizeRecipe(input, limits, { alreadyCopied = false } = {}) {
   // Placed assets generate their own geometries, materials and part nodes each time; an exported or checkpointed recipe may still carry them.
   recipe.geometries ??= [];
   recipe.materials ??= [];
+  if (hasFaceImages(recipe.nodes)) recipe.nodes = agentSceneModule('assets').expandFaceImages(recipe, limits);
   if (Array.isArray(recipe.geometries)) recipe.geometries = recipe.geometries.filter(geometry => geometry?.type !== 'asset');
   if (Array.isArray(recipe.materials)) recipe.materials = recipe.materials.filter(material => !material?.assetSource);
   if (Array.isArray(recipe.nodes)) recipe.nodes = recipe.nodes.filter(node => !node?.assetPart);
@@ -1441,6 +1446,11 @@ function cameraPoseFrom(pose) {
 // Physics holds its last pose after its duration, so a seek past the end is the resting state.
 function simulatedPose(stagedState, time) {
   return time === null ? null : stagedState.physicsSampler?.sample(Math.min(time, stagedState.physicsSampler.duration));
+}
+
+// A light with a parent loads the light-parenting module with the recipe, so a scene without one never reads it.
+function hasParentedLights(environment) {
+  return ['pointLights', 'spotLights', 'areaLights'].some(field => environment[field]?.some(light => light.parent !== undefined));
 }
 
 /** The local transform of a node at a sampled motion and simulated pose: a body, then a track, then the rest value. */
@@ -2157,6 +2167,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const sameParts = state && state.sourceRestParts.length === nextParts.length &&
       state.sourceRestParts.every((part, index) => part === nextParts[index]);
     const sourceRestParts = sameParts ? state.sourceRestParts : Object.freeze(nextParts);
+    if (hasParentedLights(recipe.environment)) agentSceneModule('lightParenting').requireKnownLightParents(recipe.environment, recipe.nodes);
     const lightBakeResult = stageLightBake(recipe, sourceRestParts, graph, stagedMaterialSnapshots);
     const { reflected, restParts } = stageRestParts(recipe, sourceRestParts, lightBakeResult, graph);
     // Unchanged rest parts start from the parts the last pose drew (#2730): a pose that samples the same sea, cloth or
@@ -2257,16 +2268,18 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     }
     const worldMatrices = new Map(sourceRestParts.map(part => [part.name, new Float32Array(graph.getNode(part.name).worldMatrix)]));
     const generatedGeometryGenerators = agentSceneModule('bake').bakeGenerators(recipe);
-    const key = agentSceneModule('bake').lightBakeKey(recipe, generatedGeometryGenerators, recipe.environment, worldMatrices);
+    const bakeEnvironment = hasParentedLights(recipe.environment) ? agentSceneModule('lightParenting').bakeEnvironmentOf(recipe.environment, recipe, sourceRestParts, worldMatrices, graph) : recipe.environment;
+    const bakeRecipe = bakeEnvironment === recipe.environment ? recipe : { ...recipe, environment: bakeEnvironment };
+    const key = agentSceneModule('bake').lightBakeKey(recipe, generatedGeometryGenerators, bakeEnvironment, worldMatrices);
     if (lightBake?.key === key && lightBake.sourceRestParts === sourceRestParts) {
       lightBake.currentKey = key;
       return { ...lightBake, reused: true };
     }
     if (bakeDeferral && state && !recipe.bake.rebake) {
-      return agentSceneModule('bakeDeferred').stageSettling(settling, bakeDeferral, { key, recipe, sourceRestParts, worldMatrices, generatedGeometryGenerators, stagedMaterialSnapshots, lightBake, state });
+      return agentSceneModule('bakeDeferred').stageSettling(settling, bakeDeferral, { key, recipe: bakeRecipe, sourceRestParts, worldMatrices, generatedGeometryGenerators, stagedMaterialSnapshots, lightBake, state });
     }
     // The first build of a scene still fails loudly. A later edit stays applied: the old bake no longer fits the edited parts, so it is dropped.
-    const { baked, refusal } = agentSceneModule('bake').withStagedMaterials(stagedMaterialSnapshots, () => agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators));
+    const { baked, refusal } = agentSceneModule('bake').withStagedMaterials(stagedMaterialSnapshots, () => agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, bakeEnvironment, recipe.bake, generatedGeometryGenerators));
     if (refusal) {
       lightBake = null;
       skippedBake = refusal;
@@ -2534,7 +2547,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const involvedNodes = recipe.nodes.filter(node => emitterMeshes.has(node.id) || recipe.particles.systems.some(system => system.node === node.id));
     const oceanTracks = (recipe.motion?.tracks ?? []).filter(track => track.kind === 'geometry' && track.property === 'oceanTime');
     // An emitter that follows a node reads its animated transform, so the motion, the physics and the node tree are part of the key.
-    const followsNode = recipe.particles.systems.some(system => system.emitter?.follow);
+    const followsNode = recipe.particles.systems.some(system => system.emitter?.follow || system.type === 'beam' || system.type === 'trail');
     const followedPose = followsNode ? [recipe.motion, recipe.physics, recipe.armatures, recipe.nodes.map(node => [node.id, node.parent, node.translation, node.rotation, node.scale])] : null;
     const key = JSON.stringify([recipe.particles, involvedNodes, involvedNodes.map(node => geometryRecords.get(node.geometry).signature), oceanTracks, followedPose]);
     if (particleBake?.key !== key) {
@@ -2703,7 +2716,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const environment = structuredClone(agentEnvironmentKey(state.recipe.environment));
       // The time a grid sequence plays at (#1045): the rasterizer and the path tracer both pick the frame from it.
       if (environment.localVolumes?.some(volume => volume.frames)) environment.volumeTime = state.motionTime;
-      return state.movedLook ?agentSceneModule('motion').motionEnvironment(environment, state.movedLook) : environment;
+      const moved = state.movedLook ? agentSceneModule('motion').motionEnvironment(environment, state.movedLook) : environment;
+      return hasParentedLights(moved) ? agentSceneModule('lightParenting').environmentAtPose(state, moved) : moved;
     },
     /** World bounds ({ name, min, max }) of the visible mesh parts in the current pose; parts with no known bounds are left out. */
     worldBounds() {
@@ -2798,7 +2812,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
           knownKeys(operation, ['type', lookField], 'operation');
           const patch = operation[lookField];
           // Spot and area lights, cascades and sun links are absent from a recipe until it sets them.
-          const optionalFields = lookField === 'environment' ? ['ground', 'spotLights', 'areaLights', 'shadowCascades', 'localVolumes', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'hdri', 'keyFromHdri', 'sky', 'wetness', 'puddles'] : lookField === 'effects' ? postStepSupport.fields : lookField === 'shadow' ? ['hard'] : [];
+          const optionalFields = lookField === 'environment' ? ['ground', 'spotLights', 'areaLights', 'shadowCascades', 'localVolumes', 'keyAffects', 'objectReflections', 'floorSkyTrace', 'sunBounce', 'specularAntiAliasing', 'sunAngularRadius', 'lines', 'resolveCoplanar', 'viewTransform', 'look', 'hdri', 'keyFromHdri', 'sky', 'wetness', 'puddles', 'ambientColor', 'environmentDiffuseScale', 'skybox'] : lookField === 'effects' ? postStepSupport.fields : lookField === 'shadow' ? ['hard'] : [];
           knownKeys(patch, [...Object.keys(candidate[lookField]), ...optionalFields], lookField);
           requireChange(Object.keys(patch).length > 0, operation, [...Object.keys(candidate[lookField]), ...optionalFields]);
           const { kept: keptPatch, cleared: clearedFields } = splitClearedLookPatch(lookField, patch);
