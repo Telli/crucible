@@ -267,9 +267,9 @@ Ambient occlusion reads the depth texture, so it needs the HDR depth target that
 | `grain` | `0` | `0` to `0.1` |
 | `ambientOcclusion` | `0` | `0` to `1`. Screen-space contact darkening, off by default; any value above `0` runs the pass |
 | `ambientOcclusionRadius` | `0.5` | `0.01` to `100` world units |
-| `bloom.strength` | `0.12` | `0` to `2` |
+| `bloom.strength` | `0.12` | `0` to `8` |
 | `bloom.threshold` | `1` | `0` to `10` |
-| `bloom.radius` | `1` | `0.1` to `4` |
+| `bloom.radius` | `1` | `0.1` to `16` |
 | `depthOfField.blur` | `0` | `0` to `1`. Lens blur from depth, off by default; the widest circle is 5 percent of the image height |
 | `depthOfField.focusDistance` | `5` | `0.01` to `100000` metres from the camera that stay sharp |
 | `motionBlur.shutter` | `0` | `0` to `0.5` seconds of camera motion to smear |

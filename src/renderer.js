@@ -12,7 +12,7 @@ import { planRenderSize, estimateTextureBytes, estimateFrameBytes, memoryBudgetE
 import { applyProjection } from './camera.js';
 import { boundsGrownByParts, fittedNearPlane, sceneBoundsOfParts } from './near-plane-fit.js';
 import { installReversedDepth, prepareCameraRelativeProgram } from './reversed-depth.js';
-import { isBloomActive, resolveEffects } from './effects.js';
+import { bloomBlurPlan, isBloomActive, resolveEffects } from './effects.js';
 import { frameDiagnostics } from './frame-diagnostics.js';
 import { depthLayerOf, flushOrderOf, RANKS_PER_LAYER } from './depth-layer.js';
 import { createLightingState, updateLightingState } from './lighting.js';
@@ -2848,13 +2848,18 @@ export class CrucibleRenderer {
     context.viewport(0, 0, this.bloomWidth, this.bloomHeight);
     context.uniform1i(this.bloomUniforms.sourceTexture, 0);
     context.uniform1f(this.bloomUniforms.threshold, bloom.threshold);
-    for (let pass = 0; pass < 2; pass++) {
-      context.bindFramebuffer(context.FRAMEBUFFER, this.bloomTargets[pass].framebuffer);
-      context.activeTexture(context.TEXTURE0);
-      context.bindTexture(context.TEXTURE_2D, pass === 0 ? sourceTexture : this.bloomTargets[0].texture);
-      context.uniform1f(this.bloomUniforms.extract, pass === 0 ? 1 : 0);
-      context.uniform2f(this.bloomUniforms.texelDirection, pass === 0 ? bloom.radius / this.bloomWidth : 0, pass === 1 ? bloom.radius / this.bloomHeight : 0);
-      context.drawArrays(context.TRIANGLES, 0, 3);
+    // The first pair reads the frame and extracts the bright part; each later pair blurs the last result again. The glow always ends in target 1.
+    const { pairs, step } = bloomBlurPlan(bloom.radius);
+    for (let pair = 0; pair < pairs; pair++) {
+      for (let pass = 0; pass < 2; pass++) {
+        const first = pair === 0 && pass === 0;
+        context.bindFramebuffer(context.FRAMEBUFFER, this.bloomTargets[pass].framebuffer);
+        context.activeTexture(context.TEXTURE0);
+        context.bindTexture(context.TEXTURE_2D, first ? sourceTexture : this.bloomTargets[1 - pass].texture);
+        context.uniform1f(this.bloomUniforms.extract, first ? 1 : 0);
+        context.uniform2f(this.bloomUniforms.texelDirection, pass === 0 ? step / this.bloomWidth : 0, pass === 1 ? step / this.bloomHeight : 0);
+        context.drawArrays(context.TRIANGLES, 0, 3);
+      }
     }
   }
 

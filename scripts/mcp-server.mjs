@@ -405,9 +405,9 @@ const effects = z.strictObject({
   ambientOcclusion: unit.optional().describe('Screen-space contact darkening, 0 off to 1 full. Default 0 (off) when unset; above 0 turns the pass on.'),
   ambientOcclusionRadius: bounded(0.01, 100).optional().describe('World-space reach of the occlusion; default 0.5.'),
   bloom: z.strictObject({
-    strength: bounded(0, 2).optional(),
+    strength: bounded(0, 8).optional(),
     threshold: bounded(0, 10).optional(),
-    radius: bounded(0.1, 4).optional(),
+    radius: bounded(0.1, 16).optional(),
   }).optional(),
   depthOfField: z.strictObject({ blur: unit.optional(), focusDistance: bounded(0.01, 100000).optional() }).optional().describe('Lens blur: blur 0 to 1, focusDistance metres.'),
   motionBlur: z.strictObject({ shutter: bounded(0, 0.5).optional(), objects: bounded(0, 1).optional() }).optional().describe('Motion smear, shutter in seconds. objects 0 to 1 also smears each moving part along its own motion (off at 0).'),
