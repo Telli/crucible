@@ -88,17 +88,29 @@ export function findJumps(values, { levels = DEFAULT_JUMP_LEVELS, medianFactor =
     if (step > levels) jumps.push(entry);
     else if (step > medianFactor * medianStep && step > MINIMUM_NOTE_LEVELS) notes.push(entry);
   }
-  return { jumps, notes, medianStep, dropouts: pairDropouts(jumps) };
+  return { jumps, notes, medianStep, dropouts: pairDropouts(jumps, levels) };
 }
 
-/** A jump one way followed within a few frames by a jump back the other way: the frames between are a dropout or a flash. */
-function pairDropouts(jumps, longestDropoutFrames = 4) {
+/**
+ * A jump one way followed within a few frames by a jump back the other way to about the level before it: the frames between are a
+ * dropout or a flash. Each jump is used once, so an exit is never also the entry of the next dropout.
+ */
+function pairDropouts(jumps, levels, longestDropoutFrames = 4) {
   const dropouts = [];
-  for (let index = 0; index < jumps.length - 1; index += 1) {
+  let index = 0;
+  while (index < jumps.length) {
     const into = jumps[index];
     const out = jumps[index + 1];
-    const oppositeDirection = Math.sign(into.to - into.from) === -Math.sign(out.to - out.from);
-    if (oppositeDirection && out.frame - into.frame <= longestDropoutFrames) dropouts.push({ firstFrame: into.frame, lastFrame: out.frame - 1 });
+    const isReturn = out !== undefined
+      && Math.sign(into.to - into.from) === -Math.sign(out.to - out.from)
+      && out.frame - into.frame <= longestDropoutFrames
+      && Math.abs(out.to - into.from) <= levels;
+    if (isReturn) {
+      dropouts.push({ firstFrame: into.frame, lastFrame: out.frame - 1 });
+      index += 2;
+    } else {
+      index += 1;
+    }
   }
   return dropouts;
 }

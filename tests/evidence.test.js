@@ -88,6 +88,23 @@ test('a dropout of 2 frames is one line labelled with its range, and a 1-frame d
   assert.doesNotMatch(one.detail, /luma frames/);
 });
 
+test('two separate one-frame dips are two dropouts, and an exit is never reused as the next entry', () => {
+  const asMetrics = lumas => lumas.map(luma => metricsOf(luma, 40));
+  const apart = checkContinuity(asMetrics([120, 120, 30, 120, 120, 30, 120, 120]));
+  assert.deepEqual(apart.dropouts, [{ firstFrame: 2, lastFrame: 2 }, { firstFrame: 5, lastFrame: 5 }]);
+  assert.match(apart.detail, /^luma frame 2: 120\.0 to 30\.0 \(90\.0 levels\); luma frame 5: 120\.0 to 30\.0 \(90\.0 levels\)$/);
+  const alternating = checkContinuity(asMetrics([120, 30, 120, 30, 120]));
+  assert.deepEqual(alternating.dropouts, [{ firstFrame: 1, lastFrame: 1 }, { firstFrame: 3, lastFrame: 3 }]);
+  assert.equal(alternating.detail.match(/luma frame/g).length, 2);
+});
+
+test('a dropout names its first, last and 3-frame range', () => {
+  const dropoutAt = dropped => checkContinuity(Array.from({ length: 12 }, (_, index) => metricsOf(dropped.includes(index) ? 30 : 120, 40))).detail;
+  assert.match(dropoutAt([1]), /^luma frame 1:/);
+  assert.match(dropoutAt([2, 3, 4]), /^luma frames 2-4:/);
+  assert.match(dropoutAt([10, 11]), /^luma frame 10:/);
+});
+
 test('bad options throw before the --out folder is created', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'evidence-validate-'));
   try {
