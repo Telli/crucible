@@ -186,6 +186,21 @@ export function maximumMemoryMiB(totalMemoryBytes) {
 export function memoryRangeError(memory, maximumMiB) {
   return new RangeError(`memory must be an integer from 32 to ${maximumMiB} MiB on this machine (half of its RAM, at most ${MEMORY_CEILING_MIB}), got ${memory}.`);
 }
+/**
+ * Rewrites the renderer's "Fix: pass { memoryBudgetMiB: N }." hint for a tool caller. No MCP tool takes memoryBudgetMiB: the budget
+ * is the server's --memory, so the hint names what the agent can do in its call (smaller bakes, fewer textures) and what the
+ * operator can do (restart with --memory N, or that N is over what this machine accepts) (#3205). Other messages pass through.
+ */
+export function agentMemoryBudgetMessage(message, { memory, maximumMemory }) {
+  const hint = /Fix: pass \{ memoryBudgetMiB: (\d+) \}\./.exec(message);
+  if (!hint) return message;
+  const requiredMiB = Number(hint[1]);
+  const ownCall = 'set the resolution of baked textures to 512 (1024 costs four times the bytes), use fewer textures, or remove parts';
+  const operator = requiredMiB <= maximumMemory
+    ? `ask the server operator to restart it with --memory ${requiredMiB} or more (now ${memory}, at most ${maximumMemory} on this machine)`
+    : `--memory cannot reach ${requiredMiB} on this machine (at most ${maximumMemory})`;
+  return message.replace(hint[0], `Fix: no tool call takes a memory budget; ${ownCall}, or ${operator}.`);
+}
 export const AUDIO_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(wav|mp3|ogg|flac)$/;
 
 /** The error for an audio file name AUDIO_FILE_PATTERN refuses: names the value received, the rule and the fix. */
