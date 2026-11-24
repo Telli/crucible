@@ -394,7 +394,7 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-agent-name {
   margin: 22px 0 0 -8px;
-  padding: 4px 11px;
+  padding: 4px 12px;
   border-radius: 5px 11px 11px 11px;
   color: #17161a;
   font: 700 12.5px/1.5 var(--studio-font);
