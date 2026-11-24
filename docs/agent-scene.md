@@ -47,6 +47,20 @@ The renderer owns GPU allocation and disposal.
 The authoring session does not allocate GPU resources.
 The normal frame loop can render retained parts without calling inspection or exporting the recipe.
 
+### Lights on parts
+
+A point, spot or area light may name a `parent`: a node ID, or the label of a placed asset part (a glTF mesh node name). Its `position` and `direction` are then in that node's space (`position` defaults to the node's origin), and the light follows the node's world transform on every frame, through motion tracks, physics and glTF clips. `scene.environment` returns the lights in world space at the pose last sampled, so the rasterizer, both path tracers and the light bake read the same list. A bake traces the rest pose.
+
+```json
+{ "environment": {
+  "pointLights": [ { "parent": "lantern", "position": [0, 0.3, 0], "intensity": 6 } ],
+  "spotLights": [ { "parent": "lantern", "direction": [0, -1, 0], "angle": 0.6 } ],
+  "areaLights": [ { "parent": "screen", "face": "+z", "intensity": 5 } ]
+} }
+```
+
+An area light with `face` (`+x`, `-x`, `+y`, `-y`, `+z` or `-z`) is a surface light: the rectangle of that face of the parent's bounding box, sized by the part's scale and shining outward, `faceOffset` metres (0.002) in front of it so it does not light its own face from inside. Leave out `position`, `direction`, `up`, `width` and `height`. A parent that matches no node, or the label of several parts, is rejected with the IDs to choose from. Light counts are the same as for lights without a parent.
+
 ### On-demand code
 
 Mesh editing, `lathe`, `extrude`, `tube` and `curve` geometry, `text` geometry with its font, `terrain` and `floorPlan` geometry, material `pattern`, `motion` and node `relations` load on demand, so a recipe of
@@ -479,6 +493,20 @@ translations, whatever the order of the nodes. A relation that cannot be satisfi
 whole edit and names the relation. `relations: []` in `set-node` removes them and keeps the part where it is. The
 exported recipe holds both the relations and the solved translations. Motion and physics move nodes after the solve and
 know nothing of relations. The code loads on demand (`relations`, see On-demand code). The MCP schema only says `relations` is a list; the kinds and fields are in `scene_capabilities` under `relations`.
+
+### Text panels and billboards
+
+Signs, labels and name tags are text on a texture. `material.text` draws it on the CPU from the DejaVu Sans outlines that 3D text already bundles, so the same input gives the same bytes on every machine and in every backend (no canvas, no system font). Fields: `content` (1 to 512 characters, up to 32 lines, `\n` breaks a line, a character the font lacks draws as `?`), `width` and `height` (the metres the panel covers), `font` (`sans`, the only family bundled), `fontSize` (metres), `color`, `background` (leave it out for a transparent panel, which blends), `align`, `verticalAlign`, `wrap` (breaks at the width, and inside a word wider than a line), `padding` and `resolution` (pixels per metre, 256 by default). The texture is at most 1024 pixels on a side. The material takes the `surface` or `unlit` tag and no `pattern`, `map` or `colorMap`.
+
+A sign on one face of a part is a `plane` node, a child of the part, sized by its scale and placed a millimetre off the face with `decal: true`. A name tag is the same node with `billboard`: `size` `[width, height]` in metres or `screenHeight` (the share of the frame height, at any distance), and `offset` in world metres from the node. Leave `offset` out and the tag stands above the top of the world bounding box of its parent node and everything below it, with a gap of 20 percent of the tag's own height, so it never covers a head or a hat; an explicit `offset`, even `[0, 0, 0]`, wins. A billboard node casts no shadow unless it sets `castShadow: true`, so a tag leaves no stray line on the ground. A part in front hides the tag, like a Roblox `BillboardGui`; `alwaysOnTop: true` draws it through parts and needs a material with `depthTest: false` and `alphaMode: "blend"`, a pair that is checked. Its sheet faces the camera at every sampled time, follows the node under a moving parent, and ignores the node's rotation and scale. It faces the recipe camera or the camera track, perspective or orthographic. Neither goes into a `crucible pack`, which refuses a recipe that uses them. The fields are in `scene_capabilities` under `textPanel` and `billboard`; the code loads on demand (`textPanel`, `textBillboard`).
+
+```json
+{ "materials": [{ "id": "sign", "tag": "unlit", "text": { "content": "OPEN\nCoffee 24h", "width": 2, "height": 0.8, "color": [1, 0.9, 0.6], "background": [0.1, 0.05, 0.02] } }],
+  "nodes": [
+    { "id": "shop", "geometry": "box", "material": "wall", "scale": [4, 3, 0.3] },
+    { "id": "shop-sign", "parent": "shop", "geometry": "plane", "material": "sign", "translation": [0, 0.2, 0.502], "scale": [0.5, 0.267, 1], "decal": true },
+    { "id": "tag", "parent": "walker", "geometry": "plane", "material": "name", "billboard": { "screenHeight": 0.03 } } ] }
+```
 
 ## Transactions and ownership
 

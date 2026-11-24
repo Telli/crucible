@@ -20,6 +20,8 @@ const MODULE_LOADERS = {
   vehicleDamage: () => import('./vehicle-damage.js'),
   cloth: () => import('./agent-cloth.js'),
   particles: () => import('./agent-particles.js'),
+  textPanel: () => import('./text-panel.js'),
+  textBillboard: () => import('./text-billboard.js'),
   bake: () => import('./agent-bake.js'),
   bakeDeferred: () => import('./agent-bake-deferred.js'),
   reflections: () => import('./agent-reflections.js'),
@@ -42,6 +44,7 @@ const MODULE_LOADERS = {
   floorPlan: () => import('./agent-floor-plan.js'),
   navigation: () => import('./agent-navigation.js'),
   lightLinking: () => import('./light-linking.js'),
+  lightParenting: () => import('./light-parenting.js'),
   cascades: () => import('./light-modules.js'),
   assets: () => import('./agent-scene-assets.js'),
   vegetation: () => import('./agent-vegetation.js'),
@@ -101,6 +104,8 @@ const MODULE_MARKERS = {
   vehicleDamage: ['"type":"dented"'],
   cloth: ['"cloth":{'],
   particles: ['"particles":{', '"add-explosion"'],
+  textPanel: ['"text":{'],
+  textBillboard: ['"billboard":{'],
   bake: ['"bake":{'],
   bakeDeferred: ['"bake":{'],
   // A metallic value of 0.5 or more may make a part reflective; the module skips a scene that has no smooth one.
@@ -129,6 +134,8 @@ const MODULE_MARKERS = {
   // No recipe text asks for it, only the path option of scene_inspect does, so a host loads it with loadAllAgentSceneModules.
   navigation: [],
   lightLinking: ['"affects"', '"keyAffects"'],
+  // A light with a parent or a face, in a recipe or in a later set-environment (#3239).
+  lightParenting: [/"(?:pointLights|spotLights|areaLights)":\[(?:[^\[\]]|\[[^\]]*\])*?"(?:parent|face)"/],
   // The cascade module also loads light-shapes (soft area shadows, IES profiles), so these markers bring both.
   cascades: [/"(?:shadowCascades|sunAngularRadius|ies|hard)"|"areaLights":\[\{/],
   assets: ['"asset":{', '"sequence":{', '"faceImages":', /"(?:colorMap|normalMap|roughnessMap|metallicMap|occlusionMap|heightMap|textureSet)":"/],
