@@ -320,6 +320,7 @@ const TINT_FRAGMENT_DECLARATIONS = `in vec3 tintColor;
 in float tintOpacity;
 uniform float tintPass;
 uniform float tintTransmission;
+uniform vec3 tintFaceTransmittance;
 uniform float tintMapSize;
 uniform float tintBias;
 uniform highp sampler2DShadow opaqueShadow;
@@ -335,7 +336,7 @@ const TINT_FRAGMENT_BRANCH = `void main() {
     float coverage = tintOpacity * baseSample.a;
     if (coverage < 0.02) discard;
     if (texture(opaqueShadow, vec3(gl_FragCoord.xy / tintMapSize, gl_FragCoord.z - tintBias)) < 0.5) discard;
-    vec3 passing = tintTransmission * tintColor * baseSample.rgb;
+    vec3 passing = tintTransmission * tintFaceTransmittance * tintColor * baseSample.rgb;
     tintOutput = vec4(mix(vec3(1.0), passing, coverage), gl_FragCoord.z);
     return;
   }
