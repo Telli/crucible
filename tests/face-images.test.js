@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentScene, loadAllAgentSceneModules } from '../src/agent-scene.js';
 import { FACE_NAMES } from '../src/agent-face-images.js';
+import { textureDescriptorInfo } from '../src/renderer.js';
 
 await loadAllAgentSceneModules();
 
@@ -143,4 +144,12 @@ test('faceImages errors say what to pass', () => {
     geometries: [{ id: 'ball', type: 'sphere' }], materials: [],
     nodes: [{ id: 'ball', geometry: 'ball', material: 'default', faceImages: [{ face: '+z', colorMap: IMAGE }] }],
   }, {}, { sequenceFrames: pool }), /geometry is a box/);
+});
+
+test('a tiled face image is mipmapped by default, so a wall seen at a grazing angle does not alias', () => {
+  const part = decalPart(sceneWith([{ face: '+z', colorMap: IMAGE, tile: [0.5, 0.5] }]));
+  const info = textureDescriptorInfo(part.material.map);
+  assert.equal(info.mipmaps, true, 'a mip chain is built');
+  assert.equal(info.minFilter, 9987, 'with trilinear minification; the renderer adds anisotropic filtering to such a texture');
+  assert.equal(info.wrapS, 10497, 'and the tiles repeat');
 });
