@@ -1223,6 +1223,8 @@ export const STUDIO_CSS = `
   z-index: 7;
 }
 .crucible-studio-status:empty { display: none; }
+/* The toast lets clicks through, except on an error message, which a person may want to copy. */
+.crucible-studio-status .crucible-studio-selectable { pointer-events: auto; }
 /* The box stays mounted and the script sets data-state: in while a message shows, out while it leaves. The individual
    translate property leaves the centring transform alone. */
 @supports (transition-behavior: allow-discrete) {

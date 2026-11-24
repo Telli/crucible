@@ -80,9 +80,21 @@ test('the dialogs and the page pass the selection audit, and a seeded selectable
   assert.ok(summarize(seeded).findings.some(finding => finding.kind === KINDS.selectableChrome), 'the seeded rule is reported');
 });
 
+test('the notices pass the selection audit, and only an error message in them is selectable', { timeout: 240000 }, async context => {
+  const screens = await inChrome(context, () => runAudit({ only: 'notice' }));
+  if (!screens) return;
+  assert.equal(screens.length, 10, 'error toast, toast, paused notice, paused notice with Reload and draft notice, in two themes');
+  assert.deepEqual(summarize(screens).findings.map(finding => finding.message), []);
+  const selectableCount = name => screens.filter(screen => screen.name.startsWith(name)).map(screen => screen.records.filter(record => record.selectable).length);
+  assert.deepEqual(selectableCount('error toast'), [1, 1], 'the error message is on the allowed list');
+  assert.deepEqual(selectableCount('toast'), [0, 0], 'an ordinary toast is not');
+  assert.deepEqual(selectableCount('paused notice'), [0, 0, 0, 0]);
+  assert.deepEqual(selectableCount('draft notice'), [0, 0]);
+});
+
 test('a drag, a double click and select all select nothing in the chrome, and text fields and opted-in blocks still select', { timeout: 240000 }, async context => {
   const checks = await inChrome(context, () => runSelectionBehavior());
   if (!checks) return;
   assert.deepEqual(checks.filter(check => !check.passed), []);
-  assert.ok(checks.length >= 14);
+  assert.ok(checks.length >= 15);
 });

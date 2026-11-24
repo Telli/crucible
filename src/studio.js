@@ -40,7 +40,7 @@ import { clearStudioDraft, createDraftNotice, DRAFT_SAVE_DELAY_MILLISECONDS, dra
 import { createBakeMark } from './studio-bake-mark.js';
 import { isModifierKey, longestTransitionMilliseconds, popoverOpeningStyle } from './studio-popover-motion.js';
 import { createPostPassNotice, createPostPassPlanner, installPostPasses, sceneHasPostPasses } from './studio-post-passes.js';
-import { CONTEXT_LOST_MESSAGE, createPausedPictureNotice, describeFrameFailure, watchContextLoss } from './studio-context-loss.js';
+import { CONTEXT_LOST_MESSAGE, createPausedPictureNotice, describeFrameFailure, frameFailureReason, watchContextLoss } from './studio-context-loss.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
 import {
   STUDIO_LENS_PRESETS,
@@ -1489,7 +1489,7 @@ export function createStudio(container, {
         const created = controller.addPrimitive(primitiveType);
         announce(`Added ${created.label}`);
       } catch (error) {
-        announce(error.message);
+        announce(error);
       }
     });
     return addPrimitiveButton;
@@ -1512,7 +1512,7 @@ export function createStudio(container, {
       selectInspectorTab('look');
       announce(`${countLabel}: ${count}`);
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   };
   addPointLightButton.addEventListener('click', () => addLightFromMenu('point', 'Point lights'));
@@ -1839,14 +1839,21 @@ export function createStudio(container, {
     }
   });
 
+  // A message is a sentence the product wrote. An error is passed whole, and its own text is marked selectable so a person can copy it.
   function announce(message, durationMilliseconds = STATUS_DEFAULT_MILLISECONDS) {
     clearTimeout(statusTimer);
     clearTimeout(statusExitTimer);
-    if (!message) {
+    const isError = message instanceof Error;
+    const text = isError ? message.message : message;
+    if (!text) {
       clearStatus();
       return;
     }
-    statusRegion.textContent = message;
+    if (isError) {
+      statusRegion.replaceChildren(createElement(documentReference, 'span', { className: 'crucible-studio-selectable', textContent: text }));
+    } else {
+      statusRegion.textContent = text;
+    }
     statusRegion.dataset.state = 'in';
     statusTimer = setTimeout(hideStatus, durationMilliseconds);
   }
@@ -1913,7 +1920,7 @@ export function createStudio(container, {
       const cloned = controller.duplicateSelected();
       announce(`Duplicated to ${cloned.label}`);
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   });
   deleteButton.addEventListener('click', () => {
@@ -1921,7 +1928,7 @@ export function createStudio(container, {
     try {
       deleteSelection();
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   });
   frameButton.addEventListener('click', () => {
@@ -2043,7 +2050,7 @@ export function createStudio(container, {
     try {
       controller.updateNodeTransform(controller.selectedNodeId, { parent: nodeParentSelect.value || null });
     } catch (error) {
-      announce(error.message);
+      announce(error);
       syncUi();
     }
   });
@@ -2090,7 +2097,7 @@ export function createStudio(container, {
       treeInspector = treeTools.createTreeInspector({ documentReference, createElement, createSliderField, controller, announce });
       treeSection.append(treeInspector.element);
       treeInspector.sync(controller.exportRecipe().nodes.find(node => node.id === controller.selectedNodeId));
-    }).catch(error => announce(error.message)).finally(() => {
+    }).catch(error => announce(error)).finally(() => {
       treeInspectorLoading = false;
     });
   }
@@ -2115,7 +2122,7 @@ export function createStudio(container, {
       try {
         controller.assignNodeMaterial(controller.selectedNodeId, materialSelect.value);
       } catch (error) {
-        announce(error.message);
+        announce(error);
       }
     }
   });
@@ -2264,7 +2271,7 @@ export function createStudio(container, {
       bookmarkNameInput.value = '';
       announce(`Saved view ${name}`);
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   });
   const cameraPanelBody = createElement(
@@ -2394,7 +2401,7 @@ export function createStudio(container, {
       controller.insertNodeKeyframe();
       announce(`Keyframed at ${controller.motionTime.toFixed(2)} s`);
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   });
   autoKeyButton.addEventListener('click', () => controller.setAutoKey(!controller.autoKey));
@@ -2457,7 +2464,7 @@ export function createStudio(container, {
       recipeDialog.close('apply');
       announce('Recipe applied');
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   });
 
@@ -2858,7 +2865,7 @@ export function createStudio(container, {
         discardDraft();
         announce(`Opened ${picked.fileName}`);
       } catch (error) {
-        announce(error.message);
+        announce(error);
       }
       return;
     }
@@ -2900,7 +2907,7 @@ export function createStudio(container, {
       discardDraft();
       announce(`Loaded ${file.name}`);
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   });
 
@@ -2916,7 +2923,7 @@ export function createStudio(container, {
       announce(message, importMessageDuration(message, STATUS_DEFAULT_MILLISECONDS));
     } catch (error) {
       const { importMessageDuration } = await import('./studio-import.js');
-      announce(error.message, importMessageDuration(error.message, STATUS_DEFAULT_MILLISECONDS));
+      announce(error, importMessageDuration(error.message, STATUS_DEFAULT_MILLISECONDS));
     }
   }
 
@@ -2954,7 +2961,7 @@ export function createStudio(container, {
       triggerBlobDownload(glbBytes, `${baseName}.glb`, 'model/gltf-binary');
       announce('Exported GLB mesh');
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   });
 
@@ -2973,7 +2980,7 @@ export function createStudio(container, {
       triggerBlobDownload(payload.packBytes, `${payload.title}.pack`, 'application/octet-stream');
       announce('Downloaded scene.pack');
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   });
 
@@ -3285,7 +3292,7 @@ export function createStudio(container, {
         drawWhenLinked();
         return true;
       }
-      pausedNotice.show(describeFrameFailure(error));
+      pausedNotice.show(describeFrameFailure(error), frameFailureReason(error));
       return false;
     } finally {
       deferringLinks = false;
@@ -4137,7 +4144,7 @@ export function createStudio(container, {
     } catch (error) {
       // Edit mode refuses a move it could not write down before the pointer moves, and says why.
       if (!meshEditor?.active) throw error;
-      announce(error.message);
+      announce(error);
       return;
     }
     pointerState = { mode: 'gizmo', pointerId: event.pointerId };
@@ -4242,7 +4249,7 @@ export function createStudio(container, {
       controller.moveSceneObject(key, hit.map((component, axis) => component + grabOffset[axis]));
     } catch (error) {
       pointerState.planeNormal = null;
-      announce(error.message);
+      announce(error);
     }
   }
 
@@ -4318,7 +4325,7 @@ export function createStudio(container, {
       await loadExternalTextFile(await file.text(), { filePath: file.path || null, fileName: file.name });
       announce(`Loaded ${file.name}`);
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   });
 
@@ -4372,7 +4379,7 @@ export function createStudio(container, {
       const pasted = controller.pasteCopy();
       announce(`Pasted ${pasted.label}`);
     } catch (error) {
-      announce(error.message);
+      announce(error);
     }
   }
 
@@ -4402,7 +4409,7 @@ export function createStudio(container, {
     const pressedOnNodeId = controller.selectedNodeId;
     const editor = await loadMeshEditor();
     const converted = editor.conversionOf(pressedOnNodeId);
-    if (converted) await loadAgentSceneModules({ geometries: [converted] }).catch(error => announce(error.message));
+    if (converted) await loadAgentSceneModules({ geometries: [converted] }).catch(error => announce(error));
     if (!meshEnterPending) return;
     meshEnterPending = false;
     // The generator code that was loaded belongs to the object Tab was pressed on: another selection by now gets nothing.
@@ -4593,15 +4600,23 @@ export function createStudio(container, {
     if (!isModifierKey(event.key)) root.dataset.input = 'keyboard';
     onWindowKeyDown(event);
   };
-  const onPointerInput = () => {
+  const onPointerInput = event => {
     root.dataset.input = 'pointer';
+    pointerStartedInStudio = (event.composedPath?.() ?? []).includes(root);
   };
   // Select all is Studio's own, never the browser's: outside a text field it would highlight the page, in any mode and over any dialog.
+  // Studio can sit inside someone else's page, so the host page keeps select all unless the event comes from Studio: its root is on the
+  // event's path (composedPath also sees through a shadow root), or focus fell to the body after the last click landed in Studio.
+  // A text field or an opted-in block anywhere on the path keeps it for its own text.
+  let pointerStartedInStudio = false;
   const blockPageSelectAll = event => {
-    const isSelectAll = event.key?.toLowerCase() === 'a' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
+    const isLetterA = event.key?.toLowerCase() === 'a' || event.code === 'KeyA';
+    const isSelectAll = isLetterA && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
     if (!isSelectAll || !root.isConnected) return;
-    const target = event.target;
-    if (isEditableTarget(target, event.key) || target?.closest?.('.crucible-studio-selectable')) return;
+    const path = event.composedPath?.() ?? [event.target];
+    const focusFellToBody = path[0] === documentReference.body && pointerStartedInStudio;
+    if (!path.includes(root) && !focusFellToBody) return;
+    if (path.some(node => isEditableTarget(node, 'a') || node?.closest?.('.crucible-studio-selectable'))) return;
     event.preventDefault();
   };
   documentReference.addEventListener('keydown', onKeyDown);
@@ -4759,7 +4774,7 @@ export function createStudio(container, {
       isDirty = false;
       syncFileBanner();
     }).catch(error => {
-      announce(error.message);
+      announce(error);
       throw error;
     })
     : Promise.resolve();

@@ -3,7 +3,7 @@
 // studio-layout-rules.mjs: unequal insets around the content of a padded container, a gap or padding off the spacing
 // scale, or a gap between groups smaller than the gap inside one. Every failure names the selector, the numbers and the fix.
 //
-//   node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover|dialog] [--records file.json]
+//   node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover|dialog|notice] [--records file.json]
 //
 // Without --origin it starts a Vite dev server on a free port and stops it (by its own PID) at the end. Screens: the Studio
 // page, each of its popover menus, and the five steps of the setup dialog, each in the dark and the light theme at 1280 by 720.
@@ -18,10 +18,14 @@ const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 const STUDIO_PAGE = '/bench/studio/index.html?setup=off';
 const READY_EXPRESSION = 'Boolean(window.__studioPage?.renderer) && !document.getElementById("studio-loading")';
 const PREFERENCES_KEY = 'crucible-studio-preferences';
+const DRAFT_KEY = 'crucible.studio.draft';
+// The Settings dialog is checked for selection only: its spacing has an open finding that pull request #3317, which redesigns Settings,
+// closes. The Recipe JSON and shortcuts dialogs keep every spacing rule.
+const SELECTION_ONLY_DIALOG_TITLES = new Set(['crucible-studio-settings-title']);
 const THEMES = ['dark', 'light'];
 const VIEWPORT = { width: 1280, height: 720 };
 const SERVER_START_TIMEOUT_MS = 60000;
-const USAGE = 'Usage: node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover|dialog] [--records file.json]';
+const USAGE = 'Usage: node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover|dialog|notice] [--records file.json]';
 const CHROME_PATH = process.env.CHROME_PATH ?? (process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : undefined);
 const GPU_ARGUMENTS = ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--disable-audio-output'];
 const SOFTWARE_ARGUMENTS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-webgl', '--ignore-gpu-blocklist', '--disable-audio-output'];
@@ -168,10 +172,11 @@ export async function launchBrowser() {
   return chromium.launch(options).catch(() => chromium.launch({ ...options, channel: 'chrome' }));
 }
 
-export async function openStudio(browser, origin, theme, extraCss = '') {
+export async function openStudio(browser, origin, theme, extraCss = '', { savedDraft = null } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1 });
   await context.addInitScript(FAKE_POINTER_LOCK_SCRIPT);
   await context.addInitScript(([key, value]) => localStorage.setItem(key, value), [PREFERENCES_KEY, JSON.stringify({ theme, setupDone: true })]);
+  if (savedDraft) await context.addInitScript(([key, value]) => localStorage.setItem(key, value), [DRAFT_KEY, JSON.stringify(savedDraft)]);
   const page = await context.newPage();
   await page.goto(origin + STUDIO_PAGE, { waitUntil: 'load', timeout: 120000 });
   await page.waitForFunction(READY_EXPRESSION, null, { timeout: 120000 });
@@ -183,6 +188,49 @@ export async function openStudio(browser, origin, theme, extraCss = '') {
 
 function measure(page, selector) {
   return page.evaluate(`(${collectSpacingRecords.toString()})(document.querySelector(${JSON.stringify(selector)}), ${JSON.stringify(SELECTABLE_SELECTOR)})`);
+}
+
+// The notices that appear over the picture, each caused by what a person does: an error toast from bad JSON in the Recipe JSON dialog, a
+// plain toast from Duplicate, and the paused notice from a real lost WebGL context (before and after it offers Reload).
+async function measureNotices(page, theme) {
+  const screens = [];
+  const measureToast = async (name, expectedText) => {
+    await page.waitForFunction(text => document.querySelector('.crucible-studio-status[data-state="in"]')?.textContent.includes(text), expectedText);
+    await page.waitForTimeout(250);
+    screens.push({ name: `${name} (${theme})`, records: await measure(page, '.crucible-studio-status') });
+  };
+  await page.evaluate(() => document.getElementById('crucible-studio-json-title').closest('dialog').showModal());
+  await page.locator('textarea[aria-label="Scene recipe JSON"]').fill('{ not json');
+  await page.getByRole('button', { name: 'Apply JSON' }).click();
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close()));
+  await measureToast('error toast', 'JSON');
+  await page.evaluate(() => window.__studioPage.selectNode('cube'));
+  await page.keyboard.press('Control+d');
+  await measureToast('toast', 'Duplicated');
+  await page.evaluate(() => {
+    // A lost context returns no extension, so the handle is kept to restore it.
+    window.loseContextExtension = document.querySelector('.crucible-studio canvas').getContext('webgl2').getExtension('WEBGL_lose_context');
+    window.loseContextExtension.loseContext();
+  });
+  await page.waitForSelector('.crucible-studio-paused:not([hidden])');
+  await page.waitForTimeout(250);
+  screens.push({ name: `paused notice (${theme})`, records: await measure(page, '.crucible-studio-paused') });
+  await page.waitForSelector('.crucible-studio-paused button:not([hidden])');
+  screens.push({ name: `paused notice with Reload (${theme})`, records: await measure(page, '.crucible-studio-paused') });
+  await page.evaluate(() => window.loseContextExtension.restoreContext());
+  return screens;
+}
+
+// The draft notice shows when storage holds an unsaved draft that differs from the opened scene, so a second page loads with one seeded.
+async function measureDraftNotice(browser, origin, theme, extraCss) {
+  const draft = { fileName: 'room.scene.json', recipe: { format: 'crucible.scene', nodes: [] } };
+  const { context, page } = await openStudio(browser, origin, theme, extraCss, { savedDraft: draft });
+  try {
+    await page.waitForSelector('.crucible-studio-draft:not([hidden])');
+    return { name: `draft notice (${theme})`, records: await measure(page, '.crucible-studio-draft') };
+  } finally {
+    await context.close();
+  }
 }
 
 async function measureScreens(page, theme, only) {
@@ -202,10 +250,11 @@ async function measureScreens(page, theme, only) {
     for (const title of titles) {
       await page.evaluate(identifier => document.getElementById(identifier).closest('dialog').showModal(), title);
       await page.waitForTimeout(250);
-      screens.push({ name: `${title.replace('crucible-studio-', '')} dialog (${theme})`, records: await measure(page, `dialog:has(#${title})`), selectionOnly: true });
+      screens.push({ name: `${title.replace('crucible-studio-', '')} dialog (${theme})`, records: await measure(page, `dialog:has(#${title})`), selectionOnly: SELECTION_ONLY_DIALOG_TITLES.has(title) });
       await page.evaluate(identifier => document.getElementById(identifier).closest('dialog').close(), title);
     }
   }
+  if (!only || only === 'notice') screens.push(...await measureNotices(page, theme));
   if (!only || only === 'setup') {
     await page.evaluate(() => window.__studioPage.openSetup());
     await page.waitForSelector('dialog.crucible-studio-setup-dialog[open]');
@@ -245,6 +294,7 @@ export async function runAudit({ origin, only, extraCss } = {}) {
       const { context, page } = await openStudio(browser, server.origin, theme, extraCss);
       screens.push(...await measureScreens(page, theme, only));
       await context.close();
+      if (!only || only === 'notice') screens.push(await measureDraftNotice(browser, server.origin, theme, extraCss));
     }
     return screens;
   } finally {
@@ -354,6 +404,15 @@ export async function probeSelectionBehavior(page) {
     document.querySelector(target).dispatchEvent(event);
     return event.defaultPrevented;
   }, selector);
+  // The host page of an embedded Studio keeps select all: an element outside the root is left alone.
+  await page.evaluate(() => {
+    const hostText = document.createElement('p');
+    hostText.id = 'host-page-text';
+    document.body.append(hostText);
+  });
+  const onHostPage = await selectAllPrevented('#host-page-text');
+  checks.push({ name: 'Ctrl+A on the host page outside Studio keeps its browser default', selected: onHostPage ? 0 : 1, passed: !onHostPage });
+  await page.evaluate(() => document.getElementById('host-page-text').remove());
   const outsideField = await selectAllPrevented('.crucible-studio');
   checks.push({ name: 'Ctrl+A outside a field has its browser default prevented', selected: outsideField ? 0 : 1, passed: outsideField });
   const insideField = await selectAllPrevented('textarea[aria-label="Scene recipe JSON"]');
@@ -378,7 +437,7 @@ async function main() {
   const screens = await runAudit({ origin: flags.origin, only: flags.only });
   if (flags.records) writeFileSync(flags.records, JSON.stringify(screens));
   const { findings, allowed } = summarize(screens);
-  const behavior = flags.only ? [] : await runSelectionBehavior({ origin: flags.origin });
+  const behavior = await runSelectionBehavior({ origin: flags.origin });
   for (const check of behavior.filter(item => !item.passed)) findings.push({ kind: 'selectable-chrome', message: `behaviour: ${check.name} left ${check.selected} characters selected where the rule says otherwise.`, surfaces: ['behaviour'] });
   const bySurface = countBySurface(findings);
   if (flags.json) {
