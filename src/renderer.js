@@ -3,7 +3,6 @@ import { materialTags, registeredFeatureCode } from './shader-registry.js';
 import { mat4, mat3 } from 'gl-matrix';
 import { BLEND_FACTORS } from './blend-output.js';
 import { packNormalsWithTangents, validateGeometryTangents } from './tangent-encoding.js';
-import { batchWindStrength } from './wind-strength.js';
 import { SPLAT_UNITS, requireSplatSupport, layerTextureSupport, LIGHT_SHADING_FEATURE, WETNESS_FEATURE, FRAGMENT_SHADOW_POSITION_FEATURE, VERTEX_OPACITY_FEATURE, SHADING_MODES, LIGHT_SHADING_MAXIMUM_SAMPLES, createVertexShader, TANGENT_FEATURE, vertexShader, liquidFragmentSource, createFragmentShader, liquidPassDrawer, createDepthFragmentShader, benchmarkVertexShader, benchmarkFragmentShader, viewTransformShader, createDepthVertexShader } from './shaders.js';
 import { postFragment, createPostFragment, GRID_MOTION_STEP, GRID_DETAIL_STEP, NOISE_OCTAVES_STEP, localVolumeKindSteps, POST_STEPS, POST_STEPS_WITH_OPTIONAL_CODE, skyFragment, bloomFragment } from './post.js';
 import { createGlazeBackend } from './glaze-backend.js';
@@ -3010,11 +3009,10 @@ export class CrucibleRenderer {
   // A batch whose material has `windScale` feels a share of the frame wind (ground-cover grass); the batch after it gets the frame wind back.
   // Batches without a scale never write the uniform, so a scene without one draws exactly as before.
   bindBatchWind(batch) {
-    const material = batch.parts?.[0]?.material;
-    const scale = material?.windScale;
+    const scale = batch.parts?.[0]?.material.windScale;
     if (scale === undefined && !this.windScaledBatch) return;
     this.windScaledBatch = scale !== undefined;
-    this.context.uniform1f(this.uniforms.wind, batchWindStrength(this.frameWind, material));
+    this.context.uniform1f(this.uniforms.wind, this.frameWind * (scale ?? 1));
   }
 
   drawBatch(batch, textured = false, selection = null, levelSet = batch) {

@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { bladeAnglesToUp, meanOf } from './support/grass-stance.mjs';
 import { GROUND_COVER_LIMITS, groundCoverParts, normalizeGroundCover } from '../src/ground-cover.js';
-import { groupParts } from '../src/renderer.js';
-import { batchWindStrength } from '../src/wind-strength.js';
+import { CrucibleRenderer, groupParts } from '../src/renderer.js';
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -100,9 +99,22 @@ test('ground-cover blades feel a length-scaled wind while a tree in the same sce
   const batches = groupParts([tree, ...grass]);
   const treeBatch = batches.find(batch => batch.some(part => part.material.tag === 'foliage'));
   const grassBatch = batches.find(batch => batch.some(part => part.material.tag === 'grass'));
-  assert.equal(batchWindStrength(sceneWind, treeBatch[0].material), sceneWind, 'a tree keeps the scene wind');
-  assert.ok(Math.abs(batchWindStrength(sceneWind, grassBatch[0].material) - 0.06) < 1e-9, 'a 0.12 m lawn feels 0.3 * 0.12 / 0.6');
-  const windy = bladeAnglesToUp(grass, { strength: batchWindStrength(sceneWind, grassBatch[0].material) });
+  // The renderer's per-batch bind writes the wind uniform: the tree batch keeps the frame wind, the ground cover gets a share of it.
+  const written = [];
+  let lawnWind;
+  const renderer = Object.create(CrucibleRenderer.prototype);
+  Object.assign(renderer, { frameWind: sceneWind, windScaledBatch: false, uniforms: { wind: 'wind' }, context: { uniform1f: (name, value) => written.push(value) } });
+  renderer.bindBatchWind({ parts: [grassBatch[0]] });
+  renderer.bindBatchWind({ parts: [treeBatch[0]] });
+  assert.ok(Math.abs(written[0] - 0.06) < 1e-9, `a 0.12 m lawn feels 0.3 * 0.12 / 0.6, got ${written[0]}`);
+  lawnWind = written[0];
+  assert.equal(written[1], sceneWind, 'the tree batch after it gets the scene wind back');
+  const plain = Object.create(renderer);
+  plain.windScaledBatch = false;
+  written.length = 0;
+  plain.bindBatchWind({ parts: [treeBatch[0]] });
+  assert.equal(written.length, 0, 'a scene without scaled batches never writes the wind uniform');
+  const windy = bladeAnglesToUp(grass, { strength: lawnWind });
   assert.ok(meanOf(windy) < 25, `with the default wind the mean blade angle to world up is ${meanOf(windy)} degrees`);
   assert.ok(meanOf(bladeAnglesToUp(grass, { strength: sceneWind })) > 40, 'the unscaled scene wind would bend 0.12 m blades far over');
 });
