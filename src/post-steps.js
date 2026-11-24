@@ -310,7 +310,7 @@ void main() {
   outputColor = vec4(graded, source.a);
 }`;
 
-// The gather runs at half resolution (a quarter of the pixels, so a quarter of the depth reads) and a depth-aware upsample puts it back.
+// The gather runs at half resolution (a quarter of the pixels, so a quarter of the depth reads) and a upsample puts it back, weighting sky and geometry apart.
 export const SUN_RAY_RESOLUTION_DIVISOR = 2;
 
 // Radial blur of the light the sun sends past the geometry (GPU Gems 3, ch. 13). A tap counts only where the depth buffer shows open sky,
@@ -343,7 +343,9 @@ void main() {
   }
   vec2 fromSunPixel = (textureCoordinate - sunPosition) * aspectScale;
   float falloff = exp(-length(fromSunPixel) / (0.35 + 0.6 * spread));
-  outputColor = vec4(gathered / totalWeight * falloff, 0.0, 0.0, 1.0);
+  // A sixth of the glow is the haze around the sun, which a crown in front of it does not remove; the rest is the shafts. Without the haze a
+  // crown leaves a ring of unlit sky around it, which reads as a dark halo.
+  outputColor = vec4(0.4 * (0.15 + 0.85 * gathered / totalWeight) * falloff, 0.0, 0.0, 1.0);
 }`;
 
 // Adds the gathered rays to the frame. The four half-resolution texels around a pixel are weighted by bilinear share and by how well their
@@ -372,7 +374,8 @@ void main() {
     ivec2 texel = clamp(base + offset, ivec2(0), lastCoarseTexel);
     float cornerDepth = texelFetch(sceneDepth, clamp(ivec2((vec2(texel) + 0.5) / coarseSize * depthSize), ivec2(0), lastDepthTexel), 0).r;
     float bilinear = (offset.x == 1 ? share.x : 1.0 - share.x) * (offset.y == 1 ? share.y : 1.0 - share.y);
-    float similarity = (isSky(cornerDepth) == isSky(centreDepth) ? 1.0 : 0.02) / (1.0 + abs(cornerDepth - centreDepth) * 4000.0);
+    // Only sky against geometry counts: weighting by depth distance as well favoured the neighbours along a sloped floor and left vertical streaks.
+    float similarity = isSky(cornerDepth) == isSky(centreDepth) ? 1.0 : 0.02;
     float cornerWeight = bilinear * similarity + 1e-5;
     rays += texelFetch(rayTexture, texel, 0).r * cornerWeight;
     total += cornerWeight;

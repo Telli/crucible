@@ -33,14 +33,15 @@ async function startServer(context) {
   return client;
 }
 
-async function frameOf(client, environment, effects = {}, pillarColor = [0.8, 0.8, 0.8]) {
+async function frameOf(client, environment, effects = {}, pillarColor = [0.8, 0.8, 0.8], extra = { geometries: [], materials: [], nodes: [] }) {
   const recipe = {
     format: 'crucible.scene', schemaVersion: 1,
-    geometries: [{ id: 'box', type: 'box' }],
-    materials: [{ id: 'ground', color: [0.8, 0.8, 0.8] }, { id: 'pillar', color: pillarColor }],
+    geometries: [{ id: 'box', type: 'box' }, ...extra.geometries],
+    materials: [{ id: 'ground', color: [0.8, 0.8, 0.8] }, { id: 'pillar', color: pillarColor }, ...extra.materials],
     nodes: [
       { id: 'floor', geometry: 'box', material: 'ground', translation: [0, -0.1, 0], scale: [14, 0.2, 14] },
       { id: 'pillar', geometry: 'box', material: 'pillar', translation: [0, 1, 0], scale: [1, 2, 1] },
+      ...extra.nodes,
     ],
     camera: { eye: EYE, target: TARGET, fov: FIELD_OF_VIEW },
     environment: { ground: false, ...environment },
@@ -143,4 +144,65 @@ test('saturation keeps a leaf green off the clip while it adds chroma', { timeou
   assert.ok(chroma(redAfter, greenAfter, blueAfter) > chroma(redBefore, greenBefore, blueBefore) + 0.02, 'saturation adds chroma');
   assert.ok(Math.min(redAfter, blueAfter) > 0.03, `the lowest channel does not clip to black (${Math.min(redAfter, blueAfter)})`);
   assert.ok(Math.min(redAfter, blueAfter) > 0.5 * Math.min(redBefore, blueBefore), 'the lowest channel keeps at least half of its level');
+});
+
+test('a face the sun reaches at a grazing angle takes no ambientColor fill', { timeout: 240000 }, async context => {
+  const client = await startServer(context);
+  const sun = { setup: 'daylight', lightDirection: SUN_BEHIND_CAMERA_RIGHT };
+  const plain = await frameOf(client, sun);
+  const filled = await frameOf(client, { ...sun, ambientColor: [0.9, 0.55, 0.3] });
+  // the pillar's front face has the normal [0, 0, 1], so the sun reaches it with N.L of about 0.3
+  const before = meanColor(plain, pixelOf([0, 1, 0.5]));
+  const after = meanColor(filled, pixelOf([0, 1, 0.5]));
+  for (let channel = 0; channel < 3; channel++) {
+    assert.ok(Math.abs(after[channel] - before[channel]) < 0.012, `sunlit face channel ${channel} moved from ${before[channel]} to ${after[channel]}`);
+  }
+});
+
+test('crowns in front of the sun keep sunRays additive and leave no dark ring around them', { timeout: 240000 }, async context => {
+  const client = await startServer(context);
+  const towardSun = [0.0, 0.12, -1];
+  const sun = { setup: 'daylight', lightDirection: towardSun, keyIntensity: 1.4 };
+  const distance = 10;
+  const crown = {
+    geometries: [{ id: 'ball', type: 'sphere' }],
+    materials: [{ id: 'leaf', color: [0.1, 0.6, 0.2] }],
+    nodes: [{ id: 'crown', geometry: 'ball', material: 'leaf', translation: EYE.map((value, axis) => value + towardSun[axis] * distance), scale: [3, 3, 3] }],
+  };
+  const plain = await frameOf(client, sun, {}, [0.8, 0.8, 0.8], crown);
+  const rays = await frameOf(client, sun, { sunRays: { intensity: 1.5, spread: 0.8 } }, [0.8, 0.8, 0.8], crown);
+  const channelCount = plain.channels;
+  const isCrown = pixel => (plain.data[pixel * channelCount + 1] - plain.data[pixel * channelCount]) / 255 > 0.08;
+  const skyColour = [0, 1, 2].map(channel => plain.data[channel]);
+  const isSky = pixel => [0, 1, 2].every(channel => Math.abs(plain.data[pixel * channelCount + channel] - skyColour[channel]) < 8);
+  const distanceToCrown = new Float64Array(SIZE * SIZE).fill(Infinity);
+  const crownPixels = [];
+  for (let pixel = 0; pixel < SIZE * SIZE; pixel++) if (isCrown(pixel)) crownPixels.push(pixel);
+  assert.ok(crownPixels.length > 800, `the crown covers the sun (${crownPixels.length} pixels)`);
+  let darker = 0;
+  let ringSum = 0;
+  let ringCount = 0;
+  let farSum = 0;
+  let farCount = 0;
+  for (let pixel = 0; pixel < SIZE * SIZE; pixel++) {
+    let added = 0;
+    for (let channel = 0; channel < 3; channel++) added += (rays.data[pixel * channelCount + channel] - plain.data[pixel * channelCount + channel]) / 255;
+    if (added < -0.012) darker++;
+    if (!isSky(pixel)) continue;
+    const row = Math.floor(pixel / SIZE);
+    const column = pixel % SIZE;
+    let nearest = Infinity;
+    for (const crownPixel of crownPixels) {
+      nearest = Math.min(nearest, Math.hypot(row - Math.floor(crownPixel / SIZE), column - crownPixel % SIZE));
+    }
+    distanceToCrown[pixel] = nearest;
+    if (nearest <= 4) { ringSum += added; ringCount++; }
+    if (nearest > 15) { farSum += added; farCount++; }
+  }
+  assert.equal(darker, 0, 'the rays never darken a pixel, with the crown in front of the sun too');
+  assert.ok(ringCount > 100 && farCount > 100, `ring ${ringCount} and far ${farCount} sky pixels to compare`);
+  const ring = ringSum / ringCount;
+  const far = farSum / farCount;
+  assert.ok(far > 0.02, `the far sky takes the glow (${far})`);
+  assert.ok(ring > 0.7 * far, `the sky next to the crown gets as much glow as the sky away from it, so no dark ring: ${ring} against ${far}`);
 });

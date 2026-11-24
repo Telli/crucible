@@ -1013,7 +1013,7 @@ ${featureCode("areaRadiance")}      radiance += illuminate(normal, viewDirection
   vec3 reflected = reflect(-viewDirection, specularNormal);
 ${featureCode("probeReflection")}${featureCode("irradianceGridOcclusion")}  if (ENVIRONMENT_ENABLED) {
     radiance += environmentLighting(normal, specularNormal, baseReflectance, viewDirection, reflected, color, metallic, roughness, occlusion, ambientIntensity, skyReflection);
-    float keyReach = visibility * smoothstep(0.0, 0.4, dot(normal, normalize(lightDirection))) * step(0.003, dot(keyColor, vec3(1.0)));
+    float keyReach = visibility * smoothstep(0.0, 0.12, dot(normal, normalize(lightDirection))) * step(0.003, dot(keyColor, vec3(1.0)));
     radiance += ambientColor * color * (1.0 - metallic) * occlusion * ambientIntensity * (1.0 - keyReach);
     if (USES_ALPHA_MODE) blendSpecular += environmentLighting(normal, specularNormal, baseReflectance, viewDirection, reflected, vec3(0.0), metallic, roughness, occlusion, ambientIntensity, skyReflection);
   } else {
