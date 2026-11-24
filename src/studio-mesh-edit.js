@@ -662,6 +662,25 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     }
   }
 
+  /**
+   * How far the picked element reaches from the move handles' centre on screen, in pixels (0 for one vertex or nothing picked).
+   * The handles read it to leave that much of the middle clear, so the picked element stays in view.
+   */
+  function selectionScreenRadius() {
+    const vertices = selectedVertices();
+    const centre = selectionCentreWorld();
+    if (!centre || vertices.size === 0) return 0;
+    const project = controller.worldPointProjector();
+    const middle = project(centre);
+    let reach = 0;
+    for (const vertex of vertices) {
+      const world = transformPoint(state.part.matrix, state.positions[vertex * 3], state.positions[vertex * 3 + 1], state.positions[vertex * 3 + 2]);
+      const point = project(world);
+      if (point.visible) reach = Math.max(reach, Math.hypot(point.x - middle.x, point.y - middle.y));
+    }
+    return reach;
+  }
+
   // The stroke and fill of these paths come from the stylesheet (`--studio-*` tokens), so the cage follows the theme. `layer` says
   // whether a path goes under the move handles or over them: picked vertices and edges go over, or the handles' centre dot hides them.
   function cagePaths() {
@@ -748,6 +767,7 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     pick,
     refresh,
     cagePaths,
+    selectionScreenRadius,
     draw,
   });
 }

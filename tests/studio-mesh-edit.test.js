@@ -5,7 +5,7 @@ import { mat4 } from 'gl-matrix';
 import { createAgentScene } from '../src/agent-scene.js';
 import { meshEditSourceOf } from '../src/agent-mesh.js';
 import { isLiveGeometry, markLiveGeometry } from '../src/live-geometry.js';
-import { createStudio, createStudioController } from '../src/studio.js';
+import { clearedShaftStart, createStudio, createStudioController } from '../src/studio.js';
 import { byDataset, byLabel, createFakeRenderer, dispatch, installStudioDom } from './support/studio-dom.mjs';
 import { CAGE_TRIANGLE_BUDGET, MAX_LOG_ENTRIES, MAX_MASK_VERTICES, createMeshEditor, planMeshMove, previewNormalsOf } from '../src/studio-mesh-edit.js';
 import { DEFAULT_KEYMAP_ACTIONS, findKeymapAction, resolveKeymap } from '../src/studio-keymap.js';
@@ -784,4 +784,107 @@ test('the edit mode hint goes away with the first pick that selects something', 
   const countAfterFirstPick = messages.length;
   editor.pick(cornerPixel.x, cornerPixel.y, { additive: true });
   assert.equal(messages.length, countAfterFirstPick, 'later picks say nothing');
+});
+
+// The move handles leave the middle of a small pick clear, so a person can see what is picked (Blender does the same).
+function mountStudioOnShape(testContext, base) {
+  const dom = installStudioDom();
+  const recipe = recipeOf({ base });
+  const studio = createStudio(dom.container, { recipe, renderer: createFakeRenderer() });
+  testContext.after(() => {
+    studio.dispose();
+    dom.uninstall();
+  });
+  const root = dom.container.firstElementChild;
+  const viewport = root.querySelector('.crucible-studio-viewport');
+  viewport.box = VIEWPORT_BOX;
+  studio.renderNow();
+  studio.controller.selectNode('hero');
+  return { dom, studio, root, viewport, controller: studio.controller, press: (key, properties = {}) => dispatch(dom.document, 'keydown', { key, ...properties }) };
+}
+
+function drawnHandles(root) {
+  const svg = root.querySelector('.crucible-studio-gizmo');
+  const nodes = svg.querySelectorAll('[data-gizmo-axis]').filter(node => node.getAttribute('stroke') !== 'transparent' && node.getAttribute('data-gizmo-hit') === null);
+  return {
+    planes: nodes.filter(node => ['xy', 'xz', 'yz'].includes(node.getAttribute('data-gizmo-axis'))),
+    centreDots: nodes.filter(node => node.tagName === 'CIRCLE' && node.getAttribute('r') === '6.5'),
+    shafts: nodes.filter(node => node.tagName === 'LINE'),
+  };
+}
+
+function distanceFromPointToSegment(point, shaft) {
+  const [startX, startY, endX, endY] = ['x1', 'y1', 'x2', 'y2'].map(name => Number(shaft.getAttribute(name)));
+  const lengthSquared = (endX - startX) ** 2 + (endY - startY) ** 2;
+  const along = Math.max(0, Math.min(1, ((point.x - startX) * (endX - startX) + (point.y - startY) * (endY - startY)) / lengthSquared));
+  return Math.hypot(point.x - (startX + along * (endX - startX)), point.y - (startY + along * (endY - startY)));
+}
+
+async function pickFaceThrough(ui, predicate) {
+  ui.press('Tab');
+  await untilEditing(ui);
+  const face = faceOf(ui.controller, predicate);
+  const centre = pixelOfFaceCentre(ui.controller, face.corners);
+  const down = { clientX: VIEWPORT_BOX.left + centre.x, clientY: VIEWPORT_BOX.top + centre.y };
+  dispatch(ui.viewport.querySelector('canvas'), 'pointerdown', down);
+  dispatch(ui.viewport, 'pointerup', down);
+  ui.studio.renderNow();
+  const positions = editorPositions(ui.controller);
+  const reach = Math.max(...face.corners.map(vertex => {
+    const corner = ui.controller.projectWorldPoint(worldPointOf(ui.controller, vertex, positions));
+    return Math.hypot(corner.x - centre.x, corner.y - centre.y);
+  }));
+  return { centre, reach };
+}
+
+test('a small pick keeps the middle clear: no plane squares or centre dot, and no shaft crosses the picked face', async testContext => {
+  const ui = mountStudioOnShape(testContext, { type: 'box', bevel: 0, subdivisions: 8 });
+  const { centre, reach } = await pickFaceThrough(ui, point => point[2] > 0.49 && point[0] > -1e-6 && point[0] < 0.126 && point[1] > -1e-6 && point[1] < 0.126);
+  assert.ok(reach < 30, `the face is small on screen (${reach.toFixed(1)} px from its middle to a corner)`);
+  const handles = drawnHandles(ui.root);
+  assert.equal(handles.planes.length, 0, 'the plane squares would sit on the face');
+  assert.equal(handles.centreDots.length, 0, 'the centre dot would sit on the face');
+  assert.ok(handles.shafts.length >= 2, 'the arrows stay');
+  for (const shaft of handles.shafts) {
+    assert.ok(distanceFromPointToSegment(centre, shaft) >= reach, `the ${shaft.getAttribute('data-gizmo-axis')} shaft starts outside the face`);
+  }
+  const grabbed = ui.root.querySelectorAll('[data-gizmo-hit]');
+  assert.ok(grabbed.length > 0, 'the hit areas of the handles are still there, so the arrows stay as easy to take');
+});
+
+test('a large pick also keeps the middle clear, with the arrows cut short of the element at most 60 percent', async testContext => {
+  const ui = mountStudioOnShape(testContext, { type: 'box', bevel: 0 });
+  const { reach } = await pickFaceThrough(ui, point => point[2] > 0.49);
+  assert.ok(reach > 60, `the face is large on screen (${reach.toFixed(1)} px)`);
+  const handles = drawnHandles(ui.root);
+  assert.equal(handles.planes.length, 0);
+  assert.equal(handles.centreDots.length, 0);
+  assert.ok(handles.shafts.length >= 2);
+  const origin = ui.controller.gizmoHandles().origin;
+  for (const shaft of handles.shafts) {
+    assert.ok(distanceFromPointToSegment(origin, shaft) > 0, 'a shaft starts away from the middle');
+  }
+});
+
+test('clearedShaftStart skips the picked reach plus a gap, never more than 60 percent of the shaft, and nothing in object mode', () => {
+  const origin = { x: 100, y: 100 };
+  const tip = { x: 100, y: 20 };
+  assert.deepEqual(clearedShaftStart(origin, tip, null), origin);
+  assert.deepEqual(clearedShaftStart(origin, tip, 0), { x: 100, y: 88 }, 'one vertex still gets the gap');
+  assert.deepEqual(clearedShaftStart(origin, tip, 12), { x: 100, y: 76 });
+  assert.deepEqual(clearedShaftStart(origin, tip, 500), { x: 100, y: 52 });
+});
+
+test('Tab on a part that comes from an imported file says so and starts no edit', () => {
+  // An asset node needs a decoder to expand, which a unit test cannot hold without a file; the refusal reads only the recipe
+  // and the selected id, so a controller with exactly those, and the node a placed file leaves in a recipe, pins the message.
+  const recipe = { format: 'crucible.scene', schemaVersion: 1, materials: [], geometries: [], nodes: [{ id: 'rock', asset: { id: 'scan' } }] };
+  const messages = [];
+  const controller = { selectedNodeId: 'rock', exportRecipe: () => recipe };
+  const editor = createMeshEditor({ controller, announce: message => messages.push(message) });
+  const result = editor.enter();
+  assert.equal(result.ok, false);
+  assert.equal(result.message, 'This object is an imported file, which has no mesh to edit. Select a shape or a mesh.');
+  assert.deepEqual(messages, [result.message]);
+  assert.equal(editor.active, false);
 });

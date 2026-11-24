@@ -703,7 +703,24 @@ function appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool) {
   gizmoSvg.append(hitDisc(origin, GIZMO_HIT_ORIGIN_RADIUS, tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen'));
 }
 
-function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, { hideSelectionOutline = false } = {}) {
+// In mesh edit mode the move handles leave the picked element's middle clear, as Blender's do: the plane squares and the centre dot
+// are not drawn (the centre still drags on the screen plane), and each shaft starts this far from the centre (the element's reach
+// plus a gap), but never gives up more than this share of its length, so the arrow stays a handle on a large pick too.
+const EDIT_CLEARANCE_GAP = 12;
+const EDIT_CLEARANCE_MAXIMUM_SHARE = 0.6;
+
+/** Where a shaft from the origin to the tip starts once the middle is clear; the origin itself when nothing is cleared. */
+export function clearedShaftStart(origin, tip, clearRadius) {
+  const length = Math.hypot(tip.x - origin.x, tip.y - origin.y);
+  if (clearRadius === null || length < 1e-3) {
+    return origin;
+  }
+  const skipped = Math.min(clearRadius + EDIT_CLEARANCE_GAP, length * EDIT_CLEARANCE_MAXIMUM_SHARE);
+  const share = skipped / length;
+  return { x: origin.x + (tip.x - origin.x) * share, y: origin.y + (tip.y - origin.y) * share };
+}
+
+function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, { hideSelectionOutline = false, clearRadius = null } = {}) {
   gizmoSvg.replaceChildren();
   const width = controller.viewportWidth;
   const height = controller.viewportHeight;
@@ -776,7 +793,10 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
     return;
   }
 
-  if (tool === 'translate') {
+  // clearRadius is null in object mode, which keeps every handle exactly as it was.
+  const cleared = clearRadius !== null;
+
+  if (tool === 'translate' && !cleared) {
     const planeColors = { xy: '#5ea8ff', xz: '#5fc48a', yz: '#ee7a6c' };
     for (const planeAxis of ['xy', 'xz', 'yz']) {
       const corners = handles.planes[planeAxis];
@@ -795,9 +815,10 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
   for (const axis of AXIS_NAMES) {
     const tip = handles.axes[axis];
     if (!tip.visible) continue;
+    const shaftStart = cleared ? clearedShaftStart(origin, tip, clearRadius) : origin;
     gizmoSvg.append(createSvgElement(documentReference, 'line', {
-      x1: origin.x.toFixed(1),
-      y1: origin.y.toFixed(1),
+      x1: shaftStart.x.toFixed(1),
+      y1: shaftStart.y.toFixed(1),
       x2: tip.x.toFixed(1),
       y2: tip.y.toFixed(1),
       stroke: AXIS_COLORS[axis],
@@ -826,6 +847,9 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
     }
   }
 
+  if (cleared) {
+    return;
+  }
   gizmoSvg.append(createSvgElement(documentReference, 'circle', {
     cx: origin.x.toFixed(1),
     cy: origin.y.toFixed(1),
@@ -3120,7 +3144,7 @@ export function createStudio(container, {
     try {
       syncViewportDimensions();
       drawSceneFrame();
-      renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, { hideSelectionOutline: Boolean(meshEditor?.active) });
+      renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, { hideSelectionOutline: Boolean(meshEditor?.active), clearRadius: meshEditor?.active ? meshEditor.selectionScreenRadius() : null });
       if (!capturingStill) {
         renderSceneObjectMarks(documentReference, gizmoSvg, controller);
       }
