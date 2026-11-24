@@ -37,9 +37,9 @@ const ENVIRONMENT_FIELDS = [
 ];
 const EFFECT_FIELDS = ['exposure', 'saturation', 'contrast', 'temperature', 'vignette', 'grain', 'ambientOcclusion', 'ambientOcclusionRadius', 'bloom', 'depthOfField', 'motionBlur'];
 const SHADOW_FIELDS = ['target', 'extent', 'distance', 'near', 'far', 'hard'];
-const POINT_LIGHT_FIELDS = ['position', 'color', 'intensity', 'radius', 'range', 'castShadow', 'softFalloff', 'affects'];
-const SPOT_LIGHT_FIELDS = ['position', 'direction', 'angle', 'penumbra', 'color', 'intensity', 'radius', 'range', 'castShadow', 'softFalloff', 'ies', 'affects'];
-const AREA_LIGHT_FIELDS = ['position', 'direction', 'up', 'width', 'height', 'color', 'intensity', 'castShadow', 'ies', 'portal', 'affects'];
+const POINT_LIGHT_FIELDS = ['position', 'color', 'intensity', 'radius', 'range', 'castShadow', 'softFalloff', 'affects', 'parent'];
+const SPOT_LIGHT_FIELDS = ['position', 'direction', 'angle', 'penumbra', 'color', 'intensity', 'radius', 'range', 'castShadow', 'softFalloff', 'ies', 'affects', 'parent'];
+const AREA_LIGHT_FIELDS = ['position', 'direction', 'up', 'width', 'height', 'color', 'intensity', 'castShadow', 'ies', 'portal', 'affects', 'parent', 'face', 'faceOffset'];
 const VOLUME_VECTOR_FIELDS = ['minimum', 'maximum', 'color', 'ambient', 'drift'];
 const VOLUME_NUMBER_FIELDS = ['density', 'steps', 'anisotropy', 'noiseAmount', 'noiseScale', 'maxDistance', 'shadowAmbient', 'heightFalloff', 'detailOctaves', 'detailAmount', 'warp', 'contrast', 'profileSoftness', 'keyScattering', 'scatterOctaves', 'multiScatter', 'multiExtinction', 'multiAnisotropy', 'keyTransmittance', 'surfaceTransmittance', 'beamRadius'];
 export const VOLUME_FOG_FIELDS = Object.freeze([...VOLUME_VECTOR_FIELDS, ...VOLUME_NUMBER_FIELDS]);
@@ -218,10 +218,23 @@ function portalFieldFrom(light) {
   return flag ? { portal: true } : {};
 }
 
+// With a parent the position is an offset in the parent's space, [0, 0, 0] (the parent's origin) when left out.
+function positionFrom(light) {
+  return vectorInRange(light.parent !== undefined && light.position === undefined ? [0, 0, 0] : light.position, -1e6, 1e6, 'position');
+}
+
+// parent, face and faceOffset belong to the lazy light-parenting module, which a recipe that names one loads first.
+function parentingFieldsFrom(light, shape) {
+  if (light.parent === undefined && light.face === undefined && light.faceOffset === undefined) return { parentFields: {}, surface: {} };
+  const parenting = agentSceneModule('lightParenting');
+  return { parentFields: parenting.parentFieldFrom(light), surface: shape === 'area' ? parenting.surfaceFieldsFrom(light, numberInRange) : {} };
+}
+
 function pointLightFrom(light) {
   knownKeys(light, POINT_LIGHT_FIELDS, 'point light');
   return {
-    position: vectorInRange(light.position, -1e6, 1e6, 'position'),
+    position: positionFrom(light),
+    ...parentingFieldsFrom(light, 'point').parentFields,
     color: vectorInRange(fallback(light.color, [1, 1, 1]), 0, 1, 'color'),
     intensity: numberInRange(fallback(light.intensity, 1), 0, 1e5, 'intensity'),
     radius: numberInRange(fallback(light.radius, 0.05), 0.001, 1e6, 'radius'),
@@ -244,7 +257,8 @@ function spotAngleFrom(value) {
 function spotLightFrom(light) {
   knownKeys(light, SPOT_LIGHT_FIELDS, 'spot light');
   return {
-    position: vectorInRange(light.position, -1e6, 1e6, 'position'),
+    position: positionFrom(light),
+    ...parentingFieldsFrom(light, 'spot').parentFields,
     direction: directionFrom(light.direction, 'direction').direction,
     angle: spotAngleFrom(fallback(light.angle, Math.PI / 4)),
     penumbra: numberInRange(fallback(light.penumbra, 0.15), 0, 1, 'penumbra'),
@@ -260,11 +274,16 @@ function spotLightFrom(light) {
 
 function areaLightFrom(light) {
   knownKeys(light, AREA_LIGHT_FIELDS, 'area light');
+  const { parentFields, surface } = parentingFieldsFrom(light, 'area');
   const resolved = {
-    position: vectorInRange(light.position, -1e6, 1e6, 'position'),
-    direction: directionFrom(light.direction, 'direction').direction,
-    width: numberInRange(light.width, 0.001, 1e4, 'width'),
-    height: numberInRange(light.height, 0.001, 1e4, 'height'),
+    ...(surface.face === undefined ? {
+      position: positionFrom(light),
+      direction: directionFrom(light.direction, 'direction').direction,
+      width: numberInRange(light.width, 0.001, 1e4, 'width'),
+      height: numberInRange(light.height, 0.001, 1e4, 'height'),
+    } : {}),
+    ...parentFields,
+    ...surface,
     color: vectorInRange(fallback(light.color, [1, 1, 1]), 0, 1, 'color'),
     intensity: numberInRange(fallback(light.intensity, 1), 0, 1e5, 'intensity'),
   };
@@ -425,7 +444,7 @@ function environmentFrom(input = {}) {
     Object.assign(environment, explicit);
   }
   lightShapeSupport.normalize?.(input, environment);
-  updateLightingState(createLightingState(), environment, { world });
+  updateLightingState(createLightingState(), (environment.areaLights?.some(light => light.face !== undefined) ? agentSceneModule('lightParenting').withStandInLights(environment) : environment), { world });
   return environment;
 }
 

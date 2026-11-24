@@ -1443,6 +1443,11 @@ function simulatedPose(stagedState, time) {
   return time === null ? null : stagedState.physicsSampler?.sample(Math.min(time, stagedState.physicsSampler.duration));
 }
 
+// A light with a parent loads the light-parenting module with the recipe, so a scene without one never reads it.
+function hasParentedLights(environment) {
+  return ['pointLights', 'spotLights', 'areaLights'].some(field => environment[field]?.some(light => light.parent !== undefined));
+}
+
 /** The local transform of a node at a sampled motion and simulated pose: a body, then a track, then the rest value. */
 function localTransformOf(node, sampled, simulated) {
   const patch = sampled?.nodes.get(node.id);
@@ -2157,6 +2162,7 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     const sameParts = state && state.sourceRestParts.length === nextParts.length &&
       state.sourceRestParts.every((part, index) => part === nextParts[index]);
     const sourceRestParts = sameParts ? state.sourceRestParts : Object.freeze(nextParts);
+    if (hasParentedLights(recipe.environment)) agentSceneModule('lightParenting').requireKnownLightParents(recipe.environment, recipe.nodes);
     const lightBakeResult = stageLightBake(recipe, sourceRestParts, graph, stagedMaterialSnapshots);
     const { reflected, restParts } = stageRestParts(recipe, sourceRestParts, lightBakeResult, graph);
     // Unchanged rest parts start from the parts the last pose drew (#2730): a pose that samples the same sea, cloth or
@@ -2257,16 +2263,18 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
     }
     const worldMatrices = new Map(sourceRestParts.map(part => [part.name, new Float32Array(graph.getNode(part.name).worldMatrix)]));
     const generatedGeometryGenerators = agentSceneModule('bake').bakeGenerators(recipe);
-    const key = agentSceneModule('bake').lightBakeKey(recipe, generatedGeometryGenerators, recipe.environment, worldMatrices);
+    const bakeEnvironment = hasParentedLights(recipe.environment) ? agentSceneModule('lightParenting').bakeEnvironmentOf(recipe.environment, recipe, sourceRestParts, worldMatrices, graph) : recipe.environment;
+    const bakeRecipe = bakeEnvironment === recipe.environment ? recipe : { ...recipe, environment: bakeEnvironment };
+    const key = agentSceneModule('bake').lightBakeKey(recipe, generatedGeometryGenerators, bakeEnvironment, worldMatrices);
     if (lightBake?.key === key && lightBake.sourceRestParts === sourceRestParts) {
       lightBake.currentKey = key;
       return { ...lightBake, reused: true };
     }
     if (bakeDeferral && state && !recipe.bake.rebake) {
-      return agentSceneModule('bakeDeferred').stageSettling(settling, bakeDeferral, { key, recipe, sourceRestParts, worldMatrices, generatedGeometryGenerators, stagedMaterialSnapshots, lightBake, state });
+      return agentSceneModule('bakeDeferred').stageSettling(settling, bakeDeferral, { key, recipe: bakeRecipe, sourceRestParts, worldMatrices, generatedGeometryGenerators, stagedMaterialSnapshots, lightBake, state });
     }
     // The first build of a scene still fails loudly. A later edit stays applied: the old bake no longer fits the edited parts, so it is dropped.
-    const { baked, refusal } = agentSceneModule('bake').withStagedMaterials(stagedMaterialSnapshots, () => agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, recipe.environment, recipe.bake, generatedGeometryGenerators));
+    const { baked, refusal } = agentSceneModule('bake').withStagedMaterials(stagedMaterialSnapshots, () => agentSceneModule('bake').bakeUnlessRefused(Boolean(state), sourceRestParts, worldMatrices, bakeEnvironment, recipe.bake, generatedGeometryGenerators));
     if (refusal) {
       lightBake = null;
       skippedBake = refusal;
@@ -2703,7 +2711,8 @@ export function createAgentScene(input, inputLimits = {}, options = {}) {
       const environment = structuredClone(agentEnvironmentKey(state.recipe.environment));
       // The time a grid sequence plays at (#1045): the rasterizer and the path tracer both pick the frame from it.
       if (environment.localVolumes?.some(volume => volume.frames)) environment.volumeTime = state.motionTime;
-      return state.movedLook ?agentSceneModule('motion').motionEnvironment(environment, state.movedLook) : environment;
+      const moved = state.movedLook ? agentSceneModule('motion').motionEnvironment(environment, state.movedLook) : environment;
+      return hasParentedLights(moved) ? agentSceneModule('lightParenting').environmentAtPose(state, moved) : moved;
     },
     /** World bounds ({ name, min, max }) of the visible mesh parts in the current pose; parts with no known bounds are left out. */
     worldBounds() {
