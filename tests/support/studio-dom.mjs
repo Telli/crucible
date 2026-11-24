@@ -291,7 +291,12 @@ export class FakeNode {
     this.capturedPointerIds.push(pointerId);
   }
 
-  focus() {
+  // A browser refuses focus for an element that is detached, hidden or disabled; preventScroll is accepted and ignored.
+  focus(options = {}) {
+    for (let current = this; current; current = current.parentNode) {
+      if (current.hidden) return;
+    }
+    if (!this.isConnected || this.disabled) return;
     this.ownerDocument.activeElement = this;
     this.dispatchEvent(this.ownerDocument.createEvent('focusin', { bubbles: true }));
   }

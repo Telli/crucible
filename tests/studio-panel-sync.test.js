@@ -353,3 +353,44 @@ test('across random edits the kept panel equals a freshly mounted one', testCont
     }
   }
 });
+
+test('the list keeps the offset the person scrolled to across adds, hides and deletes', testContext => {
+  const panel = mountPanel(testContext, { recipe: manyNodesRecipe(8) });
+  panel.tree.scrollTop = 120;
+  panel.studio.controller.addPrimitive('box');
+  assert.equal(panel.tree.scrollTop, 120);
+  panel.studio.controller.updateNodeTransform('n2', { visible: false });
+  assert.equal(panel.tree.scrollTop, 120);
+  panel.studio.selectNode('n4');
+  panel.studio.controller.deleteSelected();
+  assert.equal(panel.tree.scrollTop, 120);
+});
+
+test('moving the last row to the front moves that one row', testContext => {
+  const panel = mountPanel(testContext, { recipe: manyNodesRecipe(4) });
+  resetMoves(panel);
+  const reordered = panel.studio.exportRecipe();
+  reordered.nodes.unshift(reordered.nodes.pop());
+  panel.studio.controller.loadRecipe(reordered);
+  assert.deepEqual(panel.nodeRows().map(rowLabel), ['n3', 'n0', 'n1', 'n2']);
+  assert.deepEqual(movedRows(panel), ['n3']);
+});
+
+test('the fake browser refuses focus for a detached, hidden or disabled element', testContext => {
+  const panel = mountPanel(testContext, { recipe: manyNodesRecipe(3) });
+  const document = panel.dom.document;
+  const anchor = panel.rowByLabel('n0').querySelector('.crucible-studio-tree-select');
+  anchor.focus({ preventScroll: true });
+  assert.ok(document.activeElement === anchor);
+  const detached = document.createElement('button');
+  detached.focus();
+  assert.ok(document.activeElement === anchor, 'a detached element takes no focus');
+  const hiddenButton = panel.rowByLabel('n1').querySelector('.crucible-studio-tree-select');
+  hiddenButton.hidden = true;
+  hiddenButton.focus();
+  assert.ok(document.activeElement === anchor, 'a hidden element takes no focus');
+  const disabledButton = panel.rowByLabel('n2').querySelector('.crucible-studio-tree-select');
+  disabledButton.disabled = true;
+  disabledButton.focus();
+  assert.ok(document.activeElement === anchor, 'a disabled element takes no focus');
+});

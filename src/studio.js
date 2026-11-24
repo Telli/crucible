@@ -3315,9 +3315,33 @@ export function createStudio(container, {
     row.badge.style.fill = fill;
   }
 
-  // Puts the wanted rows in the list in order. Stale rows leave first, then the rows are walked from the end and a row is
-  // moved only when the row after it is not the one wanted, so a row that keeps its place is never detached (it would lose
-  // keyboard focus and hover).
+  // Indexes of the longest run of values that keeps rising: the rows of that run are already in the right order.
+  function longestRisingRun(values) {
+    const tails = [];
+    const tailIndexAtLength = [];
+    const previousIndex = new Array(values.length).fill(-1);
+    values.forEach((value, index) => {
+      let low = 0;
+      let high = tails.length;
+      while (low < high) {
+        const middle = (low + high) >> 1;
+        if (tails[middle] < value) low = middle + 1;
+        else high = middle;
+      }
+      tails[low] = value;
+      tailIndexAtLength[low] = index;
+      previousIndex[index] = low > 0 ? tailIndexAtLength[low - 1] : -1;
+    });
+    const run = new Set();
+    for (let index = tails.length ? tailIndexAtLength[tails.length - 1] : -1; index >= 0; index = previousIndex[index]) {
+      run.add(index);
+    }
+    return run;
+  }
+
+  // Puts the wanted rows in the list in order. Stale rows leave first. The rows already in the list that keep their relative
+  // order stay where they are; every other row is inserted before the row that follows it. A row that stays is never
+  // detached, since that would drop its keyboard focus and hover.
   function placeOutlinerRows(rowElements) {
     const wanted = new Set(rowElements);
     for (const child of [...outlinerTree.children]) {
@@ -3325,10 +3349,13 @@ export function createStudio(container, {
         child.remove();
       }
     }
+    const positions = new Map([...outlinerTree.children].map((child, index) => [child, index]));
+    const inList = rowElements.filter(element => positions.has(element));
+    const stays = new Set([...longestRisingRun(inList.map(element => positions.get(element)))].map(index => inList[index]));
     let following = null;
     for (let index = rowElements.length - 1; index >= 0; index -= 1) {
       const element = rowElements[index];
-      if (element.parentNode !== outlinerTree || element.nextElementSibling !== following) {
+      if (!stays.has(element)) {
         outlinerTree.insertBefore(element, following);
       }
       following = element;
@@ -3354,7 +3381,7 @@ export function createStudio(container, {
     if (!focused || documentReference.activeElement === focused.element) {
       return;
     }
-    outlinerRows.get(focused.rowKey)?.element.children[focused.buttonIndex]?.focus();
+    outlinerRows.get(focused.rowKey)?.element.children[focused.buttonIndex]?.focus({ preventScroll: true });
   }
 
   function renderOutliner(recipe) {
@@ -3391,6 +3418,7 @@ export function createStudio(container, {
     }
     lastTreeKey = treeKey;
     const focused = focusedOutlinerButton();
+    const savedScrollTop = outlinerTree.scrollTop;
     const previousRows = new Map(outlinerRows);
     outlinerRows.clear();
     for (const wanted of wantedRows) {
@@ -3407,9 +3435,11 @@ export function createStudio(container, {
     lastTreeStructureKey = structureKey;
     placeOutlinerRows([...outlinerRows.values()].map(row => row.element));
     restoreOutlinerFocus(focused);
-    // Rebuilding the list used to start it from the top; the browser would otherwise keep the row it had snapped to.
-    outlinerTree.scrollTop = 0;
     fitTreeToWholeRows();
+    // Rows added or removed above the one the browser snapped to would move the list; it stays where the person left it.
+    if (outlinerTree.scrollTop !== savedScrollTop) {
+      outlinerTree.scrollTop = savedScrollTop;
+    }
   }
 
   // The swatches are rebuilt only when a material was added, removed or recoloured; moving the pressed state to another
