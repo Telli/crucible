@@ -23,17 +23,19 @@ let workerStartFailure = null;
 // What ran where, since the last reset: a kernel served by a worker, a kernel computed inline, and why a kernel that
 // should have gone to a worker did not. A silent fallback would otherwise look the same as success.
 const MAXIMUM_RECORDED_FALLBACKS = 16;
-const statistics = { worker: 0, page: 0, inline: 0, fallbacks: [] };
+const statistics = { worker: 0, page: 0, inline: 0, passes: 0, kernelMilliseconds: 0, fallbacks: [] };
 
 /** Counts of kernels served by a worker and run inline, with the reason for each fallback. */
 export function kernelStats() {
-  return { worker: statistics.worker, page: statistics.page, inline: statistics.inline, fallbacks: statistics.fallbacks.map(fallback => ({ ...fallback })) };
+  return { worker: statistics.worker, page: statistics.page, inline: statistics.inline, passes: statistics.passes, kernelMilliseconds: statistics.kernelMilliseconds, fallbacks: statistics.fallbacks.map(fallback => ({ ...fallback })) };
 }
 
 export function resetKernelStats() {
   statistics.worker = 0;
   statistics.page = 0;
   statistics.inline = 0;
+  statistics.passes = 0;
+  statistics.kernelMilliseconds = 0;
   statistics.fallbacks = [];
 }
 
@@ -53,8 +55,35 @@ function computeInline(compute, args) {
 
 /** Thrown by `runKernel` inside a session when a kernel's result has to be computed on the worker first. */
 export class KernelDeferred {
-  constructor(job) {
+  constructor(job, jobs = [job]) {
     this.job = job;
+    this.jobs = jobs;
+  }
+}
+
+/**
+ * Runs `action(item)` for every item and, when some of them need kernels, asks for all of those kernels at once. Without
+ * this a build that reads the baked textures of N parts is built N times, one new kernel per build, and the cost of
+ * everything built before the first kernel is paid N times. Outside a `buildWithKernels` session no kernel defers, so
+ * this is a plain loop.
+ */
+export function forEachDeferring(items, action) {
+  const pending = new Map();
+  for (const item of items) {
+    try {
+      action(item);
+    } catch (error) {
+      if (!(error instanceof KernelDeferred)) {
+        throw error;
+      }
+      for (const job of error.jobs) {
+        pending.set(job.key, job);
+      }
+    }
+  }
+  if (pending.size > 0) {
+    const jobs = [...pending.values()];
+    throw new KernelDeferred(jobs[0], jobs);
   }
 }
 
@@ -254,19 +283,20 @@ function requestKernel(worker, job, signal, timeoutMilliseconds) {
  * built from identical bytes. `createWorker` replaces the browser Worker (tests, other hosts); `signal` cancels the
  * build and ends the worker. Hosts without workers just run the build.
  */
-export async function buildWithKernels(build, { createWorker = defaultWorkerFactory, signal, available = kernelWorkersAvailable(), pageKernels, kernelTimeoutMilliseconds = DEFAULT_KERNEL_TIMEOUT_MILLISECONDS } = {}) {
+export async function buildWithKernels(build, { createWorker = defaultWorkerFactory, signal, available = kernelWorkersAvailable(), pageKernels, kernelTimeoutMilliseconds = DEFAULT_KERNEL_TIMEOUT_MILLISECONDS, maximumWorkers = defaultMaximumWorkers() } = {}) {
   validateKernelTimeout(kernelTimeoutMilliseconds);
   if (!available || activeSession) {
     return build();
   }
   const session = { results: new Map(), inlineKeys: new Set(), inlineAll: false, deferrals: 0 };
-  let worker = null;
+  const workers = [];
   try {
     for (;;) {
       if (signal?.aborted) {
         throw abortError(signal);
       }
       activeSession = session;
+      statistics.passes++;
       try {
         return build();
       } catch (error) {
@@ -280,18 +310,52 @@ export async function buildWithKernels(build, { createWorker = defaultWorkerFact
           session.inlineAll = true;
           recordFallback(error.job.name, 'the build asked for more kernels than any scene holds');
         }
-        if (await computeOnPage(session, pageKernels, error.job)) {
-          continue;
-        }
-        worker ??= createWorkerOrNull(createWorker);
-        await computeOnWorker(session, worker, error.job, signal, kernelTimeoutMilliseconds);
+        const startedAt = performance.now();
+        await computeDeferredJobs(session, error.jobs, { pageKernels, workers, createWorker, signal, timeoutMilliseconds: kernelTimeoutMilliseconds, maximumWorkers });
+        statistics.kernelMilliseconds += Math.round(performance.now() - startedAt);
       } finally {
         activeSession = null;
       }
     }
   } finally {
-    worker?.terminate();
+    for (const worker of workers) {
+      worker?.terminate();
+    }
   }
+}
+
+// The workers one build may start. Each one holds a copy of the module and of its job's input, so the pool stays small,
+// and one core stays free for the page.
+const MAXIMUM_WORKERS = 4;
+
+function defaultMaximumWorkers() {
+  const cores = typeof navigator === 'object' && Number.isInteger(navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 2;
+  return Math.max(1, Math.min(MAXIMUM_WORKERS, cores - 1));
+}
+
+// The kernels of one build pass, each computed once. Page kernels run first, one after the other, because they share the
+// GPU. The rest run on a pool of workers; each result is stored under its job's key, so the order in which workers finish
+// does not change what the next build pass reads.
+async function computeDeferredJobs(session, jobs, { pageKernels, workers, createWorker, signal, timeoutMilliseconds, maximumWorkers }) {
+  const workerJobs = [];
+  for (const job of jobs) {
+    if (session.results.has(job.key)) {
+      continue;
+    }
+    if (!(await computeOnPage(session, pageKernels, job))) {
+      workerJobs.push(job);
+    }
+  }
+  const size = Math.min(workerJobs.length, maximumWorkers);
+  while (workers.length < size) {
+    workers.push(createWorkerOrNull(createWorker));
+  }
+  const queue = [...workerJobs];
+  await Promise.all(workers.slice(0, size).map(async worker => {
+    while (queue.length > 0) {
+      await computeOnWorker(session, worker, queue.shift(), signal, timeoutMilliseconds);
+    }
+  }));
 }
 
 // A page kernel answers a job on the page itself, where the GPU is, instead of on the worker. It takes a job only when its
