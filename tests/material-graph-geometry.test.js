@@ -98,11 +98,14 @@ test('a graph with the new nodes bakes on box mapping without UVs and counts tow
   assert.ok(first.map && first.normalMap);
   assert.ok(first.boxMapScale > 0);
   assert.deepEqual(first.map.image.data, second.map.image.data);
-  // Four smooth Voronoi outputs cost about 25 units a pixel each, which is over the 60 million budget at 1024 by 1024.
-  assert.throws(() => normalizeMaterialPattern({
-    type: 'graph', resolution: 1024,
-    graph: Object.fromEntries(['color', 'roughness', 'metallic', 'height'].map(name => [name, { voronoi: { scale: 8, output: 'smoothF1' } }])),
-  }), /work units per pixel|nodes/);
+  const heavyGraph = {
+    color: { ramp: { value: { brick: { columns: 4, rows: 4, output: 'cell' } }, stops: [[0, [0.4, 0.1, 0.05]], [1, [0.7, 0.3, 0.2]]] } },
+    roughness: { noise: { scale: 4, octaves: 6, seed: 1 } },
+    metallic: { noise: { scale: 5, octaves: 6, seed: 2 } },
+    height: { invert: { noise: { scale: 6, octaves: 6, seed: 3 } } },
+  };
+  assert.throws(() => normalizeMaterialPattern({ type: 'graph', resolution: 1024, graph: heavyGraph }), /work units per pixel.*60,000,000/);
+  assert.ok(normalizeMaterialPattern({ type: 'graph', resolution: 512, graph: heavyGraph }), 'the same graph bakes at 512');
 });
 
 test('object coordinates follow the pattern size when baked', () => {
@@ -117,4 +120,29 @@ test('scene_capabilities lists the new operators and the coordinate topic text',
   for (const operator of ['coord', 'mapping', 'brick', 'whiteNoise']) assert.ok(materialGraph.operators.includes(operator), operator);
   assert.ok(materialGraph.nodes.coordinates.includes('"coord"'));
   assert.ok(materialGraph.nodes.textures.brick && materialGraph.nodes.textures.whiteNoise);
+});
+
+function budgetGraph(roughnessWrappers) {
+  const noise = (octaves, seed) => ({ noise: { scale: 4, octaves, seed } });
+  let roughness = noise(1, 1);
+  for (let index = 0; index < roughnessWrappers; index++) roughness = { invert: roughness };
+  return { roughness, metallic: noise(2, 2), height: noise(6, 3) };
+}
+
+test('the work budget is 60,000,000 units: the last graph under it at 1024 bakes and the next one over it is refused', () => {
+  const maxWork = AGENT_SCENE_CAPABILITIES.materialGraph.maxWork;
+  assert.equal(maxWork, 60_000_000);
+  const pixels = 1024 * 1024;
+  const underGraph = budgetGraph(3);
+  const overGraph = budgetGraph(4);
+  const underCost = compileMaterialGraph(underGraph).cost;
+  const overCost = compileMaterialGraph(overGraph).cost;
+  assert.ok(underCost * pixels <= maxWork, `${underCost} units at 1024 is under the budget`);
+  assert.ok(overCost * pixels > maxWork, `${overCost} units at 1024 is over the budget`);
+  assert.ok(normalizeMaterialPattern({ type: 'graph', resolution: 1024, graph: underGraph }));
+  assert.throws(
+    () => normalizeMaterialPattern({ type: 'graph', resolution: 1024, graph: overGraph }),
+    /work units per pixel at 1024 by 1024 is [\d,]+ in all, over the limit of 60,000,000 work units .*Pass fewer or cheaper nodes, or a smaller resolution/,
+  );
+  assert.ok(normalizeMaterialPattern({ type: 'graph', resolution: 512, graph: overGraph }), 'the same graph bakes at 512');
 });

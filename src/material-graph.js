@@ -1027,7 +1027,7 @@ export function checkMaterialGraphWork(compiled, resolution) {
   integerInRange(resolution, 1, 16384, 'resolution');
   const work = compiled.cost * resolution * resolution;
   if (work > MATERIAL_GRAPH_LIMITS.maxWork) {
-    throw new RangeError(`Material graph: ${compiled.cost} work units per pixel at ${resolution} by ${resolution} is over the limit of ${MATERIAL_GRAPH_LIMITS.maxWork} (about ${Math.round(MATERIAL_GRAPH_LIMITS.maxWork * WORK_UNIT_NANOSECONDS / 1e9 * 10) / 10} s of baking). Use fewer nodes or a smaller resolution.`);
+    throw new RangeError(`Material graph: ${compiled.cost} work units per pixel at ${resolution} by ${resolution} is ${Math.round(work).toLocaleString('en-US')} in all, over the limit of ${MATERIAL_GRAPH_LIMITS.maxWork.toLocaleString('en-US')} work units (about ${Math.round(MATERIAL_GRAPH_LIMITS.maxWork * WORK_UNIT_NANOSECONDS / 1e9 * 10) / 10} s of baking). Pass fewer or cheaper nodes, or a smaller resolution (256, 512 or 1024).`);
   }
 }
 

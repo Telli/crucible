@@ -166,7 +166,16 @@ export function createAgentPresence(documentReference, { controller, requestDraw
       color = agentColor(label);
       pointer.style.color = color;
       nameTag.style.background = color;
-      stops = nodeIds.filter(nodeId => controller.nodeOutline(nodeId) !== null).slice(0, MAXIMUM_STOPS);
+      // The outline of a node costs a pass over its parts, so the search ends at the stops the pointer will visit (#2842).
+      stops = [];
+      for (const nodeId of nodeIds) {
+        if (stops.length >= MAXIMUM_STOPS) {
+          break;
+        }
+        if (controller.nodeOutline(nodeId) !== null) {
+          stops.push(nodeId);
+        }
+      }
       if (stops.length > 0) {
         goToStop(0);
       }

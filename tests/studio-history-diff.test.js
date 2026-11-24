@@ -362,3 +362,26 @@ test('operationsBetweenRecipes adds geometry and material before the node that u
   const types = operationsBetweenRecipes(base, target, HISTORY_STEP).map(operation => operation.type);
   assert.deepEqual(types, ['add-geometry', 'add-material', 'add-node']);
 });
+
+test('undo and redo of a transform keep the parts of every untouched node (#2787)', () => {
+  const controller = makeController();
+  controller.scene.settleFlush();
+  const partsBefore = [...controller.scene.parts];
+  controller.updateNodeTransform('hero', { translation: [4, 0.5, 0] });
+  controller.undo();
+  controller.scene.settleFlush();
+  const partsAfterUndo = controller.scene.parts;
+  assert.equal(partsAfterUndo.length, partsBefore.length);
+  for (const [index, partBefore] of partsBefore.entries()) {
+    if (partBefore.name !== 'hero') {
+      assert.equal(partsAfterUndo[index], partBefore, `the part ${partBefore.name} is the same object after undo`);
+    }
+  }
+  controller.redo();
+  controller.scene.settleFlush();
+  for (const [index, partBefore] of partsBefore.entries()) {
+    if (partBefore.name !== 'hero') {
+      assert.equal(controller.scene.parts[index], partBefore, `the part ${partBefore.name} is the same object after redo`);
+    }
+  }
+});
