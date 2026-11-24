@@ -175,9 +175,9 @@ test('a ribbon bend is mitred: a 90 degree corner keeps its width and no quad fo
   const half = Math.hypot(...[0, 1, 2].map(axis => mesh.positions[9 + axis] - mesh.positions[6 + axis])) / 2;
   assert.ok(Math.abs(half - 0.1 * Math.SQRT2) < 1e-4, `the corner is mitred to width over the cosine of half the turn, got ${half}`);
   const sideOf = quad => {
-    const [a, b, c] = [mesh.indices[quad * 6], mesh.indices[quad * 6 + 1], mesh.indices[quad * 6 + 2]];
+    const [firstVertex, secondVertex, thirdVertex] = [mesh.indices[quad * 6], mesh.indices[quad * 6 + 1], mesh.indices[quad * 6 + 2]];
     const edge = (from, to) => [0, 1].map(axis => mesh.positions[to * 3 + axis] - mesh.positions[from * 3 + axis]);
-    const [first, second] = [edge(a, b), edge(a, c)];
+    const [first, second] = [edge(firstVertex, secondVertex), edge(firstVertex, thirdVertex)];
     return Math.sign(first[0] * second[1] - first[1] * second[0]);
   };
   assert.equal(sideOf(0), sideOf(1), 'both quads face the same way, so none folds over');
