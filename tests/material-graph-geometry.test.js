@@ -98,10 +98,14 @@ test('a graph with the new nodes bakes on box mapping without UVs and counts tow
   assert.ok(first.map && first.normalMap);
   assert.ok(first.boxMapScale > 0);
   assert.deepEqual(first.map.image.data, second.map.image.data);
-  assert.throws(() => normalizeMaterialPattern({
-    type: 'graph', resolution: 1024,
-    graph: Object.fromEntries(['color', 'roughness', 'metallic', 'height'].map(name => [name, { brick: { columns: 64 - 4 * ['color', 'roughness', 'metallic', 'height'].indexOf(name), rows: 64, at: { mapping: { scale: 2 + ['color', 'roughness', 'metallic', 'height'].indexOf(name), vector: { mapping: { scale: 10 + ['color', 'roughness', 'metallic', 'height'].indexOf(name) } } } } } }])),
-  }), /work units per pixel|nodes/);
+  const heavyGraph = {
+    color: { ramp: { value: { brick: { columns: 4, rows: 4, output: 'cell' } }, stops: [[0, [0.4, 0.1, 0.05]], [1, [0.7, 0.3, 0.2]]] } },
+    roughness: { noise: { scale: 4, octaves: 6, seed: 1 } },
+    metallic: { noise: { scale: 5, octaves: 6, seed: 2 } },
+    height: { invert: { noise: { scale: 6, octaves: 6, seed: 3 } } },
+  };
+  assert.throws(() => normalizeMaterialPattern({ type: 'graph', resolution: 1024, graph: heavyGraph }), /work units per pixel.*60,000,000/);
+  assert.ok(normalizeMaterialPattern({ type: 'graph', resolution: 512, graph: heavyGraph }), 'the same graph bakes at 512');
 });
 
 test('object coordinates follow the pattern size when baked', () => {
@@ -116,4 +120,23 @@ test('scene_capabilities lists the new operators and the coordinate topic text',
   for (const operator of ['coord', 'mapping', 'brick', 'whiteNoise']) assert.ok(materialGraph.operators.includes(operator), operator);
   assert.ok(materialGraph.nodes.coordinates.includes('"coord"'));
   assert.ok(materialGraph.nodes.textures.brick && materialGraph.nodes.textures.whiteNoise);
+});
+
+function noiseGraph(heightWrapper) {
+  const noise = (scale, seed) => ({ noise: { scale, octaves: 6, seed } });
+  return { roughness: noise(4, 1), metallic: noise(5, 2), height: heightWrapper(noise(6, 3)) };
+}
+
+test('the work budget is 60,000,000 units: 57 units at 1024 is under it and 58 is over it', () => {
+  assert.equal(AGENT_SCENE_CAPABILITIES.materialGraph.maxWork, 60_000_000);
+  const underGraph = noiseGraph(node => node);
+  const overGraph = noiseGraph(node => ({ invert: node }));
+  assert.equal(compileMaterialGraph(underGraph).cost, 57);
+  assert.equal(compileMaterialGraph(overGraph).cost, 58);
+  assert.ok(57 * 1024 * 1024 <= 60_000_000, '57 units at 1024 is 59,768,832');
+  assert.ok(normalizeMaterialPattern({ type: 'graph', resolution: 1024, graph: underGraph }));
+  assert.throws(
+    () => normalizeMaterialPattern({ type: 'graph', resolution: 1024, graph: overGraph }),
+    /58 work units per pixel at 1024 by 1024 is 60,817,408 in all, over the limit of 60,000,000 work units. Pass fewer or cheaper nodes, or a smaller resolution/,
+  );
 });

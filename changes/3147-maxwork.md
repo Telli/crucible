@@ -1,1 +1,1 @@
-- The material graph bake budget (`maxWork`) is now 60,000,000 work units, so a graph of about 60 units per pixel bakes at 1024 by 1024.
+- The material graph bake budget (`maxWork`) is now 60,000,000 work units, so a graph of 57 units per pixel bakes at 1024 by 1024, and the over-budget error names the total and the limit (#3147).
