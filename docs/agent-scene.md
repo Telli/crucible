@@ -243,6 +243,25 @@ texture repeats outside 0 to 1 and tiles. `size` and `axis` only apply to `box`.
 fails at render and at `scene_export_glb` with a message that names `uv_unwrap`. GLB export writes the baked graph textures
 and the geometry UVs.
 
+### Face images
+
+`faceImages` on a node whose geometry is a `box` puts an image, a tiled texture or a per-frame image sequence on chosen faces of the part: a Roblox Decal (one image on one face) or Texture (an image tiled by a size in metres). Each entry is a `face` (`+x`, `-x`, `+y`, `-y`, `+z`, `-z`, seen upright from outside) and either `colorMap` (one catalog image asset ID) or `map: { "sequence": { "frames": [...], "fps": 30 } }`, plus any of:
+
+- `tile: [u, v]`: metres one tile covers along the face (0.001 to 100000). The tiling stays the same size when the part is resized, so a 4 m wall at `[0.5, 0.25]` shows 8 by 8 tiles and a wall twice as wide shows 16 across. Leave it out and one image covers the whole face (1 Roblox stud is 0.28 m). `offset: [u, v]` (tiles) and `rotation` (degrees) move the tiles.
+- `color` tints the image, `opacity` fades it, `alphaMode` is `blend` by default and takes the image's own alpha; `mask` with `alphaCutoff` gives a hard cutout.
+
+```json
+{ "id": "wall", "geometry": "block", "material": "brick", "scale": [4, 2, 0.5],
+  "faceImages": [
+    { "face": "+z", "colorMap": "<image id>", "tile": [0.5, 0.25] },
+    { "face": "+x", "map": { "sequence": { "frames": ["<id>", "<id>", "<id>"], "fps": 30 } } }
+  ] }
+```
+
+A sequence shows image `floor(time * fps)` of the list with no blending: set `fps` to the scene's frame rate to change the image on every frame (a character's face), or lower to hold each image longer; `loop: false` holds the last image. The same time drives `scene_look`, scene files and render jobs, so a frame range or a clip shows the same image for the same time. At most 6 entries a node and 5 stacked on one face; frames follow the [texture sequence](#image-sequence-maps) limits, local catalog images only.
+
+Each entry becomes a child quad `<node>.face-<n>` with its own material of the same name, 0.5 mm outside the face with `decal: true`, so it follows the part and `set-node` and `set-material` edit it by those IDs. Set `faceImages` again to replace them all, or `null` to remove them. `worldScale: [u, v]` also works on a plain quad or mesh material with `colorMap` or a map sequence.
+
 ### Which geometries have UVs
 
 An image map (`map.sequence`, `colorMap` and the other texture set maps) reads UV channel 0, and a geometry type either carries it or does not:
@@ -282,7 +301,7 @@ A `surface` material takes the maps of a scanned set (Poly Haven, ambientCG) fro
 - `textureSet` fills `colorMap`, `normalMap`, `roughnessMap`, `metallicMap`, `occlusionMap` and `heightMap`. Each of those fields also takes one catalog image asset ID on its own and wins over the set. The server swaps `textureSet` for the IDs before the scene is built, so a saved recipe holds only the pinned IDs; a library caller passes the IDs. An ID that is not a catalog image, or a set name that does not exist, fails with the field, the IDs that would fit and the sets the catalog has.
 - `normalConvention` is `opengl` (default) or `directx`. A DirectX normal map has its green channel flipped when it is loaded; a set whose only normal map is a DirectX file sets it for you.
 - The roughness and metallic images are repacked into one glTF metallicRoughness texture: roughness in green, metallic in blue, the other channel 255, so `roughness` and `metallic` (default 1 when their map is set) still scale it. Their sizes must match.
-- `uvScale` (one number or `[u, v]`, 0.001 to 10000 tiles), `uvOffset` (`[u, v]`, -10000 to 10000) and `uvRotation` (degrees, -360 to 360) move every map of the material together, the way glTF `KHR_texture_transform` does: scale, then rotate, then offset. `worldScale` (metres per tile, 0.001 to 100000, not together with `uvScale`) sets the tile size instead, so a 2 m scan repeats every 2 m on a 10 m plane and on a 400 m terrain alike (a chunked terrain too). The transform is baked into the mesh UVs, so the rasterizer, both path tracers and the exports read the same texture coordinates; `worldScale` measures the mesh at its rest size, scaled by its node. A material without these fields draws exactly as before, and the fields need a catalog map and a mesh with UVs.
+- `uvScale` (one number or `[u, v]`, 0.001 to 10000 tiles), `uvOffset` (`[u, v]`, -10000 to 10000) and `uvRotation` (degrees, -360 to 360) move every map of the material together, the way glTF `KHR_texture_transform` does: scale, then rotate, then offset. `worldScale` (metres per tile, 0.001 to 100000, one number or `[u, v]` for a tile that is longer than it is wide, not together with `uvScale`) sets the tile size instead, so a 2 m scan repeats every 2 m on a 10 m plane and on a 400 m terrain alike (a chunked terrain too). The transform is baked into the mesh UVs, so the rasterizer, both path tracers and the exports read the same texture coordinates; `worldScale` measures the mesh at its rest size, scaled by its node. A material without these fields draws exactly as before, and the fields need a catalog map and a mesh with UVs.
 - `colorMap` is the base colour, `color` tints it (white by default). It cannot be combined with `map` or `pattern`, nor can any other map field with `pattern`. The material needs UVs, which [some geometries have](#which-geometries-have-uvs).
 - `occlusionMap` is drawn by the rasterizer; the path tracers ignore it and say so. `heightMap` is kept and exported in the recipe, but no renderer displaces or parallax-maps from it yet: `scene_inspect` reports it as ignored, and a path traced render lists it under `ignored`.
 
@@ -408,7 +427,7 @@ An asset placement with a `crowd` field fills its group node with `count` (1 to 
 
 ### Seams between meshes
 
-Three node fields fix what looks wrong where meshes meet; `add-node` and `set-node` take all of them. `blend: { "radius": 0.15 }` (metres, 0.005 to 2) softens the seam where a rock or trunk cuts into the ground and needs a preview with depth; see [mesh-blend.md](mesh-blend.md). `decal: true` and `depthLayer` (0 to 4) stop z-fighting on flush faces; see `depthBias` in `scene_capabilities`.
+Three node fields fix what looks wrong where meshes meet; `add-node` and `set-node` take all of them. `blend: { "radius": 0.15 }` (metres, 0.005 to 2) softens the seam where a rock or trunk cuts into the ground and needs a preview with depth; see [mesh-blend.md](mesh-blend.md). `decal: true` and `depthLayer` (0 to 4) stop z-fighting on flush faces; see `depthBias` in `scene_capabilities`. For an image on a face, see [Face images](#face-images).
 
 ### Visibility and render flags
 
