@@ -111,8 +111,8 @@ try {
       const x = (0.4124 * linear[0] + 0.3576 * linear[1] + 0.1805 * linear[2]) / 0.95047;
       const y = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
       const z = (0.0193 * linear[0] + 0.1192 * linear[1] + 0.9505 * linear[2]) / 1.08883;
-      const f = value => (value > 0.008856 ? Math.cbrt(value) : 7.787 * value + 16 / 116);
-      return { lightness: 116 * f(y) - 16, a: 500 * (f(x) - f(y)), b: 200 * (f(y) - f(z)) };
+      const labCurve = value => (value > 0.008856 ? Math.cbrt(value) : 7.787 * value + 16 / 116);
+      return { lightness: 116 * labCurve(y) - 16, a: 500 * (labCurve(x) - labCurve(y)), b: 200 * (labCurve(y) - labCurve(z)) };
     };
     for (const [name, view] of Object.entries(views)) {
       topOnly.render({ ...view, time: 1, environment: environmentFor(name) });
