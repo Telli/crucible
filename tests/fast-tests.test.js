@@ -136,6 +136,20 @@ test('a browser word that only appears in a comment does not make a test a brows
   assert.match(browserReason('tests/real-import.test.js'), /launches a browser through playwright/);
 });
 
+test('a regular expression with slashes is not read as a comment, so a real launch after it is still found', () => {
+  const sources = {
+    'tests/escaped-slashes.test.js': "const r = /a\\/\\/b/; import { chromium } from 'playwright';",
+    'tests/url-pattern.test.js': "const pattern = /https?:\\/\\//; const page = await import('playwright');",
+    'tests/class-slashes.test.js': "const pattern = /[//]/;\nimport { chromium } from 'playwright';",
+    'tests/division.test.js': "const half = total / 2; // playwright is not used\n",
+  };
+  const browserReason = createBrowserDetector(path => sources[path] ?? null);
+  assert.match(browserReason('tests/escaped-slashes.test.js'), /launches a browser through playwright/);
+  assert.match(browserReason('tests/url-pattern.test.js'), /launches a browser through playwright/);
+  assert.match(browserReason('tests/class-slashes.test.js'), /launches a browser through playwright/);
+  assert.equal(browserReason('tests/division.test.js'), null);
+});
+
 test('without a source reader nothing is dropped, so the browser check is opt in per caller', () => {
   assert.deepEqual(selectFastTests(fixtureTimings, fixtureFiles).files, [...fixtureFiles].sort());
 });

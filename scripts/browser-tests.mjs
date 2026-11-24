@@ -23,9 +23,28 @@ const EXTENSIONS = ['', '.js', '.mjs', '.cjs'];
 
 const QUOTES = new Set(["'", '"', '`']);
 
+// A `/` starts a regular expression, not a division, after one of these (or at the start of the file).
+const REGEX_MAY_START_AFTER = /(?:^|[(,=:[!&|?{};+\-*%<>~^]|\b(?:return|typeof|case|in|of|void|delete|yield|await))$/;
+
+/** Index just past the regular expression literal that starts at `start`, or `start + 1` when the line ends before it closes. */
+function endOfRegexLiteral(sourceText, start) {
+  let index = start + 1;
+  let insideClass = false;
+  while (index < sourceText.length && sourceText[index] !== '\n') {
+    const character = sourceText[index];
+    if (character === '\\') index += 1;
+    else if (character === '[') insideClass = true;
+    else if (character === ']') insideClass = false;
+    else if (character === '/' && !insideClass) return index + 1;
+    index += 1;
+  }
+  return start + 1;
+}
+
 /**
  * Returns the source with `//` line comments and block comments removed, so a word that appears only in a comment is not a launcher (#3219).
  * A quote opens a string that the same quote closes (a single or double quote also ends at the line break), so `https://` inside a string stays.
+ * A regular expression literal is kept whole too, so `/a\/\/b/` is not read as the start of a comment.
  */
 export function stripComments(sourceText) {
   let output = '';
@@ -33,7 +52,13 @@ export function stripComments(sourceText) {
   while (index < sourceText.length) {
     const character = sourceText[index];
     const next = sourceText[index + 1];
-    if (character === '/' && next === '/') {
+    const regexEnd = character === '/' && next !== '/' && next !== '*' && REGEX_MAY_START_AFTER.test(output.slice(-200).trimEnd())
+      ? endOfRegexLiteral(sourceText, index)
+      : index + 1;
+    if (regexEnd > index + 1) {
+      output += sourceText.slice(index, regexEnd);
+      index = regexEnd;
+    } else if (character === '/' && next === '/') {
       while (index < sourceText.length && sourceText[index] !== '\n') index += 1;
     } else if (character === '/' && next === '*') {
       const end = sourceText.indexOf('*/', index + 2);
