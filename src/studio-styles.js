@@ -2370,7 +2370,8 @@ export const STUDIO_CSS = `
 }
 .crucible-studio-setup-sign-in[data-state="signed-in"] > .crucible-studio-icon {
   flex: none;
-  color: var(--studio-ok);
+  /* Mixed toward the text colour, so the mark stays clear on the pale card of the light theme. */
+  color: color-mix(in srgb, var(--studio-ok) 60%, var(--studio-text));
 }
 .crucible-studio-setup-sign-in[data-state="signed-in"] > span {
   min-inline-size: 0;
