@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createTree } from '../src/vegetation.js';
 import { TREE_PRESETS } from '../src/vegetation-presets.js';
+import { createLeafPixels } from '../src/vegetation-textures.js';
 
 const CROWN_PRESETS = ['oak', 'ash', 'aspen', 'birch'];
 const FOLIAGE_TRIANGLE_LIMIT = 10000;
@@ -86,5 +87,51 @@ test('plain species grow without an envelope', () => {
   for (const species of ['broadleaf', 'birch', 'conifer', 'palm', 'bush']) {
     const tree = createTree(species, 4);
     assert.ok(foliageGeometry(tree).indices.length > 0);
+  }
+});
+
+// A leaf card base is its twig's tip: the bark of the leafy tree has to draw the twig, or the card floats (#3057).
+test('every leaf card of a crowned tree sits on the tip of a drawn twig', () => {
+  const MAXIMUM_GAP = 0.05;
+  const CARD_VERTICES = 4;
+  for (const name of CROWN_PRESETS) {
+    const tree = createTree({ preset: name }, 4);
+    const bark = tree.levels[0].parts.find(part => part.role === 'bark').geometry.positions;
+    const { positions } = foliageGeometry(tree);
+    let floating = 0;
+    // Every eighth card keeps the nearest-bark search short; the cards come off one stream, so the sample is even.
+    for (let first = 0; first + CARD_VERTICES * 3 <= positions.length; first += CARD_VERTICES * 3 * 8) {
+      const base = [0, 1, 2].map(axis => (positions[first + axis] + positions[first + 3 + axis]) / 2);
+      let nearest = Infinity;
+      for (let index = 0; index < bark.length; index += 3) {
+        nearest = Math.min(nearest, Math.hypot(bark[index] - base[0], bark[index + 1] - base[1], bark[index + 2] - base[2]));
+      }
+      if (nearest > MAXIMUM_GAP) floating++;
+    }
+    assert.equal(floating, 0, `${name}: ${floating} leaf cards start more than ${MAXIMUM_GAP} m from any bark`);
+  }
+});
+
+test('each crowned species paints its own spray atlas', () => {
+  const expectedKind = { oak: 'twig', ash: 'twig-ash', aspen: 'twig-aspen', birch: 'twig-birch' };
+  const alphaOf = pixels => Buffer.from(pixels.data).filter((_, index) => index % 4 === 3);
+  for (const name of CROWN_PRESETS) {
+    const tree = createTree({ preset: name }, 4);
+    const painted = alphaOf(tree.materials.foliage.map.image);
+    assert.ok(painted.equals(alphaOf(createLeafPixels(expectedKind[name], [100, 140, 50]))), `${name} does not draw the ${expectedKind[name]} atlas`);
+  }
+  const alphas = CROWN_PRESETS.map(name => alphaOf(createTree({ preset: name }, 4).materials.foliage.map.image).toString('base64'));
+  assert.equal(new Set(alphas).size, CROWN_PRESETS.length, 'two crowned species share one atlas');
+});
+
+test('no leaf card points steeply down unless its placement lets it hang', () => {
+  for (const name of ['oak', 'ash', 'aspen']) {
+    const tree = createTree({ preset: name }, 4);
+    const { positions } = foliageGeometry(tree);
+    for (let first = 0; first + 12 <= positions.length; first += 12) {
+      const rise = (positions[first + 7] + positions[first + 10]) / 2 - (positions[first + 1] + positions[first + 4]) / 2;
+      const length = Math.hypot(...[0, 1, 2].map(axis => (positions[first + 6 + axis] + positions[first + 9 + axis]) / 2 - (positions[first + axis] + positions[first + 3 + axis]) / 2));
+      assert.ok(rise / length >= -0.35, `${name} card at ${first / 12} points ${(rise / length).toFixed(2)} down`);
+    }
   }
 });

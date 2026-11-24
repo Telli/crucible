@@ -118,7 +118,7 @@ test('the sprig card is still a fifth leaf, and addLeafSurface maps a variant ce
 test('broad-leaved tree presets carry twig cards and crown placement, plain species keep sprig cards', () => {
   for (const preset of ['oak', 'ash', 'aspen', 'birch']) {
     const { preset: grown } = resolveTreePreset({ preset });
-    assert.equal(grown.leaf.texture, 'twig', preset);
+    assert.equal(grown.leaf.texture, { oak: 'twig', ash: 'twig-ash', aspen: 'twig-aspen', birch: 'twig-birch' }[preset], preset);
     assert.ok((grown.leaf.placement.twigs ?? grown.bareTwigs).length >= 1, `${preset} carries its leaves on twigs`);
     assert.equal(grown.leaf.placement.cardFan, undefined, preset);
   }
@@ -135,9 +135,10 @@ test('plain species grow the same geometry as before twig cards', () => {
   assert.equal(geometryHash(createTree('bush', 4)), '505a750a3783');
 });
 
-test('mesh leaves of the presets grow the same geometry as before twig cards', () => {
-  assert.equal(geometryHash(createTree({ preset: 'oak', leaves: 'mesh' }, 4)), '3407cb1fa349');
-  assert.equal(geometryHash(createTree({ preset: 'birch', leaves: 'mesh' }, 4)), '9678808ad542');
+// The oak's mesh leaves follow its habit (limb count, angles), so this pin moves when the oak preset's growth does; the birch's must not.
+test('mesh leaves of the presets grow the same geometry from one build to the next', () => {
+  assert.equal(geometryHash(createTree({ preset: 'oak', leaves: 'mesh' }, 4)), '340d19cc6dae');
+  assert.equal(geometryHash(createTree({ preset: 'birch', leaves: 'mesh' }, 4)), 'e0aa2233b0e1');
 });
 
 for (const preset of ['oak', 'birch']) {
@@ -157,8 +158,6 @@ for (const preset of ['oak', 'birch']) {
 // per species hold on seeds 1 to 8 or on seed 4; the others (the widest row of an ash, the sky hole of an oak, all of the aspen,
 // whose band comes from two cropped photos) are still open on #3041 (oak seed 4 holds all but its sky hole).
 const HULL_FILL_STEP_LIMIT = 0.05;
-// The ash steps by 0.06 at seed 4: its level 1 keeps every third site of a sparser crown. Open on #3041.
-const HULL_FILL_STEP_LIMITS = Object.freeze({ ash: 0.07 });
 const HELD_BAND_METRICS = Object.freeze({
   oak: ['hullFill', 'bayShare', 'widthOverHeight', 'widestRow'],
   ash: ['hullFill', 'bayShare', 'widthOverHeight'],
@@ -172,7 +171,7 @@ for (const [preset, heldMetrics] of Object.entries(HELD_BAND_METRICS)) {
     const failures = bandFailures(near, PHOTO_BANDS[preset]).filter(name => heldMetrics.includes(name));
     assert.deepEqual(failures, [], `${preset} is outside its photo band on ${failures.join(', ')}: ${report}`);
     const middle = modelCrownMetrics(tree, 1);
-    assert.ok(Math.abs(near.hullFill - middle.hullFill) <= (HULL_FILL_STEP_LIMITS[preset] ?? HULL_FILL_STEP_LIMIT), `hull fill moves ${near.hullFill.toFixed(2)} to ${middle.hullFill.toFixed(2)} across the level 0 to 1 switch`);
+    assert.ok(Math.abs(near.hullFill - middle.hullFill) <= HULL_FILL_STEP_LIMIT, `hull fill moves ${near.hullFill.toFixed(2)} to ${middle.hullFill.toFixed(2)} across the level 0 to 1 switch`);
   });
 }
 

@@ -189,7 +189,7 @@ function growTwigs(skeleton, preset, seed, generations = preset.bareTwigs) {
         const direction = sproutDirection(sample, slot, randomInRange(random, generation.angle));
         const length = parent.length * randomInRange(random, generation.lengthRatio);
         const walked = walkBranch(sample.position, direction, length, sample.radius * generation.radiusRatio, generation, random);
-        grown.push(pruneToEnvelope({ level: lastLevel + 1 + generationIndex, ...walked }, preset.envelope, skeleton.height));
+        grown.push({ ...pruneToEnvelope({ level: lastLevel + 1 + generationIndex, ...walked }, preset.envelope, skeleton.height), parent });
       }
     }
     twigs.push(...grown);
@@ -278,9 +278,10 @@ function growLeafTwigs(branches, height, preset, seed) {
   return growTwigs({ branches, height }, preset, seed, generations);
 }
 
-// Where a twig carries leaf sites, as fractions of its length: the last generation along its length and tip, the rest at the tip.
-const TIP_SITE_FRACTIONS = Object.freeze([1]);
-const END_TWIG_SITE_FRACTIONS = Object.freeze([0.75]);
+// A twig carries its leaf site at its tip, so no bare stick shows past the card.
+// How far a leaf may point below the horizontal unless the placement lets it hang (`droop`, a birch): a card hung straight down from a
+// low limb reached the ground.
+const DEFAULT_LEAF_DROOP = 0.3;
 
 /**
  * The leaf sites of a tree preset that sets `leaf.placement` (#3041, #3057): on its twig generations, on a random stream of their
@@ -290,31 +291,38 @@ const END_TWIG_SITE_FRACTIONS = Object.freeze([0.75]);
  */
 function placeCrownLeafSites(branches, height, preset, seed) {
   const random = createRandom(seed * 6151 + 53);
-  const { interiorKeep, outwardTilt, upTilt } = preset.leaf.placement;
+  const { interiorKeep, outwardTilt, upTilt, droop = DEFAULT_LEAF_DROOP } = preset.leaf.placement;
   const limit = treeLeafSiteLimit(preset);
   const twigs = growLeafTwigs(branches, height, preset, seed);
-  const lastTwigLevel = Math.max(...twigs.map(twig => twig.level));
   const candidates = [];
-  for (const twig of twigs) {
-    for (const fraction of twig.level === lastTwigLevel ? END_TWIG_SITE_FRACTIONS : TIP_SITE_FRACTIONS) {
-      candidates.push(sampleBranch(twig, fraction));
-    }
-  }
+  for (const twig of twigs) candidates.push({ ...sampleBranch(twig, 1), twig });
   const center = scaleVector(candidates.reduce((sum, sample) => addVectors(sum, sample.position), [0, 0, 0]), 1 / candidates.length);
   const extent = [0, 1, 2].map(axis => Math.max(...candidates.map(sample => Math.abs(sample.position[axis] - center[axis])), 0.1));
   const leafSites = [];
+  const leafTwigs = new Set();
   for (const sample of candidates) {
     const offset = subtractVectors(sample.position, center);
     const outside = clamp(vectorLength(offset.map((value, axis) => value / extent[axis])), 0, 1);
     if (random() > interiorKeep + (1 - interiorKeep) * outside * outside * (3 - 2 * outside)) continue;
-    const direction = normalized(addVectors(
+    const pointing = normalized(addVectors(
       addVectors(scaleVector(normalized(offset), outwardTilt), scaleVector(WORLD_UP, upTilt)),
       addVectors(sample.direction, scaleVector(randomUnitOffset(random), 0.25)),
     ));
+    const direction = limitDroop(pointing, droop);
     leafSites.push({ position: sample.position, direction, scale: 0.8 + random() * 0.45, roll: (random() - 0.5) * 0.8 });
+    for (let twig = sample.twig; twig && !leafTwigs.has(twig); twig = twig.parent) leafTwigs.add(twig);
   }
   if (leafSites.length > limit) throw tooManyLeafSites(limit);
-  return leafSites;
+  // Only a twig that carries a leaf, or leads to one, is drawn: the rest would end in a bare stick (#3057).
+  return { leafSites, leafTwigs: twigs.filter(twig => leafTwigs.has(twig)) };
+}
+
+/** `direction` with its downward slope held to `droop` (0.3 lets a leaf point 17 degrees below the horizontal), turned toward the horizontal. */
+function limitDroop(direction, droop) {
+  if (direction[1] >= -droop) return direction;
+  const flat = Math.hypot(direction[0], direction[2]);
+  const scale = flat > 1e-6 ? Math.sqrt(1 - droop * droop) / flat : 0;
+  return [direction[0] * scale, -droop, direction[2] * scale];
 }
 
 /**
@@ -433,10 +441,10 @@ function growSkeleton(preset, height, random, leafMode, seed) {
     radius: height * preset.trunkRadiusRatio,
     level: 0,
   });
-  const sites = !placeCrown ? leafSites
+  const placed = !placeCrown ? { leafSites }
     : preset.leaf.placement.depth === undefined ? placeCrownLeafSites(branches, height, preset, seed)
-      : placeBranchLevelLeafSites(branches, preset, random);
-  return { branches, height, leafSites: sites, crown: describeCrown(sites) };
+      : { leafSites: placeBranchLevelLeafSites(branches, preset, random) };
+  return { branches, height, leafSites: placed.leafSites, leafTwigs: placed.leafTwigs ?? [], crown: describeCrown(placed.leafSites) };
 }
 
 function describeCrown(leafSites) {
@@ -450,6 +458,11 @@ function thinnedRings(points, radii, stride) {
   const kept = points.map((point, index) => index).filter(index => index % stride === 0 || index === points.length - 1);
   return { points: kept.map(index => points[index]), radii: kept.map(index => radii[index]) };
 }
+
+// A leaf twig is drawn as a three-sided stick from its base to its tip (#3057): it only has to hold its card, and a ring
+// per step would put more triangles in the twigs than in the leaves.
+const LEAF_TWIG_SIDES = 3;
+const LEAF_TWIG_RING_STRIDE = 3;
 
 function buildBark(skeleton, preset, setting, bark) {
   const lastLevel = preset.levels.length - 1;
@@ -467,6 +480,11 @@ function buildBark(skeleton, preset, setting, bark) {
       radii = [radii[0] * preset.rootFlare, ...radii];
     }
     addTube(builder, points, radii, sides, bark.tileSize, [1, 1, 1], { worldScaleUv: bark.scanned });
+  }
+  for (const twig of skeleton.leafTwigs ?? []) {
+    if (twig.level > maximumLevel) continue;
+    const { points, radii } = thinnedRings(twig.points, twig.radii, LEAF_TWIG_RING_STRIDE);
+    addTube(builder, points, radii, LEAF_TWIG_SIDES, bark.tileSize, [1, 1, 1], { worldScaleUv: bark.scanned });
   }
   return builder.build();
 }
