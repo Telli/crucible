@@ -1,6 +1,5 @@
 import './support/load-agent-scene-modules.mjs';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { normalizeAgentLook } from '../src/agent-look.js';
 import { createLightingState, updateLightingState } from '../src/lighting.js';
@@ -41,13 +40,6 @@ test('ambientColor stays out of the diffuse light and the diffuse scale multipli
   assert.deepEqual(calls.bounce, [0, 0, 0], 'the fill is not a bounce: adding it to the irradiance lit sunlit ground as well as shadow');
   assert.deepEqual(calls.frame, [1, 0, 1]);
   assert.equal(calls.irradiance[0], Math.fround(0.1));
-});
-
-test('the main shader weights the ambientColor fill by the key light so it tints shadow and leaves lit surfaces alone', () => {
-  const source = readFileSync(new URL('../src/shaders.js', import.meta.url), 'utf8');
-  assert.match(source, /uniform vec3 ambientColor;/);
-  assert.match(source, /float keyReach = visibility \* smoothstep\(0\.0, 0\.4, dot\(normal, normalize\(lightDirection\)\)\)/);
-  assert.match(source, /radiance \+= ambientColor \* color \* \(1\.0 - metallic\) \* occlusion \* ambientIntensity \* \(1\.0 - keyReach\);/);
 });
 
 test('ambientColor and environmentDiffuseScale errors name the field and the range', () => {

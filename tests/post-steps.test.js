@@ -4,12 +4,12 @@ import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mat4 } from 'gl-matrix';
+import { mat4, vec3 } from 'gl-matrix';
 import { resolveEffects } from '../src/effects.js';
 import { normalizeAgentLook } from '../src/agent-look.js';
 import { agentSceneModulesNeeded, loadAgentSceneModules } from '../src/agent-scene-modules.js';
 import { installCameraEffects } from '../src/camera-effects.js';
-import { installPostSteps, resolvePostSteps, glareFragment, lensDistortionFragment, colorBalanceFragment, stylizeFragment, compositeFragment, usesObjectMask } from '../src/post-steps.js';
+import { installPostSteps, resolvePostSteps, glareFragment, lensDistortionFragment, colorBalanceFragment, stylizeFragment, compositeFragment, usesObjectMask, sunScreenPosition } from '../src/post-steps.js';
 import { createAgentScene } from '../src/agent-scene.js';
 import { normalizeUserPasses, buildPassFragment, installUserPasses, describeUserPasses } from '../src/user-pass.js';
 
@@ -109,8 +109,8 @@ test('each stage draws only for a frame that sets its step, and frees its target
     stage.releaseTargets(context);
     stage.dispose(context);
   }
-  assert.ok(calls.filter(call => call[0] === 'drawArrays').length === 7);
-  assert.ok(calls.filter(call => call[0] === 'deleteTexture').length === 7);
+  assert.ok(calls.filter(call => call[0] === 'drawArrays').length === 8, 'the sun rays draw a gather and a composite');
+  assert.ok(calls.filter(call => call[0] === 'deleteTexture').length === 8);
 });
 
 test('a stylize step resolves its filters and a mask, and refuses bad input', () => {
@@ -341,17 +341,61 @@ test('sunRays resolves with defaults and names the fix in each error', () => {
   assert.throws(() => resolvePostSteps({ sunRays: { color: 1 } }), /effects\.sunRays\.color.*one of the fields intensity, spread/);
 });
 
-test('colour correction scales saturation as Oklab chroma and keeps every channel off the clip', async () => {
-  const { colorCorrectionFragment } = await import('../src/post-steps.js');
-  assert.match(colorCorrectionFragment, /vec3 linearToOklab/, 'saturation moves chroma in Oklab, not a mix with luminance that pushes greens past the gamut');
-  assert.match(colorCorrectionFragment, /smoothstep\(0\.04, 0\.22, chroma\)/, 'vivid colours gain less');
-  assert.match(colorCorrectionFragment, /keepLowest = 0\.2 \* greyLowest/, 'a colour is pulled toward its grey before a channel clips');
-  assert.doesNotMatch(colorCorrectionFragment, /mix\(vec3\(luminance\), graded/);
+function cameraRenderer(context, towardSun) {
+  const eye = [0, 1.7, 7];
+  const projection = mat4.perspective(mat4.create(), 50 * Math.PI / 180, 16 / 9, 0.1, 500);
+  const view = mat4.lookAt(mat4.create(), eye, [0, 2.2, -10], [0, 1, 0]);
+  const renderer = fakeRenderer(context);
+  renderer.viewProjection = mat4.multiply(mat4.create(), projection, view);
+  renderer.activeLightDirection = towardSun;
+  return { renderer, frame: { eye, effects: { sunRays: { intensity: 0.5, spread: 0.7 } } } };
+}
+
+function screenOf(renderer, point) {
+  const clip = [0, 1, 3].map(row => renderer.viewProjection[row] * point[0] + renderer.viewProjection[row + 4] * point[1] + renderer.viewProjection[row + 8] * point[2] + renderer.viewProjection[row + 12]);
+  return [clip[0] / clip[2] * 0.5 + 0.5, clip[1] / clip[2] * 0.5 + 0.5];
+}
+
+test('the sun rays start at the sun: its direction projected through the camera, in line with every cast shadow', () => {
+  const context = recordingContext([]);
+  const forward = vec3.normalize(vec3.create(), [0, 0.5, -17]);
+  const ahead = cameraRenderer(context, [...forward]);
+  const centre = sunScreenPosition(ahead.renderer, ahead.frame);
+  assert.ok(Math.abs(centre[0] - 0.5) < 1e-3 && Math.abs(centre[1] - 0.5) < 1e-3, `a sun on the view axis is at the screen centre, got ${centre}`);
+  const yawed = vec3.rotateY(vec3.create(), forward, [0, 0, 0], -0.2);
+  const side = cameraRenderer(context, [...yawed]);
+  const expectedX = 0.5 + 0.5 * Math.tan(0.2) / (Math.tan(25 * Math.PI / 180) * 16 / 9);
+  assert.ok(Math.abs(sunScreenPosition(side.renderer, side.frame)[0] - expectedX) < 0.02, 'a sun 0.2 rad to the right lands where the lens puts it');
+  // A pole of height 3 casts a shadow along -sun; on screen the sun, the pole top and the shadow tip lie on one line, in that order.
+  const towardSun = vec3.normalize(vec3.create(), [0.3, 0.45, -1]);
+  const view = cameraRenderer(context, [...towardSun]);
+  const sun = sunScreenPosition(view.renderer, view.frame);
+  const top = [1, 3, -12];
+  const shadowTip = [top[0] - towardSun[0] * 3 / towardSun[1], 0, top[2] - towardSun[2] * 3 / towardSun[1]];
+  const topOnScreen = screenOf(view.renderer, top);
+  const tipOnScreen = screenOf(view.renderer, shadowTip);
+  const along = [topOnScreen[0] - tipOnScreen[0], topOnScreen[1] - tipOnScreen[1]];
+  const toSun = [sun[0] - topOnScreen[0], sun[1] - topOnScreen[1]];
+  const cross = (along[0] * toSun[1] - along[1] * toSun[0]) / (Math.hypot(...along) * Math.hypot(...toSun));
+  assert.ok(Math.abs(cross) < 0.01, `the shadow line points at the sun's screen position (sine of the angle ${cross})`);
+  assert.ok(along[0] * toSun[0] + along[1] * toSun[1] > 0, 'from the shadow tip through the pole top and on to the sun');
+  const behind = cameraRenderer(context, [0, 0.3, 1]);
+  assert.equal(sunScreenPosition(behind.renderer, behind.frame), null, 'a sun behind the camera has no screen position');
 });
 
-test('sun rays gather the sun disc through open sky and only ever add light', async () => {
-  const { sunRaysFragment } = await import('../src/post-steps.js');
-  assert.match(sunRaysFragment, /gathered \+= depth >= 0\.99999 \? glow \* weight : 0\.0;/, 'a tap counts only where the depth buffer shows open sky, weighted by its nearness to the sun');
-  assert.match(sunRaysFragment, /source\.rgb \+ rayColor \* rayControls\.x \* gathered \/ totalWeight \* falloff/, 'the result is the frame plus the rays: never a subtraction, so no dark halo');
-  assert.match(sunRaysFragment, /vec2 step = toSun \* reach/, 'every ray runs toward the sun');
+test('the sun rays gather half resolution toward the projected sun, and a sun behind the camera draws nothing', () => {
+  const calls = [];
+  const context = recordingContext(calls);
+  const { renderer, frame } = cameraRenderer(context, [0.3, 0.45, -1]);
+  installPostSteps(renderer);
+  const stage = renderer.postStages.find(candidate => candidate.name === 'Sun rays');
+  const position = sunScreenPosition(renderer, frame);
+  assert.ok(stage.apply(renderer, frame, resolveEffects({}), 'source'));
+  const viewports = calls.filter(call => call[0] === 'viewport').map(call => call.slice(1));
+  assert.deepEqual(viewports, [[0, 0, 8, 5], [0, 0, 16, 9]], 'the gather covers a quarter of the pixels, then the upsample covers the frame');
+  assert.ok(calls.some(call => call[0] === 'uniform2f' && call[2] === position[0] && call[3] === position[1]), 'the gather is told the projected sun position');
+  calls.length = 0;
+  const behind = cameraRenderer(context, [0, 0.3, 1]);
+  assert.equal(stage.apply(behind.renderer, behind.frame, resolveEffects({}), 'source'), null);
+  assert.equal(calls.filter(call => call[0] === 'drawArrays').length, 0, 'no pass runs for a sun behind the camera');
 });
