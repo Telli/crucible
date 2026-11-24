@@ -35,6 +35,9 @@ test('markers name the module a recipe needs', () => {
   assert.deepEqual(agentSceneModulesNeeded({ materials: [{ id: 'm', metallic: 1 }] }), ['reflections']);
   assert.deepEqual(agentSceneModulesNeeded({ materials: [{ id: 'm', metallic: 0 }, { id: 'n', metallic: 0.2 }] }), []);
   assert.deepEqual(agentSceneModulesNeeded({ materials: [{ id: 'm', pattern: { type: 'bricks' } }] }), ['patterns']);
+  const placedGraphModules = agentSceneModulesNeeded({ nodes: [{ id: 'rock', asset: { id: 'a', pattern: { graph: {} } } }] });
+  assert.ok(placedGraphModules.includes('assetGraph') && placedGraphModules.includes('patterns'));
+  assert.ok(!agentSceneModulesNeeded({ nodes: [{ id: 'rock', asset: { id: 'a' } }] }).includes('assetGraph'));
 });
 
 test('a primitive recipe runs without loading any module', () => {

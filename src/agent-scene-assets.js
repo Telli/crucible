@@ -23,20 +23,32 @@ export function registerCrowdModule(module) {
   crowdModule = module;
 }
 
+// The graph code for placed parts registers itself here when it loads, for the same reason.
+let assetGraphModule = null;
+
+export function registerAssetGraphModule(module) {
+  assetGraphModule = module;
+}
+
+function assetGraphCode() {
+  if (!assetGraphModule) throw new Error('This recipe puts a graph on a placed asset, which loads on demand: await loadAgentSceneModules(recipe) before createAgentScene or apply.');
+  return assetGraphModule;
+}
+
 function crowdCode() {
   if (!crowdModule) throw new Error('This recipe places a crowd, which loads on demand: await loadAgentSceneModules(recipe) before createAgentScene or apply.');
   return crowdModule;
 }
 
 const ASSET_ID = /^[a-f0-9]{64}$/;
-const PLACEMENT_FIELDS = ['id', 'materials', 'flatten', 'clip', 'drive', 'crowd'];
+const PLACEMENT_FIELDS = ['id', 'materials', 'flatten', 'pattern', 'clip', 'drive', 'crowd'];
 const FLATTEN_FIELDS = ['color', 'unlit'];
 const CLIP_FIELDS = ['index', 'start', 'speed', 'loop'];
 // `clip.index: 'all'` plays every clip of the asset on one timeline (the same word the pose animation takes in gltf.js).
 const ALL_CLIPS = 'all';
 const COLOR_FIELDS = ['color', 'emissiveColor'];
 const UNIT_FIELDS = ['metallic', 'roughness', 'opacity'];
-const OVERRIDE_FIELDS = ['name', 'id', 'tag', ...COLOR_FIELDS, ...UNIT_FIELDS, 'emission', 'emissionMask'];
+const OVERRIDE_FIELDS = ['name', 'id', 'pattern', 'tag', ...COLOR_FIELDS, ...UNIT_FIELDS, 'emission', 'emissionMask'];
 // A tag an override may set: foliage and grass make an imported tree sway in the wind and shade like a grown one.
 const OVERRIDE_TAGS = ['surface', 'foliage', 'grass'];
 
@@ -95,6 +107,10 @@ function normalizeMaterialOverride(override, index) {
   if (override.emissionMask !== undefined) {
     result.emissionMask = normalizeEmissionMask(override.emissionMask, `${path}.emissionMask`);
   }
+  if (override.pattern !== undefined) {
+    if (override.id !== undefined) throw invalidField(`${path}.pattern`, 'a pattern with an id', 'a graph without an id: an id is a handle for motion tracks, and a baked graph cannot be driven by one');
+    result.pattern = assetGraphCode().normalizeAssetPattern(override.pattern, `${path}.pattern`);
+  }
   return result;
 }
 
@@ -142,6 +158,12 @@ export function normalizeAssetPlacement(value) {
     result.materials = overrides;
   }
   if (value.flatten !== undefined) result.flatten = normalizeFlatten(value.flatten);
+  if (value.pattern !== undefined) {
+    if (value.flatten !== undefined || value.crowd !== undefined) {
+      throw invalidField('asset.pattern', value.pattern, `a placement without ${value.flatten !== undefined ? 'flatten, which drops the textures a graph reads' : 'crowd, whose copies share one material'}; drop one of them`);
+    }
+    result.pattern = assetGraphCode().normalizeAssetPattern(value.pattern, 'asset.pattern');
+  }
   if (value.clip !== undefined) {
     knownKeys(value.clip, CLIP_FIELDS, 'asset.clip');
     const { index, start = 0, speed = 1, loop = true } = value.clip;
@@ -155,6 +177,7 @@ export function normalizeAssetPlacement(value) {
   }
   if (value.crowd !== undefined) {
     if (value.clip !== undefined || value.drive !== undefined) throw invalidField('asset.crowd', value.crowd, 'only one of clip, drive or crowd; drop the others, such as keeping just the crowd', TypeError);
+    if (result.materials?.some(override => override.pattern)) throw invalidField('asset.materials', 'a pattern on a crowd', 'a crowd without material patterns: its copies share one material');
     result.crowd = crowdCode().normalizeCrowd(value.crowd);
   }
   if (value.drive !== undefined) {
@@ -263,8 +286,9 @@ function flattenChanges(flatten) {
   return { fields, droppedMaps };
 }
 
-export function materialOutput(source, fields, droppedMaps = []) {
+export function materialOutput(source, fields, droppedMaps = [], assetGraph = null) {
   const output = { ...source };
+  if (assetGraph) output.assetGraph = assetGraph;
   for (const map of droppedMaps) delete output[map];
   for (const [field, value] of Object.entries(fields)) {
     output[field] = Array.isArray(value) ? Object.freeze([...value]) : value;
@@ -341,6 +365,7 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
       }
     }
     const overrideByName = new Map(overrides.map(override => [override.name, override]));
+    const placementIndex = recipe.nodes.indexOf(node);
     const materialIndexes = new Map();
     const partNodeIds = [];
     asset.parts.forEach((part, index) => {
@@ -353,18 +378,21 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
       if (!materialIndexes.has(part.material)) materialIndexes.set(part.material, materialIndexes.size);
       const override = overrideByName.get(part.material.name);
       const fields = { ...flattened.fields, ...overrideFields(override) };
+      const authoredPattern = override?.pattern ?? node.asset.pattern;
+      const assetGraph = authoredPattern ? completedGraph(authoredPattern, part.material, override ? `nodes[${placementIndex}].asset.materials[${overrides.indexOf(override)}].pattern` : `nodes[${placementIndex}].asset.pattern`) : null;
+      // A graph is baked for one placement, so its material is that placement's own and the copies do not batch.
       const materialKey = override?.id === undefined
-        ? `asset:${assetId.slice(0, 12)}:${copy}:${materialIndexes.get(part.material)}:${JSON.stringify(fields)}${flatten ? JSON.stringify(flattened.droppedMaps) : ''}`
+        ? `asset:${assetId.slice(0, 12)}:${copy}:${materialIndexes.get(part.material)}:${JSON.stringify(fields)}${flatten ? JSON.stringify(flattened.droppedMaps) : ''}${assetGraph ? `:graph:${node.id}:${assetGraph.key}` : ''}`
         : handledMaterialKey(override.id, materialIndexes.get(part.material), handleOwners, recipe, node);
       if (!materialIds.has(materialKey)) {
         materialIds.set(materialKey, materialKey);
         recipe.materials.push({ id: materialKey, ...jsonMaterial(part.material), ...fields, assetSource: true, ...(override?.id === undefined ? {} : { animatable: true }) });
         // The same output object across stages keeps the renderer's batches and the parts' identity stable.
         // A handled material keeps its id when the override changes, so the cache also compares the override fields.
-        const fieldsKey = JSON.stringify([fields, flattened.droppedMaps]);
+        const fieldsKey = JSON.stringify([fields, flattened.droppedMaps, assetGraph?.key ?? null]);
         const cached = outputCache.get(materialKey);
         if (cached?.source !== part.material || cached.fieldsKey !== fieldsKey) {
-          outputCache.set(materialKey, { source: part.material, fieldsKey, output: materialOutput(part.material, fields, flattened.droppedMaps) });
+          outputCache.set(materialKey, { source: part.material, fieldsKey, output: materialOutput(part.material, fields, flattened.droppedMaps, assetGraph) });
         }
         runtime.materialOutputs.set(materialKey, outputCache.get(materialKey).output);
       }
@@ -391,6 +419,23 @@ export function expandAssetPlacements(recipe, assets, limits, outputCache = new 
   }
   recipe.nodes.push(...generatedNodes);
   return runtime;
+}
+
+/** The pattern a placed part draws with, completed from its imported material, and its key. One result per pattern and source material. */
+const completedGraphs = new WeakMap();
+
+function completedGraph(pattern, sourceMaterial, path) {
+  let bySource = completedGraphs.get(pattern);
+  if (!bySource) {
+    bySource = new WeakMap();
+    completedGraphs.set(pattern, bySource);
+  }
+  if (!bySource.has(sourceMaterial)) {
+    const graphCode = assetGraphCode();
+    const completed = graphCode.completeAssetPattern(pattern, sourceMaterial, path);
+    bySource.set(sourceMaterial, Object.freeze({ pattern: completed, key: graphCode.assetPatternKey(completed) }));
+  }
+  return bySource.get(sourceMaterial);
 }
 
 // An override with an id gets a material of its own named by that id, so a motion track can drive it. A second source

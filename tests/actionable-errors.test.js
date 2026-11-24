@@ -225,6 +225,7 @@ const RAW_THROWS_LEFT = {
     "`${entry.id}: ${error.message}`);",
   ],
   'src/agent-scene-assets.js': [
+    "'This recipe puts a graph on a placed as",
     "'This recipe places a crowd, which loads",
     "'This recipe places catalog assets, whic",
     "`A scene places at most ${ASSET_PLACEMEN",
