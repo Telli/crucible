@@ -509,8 +509,34 @@ test('the stream shortens into the lip before the pot starts to right itself, so
   assert.match(potStart.declarations, /rotate[(]30deg[)]/, 'the pot starts the wind-down still tipped (held through its delay)');
 });
 
+test('the stream is fully transparent before its last frame, so no flake of lava is left at the lip once it has retracted', () => {
+  const steps = keyframeOffsets('stream-out');
+  const hidden = steps.find(step => /opacity: 0/.test(step.declarations) && !step.offsets.includes(100));
+  assert.ok(hidden, 'opacity reaches 0 at a step before the end, while the stream still has some length');
+  assert.ok(Math.max(...hidden.offsets) <= 85, 'and does so before the last frames of the retraction');
+  assert.ok(!steps.some(step => /opacity: 1/.test(step.declarations) && step.offsets.some(offset => offset > 0 && offset < 100)), 'no middle step holds the stream fully opaque up to its last frames');
+});
+
+test('the stream leaves from behind the pot, tangent to its rim, with no flat top over the page and no gap', () => {
+  const rule = selector => new RegExp(`${selector} [{]([^}]*)[}]`).exec(LOADING_STYLE)[1];
+  assert.match(rule('#studio-loading [.]stream'), /z-index: 0;/, 'the stream sits under the pot (it comes first in the markup), so the pot hides its flat top and the stream emerges from the rim');
+  assert.doesNotMatch(rule('#studio-loading [.]pot'), /z-index/, 'the pot is not lowered beneath the stream');
+  assert.match(rule('#studio-loading [.]pot'), /left: -78px;/, 'the pot sits 2 px right of where it stood, so the stream top is under the rim crest at the 30 degree pour angle, not beside it');
+});
+
+test('the stream turns to the plain molten token over its last 14 px, so it meets the fill in the same colour with no band, outline or glow', () => {
+  const overlay = /#studio-loading [.]flow::after [{]([^}]*)[}]/.exec(LOADING_STYLE);
+  assert.ok(overlay, 'a static overlay sits at the bottom of the stream');
+  assert.match(overlay[1], /inset: auto 0 0;/, 'it is pinned to the bottom edge');
+  assert.ok(Number(/height: ([0-9]+)px;/.exec(overlay[1])[1]) >= 14, 'it is at least one band period tall, so a dark band never meets the fill');
+  assert.match(overlay[1], /background: linear-gradient[(]transparent, var[(]--site-focus[)][)];/, 'it ends in the same token as the fill, fully opaque at the junction');
+  assert.ok(!/(?:box-shadow|filter|outline|border):/.test(rule('#studio-loading [.]fill')), 'the fill has no outline, glow or shadow');
+  assert.ok(!/(?:box-shadow|filter|outline|border):/.test(rule('#studio-loading [.]stream')), 'nor has the stream');
+  function rule(selector) { return new RegExp(`${selector} [{]([^}]*)[}]`).exec(LOADING_STYLE)[1]; }
+});
+
 test('the fill stays hidden until the stream has landed, and the wind-down waits for the landing', async () => {
-  assert.match(LOADING_STYLE, /studio-fill-land 0[.]08s linear 0[.]72s both/, 'the fill appears as the stream arrives, from a 4 px start under the stream end');
+  assert.match(LOADING_STYLE, /studio-fill-land 0[.]08s steps[(]1, end[)] 0[.]72s both/, 'the fill appears as the stream arrives, from a 4 px start under the stream end');
   assert.match(LOADING_STYLE, /@keyframes studio-fill-land [{] from [{] opacity: 0; [}] to [{] opacity: 1; [}] [}]/);
   const motionBlock = LOADING_STYLE.slice(LOADING_STYLE.indexOf('@media (prefers-reduced-motion: no-preference) {'));
   const streamIn = /studio-stream-in ([\d.]+)s var[(]--site-ease-out[)] ([\d.]+)s/.exec(motionBlock);
@@ -526,6 +552,13 @@ test('the fill stays hidden until the stream has landed, and the wind-down waits
   const waitedAgain = Date.now();
   await waitForStreamLanding(page.documentReference);
   assert.ok(Date.now() - waitedAgain < 100, 'a later ready does not wait');
+});
+
+test('the fill appears in one frame at full opacity once the stream has landed, so at the junction it never differs from the stream in opacity', () => {
+  const land = /studio-fill-land ([0-9.]+)s (steps[(][^)]*[)]|[^ ]+) ([0-9.]+)s both/.exec(LOADING_STYLE);
+  assert.ok(land, 'the fill has one appearance animation');
+  assert.match(land[2], /^steps[(]1, ?(?:end|jump-end)[)]$/, 'a single step: opacity is 0 until the end of the animation and 1 from then on, with no fade through half-opacity');
+  assert.ok(Number(land[1]) + Number(land[3]) >= 0.8 - 1e-9, 'the step comes when the stream has finished growing (0.8 s), not before');
 });
 
 test('with reduced motion the fill completes in 200 ms, and with motion in 90 ms while the stream still pours', () => {
