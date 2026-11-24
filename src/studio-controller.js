@@ -45,7 +45,7 @@ const SPAWN_CLEARANCE = 0.75;
 const SPAWN_STEP = 1.25;
 const SPAWN_ATTEMPTS = 16;
 // These lie on the ground under everything else, so they start at the centre whatever stands there.
-const GROUND_PRIMITIVES = new Set(['plane', 'terrain']);
+const GROUND_PRIMITIVES = new Set(['plane']);
 const ROTATION_DEGREES_PER_PIXEL = 0.75;
 const ROTATION_SNAP_DEGREES = 15;
 const TRANSLATION_SNAP_STEP = 0.25;
