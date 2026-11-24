@@ -226,6 +226,12 @@ export const STUDIO_CSS = `
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+.crucible-studio-gizmo .crucible-studio-cage-brush {
+  fill: color-mix(in srgb, var(--studio-accent) 14%, transparent);
+  stroke: var(--studio-accent);
+  stroke-width: 1.5;
+  pointer-events: none;
+}
 .crucible-studio-gizmo .crucible-studio-cage-selected-vertex { stroke-width: 12; }
 .crucible-studio-gizmo .crucible-studio-cage-selected-edge { stroke-width: 4; }
 .crucible-studio-gizmo .crucible-studio-cage-selected-face {

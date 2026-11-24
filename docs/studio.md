@@ -56,6 +56,8 @@ Not there yet, and said so on screen when you reach it:
 - A mesh holds at most 64 edits, and a move needs one. At the limit Studio refuses the drag before it starts.
 - A move of more than 19 vertices that are not whole faces cannot be written yet; pick whole faces, or fewer vertices.
 - A mesh with a modifier stack is refused. A mesh of more than 8,000 triangles draws only the picked elements, with a notice.
+- **Alt+A** selects none and **Ctrl+I** inverts the selection, in the mode you are in (vertices, edges or faces); the object stays selected. Inverting nothing selects everything of that mode. Like a pick, neither is an undo step.
+- **C** starts circle select, as in Blender. A circle follows the pointer: drag with the left button to select what it passes over, drag with the middle button (or hold **Shift**) to deselect, turn the wheel to make the circle bigger or smaller (4 to 400 pixels, 25 to start), and press **Esc** or right click to stop. In vertex mode it takes the vertices inside the circle, in edge mode the edges it touches, in face mode the faces it overlaps. Only what faces the camera is taken. The circle keeps its size until you change it.
 - Rotate, scale, box select, extrude and the other tools come next.
 
 If another object uses the same geometry, entering edit mode gives this object a geometry of its own (the same conversion step), so the other one keeps its shape and does not move with it.
@@ -120,6 +122,7 @@ The keys follow Blender where Studio has the same action. **Help ▸ Keyboard sh
 | A, Alt+A, Ctrl+I | Select all, select none, invert the selection |
 | Tab | Edit the mesh of the selected object; Tab again leaves |
 | 1, 2, 3 | In edit mode: select vertices, edges or faces |
+| Alt+A, Ctrl+I, C | In edit mode: select none, invert the selection, circle select (Esc or right click ends it) |
 | H, Alt+H | Hide the selection, show everything that is hidden |
 | Alt+G, Alt+R, Alt+S | Reset the position, rotation or scale of the selection |
 | Right click | Menu of the object under the pointer |
