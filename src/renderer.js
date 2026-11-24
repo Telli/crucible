@@ -2828,34 +2828,62 @@ export class CrucibleRenderer {
   drawBlendedInOrder(batches) {
     if (batches.length === 0) return;
     const order = this.translucentOrder ??= new TranslucentOrder(INSTANCE_STRIDE);
+    const batchRange = this.translucentRange ??= [0, 0];
     const sortable = this.translucentSortable ??= [];
-    const singleBatch = this.translucentSingle ??= [null];
     sortable.length = 0;
     for (const batch of batches) {
       batch.sortCenter ??= boundsCenterOf(batch.parts[0].geometry);
+      order.depthRange(batch, this.view, batchRange);
+      batch.sortFarthest = batchRange[0];
+      batch.sortNearest = batchRange[1];
       sortable.push(batch);
     }
-    if (order.sort(sortable, this.view) > MAXIMUM_BLEND_RUNS) {
-      // Many batches that interleave cost a draw state change each. Past the budget a batch draws whole, in its own back to
-      // front order, and the batches go farthest first by the mean depth of their instances.
-      for (const batch of sortable) {
+    sortable.sort((first, second) => first.sortFarthest - second.sortFarthest);
+    // Batches whose depth ranges overlap form a group that may interleave; a lone batch in its group draws on its own, as
+    // it did before. Groups draw farthest first.
+    const group = this.translucentGroup ??= [];
+    let start = 0;
+    while (start < sortable.length) {
+      let end = start + 1;
+      let nearest = sortable[start].sortNearest;
+      while (end < sortable.length && sortable[end].sortFarthest <= nearest) {
+        nearest = Math.max(nearest, sortable[end].sortNearest);
+        end++;
+      }
+      group.length = 0;
+      for (let index = start; index < end; index++) group.push(sortable[index]);
+      this.drawBlendedGroup(group, order);
+      start = end;
+    }
+    this.restoreInstanceOrder(sortable);
+  }
+
+  /** Draws one group of blended batches in back to front order, interleaving instances only when the group has several batches. */
+  drawBlendedGroup(group, order) {
+    const singleBatch = this.translucentSingle ??= [null];
+    if (group.length === 1) {
+      order.sort(group, this.view);
+      this.drawBlendedRun(group[0], 0, group[0].instanceCount);
+      return;
+    }
+    if (order.sort(group, this.view) > MAXIMUM_BLEND_RUNS) {
+      // Past the run budget each batch draws whole in its own order, farthest mean depth first.
+      for (const batch of group) {
         singleBatch[0] = batch;
         order.sort(singleBatch, this.view);
         batch.sortMeanDepth = order.meanDepth(batch.instanceCount);
       }
-      sortable.sort((first, second) => first.sortMeanDepth - second.sortMeanDepth);
-      for (const batch of sortable) {
+      group.sort((first, second) => first.sortMeanDepth - second.sortMeanDepth);
+      for (const batch of group) {
         singleBatch[0] = batch;
         order.sort(singleBatch, this.view);
         this.drawBlendedRun(batch, 0, batch.instanceCount);
       }
-      this.restoreInstanceOrder(sortable);
       return;
     }
     for (let run = 0; run < order.runTotal; run++) {
-      this.drawBlendedRun(sortable[order.runBatches[run]], order.runStarts[run], order.runCounts[run]);
+      this.drawBlendedRun(group[order.runBatches[run]], order.runStarts[run], order.runCounts[run]);
     }
-    this.restoreInstanceOrder(sortable);
   }
 
   /** Draws `count` instances of a blended batch from the sorted copy in translucentOrder, starting at instance `start` of that copy. */

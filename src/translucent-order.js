@@ -39,6 +39,29 @@ export class TranslucentOrder {
     this.runCounts = new Uint32Array(this.capacity);
   }
 
+  /**
+   * Sets `range[0]` and `range[1]` to the nearest and farthest view depth (z, farthest most negative) of the sort centres of
+   * a batch's instances. Batches whose ranges do not overlap draw in range order with no interleaving between them.
+   */
+  depthRange(batch, view, range) {
+    const stride = this.instanceStride;
+    const { instanceData, instanceCount, sortCenter: center } = batch;
+    let farthest = Infinity;
+    let nearest = -Infinity;
+    for (let instance = 0; instance < instanceCount; instance++) {
+      const base = instance * stride;
+      const depth = view[2] * (instanceData[base] * center[0] + instanceData[base + 4] * center[1] + instanceData[base + 8] * center[2] + instanceData[base + 12])
+        + view[6] * (instanceData[base + 1] * center[0] + instanceData[base + 5] * center[1] + instanceData[base + 9] * center[2] + instanceData[base + 13])
+        + view[10] * (instanceData[base + 2] * center[0] + instanceData[base + 6] * center[1] + instanceData[base + 10] * center[2] + instanceData[base + 14])
+        + view[14];
+      if (depth < farthest) farthest = depth;
+      if (depth > nearest) nearest = depth;
+    }
+    range[0] = farthest;
+    range[1] = nearest;
+    return range;
+  }
+
   /** Mean view depth of the first `count` instances after the last sort. */
   meanDepth(count) {
     let total = 0;

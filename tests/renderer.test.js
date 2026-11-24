@@ -216,6 +216,25 @@ test('blended instances of two batches draw in one back to front order, and each
   assert.equal(near.instanceCount, 2, 'a run never leaves a short instance count behind');
 });
 
+test('batches whose depth ranges do not overlap draw whole, farthest first; only overlapping ones interleave (#3236)', () => {
+  const drawn = [];
+  const renderer = Object.create(CrucibleRenderer.prototype);
+  renderer.context = { ARRAY_BUFFER: 34962, bindBuffer() {}, bufferSubData() {} };
+  renderer.view = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const batchOf = (name, depths) => {
+    const instanceData = new Float32Array(depths.length * 42);
+    depths.forEach((depth, index) => { instanceData[index * 42 + 14] = depth; });
+    return { name, instanceBuffer: {}, instanceData, instanceCount: depths.length, sortCenter: [0, 0, 0] };
+  };
+  const nearest = batchOf('nearest', [-1, -2]);
+  const middleA = batchOf('middleA', [-10, -14]);
+  const middleB = batchOf('middleB', [-12, -16]);
+  const farthest = batchOf('farthest', [-30, -40]);
+  renderer.drawAlphaBatch = (batch) => drawn.push([batch.name, batch.instanceCount]);
+  renderer.drawBlendedInOrder([nearest, middleA, farthest, middleB]);
+  assert.deepEqual(drawn, [['farthest', 2], ['middleB', 1], ['middleA', 1], ['middleB', 1], ['middleA', 1], ['nearest', 2]]);
+});
+
 test('past the run budget blended batches draw whole, farthest mean depth first (#3236)', () => {
   const drawn = [];
   const renderer = Object.create(CrucibleRenderer.prototype);
@@ -224,7 +243,7 @@ test('past the run budget blended batches draw whole, farthest mean depth first 
   const batches = Array.from({ length: 60 }, (unused, index) => {
     const instanceData = new Float32Array(2 * 42);
     instanceData[14] = -index;
-    instanceData[42 + 14] = -index - 0.5;
+    instanceData[42 + 14] = -100 - index;
     return { index, instanceBuffer: {}, instanceData, instanceCount: 2, sortCenter: [0, 0, 0] };
   });
   renderer.drawAlphaBatch = (batch) => drawn.push([batch.index, batch.instanceCount]);

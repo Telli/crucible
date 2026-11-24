@@ -19,12 +19,12 @@ try {
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/bench/transparent-order/harness.html`, { timeout: 180000 });
   await page.waitForFunction(() => window.harnessReady, null, { timeout: 180000 });
   if (mode === 'still') {
-    const { image } = await page.evaluate(() => window.runStill());
+    const { image } = await page.evaluate(label => window.runStill({ label: label }));
     await writeFile(`${outputPrefix}.png`, Buffer.from(image, 'base64'));
     console.log(`wrote ${outputPrefix}.png`);
   } else {
-    for (const kinds of [1, 3]) {
-      for (const count of [50, 500]) console.log(JSON.stringify(await page.evaluate(parameters => window.runCost(parameters), { count, kinds })));
+    for (const [count, kinds, stacked] of [[50, 1, false], [500, 1, false], [50, 3, false], [50, 3, true], [500, 3, false], [500, 3, true]]) {
+      console.log(JSON.stringify(await page.evaluate(parameters => window.runCost(parameters), { count, kinds, stacked })));
     }
   }
 } finally {
