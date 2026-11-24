@@ -9,6 +9,7 @@ name: Cook addon
 # Every other pull request skips it, and main runs it nightly (#1796).
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'package.json'
       - 'package-lock.json'
@@ -519,6 +520,7 @@ concurrency:
 
 jobs:
   addon:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
