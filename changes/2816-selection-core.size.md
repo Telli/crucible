@@ -1,0 +1,1 @@
+- entry:studio: the active object of a dense selection is drawn over the mask at its own width, so a person can tell which one is active after select all (#2816); the whole #2816 change is +2252 B gzip against main, under its allowance.

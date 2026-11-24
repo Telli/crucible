@@ -669,12 +669,19 @@ function appendSelectionSilhouette(documentReference, gizmoSvg, triangles, layer
   }));
 }
 
+function maskFilterIdFor(filterId, layer) {
+  return layer === 'active' ? filterId : `${filterId}-${layer}`;
+}
+
 // The filter that turns the mask canvas into its edge: the same dilate-and-subtract as the path outline, over the whole canvas.
+// One filter for a mask that outlines a single object, and one at the lower strength for a mask under the active object's own outline.
 function createMaskFilterSvg(documentReference, filterId) {
-  const filter = createSvgElement(documentReference, 'filter', { id: filterId, x: '0', y: '0', width: '1', height: '1' });
-  filter.append(...silhouetteFilterSteps(documentReference, 'active'));
   const definitions = createSvgElement(documentReference, 'defs');
-  definitions.append(filter);
+  for (const layer of ['active', 'others']) {
+    const filter = createSvgElement(documentReference, 'filter', { id: maskFilterIdFor(filterId, layer), x: '0', y: '0', width: '1', height: '1' });
+    filter.append(...silhouetteFilterSteps(documentReference, layer));
+    definitions.append(filter);
+  }
   const holder = createSvgElement(documentReference, 'svg', { class: 'crucible-studio-mask-filters', width: '0', height: '0', 'aria-hidden': 'true' });
   holder.append(definitions);
   return holder;
@@ -725,6 +732,31 @@ function appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool) {
   gizmoSvg.append(hitDisc(origin, GIZMO_HIT_ORIGIN_RADIUS, tool === 'scale' ? 'uniform' : tool === 'snap' ? 'surface' : 'screen'));
 }
 
+function appendHullOutline(documentReference, gizmoSvg, points, active) {
+  const attributes = {
+    'data-layer': active ? 'active' : 'others',
+    points: points.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
+  };
+  gizmoSvg.append(
+    createSvgElement(documentReference, 'polygon', { class: 'crucible-studio-selection-outline-casing', ...attributes }),
+    createSvgElement(documentReference, 'polygon', { class: 'crucible-studio-selection-outline', ...attributes }),
+  );
+}
+
+// Over a mask that outlines the whole selection: the active object at its own width, from its shape when it fits the
+// triangle budget alone, else from its hull.
+function appendActiveOverMask(documentReference, gizmoSvg, controller) {
+  const { active } = controller.selectionSilhouetteLayers();
+  if (active) {
+    appendSelectionSilhouette(documentReference, gizmoSvg, active, 'active');
+    return;
+  }
+  const hull = controller.selectionOutline();
+  if (hull) {
+    appendHullOutline(documentReference, gizmoSvg, hull, true);
+  }
+}
+
 function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, { hideSelectionOutline = false } = {}) {
   gizmoSvg.replaceChildren();
   const width = controller.viewportWidth;
@@ -732,7 +764,15 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
   gizmoSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   const silhouette = hideSelectionOutline ? null : controller.selectionSilhouette();
   // A dense selection is drawn by the mask; the hull below is only for when the mask cannot draw (no WebGL2).
-  const maskDrawn = outlineMask.draw(silhouette || hideSelectionOutline ? null : controller.selectionMaskSource(), width, height);
+  const maskSource = silhouette || hideSelectionOutline ? null : controller.selectionMaskSource();
+  const maskDrawn = outlineMask.draw(maskSource, width, height);
+  if (maskDrawn) {
+    // With others selected the mask is their strength and the active object is drawn over it at its own.
+    outlineMask.element.style.filter = `url(#${maskFilterIdFor(`${gizmoSvg.getAttribute('data-silhouette-filter')}-mask`, maskSource.othersExist ? 'others' : 'active')})`;
+    if (maskSource.othersExist) {
+      appendActiveOverMask(documentReference, gizmoSvg, controller);
+    }
+  }
   const outlines = silhouette || maskDrawn || hideSelectionOutline ? [] : controller.selectionOutlineLayers();
   if (silhouette) {
     const layers = controller.selectionSilhouetteLayers();
@@ -744,14 +784,7 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
     }
   }
   for (const outline of outlines.sort((first, second) => Number(first.active) - Number(second.active))) {
-    const attributes = {
-      'data-layer': outline.active ? 'active' : 'others',
-      points: outline.points.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
-    };
-    gizmoSvg.append(
-      createSvgElement(documentReference, 'polygon', { class: 'crucible-studio-selection-outline-casing', ...attributes }),
-      createSvgElement(documentReference, 'polygon', { class: 'crucible-studio-selection-outline', ...attributes }),
-    );
+    appendHullOutline(documentReference, gizmoSvg, outline.points, outline.active);
   }
   appendDragTrace(documentReference, gizmoSvg, controller.dragTrace());
   const handles = controller.gizmoHandles();

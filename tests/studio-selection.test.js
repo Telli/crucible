@@ -7,6 +7,7 @@ import { DEFAULT_KEYMAP_ACTIONS, resolveKeymapPreset, KEYMAP_PRESET_IDS } from '
 import { createStudio, createStudioController } from '../src/studio.js';
 import { SELECTION_HULL_LIMIT } from '../src/studio-controller.js';
 import { createFakeRenderer, dispatch, installStudioDom } from './support/studio-dom.mjs';
+import { createFakeWebgl2 } from './support/fake-webgl2.mjs';
 
 function makeRecipe() {
   return {
@@ -446,4 +447,82 @@ test('the outline of the rest of the selection is wider than a hairline and apar
 test('the outline carries a casing of the panel colour, from the tokens', () => {
   assert.match(STUDIO_CSS, /\.crucible-studio-silhouette-casing\s*{\s*flood-color: var\(--studio-bg\);/);
   assert.match(STUDIO_CSS, /\.crucible-studio-selection-outline-casing\s*{[^}]*stroke: var\(--studio-bg\);/);
+});
+
+function makeDenseRecipe() {
+  const recipe = makeRecipe();
+  recipe.geometries.push({ id: 'dense-ball', type: 'sphere', segments: 96, rings: 64 });
+  recipe.nodes.push({ id: 'dense', geometry: 'dense-ball', material: 'paint', translation: [0, 1, 0] });
+  return recipe;
+}
+
+test('past the triangle budget the mask has others beside it, and the active object keeps a layer of its own when it fits', () => {
+  const controller = createStudioController({ scene: createAgentScene(makeDenseRecipe()), viewportWidth: 800, viewportHeight: 600 });
+  controller.selectNodes(['dense', 'hero'], { active: 'hero' });
+  assert.equal(controller.selectionMaskSource().othersExist, true);
+  const small = controller.selectionSilhouetteLayers();
+  assert.ok(small.active.length >= 6, 'a small active object is drawn from its own shape over the mask');
+  assert.equal(small.others, null, 'the dense rest is left to the mask');
+  assert.equal(controller.selectionSilhouette(), null, 'the whole selection still has no path outline');
+
+  controller.selectNodes(['dense', 'hero'], { active: 'dense' });
+  assert.equal(controller.selectionSilhouetteLayers().active, null, 'a dense active object has no path');
+  assert.ok(controller.selectionOutline().length >= 3, 'its hull is what goes over the mask');
+
+  controller.selectNodes(['dense']);
+  assert.equal(controller.selectionMaskSource().othersExist, false, 'one object over the budget is the mask alone');
+  assert.equal(controller.selectionSilhouetteLayers().active, null);
+});
+
+function mountDenseStudio(testContext, webgl) {
+  const dom = installStudioDom();
+  if (webgl) {
+    const createElement = dom.document.createElement.bind(dom.document);
+    dom.document.createElement = tagName => {
+      const element = createElement(tagName);
+      if (tagName === 'canvas') element.getContext = () => webgl;
+      return element;
+    };
+  }
+  const studio = createStudio(dom.container, { recipe: makeDenseRecipe(), renderer: createFakeRenderer() });
+  testContext.after(() => {
+    studio.dispose();
+    dom.uninstall();
+  });
+  const viewport = dom.container.firstElementChild.querySelector('.crucible-studio-viewport');
+  viewport.box = { left: 40, top: 30, width: 800, height: 600, right: 840, bottom: 630 };
+  studio.renderNow();
+  return { studio, viewport, gizmo: viewport.querySelector('.crucible-studio-gizmo') };
+}
+
+test('with several selected the mask draws at the width of the others and the active object is drawn over it', testContext => {
+  const { context } = createFakeWebgl2();
+  const ui = mountDenseStudio(testContext, context);
+  const mask = () => ui.viewport.querySelector('.crucible-studio-selection-mask');
+  const layerOf = selector => ui.gizmo.querySelectorAll(selector).map(element => element.getAttribute('data-layer'));
+
+  ui.studio.controller.selectNodes(['dense', 'hero'], { active: 'hero' });
+  ui.studio.renderNow();
+  assert.match(mask().style.filter, /-mask-others\)$/, 'the mask is outlined at the others strength');
+  assert.deepEqual(layerOf('.crucible-studio-selection-silhouette'), ['active'], 'the active shape lies over the mask');
+  assert.equal(layerOf('.crucible-studio-selection-outline').length, 0);
+
+  ui.studio.controller.selectNodes(['dense', 'hero'], { active: 'dense' });
+  ui.studio.renderNow();
+  assert.match(mask().style.filter, /-mask-others\)$/);
+  assert.equal(layerOf('.crucible-studio-selection-silhouette').length, 0, 'a dense active object has no path');
+  assert.deepEqual(layerOf('.crucible-studio-selection-outline'), ['active'], 'its hull lies over the mask');
+
+  ui.studio.controller.selectNodes(['dense']);
+  ui.studio.renderNow();
+  assert.match(mask().style.filter, /-mask\)$/, 'one selected object keeps the active width');
+  assert.equal(layerOf('.crucible-studio-selection-silhouette').length + layerOf('.crucible-studio-selection-outline').length, 0);
+});
+
+test('without a mask a dense selection keeps its hull outlines, the active one on top', testContext => {
+  const ui = mountDenseStudio(testContext, null);
+  ui.studio.controller.selectNodes(['dense', 'hero'], { active: 'hero' });
+  ui.studio.renderNow();
+  assert.equal(ui.gizmo.querySelectorAll('.crucible-studio-selection-silhouette').length, 0);
+  assert.deepEqual(ui.gizmo.querySelectorAll('.crucible-studio-selection-outline').map(element => element.getAttribute('data-layer')), ['others', 'active']);
 });

@@ -1405,7 +1405,7 @@ export function createStudioController({
   }
 
   let silhouetteCache = { scene: null, key: '', layers: null };
-  let selectionMembersCache = { scene: null, key: '', parts: [], activeParts: [], otherParts: [], triangleCount: 0 };
+  let selectionMembersCache = { scene: null, key: '', parts: [], activeParts: [], otherParts: [], triangleCount: 0, activeTriangleCount: 0 };
 
   // The parts of every selected node (all of them, the active node's, the rest) and their triangle count, kept until the
   // scene changes or the selection moves. The member ids come from one walk of the recipe, not one per selected node.
@@ -1418,8 +1418,10 @@ export function createStudioController({
       const parts = currentScene.parts.filter(part => ownsPart(memberIds, part) && part.matrix && part.geometry?.positions && part.geometry.indices?.length);
       const activeParts = parts.filter(part => ownsPart(activeIds, part));
       const otherParts = parts.filter(part => !ownsPart(activeIds, part));
-      const triangleCount = parts.reduce((count, part) => count + part.geometry.indices.length / 3, 0);
-      selectionMembersCache = { scene: currentScene, key, parts, activeParts, otherParts, triangleCount };
+      const countTriangles = memberParts => memberParts.reduce((count, part) => count + part.geometry.indices.length / 3, 0);
+      const triangleCount = countTriangles(parts);
+      const activeTriangleCount = countTriangles(activeParts);
+      selectionMembersCache = { scene: currentScene, key, parts, activeParts, otherParts, triangleCount, activeTriangleCount };
     }
     return selectionMembersCache;
   }
@@ -1430,13 +1432,15 @@ export function createStudioController({
     if (!selectedNodeId) {
       return null;
     }
-    // The mask draws the whole selection in one strength: its two-strength outline would need a second card pass.
-    const { parts, triangleCount } = selectionMembers();
+    // The mask draws the whole selection in one strength; with others selected the viewport draws the active object over it
+    // at its own strength (its shape from selectionSilhouetteLayers(), or its hull), so no second card pass is needed.
+    const { parts, otherParts, triangleCount } = selectionMembers();
     if (triangleCount <= SILHOUETTE_TRIANGLE_BUDGET) {
       return null;
     }
     const { viewProjection } = cameraMatrices(viewCamera(), width / height, Boolean(currentScene.environment?.world));
     return {
+      othersExist: otherParts.length > 0,
       parts: parts.map(part => ({
         geometry: part.geometry,
         modelViewProjection: mat4.multiply(new Float32Array(16), viewProjection, part.matrix),
@@ -1456,13 +1460,15 @@ export function createStudioController({
     const camera = viewCamera();
     const key = [currentScene.revision, selectionVersion, width, height, camera.eye, camera.target, camera.fov, camera.focalLength, camera.orthoScale, camera.projection].join('|');
     if (silhouetteCache.scene !== currentScene || silhouetteCache.key !== key) {
-      const { activeParts, otherParts, triangleCount } = selectionMembers();
+      const { activeParts, otherParts, triangleCount, activeTriangleCount } = selectionMembers();
       const withinBudget = triangleCount > 0 && triangleCount <= SILHOUETTE_TRIANGLE_BUDGET;
+      // The active object alone may fit the budget when the whole selection does not: the mask draws the selection, this goes over it.
+      const activeWithinBudget = activeTriangleCount > 0 && activeTriangleCount <= SILHOUETTE_TRIANGLE_BUDGET;
       silhouetteCache = {
         scene: currentScene,
         key,
         layers: {
-          active: withinBudget ? computeSilhouetteOf(activeParts) : null,
+          active: activeWithinBudget ? computeSilhouetteOf(activeParts) : null,
           others: withinBudget ? computeSilhouetteOf(otherParts) : null,
           activeExists: activeParts.length > 0,
           othersExist: otherParts.length > 0,
