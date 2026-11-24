@@ -1,6 +1,7 @@
 // The first-run setup dialog: five steps of choice cards (theme, performance, modelling, keys, working with an agent) that
 // change the live Studio behind it, one step a page. It is built from the preferences Studio already keeps, so nothing
 // here is saved anywhere new.
+import { STUDIO_ACTION_ICONS } from './studio-icons.js';
 import { KEYMAP_PRESET_IDS, KEYMAP_PRESETS, keyLabel, resolveKeymapPreset } from './studio-keymap.js';
 import { STUDIO_PREFERENCE_CHOICES } from './studio-preferences.js';
 import { STUDIO_TOOLS } from './studio-templates.js';
@@ -153,7 +154,7 @@ function createSignInControl(documentReference, createElement, createIcon, built
     control.dataset.state = waiting ? 'waiting' : 'signed-out';
     signInButton.disabled = waiting;
     signInButton.replaceChildren(
-      createIcon(documentReference, 'signIn'),
+      createIcon(documentReference, STUDIO_ACTION_ICONS.signIn),
       createElement(documentReference, 'span', { textContent: waiting ? 'Finish in your browser' : 'Sign in' }),
     );
     control.replaceChildren(signInButton);
@@ -162,7 +163,7 @@ function createSignInControl(documentReference, createElement, createIcon, built
     control.dataset.state = 'signed-in';
     const identity = who?.name || who?.email;
     control.replaceChildren(
-      createIcon(documentReference, 'check'),
+      createIcon(documentReference, STUDIO_ACTION_ICONS.signedIn),
       createElement(documentReference, 'span', { textContent: identity ? `Signed in as ${identity}` : 'Signed in' }),
     );
   }
@@ -333,7 +334,7 @@ export function createStudioSetup({
   const copyPromptButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-action' });
   function showCopied(copied) {
     copyPromptButton.replaceChildren(
-      createIcon(documentReference, copied ? 'check' : 'copy'),
+      createIcon(documentReference, copied ? STUDIO_ACTION_ICONS.copied : STUDIO_ACTION_ICONS.copyPrompt),
       createElement(documentReference, 'span', { textContent: copied ? 'Copied' : 'Copy prompt' }),
     );
   }
@@ -399,11 +400,13 @@ export function createStudioSetup({
   const nextButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-primary', textContent: 'Next' });
   const doneButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-primary', textContent: 'Done' });
 
+  const setupHeading = createElement(documentReference, 'h2', { id: `crucible-studio-setup-${instanceId}-heading`, textContent: 'Set up Studio' });
+  setupHeading.prepend(createIcon(documentReference, 'agent'));
   const dialog = createElement(
     documentReference,
     'dialog',
     { className: 'crucible-studio-setup-dialog', tabIndex: -1, attributes: { 'aria-labelledby': `crucible-studio-setup-${instanceId}-heading` } },
-    createElement(documentReference, 'h2', { id: `crucible-studio-setup-${instanceId}-heading`, textContent: 'Set up Studio' }),
+    setupHeading,
     stepRow,
     createElement(documentReference, 'div', { className: 'crucible-studio-setup-body' }, ...sections),
     createElement(documentReference, 'div', { className: 'crucible-studio-dialog-actions crucible-studio-setup-actions' }, skipButton, backButton, nextButton, doneButton),
