@@ -1,0 +1,68 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { GROUND_COVER_LIMITS, groundCoverParts, normalizeGroundCover } from '../src/ground-cover.js';
+
+const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+// A horizontal square of half-width `half` at height `y`, facing up.
+function squarePart(name, half, y, materialName = name) {
+  const positions = new Float32Array([-half, y, -half, -half, y, half, half, y, half, half, y, -half]);
+  const indices = new Uint32Array([0, 1, 2, 0, 2, 3]);
+  return { name, geometry: { positions, indices }, matrix: IDENTITY, material: { name: materialName, tag: 'surface', color: [0.2, 0.3, 0.1] } };
+}
+
+// A slab lying on the lawn: its top face at y = 0.1 and its underside at the lawn's height.
+const slabParts = () => [squarePart('Slab', 1, 0.1), squarePart('SlabUnderside', 1, 0)];
+const lawnScene = () => [squarePart('Lawn', 5, 0), ...slabParts()];
+const ENTRY = { surfaces: 'Lawn', length: 0.12, density: 400 };
+
+function worldVertices(part) {
+  const { positions } = part.geometry;
+  const vertices = [];
+  for (let index = 0; index < positions.length; index += 3) {
+    vertices.push([positions[index] + part.matrix[12], positions[index + 1] + part.matrix[13], positions[index + 2] + part.matrix[14]]);
+  }
+  return vertices;
+}
+
+test('a scene file with no groundCover grows nothing, and bad entries say what to pass', () => {
+  assert.deepEqual(normalizeGroundCover(undefined), []);
+  assert.throws(() => normalizeGroundCover({}), /a list of at most 8 entries/);
+  assert.throws(() => normalizeGroundCover([{}]), /surfaces.*a node or material name/);
+  assert.throws(() => normalizeGroundCover([{ surfaces: 'Lawn', preset: 'moss' }]), /preset.*one of meadow, lawn/);
+  assert.throws(() => normalizeGroundCover([{ surfaces: 'Lawn', length: 9 }]), /length.*from 0.01 to 2/);
+  assert.throws(() => normalizeGroundCover([{ surfaces: 'Lawn', colour: [1, 0, 0] }]), /colour.*not a field/);
+  assert.equal(normalizeGroundCover([{ surfaces: 'Lawn' }])[0].preset, 'lawn');
+});
+
+test('an unknown surface name fails and lists the names the GLB has', () => {
+  const entries = normalizeGroundCover([{ surfaces: 'Meadow' }]);
+  assert.throws(() => groundCoverParts(lawnScene(), entries, [0, 3, 8]), /Meadow.*it has Lawn, Slab/);
+});
+
+test('a named ground mesh grows blades on it, matched by node or material name', () => {
+  const byNode = groundCoverParts(lawnScene(), normalizeGroundCover([ENTRY]), [0, 3, 8]);
+  const byMaterial = groundCoverParts([squarePart('Mesh.001', 5, 0, 'LawnMaterial')], normalizeGroundCover([{ ...ENTRY, surfaces: 'LawnMaterial' }]), [0, 3, 8]);
+  assert.ok(byNode.reduce((total, part) => total + part.bladeCount, 0) > 1000);
+  assert.ok(byMaterial.length > 0);
+  assert.ok(byNode.every(part => part.material.tag === 'grass'));
+});
+
+test('no blade stands on or through a slab laid on the lawn', () => {
+  const parts = groundCoverParts(lawnScene(), normalizeGroundCover([ENTRY]), [0, 3, 8]);
+  const inside = parts.flatMap(worldVertices).filter(([x, , z]) => Math.abs(x) < 0.85 && Math.abs(z) < 0.85);
+  assert.equal(inside.length, 0, 'grass under or through the slab');
+  const beside = parts.flatMap(worldVertices).filter(([x, , z]) => Math.abs(x) > 1.3 && Math.abs(x) < 2 && Math.abs(z) < 1);
+  assert.ok(beside.length > 100, 'the lawn beside the slab still has grass');
+});
+
+test('two builds of the same scene are identical', () => {
+  const build = () => groundCoverParts(lawnScene(), normalizeGroundCover([ENTRY]), [0, 3, 8]);
+  const [first, second] = [build(), build()];
+  assert.equal(first.length, second.length);
+  first.forEach((part, index) => assert.deepEqual(part.geometry.positions, second[index].geometry.positions));
+});
+
+test('a field past the blade budget is refused before any frame', () => {
+  assert.throws(() => groundCoverParts([squarePart('Lawn', 400, 0)], normalizeGroundCover([{ surfaces: 'Lawn', density: 5000 }]), [0, 3, 8]), new RegExp(`fewer than ${GROUND_COVER_LIMITS.maxBlades}`));
+});

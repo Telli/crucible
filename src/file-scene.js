@@ -96,6 +96,19 @@ async function readJson(url) {
   return response.json();
 }
 
+// "environment.groundCover" grows grass on named surfaces (#3290). A scene without it loads nothing and keeps its parts as they are.
+// The field is built once for the first frame's eye, so every frame and every rerender draws the same blades.
+async function addGroundCover(asset, description, camera) {
+  if (description.environment?.groundCover === undefined) return {};
+  const { normalizeGroundCover, groundCoverParts } = await import('./ground-cover.js');
+  const entries = normalizeGroundCover(description.environment.groundCover);
+  if (!entries.length) return {};
+  const firstEye = camera ? camera.sample(0).eye : description.eye;
+  asset.parts = [...asset.parts, ...groundCoverParts(asset.parts, entries, firstEye)];
+  const winds = entries.map(entry => entry.wind).filter(wind => wind !== undefined);
+  return winds.length ? { wind: Math.max(...winds) } : {};
+}
+
 async function start() {
   const description = await readJson('/__file/config.json');
   const cameraResponse = await fetch('/__file/camera.json');
@@ -109,6 +122,7 @@ async function start() {
   const asset = await loadGltf(model, { baseUrl: new URL('.', new URL(description.glb, location.href)).href, sharedTextures, ...gltfOptions });
   const assetOwnParts = asset.parts;
   asset.parts = await loadStagedParts(description, asset, model, sharedTextures);
+  const groundCover = await addGroundCover(asset, description, camera);
   const rendererOptions = withSceneFileRendererDefaults(description.renderer);
   await loadViewTransformForRendererOptions(rendererOptions);
   const shadowCascades = rendererOptions.shadowCascades ? createCascadedShadows(rendererOptions.shadowCascades) : undefined;
@@ -132,7 +146,7 @@ async function start() {
     environment: { ...environmentForRenderer(interior.environment), map: drawn.map },
   });
   attachWaterReflection(renderer, reflection.surface, { updateEvery: 1 });
-  const frame = { exposure: description.exposure ?? 1, ...(description.frame ?? {}) };
+  const frame = { exposure: description.exposure ?? 1, ...(groundCover.wind === undefined ? {} : { wind: groundCover.wind }), ...(description.frame ?? {}) };
   // A GLB with an animation clip plays its first clip on a loop, as the showcase page does; one without a clip is drawn as before.
   // A scene file that asks for motion blur ("frame.effects.motionBlur") loads the blur stages; one that does not loads nothing.
   const blurModule = description.frame?.effects?.motionBlur ? await import('./file-scene-motion-blur.js') : null;
