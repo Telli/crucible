@@ -178,6 +178,19 @@ test('the shadow pass skips instances outside the light and picks the shadow lev
   assert.deepEqual([...renderer.selectShadowInstances(batch, batch.shadowLevels, perspective, 64).counts], [2, 0], 'a perspective light has no single texel size, so it keeps the own geometry');
 });
 
+test('a part with camera levels and no shadow levels casts from level 0, like the same part without levels (#3189)', () => {
+  const geometry = sphere(24, 12);
+  const lods = [{ geometry, error: 0 }, { geometry: box(0, 1), error: 0.5 }];
+  const withLevels = drawingRenderer([rigidPart('scan', geometry, [0, 0, 0], { lods })]);
+  const withoutLevels = drawingRenderer([rigidPart('scan', geometry, [0, 0, 0])]);
+  assert.equal(withLevels.batch.shadowLevels, null);
+  const withSelection = withLevels.renderer.selectShadowInstances(withLevels.batch, withLevels.batch, lightMatrix(40), 64);
+  const withoutSelection = withoutLevels.renderer.selectShadowInstances(withoutLevels.batch, withoutLevels.batch, lightMatrix(40), 64);
+  assert.equal(withSelection.counts[0], 1, 'a texel of 1.25 units is wider than the error of 0.5 units, yet only level 0 casts');
+  assert.deepEqual([...withSelection.counts.slice(1)], [0]);
+  assert.equal(withoutSelection.counts[0], 1);
+});
+
 test('a batch without shadow levels uses its camera levels in the shadow pass, and shadow levels are refused on deforming parts', () => {
   const geometry = box(0, 1);
   const { renderer } = drawingRenderer([rigidPart('tree', geometry, [0, 0, 0])]);

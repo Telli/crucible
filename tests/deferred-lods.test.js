@@ -60,7 +60,7 @@ test('levels made under different idle timing equal the levels made before the f
   for (const timing of ['all at once', 'one tick between jobs', 'late, with other work between']) {
     const scheduler = manualScheduler();
     const swapped = [];
-    const deferred = startDeferredLods({ geometries: plan.geometries, ratios: plan.ratios, schedule: scheduler.schedule, onLevels: (geometry, levels) => swapped.push([geometry, levels]) });
+    const deferred = startDeferredLods({ geometries: plan.geometries, ratios: plan.ratios, schedule: scheduler.schedule, sliceMilliseconds: Infinity, onLevels: (geometry, levels) => swapped.push([geometry, levels]) });
     if (timing === 'late, with other work between') await new Promise(resolve => setTimeout(resolve, 20));
     await scheduler.runAll(timing === 'all at once' ? undefined : () => new Promise(resolve => setImmediate(resolve)));
     const levelsByGeometry = await deferred.ready;
@@ -74,13 +74,45 @@ test('levels made under different idle timing equal the levels made before the f
   });
 });
 
+test('slicing the work into steps of a fake clock gives the same bytes as the unsliced levels, with one job queued at a time', async () => {
+  const { planDenseLods, addLodsToDenseParts } = await import('../src/dense-lods.js');
+  const { startDeferredLods } = await import('../src/deferred-lods.js');
+  const { generateGeometryLods, generateGeometryLodsSteps } = await import('../src/mesh-lod.js');
+  const options = { pixels: 400 };
+  const parts = scanParts();
+  const plan = planDenseLods(parts, options);
+  const upFront = addLodsToDenseParts(parts, options);
+
+  const stepsToFinish = (() => {
+    const steps = generateGeometryLodsSteps(parts[0].geometry, { ratios: plan.ratios });
+    let count = 0;
+    while (!steps.next().done) count++;
+    return count;
+  })();
+  assert.ok(stepsToFinish > 10, `the simplifier yields many times for one geometry (${stepsToFinish})`);
+  assert.deepEqual(bytesOfLevels(generateGeometryLods(parts[0].geometry, { ratios: plan.ratios })), bytesOfLevels(upFront[0].lods));
+
+  for (const sliceMilliseconds of [1, 5]) {
+    let clock = 0;
+    const scheduler = manualScheduler();
+    let jobs = 0;
+    const countingSchedule = job => scheduler.schedule(() => { jobs++; job(); });
+    const deferred = startDeferredLods({ geometries: plan.geometries, ratios: plan.ratios, schedule: countingSchedule, sliceMilliseconds, now: () => clock++ });
+    await scheduler.runAll();
+    const levelsByGeometry = await deferred.ready;
+    assert.ok(jobs > plan.geometries.length * 2, `each geometry takes several jobs (${jobs} jobs for slices of ${sliceMilliseconds})`);
+    assert.equal(scheduler.maximumPending, 1);
+    parts.forEach((part, index) => assert.deepEqual(bytesOfLevels(levelsByGeometry.get(part.geometry)), bytesOfLevels(upFront[index].lods), `${part.name} differs at slices of ${sliceMilliseconds}`));
+  }
+});
+
 test('nothing is made until the scheduler runs a job, and cancel stops the work and settles ready with null', async () => {
   const { planDenseLods } = await import('../src/dense-lods.js');
   const { startDeferredLods } = await import('../src/deferred-lods.js');
   const plan = planDenseLods(scanParts(), { pixels: 400 });
   const scheduler = manualScheduler();
   const made = [];
-  const deferred = startDeferredLods({ geometries: plan.geometries, ratios: plan.ratios, schedule: scheduler.schedule, onLevels: geometry => made.push(geometry) });
+  const deferred = startDeferredLods({ geometries: plan.geometries, ratios: plan.ratios, schedule: scheduler.schedule, sliceMilliseconds: Infinity, onLevels: geometry => made.push(geometry) });
   assert.equal(made.length, 0);
   assert.equal(scheduler.pending, 1);
   scheduler.runNext();
@@ -104,7 +136,7 @@ test('an error in the deferred work is reported and rejects ready, and no furthe
   assert.equal(reported.length, 1);
   assert.equal(scheduler.pending, 0);
 
-  const failingSwap = startDeferredLods({ geometries: plan.geometries, ratios: plan.ratios, schedule: scheduler.schedule, onLevels: () => { throw new Error('swap failed'); }, onError: error => reported.push(error) });
+  const failingSwap = startDeferredLods({ geometries: plan.geometries, ratios: plan.ratios, schedule: scheduler.schedule, sliceMilliseconds: Infinity, onLevels: () => { throw new Error('swap failed'); }, onError: error => reported.push(error) });
   scheduler.runNext();
   await assert.rejects(failingSwap.ready, /swap failed/);
   assert.equal(reported.length, 2);
