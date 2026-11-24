@@ -27,7 +27,7 @@ test('the trace leaves out every hidden part of a scene with local volumes, name
 });
 
 test('a hidden part without a volume does not cut the soft volume of the other one', async () => {
-  const environment = { background: [0, 0, 0], localVolumes: [SOFT_VOLUME] };
+  const environment = { localVolumes: [SOFT_VOLUME] };
   const withIdle = await renderPathTracedImage({ parts: [smoke, idle, backdrop], environment, camera: CAMERA }, IMAGE);
   const withoutIdle = await renderPathTracedImage({ parts: [smoke, backdrop], environment, camera: CAMERA }, IMAGE);
   assert.deepEqual(Array.from(withIdle.linear), Array.from(withoutIdle.linear));
@@ -35,7 +35,7 @@ test('a hidden part without a volume does not cut the soft volume of the other o
 
 test('a hidden part is left out of a scene without local volumes too (#1806)', async () => {
   const lit = { ...idle, material: { ...UNLIT, color: [1, 1, 1], emission: 1 } };
-  const withoutHidden = await renderPathTracedImage({ parts: [backdrop], environment: { background: [0, 0, 0] }, camera: CAMERA }, IMAGE);
-  const withHidden = await renderPathTracedImage({ parts: [lit, backdrop], environment: { background: [0, 0, 0] }, camera: CAMERA }, IMAGE);
+  const withoutHidden = await renderPathTracedImage({ parts: [backdrop], environment: {}, camera: CAMERA }, IMAGE);
+  const withHidden = await renderPathTracedImage({ parts: [lit, backdrop], environment: {}, camera: CAMERA }, IMAGE);
   assert.deepEqual(Array.from(withHidden.linear), Array.from(withoutHidden.linear));
 });

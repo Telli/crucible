@@ -38,7 +38,7 @@ function clock(value, name) {
   return value;
 }
 
-const REVIEW_CAMERA_FIELDS = ['eye', 'target', 'up', 'fov', 'near', 'far', 'projection', 'orthoScale'];
+export const REVIEW_CAMERA_FIELDS = Object.freeze(['eye', 'target', 'up', 'fov', 'near', 'far', 'projection', 'orthoScale']);
 const REVIEW_VECTOR_FIELDS = ['eye', 'target', 'up'];
 const REVIEW_PROJECTIONS = ['perspective', 'orthographic'];
 

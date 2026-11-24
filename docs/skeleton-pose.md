@@ -84,6 +84,7 @@ joint's own frame (`local = local * delta`), and weight scales the delta. An add
 | `pole` | World point the middle joint bends toward, or `(time, middlePosition) => point`. Without one, it keeps the current bend |
 | `weight` | 0 to 1 (default 1), or a function of time |
 | `keepEndRotation` | Default `true`: the end joint keeps its world rotation, so a foot stays flat while the leg moves |
+| `hingeFromPose` | Default `false`: `true` rolls `root` and `middle` around their solved bone axes after the bend so the pre-solve hinge normal stays aligned with the solved bend plane (removes holonomy twist drift) |
 | `limits` | `{ root: { x: [min, max], y, z }, middle: {...} }` in degrees: the turn away from the joint's rest rotation, per axis of its own, as Euler XYZ. Applied after the solve; `ikResults[n].limited` lists each change as `{ joint, axis, requested, applied }` |
 | `bendToward` | World direction (not the zero vector) the middle joint should bend toward. `ikResults[n].warnings` gets `wrong-bend` when the solve bends the other way, and `hyperextended` when the limb is locked straight. Without it, a limb that rests bent is checked against its rest bend |
 
@@ -113,10 +114,23 @@ The turn is the shortest rotation, so `aim` does not hold an up direction and ca
 
 `{ type: 'spline', chain: ['b0', 'b1', 'b2', 'end'], curve, stretch, weight }` (or `root` and `end`, alias `'spline_ik'`) fits the bone chain along a Catmull-Rom curve of 2 to 64 world points `[x, y, z]` (or a function `time => points`). `stretch` defaults to `true` (1), scaling each bone segment to its arc-length span along the curve; `false` (0) keeps rest bone lengths.
 
+## Custom solvers
+
+An entry `{ type: 'custom', weight, create(prepared, resolveJoint, label) }` lets you run your own solver on the posed rig:
+
+- `create(prepared, resolveJoint, label)` runs once when `createSkeletonPose` is created and returns `{ joints, solve(time, context, weight) }`, where `joints` is an array of joint indices in `prepared.joints` that the solver writes.
+- `solve(time, context, weight)` runs in solver order on each `apply(time)`. `context` exposes:
+  - `context.state`: `{ positions, rotations, scales }` in rig world space (indexed by joint index).
+  - `context.prepared`: `{ joints, order, restTranslations, restRotations, rootRotation, indexByName }`.
+  - `context.localRotations`, `context.localTranslations`: per-joint local pose arrays; call `context.update()` after mutating them directly.
+  - `context.setWorldRotation(index, worldRotation, weight)`: sets joint `index` to a world XYZW quaternion blended by `weight` and refreshes `state`.
+
+For joint constraints or clamp behavior beyond local Euler `limits`, read and rewrite `state.rotations[joint]` through `context.setWorldRotation` inside a custom solver.
+
 ## Reading the result
 
 `pose.jointWorld(name)` returns `{ position, rotation }` after the last `apply`, in world space, for attaching props or
-chaining targets. `pose.ikResults` holds one `{ reached, error }` per solver: `error` is metres from the target for
+chaining targets. To inspect deformed mesh vertices directly on the CPU after `apply(time)`, call `posedVertexPositions(part, output?)` (exported from `'crucible'` and `'crucible/addons/skeleton-pose'`), which returns world-space `[x, y, z, ...]` positions matching the renderer's normalized skinning blend. `pose.ikResults` holds one `{ reached, error }` per solver: `error` is metres from the target for
 two-bone and radians off target for aim.
 
 ## Rigs seen so far

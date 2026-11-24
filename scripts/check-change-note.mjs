@@ -38,12 +38,24 @@ function git(args) {
 
 function baseRefFromArguments() {
   const flagIndex = process.argv.indexOf('--base');
-  if (flagIndex !== -1) return process.argv[flagIndex + 1];
+  if (flagIndex !== -1) {
+    const reference = process.argv[flagIndex + 1];
+    if (!reference || reference.startsWith('-')) {
+      throw new Error('Pass a branch or commit after --base, such as --base origin/main.');
+    }
+    return reference;
+  }
   return pullRequestBaseOf() ?? git(['rev-parse', 'HEAD^1']);
 }
 
 async function main() {
-  const baseRef = baseRefFromArguments();
+  let baseRef;
+  try {
+    baseRef = baseRefFromArguments();
+  } catch (error) {
+    console.error(`FAIL check-change-note: ${error.message}`);
+    return 1;
+  }
   const changedPaths = git(['diff', '--name-only', '--no-renames', baseRef, 'HEAD']).split('\n').filter(Boolean);
   const addedPaths = git(['diff', '--name-only', '--no-renames', '--diff-filter=A', baseRef, 'HEAD']).split('\n').filter(Boolean);
   const release = isVersionBump(git(['show', `${baseRef}:package.json`]), git(['show', 'HEAD:package.json']));

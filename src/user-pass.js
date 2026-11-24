@@ -15,7 +15,7 @@ const ORIGIN = Object.freeze([0, 0, 0]);
 export const USER_PASS_INPUTS = Object.freeze(['sceneColor', 'sceneDepth', 'resolution', 'time', 'cameraEye', 'depthAt', 'worldPointAt', 'worldNormalAt', 'pixelFootprintAt', 'worldFootprintAt', 'bandLimitedLine', 'objectSlotAt', 'sceneObjectIds', 'userPass']);
 export const USER_PASS_SCALE = Object.freeze({ min: 0.05, max: 1 });
 const PASS_NAME_PATTERN = /^[a-z][A-Za-z0-9-]{0,31}$/;
-const PASS_FIELDS = ['name', 'fragment', 'uniforms', 'scale', 'objects', 'needs', 'luts'];
+const PASS_FIELDS = ['name', 'fragment', 'uniforms', 'scale', 'offset', 'objects', 'needs', 'luts'];
 const ENTRY_FUNCTION = Object.freeze({ pattern: /\bvec4\s+userPass\s*\(\s*vec2\s+[A-Za-z_]\w*\s*\)\s*\{/, example: 'vec4 userPass(vec2 uv) { return texture(sceneColor, uv); }' });
 
 /**
@@ -39,6 +39,13 @@ export function normalizeUserPasses(input) {
     if (typeof scale !== 'number' || !(scale >= USER_PASS_SCALE.min && scale <= USER_PASS_SCALE.max)) {
       throw new RangeError(`Post pass "${entry.name}" scale must be between ${USER_PASS_SCALE.min} and ${USER_PASS_SCALE.max}. Fix: 0.25 renders at a quarter of the width and height.`);
     }
+    let offset;
+    if (entry.offset !== undefined) {
+      if (!Array.isArray(entry.offset) || entry.offset.length !== 2 || !entry.offset.every(value => typeof value === 'number' && Number.isFinite(value))) {
+        throw new RangeError(`Post pass "${entry.name}" offset must be [x, y] of finite numbers in pass pixels.`);
+      }
+      offset = [entry.offset[0], entry.offset[1]];
+    }
     const fragmentLabel = `Post pass "${entry.name}" fragment`;
     const { source } = validateShaderSnippet(entry.fragment, { label: fragmentLabel, requiredFunction: ENTRY_FUNCTION });
     const needs = entry.needs === undefined ? [] : normalizeNeeds(entry.needs, `postPasses[${index}]`);
@@ -46,6 +53,7 @@ export function normalizeUserPasses(input) {
     if (missing) throw new RangeError(missing);
     const uniforms = validateSnippetUniforms(entry.uniforms, { label: `Post pass "${entry.name}"`, reservedNames: [...USER_PASS_INPUTS, ...needInputNames(needs)] });
     const normalized = { name: entry.name, fragment: entry.fragment, uniforms, scale };
+    if (offset !== undefined) normalized.offset = offset;
     if (entry.objects !== undefined) normalized.objects = resolveObjectNames(entry.objects, `postPasses[${index}].objects`);
     if (entry.needs !== undefined) normalized.needs = needs;
     if (entry.luts !== undefined) {
@@ -286,8 +294,15 @@ const copyFragment = `#version 300 es
 precision highp float;
 in vec2 textureCoordinate;
 uniform sampler2D sourceTexture;
+uniform vec2 u67_offset;
 out vec4 outputColor;
-void main() { outputColor = texture(sourceTexture, textureCoordinate); }`;
+void main() { outputColor = texture(sourceTexture, textureCoordinate - u67_offset / vec2(textureSize(sourceTexture, 0))); }`;
+
+/** Block origin shifted so a pixel-grid pass enlarged output shifts by `offset` pass pixels (+gl_FragCoord). */
+export function enlargedBlockOrigin(origin, size, offset) {
+  if (!offset) return origin;
+  return [origin[0] - offset[0] * size, origin[1] - offset[1] * size];
+}
 
 // Enlarges a pass drawn on a block lattice back to the grid size: each grid pixel takes the block it falls in.
 const blockEnlargeFragment = `#version 300 es
@@ -475,8 +490,12 @@ export function installUserPasses(renderer) {
     inputs.bind(context, pass, locations);
     const readsObjectIds = identifiers.length > 0 || Boolean(pass.needs?.includes('objectId'));
     if (readsObjectIds) {
+      const objectIdTexture = renderer.passSupport?.texture;
+      if (!objectIdTexture) {
+        throw new Error('A user pass with objects or needs: ["objectId"] requires the objectId pass first. Call renderer.render({ ...frame, pass: "objectId" }) before renderer.render(frame).');
+      }
       context.activeTexture(context.TEXTURE2);
-      context.bindTexture(context.TEXTURE_2D, renderer.passSupport.texture);
+      context.bindTexture(context.TEXTURE_2D, objectIdTexture);
       context.uniform1i(locations.sceneObjectIds, 2);
     }
     context.drawArrays(context.TRIANGLES, 0, 3);
@@ -484,18 +503,19 @@ export function installUserPasses(renderer) {
     if (readsObjectIds) unbindMask(context);
   }
 
-  function drawTextureToCanvas(slot, fragment, texture, width, height) {
+  function drawTextureToCanvas(slot, fragment, texture, width, height, offset = null, framebuffer = null) {
     const context = renderer.context;
     if (!state[slot]) {
       const program = compileProgram(context, fullscreenVertex, fragment);
-      state[slot] = { program, texture: context.getUniformLocation(program, 'sourceTexture') };
+      state[slot] = { program, texture: context.getUniformLocation(program, 'sourceTexture'), offset: context.getUniformLocation(program, 'u67_offset') };
     }
-    context.bindFramebuffer(context.FRAMEBUFFER, null);
+    context.bindFramebuffer(context.FRAMEBUFFER, framebuffer);
     context.viewport(0, 0, width, height);
     context.useProgram(state[slot].program);
     context.activeTexture(context.TEXTURE0);
     context.bindTexture(context.TEXTURE_2D, texture);
     context.uniform1i(state[slot].texture, 0);
+    if (state[slot].offset) context.uniform2f(state[slot].offset, offset?.[0] ?? 0, offset?.[1] ?? 0);
     context.drawArrays(context.TRIANGLES, 0, 3);
   }
 
@@ -522,6 +542,7 @@ export function installUserPasses(renderer) {
   function drawBlockPass(entry, inputTexture, width, height, frame, block, toCanvas) {
     const context = renderer.context;
     const { size, origin } = block;
+    const effectiveOrigin = enlargedBlockOrigin(origin, size, entry.pass.offset);
     const columns = Math.ceil((width + origin[0]) / size);
     const rows = Math.ceil((height + origin[1]) / size);
     const target = targetFor(entry, columns, rows);
@@ -546,7 +567,7 @@ export function installUserPasses(renderer) {
     context.bindTexture(context.TEXTURE_2D, target.texture);
     context.uniform1i(state.enlarge.uniforms.sourceTexture, 0);
     context.uniform1f(state.enlarge.uniforms.blockSize, size);
-    context.uniform2fv(state.enlarge.uniforms.blockOrigin, origin);
+    context.uniform2fv(state.enlarge.uniforms.blockOrigin, effectiveOrigin);
     context.drawArrays(context.TRIANGLES, 0, 3);
     return output?.texture ?? null;
   }
@@ -563,35 +584,59 @@ export function installUserPasses(renderer) {
     const antialiasLast = steps[steps.length - 1].kind === 'antialias';
     let input = captureFinishedFrame(width, height);
     let drewToCanvas = false;
+    let finalOffset = null;
     entries.forEach((entry, index) => {
       const isLast = index === entries.length - 1;
+      const offset = entry.pass.offset;
+      const hasOffset = Boolean(offset && (offset[0] !== 0 || offset[1] !== 0));
       const block = gridBlock(entry.pass);
       if (block) {
         drewToCanvas = isLast && !antialiasLast;
         input = drawBlockPass(entry, input, width, height, frame, block, drewToCanvas);
+        finalOffset = null;
         return;
       }
       // On the grid a pass that rounds to one pixel per block runs at the grid size.
       const fullSize = entry.pass.scale === 1 || Boolean(renderer.pixelGrid?.active);
-      const directToCanvas = isLast && fullSize && !antialiasLast;
+      const directToCanvas = isLast && fullSize && !antialiasLast && !hasOffset;
       const passWidth = fullSize ? width : Math.max(1, Math.round(width * entry.pass.scale));
       const passHeight = fullSize ? height : Math.max(1, Math.round(height * entry.pass.scale));
       const target = directToCanvas ? null : targetFor(entry, passWidth, passHeight);
       context.bindFramebuffer(context.FRAMEBUFFER, target?.framebuffer ?? null);
       drawPass(entry, input, passWidth, passHeight, frame);
-      input = target?.texture;
+      if (hasOffset && (!isLast || antialiasLast)) {
+        const enlarged = enlargedTarget(entry, width, height);
+        drawTextureToCanvas('copy', copyFragment, target.texture, width, height, offset, enlarged.framebuffer);
+        input = enlarged.texture;
+        finalOffset = null;
+      } else {
+        input = target?.texture;
+        finalOffset = hasOffset ? offset : null;
+      }
       drewToCanvas = directToCanvas;
     });
     if (antialiasLast) drawTextureToCanvas('smooth', antialiasFragment, input, width, height);
-    else if (!drewToCanvas) drawTextureToCanvas('copy', copyFragment, input, width, height);
+    else if (!drewToCanvas) drawTextureToCanvas('copy', copyFragment, input, width, height, finalOffset);
     inputs.prune(context, state.passes);
   }
 
-  // A pass that lists `needs` reads render passes drawn from this frame's camera, so they are drawn here, before the lit frame.
+  // A pass that lists `needs` or `objects` reads render passes drawn from this frame's camera, so they are drawn here before the lit frame unless the host already drew `objectId`.
+  let objectIdDrawn = false;
   const render = renderer.render;
   renderer.render = function renderWithPassInputs(frame, ...rest) {
-    const drawsLitFrame = state.passes.length > 0 && !frame.pass && !frame.reflectionTarget && !this.benchmark;
-    if (drawsLitFrame) inputs.draw(passFrame => render.call(this, passFrame, ...rest), frame, state.passes);
+    if (frame?.pass) {
+      const result = render.call(this, frame, ...rest);
+      objectIdDrawn = frame.pass === 'objectId';
+      return result;
+    }
+    const drawsLitFrame = state.passes.length > 0 && !frame?.reflectionTarget && !this.benchmark;
+    if (drawsLitFrame) {
+      try {
+        inputs.draw(passFrame => render.call(this, passFrame, ...rest), frame, state.passes, { objectIdDrawn });
+      } finally {
+        objectIdDrawn = false;
+      }
+    }
     return render.call(this, frame, ...rest);
   };
 

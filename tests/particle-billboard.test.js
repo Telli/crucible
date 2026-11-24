@@ -111,9 +111,14 @@ test('the vertex opacity shader splices only when asked: the default sources kee
   const rigid = SHADER_FEATURES.filter(feature => !['crowd', 'skin', 'morph'].includes(feature));
   const plainFragment = createFragmentShader(rigid);
   const plainVertex = createVertexShader(rigid);
-  assert.ok(!plainFragment.includes('vertexOpacity') && !plainVertex.includes('vertexOpacity'));
+  // The glTF COLOR_0 alpha path (#2948) declares vertexOpacity behind VERTEX_ALPHA, a constant 1 otherwise; the particle feature replaces that declaration with an input.
+  const constantOpacity = '#ifdef VERTEX_ALPHA\nin float vertexOpacity;\n#else\nconst float vertexOpacity = 1.0;\n#endif';
+  assert.ok(plainFragment.includes(constantOpacity));
+  assert.ok(!plainVertex.includes('vertexOpacity = vertexColor.a;'));
   assert.ok(!SHADER_FEATURES.includes(shaders.VERTEX_OPACITY_FEATURE));
   const features = [...rigid, shaders.VERTEX_OPACITY_FEATURE];
-  assert.ok(createFragmentShader(features).includes('textureAlpha * vertexOpacity;'));
+  const opacityFragment = createFragmentShader(features);
+  assert.ok(opacityFragment.includes('textureAlpha * vertexOpacity;'));
+  assert.ok(!opacityFragment.includes(constantOpacity) && opacityFragment.includes('in float vertexOpacity;'));
   assert.ok(createVertexShader(features).includes('vertexOpacity = vertexColor.a;'));
 });

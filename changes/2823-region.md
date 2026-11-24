@@ -1,0 +1,1 @@
+- A mesh particle emitter takes `region` (`{ center, halfExtents }`, a box in world space) so all its droplets are born on the part of the mesh inside it, such as the sea around one hull (#2823)

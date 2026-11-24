@@ -1,4 +1,4 @@
-import { CLOSED_ROOM_MAXIMUM_TRIANGLES, CLOSED_ROOM_SHARE, closedRoomShare, freeOrigin, hitsFrontFace, worldTriangles } from './closed-room.js';
+import { CLOSED_ROOM_MAXIMUM_TRIANGLES, CLOSED_ROOM_RAYS, CLOSED_ROOM_SHARE, fibonacciDirection, freeOrigin, hitsFrontFace, worldTriangles } from './closed-room.js';
 
 // A closed-room test for rooms with a garden outside the window and heavy props inside. closedRoomShare (which the inspect
 // diagnostic uses) shoots from the middle of the bounds, so a lawn beside the room moves the start out of it, and it gives up
@@ -51,36 +51,163 @@ function partsNearTheRest(parts, worldMatrices) {
 const CLOSED_ROOM_WALL_RAYS = 36;
 // A room has walls when this share of the level rays around the origin hit one; a canopy on columns hits a column now and then.
 const CLOSED_ROOM_WALL_SHARE = 0.8;
+// A ray only has to test a part whose box it crosses. Boxes grow by this share of the scene's extent plus its largest coordinate, so
+// rounding in the triangle test never lets a hit land outside the box, and a flat wall quad (a box with no thickness) still has a volume.
+const BOX_PADDING_SHARE = 1e-4;
+// Parts with fewer triangles than this are cheaper to test directly than to box-test first.
+const MINIMUM_TRIANGLES_FOR_BOX_TEST = 8;
+
+function isOpaque(part) {
+  return !['blend', 'add'].includes(part.material?.alphaMode);
+}
 
 /**
- * The share of level rays (a ring around the up axis at the origin's height) that hit a part's inner face, or null under the same conditions as
- * closedRoomShare. A roof over a floor on a few columns has a high closedRoomShare, because the rays up and down hit the roof and the floor, but few
- * level rays hit anything, so this tells a room with walls from a canopy or a colonnade.
+ * World triangles of the parts, built once: `entries` holds each part's triangle range and padded box, so a subset of the parts reuses
+ * the same corner array. Null when worldTriangles gives none (no triangles, or over the triangle budget).
  */
-function closedRoomWallShare(parts, worldMatrices) {
-  const triangles = worldTriangles(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)), worldMatrices);
-  if (!triangles) {
+function prepareScene(parts, worldMatrices) {
+  const world = worldTriangles(parts, worldMatrices);
+  if (!world) {
     return null;
   }
-  const origin = freeOrigin(triangles);
+  let largestCoordinate = 0;
+  let largestExtent = 0;
+  for (let axis = 0; axis < 3; axis++) {
+    largestCoordinate = Math.max(largestCoordinate, Math.abs(world.minimum[axis]), Math.abs(world.maximum[axis]));
+    largestExtent = Math.max(largestExtent, world.maximum[axis] - world.minimum[axis]);
+  }
+  const padding = BOX_PADDING_SHARE * (largestExtent + largestCoordinate);
+  const entries = [];
+  let firstTriangle = 0;
+  parts.forEach((part, index) => {
+    const triangleCount = part.geometry.indices.length / 3;
+    const bounds = world.partBounds[index];
+    entries.push({
+      part,
+      firstTriangle,
+      triangleCount,
+      bounds,
+      boxMinimum: bounds.minimum.map(value => value - padding),
+      boxMaximum: bounds.maximum.map(value => value + padding),
+    });
+    firstTriangle += triangleCount;
+  });
+  return { corners: world.corners, entries };
+}
+
+// The scene as closedRoomShare would see it with only these entries: the same bounds, from the per-part bounds (min and max do not depend on order).
+function viewOf(corners, entries) {
+  const minimum = [Infinity, Infinity, Infinity];
+  const maximum = [-Infinity, -Infinity, -Infinity];
+  let triangleCount = 0;
+  for (const entry of entries) {
+    triangleCount += entry.triangleCount;
+    for (let axis = 0; axis < 3; axis++) {
+      minimum[axis] = Math.min(minimum[axis], entry.bounds.minimum[axis]);
+      maximum[axis] = Math.max(maximum[axis], entry.bounds.maximum[axis]);
+    }
+  }
+  const partBounds = entries.map(entry => entry.bounds);
+  return { corners, entries, triangleCount, minimum, maximum, partBounds };
+}
+
+// Whether the half line from `origin` along `direction` crosses the box. An axis the ray does not move on needs the origin inside the slab; a NaN never rejects.
+function rayCrossesBox(origin, direction, boxMinimum, boxMaximum) {
+  let near = 0;
+  let far = Infinity;
+  for (let axis = 0; axis < 3; axis++) {
+    const step = direction[axis];
+    if (step === 0) {
+      if (origin[axis] < boxMinimum[axis] || origin[axis] > boxMaximum[axis]) {
+        return false;
+      }
+      continue;
+    }
+    const entry = (boxMinimum[axis] - origin[axis]) / step;
+    const exit = (boxMaximum[axis] - origin[axis]) / step;
+    near = Math.max(near, Math.min(entry, exit));
+    far = Math.min(far, Math.max(entry, exit));
+  }
+  return !(near > far);
+}
+
+function rayHitsFrontFace(view, origin, direction) {
+  for (const entry of view.entries) {
+    if (entry.triangleCount >= MINIMUM_TRIANGLES_FOR_BOX_TEST && !rayCrossesBox(origin, direction, entry.boxMinimum, entry.boxMaximum)) {
+      continue;
+    }
+    const end = entry.firstTriangle + entry.triangleCount;
+    for (let triangle = entry.firstTriangle; triangle < end; triangle++) {
+      if (hitsFrontFace(view.corners, triangle * 9, origin, direction)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// closedRoomShare on a prepared view, with the same origin and rays, so the same share.
+function roomShareOf(view) {
+  if (view.triangleCount === 0) {
+    return null;
+  }
+  const origin = freeOrigin(view);
   if (!origin) {
     return null;
   }
   const direction = [0, 0, 0];
   let hits = 0;
+  for (let ray = 0; ray < CLOSED_ROOM_RAYS; ray++) {
+    fibonacciDirection(ray, CLOSED_ROOM_RAYS, direction);
+    if (rayHitsFrontFace(view, origin, direction)) {
+      hits++;
+    }
+  }
+  return hits / CLOSED_ROOM_RAYS;
+}
+
+/**
+ * Whether at least CLOSED_ROOM_WALL_SHARE of the level rays (a ring around the up axis at the origin's height) hit a part's inner face. A roof
+ * over a floor on a few columns has a high closed-room share, because the rays up and down hit the roof and the floor, but few level rays hit
+ * anything, so this tells a room with walls from a canopy or a colonnade. False when the view has no triangles or no free origin. Stops as soon
+ * as the share cannot reach the threshold any more.
+ */
+function viewHasWalls(view) {
+  if (view.triangleCount === 0) {
+    return false;
+  }
+  const origin = freeOrigin(view);
+  if (!origin) {
+    return false;
+  }
+  const direction = [0, 0, 0];
+  let hits = 0;
   for (let ray = 0; ray < CLOSED_ROOM_WALL_RAYS; ray++) {
+    if ((hits + CLOSED_ROOM_WALL_RAYS - ray) / CLOSED_ROOM_WALL_RAYS < CLOSED_ROOM_WALL_SHARE) {
+      return false;
+    }
     const angle = ((ray + 0.5) / CLOSED_ROOM_WALL_RAYS) * Math.PI * 2;
     direction[0] = Math.cos(angle);
     direction[1] = 0;
     direction[2] = Math.sin(angle);
-    for (let triangle = 0; triangle < triangles.triangleCount; triangle++) {
-      if (hitsFrontFace(triangles.corners, triangle * 9, origin, direction)) {
-        hits++;
-        break;
-      }
+    if (rayHitsFrontFace(view, origin, direction)) {
+      hits++;
     }
   }
-  return hits / CLOSED_ROOM_WALL_RAYS;
+  return hits / CLOSED_ROOM_WALL_RAYS >= CLOSED_ROOM_WALL_SHARE;
+}
+
+// The views of all the kept parts and of the ones near the rest; the second is the first itself when no part is left out.
+function keptAndNearViews(parts, worldMatrices) {
+  const kept = lightestParts(parts.filter(isOpaque));
+  const scene = prepareScene(kept, worldMatrices);
+  if (!scene) {
+    return null;
+  }
+  const keptView = viewOf(scene.corners, scene.entries);
+  const near = new Set(partsNearTheRest(kept, worldMatrices));
+  const nearView = near.size === new Set(kept).size ? keptView : viewOf(scene.corners, scene.entries.filter(entry => near.has(entry.part)));
+  return { keptView, nearView };
 }
 
 /**
@@ -89,20 +216,28 @@ function closedRoomWallShare(parts, worldMatrices) {
  * CLOSED_ROOM_MAXIMUM_TRIANGLES triangles. Null when nothing is left to test. `worldMatrices` maps each part (or its name) to its world matrix.
  */
 export function fittedClosedRoomShare(parts, worldMatrices) {
-  const kept = lightestParts(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)));
-  const share = closedRoomShare(kept, worldMatrices);
+  const views = keptAndNearViews(parts, worldMatrices);
+  if (!views) {
+    return null;
+  }
+  const share = roomShareOf(views.keptView);
   if (share === null || share >= CLOSED_ROOM_SHARE) {
     return share;
   }
-  return Math.max(share, closedRoomShare(partsNearTheRest(kept, worldMatrices), worldMatrices) ?? 0);
+  if (views.nearView === views.keptView) {
+    return share;
+  }
+  return Math.max(share, roomShareOf(views.nearView) ?? 0);
 }
 
 /**
- * Whether the scene has walls all round (closedRoomWallShare of at least CLOSED_ROOM_WALL_SHARE), tested on the same parts as fittedClosedRoomShare:
+ * Whether the scene has walls all round (at least CLOSED_ROOM_WALL_SHARE of the level rays hit one), tested on the same parts as fittedClosedRoomShare:
  * all of them, or the ones near the rest when a lawn beside the room moves the origin out of it. False when nothing can be tested.
  */
 export function fittedRoomHasWalls(parts, worldMatrices) {
-  const kept = lightestParts(parts.filter(part => !['blend', 'add'].includes(part.material?.alphaMode)));
-  const share = Math.max(closedRoomWallShare(kept, worldMatrices) ?? 0, closedRoomWallShare(partsNearTheRest(kept, worldMatrices), worldMatrices) ?? 0);
-  return share >= CLOSED_ROOM_WALL_SHARE;
+  const views = keptAndNearViews(parts, worldMatrices);
+  if (!views) {
+    return false;
+  }
+  return viewHasWalls(views.keptView) || (views.nearView !== views.keptView && viewHasWalls(views.nearView));
 }

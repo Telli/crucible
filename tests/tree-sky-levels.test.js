@@ -29,13 +29,16 @@ for (const species of SPECIES) {
       assert.equal(geometry.skyVisibility.length, geometry.positions.length / 3);
       // The sky gain of a level moves its mean on purpose, and a vertex stops at full sky, so a large gain can fall short of
       // level 0's mean times the gain. The floor of the visibility keeps a very dense crown from matching exactly too.
-      const gain = gains[index]?.sky ?? 1;
+      // Only a bush still draws clumps at the far levels; the others draw leaf cards there and take no gain (#3051).
+      const gain = species === 'bush' ? gains[index]?.sky ?? 1 : 1;
       const levelMean = coverageMeanSkyVisibility(geometry);
       if (gain > 1.5) {
         assert.ok(levelMean >= levelZeroMean * 1.2 && levelMean <= 1, `${species} level ${index} has a mean of ${levelMean.toFixed(3)} against ${levelZeroMean.toFixed(3)} at level 0`);
         return;
       }
-      const expected = levelZeroMean * gain;
+      // A far level of leaf cards stands for the same leaf as level 1, so it matches level 1; a dense conifer crown floors out above level 0 already there.
+      const referenceMean = species !== 'bush' && index >= 2 ? coverageMeanSkyVisibility(foliageGeometry(tree.levels[1])) : levelZeroMean;
+      const expected = referenceMean * gain;
       const allowedDifference = Math.max(0.1 * expected, 0.02);
       const difference = Math.abs(levelMean - expected);
       assert.ok(difference <= allowedDifference, `${species} level ${index} differs from level 0 by ${difference.toFixed(3)}`);
@@ -95,9 +98,10 @@ test('a tree whose far level carries more leaf area than its species usually doe
 });
 
 test('the standing clump cards of a far level face every way, so the crown is as bright from every side', () => {
+  // Only a bush draws clumps at level 2 now (#3051); the leaf cards of the others have no standing card.
   // Before #432 every standing card of a crown faced one world direction, and level 2 drew three times darker from one side.
   // The facing comes from the triangles themselves, since the shading normals may be blended toward the crown.
-  for (const species of SPECIES) {
+  for (const species of ['bush']) {
     const { positions, indices } = foliageGeometry(createTree(species, 3).levels[2]);
     let sumX = 0;
     let sumZ = 0;

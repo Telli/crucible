@@ -1,0 +1,237 @@
+import './support/load-agent-scene-modules.mjs';
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createAgentScene } from '../src/agent-scene.js';
+import { createLightingState, updateLightingState } from '../src/lighting.js';
+import { createFragmentShader, fragmentShader, WETNESS_FEATURE, SHADER_FEATURES } from '../src/shaders.js';
+import { normalizeAgentLook } from '../src/agent-look.js';
+import { AGENT_SCENE_CAPABILITIES } from '../src/agent-scene-capabilities.js';
+import { wetnessUniformValues, wetnessResponse, puddleShare, PUDDLE_SOURCES, PUDDLE_SHARE_CAP } from '../src/wetness.js';
+import { puddleFillLevel, PUDDLE_LEVEL_TABLE, SOAKED_ROAD_ROUGHNESS_SCALE, WATER_SURFACE_ROUGHNESS } from '../src/wetness-shader.js';
+import { wetnessKeepOutBoxes, wetnessGroundHeight, KEEP_OUT_LIMIT } from '../src/wetness-keep-out.js';
+import { findWaterSurface, flagWetMirrorParts, wetMirrorSurface } from '../src/water-reflection.js';
+import { wetStone } from './support/wetness-noise-port.mjs';
+
+function emptySession() {
+  return createAgentScene({ format: 'crucible.scene', schemaVersion: 1, geometries: [], materials: [], nodes: [] });
+}
+
+test('a dry look has no wetness fields and the lighting state stays dry', () => {
+  const { environment } = normalizeAgentLook({ environment: {} });
+  assert.equal('wetness' in environment, false);
+  assert.equal('puddles' in environment, false);
+  const state = updateLightingState(createLightingState(), environment);
+  assert.equal(state.wetness, 0);
+  assert.deepEqual([...state.wetnessState], [0, 0, 0, 0]);
+});
+
+test('wetness and puddles are bounded, and puddles fill in their defaults', () => {
+  const { environment } = normalizeAgentLook({ environment: { wetness: 0.5, puddles: {} } });
+  assert.equal(environment.wetness, 0.5);
+  assert.deepEqual({ ...environment.puddles }, { coverage: 0.5, from: 'height' });
+  for (const wetness of [-0.1, 1.1, 'wet']) {
+    assert.throws(() => normalizeAgentLook({ environment: { wetness } }), /environment\.wetness/);
+  }
+  assert.throws(() => normalizeAgentLook({ environment: { puddles: { coverage: 2 } } }), /puddles\.coverage/);
+  assert.throws(() => normalizeAgentLook({ environment: { puddles: { depth: 1 } } }), /puddles\.depth/);
+  assert.throws(() => normalizeAgentLook({ environment: { puddles: 'many' } }), /environment\.puddles/);
+});
+
+test('an unknown puddle source is refused with the one to pass', () => {
+  for (const from of ['cavity', 'mask', 'noise']) {
+    assert.throws(() => normalizeAgentLook({ environment: { puddles: { from } } }), /puddles\.from.*pass from: "height"/);
+  }
+  assert.deepEqual(PUDDLE_SOURCES, ['height']);
+});
+
+test('the puddle share is a quarter of the ground at most, and grows with wetness and coverage', () => {
+  assert.equal(PUDDLE_SHARE_CAP, 0.25);
+  assert.equal(puddleShare(1, 1), 0.25);
+  assert.equal(puddleShare(0.5, 0.5), 0.25 * 0.5 * 0.25);
+  assert.equal(puddleShare(0, 1), 0);
+  assert.deepEqual(wetnessUniformValues({ puddles: { coverage: 0.8 } }), [0, 0, 0, 0]);
+  assert.deepEqual(wetnessUniformValues({ wetness: 1, puddles: { coverage: 0 } }), [1, 0, 0, 0]);
+  const state = updateLightingState(createLightingState(), { wetness: 0.5, puddles: { coverage: 0.8 } });
+  assert.equal(state.wetness, 0.75);
+  assert.ok(Math.abs(state.wetnessState[1] - puddleFillLevel(puddleShare(0.5, 0.8))) < 1e-6);
+});
+
+test('the wetness curve is visible by the middle of the range and keeps its ends', () => {
+  assert.equal(wetnessResponse(0), 0);
+  assert.equal(wetnessResponse(1), 1);
+  assert.equal(wetnessResponse(0.5), 0.75);
+  assert.ok(wetnessResponse(0.1) > 0.15);
+});
+
+test('the wetness code joins the fragment shader only when the feature is on', () => {
+  const dry = createFragmentShader(SHADER_FEATURES);
+  assert.equal(dry, fragmentShader);
+  assert.equal(dry.includes('wetnessState'), false);
+  const wet = createFragmentShader([...SHADER_FEATURES, WETNESS_FEATURE]);
+  assert.match(wet, /uniform vec4 wetnessState;/);
+  assert.match(wet, /float wetBasin\(/);
+  assert.match(wet, /\(1\.0 - metallic\)/);
+});
+
+test('set-environment sets wetness and puddles and null clears them', () => {
+  const session = emptySession();
+  session.apply([{ type: 'set-environment', environment: { wetness: 1, puddles: { coverage: 0.6 } } }], { expectedRevision: session.revision });
+  let recipe = session.exportRecipe();
+  assert.equal(recipe.environment.wetness, 1);
+  assert.equal(recipe.environment.puddles.coverage, 0.6);
+  session.apply([{ type: 'set-environment', environment: { wetness: null, puddles: null } }], { expectedRevision: session.revision });
+  recipe = session.exportRecipe();
+  assert.equal(Object.hasOwn(recipe.environment, 'wetness'), false);
+  assert.equal(Object.hasOwn(recipe.environment, 'puddles'), false);
+});
+
+test('scene_capabilities names the wetness topic with the sources the validator accepts', () => {
+  const topic = AGENT_SCENE_CAPABILITIES.wetness;
+  assert.deepEqual(topic.environment, ['environment.wetness', 'environment.puddles']);
+  assert.deepEqual([...topic.puddles.from], PUDDLE_SOURCES);
+  assert.match(topic.renderers, /path tracers ignore it/);
+});
+
+function partWithFootprint(minimumX, minimumZ, maximumX, maximumZ, matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]) {
+  const positions = new Float32Array([minimumX, 0, minimumZ, maximumX, 0.01, maximumZ]);
+  return { geometry: { positions }, matrix };
+}
+
+test('keep-out boxes list thin parts at their world footprint and skip wide ones', () => {
+  const marking = partWithFootprint(-0.1, -5, 0.1, 5, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 3, 0, 2, 1]);
+  const road = partWithFootprint(-10, -20, 10, 20);
+  const { boxes, count } = wetnessKeepOutBoxes([road, marking]);
+  assert.equal(count, 1);
+  assert.deepEqual([...boxes.slice(0, 4)].map((value) => Math.round(value * 100) / 100), [2.9, -3, 3.1, 7]);
+});
+
+test('keep-out boxes stop at the shader limit and ignore parts that deform', () => {
+  const posts = Array.from({ length: KEEP_OUT_LIMIT + 5 }, (_, index) => partWithFootprint(index, 0, index + 0.2, 0.2));
+  assert.equal(wetnessKeepOutBoxes(posts).count, KEEP_OUT_LIMIT);
+  const skinned = { ...partWithFootprint(0, 0, 0.1, 0.1), skin: {} };
+  assert.equal(wetnessKeepOutBoxes([skinned]).count, 0);
+});
+
+test('the wet shader fades puddles out near keep-out boxes', () => {
+  const wet = createFragmentShader(new Set([...SHADER_FEATURES, WETNESS_FEATURE]));
+  assert.match(wet, /wetnessKeepOut\[24\]/);
+  assert.match(wet, /clearance = wetKeepOutDistance[(]worldPosition[)]/);
+});
+
+function groundPart(minimumX, minimumZ, maximumX, maximumZ, roughness = 0.95, metallic = 0) {
+  const positions = new Float32Array([minimumX, -0.1, minimumZ, maximumX, 0, maximumZ]);
+  const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  return { geometry: { positions }, matrix: identity, material: { roughness, metallic } };
+}
+
+test('wet mirror mode takes a rough flat ground part that a dry scene would leave out', () => {
+  const road = groundPart(-10, -20, 10, 20);
+  assert.equal(findWaterSurface([road]), null);
+  assert.equal(findWaterSurface([road], { wet: true }).height, 0);
+});
+
+test('wet mirror mode skips metal and flags the ground so the renderer can mirror it', () => {
+  const metalSheet = groundPart(-10, -20, 10, 20, 0.2, 1);
+  assert.equal(findWaterSurface([metalSheet], { wet: true }), null);
+  const road = groundPart(-10, -20, 10, 20);
+  const [flagged] = flagWetMirrorParts([road]);
+  assert.equal(flagged.material.waterReflection, true);
+  assert.equal(wetMirrorSurface([flagged]).height, 0);
+  assert.equal(wetMirrorSurface([road]), null);
+});
+
+function wetShaderSource() {
+  return createFragmentShader(new Set([...SHADER_FEATURES, WETNESS_FEATURE]));
+}
+
+test('the fill level falls as the share grows, through the measured table', () => {
+  const levels = [0, 0.005, 0.01, 0.02, 0.03, 0.0625, 0.1, 0.125, 0.2, 0.25].map(puddleFillLevel);
+  for (let index = 1; index < levels.length; index++) assert.ok(levels[index] < levels[index - 1], `level ${index} falls`);
+  for (const [share, level] of PUDDLE_LEVEL_TABLE) assert.ok(Math.abs(puddleFillLevel(share) - level) < 1e-9);
+  assert.equal(puddleFillLevel(1), puddleFillLevel(0.25));
+});
+
+function raisedGround(height) {
+  const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, height, 0, 1];
+  return { geometry: { positions: new Float32Array([-10, -0.1, -20, 10, 0, 20]) }, matrix: identity, material: { roughness: 0.95, metallic: 0 } };
+}
+
+test('the ground height is the top of the widest part, so a raised or sunk road is measured from itself', () => {
+  assert.equal(wetnessGroundHeight([]), 0);
+  for (const height of [3, -2, 0]) {
+    const marking = partWithFootprint(-0.1, -5, 0.1, 5, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, height + 50, 0, 1]);
+    assert.ok(Math.abs(wetnessGroundHeight([marking, raisedGround(height)]) - height) < 1e-6);
+  }
+});
+
+test('the shader measures the water depth from the ground height, not from world y', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('6.0 * (worldPosition.y - wetnessState.w)'));
+  assert.equal(wet.includes('6.0 * worldPosition.y'), false);
+});
+
+test('only standing water mirrors: the road is set rough after the lighting and the water smooth', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes(`roughness = wetStanding > 0.99 ? ${WATER_SURFACE_ROUGHNESS.toFixed(2)} : mix(0.5, 0.35, wetStanding);`));
+  assert.ok(wet.includes(`roughness * ${SOAKED_ROAD_ROUGHNESS_SCALE.toFixed(2)}`));
+  assert.ok(WATER_SURFACE_ROUGHNESS < 0.1 && SOAKED_ROAD_ROUGHNESS_SCALE > 0.5, 'water is a mirror, soaked road is satin');
+});
+
+test('the water edge is narrow and pixel-wide, and the interior is flat and smooth', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('standing = smoothstep(-edgeWidth, edgeWidth, stoneDepth) * gate'));
+  assert.ok(wet.includes('float edgeWidth = max(1.5 * fwidth(stoneDepth), 0.00001);'), 'the shore is anti-aliased on the depth the stones break, about 1.5 pixels wide');
+  assert.ok(wet.includes('normal = normalize(mix(normal, normalize(vec3(wetRipple.x, 1.0, wetRipple.y)), standing));'));
+  assert.ok(wet.includes('float gate = smoothstep(0.996, 0.9995, geometricNormal.y)'));
+});
+
+test('grain and fine detail fade with the pixel footprint so the horizon does not speckle', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('float pixelSize = sqrt(length(dFdx(worldPosition)) * length(dFdy(worldPosition)));'));
+  assert.ok(wet.includes('float wallGrainFade = 1.0 - smoothstep(0.006, 0.03, pixelSize);'), 'walls keep the grain fade they had');
+  assert.match(wet, /wetBasin[(]worldPosition, detailFade[)]/);
+});
+
+test('the water ripple is a faint slow tilt that moves with time and stays well under the mirror blur', () => {
+  const wet = wetShaderSource();
+  const ripple = wet.match(/vec2 wetRipple = [\s\S]*?\) \* ([0-9.]+);/);
+  assert.ok(ripple, 'the water normal carries a ripple');
+  assert.ok(Number(ripple[1]) <= 0.006, 'a ripple of a fifth of a degree or less keeps the reflection sharp');
+  assert.ok(ripple[0].includes('time *'), 'the ripple moves with the frame time and so is the same for the same time');
+});
+
+test('the soak band only darkens the road, so no bright ring of sky glints sits around a puddle; the wet fringe is narrow and glossy', () => {
+  const wet = wetShaderSource();
+  assert.equal(wet.includes('roughness * 0.75'), false, 'a smoother soak band lit a halo of glints around the water');
+  assert.ok(wet.includes('color *= (1.0 - 0.15 * soakBand) * (1.0 - 0.3 * fringe);'));
+  assert.ok(wet.includes('fringe = smoothstep(-0.014, 0.0, stoneDepth) * gate * (1.0 - standing);'), 'the fringe is about 3 cm wide');
+  assert.ok(wet.includes('roughness = mix(roughness, max(roughness * mix(0.8, 0.45, stoneTop), 0.075), fringe);'));
+});
+
+test('the wet grit eases in from the first drop of wetness and never touches a dry road', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('if (!TAG_WATER && !TAG_FIRE && !TAG_SMOKE && wetnessState.x > 0.0) {'), 'a dry road never enters the wet code');
+  assert.ok(wet.includes('float wetGrit = wetnessState.x * sqrt(wetnessState.x);'));
+  const gritAt = wetness => wetnessResponse(wetness) ** 1.5;
+  assert.equal(gritAt(0), 0);
+  assert.ok(gritAt(0.05) > 0.02 && gritAt(0.05) < gritAt(0.25) && gritAt(0.25) < gritAt(0.5) && gritAt(1) === 1);
+});
+
+test('the road stones are a mix of sizes on rotated lattices, mostly small, and lose their finest octave first', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('float wetStone(vec3 position, vec3 fades) {'));
+  assert.ok(wet.includes('vec3 stoneFades = 1.0 - vec3(smoothstep(0.009, 0.03, pixelSize), smoothstep(0.0055, 0.016, pixelSize), smoothstep(0.0018, 0.0049, pixelSize));'));
+  const heights = [];
+  for (let x = 0; x < 3; x += 0.01) {
+    for (let z = 0; z < 3; z += 0.01) heights.push(wetStone(x, 0, z));
+  }
+  const mean = heights.reduce((sum, value) => sum + value, 0) / heights.length;
+  assert.ok(Math.abs(mean - 0.5) < 0.02, 'the height is centred on 0.5');
+  let neighbourStep = 0;
+  let spread = 0;
+  for (let index = 1; index < heights.length; index++) {
+    neighbourStep += Math.abs(heights[index] - heights[index - 1]);
+    spread += Math.abs(heights[index] - mean);
+  }
+  assert.ok(neighbourStep / spread > 0.04, 'the smallest stones dominate the change from one centimetre to the next');
+});

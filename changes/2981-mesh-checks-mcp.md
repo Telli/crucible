@@ -1,0 +1,1 @@
+- `scene_create_asset` takes `checkMesh: true` and returns the duplicate-triangle and non-manifold-edge counts in `assetWarnings`, and `scripts/validate-gltf.mjs` runs the glTF-Validator over GLB files through `strict` (the validator is a devDependency, never core) (#2981)

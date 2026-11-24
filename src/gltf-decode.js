@@ -82,6 +82,9 @@ async function decodeImage(bytes, mimeType, target) {
     return createImageBitmap(blob, options);
   }
   if (target) throw new Error('Scaling textures to fit maxTexturePixels requires createImageBitmap.');
+  if (typeof Image !== 'function') {
+    throw new Error('Texture decoding requires a browser or { textures: false }.');
+  }
   const url = URL.createObjectURL(blob);
   try {
     const image = new Image();
@@ -141,13 +144,14 @@ function releaserFor(releasers) {
  * The result has the shape the CrucibleRenderer conversion in gltf.js reads. Nothing here imports three.js: Draco, meshopt
  * and KTX2 decoders arrive as `decoders` objects that the caller supplies.
  */
-export async function decodeGltf({ document, glbBinary, resourceBytes, decoders, limits, imageTargets = new Map(), sharedTextures }) {
+export async function decodeGltf({ document, glbBinary, resourceBytes, decoders, limits, imageTargets = new Map(), sharedTextures, decodeTextures = true }) {
   const releasers = [];
   const usedNames = new Map();
   const nodeCache = new Map();
   const meshNames = new Map();
   const sources = new Map();
   const materials = new Map();
+  const pendingMaterials = [];
   const textures = new Map();
   const images = new Map();
   const skeletons = new Map();
@@ -189,32 +193,40 @@ export async function decodeGltf({ document, glbBinary, resourceBytes, decoders,
     return reader.viewBytes(definition.bufferView);
   }
 
+  function cachePending(map, key, create) {
+    if (map.has(key)) return map.get(key);
+    const pending = create().catch(error => {
+      map.delete(key);
+      throw error;
+    });
+    map.set(key, pending);
+    return pending;
+  }
+
   function loadKtx2Image(bytes) {
     const loader = decoders.ktx2;
+    if (typeof loader.parse === 'function') {
+      // KTX2Loader transfers its ArrayBuffer to a worker; copy so shared GLB bytes stay valid for other images.
+      const buffer = bytes.slice().buffer;
+      return new Promise((resolve, reject) => loader.parse(buffer, resolve, reject));
+    }
     const url = URL.createObjectURL(new Blob([bytes], { type: 'image/ktx2' }));
     return new Promise((resolve, reject) => loader.load(url, resolve, undefined, reject)).finally(() => URL.revokeObjectURL(url));
   }
 
-  async function loadImage(sourceIndex, isKtx2) {
-    const key = `${sourceIndex}:${isKtx2}`;
-    if (images.has(key)) return images.get(key);
-    const bytes = imageBytes(sourceIndex);
-    let loaded;
-    if (isKtx2) {
-      const texture = await loadKtx2Image(bytes);
-      loaded = { image: texture.image, isCompressedTexture: texture.isCompressedTexture === true, format: texture.format, mipmaps: texture.mipmaps };
-      releasers.push(() => texture.dispose?.());
-    } else {
-      const mimeType = mimeTypeOf(document.images[sourceIndex], bytes);
-      const scaleTarget = imageTargets.get(sourceIndex);
-      const image = await decodeImage(bytes, mimeType, scaleTarget);
+  function loadImage(sourceIndex, isKtx2) {
+    return cachePending(images, `${sourceIndex}:${isKtx2}`, async () => {
+      const bytes = imageBytes(sourceIndex);
+      const mimeType = isKtx2 ? 'image/ktx2' : mimeTypeOf(document.images[sourceIndex], bytes);
+      const scaleTarget = isKtx2 ? null : imageTargets.get(sourceIndex);
+      const result = isKtx2
+        ? await loadKtx2Image(bytes)
+        : { image: await decodeImage(bytes, mimeType, scaleTarget) };
       // A scaled image no longer matches its file, so only an unscaled one lets export reuse the source bytes.
-      if (!scaleTarget) rememberSourceEncoding(image, bytes.slice(), mimeType);
-      loaded = { image, isCompressedTexture: false, format: undefined, mipmaps: undefined };
-      releasers.push(() => image.close?.());
-    }
-    images.set(key, loaded);
-    return loaded;
+      if (!scaleTarget) rememberSourceEncoding(result.mipmaps?.[0] ?? result.image, bytes.slice(), mimeType);
+      releasers.push(() => (isKtx2 ? result.dispose?.() : result.image.close?.()));
+      return { image: result.image, isCompressedTexture: result.isCompressedTexture === true, format: result.format, mipmaps: result.mipmaps };
+    });
   }
 
   // A WebP source with a PNG or JPEG fallback falls back when this browser cannot decode WebP.
@@ -231,64 +243,60 @@ export async function decodeGltf({ document, glbBinary, resourceBytes, decoders,
     }
   }
 
-  async function loadTexture(textureIndex) {
-    if (textures.has(textureIndex)) return textures.get(textureIndex);
+  function loadTexture(textureIndex) {
     const definition = document.textures[textureIndex];
     // A texture that several files of one world carry is stored in the first file only; later files hold a stand-in image and
     // the same key, and take the texture the first file decoded.
     const shareKey = definition.extras?.sharedTexture;
     const shared = shareKey && sharedTextures?.get(shareKey);
-    if (shared) return shared;
-    const sampler = document.samplers?.[definition.sampler] ?? {};
-    const { image, isCompressedTexture, format, mipmaps } = await loadTextureImage(definition);
-    const texture = {
-      image,
-      isCompressedTexture,
-      format,
-      mipmaps,
-      wrapS: sampler.wrapS ?? 10497,
-      wrapT: sampler.wrapT ?? 10497,
-      minFilter: sampler.minFilter ?? 9987,
-      magFilter: sampler.magFilter ?? 9729,
-    };
-    textures.set(textureIndex, texture);
-    if (shareKey) sharedTextures?.set(shareKey, texture);
-    return texture;
+    if (shared) return Promise.resolve(shared);
+    return cachePending(textures, textureIndex, async () => {
+      const sampler = document.samplers?.[definition.sampler] ?? {};
+      const { image, isCompressedTexture, format, mipmaps } = await loadTextureImage(definition);
+      const texture = {
+        image,
+        isCompressedTexture,
+        format,
+        mipmaps,
+        wrapS: sampler.wrapS ?? 10497,
+        wrapT: sampler.wrapT ?? 10497,
+        minFilter: sampler.minFilter ?? 9987,
+        magFilter: sampler.magFilter ?? 9729,
+      };
+      if (shareKey) sharedTextures?.set(shareKey, texture);
+      return texture;
+    });
   }
 
-  async function loadMaterial(materialIndex) {
-    if (materials.has(materialIndex)) return materials.get(materialIndex);
-    const definition = materialIndex === undefined ? {} : document.materials[materialIndex];
-    const pbr = definition.pbrMetallicRoughness ?? {};
-    const material = {
-      materialIndex,
-      color: (pbr.baseColorFactor ?? [1, 1, 1]).slice(0, 3),
-      metalness: pbr.metallicFactor ?? 1,
-      roughness: pbr.roughnessFactor ?? 1,
-      emissive: [...(definition.emissiveFactor ?? [0, 0, 0])],
-      emissiveIntensity: definition.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1,
-      aoMapIntensity: definition.occlusionTexture?.strength ?? 1,
-    };
-    for (const [field, sourceField, inPbrBlock] of TEXTURE_SLOTS) {
-      const reference = inPbrBlock ? pbr[sourceField] : definition[sourceField];
-      if (!reference) continue;
-      try {
-        material[field] = await loadTexture(reference.index);
-      } catch (error) {
-        throw new Error(`${sourceField} failed to decode. Use a valid PNG, JPEG or WebP image. ${error.message}`);
+  function loadMaterial(materialIndex) {
+    return cachePending(materials, materialIndex, async () => {
+      const definition = materialIndex === undefined ? {} : document.materials[materialIndex];
+      const pbr = definition.pbrMetallicRoughness ?? {};
+      const material = {
+        materialIndex,
+        color: (pbr.baseColorFactor ?? [1, 1, 1]).slice(0, 3),
+        metalness: pbr.metallicFactor ?? 1,
+        roughness: pbr.roughnessFactor ?? 1,
+        emissive: [...(definition.emissiveFactor ?? [0, 0, 0])],
+        emissiveIntensity: definition.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1,
+        aoMapIntensity: definition.occlusionTexture?.strength ?? 1,
+      };
+      if (decodeTextures) {
+        const loadSlot = (index, label, target, key) => loadTexture(index).then(
+          texture => { target[key] = texture; },
+          error => { throw new Error(`${label} failed to decode. Use a valid PNG, JPEG or WebP image. ${error.message}`); },
+        );
+        const slotLoads = TEXTURE_SLOTS.flatMap(([field, sourceField, inPbrBlock]) => {
+          const reference = inPbrBlock ? pbr[sourceField] : definition[sourceField];
+          return reference ? [loadSlot(reference.index, sourceField, material, field)] : [];
+        });
+        const layerTextures = {};
+        const layerReferences = layerTextureReferences(definition);
+        await Promise.all([...slotLoads, ...layerReferences.map(([name, reference]) => loadSlot(reference.index, name, layerTextures, name))]);
+        if (layerReferences.length > 0) material.layerTextures = layerTextures;
       }
-    }
-    const layerTextures = {};
-    for (const [name, reference] of layerTextureReferences(definition)) {
-      try {
-        layerTextures[name] = await loadTexture(reference.index);
-      } catch (error) {
-        throw new Error(`${name} failed to decode. Use a valid PNG, JPEG or WebP image. ${error.message}`);
-      }
-    }
-    if (Object.keys(layerTextures).length > 0) material.layerTextures = layerTextures;
-    materials.set(materialIndex, material);
-    return material;
+      return material;
+    });
   }
 
   function decodeDracoGeometry(primitive, extension) {
@@ -417,7 +425,9 @@ export async function decodeGltf({ document, glbBinary, resourceBytes, decoders,
     const object = new SceneNode();
     object.isMesh = true;
     object.geometry = loadPrimitiveSource(meshIndex, primitiveIndex);
-    object.material = await loadMaterial(primitive.material);
+    pendingMaterials.push(loadMaterial(primitive.material).then(material => {
+      object.material = material;
+    }));
     object.name = reserveMeshNames(meshIndex)[primitiveIndex];
     object.association = { meshes: meshIndex, primitives: primitiveIndex };
     if (definition.skin !== undefined) {
@@ -499,10 +509,14 @@ export async function decodeGltf({ document, glbBinary, resourceBytes, decoders,
         if (channel.target.node !== undefined) await buildNode(channel.target.node);
       }
     }
+    for (const result of await Promise.allSettled(pendingMaterials)) {
+      if (result.status === 'rejected') throw result.reason;
+    }
     const animations = createClips(document, index => nodeCache.get(index), reader.readAccessor);
     scene.updateMatrixWorld();
     return { scene, animations, release };
   } catch (error) {
+    await Promise.allSettled(pendingMaterials);
     release();
     throw error;
   }

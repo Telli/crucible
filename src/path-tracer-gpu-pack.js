@@ -98,6 +98,19 @@ export function packTriangles(scene, { secondUvSet = false } = {}) {
   return table;
 }
 
+/** One texel per triangle slot, in leaf order: the COLOR_0 alpha of its three corners. Null for a scene whose parts carry none. */
+export function packVertexAlpha(scene) {
+  if (!scene.vertexAlpha) return null;
+  const order = scene.bvh.triangleOrder;
+  const table = createTable(order.length);
+  for (let slot = 0; slot < order.length; slot++) {
+    for (let corner = 0; corner < 3; corner++) {
+      table.data[slot * 4 + corner] = scene.vertexAlpha[scene.indices[order[slot] * 3 + corner]];
+    }
+  }
+  return table;
+}
+
 /** Writes the triangles of `scene` in leaf order into `data`, starting at triangle slot `firstSlot`. */
 export function writeTriangles(data, firstSlot, scene, { secondUvSet = false } = {}) {
   const { positions, normals, uvs, uvs1, colors, indices, triangleMaterial, bvh } = scene;
