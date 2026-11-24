@@ -5,6 +5,7 @@ import { createStudio, STUDIO_PRIMITIVES } from '../src/studio.js';
 import { STUDIO_CSS } from '../src/studio-styles.js';
 import {
   STUDIO_BRAND_ICON_NAMES,
+  STUDIO_FILLED_ICON_NAMES,
   STUDIO_ICON_PATHS,
   STUDIO_LIGHT_ICONS,
   STUDIO_NOTICE_ICONS,
@@ -144,4 +145,17 @@ test('the notice under the top bar leads with a mark per outcome', async testCon
   assert.equal(status.getAttribute('data-outcome'), 'warning');
   assert.equal(markOf(), STUDIO_ICON_PATHS.warning);
   assert.equal(status.textContent, 'Add a keyframe first (K)');
+});
+
+test('the error mark is a solid disc and the other outcomes stay outlines, and the light marks differ from the sun', () => {
+  assert.deepEqual([...STUDIO_FILLED_ICON_NAMES], ['error']);
+  assert.ok(STUDIO_FILLED_ICON_NAMES.includes(STUDIO_NOTICE_ICONS.error));
+  const lightPaths = Object.values(STUDIO_LIGHT_ICONS).map(name => STUDIO_ICON_PATHS[name]);
+  assert.equal(new Set([...lightPaths, STUDIO_ICON_PATHS.sun]).size, 4, 'point, spot, area and the sun each draw their own glyph');
+});
+
+test('the icon colour is a mix of existing tokens and the status icons and section icons use it', () => {
+  assert.ok(STUDIO_CSS.includes('--studio-icon: color-mix(in srgb, var(--studio-text) 78%, var(--studio-panel));'));
+  assert.ok(STUDIO_CSS.includes('.crucible-studio-property-title .crucible-studio-section-icon { color: var(--studio-icon); stroke-width: 2; }'));
+  assert.ok(STUDIO_CSS.includes('.crucible-studio-status .crucible-studio-icon { color: var(--studio-icon); }'));
 });

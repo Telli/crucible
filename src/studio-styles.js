@@ -17,6 +17,8 @@ export const STUDIO_CSS = `
   --studio-border: var(--site-border, #fefefd1f);
   --studio-accent: var(--site-focus, #fc9132);
   --studio-ok: #5fc48a;
+  /* A label's icon: the text colour one step toward the panel, clearly visible in both themes. */
+  --studio-icon: color-mix(in srgb, var(--studio-text) 78%, var(--studio-panel));
   --studio-font: Inter, system-ui, sans-serif;
   --studio-font-heading: 'Plus Jakarta Sans', Inter, system-ui, sans-serif;
   --studio-font-mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -74,10 +76,12 @@ export const STUDIO_CSS = `
   padding: 0;
   flex-shrink: 0;
 }
-.crucible-studio-icon[data-brand] {
+.crucible-studio-icon[data-brand],
+.crucible-studio-icon[data-filled] {
   fill: currentColor;
   stroke: none;
 }
+.crucible-studio-icon[data-filled] { fill-rule: evenodd; }
 .crucible-studio-icon {
   inline-size: 17px;
   block-size: 17px;
@@ -1141,8 +1145,8 @@ export const STUDIO_CSS = `
   gap: 7px;
 }
 .crucible-studio-status:empty { display: none; }
-/* The mark leads each outcome in its own shape and colour: done in green, a refusal or a failure in the accent, the rest quiet. */
-.crucible-studio-status .crucible-studio-icon { color: var(--studio-muted); }
+/* The mark leads each outcome in its own shape and weight: done in green, a warning as an accent outline, a failure as a solid accent disc, the rest quiet. */
+.crucible-studio-status .crucible-studio-icon { color: var(--studio-icon); }
 .crucible-studio-status[data-outcome="success"] .crucible-studio-icon { color: var(--studio-ok); }
 .crucible-studio-status[data-outcome="warning"] .crucible-studio-icon,
 .crucible-studio-status[data-outcome="error"] .crucible-studio-icon { color: var(--studio-accent); }
@@ -1469,7 +1473,7 @@ export const STUDIO_CSS = `
   inline-size: 14px;
   block-size: 14px;
 }
-.crucible-studio-property-title .crucible-studio-section-icon { color: var(--studio-muted); }
+.crucible-studio-property-title .crucible-studio-section-icon { color: var(--studio-icon); stroke-width: 2; }
 .crucible-studio-property-title .crucible-studio-chevron {
   transition: transform var(--studio-motion-quick) var(--studio-ease-out);
 }
@@ -1912,6 +1916,11 @@ export const STUDIO_CSS = `
   border-radius: 14px;
   background: var(--studio-panel);
   color: var(--studio-text);
+}
+.crucible-studio dialog h2 .crucible-studio-icon {
+  inline-size: 18px;
+  block-size: 18px;
+  translate: 0 1px;
 }
 .crucible-studio dialog h2 {
   display: flex;
