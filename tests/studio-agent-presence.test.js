@@ -2,19 +2,40 @@ import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 import { AGENT_COLORS, agentColor, assertAgentName, createAgentPresence, describeAgentEdit, diffRecipeNodes } from '../src/studio-agent-presence.js';
 
-function makeFakeDocument() {
-  const fakeElement = () => ({
-    dataset: {},
-    style: { setProperty(name, value) { this[name] = value; } },
-    children: [],
-    setAttribute() {},
-    append() {},
-    set textContent(value) {},
-  });
-  return { createElement: fakeElement, createElementNS: fakeElement };
+function makeFakeDocument({ travelToken = '360ms', easingToken = 'cubic-bezier(0.2, 0, 0, 1)' } = {}) {
+  const fakeElement = () => {
+    const element = {
+      dataset: {},
+      style: { setProperty(name, value) { this[name] = value; } },
+      children: [],
+      glides: [],
+      glideTransform: 'none',
+      setAttribute() {},
+      append() {},
+      set textContent(value) {},
+      animate(keyframes, options) {
+        const glide = {
+          keyframes,
+          options,
+          cancelled: false,
+          cancel() { this.cancelled = true; this.oncancel?.(); },
+          finish() { this.onfinish?.(); },
+        };
+        element.glides.push(glide);
+        return glide;
+      },
+    };
+    return element;
+  };
+  const values = { '--studio-motion-travel': travelToken, '--studio-ease-out': easingToken };
+  return {
+    createElement: fakeElement,
+    createElementNS: fakeElement,
+    defaultView: { getComputedStyle: element => ({ getPropertyValue: name => values[name] ?? '', transform: element.glideTransform }) },
+  };
 }
 
-function makePresence(positions) {
+function makePresence(positions, options) {
   const controller = {
     viewportWidth: 800,
     viewportHeight: 600,
@@ -23,7 +44,7 @@ function makePresence(positions) {
       return [[x, y], [x + 10, y], [x, y + 10]];
     },
   };
-  return createAgentPresence(makeFakeDocument(), { controller, requestDraw() {} });
+  return createAgentPresence(makeFakeDocument(options), { controller, requestDraw() {} });
 }
 
 function makeRecipe() {
@@ -112,73 +133,125 @@ test('the pointer asks for outlines only until it has its stops, and visits the 
   presence.dispose();
 });
 
-test('a new target writes the pointer position in pixels and turns the travelling state on (#3223)', () => {
+function withFakeTimers(body) {
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
-    const positions = { hero: [100, 200], orb: [400, 300] };
-    const presence = makePresence(positions);
-    presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
-    const pointer = presence.element;
-    assert.equal(pointer.dataset.travelling, undefined, 'the first appearance snaps in place');
-    assert.equal(pointer.style['--studio-agent-x'], '103.3px');
-    assert.equal(pointer.style['--studio-agent-y'], '203.3px');
-    mock.timers.tick(1100);
-    assert.equal(presence.activeNodeId, 'orb');
-    assert.equal(pointer.dataset.travelling, 'true');
-    assert.equal(pointer.style['--studio-agent-x'], '403.3px');
-    mock.timers.tick(400);
-    assert.equal(pointer.dataset.travelling, undefined, 'the travel state ends after the travel time');
-    presence.dispose();
+    body();
   } finally {
     mock.timers.reset();
+  }
+}
+
+test('a new target glues the pointer there in pixels and starts a glide from where it stood (#3223)', () => withFakeTimers(() => {
+  const presence = makePresence({ hero: [100, 200], orb: [400, 300] });
+  presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
+  const pointer = presence.element;
+  assert.equal(pointer.dataset.travelling, undefined, 'the first appearance snaps in place');
+  assert.equal(pointer.glides.length, 0);
+  assert.equal(pointer.style['--studio-agent-x'], '103.3px');
+  assert.equal(pointer.style['--studio-agent-y'], '203.3px');
+  mock.timers.tick(1100);
+  assert.equal(presence.activeNodeId, 'orb');
+  assert.equal(pointer.dataset.travelling, 'true');
+  assert.equal(pointer.style['--studio-agent-x'], '403.3px', 'the glued position is already the new target');
+  assert.equal(pointer.glides.length, 1);
+  assert.deepEqual(pointer.glides[0].keyframes, [{ transform: 'translate(-300.0px, -100.0px)' }, { transform: 'translate(0px, 0px)' }], 'the glide starts at the old place and ends at zero offset');
+  assert.deepEqual(pointer.glides[0].options, { duration: 360, easing: 'cubic-bezier(0.2, 0, 0, 1)' });
+  pointer.glides[0].finish();
+  assert.equal(pointer.dataset.travelling, undefined, 'the glide ending ends the travel');
+  presence.dispose();
+}));
+
+test('camera updates during a glide keep it running and keep the pointer glued under it (#3223)', () => withFakeTimers(() => {
+  const positions = { hero: [100, 200], orb: [400, 300] };
+  const presence = makePresence(positions);
+  presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
+  const pointer = presence.element;
+  presence.place();
+  assert.equal(pointer.dataset.travelling, undefined, 'a frame with the camera still starts no travel');
+  mock.timers.tick(1100);
+  for (const [index, x] of [410, 420, 430, 440].entries()) {
+    positions.orb = [x, 300 + index * 5];
+    presence.place();
+    assert.equal(pointer.dataset.travelling, 'true', `camera frame ${index} must not cut the glide`);
+    assert.equal(pointer.style['--studio-agent-x'], `${(x + 3.3).toFixed(1)}px`);
+  }
+  assert.equal(pointer.glides.length, 1, 'the camera starts no second glide');
+  assert.equal(pointer.glides[0].cancelled, false);
+  pointer.glides[0].finish();
+  positions.orb = [500, 400];
+  presence.place();
+  assert.equal(pointer.dataset.travelling, undefined);
+  assert.equal(pointer.style['--studio-agent-x'], '503.3px', 'after the glide the pointer follows the camera');
+  presence.dispose();
+}));
+
+test('a second target mid-glide starts the next glide from the visible position (#3223)', () => withFakeTimers(() => {
+  const presence = makePresence({ hero: [100, 200], orb: [400, 300], lamp: [600, 100] });
+  presence.show({ name: 'Claude', nodeIds: ['hero', 'orb', 'lamp'] });
+  const pointer = presence.element;
+  mock.timers.tick(1100);
+  const firstGlide = pointer.glides[0];
+  pointer.glideTransform = 'matrix(1, 0, 0, 1, -120, -40)';
+  mock.timers.tick(200);
+  assert.equal(pointer.dataset.travelling, 'true');
+  mock.timers.tick(900);
+  assert.equal(presence.activeNodeId, 'lamp');
+  assert.equal(firstGlide.cancelled, true, 'the old glide is replaced');
+  assert.equal(pointer.glides.length, 2);
+  assert.equal(pointer.dataset.travelling, 'true', 'the next target keeps the travel state');
+  assert.equal(pointer.style['--studio-agent-x'], '603.3px');
+  assert.deepEqual(pointer.glides[1].keyframes[0], { transform: 'translate(-320.0px, 160.0px)' }, 'from the old place (403.3, 303.3) plus what was left of the glide (-120, -40), minus the new target');
+  presence.show({ name: 'Claude', nodeIds: ['hero'] });
+  assert.equal(pointer.hidden, false, 'a new walk does not hide the pointer first');
+  assert.equal(pointer.glides.length, 3, 'it glides from where it stands');
+  presence.hide();
+  assert.equal(pointer.dataset.travelling, undefined);
+  assert.equal(pointer.glides[2].cancelled, true, 'hiding the pointer stops the glide');
+  presence.dispose();
+}));
+
+test('the glide takes its duration and easing from the tokens and the fallback timer follows the duration (#3223)', () => {
+  for (const [token, expectedDuration] of [['200ms', 200], ['0.5s', 500], ['360ms', 360]]) {
+    withFakeTimers(() => {
+      const positions = { hero: [100, 200], orb: [400, 300] };
+      const presence = makePresence(positions, { travelToken: token, easingToken: ' ease-in-out ' });
+      presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
+      mock.timers.tick(1100);
+      const pointer = presence.element;
+      assert.deepEqual(pointer.glides[0].options, { duration: expectedDuration, easing: 'ease-in-out' });
+      mock.timers.tick(expectedDuration + 39 - 5);
+      positions.orb = [410, 300];
+      presence.place();
+      assert.equal(pointer.dataset.travelling, 'true', `${token}: still travelling just before the fallback`);
+      mock.timers.tick(10);
+      assert.equal(pointer.dataset.travelling, undefined, `${token}: the fallback ends a travel ${expectedDuration + 40} ms after it started, camera updates or not`);
+      assert.equal(pointer.glides[0].cancelled, true);
+      presence.dispose();
+    });
   }
 });
 
-test('a camera follow update writes the position without the travelling state and ends a travel (#3223)', () => {
-  mock.timers.enable({ apis: ['setTimeout'] });
-  try {
-    const positions = { hero: [100, 200], orb: [400, 300] };
-    const presence = makePresence(positions);
-    presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
-    const pointer = presence.element;
-    presence.place();
-    assert.equal(pointer.dataset.travelling, undefined, 'a frame with the camera still starts no travel');
-    mock.timers.tick(1100);
-    presence.place();
-    assert.equal(pointer.dataset.travelling, 'true', 'a frame with the camera still keeps the travel going');
-    positions.orb = [450, 320];
-    presence.place();
-    assert.equal(pointer.dataset.travelling, undefined, 'a moved camera ends the travel so the pointer stays glued');
-    assert.equal(pointer.style['--studio-agent-x'], '453.3px');
-    assert.equal(pointer.style['--studio-agent-y'], '323.3px');
-    presence.dispose();
-  } finally {
-    mock.timers.reset();
-  }
-});
+test('a zero travel token, as reduced motion sets it, makes the pointer snap with no glide (#3223)', () => withFakeTimers(() => {
+  const presence = makePresence({ hero: [100, 200], orb: [400, 300] }, { travelToken: '0ms' });
+  presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
+  mock.timers.tick(1100);
+  assert.equal(presence.activeNodeId, 'orb');
+  assert.equal(presence.element.dataset.travelling, undefined);
+  assert.equal(presence.element.glides.length, 0);
+  assert.equal(presence.element.style['--studio-agent-x'], '403.3px');
+  presence.dispose();
+}));
 
-test('a second target during a travel keeps travelling and a walk shown while the pointer is up travels too (#3223)', () => {
-  mock.timers.enable({ apis: ['setTimeout'] });
-  try {
-    const positions = { hero: [100, 200], orb: [400, 300], lamp: [600, 100] };
-    const presence = makePresence(positions);
-    presence.show({ name: 'Claude', nodeIds: ['hero', 'orb', 'lamp'] });
-    const pointer = presence.element;
-    mock.timers.tick(1100);
-    mock.timers.tick(200);
-    assert.equal(pointer.dataset.travelling, 'true');
-    mock.timers.tick(900);
-    assert.equal(presence.activeNodeId, 'lamp');
-    assert.equal(pointer.dataset.travelling, 'true', 'the next target keeps the travel state');
-    assert.equal(pointer.style['--studio-agent-x'], '603.3px');
-    presence.show({ name: 'Claude', nodeIds: ['hero'] });
-    assert.equal(pointer.hidden, false, 'a new walk does not hide the pointer first');
-    assert.equal(pointer.dataset.travelling, 'true', 'it travels from where it stands');
-    assert.equal(pointer.style['--studio-agent-x'], '103.3px');
-    presence.hide();
-    assert.equal(pointer.dataset.travelling, undefined);
-    presence.dispose();
-  } finally {
-    mock.timers.reset();
-  }
-});
+test('a stop on the object the pointer is already on starts no travel (#3223)', () => withFakeTimers(() => {
+  const presence = makePresence({ hero: [100, 200], orb: [400, 300] });
+  presence.show({ name: 'Claude', nodeIds: ['hero', 'hero', 'orb'] });
+  mock.timers.tick(1100);
+  assert.equal(presence.element.dataset.travelling, undefined, 'the second stop is the same object');
+  mock.timers.tick(1100);
+  assert.equal(presence.element.dataset.travelling, 'true', 'the third stop is another object');
+  presence.element.glides[0].finish();
+  presence.show({ name: 'Claude', nodeIds: ['orb'] });
+  assert.equal(presence.element.dataset.travelling, undefined, 'a new walk that starts on the same object does not travel');
+  presence.dispose();
+}));

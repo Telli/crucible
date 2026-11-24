@@ -6,8 +6,27 @@ const MAXIMUM_NAME_LENGTH = 40;
 const MAXIMUM_STOPS = 8;
 const STOP_MILLISECONDS = 1100;
 const LINGER_MILLISECONDS = 1600;
-// Matches --studio-motion-travel in studio-styles.js, plus a frame of slack so the style never outlives the travel.
-const TRAVEL_MILLISECONDS = 360 + 40;
+const TRAVEL_FALLBACK_MARGIN_MILLISECONDS = 40;
+const DEFAULT_TRAVEL_MILLISECONDS = 360;
+const DEFAULT_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
+const MINIMUM_GLIDE_PIXELS = 0.5;
+// Custom properties of studio-styles.js: how long and with what curve the pointer glides to a new object.
+const TRAVEL_TOKEN = '--studio-motion-travel';
+const EASE_TOKEN = '--studio-ease-out';
+
+function parseDurationMilliseconds(text, fallback) {
+  const match = /^\s*(-?\d*\.?\d+)(ms|s)\s*$/.exec(text ?? '');
+  if (!match) {
+    return fallback;
+  }
+  return Number(match[1]) * (match[2] === 's' ? 1000 : 1);
+}
+
+/** The x and y of a computed `transform` value: "none" is no offset, "matrix(a, b, c, d, x, y)" carries it last. */
+function parseTranslation(transform) {
+  const numbers = /^matrix\((.+)\)$/.exec(transform ?? '')?.[1].split(',').map(Number);
+  return numbers?.length === 6 ? [numbers[4], numbers[5]] : [0, 0];
+}
 
 export const DEFAULT_AGENT_NAME = 'Agent';
 // Brand kit accent and status colours, plus the blue of the Z axis. Each is light enough for ink text.
@@ -109,6 +128,7 @@ export function createAgentPresence(documentReference, { controller, requestDraw
   let color = AGENT_COLORS[0];
   let timer = null;
   let travelTimer = null;
+  let glide = null;
   let placedX = null;
   let placedY = null;
 
@@ -119,18 +139,56 @@ export function createAgentPresence(documentReference, { controller, requestDraw
   function endTravel() {
     clearTimeout(travelTimer);
     travelTimer = null;
+    if (glide) {
+      const finishedGlide = glide;
+      glide = null;
+      finishedGlide.onfinish = null;
+      finishedGlide.oncancel = null;
+      finishedGlide.cancel();
+    }
     delete pointer.dataset.travelling;
   }
 
-  function startTravel() {
-    clearTimeout(travelTimer);
-    pointer.dataset.travelling = 'true';
-    travelTimer = setTimeout(endTravel, TRAVEL_MILLISECONDS);
+  function readTokens() {
+    const view = documentReference.defaultView;
+    const style = view?.getComputedStyle?.(pointer);
+    return {
+      duration: parseDurationMilliseconds(style?.getPropertyValue(TRAVEL_TOKEN), DEFAULT_TRAVEL_MILLISECONDS),
+      easing: style?.getPropertyValue(EASE_TOKEN)?.trim() || DEFAULT_EASING,
+      transform: style?.transform,
+    };
   }
 
-  // The pointer is placed with the compositor-run `translate` property from two pixel values; only a travel to a new
-  // target eases it, so while the camera moves the pointer stays on its object instead of trailing it.
-  function placeAt(isTravel) {
+  // Where the pointer is on screen right now: its glued place plus the offset the running glide has left.
+  function visiblePosition(transform) {
+    const [glideX, glideY] = parseTranslation(transform);
+    return [placedX + glideX, placedY + glideY];
+  }
+
+  // A travel is a transform animation that starts at the offset between where the pointer stood and the new target and
+  // runs to zero. The translate that glues the pointer to its object keeps following the camera underneath it, so the
+  // pointer lands on a moving object exactly instead of chasing it, and a new target starts from the visible position.
+  function beginGlide(fromX, fromY, { duration, easing }) {
+    const offsetX = fromX - placedX;
+    const offsetY = fromY - placedY;
+    endTravel();
+    if (duration <= 0 || typeof pointer.animate !== 'function' || Math.hypot(offsetX, offsetY) < MINIMUM_GLIDE_PIXELS) {
+      return;
+    }
+    glide = pointer.animate(
+      [{ transform: `translate(${offsetX.toFixed(1)}px, ${offsetY.toFixed(1)}px)` }, { transform: 'translate(0px, 0px)' }],
+      { duration, easing },
+    );
+    glide.onfinish = endTravel;
+    glide.oncancel = endTravel;
+    pointer.dataset.travelling = 'true';
+    // The timer outlives the glide by a frame or two, so the animation events normally end a travel first.
+    travelTimer = setTimeout(endTravel, duration + TRAVEL_FALLBACK_MARGIN_MILLISECONDS);
+  }
+
+  // The pointer is glued to its object by the compositor-run translate property from two pixel values, with no
+  // transition: the camera moves it every frame and it never trails.
+  function place() {
     const nodeId = activeNodeId();
     if (!nodeId) {
       return null;
@@ -140,12 +198,9 @@ export function createAgentPresence(documentReference, { controller, requestDraw
       return null;
     }
     const centre = centreOf(outline);
-    const x = centre[0].toFixed(1);
-    const y = centre[1].toFixed(1);
+    const x = Number(centre[0].toFixed(1));
+    const y = Number(centre[1].toFixed(1));
     if (x !== placedX || y !== placedY) {
-      if (!isTravel) {
-        endTravel();
-      }
       pointer.style.setProperty('--studio-agent-x', `${x}px`);
       pointer.style.setProperty('--studio-agent-y', `${y}px`);
       placedX = x;
@@ -169,13 +224,17 @@ export function createAgentPresence(documentReference, { controller, requestDraw
 
   function goToStop(index) {
     stopIndex = index;
+    const previousNodeId = pointer.dataset.nodeId;
     pointer.dataset.nodeId = activeNodeId();
-    // A pointer that is already on screen travels to the new target from where it stands; a hidden one appears in place.
-    const isTravel = !pointer.hidden;
-    if (isTravel) {
-      startTravel();
+    // A pointer that is already on screen travels to a new object from where it stands; a hidden one appears in place,
+    // and a stop on the object it is already on has nowhere to travel.
+    const travels = !pointer.hidden && previousNodeId !== activeNodeId();
+    const tokens = travels ? readTokens() : null;
+    const origin = travels ? visiblePosition(tokens.transform) : null;
+    pointer.hidden = place() === null;
+    if (travels && !pointer.hidden) {
+      beginGlide(origin[0], origin[1], tokens);
     }
-    pointer.hidden = placeAt(isTravel) === null;
     requestDraw();
     const isLast = index >= stops.length - 1;
     timer = setTimeout(() => (isLast ? finish() : goToStop(index + 1)), isLast ? LINGER_MILLISECONDS : STOP_MILLISECONDS);
@@ -190,7 +249,7 @@ export function createAgentPresence(documentReference, { controller, requestDraw
       return color;
     },
     /** Called on every Studio frame: keeps the pointer on its object while the camera moves and returns the outline to draw. */
-    place: () => placeAt(false),
+    place,
     /** Walks the pointer over `nodeIds` in order, under `name`. A new call replaces a walk in progress. */
     show({ name, nodeIds }) {
       const label = assertAgentName(name);
@@ -223,7 +282,7 @@ export function createAgentPresence(documentReference, { controller, requestDraw
     hide: finish,
     dispose() {
       clearTimeout(timer);
-      clearTimeout(travelTimer);
+      endTravel();
     },
   };
 }

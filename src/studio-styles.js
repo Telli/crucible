@@ -25,10 +25,12 @@ export const STUDIO_CSS = `
   --studio-rail: 44px;
   --studio-bar-clear: 54px;
   --studio-shadow: 0 10px 28px rgb(0 0 0 / 0.26);
-  --studio-motion-press: 100ms;
   --studio-motion-quick: var(--site-motion-quick, 110ms);
   --studio-motion-base: var(--site-motion-base, 170ms);
+  /* The agent pointer's glide to a new object (studio-agent-presence.js reads it); 0ms under reduced motion means it snaps. */
   --studio-motion-travel: 360ms;
+  /* An opacity fade carries no movement, so reduced motion keeps it; the durations above go to 0ms there. */
+  --studio-motion-fade: 100ms;
   --studio-ease-out: var(--site-ease-out, cubic-bezier(0.2, 0, 0, 1));
   --studio-ease-in: cubic-bezier(0.4, 0, 1, 1);
   background: var(--studio-bg);
@@ -108,7 +110,6 @@ export const STUDIO_CSS = `
 }
 @media (prefers-reduced-motion: reduce) {
   .crucible-studio {
-    --studio-motion-press: 0ms;
     --studio-motion-quick: 0ms;
     --studio-motion-base: 0ms;
     --studio-motion-travel: 0ms;
@@ -338,11 +339,6 @@ export const STUDIO_CSS = `
   color: #17161a;
   font: 700 12.5px/1.5 var(--studio-font);
   white-space: nowrap;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .crucible-studio-agent-cursor[data-travelling="true"] {
-    transition: translate var(--studio-motion-travel) var(--studio-ease-out);
-  }
 }
 .crucible-studio-drop-overlay {
   position: absolute;
