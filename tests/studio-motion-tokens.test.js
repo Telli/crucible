@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { EASE_TOKEN, TRAVEL_TOKEN } from '../src/studio-agent-presence.js';
 import { STUDIO_CSS } from '../src/studio-styles.js';
 
 const LAYOUT_PROPERTIES = ['left', 'top', 'right', 'bottom', 'width', 'height', 'inline-size', 'block-size', 'min-width', 'min-height', 'max-width', 'max-height', 'margin', 'padding', 'inset', 'grid-template', 'flex-basis', 'font-size'];
@@ -191,4 +192,11 @@ test('the agent pointer is glued by translate and has no CSS motion; its glide i
   assert.match(base.body, /translate:\s*var\(--studio-agent-x, 0px\) var\(--studio-agent-y, 0px\)/);
   assert.ok(!/(^|[;\s])(left|top)\s*:/.test(base.body), 'the pointer is not placed with left or top');
   assert.deepEqual(pointerRules.filter(rule => /transition|animation/.test(rule.body)).map(rule => rule.selector), [], 'a transition on the pointer would make it trail the camera');
+});
+
+test('the custom properties the pointer script reads exist in the stylesheet under the constant names the script uses (#3223)', () => {
+  const properties = customPropertiesOf(parseRules(STUDIO_CSS));
+  assert.ok(properties.has(TRAVEL_TOKEN), `${TRAVEL_TOKEN} is read by studio-agent-presence.js and must be defined`);
+  assert.match(properties.get(TRAVEL_TOKEN), /^\d+ms$/);
+  assert.ok(properties.has(EASE_TOKEN), `${EASE_TOKEN} is read by studio-agent-presence.js and must be defined`);
 });

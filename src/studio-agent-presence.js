@@ -11,8 +11,8 @@ const DEFAULT_TRAVEL_MILLISECONDS = 360;
 const DEFAULT_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
 const MINIMUM_GLIDE_PIXELS = 0.5;
 // Custom properties of studio-styles.js: how long and with what curve the pointer glides to a new object.
-const TRAVEL_TOKEN = '--studio-motion-travel';
-const EASE_TOKEN = '--studio-ease-out';
+export const TRAVEL_TOKEN = '--studio-motion-travel';
+export const EASE_TOKEN = '--studio-ease-out';
 
 function parseDurationMilliseconds(text, fallback) {
   const match = /^\s*(-?\d*\.?\d+)(ms|s)\s*$/.exec(text ?? '');
@@ -152,8 +152,10 @@ export function createAgentPresence(documentReference, { controller, requestDraw
   function readTokens() {
     const view = documentReference.defaultView;
     const style = view?.getComputedStyle?.(pointer);
+    // A missing or unreadable token must not play a glide for someone who asked for reduced motion.
+    const reducedMotion = view?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
     return {
-      duration: parseDurationMilliseconds(style?.getPropertyValue(TRAVEL_TOKEN), DEFAULT_TRAVEL_MILLISECONDS),
+      duration: reducedMotion ? 0 : parseDurationMilliseconds(style?.getPropertyValue(TRAVEL_TOKEN), DEFAULT_TRAVEL_MILLISECONDS),
       easing: style?.getPropertyValue(EASE_TOKEN)?.trim() || DEFAULT_EASING,
       transform: style?.transform,
     };
@@ -232,6 +234,9 @@ export function createAgentPresence(documentReference, { controller, requestDraw
     const tokens = travels ? readTokens() : null;
     const origin = travels ? visiblePosition(tokens.transform) : null;
     pointer.hidden = place() === null;
+    if (pointer.hidden) {
+      endTravel();
+    }
     if (travels && !pointer.hidden) {
       beginGlide(origin[0], origin[1], tokens);
     }

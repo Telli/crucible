@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 import { AGENT_COLORS, agentColor, assertAgentName, createAgentPresence, describeAgentEdit, diffRecipeNodes } from '../src/studio-agent-presence.js';
 
-function makeFakeDocument({ travelToken = '360ms', easingToken = 'cubic-bezier(0.2, 0, 0, 1)' } = {}) {
+function makeFakeDocument({ travelToken = '360ms', easingToken = 'cubic-bezier(0.2, 0, 0, 1)', reducedMotion } = {}) {
   const fakeElement = () => {
     const element = {
       dataset: {},
@@ -31,7 +31,7 @@ function makeFakeDocument({ travelToken = '360ms', easingToken = 'cubic-bezier(0
   return {
     createElement: fakeElement,
     createElementNS: fakeElement,
-    defaultView: { getComputedStyle: element => ({ getPropertyValue: name => values[name] ?? '', transform: element.glideTransform }) },
+    defaultView: { ...(reducedMotion === undefined ? {} : { matchMedia: query => ({ matches: reducedMotion && query.includes('reduce') }) }), getComputedStyle: element => ({ getPropertyValue: name => values[name] ?? '', transform: element.glideTransform }) },
   };
 }
 
@@ -255,3 +255,77 @@ test('a stop on the object the pointer is already on starts no travel (#3223)', 
   assert.equal(presence.element.dataset.travelling, undefined, 'a new walk that starts on the same object does not travel');
   presence.dispose();
 }));
+
+test('a target that goes off screen under a running glide ends it, and the pointer shown again appears in place (#3223)', () => withFakeTimers(() => {
+  const positions = { hero: [100, 200], orb: [400, 300], lamp: [600, 100] };
+  const controller = {
+    viewportWidth: 800,
+    viewportHeight: 600,
+    lampOffScreen: false,
+    nodeOutline(nodeId) {
+      const [x, y] = positions[nodeId];
+      return this.lampOffScreen && nodeId === 'lamp' ? null : [[x, y], [x + 10, y], [x, y + 10]];
+    },
+  };
+  const presence = createAgentPresence(makeFakeDocument({ travelToken: '2s' }), { controller, requestDraw() {} });
+  presence.show({ name: 'Claude', nodeIds: ['hero', 'orb', 'lamp'] });
+  const pointer = presence.element;
+  mock.timers.tick(1100);
+  assert.equal(pointer.glides.length, 1);
+  assert.equal(pointer.glides[0].cancelled, false, 'a two second glide is still in flight at the next stop');
+  controller.lampOffScreen = true;
+  mock.timers.tick(1100);
+  assert.equal(presence.activeNodeId, 'lamp');
+  assert.equal(pointer.hidden, true);
+  assert.equal(pointer.glides[0].cancelled, true, 'the glide in flight is cancelled');
+  assert.equal(pointer.dataset.travelling, undefined);
+  mock.timers.tick(2000);
+  controller.lampOffScreen = false;
+  presence.show({ name: 'Claude', nodeIds: ['orb'] });
+  assert.equal(pointer.hidden, false);
+  assert.equal(pointer.glides.length, 1, 'shown again, it appears in place with no new animation');
+  presence.dispose();
+}));
+
+test('a glide whose target is off screen when it starts hides the pointer and leaves no animation (#3223)', () => withFakeTimers(() => {
+  let orbVisible = true;
+  const controller = {
+    viewportWidth: 800,
+    viewportHeight: 600,
+    nodeOutline: nodeId => (nodeId === 'orb' && !orbVisible ? null : [[100, 200], [110, 200], [100, 210]]),
+  };
+  const presence = createAgentPresence(makeFakeDocument(), { controller, requestDraw() {} });
+  presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
+  orbVisible = false;
+  mock.timers.tick(1100);
+  assert.equal(presence.element.hidden, true);
+  assert.equal(presence.element.dataset.travelling, undefined);
+  assert.equal(presence.element.glides.filter(glide => !glide.cancelled).length, 0);
+  presence.dispose();
+}));
+
+test('a pointer under reduced motion snaps even when the token cannot be read (#3223)', () => {
+  for (const options of [{ reducedMotion: true }, { reducedMotion: true, travelToken: '' }, { reducedMotion: true, travelToken: 'soon' }]) {
+    withFakeTimers(() => {
+      const presence = makePresence({ hero: [100, 200], orb: [400, 300] }, options);
+      presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
+      mock.timers.tick(1100);
+      assert.equal(presence.element.glides.length, 0, JSON.stringify(options));
+      assert.equal(presence.element.style['--studio-agent-x'], '403.3px');
+      presence.dispose();
+    });
+  }
+});
+
+test('an unreadable token still glides for someone who has not asked for reduced motion, and no matchMedia is fine (#3223)', () => {
+  for (const options of [{ reducedMotion: false, travelToken: '' }, { travelToken: 'soon' }]) {
+    withFakeTimers(() => {
+      const presence = makePresence({ hero: [100, 200], orb: [400, 300] }, options);
+      presence.show({ name: 'Claude', nodeIds: ['hero', 'orb'] });
+      mock.timers.tick(1100);
+      assert.equal(presence.element.glides.length, 1);
+      assert.equal(presence.element.glides[0].options.duration, 360);
+      presence.dispose();
+    });
+  }
+});
