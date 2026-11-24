@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
   creepTargetAfter,
+  driftTargetAfter,
   reportStudioLoadingProgress,
   revealStudio,
   showStudioLoadingFailure,
@@ -163,9 +164,9 @@ function createProgressPage() {
       defaultView: { getComputedStyle: () => ({ transform: `matrix(${state.fillScale}, 0, 0, 1, 0, 0)` }) },
     },
     animate(keyframes, options) {
-      const target = Number(/scaleX[(]([\d.]+)/.exec(keyframes[1].transform)[1]);
-      const from = Number(/scaleX[(]([\d.]+)/.exec(keyframes[0].transform)[1]);
-      state.started.push({ from, target, options });
+      const scales = keyframes.map(keyframe => Number(/scaleX[(]([\d.]+)/.exec(keyframe.transform)[1]));
+      const target = scales[1];
+      state.started.push({ from: scales[0], target, driftTarget: scales.at(-1), scales, keyframes, options });
       state.fillScale = target;
       return { cancel: () => (state.cancelled += 1) };
     },
@@ -188,7 +189,7 @@ function createProgressPage() {
 }
 
 test('the loading element has a pot, a stream that leaves its lip into a pool, droplets and a fill in the bar', () => {
-  assert.match(PAGE_HTML, /<div class="pour">\s*<div class="stream"><div class="flow"><i><\/i><\/div><\/div>\s*<div class="pot">[\s\S]*mark-light[\s\S]*mark-dark[\s\S]*<\/div>\s*<div class="pool"><\/div>\s*(?:<i class="drop"><\/i>){3}\s*<div class="progress"><div class="fill"><\/div><\/div>/);
+  assert.match(PAGE_HTML, /<div class="pour">\s*<div class="stream"><div class="flow"><i><\/i><\/div><\/div>\s*<div class="pot">[\s\S]*mark-light[\s\S]*mark-dark[\s\S]*<\/div>\s*<div class="pool"><\/div>\s*<b class="ripple"><\/b>\s*(?:<i class="drop"><\/i>){2}\s*<div class="progress"><div class="fill"><\/div><\/div>/);
   assert.match(PAGE_HTML, /<img class="mark mark-light" src="\/brand\/crucible-mark[.]svg"/, 'the pot is the brand mark file, not a redrawn copy');
   assert.ok(!PAGE_HTML.includes('class="body"'), 'no copy of the mark artwork sits in the page');
 });
@@ -198,7 +199,7 @@ test('the stream is one static curved clip, wider at the lip than at the pool, w
   assert.ok(clip, 'the stream shape is a static clip-path');
   const topWidth = /^M(\d+) 0H(\d+)/.exec(clip[1]);
   assert.ok(Number(topWidth[2]) - Number(topWidth[1]) > 4, 'the stream is wide where it leaves the lip');
-  assert.match(clip[1], /Q\d+ 65 6 65Q4 65 4 63/, 'it ends rounded, 4 px wide, at the pool');
+  assert.match(clip[1], /Q\d+ 66 6 66Q4 66 4 64/, 'it ends rounded, 4 px wide, at the pool');
   assert.match(LOADING_STYLE, /[.]flow i [{][^}]*repeating-linear-gradient[(]transparent 0, color-mix[(]in srgb, var[(]--site-text[)] 24%, transparent[)] 4px, transparent 8px, color-mix[(]in srgb, var[(]--site-bg[)] 30%, transparent[)] 11px, transparent 14px[)],\s*var[(]--site-focus[)]/, 'soft lighter and deeper bands made of tokens over the molten colour');
   assert.match(LOADING_STYLE, /studio-stream-flow 0[.]7s linear infinite/);
   assert.match(LOADING_STYLE, /@keyframes studio-stream-flow [{] to [{] transform: translateY[(]14px[)]; [}] [}]/, 'the flow moves by exactly one band period of 14 px, so the loop is seamless');
@@ -211,13 +212,15 @@ test('the stream lands in the middle of the pool and the pool starts at the left
   const pool = rule('#studio-loading [.]pool');
   const bar = rule('#studio-loading [.]progress');
   const stream = rule('#studio-loading [.]stream');
-  const clip = /clip-path: path[(]"[^"]*Q8 65 6 65/.test(LOADING_STYLE);
+  const clip = /clip-path: path[(]"[^"]*Q8 66 6 66/.test(LOADING_STYLE);
   assert.ok(clip);
   const landingX = lengthOf(stream, 'left') + 6;
   assert.equal(lengthOf(pool, 'left'), lengthOf(bar, 'left'), 'the pool and the bar start at the same x');
   assert.equal(landingX, lengthOf(pool, 'left') + lengthOf(pool, 'width') / 2, 'the stream lands in the middle of the pool');
   assert.equal(lengthOf(pool, 'top') + lengthOf(pool, 'height'), lengthOf(bar, 'top'), 'the pool sits on the bar');
-  assert.equal(lengthOf(stream, 'top') + lengthOf(stream, 'height'), lengthOf(pool, 'top') + 3, 'the stream ends inside the pool');
+  assert.equal(lengthOf(stream, 'top') + lengthOf(stream, 'height'), lengthOf(pool, 'top') + 4, 'the stream ends inside the pool, its rounded end sunk into it');
+  const poolRatio = lengthOf(pool, 'width') / lengthOf(pool, 'height');
+  assert.ok(poolRatio >= 2.3 && poolRatio <= 3, 'the pool is a flat puddle, about 2.5 times wider than tall');
 });
 
 test('the whole group is scaled up by one transform and still fits a 360 px window', () => {
@@ -255,14 +258,14 @@ test('with reduced motion the pot and stream stand still, the fill still moves a
   const outsideMotionBlock = LOADING_STYLE.replace(motionBlock, '');
   const animationsOutside = [...outsideMotionBlock.matchAll(/(?<![-\w])animation: ([^;]+);/g)].map(match => match[1].split(' ')[0]);
   assert.deepEqual(animationsOutside, ['studio-fill-creep', 'studio-loader-fade', 'none'], 'only the fill, the closing fade and the error reset run without the no-preference query');
-  for (const name of ['pot-tilt', 'stream-in', 'stream-sway', 'stream-flow', 'pool-in', 'drop']) {
+  for (const name of ['pot-tilt', 'stream-in', 'stream-sway', 'stream-flow', 'pool-in', 'ripple', 'drop']) {
     assert.ok(motionBlock.includes(`studio-${name}`), `${name} is inside the no-preference query`);
   }
-  for (const selector of ['stream', 'pool', 'drop']) {
+  for (const selector of ['stream', 'pool', 'ripple', 'drop']) {
     assert.match(LOADING_STYLE, new RegExp(`[.]${selector} [{][^}]*opacity: 0;`), `the ${selector} is hidden until its animation shows it`);
   }
-  assert.match(motionBlock, /data-state="done"\] [{] animation-delay: 0[.]6s; [}]/);
-  assert.match(LOADING_STYLE, /data-state="done"\] [{] animation: studio-loader-fade 0[.]18s ease-out 0[.]45s both; [}]/, 'the hold is shorter with reduced motion');
+  assert.match(motionBlock, /data-state="done"\] [{] animation-delay: 0[.]2s; [}]/);
+  assert.match(LOADING_STYLE, /data-state="done"\] [{] animation: studio-loader-fade 0[.]15s ease-out 0[.]15s both; pointer-events: none; [}]/, 'the hold is shorter with reduced motion');
 });
 
 test('the pour uses only the brand tokens, with no colour of its own', () => {
@@ -294,8 +297,8 @@ test('between milestones the fill keeps creeping toward a point short of the nex
   assert.equal(page.state.cancelled, milestones.length - 1, 'a new creep replaces the one before it');
   page.state.started.forEach((creep, index) => {
     const nextMilestone = milestones[index + 1] ?? 1;
-    assert.equal(creep.options.duration, 30000, 'a long run, so the fill is still moving after ten seconds');
-    assert.match(creep.options.easing, /^cubic-bezier/);
+    assert.ok(creep.options.duration >= 30000, 'a long run, so the fill is still moving after ten seconds');
+    assert.match(creep.keyframes[0].easing, /^cubic-bezier/);
     assert.ok(creep.target > milestones[index], 'it heads past the milestone just reached');
     assert.ok(creep.target < nextMilestone, 'it never arrives at the next milestone');
     assert.ok(creep.target <= 0.97, 'it never reaches full');
@@ -315,7 +318,7 @@ test('a fill that has already crept past a lower target keeps its place', () => 
   assert.equal(page.state.started[0].target, 0.6, 'the target is never below where the fill stands');
 });
 
-test('the bar fills in 350 ms only after Studio is ready, and the pour winds down with it', async () => {
+test('the bar fills in 200 ms only after Studio is ready, and the pour winds down with it', async () => {
   const page = createProgressPage();
   let finishReady;
   const studio = { ready: new Promise(resolve => (finishReady = resolve)), setupDone: true, openSetup() {} };
@@ -331,7 +334,7 @@ test('the bar fills in 350 ms only after Studio is ready, and the pour winds dow
   assert.equal(page.progress(), 1);
   const completion = page.state.started.at(-1);
   assert.equal(completion.target, 1);
-  assert.equal(completion.options.duration, 350);
+  assert.equal(completion.options.duration, 200);
   assert.equal(page.loadingElement.dataset.state, 'done', 'the stream and pot wind down as the bar fills');
   while (frames.length > 0) {
     frames.splice(0).forEach(callback => callback());
@@ -365,4 +368,38 @@ test('the page script reports every milestone, in rising order, at the step it n
   assert.ok(position('sceneModulesLoaded') > pageScript.indexOf('await loadAllAgentSceneModules()'));
   assert.ok(position('studioCreated') > pageScript.indexOf('createStudio(root'));
   assert.ok(position('sceneFileLoaded') > pageScript.indexOf('await studio.loadExternalTextFile'));
+});
+
+test('the closing sequence adds at most 0.4 s, and the loading state passes input through from the moment of ready', () => {
+  const seconds = pattern => Number(pattern.exec(LOADING_STYLE)[1]);
+  const potRight = seconds(/studio-pot-right ([\d.]+)s/);
+  const streamOut = seconds(/studio-stream-out ([\d.]+)s/);
+  const fadeDuration = seconds(/studio-loader-fade ([\d.]+)s/);
+  const fadeDelayWithMotion = seconds(/data-state="done"\] [{] animation-delay: ([\d.]+)s/);
+  const fadeDelayReduced = seconds(/studio-loader-fade [\d.]+s ease-out ([\d.]+)s/);
+  assert.equal(potRight, streamOut, 'the pot and the stream move together');
+  assert.ok(fadeDelayWithMotion >= Math.max(potRight, streamOut), 'the fade starts as they finish');
+  assert.ok(fadeDelayWithMotion + fadeDuration <= 0.4, 'the added wait with motion is 0.4 s at most');
+  assert.ok(fadeDelayReduced + fadeDuration <= 0.3, 'the added wait with reduced motion is 0.3 s at most');
+  assert.match(LOADING_STYLE, /data-state="done"\] [{][^}]*pointer-events: none/, 'the app underneath takes input at once');
+});
+
+test('past the long ease the fill drifts on, slowly and linearly, and stays below the next step', () => {
+  const page = createProgressPage();
+  const milestones = Object.values(STUDIO_LOADING_MILESTONES);
+  milestones.forEach(value => reportStudioLoadingProgress(page.documentReference, value));
+  page.state.started.forEach((creep, index) => {
+    const nextMilestone = milestones[index + 1] ?? 1;
+    assert.equal(creep.options.duration, 150000, 'thirty seconds of ease and two minutes of drift');
+    assert.equal(creep.keyframes[1].offset, 0.2, 'the ease takes the first fifth');
+    assert.equal(creep.keyframes[1].easing, 'linear', 'the drift after it is linear');
+    assert.ok(creep.driftTarget >= creep.target, 'the drift never goes back');
+    assert.ok(creep.driftTarget > creep.target || creep.target === 0.97, 'the drift keeps the fill moving after the ease, unless the cap is already reached');
+    assert.ok(creep.driftTarget < nextMilestone, 'the drift never arrives at the next step');
+    assert.ok(creep.driftTarget <= 0.97, 'the drift never reaches full');
+    assert.equal(driftTargetAfter(milestones[index]), creep.driftTarget);
+  });
+  assert.ok(driftTargetAfter(0.97) <= 0.97 && driftTargetAfter(2) <= 0.97, 'past the last step the cap holds');
+  assert.match(LOADING_STYLE, /studio-fill-creep 150s linear both/);
+  assert.match(LOADING_STYLE, /20% [{] transform: scaleX\(0[.]3\); [}] 100% [{] transform: scaleX\(0[.]34\); [}]/, 'before the first step the CSS creep also drifts on, below 0.35');
 });
