@@ -64,6 +64,15 @@ test('an opened issue gets the maintainer only when nobody is assigned', () => {
   assert.deepEqual(assigned, { addLabels: [], addAssignees: [] });
 });
 
+test('an opened starter issue stays unassigned so newcomers can take it', () => {
+  for (const labelName of ['good first issue', 'help wanted']) {
+    const payload = loadFixture('issue-opened-unassigned');
+    payload.issue.labels = [{ name: 'documentation' }, { name: labelName }];
+    const plan = planMetadataChanges({ eventName: 'issues', payload });
+    assert.deepEqual(plan, { addLabels: [], addAssignees: [] }, `${labelName} must not get the maintainer`);
+  }
+});
+
 test('malformed payloads and unknown events throw an error that says what to pass', () => {
   assert.throws(() => planPullRequest('pull-request-malformed', undefined), /pull_request\.number must be a positive integer/);
   assert.throws(() => planMetadataChanges({ eventName: pullRequestEvent, payload: {} }), /payload\.pull_request must be an object/);
