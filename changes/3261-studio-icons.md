@@ -1,0 +1,1 @@
+- Studio titles and main entries now lead with an icon: the property section titles, the shape and light entries of the Add menu, the dialog titles and the notice under the top bar, whose mark differs for success, warning, error and plain information.

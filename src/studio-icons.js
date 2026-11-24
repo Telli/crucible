@@ -60,6 +60,17 @@ export const STUDIO_ICON_PATHS = Object.freeze({
   tierAutomatic: 'M4 12a8 8 0 0 1 14-5.3M20 4v4h-4M20 12a8 8 0 0 1-14 5.3M4 20v-4h4',
   handle: 'M7 7h10v10H7zM3 3h4v4H3zM17 3h4v4h-4zM3 17h4v4H3zM17 17h4v4h-4z',
   chat: 'M4 5h16v11h-9l-4.5 4v-4H4zM8 9.5h8M8 12.5h5',
+  // Silhouettes of the add menu shapes, and the marks of property sections and notices, drawn to stay readable at 16 px.
+  box: 'M4 9l3-5h13v11l-3 5H4zM4 9h13l3-5M17 9v11',
+  icoSphere: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7l4.5 8h-9zM12 3v4M7.5 15l-3.2 2.4M16.5 15l3.2 2.4',
+  disc: 'M3 10c0-1.9 4-3.5 9-3.5s9 1.6 9 3.5-4 3.5-9 3.5-9-1.6-9-3.5zM3 10v3c0 1.9 4 3.5 9 3.5s9-1.6 9-3.5v-3',
+  text: 'M5 6V4h14v2M12 4v16M9 20h6',
+  shadow: 'M12 3.5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM6 19.5c0-1 2.7-1.8 6-1.8s6 .8 6 1.8-2.7 1.8-6 1.8-6-.8-6-1.8z',
+  depthOfField: 'M12 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM7.5 7.5a6 6 0 0 0 0 9M16.5 7.5a6 6 0 0 1 0 9M4.5 4.5a10 10 0 0 0 0 15M19.5 4.5a10 10 0 0 1 0 15',
+  fog: 'M3 6h11M8 10.5h13M3 15h11M8 19.5h9',
+  film: 'M5 3h14a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM8 3v18M16 3v18M4 8h4M4 12h4M4 16h4M16 8h4M16 12h4M16 16h4',
+  error: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 9l6 6M15 9l-6 6',
+  info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v6M12 7.5h.01',
   // Brand marks, the official glyphs from Simple Icons (CC0), unaltered. They are filled shapes, not strokes.
   brandBlender: 'M12.51 13.214c.046-.8.438-1.506 1.03-2.006a3.424 3.424 0 0 1 2.212-.79c.85 0 1.631.3 2.211.79.592.5.983 1.206 1.028 2.005.045.823-.285 1.586-.865 2.153a3.389 3.389 0 0 1-2.374.938 3.393 3.393 0 0 1-2.376-.938c-.58-.567-.91-1.33-.865-2.152M7.35 14.831c.006.314.106.922.256 1.398a7.372 7.372 0 0 0 1.593 2.757 8.227 8.227 0 0 0 2.787 2.001 8.947 8.947 0 0 0 3.66.76 8.964 8.964 0 0 0 3.657-.772 8.285 8.285 0 0 0 2.785-2.01 7.428 7.428 0 0 0 1.592-2.762 6.964 6.964 0 0 0 .25-3.074 7.123 7.123 0 0 0-1.016-2.779 7.764 7.764 0 0 0-1.852-2.043h.002L13.566 2.55l-.02-.015c-.492-.378-1.319-.376-1.86.002-.547.382-.609 1.015-.123 1.415l-.001.001 3.126 2.543-9.53.01h-.013c-.788.001-1.545.518-1.695 1.172-.154.665.38 1.217 1.2 1.22V8.9l4.83-.01-8.62 6.617-.034.025c-.813.622-1.075 1.658-.563 2.313.52.667 1.625.668 2.447.004L7.414 14s-.069.52-.063.831zm12.09 1.741c-.97.988-2.326 1.548-3.795 1.55-1.47.004-2.827-.552-3.797-1.538a4.51 4.51 0 0 1-1.036-1.622 4.282 4.282 0 0 1 .282-3.519 4.702 4.702 0 0 1 1.153-1.371c.942-.768 2.141-1.183 3.396-1.185 1.256-.002 2.455.41 3.398 1.175.48.391.87.854 1.152 1.367a4.28 4.28 0 0 1 .522 1.706 4.236 4.236 0 0 1-.239 1.811 4.54 4.54 0 0 1-1.035 1.626',
   brandMaya: 'M4.348 0 .69 2.203v16.875l3.657-2.203h17.297V1.219c0-.67-.551-1.219-1.22-1.219H4.349zm18.297 3.75v14.125H4.627l-1.943 1.17v3.736c0 .67.55 1.219 1.218 1.219H23.31V3.75h-.664zm-14.471.025h2.937l1.885 7.508 1.977-7.48-.012-.028h2.857v9.354h-2.216v-6.04l-1.565 6.026v.014h-2.203l-1.656-6.28v6.28H8.174V3.775zm1.33 14.762h1.18l1.068 3.543h-.902l-.217-.773H9.568l-.197.773h-.88l1.013-3.543zm1.918 0h.932l.648 1.494.643-1.494h.894l-1.113 2.133v1.41h-.887v-1.406l-1.117-2.137zm3.826 0h1.18l1.068 3.543h-.9l-.217-.773h-1.065l-.197.773h-.88l1.011-3.543zm-5.156.582-.362 1.53h.73l-.368-1.53zm5.744 0-.36 1.53h.73l-.37-1.53z',
@@ -67,6 +78,38 @@ export const STUDIO_ICON_PATHS = Object.freeze({
 });
 
 export const STUDIO_BRAND_ICON_NAMES = Object.freeze(['brandBlender', 'brandMaya', 'brandCinema4d']);
+
+// The add menu shows the basic shapes and the lights with a picture; a shape not listed here gets no icon.
+export const STUDIO_PRIMITIVE_ICONS = Object.freeze({
+  plane: 'plane',
+  box: 'box',
+  disc: 'disc',
+  sphere: 'sphere',
+  icoSphere: 'icoSphere',
+  cylinder: 'cylinder',
+  cone: 'cone',
+  torus: 'torus',
+  text: 'text',
+});
+export const STUDIO_LIGHT_ICONS = Object.freeze({ point: 'pointLight', spot: 'spotLight', area: 'areaLight' });
+// One icon for each property section id of PROPERTY_SECTIONS.
+export const STUDIO_PROPERTY_SECTION_ICONS = Object.freeze({
+  light: 'pointLight',
+  shape: 'box',
+  shadow: 'shadow',
+  transform: 'translate',
+  lens: 'camera',
+  depthOfField: 'depthOfField',
+  sun: 'sun',
+  world: 'globe',
+  atmosphere: 'fog',
+  film: 'film',
+  effects: 'agent',
+  sceneShadow: 'shadow',
+  quality: 'speed',
+});
+// The mark a status notice leads with; its shape differs per outcome.
+export const STUDIO_NOTICE_ICONS = Object.freeze({ success: 'check', warning: 'warning', error: 'error', info: 'info' });
 
 export const STUDIO_ICON_NAMES = Object.freeze(Object.keys(STUDIO_ICON_PATHS));
 

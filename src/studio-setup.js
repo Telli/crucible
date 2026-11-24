@@ -343,11 +343,13 @@ export function createStudioSetup({
   const nextButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-primary', textContent: 'Next' });
   const doneButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-primary', textContent: 'Done' });
 
+  const setupHeading = createElement(documentReference, 'h2', { id: `crucible-studio-setup-${instanceId}-heading`, textContent: 'Set up Studio' });
+  setupHeading.prepend(createIcon(documentReference, 'agent'));
   const dialog = createElement(
     documentReference,
     'dialog',
     { className: 'crucible-studio-setup-dialog', tabIndex: -1, attributes: { 'aria-labelledby': `crucible-studio-setup-${instanceId}-heading` } },
-    createElement(documentReference, 'h2', { id: `crucible-studio-setup-${instanceId}-heading`, textContent: 'Set up Studio' }),
+    setupHeading,
     stepRow,
     createElement(documentReference, 'div', { className: 'crucible-studio-setup-body' }, ...sections),
     createElement(documentReference, 'div', { className: 'crucible-studio-dialog-actions crucible-studio-setup-actions' }, skipButton, backButton, nextButton, doneButton),
