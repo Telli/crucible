@@ -291,12 +291,52 @@ export function releaseResources(gl) {
 }
 
 /** The band size, tile width and the last turn given to the page, kept from one sample to the next. */
-export function createBandState(height, tileWidth = MAX_TILE_WIDTH) {
-  return { bandRows: Math.min(height, 32), tileWidth, lastYield: performance.now() };
+export function createBandState(height, tileWidth = MAX_TILE_WIDTH, now = () => performance.now()) {
+  return { bandRows: Math.min(height, 32), tileWidth, now, lastYield: now() };
+}
+
+const FENCE_POLL_LIMIT_SECONDS = 10;
+// A message turn, not setTimeout(0): browsers hold nested timeouts to 4 ms, which added seconds to a 1080x1920 trace.
+const yieldToPage = typeof MessageChannel === 'function'
+  ? () => new Promise(resolve => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(0);
+  })
+  : () => new Promise(resolve => setTimeout(resolve, 0));
+const synchronizationPixel = new Float32Array(4);
+
+/**
+ * Resolves when the GPU has finished every draw sent so far. gl.finish() returns at once on some drivers (ANGLE on Vulkan
+ * inside a sandbox), which made every tile look free, so the tile size doubled to its cap and the draws queued up until the
+ * GPU watchdog fired (#2833). A fence is polled with yields to the page, because browsers allow no blocking wait on it;
+ * without fences, reading one value back waits.
+ */
+export async function waitForDraw(gl, now = () => performance.now()) {
+  if (typeof gl.fenceSync !== 'function') {
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, synchronizationPixel);
+    return;
+  }
+  const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (!fence) {
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, synchronizationPixel);
+    return;
+  }
+  gl.flush();
+  const deadline = now() + FENCE_POLL_LIMIT_SECONDS * 1000;
+  try {
+    while (gl.clientWaitSync(fence, 0, 0) === gl.TIMEOUT_EXPIRED && now() < deadline) await yieldToPage();
+  } finally {
+    gl.deleteSync(fence);
+  }
 }
 
 /** Draws one sample of every pixel in bounded 2D tiles that take about DRAW_SECONDS_TARGET each, yielding between tiles. */
 export async function drawOneSample(gl, program, width, height, sample, band, shouldStop) {
+  const now = band.now ?? (() => performance.now());
   const tileWidth = Math.max(1, Math.min(width, band.tileWidth ?? MAX_TILE_WIDTH));
   const maxBandRows = Math.min(height, Math.max(MINIMUM_BAND_ROWS, Math.floor(MAX_TILE_PIXELS / tileWidth)));
   gl.viewport(0, 0, width, height);
@@ -312,17 +352,19 @@ export async function drawOneSample(gl, program, width, height, sample, band, sh
       rowStart += rows;
       for (let colStart = 0; colStart < width; colStart += tileWidth) {
         const cols = Math.min(tileWidth, width - colStart);
-        const started = performance.now();
+        const started = now();
         gl.scissor(colStart, firstRow, cols, rows);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
-        gl.finish();
-        const seconds = (performance.now() - started) / 1000;
-        const scale = Math.min(2, DRAW_SECONDS_TARGET / Math.max(seconds, 1e-4));
-        band.bandRows = Math.max(MINIMUM_BAND_ROWS, Math.min(maxBandRows, Math.round(rows * scale)));
+        await waitForDraw(gl, now);
+        const seconds = (now() - started) / 1000;
+        // Pace by pixels per second, so the narrow tile at the right edge of a row does not read as a cheap draw.
+        const pixelsPerSecond = (cols * rows) / Math.max(seconds, 1e-4);
+        const wantedRows = Math.round((DRAW_SECONDS_TARGET * pixelsPerSecond) / tileWidth);
+        band.bandRows = Math.max(MINIMUM_BAND_ROWS, Math.min(maxBandRows, band.bandRows * 2, wantedRows));
         shouldStop();
-        if ((performance.now() - band.lastYield) / 1000 > YIELD_SECONDS) {
+        if ((now() - band.lastYield) / 1000 > YIELD_SECONDS) {
           await nextTask();
-          band.lastYield = performance.now();
+          band.lastYield = now();
         }
       }
     }
