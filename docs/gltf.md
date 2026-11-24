@@ -322,7 +322,7 @@ Renderer integration owns the final textured rendering check.
 
 - `surfaces` is a node name, a material name, or a list of them. If none match, the error lists the names the GLB has.
 - Blades grow on the upward faces of those parts. They skip any spot where another part stands within `length` above the surface, so a path or slab on the lawn stays clear.
-- Optional fields: `preset` (`lawn` by default; also `meadow`, `savanna`, `wild`), `density` (blades per square metre), `length` (metres), `color` (`"preset"`, `"surface"` for the surface material colour, or three linear RGB numbers), `wind` (0 to 1; `frame.wind` overrides it) and `seed`.
+- Optional fields: `preset` (`lawn` by default; also `meadow`, `savanna`, `wild`), `density` (blades per square metre), `length` (metres), `color` (`"preset"`, `"surface"` for the surface material colour, or three linear RGB numbers), `wind` (0 to 1, the renderer wind strength; `frame.wind` overrides it; the default is 0.3 times length over 0.6 m, so 0.06 for 0.12 m blades, because the wind moves tips by metres and 0.3 bends a short lawn flat) and `seed`.
 - The field is seeded and built once, for the first camera frame. Every frame and every rerender draws the same blades. The blades sway with the frame time, so a video shows the wind and a single frame at one time is always the same.
 - The limit is 2,000,000 blades for all entries together. Crucible estimates the lowest possible count for each entry (area times density times 0.12) and adds them up. If the total is over the limit, it refuses before it grows anything.
 - A scene without the field loads nothing and renders as before.
