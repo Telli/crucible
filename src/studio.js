@@ -1098,6 +1098,9 @@ export function createStudio(container, {
   let awaitedProgramTimer = 0;
   let pointerState = null;
   let viewportPointer = null;
+  // Edit mode (src/studio-mesh-edit.js) is loaded on the first Tab, so the core entry carries none of it.
+  let meshEditor = null;
+  let meshEditorLoad = null;
   let modalTransform = null;
   let swallowContextMenu = false;
   let swallowClick = false;
@@ -1789,8 +1792,28 @@ export function createStudio(container, {
     attributes: { 'aria-pressed': tool === controller.tool ? 'true' : 'false' },
   }));
   toolButtons.forEach(button => {
-    button.addEventListener('click', () => controller.setTool(button.dataset.tool));
+    button.addEventListener('click', () => {
+      if (meshEditor?.active) {
+        announce('Edit mode moves the selection; leave it with Tab to rotate or scale.');
+        return;
+      }
+      controller.setTool(button.dataset.tool);
+    });
   });
+
+  const MESH_MODES = Object.freeze([
+    { mode: 'vertex', icon: 'meshVertex', label: 'Vertices', action: 'mesh.vertexMode' },
+    { mode: 'edge', icon: 'meshEdge', label: 'Edges', action: 'mesh.edgeMode' },
+    { mode: 'face', icon: 'meshFace', label: 'Faces', action: 'mesh.faceMode' },
+  ]);
+  const meshModeButtons = MESH_MODES.map(({ mode, icon, label, action }) => createKeyedIconButton(icon, () => `${label} (${keyLabel(keymap, action)})`, {
+    dataset: { meshMode: mode },
+    attributes: { 'aria-pressed': 'false' },
+  }));
+  meshModeButtons.forEach(button => {
+    button.addEventListener('click', () => chooseMeshMode(button.dataset.meshMode));
+  });
+  const meshModeGroup = createElement(documentReference, 'div', { className: 'crucible-studio-group', hidden: true, attributes: { role: 'group', 'aria-label': 'Mesh selection' } }, ...meshModeButtons);
 
   const undoButton = createKeyedIconButton('undo', () => `Undo (${keyLabel(keymap, 'edit.undo')})`, { attributes: { 'aria-disabled': 'true' } });
   const redoButton = createKeyedIconButton('redo', () => `Redo (${keyLabel(keymap, 'edit.redo')})`, { attributes: { 'aria-disabled': 'true' } });
@@ -1847,6 +1870,7 @@ export function createStudio(container, {
       attributes: { role: 'toolbar', focusgroup: 'toolbar wrap', 'aria-orientation': 'vertical', 'aria-label': 'Tools', 'aria-controls': canvas.id },
     },
     createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Transform tool' } }, ...toolButtons),
+    meshModeGroup,
     createElement(documentReference, 'div', { className: 'crucible-studio-group', attributes: { role: 'group', 'aria-label': 'Edit the scene' } }, addMenuButton, undoButton, redoButton),
     // Above the line: what changes the scene. Below it: what only shows or hides parts of Studio.
     createElement(documentReference, 'div', { className: 'crucible-studio-toolbar-rule', attributes: { role: 'separator', 'aria-orientation': 'horizontal' } }),
@@ -3159,6 +3183,7 @@ export function createStudio(container, {
         renderSceneObjectMarks(documentReference, gizmoSvg, controller);
       }
       drawAgentOutline();
+      if (meshEditor?.active && !capturingStill) meshEditor.draw(documentReference, gizmoSvg);
       syncViewportAids();
     } finally {
       insideDraw = false;
@@ -3668,6 +3693,10 @@ export function createStudio(container, {
   function syncUi() {
     const recipe = controller.exportRecipe();
     toolButtons.forEach(button => button.setAttribute('aria-pressed', button.dataset.tool === controller.tool ? 'true' : 'false'));
+    const editingMesh = Boolean(meshEditor?.active);
+    root.dataset.meshEdit = editingMesh ? 'true' : 'false';
+    meshModeGroup.hidden = !editingMesh;
+    meshModeButtons.forEach(button => button.setAttribute('aria-pressed', editingMesh && button.dataset.meshMode === meshEditor.mode ? 'true' : 'false'));
     undoButton.setAttribute('aria-disabled', controller.canUndo ? 'false' : 'true');
     redoButton.setAttribute('aria-disabled', controller.canRedo ? 'false' : 'true');
     const selectedNode = recipe.nodes.find(node => node.id === controller.selectedNodeId) ?? null;
@@ -4021,7 +4050,14 @@ export function createStudio(container, {
     event.stopPropagation();
     const coordinates = localCoordinates(event);
     gizmoSvg.dataset.hoverAxis = axis;
-    controller.beginGizmoDrag(axis, coordinates.x, coordinates.y);
+    try {
+      controller.beginGizmoDrag(axis, coordinates.x, coordinates.y);
+    } catch (error) {
+      // Edit mode refuses a move it could not write down before the pointer moves, and says why.
+      if (!meshEditor?.active) throw error;
+      announce(error.message);
+      return;
+    }
     pointerState = { mode: 'gizmo', pointerId: event.pointerId };
     viewportElement.setPointerCapture?.(event.pointerId);
   });
@@ -4143,7 +4179,13 @@ export function createStudio(container, {
     }
     if (!finished.moved && !finished.keymapNavigation) {
       const coordinates = localCoordinates(event);
-      if (controller.tool === 'snap' && controller.selectedNodeId && event.altKey) {
+      if (meshEditor?.active) {
+        if ((event.button ?? 0) === 0) {
+          meshEditor.pick(coordinates.x, coordinates.y, { additive: event.shiftKey });
+          syncUi();
+          requestFrame();
+        }
+      } else if (controller.tool === 'snap' && controller.selectedNodeId && event.altKey) {
         controller.snapSelectedToAt(coordinates.x, coordinates.y);
       } else {
         selectNodeAndShowItsPanel(() => controller.pickAt(coordinates.x, coordinates.y));
@@ -4258,6 +4300,68 @@ export function createStudio(container, {
     return Boolean(selection && !selection.isCollapsed && selection.toString() !== '');
   }
 
+  function loadMeshEditor() {
+    meshEditorLoad ??= import('./studio-mesh-edit.js').then(({ createMeshEditor }) => {
+      meshEditor = createMeshEditor({ controller, announce, getRenderer: () => renderer });
+      return meshEditor;
+    });
+    return meshEditorLoad;
+  }
+
+  async function enterMeshEdit() {
+    const editor = await loadMeshEditor();
+    if (editor.active) return;
+    if (editor.enter().ok) announce('Edit mode: pick a vertex, edge or face.');
+    syncUi();
+    requestFrame();
+  }
+
+  function leaveMeshEdit() {
+    meshEditor?.leave();
+    syncUi();
+    requestFrame();
+  }
+
+  // Esc puts a drag back, else clears the selection, else leaves edit mode.
+  function escapeMeshEdit() {
+    if (controller.dragging) {
+      controller.cancelGizmoDrag();
+      pointerState = null;
+    } else if (!meshEditor.clearSelection()) {
+      meshEditor.leave();
+    }
+    syncUi();
+    requestFrame();
+  }
+
+  function chooseMeshMode(mode) {
+    meshEditor.setMode(mode);
+    syncUi();
+    requestFrame();
+  }
+
+  // Tab is also how the keyboard moves between controls, so it enters edit mode only from the page or the canvas.
+  function tabBelongsToViewport(target) {
+    return !target || target === documentReference || target === documentReference.body || target === documentReference.documentElement || target === canvas;
+  }
+
+  // In edit mode these keys of the normal context still work; every other one would act on the whole object.
+  const MESH_EDIT_PASS_THROUGH = new Set(['edit.undo', 'edit.redo', 'file.open', 'file.save', 'file.saveAs', 'settings.open', 'help.shortcuts', 'view.frame', 'view.top', 'view.projection', 'view.properties']);
+  const meshKeyHandlers = {
+    'mesh.leave': event => {
+      event.preventDefault();
+      leaveMeshEdit();
+    },
+    'mesh.escape': event => {
+      event.preventDefault();
+      escapeMeshEdit();
+    },
+    'mesh.vertexMode': () => chooseMeshMode('vertex'),
+    'mesh.edgeMode': () => chooseMeshMode('edge'),
+    'mesh.faceMode': () => chooseMeshMode('face'),
+    'mesh.noop': event => event.preventDefault(),
+  };
+
   // Handlers of the normal context by action id. A handler calls preventDefault for the keys the browser would
   // otherwise use itself (save, open, copy, undo and so on).
   const keyHandlers = {
@@ -4330,6 +4434,11 @@ export function createStudio(container, {
       settingsDialog.showModal();
     },
     'help.shortcuts': () => shortcutsDialog.showModal(),
+    'mesh.enter': event => {
+      if (!controller.selectedNodeId || !tabBelongsToViewport(event.target)) return;
+      event.preventDefault();
+      enterMeshEdit();
+    },
   };
   for (const [actionId, tool] of Object.entries(PICK_UP_TOOL_BY_ACTION)) {
     // Blender's keys pick the object up; Maya's and Cinema 4D's only choose the tool, whose handles then appear.
@@ -4359,13 +4468,23 @@ export function createStudio(container, {
     if (isEditableTarget(event.target, event.key)) {
       return;
     }
-    const match = findKeymapAction(keymap, event, 'normal');
+    const editingMesh = Boolean(meshEditor?.active);
+    const meshMatch = editingMesh ? findKeymapAction(keymap, event, 'mesh') : null;
+    const match = meshMatch ?? findKeymapAction(keymap, event, 'normal');
     if (!match) {
       return;
     }
     // A Ctrl key works over an open dialog; a plain key does not.
     const dialogIsOpen = recipeDialog.open || shortcutsDialog.open || settingsDialog.open;
     if (dialogIsOpen && !match.binding.ctrl) {
+      return;
+    }
+    if (meshMatch) {
+      meshKeyHandlers[match.actionId](event, match.binding);
+      return;
+    }
+    if (editingMesh && !MESH_EDIT_PASS_THROUGH.has(match.actionId)) {
+      if (match.binding.ctrl) event.preventDefault();
       return;
     }
     keyHandlers[match.actionId](event, match.binding);
@@ -4466,6 +4585,9 @@ export function createStudio(container, {
     if (detail.kind === 'flush') {
       requestFrame();
       return;
+    }
+    if (meshEditor?.active && ['undo', 'redo', 'load', 'topology', 'selection', 'pick'].includes(detail.kind)) {
+      meshEditor.refresh();
     }
     selectionReadoutStale = true;
     if (detail.kind === 'load') {

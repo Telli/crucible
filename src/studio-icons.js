@@ -54,6 +54,10 @@ export const STUDIO_ICON_PATHS = Object.freeze({
   check: 'M5 12.5l4.5 4.5L19 7',
   theme: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 3v18M12 7.5h4.5M12 12h6M12 16.5h4.5',
   speed: 'M4 17a8 8 0 1 1 16 0M12 17l4-5M12 17h.01',
+  // Edit mode selection: the corner points, one edge between two points, one face of the cage.
+  meshVertex: 'M7 7h.01M17 7h.01M7 17h.01M17 17h.01M9 7h6M9 17h6M7 9v6M17 9v6',
+  meshEdge: 'M5 5h.01M19 19h.01M5 5l14 14M5 19h6M13 5h6',
+  meshFace: 'M6 6h12v12H6zM6 6l12 12',
   tierLight: 'M4 4h6.5v6.5H4zM13.5 4H20v6.5h-6.5zM4 13.5h6.5V20H4zM13.5 13.5H20V20h-6.5z',
   tierBalanced: 'M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z',
   tierSharp: 'M4 4h16v16H4zM7.2 4v16M10.4 4v16M13.6 4v16M16.8 4v16M4 7.2h16M4 10.4h16M4 13.6h16M4 16.8h16',

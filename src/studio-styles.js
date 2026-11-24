@@ -159,6 +159,30 @@ export const STUDIO_CSS = `
   height: 100%;
   pointer-events: none;
 }
+/* The cage of edit mode: edges, the vertices in vertex mode and the picked elements, in the theme's own tokens. */
+.crucible-studio-gizmo .crucible-studio-cage-edges {
+  fill: none;
+  stroke: color-mix(in srgb, var(--studio-text) 55%, transparent);
+  stroke-width: 1;
+}
+.crucible-studio-gizmo .crucible-studio-cage-vertices {
+  fill: none;
+  stroke: color-mix(in srgb, var(--studio-text) 80%, transparent);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+.crucible-studio-gizmo .crucible-studio-cage-selected {
+  fill: none;
+  stroke: var(--studio-accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.5;
+}
+.crucible-studio-gizmo .crucible-studio-cage-selected-vertex { stroke-width: 9; }
+.crucible-studio-gizmo .crucible-studio-cage-selected-face {
+  fill: color-mix(in srgb, var(--studio-accent) 32%, transparent);
+  stroke-width: 1.5;
+}
 .crucible-studio-gizmo [data-gizmo-axis] {
   pointer-events: all;
   cursor: pointer;
