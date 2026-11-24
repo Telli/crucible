@@ -66,7 +66,7 @@ export const MATERIAL_GRAPH_OPERATORS = Object.freeze([
 export const MESH_MAP_NAMES = Object.freeze(['curvature', 'ao', 'thickness']);
 export const SURFACE_OUTPUTS = Object.freeze(['slope', 'normalY', 'height']);
 export const SURFACE_SPACES = Object.freeze(['object', 'world']);
-export const MATERIAL_GRAPH_LIMITS = Object.freeze({ maxNodes: MAX_FIELD_NODES, maxDepth: MAX_FIELD_DEPTH, maxStops: 8, maxWork: 30_000_000 });
+export const MATERIAL_GRAPH_LIMITS = Object.freeze({ maxNodes: MAX_FIELD_NODES, maxDepth: MAX_FIELD_DEPTH, maxStops: 8, maxWork: 60_000_000 });
 // Curve and text geometry. A text geometry is bounded by vertices per curve segment: the bundled font stays under
 // 640 per character and a registered font is held to 128 outline points per glyph (2400).
 export const CURVE_TEXT_LIMITS = Object.freeze({
