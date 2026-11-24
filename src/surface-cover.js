@@ -28,7 +28,10 @@ export const SURFACE_COVER_LIMITS = Object.freeze({
 export const SURFACE_COVER_DEFAULTS = Object.freeze({ output: 'slope', edge: 0.5, softness: 0.1, color: Object.freeze([0.9, 0.92, 0.95]), roughness: 0.85 });
 export const SURFACE_COVER_NOISE_DEFAULTS = Object.freeze({ scale: 1, amount: 0.4, seed: 0 });
 // The shader sums two octaves of lattice noise, the second at this frequency ratio and weight (a fixed, bounded cost).
-export const SURFACE_COVER_OCTAVE = Object.freeze({ firstWeight: 0.65, secondWeight: 0.35, ratio: 2.17, shift: 13 });
+export const SURFACE_COVER_OCTAVE = Object.freeze({ firstWeight: 0.6, secondWeight: 0.4, ratio: 5.3, shift: 13 });
+// The edge never gets thinner than the pixel, but the pixel's share is capped at this many softnesses: a crease in the mesh
+// normals jumps the signal between two neighbouring pixels, and an uncapped fwidth smears a white band along every crease.
+export const SURFACE_COVER_FILTER_CAP = 1.5;
 
 const RIGHT_ANGLE = Math.PI / 2;
 const EXAMPLE = '{"surfaceCover":{"output":"slope","edge":0.5,"noise":{"scale":0.2}}}';
@@ -141,6 +144,11 @@ export function surfaceCoverSignal(cover, upNormal, height) {
   return (height - cover.range[0]) / (cover.range[1] - cover.range[0]);
 }
 
+/** Half the width of the smoothstep: the softness, widened toward half the screen-space change of the signal, up to the cap. */
+export function surfaceCoverHalfWidth(softness, filterWidth) {
+  return Math.max(softness, Math.min(0.5 * filterWidth, SURFACE_COVER_FILTER_CAP * softness));
+}
+
 function smoothstepBetween(low, high, value) {
   const unit = Math.min(1, Math.max(0, (value - low) / (high - low)));
   return unit * unit * (3 - 2 * unit);
@@ -156,8 +164,34 @@ export function surfaceCoverAmount(cover, position, normal, filterWidth = 0) {
   const upNormal = length > 0 ? normal[1] / length : 0;
   const signal = surfaceCoverSignal(cover, upNormal, position[1]);
   const broken = cover.noise ? signal + cover.noise.amount * (surfaceCoverNoise(position, cover.noise) - 0.5) : signal;
-  const half = Math.max(cover.softness, 0.5 * filterWidth);
+  const half = surfaceCoverHalfWidth(cover.softness, filterWidth);
   return smoothstepBetween(cover.edge - half, cover.edge + half, broken);
+}
+
+// The graph reaches the same mask in two steps: a `smoothstep(low, high, signal)` mask, then the `layer` node's own
+// smoothstep(edge - softness, edge + softness) over that mask. Both steps collapse into one cover whose edge sits where the
+// first step reaches the layer's edge and whose softness is the signal distance the second step spans. A cover with the
+// graph's default layer edge 0.5 and softness 0.1 over smoothstep(0.2, 0.46) is edge 0.33, softness 0.026, far narrower than
+// the 0.13 that reading the mask alone suggests.
+function inverseSmoothstep(value) {
+  let low = 0;
+  let high = 1;
+  for (let step = 0; step < 40; step++) {
+    const middle = (low + high) / 2;
+    if (middle * middle * (3 - 2 * middle) < value) low = middle;
+    else high = middle;
+  }
+  return (low + high) / 2;
+}
+
+/** The `edge` and `softness` of a cover that matches a graph mask `smoothstep(low, high, signal)` gated by a layer node `edge` and `softness`. */
+export function surfaceCoverFromGraphMask({ low, high, layerEdge = 0.5, layerSoftness = 0.1 }) {
+  const span = high - low;
+  const lower = Math.max(0, layerEdge - layerSoftness);
+  const upper = Math.min(1, layerEdge + layerSoftness);
+  const edge = low + span * inverseSmoothstep(layerEdge);
+  const softness = Math.max(SURFACE_COVER_LIMITS.softness[0], span * (inverseSmoothstep(upper) - inverseSmoothstep(lower)) / 2);
+  return { edge, softness };
 }
 
 // ---- the shader ----
@@ -192,7 +226,7 @@ float coverNoise(vec3 position) {
 const SURFACE_COVER_SURFACE = `  if (materialCoverShape.x > -0.5) {
     float coverUp = normalize(worldNormal).y;
     float coverSignal = materialCoverShape.x < 0.5 ? 1.0 - acos(clamp(coverUp, -1.0, 1.0)) / 1.5707963 : (materialCoverShape.x < 1.5 ? 0.5 + 0.5 * clamp(coverUp, -1.0, 1.0) : (worldPosition.y - materialCoverNoise.z) / (materialCoverNoise.w - materialCoverNoise.z));
-    float coverWidth = max(materialCoverShape.z, 0.5 * fwidth(coverSignal));
+    float coverWidth = max(materialCoverShape.z, min(0.5 * fwidth(coverSignal), ${SURFACE_COVER_FILTER_CAP} * materialCoverShape.z));
     float coverBroken = coverSignal;
     if (materialCoverShape.w > 0.0) {
       vec3 coverPoint = worldPosition * materialCoverNoise.x + vec3(materialCoverNoise.y);

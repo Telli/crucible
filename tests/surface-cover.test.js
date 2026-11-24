@@ -122,10 +122,10 @@ test('the cover amount is a smooth step over the edge, widened by the filter wid
   assert.equal(surfaceCoverAmount(cover, [0, 0, 0], up), 1);
   assert.equal(surfaceCoverAmount(cover, [0, 0, 0], [0, -1, 0]), 0);
   assert.equal(surfaceCoverAmount(cover, [0, 0, 0], [1, 0, 0]), 0.5);
-  const slightlyAbove = [0.4, 1, 0];
+  const slightlyAbove = [Math.sqrt(0.99), 0.1, 0];
   const exactAmount = surfaceCoverAmount(cover, [0, 0, 0], slightlyAbove);
   const widenedAmount = surfaceCoverAmount(cover, [0, 0, 0], slightlyAbove, 1);
-  assert.ok(exactAmount > 0.9 && widenedAmount < exactAmount, `${exactAmount} then ${widenedAmount}`);
+  assert.ok(exactAmount > 0.8 && widenedAmount < exactAmount - 0.05, `${exactAmount} then ${widenedAmount}`);
 });
 
 test('the noise breaks the edge up by at most amount around the signal and repeats for a seed', async () => {
@@ -162,4 +162,96 @@ test('the uniform vectors carry the cover, and the off marker without one', asyn
   assert.deepEqual(values.shape, [2, 0.3, 0.05, 0.2]);
   assert.deepEqual(values.noise, [4, 62, 2, 10]);
   assert.equal(values.look[3], 0.85);
+});
+
+// ---- round 2: the mask against an independent CPU reference (#3147) ----
+
+const referenceSmoothstep = (low, high, value) => {
+  const unit = Math.min(1, Math.max(0, (value - low) / (high - low)));
+  return unit * unit * (3 - 2 * unit);
+};
+
+test('surfaceCoverSignal gives the baked slope, normalY and height values for known normals and heights', async () => {
+  const { normalizeSurfaceCover, surfaceCoverSignal } = await loadCover();
+  const slope = normalizeSurfaceCover({ output: 'slope' });
+  assert.ok(Math.abs(surfaceCoverSignal(slope, 1, 0) - 1) < 1e-9);
+  assert.ok(Math.abs(surfaceCoverSignal(slope, Math.cos(Math.PI / 3), 0) - (1 - 60 / 90)) < 1e-9);
+  assert.ok(Math.abs(surfaceCoverSignal(slope, 0, 0)) < 1e-9);
+  assert.ok(surfaceCoverSignal(slope, -1, 0) < -0.99, 'an overhang is below zero, never covered');
+  const normalY = normalizeSurfaceCover({ output: 'normalY' });
+  assert.equal(surfaceCoverSignal(normalY, 0.5, 0), 0.75);
+  const height = normalizeSurfaceCover({ output: 'height', range: [10, 20] });
+  assert.equal(surfaceCoverSignal(height, 0, 12.5), 0.25);
+});
+
+test('surfaceCoverAmount matches a hand written smoothstep over many normals', async () => {
+  const { normalizeSurfaceCover, surfaceCoverAmount } = await loadCover();
+  const cover = normalizeSurfaceCover({ output: 'slope', edge: 0.33, softness: 0.05 });
+  for (let degrees = 0; degrees <= 180; degrees += 7.5) {
+    const angle = degrees * Math.PI / 180;
+    const normal = [Math.sin(angle) * 3, Math.cos(angle) * 3, 0];
+    const expected = referenceSmoothstep(0.28, 0.38, 1 - angle / (Math.PI / 2));
+    assert.ok(Math.abs(surfaceCoverAmount(cover, [0, 0, 0], normal) - expected) < 1e-9, `normal at ${degrees} degrees`);
+  }
+});
+
+test('the signal comes from the interpolated vertex normal, which is continuous where a flat face normal jumps', async () => {
+  const { normalizeSurfaceCover, surfaceCoverAmount } = await loadCover();
+  const cover = normalizeSurfaceCover({ output: 'slope', edge: 0.4, softness: 0.05 });
+  const scene = createAgentScene(recipeWith());
+  const { positions, normals, indices } = scene.parts[0].geometry;
+  let largestFlatStep = 0;
+  for (let triangle = 0; triangle < indices.length / 3; triangle++) {
+    const corner = index => [0, 1, 2].map(axis => normals[indices[triangle * 3 + index] * 3 + axis]);
+    const vertexAmounts = [0, 1, 2].map(index => surfaceCoverAmount(cover, [0, 0, 0], corner(index)));
+    const point = index => [0, 1, 2].map(axis => positions[indices[triangle * 3 + index] * 3 + axis]);
+    const [first, second, third] = [point(0), point(1), point(2)];
+    const flat = [0, 1, 2].map(axis => (second[(axis + 1) % 3] - first[(axis + 1) % 3]) * (third[(axis + 2) % 3] - first[(axis + 2) % 3]) - (second[(axis + 2) % 3] - first[(axis + 2) % 3]) * (third[(axis + 1) % 3] - first[(axis + 1) % 3]));
+    largestFlatStep = Math.max(largestFlatStep, Math.abs(surfaceCoverAmount(cover, [0, 0, 0], flat) - vertexAmounts[0]));
+    // On a sphere each vertex normal is the direction of the vertex itself, the smooth normal the cover must read.
+    const direction = point(0);
+    const length = Math.hypot(...direction);
+    const analytic = surfaceCoverAmount(cover, [0, 0, 0], direction.map(value => value / length));
+    assert.ok(Math.abs(analytic - vertexAmounts[0]) < 0.02, 'a vertex normal of the sphere points along its position');
+  }
+  assert.ok(largestFlatStep > 0, 'the flat normal is a different signal');
+});
+
+test('the filter width widens the edge to about a pixel but never past the cap', async () => {
+  const { surfaceCoverHalfWidth, SURFACE_COVER_FILTER_CAP } = await loadCover();
+  assert.equal(surfaceCoverHalfWidth(0.02, 0.01), 0.02);
+  assert.ok(Math.abs(surfaceCoverHalfWidth(0.02, 0.05) - 0.025) < 1e-12);
+  assert.ok(Math.abs(surfaceCoverHalfWidth(0.02, 5) - SURFACE_COVER_FILTER_CAP * 0.02) < 1e-12, 'a crease in the normals must not smear a wide band');
+});
+
+test('surfaceCoverFromGraphMask makes the cover cover the same share as the graph mask plus layer gate', async () => {
+  const { surfaceCoverFromGraphMask, normalizeSurfaceCover, surfaceCoverAmount } = await loadCover();
+  const { edge, softness } = surfaceCoverFromGraphMask({ low: 0.2, high: 0.46 });
+  assert.ok(Math.abs(edge - 0.33) < 1e-6);
+  assert.ok(Math.abs(softness - 0.0174) < 0.001, `softness ${softness}`);
+  const cover = normalizeSurfaceCover({ output: 'normalY', edge, softness });
+  let graphShare = 0;
+  let coverShare = 0;
+  let largestGap = 0;
+  const samples = 1000;
+  for (let sample = 0; sample < samples; sample++) {
+    const signal = sample / (samples - 1);
+    const graph = referenceSmoothstep(0.4, 0.6, referenceSmoothstep(0.2, 0.46, signal));
+    const normalY = 2 * signal - 1;
+    const amount = surfaceCoverAmount(cover, [0, 0, 0], [Math.sqrt(1 - normalY * normalY), normalY, 0]);
+    graphShare += graph / samples;
+    coverShare += amount / samples;
+    largestGap = Math.max(largestGap, Math.abs(graph - amount));
+  }
+  assert.ok(Math.abs(graphShare - coverShare) < 0.005, `share ${graphShare} against ${coverShare}`);
+  assert.ok(largestGap < 0.15, `largest gap ${largestGap}`);
+  const wrongReading = normalizeSurfaceCover({ output: 'normalY', edge: 0.33, softness: 0.13 });
+  assert.ok(Math.abs(surfaceCoverAmount(wrongReading, [0, 0, 0], [Math.sqrt(1 - 0.09), -0.3, 0]) - referenceSmoothstep(0.4, 0.6, referenceSmoothstep(0.2, 0.46, 0.35))) > 0.05, 'the mask alone (softness 0.13) is a different edge');
+});
+
+test('the generated fragment shader caps the filter width and uses the world normal', async () => {
+  await loadCover();
+  const source = createFragmentShader(['surfaceCover']);
+  assert.match(source, /min\(0\.5 \* fwidth\(coverSignal\), 1\.5 \* materialCoverShape\.z\)/);
+  assert.match(source, /normalize\(worldNormal\)\.y/);
 });
