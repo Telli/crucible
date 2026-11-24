@@ -28,6 +28,8 @@ The tests are in `tests/` and the guides are in `docs/`.
 
 Name the pull request `<imperative sentence> (#<issue>)`, such as `Add mesh bevel to mesh_edit (#412)`. Keep one change in each pull request.
 
+A bug you find on the way can ride along in the same pull request when it sits in a file you already change, the fix is small (about 20 lines) and changes no look, and you add a test that fails without it. Put it in its own commit and name it in the description under **Also fixed**. Any other bug gets its own issue or its own pull request.
+
 ### Your first pull request
 
 Start with an issue labelled [`good first issue`](https://github.com/codepawl/crucible/labels/good%20first%20issue). Each one names the files to change and has a `Done when` list. None of them needs a GPU, Rust or Blender.
@@ -47,6 +49,8 @@ node scripts/open-pr.mjs --title "Add mesh bevel to mesh_edit (#412)" --body-fil
 ```
 
 It runs the metadata checks locally on the description and the files changed against `origin/main` (pictures passed with `--evidence` count as evidence) and stops with every finding and its fix. It refuses an empty description or `-`. Then it pushes the branch if needed, runs one `gh pr create`, pushes the evidence with `push-evidence.mjs`, adds the pictures under `## Evidence` and reads the stored description back to check it. `--base <branch>` changes the base, and `--dry-run` prints the commands and the final description without writing anything on GitHub.
+
+While you still expect review rounds, pass `--draft`. CI runs no job on a draft, so the pushes of each round take no runner time. Run `gh pr ready <number>` when the work is done: that starts the full `Test` run, and a maintainer merges only a ready pull request.
 
 ### Link the issue
 
