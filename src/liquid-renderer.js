@@ -1,6 +1,7 @@
 import { compileProgram } from './gl-program.js';
 import { CLIP_PLANES_FEATURE, addClipPlanesToLiquidShader, bindClipPlanes, clipPlaneLocations } from './clip-planes.js';
 import { resolveLiquidOptics } from './liquid-optics.js';
+import { batchesNeedRefractionMips, mipLevelCount } from './transmission-blur.js';
 import { liquidProbeSupport, liquidWaterSupport } from './shader-registry.js';
 
 // The renderer's liquid and foam pass, kept apart from renderer.js so a scene without liquid or foam does not carry it.
@@ -35,6 +36,44 @@ function ensureLiquidProgram(renderer, environmentSpecularUnit, vertexSource, fr
   context.uniform1i(renderer.liquidUniforms.environmentSpecular, environmentSpecularUnit);
 }
 
+/**
+ * Copies the resolved opaque scene into a texture with a full mip chain and returns it. Rough glass samples its blurrier levels.
+ * The chain lives apart from frameTexture, which post and bloom read with a plain filter, and it is only built (once per frame, on
+ * the frames that draw rough glass) here; a frame with no glass, or only smooth glass, never allocates or fills it.
+ */
+export function copySceneIntoMipChain(renderer, width, height) {
+  const context = renderer.context;
+  const hdr = Boolean(renderer.hdr);
+  let chain = renderer.refractionChain;
+  if (!chain || chain.width !== width || chain.height !== height || chain.hdr !== hdr) {
+    chain?.release();
+    const texture = context.createTexture();
+    context.bindTexture(context.TEXTURE_2D, texture);
+    context.texStorage2D(context.TEXTURE_2D, mipLevelCount(width, height), hdr ? context.RGBA16F : context.RGBA8, width, height);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR_MIPMAP_LINEAR);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MAG_FILTER, context.LINEAR);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, context.CLAMP_TO_EDGE);
+    context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_T, context.CLAMP_TO_EDGE);
+    const framebuffer = context.createFramebuffer();
+    context.bindFramebuffer(context.FRAMEBUFFER, framebuffer);
+    context.framebufferTexture2D(context.FRAMEBUFFER, context.COLOR_ATTACHMENT0, context.TEXTURE_2D, texture, 0);
+    const release = () => {
+      context.deleteTexture(texture);
+      context.deleteFramebuffer(framebuffer);
+      renderer.refractionChain = null;
+    };
+    chain = { texture, framebuffer, width, height, hdr, release };
+    renderer.refractionChain = chain;
+  }
+  // A blit, not copyTexSubImage2D: the opaque frame may be stored without alpha, and a copy needs the two formats to match.
+  context.bindFramebuffer(context.READ_FRAMEBUFFER, renderer.resolveFramebuffer);
+  context.bindFramebuffer(context.DRAW_FRAMEBUFFER, chain.framebuffer);
+  context.blitFramebuffer(0, 0, width, height, 0, 0, width, height, context.COLOR_BUFFER_BIT, context.NEAREST);
+  context.bindTexture(context.TEXTURE_2D, chain.texture);
+  context.generateMipmap(context.TEXTURE_2D);
+  return chain.texture;
+}
+
 export function drawLiquidPass(renderer, { frame, environment, assemblyAmount, environmentMap, liquids, foams, environmentSpecularUnit, maximumDistance, vertexSource, fragmentSource }) {
   const optics = resolveLiquidOptics({ ...environment.liquid, ...frame.liquid });
   ensureLiquidProgram(renderer, environmentSpecularUnit, vertexSource, fragmentSource);
@@ -45,6 +84,7 @@ export function drawLiquidPass(renderer, { frame, environment, assemblyAmount, e
   context.bindFramebuffer(context.READ_FRAMEBUFFER, renderer.multisampleFramebuffer);
   context.bindFramebuffer(context.DRAW_FRAMEBUFFER, renderer.resolveFramebuffer);
   context.blitFramebuffer(0, 0, width, height, 0, 0, width, height, context.COLOR_BUFFER_BIT, context.NEAREST);
+  const sceneTexture = batchesNeedRefractionMips(liquids, width, height) ? copySceneIntoMipChain(renderer, width, height) : renderer.frameTexture;
   context.bindFramebuffer(context.FRAMEBUFFER, renderer.multisampleFramebuffer);
   context.viewport(0, 0, width, height);
   context.enable(context.DEPTH_TEST);
@@ -75,7 +115,7 @@ export function drawLiquidPass(renderer, { frame, environment, assemblyAmount, e
   if (uniforms.skinEnabled) context.uniform1f(uniforms.skinEnabled, 0);
   if (uniforms.morphEnabled) context.uniform1f(uniforms.morphEnabled, 0);
   context.activeTexture(context.TEXTURE0);
-  context.bindTexture(context.TEXTURE_2D, renderer.frameTexture);
+  context.bindTexture(context.TEXTURE_2D, sceneTexture);
   context.uniform1i(uniforms.sceneColor, 0);
   for (const batch of liquids) {
     const layers = batch.layerState;

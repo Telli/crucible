@@ -400,6 +400,7 @@ on:
       - 'src/texture-set-names.js'
       - 'src/tile-field.js'
       - 'src/toon-shader.js'
+      - 'src/transmission-blur.js'
       - 'src/tree-level-gains.js'
       - 'src/tree-sky.js'
       - 'src/triangle-bvh.js'

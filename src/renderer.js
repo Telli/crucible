@@ -2258,6 +2258,7 @@ export class CrucibleRenderer {
     if (this.multisampleColor) this.backend.deleteRenderbuffer(this.multisampleColor);
     if (this.multisampleDepth) this.backend.deleteRenderbuffer(this.multisampleDepth);
     if (this.frameTexture) this.backend.deleteTexture(this.frameTexture);
+    this.refractionChain?.release();
     if (this.depthTexture) this.backend.deleteTexture(this.depthTexture);
     for (const target of this.bloomTargets ?? []) {
       context.deleteTexture(target.texture);

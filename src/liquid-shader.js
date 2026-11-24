@@ -2,6 +2,7 @@ import { environmentLookupGlsl } from './environment-shading.js';
 import { registerShaderFeatureCode } from './shader-registry.js';
 import { drawLiquidPass } from './liquid-renderer.js';
 import { probeLookupGlsl, probeUniformsGlsl } from './probe-glsl.js';
+import { transmissionBlurGlsl } from './transmission-blur.js';
 import { waterMirrorFunctionsGlsl, waterMirrorUniformsGlsl } from './water-mirror-glsl.js';
 
 // Importing this module registers the liquid and foam shader. A renderer with a transmissive, liquid or foam part
@@ -93,6 +94,7 @@ vec3 ambientLight(vec3 normal) {
   return mix(studioAmbient, worldAmbient, worldMode) * ambientIntensity;
 }
 
+${transmissionBlurGlsl}
 vec3 displayed(vec3 radiance) {
   return hdrEnabled > 0.5 ? clamp(radiance * exposure, vec3(0), vec3(65504.0)) : pow(toneMap(radiance * exposure), vec3(1.0 / 2.2));
 }
@@ -132,7 +134,9 @@ void main() {
   vec4 projected = viewProjection * vec4(worldPosition + bent * thickness, 1.0);
   vec2 refracted = projected.w > 0.0 ? projected.xy / projected.w * 0.5 + 0.5 : screen;
   refracted = clamp(mix(screen, refracted, glass ? 1.0 : liquidOptics.z), vec2(0.001), vec2(0.999));
-  vec3 behind = texture(sceneColor, refracted).rgb;
+  // Rough glass reads a blurrier level of the scene's mip chain; a scene without one (or a liquid) reads the sharp image.
+  float blurLevel = glass ? transmissionBlurLevel(roughness, indexOfRefraction, resolution) : 0.0;
+  vec3 behind = textureLod(sceneColor, refracted, blurLevel).rgb;
   // The material colour is what one metre of this liquid lets through.
   // For a PBR material the colour tints what passes through and the attenuation colour is what attenuationDistance metres let through.
   vec3 absorption = pow(clamp(glass ? glassTint : color, vec3(0.001), vec3(1.0)), vec3(glass ? thickness / glassState.w : thickness));
