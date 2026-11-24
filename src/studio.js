@@ -29,7 +29,7 @@ import {
 } from './studio-preferences.js';
 import { createOutlineMask } from './studio-outline-mask.js';
 import { createPanelGrips } from './studio-panel-grips.js';
-import { STUDIO_BRAND_ICON_NAMES, STUDIO_FILLED_ICON_NAMES, STUDIO_ICON_ACCENTS, STUDIO_LIGHT_ICONS, STUDIO_NOTICE_ICONS, STUDIO_PRIMITIVE_ICONS, studioIconPath } from './studio-icons.js';
+import { leadWithActionIcon, STUDIO_ACTION_ICONS, STUDIO_BRAND_ICON_NAMES, STUDIO_FILLED_ICON_NAMES, STUDIO_ICON_ACCENTS, STUDIO_LIGHT_ICONS, STUDIO_NOTICE_ICONS, STUDIO_PRIMITIVE_ICONS, studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
 import { createKeyMarkers } from './studio-timeline-keys.js';
 import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-properties.js';
@@ -2315,6 +2315,8 @@ export function createStudio(container, {
   const dialogFileButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Load file…' });
   const dialogCloseButton = createElement(documentReference, 'button', { type: 'submit', value: 'close', textContent: 'Close' });
   const dialogApplyButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-primary-btn', textContent: 'Apply JSON' });
+  leadWithActionIcon(dialogFileButton, createIcon(documentReference, STUDIO_ACTION_ICONS.loadFile), STUDIO_ACTION_ICONS.loadFile);
+  leadWithActionIcon(dialogApplyButton, createIcon(documentReference, STUDIO_ACTION_ICONS.applyJson), STUDIO_ACTION_ICONS.applyJson);
   const recipeDialog = createElement(
     documentReference,
     'dialog',
@@ -2388,6 +2390,7 @@ export function createStudio(container, {
     return createElement(documentReference, 'label', { className: 'crucible-studio-setting' }, createElement(documentReference, 'span', { textContent: label }), control);
   });
   const settingsResetButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Reset' });
+  leadWithActionIcon(settingsResetButton, createIcon(documentReference, STUDIO_ACTION_ICONS.resetSettings), STUDIO_ACTION_ICONS.resetSettings);
   settingsResetButton.addEventListener('click', () => {
     preferences = normalizeStudioPreferences({ setupDone: preferences.setupDone });
     storePreferences();

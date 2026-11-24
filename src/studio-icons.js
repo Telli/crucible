@@ -64,6 +64,10 @@ export const STUDIO_ICON_PATHS = Object.freeze({
   tierAutomatic: 'M4 12a8 8 0 0 1 14-5.3M20 4v4h-4M20 12a8 8 0 0 1-14 5.3M4 20v-4h4',
   handle: 'M7 7h10v10H7zM3 3h4v4H3zM17 3h4v4h-4zM3 17h4v4H3zM17 17h4v4h-4z',
   chat: 'M4 5h16v11h-9l-4.5 4v-4H4zM8 9.5h8M8 12.5h5',
+  // Action buttons: reload turns clockwise, reset (put back) the other way, signIn is a door with an arrow going in.
+  reload: 'M20 12a8 8 0 1 1-2.3-5.7L20 8.5M20 4v4.5h-4.5',
+  reset: 'M4 12a8 8 0 1 0 2.3-5.7L4 8.5M4 4v4.5h4.5',
+  signIn: 'M10 4h7a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-7M3 12h11M10.5 8l4 4-4 4',
   // Silhouettes of the add menu shapes, and the marks of property sections and notices, drawn to stay readable at 16 px.
   box: 'M4 9l3-5h13v11l-3 5H4zM4 9h13l3-5M17 9v11',
   icoSphere: 'M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM12 7.5l4.5 7.5h-9z',
@@ -125,6 +129,30 @@ export const STUDIO_PROPERTY_SECTION_ICONS = Object.freeze({
 });
 // The mark a status notice leads with; its shape differs per outcome.
 export const STUDIO_NOTICE_ICONS = Object.freeze({ success: 'check', warning: 'warning', error: 'error', info: 'info' });
+
+/**
+ * The icon each main action button of a notice or dialog leads with. A dismissal (Close, Skip, Done, Back, Next) has none:
+ * its text says it. Buttons that sit together never share an icon, and none repeats the icon of the title above it.
+ */
+export const STUDIO_ACTION_ICONS = Object.freeze({
+  reload: 'reload',
+  restoreDraft: 'reset',
+  discardDraft: 'remove',
+  loadFile: 'open',
+  applyJson: 'check',
+  resetSettings: 'reset',
+  signIn: 'signIn',
+  signedIn: 'chat',
+  copyPrompt: 'duplicate',
+  copied: 'check',
+});
+
+/** Puts an action's icon before the label of its button and marks the button; the label stays its accessible name. */
+export function leadWithActionIcon(button, icon, iconName) {
+  button.dataset.actionIcon = iconName;
+  button.prepend(icon);
+  return button;
+}
 
 // Glyphs drawn as solid shapes with the mark cut out of them, so they show as a weight apart from the outlined set.
 export const STUDIO_FILLED_ICON_NAMES = Object.freeze(['error']);

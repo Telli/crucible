@@ -76,6 +76,8 @@ export const STUDIO_CSS = `
   padding: 0;
   flex-shrink: 0;
 }
+.crucible-studio button[data-action-icon] { gap: 8px; }
+.crucible-studio button[data-action-icon] > .crucible-studio-icon { color: inherit; }
 .crucible-studio-icon[data-brand],
 .crucible-studio-icon[data-filled] {
   fill: currentColor;
@@ -424,7 +426,7 @@ export const STUDIO_CSS = `
   inset-block-start: var(--studio-top);
   inset-inline: calc(var(--studio-rail) + 2 * var(--studio-edge)) calc(var(--studio-side-width, 284px) + 2 * var(--studio-edge));
   inline-size: fit-content;
-  max-inline-size: 520px;
+  max-inline-size: 600px;
   margin-inline: auto;
   gap: 10px;
   padding: 10px 12px;
