@@ -317,9 +317,9 @@ export const STUDIO_CSS = `
 .crucible-studio-silhouette-colour {
   flood-color: var(--studio-accent);
 }
-/* The active object is drawn at the full accent; the rest of the selection at half of it, so the two read apart. */
+/* The active object is drawn at the full accent; the rest of the selection at 40 percent of it, so the two read apart. */
 .crucible-studio-silhouette-colour[data-layer="others"] {
-  flood-color: color-mix(in srgb, var(--studio-accent) 50%, transparent);
+  flood-color: color-mix(in srgb, var(--studio-accent) 40%, transparent);
 }
 .crucible-studio-selection-outline {
   fill: none;
@@ -329,7 +329,7 @@ export const STUDIO_CSS = `
   pointer-events: none;
 }
 .crucible-studio-selection-outline[data-layer="others"] {
-  stroke: color-mix(in srgb, var(--studio-accent) 50%, transparent);
+  stroke: color-mix(in srgb, var(--studio-accent) 40%, transparent);
 }
 /* The axis widget stands at the top right of the viewport, beside the panel column. Floating, that is left of the
    Scene card, level with its top and one edge gap from it; --studio-gizmo-clear is the room the cards take. */

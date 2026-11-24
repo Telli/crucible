@@ -227,9 +227,9 @@ test('the default keymap binds select all, none and invert, and no preset loses 
   }
 });
 
-test('the stylesheet draws the rest of the selection at half the accent', () => {
-  assert.match(STUDIO_CSS, /\.crucible-studio-silhouette-colour\[data-layer="others"\]\s*{\s*flood-color: color-mix\(in srgb, var\(--studio-accent\) 50%, transparent\);/);
-  assert.match(STUDIO_CSS, /\.crucible-studio-selection-outline\[data-layer="others"\]\s*{\s*stroke: color-mix\(in srgb, var\(--studio-accent\) 50%, transparent\);/);
+test('the stylesheet draws the rest of the selection at 40 percent of the accent', () => {
+  assert.match(STUDIO_CSS, /\.crucible-studio-silhouette-colour\[data-layer="others"\]\s*{\s*flood-color: color-mix\(in srgb, var\(--studio-accent\) 40%, transparent\);/);
+  assert.match(STUDIO_CSS, /\.crucible-studio-selection-outline\[data-layer="others"\]\s*{\s*stroke: color-mix\(in srgb, var\(--studio-accent\) 40%, transparent\);/);
 });
 
 function mountStudio(testContext) {

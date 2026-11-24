@@ -98,7 +98,7 @@ A field that a motion track or driver animates is locked, shown in the muted col
 
 Click an object to select it. Shift+click (or Ctrl or Command+click) adds an object to the selection, or takes it out if it is already in; the one you added last is the **active** object. A click on empty space clears the selection, and Shift+click on empty space leaves it alone. Select all (A) takes every visible object, Select none (Alt+A) clears the selection and Invert (Ctrl+I) swaps selected and not selected.
 
-Every selected object has an outline: the active one in the full accent colour, the others at half strength. A selection too dense for the shape outline (past 8,000 triangles) is drawn by the mask in one strength. The Properties card, the handles, the readout and every action (move, delete, duplicate, hide, keyframes) still work on the active object only, and the Properties head says how many are selected. Tab edits the mesh of the active object.
+Every selected object has an outline: the active one in the full accent colour, the others at 40 percent strength. A selection too dense for the shape outline (past 8,000 triangles) is drawn by the mask in one strength. The Properties card, the handles, the readout and every action (move, delete, duplicate, hide, keyframes) still work on the active object only, and the Properties head says how many are selected. Tab edits the mesh of the active object.
 
 ## Keys
 
