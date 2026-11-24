@@ -255,3 +255,63 @@ test('the generated fragment shader caps the filter width and uses the world nor
   assert.match(source, /min\(0\.5 \* fwidth\(coverSignal\), 1\.5 \* materialCoverShape\.z\)/);
   assert.match(source, /normalize\(worldNormal\)\.y/);
 });
+
+test('an octave fades to nothing as its footprint grows past the cell size', async () => {
+  const { surfaceCoverOctaveFade, surfaceCoverNoise, normalizeSurfaceCover, surfaceCoverAmount, SURFACE_COVER_OCTAVE_FADE } = await loadCover();
+  assert.equal(surfaceCoverOctaveFade(0), 1, 'a footprint of zero keeps the whole octave');
+  assert.equal(surfaceCoverOctaveFade(SURFACE_COVER_OCTAVE_FADE.fullBelow), 1);
+  assert.equal(surfaceCoverOctaveFade(SURFACE_COVER_OCTAVE_FADE.goneAbove), 0);
+  assert.equal(surfaceCoverOctaveFade(4), 0, 'a cell under a pixel wide has no amplitude left');
+  let previous = 1;
+  for (let footprint = 0; footprint <= 1; footprint += 0.02) {
+    const fade = surfaceCoverOctaveFade(footprint);
+    assert.ok(fade <= previous + 1e-12, `the fade never grows with the footprint (${footprint})`);
+    previous = fade;
+  }
+  const noise = { scale: 0.7, amount: 0.4, seed: 3 };
+  const positions = [[0.3, 1.1, -2.4], [5.2, 0.4, 3.3], [-7.7, 2.9, 0.1], [1.9, 6.1, 4.8]];
+  const spread = Array.from({ length: 60 }, (_, index) => surfaceCoverNoise([index * 0.37, index * 0.11, -index * 0.23], noise, 0));
+  assert.ok(Math.max(...spread) - Math.min(...spread) > 0.2, 'a footprint of zero keeps the noise varying');
+  for (const position of positions) {
+    assert.equal(surfaceCoverNoise(position, noise, 2), 0.5, 'at a large footprint the noise is its mean, so no speckle is left');
+  }
+  const cover = normalizeSurfaceCover({ output: 'slope', edge: 0.33, softness: 0.0174, noise });
+  const normal = [Math.sqrt(1 - 0.5 * 0.5), 0.5, 0];
+  const distant = positions.map(position => surfaceCoverAmount(cover, position, normal, 0, 2));
+  assert.ok(distant.every(amount => amount === distant[0]), 'far away the edge no longer depends on the position');
+});
+
+test('only the finer octave fades at a footprint that still resolves the coarse one', async () => {
+  const { surfaceCoverNoise, SURFACE_COVER_OCTAVE_FADE, SURFACE_COVER_OCTAVE } = await loadCover();
+  const noise = { scale: 1, amount: 0.4, seed: 0 };
+  const firstFull = SURFACE_COVER_OCTAVE_FADE.fullBelow * 0.9;
+  const secondGone = SURFACE_COVER_OCTAVE_FADE.goneAbove / SURFACE_COVER_OCTAVE.ratio * 1.05;
+  assert.ok(secondGone < firstFull, 'the two footprints sit between the fine and the coarse fade');
+  for (const position of [[0.37, 0.61, 0.83], [4.2, 1.7, -3.9], [-2.2, 5.5, 1.4]]) {
+    const resolved = surfaceCoverNoise(position, noise, 0);
+    const coarseOnly = surfaceCoverNoise(position, noise, secondGone);
+    assert.notEqual(coarseOnly, resolved, 'the fine octave is gone');
+    assert.equal(coarseOnly, surfaceCoverNoise(position, noise, firstFull), 'the coarse octave is untouched across the two footprints');
+  }
+});
+
+test('the generated fragment shader fades each octave by the footprint of its coordinate', async () => {
+  await loadCover();
+  const source = createFragmentShader(['surfaceCover']);
+  assert.match(source, /float coverFootprint = length\(fwidth\(coverPoint\)\)/);
+  assert.match(source, /1\.0 - smoothstep\(0\.25, 0\.5, cellsPerPixel\)/);
+  assert.match(source, /coverOctaveFade\(coverFootprint \* 5\.3\)/);
+  assert.match(source, /coverOffset < 0\.0 \? coverOffset \* \(1\.0 - smoothstep\(0\.0, 0\.05, max\(coverSignal - materialCoverShape\.y, 0\.0\)\)\)/);
+});
+
+test('a negative noise lobe cannot punch a hole into the layer far above the edge', async () => {
+  const { surfaceCoverBrokenSignal, normalizeSurfaceCover, SURFACE_COVER_HOLE_REACH } = await loadCover();
+  const cover = normalizeSurfaceCover({ output: 'slope', edge: 0.33, softness: 0.0174, noise: { scale: 1, amount: 0.4 } });
+  const deepestLobe = 0;
+  const farAbove = 0.33 + SURFACE_COVER_HOLE_REACH + 0.01;
+  assert.equal(surfaceCoverBrokenSignal(cover, farAbove, deepestLobe), farAbove, 'beyond the reach the pull-down is gone');
+  assert.ok(farAbove + 0.4 * (deepestLobe - 0.5) < 0.33, 'unfaded, the same lobe would drop the pixel under the edge');
+  const nearEdge = 0.33 + SURFACE_COVER_HOLE_REACH / 4;
+  assert.ok(surfaceCoverBrokenSignal(cover, nearEdge, deepestLobe) < nearEdge, 'along the edge the lobe still bites');
+  assert.equal(surfaceCoverBrokenSignal(cover, 0.1, 1), 0.1 + 0.4 * 0.5, 'a positive lobe on the bare side is untouched');
+});

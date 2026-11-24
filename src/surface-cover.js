@@ -32,6 +32,14 @@ export const SURFACE_COVER_OCTAVE = Object.freeze({ firstWeight: 0.6, secondWeig
 // The edge never gets thinner than the pixel, but the pixel's share is capped at this many softnesses: a crease in the mesh
 // normals jumps the signal between two neighbouring pixels, and an uncapped fwidth smears a white band along every crease.
 export const SURFACE_COVER_FILTER_CAP = 1.5;
+// An octave whose lattice cell is under a few pixels wide only aliases (speckles that shimmer when the camera moves), so its
+// amplitude fades out as the pixel footprint, in lattice cells per pixel, grows: full at the first value, gone at the second
+// (4 pixels a cell and 2 pixels a cell). A faded octave is replaced by its mean 0.5, so the edge stays where it was.
+// A negative noise lobe over a covered pixel punches a dark hole into the layer, an isolated blob where the signal only sits a
+// little above the edge. Noise may still add layer on the bare side, but the pull-down fades to nothing once the signal is
+// this far (in signal units) above the edge, so holes can only open along the edge itself.
+export const SURFACE_COVER_HOLE_REACH = 0.05;
+export const SURFACE_COVER_OCTAVE_FADE = Object.freeze({ fullBelow: 0.25, goneAbove: 0.5 });
 
 const RIGHT_ANGLE = Math.PI / 2;
 const EXAMPLE = '{"surfaceCover":{"output":"slope","edge":0.5,"noise":{"scale":0.2}}}';
@@ -128,12 +136,22 @@ function latticeNoise(x, y, z) {
   return lerp(plane(0), plane(1), blendZ);
 }
 
-/** The two octave noise the shader adds to the signal, from 0 to 1, at a world position in metres. */
-export function surfaceCoverNoise(position, noise) {
+/** How much of an octave is kept, 1 down to 0, for a pixel footprint of `cellsPerPixel` lattice cells. */
+export function surfaceCoverOctaveFade(cellsPerPixel) {
+  return 1 - smoothstepBetween(SURFACE_COVER_OCTAVE_FADE.fullBelow, SURFACE_COVER_OCTAVE_FADE.goneAbove, cellsPerPixel);
+}
+
+/**
+ * The two octave noise the shader adds to the signal, from 0 to 1, at a world position in metres. `footprint` is the
+ * length of the screen-space change of the first octave's coordinate; each octave fades to 0.5 as its own footprint grows.
+ */
+export function surfaceCoverNoise(position, noise, footprint = 0) {
   const shift = noise.seed * 31;
   const [x, y, z] = position.map(coordinate => coordinate * noise.scale + shift);
   const { firstWeight, secondWeight, ratio, shift: octaveShift } = SURFACE_COVER_OCTAVE;
-  return firstWeight * latticeNoise(x, y, z) + secondWeight * latticeNoise(x * ratio + octaveShift, y * ratio + octaveShift, z * ratio + octaveShift);
+  const first = lerp(0.5, latticeNoise(x, y, z), surfaceCoverOctaveFade(footprint));
+  const second = lerp(0.5, latticeNoise(x * ratio + octaveShift, y * ratio + octaveShift, z * ratio + octaveShift), surfaceCoverOctaveFade(footprint * ratio));
+  return firstWeight * first + secondWeight * second;
 }
 
 /** The mask signal before noise: 1 where the layer sits, from the unit up component of the normal and the world height. */
@@ -154,16 +172,24 @@ function smoothstepBetween(low, high, value) {
   return unit * unit * (3 - 2 * unit);
 }
 
+/** The signal with the noise added: `noiseValue` from 0 to 1 moves it by amount * (noiseValue - 0.5), pulls toward bare fading out above the edge. */
+export function surfaceCoverBrokenSignal(cover, signal, noiseValue) {
+  const offset = cover.noise.amount * (noiseValue - 0.5);
+  if (offset >= 0) return signal + offset;
+  const marginAboveEdge = Math.max(0, signal - cover.edge);
+  return signal + offset * (1 - smoothstepBetween(0, SURFACE_COVER_HOLE_REACH, marginAboveEdge));
+}
+
 /**
  * How much of the layer covers a point: `position` is the world position and `normal` the world normal (any length).
  * `filterWidth` is the screen-space change of the signal, which the shader passes from fwidth so the edge never gets
  * thinner than a pixel; 0 gives the exact mask.
  */
-export function surfaceCoverAmount(cover, position, normal, filterWidth = 0) {
+export function surfaceCoverAmount(cover, position, normal, filterWidth = 0, noiseFootprint = 0) {
   const length = Math.hypot(...normal);
   const upNormal = length > 0 ? normal[1] / length : 0;
   const signal = surfaceCoverSignal(cover, upNormal, position[1]);
-  const broken = cover.noise ? signal + cover.noise.amount * (surfaceCoverNoise(position, cover.noise) - 0.5) : signal;
+  const broken = cover.noise ? surfaceCoverBrokenSignal(cover, signal, surfaceCoverNoise(position, cover.noise, noiseFootprint)) : signal;
   const half = surfaceCoverHalfWidth(cover.softness, filterWidth);
   return smoothstepBetween(cover.edge - half, cover.edge + half, broken);
 }
@@ -221,6 +247,9 @@ float coverNoise(vec3 position) {
   float high = mix(mix(coverCellHash(cell + vec3(0, 0, 1)), coverCellHash(cell + vec3(1, 0, 1)), blend.x), mix(coverCellHash(cell + vec3(0, 1, 1)), coverCellHash(cell + vec3(1, 1, 1)), blend.x), blend.y);
   return mix(low, high, blend.z);
 }
+float coverOctaveFade(float cellsPerPixel) {
+  return 1.0 - smoothstep(${SURFACE_COVER_OCTAVE_FADE.fullBelow}, ${SURFACE_COVER_OCTAVE_FADE.goneAbove}, cellsPerPixel);
+}
 `;
 
 const SURFACE_COVER_SURFACE = `  if (materialCoverShape.x > -0.5) {
@@ -230,8 +259,10 @@ const SURFACE_COVER_SURFACE = `  if (materialCoverShape.x > -0.5) {
     float coverBroken = coverSignal;
     if (materialCoverShape.w > 0.0) {
       vec3 coverPoint = worldPosition * materialCoverNoise.x + vec3(materialCoverNoise.y);
-      float coverBreak = ${SURFACE_COVER_OCTAVE.firstWeight} * coverNoise(coverPoint) + ${SURFACE_COVER_OCTAVE.secondWeight} * coverNoise(coverPoint * ${SURFACE_COVER_OCTAVE.ratio} + vec3(${SURFACE_COVER_OCTAVE.shift}.0));
-      coverBroken += materialCoverShape.w * (coverBreak - 0.5);
+      float coverFootprint = length(fwidth(coverPoint));
+      float coverBreak = ${SURFACE_COVER_OCTAVE.firstWeight} * mix(0.5, coverNoise(coverPoint), coverOctaveFade(coverFootprint)) + ${SURFACE_COVER_OCTAVE.secondWeight} * mix(0.5, coverNoise(coverPoint * ${SURFACE_COVER_OCTAVE.ratio} + vec3(${SURFACE_COVER_OCTAVE.shift}.0)), coverOctaveFade(coverFootprint * ${SURFACE_COVER_OCTAVE.ratio}));
+      float coverOffset = materialCoverShape.w * (coverBreak - 0.5);
+      coverBroken += coverOffset < 0.0 ? coverOffset * (1.0 - smoothstep(0.0, ${SURFACE_COVER_HOLE_REACH}, max(coverSignal - materialCoverShape.y, 0.0))) : coverOffset;
     }
     float covered = smoothstep(materialCoverShape.y - coverWidth, materialCoverShape.y + coverWidth, coverBroken);
     color = mix(color, materialCoverLook.rgb, covered);
