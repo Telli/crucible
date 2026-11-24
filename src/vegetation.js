@@ -17,6 +17,7 @@ import {
 } from './vegetation-geometry.js';
 import { coverageMean, createCrownSkyField, matchMeanVisibility, scaleVisibility, vertexCoverage } from './tree-sky.js';
 import { TREE_LEVEL_GAINS } from './tree-level-gains.js';
+import { crownBrightness, crownDepth, crownLightSettings, describeCrownShape, roundedCanopyNormal, roundedNormalSettings, tipTint } from './foliage-shading.js';
 import { LEVEL_SETTINGS, SPECIES, TREE_LEVEL_DISTANCES } from './vegetation-species.js';
 import { MAX_TREE_BRANCHES, MAX_TREE_LEAF_SITES, TREE_PRESETS, applyTreeGrowth, checkTreeGrowth, maximumBranchCount, mergeTreeGrowth } from './vegetation-presets.js';
 import { barkTextureDescriptor, leafTextureDescriptor } from './vegetation-textures.js';
@@ -448,9 +449,7 @@ function growSkeleton(preset, height, random, leafMode, seed) {
 }
 
 function describeCrown(leafSites) {
-  const center = scaleVector(leafSites.reduce((sum, site) => addVectors(sum, site.position), [0, 0, 0]), 1 / leafSites.length);
-  const radius = Math.max(...leafSites.map(site => vectorLength(subtractVectors(site.position, center))), 0.1);
-  return { center, radius };
+  return describeCrownShape(leafSites.map(site => site.position));
 }
 
 /** Every `stride`-th ring of a branch, and always its tip. */
@@ -546,8 +545,8 @@ export function resolveLeafTextures(leafTextures, species) {
 
 // A number in [0, 1) for an integer cell and a channel, the same on every machine and independent of the tree's random
 // stream, so tinting the leaves moves none of them.
-function cellHash(cell, channel) {
-  let hash = Math.imul(cell[0] | 0, 73856093) ^ Math.imul(cell[1] | 0, 19349663) ^ Math.imul(cell[2] | 0, 83492791) ^ Math.imul(channel + 1, 2654435761);
+function cellHash(cell, channel, salt) {
+  let hash = Math.imul(cell[0] | 0, 73856093) ^ Math.imul(cell[1] | 0, 19349663) ^ Math.imul(cell[2] | 0, 83492791) ^ Math.imul(channel + 1 + salt * 4, 2654435761);
   hash = Math.imul(hash ^ (hash >>> 15), 2246822519);
   hash = Math.imul(hash ^ (hash >>> 13), 3266489917);
   return ((hash ^ (hash >>> 16)) >>> 0) / 4294967296;
@@ -556,33 +555,43 @@ function cellHash(cell, channel) {
 // Real crowns change green from clump to clump and turn darker and cooler inside, where only sky light filtered through
 // other leaves reaches. The clump is a cell of the crown, the same cell the far level merges into one clump card, so every
 // level of a tree carries the same tint and nothing shifts colour when the level changes (issue #2991).
-const CLUMP_VALUE_SPREAD = 0.3;
-const CLUMP_WARMTH = [0.12, 0.04, -0.15];
-const INNER_COOLING = [-0.22, -0.05, 0.16];
+const CLUMP_VALUE_SPREAD = 0.16;
+// Within a clump the leaves still differ: a finer cell (a tenth of the crown radius) lightens or darkens a few leaves, a speckle
+// of light and dark as in a photo. The spread is capped so no cell is a blotch, and the far level averages it with its clump.
+const SPECKLE_CELL_DIVISOR = 9;
+const SPECKLE_VALUE_SPREAD = 0.34;
+const SPECKLE_WARMTH = 0.05;
+const CLUMP_WARMTH = [0.04, 0.02, -0.04];
+const INNER_COOLING = [-0.3, -0.08, 0.22];
 
 function crownTint(skeleton, position, distanceFraction) {
   const cellSize = skeleton.crown.radius / 2.1;
   const cell = position.map(value => Math.floor(value / cellSize));
-  const value = 1 + (cellHash(cell, 0) - 0.5) * CLUMP_VALUE_SPREAD;
-  const warmth = (cellHash(cell, 1) - 0.5) * 2;
-  const cooling = (1 - distanceFraction) ** 1.5;
-  return [0, 1, 2].map(index => value * (1 + CLUMP_WARMTH[index] * warmth) * (1 + INNER_COOLING[index] * cooling));
+  const { tintSalt } = skeleton.crown;
+  const value = 1 + (cellHash(cell, 0, tintSalt) - 0.5) * CLUMP_VALUE_SPREAD;
+  const warmth = (cellHash(cell, 1, tintSalt) - 0.5) * 2;
+  const speckleCell = position.map(coordinate => Math.floor(coordinate * SPECKLE_CELL_DIVISOR / skeleton.crown.radius));
+  const speckle = 1 + (cellHash(speckleCell, 2, tintSalt) - 0.5) * SPECKLE_VALUE_SPREAD;
+  const speckleWarmth = (cellHash(speckleCell, 3, tintSalt) - 0.5) * 2 * SPECKLE_WARMTH;
+  const cooling = (1 - distanceFraction) ** 1.2;
+  const tips = tipTint(distanceFraction);
+  return [0, 1, 2].map(index => value * speckle * (1 + speckleWarmth * (index === 2 ? -1 : 1)) * (1 + CLUMP_WARMTH[index] * warmth) * (1 + INNER_COOLING[index] * cooling) * tips[index]);
 }
 
-function crownShading(skeleton, position) {
-  const { center, radius } = skeleton.crown;
-  const offset = subtractVectors(position, center);
-  const distanceFraction = clamp(vectorLength(offset) / radius, 0, 1);
-  const heightFraction = clamp(offset[1] / radius * 0.5 + 0.5, 0, 1);
+function crownShading(skeleton, position, skyLift, light) {
+  const { crown } = skeleton;
+  const depth = crownDepth(crown, position);
+  const heightFraction = clamp((position[1] - crown.center[1]) / crown.radius * 0.5 + 0.5, 0, 1);
   return {
-    brightness: lerp(0.55, 1.1, distanceFraction ** 0.8) + 0.12 * heightFraction,
-    canopyNormal: normalized(addVectors(normalized(offset), scaleVector(WORLD_UP, 0.35))),
-    tint: crownTint(skeleton, position, distanceFraction),
+    brightness: crownBrightness(light, depth, heightFraction),
+    canopyNormal: roundedCanopyNormal(crown, position, skyLift),
+    tint: crownTint(skeleton, position, depth),
   };
 }
 
 function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
-  const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position);
+  const rounding = roundedNormalSettings(spec, 0.45);
+  const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position, rounding.skyLift, crownLightSettings(spec));
   for (let index = 0; index < spec.meshPerSite; index++) {
     const yaw = (index - (spec.meshPerSite - 1) / 2) * spec.meshSpread;
     const direction = normalized(addScaled(rotateAroundUp(site.direction, yaw), WORLD_UP, (random() - 0.5) * 0.5));
@@ -596,7 +605,7 @@ function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
       droop: spec.droop,
       fold: spec.fold,
       canopyNormal,
-      canopyBlend: 0.45,
+      canopyBlend: rounding.blend,
       colorBase: LEAF_COLOR_BASE,
       colorTip: LEAF_COLOR_TIP,
       brightness: brightness * (0.9 + random() * 0.2) / 1.5,
@@ -624,7 +633,8 @@ function drawsSprayCards(spec) {
 function addCards(builder, skeleton, spec, site, scale, random, variantIndex = 0, { tipScale = scale, cardCount = spec.cardsPerSite } = {}) {
   const pullBack = spec.cardSize[1] * site.scale * (scale - tipScale);
   const origin = addScaled(site.position, site.direction, -pullBack);
-  const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position);
+  const rounding = roundedNormalSettings(spec, 0.55);
+  const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position, rounding.skyLift, crownLightSettings(spec));
   const firstRoll = (random() - 0.5) * 0.6;
   // A twig crown (#3057) draws each card as two flat triangles; a plain species keeps its three-row, drooping card.
   const crowned = drawsSprayCards(spec);
@@ -645,7 +655,7 @@ function addCards(builder, skeleton, spec, site, scale, random, variantIndex = 0
       droop: crowned ? 0 : 0.12,
       uvRect: cardUvRect(crowned, variantIndex),
       canopyNormal,
-      canopyBlend: 0.55,
+      canopyBlend: rounding.blend,
       colorBase: LEAF_COLOR_BASE,
       colorTip: LEAF_COLOR_TIP,
       brightness: brightness * (0.9 + random() * 0.2),
@@ -695,9 +705,10 @@ function addCrownClumps(builder, skeleton, spec, mode, random, widthScale = 1) {
     const center = scaleVector(sites.reduce((sum, site) => addVectors(sum, site.position), [0, 0, 0]), 1 / sites.length);
     const yaw = clumpIndex * GOLDEN_ANGLE;
     clumpIndex++;
-    const shading = crownShading(skeleton, center);
+    const rounding = roundedNormalSettings(spec, 0);
+    const shading = crownShading(skeleton, center, rounding.skyLift, crownLightSettings(spec));
     // The card stands for every leaf of its cell, so it takes their mean tint; the centre alone sits deeper and reads cooler.
-    const tint = [0, 1, 2].map(index => sites.reduce((sum, site) => sum + crownShading(skeleton, site.position).tint[index], 0) / sites.length);
+    const tint = [0, 1, 2].map(index => sites.reduce((sum, site) => sum + crownShading(skeleton, site.position, rounding.skyLift, crownLightSettings(spec)).tint[index], 0) / sites.length);
     const radius = cellSize * (0.55 + 0.1 * Math.min(sites.length, 5)) * widthScale * (spec.clumpScale ?? 1);
     if (mode === 'mesh') {
       addBlob(builder, center, radius, shading.brightness / 1.5, tint);
@@ -742,7 +753,7 @@ function addFrondRibbons(builder, skeleton, spec, segments, random) {
       const progress = step / segments;
       const sample = sampleBranch(branch, progress);
       const frame = createLeafFrame(sample.direction, roll);
-      const { brightness, canopyNormal, tint } = crownShading(skeleton, sample.position);
+      const { brightness, canopyNormal, tint } = crownShading(skeleton, sample.position, roundedNormalSettings(spec, 0).skyLift, crownLightSettings(spec));
       const halfWidth = frondWidth * 0.5 * (0.85 + 0.15 * Math.sin(Math.PI * progress));
       const stepBrightness = brightness * lerp(0.78, 1.12, progress);
       const row = [-1, 0, 1].map((column) => {
