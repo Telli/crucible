@@ -149,7 +149,7 @@ Blender 5.3 manual, read 2026-11-24. Studio at commit `740d33d56`. Status words 
 | [Timeline playhead](https://docs.blender.org/manual/en/latest/editors/timeline.html) | panel | panel | Has. `src/studio.js:2452` | A scrub bar in the bottom panel. Play is on Space (`src/studio-keymap.js:50`). |
 | [Undo and redo](https://docs.blender.org/manual/en/latest/interface/undo_redo.html) (Ctrl+Z, Shift+Ctrl+Z) | operator | operator | Has. `src/studio-keymap.js:41-42`, `src/studio-controller.js:645` | 32 steps. Rail buttons and Edit menu items call the same operator. |
 | [Undo history](https://docs.blender.org/manual/en/latest/interface/undo_redo.html) (Edit menu) | operator | missing | Missing | No list of steps. |
-| [Adjust last operation](https://docs.blender.org/manual/en/latest/interface/undo_redo.html) (Edit menu, F9) | panel | missing | Missing | No panel to tune the last action. |
+| [Adjust last operation](https://docs.blender.org/manual/en/latest/interface/undo_redo.html) (Edit menu, F9) | panel | panel | Partial. `src/studio-shape-settings.js:152`, `src/studio.js:2206` | Reason: Studio keeps the recipe, not the last operator, so the settings of an added basic shape (segments, rings, bevel, radii, subdivisions) are fields of the node panel for as long as the part is a parametric shape, not a panel that follows the last action. Edit mode turns the shape into a mesh and the fields give way to a note saying why. Other operators have no settings panel. |
 | [Repeat last](https://docs.blender.org/manual/en/latest/interface/undo_redo.html) (Shift+R) | operator | missing | Missing | Repeats the last command on the new selection. |
 | [Search menu](https://docs.blender.org/manual/en/latest/interface/controls/buttons/menus.html) (F3, Space in a menu) | operator | missing | Missing | The only search is the Scene list filter (`src/studio.js:1806`). |
 | [Pie menus](https://docs.blender.org/manual/en/latest/interface/controls/buttons/menus.html) (Z, Period, Comma, Tab held) | operator | missing | Missing | Opened by a key; they hold operators and settings. Left out on purpose, see below. |
@@ -175,7 +175,6 @@ Size: S is one small pull request, M is one pull request, L is several. A new me
 | 12 | Proportional editing, as a toggle with a falloff setting | should | Soft shaping of organic forms. | S to M | Supported | #3296 |
 | 13 | See and pick through the mesh, as an X-ray toggle | should | Without it, back faces cannot be box selected. | M | Viewport work | #3297 |
 | 14 | Fill, bridge, subdivide, symmetrize as operators | should | Closing and joining shapes. | M | Supported, face from picked vertices is not | #3298 |
-| 15 | Shape settings in Properties | should | Blender's adjust last operation after an add. | S to M | Supported | #3299 |
 | 16 | Parent with a key, world position kept, drag in the Scene list | should | Grouping parts of a model. | M | UI only | #3300 |
 | 17 | Apply transforms and set origin | should | Needed before mirror and bevel behave. | M | Not verified | #3301 |
 | 18 | Join and separate | should | Splitting and merging parts. | L | Engine work | #3302 |

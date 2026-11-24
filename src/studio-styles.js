@@ -694,6 +694,12 @@ export const STUDIO_CSS = `
 .crucible-studio-tree-section { display: grid; }
 .crucible-studio-tree-section[hidden], .crucible-studio-tree-controls[hidden] { display: none; }
 .crucible-studio-tree-controls { display: grid; gap: 12px; }
+.crucible-studio-shape-settings { display: grid; gap: var(--studio-space-8); }
+.crucible-studio-shape-settings[hidden], .crucible-studio-shape-reason[hidden] { display: none; }
+.crucible-studio-shape-rows { display: grid; gap: var(--studio-space-8); }
+/* No unit follows a shape number, so its inset is the 8 px edge plus 2 px, 12 px, a step of the spacing scale. */
+.crucible-studio-shape-rows .crucible-studio-prop { --studio-unit-slot: 2px; }
+.crucible-studio-shape-reason { margin: 0; color: var(--studio-muted, inherit); font-size: 12px; line-height: 1.4; }
 .crucible-studio-tree-controls > .crucible-studio-field-head { margin-block-end: -8px; }
 .crucible-studio-tree-seed {
   display: grid;
