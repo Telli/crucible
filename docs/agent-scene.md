@@ -124,6 +124,8 @@ Any `opacity` below one draws the material blended after opaque geometry, which 
 `doubleSided` draws and lights both faces of thin sheets.
 Changing the tag, opacity, blending, sidedness or pattern replaces the affected parts in the renderer; color, metallic, roughness and emission edits keep them.
 Set liquid optics with `environment.liquid`: `thickness`, `ior`, `refraction`, `scattering`, `foamOpacity` and `foamSoftness`.
+
+Roblox-style lighting settings map onto the environment and the post steps ([agent-look](agent-look.md#environment) has every field): `Sky` is `environment.skybox` (six catalog image IDs), `ClockTime` and `GeographicLatitude` are `environment.sky.clockTime` (`hours`, `latitude`), `OutdoorAmbient` is `environment.ambientColor`, `EnvironmentDiffuseScale` is `environment.environmentDiffuseScale`, `ColorCorrection` is `effects.colorCorrection` (`brightness`, `contrast`, `saturation`, `tint`) and `SunRays` is `effects.sunRays` (`intensity`, `spread`). Each is absent by default and leaves the frame unchanged until named.
 Colors use linear RGB.
 
 Base color, metallic, and roughness range from zero to one.
