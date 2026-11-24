@@ -5,8 +5,8 @@
 //
 //   node scripts/render-template-thumbnails.mjs [--origin url]
 //
-// Without --origin it starts a Vite dev server on a free port and stops it at the end. Run it through
-// `bash ~/.agents/tools/gpu-lock.sh` on a shared machine: it opens headless Chrome on the GPU.
+// Without --origin it starts a Vite dev server on a free port and stops it at the end. It opens headless Chrome on the GPU,
+// so on a shared machine start it through that machine's GPU queue.
 import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';

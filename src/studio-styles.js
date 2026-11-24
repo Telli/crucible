@@ -2139,7 +2139,6 @@ export const STUDIO_CSS = `
 .crucible-studio-popover > button[data-keeps-menu="true"] > .crucible-studio-icon:first-child { margin-inline-end: var(--studio-space-8); }
 .crucible-studio-popover button[data-keeps-menu="true"] > .crucible-studio-icon[data-recent-chevron] {
   margin-inline-start: auto;
-  transition: transform 120ms ease;
 }
 .crucible-studio-popover button[data-keeps-menu="true"][aria-expanded="true"] > .crucible-studio-icon[data-recent-chevron] { transform: rotate(90deg); }
 .crucible-studio-popover button:disabled { opacity: 0.45; cursor: default; }

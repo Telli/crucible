@@ -340,6 +340,11 @@ test('the Import row shows only with a store, and a dropped GLB or scene.json ta
 
   dom.runTimers();
   dispatch(viewport, 'drop', { dataTransfer: { files: [{ name: 'again.scene.json', text: async () => JSON.stringify(baseRecipe()) }] } });
+  // The placed model is an unsaved change, so replacing the scene asks first (#3327).
+  for (let attempt = 0; attempt < 400 && !root.querySelector('.crucible-studio-confirm-dialog')?.open; attempt += 1) {
+    await dom.settle();
+  }
+  root.querySelector('.crucible-studio-confirm-dialog').querySelectorAll('button').find(button => button.textContent === 'Discard').click();
   for (let attempt = 0; attempt < 400 && statusText() === ''; attempt += 1) {
     await dom.settle();
   }
