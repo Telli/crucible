@@ -12,7 +12,7 @@ import './leaf-transmission.js';
 import { mat4, quat } from 'gl-matrix';
 import {
   FULL_TURN, WORLD_UP, addLeafSurface, addScaled, addTube, addVectors, clamp, createFrame, createLeafFrame,
-  createMeshBuilder, createRandom, crossProduct, lerp, lerpVectors, normalized, randomInRange, scaleVector,
+  atlasCellRect, createMeshBuilder, createRandom, crossProduct, lerp, lerpVectors, normalized, randomInRange, scaleVector,
   subtractVectors, valueNoise, vectorLength,
 } from './vegetation-geometry.js';
 import { coverageMean, createCrownSkyField, matchMeanVisibility, scaleVisibility, vertexCoverage } from './tree-sky.js';
@@ -65,6 +65,7 @@ function lengthProfile(profile, progress) {
   if (profile === 'crown') return 0.62 + 0.38 * Math.sin(Math.PI * clamp(progress * 0.85 + 0.1, 0, 1));
   if (profile === 'cone') return 1 - 0.9 * progress;
   if (profile === 'umbrella') return 0.3 + 0.7 * progress;
+  if (profile === 'spreading') return 1 - 0.5 * progress;
   if (profile === 'column') return 0.8 + 0.2 * Math.sin(Math.PI * progress);
   return 1;
 }
@@ -122,16 +123,65 @@ function walkBranch(origin, direction, length, radius, parameters, random) {
   return { points, radii, length };
 }
 
+
+/**
+ * A crown envelope (Weber and Penn 1995, 4.6): the widest radius the crown may reach at each height, as fractions of the tree
+ * height. It starts at `base`, widens to `width` at `peak` (a fraction of the space above base) and narrows to the top, the
+ * two halves bent by `powerLow` and `powerHigh`.
+ */
+function insideEnvelope(point, envelope, height) {
+  const ratio = (point[1] / height - envelope.base) / (1 - envelope.base);
+  if (ratio < 0 || ratio > 1) return false;
+  const shape = ratio < envelope.peak
+    ? (ratio / envelope.peak) ** envelope.powerLow
+    : ((1 - ratio) / (1 - envelope.peak)) ** envelope.powerHigh;
+  return Math.hypot(point[0], point[2]) <= envelope.width * height * shape;
+}
+
+const ENVELOPE_CROSSING_STEPS = 8;
+// A branch whose first ring is already outside the envelope keeps only this share of its first step, as a stub.
+const OUTSIDE_STUB_SHARE = 0.15;
+
+function lerpPoint(from, to, amount) {
+  return from.map((value, axis) => lerp(value, to[axis], amount));
+}
+
+// A walked branch cut where it leaves the envelope: the rings inside it, then one ring on the boundary, found by bisection.
+// Without an envelope it is returned as it is.
+function pruneToEnvelope(branch, envelope, height) {
+  if (!envelope) return branch;
+  const { points, radii } = branch;
+  const firstOutside = points.findIndex((point, index) => index > 0 && !insideEnvelope(point, envelope, height));
+  if (firstOutside < 0) return branch;
+  const insideRings = firstOutside - 1;
+  const lastInside = points[insideRings];
+  let amount = OUTSIDE_STUB_SHARE;
+  if (insideEnvelope(lastInside, envelope, height)) {
+    let near = 0;
+    let far = 1;
+    for (let step = 0; step < ENVELOPE_CROSSING_STEPS; step++) {
+      const middle = (near + far) / 2;
+      if (insideEnvelope(lerpPoint(lastInside, points[firstOutside], middle), envelope, height)) near = middle;
+      else far = middle;
+    }
+    amount = near;
+  }
+  const ringCount = insideRings + 1;
+  const keptPoints = [...points.slice(0, ringCount), lerpPoint(lastInside, points[firstOutside], amount)];
+  const keptRadii = [...radii.slice(0, ringCount), lerp(radii[insideRings], radii[firstOutside], amount)];
+  return { ...branch, points: keptPoints, radii: keptRadii, length: branch.length * (insideRings + amount) / (points.length - 1) };
+}
+
 /**
  * The twigs a bare tree shows past its last branch level (#2826), one generation per entry of `preset.bareTwigs`. They
  * draw from their own random stream, so growing them leaves the leafy tree, its leaf sites and its crown exactly as they were.
  */
-function growTwigs(skeleton, preset, seed) {
+function growTwigs(skeleton, preset, seed, generations = preset.bareTwigs) {
   const random = createRandom(seed * 6151 + 29);
   const lastLevel = preset.levels.length - 1;
   const twigs = [];
   let parents = skeleton.branches.filter(branch => branch.level === lastLevel);
-  preset.bareTwigs.forEach((generation, generationIndex) => {
+  generations.forEach((generation, generationIndex) => {
     const grown = [];
     for (const parent of parents) {
       for (const slot of createChildSlots(generation, random)) {
@@ -139,7 +189,7 @@ function growTwigs(skeleton, preset, seed) {
         const direction = sproutDirection(sample, slot, randomInRange(random, generation.angle));
         const length = parent.length * randomInRange(random, generation.lengthRatio);
         const walked = walkBranch(sample.position, direction, length, sample.radius * generation.radiusRatio, generation, random);
-        grown.push({ level: lastLevel + 1 + generationIndex, ...walked });
+        grown.push({ ...pruneToEnvelope({ level: lastLevel + 1 + generationIndex, ...walked }, preset.envelope, skeleton.height), parent });
       }
     }
     twigs.push(...grown);
@@ -200,11 +250,86 @@ function tooManyLeafSites(limit) {
 }
 
 /**
- * The leaf sites of a tree preset that sets `leaf.placement` (#3041): on the last `depth` branch levels, kept more often the
- * nearer they sit to the crown's outside (`interiorKeep` is the share kept at its centre), and turned up and outward like the
- * leaves of a real crown, not along the twig with a random wobble.
+ * The twig generations a crowned tree carries its leaves on (#3057): the preset's own list when `leaf.placement.twigs` has one
+ * (birch, aspen), else `bareTwigs`, the twigs a bare oak or ash shows, so a leafy and a bare crown match. `tree.leafCount` scales
+ * the twigs per parent (`twigScale`) and `tree.leafStart` sets where they begin (`twigStart`).
  */
-function placeCrownLeafSites(branches, preset, random) {
+function leafTwigGenerations(preset) {
+  const { twigs, twigScale = 1, twigStart } = preset.leaf.placement;
+  return (twigs ?? preset.bareTwigs).map(generation => ({
+    ...generation,
+    count: generation.count.map(count => Math.max(1, Math.round(count * twigScale))),
+    ...(twigStart === undefined ? {} : { start: Math.min(twigStart, generation.end - 0.05) }),
+  }));
+}
+
+/** Grows the leaf twigs, after checking that their count stays inside the leaf site limit, so a huge tree fails before it allocates. */
+function growLeafTwigs(branches, height, preset, seed) {
+  const generations = leafTwigGenerations(preset);
+  const limit = treeLeafSiteLimit(preset);
+  const lastLevel = preset.levels.length - 1;
+  let generationSize = branches.filter(branch => branch.level === lastLevel).length;
+  let twigCount = 0;
+  for (const generation of generations) {
+    generationSize *= generation.count[1];
+    twigCount += generationSize;
+    if (twigCount > limit * CROWN_CANDIDATE_HEADROOM) throw tooManyLeafSites(limit);
+  }
+  return growTwigs({ branches, height }, preset, seed, generations);
+}
+
+// A twig carries its leaf site at its tip, so no bare stick shows past the card.
+// How far a leaf may point below the horizontal unless the placement lets it hang (`droop`, a birch): a card hung straight down from a
+// low limb reached the ground.
+const DEFAULT_LEAF_DROOP = 0.3;
+
+/**
+ * The leaf sites of a tree preset that sets `leaf.placement` (#3041, #3057): on its twig generations, on a random stream of their
+ * own, kept more often the nearer they sit to the crown's outside (`interiorKeep` is the share kept at its centre; the crown is
+ * fitted by an ellipsoid, so a tall or flat crown thins at its real edge). A site points along its twig, turned outward by
+ * `outwardTilt` and up by `upTilt` (negative hangs, as a birch does).
+ */
+function placeCrownLeafSites(branches, height, preset, seed) {
+  const random = createRandom(seed * 6151 + 53);
+  const { interiorKeep, outwardTilt, upTilt, droop = DEFAULT_LEAF_DROOP } = preset.leaf.placement;
+  const limit = treeLeafSiteLimit(preset);
+  const twigs = growLeafTwigs(branches, height, preset, seed);
+  const candidates = [];
+  for (const twig of twigs) candidates.push({ ...sampleBranch(twig, 1), twig });
+  const center = scaleVector(candidates.reduce((sum, sample) => addVectors(sum, sample.position), [0, 0, 0]), 1 / candidates.length);
+  const extent = [0, 1, 2].map(axis => Math.max(...candidates.map(sample => Math.abs(sample.position[axis] - center[axis])), 0.1));
+  const leafSites = [];
+  const leafTwigs = new Set();
+  for (const sample of candidates) {
+    const offset = subtractVectors(sample.position, center);
+    const outside = clamp(vectorLength(offset.map((value, axis) => value / extent[axis])), 0, 1);
+    if (random() > interiorKeep + (1 - interiorKeep) * outside * outside * (3 - 2 * outside)) continue;
+    const pointing = normalized(addVectors(
+      addVectors(scaleVector(normalized(offset), outwardTilt), scaleVector(WORLD_UP, upTilt)),
+      addVectors(sample.direction, scaleVector(randomUnitOffset(random), 0.25)),
+    ));
+    const direction = limitDroop(pointing, droop);
+    leafSites.push({ position: sample.position, direction, scale: 0.8 + random() * 0.45, roll: (random() - 0.5) * 0.8 });
+    for (let twig = sample.twig; twig && !leafTwigs.has(twig); twig = twig.parent) leafTwigs.add(twig);
+  }
+  if (leafSites.length > limit) throw tooManyLeafSites(limit);
+  // Only a twig that carries a leaf, or leads to one, is drawn: the rest would end in a bare stick (#3057).
+  return { leafSites, leafTwigs: twigs.filter(twig => leafTwigs.has(twig)) };
+}
+
+/** `direction` with its downward slope held to `droop` (0.3 lets a leaf point 17 degrees below the horizontal), turned toward the horizontal. */
+function limitDroop(direction, droop) {
+  if (direction[1] >= -droop) return direction;
+  const flat = Math.hypot(direction[0], direction[2]);
+  const scale = flat > 1e-6 ? Math.sqrt(1 - droop * droop) / flat : 0;
+  return [direction[0] * scale, -droop, direction[2] * scale];
+}
+
+/**
+ * The leaf sites of a preset whose `leaf.placement` has a `depth` (the pine, #3041): on the last `depth` branch levels, kept more
+ * often the nearer they sit to the crown's outside, and turned up and outward like the leaves of a real crown.
+ */
+function placeBranchLevelLeafSites(branches, preset, random) {
   const spec = preset.leaf;
   const { depth, interiorKeep, outwardTilt, upTilt } = spec.placement;
   const firstLevel = preset.levels.length - depth;
@@ -236,7 +361,7 @@ function placeCrownLeafSites(branches, preset, random) {
   return leafSites;
 }
 
-function growSkeleton(preset, height, random, leafMode) {
+function growSkeleton(preset, height, random, leafMode, seed) {
   const placeCrown = Boolean(preset.leaf.placement) && leafMode === 'cards';
   const lastLevel = preset.levels.length - 1;
   const branches = [];
@@ -264,8 +389,11 @@ function growSkeleton(preset, height, random, leafMode) {
     for (const slot of createChildSlots(spec, random)) {
       if (twist) slot.azimuth += twist * slot.fraction;
       const sample = sampleBranch(branch, slot.fraction);
-      const direction = sproutDirection(sample, slot, randomInRange(random, spec.angle));
+      const drawnAngle = randomInRange(random, spec.angle);
       const progress = (slot.fraction - spec.start) / Math.max(spec.end - spec.start, 1e-6);
+      // A preset with `angleTop` leans its branches from `angle` at the first slot to `angleTop` at the last: steep limbs high up.
+      const angle = spec.angleTop === undefined ? drawnAngle : drawnAngle + (spec.angleTop - (spec.angle[0] + spec.angle[1]) / 2) * progress;
+      const direction = sproutDirection(sample, slot, angle);
       growBranch({
         origin: sample.position,
         direction,
@@ -276,11 +404,30 @@ function growSkeleton(preset, height, random, leafMode) {
     }
   }
 
+  // A stem split (Weber and Penn 1995, 4.2): the trunk ends in a fork of limbs that leave it at `angle` and spread round it, so a
+  // broad crown has no central leader. Each limb is `lengthRatio` of the trunk long.
+  function spawnSplitLimbs(trunk, { count, angle, lengthRatio, radiusRatio }) {
+    const tip = sampleBranch(trunk, 1);
+    const firstAzimuth = random() * FULL_TURN;
+    for (let index = 0; index < count; index++) {
+      const azimuth = firstAzimuth + index / count * FULL_TURN + (random() - 0.5) * 0.5;
+      growBranch({
+        origin: tip.position,
+        direction: sproutDirection(tip, { azimuth }, angle * (0.85 + random() * 0.3)),
+        length: trunk.length * lengthRatio * (0.85 + random() * 0.3),
+        radius: tip.radius * radiusRatio,
+        level: 1,
+      });
+    }
+  }
+
   function growBranch({ origin, direction, length, radius, level }) {
     const parameters = preset.levels[level];
-    const branch = { level, ...walkBranch(origin, direction, length, radius, parameters, random) };
+    const walked = { level, ...walkBranch(origin, direction, length, radius, parameters, random) };
+    const branch = level > 0 ? pruneToEnvelope(walked, preset.envelope, height) : walked;
     branches.push(branch);
     if (parameters.children) spawnChildren(branch, parameters.children, parameters.twist);
+    if (level === 0 && parameters.split) spawnSplitLimbs(branch, parameters.split);
     if (level === lastLevel && !placeCrown) addLeafSites(branch);
   }
 
@@ -294,8 +441,10 @@ function growSkeleton(preset, height, random, leafMode) {
     radius: height * preset.trunkRadiusRatio,
     level: 0,
   });
-  const sites = placeCrown ? placeCrownLeafSites(branches, preset, random) : leafSites;
-  return { branches, leafSites: sites, crown: describeCrown(sites) };
+  const placed = !placeCrown ? { leafSites }
+    : preset.leaf.placement.depth === undefined ? placeCrownLeafSites(branches, height, preset, seed)
+      : { leafSites: placeBranchLevelLeafSites(branches, preset, random) };
+  return { branches, height, leafSites: placed.leafSites, leafTwigs: placed.leafTwigs ?? [], crown: describeCrown(placed.leafSites) };
 }
 
 function describeCrown(leafSites) {
@@ -309,6 +458,11 @@ function thinnedRings(points, radii, stride) {
   const kept = points.map((point, index) => index).filter(index => index % stride === 0 || index === points.length - 1);
   return { points: kept.map(index => points[index]), radii: kept.map(index => radii[index]) };
 }
+
+// A leaf twig is drawn as a three-sided stick from its base to its tip (#3057): it only has to hold its card, and a ring
+// per step would put more triangles in the twigs than in the leaves.
+const LEAF_TWIG_SIDES = 3;
+const LEAF_TWIG_RING_STRIDE = 3;
 
 function buildBark(skeleton, preset, setting, bark) {
   const lastLevel = preset.levels.length - 1;
@@ -326,6 +480,12 @@ function buildBark(skeleton, preset, setting, bark) {
       radii = [radii[0] * preset.rootFlare, ...radii];
     }
     addTube(builder, points, radii, sides, bark.tileSize, [1, 1, 1], { worldScaleUv: bark.scanned });
+  }
+  // Only the near level draws them: past it a leaf card is one quad, and a stick under it is under a pixel wide.
+  for (const twig of setting.leafTwigs ? skeleton.leafTwigs ?? [] : []) {
+    if (twig.level > maximumLevel) continue;
+    const { points, radii } = thinnedRings(twig.points, twig.radii, LEAF_TWIG_RING_STRIDE);
+    addTube(builder, points, radii, LEAF_TWIG_SIDES, bark.tileSize, [1, 1, 1], { worldScaleUv: bark.scanned });
   }
   return builder.build();
 }
@@ -447,14 +607,28 @@ function addMeshLeaves(builder, skeleton, spec, site, scale, random) {
   }
 }
 
+// A crown placement paints its twig texture as a 2 x 2 atlas of spray variants (#3057): each card draws one cell, picked by
+// its variant index. A plain species and the pine's fanned placement draw the whole texture.
+const FULL_TEXTURE_RECT = Object.freeze({ minU: 0, minV: 0, maxU: 1, maxV: 1 });
+function cardUvRect(crowned, variantIndex) {
+  return crowned ? atlasCellRect(variantIndex) : FULL_TEXTURE_RECT;
+}
+
+/** Whether a card draws a spray cell as two flat triangles: a twig crown (#3057), not a placement on branch levels (`depth`, the pine). */
+function drawsSprayCards(spec) {
+  return Boolean(spec.placement) && spec.placement.depth === undefined;
+}
+
 // `tipScale` (a far level, #3051) pulls a bigger card back along its direction so its tip stays where the tip of a card of that scale
 // would be: the far card fills the crown inward and leaves its width alone.
-function addCards(builder, skeleton, spec, site, scale, random, { tipScale = scale, cardCount = spec.cardsPerSite } = {}) {
+function addCards(builder, skeleton, spec, site, scale, random, variantIndex = 0, { tipScale = scale, cardCount = spec.cardsPerSite } = {}) {
   const pullBack = spec.cardSize[1] * site.scale * (scale - tipScale);
   const origin = addScaled(site.position, site.direction, -pullBack);
   const { brightness, canopyNormal, tint } = crownShading(skeleton, site.position);
   const firstRoll = (random() - 0.5) * 0.6;
-  // Crossed pairs turn each card a quarter turn from the last; a crown placement (#3041) fans them a little around the same
+  // A twig crown (#3057) draws each card as two flat triangles; a plain species keeps its three-row, drooping card.
+  const crowned = drawsSprayCards(spec);
+  // Crossed pairs turn each card a quarter turn from the last; the pine's placement (#3041) fans them a little around the same
   // upward, outward plate, so every card lies like a leaf and none stands edge-on.
   const fan = spec.placement?.cardFan;
   for (let index = 0; index < cardCount; index++) {
@@ -466,9 +640,10 @@ function addCards(builder, skeleton, spec, site, scale, random, { tipScale = sca
       frame: createLeafFrame(site.direction, roll),
       length: spec.cardSize[1] * site.scale * scale,
       width: spec.cardSize[0] * site.scale * scale,
-      rows: [[0, 1], [0.5, 1], [1, 1]],
+      rows: crowned ? [[0, 1], [1, 1]] : [[0, 1], [0.5, 1], [1, 1]],
       backFaces: false,
-      droop: 0.12,
+      droop: crowned ? 0 : 0.12,
+      uvRect: cardUvRect(crowned, variantIndex),
       canopyNormal,
       canopyBlend: 0.55,
       colorBase: LEAF_COLOR_BASE,
@@ -645,14 +820,16 @@ function buildFoliage(skeleton, preset, mode, levelSetting, random, levelIndex) 
     const fannedPair = Boolean(preset.leaf.farPair);
     const cardCount = fannedPair ? preset.leaf.cardsPerSite : 1;
     const keep = Math.min(1, fannedPair ? setting.leafKeep : setting.leafKeep * preset.leaf.cardsPerSite);
-    for (const site of pickFarSites(skeleton, keep)) addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random, { tipScale: setting.tipScale, cardCount });
+    pickFarSites(skeleton, keep).forEach((site, index) => {
+      addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random, index, { tipScale: setting.tipScale, cardCount });
+    });
     return builder.build();
   }
   const stride = Math.round(1 / setting.leafKeep);
   skeleton.leafSites.forEach((site, index) => {
     if (index % stride !== 0) return;
     if (mode === 'mesh') addMeshLeaves(builder, skeleton, preset.leaf, site, setting.leafScale, random);
-    else addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random);
+    else addCards(builder, skeleton, preset.leaf, site, setting.leafScale, random, Math.floor(index / stride));
   });
   return builder.build();
 }
@@ -792,7 +969,7 @@ export function resolveTreePreset({ species, preset, tree } = {}) {
   const presetLevels = named?.tree.levels ?? base.levels.length - 1;
   const overrides = mergeTreeGrowth(named?.tree ?? {}, tree === undefined ? {} : checkTreeGrowth(tree, presetLevels, growthError));
   if (Object.keys(overrides).length === 0 && !named?.height && !named?.leaf) return { species: baseSpecies, preset: base };
-  const grown = applyTreeGrowth(base, overrides, named?.height, named?.leaf);
+  const grown = applyTreeGrowth(base, overrides, named?.height, named?.leaf, named?.habit);
   const branches = maximumBranchCount(grown.levels);
   if (branches > MAX_TREE_BRANCHES) {
     throw new RangeError(`This tree could grow ${branches} branches, above the limit of ${MAX_TREE_BRANCHES}; lower tree.branches or tree.levels.`);
@@ -816,7 +993,7 @@ export function createTree(speciesOrOptions = 'broadleaf', seed = 1) {
   const random = createRandom(seed * 7919 + 17);
   const height = options.height ?? randomInRange(random, preset.height);
   checkTreeHeight(height);
-  const skeleton = growSkeleton(preset, height, random, leaves);
+  const skeleton = growSkeleton(preset, height, random, leaves, seed);
   const scannedBark = resolveBarkTextures(options.barkTextures, species);
   const bark = { scanned: Boolean(scannedBark), tileSize: options.barkTileSize ?? (scannedBark ? SCANNED_BARK_TILE_SIZE : BARK_TILE_SIZE) };
   const scannedLeaves = leaves === 'cards' ? resolveLeafTextures(options.leafTextures, species) : null;

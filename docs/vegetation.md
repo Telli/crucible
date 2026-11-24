@@ -78,9 +78,9 @@ The tree keeps the base as its `species` and names the preset in `preset`, so se
 | `tropism` | -0.5 to 0.5 | pull toward `growthDirection` each step; negative droops, which is gravity |
 | `growthDirection` | [x, y, z] | where branches grow toward, such as the sun side (up by default) |
 | `crownShape` | round, cone, column, umbrella | how branch length changes up the trunk |
-| `leafCount` | 0.5 to 20 | leaf sites per metre of twig |
+| `leafCount` | 0.5 to 20 | leaf sites per metre of twig; on oak, ash, aspen and birch, the twigs per parent against the species (5 is the species) |
 | `leafSize` | 0.25 to 3 | leaf and card size against the species |
-| `leafStart` | 0 to 0.95 | where along a twig leaves begin |
+| `leafStart` | 0 to 0.95 | where along a twig leaves begin; on oak, ash, aspen and birch, where the twigs begin on their parent |
 
 The parameters from `branches` to `radiusFalloff` take one number for every level or a list that starts at the first branches off the trunk; `gnarliness`, `twist` and `tropism` lists start at the trunk.
 A list sets levels from the first one, and the levels it leaves out keep the preset's value.
