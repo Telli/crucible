@@ -19,7 +19,7 @@ export const VOXEL_TERRAIN_LOOKS = Object.freeze({
 });
 const DEFAULT_PALETTE = Object.freeze(['grass', 'rock', 'sand', 'water']);
 const WATER_NAME = 'water';
-const WATER_DROP = 0.1;
+const WATER_DROP = 0.3;
 const WETNESS_THRESHOLD = 0.08;
 const WATER_MINIMUM_UP = 0.6;
 const LAND_MATERIAL = Object.freeze({ tag: 'surface', color: [1, 1, 1], metallic: 0, roughness: 0.92, emission: 0 });
@@ -28,6 +28,8 @@ const EDGE_MODES = ['open', 'closed'];
 const SADDLE_FIX_HINT = 'Raise smoothing, or fill the single-cell diagonal contact in the occupancy.';
 // Closed edges: the side walls and base get one flat earth colour (linear RGB), cut hard from the top surface colours.
 const BOUNDARY_SNAP = 0.25;
+const BANK_RUN = 2;
+const LEVEL_BUCKET = 0.02;
 const WALL_COLOR = Object.freeze([0.2, 0.062, 0.016]);
 const COLOR_WINDOW = 2;
 const COLOR_KERNEL_RADIUS = 1.5;
@@ -523,30 +525,106 @@ function facesUp({ quads, positions }, quadIndex) {
   return normal[1] / (Math.hypot(...normal) || 1) >= WATER_MINIMUM_UP;
 }
 
-// The water volume is blurred together with the bank, so its surface climbs a little up the bank and pokes through the
-// land at a grazing angle. A vertex is pressed down to the lowest vertex within two cells of it (when that is no more than a
-// cell lower), which gives each body one flat level and leaves separate levels alone.
-function flattenBankVertices(positions, cellSize) {
-  const bucketOf = (x, z) => `${Math.floor(x / cellSize)},${Math.floor(z / cellSize)}`;
-  const lowest = new Map();
-  for (let offset = 0; offset < positions.length; offset += 3) {
-    const key = bucketOf(positions[offset], positions[offset + 2]);
-    lowest.set(key, Math.min(lowest.get(key) ?? Infinity, positions[offset + 1]));
-  }
-  const flattened = positions.slice();
-  for (let offset = 0; offset < positions.length; offset += 3) {
-    const bucketX = Math.floor(positions[offset] / cellSize);
-    const bucketZ = Math.floor(positions[offset + 2] / cellSize);
-    let level = positions[offset + 1];
-    for (let stepZ = -2; stepZ <= 2; stepZ++) {
-      for (let stepX = -2; stepX <= 2; stepX++) {
-        const neighbour = lowest.get(`${bucketX + stepX},${bucketZ + stepZ}`);
-        if (neighbour !== undefined && neighbour >= positions[offset + 1] - cellSize) level = Math.min(level, neighbour);
-      }
+// The water volume is blurred together with the bank, so near the bank its surface climbs and dips around the real level.
+// Each body (a set of connected triangles) is set to the one level most of its vertices share, so the sheet is truly flat
+// and its shoreline is where that plane meets the ground, with no step between sections at slightly different heights.
+function levelWaterBodies(positions, indices, cellSize) {
+  const vertexCount = positions.length / 3;
+  const parent = Array.from({ length: vertexCount }, (_, vertex) => vertex);
+  const rootOf = vertex => {
+    let root = vertex;
+    while (parent[root] !== root) root = parent[root];
+    while (parent[vertex] !== root) {
+      const next = parent[vertex];
+      parent[vertex] = root;
+      vertex = next;
     }
-    flattened[offset + 1] = level;
+    return root;
+  };
+  for (let offset = 0; offset < indices.length; offset += 3) {
+    parent[rootOf(indices[offset + 1])] = rootOf(indices[offset]);
+    parent[rootOf(indices[offset + 2])] = rootOf(indices[offset]);
   }
-  for (let offset = 0; offset < positions.length; offset++) positions[offset] = flattened[offset];
+  const bucketSize = LEVEL_BUCKET * cellSize;
+  const buckets = new Map();
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
+    const root = rootOf(vertex);
+    const bucket = Math.round(positions[vertex * 3 + 1] / bucketSize);
+    const counts = buckets.get(root) ?? new Map();
+    const entry = counts.get(bucket) ?? { count: 0, total: 0 };
+    entry.count++;
+    entry.total += positions[vertex * 3 + 1];
+    counts.set(bucket, entry);
+    buckets.set(root, counts);
+  }
+  const levels = new Map();
+  for (const [root, counts] of buckets) {
+    let best = null;
+    for (const [bucket, entry] of counts) {
+      if (best === null || entry.count > best.count || (entry.count === best.count && bucket > best.bucket)) best = { ...entry, bucket };
+    }
+    levels.set(root, best.total / best.count);
+  }
+  for (let vertex = 0; vertex < vertexCount; vertex++) positions[vertex * 3 + 1] = levels.get(rootOf(vertex));
+}
+
+// The water mesh ends on cell boundaries, so where the ground there is still below the water level the sheet stops short and
+// leaves a stair step. A flat strip is added around the outline, at the level of each boundary vertex and `BANK_RUN` cells wide;
+// it lies under the neighbouring land, so the depth test hides it there and the visible shoreline is the flat water plane
+// crossing the smooth ground.
+function extendUnderBanks(compact, cellSize) {
+  const positions = Array.from(compact.positions);
+  const indices = Array.from(compact.indices);
+  const vertexCount = positions.length / 3;
+  const directed = new Set();
+  for (let corner = 0; corner < indices.length; corner++) {
+    directed.add(`${indices[corner]},${indices[corner - (corner % 3) + (corner + 1) % 3]}`);
+  }
+  const outward = new Map();
+  const boundaryEdges = [];
+  for (let corner = 0; corner < indices.length; corner++) {
+    const triangleStart = corner - (corner % 3);
+    const from = indices[corner];
+    const to = indices[triangleStart + (corner + 1) % 3];
+    if (directed.has(`${to},${from}`)) continue;
+    const opposite = indices[triangleStart + (corner + 2) % 3];
+    const edgeX = positions[to * 3] - positions[from * 3];
+    const edgeZ = positions[to * 3 + 2] - positions[from * 3 + 2];
+    const length = Math.hypot(edgeX, edgeZ);
+    if (length === 0) continue;
+    let normalX = -edgeZ / length;
+    let normalZ = edgeX / length;
+    const towardOpposite = (positions[opposite * 3] - positions[from * 3]) * normalX + (positions[opposite * 3 + 2] - positions[from * 3 + 2]) * normalZ;
+    if (towardOpposite > 0) {
+      normalX = -normalX;
+      normalZ = -normalZ;
+    }
+    boundaryEdges.push([from, to]);
+    for (const vertex of [from, to]) {
+      const sum = outward.get(vertex) ?? [0, 0];
+      outward.set(vertex, [sum[0] + normalX, sum[1] + normalZ]);
+    }
+  }
+  const outerOf = new Map();
+  for (const [vertex, [sumX, sumZ]] of outward) {
+    const length = Math.hypot(sumX, sumZ);
+    if (length < 1e-6) continue;
+    outerOf.set(vertex, positions.length / 3);
+    positions.push(positions[vertex * 3] + sumX / length * BANK_RUN * cellSize, positions[vertex * 3 + 1], positions[vertex * 3 + 2] + sumZ / length * BANK_RUN * cellSize);
+  }
+  for (const [from, to] of boundaryEdges) {
+    if (!outerOf.has(from) || !outerOf.has(to)) continue;
+    const quad = [from, to, outerOf.get(to), outerOf.get(from)];
+    // Each triangle is wound to face up on its own, so a strip that folds at a sharp corner never shows its back.
+    for (const [first, second, third] of [[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]]) {
+      const [ax, az] = [positions[second * 3] - positions[first * 3], positions[second * 3 + 2] - positions[first * 3 + 2]];
+      const [bx, bz] = [positions[third * 3] - positions[first * 3], positions[third * 3 + 2] - positions[first * 3 + 2]];
+      const upward = az * bx - ax * bz;
+      if (upward > 0) indices.push(first, second, third);
+      else if (upward < 0) indices.push(first, third, second);
+    }
+  }
+  return { positions: Float32Array.from(positions), indices: Uint32Array.from(indices), vertexCount };
 }
 
 function waterPart(input, layout, paddedOrigin) {
@@ -569,11 +647,13 @@ function waterPart(input, layout, paddedOrigin) {
   const compact = compactMesh(mesh, keep);
   if (compact.indices.length === 0) return null;
   clampToBounds(compact.positions, input);
-  flattenBankVertices(compact.positions, cellSize);
+  levelWaterBodies(compact.positions, compact.indices, cellSize);
   for (let vertex = 0; vertex < compact.positions.length / 3; vertex++) compact.positions[vertex * 3 + 1] -= WATER_DROP * cellSize;
-  const normals = new Float32Array(compact.positions.length);
-  for (let vertex = 0; vertex < compact.positions.length / 3; vertex++) normals[vertex * 3 + 1] = 1;
-  const geometry = geometryOf(compact, normals, planarUvs(compact.positions));
+  const extended = extendUnderBanks(compact, cellSize);
+  clampToBounds(extended.positions, input);
+  const normals = new Float32Array(extended.positions.length);
+  for (let vertex = 0; vertex < extended.positions.length / 3; vertex++) normals[vertex * 3 + 1] = 1;
+  const geometry = geometryOf(extended, normals, planarUvs(extended.positions));
   return { name: 'Voxel water', geometry, matrix: identityMatrix(), material: { ...WATER_MATERIAL } };
 }
 

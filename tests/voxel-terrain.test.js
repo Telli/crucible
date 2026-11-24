@@ -238,3 +238,49 @@ test('a closed wall hangs from the smooth surface boundary, not from per-cell he
   }
   assert.ok(checked > 40, `checked ${checked} wall top vertices`);
 });
+
+function landHeightAt(land, x, z) {
+  const { positions, indices } = land;
+  let highest = -Infinity;
+  for (let offset = 0; offset < indices.length; offset += 3) {
+    const [first, second, third] = [0, 1, 2].map(corner => indices[offset + corner] * 3);
+    const determinant = (positions[second + 2] - positions[third + 2]) * (positions[first] - positions[third]) + (positions[third] - positions[second]) * (positions[first + 2] - positions[third + 2]);
+    if (Math.abs(determinant) < 1e-12) continue;
+    const weightFirst = ((positions[second + 2] - positions[third + 2]) * (x - positions[third]) + (positions[third] - positions[second]) * (z - positions[third + 2])) / determinant;
+    const weightSecond = ((positions[third + 2] - positions[first + 2]) * (x - positions[third]) + (positions[first] - positions[third]) * (z - positions[third + 2])) / determinant;
+    const weightThird = 1 - weightFirst - weightSecond;
+    if (weightFirst < -1e-9 || weightSecond < -1e-9 || weightThird < -1e-9) continue;
+    highest = Math.max(highest, weightFirst * positions[first + 1] + weightSecond * positions[second + 1] + weightThird * positions[third + 1]);
+  }
+  return highest;
+}
+
+test('the water outline lies under land that is above the water level, so the shoreline is where the ground crosses the water plane', () => {
+  const result = createVoxelTerrain(landscapeInput({ edges: 'closed' }));
+  const land = result.parts[0].geometry;
+  const water = result.parts.find(part => part.material.tag === 'water').geometry;
+  const wallStart = land.indices.length - result.stats.wallTriangles * 3;
+  const topLand = { positions: land.positions, indices: land.indices.subarray(0, wallStart) };
+  const directed = new Set();
+  for (let corner = 0; corner < water.indices.length; corner++) directed.add(`${water.indices[corner]},${water.indices[corner - (corner % 3) + (corner + 1) % 3]}`);
+  const bounds = result.bounds;
+  let checked = 0;
+  for (let corner = 0; corner < water.indices.length; corner++) {
+    const from = water.indices[corner];
+    const to = water.indices[corner - (corner % 3) + (corner + 1) % 3];
+    if (directed.has(`${to},${from}`)) continue;
+    const middle = [0, 1, 2].map(axis => (water.positions[from * 3 + axis] + water.positions[to * 3 + axis]) / 2);
+    const nearBounds = [0, 2].some(axis => middle[axis] <= bounds.min[axis] + 1e-6 || middle[axis] >= bounds.max[axis] - 1e-6);
+    if (nearBounds) continue;
+    const landHeight = landHeightAt(topLand, middle[0], middle[2]);
+    if (landHeight === -Infinity) continue;
+    assert.ok(landHeight >= middle[1] - 1e-3, `the water outline at (${middle[0].toFixed(2)}, ${middle[2].toFixed(2)}) is at ${middle[1].toFixed(3)} but the ground there is only ${landHeight.toFixed(3)}: a visible step`);
+    checked++;
+  }
+  assert.ok(checked > 20, `checked ${checked} outline edges`);
+  for (let offset = 0; offset < water.indices.length; offset += 3) {
+    const [first, second, third] = [0, 1, 2].map(corner => water.indices[offset + corner] * 3);
+    const upward = (water.positions[second + 2] - water.positions[first + 2]) * (water.positions[third] - water.positions[first]) - (water.positions[second] - water.positions[first]) * (water.positions[third + 2] - water.positions[first + 2]);
+    assert.ok(upward >= -1e-9, 'every water triangle faces up');
+  }
+});

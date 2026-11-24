@@ -182,7 +182,44 @@ try {
       walls[name] = { largestStep, largestKink, pixels: count, mean, lab: toLab(mean), transitionWidth: widths.length ? widths[Math.floor(widths.length / 2)] : null, columns: widths.length };
     }
     topOnly.dispose();
-    return { pictures, boxes, walls };
+    // The water outline: water pixels are the cyan ones. Along every row and every column, each run of water has two ends;
+    // an end is followed from line to line (to the nearest end of the previous line within 6 px), and `kink` is how far
+    // an end sits off the straight line between the ends on the lines before and after it. A smooth shore, however
+    // curved or steep, gives a kink near 0, a stair step gives its height.
+    const isWater = (pixels, pixel) => pixels[pixel * 4 + 1] - pixels[pixel * 4] > 35 && pixels[pixel * 4 + 2] - pixels[pixel * 4] > 35;
+    const outlines = {};
+    for (const [name] of Object.entries(views)) {
+      const pixels = withLandscape[name];
+      let worst = { kink: 0, at: [0, 0], direction: '' };
+      for (const direction of ['rows', 'columns']) {
+        const lines = direction === 'rows' ? canvas.height : canvas.width;
+        const length = direction === 'rows' ? canvas.width : canvas.height;
+        const endsOf = line => {
+          const ends = [];
+          let inside = false;
+          for (let position = 0; position < length; position++) {
+            const pixel = direction === 'rows' ? line * canvas.width + position : position * canvas.width + line;
+            const water = isWater(pixels, pixel);
+            if (water !== inside) { ends.push(position); inside = water; }
+          }
+          return ends;
+        };
+        const all = [];
+        for (let line = 0; line < lines; line++) all.push(endsOf(line));
+        const nearest = (ends, value) => ends.reduce((best, end) => (best === null || Math.abs(end - value) < Math.abs(best - value) ? end : best), null);
+        for (let line = 1; line < lines - 1; line++) {
+          for (const end of all[line]) {
+            const before = nearest(all[line - 1], end);
+            const after = nearest(all[line + 1], end);
+            if (before === null || after === null || Math.abs(before - end) > 6 || Math.abs(after - end) > 6) continue;
+            const kink = Math.abs(end - (before + after) / 2);
+            if (kink > worst.kink) worst = { kink, at: direction === 'rows' ? [end, line] : [line, end], direction };
+          }
+        }
+      }
+      outlines[name] = worst;
+    }
+    return { pictures, boxes, walls, outlines };
   }, { smoothing, edges, views, grid: GRID, palette: PALETTE, silhouetteCrop });
   await mkdir(folder, { recursive: true });
   for (const [name, image] of Object.entries(results.pictures)) await writeFile(`${folder}/${name}.png`, Buffer.from(image.split(',')[1], 'base64'));
@@ -197,6 +234,9 @@ try {
   for (const [name, wall] of Object.entries(results.walls)) {
     const [red, green, blue] = wall.mean.map(Math.round);
     console.log(`${name} wall: ${wall.pixels} px, mean RGB ${red} ${green} ${blue}, R-B ${red - blue}, Lab a* ${wall.lab.a.toFixed(1)}, L ${wall.lab.lightness.toFixed(0)}, top-to-wall change ${wall.transitionWidth} px (median of ${wall.columns} columns)${wall.largestStep === null ? '' : `, wall top silhouette in the crop: largest column-to-column change ${wall.largestStep} px, largest kink off the line between neighbours ${wall.largestKink} px`}`);
+  }
+  for (const [name, outline] of Object.entries(results.outlines)) {
+    console.log(`${name} water outline: largest kink off the line between neighbouring ${outline.direction} ${outline.kink.toFixed(1)} px at (${outline.at.join(', ')})`);
   }
   console.log('written', Object.keys(results.pictures).join(', '));
 } finally {
