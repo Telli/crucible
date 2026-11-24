@@ -7,11 +7,19 @@ export const STUDIO_LOADING_ELEMENT_ID = 'studio-loading';
 
 const LOADING_MESSAGE_SELECTOR = '[data-loading-message]';
 const PROGRESS_PROPERTY = '--progress';
-const WIND_DOWN_LIMIT_MILLISECONDS = 700;
+const FILL_SELECTOR = '.fill';
+const WIND_DOWN_LIMIT_MILLISECONDS = 1200;
+const FILL_CREEP_MILLISECONDS = 30000;
+const FILL_CREEP_EASING = 'cubic-bezier(0.1, 0.5, 0.2, 1)';
+const FILL_CREEP_SHARE = 0.85;
+const FILL_COMPLETE_MILLISECONDS = 350;
+const FILL_COMPLETE_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
 
 /**
- * Where the fill of the loading bar stands (0 to 1) once the page script reaches each step. The page starts at 0.12 from its
- * CSS alone, and the bar reaches 1 only when Studio is ready. The fill eases toward each value, so it creeps between steps.
+ * Where the fill of the loading bar stands (0 to 1) once the page script reaches each step. The page's CSS starts a slow creep
+ * toward 0.3 at first paint. At each step the fill eases, over thirty seconds with a strong ease-out, toward a point
+ * 85 percent of the way to the next step, so it keeps moving while the load waits and never arrives early. It reaches 1 only
+ * when Studio is ready.
  */
 export const STUDIO_LOADING_MILESTONES = Object.freeze({
   modulesLoaded: 0.35,
@@ -22,35 +30,70 @@ export const STUDIO_LOADING_MILESTONES = Object.freeze({
 
 const HIGHEST_VALUE_BEFORE_READY = 0.97;
 
-/** Moves the fill forward to the value. It never moves back and never reaches full: only the wind-down does. */
-export function reportStudioLoadingProgress(documentReference, value) {
-  const style = documentReference.getElementById(STUDIO_LOADING_ELEMENT_ID)?.style;
-  if (!style) {
-    return;
-  }
-  const current = Number(style.getPropertyValue(PROGRESS_PROPERTY)) || 0;
-  const next = Math.min(Math.max(value, current), HIGHEST_VALUE_BEFORE_READY);
-  style.setProperty(PROGRESS_PROPERTY, String(next));
+/** The point the fill creeps toward while the load waits for the step after the one at `value`: short of that step, never full. */
+export function creepTargetAfter(value) {
+  const nextStep = Object.values(STUDIO_LOADING_MILESTONES).find(milestone => milestone > value) ?? 1;
+  return Math.min(value + (nextStep - value) * FILL_CREEP_SHARE, HIGHEST_VALUE_BEFORE_READY);
 }
 
-/** Fills the bar. */
-function completeStudioLoadingProgress(documentReference) {
-  documentReference.getElementById(STUDIO_LOADING_ELEMENT_ID)?.style?.setProperty(PROGRESS_PROPERTY, '1');
+function currentFillScale(fillElement) {
+  const transform = fillElement.ownerDocument.defaultView.getComputedStyle(fillElement).transform;
+  const scale = /^matrix[(]([-\d.e]+)/.exec(transform);
+  return scale ? Number(scale[1]) : 0;
+}
+
+const runningFillAnimations = new WeakMap();
+
+/** Eases the fill from where it stands now to the target. A new run replaces the one before it and never goes backward. */
+function animateFill(loadingElement, target, milliseconds, easing) {
+  const fillElement = loadingElement.querySelector(FILL_SELECTOR);
+  if (!fillElement?.animate) {
+    return;
+  }
+  const start = currentFillScale(fillElement);
+  const animation = fillElement.animate(
+    [{ transform: `scaleX(${start})` }, { transform: `scaleX(${Math.max(target, start)})` }],
+    { duration: milliseconds, easing, fill: 'forwards' },
+  );
+  runningFillAnimations.get(fillElement)?.cancel();
+  runningFillAnimations.set(fillElement, animation);
 }
 
 /**
- * Studio is ready: the bar fills, the stream thins and stops and the pot rights itself. All of it starts now; the returned
- * promise resolves when those animations end, at most a moment later.
+ * Moves the fill forward to the step. It never moves back and never reaches full: only the wind-down does. The value goes on
+ * the loading element as --progress (the resting size of the fill), and a long ease starts toward the next step.
+ */
+export function reportStudioLoadingProgress(documentReference, value) {
+  const loadingElement = documentReference.getElementById(STUDIO_LOADING_ELEMENT_ID);
+  if (!loadingElement?.style) {
+    return;
+  }
+  const current = Number(loadingElement.style.getPropertyValue(PROGRESS_PROPERTY)) || 0;
+  const reached = Math.min(Math.max(value, current), HIGHEST_VALUE_BEFORE_READY);
+  loadingElement.style.setProperty(PROGRESS_PROPERTY, String(reached));
+  animateFill(loadingElement, creepTargetAfter(reached), FILL_CREEP_MILLISECONDS, FILL_CREEP_EASING);
+}
+
+/** Fills the bar. */
+function completeStudioLoadingProgress(loadingElement) {
+  loadingElement.style?.setProperty(PROGRESS_PROPERTY, '1');
+  animateFill(loadingElement, 1, FILL_COMPLETE_MILLISECONDS, FILL_COMPLETE_EASING);
+}
+
+/**
+ * Studio is ready: the bar fills (350 ms), the stream thins and stops and the pot rights itself (250 ms), the picture holds,
+ * then the loading state fades out (180 ms, 780 ms in all; 630 ms with reduced motion). All of it starts now; the returned
+ * promise resolves when those animations end.
  */
 export function windDownStudioLoading(documentReference) {
   const loadingElement = documentReference.getElementById(STUDIO_LOADING_ELEMENT_ID);
   if (!loadingElement) {
     return Promise.resolve();
   }
-  completeStudioLoadingProgress(documentReference);
+  completeStudioLoadingProgress(loadingElement);
   loadingElement.dataset.state = 'done';
-  const finishingAnimations = (loadingElement.getAnimations?.({ subtree: true }) ?? []).filter(animation =>
-    Number.isFinite(animation.effect.getComputedTiming().endTime),
+  const finishingAnimations = (loadingElement.getAnimations?.({ subtree: true }) ?? []).filter(
+    animation => animation.effect.getComputedTiming().endTime <= WIND_DOWN_LIMIT_MILLISECONDS,
   );
   const limit = new Promise(resolve => setTimeout(resolve, WIND_DOWN_LIMIT_MILLISECONDS));
   return Promise.race([Promise.allSettled(finishingAnimations.map(animation => animation.finished)), limit]);

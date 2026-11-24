@@ -47,9 +47,9 @@
       }
       #studio-loading .pour {
         position: relative;
-        left: 40px;
         width: 120px;
         height: 96px;
+        transform: translateX(70px) scale(1.5);
       }
       #studio-loading .pot {
         position: absolute;
@@ -73,23 +73,58 @@
       [data-theme="dark"] #studio-loading .mark-dark { display: block; }
       #studio-loading .stream {
         position: absolute;
-        left: 4px;
+        left: 0;
         top: 24px;
-        width: 4px;
-        height: 68px;
-        overflow: hidden;
-        border-radius: 2px;
+        width: 16px;
+        height: 65px;
         opacity: 0;
-        transform-origin: 50% 0;
+        transform-origin: 6px 0;
       }
-      #studio-loading .stream::before {
+      #studio-loading .flow {
+        position: absolute;
+        inset: 0;
+        transform-origin: 6px 0;
+        clip-path: path("M1 0H8C10 6 9.5 14 8 24C7.5 36 8 50 8 63Q8 65 6 65Q4 65 4 63C4 50 3.6 36 3.2 24C2.6 12 1 8 1 0Z");
+      }
+      #studio-loading .flow i {
+        position: absolute;
+        inset: -14px 0 0;
+        background:
+          repeating-linear-gradient(transparent 0, color-mix(in srgb, var(--site-text) 24%, transparent) 4px, transparent 8px, color-mix(in srgb, var(--site-bg) 30%, transparent) 11px, transparent 14px),
+          var(--site-focus);
+      }
+      #studio-loading .pool {
+        position: absolute;
+        left: 0;
+        top: 86px;
+        width: 12px;
+        height: 6px;
+        opacity: 0;
+        transform-origin: 50% 100%;
+      }
+      #studio-loading .pool::before {
         content: "";
         position: absolute;
-        inset: -8px 0 0;
-        background: repeating-linear-gradient(var(--site-focus) 0 4px, color-mix(in srgb, var(--site-focus) 82%, var(--site-bg)) 4px 8px);
+        inset: 0;
+        border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+        background: var(--site-focus);
+        transform-origin: 50% 100%;
       }
+      #studio-loading .drop {
+        position: absolute;
+        top: 84px;
+        width: 3px;
+        height: 3px;
+        border-radius: 50%;
+        background: var(--site-focus);
+        opacity: 0;
+      }
+      #studio-loading .drop:nth-of-type(1) { left: 4px; --dx: -8px; }
+      #studio-loading .drop:nth-of-type(2) { left: 5px; --dx: 7px; }
+      #studio-loading .drop:nth-of-type(3) { left: 6px; --dx: 14px; }
       #studio-loading .progress {
         position: absolute;
+        left: 0;
         top: 92px;
         width: 120px;
         height: 4px;
@@ -100,25 +135,40 @@
       #studio-loading .fill {
         height: 100%;
         background: var(--site-focus);
-        transform: scaleX(var(--progress, 0.12));
+        transform: scaleX(var(--progress, 0.02));
         transform-origin: 0 50%;
-        transition: transform 1.6s var(--site-ease-out);
+        animation: studio-fill-creep 30s cubic-bezier(0.1, 0.5, 0.2, 1) both;
       }
-      #studio-loading[data-state="done"] .fill {
-        transition-duration: 0.35s;
-      }
+      #studio-loading[data-state="done"] { animation: studio-loader-fade 0.18s ease-out 0.45s both; }
       @media (prefers-reduced-motion: no-preference) {
+        #studio-loading[data-state="done"] { animation-delay: 0.6s; }
         #studio-loading .pot { animation: studio-pot-tilt 0.6s var(--site-ease-out) both; }
         #studio-loading .stream { animation: studio-stream-in 0.35s var(--site-ease-out) 0.45s both; }
-        #studio-loading .stream::before { animation: studio-stream-flow 0.5s linear infinite; }
-        #studio-loading[data-state="done"] .pot { animation: studio-pot-right 0.4s ease-in-out both; }
-        #studio-loading[data-state="done"] .stream { animation: studio-stream-out 0.3s ease-in both; }
+        #studio-loading .flow { animation: studio-stream-sway 2.2s ease-in-out infinite alternate; }
+        #studio-loading .flow i { animation: studio-stream-flow 0.7s linear infinite; }
+        #studio-loading .pool { animation: studio-pool-in 0.3s var(--site-ease-out) 0.8s both; }
+        #studio-loading .pool::before { animation: studio-pool-pulse 1.8s ease-in-out infinite alternate; }
+        #studio-loading .drop { animation: studio-drop 1.8s ease-out infinite; }
+        #studio-loading .drop:nth-of-type(1) { animation-delay: 1.1s; }
+        #studio-loading .drop:nth-of-type(2) { animation-delay: 1.7s; }
+        #studio-loading .drop:nth-of-type(3) { animation-delay: 2.3s; }
+        #studio-loading[data-state="done"] .pot { animation: studio-pot-right 0.25s var(--site-ease-out) both; }
+        #studio-loading[data-state="done"] .stream { animation: studio-stream-out 0.25s ease-in both; }
+        #studio-loading[data-state="done"] .pool { animation: studio-pool-out 0.25s ease-out both; }
+        #studio-loading[data-state="done"] .drop { animation: none; }
       }
+      @keyframes studio-fill-creep { from { transform: scaleX(0.02); } to { transform: scaleX(0.3); } }
       @keyframes studio-pot-tilt { from { transform: rotate(0); } to { transform: rotate(30deg); } }
       @keyframes studio-pot-right { from { transform: rotate(30deg); } to { transform: rotate(0); } }
       @keyframes studio-stream-in { from { opacity: 0; transform: scaleY(0); } to { opacity: 1; transform: scaleY(1); } }
       @keyframes studio-stream-out { from { opacity: 1; transform: scaleX(1); } to { opacity: 0; transform: scaleX(0.2); } }
-      @keyframes studio-stream-flow { to { transform: translateY(8px); } }
+      @keyframes studio-stream-flow { to { transform: translateY(14px); } }
+      @keyframes studio-stream-sway { from { transform: translateX(-0.5px) scaleX(0.97); } to { transform: translateX(0.5px) scaleX(1.03); } }
+      @keyframes studio-pool-in { from { opacity: 0; transform: scale(0.4); } to { opacity: 1; transform: scale(1); } }
+      @keyframes studio-pool-pulse { from { transform: scale(1); } to { transform: scale(1.15, 1.3); } }
+      @keyframes studio-pool-out { from { opacity: 1; } to { opacity: 0; } }
+      @keyframes studio-drop { 0% { opacity: 0; transform: translate(0, 0); animation-timing-function: ease-out; } 12% { opacity: 1; } 45% { transform: translate(calc(var(--dx) * 0.6), -9px); animation-timing-function: ease-in; } 100% { opacity: 0; transform: translate(var(--dx), 2px); } }
+      @keyframes studio-loader-fade { from { opacity: 1; } to { opacity: 0; } }
       #studio-loading .failure {
         display: none;
         grid-template-columns: auto 1fr;
@@ -138,9 +188,9 @@
         stroke-linecap: round;
         stroke-linejoin: round;
       }
-      #studio-loading[data-state="error"] .pour { left: 0; width: 72px; }
+      #studio-loading[data-state="error"] .pour { transform: none; width: 72px; }
       #studio-loading[data-state="error"] .pot { left: 0; animation: none; }
-      #studio-loading[data-state="error"] .stream, #studio-loading[data-state="error"] .progress { display: none; }
+      #studio-loading[data-state="error"] :is(.stream, .pool, .drop, .progress) { display: none; }
       #studio-loading[data-state="error"] .failure { display: grid; }
     </style>
   </head>
@@ -148,11 +198,13 @@
     <main id="studio-root"></main>
     <div id="studio-loading" role="status" aria-label="Loading Studio">
       <div class="pour">
-        <div class="stream"></div>
+        <div class="stream"><div class="flow"><i></i></div></div>
         <div class="pot">
           <img class="mark mark-light" src="/brand/crucible-mark.svg" alt="" fetchpriority="high" />
           <img class="mark mark-dark" src="/brand/crucible-mark-dark.svg" alt="" loading="lazy" />
         </div>
+        <div class="pool"></div>
+        <i class="drop"></i><i class="drop"></i><i class="drop"></i>
         <div class="progress"><div class="fill"></div></div>
       </div>
       <div class="failure" role="alert">

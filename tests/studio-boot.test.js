@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
+  creepTargetAfter,
   reportStudioLoadingProgress,
   revealStudio,
   showStudioLoadingFailure,
@@ -148,13 +149,27 @@ test('the page script no longer imports the token stylesheet or opens the setup 
   assert.ok(pageScript.includes('revealStudio'));
 });
 
-// The pour: the pot tips, a stream leaves the lip and the bar fills. Only transform and opacity may animate.
+// The pour: the pot tips, a curved stream leaves the lip into a pool, droplets hop and the bar fills. Only transform and opacity animate.
 const LOADING_STYLE = PAGE_HTML.slice(PAGE_HTML.indexOf('<style>'), PAGE_HTML.indexOf('</style>'));
 const KEYFRAME_BLOCKS = [...LOADING_STYLE.matchAll(/@keyframes (studio-[\w-]+) [{]([^\n]*)/g)];
-const COMPOSITOR_PROPERTIES = new Set(['transform', 'opacity']);
+const COMPOSITOR_PROPERTIES = new Set(['transform', 'opacity', 'animation-timing-function']);
 
+// A loading element with a fill that records the animations started on it. The fill stands where the last one ended.
 function createProgressPage() {
   const properties = new Map();
+  const state = { fillScale: 0.02, started: [], cancelled: 0 };
+  const fillElement = {
+    ownerDocument: {
+      defaultView: { getComputedStyle: () => ({ transform: `matrix(${state.fillScale}, 0, 0, 1, 0, 0)` }) },
+    },
+    animate(keyframes, options) {
+      const target = Number(/scaleX[(]([\d.]+)/.exec(keyframes[1].transform)[1]);
+      const from = Number(/scaleX[(]([\d.]+)/.exec(keyframes[0].transform)[1]);
+      state.started.push({ from, target, options });
+      state.fillScale = target;
+      return { cancel: () => (state.cancelled += 1) };
+    },
+  };
   const loadingElement = {
     dataset: {},
     style: {
@@ -163,23 +178,63 @@ function createProgressPage() {
     },
     getAnimations: () => [],
     remove() {},
-    querySelector: () => null,
+    querySelector: selector => (selector === '.fill' ? fillElement : null),
   };
   const documentReference = {
     documentElement: { removeAttribute() {} },
     getElementById: id => (id === 'studio-loading' ? loadingElement : null),
   };
-  return { loadingElement, documentReference, progress: () => Number(properties.get('--progress')) };
+  return { loadingElement, documentReference, state, progress: () => Number(properties.get('--progress')) };
 }
 
-test('the loading element has a pot, a stream that leaves its lip and a fill in the bar', () => {
-  assert.match(PAGE_HTML, /<div class="pour">\s*<div class="stream"><\/div>\s*<div class="pot">[\s\S]*mark-light[\s\S]*mark-dark[\s\S]*<\/div>\s*<div class="progress"><div class="fill"><\/div><\/div>/);
+test('the loading element has a pot, a stream that leaves its lip into a pool, droplets and a fill in the bar', () => {
+  assert.match(PAGE_HTML, /<div class="pour">\s*<div class="stream"><div class="flow"><i><\/i><\/div><\/div>\s*<div class="pot">[\s\S]*mark-light[\s\S]*mark-dark[\s\S]*<\/div>\s*<div class="pool"><\/div>\s*(?:<i class="drop"><\/i>){3}\s*<div class="progress"><div class="fill"><\/div><\/div>/);
   assert.match(PAGE_HTML, /<img class="mark mark-light" src="\/brand\/crucible-mark[.]svg"/, 'the pot is the brand mark file, not a redrawn copy');
   assert.ok(!PAGE_HTML.includes('class="body"'), 'no copy of the mark artwork sits in the page');
 });
 
-test('the pour animates only transform and opacity, from keyframes and one transition', () => {
-  assert.ok(KEYFRAME_BLOCKS.length >= 5, 'tilt, right, stream in, stream out and flow keyframes exist');
+test('the stream is one static curved clip, wider at the lip than at the pool, with a flow texture inside it', () => {
+  const clip = /[.]flow [{][^}]*clip-path: path[(]"([^"]+)"[)]/.exec(LOADING_STYLE);
+  assert.ok(clip, 'the stream shape is a static clip-path');
+  const topWidth = /^M(\d+) 0H(\d+)/.exec(clip[1]);
+  assert.ok(Number(topWidth[2]) - Number(topWidth[1]) > 4, 'the stream is wide where it leaves the lip');
+  assert.match(clip[1], /Q\d+ 65 6 65Q4 65 4 63/, 'it ends rounded, 4 px wide, at the pool');
+  assert.match(LOADING_STYLE, /[.]flow i [{][^}]*repeating-linear-gradient[(]transparent 0, color-mix[(]in srgb, var[(]--site-text[)] 24%, transparent[)] 4px, transparent 8px, color-mix[(]in srgb, var[(]--site-bg[)] 30%, transparent[)] 11px, transparent 14px[)],\s*var[(]--site-focus[)]/, 'soft lighter and deeper bands made of tokens over the molten colour');
+  assert.match(LOADING_STYLE, /studio-stream-flow 0[.]7s linear infinite/);
+  assert.match(LOADING_STYLE, /@keyframes studio-stream-flow [{] to [{] transform: translateY[(]14px[)]; [}] [}]/, 'the flow moves by exactly one band period of 14 px, so the loop is seamless');
+  assert.match(LOADING_STYLE, /studio-stream-sway 2[.]2s ease-in-out infinite alternate/);
+});
+
+test('the stream lands in the middle of the pool and the pool starts at the left end of the bar', () => {
+  const rule = selector => new RegExp(`${selector} [{]([^}]*)[}]`).exec(LOADING_STYLE)[1];
+  const lengthOf = (body, property) => Number(new RegExp(`(?:^|\\s)${property}: (-?[\\d.]+)(?:px)?;`).exec(body)[1]);
+  const pool = rule('#studio-loading [.]pool');
+  const bar = rule('#studio-loading [.]progress');
+  const stream = rule('#studio-loading [.]stream');
+  const clip = /clip-path: path[(]"[^"]*Q8 65 6 65/.test(LOADING_STYLE);
+  assert.ok(clip);
+  const landingX = lengthOf(stream, 'left') + 6;
+  assert.equal(lengthOf(pool, 'left'), lengthOf(bar, 'left'), 'the pool and the bar start at the same x');
+  assert.equal(landingX, lengthOf(pool, 'left') + lengthOf(pool, 'width') / 2, 'the stream lands in the middle of the pool');
+  assert.equal(lengthOf(pool, 'top') + lengthOf(pool, 'height'), lengthOf(bar, 'top'), 'the pool sits on the bar');
+  assert.equal(lengthOf(stream, 'top') + lengthOf(stream, 'height'), lengthOf(pool, 'top') + 3, 'the stream ends inside the pool');
+});
+
+test('the whole group is scaled up by one transform and still fits a 360 px window', () => {
+  const group = /#studio-loading [.]pour [{][^}]*width: (\d+)px;[^}]*transform: translateX[(](\d+)px[)] scale[(]([\d.]+)[)]/.exec(LOADING_STYLE);
+  assert.ok(group, 'one transform on the group sets its size and optical position');
+  const [, barWidth, shift, scale] = group.map(Number);
+  const potLeft = Number(/[.]pot [{][^}]*left: (-\d+)px/.exec(LOADING_STYLE)[1]);
+  const windowWidth = 360;
+  const origin = windowWidth / 2 + shift;
+  const leftEdge = origin + (potLeft - barWidth / 2) * scale;
+  const rightEdge = origin + (barWidth - barWidth / 2) * scale;
+  assert.ok(leftEdge >= 0 && rightEdge <= windowWidth, `the group spans ${leftEdge} to ${rightEdge} of ${windowWidth}`);
+  assert.equal(scale, 1.5);
+});
+
+test('the pour animates only transform and opacity, with the fill moved by script and no transition', () => {
+  assert.ok(KEYFRAME_BLOCKS.length >= 10, 'tilt, right, stream, sway, flow, pool, drop, fade and fill keyframes exist');
   for (const [, name, body] of KEYFRAME_BLOCKS) {
     const properties = [...body.matchAll(/([\w-]+): [^;]+;/g)].map(match => match[1]);
     assert.ok(properties.length > 0, name);
@@ -187,20 +242,27 @@ test('the pour animates only transform and opacity, from keyframes and one trans
       assert.ok(COMPOSITOR_PROPERTIES.has(property), `${name} animates ${property}`);
     }
   }
-  const transitions = [...LOADING_STYLE.matchAll(/(?<![-\w])transition: ([\w-]+)[^;]*;/g)].map(match => match[1]);
-  assert.deepEqual(transitions, ['transform'], 'the fill is the only transition and it moves by transform');
+  assert.ok(!/(?<![-\w])transition: /.test(LOADING_STYLE), 'no transitions: script and keyframes move the fill');
   assert.match(LOADING_STYLE, /[.]fill [{][^}]*transform: scaleX[(]var[(]--progress/);
   assert.ok(!/will-change|<animate/.test(PAGE_HTML), 'no will-change and no SMIL');
+  const clipPaths = LOADING_STYLE.match(/clip-path/g);
+  assert.equal(clipPaths.length, 1, 'one static clip, never animated');
 });
 
-test('with reduced motion the pot stands upright and still, no stream moves and the bar still fills', () => {
+test('with reduced motion the pot and stream stand still, the fill still moves and the loader still fades', () => {
   const motionStart = LOADING_STYLE.indexOf('@media (prefers-reduced-motion: no-preference) {');
   const motionBlock = LOADING_STYLE.slice(motionStart, LOADING_STYLE.indexOf('@keyframes', motionStart));
   const outsideMotionBlock = LOADING_STYLE.replace(motionBlock, '');
-  const animationsOutside = [...outsideMotionBlock.matchAll(/(?<![-\w])animation: ([^;]+);/g)].map(match => match[1]);
-  assert.deepEqual(animationsOutside, ['none'], 'every animation except the error reset sits inside prefers-reduced-motion: no-preference');
-  assert.match(LOADING_STYLE, /[.]stream [{][^}]*opacity: 0;/, 'the stream is hidden until its animation shows it');
-  assert.match(LOADING_STYLE, /[.]fill [{][^}]*transition: transform/, 'the fill moves with progress whatever the motion setting');
+  const animationsOutside = [...outsideMotionBlock.matchAll(/(?<![-\w])animation: ([^;]+);/g)].map(match => match[1].split(' ')[0]);
+  assert.deepEqual(animationsOutside, ['studio-fill-creep', 'studio-loader-fade', 'none'], 'only the fill, the closing fade and the error reset run without the no-preference query');
+  for (const name of ['pot-tilt', 'stream-in', 'stream-sway', 'stream-flow', 'pool-in', 'drop']) {
+    assert.ok(motionBlock.includes(`studio-${name}`), `${name} is inside the no-preference query`);
+  }
+  for (const selector of ['stream', 'pool', 'drop']) {
+    assert.match(LOADING_STYLE, new RegExp(`[.]${selector} [{][^}]*opacity: 0;`), `the ${selector} is hidden until its animation shows it`);
+  }
+  assert.match(motionBlock, /data-state="done"\] [{] animation-delay: 0[.]6s; [}]/);
+  assert.match(LOADING_STYLE, /data-state="done"\] [{] animation: studio-loader-fade 0[.]18s ease-out 0[.]45s both; [}]/, 'the hold is shorter with reduced motion');
 });
 
 test('the pour uses only the brand tokens, with no colour of its own', () => {
@@ -224,7 +286,36 @@ test('progress moves forward through each milestone and never reaches full befor
   assert.ok(page.progress() < 1, 'the report call cannot fill the bar');
 });
 
-test('the bar is full only after Studio is ready, and the pour winds down with it', async () => {
+test('between milestones the fill keeps creeping toward a point short of the next one', () => {
+  const page = createProgressPage();
+  const milestones = Object.values(STUDIO_LOADING_MILESTONES);
+  milestones.forEach(value => reportStudioLoadingProgress(page.documentReference, value));
+  assert.equal(page.state.started.length, milestones.length, 'each milestone starts one creep');
+  assert.equal(page.state.cancelled, milestones.length - 1, 'a new creep replaces the one before it');
+  page.state.started.forEach((creep, index) => {
+    const nextMilestone = milestones[index + 1] ?? 1;
+    assert.equal(creep.options.duration, 30000, 'a long run, so the fill is still moving after ten seconds');
+    assert.match(creep.options.easing, /^cubic-bezier/);
+    assert.ok(creep.target > milestones[index], 'it heads past the milestone just reached');
+    assert.ok(creep.target < nextMilestone, 'it never arrives at the next milestone');
+    assert.ok(creep.target <= 0.97, 'it never reaches full');
+    assert.ok(creep.target >= creep.from, 'it never moves backward');
+    assert.equal(creepTargetAfter(milestones[index]), creep.target);
+  });
+  const targets = page.state.started.map(creep => creep.target);
+  assert.deepEqual([...targets].sort((first, second) => first - second), targets, 'the targets rise');
+  assert.ok(creepTargetAfter(0.97) <= 0.97 && creepTargetAfter(2) <= 0.97, 'past the last step the cap holds');
+});
+
+test('a fill that has already crept past a lower target keeps its place', () => {
+  const page = createProgressPage();
+  page.state.fillScale = 0.6;
+  reportStudioLoadingProgress(page.documentReference, STUDIO_LOADING_MILESTONES.modulesLoaded);
+  assert.equal(page.state.started[0].from, 0.6);
+  assert.equal(page.state.started[0].target, 0.6, 'the target is never below where the fill stands');
+});
+
+test('the bar fills in 350 ms only after Studio is ready, and the pour winds down with it', async () => {
   const page = createProgressPage();
   let finishReady;
   const studio = { ready: new Promise(resolve => (finishReady = resolve)), setupDone: true, openSetup() {} };
@@ -233,10 +324,14 @@ test('the bar is full only after Studio is ready, and the pour winds down with i
   reportStudioLoadingProgress(page.documentReference, STUDIO_LOADING_MILESTONES.studioCreated);
   await settle();
   assert.ok(page.progress() < 1);
+  assert.ok(page.state.started.every(run => run.target < 1), 'no run reaches full before ready');
   assert.equal(page.loadingElement.dataset.state, undefined);
   finishReady();
   await settle();
   assert.equal(page.progress(), 1);
+  const completion = page.state.started.at(-1);
+  assert.equal(completion.target, 1);
+  assert.equal(completion.options.duration, 350);
   assert.equal(page.loadingElement.dataset.state, 'done', 'the stream and pot wind down as the bar fills');
   while (frames.length > 0) {
     frames.splice(0).forEach(callback => callback());
@@ -245,20 +340,18 @@ test('the bar is full only after Studio is ready, and the pour winds down with i
   await revealed;
 });
 
-test('the wind-down waits for animations that end and not for the looping stream flow', async () => {
+test('the wind-down waits for the animations of the closing sequence and not for the creep or the stream flow', async () => {
   const page = createProgressPage();
   let finished = false;
-  const endingAnimation = {
-    effect: { getComputedTiming: () => ({ endTime: 400 }) },
-    finished: new Promise(resolve => {
-      setTimeout(() => {
-        finished = true;
-        resolve();
-      }, 20);
-    }),
-  };
-  const loopingAnimation = { effect: { getComputedTiming: () => ({ endTime: Infinity }) }, finished: new Promise(() => {}) };
-  page.loadingElement.getAnimations = () => [endingAnimation, loopingAnimation];
+  const animationEnding = (endTime, finish) => ({ effect: { getComputedTiming: () => ({ endTime }) }, finished: finish });
+  const closingFade = animationEnding(780, new Promise(resolve => {
+    setTimeout(() => {
+      finished = true;
+      resolve();
+    }, 20);
+  }));
+  const neverEnding = new Promise(() => {});
+  page.loadingElement.getAnimations = () => [closingFade, animationEnding(Infinity, neverEnding), animationEnding(30000, neverEnding)];
   await windDownStudioLoading(page.documentReference);
   assert.equal(finished, true);
 });
