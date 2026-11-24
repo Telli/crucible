@@ -95,6 +95,28 @@ function drawBlendedBatchesInOrder(renderer, batches) {
   restoreInstanceOrder(renderer, sortable);
 }
 
+/**
+ * Additive batches that lie wholly behind every transmissive shell (#3206). The shell reads a copy of the opaque scene,
+ * so a beam drawn after it would be hidden by the shell's depth; drawing the beam first puts it in that copy, and the
+ * shell attenuates it by its own transmittance only. A beam in front of, or between, shells keeps the order it had.
+ * "Behind" compares the view depth of each instance's bounds centre, as the blended order does.
+ */
+export function additiveBatchesBehindShells(renderer, additiveBatches, shells) {
+  if (additiveBatches.length === 0 || shells.length === 0) return [];
+  const order = renderer.translucentOrder ??= new TranslucentOrder(INSTANCE_STRIDE);
+  const range = renderer.translucentRange ??= [0, 0];
+  const view = renderer.view ?? IDENTITY_VIEW;
+  let farthestShellDepth = Infinity;
+  for (const shell of shells) {
+    shell.sortCenter ??= boundsCenterOf(shell.parts[0].geometry);
+    farthestShellDepth = Math.min(farthestShellDepth, order.depthRange(shell, view, range)[0]);
+  }
+  return additiveBatches.filter(batch => {
+    batch.sortCenter ??= boundsCenterOf(batch.parts[0].geometry);
+    return order.depthRange(batch, view, range)[1] < farthestShellDepth;
+  });
+}
+
 /** Draws one group of blended batches in back to front order, interleaving instances only when the group has several batches. */
 function drawBlendedGroup(renderer, group, order) {
   const view = renderer.view ?? IDENTITY_VIEW;
@@ -2812,7 +2834,9 @@ export class CrucibleRenderer {
     this.activateEnvironment(environmentMap);
     const liquids = this.batches.filter(batch => batchPass(batch) === 'liquid');
     const foams = this.batches.filter(batch => batchPass(batch) === 'foam');
+    this.additiveBehindShells = null;
     if (liquids.length === 0 && foams.length === 0) return;
+    this.drawAdditiveBehindShells(liquids);
     liquidPassDrawer()(this, { frame, environment, assemblyAmount, environmentMap, liquids, foams, environmentSpecularUnit: ENVIRONMENT_SPECULAR_UNIT, maximumDistance: MAX_FINITE_DISTANCE, vertexSource: vertexShader, fragmentSource: liquidFragmentSource() });
   }
 
@@ -2931,6 +2955,32 @@ export class CrucibleRenderer {
     this.context.uniform4fv(this.uniforms.clipPerMetre, clipPerMetreScratch);
   }
 
+  /** Draws additive batches that lie behind every shell into the opaque scene the shell reads; drawBlendBatches skips them. */
+  drawAdditiveBehindShells(liquids) {
+    const shells = liquids.filter(batch => batch.layerState[9] > 0);
+    const additive = this.batches.filter(batch => batch.alphaMode === 'add' && batchPass(batch) === 'opaque' && batch.depthTest !== false);
+    const behind = additiveBatchesBehindShells(this, additive, shells);
+    if (behind.length === 0) return;
+    this.additiveBehindShells = new Set(behind);
+    const context = this.context;
+    context.bindFramebuffer(context.FRAMEBUFFER, this.multisampleFramebuffer);
+    context.viewport(0, 0, this.canvas.width, this.canvas.height);
+    context.enable(context.DEPTH_TEST);
+    context.useProgram(this.program);
+    context.activeTexture(context.TEXTURE0);
+    context.bindTexture(context.TEXTURE_2D, this.shadowTexture);
+    context.uniform1i(this.uniforms.shadowMap, 0);
+    context.enable(context.BLEND);
+    context.blendFuncSeparate(context.SRC_ALPHA, context.ONE, context.ZERO, context.ONE);
+    context.depthMask(false);
+    for (const batch of behind) this.drawAlphaBatch(batch, true);
+    context.depthMask(true);
+    this.applyDepthRank(0);
+    context.disable(context.BLEND);
+    context.enable(context.CULL_FACE);
+    context.bindVertexArray(null);
+  }
+
   /** Draws blended batches back to front as one set; see drawBlendedBatchesInOrder. */
   drawBlendedInOrder(batches) {
     drawBlendedBatchesInOrder(this, batches);
@@ -2941,7 +2991,7 @@ export class CrucibleRenderer {
     const context = this.context;
     const blendBatches = this.batches.filter(batch => batch.alphaMode === 'blend' && batchPass(batch) === 'opaque');
     // Light adds in any order, so additive batches need no sort.
-    const addBatches = this.batches.filter(batch => batch.alphaMode === 'add' && batchPass(batch) === 'opaque');
+    const addBatches = this.batches.filter(batch => batch.alphaMode === 'add' && batchPass(batch) === 'opaque' && !this.additiveBehindShells?.has(batch));
     if (blendBatches.length === 0 && addBatches.length === 0) return;
     // The liquid and foam pass may have switched program, texture unit 0 and the viewport.
     context.bindFramebuffer(context.FRAMEBUFFER, this.multisampleFramebuffer);
