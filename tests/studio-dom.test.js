@@ -4722,3 +4722,25 @@ test('select all is kept from the page outside a text field, in any mode, and le
   const plain = dispatch(ui.tool('select'), 'keydown', { key: 'a' });
   assert.equal(plain.defaultPrevented, false);
 });
+
+test('settleUntil keeps waiting past a few hundred event-loop turns, as a thread-pool hash on a loaded runner needs (#3330)', async testContext => {
+  const dom = installStudioDom();
+  testContext.after(() => dom.uninstall());
+  let turns = 0;
+  const countTurns = () => {
+    turns += 1;
+    if (turns < 1500) setImmediate(countTurns);
+  };
+  setImmediate(countTurns);
+  await dom.settleUntil(() => turns >= 1500);
+  assert.equal(turns, 1500, 'the wait lasted until the work was done, not a fixed 400 turns');
+});
+
+test('settleUntil gives up at its deadline when the work never finishes', async testContext => {
+  const dom = installStudioDom();
+  testContext.after(() => dom.uninstall());
+  const started = performance.now();
+  await dom.settleUntil(() => false, 50);
+  const waited = performance.now() - started;
+  assert.ok(waited >= 50 && waited < 5000, `waited ${waited} ms for a 50 ms deadline`);
+});
