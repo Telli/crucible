@@ -335,7 +335,8 @@ const HOSTILE_INPUTS = {
   doctypes: { count: 1600000, build: count => '<!DOCTYPE'.repeat(count) },
   ampersands: { count: 560000, build: count => `<roblox>${'&a'.repeat(count)}</roblox>` },
   longEntity: { count: 640000, build: count => `<roblox>${'&'.repeat(count)}${'a'.repeat(count)}</roblox>` },
-  quotes: { count: 16000000, build: count => `<roblox a="${'"'.repeat(1000)}${"'".repeat(count)}` },
+  // count quoted values in one open tag: readTag's quote-skip loop runs once per value and the tag never closes
+  quotes: { count: 1000000, build: count => `<roblox ${'a="" '.repeat(count)}` },
   dashedName: { count: 16000000, build: count => `<roblox><Item class="Part"><Properties><string name="Name">${'-'.repeat(count)}x</string></Properties></Item></roblox>` },
 };
 const MINIMUM_MILLISECONDS = 5;
