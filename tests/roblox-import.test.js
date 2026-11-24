@@ -11,7 +11,7 @@ import { createAgentScene, loadAgentSceneModules } from '../src/agent-scene.js';
 import { box } from '../src/geometry.js';
 import { exportGlb } from '../src/export.js';
 import { importRoblox, RobloxImportError, STUD_METERS, CANDELA_PER_BRIGHTNESS, matrixToQuaternion, robloxAssetKey } from '../packages/roblox-import/index.mjs';
-import { importRobloxFile, glbBounds } from '../packages/roblox-import/node.mjs';
+import { importRobloxFile, glbBounds, readFileOnce } from '../packages/roblox-import/node.mjs';
 
 const SAMPLE_PATH = new URL('./fixtures/roblox-sample.rbxlx', import.meta.url);
 const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
@@ -436,5 +436,21 @@ test('no remote fetches: network calls throw while the sample and a mapped mesh 
   for (const name of ['index.mjs', 'node.mjs']) {
     const source = await readFile(new URL(`../packages/roblox-import/${name}`, import.meta.url), 'utf8');
     assert.ok(!/\bfetch\s*\(|node:https?|node:net|node:dgram|XMLHttpRequest|WebSocket|child_process/.test(source), `${name} has no network or process code`);
+  }
+});
+
+test('files are opened once: size and type come from the open handle, and a swapped link is refused', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'roblox-once-'));
+  try {
+    await writeFile(join(folder, 'big.bin'), Buffer.alloc(64));
+    const options = { maxBytes: 32, tooLarge: 'too large', notFile: 'not a file' };
+    await assert.rejects(readFileOnce(join(folder, 'big.bin'), options), /too large/);
+    assert.equal((await readFileOnce(join(folder, 'big.bin'), { ...options, maxBytes: 64 })).length, 64);
+    await assert.rejects(importRobloxFile(join(folder, 'big.bin'), { maxBytes: 32 }), /too large|larger than the maxBytes/);
+    await assert.rejects(readFileOnce(folder, options), error => error.code === 'EISDIR' || /not a file/.test(error.message));
+    const inside = join(folder, 'big.bin');
+    await assert.rejects(readFileOnce(inside, { ...options, maxBytes: 64, root: folder, expectedPath: join(folder, 'other.bin') }), /changed while it was being read/);
+  } finally {
+    await rm(folder, { recursive: true, force: true });
   }
 });
