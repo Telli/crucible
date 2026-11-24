@@ -27,10 +27,8 @@ const WATER_MATERIAL = Object.freeze({ tag: 'water', color: [0.02, 0.2, 0.24], m
 const EDGE_MODES = ['open', 'closed'];
 const SADDLE_FIX_HINT = 'Raise smoothing, or fill the single-cell diagonal contact in the occupancy.';
 // Closed edges: the side walls and base get one flat earth colour (linear RGB), cut hard from the top surface colours.
+const BOUNDARY_SNAP = 0.25;
 const WALL_COLOR = Object.freeze([0.2, 0.062, 0.016]);
-const WALL_SNAP = 0.75;
-const WALL_TOLERANCE = 0.02;
-const WALL_STEEPNESS = 0.5;
 const COLOR_WINDOW = 2;
 const COLOR_KERNEL_RADIUS = 1.5;
 const COLOR_FALLBACK_RADIUS = 3;
@@ -364,114 +362,118 @@ function geometryOf(compact, normals, uvs, colors = null) {
 }
 
 // The padding cells lie half a cell outside the grid, so the outermost vertices can sit up to half a cell beyond it.
-// They are pressed onto the boundary, which keeps the mesh inside the grid bounds.
+// They are pressed onto the boundary, which keeps the mesh inside the grid bounds. A vertex that falls just short of a
+// side (within a quarter cell, along x or z) is pressed onto it too, so the boundary of the surface lies exactly on the box.
 function clampToBounds(positions, { grid, cellSize, origin }) {
-  for (let offset = 0; offset < positions.length; offset++) {
-    const axis = offset % 3;
-    positions[offset] = Math.min(origin[axis] + grid[axis] * cellSize, Math.max(origin[axis], positions[offset]));
-  }
-}
-
-// Closed edges: the rounded shoulder where the surface meets a side of the box is pressed flat onto that side (and onto the
-// base), so the wall is a true plane and the line where it meets the top surface follows the surface instead of a cell grid.
-function snapToWalls(positions, { grid, cellSize, origin }) {
   for (let offset = 0; offset < positions.length; offset++) {
     const axis = offset % 3;
     const low = origin[axis];
     const high = origin[axis] + grid[axis] * cellSize;
-    if (positions[offset] - low <= WALL_SNAP * cellSize) positions[offset] = low;
-    else if (axis !== 1 && high - positions[offset] <= WALL_SNAP * cellSize) positions[offset] = high;
+    positions[offset] = Math.min(high, Math.max(low, positions[offset]));
+    if (axis === 1) continue;
+    if (positions[offset] - low <= BOUNDARY_SNAP * cellSize) positions[offset] = low;
+    else if (high - positions[offset] <= BOUNDARY_SNAP * cellSize) positions[offset] = high;
   }
 }
 
+// The sides of the grid box a wall can stand on: [axis, 0 for the low side or 1 for the high side].
+const WALL_SIDES = Object.freeze([[0, 0], [0, 1], [2, 0], [2, 1]]);
+
 function landPart(input, layout, paddedOrigin) {
   const { grid, palette, occupancy, materials, smoothing, edges, cellSize } = input;
-  const solid = paddedField(grid, layout, edges, cell => (materials[cell] === palette.waterIndex ? 0 : occupancy[cell]));
+  // The surface is always meshed with the outer cells continued outward, so it runs smoothly to the grid bounds.
+  // `edges: 'closed'` then adds the walls and the base below that surface's boundary instead of rounding the border.
+  const solid = paddedField(grid, layout, 'open', cell => (materials[cell] === palette.waterIndex ? 0 : occupancy[cell]));
   const blurred = blurField(solid, layout.dims, smoothing);
   const mesh = meshField(signedDistancesOf(blurred), layout, cellSize, paddedOrigin);
   if (mesh.quads.length === 0) return null;
   const compact = compactMesh(mesh, () => true);
   clampToBounds(compact.positions, input);
-  if (edges === 'closed') snapToWalls(compact.positions, input);
   const normals = normalsOf(compact.positions, blurred, layout, cellSize, paddedOrigin);
   const { colors, dominant } = vertexColors(compact.positions, input, layout, paddedOrigin);
-  const walled = edges === 'closed' ? splitWalls(compact, normals, colors, dominant, input) : { positions: compact.positions, normals, colors, dominant, indices: compact.indices, wallTriangles: 0 };
+  const walled = edges === 'closed' ? addWalls(compact, normals, colors, dominant, input) : { positions: compact.positions, normals, colors, dominant, indices: compact.indices, wallTriangles: 0 };
   const geometry = geometryOf({ positions: walled.positions, indices: walled.indices }, walled.normals, planarUvs(walled.positions), walled.colors);
   return { part: { name: 'Voxel terrain', geometry, matrix: identityMatrix(), material: { ...LAND_MATERIAL } }, dominant: walled.dominant, wallTriangles: walled.wallTriangles };
 }
 
-// A triangle that lies near one side of the grid box (or its base) and faces that side is a wall face. Wall triangles get their
-// own copies of their vertices with the earth colour and are listed last in the index buffer, so a wall never shares a
-// vertex, and therefore never blends colour, with the top surface.
-function splitWalls(compact, normals, colors, dominant, { grid, cellSize, origin }) {
-  const positions = Float32Array.from(compact.positions);
-  const { indices } = compact;
-  const tolerance = WALL_TOLERANCE * cellSize;
-  const onSide = (vertex, axis, side) => Math.abs(positions[vertex * 3 + axis] - (side === 0 ? origin[axis] : origin[axis] + grid[axis] * cellSize)) <= tolerance;
-  const planes = [[0, 0], [0, 1], [1, 0], [2, 0], [2, 1]];
-  const faceDirection = triangle => {
-    const corner = index => [0, 1, 2].map(axis => positions[indices[triangle * 3 + index] * 3 + axis]);
-    const [first, second, third] = [corner(0), corner(1), corner(2)];
-    const edgeA = second.map((value, axis) => value - first[axis]);
-    const edgeB = third.map((value, axis) => value - first[axis]);
-    const normal = [edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1], edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2], edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]];
-    const length = Math.hypot(...normal) || 1;
-    return normal.map(component => Math.abs(component) / length);
-  };
-  // A wall triangle lies close to one side of the box and faces that side (a rounded top rim, which faces up, stays top).
-  const planeOf = triangle => {
-    const direction = faceDirection(triangle);
-    return planes.findIndex(([axis, side]) => direction[axis] >= WALL_STEEPNESS && [0, 1, 2].every(corner => onSide(indices[triangle * 3 + corner], axis, side)));
-  };
-  const topIndices = [];
-  const wallIndices = [];
-  const wallPlanes = [];
-  for (let triangle = 0; triangle < indices.length / 3; triangle++) {
-    const plane = planeOf(triangle);
-    const target = plane >= 0 ? wallIndices : topIndices;
-    if (plane >= 0) wallPlanes.push(plane);
-    for (let corner = 0; corner < 3; corner++) target.push(indices[triangle * 3 + corner]);
+// Walls hang from the boundary edges of the top surface that lie on a side of the grid box, using the very vertices of that
+// boundary (so the wall's top edge is the smooth surface, not a per-cell height), and a flat base closes the bottom. Wall and
+// base vertices are their own copies with one flat earth colour and flat outward normals, so a top colour never reaches a wall.
+// The wall triangles are listed last in the index buffer.
+function addWalls(compact, normals, colors, dominant, { grid, cellSize, origin }) {
+  const positions = compact.positions;
+  const indices = compact.indices;
+  const directed = new Set();
+  for (let corner = 0; corner < indices.length; corner++) {
+    const triangleStart = corner - (corner % 3);
+    directed.add(`${indices[corner]},${indices[triangleStart + (corner + 1) % 3]}`);
   }
+  const low = origin.slice();
+  const high = origin.map((value, axis) => value + grid[axis] * cellSize);
+  const onSide = (vertex, [axis, side]) => positions[vertex * 3 + axis] === (side === 0 ? low[axis] : high[axis]);
+  const sharedSide = (first, second) => WALL_SIDES.findIndex(wallSide => onSide(first, wallSide) && onSide(second, wallSide));
+  const extraPositions = [];
+  const extraNormals = [];
+  const extraSources = [];
   const vertexCount = positions.length / 3;
-  const copyOf = new Map();
-  const extra = [];
-  const wallCopies = wallIndices.map(vertex => {
-    if (!copyOf.has(vertex)) {
-      copyOf.set(vertex, vertexCount + extra.length);
-      extra.push(vertex);
+  const copies = new Map();
+  const copyOf = (vertex, side, bottom) => {
+    const key = `${vertex},${side},${bottom}`;
+    if (!copies.has(key)) {
+      copies.set(key, vertexCount + extraSources.length);
+      extraPositions.push(positions[vertex * 3], bottom ? low[1] : positions[vertex * 3 + 1], positions[vertex * 3 + 2]);
+      const [axis, direction] = WALL_SIDES[side];
+      const normal = [0, 0, 0];
+      normal[axis] = direction === 0 ? -1 : 1;
+      extraNormals.push(...normal);
+      extraSources.push(vertex);
     }
-    return copyOf.get(vertex);
-  });
-  const total = vertexCount + extra.length;
-  const widen = (source, width) => {
-    const result = new Float32Array(total * width);
-    result.set(source);
-    extra.forEach((vertex, slot) => result.set(source.subarray(vertex * width, vertex * width + width), (vertexCount + slot) * width));
-    return result;
+    return copies.get(key);
   };
-  const wallColors = widen(colors, 3);
-  extra.forEach((vertex, slot) => wallColors.set(WALL_COLOR, (vertexCount + slot) * 3));
-  // A wall is flat: each copy takes the outward direction of the wall faces that use it, not a normal blended with the top.
-  const wallNormals = widen(normals, 3);
-  extra.forEach((vertex, slot) => wallNormals.fill(0, (vertexCount + slot) * 3, (vertexCount + slot) * 3 + 3));
-  wallCopies.forEach((copy, position) => {
-    const [axis, side] = planes[wallPlanes[Math.floor(position / 3)]];
-    wallNormals[copy * 3 + axis] += side === 0 ? -1 : 1;
+  const wallIndices = [];
+  for (let corner = 0; corner < indices.length; corner++) {
+    const triangleStart = corner - (corner % 3);
+    const from = indices[corner];
+    const to = indices[triangleStart + (corner + 1) % 3];
+    if (directed.has(`${to},${from}`)) continue;
+    const side = sharedSide(from, to);
+    if (side < 0) continue;
+    const quad = [copyOf(from, side, false), copyOf(to, side, false), copyOf(to, side, true), copyOf(from, side, true)];
+    // (from, to, bottom of to) is a counter-clockwise triangle seen from outside when its normal points away from the box.
+    const [axis, direction] = WALL_SIDES[side];
+    const alongAxis = axis === 0 ? 2 : 0;
+    const travel = positions[to * 3 + alongAxis] - positions[from * 3 + alongAxis];
+    // The normal of (from, to, bottom of to) is travel x down, which has this component along the wall's axis.
+    const normalAlongAxis = axis === 0 ? travel : -travel;
+    const facesOutward = (direction === 0 ? -1 : 1) * normalAlongAxis > 0;
+    wallIndices.push(...(facesOutward ? [quad[0], quad[1], quad[2], quad[0], quad[2], quad[3]] : [quad[0], quad[2], quad[1], quad[0], quad[3], quad[2]]));
+  }
+  const baseCorners = [[low[0], low[2]], [high[0], low[2]], [high[0], high[2]], [low[0], high[2]]].map(([x, z]) => {
+    extraPositions.push(x, low[1], z);
+    extraNormals.push(0, -1, 0);
+    extraSources.push(0);
+    return vertexCount + extraSources.length - 1;
   });
-  extra.forEach((vertex, slot) => {
-    const offset = (vertexCount + slot) * 3;
-    const length = Math.hypot(wallNormals[offset], wallNormals[offset + 1], wallNormals[offset + 2]) || 1;
-    for (let channel = 0; channel < 3; channel++) wallNormals[offset + channel] /= length;
-  });
-  const wallDominant = new Uint8Array(total);
-  wallDominant.set(dominant);
-  extra.forEach((vertex, slot) => { wallDominant[vertexCount + slot] = dominant[vertex]; });
+  wallIndices.push(baseCorners[0], baseCorners[1], baseCorners[2], baseCorners[0], baseCorners[2], baseCorners[3]);
+  const total = vertexCount + extraSources.length;
+  const joinedPositions = new Float32Array(total * 3);
+  joinedPositions.set(positions);
+  joinedPositions.set(extraPositions, vertexCount * 3);
+  const joinedNormals = new Float32Array(total * 3);
+  joinedNormals.set(normals);
+  joinedNormals.set(extraNormals, vertexCount * 3);
+  const joinedColors = new Float32Array(total * 3);
+  joinedColors.set(colors);
+  for (let slot = 0; slot < extraSources.length; slot++) joinedColors.set(WALL_COLOR, (vertexCount + slot) * 3);
+  const joinedDominant = new Uint8Array(total);
+  joinedDominant.set(dominant);
+  extraSources.forEach((source, slot) => { joinedDominant[vertexCount + slot] = dominant[source]; });
   return {
-    positions: widen(positions, 3),
-    normals: wallNormals,
-    colors: wallColors,
-    dominant: wallDominant,
-    indices: Uint32Array.from([...topIndices, ...wallCopies]),
+    positions: joinedPositions,
+    normals: joinedNormals,
+    colors: joinedColors,
+    dominant: joinedDominant,
+    indices: Uint32Array.from([...indices, ...wallIndices]),
     wallTriangles: wallIndices.length / 3,
   };
 }

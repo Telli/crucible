@@ -214,3 +214,27 @@ test('closed edges give the side walls one flat earth colour and leave the top s
   const { normals } = closed.parts[0].geometry;
   for (const vertex of wallVertices) assert.ok(Math.abs(normals[vertex * 3 + 1]) < 0.75 || normals[vertex * 3 + 1] < 0, 'wall normals do not face up');
 });
+
+test('a closed wall hangs from the smooth surface boundary, not from per-cell heights', () => {
+  const closed = createVoxelTerrain(landscapeInput({ edges: 'closed' }));
+  const open = createVoxelTerrain(landscapeInput({ edges: 'open' }));
+  const openGeometry = open.parts[0].geometry;
+  const openHeights = new Map();
+  for (let vertex = 0; vertex < openGeometry.positions.length / 3; vertex++) {
+    const key = `${openGeometry.positions[vertex * 3]},${openGeometry.positions[vertex * 3 + 2]}`;
+    openHeights.set(key, [...(openHeights.get(key) ?? []), openGeometry.positions[vertex * 3 + 1]]);
+  }
+  const { positions, indices } = closed.parts[0].geometry;
+  const wallStart = indices.length - closed.stats.wallTriangles * 3;
+  const bottom = 0;
+  let checked = 0;
+  for (const vertex of new Set(indices.subarray(wallStart))) {
+    const height = positions[vertex * 3 + 1];
+    if (height === bottom) continue;
+    const surfaceHeights = openHeights.get(`${positions[vertex * 3]},${positions[vertex * 3 + 2]}`);
+    assert.notEqual(surfaceHeights, undefined, 'a wall top vertex sits on a vertex of the smooth surface');
+    assert.ok(surfaceHeights.some(surfaceHeight => Math.abs(height - surfaceHeight) < 1e-6), `wall top height ${height} should equal a surface boundary height (${surfaceHeights})`);
+    checked++;
+  }
+  assert.ok(checked > 40, `checked ${checked} wall top vertices`);
+});

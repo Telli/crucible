@@ -24,6 +24,7 @@ const MINIMUM_HEIGHT_SHARE = 0.55;
 const GRID = [80, 40, 128];
 const SHORE_EYE = (process.env.SHORE_EYE ?? '154,47,157').split(',').map(Number);
 const SHORE_TARGET = (process.env.SHORE_TARGET ?? '48,6,118').split(',').map(Number);
+const silhouetteCrop = { left: 140, top: 620, right: 700, bottom: 1100 };
 const PALETTE = ['grass', 'rock', 'sand', 'water'];
 const CENTRE = [40, 10, 64];
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'silent' });
@@ -48,7 +49,7 @@ try {
     slope: fitSteepView(parts, -25, CENTRE, WIDTH, HEIGHT, MARGIN, fitOptions).view,
     shore: { eye: SHORE_EYE, target: SHORE_TARGET },
   };
-  const results = await page.evaluate(async ({ smoothing, edges, views, grid, palette }) => {
+  const results = await page.evaluate(async ({ smoothing, edges, views, grid, palette, silhouetteCrop }) => {
     await import('/src/world-material-shader.js');
     const { CrucibleRenderer } = await import('/src/renderer.js');
     const { createVoxelTerrain } = await import('/src/voxel-terrain.js');
@@ -157,11 +158,32 @@ try {
       }
       widths.sort((first, second) => first - second);
       const mean = sum.map(value => value / Math.max(1, count));
-      walls[name] = { pixels: count, mean, lab: toLab(mean), transitionWidth: widths.length ? widths[Math.floor(widths.length / 2)] : null, columns: widths.length };
+      // Steps in the wall's top silhouette inside the crop: the highest wall pixel of each column, and the largest change between neighbouring columns.
+      let largestStep = null;
+      let largestKink = null;
+      if (name === 'shore') {
+        const tops = [];
+        for (let x = silhouetteCrop.left; x < silhouetteCrop.right; x++) {
+          let columnTop = null;
+          for (let y = silhouetteCrop.top; y < silhouetteCrop.bottom; y++) {
+            if (isWall[y * canvas.width + x]) { columnTop = y; break; }
+          }
+          tops.push(columnTop);
+        }
+        largestStep = 0;
+        largestKink = 0;
+        for (let index = 1; index < tops.length - 1; index++) {
+          if (tops[index] === null || tops[index - 1] === null || tops[index + 1] === null) continue;
+          largestStep = Math.max(largestStep, Math.abs(tops[index + 1] - tops[index]));
+          // How far a column's top sits off the straight line between its neighbours: a smooth edge, however steep, gives about 0.
+          largestKink = Math.max(largestKink, Math.abs(tops[index] - (tops[index - 1] + tops[index + 1]) / 2));
+        }
+      }
+      walls[name] = { largestStep, largestKink, pixels: count, mean, lab: toLab(mean), transitionWidth: widths.length ? widths[Math.floor(widths.length / 2)] : null, columns: widths.length };
     }
     topOnly.dispose();
     return { pictures, boxes, walls };
-  }, { smoothing, edges, views, grid: GRID, palette: PALETTE });
+  }, { smoothing, edges, views, grid: GRID, palette: PALETTE, silhouetteCrop });
   await mkdir(folder, { recursive: true });
   for (const [name, image] of Object.entries(results.pictures)) await writeFile(`${folder}/${name}.png`, Buffer.from(image.split(',')[1], 'base64'));
   for (const [name, box] of Object.entries(results.boxes)) {
@@ -174,7 +196,7 @@ try {
   console.log(`shore near corner at pixel (${cornerX.toFixed(0)}, ${cornerY.toFixed(0)}): margins left ${cornerX.toFixed(0)}, right ${(WIDTH - cornerX).toFixed(0)}, bottom ${(HEIGHT - cornerY).toFixed(0)}`);
   for (const [name, wall] of Object.entries(results.walls)) {
     const [red, green, blue] = wall.mean.map(Math.round);
-    console.log(`${name} wall: ${wall.pixels} px, mean RGB ${red} ${green} ${blue}, R-B ${red - blue}, Lab a* ${wall.lab.a.toFixed(1)}, L ${wall.lab.lightness.toFixed(0)}, top-to-wall change ${wall.transitionWidth} px (median of ${wall.columns} columns)`);
+    console.log(`${name} wall: ${wall.pixels} px, mean RGB ${red} ${green} ${blue}, R-B ${red - blue}, Lab a* ${wall.lab.a.toFixed(1)}, L ${wall.lab.lightness.toFixed(0)}, top-to-wall change ${wall.transitionWidth} px (median of ${wall.columns} columns)${wall.largestStep === null ? '' : `, wall top silhouette in the crop: largest column-to-column change ${wall.largestStep} px, largest kink off the line between neighbours ${wall.largestKink} px`}`);
   }
   console.log('written', Object.keys(results.pictures).join(', '));
 } finally {
