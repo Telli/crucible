@@ -4155,15 +4155,16 @@ export function createStudio(container, {
     }
     keyHandlers[match.actionId](event, match.binding);
   };
-  documentReference.addEventListener('keydown', onWindowKeyDown);
   // The last kind of input decides whether a menu animates: a menu opened from the keyboard is a shortcut and appears at once.
-  const onKeyboardInput = event => {
+  // One keydown listener serves both, so the page keeps the single listener it always had.
+  const onKeyDown = event => {
     if (!isModifierKey(event.key)) root.dataset.input = 'keyboard';
+    onWindowKeyDown(event);
   };
   const onPointerInput = () => {
     root.dataset.input = 'pointer';
   };
-  documentReference.addEventListener('keydown', onKeyboardInput, true);
+  documentReference.addEventListener('keydown', onKeyDown);
   documentReference.addEventListener('pointerdown', onPointerInput, true);
 
   const onVisibilityChange = () => {
@@ -4383,8 +4384,7 @@ export function createStudio(container, {
       documentReference.removeEventListener('contextmenu', onModalContextMenu, true);
       documentReference.removeEventListener('click', onModalClick, true);
       documentReference.removeEventListener('pointerdown', onAnyPointerDown, true);
-      documentReference.removeEventListener('keydown', onWindowKeyDown);
-      documentReference.removeEventListener('keydown', onKeyboardInput, true);
+      documentReference.removeEventListener('keydown', onKeyDown);
       documentReference.removeEventListener('pointerdown', onPointerInput, true);
       documentReference.removeEventListener('visibilitychange', onVisibilityChange);
       documentReference.removeEventListener('visibilitychange', flushDraftWhenHidden);
