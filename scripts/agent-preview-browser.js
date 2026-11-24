@@ -8,7 +8,7 @@ let heldNativeExportRanges = null;
 // The tables of the last export a job asked to keep, so the next frame can send only what changed since (#1861).
 let nativeExportBaseline = null;
 let nativeExportCount = 0;
-import { buildWithKernels, kernelWorkersAvailable, kernelStats, resetKernelStats } from '../src/kernel-offload.js';
+import { buildWithKernels, forEachDeferring, kernelWorkersAvailable, kernelStats, resetKernelStats } from '../src/kernel-offload.js';
 import { createAgentScene, applyCameraFields, loadAllAgentSceneModules, allAgentSceneModulesLoaded, needsMeshBooleans, loadMeshBooleans, meshBooleansLoaded, setManifoldModuleLoader, needsPhysics, needsBuoyancy, loadPhysicsEngine, physicsEngineLoaded, setPhysicsModuleLoader } from '../src/agent-scene.js';
 import { CrucibleRenderer } from '../src/renderer.js';
 import { skyOpenness } from '../src/closed-room.js';
@@ -845,12 +845,12 @@ async function pageKernelsFor(recipe, backend) {
 
 async function buildSceneOffMainThread(recipe, options, backend) {
   const pageKernels = await pageKernelsFor(recipe, backend);
+  // A pass that stops at a missing bake keeps the scene it built: the next pass reads the finished bakes from it.
+  let built;
   return buildWithKernels(() => {
-    const scene = createAgentScene(recipe, {}, options);
-    for (const part of scene.parts) {
-      void part.material.map;
-    }
-    return scene;
+    built ??= createAgentScene(recipe, {}, options);
+    forEachDeferring(built.parts, part => void part.material.map);
+    return built;
   }, { pageKernels });
 }
 

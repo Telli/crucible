@@ -1,0 +1,1 @@
+- scene_create builds a scene with many baked materials in 2 build passes instead of one per bake and bakes on up to 4 workers, so 9 baked graphs build in about 4 s instead of 25 s with the same bytes (#3147)
