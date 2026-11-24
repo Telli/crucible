@@ -1,7 +1,8 @@
 import './support/load-agent-scene-modules.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createStudio } from '../src/studio.js';
+import { createStudio, STUDIO_PRIMITIVES } from '../src/studio.js';
+import { STUDIO_CSS } from '../src/studio-styles.js';
 import {
   STUDIO_BRAND_ICON_NAMES,
   STUDIO_ICON_PATHS,
@@ -13,7 +14,6 @@ import {
 import { PROPERTY_SECTIONS } from '../src/studio-properties.js';
 import { byDataset, byText, createFakeRenderer, installStudioDom } from './support/studio-dom.mjs';
 
-const BASIC_SHAPES = ['plane', 'box', 'disc', 'sphere', 'icoSphere', 'cylinder', 'cone', 'torus', 'text'];
 const ARGUMENT_COUNTS = { m: 2, l: 2, h: 1, v: 1, c: 6, s: 4, q: 4, t: 2, a: 7, z: 0 };
 
 /** Every point a stroke path visits, so a glyph that leaves the 24 unit box is caught. */
@@ -56,7 +56,7 @@ function mountStudio(testContext) {
 }
 
 test('every shape of the basic add menu, every light and every notice outcome has a drawn icon', () => {
-  for (const shape of BASIC_SHAPES) {
+  for (const shape of STUDIO_PRIMITIVES) {
     assert.ok(STUDIO_ICON_PATHS[STUDIO_PRIMITIVE_ICONS[shape]], `${shape} has an icon`);
   }
   assert.deepEqual(Object.keys(STUDIO_LIGHT_ICONS).sort(), ['area', 'point', 'spot']);
@@ -68,7 +68,7 @@ test('every shape of the basic add menu, every light and every notice outcome ha
 });
 
 test('the shapes of the add menu do not share a glyph', () => {
-  const iconNames = BASIC_SHAPES.map(shape => STUDIO_PRIMITIVE_ICONS[shape]);
+  const iconNames = STUDIO_PRIMITIVES.map(shape => STUDIO_PRIMITIVE_ICONS[shape]);
   assert.equal(new Set(iconNames).size, iconNames.length);
   assert.equal(new Set(iconNames.map(name => STUDIO_ICON_PATHS[name])).size, iconNames.length);
 });
@@ -92,13 +92,17 @@ test('stroke glyph paths stay inside the 24 unit box', () => {
 test('add menu entries lead with their icon and keep their label as the name', testContext => {
   const { root } = mountStudio(testContext);
   const addPopover = root.querySelector('#crucible-studio-pop-add');
-  for (const label of ['Box', 'Plane', 'Sphere', 'Icosphere', 'Cylinder', 'Cone', 'Torus', 'Text', 'Point light', 'Spot light', 'Area light']) {
+  for (const label of [...STUDIO_PRIMITIVES.map(shape => (shape === 'icoSphere' ? 'Icosphere' : shape === 'disc' ? 'Circle' : shape[0].toUpperCase() + shape.slice(1))), 'Point light', 'Spot light', 'Area light']) {
     const entry = byText(addPopover, label);
     assert.equal(entry.querySelectorAll('svg').length, 1, `${label} has one icon`);
     assert.equal(entry.querySelector('svg').getAttribute('aria-hidden'), 'true');
     assert.equal(entry.firstElementChild.tagName.toLowerCase(), 'svg', `${label} leads with its icon`);
     assert.equal(entry.getAttribute('aria-label'), null, `${label} keeps its visible text as its name`);
   }
+});
+
+test('the add menu is one column, so every label starts at the same x and the menu is no wider than its longest entry', () => {
+  assert.ok(STUDIO_CSS.includes('#crucible-studio-pop-add .crucible-studio-popover-grid { grid-template-columns: minmax(0, 1fr); }'));
 });
 
 test('each property section title carries its chevron and exactly one section icon', async testContext => {

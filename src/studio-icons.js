@@ -40,7 +40,7 @@ export const STUDIO_ICON_PATHS = Object.freeze({
   sphere: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12c0 1.9 4 3.5 9 3.5s9-1.6 9-3.5',
   cylinder: 'M5 6.5C5 4.6 8.1 3 12 3s7 1.6 7 3.5v11c0 1.9-3.1 3.5-7 3.5s-7-1.6-7-3.5zM5 6.5C5 8.4 8.1 10 12 10s7-1.6 7-3.5',
   cone: 'M12 3L4.5 17.5c0 1.9 3.4 3.5 7.5 3.5s7.5-1.6 7.5-3.5zM4.5 17.5c0-1.9 3.4-3.5 7.5-3.5s7.5 1.6 7.5 3.5',
-  torus: 'M12 6c5 0 9 2.7 9 6s-4 6-9 6-9-2.7-9-6 4-6 9-6zM8.5 11.5c0 1 1.6 1.8 3.5 1.8s3.5-.8 3.5-1.8',
+  torus: 'M12 5c5.5 0 10 3.1 10 7s-4.5 7-10 7S2 15.9 2 12s4.5-7 10-7zM12 9c-3 0-5.5 1.3-5.5 3s2.5 3 5.5 3 5.5-1.3 5.5-3-2.5-3-5.5-3z',
   plane: 'M6.5 8h15l-4 8h-15z',
   group: 'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',
   open: 'M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
@@ -62,11 +62,12 @@ export const STUDIO_ICON_PATHS = Object.freeze({
   chat: 'M4 5h16v11h-9l-4.5 4v-4H4zM8 9.5h8M8 12.5h5',
   // Silhouettes of the add menu shapes, and the marks of property sections and notices, drawn to stay readable at 16 px.
   box: 'M4 9l3-5h13v11l-3 5H4zM4 9h13l3-5M17 9v11',
-  icoSphere: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7l4.5 8h-9zM12 3v4M7.5 15l-3.2 2.4M16.5 15l3.2 2.4',
-  disc: 'M3 10c0-1.9 4-3.5 9-3.5s9 1.6 9 3.5-4 3.5-9 3.5-9-1.6-9-3.5zM3 10v3c0 1.9 4 3.5 9 3.5s9-1.6 9-3.5v-3',
+  icoSphere: 'M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM12 7.5l4.5 7.5h-9zM12 3v4.5M16.5 15l3.3 1.5M7.5 15l-3.3 1.5M16.5 15L12 21M7.5 15L12 21',
+  disc: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 10.8a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4z',
   text: 'M5 6V4h14v2M12 4v16M9 20h6',
-  shadow: 'M12 3.5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM6 19.5c0-1 2.7-1.8 6-1.8s6 .8 6 1.8-2.7 1.8-6 1.8-6-.8-6-1.8z',
-  depthOfField: 'M12 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM7.5 7.5a6 6 0 0 0 0 9M16.5 7.5a6 6 0 0 1 0 9M4.5 4.5a10 10 0 0 0 0 15M19.5 4.5a10 10 0 0 1 0 15',
+  bulb: 'M9 17h6M10 20h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z',
+  shadow: 'M9 4a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM9 18c0-1.4 2.7-2.5 6-2.5s6 1.1 6 2.5-2.7 2.5-6 2.5-6-1.1-6-2.5z',
+  depthOfField: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8l3.5 2v4L12 16l-3.5-2v-4z',
   fog: 'M3 6h11M8 10.5h13M3 15h11M8 19.5h9',
   film: 'M5 3h14a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM8 3v18M16 3v18M4 8h4M4 12h4M4 16h4M16 8h4M16 12h4M16 16h4',
   error: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 9l6 6M15 9l-6 6',
@@ -94,7 +95,7 @@ export const STUDIO_PRIMITIVE_ICONS = Object.freeze({
 export const STUDIO_LIGHT_ICONS = Object.freeze({ point: 'pointLight', spot: 'spotLight', area: 'areaLight' });
 // One icon for each property section id of PROPERTY_SECTIONS.
 export const STUDIO_PROPERTY_SECTION_ICONS = Object.freeze({
-  light: 'pointLight',
+  light: 'bulb',
   shape: 'box',
   shadow: 'shadow',
   transform: 'translate',
