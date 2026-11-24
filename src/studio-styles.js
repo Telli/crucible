@@ -2057,6 +2057,7 @@ export const STUDIO_CSS = `
   background: transparent;
   color: var(--studio-muted);
 }
+.crucible-studio dialog button.crucible-studio-new-close { margin-block: -8px; }
 .crucible-studio dialog button.crucible-studio-new-close:hover,
 .crucible-studio dialog button.crucible-studio-new-close:focus-visible { color: var(--studio-text); }
 .crucible-studio-new-cards {
@@ -2094,6 +2095,7 @@ export const STUDIO_CSS = `
   display: block;
   aspect-ratio: 8 / 5;
   overflow: hidden;
+  border: 1px solid var(--studio-border);
   border-radius: 6px;
   background: color-mix(in srgb, var(--studio-text) 8%, transparent);
 }
@@ -2116,13 +2118,26 @@ export const STUDIO_CSS = `
 }
 .crucible-studio dialog.crucible-studio-confirm-dialog h2,
 .crucible-studio-confirm-message { margin: 0; }
+.crucible-studio dialog.crucible-studio-confirm-dialog h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--studio-space-8);
+}
+.crucible-studio dialog.crucible-studio-confirm-dialog h2 .crucible-studio-icon { flex: none; }
 .crucible-studio-confirm-dialog .crucible-studio-dialog-actions { margin-top: 0; }
 /* File menu: the groups are set apart by space, and Open recent opens its list in place. */
 .crucible-studio-popover > [data-group-start="true"] { margin-block-start: var(--studio-space-8); }
-#crucible-studio-pop-new { max-block-size: calc(100dvh - 16px); overflow-y: auto; }
+/* A fixed width, so the menu does not change size when the recent list opens; long names are cut with an ellipsis. */
+#crucible-studio-pop-new { inline-size: 264px; max-block-size: calc(100dvh - 16px); overflow-y: auto; }
+/* The scenes are children of Open recent: indented one step, with Clear recent set apart and quieter. */
 .crucible-studio-recent-list {
   display: grid;
   gap: 2px;
+  padding-inline-start: var(--studio-space-16);
+}
+.crucible-studio-recent-list > button[data-clear-recent="true"] {
+  margin-block-start: var(--studio-space-8);
+  color: var(--studio-muted);
 }
 .crucible-studio-recent-list[hidden] { display: none; }
 .crucible-studio-recent-list > button { gap: 0; }

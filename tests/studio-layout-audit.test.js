@@ -47,3 +47,9 @@ test('a chooser card with 25px under its name fails the audit (#3327)', { timeou
   const { findings } = summarize(screens);
   assert.ok(findings.some(finding => finding.kind === 'off-scale' && finding.message.includes('padding-bottom is 25 px')), 'the off-scale padding is reported');
 });
+test('a Save button taller than Cancel and Discard fails the audit (#3327)', { timeout: 240000 }, async context => {
+  const screens = await auditSetup(context, '.crucible-studio dialog button.crucible-studio-setup-primary { height: 39px !important; }', 'newscene');
+  if (!screens) return;
+  const { findings } = summarize(screens);
+  assert.ok(findings.some(finding => finding.kind === 'uneven-height' && finding.message.includes('39 px')), 'the uneven button height is reported');
+});

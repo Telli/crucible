@@ -2459,6 +2459,9 @@ export function createStudio(container, {
       const parsed = JSON.parse(dialogTextarea.value);
       await prepareRecipe(parsed);
       controller.loadRecipe(parsed);
+      // Apply is one undo step and asks nothing, but the scene now differs from its file, so it counts as changed.
+      isDirty = true;
+      syncFileBanner();
       recipeDialog.close('apply');
       announce('Recipe applied');
     } catch (error) {
@@ -2841,6 +2844,8 @@ export function createStudio(container, {
     const madeByAgent = agent ?? (filePath !== null && filePath === activeFilePath);
     const agentLabel = assertAgentName(madeByAgent?.name ?? defaultAgentName);
     const recipeBefore = madeByAgent ? controller.exportRecipe() : null;
+    // A host or a watched-file reload does not ask first: the scene it replaces stays one undo step away, and this says so.
+    const replacedUnsavedChanges = isDirty && recordUndo;
     await prepareRecipe(parsed);
     controller.loadRecipe(parsed, { recordUndo });
     if (madeByAgent) {
@@ -2852,6 +2857,7 @@ export function createStudio(container, {
     activeFileName = fileName;
     isDirty = false;
     syncFileBanner();
+    if (replacedUnsavedChanges) announce('Replaced unsaved changes. Undo brings them back.');
   }
 
   // The New scene chooser, the unsaved-changes question and the recent list load on first use, so Studio's entry stays small.
@@ -2901,7 +2907,16 @@ export function createStudio(container, {
     return true;
   }
 
-  async function openNewScene() {
+  // Asked twice (a menu click and a host call), it is one chooser and one answer.
+  let openingNewScene = null;
+  function openNewScene() {
+    openingNewScene ??= startNewScene().finally(() => {
+      openingNewScene = null;
+    });
+    return openingNewScene;
+  }
+
+  async function startNewScene() {
     const { chooseTemplate } = await loadNewSceneDialogs();
     const templateKey = await chooseTemplate();
     if (!templateKey || !(await confirmReplaceScene())) return;

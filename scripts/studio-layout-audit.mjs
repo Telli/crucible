@@ -234,7 +234,8 @@ async function measureNewSceneScreens(page, theme) {
   await page.locator('.crucible-studio-new-card').nth(1).click();
   await page.waitForSelector('dialog.crucible-studio-confirm-dialog[open]');
   await page.waitForTimeout(200);
-  screens.push({ name: `unsaved changes (${theme})`, records: await measure(page, 'dialog.crucible-studio-confirm-dialog') });
+  const confirmButtonHeights = await page.evaluate(() => Array.from(document.querySelectorAll('dialog.crucible-studio-confirm-dialog .crucible-studio-dialog-actions button')).map(button => button.getBoundingClientRect().height));
+  screens.push({ name: `unsaved changes (${theme})`, records: await measure(page, 'dialog.crucible-studio-confirm-dialog'), buttonRowHeights: confirmButtonHeights });
   await page.locator('dialog.crucible-studio-confirm-dialog button', { hasText: 'Cancel' }).click();
   await page.evaluate(() => window.__newSceneChoice);
   screens.push(await measureRecentMenu(page, theme));
@@ -269,6 +270,15 @@ export function summarize(screens, allowlist = ALLOWLIST) {
   const allowedMerged = new Map();
   for (const screen of screens) {
     const { findings, allowed } = findSpacingProblems(screen.records, { allowlist });
+    const rowHeights = screen.buttonRowHeights ?? [];
+    if (rowHeights.length > 1 && Math.max(...rowHeights) - Math.min(...rowHeights) > 1) {
+      findings.push({
+        kind: 'uneven-height',
+        selector: 'crucible-studio-dialog-actions > button',
+        detail: rowHeights.join(','),
+        message: `The buttons of one row are ${rowHeights.map(height => `${height} px`).join(', ')} tall; give them the same height (32 px).`,
+      });
+    }
     for (const [list, target] of [[findings, merged], [allowed, allowedMerged]]) {
       for (const problem of list) {
         const key = `${problem.kind}|${problem.selector}|${problem.detail}|${problem.message}`;

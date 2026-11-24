@@ -23,6 +23,17 @@ export class RecentSceneUnavailable extends Error {
   }
 }
 
+/** Thrown when the browser did not give read access (the prompt was refused or dismissed). The entry stays in the list. */
+export class RecentScenePermissionNeeded extends Error {
+  constructor(name) {
+    super(`Permission is needed to open ${name}. Choose it again and allow access.`);
+    this.name = 'RecentScenePermissionNeeded';
+  }
+}
+
+// A handle that throws one of these is not gone: the person, or the page, did not allow the read this time.
+const PERMISSION_ERROR_NAMES = new Set(['NotAllowedError', 'SecurityError', 'AbortError']);
+
 function readIndex(storage) {
   try {
     const parsed = JSON.parse(storage?.getItem(RECENT_INDEX_KEY) ?? '[]');
@@ -44,11 +55,40 @@ function writeIndex(storage, entries) {
   }
 }
 
+function removeQuietly(storage, key) {
+  try {
+    storage?.removeItem(key);
+  } catch {
+    // A copy that cannot be removed is unreachable once the index stops naming it.
+  }
+}
+
 function copyLength(storage, entry) {
   try {
     return storage?.getItem(COPY_KEY_PREFIX + entry.id)?.length ?? 0;
   } catch {
     return 0;
+  }
+}
+
+function storedCopyKeys(storage) {
+  const keys = [];
+  try {
+    for (let position = 0; position < (storage?.length ?? 0); position += 1) {
+      const key = storage.key(position);
+      if (key?.startsWith(COPY_KEY_PREFIX)) keys.push(key);
+    }
+  } catch {
+    // A storage that cannot be listed has nothing to sweep.
+  }
+  return keys;
+}
+
+// A copy the index does not name was left by a refused write or another tab's removal; it would sit outside the cap for good.
+function sweepOrphanCopies(storage, entries) {
+  const named = new Set(entries.map(entry => COPY_KEY_PREFIX + entry.id));
+  for (const key of storedCopyKeys(storage)) {
+    if (!named.has(key)) removeQuietly(storage, key);
   }
 }
 
@@ -89,16 +129,12 @@ export function createIndexedDbHandleStore(indexedDatabaseFactory = globalThis.i
  */
 export function createRecentScenes({ storage, handleStore = null, host = null, createId = () => globalThis.crypto.randomUUID() } = {}) {
   async function dropEntry(entry) {
-    try {
-      storage?.removeItem(COPY_KEY_PREFIX + entry.id);
-    } catch {
-      // A copy that cannot be removed is unreachable once the index stops naming it.
-    }
+    removeQuietly(storage, COPY_KEY_PREFIX + entry.id);
     if (entry.kind === 'handle') await handleStore?.delete(entry.id).catch(() => {});
   }
 
   async function sameFile(entry, handle) {
-    if (entry.kind !== 'handle' || !handleStore) return false;
+    if (entry.kind !== 'handle' || !handleStore) return entry.name === handle.name;
     try {
       const stored = await handleStore.get(entry.id);
       if (stored && typeof stored.isSameEntry === 'function') return await stored.isSameEntry(handle);
@@ -108,70 +144,94 @@ export function createRecentScenes({ storage, handleStore = null, host = null, c
     return entry.name === handle.name;
   }
 
-  async function findDuplicate(entries, { name, handle }) {
+  // A handle entry and a copy entry of one file name are one entry: the file was opened one way and saved the other.
+  async function findDuplicates(entries, { name, handle }) {
+    const duplicates = [];
     for (const entry of entries) {
-      const isDuplicate = handle ? await sameFile(entry, handle) : entry.kind === 'copy' && entry.name === name;
-      if (isDuplicate) return entry;
+      const isDuplicate = handle && entry.kind === 'handle' ? await sameFile(entry, handle) : entry.name === name;
+      if (isDuplicate) duplicates.push(entry);
     }
-    return null;
+    return duplicates;
   }
 
   // Oldest copies go first until the copies together fit; a handle costs no storage, so it is never dropped for size.
-  async function trimCopies(entries) {
+  function fitCopies(entries) {
     const kept = [...entries];
     let total = kept.reduce((sum, entry) => sum + copyLength(storage, entry), 0);
     for (let index = kept.length - 1; index >= 0 && total > RECENT_COPY_CHARACTER_LIMIT; index -= 1) {
       if (kept[index].kind !== 'copy') continue;
       total -= copyLength(storage, kept[index]);
-      await dropEntry(kept[index]);
       kept.splice(index, 1);
     }
     return kept;
   }
 
+  async function readHandleEntry(entry) {
+    const handle = await handleStore?.get(entry.id);
+    if (!handle) throw new Error('the browser forgot the file');
+    let granted = false;
+    try {
+      granted = (await handle.queryPermission?.({ mode: 'read' })) === 'granted'
+        || (await handle.requestPermission?.({ mode: 'read' })) === 'granted';
+    } catch (error) {
+      if (!PERMISSION_ERROR_NAMES.has(error?.name)) throw error;
+    }
+    if (!granted) throw new RecentScenePermissionNeeded(entry.name);
+    try {
+      const file = await handle.getFile();
+      return { text: await file.text(), fileName: file.name, handle };
+    } catch (error) {
+      if (PERMISSION_ERROR_NAMES.has(error?.name)) throw new RecentScenePermissionNeeded(entry.name);
+      throw error;
+    }
+  }
+
   const local = {
     async list() {
-      return readIndex(storage).map(({ id, name, kind }) => ({ id, name, kind }));
+      const entries = readIndex(storage);
+      sweepOrphanCopies(storage, entries);
+      return entries.map(({ id, name, kind }) => ({ id, name, kind }));
     },
 
     /** Puts a scene first. Give `handle` (a file handle) or `text` (the recipe JSON). Returns 'remembered' or the reason it was not. */
     async remember({ name, handle = null, text = null }) {
       if (handle && !handleStore) return 'no-handle-store';
       if (!handle && (typeof text !== 'string' || text.length > RECENT_COPY_CHARACTER_LIMIT)) return 'too-large';
-      const existing = readIndex(storage);
-      const duplicate = await findDuplicate(existing, { name, handle });
-      const entry = { id: duplicate?.id ?? createId(), name, kind: handle ? 'handle' : 'copy' };
+      const duplicates = await findDuplicates(readIndex(storage), { name, handle });
+      const entry = { id: createId(), name, kind: handle ? 'handle' : 'copy' };
       try {
         if (handle) await handleStore.put(entry.id, handle);
         else storage.setItem(COPY_KEY_PREFIX + entry.id, text);
       } catch {
+        await dropEntry(entry);
         return 'storage-refused';
       }
-      const others = existing.filter(item => item.id !== entry.id);
-      for (const dropped of others.slice(RECENT_SCENE_LIMIT - 1)) await dropEntry(dropped);
-      const trimmed = await trimCopies([entry, ...others.slice(0, RECENT_SCENE_LIMIT - 1)]);
-      writeIndex(storage, trimmed);
+      // From here nothing waits: the index is read again right before it is written, so another tab's entries are merged by
+      // recency (this one first) instead of being overwritten by a list read before the handle was stored.
+      const latest = readIndex(storage);
+      const duplicateIds = new Set(duplicates.map(duplicate => duplicate.id));
+      const others = latest.filter(item => !duplicateIds.has(item.id) && item.name !== name);
+      const kept = fitCopies([entry, ...others].slice(0, RECENT_SCENE_LIMIT));
+      if (!writeIndex(storage, kept)) {
+        await dropEntry(entry);
+        return 'storage-refused';
+      }
+      const keptIds = new Set(kept.map(item => item.id));
+      for (const dropped of latest.filter(item => !keptIds.has(item.id))) await dropEntry(dropped);
       return 'remembered';
     },
 
-    /** Resolves to { text, fileName, handle? }. An entry that cannot be read is removed and the error names it. */
+    /** Resolves to { text, fileName, handle? }. An entry whose file is gone is removed and the error names it; a refused permission keeps it. */
     async open(id) {
       const entry = readIndex(storage).find(item => item.id === id);
       if (!entry) throw new RecentSceneUnavailable('This scene', 'it is not in the list');
       try {
-        if (entry.kind === 'copy') {
-          const text = storage.getItem(COPY_KEY_PREFIX + entry.id);
-          if (typeof text !== 'string') throw new Error('the saved copy is gone');
-          return { text, fileName: entry.name };
-        }
-        const handle = await handleStore.get(entry.id);
-        if (!handle) throw new Error('the browser forgot the file');
-        const granted = (await handle.queryPermission?.({ mode: 'read' })) === 'granted'
-          || (await handle.requestPermission?.({ mode: 'read' })) === 'granted';
-        if (!granted) throw new Error('permission was not given');
-        const file = await handle.getFile();
-        return { text: await file.text(), fileName: file.name, handle };
+        if (entry.kind === 'handle') return await readHandleEntry(entry);
+        const text = storage.getItem(COPY_KEY_PREFIX + entry.id);
+        if (typeof text !== 'string') throw new Error('the saved copy is gone');
+        return { text, fileName: entry.name };
       } catch (error) {
+        if (error instanceof RecentScenePermissionNeeded) throw error;
         await local.remove(id);
         throw new RecentSceneUnavailable(entry.name, error.message);
       }
@@ -179,14 +239,17 @@ export function createRecentScenes({ storage, handleStore = null, host = null, c
 
     async remove(id) {
       const index = readIndex(storage);
+      writeIndex(storage, index.filter(item => item.id !== id));
       const entry = index.find(item => item.id === id);
       if (entry) await dropEntry(entry);
-      writeIndex(storage, index.filter(item => item.id !== id));
     },
 
     async clear() {
-      for (const entry of readIndex(storage)) await dropEntry(entry);
+      const entries = readIndex(storage);
       writeIndex(storage, []);
+      for (const entry of entries) await dropEntry(entry);
+      sweepOrphanCopies(storage, []);
+      await handleStore?.clear().catch(() => {});
     },
   };
 

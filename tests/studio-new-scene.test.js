@@ -7,6 +7,8 @@ import { TEMPLATE_THUMBNAIL_URLS } from '../src/studio-template-thumbnails.js';
 import {
   RECENT_COPY_CHARACTER_LIMIT,
   RECENT_SCENE_LIMIT,
+  RECENT_INDEX_KEY,
+  RecentScenePermissionNeeded,
   RecentSceneUnavailable,
   createRecentScenes,
 } from '../src/studio-recent-scenes.js';
@@ -16,6 +18,8 @@ function memoryStorage() {
   const entries = new Map();
   return {
     entries,
+    get length() { return entries.size; },
+    key: position => [...entries.keys()][position] ?? null,
     getItem: key => entries.get(key) ?? null,
     setItem: (key, value) => entries.set(key, String(value)),
     removeItem: key => entries.delete(key),
@@ -42,13 +46,17 @@ function sequentialIds() {
   return () => `id-${next += 1}`;
 }
 
-function fileHandle(name, { permission = 'granted', text = recipeText(name), fails = false } = {}) {
+function fileHandle(name, { permission = 'granted', text = recipeText(name), fails = false, failure = null, dismissed = false } = {}) {
   return {
     name,
     isSameEntry: async other => other.name === name,
-    queryPermission: async () => permission,
-    requestPermission: async () => permission,
+    queryPermission: async () => (dismissed ? 'prompt' : permission),
+    requestPermission: async () => {
+      if (dismissed) throw Object.assign(new Error('The request is not allowed by the user agent'), { name: 'NotAllowedError' });
+      return permission;
+    },
     getFile: async () => {
+      if (failure) throw Object.assign(new Error('no such file'), { name: failure });
       if (fails) throw new Error('the file was moved');
       return { name, text: async () => text };
     },
@@ -117,16 +125,99 @@ test('an entry that can no longer be opened says so and is removed', async () =>
   const storage = memoryStorage();
   const recent = createRecentScenes({ storage, handleStore, createId: sequentialIds() });
   await recent.remember({ name: 'moved.json', handle: fileHandle('moved.json', { fails: true }) });
-  await recent.remember({ name: 'denied.json', handle: fileHandle('denied.json', { permission: 'denied' }) });
+  await recent.remember({ name: 'missing.json', handle: fileHandle('missing.json', { failure: 'NotFoundError' }) });
   await recent.remember({ name: 'copy.json', text: recipeText() });
-  const [copyEntry, deniedEntry, movedEntry] = await recent.list();
+  const [copyEntry, missingEntry, movedEntry] = await recent.list();
   await assert.rejects(recent.open(movedEntry.id), error => error instanceof RecentSceneUnavailable && /moved\.json can no longer be opened \(the file was moved\)/.test(error.message));
-  await assert.rejects(recent.open(deniedEntry.id), /permission was not given/);
+  await assert.rejects(recent.open(missingEntry.id), /missing\.json can no longer be opened \(no such file\)/);
   assert.deepEqual((await recent.list()).map(entry => entry.name), ['copy.json']);
   assert.equal(handleStore.handles.size, 0);
   storage.entries.delete(`crucible.studio.recent.copy.${copyEntry.id}`);
   await assert.rejects(recent.open(copyEntry.id), /the saved copy is gone/);
   assert.deepEqual(await recent.list(), []);
+});
+
+test('a refused or dismissed permission prompt keeps the entry and its handle and asks for permission', async () => {
+  const handleStore = memoryHandleStore();
+  const recent = createRecentScenes({ storage: memoryStorage(), handleStore, createId: sequentialIds() });
+  await recent.remember({ name: 'denied.json', handle: fileHandle('denied.json', { permission: 'denied' }) });
+  await recent.remember({ name: 'dismissed.json', handle: fileHandle('dismissed.json', { dismissed: true }) });
+  await recent.remember({ name: 'blocked.json', handle: fileHandle('blocked.json', { failure: 'NotAllowedError' }) });
+  for (const entry of await recent.list()) {
+    await assert.rejects(recent.open(entry.id), error => error instanceof RecentScenePermissionNeeded && /^Permission is needed to open /.test(error.message), entry.name);
+  }
+  assert.deepEqual((await recent.list()).map(entry => entry.name), ['blocked.json', 'dismissed.json', 'denied.json']);
+  assert.equal(handleStore.handles.size, 3);
+});
+
+test('a refused index write rolls the new copy or handle back and reports the refusal', async () => {
+  const storage = memoryStorage();
+  const handleStore = memoryHandleStore();
+  const recent = createRecentScenes({ storage, handleStore, createId: sequentialIds() });
+  assert.equal(await recent.remember({ name: 'kept.json', text: recipeText() }), 'remembered');
+  const setItem = storage.setItem;
+  storage.setItem = (key, value) => {
+    if (key === RECENT_INDEX_KEY) throw new Error('quota');
+    return setItem(key, value);
+  };
+  assert.equal(await recent.remember({ name: 'copy.json', text: recipeText() }), 'storage-refused');
+  assert.equal(await recent.remember({ name: 'handle.json', handle: fileHandle('handle.json') }), 'storage-refused');
+  storage.setItem = setItem;
+  assert.deepEqual((await recent.list()).map(entry => entry.name), ['kept.json']);
+  assert.equal([...storage.entries.keys()].filter(key => key.includes('.copy.')).length, 1, 'no orphan copy');
+  assert.equal(handleStore.handles.size, 0, 'no orphan handle');
+});
+
+test('copies the index does not name are swept when the list is read, so they cannot escape the cap', async () => {
+  const storage = memoryStorage();
+  const recent = createRecentScenes({ storage, createId: sequentialIds() });
+  await recent.remember({ name: 'a.json', text: recipeText() });
+  storage.setItem('crucible.studio.recent.copy.stray', 'x'.repeat(5000));
+  assert.deepEqual((await recent.list()).map(entry => entry.name), ['a.json']);
+  assert.equal(storage.getItem('crucible.studio.recent.copy.stray'), null);
+  assert.equal(storage.entries.size, 2, 'the index and the one named copy remain');
+});
+
+test('clear empties the handle store entirely, not only the listed handles', async () => {
+  const handleStore = memoryHandleStore();
+  handleStore.handles.set('stray', fileHandle('stray.json'));
+  const recent = createRecentScenes({ storage: memoryStorage(), handleStore, createId: sequentialIds() });
+  await recent.remember({ name: 'listed.json', handle: fileHandle('listed.json') });
+  await recent.clear();
+  assert.equal(handleStore.handles.size, 0);
+});
+
+test('a handle entry and a copy entry of the same file name are one entry, the newer winning', async () => {
+  const storage = memoryStorage();
+  const handleStore = memoryHandleStore();
+  const recent = createRecentScenes({ storage, handleStore, createId: sequentialIds() });
+  await recent.remember({ name: 'trip.json', text: recipeText() });
+  await recent.remember({ name: 'trip.json', handle: fileHandle('trip.json') });
+  assert.deepEqual(await recent.list(), [{ id: 'id-2', name: 'trip.json', kind: 'handle' }]);
+  assert.equal([...storage.entries.keys()].filter(key => key.includes('.copy.')).length, 0, 'the older copy is gone');
+  await recent.remember({ name: 'trip.json', text: recipeText('saved') });
+  assert.deepEqual((await recent.list()).map(entry => entry.kind), ['copy']);
+  assert.equal(handleStore.handles.size, 0, 'the older handle is gone');
+});
+
+test('two tabs: the index is read again right before it is written and merged by recency', async () => {
+  const storage = memoryStorage();
+  const handleStore = memoryHandleStore();
+  let releaseFirstPut;
+  const firstPutWaits = new Promise(resolve => { releaseFirstPut = resolve; });
+  const slowPut = handleStore.put;
+  handleStore.put = async (id, handle) => {
+    await firstPutWaits;
+    return slowPut(id, handle);
+  };
+  const firstTab = createRecentScenes({ storage, handleStore, createId: () => 'from-first-tab' });
+  const secondTab = createRecentScenes({ storage, createId: () => 'from-second-tab' });
+  const firstRemember = firstTab.remember({ name: 'first.json', handle: fileHandle('first.json') });
+  await secondTab.remember({ name: 'second.json', text: recipeText() });
+  releaseFirstPut();
+  await firstRemember;
+  assert.deepEqual((await firstTab.list()).map(entry => entry.name), ['first.json', 'second.json']);
+  assert.equal(storage.getItem('crucible.studio.recent.copy.from-second-tab'), recipeText(), "the other tab's copy was not swept");
 });
 
 test('clear forgets every entry and its stored copy or handle', async () => {
@@ -455,4 +546,60 @@ test('a host that supplies recents is asked for them and opens them', async test
   await ui.settle();
   assert.deepEqual(opened, ['h1']);
   assert.equal(ui.filePill.title, 'C:/projects/host.scene.json');
+});
+
+test('the unsaved question leads with a warning mark and orders Discard, Cancel and Save, Save being the one filled primary button', async testContext => {
+  const ui = mountNewSceneStudio(testContext);
+  const { opening } = await startUnsavedChoice(ui);
+  const buttons = ui.confirm().querySelectorAll('.crucible-studio-dialog-actions button');
+  assert.deepEqual(buttons.map(button => button.textContent), ['Discard', 'Cancel', 'Save']);
+  assert.match(buttons[2].className, /crucible-studio-setup-primary/, 'Save uses the primary class the setup dialog uses for Next and Done');
+  assert.equal(buttons.filter(button => /primary/.test(button.className)).length, 1, 'one primary button');
+  const heading = ui.confirm().querySelector('h2');
+  assert.ok(heading.querySelector('.crucible-studio-icon'), 'a mark beside the title');
+  assert.equal(heading.textContent, 'Unsaved changes');
+  assert.equal(ui.dom.document.activeElement, buttons[2], 'focus starts on Save');
+  byText(ui.confirm(), 'Cancel').click();
+  await opening;
+});
+
+test('asking for a new scene twice while the chooser is open is one chooser and one answer', async testContext => {
+  const ui = mountNewSceneStudio(testContext);
+  const first = ui.studio.openNewScene();
+  const second = ui.studio.openNewScene();
+  assert.equal(first, second);
+  await ui.settle();
+  ui.card('showcase').click();
+  await first;
+  assert.equal(ui.filePill.textContent, 'showcase.scene.json');
+  assert.equal(ui.studio.controller.canUndo, true);
+  ui.studio.controller.undo();
+  assert.deepEqual(ui.studio.exportRecipe().nodes.map(node => node.id), ['hero'], 'one replacement, not two');
+});
+
+test('Apply on the recipe dialog replaces the scene without a question and marks it changed', async testContext => {
+  const ui = mountNewSceneStudio(testContext);
+  assert.equal(ui.studio.dirty, false);
+  const menuButton = ui.popover.querySelectorAll('button').find(button => button.textContent === 'Recipe JSON');
+  menuButton.click();
+  await ui.settle();
+  ui.root.querySelector('textarea').value = JSON.stringify({ ...makeRecipe(), nodes: [] });
+  ui.root.querySelectorAll('button').find(button => button.textContent === 'Apply JSON').click();
+  await ui.settle();
+  assert.equal(ui.status(), 'Recipe applied');
+  assert.deepEqual(ui.studio.exportRecipe().nodes, []);
+  assert.equal(ui.studio.dirty, true);
+  assert.equal(ui.filePill.dataset.dirty, 'true');
+});
+
+test('a watched-file reload over unsaved edits keeps those edits one undo step away and says so', async testContext => {
+  const ui = mountNewSceneStudio(testContext);
+  ui.studio.controller.updateNodeTransform('hero', { translation: [2, 0.5, 0] });
+  assert.equal(ui.studio.dirty, true);
+  await ui.studio.loadExternalTextFile(JSON.stringify({ ...makeRecipe(), nodes: [] }), { filePath: 'C:/projects/watched.scene.json', fileName: 'watched.scene.json', agent: true });
+  assert.equal(ui.studio.dirty, false);
+  assert.deepEqual(ui.studio.exportRecipe().nodes, []);
+  assert.match(ui.status(), /Replaced unsaved changes\. Undo brings them back/);
+  ui.studio.controller.undo();
+  assert.deepEqual(ui.studio.exportRecipe().nodes.find(node => node.id === 'hero').translation, [2, 0.5, 0]);
 });

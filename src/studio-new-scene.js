@@ -72,31 +72,46 @@ export function createNewSceneDialogs({ documentReference, createElement, create
     buttons[target].focus();
   });
 
+  // A second call while a dialog is open gets the same answer instead of leaving one promise that never settles.
+  let pendingChoice = null;
+  let pendingQuestion = null;
+
   /** Opens the chooser. Resolves to the key of the chosen starting scene, or null when the person cancelled. */
   function chooseTemplate() {
-    return new Promise(resolve => {
+    pendingChoice ??= new Promise(resolve => {
       for (const { templateKey, thumbnail } of cards) {
         if (!thumbnail.src) thumbnail.src = TEMPLATE_THUMBNAIL_URLS[templateKey];
       }
       chooser.returnValue = '';
-      chooser.addEventListener('close', () => resolve(chooser.returnValue || null), { once: true });
+      chooser.addEventListener('close', () => {
+        pendingChoice = null;
+        resolve(chooser.returnValue || null);
+      }, { once: true });
       chooser.showModal();
       cards[0].card.focus();
     });
+    return pendingChoice;
   }
 
-  const unsavedHeading = createElement(documentReference, 'h2', { id: 'crucible-studio-unsaved-title', textContent: 'Unsaved changes' });
+  const unsavedHeading = createElement(
+    documentReference,
+    'h2',
+    { id: 'crucible-studio-unsaved-title' },
+    createIcon(documentReference, 'warning'),
+    createElement(documentReference, 'span', { textContent: 'Unsaved changes' }),
+  );
   const unsavedMessage = createElement(documentReference, 'p', { className: 'crucible-studio-confirm-message' });
   const cancelButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Cancel' });
-  const discardButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Discard' });
-  const saveButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-primary-btn', textContent: 'Save' });
+  // The buttons follow the setup dialog: the lesser choice at the left edge, then Cancel, then the one filled primary button.
+  const discardButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-skip', textContent: 'Discard' });
+  const saveButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-setup-primary', textContent: 'Save' });
   const confirm = createElement(
     documentReference,
     'dialog',
     { className: 'crucible-studio-confirm-dialog', attributes: { role: 'alertdialog', 'aria-labelledby': 'crucible-studio-unsaved-title', closedby: 'any' } },
     unsavedHeading,
     unsavedMessage,
-    createElement(documentReference, 'div', { className: 'crucible-studio-dialog-actions' }, cancelButton, discardButton, saveButton),
+    createElement(documentReference, 'div', { className: 'crucible-studio-dialog-actions crucible-studio-setup-actions' }, discardButton, cancelButton, saveButton),
   );
   cancelButton.addEventListener('click', () => confirm.close('cancel'));
   discardButton.addEventListener('click', () => confirm.close('discard'));
@@ -104,13 +119,17 @@ export function createNewSceneDialogs({ documentReference, createElement, create
 
   /** Asks what to do with the scene being left. Resolves to 'save', 'discard' or 'cancel' (also for Escape). */
   function askUnsavedChanges(fileName) {
-    return new Promise(resolve => {
+    pendingQuestion ??= new Promise(resolve => {
       unsavedMessage.textContent = `${fileName} has changes that are not saved.`;
       confirm.returnValue = '';
-      confirm.addEventListener('close', () => resolve(['save', 'discard'].includes(confirm.returnValue) ? confirm.returnValue : 'cancel'), { once: true });
+      confirm.addEventListener('close', () => {
+        pendingQuestion = null;
+        resolve(['save', 'discard'].includes(confirm.returnValue) ? confirm.returnValue : 'cancel');
+      }, { once: true });
       confirm.showModal();
       saveButton.focus();
     });
+    return pendingQuestion;
   }
 
   return { chooseTemplate, askUnsavedChanges, dialogs: [chooser, confirm] };
