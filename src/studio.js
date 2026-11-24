@@ -598,7 +598,36 @@ function appendRotationSweep(documentReference, gizmoSvg, sweep) {
 // The flight to a framed object: long enough to follow, short enough never to wait for.
 const FLIGHT_MILLISECONDS = 320;
 const SILHOUETTE_FILTER_ID = 'crucible-studio-silhouette';
-const SILHOUETTE_EDGE_PIXELS = 1.5;
+// The active object is outlined thicker than the rest of the selection: the two read apart by width, and both keep the full accent.
+const SILHOUETTE_EDGE_PIXELS = { active: 2.5, others: 1.5 };
+// A ring of the panel colour on each side of the accent (the shape's own edge pixels inside, the ground outside), so the
+// outline holds on a surface as light as the accent, such as a cream model, and on a dark one.
+const SILHOUETTE_CASING_PIXELS = 1;
+
+// The steps that turn a filled shape into its outline: the accent ring just outside the shape, with the casing on both sides of it.
+function silhouetteFilterSteps(documentReference, layer) {
+  const edgePixels = SILHOUETTE_EDGE_PIXELS[layer];
+  const merge = createSvgElement(documentReference, 'feMerge');
+  merge.append(
+    createSvgElement(documentReference, 'feMergeNode', { in: 'casing' }),
+    createSvgElement(documentReference, 'feMergeNode', { in: 'innerCasing' }),
+    createSvgElement(documentReference, 'feMergeNode', { in: 'ring' }),
+  );
+  return [
+    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'dilate', radius: edgePixels, result: 'grown' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'grown', in2: 'SourceAlpha', operator: 'out', result: 'edge' }),
+    createSvgElement(documentReference, 'feFlood', { class: 'crucible-studio-silhouette-colour', 'data-layer': layer, result: 'colour' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'colour', in2: 'edge', operator: 'in', result: 'ring' }),
+    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'dilate', radius: edgePixels + SILHOUETTE_CASING_PIXELS, result: 'wide' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'wide', in2: 'grown', operator: 'out', result: 'casingEdge' }),
+    createSvgElement(documentReference, 'feFlood', { class: 'crucible-studio-silhouette-casing', result: 'casingColour' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'casingColour', in2: 'casingEdge', operator: 'in', result: 'casing' }),
+    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'erode', radius: SILHOUETTE_CASING_PIXELS, result: 'shrunk' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'SourceAlpha', in2: 'shrunk', operator: 'out', result: 'innerEdge' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'casingColour', in2: 'innerEdge', operator: 'in', result: 'innerCasing' }),
+    merge,
+  ];
+}
 
 // Draws the edge of the selected object's shape on screen: the triangles are filled as one shape, and a filter keeps
 // only the ring just outside it, so no line crosses the inside of the object.
@@ -620,7 +649,7 @@ function appendSelectionSilhouette(documentReference, gizmoSvg, triangles, layer
       bottom = Math.max(bottom, triangles[offset + corner + 1]);
     }
   }
-  const margin = SILHOUETTE_EDGE_PIXELS + 2;
+  const margin = SILHOUETTE_EDGE_PIXELS[layer] + SILHOUETTE_CASING_PIXELS + 2;
   const filter = createSvgElement(documentReference, 'filter', {
     id: filterId,
     filterUnits: 'userSpaceOnUse',
@@ -629,12 +658,7 @@ function appendSelectionSilhouette(documentReference, gizmoSvg, triangles, layer
     width: (right - left + margin * 2).toFixed(1),
     height: (bottom - top + margin * 2).toFixed(1),
   });
-  filter.append(
-    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'dilate', radius: SILHOUETTE_EDGE_PIXELS, result: 'grown' }),
-    createSvgElement(documentReference, 'feComposite', { in: 'grown', in2: 'SourceAlpha', operator: 'out', result: 'edge' }),
-    createSvgElement(documentReference, 'feFlood', { class: 'crucible-studio-silhouette-colour', 'data-layer': layer, result: 'colour' }),
-    createSvgElement(documentReference, 'feComposite', { in: 'colour', in2: 'edge', operator: 'in' }),
-  );
+  filter.append(...silhouetteFilterSteps(documentReference, layer));
   const definitions = createSvgElement(documentReference, 'defs');
   definitions.append(filter);
   gizmoSvg.append(definitions, createSvgElement(documentReference, 'path', {
@@ -648,12 +672,7 @@ function appendSelectionSilhouette(documentReference, gizmoSvg, triangles, layer
 // The filter that turns the mask canvas into its edge: the same dilate-and-subtract as the path outline, over the whole canvas.
 function createMaskFilterSvg(documentReference, filterId) {
   const filter = createSvgElement(documentReference, 'filter', { id: filterId, x: '0', y: '0', width: '1', height: '1' });
-  filter.append(
-    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'dilate', radius: SILHOUETTE_EDGE_PIXELS, result: 'grown' }),
-    createSvgElement(documentReference, 'feComposite', { in: 'grown', in2: 'SourceAlpha', operator: 'out', result: 'edge' }),
-    createSvgElement(documentReference, 'feFlood', { class: 'crucible-studio-silhouette-colour', result: 'colour' }),
-    createSvgElement(documentReference, 'feComposite', { in: 'colour', in2: 'edge', operator: 'in' }),
-  );
+  filter.append(...silhouetteFilterSteps(documentReference, 'active'));
   const definitions = createSvgElement(documentReference, 'defs');
   definitions.append(filter);
   const holder = createSvgElement(documentReference, 'svg', { class: 'crucible-studio-mask-filters', width: '0', height: '0', 'aria-hidden': 'true' });
@@ -725,11 +744,14 @@ function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask,
     }
   }
   for (const outline of outlines.sort((first, second) => Number(first.active) - Number(second.active))) {
-    gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
-      class: 'crucible-studio-selection-outline',
+    const attributes = {
       'data-layer': outline.active ? 'active' : 'others',
       points: outline.points.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
-    }));
+    };
+    gizmoSvg.append(
+      createSvgElement(documentReference, 'polygon', { class: 'crucible-studio-selection-outline-casing', ...attributes }),
+      createSvgElement(documentReference, 'polygon', { class: 'crucible-studio-selection-outline', ...attributes }),
+    );
   }
   appendDragTrace(documentReference, gizmoSvg, controller.dragTrace());
   const handles = controller.gizmoHandles();
@@ -1231,7 +1253,6 @@ export function createStudio(container, {
     createMenuItem('Duplicate', 'edit.duplicate', () => duplicateSelection(), 'duplicate'),
     createMenuItem('Delete', 'edit.delete', () => deleteButton.click(), 'remove'),
     createMenuItem('Deselect', 'edit.deselect', () => controller.selectNode(null)),
-
     createMenuItem('Hide', 'edit.hide', () => hideSelection(), 'eyeOff'),
     createMenuItem('Show all', 'edit.showAll', () => showAllHidden(), 'eye'),
     createMenuItem('Reset position', 'edit.resetPosition', () => resetSelectionTransform('translation'), 'translate'),
@@ -3282,12 +3303,10 @@ export function createStudio(container, {
 
   function selectAllNodes() {
     selectNodeAndShowItsPanel(() => controller.selectAll());
-    announce(`${controller.selectedNodeIds.length} selected`);
   }
 
   function invertNodeSelection() {
     selectNodeAndShowItsPanel(() => controller.invertSelection());
-    announce(`${controller.selectedNodeIds.length} selected`);
   }
 
   function selectSceneObjectAndShowItsPanel(key) {
@@ -3311,7 +3330,11 @@ export function createStudio(container, {
       createElement(documentReference, 'span', { className: 'crucible-studio-tree-label', textContent: node.label ?? node.id }),
     );
     selectButton.style.paddingLeft = `${4 + depth * 12}px`;
-    selectButton.addEventListener('click', () => selectNodeAndShowItsPanel(() => controller.selectNode(node.id)));
+    selectButton.addEventListener('click', event => {
+      // Shift or Ctrl (Command) adds the row to the selection or takes it out, as in the viewport; a plain click replaces.
+      const toggles = event.shiftKey || event.ctrlKey || event.metaKey;
+      selectNodeAndShowItsPanel(() => (toggles ? controller.selectNodes([node.id], { mode: 'toggle' }) : controller.selectNode(node.id)));
+    });
     selectButton.addEventListener('contextmenu', event => {
       event.preventDefault();
       selectNodeAndShowItsPanel(() => controller.selectNode(node.id));
@@ -3339,11 +3362,21 @@ export function createStudio(container, {
     return { element, badge, appliedFill: '' };
   }
 
-  function setOutlinerRowSelected(row, selected) {
+  // Every selected row is marked selected; the active one, the node the panels follow, also carries aria-current and a stronger tint.
+  function setOutlinerRowSelected(row, selected, active = selected) {
     const selectedText = selected ? 'true' : 'false';
     if (row.element.dataset.selected !== selectedText) {
       row.element.dataset.selected = selectedText;
       row.element.setAttribute('aria-selected', selectedText);
+    }
+    const activeText = selected && active ? 'true' : 'false';
+    if (row.element.dataset.active !== activeText) {
+      row.element.dataset.active = activeText;
+      if (activeText === 'true') {
+        row.element.setAttribute('aria-current', 'true');
+      } else {
+        row.element.removeAttribute('aria-current');
+      }
     }
   }
 
@@ -3433,6 +3466,7 @@ export function createStudio(container, {
       return (node.label ?? node.id).toLowerCase().includes(queryText) || node.id.toLowerCase().includes(queryText);
     });
     const sceneObjects = controller.listSceneObjects().filter(object => !queryText || object.label.toLowerCase().includes(queryText) || object.key.includes(queryText));
+    const selectedNodeIdSet = new Set(controller.selectedNodeIds);
     const wantedRows = [
       ...sceneObjects.map(object => ({
         rowKey: `object:${object.key}`,
@@ -3446,13 +3480,14 @@ export function createStudio(container, {
         return {
           rowKey: `node:${node.id}`,
           contentKey: `${depth}:${node.label ?? ''}:${node.visible ?? true}:${iconName}`,
-          selected: node.id === controller.selectedNodeId,
+          selected: selectedNodeIdSet.has(node.id),
+          active: node.id === controller.selectedNodeId,
           fill: node.material && materialColors.has(node.material) ? materialColors.get(node.material) : '',
           build: () => createNodeRow(node, depth, iconName),
         };
       }),
     ];
-    const treeKey = `${queryText}|${wantedRows.map(wanted => `${wanted.rowKey}:${wanted.contentKey}:${wanted.selected}:${wanted.fill}`).join('|')}`;
+    const treeKey = `${queryText}|${wantedRows.map(wanted => `${wanted.rowKey}:${wanted.contentKey}:${wanted.selected}:${wanted.active ?? wanted.selected}:${wanted.fill}`).join('|')}`;
     if (treeKey === lastTreeKey) {
       return;
     }
@@ -3464,7 +3499,7 @@ export function createStudio(container, {
     for (const wanted of wantedRows) {
       const previous = previousRows.get(wanted.rowKey);
       const row = previous?.contentKey === wanted.contentKey ? previous : { ...wanted.build(), contentKey: wanted.contentKey };
-      setOutlinerRowSelected(row, wanted.selected);
+      setOutlinerRowSelected(row, wanted.selected, wanted.active);
       if (row.badge) setOutlinerRowFill(row, wanted.fill);
       outlinerRows.set(wanted.rowKey, row);
     }

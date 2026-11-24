@@ -37,6 +37,9 @@ const AXIS_PARALLEL_LIMIT = 0.002;
 const OUTLINE_VERTEX_BUDGET = 4000;
 // Above this many triangles the selection is outlined from a mask the graphics card draws: an SVG path of that many triangles costs seconds a frame.
 const SILHOUETTE_TRIANGLE_BUDGET = 8000;
+// The hull fallback (no WebGL2, or part of the selection behind the camera) projects every vertex of a node each frame, about
+// 0.7 ms a node. Past this many selected nodes besides the active one, the rest are left without an outline: 11 nodes cost about 8 ms.
+const SELECTION_HULL_LIMIT = 11;
 const RING_EDGE_ON_LIMIT = 0.12;
 const RING_RADIUS_FACTOR = 0.92;
 const MINIMUM_AXIS_SCREEN_SHARE = 0.8;
@@ -1087,7 +1090,11 @@ export function createStudioController({
    * selected leaves, each other joins) or 'remove'. The active node is `active` when given (it must end up selected);
    * otherwise the last id that joined; when the active node left, the last one still selected. Returns the selected ids.
    */
-  function selectNodes(nodeIds, { mode = 'replace', active } = {}) {
+  function selectNodes(nodeIds, options) {
+    if (options !== undefined && options !== null && (typeof options !== 'object' || Array.isArray(options))) {
+      throw new TypeError('selectNodes options must be an object, for example selectNodes(["box-1"], { mode: "add" }), or left out.');
+    }
+    const { mode = 'replace', active } = options ?? {};
     if (!Array.isArray(nodeIds) || nodeIds.some(nodeId => typeof nodeId !== 'string' || nodeId === '')) {
       throw new TypeError('selectNodes expects an array of node ID strings, for example selectNodes(["box-1", "box-2"]).');
     }
@@ -1149,7 +1156,11 @@ export function createStudioController({
 
   /** The selected nodes that have no selected ancestor: what a move, copy or delete has to act on so a child is not handled twice. */
   function selectionRoots() {
-    const parentOf = new Map(currentScene.exportRecipe().nodes.map(node => [node.id, node.parent]));
+    return selectionRootsIn(currentScene.exportRecipe().nodes);
+  }
+
+  function selectionRootsIn(recipeNodes) {
+    const parentOf = new Map(recipeNodes.map(node => [node.id, node.parent]));
     const chosen = new Set(selectedNodeIds);
     return selectedNodeIds.filter(nodeId => {
       const visited = new Set([nodeId]);
@@ -1314,14 +1325,17 @@ export function createStudioController({
     return selectedNodeId ? nodeOutline(selectedNodeId) : null;
   }
 
-  // The same hull for every selected object, the active one marked, for the fallback that cannot draw the real shape.
+  // The same hull for the selected objects, the active one marked, for the fallback that cannot draw the real shape.
+  // The active node always has its hull; the others only up to SELECTION_HULL_LIMIT of them, as each costs a pass over its vertices.
   function selectionOutlineLayers() {
-    const outlinedIds = new Set(selectionRoots());
-    if (selectedNodeId) {
-      outlinedIds.add(selectedNodeId);
+    if (selectedNodeIds.length === 0) {
+      return [];
     }
-    return [...outlinedIds]
-      .map(nodeId => ({ points: nodeOutline(nodeId), active: nodeId === selectedNodeId }))
+    const recipeNodes = currentScene.exportRecipe().nodes;
+    const otherIds = selectionRootsIn(recipeNodes).filter(nodeId => nodeId !== selectedNodeId).slice(-SELECTION_HULL_LIMIT);
+    const outlinedIds = selectedNodeId ? [...otherIds, selectedNodeId] : otherIds;
+    return outlinedIds
+      .map(nodeId => ({ points: hullOutlineOf(nodeId, recipeNodes), active: nodeId === selectedNodeId }))
       .filter(layer => layer.points);
   }
 
@@ -1359,7 +1373,12 @@ export function createStudioController({
     if (typeof nodeId !== 'string' || nodeId === '') {
       throw new TypeError('nodeOutline requires a node id string.');
     }
-    const memberIds = descendantIdsOf(currentScene.exportRecipe().nodes, nodeId);
+    return hullOutlineOf(nodeId, currentScene.exportRecipe().nodes);
+  }
+
+  // The hull of one node over the recipe's nodes, which a caller outlining several nodes reads once.
+  function hullOutlineOf(nodeId, recipeNodes) {
+    const memberIds = descendantIdsOf(recipeNodes, nodeId);
     const memberParts = currentScene.parts.filter(part => ownsPart(memberIds, part) && part.matrix && part.geometry?.positions);
     const totalVertices = memberParts.reduce((count, part) => count + part.geometry.positions.length / 3, 0);
     if (totalVertices === 0) {
@@ -2994,6 +3013,7 @@ export function createStudioController({
 
 export {
   freeSpawnTranslation,
+  SELECTION_HULL_LIMIT,
   STUDIO_MATERIAL_PRESETS,
   STUDIO_PRIMITIVE_GROUPS,
   STUDIO_PRIMITIVES,

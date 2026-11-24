@@ -317,19 +317,30 @@ export const STUDIO_CSS = `
 .crucible-studio-silhouette-colour {
   flood-color: var(--studio-accent);
 }
-/* The active object is drawn at the full accent; the rest of the selection at 40 percent of it, so the two read apart. */
-.crucible-studio-silhouette-colour[data-layer="others"] {
-  flood-color: color-mix(in srgb, var(--studio-accent) 40%, transparent);
+/* Both layers use the full accent with a ring of the panel colour outside it, so the outline reads on light and dark
+   surfaces alike. The active object's outline is the wider one (2.5 px against 1.5 px). */
+.crucible-studio-silhouette-casing {
+  flood-color: var(--studio-bg);
 }
 .crucible-studio-selection-outline {
   fill: none;
   stroke: var(--studio-accent);
-  stroke-width: 1.5;
+  stroke-width: 2.5;
   stroke-linejoin: round;
   pointer-events: none;
 }
 .crucible-studio-selection-outline[data-layer="others"] {
-  stroke: color-mix(in srgb, var(--studio-accent) 40%, transparent);
+  stroke-width: 1.5;
+}
+.crucible-studio-selection-outline-casing {
+  fill: none;
+  stroke: var(--studio-bg);
+  stroke-width: 4.5;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.crucible-studio-selection-outline-casing[data-layer="others"] {
+  stroke-width: 3.5;
 }
 /* The axis widget stands at the top right of the viewport, beside the panel column. Floating, that is left of the
    Scene card, level with its top and one edge gap from it; --studio-gizmo-clear is the room the cards take. */
@@ -1052,8 +1063,12 @@ export const STUDIO_CSS = `
   padding: 0 2px 0 var(--studio-space-8);
   border-radius: 8px;
 }
+/* Every selected row is tinted; the active one, which the panels follow, more strongly. */
 .crucible-studio-tree-row[data-selected="true"] {
-  background: color-mix(in srgb, var(--studio-text) 11%, transparent);
+  background: color-mix(in srgb, var(--studio-text) 10%, transparent);
+}
+.crucible-studio-tree-row[data-active="true"] {
+  background: color-mix(in srgb, var(--studio-text) 18%, transparent);
 }
 @media (hover: hover) {
   .crucible-studio-tree-row:not([data-selected="true"]):hover {

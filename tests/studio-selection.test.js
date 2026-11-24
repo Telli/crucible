@@ -5,6 +5,7 @@ import { createAgentScene } from '../src/agent-scene.js';
 import { STUDIO_CSS } from '../src/studio-styles.js';
 import { DEFAULT_KEYMAP_ACTIONS, resolveKeymapPreset, KEYMAP_PRESET_IDS } from '../src/studio-keymap.js';
 import { createStudio, createStudioController } from '../src/studio.js';
+import { SELECTION_HULL_LIMIT } from '../src/studio-controller.js';
 import { createFakeRenderer, dispatch, installStudioDom } from './support/studio-dom.mjs';
 
 function makeRecipe() {
@@ -227,10 +228,6 @@ test('the default keymap binds select all, none and invert, and no preset loses 
   }
 });
 
-test('the stylesheet draws the rest of the selection at 40 percent of the accent', () => {
-  assert.match(STUDIO_CSS, /\.crucible-studio-silhouette-colour\[data-layer="others"\]\s*{\s*flood-color: color-mix\(in srgb, var\(--studio-accent\) 40%, transparent\);/);
-  assert.match(STUDIO_CSS, /\.crucible-studio-selection-outline\[data-layer="others"\]\s*{\s*stroke: color-mix\(in srgb, var\(--studio-accent\) 40%, transparent\);/);
-});
 
 function mountStudio(testContext) {
   const dom = installStudioDom();
@@ -353,4 +350,100 @@ test('the embedder API selects several nodes', testContext => {
   const heroPoint = ui.controller.projectWorldPoint(HERO);
   ui.studio.pickAt(heroPoint.x, heroPoint.y, { mode: 'add' });
   assert.deepEqual(ui.studio.selectedNodeIds, ['hero']);
+});
+
+test('selectNodes takes a null or missing options argument, and names a non-object one', () => {
+  const controller = makeController();
+  assert.deepEqual(controller.selectNodes(['hero'], null), ['hero']);
+  assert.deepEqual(controller.selectNodes(['orb'], undefined), ['orb']);
+  for (const wrong of ['add', 3, true]) {
+    assert.throws(() => controller.selectNodes(['hero'], wrong), error => error instanceof TypeError && /options must be an object/.test(error.message) && /mode/.test(error.message));
+  }
+  assert.deepEqual(controller.selectedNodeIds, ['orb'], 'a refused call changes nothing');
+});
+
+function makeCrowdController(count) {
+  const recipe = makeRecipe();
+  recipe.nodes = Array.from({ length: count }, (_, index) => ({
+    id: `crowd-${index}`,
+    geometry: 'cube',
+    material: 'paint',
+    translation: [(index % 10) * 0.4 - 2, 0.3, Math.floor(index / 10) * 0.4 - 1],
+    scale: [0.1, 0.1, 0.1],
+  }));
+  return createStudioController({ scene: createAgentScene(recipe), viewportWidth: 800, viewportHeight: 600 });
+}
+
+test('the hull outline fallback draws the active node and at most the limit of the others', () => {
+  const controller = makeCrowdController(60);
+  controller.selectNodes(Array.from({ length: 60 }, (_, index) => `crowd-${index}`), { active: 'crowd-59' });
+  const hulls = controller.selectionOutlineLayers();
+  assert.equal(hulls.length, SELECTION_HULL_LIMIT + 1, 'the cap counts the others, and the active one comes on top of it');
+  assert.equal(hulls.filter(layer => layer.active).length, 1, 'the active node always has its hull');
+  controller.selectNodes(['crowd-0', 'crowd-1'], { active: 'crowd-1' });
+  assert.equal(controller.selectionOutlineLayers().length, 2, 'a small selection is outlined in full');
+  controller.selectNodes(Array.from({ length: 60 }, (_, index) => `crowd-${index}`), { active: 'crowd-0' });
+  assert.ok(controller.selectionOutlineLayers().some(layer => layer.active), 'the active node is outlined even when it is the first of many');
+});
+
+test('the Scene list marks every selected row, the active one apart, and Shift or Ctrl click toggles a row', testContext => {
+  const ui = mountStudio(testContext);
+  const rowFor = id => ui.root.querySelectorAll('.crucible-studio-tree-row').find(row => row.dataset.sceneObject === undefined && row.textContent.includes(id));
+  const press = (id, modifiers = {}) => dispatch(rowFor(id).querySelector('.crucible-studio-tree-select'), 'click', modifiers);
+  ui.controller.selectNodes(['hero', 'orb', 'ground'], { active: 'orb' });
+  for (const id of ['hero', 'orb', 'ground']) {
+    assert.equal(rowFor(id).getAttribute('aria-selected'), 'true', `${id} is selected`);
+    assert.equal(rowFor(id).dataset.selected, 'true');
+  }
+  assert.equal(rowFor('hat').getAttribute('aria-selected'), 'false');
+  assert.equal(rowFor('orb').getAttribute('aria-current'), 'true', 'the active row says so');
+  assert.equal(rowFor('hero').getAttribute('aria-current'), null);
+  assert.equal(rowFor('orb').dataset.active, 'true');
+  assert.notEqual(rowFor('hero').dataset.active, 'true');
+  press('hat');
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hat'], 'a plain click replaces, as before');
+  press('orb', { shiftKey: true });
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hat', 'orb']);
+  assert.equal(ui.controller.selectedNodeId, 'orb');
+  press('hero', { ctrlKey: true });
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hat', 'orb', 'hero']);
+  press('orb', { metaKey: true });
+  assert.deepEqual(ui.controller.selectedNodeIds, ['hat', 'hero'], 'Command+click on a selected row takes it out');
+  assert.equal(rowFor('orb').getAttribute('aria-selected'), 'false');
+  assert.equal(rowFor('hero').getAttribute('aria-current'), 'true');
+  assert.equal(rowFor('hat').getAttribute('aria-current'), null, 'only one row is current');
+});
+
+test('the stylesheet gives the active row more weight than the other selected rows, with no border', () => {
+  const selected = /\.crucible-studio-tree-row\[data-selected="true"\]\s*{([^}]*)}/.exec(STUDIO_CSS);
+  const active = /\.crucible-studio-tree-row\[data-active="true"\]\s*{([^}]*)}/.exec(STUDIO_CSS);
+  assert.ok(selected && active, 'both rules exist');
+  const share = rule => Number(/var\(--studio-text\) (\d+)%/.exec(rule[1])?.[1]);
+  assert.ok(share(active) > share(selected) && share(selected) > 6, 'active > selected > the 6 percent hover');
+  assert.doesNotMatch(selected[1] + active[1], /border|box-shadow/);
+});
+
+test('select all and invert leave no pill over the viewport, the Properties head carries the count', testContext => {
+  const ui = mountStudio(testContext);
+  const status = ui.root.querySelector('.crucible-studio-status');
+  ui.pressKey('a');
+  assert.equal(status.textContent, '', 'select all announces nothing');
+  assert.equal(ui.root.querySelector('.crucible-studio-selection-count').textContent, '4 selected');
+  ui.controller.selectNodes(['hero']);
+  ui.pressKey('i', { ctrlKey: true });
+  assert.equal(status.textContent, '', 'invert announces nothing');
+});
+
+test('the outline of the rest of the selection is wider than a hairline and apart from the active one by width', () => {
+  const edgeWidths = [...STUDIO_CSS.matchAll(/\.crucible-studio-selection-outline(?:\[data-layer="(others)"\])?\s*{([^}]*)}/g)]
+    .map(match => ({ layer: match[1] ?? 'active', width: Number(/stroke-width:\s*([\d.]+)/.exec(match[2])?.[1]) }));
+  const widthOf = layer => edgeWidths.find(entry => entry.layer === layer && Number.isFinite(entry.width))?.width;
+  assert.ok(widthOf('others') >= 1.5, 'the rest is at least 1.5 px');
+  assert.ok(widthOf('active') >= widthOf('others') + 1, 'the active outline is at least a pixel wider');
+  assert.doesNotMatch(STUDIO_CSS, /selection-outline\[data-layer="others"\]\s*{[^}]*40%/, 'the rest is no longer faded to 40 percent');
+});
+
+test('the outline carries a casing of the panel colour, from the tokens', () => {
+  assert.match(STUDIO_CSS, /\.crucible-studio-silhouette-casing\s*{\s*flood-color: var\(--studio-bg\);/);
+  assert.match(STUDIO_CSS, /\.crucible-studio-selection-outline-casing\s*{[^}]*stroke: var\(--studio-bg\);/);
 });
