@@ -440,13 +440,30 @@ test('the outline of the rest of the selection is wider than a hairline and apar
     .map(match => ({ layer: match[1] ?? 'active', width: Number(/stroke-width:\s*([\d.]+)/.exec(match[2])?.[1]) }));
   const widthOf = layer => edgeWidths.find(entry => entry.layer === layer && Number.isFinite(entry.width))?.width;
   assert.ok(widthOf('others') >= 1.5, 'the rest is at least 1.5 px');
-  assert.ok(widthOf('active') >= widthOf('others') + 1, 'the active outline is at least a pixel wider');
+  assert.ok(widthOf('active') >= widthOf('others') * 2, 'the active outline is at least twice as wide, so the two read apart at a glance');
   assert.doesNotMatch(STUDIO_CSS, /selection-outline\[data-layer="others"\]\s*{[^}]*40%/, 'the rest is no longer faded to 40 percent');
 });
 
-test('the outline carries a casing of the panel colour, from the tokens', () => {
-  assert.match(STUDIO_CSS, /\.crucible-studio-silhouette-casing\s*{\s*flood-color: var\(--studio-bg\);/);
-  assert.match(STUDIO_CSS, /\.crucible-studio-selection-outline-casing\s*{[^}]*stroke: var\(--studio-bg\);/);
+test('the outline carries a casing of the viewport dark, which does not follow the UI theme', () => {
+  assert.match(STUDIO_CSS, /\.crucible-studio-silhouette-casing\s*{\s*flood-color: var\(--studio-trace-edge\);/);
+  assert.match(STUDIO_CSS, /\.crucible-studio-selection-outline-casing\s*{[^}]*stroke: var\(--studio-trace-edge\);/);
+  assert.doesNotMatch(STUDIO_CSS, /(?:silhouette-casing|outline-casing)[^}]*--studio-bg/, 'the light theme must not pale the ring');
+  const root = /\n\.crucible-studio\s*{([^}]*)}/.exec(STUDIO_CSS)[1];
+  assert.match(root, /--studio-trace-edge:\s*#17161a;/, 'declared on the root, so the mask filters outside the gizmo resolve it too');
+  assert.doesNotMatch(STUDIO_CSS, /\[data-theme="light"\][^{]*{[^}]*--studio-trace-edge/);
+});
+
+test('the outline filters grow the active ring to at least twice the others, on the shape and mask paths alike', testContext => {
+  const ui = mountDenseStudio(testContext, null);
+  ui.studio.controller.selectNodes(['hat', 'orb'], { active: 'hat' });
+  ui.studio.renderNow();
+  const radii = steps => steps.filter(step => step.getAttribute('result') === 'grown').map(step => Number(step.getAttribute('radius')));
+  const [others, active] = radii(ui.gizmo.querySelectorAll('feMorphology'));
+  assert.ok(others >= 1.5, 'the others keep at least 1.5 px');
+  assert.ok(active >= others * 2, `active ${active} against others ${others}`);
+  const maskFilters = ui.viewport.querySelectorAll('.crucible-studio-mask-filters feMorphology');
+  const maskRadii = radii(maskFilters);
+  assert.deepEqual(maskRadii.slice(0, 2), [active, others], 'the mask filters use the same pair');
 });
 
 function makeDenseRecipe() {
@@ -511,12 +528,39 @@ test('with several selected the mask draws at the width of the others and the ac
   ui.studio.renderNow();
   assert.match(mask().style.filter, /-mask-others\)$/);
   assert.equal(layerOf('.crucible-studio-selection-silhouette').length, 0, 'a dense active object has no path');
-  assert.deepEqual(layerOf('.crucible-studio-selection-outline'), ['active'], 'its hull lies over the mask');
+  assert.equal(layerOf('.crucible-studio-selection-outline').length, 0, 'its true silhouette is a second mask, not a hull');
 
   ui.studio.controller.selectNodes(['dense']);
   ui.studio.renderNow();
   assert.match(mask().style.filter, /-mask\)$/, 'one selected object keeps the active width');
   assert.equal(layerOf('.crucible-studio-selection-silhouette').length + layerOf('.crucible-studio-selection-outline').length, 0);
+});
+
+test('a dense active object among others gets a second mask of its own at the active width', testContext => {
+  const { context } = createFakeWebgl2();
+  const ui = mountDenseStudio(testContext, context);
+  const masks = () => ui.viewport.querySelectorAll('.crucible-studio-selection-mask');
+  const { controller } = ui.studio;
+
+  controller.selectNodes(['dense', 'hero'], { active: 'dense' });
+  const source = controller.selectionActiveMaskSource();
+  assert.equal(source.parts.length, 1, 'only the active object is in it');
+  assert.equal(source.parts[0].geometry, controller.selectionMaskSource().parts.find(part => part.geometry.indices.length > 3 * 8000).geometry);
+  ui.studio.renderNow();
+  assert.equal(masks().length, 2);
+  assert.match(masks()[0].style.filter, /-mask-others\)$/, 'the rest of the selection at the lower strength');
+  assert.match(masks()[1].style.filter, /-mask\)$/, 'the active object at its own strength');
+  assert.equal(masks()[1].hidden, false);
+
+  controller.selectNodes(['dense', 'hero'], { active: 'hero' });
+  assert.equal(controller.selectionActiveMaskSource(), null, 'an active object inside the budget keeps its path');
+  ui.studio.renderNow();
+  assert.equal(masks()[1].hidden, true, 'the second mask hides when it is not needed');
+
+  controller.selectNodes(['dense']);
+  assert.equal(controller.selectionActiveMaskSource(), null, 'one dense object alone is the first mask at the active width');
+  controller.selectNodes([]);
+  assert.equal(controller.selectionActiveMaskSource(), null);
 });
 
 test('without a mask a dense selection keeps its hull outlines, the active one on top', testContext => {

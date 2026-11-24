@@ -1438,14 +1438,28 @@ export function createStudioController({
     if (triangleCount <= SILHOUETTE_TRIANGLE_BUDGET) {
       return null;
     }
+    return { othersExist: otherParts.length > 0, parts: maskPartsOf(parts) };
+  }
+
+  // The active object alone for a second mask at its own width: only when others are selected and the active object is
+  // over the triangle budget by itself, so it has no path and would otherwise be marked by its hull. Null otherwise.
+  function selectionActiveMaskSource() {
+    if (!selectedNodeId) {
+      return null;
+    }
+    const { activeParts, otherParts, activeTriangleCount } = selectionMembers();
+    if (otherParts.length === 0 || activeTriangleCount <= SILHOUETTE_TRIANGLE_BUDGET) {
+      return null;
+    }
+    return { othersExist: false, parts: maskPartsOf(activeParts) };
+  }
+
+  function maskPartsOf(memberParts) {
     const { viewProjection } = cameraMatrices(viewCamera(), width / height, Boolean(currentScene.environment?.world));
-    return {
-      othersExist: otherParts.length > 0,
-      parts: parts.map(part => ({
-        geometry: part.geometry,
-        modelViewProjection: mat4.multiply(new Float32Array(16), viewProjection, part.matrix),
-      })),
-    };
+    return memberParts.map(part => ({
+      geometry: part.geometry,
+      modelViewProjection: mat4.multiply(new Float32Array(16), viewProjection, part.matrix),
+    }));
   }
 
   // The selected object's triangles on screen, as a flat list of x, y pairs (six numbers a triangle), all wound the same
@@ -2954,6 +2968,7 @@ export function createStudioController({
     selectionSilhouette,
     selectionSilhouetteLayers,
     selectionMaskSource,
+    selectionActiveMaskSource,
     nodeOutline,
     nodeBounds,
     beginGizmoDrag,
