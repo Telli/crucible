@@ -17,11 +17,16 @@ try {
   const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
   page.on('pageerror', error => console.log('PAGE ERROR', error.message));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/bench/transparent-order/harness.html`, { timeout: 180000 });
-  await page.waitForFunction(() => window.harnessReady, null, { timeout: 180000 });
+  await page.waitForFunction(() => window.harnessReady && window.runOrbit, null, { timeout: 180000 });
   if (mode === 'still') {
     const { image } = await page.evaluate(label => window.runStill({ label: label }));
     await writeFile(`${outputPrefix}.png`, Buffer.from(image, 'base64'));
     console.log(`wrote ${outputPrefix}.png`);
+  } else if (mode === 'diagnose' || mode === 'orbit') {
+    const runner = mode === 'diagnose' ? 'runDiagnose' : 'runOrbit';
+    const { image, ...numbers } = await page.evaluate(([name, label]) => window[name]({ label }), [runner, process.env.STILL_LABEL ?? '']);
+    await writeFile(`${outputPrefix}.png`, Buffer.from(image, 'base64'));
+    console.log(JSON.stringify(numbers));
   } else {
     for (const [count, kinds, stacked] of [[50, 1, false], [500, 1, false], [50, 3, false], [50, 3, true], [500, 3, false], [500, 3, true]]) {
       console.log(JSON.stringify(await page.evaluate(parameters => window.runCost(parameters), { count, kinds, stacked })));

@@ -211,8 +211,9 @@ test('blended instances of two batches draw in one back to front order, and each
   renderer.drawAlphaBatch = (batch) => drawn.push([batch === near ? 'near' : 'far', batch.instanceCount]);
   renderer.drawBlendedInOrder([near, far]);
   assert.deepEqual(drawn, [['near', 1], ['far', 1], ['near', 1]]);
-  assert.deepEqual(uploads.slice(0, 3).map(upload => upload[0]), [3, 2, 1], 'the farthest instance draws first');
-  assert.deepEqual([uploads[3][0], uploads[3][42], uploads[4][0]], [1, 3, 2], 'every batch buffer is back in its own order');
+  assert.deepEqual(uploads.slice(0, 2).map(upload => upload[0]), [3, 1], 'the farthest instance of the two-instance batch draws first');
+  assert.equal(uploads.length, 3, 'a lone instance needs no upload');
+  assert.deepEqual([uploads[2][0], uploads[2][42]], [1, 3], 'the buffer is back in its own order');
   assert.equal(near.instanceCount, 2, 'a run never leaves a short instance count behind');
 });
 

@@ -6,7 +6,7 @@ import { createAgentScene } from '/src/agent-scene.js';
 const GLASS_COLOURS = [[0.95, 0.1, 0.1], [0.1, 0.85, 0.2], [0.1, 0.25, 1]];
 
 // One geometry per colour: parts that share a geometry and alpha state share a batch, and the batches are what interleave.
-function glassRecipe(paneCount, spread, geometryKinds = GLASS_COLOURS.length, stacked = false) {
+export function glassRecipe(paneCount, spread, geometryKinds = GLASS_COLOURS.length, stacked = false) {
   const materials = GLASS_COLOURS.map((color, index) => ({ id: `glass-${index}`, color, opacity: 0.7, alphaMode: 'blend', roughness: 0.2 }));
   const nodes = Array.from({ length: paneCount }, (unused, index) => ({
     id: `pane-${index}`,
@@ -19,7 +19,7 @@ function glassRecipe(paneCount, spread, geometryKinds = GLASS_COLOURS.length, st
   return { format: 'crucible.scene', schemaVersion: 1, geometries: Array.from({ length: geometryKinds }, (unused, index) => ({ id: `pane-${index}`, type: 'box', bevel: index * 0.001 })), materials, nodes };
 }
 
-function createRenderer(canvas, paneCount, spread, geometryKinds, stacked) {
+export function createRenderer(canvas, paneCount, spread, geometryKinds, stacked) {
   const scene = createAgentScene(glassRecipe(paneCount, spread, geometryKinds, stacked));
   const environment = { ...scene.environment, world: true };
   const renderer = new CrucibleRenderer(canvas, scene.parts, { ground: true, hdr: true, depth: true, samples: 4, pixelRatio: 1, world: true, environment });
@@ -27,7 +27,7 @@ function createRenderer(canvas, paneCount, spread, geometryKinds, stacked) {
   return { renderer, environment };
 }
 
-function cameraAt(angle) {
+export function cameraAt(angle) {
   const radius = 5;
   return { eye: [Math.sin(angle) * radius, 1.6, Math.cos(angle) * radius], target: [0, 1.1, 0], up: [0, 1, 0], fov: 45, near: 0.1, far: 100 };
 }

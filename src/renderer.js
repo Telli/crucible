@@ -47,8 +47,106 @@ const ALPHA_MODES = { opaque: 0, mask: 1, blend: 2, add: 3 };
 
 /** Centre of the axis-aligned bounds of a geometry in its own space, where a blended instance is sorted from. */
 function boundsCenterOf(geometry) {
+  if (!geometry?.positions) return [0, 0, 0];
   const { minimum, maximum } = geometryBoundingSphere(geometry);
   return [(minimum[0] + maximum[0]) / 2, (minimum[1] + maximum[1]) / 2, (minimum[2] + maximum[2]) / 2];
+}
+
+const IDENTITY_VIEW = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+/**
+ * Draws blended batches back to front as one set: every instance of every batch is ordered together by the view depth
+ * of the centre of its bounds (translucent-order.js), then drawn in runs of consecutive instances of one batch, so
+ * panes of different materials interleave correctly. A batch whose instances are all in one run draws as one call.
+ */
+function drawBlendedBatchesInOrder(renderer, batches) {
+  if (batches.length === 0) return;
+  const order = renderer.translucentOrder ??= new TranslucentOrder(INSTANCE_STRIDE);
+  const batchRange = renderer.translucentRange ??= [0, 0];
+  const view = renderer.view ?? IDENTITY_VIEW;
+  const sortable = renderer.translucentSortable ??= [];
+  sortable.length = 0;
+  for (const batch of batches) {
+  batch.sortCenter ??= boundsCenterOf(batch.parts[0].geometry);
+    order.depthRange(batch, view, batchRange);
+    batch.sortFarthest = batchRange[0];
+    batch.sortNearest = batchRange[1];
+    sortable.push(batch);
+  }
+  sortable.sort((first, second) => first.sortFarthest - second.sortFarthest);
+  // Batches whose depth ranges overlap form a group that may interleave; a lone batch in its group draws on its own, as
+  // it did before. Groups draw farthest first.
+  const group = renderer.translucentGroup ??= [];
+  let start = 0;
+  while (start < sortable.length) {
+    let end = start + 1;
+    let nearest = sortable[start].sortNearest;
+    while (end < sortable.length && sortable[end].sortFarthest <= nearest) {
+      nearest = Math.max(nearest, sortable[end].sortNearest);
+      end++;
+    }
+    group.length = 0;
+    for (let index = start; index < end; index++) group.push(sortable[index]);
+    drawBlendedGroup(renderer, group, order);
+    start = end;
+  }
+  restoreInstanceOrder(renderer, sortable);
+}
+
+/** Draws one group of blended batches in back to front order, interleaving instances only when the group has several batches. */
+function drawBlendedGroup(renderer, group, order) {
+  const view = renderer.view ?? IDENTITY_VIEW;
+  const singleBatch = renderer.translucentSingle ??= [null];
+  if (group.length === 1) {
+    order.sort(group, view);
+    drawBlendedRun(renderer, group[0], 0, group[0].instanceCount);
+    return;
+  }
+  if (order.sort(group, view) > MAXIMUM_BLEND_RUNS) {
+    // Past the run budget each batch draws whole in its own order, farthest mean depth first.
+    for (const batch of group) {
+      singleBatch[0] = batch;
+      order.sort(singleBatch, view);
+      batch.sortMeanDepth = order.meanDepth(batch.instanceCount);
+    }
+    group.sort((first, second) => first.sortMeanDepth - second.sortMeanDepth);
+    for (const batch of group) {
+      singleBatch[0] = batch;
+      order.sort(singleBatch, view);
+      drawBlendedRun(renderer, batch, 0, batch.instanceCount);
+    }
+    return;
+  }
+  for (let run = 0; run < order.runTotal; run++) {
+    drawBlendedRun(renderer, group[order.runBatches[run]], order.runStarts[run], order.runCounts[run]);
+  }
+}
+
+/** Draws `count` instances of a blended batch from the sorted copy in translucentOrder, starting at instance `start` of that copy. */
+function drawBlendedRun(renderer, batch, start, count) {
+  const context = renderer.context;
+  const whole = batch.instanceCount;
+  // A lone instance is already what its buffer holds.
+  if (whole > 1) {
+    context.bindBuffer(context.ARRAY_BUFFER, batch.instanceBuffer);
+    context.bufferSubData(context.ARRAY_BUFFER, 0, renderer.translucentOrder.gathered, start * INSTANCE_STRIDE, count * INSTANCE_STRIDE);
+  }
+  batch.instanceCount = count;
+  try {
+    renderer.drawAlphaBatch(batch, true);
+  } finally {
+    batch.instanceCount = whole;
+  }
+}
+
+function restoreInstanceOrder(renderer, sortable) {
+  const context = renderer.context;
+  const stride = INSTANCE_STRIDE;
+  for (const batch of sortable) {
+    if (batch.instanceCount < 2) continue;
+    context.bindBuffer(context.ARRAY_BUFFER, batch.instanceBuffer);
+    context.bufferSubData(context.ARRAY_BUFFER, 0, batch.instanceData, 0, batch.instanceCount * stride);
+  }
 }
 
 /** Blend and add draw after the opaque loop, sorted, without writing depth. */
@@ -2820,94 +2918,11 @@ export class CrucibleRenderer {
     this.context.uniform4fv(this.uniforms.clipPerMetre, clipPerMetreScratch);
   }
 
-  /**
-   * Draws blended batches back to front as one set: every instance of every batch is ordered together by the view depth
-   * of the centre of its bounds (translucent-order.js), then drawn in runs of consecutive instances of one batch, so
-   * panes of different materials interleave correctly. A batch whose instances are all in one run draws as one call.
-   */
+  /** Draws blended batches back to front as one set; see drawBlendedBatchesInOrder. */
   drawBlendedInOrder(batches) {
-    if (batches.length === 0) return;
-    const order = this.translucentOrder ??= new TranslucentOrder(INSTANCE_STRIDE);
-    const batchRange = this.translucentRange ??= [0, 0];
-    const sortable = this.translucentSortable ??= [];
-    sortable.length = 0;
-    for (const batch of batches) {
-      batch.sortCenter ??= boundsCenterOf(batch.parts[0].geometry);
-      order.depthRange(batch, this.view, batchRange);
-      batch.sortFarthest = batchRange[0];
-      batch.sortNearest = batchRange[1];
-      sortable.push(batch);
-    }
-    sortable.sort((first, second) => first.sortFarthest - second.sortFarthest);
-    // Batches whose depth ranges overlap form a group that may interleave; a lone batch in its group draws on its own, as
-    // it did before. Groups draw farthest first.
-    const group = this.translucentGroup ??= [];
-    let start = 0;
-    while (start < sortable.length) {
-      let end = start + 1;
-      let nearest = sortable[start].sortNearest;
-      while (end < sortable.length && sortable[end].sortFarthest <= nearest) {
-        nearest = Math.max(nearest, sortable[end].sortNearest);
-        end++;
-      }
-      group.length = 0;
-      for (let index = start; index < end; index++) group.push(sortable[index]);
-      this.drawBlendedGroup(group, order);
-      start = end;
-    }
-    this.restoreInstanceOrder(sortable);
+    drawBlendedBatchesInOrder(this, batches);
   }
 
-  /** Draws one group of blended batches in back to front order, interleaving instances only when the group has several batches. */
-  drawBlendedGroup(group, order) {
-    const singleBatch = this.translucentSingle ??= [null];
-    if (group.length === 1) {
-      order.sort(group, this.view);
-      this.drawBlendedRun(group[0], 0, group[0].instanceCount);
-      return;
-    }
-    if (order.sort(group, this.view) > MAXIMUM_BLEND_RUNS) {
-      // Past the run budget each batch draws whole in its own order, farthest mean depth first.
-      for (const batch of group) {
-        singleBatch[0] = batch;
-        order.sort(singleBatch, this.view);
-        batch.sortMeanDepth = order.meanDepth(batch.instanceCount);
-      }
-      group.sort((first, second) => first.sortMeanDepth - second.sortMeanDepth);
-      for (const batch of group) {
-        singleBatch[0] = batch;
-        order.sort(singleBatch, this.view);
-        this.drawBlendedRun(batch, 0, batch.instanceCount);
-      }
-      return;
-    }
-    for (let run = 0; run < order.runTotal; run++) {
-      this.drawBlendedRun(group[order.runBatches[run]], order.runStarts[run], order.runCounts[run]);
-    }
-  }
-
-  /** Draws `count` instances of a blended batch from the sorted copy in translucentOrder, starting at instance `start` of that copy. */
-  drawBlendedRun(batch, start, count) {
-    const context = this.context;
-    const whole = batch.instanceCount;
-    context.bindBuffer(context.ARRAY_BUFFER, batch.instanceBuffer);
-    context.bufferSubData(context.ARRAY_BUFFER, 0, this.translucentOrder.gathered, start * INSTANCE_STRIDE, count * INSTANCE_STRIDE);
-    batch.instanceCount = count;
-    try {
-      this.drawAlphaBatch(batch, true);
-    } finally {
-      batch.instanceCount = whole;
-    }
-  }
-
-  restoreInstanceOrder(sortable) {
-    const context = this.context;
-    const stride = INSTANCE_STRIDE;
-    for (const batch of sortable) {
-      context.bindBuffer(context.ARRAY_BUFFER, batch.instanceBuffer);
-      context.bufferSubData(context.ARRAY_BUFFER, 0, batch.instanceData, 0, batch.instanceCount * stride);
-    }
-  }
   /** Alpha-blended batches draw after opaque and masked geometry, farthest first, without writing depth. Additive batches draw last. */
   drawBlendBatches(frame) {
     const context = this.context;
@@ -2936,7 +2951,7 @@ export class CrucibleRenderer {
     // The program writes a blended part premultiplied, so its specular is not faded by alpha (blend-output.js).
     context.blendFuncSeparate(context[BLEND_FACTORS.sourceColor], context[BLEND_FACTORS.destinationColor], context[BLEND_FACTORS.sourceAlpha], context[BLEND_FACTORS.destinationAlpha]);
     context.depthMask(false);
-    this.drawBlendedInOrder(depthOrdered);
+    drawBlendedBatchesInOrder(this, depthOrdered);
     if (depthAddBatches.length > 0) {
       // Source colour times opacity is added to the frame; the destination alpha is kept.
       context.blendFuncSeparate(context.SRC_ALPHA, context.ONE, context.ZERO, context.ONE);
@@ -2946,7 +2961,7 @@ export class CrucibleRenderer {
       context.disable(context.DEPTH_TEST);
       if (overlayOrdered.length > 0) {
         context.blendFuncSeparate(context[BLEND_FACTORS.sourceColor], context[BLEND_FACTORS.destinationColor], context[BLEND_FACTORS.sourceAlpha], context[BLEND_FACTORS.destinationAlpha]);
-        this.drawBlendedInOrder(overlayOrdered);
+        drawBlendedBatchesInOrder(this, overlayOrdered);
       }
       if (overlayAddBatches.length > 0) {
         context.blendFuncSeparate(context.SRC_ALPHA, context.ONE, context.ZERO, context.ONE);
