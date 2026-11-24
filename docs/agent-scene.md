@@ -194,7 +194,7 @@ Nodes: `uv` (`"u"`, `"v"` or `"both"`), `noise`, `voronoi` (`output`: `distance`
 (2 to 8 stops of numbers or colours), `vec`, and the maths nodes `add`, `sub`, `mul`, `div`, `min`, `max`, `pow`, `abs`, `floor`,
 `fract`, `sqrt`, `invert`, `clamp`, `smoothstep` and `mix`. Mixing nodes: `layer` (`base`, `top`, `mask`, `edge` 0.5, `softness` 0.1) puts `top` over `base` where the mask passes the edge, so `{ "layer": { "base": [0.45, 0.18, 0.06], "top": [0.1, 0.35, 0.7], "mask": chipMask } }` is paint over rust; `hue` (`color`, `shift` in turns, `saturation`, `value`) and `curve` (`value`, 2 to 8 `points` `[x, y]` with rising x, straight segments). Maths nodes work on each component of a vector. Every texture
 node takes `at`, a vector expression such as `{ "add": [{ "uv": "both" }, { "mul": [{ "vec": [0.1, 0, 0] }, 1] }] }`, to warp
-it. Scales and counts are whole numbers (1 to 64, even for `checker`), so every texture node tiles. `noise` is Blender's Noise Texture
+it. Scales and counts are whole numbers (1 to 64, even for `checker`), so every texture node tiles; `noise` and `voronoi` scales go up to 1024 when the bake resolution is at least 4 times the scale (256 at 1024, for snow sparkle or fine aggregate). `noise` is Blender's Noise Texture
 (2D, detail `octaves - 1`, roughness 0.5, lacunarity 2, normalized; `seed` moves the lattice by whole cells) with the lattice
 wrapped so it repeats. `"tile": false` matches Blender's Noise Texture exactly, does not repeat.
 

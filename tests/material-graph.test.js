@@ -328,3 +328,19 @@ test('a missing graph input names its field, and a unary operator on three numbe
   assert.throws(() => compileMaterialGraph({ color: { abs: [1, 2, 3] } }), /abs needs 1 argument, got a list of 3\. A list is read as the arguments; to pass a vector, wrap it: \{"abs": \[\[x, y, z\]\]\}/);
   assert.deepEqual(Object.keys(compileMaterialGraph({ color: { abs: [[1, -2, 3]] } }).outputs), ['color']);
 });
+
+test('noise and voronoi scales above 64 bake when the resolution resolves them, and fail with the range when it does not', () => {
+  const fine = { type: 'graph', graph: { height: { noise: { scale: 200, seed: 2 } } }, resolution: 1024 };
+  const accepted = normalizeMaterialPattern(fine);
+  assert.equal(accepted.graph.height.noise.scale, 200);
+  const baked = bakeMaterialPattern(accepted);
+  assert.ok(baked.height || baked.normalMap || baked.color, 'the fine noise bakes a texture');
+  assert.doesNotThrow(() => normalizeMaterialPattern({ type: 'graph', graph: { height: { voronoi: { scale: 256 } } }, resolution: 1024 }));
+  assert.throws(
+    () => normalizeMaterialPattern({ type: 'graph', graph: { height: { noise: { scale: 257 } } }, resolution: 1024 }),
+    error => /scale 257 is too fine for a 1024 by 1024 bake/.test(error.message) && /1 to 256/.test(error.message),
+  );
+  assert.throws(() => compileMaterialGraph({ height: { noise: { scale: 1025 } } }), error => /from 1 to 64, or up to 1024/.test(error.message));
+  assert.doesNotThrow(() => normalizeMaterialPattern({ type: 'graph', graph: { height: { noise: { scale: 64 } } }, resolution: 256 }));
+  assert.throws(() => normalizeMaterialPattern({ type: 'graph', graph: { height: { noise: { scale: 129 } } }, resolution: 512 }), error => /1 to 128/.test(error.message));
+});
