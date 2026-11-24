@@ -841,10 +841,59 @@ export function graphSurfaceSettings(graph) {
   return [...found.values()];
 }
 
+// The imported textures of a placed asset part (#3202). The host hands them in `groups` under "base:<source map>", as it
+// does for `surface`, so the node reads the scan's own base colour, roughness, metallic and normal at the texel's u and v.
+export const BASE_KEY_PREFIX = 'base:';
+export const BASE_OUTPUT_SOURCES = Object.freeze({ color: 'map', roughness: 'metallicRoughnessMap', metallic: 'metallicRoughnessMap', normal: 'normalMap' });
+const BASE_COST = 2;
+const BASE_EXAMPLE = '{"base":{"output":"color"}}';
+
+function readBaseOutput(node) {
+  const settings = textureSettings(node, 'base', ['output']);
+  const output = settings.output ?? 'color';
+  if (!Object.hasOwn(BASE_OUTPUT_SOURCES, output)) throw graphError(`base output must be one of ${Object.keys(BASE_OUTPUT_SOURCES).join(', ')}, got ${describeKey(String(output))}, such as ${BASE_EXAMPLE}.`);
+  return output;
+}
+
+/** The key a scan's source map is handed to the graph under. */
+export function baseMapKey(sourceMap) {
+  return `${BASE_KEY_PREFIX}${sourceMap}`;
+}
+
+const signedByte = byte => byte / 127.5 - 1;
+
+function compileBase(node, state) {
+  const output = readBaseOutput(node);
+  state.cost += BASE_COST;
+  const isVector = output === 'color' || output === 'normal';
+  if (!state.groups) return isVector ? vectorValue(() => 0, () => 0, () => 0) : scalarValue(() => 0);
+  const sourceMap = BASE_OUTPUT_SOURCES[output];
+  const map = state.groups.get(baseMapKey(sourceMap));
+  if (!map) throw graphError(`base ${output} reads the ${sourceMap} of a placed asset part, and this material has none. Use base only in asset.materials[].pattern or asset.pattern, on a material that has that map.`);
+  const at = (channel, decode) => (u, v) => sampleImageChannel(map, u, v, channel, decode);
+  if (output === 'color') return vectorValue(at(0, srgbToLinear), at(1, srgbToLinear), at(2, srgbToLinear));
+  if (output === 'normal') return vectorValue(at(0, signedByte), at(1, signedByte), at(2, signedByte));
+  return scalarValue(at(output === 'roughness' ? 1 : 2, byte => byte / 255));
+}
+
+/** The distinct `base` outputs a graph reads, in the order they first appear. */
+export function graphBaseOutputs(graph) {
+  const found = new Set();
+  const visit = (value, depth) => {
+    if (!value || typeof value !== 'object' || depth > MATERIAL_GRAPH_LIMITS.maxDepth * 3) return;
+    // A node holds exactly one operator, so the settings of a layer (which has a "base" of its own) are not a base node.
+    if (!Array.isArray(value) && Object.keys(value).length === 1 && isPlainObject(value.base)) found.add(readBaseOutput(value));
+    for (const child of Array.isArray(value) ? value : Object.values(value)) visit(child, depth + 1);
+  };
+  visit(graph, 0);
+  return [...found];
+}
+
 const TEXTURE_COMPILERS = new Map([
   ['vertexGroup', compileVertexGroup],
   ['meshMap', compileMeshMap],
   ['surface', compileSurface],
+  ['base', compileBase],
   ['image', compileImage], ['noise', compileNoise], ['whiteNoise', compileWhiteNoise], ['brick', compileBrick], ['voronoi', compileVoronoi], ['wave', compileWave], ['checker', compileChecker], ['gradient', compileGradient],
 ]);
 
