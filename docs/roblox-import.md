@@ -36,9 +36,9 @@ The binary `.rbxl` and `.rbxm` files are not read. In Roblox Studio use File, Sa
 
 Units and axes: 1 stud is 0.28 m. Roblox and Crucible are both right-handed with Y up and a camera that looks down its local -Z, so no axis is flipped. A `CFrame` must be a pure rotation: a mirrored or scaled matrix stops the import and names the part. The field of view is vertical in both; a camera with another `FieldOfViewMode` is listed in `warnings`. Colours are sRGB in Roblox and are converted to the linear values a recipe holds.
 
-The wedge orientation (tall side toward +Z) comes from the shape of the Roblox wedge mesh as remembered and is not checked against Roblox Studio output yet; the test pins it so a correction is one line.
+Known limit: which way the wedge leans is not settled by Roblox's public documentation. The [WedgePart page](https://create.roblox.com/docs/reference/engine/classes/WedgePart) says only that it is "great for building slopes because of their slanted surface" and can be rotated onto its slant; it does not say which face is tall. The importer puts the tall flat side at local +Z with the slope rising toward the back, and a test pins that, so a correction after a check in Roblox Studio is one line.
 
-Light strength has no unit in Roblox. A `Brightness` of 1 becomes 12 candela (`CANDELA_PER_BRIGHTNESS`), and `Range` converts from studs. Tune the exported recipe if a scene needs another balance. Crucible draws at most 16 point, 8 spot and 7 area lights, so extra lights are dropped in document order with a warning.
+Light strength has no unit in the Roblox documentation (its own [point light example](https://create.roblox.com/docs/reference/engine/classes/PointLight) uses Brightness 1 and Range 16 studs). A `Brightness` of 1 becomes 4 candela (`CANDELA_PER_BRIGHTNESS`), which adds about 0.8 lux at the end of the default point light range of 8 studs: a glow beside the sun. An earlier value of 12 candela over-drove the lights and blew a white part out to 255. `Range` converts from studs, and Spot and Surface lights default to 16 studs like Roblox. Tune the exported recipe if a scene needs another balance. Crucible draws at most 16 point, 8 spot and 7 area lights, so extra lights are dropped in document order with a warning.
 
 Materials map to the plain fields every recipe has (colour, roughness, metallic, emission). Material presets with patterns (wood, brick, grass) wait for #3234.
 
@@ -60,7 +60,7 @@ Every error says what failed and what to pass. A class that this importer cannot
 
 | Option | Default | At most |
 | --- | --- | --- |
-| `maxBytes` (XML text) | 64 MiB | 256 MiB |
+| `maxBytes` (XML text, counted in UTF-8 bytes) | 64 MiB | 256 MiB |
 | `maxParts` | 20,000 | 100,000 |
 | `maxItems` (XML elements) | 200,000 | 1,000,000 |
 | `maxDepth` (nesting) | 128 | 512 |

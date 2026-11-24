@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { createAgentScene, loadAgentSceneModules } from '../src/agent-scene.js';
 import { box } from '../src/geometry.js';
 import { exportGlb } from '../src/export.js';
-import { importRoblox, RobloxImportError, STUD_METERS, matrixToQuaternion, robloxAssetKey } from '../packages/roblox-import/index.mjs';
+import { importRoblox, RobloxImportError, STUD_METERS, CANDELA_PER_BRIGHTNESS, matrixToQuaternion, robloxAssetKey } from '../packages/roblox-import/index.mjs';
 import { importRobloxFile, glbBounds } from '../packages/roblox-import/node.mjs';
 
 const SAMPLE_PATH = new URL('./fixtures/roblox-sample.rbxlx', import.meta.url);
@@ -197,6 +197,8 @@ test('colour is converted from sRGB to linear, packed or as floats, and material
   const floats = importRoblox(`<roblox><Item class="Part" referent="a"><Properties><string name="Name">F</string><Color3 name="Color"><R>1</R><G>0</G><B>0.5</B></Color3>`
     + `<Vector3 name="size"><X>1</X><Y>1</Y><Z>1</Z></Vector3><float name="Transparency">0.25</float><token name="Material">288</token></Properties></Item></roblox>`).recipe;
   close(floats.materials[0].color, [1, 0, 0.214041], 'float colour');
+  const orange = (0xff << 24 | 218 << 16 | 133 << 8 | 65) >>> 0;
+  close(importRoblox(place(part({ color: orange }))).recipe.materials[0].color, [0.701102, 0.234551, 0.052861], 'sRGB 218,133,65 is the linear albedo the recipe holds');
   assert.equal(floats.materials[0].opacity, 0.75);
   assert.equal(floats.materials[0].alphaMode, 'blend');
   assert.ok(floats.materials[0].emission > 0, 'Neon glows');
@@ -224,6 +226,17 @@ test('the camera keeps its position, looks down local -Z with a vertical field o
   close(look.map(value => value / 10), apply(turned, [0, 0, -1]), 'look direction is -Z of the CFrame');
   close(recipe.camera.up, [0, 1, 0], 'up');
   assert.equal(recipe.camera.fov, 60);
+});
+
+test('light strength is pinned: Brightness 1 is ${CANDELA_PER_BRIGHTNESS} candela and the documented default ranges convert from studs', () => {
+  const lamp = part({ children: '<Item class="PointLight" referent="a"><Properties/></Item><Item class="SpotLight" referent="b"><Properties/></Item>' });
+  const { recipe } = importRoblox(place(lamp));
+  assert.equal(CANDELA_PER_BRIGHTNESS, 4);
+  assert.equal(recipe.environment.pointLights[0].intensity, 4);
+  assert.equal(recipe.environment.pointLights[0].range, 2.24);
+  assert.equal(recipe.environment.spotLights[0].intensity, 4);
+  assert.equal(recipe.environment.spotLights[0].range, 4.48);
+  assert.ok(Math.abs(recipe.environment.spotLights[0].angle - Math.PI / 4) < 1e-6, 'the default Angle of 90 degrees is a half angle of 45');
 });
 
 test('lights: point, spot and surface keep their position, face, range and cone', () => {
@@ -294,6 +307,11 @@ test('counts and sizes are bounded', () => {
   assert.throws(() => importRoblox(many, { maxParts: 4 }), /more than 4 parts.*Raise maxParts/);
   assert.throws(() => importRoblox(many, { maxItems: 10 }), /more than 10 elements/);
   assert.throws(() => importRoblox(many, { maxBytes: 100 }), /above the limit of 100/);
+  // maxBytes counts bytes, not characters: forty euro signs are 40 characters and 120 bytes.
+  const multibyte = `<roblox>${'€'.repeat(40)}</roblox>`;
+  assert.ok(multibyte.length < 100);
+  assert.throws(() => importRoblox(multibyte, { maxBytes: 100 }), /holds 137 bytes, above the limit of 100/);
+  assert.throws(() => importRoblox(`<roblox>${'😀'.repeat(30)}</roblox>`, { maxBytes: 100 }), /holds 137 bytes/);
   const deep = `<roblox>${'<Item class="Model" referent="m">'.repeat(40)}</roblox>`;
   assert.throws(() => importRoblox(deep, { maxDepth: 8 }), /nests deeper than 8/);
   const lights = place(part({ children: Array.from({ length: 20 }, () => '<Item class="PointLight" referent="l"><Properties/></Item>').join('') }));
@@ -322,7 +340,7 @@ test('the sample place builds into a Crucible scene with every part, a camera an
   assert.equal(result.recipe.environment.areaLights.length, 1);
   const scene = await buildScene(result.recipe);
   assert.equal(scene.parts.length, 10);
-  assert.equal(result.recipe.camera.fov, 70);
+  assert.equal(result.recipe.camera.fov, 65);
 });
 
 test('robloxAssetKey reads the three reference forms and never needs the network', () => {

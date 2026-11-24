@@ -24,9 +24,11 @@ const MAX_POINT_LIGHTS = 16;
 const MAX_SPOT_LIGHTS = 8;
 const MAX_AREA_LIGHTS = 7;
 
-// Candela of a Crucible light per unit of Roblox Brightness. Roblox has no photometric unit, so this one number is the
-// calibration: a Brightness 1 light gives a readable pool at a few metres.
-export const CANDELA_PER_BRIGHTNESS = 12;
+// Candela of a Crucible light per unit of Roblox Brightness. The Roblox documentation gives Brightness no photometric unit
+// (a PointLight of Brightness 1 and Range 16 is its own example), so this one number is a calibration. At 12 a Brightness 1
+// light was 12 lux at one metre, stronger than the default sun, and a Brightness 6 spot blew a white part out to 255; at 4 a
+// Brightness 1 point light adds about 0.8 lux at the end of its default range of 8 studs, a glow beside the sun.
+export const CANDELA_PER_BRIGHTNESS = 4;
 const SPOT_PENUMBRA = 0.3;
 const MAX_SPOT_HALF_ANGLE = 1.5;
 
@@ -181,9 +183,25 @@ function parseAttributes(source, tagName) {
 }
 
 // A small non-recursive XML reader: elements, attributes, text, CDATA and entities, with the element count and depth bounded.
+// The size of the text as UTF-8, counted without making a copy.
+function utf8ByteLength(text) {
+  let bytes = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      bytes += 4;
+      index += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
 function parseXml(text, limits) {
-  if (text.length > limits.maxBytes) {
-    throw new RobloxImportError(`The XML holds ${text.length} characters, above the limit of ${limits.maxBytes}. Raise maxBytes (up to ${HARD_LIMITS.maxBytes}) or export a smaller selection.`);
+  const byteLength = utf8ByteLength(text);
+  if (byteLength > limits.maxBytes) {
+    throw new RobloxImportError(`The XML holds ${byteLength} bytes, above the limit of ${limits.maxBytes}. Raise maxBytes (up to ${HARD_LIMITS.maxBytes}) or export a smaller selection.`);
   }
   const root = { tag: '#document', attributes: {}, children: [], text: '' };
   const stack = [root];
