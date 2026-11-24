@@ -4582,7 +4582,7 @@ export function createStudio(container, {
     requestFrame();
   }
 
-  // Circle select (C), as in Blender: left drag paints the selection, middle drag or Shift paints the deselection, the wheel
+  // Circle select (C): left drag paints the selection, middle drag or Shift paints the deselection, the wheel
   // resizes the brush, right click or Esc ends it. The brush owns the viewport pointer until then, so the camera keys it.
   let circlePaint = null;
 

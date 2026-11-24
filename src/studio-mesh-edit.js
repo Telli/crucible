@@ -435,7 +435,7 @@ export function createMeshEditor({ controller, announce = () => {}, getRenderer 
     if (circle) circle.centre = { x: pixelX, y: pixelY };
   }
 
-  // The brush reaches what faces the camera, like Blender without X-ray.
+  // The brush reaches only what faces the camera.
   function circleHits(pixelX, pixelY) {
     const projected = projectCage();
     const { mesh } = state;
