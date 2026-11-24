@@ -127,6 +127,8 @@ test('the page HTML paints the theme and the loading state before any module scr
   assert.ok(PAGE_HTML.includes(`localStorage.getItem('${STUDIO_PREFERENCES_KEY}')`), 'the inline script reads the key Studio saves its theme under');
   assert.match(PAGE_HTML, /background: var\(--site-bg\)/);
   assert.match(PAGE_HTML, /role="status"/);
+  assert.match(PAGE_HTML, /[.]progress [{][^}]*background: color-mix[(]in srgb, var[(]--site-text[)] 22%, transparent[)]/, 'the track is the text token at 22 percent, which stays visible on the paper and on the dark background');
+  assert.match(PAGE_HTML, /[.]progress::after [{][^}]*background: var[(]--site-focus[)]/, 'the moving segment is the accent token of each theme');
   assert.match(PAGE_HTML, /prefers-reduced-motion: no-preference/);
   assert.match(PAGE_HTML, /data-loading-message/);
   assert.match(PAGE_HTML, /<svg viewBox="0 0 24 24"[^>]*>[\s\S]*<\/svg>\s*<span data-loading-message>/, 'the failure leads with an icon');
