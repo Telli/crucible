@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MAX_TILE_PIXELS, MAX_TILE_WIDTH, createBandState, drawOneSample, waitForDraw } from '../src/path-tracer-gpu.js';
+import { MAX_TILE_PIXELS, MAX_TILE_WIDTH, createBandState, drawOneSample, isSoftwareRenderer, waitForDraw } from '../src/path-tracer-gpu.js';
 
 function createMockGl() {
   const tiles = [];
@@ -167,4 +167,38 @@ test('cheap tiles queue up and share one fence wait instead of one wait per tile
   await drawOneSample(gl, {}, 256, 256, 0, band, () => {});
   assert.ok(gl.tiles.length >= 16, `only ${gl.tiles.length} tiles were drawn`);
   assert.ok(fences * 3 <= gl.tiles.length, `${fences} fence waits for ${gl.tiles.length} tiles`);
+});
+
+test('software renderer names are told apart from hardware ones', () => {
+  assert.equal(isSoftwareRenderer('ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)'), true);
+  assert.equal(isSoftwareRenderer('llvmpipe (LLVM 15.0.7, 256 bits)'), true);
+  assert.equal(isSoftwareRenderer('ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)'), false);
+  assert.equal(isSoftwareRenderer(undefined), false);
+});
+
+function createGlWithRenderer(rendererName) {
+  const gl = createMockGl();
+  const calls = { finish: 0, fenceSync: 0 };
+  gl.finish = () => {
+    calls.finish++;
+  };
+  gl.fenceSync = () => {
+    calls.fenceSync++;
+    return {};
+  };
+  gl.getExtension = () => ({ UNMASKED_RENDERER_WEBGL: 9 });
+  gl.getParameter = () => rendererName;
+  return { gl, calls };
+}
+
+test('a software renderer waits with gl.finish() and no fence', async () => {
+  const { gl, calls } = createGlWithRenderer('ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device), SwiftShader driver)');
+  await waitForDraw(gl);
+  assert.deepEqual(calls, { finish: 1, fenceSync: 0 });
+});
+
+test('a hardware renderer waits on a fence, not gl.finish()', async () => {
+  const { gl, calls } = createGlWithRenderer('ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)');
+  await waitForDraw(gl);
+  assert.deepEqual(calls, { finish: 0, fenceSync: 1 });
 });

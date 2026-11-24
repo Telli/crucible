@@ -313,14 +313,34 @@ const yieldToPage = typeof MessageChannel === 'function'
   })
   : () => new Promise(resolve => setTimeout(resolve, 0));
 const synchronizationPixel = new Float32Array(4);
+const SOFTWARE_RENDERER = /swiftshader|llvmpipe|softpipe|software/i;
+const softwareContexts = new WeakMap();
+
+/** True for a CPU renderer (SwiftShader, llvmpipe), named in the renderer string a context reports. */
+export function isSoftwareRenderer(rendererName) {
+  return SOFTWARE_RENDERER.test(String(rendererName ?? ''));
+}
+
+function runsOnSoftware(gl) {
+  if (!softwareContexts.has(gl)) {
+    const debugInfo = typeof gl.getExtension === 'function' ? gl.getExtension('WEBGL_debug_renderer_info') : null;
+    softwareContexts.set(gl, Boolean(debugInfo) && isSoftwareRenderer(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)));
+  }
+  return softwareContexts.get(gl);
+}
 
 /**
  * Resolves when the GPU has finished every draw sent so far. gl.finish() returns at once on some drivers (ANGLE on Vulkan
  * inside a sandbox), which made every tile look free, so the tile size doubled to its cap and the draws queued up until the
  * GPU watchdog fired (#2833). A fence is polled with yields to the page, because browsers allow no blocking wait on it;
- * without fences, reading one value back waits.
+ * without fences, reading one value back waits. A software renderer keeps gl.finish(): it runs the draw on the page's own cores, so a
+ * polled wait only added idle time (a 2048 tile bake took 40 percent longer), and the lying finish is a hardware driver problem.
  */
 export async function waitForDraw(gl, now = () => performance.now()) {
+  if (runsOnSoftware(gl)) {
+    gl.finish();
+    return;
+  }
   if (typeof gl.fenceSync !== 'function') {
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, synchronizationPixel);
     return;
@@ -344,8 +364,8 @@ export async function waitForDraw(gl, now = () => performance.now()) {
 // Waiting for the GPU after every tile leaves it idle while the page polls, which cost a software GL bake of small tiles about
 // 40 percent against the old gl.finish() that never waited there. So tiles queue up, and the wait comes once the queue holds
 // about DRAW_SECONDS_TARGET of work at the last measured speed (or at once while the speed is still unknown).
-function shouldWaitForQueue(band) {
-  if (!band.pixelsPerSecond) return true;
+function shouldWaitForQueue(gl, band) {
+  if (!band.pixelsPerSecond || runsOnSoftware(gl)) return true;
   return band.queuedPixels / band.pixelsPerSecond >= DRAW_SECONDS_TARGET;
 }
 
@@ -381,7 +401,7 @@ export async function drawOneSample(gl, program, width, height, sample, band, sh
         gl.scissor(colStart, firstRow, cols, rows);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         band.queuedPixels += cols * rows;
-        if (shouldWaitForQueue(band)) await settleQueue(gl, band, tileWidth, maxBandRows, now);
+        if (shouldWaitForQueue(gl, band)) await settleQueue(gl, band, tileWidth, maxBandRows, now);
         shouldStop();
         if ((now() - band.lastYield) / 1000 > YIELD_SECONDS) {
           await nextTask();
