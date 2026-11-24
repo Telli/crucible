@@ -230,3 +230,76 @@ test('a text panel texture gets a mip chain, trilinear minification and anisotro
   assert.deepEqual(generatedMipmaps, [3553]);
   assert.deepEqual(appliedLevels, [16]);
 });
+
+// The world bounding box top of the parts named in `names`, from the scene's own part matrices and geometry.
+function worldTopOfParts(scene, names) {
+  let top = -Infinity;
+  for (const part of scene.parts.filter(candidate => names.includes(candidate.name))) {
+    const positions = part.geometry.positions;
+    for (let offset = 0; offset < positions.length; offset += 3) {
+      const [x, y, z] = [positions[offset], positions[offset + 1], positions[offset + 2]];
+      top = Math.max(top, part.matrix[1] * x + part.matrix[5] * y + part.matrix[9] * z + part.matrix[13]);
+    }
+  }
+  return top;
+}
+
+function sheetBounds(scene, name) {
+  const corners = worldCorners(scene.parts.find(candidate => candidate.name === name));
+  const height = Math.hypot(...corners[2].map((value, axis) => value - corners[0][axis]));
+  return { bottom: Math.min(...corners.map(corner => corner[1])), height };
+}
+
+test('a billboard without an offset stands above the top of its parent bounding box plus a clearance (#3237)', () => {
+  const heights = [0.5, 1.5, 3];
+  const nodes = heights.flatMap((height, index) => [
+    { id: `post-${index}`, geometry: 'block', material: 'tag', translation: [index * 1.5 - 1.5, height / 2, 0], scale: [0.4, height, 0.4] },
+    { id: `tag-${index}`, parent: `post-${index}`, geometry: 'sheet', material: 'tag', billboard: { screenHeight: 0.06 } },
+  ]);
+  // A child that rises above its parent: the tag clears the child, not only the parent's own box.
+  nodes.push({ id: 'hat', parent: 'post-0', geometry: 'block', material: 'tag', translation: [0, 2, 0], scale: [0.5, 0.5, 0.5] });
+  const scene = createAgentScene(recipe({ eye: [0, 1.6, 9], nodes }));
+  scene.sampleMotion(0);
+  const subjects = [['post-0', ['post-0', 'hat']], ['post-1', ['post-1']], ['post-2', ['post-2']]];
+  subjects.forEach(([parent, names], index) => {
+    const top = worldTopOfParts(scene, names);
+    const { bottom, height } = sheetBounds(scene, `tag-${index}`);
+    assert.ok(bottom >= top + 0.2 * height - 1e-4, `${parent}: label bottom ${bottom} must be at least the bbox top ${top} plus a gap of ${0.2 * height}`);
+    assert.ok(bottom - top < 0.2 * height + 1e-3, `${parent}: the gap ${bottom - top} stays the clearance, not far above it`);
+  });
+  assert.ok(worldTopOfParts(scene, ['post-0', 'hat']) > 0.5 + 0.5, 'the hat rises above its parent, so the tag had to clear it');
+});
+
+test('an explicit billboard offset wins over the bounding box placement, even [0, 0, 0]', () => {
+  const centerY = offset => {
+    const scene = createAgentScene(recipe({
+      nodes: [
+        { id: 'post', geometry: 'block', material: 'tag', translation: [0, 1, 0], scale: [0.4, 2, 0.4] },
+        { id: 'tag', parent: 'post', geometry: 'sheet', material: 'tag', billboard: { screenHeight: 0.05, ...(offset ? { offset } : {}) } },
+      ],
+    }));
+    scene.sampleMotion(0);
+    const corners = worldCorners(scene.parts.find(candidate => candidate.name === 'tag'));
+    return corners.reduce((sum, corner) => sum + corner[1], 0) / 4;
+  };
+  assert.ok(Math.abs(centerY([0, 0, 0]) - 1) < 1e-4, 'offset [0, 0, 0] keeps the tag on the node');
+  assert.ok(Math.abs(centerY([0, 1.7, 0]) - 2.7) < 1e-4, 'offset [0, 1.7, 0] is taken as given');
+  assert.ok(centerY(null) > 2, 'no offset puts the tag above the 2 m post');
+});
+
+test('the default billboard placement follows a part that moves', () => {
+  const scene = createAgentScene(recipe({
+    nodes: [
+      { id: 'lift', geometry: 'block', material: 'tag', translation: [0, 0.5, 0] },
+      { id: 'tag', parent: 'lift', geometry: 'sheet', material: 'tag', billboard: { screenHeight: 0.05 } },
+    ],
+    motion: { duration: 2, tracks: [{ kind: 'node', id: 'lift', property: 'translation', keyframes: [{ time: 0, value: [0, 0.5, 0] }, { time: 2, value: [0, 2.5, 0] }] }] },
+  }));
+  const gapAt = time => {
+    scene.sampleMotion(time);
+    return sheetBounds(scene, 'tag').bottom - worldTopOfParts(scene, ['lift']);
+  };
+  const { height } = (scene.sampleMotion(0), sheetBounds(scene, 'tag'));
+  assert.ok(Math.abs(gapAt(0) - 0.2 * height) < 1e-3, `gap at 0 s ${gapAt(0)}`);
+  assert.ok(Math.abs(gapAt(2) - 0.2 * height) < 5e-3, `gap at 2 s ${gapAt(2)}`);
+});

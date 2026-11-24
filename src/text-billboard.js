@@ -11,6 +11,10 @@ export const TEXT_BILLBOARD_LIMITS = Object.freeze({
 
 const BILLBOARD_FIELDS = ['size', 'screenHeight', 'offset', 'alwaysOnTop'];
 const PLANE_TYPES = ['plane', 'grid'];
+// Without an explicit offset a tag sits above the world bounding box of the part it hangs from, with this share of its own
+// height as clearance, so the label's bottom edge never touches or covers the top of a head, a roof or a tall prop.
+export const BILLBOARD_CLEARANCE_SHARE = 0.2;
+const PLACEMENT_ITERATIONS = 6;
 
 function checkedNumber(path, value, [minimum, maximum], example) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
@@ -22,7 +26,9 @@ function checkedNumber(path, value, [minimum, maximum], example) {
 /**
  * Validates the `billboard` field of a node: `size` [width, height] in metres, or `screenHeight`, the share of the frame height
  * the tag covers at any distance (the width follows the text panel's shape); `offset` [x, y, z] in world metres from the node,
- * such as [0, 0.4, 0] to hold a name tag above a head.
+ * such as [0, 0.4, 0] to hold a name tag above a head. A missing offset is not [0, 0, 0]: a tag whose node has a parent is
+ * placed above the top of the parent's world bounding box plus a clearance (see BILLBOARD_CLEARANCE_SHARE), and an
+ * explicit offset, even [0, 0, 0], always wins.
  */
 export function normalizeBillboard(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -41,9 +47,11 @@ export function normalizeBillboard(value) {
   } else {
     result.screenHeight = checkedNumber('billboard.screenHeight', value.screenHeight, TEXT_BILLBOARD_LIMITS.screenHeight, 0.03);
   }
-  const offset = value.offset ?? [0, 0, 0];
-  if (!Array.isArray(offset) || offset.length !== 3) throw invalidField('billboard.offset', offset, 'three numbers [x, y, z] in world metres, such as [0, 0.5, 0]', TypeError);
-  result.offset = offset.map((component, index) => checkedNumber(`billboard.offset[${index}]`, component, TEXT_BILLBOARD_LIMITS.offset, 0.5));
+  if (value.offset !== undefined) {
+    const offset = value.offset;
+    if (!Array.isArray(offset) || offset.length !== 3) throw invalidField('billboard.offset', offset, 'three numbers [x, y, z] in world metres, such as [0, 0.5, 0]', TypeError);
+    result.offset = offset.map((component, index) => checkedNumber(`billboard.offset[${index}]`, component, TEXT_BILLBOARD_LIMITS.offset, 0.5));
+  }
   if (value.alwaysOnTop !== undefined && typeof value.alwaysOnTop !== 'boolean') throw invalidField('billboard.alwaysOnTop', value.alwaysOnTop, 'true or false', TypeError);
   if (value.alwaysOnTop) result.alwaysOnTop = true;
   return result;
@@ -82,9 +90,7 @@ function worldQuadSize(node, camera, center, panelAspect) {
   return [height * panelAspect, height];
 }
 
-// A unit sheet in XY becomes a sheet of `size` that faces the eye, then returns to the node's own space.
-function facingGeometry(template, worldMatrix, node, camera, panelAspect) {
-  const center = vec3.fromValues(worldMatrix[12] + node.billboard.offset[0], worldMatrix[13] + node.billboard.offset[1], worldMatrix[14] + node.billboard.offset[2]);
+function facingAxes(camera, center) {
   const toEye = camera.projection === 'orthographic'
     ? vec3.subtract(vec3.create(), camera.eye, camera.target)
     : vec3.subtract(vec3.create(), camera.eye, center);
@@ -93,6 +99,29 @@ function facingGeometry(template, worldMatrix, node, camera, panelAspect) {
   if (vec3.length(right) < 1e-6) vec3.cross(right, [0, 0, 1], toEye);
   vec3.normalize(right, right);
   const up = vec3.cross(vec3.create(), toEye, right);
+  return { toEye, right, up };
+}
+
+// Where the sheet is centred. An explicit offset is added to the node's world position. Without one and with the top of the
+// parent's world bounding box known, the sheet stands on that top: its lowest corner is BILLBOARD_CLEARANCE_SHARE of its own
+// height above it. The sheet's size and tilt depend on where it is, so the height is settled in a few passes.
+function sheetCenter(node, worldMatrix, camera, panelAspect, parentTop) {
+  const center = vec3.fromValues(worldMatrix[12], worldMatrix[13], worldMatrix[14]);
+  if (node.billboard.offset) return vec3.add(center, center, node.billboard.offset);
+  if (parentTop === null || parentTop === undefined) return center;
+  center[1] = parentTop;
+  for (let pass = 0; pass < PLACEMENT_ITERATIONS; pass++) {
+    const { right, up } = facingAxes(camera, center);
+    const [width, height] = worldQuadSize(node, camera, center, panelAspect);
+    center[1] = parentTop + BILLBOARD_CLEARANCE_SHARE * height + (height / 2) * Math.abs(up[1]) + (width / 2) * Math.abs(right[1]);
+  }
+  return center;
+}
+
+// A unit sheet in XY becomes a sheet of `size` that faces the eye, then returns to the node's own space.
+function facingGeometry(template, worldMatrix, node, camera, panelAspect, parentTop = null) {
+  const center = sheetCenter(node, worldMatrix, camera, panelAspect, parentTop);
+  const { toEye, right, up } = facingAxes(camera, center);
   const [width, height] = worldQuadSize(node, camera, center, panelAspect);
   const inverse = mat4.invert(mat4.create(), worldMatrix);
   const positions = new Float32Array(template.positions.length);
@@ -114,9 +143,9 @@ function facingGeometry(template, worldMatrix, node, camera, panelAspect) {
 }
 
 /** The world-space corners of the sheet a billboard node draws, for tests and the report: `{ center, right, up, size }`. */
-export function billboardFrame(node, worldMatrix, camera, panelAspect = 1) {
+export function billboardFrame(node, worldMatrix, camera, panelAspect = 1, parentTop = null) {
   const template = { positions: new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, -0.5, 0.5, 0, 0.5, 0.5, 0]), normals: new Float32Array(12) };
-  const geometry = facingGeometry(template, worldMatrix, node, camera, panelAspect);
+  const geometry = facingGeometry(template, worldMatrix, node, camera, panelAspect, parentTop);
   const world = new Float32Array(12);
   for (let vertex = 0; vertex < 4; vertex++) {
     const point = vec3.fromValues(geometry.positions[vertex * 3], geometry.positions[vertex * 3 + 1], geometry.positions[vertex * 3 + 2]);
@@ -124,6 +153,47 @@ export function billboardFrame(node, worldMatrix, camera, panelAspect = 1) {
     world.set(point, vertex * 3);
   }
   return world;
+}
+
+function localBounds(template) {
+  const low = [Infinity, Infinity, Infinity];
+  const high = [-Infinity, -Infinity, -Infinity];
+  for (let offset = 0; offset < template.positions.length; offset += 3) {
+    for (let axis = 0; axis < 3; axis++) {
+      low[axis] = Math.min(low[axis], template.positions[offset + axis]);
+      high[axis] = Math.max(high[axis], template.positions[offset + axis]);
+    }
+  }
+  return { low, high };
+}
+
+// The nodes a tag hangs over: its parent and everything below the parent, except billboards and hidden nodes. A node that
+// draws no recipe geometry (an imported asset, vegetation) adds nothing, so the tag then clears only the geometry that is there.
+function partsUnder(recipe, geometries, parentId) {
+  const nodesById = new Map(recipe.nodes.map(node => [node.id, node]));
+  const underParent = node => {
+    for (let cursor = node, depth = 0; cursor && depth < 256; cursor = nodesById.get(cursor.parent), depth++) {
+      if (cursor.id === parentId) return true;
+    }
+    return false;
+  };
+  return recipe.nodes
+    .filter(node => !node.billboard && node.visible !== false && node.geometry !== undefined && geometries.get(node.geometry) && underParent(node))
+    .map(node => ({ id: node.id, bounds: localBounds(geometries.get(node.geometry)) }));
+}
+
+// The highest world y of those parts at a scene time.
+function worldTopOf(parts, follow, time) {
+  let top = -Infinity;
+  const corner = vec3.create();
+  for (const { id, bounds } of parts) {
+    const matrix = follow.matrixAt(id, time);
+    for (let bits = 0; bits < 8; bits++) {
+      vec3.set(corner, bits & 1 ? bounds.high[0] : bounds.low[0], bits & 2 ? bounds.high[1] : bounds.low[1], bits & 4 ? bounds.high[2] : bounds.low[2]);
+      top = Math.max(top, vec3.transformMat4(corner, corner, matrix)[1]);
+    }
+  }
+  return top === -Infinity ? null : top;
 }
 
 function assertPlane(node, recipe) {
@@ -142,11 +212,12 @@ export function bakeTextBillboards(recipe, geometries, follow) {
   const prepared = billboards.map(node => {
     assertPlane(node, recipe);
     const panel = recipe.materials.find(material => material.id === node.material)?.text;
-    return { node, template: geometries.get(node.geometry), aspect: panel ? panel.width / panel.height : 1 };
+    const parts = node.billboard.offset || !node.parent ? [] : partsUnder(recipe, geometries, node.parent);
+    return { node, template: geometries.get(node.geometry), aspect: panel ? panel.width / panel.height : 1, parts };
   });
   return Object.freeze({
     sample(time, camera) {
-      return new Map(prepared.map(({ node, template, aspect }) => [node.id, facingGeometry(template, follow.matrixAt(node.id, time), node, camera, aspect)]));
+      return new Map(prepared.map(({ node, template, aspect, parts }) => [node.id, facingGeometry(template, follow.matrixAt(node.id, time), node, camera, aspect, parts.length ? worldTopOf(parts, follow, time) : null)]));
     },
     report() {
       return { count: prepared.length, nodes: prepared.map(({ node }) => node.id) };
