@@ -5,7 +5,7 @@
 //   { "rbxassetid://123456": "tree.glb", "789": "wall.png" }
 // An id may be written as rbxassetid://N, as an asset URL with ?id=N (only the number is used) or as the bare number.
 import { createHash } from 'node:crypto';
-import { open, realpath } from 'node:fs/promises';
+import { open, realpath, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { RobloxImportError, importRoblox, robloxAssetKey } from './index.mjs';
 
@@ -23,30 +23,35 @@ function isInside(root, path) {
 }
 
 /**
- * Opens a file once and reads it from that handle: the size and type come from fstat of the open handle, so the file cannot
- * change between the check and the read. With `root`, the path is resolved again after the open and must still be inside
- * the folder and be the file that was checked before it (a link swapped in meanwhile is refused).
+ * Opens a file once and reads it from that handle, so the size and type come from fstat of the open handle and the file cannot
+ * change between the check and the read. With `root`, the path is resolved after the open and the file must lie inside the
+ * folder, and the open handle must be that same file (device and inode, which a link swapped in meanwhile would break).
+ * Returns `{ bytes, resolvedPath }`.
  */
-export async function readFileOnce(path, { maxBytes, tooLarge, notFile, root, expectedPath }) {
+export async function readFileOnce(path, { maxBytes, tooLarge, notFile, root, outside }) {
   const handle = await open(path, 'r');
   try {
-    const info = await handle.stat();
+    const info = await handle.stat({ bigint: true });
     if (!info.isFile()) throw new RobloxImportError(notFile);
-    if (info.size > maxBytes) throw new RobloxImportError(tooLarge);
+    if (info.size > BigInt(maxBytes)) throw new RobloxImportError(tooLarge);
+    let resolvedPath = resolve(path);
     if (root !== undefined) {
-      const resolved = await realpath(path);
-      if (resolved !== expectedPath || !isInside(root, resolved)) {
-        throw new RobloxImportError(`"${path}" changed while it was being read: it no longer resolves to the file inside the asset folder. Do not move files while importing.`);
+      resolvedPath = await realpath(path);
+      if (!isInside(root, resolvedPath)) throw new RobloxImportError(outside);
+      const target = await stat(resolvedPath, { bigint: true });
+      if (target.dev !== info.dev || target.ino !== info.ino) {
+        throw new RobloxImportError(`"${path}" changed while it was being read: the file that was opened is not the one the path now resolves to. Do not move or relink files while importing.`);
       }
     }
-    const buffer = Buffer.alloc(info.size);
+    const size = Number(info.size);
+    const bytes = Buffer.alloc(size);
     let offset = 0;
-    while (offset < info.size) {
-      const { bytesRead } = await handle.read(buffer, offset, info.size - offset, offset);
+    while (offset < size) {
+      const { bytesRead } = await handle.read(bytes, offset, size - offset, offset);
       if (bytesRead === 0) break;
       offset += bytesRead;
     }
-    return buffer.subarray(0, offset);
+    return { bytes: bytes.subarray(0, offset), resolvedPath };
   } finally {
     await handle.close();
   }
@@ -120,8 +125,16 @@ export function glbBounds(bytes) {
 async function readMap(folder) {
   let text;
   try {
-    text = (await readFileOnce(resolve(folder, MAP_FILE), { maxBytes: MAX_MAP_BYTES, tooLarge: `${MAP_FILE} is larger than ${MAX_MAP_BYTES} bytes. List only the assets the scene uses.`, notFile: `${MAP_FILE} must be a regular file.` })).toString('utf8');
-  } catch {
+    const { bytes } = await readFileOnce(resolve(folder, MAP_FILE), {
+      maxBytes: MAX_MAP_BYTES,
+      tooLarge: `${MAP_FILE} is larger than ${MAX_MAP_BYTES} bytes. List only the assets the scene uses.`,
+      notFile: `${MAP_FILE} must be a regular file.`,
+      root: folder,
+      outside: `${MAP_FILE} resolves outside the asset folder. Keep ${MAP_FILE} as a regular file inside the folder.`,
+    });
+    text = bytes.toString('utf8');
+  } catch (error) {
+    if (error instanceof RobloxImportError) throw error;
     throw new RobloxImportError(`The asset folder has no ${MAP_FILE}. Create ${MAP_FILE} there, a JSON object that maps each Roblox asset id to a file in the folder, such as { "rbxassetid://123": "tree.glb" }.`);
   }
   let map;
@@ -144,17 +157,23 @@ export async function loadAssetFolder(folder) {
   for (const [reference, fileName] of entries.sort(([first], [second]) => first.localeCompare(second))) {
     const key = robloxAssetKey(reference);
     if (typeof fileName !== 'string' || fileName === '') throw new RobloxImportError(`${MAP_FILE} entry "${reference}" must name a file in the asset folder.`);
-    let path;
+    let read;
     try {
-      path = await realpath(resolve(root, fileName));
-    } catch {
+      read = await readFileOnce(resolve(root, fileName), {
+        maxBytes: MAX_ASSET_BYTES,
+        tooLarge: `"${fileName}" is larger than ${MAX_ASSET_BYTES} bytes. Shrink the asset.`,
+        notFile: `"${fileName}" is not a regular file. Map a file, not a folder.`,
+        root,
+        outside: `${MAP_FILE} entry "${reference}" names "${fileName}", outside the asset folder. Put the file inside the folder.`,
+      });
+    } catch (error) {
+      if (error instanceof RobloxImportError) throw error;
       throw new RobloxImportError(`${MAP_FILE} entry "${reference}" names "${fileName}", which is not in the asset folder. Copy the file there or fix the name.`);
     }
-    if (!isInside(root, path)) throw new RobloxImportError(`${MAP_FILE} entry "${reference}" names "${fileName}", outside the asset folder. Put the file inside the folder.`);
-    const extension = extname(path).toLowerCase();
+    const { bytes, resolvedPath } = read;
+    const extension = extname(resolvedPath).toLowerCase();
     const kind = extension === '.glb' ? 'glb' : IMAGE_EXTENSIONS.has(extension) ? 'image' : null;
     if (!kind) throw new RobloxImportError(`${MAP_FILE} entry "${reference}" names "${fileName}". Only .glb meshes and .png, .jpg, .jpeg or .webp images are read; convert the file first.`);
-    const bytes = await readFileOnce(path, { maxBytes: MAX_ASSET_BYTES, tooLarge: `"${fileName}" is larger than ${MAX_ASSET_BYTES} bytes. Shrink the asset.`, notFile: `"${fileName}" is not a regular file. Map a file, not a folder.`, root, expectedPath: path });
     assets[key] = { id: createHash('sha256').update(bytes).digest('hex'), kind, file: fileName };
     if (kind === 'glb') assets[key].bounds = glbBounds(bytes) ?? undefined;
   }
@@ -169,7 +188,7 @@ export async function importRobloxFile(file, options = {}) {
   if (extension === '.rbxl' || extension === '.rbxm') {
     throw new RobloxImportError(`${path} is a binary Roblox file. In Roblox Studio use File > Save As and choose ${extension}x (the XML format), then pass that file.`);
   }
-  const xmlBytes = await readFileOnce(path, {
+  const { bytes: xmlBytes } = await readFileOnce(path, {
     maxBytes: Math.min(importOptions.maxBytes ?? MAX_XML_BYTES, MAX_XML_BYTES),
     tooLarge: `${path} is larger than the maxBytes limit. Raise maxBytes or export a smaller selection.`,
     notFile: `${path} is not a regular file. Pass an .rbxlx or .rbxmx file.`,

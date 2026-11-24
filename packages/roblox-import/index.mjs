@@ -25,9 +25,10 @@ const MAX_SPOT_LIGHTS = 8;
 const MAX_AREA_LIGHTS = 7;
 
 // Candela of a Crucible light per unit of Roblox Brightness. The Roblox documentation gives Brightness no photometric unit
-// (a PointLight of Brightness 1 and Range 16 is its own example), so this one number is a calibration. At 12 a Brightness 1
-// light was 12 lux at one metre, stronger than the default sun, and a Brightness 6 spot blew a white part out to 255; at 4 a
-// Brightness 1 point light adds about 0.8 lux at the end of its default range of 8 studs, a glow beside the sun.
+// (a PointLight of Brightness 1 and Range 16 is its own example), so this one number is a calibration. At 12 candela the lights
+// over-drove a scene and a Brightness 6 spot blew a white part out to 255. At 4 a Brightness 1 point light lifts a grey card one
+// metre below it by 1.63 times in linear luma and does not clip a white card (scripts/measure-roblox-light.mjs; an
+// approximation, since Roblox Brightness has no physical unit).
 export const CANDELA_PER_BRIGHTNESS = 4;
 const SPOT_PENUMBRA = 0.3;
 const MAX_SPOT_HALF_ANGLE = 1.5;
@@ -157,32 +158,81 @@ function resolveOptions(options) {
 
 const ENTITIES = Object.freeze({ lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" });
 
-function decodeEntities(text) {
-  if (!text.includes('&')) return text;
-  return text.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|[a-z]+);/g, (whole, body) => {
-    if (body[0] === '#') {
-      const code = body[1] === 'x' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
-      return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
-    }
-    return ENTITIES[body] ?? whole;
-  });
+function isSpace(code) {
+  return code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d || code === 0x0c;
 }
 
+function isNameStart(code) {
+  return (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a) || code === 0x5f;
+}
+
+function isNameCharacter(code) {
+  return isNameStart(code) || (code >= 0x30 && code <= 0x39) || code === 0x2e || code === 0x3a || code === 0x2d;
+}
+
+function decodeEntities(text) {
+  let ampersand = text.indexOf('&');
+  if (ampersand === -1) return text;
+  let decoded = '';
+  let copiedUpTo = 0;
+  while (ampersand !== -1) {
+    // The name or number between & and ; is at most 12 characters, so look only that far ahead.
+    let semicolonAt = -1;
+    for (let index = ampersand + 1; index <= ampersand + 13 && index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      if (code === 0x3b) {
+        semicolonAt = index;
+        break;
+      }
+      if (code === 0x26) break;
+    }
+    const body = semicolonAt === -1 ? '' : text.slice(ampersand + 1, semicolonAt);
+    let replacement = null;
+    if (/^#x[0-9a-fA-F]+$/.test(body) || /^#[0-9]+$/.test(body)) {
+      const code = body[1] === 'x' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+      if (Number.isInteger(code) && code >= 0 && code <= 0x10ffff) replacement = String.fromCodePoint(code);
+    } else if (/^[a-z]+$/.test(body)) {
+      replacement = ENTITIES[body] ?? null;
+    }
+    if (replacement === null) {
+      ampersand = text.indexOf('&', ampersand + 1);
+    } else {
+      decoded += text.slice(copiedUpTo, ampersand) + replacement;
+      copiedUpTo = semicolonAt + 1;
+      ampersand = text.indexOf('&', copiedUpTo);
+    }
+  }
+  return decoded + text.slice(copiedUpTo);
+}
+
+// Reads name="value" pairs in one pass over the text; every step moves forward, so the time is linear in the text.
 function parseAttributes(source, tagName) {
   const attributes = {};
-  const pattern = /([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-  let match = pattern.exec(source);
-  while (match) {
-    attributes[match[1]] = decodeEntities(match[2] ?? match[3]);
-    match = pattern.exec(source);
-  }
-  if (source.replace(pattern, '').trim() !== '') {
-    throw new RobloxImportError(`The XML tag <${tagName}> has attributes that are not name="value" pairs. Export the place again from Roblox Studio as .rbxlx or .rbxmx.`);
+  const fail = () => new RobloxImportError(`The XML tag <${tagName}> has attributes that are not name="value" pairs. Export the place again from Roblox Studio as .rbxlx or .rbxmx.`);
+  let position = 0;
+  while (position < source.length) {
+    while (position < source.length && isSpace(source.charCodeAt(position))) position += 1;
+    if (position >= source.length) break;
+    const nameStart = position;
+    while (position < source.length && !isSpace(source.charCodeAt(position)) && source[position] !== '=') position += 1;
+    const name = source.slice(nameStart, position);
+    while (position < source.length && isSpace(source.charCodeAt(position))) position += 1;
+    if (name === '' || source[position] !== '=') throw fail();
+    position += 1;
+    while (position < source.length && isSpace(source.charCodeAt(position))) position += 1;
+    const quote = source[position];
+    if (quote !== '"' && quote !== "'") throw fail();
+    const valueEnd = source.indexOf(quote, position + 1);
+    if (valueEnd === -1) throw fail();
+    attributes[name] = decodeEntities(source.slice(position + 1, valueEnd));
+    position = valueEnd + 1;
   }
   return attributes;
 }
 
 // A small non-recursive XML reader: elements, attributes, text, CDATA and entities, with the element count and depth bounded.
+// It walks the text once with indexOf and character checks, never a backtracking pattern, so hostile input costs time in
+// proportion to its length.
 // The size of the text as UTF-8, counted without making a copy.
 function utf8ByteLength(text) {
   let bytes = 0;
@@ -198,6 +248,37 @@ function utf8ByteLength(text) {
   return bytes;
 }
 
+function unterminated(what, end) {
+  return new RobloxImportError(`The XML has ${what} that never ends with ${end}. The file is cut off or edited by hand; export it again from Roblox Studio.`);
+}
+
+// Reads one tag that starts at text[start] === '<'. Returns { closing, tag, attributeText, selfClosing, end } with end after '>'.
+function readTag(text, start) {
+  let position = start + 1;
+  const closing = text[position] === '/';
+  if (closing) position += 1;
+  if (!isNameStart(text.charCodeAt(position))) {
+    throw new RobloxImportError('The XML has a tag this reader cannot parse. Export the place again from Roblox Studio as .rbxlx or .rbxmx.');
+  }
+  const nameStart = position;
+  while (position < text.length && isNameCharacter(text.charCodeAt(position))) position += 1;
+  const tag = text.slice(nameStart, position);
+  const attributesStart = position;
+  while (position < text.length && text[position] !== '>') {
+    if (text[position] === '"' || text[position] === "'") {
+      const quoteEnd = text.indexOf(text[position], position + 1);
+      if (quoteEnd === -1) throw unterminated(`a quoted value in <${tag}>`, 'a closing quote');
+      position = quoteEnd + 1;
+    } else {
+      position += 1;
+    }
+  }
+  if (position >= text.length) throw unterminated(`the tag <${tag}>`, '">"');
+  const selfClosing = text[position - 1] === '/' && position - 1 >= attributesStart;
+  const attributeText = text.slice(attributesStart, selfClosing ? position - 1 : position);
+  return { closing, tag, attributeText, selfClosing, end: position + 1 };
+}
+
 function parseXml(text, limits) {
   const byteLength = utf8ByteLength(text);
   if (byteLength > limits.maxBytes) {
@@ -205,22 +286,42 @@ function parseXml(text, limits) {
   }
   const root = { tag: '#document', attributes: {}, children: [], text: '' };
   const stack = [root];
-  const tokens = /<!--[\s\S]*?-->|<!\[CDATA\[([\s\S]*?)\]\]>|<\?[\s\S]*?\?>|<!DOCTYPE[^>]*>|<(\/?)([A-Za-z_][\w.:-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>|([^<]+)/g;
   let elementCount = 0;
-  let match = tokens.exec(text);
-  while (match) {
-    const [whole, cdata, closing, tag, attributeText, selfClosing, plain] = match;
+  let position = 0;
+  while (position < text.length) {
     const current = stack[stack.length - 1];
-    if (cdata !== undefined) {
-      current.text += cdata;
-    } else if (plain !== undefined) {
-      current.text += decodeEntities(plain);
-    } else if (tag !== undefined && closing) {
-      if (stack.length < 2 || current.tag !== tag) {
-        throw new RobloxImportError(`The XML closes </${tag}> where </${current.tag}> was expected. The file is cut off or edited by hand; export it again from Roblox Studio.`);
+    if (text[position] !== '<') {
+      const next = text.indexOf('<', position);
+      const end = next === -1 ? text.length : next;
+      current.text += decodeEntities(text.slice(position, end));
+      position = end;
+    } else if (text.startsWith('<!--', position)) {
+      const end = text.indexOf('-->', position + 4);
+      if (end === -1) throw unterminated('a comment', '-->');
+      position = end + 3;
+    } else if (text.startsWith('<![CDATA[', position)) {
+      const end = text.indexOf(']]>', position + 9);
+      if (end === -1) throw unterminated('a CDATA section', ']]>');
+      current.text += text.slice(position + 9, end);
+      position = end + 3;
+    } else if (text.startsWith('<?', position)) {
+      const end = text.indexOf('?>', position + 2);
+      if (end === -1) throw unterminated('a processing instruction', '?>');
+      position = end + 2;
+    } else if (text.startsWith('<!', position)) {
+      const end = text.indexOf('>', position + 2);
+      if (end === -1) throw unterminated('a declaration', '">"');
+      position = end + 1;
+    } else {
+      const { closing, tag, attributeText, selfClosing, end } = readTag(text, position);
+      position = end;
+      if (closing) {
+        if (stack.length < 2 || current.tag !== tag) {
+          throw new RobloxImportError(`The XML closes </${tag}> where </${current.tag}> was expected. The file is cut off or edited by hand; export it again from Roblox Studio.`);
+        }
+        stack.pop();
+        continue;
       }
-      stack.pop();
-    } else if (tag !== undefined) {
       elementCount += 1;
       if (elementCount > limits.maxItems) {
         throw new RobloxImportError(`The XML holds more than ${limits.maxItems} elements. Raise maxItems (up to ${HARD_LIMITS.maxItems}) or export a smaller selection.`);
@@ -233,10 +334,7 @@ function parseXml(text, limits) {
         }
         stack.push(element);
       }
-    } else if (whole.startsWith('<') && !whole.startsWith('<!--') && !whole.startsWith('<?') && !whole.startsWith('<!')) {
-      throw new RobloxImportError('The XML has a tag this reader cannot parse. Export the place again from Roblox Studio as .rbxlx or .rbxmx.');
     }
-    match = tokens.exec(text);
   }
   if (stack.length !== 1) throw new RobloxImportError(`The XML ends inside <${stack[stack.length - 1].tag}>. The file is cut off; export it again from Roblox Studio.`);
   const roblox = root.children.find(child => child.tag === 'roblox');
@@ -423,7 +521,21 @@ const ROTATION_Y_MINUS_QUARTER = Object.freeze([0, 0, -1, 0, 1, 0, 1, 0, 0]);
 // ---------------------------------------------------------------- names and ids
 
 function slugOf(name) {
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  // One pass: letters and digits stay, each run of other characters becomes one dash, and the ends carry no dash.
+  let slug = '';
+  let pendingDash = false;
+  for (const character of name.toLowerCase()) {
+    const alphanumeric = (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9');
+    if (!alphanumeric) {
+      pendingDash = slug !== '';
+      continue;
+    }
+    if (pendingDash) slug += '-';
+    pendingDash = false;
+    slug += character;
+    if (slug.length >= 61) break;
+  }
+  slug = slug.slice(0, 60);
   return slug === '' ? 'item' : slug;
 }
 

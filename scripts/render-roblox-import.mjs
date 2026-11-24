@@ -1,9 +1,11 @@
 // Imports a Roblox-style XML place, renders it in Crucible, and draws the same source parts in a separate diagram, side by side.
 // Usage: node scripts/render-roblox-import.mjs <place.rbxlx> <output directory> [--size <width>x<height>]
+// It also renders the albedo and objectId passes, averages each part's albedo, and prints the CIEDE2000 difference between that and
+// the part's source Color3 (<name>-albedo.png, <name>-colour-check.json, <name>-three-up.png).
 // Writes <name>.png (the Crucible render), <name>-diagram.png (flat-shaded source parts seen from the Roblox camera, drawn from the
 // raw XML numbers with its own small reader and projection, not from the importer), <name>-side-by-side.png and <name>.json (the
 // recipe, camera, size and backend of the render). Run it through gpu-lock: it starts the MCP server and a headless Chrome render.
-import { mkdir, readFile, writeFile, copyFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, copyFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -206,11 +208,12 @@ async function renderJob(call, sessionId, settings) {
     if (['cancelled', 'failed'].includes(record.state)) throw new Error(`Render job ${record.state}: ${record.reason}`);
     await delay(250);
   }
-  const result = (await call('scene_render_result', { jobId })).structuredContent;
-  return result.artifacts[0].path;
+  const result = (await call('scene_render_result', { jobId, response_format: 'detailed' })).structuredContent;
+  const artifacts = new Map(result.artifacts.map(artifact => [artifact.path.split(/[\\/]/).pop(), artifact.path]));
+  return { artifacts, metrics: result.metrics };
 }
 
-async function renderRecipe(recipe, width, height, outputPath) {
+async function renderRecipe(recipe, width, height, outputPath, albedoPath, objectIdPath) {
   if (!existsSync(new URL('../build/mcp/server.mjs', import.meta.url))) throw new Error('Run npm run build and node scripts/build-mcp.mjs first: the MCP server is not built.');
   const transport = new StdioClientTransport({ command: process.execPath, args: [serverEntry, '--jobs', join(tmpdir(), `crucible-roblox-${process.pid}`)], stderr: 'ignore' });
   const client = new Client({ name: 'render-roblox-import', version: '1.0.0' });
@@ -220,12 +223,143 @@ async function renderRecipe(recipe, width, height, outputPath) {
     const created = await call('scene_create', { recipe });
     if (created.isError) throw new Error(created.content?.[0]?.text);
     const { sessionId } = created.structuredContent;
-    const artifact = await renderJob(call, sessionId, { kind: 'image', width, height });
-    await copyFile(artifact, outputPath);
+    const { artifacts, metrics } = await renderJob(call, sessionId, { kind: 'image', width, height, passes: ['albedo', 'objectId'] });
+    await copyFile(artifacts.get('render.png'), outputPath);
+    await copyFile(artifacts.get('render-albedo.png'), albedoPath);
+    await copyFile(artifacts.get('render-objectId.png'), objectIdPath);
     await call('scene_dispose', { sessionId });
+    return metrics.objectNodes;
   } finally {
     await client.close();
   }
+}
+
+// ---------------------------------------------------------------- the colour check: mean albedo per part against its source Color3
+
+function srgbToLinear(value) {
+  const unit = value / 255;
+  return unit <= 0.04045 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4;
+}
+
+function linearToSrgb255(value) {
+  const clamped = Math.min(1, Math.max(0, value));
+  return 255 * (clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * clamped ** (1 / 2.4) - 0.055);
+}
+
+function srgbToLab(rgb255) {
+  const [red, green, blue] = rgb255.map(srgbToLinear);
+  const x = (0.4124564 * red + 0.3575761 * green + 0.1804375 * blue) / 0.95047;
+  const y = 0.2126729 * red + 0.7151522 * green + 0.072175 * blue;
+  const z = (0.0193339 * red + 0.119192 * green + 0.9503041 * blue) / 1.08883;
+  const cubeRootCurve = value => (value > 216 / 24389 ? Math.cbrt(value) : (24389 / 27 * value + 16) / 116);
+  return [116 * cubeRootCurve(y) - 16, 500 * (cubeRootCurve(x) - cubeRootCurve(y)), 200 * (cubeRootCurve(y) - cubeRootCurve(z))];
+}
+
+/** CIEDE2000 between two sRGB colours (0 to 255), after Sharma, Wu and Dalal (2005). */
+export function deltaE2000(firstRgb, secondRgb) {
+  const [l1, a1, b1] = srgbToLab(firstRgb);
+  const [l2, a2, b2] = srgbToLab(secondRgb);
+  const radians = angle => angle * Math.PI / 180;
+  const degrees = angle => angle * 180 / Math.PI;
+  const chromaMean = (Math.hypot(a1, b1) + Math.hypot(a2, b2)) / 2;
+  const g = 0.5 * (1 - Math.sqrt(chromaMean ** 7 / (chromaMean ** 7 + 25 ** 7)));
+  const a1Prime = (1 + g) * a1;
+  const a2Prime = (1 + g) * a2;
+  const c1 = Math.hypot(a1Prime, b1);
+  const c2 = Math.hypot(a2Prime, b2);
+  const hue = (b, aPrime) => (b === 0 && aPrime === 0 ? 0 : (degrees(Math.atan2(b, aPrime)) + 360) % 360);
+  const h1 = hue(b1, a1Prime);
+  const h2 = hue(b2, a2Prime);
+  const deltaL = l2 - l1;
+  const deltaC = c2 - c1;
+  let deltaH = 0;
+  if (c1 * c2 !== 0) {
+    deltaH = h2 - h1;
+    if (deltaH > 180) deltaH -= 360;
+    else if (deltaH < -180) deltaH += 360;
+  }
+  const deltaHue = 2 * Math.sqrt(c1 * c2) * Math.sin(radians(deltaH / 2));
+  const lMean = (l1 + l2) / 2;
+  const cMean = (c1 + c2) / 2;
+  let hMean = h1 + h2;
+  if (c1 * c2 !== 0) {
+    hMean = Math.abs(h1 - h2) <= 180 ? (h1 + h2) / 2 : (h1 + h2 + (h1 + h2 < 360 ? 360 : -360)) / 2;
+  }
+  const t = 1 - 0.17 * Math.cos(radians(hMean - 30)) + 0.24 * Math.cos(radians(2 * hMean)) + 0.32 * Math.cos(radians(3 * hMean + 6)) - 0.2 * Math.cos(radians(4 * hMean - 63));
+  const deltaTheta = 30 * Math.exp(-(((hMean - 275) / 25) ** 2));
+  const rc = 2 * Math.sqrt(cMean ** 7 / (cMean ** 7 + 25 ** 7));
+  const sl = 1 + 0.015 * (lMean - 50) ** 2 / Math.sqrt(20 + (lMean - 50) ** 2);
+  const sc = 1 + 0.045 * cMean;
+  const sh = 1 + 0.015 * cMean * t;
+  const rt = -Math.sin(radians(2 * deltaTheta)) * rc;
+  return Math.sqrt((deltaL / sl) ** 2 + (deltaC / sc) ** 2 + (deltaHue / sh) ** 2 + rt * (deltaC / sc) * (deltaHue / sh));
+}
+
+/** Mean albedo (the pass stores linear values, 0 to 255) of every pixel that shows the object and has four neighbours that show it too. */
+async function meanAlbedoPerObject(albedoPath, objectIdPath) {
+  const albedo = await sharp(albedoPath).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const identifiers = await sharp(objectIdPath).removeAlpha().raw().toBuffer();
+  const { width, height } = albedo.info;
+  const sums = new Map();
+  const identifierAt = (x, y) => identifiers[(y * width + x) * 3] + identifiers[(y * width + x) * 3 + 1] * 256 + identifiers[(y * width + x) * 3 + 2] * 65536;
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const identifier = identifierAt(x, y);
+      if (identifier === 0) continue;
+      if (identifierAt(x - 1, y) !== identifier || identifierAt(x + 1, y) !== identifier || identifierAt(x, y - 1) !== identifier || identifierAt(x, y + 1) !== identifier) continue;
+      const entry = sums.get(identifier) ?? { count: 0, red: 0, green: 0, blue: 0 };
+      const offset = (y * width + x) * 3;
+      entry.count += 1;
+      entry.red += albedo.data[offset];
+      entry.green += albedo.data[offset + 1];
+      entry.blue += albedo.data[offset + 2];
+      sums.set(identifier, entry);
+    }
+  }
+  return new Map([...sums].map(([identifier, entry]) => [identifier, { pixels: entry.count, rgb: [entry.red / entry.count, entry.green / entry.count, entry.blue / entry.count] }]));
+}
+
+/** Rewrites the albedo pass as sRGB, the way a screen shows colour, with the sky colour where no object is drawn. */
+async function writeAlbedoPreview(albedoPath, objectIdPath) {
+  const albedo = await sharp(albedoPath).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const identifiers = await sharp(objectIdPath).removeAlpha().raw().toBuffer();
+  const sky = [0xcf, 0xd8, 0xe3];
+  const preview = Buffer.alloc(albedo.data.length);
+  for (let offset = 0; offset < albedo.data.length; offset += 3) {
+    const empty = identifiers[offset] + identifiers[offset + 1] + identifiers[offset + 2] === 0;
+    for (let channel = 0; channel < 3; channel++) {
+      preview[offset + channel] = empty ? sky[channel] : Math.round(linearToSrgb255(albedo.data[offset + channel] / 255));
+    }
+  }
+  await sharp(preview, { raw: albedo.info }).png().toFile(`${albedoPath}.preview.png`);
+  await copyFile(`${albedoPath}.preview.png`, albedoPath);
+  await rm(`${albedoPath}.preview.png`);
+}
+
+async function colourTable(source, recipe, objectNodes, albedoPath, objectIdPath) {
+  const means = await meanAlbedoPerObject(albedoPath, objectIdPath);
+  const materials = new Map(recipe.materials.map(material => [material.id, material]));
+  const rows = [];
+  source.parts.forEach((part, index) => {
+    const suffix = new RegExp(`-${index}(\\.slope)?$`);
+    const node = recipe.nodes.find(candidate => candidate.geometry && suffix.test(candidate.id));
+    const identifiers = objectNodes[node.id] ?? [];
+    const row = { part: part.name, source: part.color };
+    const material = materials.get(node.material);
+    if (material.alphaMode !== 'blend' && identifiers.length > 0 && means.has(identifiers[0])) {
+      const measured = means.get(identifiers[0]);
+      row.measured = measured.rgb.map(value => Math.round(linearToSrgb255(value / 255) * 10) / 10);
+      row.pixels = measured.pixels;
+      row.from = 'albedo pass';
+    } else {
+      row.measured = material.color.map(value => Math.round(linearToSrgb255(value) * 10) / 10);
+      row.pixels = 0;
+      row.from = 'scene material (a blended part is not a clean albedo)';
+    }
+    row.deltaE2000 = Math.round(deltaE2000(row.measured, part.color) * 100) / 100;
+    rows.push(row);
+  });
+  return rows;
 }
 
 async function caption(text, width) {
@@ -241,9 +375,18 @@ async function main() {
   const result = importRoblox(xml);
   for (const warning of result.warnings) console.log(`warning: ${warning}`);
   const renderPath = join(options.directory, `${name}.png`);
-  await renderRecipe(result.recipe, options.width, options.height, renderPath);
+  const albedoPath = join(options.directory, `${name}-albedo.png`);
+  const objectIdPath = join(options.directory, `${name}-objectid.png`);
+  const objectNodes = await renderRecipe(result.recipe, options.width, options.height, renderPath, albedoPath, objectIdPath);
+  const sourceParts = readSourceParts(xml);
+  const table = await colourTable(sourceParts, result.recipe, objectNodes, albedoPath, objectIdPath);
+  await writeAlbedoPreview(albedoPath, objectIdPath);
+  await rm(objectIdPath);
+  console.log('| Part | Source Color3 | Mean albedo (sRGB) | Pixels | dE2000 |');
+  for (const row of table) console.log(`| ${row.part} | ${row.source.join(', ')} | ${row.measured.join(', ')} | ${row.pixels} | ${row.deltaE2000} |`);
+  await writeFile(join(options.directory, `${name}-colour-check.json`), `${JSON.stringify(table, null, 2)}\n`);
   const diagramPath = join(options.directory, `${name}-diagram.png`);
-  await sharp(Buffer.from(drawDiagram(readSourceParts(xml), options.width, options.height))).png().toFile(diagramPath);
+  await sharp(Buffer.from(drawDiagram(sourceParts, options.width, options.height))).png().toFile(diagramPath);
   const bar = 56;
   const sideBySide = join(options.directory, `${name}-side-by-side.png`);
   await sharp({ create: { width: options.width * 2, height: options.height + bar, channels: 3, background: '#1b1f24' } })
@@ -253,8 +396,18 @@ async function main() {
       { input: diagramPath, left: 0, top: bar },
       { input: renderPath, left: options.width, top: bar },
     ]).png().toFile(sideBySide);
+  const threeUp = join(options.directory, `${name}-three-up.png`);
+  await sharp({ create: { width: options.width * 3, height: options.height + bar, channels: 3, background: '#1b1f24' } })
+    .composite([
+      { input: await caption('Source parts from the Roblox XML', options.width), left: 0, top: 0 },
+      { input: await caption('Crucible albedo pass in sRGB, glass not in it', options.width), left: options.width, top: 0 },
+      { input: await caption('Crucible lit render', options.width), left: options.width * 2, top: 0 },
+      { input: diagramPath, left: 0, top: bar },
+      { input: albedoPath, left: options.width, top: bar },
+      { input: renderPath, left: options.width * 2, top: bar },
+    ]).png().toFile(threeUp);
   await writeFile(join(options.directory, `${name}.json`), `${JSON.stringify({
-    source: basename(options.file), studMeters: STUD_METERS, size: [options.width, options.height], backend: 'crucible MCP render job, kind image, default quality',
+    source: basename(options.file), studMeters: STUD_METERS, size: [options.width, options.height], backend: 'crucible MCP render job, kind image, default quality, passes albedo and objectId',
     camera: result.recipe.camera, environment: result.recipe.environment, recipe: result.recipe,
   }, null, 2)}\n`);
   console.log(`wrote ${renderPath}, ${diagramPath}, ${sideBySide}`);

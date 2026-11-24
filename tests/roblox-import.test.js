@@ -4,7 +4,7 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import { createHash } from 'node:crypto';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, realpath, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentScene, loadAgentSceneModules } from '../src/agent-scene.js';
@@ -320,6 +320,33 @@ test('counts and sizes are bounded', () => {
   assert.match(result.warnings[0], /20 point lights.*at most 16/);
 });
 
+test('hostile text is read in linear time: repeated markers, many bangs, ampersands and dashes parse in under 50 ms', () => {
+  const megabyte = 1024 * 1024;
+  const hostile = {
+    bangs: '!'.repeat(megabyte),
+    bangsInsideTag: `<roblox ${'!'.repeat(megabyte)}`,
+    bangsInsideAttributes: `<roblox ${'! '.repeat(megabyte / 2)}>`,
+    comments: '<!--'.repeat(100000),
+    cdata: '<![CDATA[a'.repeat(100000),
+    instructions: '<?'.repeat(100000),
+    doctypes: '<!DOCTYPE'.repeat(100000),
+    ampersands: `<roblox>${'&a'.repeat(megabyte / 2)}</roblox>`,
+    longEntity: `<roblox>${'&'.repeat(megabyte / 2)}${'a'.repeat(megabyte / 2)}</roblox>`,
+    quotes: `<roblox a="${'"'.repeat(1000)}${"'".repeat(megabyte)}`,
+    dashedName: `<roblox><Item class="Part"><Properties><string name="Name">${'-'.repeat(megabyte)}x</string></Properties></Item></roblox>`,
+  };
+  for (const [label, text] of Object.entries(hostile)) {
+    const started = process.hrtime.bigint();
+    try {
+      importRoblox(text, { maxBytes: 4 * megabyte });
+    } catch (error) {
+      assert.ok(error instanceof RobloxImportError, `${label} fails with a RobloxImportError, not ${error}`);
+    }
+    const milliseconds = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.ok(milliseconds < 50, `${label} took ${milliseconds.toFixed(1)} ms`);
+  }
+});
+
 test('the import is deterministic: the same text gives the same recipe, byte for byte, and names follow the document order', async () => {
   const text = await readFile(SAMPLE_PATH, 'utf8');
   const first = JSON.stringify(importRoblox(text));
@@ -439,17 +466,46 @@ test('no remote fetches: network calls throw while the sample and a mapped mesh 
   }
 });
 
+test('a real file outside the asset folder and an asset-map.json link that leaves it are refused', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'roblox-contain-'));
+  try {
+    const folder = join(parent, 'assets');
+    await mkdir(folder);
+    await writeFile(join(parent, 'secret.png'), Buffer.alloc(8));
+    await writeFile(join(parent, 'place.rbxlx'), place(part({})));
+    await writeFile(join(folder, 'asset-map.json'), JSON.stringify({ 1: '../secret.png' }));
+    await assert.rejects(importRobloxFile(join(parent, 'place.rbxlx'), { assetFolder: folder }), /outside the asset folder/);
+    await rm(join(folder, 'asset-map.json'));
+    await writeFile(join(parent, 'map-outside.json'), JSON.stringify({}));
+    try {
+      await symlink(join(parent, 'map-outside.json'), join(folder, 'asset-map.json'));
+    } catch {
+      return;
+    }
+    await assert.rejects(importRobloxFile(join(parent, 'place.rbxlx'), { assetFolder: folder }), /asset-map.json resolves outside the asset folder/);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
 test('files are opened once: size and type come from the open handle, and a swapped link is refused', async () => {
   const folder = await mkdtemp(join(tmpdir(), 'roblox-once-'));
   try {
     await writeFile(join(folder, 'big.bin'), Buffer.alloc(64));
     const options = { maxBytes: 32, tooLarge: 'too large', notFile: 'not a file' };
     await assert.rejects(readFileOnce(join(folder, 'big.bin'), options), /too large/);
-    assert.equal((await readFileOnce(join(folder, 'big.bin'), { ...options, maxBytes: 64 })).length, 64);
+    assert.equal((await readFileOnce(join(folder, 'big.bin'), { ...options, maxBytes: 64 })).bytes.length, 64);
     await assert.rejects(importRobloxFile(join(folder, 'big.bin'), { maxBytes: 32 }), /too large|larger than the maxBytes/);
     await assert.rejects(readFileOnce(folder, options), error => error.code === 'EISDIR' || /not a file/.test(error.message));
     const inside = join(folder, 'big.bin');
-    await assert.rejects(readFileOnce(inside, { ...options, maxBytes: 64, root: folder, expectedPath: join(folder, 'other.bin') }), /changed while it was being read/);
+    const contained = await readFileOnce(inside, { ...options, maxBytes: 64, root: await realpath(folder), outside: 'outside' });
+    assert.equal(contained.bytes.length, 64);
+    const otherRoot = await mkdtemp(join(tmpdir(), 'roblox-root-'));
+    try {
+      await assert.rejects(readFileOnce(inside, { ...options, maxBytes: 64, root: await realpath(otherRoot), outside: 'outside' }), /outside/);
+    } finally {
+      await rm(otherRoot, { recursive: true, force: true });
+    }
   } finally {
     await rm(folder, { recursive: true, force: true });
   }
