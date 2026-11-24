@@ -322,6 +322,8 @@ const environment = z.strictObject({
   keyIntensity: bounded(0, 100).optional(),
   fillIntensity: bounded(0, 100).optional(),
   ambientIntensity: bounded(0, 100).optional().describe('Scales the sky ambient and, with an hdri or setup environment map, that map\'s diffuse light and reflections too. 0 blacks the map out; for an HDRI-only scene keep it above 0 and set key and fill to 0.'),
+  ambientColor: boundedVector(0, 10).optional().describe('Flat diffuse light added to the environment, linear RGB.'),
+  environmentDiffuseScale: bounded(0, 100).optional().describe('Scales the environment diffuse light only, not its reflections.'),
   daylight: bounded(0, 100).optional(),
   keyAffects: affects.describe('Node IDs lit; default all.'),
   shadowCascades: z.number().int().min(0).max(4).optional().describe('Sun shadow slices; 0 one map.'),
@@ -382,7 +384,7 @@ const environment = z.strictObject({
   wind: z.strictObject({ strength: bounded(0, 4).optional(), direction: bounded(-360, 360).optional().describe('Degrees: 0 toward +x, 90 toward +z.') }).optional().describe('Sway of foliage and grass materials; strength defaults to 0.3.'),
 });
 // Every tool lists the same short environment; the full schema is served by scene_capabilities topic environment.
-const environmentListed = listed('environment', environment, 'Lighting and sky. More fields: sky (physicalSky), hdri, look, viewTransform, keyColor, keyIntensity, fillIntensity, ambientIntensity, daylight, keyAffects, shadowCascades, pointLights, spotLights, areaLights, skyTop, skyBottom, fogColor, fogDensity, volumeFog (density, scatterOctaves, multiScatter, keyTransmittance, surfaceTransmittance and more: scene_capabilities environment), liquid, lines, wind, objectReflections, floorSkyTrace, sunBounce, specularAntiAliasing, wetness, puddles, resolveCoplanar; see scene_capabilities environment.', coreOf(environment.shape, ['setup', 'world', 'ground', 'lightDirection', 'environmentIntensity']));
+const environmentListed = listed('environment', environment, 'Lighting and sky. More fields: sky (physicalSky), hdri, look, viewTransform, keyColor, keyIntensity, fillIntensity, ambientIntensity, ambientColor, environmentDiffuseScale, daylight, keyAffects, shadowCascades, pointLights, spotLights, areaLights, skyTop, skyBottom, fogColor, fogDensity, volumeFog (density, scatterOctaves, multiScatter, keyTransmittance, surfaceTransmittance and more: scene_capabilities environment), liquid, lines, wind, objectReflections, floorSkyTrace, sunBounce, specularAntiAliasing, wetness, puddles, resolveCoplanar; see scene_capabilities environment.', coreOf(environment.shape, ['setup', 'world', 'ground', 'lightDirection', 'environmentIntensity']));
 // Named post steps are checked by the engine and listed in docs/agent-look.md; every tool that takes a recipe repeats this schema.
 const looseField = z.unknown().optional();
 const effects = z.strictObject({

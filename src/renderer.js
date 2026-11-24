@@ -2494,9 +2494,14 @@ export class CrucibleRenderer {
     const context = this.context;
     const coefficients = this.environmentResources.irradiance;
     const bounced = withBounce ? map.irradianceWithBounce?.(coefficients) : null;
-    if (uniforms['environmentIrradiance[0]']) context.uniform3fv(uniforms['environmentIrradiance[0]'], bounced ?? coefficients);
-    if (uniforms.environmentBounce) context.uniform3f(uniforms.environmentBounce, bounced ? bounced[0] - coefficients[0] : 0, bounced ? bounced[1] - coefficients[1] : 0, bounced ? bounced[2] - coefficients[2] : 0);
-    if (uniforms.environmentDiffuseFrame) context.uniform3f(uniforms.environmentDiffuseFrame, Math.cos(map.rotation), Math.sin(map.rotation), map.intensity);
+    // environment.ambientColor adds to the constant term of the diffuse light (the slot a room's bounce uses) and
+    // environment.environmentDiffuseScale scales the diffuse light; the specular light and a probe are left alone.
+    const { ambientColor, environmentDiffuseScale } = withBounce ? this.lighting : { ambientColor: [0, 0, 0], environmentDiffuseScale: 1 };
+    const irradiance = Float32Array.from(bounced ?? coefficients);
+    for (let channel = 0; channel < 3; channel++) irradiance[channel] += ambientColor[channel];
+    if (uniforms['environmentIrradiance[0]']) context.uniform3fv(uniforms['environmentIrradiance[0]'], irradiance);
+    if (uniforms.environmentBounce) context.uniform3f(uniforms.environmentBounce, irradiance[0] - coefficients[0], irradiance[1] - coefficients[1], irradiance[2] - coefficients[2]);
+    if (uniforms.environmentDiffuseFrame) context.uniform3f(uniforms.environmentDiffuseFrame, Math.cos(map.rotation), Math.sin(map.rotation), map.intensity * environmentDiffuseScale);
   }
 
   drawEnvironmentBackground(map, frame, exposure) {
