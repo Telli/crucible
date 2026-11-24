@@ -47,8 +47,9 @@ test('the factor leaves the whole part of the emissive map flags alone', () => {
   assert.equal(MATERIAL_TEXELS, 10);
 });
 
-test('every tracer kernel scales the emission it adds by the factor', () => {
-  assert.match(FRAGMENT_SOURCE, /addRadiance\(depth, throughput \* hitEmission \* emissionFresnelScale\(dot\(-direction, normal\)\)\)/);
-  assert.match(MEGAKERNEL_SOURCE, /addRadiance\(depth, throughput \* hitEmission \* emissionFresnelScale\(dot\(-direction, normal\)\)\)/);
-  assert.match(WAVEFRONT_SOURCE, /addRadiance\(depth, throughput \* hitEmission \* emissionFresnelScale\(dot\(-direction, normal\)\)\)/);
+test('every tracer kernel scales the emission of a hit by the factor, as the CPU tracer does', () => {
+  const scaling = /fresnelFraction = fract\(flagsTwo\.x\);\s*if \(fresnelFraction > 0\.0\)\s*\{?\s*hitEmission \*= 2\.0 \* fresnelFraction - 1\.0 \+ \(2\.0 - 2\.0 \* fresnelFraction\) \* pow\(1\.0 - clamp\(abs\(dot\(direction, hitNormal\)\), 0\.0, 1\.0\), 5\.0\)/;
+  assert.match(FRAGMENT_SOURCE, scaling);
+  assert.match(MEGAKERNEL_SOURCE, scaling);
+  assert.match(WAVEFRONT_SOURCE, scaling);
 });

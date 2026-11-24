@@ -198,8 +198,6 @@ var<private> hitPoint: vec3<f32>;
 var<private> hitNormal: vec3<f32>;
 var<private> hitColor: vec3<f32>;
 var<private> hitEmission: vec3<f32>;
-// Reflectance at normal incidence of the emission Fresnel factor, or -1 for none (the fraction of the emissive map flags).
-var<private> hitEmissionFresnel: f32;
 var<private> hitMetallic: f32;
 var<private> hitRoughness: f32;
 var<private> hitClearcoat: f32;
@@ -225,12 +223,6 @@ fn wrapTexel(index: i32, size: i32, mode: i32) -> i32 {
     return select(2 * size - 1 - folded, folded, folded < size);
   }
   return ((index % size) + size) % size;
-}
-
-// Schlick factor of the emission of the last hit, the same as fresnelSchlick in material-layers.js: 1 when the material has none.
-fn emissionFresnelScale(cosine: f32) -> f32 {
-  if (hitEmissionFresnel < 0.0) { return 1.0; }
-  return hitEmissionFresnel + (1.0 - hitEmissionFresnel) * pow(1.0 - clamp(cosine, 0.0, 1.0), 5.0);
 }
 
 fn sampleAtlas(rectangle: vec4<f32>, flags: f32, uv: vec2<f32>) -> vec4<f32> {
@@ -325,8 +317,6 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   let flagsTwo = materials[material + 5];
   hitColor = colorMetallic.rgb * vertexColor;
   hitEmission = emissionRoughness.rgb;
-  let emissionFresnelFraction = flagsTwo.x - floor(flagsTwo.x);
-  hitEmissionFresnel = select(-1.0, 2.0 * emissionFresnelFraction - 1.0, emissionFresnelFraction > 0.0);
   hitMetallic = colorMetallic.w;
   hitRoughness = emissionRoughness.w;
   hitClearcoat = coating.x;
@@ -344,6 +334,8 @@ fn fillHit(origin: vec3<f32>, direction: vec3<f32>, distance: f32) -> f32 {
   }
   let emissiveRectangle = materials[material + 9];
   if (emissiveRectangle.z > 0.0) { hitEmission *= sampleAtlas(emissiveRectangle, flagsTwo.x, select(uv, secondUv, mapReadsSecondUvSet(flagsTwo.z, 8))).rgb; }
+  let fresnelFraction = fract(flagsTwo.x);
+  if (fresnelFraction > 0.0) { hitEmission *= 2.0 * fresnelFraction - 1.0 + (2.0 - 2.0 * fresnelFraction) * pow(1.0 - clamp(abs(dot(direction, hitNormal)), 0.0, 1.0), 5.0); }
   let surfaceRectangle = materials[material + 8];
   if (surfaceRectangle.z > 0.0) {
     let texel = sampleAtlas(surfaceRectangle, flagsOne.w, select(uv, secondUv, mapReadsSecondUvSet(flagsTwo.z, 4)));
@@ -1286,7 +1278,7 @@ fn tracePath(origin: vec3<f32>, startDirection: vec3<f32>, pixel: u32, sampleInd
         featureDepth = hitDistance;
         featuresRecorded = true;
       }
-      addRadiance(depth, throughput * hitEmission * emissionFresnelScale(dot(-direction, normal)));
+      addRadiance(depth, throughput * hitEmission);
       needsLights = !isGlass;
       if (needsLights) {
         prepareSurface(normal, -direction);
@@ -1581,7 +1573,7 @@ fn shadePaths(@builtin(global_invocation_id) id: vec3<u32>) {
     storeVector(base + 4u, vec4<f32>(select(hitColor, vec3<f32>(1.0), isGlass), 0.0));
     storeVector(base + 5u, vec4<f32>(normal, hitDistance));
   }
-  addRadiance(depth, throughput * hitEmission * emissionFresnelScale(dot(-direction, normal)));
+  addRadiance(depth, throughput * hitEmission);
   if (params.emittersFlagsSample.y != 0) { sunFrame = buildFrame(params.sunDirection.xyz); }
   if (isGlass) {
     let slotCount = emitterSlotCount(depth);

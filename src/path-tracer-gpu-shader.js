@@ -379,8 +379,6 @@ vec3 hitPoint;
 vec3 hitNormal;
 vec3 hitColor;
 vec3 hitEmission;
-// Reflectance at normal incidence of the emission Fresnel factor, or -1 for none (the fraction of the emissive map flags).
-float hitEmissionFresnel;
 float hitMetallic;
 float hitRoughness;
 float hitClearcoat;
@@ -402,12 +400,6 @@ int wrapTexel(int index, int size, int mode) {
     return folded < size ? folded : 2 * size - 1 - folded;
   }
   return ((index % size) + size) % size;
-}
-
-// Schlick factor of the emission of the last hit, the same as fresnelSchlick in material-layers.js: 1 when the material has none.
-float emissionFresnelScale(float cosine) {
-  if (hitEmissionFresnel < 0.0) return 1.0;
-  return hitEmissionFresnel + (1.0 - hitEmissionFresnel) * pow(1.0 - clamp(cosine, 0.0, 1.0), 5.0);
 }
 
 vec4 sampleAtlas(vec4 rectangle, float flags, vec2 uv) {
@@ -502,8 +494,6 @@ float fillHit(vec3 origin, vec3 direction, float distance) {
   vec4 flagsTwo = fetchData(uMaterials, material + 5);
   hitColor = colorMetallic.rgb * vertexColor;
   hitEmission = emissionRoughness.rgb;
-  float emissionFresnelFraction = flagsTwo.x - floor(flagsTwo.x);
-  hitEmissionFresnel = emissionFresnelFraction > 0.0 ? 2.0 * emissionFresnelFraction - 1.0 : -1.0;
   hitMetallic = colorMetallic.w;
   hitRoughness = emissionRoughness.w;
   hitClearcoat = coating.x;
@@ -522,6 +512,8 @@ float fillHit(vec3 origin, vec3 direction, float distance) {
 ${vertexAlpha ? "  alpha *= vertexAlphaAtNearestHit();" : ""}
   vec4 emissiveRectangle = fetchData(uMaterials, material + 9);
   if (emissiveRectangle.z > 0.0) hitEmission *= sampleAtlas(emissiveRectangle, flagsTwo.x, mapReadsSecondUvSet(flagsTwo.z, 8) ? secondUv : uv).rgb;
+  float fresnelFraction = fract(flagsTwo.x);
+  if (fresnelFraction > 0.0) hitEmission *= 2.0 * fresnelFraction - 1.0 + (2.0 - 2.0 * fresnelFraction) * pow(1.0 - clamp(abs(dot(direction, hitNormal)), 0.0, 1.0), 5.0);
   vec4 surfaceRectangle = fetchData(uMaterials, material + 8);
   if (surfaceRectangle.z > 0.0) {
     vec4 texel = sampleAtlas(surfaceRectangle, flagsOne.w, mapReadsSecondUvSet(flagsTwo.z, 4) ? secondUv : uv);
@@ -1272,7 +1264,7 @@ void tracePath(vec3 origin, vec3 startDirection, uint pixel, uint sampleIndex, b
         featureDepth = hitDistance;
         featuresRecorded = true;
       }
-      addRadiance(depth, throughput * hitEmission * emissionFresnelScale(dot(-direction, normal)));
+      addRadiance(depth, throughput * hitEmission);
       needsLights = !isGlass;
       if (needsLights) {
         prepareSurface(normal, -direction);
