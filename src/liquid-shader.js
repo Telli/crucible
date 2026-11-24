@@ -2,6 +2,7 @@ import { environmentLookupGlsl } from './environment-shading.js';
 import { registerShaderFeatureCode } from './shader-registry.js';
 import { drawLiquidPass } from './liquid-renderer.js';
 import { probeLookupGlsl, probeUniformsGlsl } from './probe-glsl.js';
+import { ballLensGlsl } from './glass-ball-lens.js';
 import { transmissionBlurGlsl } from './transmission-blur.js';
 import { waterMirrorFunctionsGlsl, waterMirrorUniformsGlsl } from './water-mirror-glsl.js';
 
@@ -39,6 +40,10 @@ uniform vec4 liquidOptics;
 // A transmissive PBR material: x: transmission, y: index of refraction, z: thickness in metres, w: attenuation distance
 uniform vec4 glassState;
 uniform vec3 glassTint;
+// The share of the part that covers the refracted picture: the alpha of a blended glass material, 1 for every other part.
+uniform float glassCoverage;
+// 1 for a glass cap with no back face (a cornea): the ray bends once on entry and the glass continues behind it.
+uniform float glassMediumContinues;
 // The glTF metallic-roughness texture; a flag of 2 or more reads the second UV set, as in the opaque shader.
 uniform sampler2D metallicRoughnessMap;
 uniform float hasMetallicRoughnessMap;
@@ -95,6 +100,7 @@ vec3 ambientLight(vec3 normal) {
 }
 
 ${transmissionBlurGlsl}
+${ballLensGlsl}
 vec3 displayed(vec3 radiance) {
   return hdrEnabled > 0.5 ? clamp(radiance * exposure, vec3(0), vec3(65504.0)) : pow(toneMap(radiance * exposure), vec3(1.0 / 2.2));
 }
@@ -103,6 +109,9 @@ void main() {
   // While the mirror picture is drawn, nothing under the water plane is part of it.
   if (waterClip.y > 0.5 && worldPosition.y < waterClip.x + 0.05) discard;
   vec3 normal = normalize(worldNormal);
+  // Screen-space steps of the position and the normal give the radius of curvature the ball lens model needs.
+  float positionStep = length(fwidth(worldPosition));
+  float normalStep = length(fwidth(normal));
   if (!gl_FrontFacing) normal = -normal;
   vec3 viewDirection = normalize(eye - worldPosition);
   float facing = max(dot(normal, viewDirection), 0.0);
@@ -129,9 +138,12 @@ void main() {
   if (glass && hasMetallicRoughnessMap > 0.5) metallic *= texture(metallicRoughnessMap, hasMetallicRoughnessMap > 1.5 ? lightmapUV : textureUV).b;
   float transmissionShare = glassState.x * (1.0 - metallic);
   float indexOfRefraction = glass ? glassState.y : liquidOptics.y;
-  float thickness = (glass ? glassState.z : liquidOptics.x) * mix(0.15, 1.0, facing);
+  // Glass bends the ray at two interfaces (a ball lens); a liquid bends it once and reads the scene one thickness along.
+  float thickness = glass ? glassState.z : liquidOptics.x * mix(0.15, 1.0, facing);
   vec3 bent = refract(-viewDirection, normal, 1.0 / indexOfRefraction);
-  vec4 projected = viewProjection * vec4(worldPosition + bent * thickness, 1.0);
+  vec3 samplePosition = worldPosition + bent * thickness;
+  if (glass && thickness > 0.0 && glassMediumContinues < 0.5) samplePosition = ballLensSamplePosition(worldPosition, normal, viewDirection, indexOfRefraction, curvatureRadius(positionStep, normalStep, thickness), thickness);
+  vec4 projected = viewProjection * vec4(samplePosition, 1.0);
   vec2 refracted = projected.w > 0.0 ? projected.xy / projected.w * 0.5 + 0.5 : screen;
   refracted = clamp(mix(screen, refracted, glass ? 1.0 : liquidOptics.z), vec2(0.001), vec2(0.999));
   // Rough glass reads a blurrier level of the scene's mip chain; a scene without one (or a liquid) reads the sharp image.
@@ -155,7 +167,7 @@ void main() {
   vec3 surfaceLight = (inScatter + diffuseShare) * (1.0 - reflectance) + reflection * reflectionTint * reflectance + highlight * reflectionTint;
   surfaceLight = mix(surfaceLight, fogColor, fog);
   float transmitted = glass ? transmissionShare : 1.0;
-  outputColor = vec4(behind * transmittance * transmitted * (1.0 - reflectance) * (1.0 - fog) + displayed(surfaceLight), 1.0);
+  outputColor = vec4(behind * transmittance * transmitted * (1.0 - reflectance) * (1.0 - fog) + displayed(surfaceLight), glass ? glassCoverage : 1.0);
 }`;
 
 registerShaderFeatureCode('liquid', { fragment: liquidFragmentShader, draw: drawLiquidPass });

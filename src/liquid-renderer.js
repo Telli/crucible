@@ -13,7 +13,7 @@ const METALLIC_ROUGHNESS_MAP_INDEX = 2;
 
 const LIQUID_UNIFORMS = [
   'viewProjection', 'lightProjection', 'eye', 'sceneColor', 'resolution', 'exposure', 'hdrEnabled', 'worldMode', 'daylight', 'lightDirection',
-  'keyColor', 'ambientIntensity', 'fogColor', 'fogDensity', 'glassState', 'glassTint', 'liquidOptics', 'foamShape', 'metallicRoughnessMap', 'hasMetallicRoughnessMap',
+  'keyColor', 'ambientIntensity', 'fogColor', 'fogDensity', 'glassState', 'glassTint', 'glassCoverage', 'glassMediumContinues', 'liquidOptics', 'foamShape', 'metallicRoughnessMap', 'hasMetallicRoughnessMap',
   'environmentSpecular', 'environmentEnabled', 'environmentIntensity', 'environmentRotation', 'environmentLevelMax',
   'time', 'probeEnabled', 'probeFloor', 'waterReflection', 'waterReflectionMatrix', 'waterClip', 'waterReflectionEnabled', 'wind', 'explosionProgress', 'explosionCenter', 'assemblyAmount',
   'skinEnabled', 'skinInfluences', 'jointPalette',
@@ -74,6 +74,13 @@ export function copySceneIntoMipChain(renderer, width, height) {
   return chain.texture;
 }
 
+// KHR_materials_volume gives the thickness in the mesh's own units, so a placed or scaled asset thickens with its transform.
+// The first part stands for the batch: parts that share a glass material and differ in scale are rare.
+function partScale(matrix) {
+  const columnLength = column => Math.hypot(matrix[column * 4], matrix[column * 4 + 1], matrix[column * 4 + 2]);
+  return (columnLength(0) + columnLength(1) + columnLength(2)) / 3;
+}
+
 export function drawLiquidPass(renderer, { frame, environment, assemblyAmount, environmentMap, liquids, foams, environmentSpecularUnit, maximumDistance, vertexSource, fragmentSource }) {
   const optics = resolveLiquidOptics({ ...environment.liquid, ...frame.liquid });
   ensureLiquidProgram(renderer, environmentSpecularUnit, vertexSource, fragmentSource);
@@ -119,8 +126,16 @@ export function drawLiquidPass(renderer, { frame, environment, assemblyAmount, e
   context.uniform1i(uniforms.sceneColor, 0);
   for (const batch of liquids) {
     const layers = batch.layerState;
-    context.uniform4f(uniforms.glassState, layers[9], layers[10], layers[11], Math.min(layers[12], maximumDistance));
+    context.uniform4f(uniforms.glassState, layers[9], layers[10], layers[11] * partScale(batch.parts[0].matrix), Math.min(layers[12], maximumDistance));
     context.uniform3f(uniforms.glassTint, layers[13], layers[14], layers[15]);
+    // Blended glass covers the refracted picture by its alpha, over the opaque scene already in the frame.
+    context.uniform1f(uniforms.glassMediumContinues, batch.parts[0].material.mediumContinues === true ? 1 : 0);
+    const covering = batch.opacity < 1;
+    context.uniform1f(uniforms.glassCoverage, covering ? batch.opacity : 1);
+    if (covering) {
+      context.enable(context.BLEND);
+      context.blendFuncSeparate(context.SRC_ALPHA, context.ONE_MINUS_SRC_ALPHA, context.ONE, context.ONE_MINUS_SRC_ALPHA);
+    }
     const metallicRoughnessState = batch.mapState[METALLIC_ROUGHNESS_MAP_INDEX];
     context.activeTexture(context.TEXTURE0 + METALLIC_ROUGHNESS_UNIT);
     context.bindTexture(context.TEXTURE_2D, batch.textures[METALLIC_ROUGHNESS_MAP_INDEX]);
@@ -130,6 +145,7 @@ export function drawLiquidPass(renderer, { frame, environment, assemblyAmount, e
     liquidProbeSupport.bind?.(renderer, uniforms, batch);
     context.bindVertexArray(batch.vertexArray);
     context.drawElementsInstanced(context.TRIANGLES, batch.indexCount, context.UNSIGNED_INT, 0, batch.instanceCount);
+    if (covering) context.disable(context.BLEND);
   }
   liquidProbeSupport.finish?.(renderer, uniforms);
   if (foams.length > 0) {

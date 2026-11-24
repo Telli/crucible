@@ -1,0 +1,86 @@
+// Glass that bends light at two interfaces, the way a ball lens does. The liquid shader treats the body behind a glass fragment as a
+// sphere tangent to the surface: the view ray bends where it enters, crosses a chord of the sphere and bends again where it leaves,
+// so a thick sphere magnifies and inverts what lies behind it, as the path tracer shows. A flat pane (an infinite radius) leaves the
+// ray parallel, shifted sideways by the pane, and a thin-walled surface (thickness 0) leaves it alone.
+// The GLSL below follows the JavaScript reference line by line, so a test of the reference covers the shader.
+
+/** The estimated radius of curvature never goes below this share of the thickness (a fragment on a silhouette edge reads a tiny radius). */
+export const MINIMUM_RADIUS_PER_THICKNESS = 0.5;
+/** A flat surface has no curvature; its radius is capped here, in thicknesses, so the sphere centre stays a finite number. */
+export const MAXIMUM_RADIUS_PER_THICKNESS = 1000;
+
+/**
+ * How far behind the exit point the shader reads the scene, in thicknesses. The liquid pass has the opaque colour but not its depth, so the
+ * real distance to the backdrop is unknown; a quarter of the thickness (half a radius of a ball) keeps what sits close behind the glass
+ * upright and magnified. Something much further behind would invert in a real ball lens and does not here.
+ */
+export const SCENE_REACH_PER_THICKNESS = 0.25;
+
+const subtract = (first, second) => [first[0] - second[0], first[1] - second[1], first[2] - second[2]];
+const add = (first, second) => [first[0] + second[0], first[1] + second[1], first[2] + second[2]];
+const scale = (vector, factor) => [vector[0] * factor, vector[1] * factor, vector[2] * factor];
+const dot = (first, second) => first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
+const normalize = vector => scale(vector, 1 / Math.hypot(...vector));
+
+/** GLSL refract(): the bent direction of a unit incident ray at a surface whose normal faces it, or null in total internal reflection. */
+export function refractDirection(incident, normal, eta) {
+  const cosine = dot(normal, incident);
+  const discriminant = 1 - eta * eta * (1 - cosine * cosine);
+  if (discriminant < 0) return null;
+  return add(scale(incident, eta), scale(normal, -(eta * cosine + Math.sqrt(discriminant))));
+}
+
+/** The radius of curvature the shader reads from the screen-space steps of the position and the normal, clamped to a usable range. */
+export function curvatureRadius(positionStep, normalStep, thickness) {
+  const radius = positionStep / Math.max(normalStep, 1e-5);
+  return Math.min(Math.max(radius, thickness * MINIMUM_RADIUS_PER_THICKNESS), thickness * MAXIMUM_RADIUS_PER_THICKNESS);
+}
+
+/**
+ * Where the view ray leaves a glass body and in which direction.
+ * `normal` faces the viewer, `viewDirection` points from the surface to the eye, `thickness` is the extent of the body along the normal.
+ * Returns { exitPosition, direction, samplePosition }: the direction the ray travels after leaving, and the point `thickness * SCENE_REACH_PER_THICKNESS` metres
+ * further along it, which is where the shader reads the scene.
+ */
+export function ballLensExit({ position, normal, viewDirection, indexOfRefraction, radius, thickness }) {
+  const incident = scale(viewDirection, -1);
+  const inside = refractDirection(incident, normal, 1 / indexOfRefraction) ?? incident;
+  const cosineInside = Math.max(-dot(inside, normal), 1e-3);
+  // A sphere has a chord of 2 R cos; a slab of the given thickness has a path of thickness / cos. The shorter one limits the body.
+  const sphereChord = 2 * radius * cosineInside;
+  const slabChord = thickness / cosineInside;
+  const chord = Math.min(sphereChord, slabChord);
+  const exitPosition = add(position, scale(inside, chord));
+  // The ray leaves through the sphere when the chord ends on it, and through the parallel back face of a slab when the thickness ends it first.
+  // The normal given to the second refraction faces back into the glass; total internal reflection keeps the inside direction.
+  const center = subtract(position, scale(normal, radius));
+  const facingBack = sphereChord <= slabChord ? scale(normalize(subtract(exitPosition, center)), -1) : normal;
+  const direction = refractDirection(inside, facingBack, indexOfRefraction) ?? inside;
+  return { exitPosition, direction, samplePosition: add(exitPosition, scale(direction, thickness * SCENE_REACH_PER_THICKNESS)) };
+}
+
+export const ballLensGlsl = `
+const float MINIMUM_RADIUS_PER_THICKNESS = ${MINIMUM_RADIUS_PER_THICKNESS.toFixed(1)};
+const float MAXIMUM_RADIUS_PER_THICKNESS = ${MAXIMUM_RADIUS_PER_THICKNESS.toFixed(1)};
+const float SCENE_REACH_PER_THICKNESS = ${SCENE_REACH_PER_THICKNESS.toFixed(2)};
+
+float curvatureRadius(float positionStep, float normalStep, float thickness) {
+  float radius = positionStep / max(normalStep, 1e-5);
+  return min(max(radius, thickness * MINIMUM_RADIUS_PER_THICKNESS), thickness * MAXIMUM_RADIUS_PER_THICKNESS);
+}
+
+// The point the scene is read at after the view ray crosses a glass body of this thickness (see glass-ball-lens.js).
+vec3 ballLensSamplePosition(vec3 position, vec3 normal, vec3 viewDirection, float indexOfRefraction, float radius, float thickness) {
+  vec3 incident = -viewDirection;
+  vec3 inside = refract(incident, normal, 1.0 / indexOfRefraction);
+  if (dot(inside, inside) < 0.5) inside = incident;
+  float cosineInside = max(-dot(inside, normal), 1e-3);
+  float sphereChord = 2.0 * radius * cosineInside;
+  float slabChord = thickness / cosineInside;
+  vec3 exitPosition = position + inside * min(sphereChord, slabChord);
+  vec3 facingBack = sphereChord <= slabChord ? -normalize(exitPosition - (position - normal * radius)) : normal;
+  vec3 direction = refract(inside, facingBack, indexOfRefraction);
+  if (dot(direction, direction) < 0.5) direction = inside;
+  return exitPosition + direction * thickness * SCENE_REACH_PER_THICKNESS;
+}
+`;
