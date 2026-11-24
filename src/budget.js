@@ -1,10 +1,19 @@
 const MEBIBYTE = 1024 * 1024;
 
+/** The `code` of the RangeError that `memoryBudgetError` returns, so a caller can tell a budget refusal from another failure. */
+export const MEMORY_BUDGET_ERROR_CODE = 'MEMORY_BUDGET';
+
 /**
  * The error for a scene the memory budget cannot hold: the bytes it counted and the memoryBudgetMiB that fits them,
  * so one failed call says what to pass.
  */
 export function memoryBudgetError(geometry, textures, frame, memoryBudgetMiB, { maximumMemoryBudgetMiB = Infinity } = {}) {
+  const error = buildMemoryBudgetError(geometry, textures, frame, memoryBudgetMiB, maximumMemoryBudgetMiB);
+  error.code = MEMORY_BUDGET_ERROR_CODE;
+  return error;
+}
+
+function buildMemoryBudgetError(geometry, textures, frame, memoryBudgetMiB, maximumMemoryBudgetMiB) {
   const mebibytes = bytes => (bytes / MEBIBYTE).toFixed(1);
   const requiredMiB = Math.ceil((geometry + textures + frame) / MEBIBYTE);
   const counted = `Memory budget cannot hold geometry ${mebibytes(geometry)} MiB, textures ${mebibytes(textures)} MiB and frame ${mebibytes(frame)} MiB, over memoryBudgetMiB ${memoryBudgetMiB}.`;

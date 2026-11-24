@@ -385,7 +385,7 @@ export function createCrowdParts({ rig, palette, instances, lods = true, cells, 
         crowd: palette,
         assembly: { offset: blend, detailOffset: [0, 0, 0] },
         ...(rigPart.morph ? { morph: rigPart.morph } : {}),
-        ...(rigPart.levels ? { lods: rigPart.levels } : {}),
+        ...(rigPart.levels ? { lods: rigPart.levels, shadowLods: rigPart.levels } : {}),
       });
     }
   });
