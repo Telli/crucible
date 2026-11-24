@@ -102,9 +102,9 @@ test('voronoi output, jitter and smoothness errors say what failed and what to p
 });
 
 test('smoothF1 costs more work than the other outputs, which cost what they did', () => {
-  const costOf = output => compileMaterialGraph({ height: { voronoi: { output } } }).cost;
-  assert.equal(costOf('distance'), 9);
-  assert.equal(costOf('f2'), 9);
+  const costOf = output => compileMaterialGraph({ roughness: { voronoi: { output } } }).cost;
+  assert.equal(costOf('distance'), 10.1);
+  assert.equal(costOf('f2'), 10.1);
   assert.ok(costOf('smoothF1') > costOf('f2') * 2);
 });
 
