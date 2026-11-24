@@ -284,3 +284,50 @@ test('the water outline lies under land that is above the water level, so the sh
     assert.ok(upward >= -1e-9, 'every water triangle faces up');
   }
 });
+
+test('a slanted material border is a straight, monotonic blend, not a staircase of cells', () => {
+  const grid = [40, 8, 40];
+  const occupancy = new Float32Array(grid[0] * grid[1] * grid[2]);
+  const materials = new Uint8Array(occupancy.length);
+  for (let z = 0; z < grid[2]; z++) {
+    for (let y = 0; y < grid[1]; y++) {
+      for (let x = 0; x < grid[0]; x++) {
+        const cell = (z * grid[1] + y) * grid[0] + x;
+        occupancy[cell] = y < 4 ? 1 : y === 4 ? 0.5 : 0;
+        materials[cell] = 0.4 * (x + 0.5) - (z + 0.5) + 9 > 0 ? 1 : 0;
+      }
+    }
+  }
+  const looks = { mud: { color: [1, 0, 0], variation: 0 }, clay: { color: [0, 0, 1], variation: 0 } };
+  const { parts } = createVoxelTerrain({ grid, cellSize: 1, occupancy, materials, palette: ['mud', 'clay'], looks, smoothing: 1 });
+  const { positions, normals, colors } = parts[0].geometry;
+  const rows = new Map();
+  for (let vertex = 0; vertex < positions.length / 3; vertex++) {
+    const [x, y, z] = [positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]];
+    if (y < 3.8 || y > 5 || x < 3 || x > 37 || z < 9 || z > 30 || normals[vertex * 3 + 1] < 0.9) continue;
+    const key = Math.round(z * 4);
+    rows.set(key, [...(rows.get(key) ?? []), [x, colors[vertex * 3]]]);
+  }
+  const crossings = [];
+  for (const [key, row] of rows) {
+    row.sort((first, second) => first[0] - second[0]);
+    for (let index = 1; index < row.length; index++) {
+      assert.ok(row[index][1] <= row[index - 1][1] + 1e-6, 'the share of the first material only falls across the border');
+    }
+    for (let index = 1; index < row.length; index++) {
+      const [x0, share0] = row[index - 1];
+      const [x1, share1] = row[index];
+      if (share0 >= 0.5 && share1 < 0.5) {
+        crossings.push([key / 4, x0 + (share0 - 0.5) / (share0 - share1) * (x1 - x0)]);
+        break;
+      }
+    }
+  }
+  assert.ok(crossings.length >= 10, `found the border in ${crossings.length} rows`);
+  const meanZ = crossings.reduce((total, [z]) => total + z, 0) / crossings.length;
+  const meanX = crossings.reduce((total, [, x]) => total + x, 0) / crossings.length;
+  const slope = crossings.reduce((total, [z, x]) => total + (z - meanZ) * (x - meanX), 0) / crossings.reduce((total, [z]) => total + (z - meanZ) ** 2, 0);
+  for (const [z, x] of crossings) {
+    assert.ok(Math.abs(x - (meanX + slope * (z - meanZ))) < 0.05, `the border at z ${z} is ${Math.abs(x - (meanX + slope * (z - meanZ))).toFixed(3)} cells off a straight line`);
+  }
+});

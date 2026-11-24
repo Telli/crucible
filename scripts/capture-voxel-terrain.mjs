@@ -187,8 +187,13 @@ try {
     // an end sits off the straight line between the ends on the lines before and after it. A smooth shore, however
     // curved or steep, gives a kink near 0, a stair step gives its height.
     const isWater = (pixels, pixel) => pixels[pixel * 4 + 1] - pixels[pixel * 4] > 35 && pixels[pixel * 4 + 2] - pixels[pixel * 4] > 35;
+    const maskTests = {
+      water: isWater,
+      grass: (pixels, pixel) => pixels[pixel * 4 + 1] - pixels[pixel * 4] > 12 && pixels[pixel * 4 + 1] - pixels[pixel * 4 + 2] > 25 && !isWater(pixels, pixel),
+      sand: (pixels, pixel) => pixels[pixel * 4] > 170 && pixels[pixel * 4] - pixels[pixel * 4 + 1] >= 0 && pixels[pixel * 4] - pixels[pixel * 4 + 1] < 25 && pixels[pixel * 4] - pixels[pixel * 4 + 2] > 30,
+    };
     const outlines = {};
-    for (const [name] of Object.entries(views)) {
+    for (const [name] of Object.entries(views)) for (const [maskName, isInside] of Object.entries(maskTests)) {
       const pixels = withLandscape[name];
       let worst = { kink: 0, at: [0, 0], direction: '' };
       for (const direction of ['rows', 'columns']) {
@@ -199,7 +204,7 @@ try {
           let inside = false;
           for (let position = 0; position < length; position++) {
             const pixel = direction === 'rows' ? line * canvas.width + position : position * canvas.width + line;
-            const water = isWater(pixels, pixel);
+            const water = isInside(pixels, pixel);
             if (water !== inside) { ends.push(position); inside = water; }
           }
           return ends;
@@ -217,7 +222,7 @@ try {
           }
         }
       }
-      outlines[name] = worst;
+      outlines[`${name} ${maskName}`] = worst;
     }
     return { pictures, boxes, walls, outlines };
   }, { smoothing, edges, views, grid: GRID, palette: PALETTE, silhouetteCrop });
@@ -236,7 +241,7 @@ try {
     console.log(`${name} wall: ${wall.pixels} px, mean RGB ${red} ${green} ${blue}, R-B ${red - blue}, Lab a* ${wall.lab.a.toFixed(1)}, L ${wall.lab.lightness.toFixed(0)}, top-to-wall change ${wall.transitionWidth} px (median of ${wall.columns} columns)${wall.largestStep === null ? '' : `, wall top silhouette in the crop: largest column-to-column change ${wall.largestStep} px, largest kink off the line between neighbours ${wall.largestKink} px`}`);
   }
   for (const [name, outline] of Object.entries(results.outlines)) {
-    console.log(`${name} water outline: largest kink off the line between neighbouring ${outline.direction} ${outline.kink.toFixed(1)} px at (${outline.at.join(', ')})`);
+    console.log(`${name} outline: largest kink off the line between neighbouring ${outline.direction} ${outline.kink.toFixed(1)} px at (${outline.at.join(', ')})`);
   }
   console.log('written', Object.keys(results.pictures).join(', '));
 } finally {

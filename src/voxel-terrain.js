@@ -31,6 +31,8 @@ const BOUNDARY_SNAP = 0.25;
 const BANK_RUN = 2;
 const LEVEL_BUCKET = 0.02;
 const WALL_COLOR = Object.freeze([0.2, 0.062, 0.016]);
+const COLOR_BLUR_PASSES = 3;
+const COLOR_SHARPNESS = 4;
 const COLOR_WINDOW = 2;
 const COLOR_KERNEL_RADIUS = 1.5;
 const COLOR_FALLBACK_RADIUS = 3;
@@ -296,16 +298,62 @@ function valueNoise(x, y, z, frequency) {
   return total;
 }
 
-/** Material weights around a vertex: occupancy of each land cell near it, fading with distance, summed per material. */
+/**
+ * A smooth weight per land material at every vertex. Each material's occupancy is blurred over a few cells and sampled
+ * between cells, so a border between two materials is a smooth curve whatever the cell grid does (a diagonal border is a
+ * diagonal line, not a staircase); the weights are then sharpened so the blend between two materials stays about a cell wide.
+ * Returns the materials present and, per vertex, their normalised weights (all 0 where no land is near).
+ */
+function smoothMaterialWeights(positions, input, layout, paddedOrigin) {
+  const { grid, cellSize, palette, occupancy, materials } = input;
+  const present = [];
+  const seen = new Uint8Array(palette.names.length);
+  for (let cell = 0; cell < materials.length; cell++) {
+    if (occupancy[cell] > 0 && materials[cell] !== palette.waterIndex && !seen[materials[cell]]) {
+      seen[materials[cell]] = 1;
+      present.push(materials[cell]);
+    }
+  }
+  const vertexCount = positions.length / 3;
+  const weights = new Float32Array(vertexCount * present.length);
+  present.forEach((material, slot) => {
+    const field = paddedField(grid, layout, 'open', cell => (materials[cell] === material ? occupancy[cell] : 0));
+    const blurred = blurField(field, layout.dims, COLOR_BLUR_PASSES);
+    for (let vertex = 0; vertex < vertexCount; vertex++) {
+      weights[vertex * present.length + slot] = sampleField(blurred, layout, pointOf(positions, vertex, cellSize, paddedOrigin));
+    }
+  });
+  for (let vertex = 0; vertex < vertexCount; vertex++) {
+    let total = 0;
+    for (let slot = 0; slot < present.length; slot++) {
+      const sharpened = weights[vertex * present.length + slot] ** COLOR_SHARPNESS;
+      weights[vertex * present.length + slot] = sharpened;
+      total += sharpened;
+    }
+    for (let slot = 0; slot < present.length; slot++) weights[vertex * present.length + slot] = total > 1e-12 ? weights[vertex * present.length + slot] / total : 0;
+  }
+  return { present, weights };
+}
+
+/** Material weights around a vertex, from the smooth per-material fields; the cells near the vertex are the fallback. */
 function vertexColors(positions, input, layout, paddedOrigin) {
   const { grid, cellSize, palette, occupancy, materials } = input;
   const colors = new Float32Array(positions.length);
   const dominant = new Uint8Array(positions.length / 3);
   const weights = new Float64Array(palette.names.length);
+  const smooth = smoothMaterialWeights(positions, input, layout, paddedOrigin);
   for (let vertex = 0; vertex < positions.length / 3; vertex++) {
     const cellPosition = [0, 1, 2].map(axis => (positions[vertex * 3 + axis] - paddedOrigin[axis]) / cellSize - 1);
     weights.fill(0);
-    let total = accumulateWeights(weights, cellPosition, COLOR_KERNEL_RADIUS, input);
+    let total = 0;
+    smooth.present.forEach((material, slot) => {
+      weights[material] = smooth.weights[vertex * smooth.present.length + slot];
+      total += weights[material];
+    });
+    if (total <= 1e-6) {
+      weights.fill(0);
+      total = accumulateWeights(weights, cellPosition, COLOR_KERNEL_RADIUS, input);
+    }
     if (total <= 1e-6) total = accumulateWeights(weights, cellPosition, COLOR_FALLBACK_RADIUS, input);
     const color = [0, 0, 0];
     let variation = 0;
