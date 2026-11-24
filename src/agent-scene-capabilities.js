@@ -61,7 +61,7 @@ export const MATERIAL_GRAPH_OUTPUTS = Object.freeze(['color', 'roughness', 'meta
 export const MATERIAL_GRAPH_OPERATORS = Object.freeze([
   'uv', 'coord', 'mapping', 'vec', 'ramp', 'image', 'noise', 'whiteNoise', 'brick', 'voronoi', 'wave', 'checker', 'gradient',
   'add', 'sub', 'mul', 'div', 'min', 'max', 'pow', 'abs', 'floor', 'fract', 'sqrt', 'invert', 'clamp', 'smoothstep', 'mix',
-  'layer', 'hue', 'curve', 'fresnel', 'vertexGroup', 'meshMap', 'surface',
+  'layer', 'hue', 'curve', 'fresnel', 'vertexGroup', 'meshMap', 'surface', 'base',
 ]);
 export const MESH_MAP_NAMES = Object.freeze(['curvature', 'ao', 'thickness']);
 export const SURFACE_OUTPUTS = Object.freeze(['slope', 'normalY', 'height']);
@@ -98,6 +98,7 @@ export const MATERIAL_GRAPH_NODES = Object.freeze({
   ramp: '{"ramp":{"value":node,"stops":[[0,[r,g,b]],[1,[r,g,b]]]}} 2-8 stops rising from 0 to 1.',
   fresnel: '{"fresnel":{"ior":1.5}} ior 1.01-3. View dependent, so only as a factor of emission, alone or {"mul":[node,{"fresnel":{...}}]}: emission rises toward grazing angles, rendered per pixel by the rasterizer and the CPU path tracer.',
   surface: '{"surface":{"output":"slope"|"normalY"|"height","space":"world"|"object","range":[low,high]}} a number 0-1 from the mesh surface at each texel, baked into UV space like vertexGroup. slope is the angle from straight up as a share of a right angle: 0 on a flat surface facing up, 1 on a wall and under an overhang (snow: make it the mask of a layer). normalY is the up part of the normal, 0 down, 0.5 wall, 1 up. height is the up position from the bottom to the top of the mesh, or between range [low, high] metres (height only; the default is the whole mesh). space defaults to world, so a rock turned on its side still has snow on top; object uses the mesh as modelled. world places the mesh with the world matrix of the part when the scene is built, so it is baked, not live: move the part and build again to update it. Needs pattern mapping "uv" and a mesh with UVs; every backend reads the baked texture. A material used on two meshes bakes once per mesh.',
+  base: '{"base":{"output":"color"|"roughness"|"metallic"|"normal"}} the own texture of the placed scan at the texel UV; only in asset.pattern or asset.materials[].pattern, where unwritten outputs keep the scan texture. color and normal are vectors, roughness and metallic numbers.',
   meshMap: '{"meshMap":{"name":"curvature"|"ao"|"thickness"}} a number 0-1 baked per texel from the mesh itself, so it is as fine as the texture and not as coarse as the vertices: curvature is 0.5 flat, up to 1 on a convex edge, down to 0 in a concave one, measured in 3D so a UV seam does not split a bevel (edge wear); ao is the share of rays above the surface that hit the mesh (cavity dirt); thickness is how far rays below the surface travel inside the mesh, 0 thin to 1 thick (translucency). Needs pattern mapping "uv" and a mesh with UVs. Mixes with noise, ramps and layers; every backend reads the baked texture. A material used on two meshes bakes once per mesh.',
   vertexGroup: '{"vertexGroup":{"name":"edge"}} a number 0-1: the weight of that vertex group of the mesh, drawn into UV space and read at the texel, so it mixes with noise, ramps and layers. Needs pattern mapping "uv" and a mesh with UVs and the group (make it with a vertex_group mesh edit); every backend reads the baked texture. A material used on two meshes bakes once per mesh.',
   mixing: '{"layer":{"base","top","mask","edge","softness"}}; {"hue":{"color","shift","saturation","value"}}; {"curve":{"value","points":[[x,y]]}}.',
@@ -185,6 +186,21 @@ export function maximumMemoryMiB(totalMemoryBytes) {
 /** The --memory range error shared by the server flag check and the runtime factory, naming the machine's maximum. */
 export function memoryRangeError(memory, maximumMiB) {
   return new RangeError(`memory must be an integer from 32 to ${maximumMiB} MiB on this machine (half of its RAM, at most ${MEMORY_CEILING_MIB}), got ${memory}.`);
+}
+/**
+ * Rewrites the renderer's "Fix: pass { memoryBudgetMiB: N }." hint for a tool caller. No MCP tool takes memoryBudgetMiB: the budget
+ * is the server's --memory, so the hint names what the agent can do in its call (smaller bakes, fewer textures) and what the
+ * operator can do (restart with --memory N, or that N is over what this machine accepts) (#3205). Other messages pass through.
+ */
+export function agentMemoryBudgetMessage(message, { memory, maximumMemory }) {
+  const hint = /Fix: pass \{ memoryBudgetMiB: (\d+) \}\./.exec(message);
+  if (!hint) return message;
+  const requiredMiB = Number(hint[1]);
+  const ownCall = 'set the resolution of baked textures to 512 (1024 costs four times the bytes), use fewer textures, or remove parts';
+  const operator = requiredMiB <= maximumMemory
+    ? `ask the server operator to restart it with --memory ${requiredMiB} or more (now ${memory}, at most ${maximumMemory} on this machine)`
+    : `--memory cannot reach ${requiredMiB} on this machine (at most ${maximumMemory})`;
+  return message.replace(hint[0], `Fix: no tool call takes a memory budget; ${ownCall}, or ${operator}.`);
 }
 export const AUDIO_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.(wav|mp3|ogg|flac)$/;
 

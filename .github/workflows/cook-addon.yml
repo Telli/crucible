@@ -106,6 +106,7 @@ on:
       - 'src/animation-root-motion.js'
       - 'src/animation.js'
       - 'src/area-light-portal.js'
+      - 'src/asset-material-graph.js'
       - 'src/auto-exposure.js'
       - 'src/blend-output.js'
       - 'src/blink-curve.js'

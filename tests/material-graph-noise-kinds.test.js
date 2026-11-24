@@ -117,10 +117,10 @@ test('a warped texture still tiles, because the warp node is periodic', () => {
   }
 });
 
-test('a warp costs its node and two work units, and is held to the node limits', () => {
-  const plainCost = compileMaterialGraph({ height: { noise: { scale: 6 } } }).cost;
-  const warpedCost = compileMaterialGraph({ height: { noise: { scale: 6, warp: { node: 0.5 } } } }).cost;
-  assert.equal(warpedCost - plainCost, 3);
+test('a warp costs its node and 2.5 work units, and is held to the node limits', () => {
+  const plainCost = compileMaterialGraph({ roughness: { noise: { scale: 6 } } }).cost;
+  const warpedCost = compileMaterialGraph({ roughness: { noise: { scale: 6, warp: { node: 0.5 } } } }).cost;
+  assert.equal(Math.round((warpedCost - plainCost) * 100), 260);
   assert.equal(compileMaterialGraph({ height: { noise: { warp: { node: 0.5 } } } }).nodeCount, 2);
 });
 

@@ -121,8 +121,9 @@ function hitNearestLamp(ray) {
 }
 
 async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = false, deadlineMs,
-  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, disposeGate, disposeLostBridge = false, disposeWithoutScene = false, hangBrowserClose = false, closeTimeoutMs, failFirstGoto = false, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
+  failDispose = false, heapSize = 1024, stallPrivatePage = false, blockPrivateCreate = false, resumeDelayMs = 0, suspendDelayMs = 0, failResume = false, hangMethod, failPrivateCreate = false, failPrivateCreateMessage, failSourceCreateMessage, disposeGate, disposeLostBridge = false, disposeWithoutScene = false, hangBrowserClose = false, closeTimeoutMs, failFirstGoto = false, jobRender, sceneBake, exportedRecipe, runtimeOptions = {}, contextOverrides = {}, lookBytesPerPixel = 0, inspection } = {}) {
   const events = [];
+  let sourceCreates = 0;
   const sourceCalls = [];
   const sandboxTimers = new Set();
   const viewports = [];
@@ -159,6 +160,7 @@ async function reviewRuntimeHarness({ failShot, blockShot = false, oversize = fa
       events.push(`${this.privateTarget ? 'private' : 'source'}:${method}`);
       if (!this.privateTarget) sourceCalls.push({ method, input });
       if (method === hangMethod && !this.privateTarget) return new Promise(() => {});
+      if (method === 'create' && !this.privateTarget && failSourceCreateMessage && sourceCreates++ > 0) throw new Error(failSourceCreateMessage);
       if (method === 'create' && this.privateTarget && failPrivateCreate) {
         failPrivateCreate = false;
         throw new Error(typeof failPrivateCreateMessage === 'string' ? failPrivateCreateMessage : 'Injected private create failure');
@@ -1583,4 +1585,24 @@ runTest('a review page needs no game and is kept with the newest four web builds
   for (let index = 0; index < 5; index++) entries.push((await runtime.exportWeb({ sessionId, review: true })).entry);
   assert.equal((await keptBuilds()).length, 4);
   await assert.rejects(stat(entries[0]), { code: 'ENOENT' });
+});
+
+runTest('an over-budget scene_create names actions the call can take, never a memoryBudgetMiB argument (#3205)', async () => {
+  const counted = 'Memory budget cannot hold geometry 1.0 MiB, textures 40.0 MiB and frame 10.0 MiB, over memoryBudgetMiB 32.';
+  const { runtime } = await reviewRuntimeHarness({ runtimeOptions: { memory: 192 }, failSourceCreateMessage: `${counted} Fix: pass { memoryBudgetMiB: 274 }.` });
+  try {
+    const failure = await runtime.create({ recipe: FRESH_RECIPE }).then(() => assert.fail('create must fail'), error => error);
+    assert.match(failure.message, /^Memory budget cannot hold geometry 1\.0 MiB/);
+    assert.match(failure.message, /Fix: no tool call takes a memory budget; set the resolution of baked textures to 512/);
+    assert.match(failure.message, /restart it with --memory 274 or more \(now 192, at most \d+ on this machine\)/);
+    assert.doesNotMatch(failure.message, /pass \{ memoryBudgetMiB/);
+  } finally { await runtime.close(); }
+});
+
+runTest('an over-budget scene_create that --memory cannot reach says so (#3205)', async () => {
+  const { runtime } = await reviewRuntimeHarness({ runtimeOptions: { memory: 192 }, failSourceCreateMessage: 'Memory budget cannot hold x. Fix: pass { memoryBudgetMiB: 999999 }.' });
+  try {
+    const failure = await runtime.create({ recipe: FRESH_RECIPE }).then(() => assert.fail('create must fail'), error => error);
+    assert.match(failure.message, /--memory cannot reach 999999 on this machine \(at most \d+\)/);
+  } finally { await runtime.close(); }
 });
