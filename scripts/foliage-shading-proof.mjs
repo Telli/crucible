@@ -4,7 +4,7 @@
 //
 //   node scripts/foliage-shading-proof.mjs --out artifacts/2991/after [--reference artifacts/3057/refs] [--width 640] [--height 480]
 //        [--subjects oak,birch,forest] [--backend gpu|cpu]
-//        [--distances 8,30] [--suns behind,side] [--ground-color 0.3,0.3,0.3]
+//        [--distances 8,30] [--suns behind,side] [--eye-height m] [--fog-density d] [--ground-color 0.3,0.3,0.3]
 //
 // Subjects: `oak` and `birch` (one preset tree, seed 4) and `forest` (200 oak trees). For each it renders four stills
 // (8 m and 30 m from the trunk, sun behind the tree and sun to the side) and puts them beside a photo from
@@ -40,12 +40,14 @@ const CELL_HEIGHT = 240;
 const LABEL_HEIGHT = 22;
 
 function parseArguments(argv) {
-  const options = { out: null, reference: 'artifacts/3057/refs', width: 640, height: 480, subjects: Object.keys(SUBJECTS), backend: 'gpu', distances: [...DEFAULT_DISTANCES], suns: Object.keys(SUNS), groundColor: DEFAULT_GROUND_COLOR };
+  const options = { fogDensity: null, eyeHeight: null, out: null, reference: 'artifacts/3057/refs', width: 640, height: 480, subjects: Object.keys(SUBJECTS), backend: 'gpu', distances: [...DEFAULT_DISTANCES], suns: Object.keys(SUNS), groundColor: DEFAULT_GROUND_COLOR };
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index];
     const value = argv[index + 1];
     if (value === undefined) throw new Error(`${name} needs a value, such as ${name} 640`);
-    if (name === '--out') options.out = value;
+    if (name === '--eye-height') options.eyeHeight = Number(value);
+    else if (name === '--fog-density') options.fogDensity = Number(value);
+    else if (name === '--out') options.out = value;
     else if (name === '--reference') options.reference = value;
     else if (name === '--width') options.width = Number(value);
     else if (name === '--height') options.height = Number(value);
@@ -76,10 +78,10 @@ function treeHeightOf(subjectName) {
   return bounds.maximum[1] - bounds.minimum[1];
 }
 
-function buildRecipe({ subjectName, distance, sunName, height, groundColor }) {
+function buildRecipe({ subjectName, distance, sunName, height, groundColor, eyeHeightOverride, fogDensity }) {
   const isForest = subjectName === 'forest';
   const eyeZ = isForest ? FOREST_AREA + distance : distance;
-  const eyeHeight = isForest ? 2 : height * 0.35;
+  const eyeHeight = eyeHeightOverride ?? (isForest ? 2 : height * 0.35);
   const targetHeight = height * 0.6;
   const targetZ = 0;
   const viewHeight = height * 1.3;
@@ -95,7 +97,7 @@ function buildRecipe({ subjectName, distance, sunName, height, groundColor }) {
       { id: 'trees', vegetation: SUBJECTS[subjectName].vegetation },
     ],
     camera: { eye: [0, eyeHeight, eyeZ], target: [0, targetHeight, targetZ], fov },
-    environment: { world: true, lightDirection: SUNS[sunName] },
+    environment: { world: true, lightDirection: SUNS[sunName], ...(fogDensity === null ? {} : { fogDensity }) },
     shadow: { target: [0, height / 2, 0], extent: shadowSpan, distance: shadowSpan * 2, far: shadowSpan * 6 },
   };
 }
@@ -176,7 +178,7 @@ async function main() {
         const name = `${subjectName}-${distance}m-${sunName}`;
         plans.push({
           name, distance, sunName, stillPath: join(outputFolder, `${name}.png`),
-          recipe: buildRecipe({ subjectName, distance, sunName, height, groundColor: options.groundColor }),
+          recipe: buildRecipe({ subjectName, distance, sunName, height, groundColor: options.groundColor, eyeHeightOverride: options.eyeHeight, fogDensity: options.fogDensity }),
           description: { subject: subjectName, seed: SEED, distance, sun: SUNS[sunName], sunName, treeHeight: height },
         });
       }

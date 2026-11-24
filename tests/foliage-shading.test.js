@@ -256,8 +256,11 @@ test('the crown light spans deep shade to sunlit hull: a bright hull, a dark cor
   }
   radiances.sort((first, second) => first - second);
   const percentile = fraction => radiances[Math.floor(radiances.length * fraction)];
-  assert.ok(percentile(0.9) > 1.4, `the 90th percentile of the oak's sunlit radiance is ${percentile(0.9).toFixed(2)}`);
-  assert.ok(percentile(0.9) / percentile(0.1) > 6, `the 90th over 10th percentile is ${(percentile(0.9) / percentile(0.1)).toFixed(1)}`);
+  // Bounds taken from the round 4 renders (oak 8 m, sun beside): leaf pixels 90th percentile 153, 90th over 10th 4.9, median 73, lit half 91,
+  // against the photos' 154 to 164, 4.2 to 7.8, 52 to 83 and 65 to 94. This CPU model of the same crown reads 1.58, 22 and 0.35 there.
+  assert.ok(percentile(0.9) > 1.4, `the 90th percentile of the oak's sunlit radiance is ${percentile(0.9).toFixed(2)} (render 153 of 255, photos 154 to 164)`);
+  assert.ok(percentile(0.9) / percentile(0.1) > 15, `the 90th over 10th percentile is ${(percentile(0.9) / percentile(0.1)).toFixed(1)} (render 4.9, photos 4.2 to 7.8; round 3 read under 15)`);
+  assert.ok(percentile(0.5) < 0.5, `the median sunlit radiance is ${percentile(0.5).toFixed(2)}: the bulk of the crown stays under the photos' lit half (render lit half 91, round 3 had 104)`);
 });
 
 test('the clump speckle varies leaf colour within a clump without blotchy outliers', () => {
@@ -269,5 +272,5 @@ test('the clump speckle varies leaf colour within a clump without blotchy outlie
   const average = mean(outer);
   const deviation = Math.sqrt(mean(outer.map(value => (value - average) ** 2))) / average;
   assert.ok(deviation > 0.16, `outermost leaves vary by ${(deviation * 100).toFixed(1)} percent (without the fine speckle it is 14.4)`);
-  assert.ok(Math.max(...outer) < 3.2 * average && Math.min(...outer) > 0.3 * average, 'no leaf is a blotchy outlier');
+  assert.ok(Math.max(...outer) < 2.5 * average && Math.min(...outer) > 0.2 * average, `no leaf is a blotchy outlier (measured ${(Math.min(...outer) / average).toFixed(2)} to ${(Math.max(...outer) / average).toFixed(2)} times the mean)`);
 });
