@@ -426,6 +426,32 @@ function facesUp({ quads, positions }, quadIndex) {
   return normal[1] / (Math.hypot(...normal) || 1) >= WATER_MINIMUM_UP;
 }
 
+// The water volume is blurred together with the bank, so its surface climbs a little up the bank and pokes through the
+// land at a grazing angle. A vertex is pressed down to the lowest vertex within two cells of it (when that is no more than a
+// cell lower), which gives each body one flat level and leaves separate levels alone.
+function flattenBankVertices(positions, cellSize) {
+  const bucketOf = (x, z) => `${Math.floor(x / cellSize)},${Math.floor(z / cellSize)}`;
+  const lowest = new Map();
+  for (let offset = 0; offset < positions.length; offset += 3) {
+    const key = bucketOf(positions[offset], positions[offset + 2]);
+    lowest.set(key, Math.min(lowest.get(key) ?? Infinity, positions[offset + 1]));
+  }
+  const flattened = positions.slice();
+  for (let offset = 0; offset < positions.length; offset += 3) {
+    const bucketX = Math.floor(positions[offset] / cellSize);
+    const bucketZ = Math.floor(positions[offset + 2] / cellSize);
+    let level = positions[offset + 1];
+    for (let stepZ = -2; stepZ <= 2; stepZ++) {
+      for (let stepX = -2; stepX <= 2; stepX++) {
+        const neighbour = lowest.get(`${bucketX + stepX},${bucketZ + stepZ}`);
+        if (neighbour !== undefined && neighbour >= positions[offset + 1] - cellSize) level = Math.min(level, neighbour);
+      }
+    }
+    flattened[offset + 1] = level;
+  }
+  for (let offset = 0; offset < positions.length; offset++) positions[offset] = flattened[offset];
+}
+
 function waterPart(input, layout, paddedOrigin) {
   const { grid, palette, occupancy, materials, smoothing, edges, cellSize } = input;
   if (palette.waterIndex < 0) return null;
@@ -446,6 +472,7 @@ function waterPart(input, layout, paddedOrigin) {
   const compact = compactMesh(mesh, keep);
   if (compact.indices.length === 0) return null;
   clampToBounds(compact.positions, input);
+  flattenBankVertices(compact.positions, cellSize);
   for (let vertex = 0; vertex < compact.positions.length / 3; vertex++) compact.positions[vertex * 3 + 1] -= WATER_DROP * cellSize;
   const normals = new Float32Array(compact.positions.length);
   for (let vertex = 0; vertex < compact.positions.length / 3; vertex++) normals[vertex * 3 + 1] = 1;

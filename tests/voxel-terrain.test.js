@@ -164,3 +164,29 @@ test('an empty grid says there is no surface', () => {
   const empty = landscapeInput({ occupancy: new Float32Array(32000) });
   assert.throws(() => createVoxelTerrain(empty), /no surface/);
 });
+
+test('a pond has one flat water level, with no surface climbing the bank', () => {
+  const grid = [16, 10, 16];
+  const occupancy = new Float32Array(16 * 10 * 16);
+  const materials = new Uint8Array(occupancy.length).fill(SAND);
+  for (let z = 0; z < 16; z++) {
+    for (let x = 0; x < 16; x++) {
+      const distance = Math.max(Math.abs(x - 7.5), Math.abs(z - 7.5));
+      const bankHeight = 1.5 + Math.max(0, distance - 3) * 1.2;
+      for (let y = 0; y < 10; y++) {
+        const cell = (z * 10 + y) * 16 + x;
+        occupancy[cell] = Math.min(1, Math.max(0, bankHeight - y));
+        if (occupancy[cell] === 0 && y < 3) {
+          occupancy[cell] = 1;
+          materials[cell] = WATER;
+        }
+      }
+    }
+  }
+  const water = createVoxelTerrain({ grid, cellSize: 1, occupancy, materials }).parts.find(part => part.name === 'Voxel water');
+  assert.ok(water, 'water part');
+  const heights = [];
+  for (let offset = 1; offset < water.geometry.positions.length; offset += 3) heights.push(water.geometry.positions[offset]);
+  const spread = Math.max(...heights) - Math.min(...heights);
+  assert.ok(spread < 0.05, `water heights spread over ${spread.toFixed(2)} cells`);
+});
