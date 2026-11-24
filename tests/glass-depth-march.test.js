@@ -190,3 +190,15 @@ test('the ball lens gives a finite exit at the exact centre, where the surface n
   for (const value of [...exit.exitPosition, ...exit.direction, ...exit.samplePosition]) assert.ok(Number.isFinite(value), `a non-finite value ${value} at the centre`);
   assert.ok(Math.abs(exit.direction[0]) < 1e-12 && Math.abs(exit.direction[1]) < 1e-12, 'the centre ray goes straight on');
 });
+
+test('the exit direction does not jump where the sphere chord meets the slab chord, the centre of a ball as thick as its diameter (#3148 round 4)', () => {
+  const tilted = [Math.sin(0.12), 0, Math.cos(0.12)];
+  const exitFor = radius => ballLensExit({ position: [0, 0, 1], normal: tilted, viewDirection: [0, 0, 1], indexOfRefraction: 1.5, radius, thickness: 2 });
+  const largestJump = [0.97, 0.99, 1, 1.01, 1.03].map(radius => exitFor(radius)).slice(1).reduce((jump, exit, index, exits) => {
+    const previous = index === 0 ? exitFor(0.97) : exits[index - 1];
+    return Math.max(jump, Math.hypot(exit.direction[0] - previous.direction[0], exit.direction[1] - previous.direction[1], exit.direction[2] - previous.direction[2]));
+  }, 0);
+  assert.ok(largestJump < 0.08, `the direction jumps by ${largestJump} across a 3% change of radius`);
+  const hardSwitchGap = Math.hypot(...exitFor(1).direction.map((value, axis) => value - exitFor(1.5).direction[axis]));
+  assert.ok(hardSwitchGap > 0.02, 'the sphere and slab exits still differ well away from the band, so the blend is not a no-op');
+});
