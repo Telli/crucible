@@ -181,7 +181,8 @@ test('only standing water mirrors: the road is set rough after the lighting and 
 test('the water edge is narrow and pixel-wide, and the interior is flat and smooth', () => {
   const wet = wetShaderSource();
   assert.ok(wet.includes('standing = smoothstep(-edgeWidth, edgeWidth, stoneDepth) * gate'));
-  assert.ok(wet.includes('float edgeWidth = max(1.5 * fwidth(stoneDepth), 0.00001);'), 'the shore is anti-aliased on the depth the stones break, about 1.5 pixels wide');
+  assert.ok(wet.includes(`float edgeWidth = max(2.0 * fwidth(stoneDepth), ${wetShader.WET_SHORE_MINIMUM_SOFTNESS});`), 'the shore is anti-aliased over two pixels and never thinner than the minimum softness, so stones cannot cut it into single pixels');
+  assert.ok(Number(wetShader.WET_SHORE_MINIMUM_SOFTNESS) >= 0.002, 'the minimum softness is a few millimetres of ground');
   assert.ok(wet.includes('normal = normalize(mix(normal, normalize(vec3(wetRipple.x, 1.0, wetRipple.y)), standing));'));
   assert.ok(wet.includes('float gate = smoothstep(0.996, 0.9995, geometricNormal.y)'));
 });
@@ -204,7 +205,7 @@ test('the water ripple is a faint slow tilt that moves with time and stays well 
 test('the soak band only darkens the road, so no bright ring of sky glints sits around a puddle', () => {
   const wet = wetShaderSource();
   assert.equal(wet.includes('roughness * 0.75'), false, 'a smoother soak band lit a halo of glints around the water');
-  assert.ok(wet.includes(`color *= (1.0 - 0.15 * soakBand) * (1.0 - ${wetShader.WET_FRINGE_DARKENING} * fringe * (1.0 - 0.5 * stoneTop));`));
+  assert.ok(wet.includes(`color *= (1.0 - 0.15 * soakBand) * (1.0 - ${wetShader.WET_DAMP_DARKENING} * dampHalo) * (1.0 - ${wetShader.WET_FRINGE_DARKENING} * fringe * (1.0 - 0.5 * stoneTop));`));
 });
 
 // The fringe is the damp band just outside the water. A damp band is darker than the dry road beside it, never a bright outline.
@@ -216,12 +217,14 @@ function fringeColourMultiplier(depthOutsideRim, stoneHeight) {
   const stoneDepth = depthOutsideRim - 0.024 * (stoneHeight - 0.5);
   const fringe = smooth(-Number(wetShader.WET_FRINGE_WIDTH), 0, stoneDepth);
   const stoneTop = smooth(0.44, 0.6, stoneHeight);
-  return 1 - Number(wetShader.WET_FRINGE_DARKENING) * fringe * (1 - 0.5 * stoneTop);
+  const halo = smooth(-Number(wetShader.WET_DAMP_REACH), 0, depthOutsideRim) ** 1.6;
+  return (1 - Number(wetShader.WET_DAMP_DARKENING) * halo) * (1 - Number(wetShader.WET_FRINGE_DARKENING) * fringe * (1 - 0.5 * stoneTop));
 }
 
 test('the damp fringe is darker than the road beside it and never brighter, and reaches only a few centimetres out', () => {
   assert.ok(Number(wetShader.WET_FRINGE_DARKENING) > 0.2 && Number(wetShader.WET_FRINGE_DARKENING) < 0.8, 'the fringe darkening is a named, bounded constant');
-  assert.ok(Number(wetShader.WET_FRINGE_WIDTH) > 0 && Number(wetShader.WET_FRINGE_WIDTH) <= 0.03, 'the damp band is a few centimetres wide (about 3 cm per 0.01 of depth)');
+  assert.ok(Number(wetShader.WET_FRINGE_WIDTH) > 0 && Number(wetShader.WET_FRINGE_WIDTH) <= 0.03, 'the dark band is a few centimetres wide (about 3 cm per 0.01 of depth)');
+  assert.ok(Number(wetShader.WET_DAMP_REACH) >= 0.03 && Number(wetShader.WET_DAMP_REACH) <= 0.06, 'the soft damp gradient reaches about 10 to 18 cm and fades into the road');
   for (let stoneHeight = 0; stoneHeight <= 1; stoneHeight += 0.1) {
     for (let depth = -0.2; depth <= 0; depth += 0.002) {
       assert.ok(fringeColourMultiplier(depth, stoneHeight) <= 1, 'the fringe never brightens the road');
@@ -231,9 +234,9 @@ test('the damp fringe is darker than the road beside it and never brighter, and 
   const mean = values => values.reduce((sum, value) => sum + value, 0) / values.length;
   const bandSamples = [];
   for (let stoneHeight = 0.2; stoneHeight <= 0.8; stoneHeight += 0.1) {
-    for (let depth = -0.02; depth <= -0.01; depth += 0.001) bandSamples.push(fringeColourMultiplier(depth, stoneHeight));
+    for (let depth = -0.015; depth <= -0.005; depth += 0.001) bandSamples.push(fringeColourMultiplier(depth, stoneHeight));
   }
-  assert.ok(mean(bandSamples) <= 0.9 * fringeColourMultiplier(-0.067, 0.5), 'the band 3 to 6 cm out is clearly darker than the road 20 cm out');
+  assert.ok(mean(bandSamples) <= 0.9 * fringeColourMultiplier(-0.067, 0.5), 'the band 1.5 to 4.5 cm out is clearly darker than the road 20 cm out');
   assert.equal(fringeColourMultiplier(-0.067, 0.5), 1, 'the road 20 cm out is untouched by the fringe');
 });
 
@@ -242,7 +245,7 @@ test('the grazing glints in the damp band are sparse: only the tallest stone top
   const [low, high] = wetShader.WET_FRINGE_GLINT_STONE.map(Number);
   assert.ok(low >= 0.65 && high > low && high <= 0.95, 'glint stones are the top of the height range');
   assert.ok(wet.includes('smoothstep(0.55, 0.2, dot(geometricNormal, viewDirection))'), 'a glint needs a grazing view');
-  assert.ok(wet.includes('roughness = mix(roughness, 0.2, fringeGlint);'), 'a glint is satin, never a mirror');
+  assert.ok(wet.includes('roughness = mix(roughness, 0.26, fringeGlint * 0.6);'), 'a glint is satin, never a mirror');
 });
 
 test('the wet grit eases in from the first drop of wetness and never touches a dry road', () => {
@@ -271,4 +274,18 @@ test('the road stones are a mix of sizes on rotated lattices, mostly small, and 
     spread += Math.abs(heights[index] - mean);
   }
   assert.ok(neighbourStep / spread > 0.04, 'the smallest stones dominate the change from one centimetre to the next');
+});
+
+test('the grit tilt fades at a grazing view, so the glare patch does not glitter', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('float grazingShare = smoothstep(0.06, 0.4, dot(geometricNormal, viewDirection));'));
+  assert.ok(wet.includes('* mix(0.15, 1.0, grazingShare);'), 'the stone tilt shrinks toward a grazing view');
+  assert.ok(wet.includes('roughness = sqrt(roughness * roughness + 0.045 * (1.0 - grazingShare)'), 'the lost slope variance widens the highlight');
+});
+
+test('the wet darkening varies in patches on the ground only, and fades where a pixel is wider than a patch', () => {
+  const wet = wetShaderSource();
+  assert.ok(wet.includes('wetPatch *= (1.0 - smoothstep(0.05, 0.2, pixelSize)) * wetGroundFacing;'));
+  assert.ok(wet.includes('color *= 1.0 - 0.6 * patchyPorosity;'));
+  assert.ok(wet.includes('float patchyPorosity = clamp(wetPorosity * (1.0 + 0.9 * wetPatch), 0.0, 1.0);'));
 });

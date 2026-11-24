@@ -27,6 +27,8 @@ export const WATER_MAXIMUM_THICKNESS_RATIO = 0.02;
 export const WATER_MINIMUM_SCENE_SHARE = 0.002;
 /** The reflection target is this share of the canvas in each direction. */
 export const WATER_REFLECTION_SCALE = 0.75;
+/** The wet-ground mirror is as large as the frame: a puddle is a still film, and the reduced target of a lake blurs its edges. */
+export const WET_MIRROR_SCALE = 1;
 // The mirror draw is blurred and rippled, so it can use coarser levels and drop parts that cover almost nothing.
 /** The mirror draw accepts this many times the level error that the lit frame accepts (`lodPixelError`). */
 export const WATER_MIRROR_LOD_SCALE = 3;
@@ -148,6 +150,14 @@ export function flagWetMirrorParts(parts) {
 export function wetMirrorSurface(parts) {
   const flagged = parts.filter(part => part.material?.[WATER_BATCH_FLAG] === true);
   return flagged.length === 0 ? null : findWaterSurface(flagged, { wet: true });
+}
+
+/** The options for the mirror of wet ground: a full-size target, the frame's own level choice and no part dropped for being small. */
+export const WET_MIRROR_OPTIONS = Object.freeze({ scale: WET_MIRROR_SCALE, levelOfDetailScale: 1, minimumPixelRadius: 0 });
+
+/** Attaches the mirror for the wet ground of a scene (`wetMirrorSurface` of its parts) with `WET_MIRROR_OPTIONS`; returns the detach function. */
+export function attachWetMirror(renderer, parts) {
+  return attachWaterReflection(renderer, wetMirrorSurface(parts), WET_MIRROR_OPTIONS);
 }
 
 registerShaderFeatureCode('waterReflection', Object.freeze({
@@ -304,7 +314,7 @@ function drawMirrorImage(renderer, state, frame, renderFrame) {
   renderer.context.activeTexture(renderer.context.TEXTURE0);
   state.drawing = true;
   // Parts wholly under the plane are discarded by the shader anyway, so the renderer leaves them out of the draw.
-  renderer.mirrorCulling = { belowHeight: state.height + CLIP_MARGIN, lodScale: WATER_MIRROR_LOD_SCALE, minimumPixelRadius: WATER_MIRROR_MINIMUM_PIXEL_RADIUS };
+  renderer.mirrorCulling = { belowHeight: state.height + CLIP_MARGIN, lodScale: state.levelOfDetailScale, minimumPixelRadius: state.minimumPixelRadius };
   try {
     renderFrame(mirroredFrame(frame, state.height, state.target));
   } finally {
@@ -399,13 +409,15 @@ function hideMirrorOnlyLevels(batch) {
   }
 }
 
-export function attachWaterReflection(renderer, surface, { scale = WATER_REFLECTION_SCALE, updateEvery = 1 } = {}) {
+export function attachWaterReflection(renderer, surface, { scale = WATER_REFLECTION_SCALE, updateEvery = 1, levelOfDetailScale = WATER_MIRROR_LOD_SCALE, minimumPixelRadius = WATER_MIRROR_MINIMUM_PIXEL_RADIUS } = {}) {
   requireFiniteInRange('attachWaterReflection', 'scale', scale, 0.05, 1);
+  requireFiniteInRange('attachWaterReflection', 'levelOfDetailScale', levelOfDetailScale, 1, 16);
+  requireFiniteInRange('attachWaterReflection', 'minimumPixelRadius', minimumPixelRadius, 0, 100);
   requireFiniteInRange('attachWaterReflection', 'updateEvery', updateEvery, 0, 1000);
   if (!surface) {
     return () => {};
   }
-  const state = { height: surface.height, scale, updateEvery: Math.max(1, Math.floor(updateEvery)), partsRevision: 0, drawnRevision: -1, drawnFrame: null, framesSinceDraw: 0, target: null, ready: false, drawing: false, matrix: new Float32Array(16), program: null, locations: null };
+  const state = { height: surface.height, scale, levelOfDetailScale, minimumPixelRadius, updateEvery: Math.max(1, Math.floor(updateEvery)), partsRevision: 0, drawnRevision: -1, drawnFrame: null, framesSinceDraw: 0, target: null, ready: false, drawing: false, matrix: new Float32Array(16), program: null, locations: null };
   rendererStates.set(renderer, state);
   renderer.batches?.forEach(hideMirrorOnlyLevels);
   const render = renderer.render;

@@ -10,8 +10,13 @@
 /** The roughness scale of a soaked porous surface: 1 leaves the dry roughness, lower is glossier. Soaked road is satin, not a mirror. */
 export const SOAKED_ROAD_ROUGHNESS_SCALE = 0.62;
 /** How far (in noise-basin depth units, about 3 cm per 0.01) the damp band reaches outside the shore, and how much it darkens the road at the shore. */
-export const WET_FRINGE_WIDTH = '0.02';
-export const WET_FRINGE_DARKENING = '0.5';
+export const WET_FRINGE_WIDTH = '0.012';
+export const WET_FRINGE_DARKENING = '0.45';
+/** The soft damp gradient outside the dark band: how far it reaches (about 12 cm) and how much it darkens the road next to the band. */
+export const WET_DAMP_REACH = '0.04';
+export const WET_DAMP_DARKENING = '0.22';
+/** The shore is anti-aliased over at least this much depth (about 7 mm) and 2 pixel footprints, so no stone cuts it into single pixels. */
+export const WET_SHORE_MINIMUM_SOFTNESS = '0.0024';
 /** The stone height range over which a stone top in the damp band turns glossy: none below the first, all above the second. */
 export const WET_FRINGE_GLINT_STONE = Object.freeze(['0.7', '0.85']);
 /** The roughness of the water surface. */
@@ -115,7 +120,12 @@ float wetKeepOutDistance(vec3 position) {
     // Walls, crowns and paint keep the soft grain they had.
     float wetGrain = 0.0;
     if (gritGround < 0.999) wetGrain = 0.7 * (wearNoise(worldPosition * 38.0) - 0.5) * wallGrainFade;
-    color *= 1.0 - 0.6 * wetPorosity;
+    // Porosity and soak differ from patch to patch (a broad patch and a finer one), so a soaked road is not one flat darkening.
+    float wetPatch = 0.6 * (wearNoise(vec3(worldPosition.x * 0.9 + 4.1, 6.3, worldPosition.z * 0.9 - 2.7)) - 0.5) + 0.4 * (wearNoise(vec3(worldPosition.x * 5.5, 8.1, worldPosition.z * 5.5 + 13.0)) - 0.5);
+    wetPatch *= (1.0 - smoothstep(0.05, 0.2, pixelSize)) * wetGroundFacing;
+    float patchyPorosity = clamp(wetPorosity * (1.0 + 0.9 * wetPatch), 0.0, 1.0);
+    wetGloss = clamp(wetGloss * (1.0 + 0.6 * wetPatch), 0.0, 1.0);
+    color *= 1.0 - 0.6 * patchyPorosity;
     // Stone and gap differ in tone as well as in gloss, so the grit reads on a road that is only damp.
     color *= 1.0 + 1.0 * (stoneHeight - 0.5) * wetGrit * gritGround * (1.0 - scannedRoad);
     float soakedRoughness = mix(roughness, roughness * ${SOAKED_ROAD_ROUGHNESS_SCALE.toFixed(2)}, wetGloss);
@@ -128,6 +138,7 @@ float wetKeepOutDistance(vec3 position) {
     float standing = 0.0;
     float soakBand = 0.0;
     float fringe = 0.0;
+    float dampHalo = 0.0;
     float interior = 0.0;
     if (wetnessState.y > 0.0) {
       float clearance = wetKeepOutDistance(worldPosition);
@@ -137,24 +148,28 @@ float wetKeepOutDistance(vec3 position) {
       float stoneDepth = puddleDepth - 0.024 * (stoneHeight - 0.5);
       float gate = smoothstep(0.996, 0.9995, geometricNormal.y) * (1.0 - metallic) * smoothstep(0.18, 0.45, clearance) * paintGuard;
       // The shore is anti-aliased on the whole depth, stones included: a stone term steeper than the basin would otherwise step across pixels.
-      float edgeWidth = max(1.5 * fwidth(stoneDepth), 0.00001);
+      float edgeWidth = max(2.0 * fwidth(stoneDepth), ${WET_SHORE_MINIMUM_SOFTNESS});
       standing = smoothstep(-edgeWidth, edgeWidth, stoneDepth) * gate;
       interior = smoothstep(0.012, 0.06, puddleDepth);
       // Just outside the water the road is a damp band, darker than dry road and fading out over a few centimetres.
       fringe = smoothstep(-${WET_FRINGE_WIDTH}, 0.0, stoneDepth) * gate * (1.0 - standing);
+      float dampHalo = pow(smoothstep(-${WET_DAMP_REACH}, 0.0, puddleDepth), 1.6) * gate * (1.0 - standing);
       soakBand = smoothstep(-0.10, 0.0, puddleDepth) * gate * (1.0 - standing);
     }
     wetStanding = standing;
     // Road stones tilt the normal, less as they shrink under a pixel, and not at all under water.
-    vec2 stoneTilt = clamp(vec2(stoneSlopeU, stoneSlopeV) * 0.003, -0.35, 0.35) * wetGrit * gritGround * (1.0 - standing);
+    // At a grazing angle a pixel covers many stones along the view: their tilt fades and the lost slope variance widens the highlight instead of glittering.
+    float grazingShare = smoothstep(0.06, 0.4, dot(geometricNormal, viewDirection));
+    vec2 stoneTilt = clamp(vec2(stoneSlopeU, stoneSlopeV) * 0.003, -0.35, 0.35) * wetGrit * gritGround * (1.0 - standing) * mix(0.15, 1.0, grazingShare);
+    roughness = sqrt(roughness * roughness + 0.045 * (1.0 - grazingShare) * gritGround * wetGloss * (1.0 - standing));
     normal = normalize(normal - groundTangent * stoneTilt.x - groundBitangent * stoneTilt.y);
     // The soaked road is a little more saturated (at most 1.2 times); the soak band beside the shore is darker, the fringe darker and glossier.
     float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
     color = mix(vec3(luminance), color, mix(1.0, 1.2, wetPorosity * gritGround));
-    color *= (1.0 - 0.15 * soakBand) * (1.0 - ${WET_FRINGE_DARKENING} * fringe * (1.0 - 0.5 * stoneTop));
+    color *= (1.0 - 0.15 * soakBand) * (1.0 - ${WET_DAMP_DARKENING} * dampHalo) * (1.0 - ${WET_FRINGE_DARKENING} * fringe * (1.0 - 0.5 * stoneTop));
     // A few stone tops in the damp band glint, and only seen at a grazing angle; the rest of the band keeps the road's satin finish.
     float fringeGlint = fringe * smoothstep(${WET_FRINGE_GLINT_STONE[0]}, ${WET_FRINGE_GLINT_STONE[1]}, stoneHeight) * smoothstep(0.55, 0.2, dot(geometricNormal, viewDirection));
-    roughness = mix(roughness, 0.2, fringeGlint);
+    roughness = mix(roughness, 0.26, fringeGlint * 0.6);
     // Water: the bottom shows through the film, darker where it is deeper; the surface is flat, with a faint slow ripple, and the mirror does the rest.
     color *= mix(1.0, mix(0.7, 0.35, interior), standing);
     roughness = mix(roughness, ${WATER_SURFACE_ROUGHNESS.toFixed(2)}, standing);
@@ -167,5 +182,8 @@ float wetKeepOutDistance(vec3 position) {
   // Only the water mirrors the scene: the planar mirror reads the roughness after the lighting, so the road is set rough enough to show
   // none of it (weight 0 from roughness 0.5), the water smooth, and the shore pixels in between.
   worldLight: `  if (wetGroundFacing > 0.5) roughness = wetStanding > 0.99 ? ${WATER_SURFACE_ROUGHNESS.toFixed(2)} : mix(0.5, 0.35, wetStanding);
+#ifdef WATER_MIRROR_SHARPNESS
+  waterMirrorSharpness = wetGroundFacing > 0.5 ? 1.0 : 0.0;
+#endif
 `,
 });
