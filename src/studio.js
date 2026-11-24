@@ -31,6 +31,7 @@ import { createOutlineMask } from './studio-outline-mask.js';
 import { createPanelGrips } from './studio-panel-grips.js';
 import { leadWithActionIcon, STUDIO_ACTION_ICONS, STUDIO_BRAND_ICON_NAMES, STUDIO_FILLED_ICON_NAMES, STUDIO_ICON_ACCENTS, STUDIO_LIGHT_ICONS, STUDIO_NOTICE_ICONS, STUDIO_PRIMITIVE_ICONS, studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
+import { createShapeSettings } from './studio-shape-settings.js';
 import { createKeyMarkers } from './studio-timeline-keys.js';
 import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-properties.js';
 import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, describeBounds, describeCamera, describeGridStep, gridLayout, placeGridParts, studioDrawsFloor, viewportClipPlanes, viewportFloorPart } from './studio-viewport-aids.js';
@@ -2207,12 +2208,15 @@ export function createStudio(container, {
     });
   }
 
+  const shapeSettings = createShapeSettings({ documentReference, createElement, createPropertyLine, controller, announce: announceError });
+
   const nodePanelBody = createElement(
     documentReference,
     'div',
     { className: 'crucible-studio-panel-body' },
     createElement(documentReference, 'div', { className: 'crucible-studio-name-row' }, nodeLabelInput, visibleToggle, frameButton, duplicateButton, deleteButton),
     treeSection,
+    shapeSettings.element,
     createElement(documentReference, 'div', { className: 'crucible-studio-field' }, createElement(documentReference, 'span', { className: 'crucible-studio-field-head', textContent: 'Parent' }), nodeParentSelect),
     positionRow.container,
     rotationRow.container,
@@ -4126,6 +4130,7 @@ export function createStudio(container, {
     setRowLockedByTrack(rotationRow, !controller.autoKey && animatedProperties.includes('rotation'));
     setRowLockedByTrack(scaleRow, !controller.autoKey && animatedProperties.includes('scale'));
     syncTreeInspector(selectedNode);
+    shapeSettings.sync();
 
     const boundMaterial = selectedNode?.material ? recipe.materials.find(material => material.id === selectedNode.material) : null;
     renderPaletteSwatches(recipe, boundMaterial?.id ?? null);
