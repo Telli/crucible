@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { revealStudio, showStudioLoadingFailure, waitForNextPaint } from '../src/studio-boot.js';
+import {
+  reportStudioLoadingProgress,
+  revealStudio,
+  showStudioLoadingFailure,
+  STUDIO_LOADING_MILESTONES,
+  waitForNextPaint,
+  windDownStudioLoading,
+} from '../src/studio-boot.js';
 import { STUDIO_PREFERENCES_KEY } from '../src/studio-preferences.js';
 
 const PAGE_HTML = await readFile(new URL('../bench/studio/index.html', import.meta.url), 'utf8');
@@ -128,7 +135,7 @@ test('the page HTML paints the theme and the loading state before any module scr
   assert.match(PAGE_HTML, /background: var\(--site-bg\)/);
   assert.match(PAGE_HTML, /role="status"/);
   assert.match(PAGE_HTML, /[.]progress [{][^}]*background: color-mix[(]in srgb, var[(]--site-text[)] 22%, transparent[)]/, 'the track is the text token at 22 percent, which stays visible on the paper and on the dark background');
-  assert.match(PAGE_HTML, /[.]progress::after [{][^}]*background: var[(]--site-focus[)]/, 'the moving segment is the accent token of each theme');
+  assert.match(PAGE_HTML, /[.]fill [{][^}]*background: var[(]--site-focus[)]/, 'the fill is the accent token of each theme (it replaced the moving segment of the first loading bar)');
   assert.match(PAGE_HTML, /prefers-reduced-motion: no-preference/);
   assert.match(PAGE_HTML, /data-loading-message/);
   assert.match(PAGE_HTML, /<svg viewBox="0 0 24 24"[^>]*>[\s\S]*<\/svg>\s*<span data-loading-message>/, 'the failure leads with an icon');
@@ -139,4 +146,130 @@ test('the page script no longer imports the token stylesheet or opens the setup 
   assert.ok(!pageScript.includes("site-tokens.css'"));
   assert.ok(!pageScript.includes('studio.openSetup()'));
   assert.ok(pageScript.includes('revealStudio'));
+});
+
+// The pour: the pot tips, a stream leaves the lip and the bar fills. Only transform and opacity may animate.
+const LOADING_STYLE = PAGE_HTML.slice(PAGE_HTML.indexOf('<style>'), PAGE_HTML.indexOf('</style>'));
+const KEYFRAME_BLOCKS = [...LOADING_STYLE.matchAll(/@keyframes (studio-[\w-]+) [{]([^\n]*)/g)];
+const COMPOSITOR_PROPERTIES = new Set(['transform', 'opacity']);
+
+function createProgressPage() {
+  const properties = new Map();
+  const loadingElement = {
+    dataset: {},
+    style: {
+      getPropertyValue: name => properties.get(name) ?? '',
+      setProperty: (name, value) => properties.set(name, value),
+    },
+    getAnimations: () => [],
+    remove() {},
+    querySelector: () => null,
+  };
+  const documentReference = {
+    documentElement: { removeAttribute() {} },
+    getElementById: id => (id === 'studio-loading' ? loadingElement : null),
+  };
+  return { loadingElement, documentReference, progress: () => Number(properties.get('--progress')) };
+}
+
+test('the loading element has a pot, a stream that leaves its lip and a fill in the bar', () => {
+  assert.match(PAGE_HTML, /<div class="pour">\s*<div class="stream"><\/div>\s*<div class="pot">[\s\S]*mark-light[\s\S]*mark-dark[\s\S]*<\/div>\s*<div class="progress"><div class="fill"><\/div><\/div>/);
+  assert.match(PAGE_HTML, /<img class="mark mark-light" src="\/brand\/crucible-mark[.]svg"/, 'the pot is the brand mark file, not a redrawn copy');
+  assert.ok(!PAGE_HTML.includes('class="body"'), 'no copy of the mark artwork sits in the page');
+});
+
+test('the pour animates only transform and opacity, from keyframes and one transition', () => {
+  assert.ok(KEYFRAME_BLOCKS.length >= 5, 'tilt, right, stream in, stream out and flow keyframes exist');
+  for (const [, name, body] of KEYFRAME_BLOCKS) {
+    const properties = [...body.matchAll(/([\w-]+): [^;]+;/g)].map(match => match[1]);
+    assert.ok(properties.length > 0, name);
+    for (const property of properties) {
+      assert.ok(COMPOSITOR_PROPERTIES.has(property), `${name} animates ${property}`);
+    }
+  }
+  const transitions = [...LOADING_STYLE.matchAll(/(?<![-\w])transition: ([\w-]+)[^;]*;/g)].map(match => match[1]);
+  assert.deepEqual(transitions, ['transform'], 'the fill is the only transition and it moves by transform');
+  assert.match(LOADING_STYLE, /[.]fill [{][^}]*transform: scaleX[(]var[(]--progress/);
+  assert.ok(!/will-change|<animate/.test(PAGE_HTML), 'no will-change and no SMIL');
+});
+
+test('with reduced motion the pot stands upright and still, no stream moves and the bar still fills', () => {
+  const motionStart = LOADING_STYLE.indexOf('@media (prefers-reduced-motion: no-preference) {');
+  const motionBlock = LOADING_STYLE.slice(motionStart, LOADING_STYLE.indexOf('@keyframes', motionStart));
+  const outsideMotionBlock = LOADING_STYLE.replace(motionBlock, '');
+  const animationsOutside = [...outsideMotionBlock.matchAll(/(?<![-\w])animation: ([^;]+);/g)].map(match => match[1]);
+  assert.deepEqual(animationsOutside, ['none'], 'every animation except the error reset sits inside prefers-reduced-motion: no-preference');
+  assert.match(LOADING_STYLE, /[.]stream [{][^}]*opacity: 0;/, 'the stream is hidden until its animation shows it');
+  assert.match(LOADING_STYLE, /[.]fill [{][^}]*transition: transform/, 'the fill moves with progress whatever the motion setting');
+});
+
+test('the pour uses only the brand tokens, with no colour of its own', () => {
+  const pourRules = LOADING_STYLE.slice(LOADING_STYLE.indexOf('.stream {'), LOADING_STYLE.indexOf('@keyframes'));
+  assert.ok(!/#[0-9a-f]{3,8}\b|rgba?\(/i.test(pourRules));
+  assert.match(pourRules, /var[(]--site-focus[)]/);
+});
+
+test('progress moves forward through each milestone and never reaches full before Studio is ready', () => {
+  const page = createProgressPage();
+  const values = [];
+  for (const value of Object.values(STUDIO_LOADING_MILESTONES)) {
+    reportStudioLoadingProgress(page.documentReference, value);
+    values.push(page.progress());
+  }
+  assert.deepEqual(values, Object.values(STUDIO_LOADING_MILESTONES));
+  assert.deepEqual([...values].sort((first, second) => first - second), values, 'the milestones rise');
+  reportStudioLoadingProgress(page.documentReference, 0.2);
+  assert.equal(page.progress(), values.at(-1), 'a lower report never moves the fill back');
+  reportStudioLoadingProgress(page.documentReference, 1);
+  assert.ok(page.progress() < 1, 'the report call cannot fill the bar');
+});
+
+test('the bar is full only after Studio is ready, and the pour winds down with it', async () => {
+  const page = createProgressPage();
+  let finishReady;
+  const studio = { ready: new Promise(resolve => (finishReady = resolve)), setupDone: true, openSetup() {} };
+  const frames = [];
+  const revealed = revealStudio({ studio, setupParameter: null, documentReference: page.documentReference, requestFrame: callback => frames.push(callback) });
+  reportStudioLoadingProgress(page.documentReference, STUDIO_LOADING_MILESTONES.studioCreated);
+  await settle();
+  assert.ok(page.progress() < 1);
+  assert.equal(page.loadingElement.dataset.state, undefined);
+  finishReady();
+  await settle();
+  assert.equal(page.progress(), 1);
+  assert.equal(page.loadingElement.dataset.state, 'done', 'the stream and pot wind down as the bar fills');
+  while (frames.length > 0) {
+    frames.splice(0).forEach(callback => callback());
+    await settle();
+  }
+  await revealed;
+});
+
+test('the wind-down waits for animations that end and not for the looping stream flow', async () => {
+  const page = createProgressPage();
+  let finished = false;
+  const endingAnimation = {
+    effect: { getComputedTiming: () => ({ endTime: 400 }) },
+    finished: new Promise(resolve => {
+      setTimeout(() => {
+        finished = true;
+        resolve();
+      }, 20);
+    }),
+  };
+  const loopingAnimation = { effect: { getComputedTiming: () => ({ endTime: Infinity }) }, finished: new Promise(() => {}) };
+  page.loadingElement.getAnimations = () => [endingAnimation, loopingAnimation];
+  await windDownStudioLoading(page.documentReference);
+  assert.equal(finished, true);
+});
+
+test('the page script reports every milestone, in rising order, at the step it names', async () => {
+  const pageScript = await readFile(new URL('../bench/studio/main.js', import.meta.url), 'utf8');
+  const reported = [...pageScript.matchAll(/reportProgress\('(\w+)'\)/g)].map(match => match[1]);
+  assert.deepEqual(reported, Object.keys(STUDIO_LOADING_MILESTONES));
+  const position = name => pageScript.indexOf(`reportProgress('${name}')`);
+  assert.ok(position('modulesLoaded') < pageScript.indexOf('await loadAllAgentSceneModules()'));
+  assert.ok(position('sceneModulesLoaded') > pageScript.indexOf('await loadAllAgentSceneModules()'));
+  assert.ok(position('studioCreated') > pageScript.indexOf('createStudio(root'));
+  assert.ok(position('sceneFileLoaded') > pageScript.indexOf('await studio.loadExternalTextFile'));
 });
