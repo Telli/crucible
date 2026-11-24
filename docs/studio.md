@@ -96,6 +96,12 @@ Select a light in the Scene list and the Look tab lists what the agent can set o
 
 A field that a motion track or driver animates is locked, shown in the muted color and marked with a keyframe diamond named "Animated by a track": edit its keyframes instead. A keyed object's Position, Rotation and Scale are editable with Auto-key on, where an edit writes the key at the playhead, and locked with it off. When an agent changes the scene file, Studio reloads it and the controls show the new values. Not shown yet: a light's `ies` profile, `affects` links and `lines`. In code, `controller.updateSceneLight(key, patch, { recordUndo })`, `controller.updateSceneCamera(patch)` and `controller.describeSceneObject(key)` do the same, and the rows come from the table in `src/studio-properties.js`, so a later area adds rows and no panel code.
 
+## Selecting several objects
+
+Click an object to select it. Shift+click (or Ctrl or Command+click) adds an object to the selection, or takes it out if it is already in; the one you added last is the **active** object. A click on empty space clears the selection, and Shift+click on empty space leaves it alone. Select all (A) takes every visible object, Select none (Alt+A) clears the selection and Invert (Ctrl+I) swaps selected and not selected.
+
+Every selected object has an outline in the accent colour with a thin ring of the viewport's dark (`--studio-trace-edge`, the same in both themes, because the viewport is dark in both) on each side, so it reads on light and dark surfaces and leaves no pale glow on the floor in the light theme: the active object's outline is 4 px wide and the others' 2 px, twice as wide on screen (the filters draw a 1.5 px ring as 2 px, so a 3 and 1.5 pair only differed by half). In the Scene list every selected row is tinted, the active one more strongly (it also carries `aria-current`); a click on a row selects only that node, and Shift or Ctrl or Command+click on a row adds it or takes it out, as in the viewport. Where the shape outline cannot draw (no WebGL2, or part of the selection is behind the camera) Studio outlines the active node and at most 11 of the others by their convex hull, because each hull costs a pass over its vertices. A selection too dense for the shape outline (past 8,000 triangles) is drawn by the mask at the 2 px strength of the others, and the active object is drawn over it at 4 px: from its own shape when it alone fits the 8,000 triangles, else from a second mask of its own, so a dense imported model gets its true silhouette and not a hull across its holes. Only when that second mask cannot draw (no WebGL2) is the active object marked by its hull. One dense object selected alone is the mask at 4 px. The Properties card, the handles, the readout and every action (move, delete, duplicate, hide, keyframes) still work on the active object only, and the Properties head says how many are selected. Tab edits the mesh of the active object.
+
 ## Keys
 
 The keys follow Blender where Studio has the same action. **Help ▸ Keyboard shortcuts** (or **?**) lists them all.
@@ -111,6 +117,7 @@ The keys follow Blender where Studio has the same action. **Help ▸ Keyboard sh
 | Shift+D or Ctrl+D | Duplicate |
 | X, Delete or Backspace | Delete |
 | Esc | Deselect |
+| A, Alt+A, Ctrl+I | Select all, select none, invert the selection |
 | Tab | Edit the mesh of the selected object; Tab again leaves |
 | 1, 2, 3 | In edit mode: select vertices, edges or faces |
 | H, Alt+H | Hide the selection, show everything that is hidden |
@@ -155,6 +162,9 @@ A right click on an object, in the viewport or in the Scene list, selects it and
 | Hide the selection | H | Ctrl+H | H |
 | Show all | Alt+H | Ctrl+Shift+H | Alt+H |
 | Deselect | Esc | Esc | Ctrl+Shift+A, Esc |
+| Select all | A | A | A |
+| Select none | Alt+A | Alt+A | Alt+A |
+| Invert the selection | Ctrl+I | Ctrl+I | Ctrl+I |
 | Frame the selection | F, . | F | O, S |
 | Show or hide Properties | N | Ctrl+A | Shift+F5 |
 | Insert a keyframe | I, K | S | F9 |
@@ -406,9 +416,14 @@ const scene = createAgentScene(recipe);
 const controller = createStudioController({ scene, viewportWidth: 960, viewportHeight: 540 });
 
 controller.pickAt(480, 270);
+controller.pickAt(300, 200, { mode: 'toggle' }); // adds the object there, or takes it out
 controller.saveBookmark('Front');
 controller.setSunAngles({ azimuthDegrees: -40, elevationDegrees: 52 });
 ```
+
+The selection is an ordered set of node ids and one active id. `controller.selectedNodeId` is the active id (or `null`), `controller.selectedNodeIds` a copy of the set, and `controller.selectNode(id)` still replaces the selection with one node. `controller.selectNodes(ids, { mode, active })` changes the set: `mode` is `'replace'` (the default), `'add'`, `'toggle'` or `'remove'`, and `active` names the active node, which must be selected afterwards. Without `active`, the last node that joined becomes active; when none joined, the current active node stays active if it is still selected, and otherwise the last node left in the set is. The options argument may be left out or `null`; any other value that is not an object throws a `TypeError`. `controller.selectAll()` and `controller.invertSelection()` skip hidden nodes, and `controller.selectionRoots()` lists the selected nodes that have no selected ancestor, which is what a move or a delete has to act on so that a child is not handled twice. `controller.pickAt(x, y, { mode })` takes the same modes. A light or the camera is never selected together with nodes. A node that is deleted, or that an undo removes, leaves the set, and an undo step restores the set and the active node. `onChange` details carry `selectedNodeIds` beside `selectedNodeId`.
+
+The object `createStudio` returns has the same calls for a host page: `studio.selectNodes(ids, { mode, active })` and `studio.selectAll()` and `studio.invertSelection()` work as on the controller and return the selected ids, and `studio.selectedNodeIds` is a copy of the selected ids in the order they joined.
 
 `controller.gizmoHandles()` returns the pivot, the object's world axes (`basis`) and the screen points of each handle. `controller.selectionSilhouette()` returns the selected object's triangles on screen as a flat list of x, y pairs (six numbers a triangle), which the viewport fills and outlines, and `null` above 8,000 triangles; `controller.selectionMaskSource()` returns the parts of such a dense selection with the matrix that projects each one, for the mask canvas; `controller.selectionOutline()` returns the hull polygon around it. The silhouette and the hull return `null` when nothing is selected or part of the object is behind the camera. `controller.frameSelectionPose()` returns the camera that frames the selection without moving anything, and `controller.moveViewportCamera(patch)` moves the camera without an undo step.
 
@@ -420,4 +435,4 @@ controller.setSunAngles({ azimuthDegrees: -40, elevationDegrees: 52 });
 4. Saved camera bookmarks read and write named shots in `recipe.timeline.shots`.
 5. Every change exports cleanly with `exportRecipe()` so AI agents can continue from the same scene revision.
 
-A menu opens with a short fade and a small grow from the corner nearest its trigger, about a tenth of a second, and leaves with an 80 ms fade; sliding the pointer from one top bar menu to the next switches at once. The notice under the top bar drops in a few pixels and leaves a little faster than it came, and a second message while one shows only swaps the text. All of it uses opacity, scale and translate, so it stays on the compositor, and with reduced motion only the fade remains.
+A menu opens with a short fade and a small grow from the corner nearest its trigger, about a tenth of a second, and leaves with an 80 ms fade; sliding the pointer from one top bar menu to the next switches at once. Icons lead the places a person looks first and stay off everything else: each property section title (beside its chevron), the basic shapes and the lights of the Add menu (each shape drawn as its silhouette), the dialog titles, and the notice under the top bar, whose mark has its own shape per outcome (a tick for done, a triangle for a warning, a crossed circle for an error, an "i" for information) in the status colour. List rows, fields, sliders and buttons that already have an icon gain none. The icons are decorative: the visible text stays the name. The notice under the top bar drops in a few pixels and leaves a little faster than it came, and a second message while one shows only swaps the text. All of it uses opacity, scale and translate, so it stays on the compositor, and with reduced motion only the fade remains.

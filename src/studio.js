@@ -29,7 +29,7 @@ import {
 } from './studio-preferences.js';
 import { createOutlineMask } from './studio-outline-mask.js';
 import { createPanelGrips } from './studio-panel-grips.js';
-import { STUDIO_BRAND_ICON_NAMES, STUDIO_ICON_ACCENTS, studioIconPath } from './studio-icons.js';
+import { leadWithActionIcon, STUDIO_ACTION_ICONS, STUDIO_BRAND_ICON_NAMES, STUDIO_FILLED_ICON_NAMES, STUDIO_ICON_ACCENTS, STUDIO_LIGHT_ICONS, STUDIO_NOTICE_ICONS, STUDIO_PRIMITIVE_ICONS, studioIconPath } from './studio-icons.js';
 import { createPropertyLine, createPropertyPanel } from './studio-property-panel.js';
 import { createKeyMarkers } from './studio-timeline-keys.js';
 import { cameraFocalLengthMillimetres, choiceDisplayLabel } from './studio-properties.js';
@@ -177,6 +177,9 @@ function createIcon(documentReference, iconName) {
   const icon = createSvgElement(documentReference, 'svg', { viewBox: '0 0 24 24', class: 'crucible-studio-icon', 'aria-hidden': 'true' });
   if (STUDIO_BRAND_ICON_NAMES.includes(iconName)) {
     icon.dataset.brand = 'true';
+  }
+  if (STUDIO_FILLED_ICON_NAMES.includes(iconName)) {
+    icon.dataset.filled = 'true';
   }
   icon.append(createSvgElement(documentReference, 'path', { d: studioIconPath(iconName) }));
   for (const { kind, path } of STUDIO_ICON_ACCENTS[iconName] ?? []) {
@@ -598,12 +601,43 @@ function appendRotationSweep(documentReference, gizmoSvg, sweep) {
 // The flight to a framed object: long enough to follow, short enough never to wait for.
 const FLIGHT_MILLISECONDS = 320;
 const SILHOUETTE_FILTER_ID = 'crucible-studio-silhouette';
-const SILHOUETTE_EDGE_PIXELS = 1.5;
+// The active object is outlined thicker than the rest of the selection: the two read apart by width, and both keep the full accent.
+const SILHOUETTE_EDGE_PIXELS = { active: 4, others: 2 };
+// A ring of the viewport's dark on each side of the accent (the shape's own edge pixels inside, the ground outside), so the
+// outline holds on a surface as light as the accent, such as a cream model, and on a dark one.
+const SILHOUETTE_CASING_PIXELS = 1;
+
+// The steps that turn a filled shape into its outline: the accent ring just outside the shape, with the casing on both sides of it.
+function silhouetteFilterSteps(documentReference, layer) {
+  const edgePixels = SILHOUETTE_EDGE_PIXELS[layer];
+  const merge = createSvgElement(documentReference, 'feMerge');
+  merge.append(
+    createSvgElement(documentReference, 'feMergeNode', { in: 'casing' }),
+    createSvgElement(documentReference, 'feMergeNode', { in: 'innerCasing' }),
+    createSvgElement(documentReference, 'feMergeNode', { in: 'ring' }),
+  );
+  return [
+    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'dilate', radius: edgePixels, result: 'grown' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'grown', in2: 'SourceAlpha', operator: 'out', result: 'edge' }),
+    createSvgElement(documentReference, 'feFlood', { class: 'crucible-studio-silhouette-colour', 'data-layer': layer, result: 'colour' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'colour', in2: 'edge', operator: 'in', result: 'ring' }),
+    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'dilate', radius: edgePixels + SILHOUETTE_CASING_PIXELS, result: 'wide' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'wide', in2: 'grown', operator: 'out', result: 'casingEdge' }),
+    createSvgElement(documentReference, 'feFlood', { class: 'crucible-studio-silhouette-casing', result: 'casingColour' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'casingColour', in2: 'casingEdge', operator: 'in', result: 'casing' }),
+    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'erode', radius: SILHOUETTE_CASING_PIXELS, result: 'shrunk' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'SourceAlpha', in2: 'shrunk', operator: 'out', result: 'innerEdge' }),
+    createSvgElement(documentReference, 'feComposite', { in: 'casingColour', in2: 'innerEdge', operator: 'in', result: 'innerCasing' }),
+    merge,
+  ];
+}
 
 // Draws the edge of the selected object's shape on screen: the triangles are filled as one shape, and a filter keeps
 // only the ring just outside it, so no line crosses the inside of the object.
-function appendSelectionSilhouette(documentReference, gizmoSvg, triangles) {
-  const filterId = gizmoSvg.getAttribute('data-silhouette-filter') ?? SILHOUETTE_FILTER_ID;
+// `layer` is 'active' for the object the panels follow and 'others' for the rest of the selection, drawn at a lower strength.
+function appendSelectionSilhouette(documentReference, gizmoSvg, triangles, layer = 'active') {
+  const baseFilterId = gizmoSvg.getAttribute('data-silhouette-filter') ?? SILHOUETTE_FILTER_ID;
+  const filterId = layer === 'active' ? baseFilterId : `${baseFilterId}-${layer}`;
   let pathData = '';
   let left = Infinity;
   let top = Infinity;
@@ -618,7 +652,7 @@ function appendSelectionSilhouette(documentReference, gizmoSvg, triangles) {
       bottom = Math.max(bottom, triangles[offset + corner + 1]);
     }
   }
-  const margin = SILHOUETTE_EDGE_PIXELS + 2;
+  const margin = SILHOUETTE_EDGE_PIXELS[layer] + SILHOUETTE_CASING_PIXELS + 2;
   const filter = createSvgElement(documentReference, 'filter', {
     id: filterId,
     filterUnits: 'userSpaceOnUse',
@@ -627,32 +661,30 @@ function appendSelectionSilhouette(documentReference, gizmoSvg, triangles) {
     width: (right - left + margin * 2).toFixed(1),
     height: (bottom - top + margin * 2).toFixed(1),
   });
-  filter.append(
-    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'dilate', radius: SILHOUETTE_EDGE_PIXELS, result: 'grown' }),
-    createSvgElement(documentReference, 'feComposite', { in: 'grown', in2: 'SourceAlpha', operator: 'out', result: 'edge' }),
-    createSvgElement(documentReference, 'feFlood', { class: 'crucible-studio-silhouette-colour', result: 'colour' }),
-    createSvgElement(documentReference, 'feComposite', { in: 'colour', in2: 'edge', operator: 'in' }),
-  );
+  filter.append(...silhouetteFilterSteps(documentReference, layer));
   const definitions = createSvgElement(documentReference, 'defs');
   definitions.append(filter);
   gizmoSvg.append(definitions, createSvgElement(documentReference, 'path', {
     class: 'crucible-studio-selection-silhouette',
+    'data-layer': layer,
     d: pathData,
     filter: `url(#${filterId})`,
   }));
 }
 
+function maskFilterIdFor(filterId, layer) {
+  return layer === 'active' ? filterId : `${filterId}-${layer}`;
+}
+
 // The filter that turns the mask canvas into its edge: the same dilate-and-subtract as the path outline, over the whole canvas.
+// One filter for a mask that outlines a single object, and one at the lower strength for a mask under the active object's own outline.
 function createMaskFilterSvg(documentReference, filterId) {
-  const filter = createSvgElement(documentReference, 'filter', { id: filterId, x: '0', y: '0', width: '1', height: '1' });
-  filter.append(
-    createSvgElement(documentReference, 'feMorphology', { in: 'SourceAlpha', operator: 'dilate', radius: SILHOUETTE_EDGE_PIXELS, result: 'grown' }),
-    createSvgElement(documentReference, 'feComposite', { in: 'grown', in2: 'SourceAlpha', operator: 'out', result: 'edge' }),
-    createSvgElement(documentReference, 'feFlood', { class: 'crucible-studio-silhouette-colour', result: 'colour' }),
-    createSvgElement(documentReference, 'feComposite', { in: 'colour', in2: 'edge', operator: 'in' }),
-  );
   const definitions = createSvgElement(documentReference, 'defs');
-  definitions.append(filter);
+  for (const layer of ['active', 'others']) {
+    const filter = createSvgElement(documentReference, 'filter', { id: maskFilterIdFor(filterId, layer), x: '0', y: '0', width: '1', height: '1' });
+    filter.append(...silhouetteFilterSteps(documentReference, layer));
+    definitions.append(filter);
+  }
   const holder = createSvgElement(documentReference, 'svg', { class: 'crucible-studio-mask-filters', width: '0', height: '0', 'aria-hidden': 'true' });
   holder.append(definitions);
   return holder;
@@ -718,6 +750,36 @@ function appendGizmoHitAreas(documentReference, gizmoSvg, handles, tool, clearRa
   }
   if (!cleared) {
     gizmoSvg.append(hitDisc(origin, GIZMO_HIT_ORIGIN_RADIUS, centreAxis));
+  }
+}
+
+function appendHullOutline(documentReference, gizmoSvg, points, active) {
+  const attributes = {
+    'data-layer': active ? 'active' : 'others',
+    points: points.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
+  };
+  gizmoSvg.append(
+    createSvgElement(documentReference, 'polygon', { class: 'crucible-studio-selection-outline-casing', ...attributes }),
+    createSvgElement(documentReference, 'polygon', { class: 'crucible-studio-selection-outline', ...attributes }),
+  );
+}
+
+// Over a mask that outlines the whole selection: the active object at its own width, from its shape when it fits the
+// triangle budget alone, from a second mask of its own when it is over the budget, else (no second mask) from its hull.
+function appendActiveOverMask(documentReference, gizmoSvg, controller, activeOutlineMask, width, height) {
+  const activeMaskDrawn = activeOutlineMask.draw(controller.selectionActiveMaskSource(), width, height);
+  if (activeMaskDrawn) {
+    activeOutlineMask.element.style.filter = `url(#${maskFilterIdFor(`${gizmoSvg.getAttribute('data-silhouette-filter')}-mask`, 'active')})`;
+    return;
+  }
+  const { active } = controller.selectionSilhouetteLayers();
+  if (active) {
+    appendSelectionSilhouette(documentReference, gizmoSvg, active, 'active');
+    return;
+  }
+  const hull = controller.selectionOutline();
+  if (hull) {
+    appendHullOutline(documentReference, gizmoSvg, hull, true);
   }
 }
 
@@ -812,22 +874,37 @@ export function clearedPlaneCorners(corners, origin, axisTips, clearRadius) {
   return moved;
 }
 
-function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, { hideSelectionOutline = false, clearRadius = null } = {}) {
+function renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, activeOutlineMask, { hideSelectionOutline = false, clearRadius = null } = {}) {
   gizmoSvg.replaceChildren();
   const width = controller.viewportWidth;
   const height = controller.viewportHeight;
   gizmoSvg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   const silhouette = hideSelectionOutline ? null : controller.selectionSilhouette();
   // A dense selection is drawn by the mask; the hull below is only for when the mask cannot draw (no WebGL2).
-  const maskDrawn = outlineMask.draw(silhouette || hideSelectionOutline ? null : controller.selectionMaskSource(), width, height);
-  const outline = silhouette || maskDrawn || hideSelectionOutline ? null : controller.selectionOutline();
+  const maskSource = silhouette || hideSelectionOutline ? null : controller.selectionMaskSource();
+  const maskDrawn = outlineMask.draw(maskSource, width, height);
+  if (maskDrawn) {
+    // With others selected the mask is their strength and the active object is drawn over it at its own.
+    outlineMask.element.style.filter = `url(#${maskFilterIdFor(`${gizmoSvg.getAttribute('data-silhouette-filter')}-mask`, maskSource.othersExist ? 'others' : 'active')})`;
+    if (maskSource.othersExist) {
+      appendActiveOverMask(documentReference, gizmoSvg, controller, activeOutlineMask, width, height);
+    }
+  }
+  if (!maskDrawn || !maskSource.othersExist) {
+    activeOutlineMask.draw(null, width, height);
+  }
+  const outlines = silhouette || maskDrawn || hideSelectionOutline ? [] : controller.selectionOutlineLayers();
   if (silhouette) {
-    appendSelectionSilhouette(documentReference, gizmoSvg, silhouette);
-  } else if (outline) {
-    gizmoSvg.append(createSvgElement(documentReference, 'polygon', {
-      class: 'crucible-studio-selection-outline',
-      points: outline.map(point => `${point[0].toFixed(1)},${point[1].toFixed(1)}`).join(' '),
-    }));
+    const layers = controller.selectionSilhouetteLayers();
+    if (layers.othersExist) {
+      appendSelectionSilhouette(documentReference, gizmoSvg, layers.others, 'others');
+    }
+    if (layers.activeExists) {
+      appendSelectionSilhouette(documentReference, gizmoSvg, layers.active, 'active');
+    }
+  }
+  for (const outline of outlines.sort((first, second) => Number(first.active) - Number(second.active))) {
+    appendHullOutline(documentReference, gizmoSvg, outline.points, outline.active);
   }
   appendDragTrace(documentReference, gizmoSvg, controller.dragTrace());
   const handles = controller.gizmoHandles();
@@ -1464,16 +1541,23 @@ export function createStudio(container, {
     className: 'crucible-studio-popover',
     attributes: { popover: 'auto' },
   });
+  // A shape or light of the add menu leads with its picture; a shape without one keeps its label alone.
+  const giveEntryIcon = (button, iconName) => {
+    if (iconName) {
+      button.prepend(createIcon(documentReference, iconName));
+    }
+  };
   const addPrimitiveButtonFor = primitiveType => {
     const addPrimitiveButton = createElement(documentReference, 'button', { type: 'button', textContent: primitiveLabel(primitiveType) });
+    giveEntryIcon(addPrimitiveButton, STUDIO_PRIMITIVE_ICONS[primitiveType]);
     addPrimitiveButton.addEventListener('click', async () => {
       addPopover.hidePopover?.();
       try {
         await loadAgentSceneModules({ geometries: [primitiveGeometrySpec(primitiveType).geometry] });
         const created = controller.addPrimitive(primitiveType);
-        announce(`Added ${created.label}`);
+        announceSuccess(`Added ${created.label}`);
       } catch (error) {
-        announce(error.message);
+        announceError(error.message);
       }
     });
     return addPrimitiveButton;
@@ -1496,9 +1580,12 @@ export function createStudio(container, {
       selectInspectorTab('look');
       announce(`${countLabel}: ${count}`);
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   };
+  giveEntryIcon(addPointLightButton, STUDIO_LIGHT_ICONS.point);
+  giveEntryIcon(addSpotLightButton, STUDIO_LIGHT_ICONS.spot);
+  giveEntryIcon(addAreaLightButton, STUDIO_LIGHT_ICONS.area);
   addPointLightButton.addEventListener('click', () => addLightFromMenu('point', 'Point lights'));
   addSpotLightButton.addEventListener('click', () => addLightFromMenu('spot', 'Spot lights'));
   addAreaLightButton.addEventListener('click', () => addLightFromMenu('area', 'Area lights'));
@@ -1537,7 +1624,7 @@ export function createStudio(container, {
     const promptText = agentPromptText();
     try {
       await navigator.clipboard.writeText(promptText);
-      announce('Copied AI prompt to clipboard');
+      announceSuccess('Copied AI prompt to clipboard');
       return true;
     } catch {
       openImportDialog(promptText);
@@ -1743,12 +1830,15 @@ export function createStudio(container, {
   newMaterialQuickButton.addEventListener('click', () => {
     const created = controller.createMaterial({ assignToNodeId: controller.selectedNodeId });
     selectInspectorTab('material');
-    announce(`Created ${created.id}`);
+    announceSuccess(`Created ${created.id}`);
   });
 
   const sceneMinimizeButton = createIconButton(documentReference, 'minimize', 'Minimize Scene', { attributes: { 'aria-expanded': 'true' } });
   sceneMinimizeButton.addEventListener('click', () => setPreference('sceneMinimized', !preferences.sceneMinimized));
   const propertiesMinimizeButton = createIconButton(documentReference, 'minimize', 'Minimize Properties', { attributes: { 'aria-expanded': 'true' } });
+  // With several objects selected the panels follow the active one; the head says how many there are.
+  const selectionCountLabel = createElement(documentReference, 'span');
+  const selectionCountElement = createElement(documentReference, 'span', { className: 'crucible-studio-selection-count', attributes: { hidden: '' } }, createIcon(documentReference, 'select'), selectionCountLabel);
   propertiesMinimizeButton.addEventListener('click', () => setPreference('propertiesMinimized', !preferences.propertiesMinimized));
 
   const outlinerDock = createElement(
@@ -1807,7 +1897,7 @@ export function createStudio(container, {
   const gizmoSvg = createSvgElement(documentReference, 'svg', { class: 'crucible-studio-gizmo', 'aria-hidden': 'true', 'data-silhouette-filter': `${SILHOUETTE_FILTER_ID}-${canvas.id.split('-').pop()}` });
   const maskFilterId = `${gizmoSvg.getAttribute('data-silhouette-filter')}-mask`;
   const maskFilterSvg = createMaskFilterSvg(documentReference, maskFilterId);
-  const outlineMask = createOutlineMask({
+  const createSelectionMask = () => createOutlineMask({
     documentReference,
     className: 'crucible-studio-selection-mask',
     mount: maskCanvas => {
@@ -1816,6 +1906,9 @@ export function createStudio(container, {
     },
     onRestored: () => requestFrame(),
   });
+  const outlineMask = createSelectionMask();
+  // Over the first mask: the active object alone, when it is dense and others are selected, so its true shape gets its own width.
+  const activeOutlineMask = createSelectionMask();
   const statusRegion = createElement(documentReference, 'p', { className: 'crucible-studio-status', attributes: { role: 'status' } });
   const hintBar = createElement(documentReference, 'div', { className: 'crucible-studio-hintbar' });
   const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: canImport ? 'Drop a scene.json, GLB, HDR or image' : 'Drop a scene.json to open it' });
@@ -1825,6 +1918,7 @@ export function createStudio(container, {
     clearTimeout(statusExitTimer);
     statusRegion.textContent = '';
     delete statusRegion.dataset.state;
+    statusRegion.removeAttribute('data-outcome');
   }
 
   function hideStatus() {
@@ -1844,17 +1938,24 @@ export function createStudio(container, {
     }
   });
 
-  function announce(message, durationMilliseconds = STATUS_DEFAULT_MILLISECONDS) {
+  // The outcome picks the mark the notice leads with: success, warning, error or the plain info.
+  function announce(message, durationMilliseconds = STATUS_DEFAULT_MILLISECONDS, outcome = 'info') {
     clearTimeout(statusTimer);
     clearTimeout(statusExitTimer);
     if (!message) {
       clearStatus();
       return;
     }
-    statusRegion.textContent = message;
+    const noticeIcon = createIcon(documentReference, STUDIO_NOTICE_ICONS[outcome]);
+    statusRegion.replaceChildren(noticeIcon, createElement(documentReference, 'span', { textContent: message }));
+    statusRegion.setAttribute('data-outcome', outcome);
     statusRegion.dataset.state = 'in';
     statusTimer = setTimeout(hideStatus, durationMilliseconds);
   }
+
+  const announceError = (message, durationMilliseconds = STATUS_DEFAULT_MILLISECONDS) => announce(message, durationMilliseconds, 'error');
+  const announceSuccess = message => announce(message, STATUS_DEFAULT_MILLISECONDS, 'success');
+  const announceWarning = message => announce(message, STATUS_DEFAULT_MILLISECONDS, 'warning');
 
   // Viewport Top-Left Toolbar (Modern Web Guidance: toolbar pattern)
   const toolLabels = { select: 'Select', translate: 'Move', rotate: 'Rotate', scale: 'Scale', snap: 'Snap' };
@@ -1918,7 +2019,7 @@ export function createStudio(container, {
       const cloned = controller.duplicateSelected();
       announce(`Duplicated to ${cloned.label}`);
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   });
   deleteButton.addEventListener('click', () => {
@@ -1926,7 +2027,7 @@ export function createStudio(container, {
     try {
       deleteSelection();
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   });
   frameButton.addEventListener('click', () => {
@@ -2048,7 +2149,7 @@ export function createStudio(container, {
     try {
       controller.updateNodeTransform(controller.selectedNodeId, { parent: nodeParentSelect.value || null });
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
       syncUi();
     }
   });
@@ -2095,7 +2196,7 @@ export function createStudio(container, {
       treeInspector = treeTools.createTreeInspector({ documentReference, createElement, createSliderField, controller, announce });
       treeSection.append(treeInspector.element);
       treeInspector.sync(controller.exportRecipe().nodes.find(node => node.id === controller.selectedNodeId));
-    }).catch(error => announce(error.message)).finally(() => {
+    }).catch(error => announceError(error.message)).finally(() => {
       treeInspectorLoading = false;
     });
   }
@@ -2120,7 +2221,7 @@ export function createStudio(container, {
       try {
         controller.assignNodeMaterial(controller.selectedNodeId, materialSelect.value);
       } catch (error) {
-        announce(error.message);
+        announceError(error.message);
       }
     }
   });
@@ -2267,9 +2368,9 @@ export function createStudio(container, {
       await loadAgentSceneModules({ timeline: { shots: [] } });
       controller.saveBookmark(name);
       bookmarkNameInput.value = '';
-      announce(`Saved view ${name}`);
+      announceSuccess(`Saved view ${name}`);
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   });
   const cameraPanelBody = createElement(
@@ -2360,6 +2461,7 @@ export function createStudio(container, {
       'div',
       { className: 'crucible-studio-dock-head' },
       createElement(documentReference, 'span', { className: 'crucible-studio-dock-title' }, createIcon(documentReference, 'settings'), createElement(documentReference, 'span', { textContent: 'Properties' })),
+      selectionCountElement,
       createElement(documentReference, 'span', { className: 'crucible-studio-spacer' }),
       propertiesMinimizeButton,
     ),
@@ -2382,7 +2484,7 @@ export function createStudio(container, {
 
   playButton.addEventListener('click', () => {
     if (!hasAnimatedData(controller.exportRecipe())) {
-      announce(`Add a keyframe first (${lastKeyLabel(keymap, 'animate.keyframe')})`);
+      announceWarning(`Add a keyframe first (${lastKeyLabel(keymap, 'animate.keyframe')})`);
       return;
     }
     selectWorkspace('animate');
@@ -2399,7 +2501,7 @@ export function createStudio(container, {
       controller.insertNodeKeyframe();
       announce(`Keyframed at ${controller.motionTime.toFixed(2)} s`);
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   });
   autoKeyButton.addEventListener('click', () => controller.setAutoKey(!controller.autoKey));
@@ -2429,10 +2531,13 @@ export function createStudio(container, {
 
   // Native Dialogs (Modern Web Guidance: native <dialog>, aria-labelledby, form method="dialog", returnValue reset)
   const dialogHeading = createElement(documentReference, 'h2', { id: 'crucible-studio-json-title', textContent: 'Recipe JSON' });
+  dialogHeading.prepend(createIcon(documentReference, 'code'));
   const dialogTextarea = createElement(documentReference, 'textarea', { rows: 14, autofocus: true, attributes: { 'aria-label': 'Scene recipe JSON' } });
   const dialogFileButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Load file…' });
   const dialogCloseButton = createElement(documentReference, 'button', { type: 'submit', value: 'close', textContent: 'Close' });
   const dialogApplyButton = createElement(documentReference, 'button', { type: 'button', className: 'crucible-studio-primary-btn', textContent: 'Apply JSON' });
+  leadWithActionIcon(dialogFileButton, createIcon(documentReference, STUDIO_ACTION_ICONS.loadFile), STUDIO_ACTION_ICONS.loadFile);
+  leadWithActionIcon(dialogApplyButton, createIcon(documentReference, STUDIO_ACTION_ICONS.applyJson), STUDIO_ACTION_ICONS.applyJson);
   const recipeDialog = createElement(
     documentReference,
     'dialog',
@@ -2463,13 +2568,14 @@ export function createStudio(container, {
       isDirty = true;
       syncFileBanner();
       recipeDialog.close('apply');
-      announce('Recipe applied');
+      announceSuccess('Recipe applied');
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   });
 
   const shortcutsHeading = createElement(documentReference, 'h2', { id: 'crucible-studio-shortcuts-title', textContent: 'Studio keyboard shortcuts' });
+  shortcutsHeading.prepend(createIcon(documentReference, 'keyboard'));
   const shortcutsGrid = createElement(documentReference, 'div', { className: 'crucible-studio-shortcuts' });
   function fillShortcutsGrid() {
     shortcutsGrid.replaceChildren(...shortcutRowsFor(keymap).map(({ keys, label }) => createElement(
@@ -2508,17 +2614,20 @@ export function createStudio(container, {
     return createElement(documentReference, 'label', { className: 'crucible-studio-setting' }, createElement(documentReference, 'span', { textContent: label }), control);
   });
   const settingsResetButton = createElement(documentReference, 'button', { type: 'button', textContent: 'Reset' });
+  leadWithActionIcon(settingsResetButton, createIcon(documentReference, STUDIO_ACTION_ICONS.resetSettings), STUDIO_ACTION_ICONS.resetSettings);
   settingsResetButton.addEventListener('click', () => {
     preferences = normalizeStudioPreferences({ setupDone: preferences.setupDone });
     storePreferences();
     applyPreferences();
     announce('Settings reset');
   });
+  const settingsHeading = createElement(documentReference, 'h2', { id: 'crucible-studio-settings-title', textContent: 'Settings' });
+  settingsHeading.prepend(createIcon(documentReference, 'settings'));
   const settingsDialog = createElement(
     documentReference,
     'dialog',
     { className: 'crucible-studio-settings-dialog', attributes: { 'aria-labelledby': 'crucible-studio-settings-title', closedby: 'any' } },
-    createElement(documentReference, 'h2', { id: 'crucible-studio-settings-title', textContent: 'Settings' }),
+    settingsHeading,
     createElement(documentReference, 'div', { className: 'crucible-studio-settings' }, ...settingRows),
     createElement(
       documentReference,
@@ -2746,7 +2855,7 @@ export function createStudio(container, {
     const reportText = `${JSON.stringify(studioDiagnostics.report(), null, 2)}
 `;
     triggerBlobDownload(reportText, 'crucible-studio-diagnostics.json', 'application/json');
-    announce('Saved the diagnostics report');
+    announceSuccess('Saved the diagnostics report');
   }
 
   function capturePngDataUrl() {
@@ -2931,7 +3040,7 @@ export function createStudio(container, {
       syncFileBanner();
       announce(`New ${STUDIO_TEMPLATES[templateKey].label}`);
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   }
 
@@ -2964,7 +3073,7 @@ export function createStudio(container, {
         await (await loadRecentScenes()).clear();
         announce('Cleared the recent list');
       } catch (error) {
-        announce(error.message);
+        announceError(error.message);
       }
       refreshRecentList();
     });
@@ -2983,10 +3092,10 @@ export function createStudio(container, {
       const opened = await recentScenes.open(id);
       await loadExternalTextFile(opened.text, { filePath: opened.filePath ?? null, fileName: opened.fileName });
       discardDraft();
-      announce(`Opened ${opened.fileName}`);
+      announceSuccess(`Opened ${opened.fileName}`);
       rememberFile({ name: opened.fileName, text: opened.text, handle: opened.handle, filePath: opened.filePath });
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
       refreshRecentList();
     }
   }
@@ -2996,10 +3105,10 @@ export function createStudio(container, {
     try {
       await loadExternalTextFile(text, { filePath, fileName });
       discardDraft();
-      announce(`${verb} ${fileName}`);
+      announceSuccess(`${verb} ${fileName}`);
       rememberFile({ name: fileName, text, handle, filePath });
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   }
 
@@ -3037,7 +3146,7 @@ export function createStudio(container, {
       discardDraft();
       syncFileBanner();
       rememberFile({ name: activeFileName, text: recipeText, filePath: activeFilePath });
-      announce(`Saved ${activeFileName}`);
+      announceSuccess(`Saved ${activeFileName}`);
       return;
     }
     triggerBlobDownload(recipeText, activeFileName, 'application/json');
@@ -3045,7 +3154,7 @@ export function createStudio(container, {
     discardDraft();
     syncFileBanner();
     rememberFile({ name: activeFileName, text: recipeText });
-    announce(`Downloaded ${activeFileName}`);
+    announceSuccess(`Downloaded ${activeFileName}`);
   }
 
   openButton.addEventListener('click', () => performOpenFile());
@@ -3062,7 +3171,7 @@ export function createStudio(container, {
   // The import code loads on the first import; an import is one undo step, and a refusal says what to do and changes nothing.
   async function importFileIntoScene(file) {
     if (!canImport) {
-      announce(NO_STORE_MESSAGE);
+      announceWarning(NO_STORE_MESSAGE);
       return;
     }
     try {
@@ -3071,7 +3180,7 @@ export function createStudio(container, {
       announce(message, importMessageDuration(message, STATUS_DEFAULT_MILLISECONDS));
     } catch (error) {
       const { importMessageDuration } = await import('./studio-import.js');
-      announce(error.message, importMessageDuration(error.message, STATUS_DEFAULT_MILLISECONDS));
+      announceError(error.message, importMessageDuration(error.message, STATUS_DEFAULT_MILLISECONDS));
     }
   }
 
@@ -3088,12 +3197,12 @@ export function createStudio(container, {
     const baseName = activeFileName.replace(/\.(scene\.)?json$/i, '') || 'crucible-render';
     if (desktop?.savePng) {
       const response = await desktop.savePng({ dataUrl, suggestedName: `${baseName}.png` });
-      if (!response?.canceled) announce(`Saved ${response.fileName}`);
+      if (!response?.canceled) announceSuccess(`Saved ${response.fileName}`);
       return;
     }
     const bytes = Uint8Array.from(atob(dataUrl.split(',')[1]), character => character.charCodeAt(0));
     triggerBlobDownload(bytes, `${baseName}.png`, 'image/png');
-    announce('Saved PNG still');
+    announceSuccess('Saved PNG still');
   });
 
   exportGlbButton.addEventListener('click', async () => {
@@ -3103,13 +3212,13 @@ export function createStudio(container, {
       const baseName = activeFileName.replace(/\.(scene\.)?json$/i, '') || 'crucible-scene';
       if (desktop?.saveGlb) {
         const response = await desktop.saveGlb({ bytes: glbBytes, suggestedName: `${baseName}.glb` });
-        if (!response?.canceled) announce(`Exported ${response.fileName}`);
+        if (!response?.canceled) announceSuccess(`Exported ${response.fileName}`);
         return;
       }
       triggerBlobDownload(glbBytes, `${baseName}.glb`, 'model/gltf-binary');
-      announce('Exported GLB mesh');
+      announceSuccess('Exported GLB mesh');
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   });
 
@@ -3126,9 +3235,9 @@ export function createStudio(container, {
         return;
       }
       triggerBlobDownload(payload.packBytes, `${payload.title}.pack`, 'application/octet-stream');
-      announce('Downloaded scene.pack');
+      announceSuccess('Downloaded scene.pack');
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   });
 
@@ -3410,7 +3519,7 @@ export function createStudio(container, {
     try {
       syncViewportDimensions();
       drawSceneFrame();
-      renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, { hideSelectionOutline: Boolean(meshEditor?.active), clearRadius: meshEditor?.active ? meshEditor.selectionScreenRadius() : null });
+      renderGizmoMarkup(documentReference, gizmoSvg, controller, outlineMask, activeOutlineMask, { hideSelectionOutline: Boolean(meshEditor?.active), clearRadius: meshEditor?.active ? meshEditor.selectionScreenRadius() : null });
       if (!capturingStill) {
         renderSceneObjectMarks(documentReference, gizmoSvg, controller);
       }
@@ -3554,6 +3663,14 @@ export function createStudio(container, {
     else if (leftSceneObject && tabBefore === 'look') selectInspectorTab('material');
   }
 
+  function selectAllNodes() {
+    selectNodeAndShowItsPanel(() => controller.selectAll());
+  }
+
+  function invertNodeSelection() {
+    selectNodeAndShowItsPanel(() => controller.invertSelection());
+  }
+
   function selectSceneObjectAndShowItsPanel(key) {
     controller.selectSceneObject(key);
     selectInspectorTab(key === 'camera' ? 'camera' : 'look');
@@ -3575,7 +3692,11 @@ export function createStudio(container, {
       createElement(documentReference, 'span', { className: 'crucible-studio-tree-label', textContent: node.label ?? node.id }),
     );
     selectButton.style.paddingLeft = `${4 + depth * 12}px`;
-    selectButton.addEventListener('click', () => selectNodeAndShowItsPanel(() => controller.selectNode(node.id)));
+    selectButton.addEventListener('click', event => {
+      // Shift or Ctrl (Command) adds the row to the selection or takes it out, as in the viewport; a plain click replaces.
+      const toggles = event.shiftKey || event.ctrlKey || event.metaKey;
+      selectNodeAndShowItsPanel(() => (toggles ? controller.selectNodes([node.id], { mode: 'toggle' }) : controller.selectNode(node.id)));
+    });
     selectButton.addEventListener('contextmenu', event => {
       event.preventDefault();
       selectNodeAndShowItsPanel(() => controller.selectNode(node.id));
@@ -3603,11 +3724,21 @@ export function createStudio(container, {
     return { element, badge, appliedFill: '' };
   }
 
-  function setOutlinerRowSelected(row, selected) {
+  // Every selected row is marked selected; the active one, the node the panels follow, also carries aria-current and a stronger tint.
+  function setOutlinerRowSelected(row, selected, active = selected) {
     const selectedText = selected ? 'true' : 'false';
     if (row.element.dataset.selected !== selectedText) {
       row.element.dataset.selected = selectedText;
       row.element.setAttribute('aria-selected', selectedText);
+    }
+    const activeText = selected && active ? 'true' : 'false';
+    if (row.element.dataset.active !== activeText) {
+      row.element.dataset.active = activeText;
+      if (activeText === 'true') {
+        row.element.setAttribute('aria-current', 'true');
+      } else {
+        row.element.removeAttribute('aria-current');
+      }
     }
   }
 
@@ -3697,6 +3828,7 @@ export function createStudio(container, {
       return (node.label ?? node.id).toLowerCase().includes(queryText) || node.id.toLowerCase().includes(queryText);
     });
     const sceneObjects = controller.listSceneObjects().filter(object => !queryText || object.label.toLowerCase().includes(queryText) || object.key.includes(queryText));
+    const selectedNodeIdSet = new Set(controller.selectedNodeIds);
     const wantedRows = [
       ...sceneObjects.map(object => ({
         rowKey: `object:${object.key}`,
@@ -3710,13 +3842,14 @@ export function createStudio(container, {
         return {
           rowKey: `node:${node.id}`,
           contentKey: `${depth}:${node.label ?? ''}:${node.visible ?? true}:${iconName}`,
-          selected: node.id === controller.selectedNodeId,
+          selected: selectedNodeIdSet.has(node.id),
+          active: node.id === controller.selectedNodeId,
           fill: node.material && materialColors.has(node.material) ? materialColors.get(node.material) : '',
           build: () => createNodeRow(node, depth, iconName),
         };
       }),
     ];
-    const treeKey = `${queryText}|${wantedRows.map(wanted => `${wanted.rowKey}:${wanted.contentKey}:${wanted.selected}:${wanted.fill}`).join('|')}`;
+    const treeKey = `${queryText}|${wantedRows.map(wanted => `${wanted.rowKey}:${wanted.contentKey}:${wanted.selected}:${wanted.active ?? wanted.selected}:${wanted.fill}`).join('|')}`;
     if (treeKey === lastTreeKey) {
       return;
     }
@@ -3728,7 +3861,7 @@ export function createStudio(container, {
     for (const wanted of wantedRows) {
       const previous = previousRows.get(wanted.rowKey);
       const row = previous?.contentKey === wanted.contentKey ? previous : { ...wanted.build(), contentKey: wanted.contentKey };
-      setOutlinerRowSelected(row, wanted.selected);
+      setOutlinerRowSelected(row, wanted.selected, wanted.active);
       if (row.badge) setOutlinerRowFill(row, wanted.fill);
       outlinerRows.set(wanted.rowKey, row);
     }
@@ -3938,6 +4071,9 @@ export function createStudio(container, {
     redoButton.setAttribute('aria-disabled', controller.canRedo ? 'false' : 'true');
     const selectedNode = recipe.nodes.find(node => node.id === controller.selectedNodeId) ?? null;
     const hasNode = Boolean(selectedNode);
+    const selectedCount = controller.selectedNodeIds.length;
+    selectionCountElement.hidden = selectedCount < 2;
+    selectionCountLabel.textContent = `${selectedCount} selected`;
     duplicateButton.setAttribute('aria-disabled', hasNode ? 'false' : 'true');
     frameButton.setAttribute('aria-disabled', hasNode ? 'false' : 'true');
     deleteButton.setAttribute('aria-disabled', hasNode || selectedObjectIsDeletable() ? 'false' : 'true');
@@ -4292,7 +4428,7 @@ export function createStudio(container, {
     } catch (error) {
       // Edit mode refuses a move it could not write down before the pointer moves, and says why.
       if (!meshEditor?.active) throw error;
-      announce(error.message);
+      announceError(error.message);
       return;
     }
     pointerState = { mode: 'gizmo', pointerId: event.pointerId };
@@ -4397,7 +4533,7 @@ export function createStudio(container, {
       controller.moveSceneObject(key, hit.map((component, axis) => component + grabOffset[axis]));
     } catch (error) {
       pointerState.planeNormal = null;
-      announce(error.message);
+      announceError(error.message);
     }
   }
 
@@ -4425,7 +4561,9 @@ export function createStudio(container, {
       } else if (controller.tool === 'snap' && controller.selectedNodeId && event.altKey) {
         controller.snapSelectedToAt(coordinates.x, coordinates.y);
       } else {
-        selectNodeAndShowItsPanel(() => controller.pickAt(coordinates.x, coordinates.y));
+        // Shift or Ctrl (Command) with a left click adds the object under the pointer to the selection, or takes it out.
+        const mode = (event.button ?? 0) === 0 && (event.shiftKey || event.ctrlKey || event.metaKey) ? 'toggle' : 'replace';
+        selectNodeAndShowItsPanel(() => controller.pickAt(coordinates.x, coordinates.y, { mode }));
         // A right press that did not drag picked what is under it: an object there gets its menu. It opens after
         // this release has been handled, because the release itself closes any open menu.
         if (event.button === 2 && controller.selectedNodeId) {
@@ -4513,16 +4651,16 @@ export function createStudio(container, {
   function copySelection() {
     if (!controller.selectedNodeId) return;
     controller.copySelected();
-    announce('Copied');
+    announceSuccess('Copied');
   }
 
   function pasteCopy() {
     if (!controller.canPaste) return;
     try {
       const pasted = controller.pasteCopy();
-      announce(`Pasted ${pasted.label}`);
+      announceSuccess(`Pasted ${pasted.label}`);
     } catch (error) {
-      announce(error.message);
+      announceError(error.message);
     }
   }
 
@@ -4552,7 +4690,7 @@ export function createStudio(container, {
     const pressedOnNodeId = controller.selectedNodeId;
     const editor = await loadMeshEditor();
     const converted = editor.conversionOf(pressedOnNodeId);
-    if (converted) await loadAgentSceneModules({ geometries: [converted] }).catch(error => announce(error.message));
+    if (converted) await loadAgentSceneModules({ geometries: [converted] }).catch(error => announceError(error.message));
     if (!meshEnterPending) return;
     meshEnterPending = false;
     // The generator code that was loaded belongs to the object Tab was pressed on: another selection by now gets nothing.
@@ -4636,6 +4774,16 @@ export function createStudio(container, {
     },
     'edit.deselect': () => {
       if (controller.selectedNodeId || controller.selectedObjectKey) controller.selectNode(null);
+    },
+    // A plain letter has no browser action to stop; Ctrl+I and Alt+A do (page info, the menu bar).
+    'select.all': () => selectAllNodes(),
+    'select.none': event => {
+      event.preventDefault();
+      controller.selectNode(null);
+    },
+    'select.invert': event => {
+      event.preventDefault();
+      invertNodeSelection();
     },
     'edit.hide': (event, binding) => {
       if (binding.ctrl) event.preventDefault();
@@ -4812,10 +4960,10 @@ export function createStudio(container, {
       controller.loadRecipe(draft.recipe);
       isDirty = true;
       syncFileBanner();
-      announce('Restored the unsaved changes');
+      announceSuccess('Restored the unsaved changes');
     } catch (error) {
       clearStudioDraft(preferenceStorage);
-      announce(`The saved draft could not be restored: ${error.message}`);
+      announceError(`The saved draft could not be restored: ${error.message}`);
     }
   }
 
@@ -4900,7 +5048,7 @@ export function createStudio(container, {
       isDirty = false;
       syncFileBanner();
     }).catch(error => {
-      announce(error.message);
+      announceError(error.message);
       throw error;
     })
     : Promise.resolve();
@@ -4941,7 +5089,11 @@ export function createStudio(container, {
     selectNode: nodeId => controller.selectNode(nodeId),
     setTool: tool => controller.setTool(tool),
     setActiveTab: tab => selectInspectorTab(tab),
-    pickAt: (pixelX, pixelY) => controller.pickAt(pixelX, pixelY),
+    pickAt: (pixelX, pixelY, options) => controller.pickAt(pixelX, pixelY, options),
+    selectNodes: (nodeIds, options) => controller.selectNodes(nodeIds, options),
+    selectAll: () => controller.selectAll(),
+    invertSelection: () => controller.invertSelection(),
+    get selectedNodeIds() { return controller.selectedNodeIds; },
     setOutlinerCollapsed,
     setInspectorCollapsed,
     capturePngDataUrl,
@@ -4986,6 +5138,7 @@ export function createStudio(container, {
       intersectionObserver?.disconnect();
       controller.dispose();
       outlineMask.dispose();
+      activeOutlineMask.dispose();
       renderer?.dispose();
       catalog.dispose();
       root.remove();
