@@ -320,30 +320,46 @@ test('counts and sizes are bounded', () => {
   assert.match(result.warnings[0], /20 point lights.*at most 16/);
 });
 
-test('hostile text is read in linear time: repeated markers, many bangs, ampersands and dashes parse in under 50 ms', () => {
-  const megabyte = 1024 * 1024;
-  const hostile = {
-    bangs: '!'.repeat(megabyte),
-    bangsInsideTag: `<roblox ${'!'.repeat(megabyte)}`,
-    bangsInsideAttributes: `<roblox ${'! '.repeat(megabyte / 2)}>`,
-    comments: '<!--'.repeat(100000),
-    cdata: '<![CDATA[a'.repeat(100000),
-    instructions: '<?'.repeat(100000),
-    doctypes: '<!DOCTYPE'.repeat(100000),
-    ampersands: `<roblox>${'&a'.repeat(megabyte / 2)}</roblox>`,
-    longEntity: `<roblox>${'&'.repeat(megabyte / 2)}${'a'.repeat(megabyte / 2)}</roblox>`,
-    quotes: `<roblox a="${'"'.repeat(1000)}${"'".repeat(megabyte)}`,
-    dashedName: `<roblox><Item class="Part"><Properties><string name="Name">${'-'.repeat(megabyte)}x</string></Properties></Item></roblox>`,
-  };
-  for (const [label, text] of Object.entries(hostile)) {
+// Hostile inputs, each built from a size `count`. A reader with a backtracking pattern takes time in proportion to count squared, so
+// four times the input would take about 16 times as long; a linear reader takes about 4 times as long. The test compares the two
+// timings, which a slow or loaded machine scales equally, instead of a fixed number of milliseconds.
+const HOSTILE_INPUTS = {
+  bangs: count => '!'.repeat(count * 8),
+  bangsInsideTag: count => `<roblox ${'!'.repeat(count * 8)}`,
+  bangsInsideAttributes: count => `<roblox ${'! '.repeat(count * 4)}>`,
+  comments: count => '<!--'.repeat(count),
+  cdata: count => '<![CDATA[a'.repeat(count),
+  instructions: count => '<?'.repeat(count),
+  doctypes: count => '<!DOCTYPE'.repeat(count),
+  ampersands: count => `<roblox>${'&a'.repeat(count * 4)}</roblox>`,
+  longEntity: count => `<roblox>${'&'.repeat(count * 4)}${'a'.repeat(count * 4)}</roblox>`,
+  quotes: count => `<roblox a="${'"'.repeat(1000)}${"'".repeat(count * 8)}`,
+  dashedName: count => `<roblox><Item class="Part"><Properties><string name="Name">${'-'.repeat(count * 8)}x</string></Properties></Item></roblox>`,
+};
+
+function bestMilliseconds(text, label) {
+  let best = Infinity;
+  for (let run = 0; run < 3; run++) {
     const started = process.hrtime.bigint();
     try {
-      importRoblox(text, { maxBytes: 4 * megabyte });
+      importRoblox(text, { maxBytes: 64 * 1024 * 1024 });
     } catch (error) {
       assert.ok(error instanceof RobloxImportError, `${label} fails with a RobloxImportError, not ${error}`);
     }
-    const milliseconds = Number(process.hrtime.bigint() - started) / 1e6;
-    assert.ok(milliseconds < 50, `${label} took ${milliseconds.toFixed(1)} ms`);
+    best = Math.min(best, Number(process.hrtime.bigint() - started) / 1e6);
+    if (best > 2000) break;
+  }
+  return best;
+}
+
+test('hostile text is read in linear time: four times the input takes less than 8 times as long, and under 2 s', () => {
+  const count = 25000;
+  for (const [label, build] of Object.entries(HOSTILE_INPUTS)) {
+    bestMilliseconds(build(count / 10), label);
+    const small = Math.max(bestMilliseconds(build(count), label), 5);
+    const large = bestMilliseconds(build(count * 4), label);
+    assert.ok(large / small < 8, `${label}: ${large.toFixed(1)} ms at 4n against ${small.toFixed(1)} ms at n is a ratio of ${(large / small).toFixed(1)}, not linear`);
+    assert.ok(large < 2000, `${label} took ${large.toFixed(0)} ms for the 4n input`);
   }
 });
 
