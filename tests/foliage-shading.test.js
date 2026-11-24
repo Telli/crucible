@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createTree, resolveTreePreset } from '../src/vegetation.js';
 import { createFragmentShader } from '../src/shaders.js';
 import { crownBrightness, crownDepth, crownLightSettings, describeCrownShape, roundedCanopyNormal, roundedNormalSettings, tipTint } from '../src/foliage-shading.js';
-import { FOLIAGE_SHADOW_BIAS_SCALE, LEAF_TRANSMISSION_PARAMETERS, addLeafTransmission, leafTransmissionReference } from '../src/leaf-transmission.js';
+import { FOLIAGE_SHADOW_BIAS_SCALE, FOLIAGE_SUN_SPECULAR_SCALE, LEAF_TRANSMISSION_PARAMETERS, addLeafTransmission, foliageSunSpecularPeak, leafTransmissionReference } from '../src/leaf-transmission.js';
 
 function foliageOf(tree, levelIndex = 0) {
   return tree.levels[levelIndex].parts.find(part => part.role === 'foliage').geometry;
@@ -137,7 +137,7 @@ test('leaves glow with the sun behind them and barely with the sun beside the tr
 test('a leaf in the crown shadow still glows, by the share that passed through the leaves above it', () => {
   const lit = glowOf({ ...BACK_SUN, visibility: 1 });
   const shaded = glowOf({ ...BACK_SUN, visibility: 0 });
-  assert.ok(shaded > 0.3 * lit && shaded < lit, `shaded ${shaded} against lit ${lit}`);
+  assert.ok(shaded > 0.2 * lit && shaded < lit, `shaded ${shaded} against lit ${lit}`);
   const share = LEAF_TRANSMISSION_PARAMETERS.throughCrown;
   assert.ok(shaded > share * 0.5 * lit, 'the shaded glow is at least the through-crown share');
 });
@@ -194,16 +194,15 @@ test('the crown is a lit shell around a darker, cooler core', () => {
   assert.ok(crownBrightness(light, 1, 0.5) > 1.3, 'the hull is lit brighter than the leaf colour');
 });
 
-test('birch back-light is toned down against the oak: the same sun behind a pale birch hull leaf glows less than it used to', () => {
+test('birch back-light is toned down against the oak: the same sun behind a pale birch hull leaf glows less', () => {
   const glowAtHull = (species, hull) => {
     const leaf = createTreeLeafSpec(species);
     const color = leaf.foliageColor.map(value => value * 1.5 * hull);
     return mean(leafTransmissionReference({ normal: [0, 0, 1], viewDirection: [0, 0, 1], lightDirection: [0, 0.3, -0.954].map(value => value / Math.hypot(0, 0.3, 0.954)), visibility: 1, color }));
   };
   const birchNow = glowAtHull('birch', crownLightSettings(createTreeLeafSpec('birch')).hull);
-  const birchBefore = glowAtHull('birch', 1.1);
   const oakNow = glowAtHull('broadleaf', crownLightSettings(createTreeLeafSpec('broadleaf')).hull);
-  assert.ok(birchNow < 0.7 * birchBefore, `birch hull glow ${birchNow.toFixed(3)} against ${birchBefore.toFixed(3)} before`);
+  assert.ok(birchNow < 0.3, `birch hull glow ${birchNow.toFixed(3)} stays under 0.3 (round 1 glowed neon at 0.35 and over)`);
   assert.ok(birchNow < 0.85 * oakNow, `birch ${birchNow.toFixed(3)} should glow less than oak ${oakNow.toFixed(3)} although its leaf colour is paler`);
 });
 
@@ -213,4 +212,62 @@ test('a foliage shader tests the sun shadow with a larger bias so the sunlit fla
   assert.ok(foliage.includes(`clamp(sqrt(1.0 - cosine * cosine) / cosine, 0.25, 4.0) * ${FOLIAGE_SHADOW_BIAS_SCALE}.0;`));
   assert.ok(FOLIAGE_SHADOW_BIAS_SCALE > 1);
   assert.equal(plain.split('shadowBiasPerSlope * clamp').length - 1, foliage.split('shadowBiasPerSlope * clamp').length - 1, 'no bias line is added or lost');
+});
+
+// Ghost clumps (round 3): with the sun behind the tree the top of a crown seen toward the sun showed pale, see-through patches.
+// They were the sun's white specular lobe on the crown's own normal, which no leaf colour bounds and the larger shadow bias no
+// longer hid. The sun's light on a leaf must stay leafy: the white lobe is a small part of what the back-light adds.
+const LOOKING_TOWARD_SUN = { viewDirection: [0, 0, 1], lightDirection: [0, 0.3, -0.954].map(value => value / Math.hypot(0, 0.3, 0.954)) };
+
+test('looking toward the sun, the white specular lobe on a foliage card stays a small part of the leaf-coloured back-light', () => {
+  const hullLeaf = createTreeLeafSpec('broadleaf').foliageColor.map(value => value * 1.5 * crownLightSettings(createTreeLeafSpec('broadleaf')).hull);
+  const backLight = leafTransmissionReference({ normal: [0, 0, 1], viewDirection: LOOKING_TOWARD_SUN.viewDirection, lightDirection: LOOKING_TOWARD_SUN.lightDirection, visibility: 1, color: hullLeaf });
+  const whiteLobe = foliageSunSpecularPeak({ ...LOOKING_TOWARD_SUN, roughness: 0.85 });
+  assert.ok(whiteLobe < 0.1 * backLight[2], `the white lobe ${whiteLobe.toFixed(4)} lifts the blue of a hull leaf (${backLight[2].toFixed(4)}) by under 10 percent`);
+  assert.ok(backLight[1] > 1.5 * backLight[2], 'the back-light itself stays green, not white');
+  const unscaled = foliageSunSpecularPeak({ ...LOOKING_TOWARD_SUN, roughness: 0.85, scale: 1 });
+  assert.ok(unscaled > 0.25 * backLight[2], `without the scale the lobe (${unscaled.toFixed(4)}) would wash the blue by a quarter or more, the ghost`);
+});
+
+test('a foliage shader keeps a small share of the sun specular, and no other shader changes', () => {
+  assert.ok(FOLIAGE_SUN_SPECULAR_SCALE > 0 && FOLIAGE_SUN_SPECULAR_SCALE <= 0.1, 'leaves keep a hint of gloss, not the full lobe');
+  const plain = createFragmentShader(['foliage']);
+  const foliage = addLeafTransmission(plain);
+  assert.ok(foliage.includes(`specular *= directSpecularGain; if (TAG_FOLIAGE) specular *= ${FOLIAGE_SUN_SPECULAR_SCALE};`));
+  assert.equal(foliage.split('directSpecularGain;').length, plain.split('directSpecularGain;').length, 'no specular line is added or lost');
+});
+
+// Exposure balance (round 3): the photos' leaves run from deep shade to bright sunlit tops (10th to 90th percentile ratio 3 to 7,
+// 90th percentile 140 to 165 of 255), and round 2's crown, dimmed all over by the occlusion, ended at 124. The hull must be a
+// clear multiple of the leaf colour and the core a small fraction of it.
+test('the crown light spans deep shade to sunlit hull: a bright hull, a dark core, and a wide spread of sunlit leaf radiance', () => {
+  for (const species of ['broadleaf', 'birch']) {
+    const light = crownLightSettings(createTreeLeafSpec(species));
+    const spread = crownBrightness(light, 1, 0.5) / crownBrightness(light, 0, 0.5);
+    assert.ok(spread > 6, `${species}: hull over core is ${spread.toFixed(1)} times (round 2 had 3 to 5)`);
+  }
+  assert.ok(crownBrightness(crownLightSettings(createTreeLeafSpec('broadleaf')), 1, 0.5) > 2.2, 'an oak hull leaf reaches a bright sunlit tail');
+  const sun = [0.93, 0.34, 0.12].map(value => value / Math.hypot(0.93, 0.34, 0.12));
+  const geometry = foliageOf(createTree({ preset: 'oak' }, 4));
+  const radiances = [];
+  for (let index = 0; index < geometry.positions.length / 3; index++) {
+    const sunShare = Math.max(geometry.normals[index * 3] * sun[0] + geometry.normals[index * 3 + 1] * sun[1] + geometry.normals[index * 3 + 2] * sun[2], 0);
+    radiances.push(luminanceAt(geometry, index) * (SKY_SHARE + (1 - SKY_SHARE) * sunShare));
+  }
+  radiances.sort((first, second) => first - second);
+  const percentile = fraction => radiances[Math.floor(radiances.length * fraction)];
+  assert.ok(percentile(0.9) > 1.4, `the 90th percentile of the oak's sunlit radiance is ${percentile(0.9).toFixed(2)}`);
+  assert.ok(percentile(0.9) / percentile(0.1) > 6, `the 90th over 10th percentile is ${(percentile(0.9) / percentile(0.1)).toFixed(1)}`);
+});
+
+test('the clump speckle varies leaf colour within a clump without blotchy outliers', () => {
+  const geometry = foliageOf(createTree({ preset: 'oak' }, 4));
+  const positions = vertexPositions(geometry);
+  const crown = describeCrownShape(positions);
+  const outer = [];
+  positions.forEach((position, index) => { if (crownDepth(crown, position) > 0.95) outer.push(luminanceAt(geometry, index)); });
+  const average = mean(outer);
+  const deviation = Math.sqrt(mean(outer.map(value => (value - average) ** 2))) / average;
+  assert.ok(deviation > 0.16, `outermost leaves vary by ${(deviation * 100).toFixed(1)} percent (without the fine speckle it is 14.4)`);
+  assert.ok(Math.max(...outer) < 3.2 * average && Math.min(...outer) > 0.3 * average, 'no leaf is a blotchy outlier');
 });

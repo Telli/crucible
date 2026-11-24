@@ -396,6 +396,11 @@ function cellHash(cell, channel, salt) {
 // other leaves reaches. The clump is a cell of the crown, the same cell the far level merges into one clump card, so every
 // level of a tree carries the same tint and nothing shifts colour when the level changes (issue #2991).
 const CLUMP_VALUE_SPREAD = 0.16;
+// Within a clump the leaves still differ: a finer cell (a tenth of the crown radius) lightens or darkens a few leaves, a speckle
+// of light and dark as in a photo. The spread is capped so no cell is a blotch, and the far level averages it with its clump.
+const SPECKLE_CELL_DIVISOR = 9;
+const SPECKLE_VALUE_SPREAD = 0.34;
+const SPECKLE_WARMTH = 0.05;
 const CLUMP_WARMTH = [0.07, 0.03, -0.09];
 const INNER_COOLING = [-0.3, -0.08, 0.22];
 
@@ -405,9 +410,12 @@ function crownTint(skeleton, position, distanceFraction) {
   const { tintSalt } = skeleton.crown;
   const value = 1 + (cellHash(cell, 0, tintSalt) - 0.5) * CLUMP_VALUE_SPREAD;
   const warmth = (cellHash(cell, 1, tintSalt) - 0.5) * 2;
+  const speckleCell = position.map(coordinate => Math.floor(coordinate * SPECKLE_CELL_DIVISOR / skeleton.crown.radius));
+  const speckle = 1 + (cellHash(speckleCell, 2, tintSalt) - 0.5) * SPECKLE_VALUE_SPREAD;
+  const speckleWarmth = (cellHash(speckleCell, 3, tintSalt) - 0.5) * 2 * SPECKLE_WARMTH;
   const cooling = (1 - distanceFraction) ** 1.2;
   const tips = tipTint(distanceFraction);
-  return [0, 1, 2].map(index => value * (1 + CLUMP_WARMTH[index] * warmth) * (1 + INNER_COOLING[index] * cooling) * tips[index]);
+  return [0, 1, 2].map(index => value * speckle * (1 + speckleWarmth * (index === 2 ? -1 : 1)) * (1 + CLUMP_WARMTH[index] * warmth) * (1 + INNER_COOLING[index] * cooling) * tips[index]);
 }
 
 function crownShading(skeleton, position, skyLift, light) {

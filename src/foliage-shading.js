@@ -70,7 +70,7 @@ export function tipTint(depth) {
 // How bright the leaves are from the centre of the crown to its hull, as a multiple of the species' leaf colour. Light reaches
 // the hull directly and the centre only through other leaves, so the hull is brighter than the leaf colour and the centre a good
 // deal darker, and `exponent` keeps the dark part to the inside: a crown reads as a lit shell around a shaded core.
-const DEFAULT_CROWN_LIGHT = Object.freeze({ core: 0.26, hull: 1.45, exponent: 1.5 });
+const DEFAULT_CROWN_LIGHT = Object.freeze({ core: 0.1, hull: 2.8, exponent: 2.4 });
 const SKY_SIDE_GAIN = 0.12;
 
 /** The species' crown light (`leaf.crownLight { core, hull, exponent }`), each number defaulting to the oak's. */

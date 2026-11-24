@@ -33,7 +33,7 @@ const DEFAULT_DISTANCES = Object.freeze([8, 30]);
 const SUBJECTS = Object.freeze({
   oak: { vegetation: { preset: 'oak', seed: SEED }, photoFolder: 'oak', height: null },
   birch: { vegetation: { preset: 'birch', seed: SEED }, photoFolder: 'birch', height: null },
-  forest: { vegetation: { preset: 'oak', seed: SEED, scatter: { ground: 'ground', density: FOREST_DENSITY, area: { min: [-FOREST_AREA, -FOREST_AREA], max: [FOREST_AREA, FOREST_AREA] } } }, photoFolder: 'oak', height: 16 },
+  forest: { vegetation: { preset: 'oak', seed: SEED, scatter: { ground: 'ground', density: FOREST_DENSITY, area: { min: [-FOREST_AREA, -FOREST_AREA], max: [FOREST_AREA, FOREST_AREA] } } }, photoFolder: 'forest', height: 16 },
 });
 const CELL_WIDTH = 320;
 const CELL_HEIGHT = 240;

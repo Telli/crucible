@@ -15,14 +15,20 @@ const DEFINITION_ANCHOR = '\nvec3 toneMap(vec3 color) {';
 // usual bias the sunlit flank of a crown shadows itself in specks. A foliage shader takes a larger bias; a leaf is a few
 // millimetres thick, so nothing floats off its shadow.
 const SHADOW_BIAS_LINE = '  float bias = shadowBiasPerSlope * clamp(sqrt(1.0 - cosine * cosine) / cosine, 0.25, 4.0);';
+// The sun's specular lobe in `illuminate`: it is white and not tinted by the leaf, so a card whose rounded normal bisects the
+// view and the sun (the top of a crown seen toward the sun) added a pale, see-through wash that no leaf colour could bound. With
+// the larger shadow bias above the self-shadow no longer hides it. Leaves are matte: a foliage shader keeps a small share.
+const SPECULAR_LINE = '  specular *= directSpecularGain;';
+/** The share of the sun's specular a foliage shader keeps (measured: 1 gave pale ghost clumps beside the sun, #2991). */
+export const FOLIAGE_SUN_SPECULAR_SCALE = 0.08;
 /** How many times the usual shadow bias a foliage shader uses for the sun (measured: the sunlit half of an oak crown gains 15 percent). */
 export const FOLIAGE_SHADOW_BIAS_SCALE = 8;
 
 /** The numbers of the term; the shader and `leafTransmissionReference` both read them. */
 export const LEAF_TRANSMISSION_PARAMETERS = Object.freeze({
   strength: 0.8,
-  throughCrown: 0.45,
-  shadeGlow: 0.07,
+  throughCrown: 0.25,
+  shadeGlow: 0.015,
   behindWeight: 0.3,
   towardSunWeight: 0.7,
   towardSunSharpness: 3.0,
@@ -62,11 +68,31 @@ export function leafTransmissionReference({ normal, viewDirection, lightDirectio
   return color.map((channel, index) => (gray + (channel - gray) * desaturation) * filter[index] * (reach * strength * glow + (1 - visibility) * shadeGlow));
 }
 
+/**
+ * The sun's specular term of `illuminate` (GGX, Smith, Schlick Fresnel at 4 percent) on plain numbers for a foliage shader:
+ * the largest value over every normal, in units of the sun's radiance, for `roughness`. Tests bound it against the diffuse
+ * light of the same leaf, which is what the white wash of a ghost clump came from.
+ */
+export function foliageSunSpecularPeak({ viewDirection, lightDirection, roughness, scale = FOLIAGE_SUN_SPECULAR_SCALE }) {
+  const dot = (first, second) => first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
+  const halfway = [0, 1, 2].map(axis => viewDirection[axis] + lightDirection[axis]);
+  const halfLength = Math.hypot(...halfway);
+  const unitHalf = halfway.map(value => value / halfLength);
+  const alpha = roughness * roughness;
+  const distribution = alpha * alpha / (Math.PI * ((alpha * alpha - 1) + 1) ** 2);
+  const fresnel = 0.04 + 0.96 * (1 - dot(unitHalf, viewDirection)) ** 5;
+  const normalLight = dot(unitHalf, lightDirection);
+  const masking = (roughness + 1) ** 2 / 8;
+  const geometry = (normalLight / (normalLight * (1 - masking) + masking)) ** 2;
+  return distribution * geometry * fresnel / Math.max(4 * normalLight * normalLight, 0.001) * normalLight * scale;
+}
+
 /** Adds leaf transmission to a fragment shader that draws foliage; every other source passes through unchanged. */
 export function addLeafTransmission(source) {
   if (!source.includes(FOLIAGE_ENABLED) || !source.includes(DEFINITION_ANCHOR) || !SUN_LINE.test(source)) return source;
   const withBias = source.replace(SHADOW_BIAS_LINE, () => `${SHADOW_BIAS_LINE.slice(0, -1)} * ${glslFloat(FOLIAGE_SHADOW_BIAS_SCALE)};`);
-  const withDefinition = withBias.replace(DEFINITION_ANCHOR, () => LEAF_TRANSMISSION_CODE + DEFINITION_ANCHOR);
+  const withSpecular = withBias.replace(SPECULAR_LINE, () => `${SPECULAR_LINE} if (TAG_FOLIAGE) specular *= ${glslFloat(FOLIAGE_SUN_SPECULAR_SCALE)};`);
+  const withDefinition = withSpecular.replace(DEFINITION_ANCHOR, () => LEAF_TRANSMISSION_CODE + DEFINITION_ANCHOR);
   return withDefinition.replace(SUN_LINE, (line, sunLink) => `${line}\n  if (TAG_FOLIAGE) radiance += leafTransmission(normal, viewDirection, normalize(lightDirection), keyColor * shadowTint${sunLink}, visibility, color);`);
 }
 
