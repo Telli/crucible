@@ -85,8 +85,8 @@ const LENS_CHIP_TOLERANCE_MILLIMETRES = 0.5;
 // A view chip is active while the camera looks along its direction, within about two degrees; a free orbit matches none.
 const VIEW_CHIP_DIRECTIONS = Object.freeze({ front: [0, 0, 1], right: [1, 0, 0], top: [0.002, 1, 0.002], isometric: [1, 0.72, 1] });
 const VIEW_CHIP_MINIMUM_COSINE = 0.9995;
-// A tree row is 28px high with a 1px gap; the Scene list stretches its rows a little so a whole number of them fills it.
-const TREE_ROW_GAP_PIXELS = 1;
+// A tree row is 28px high with a 4px gap (--studio-space-4 in studio-styles.js); the Scene list stretches its rows a little so a whole number of them fills it.
+const TREE_ROW_GAP_PIXELS = 4;
 
 /** The view chip whose direction the camera looks along, or null when the camera is in a free orbit. */
 function matchingViewChip(camera) {
