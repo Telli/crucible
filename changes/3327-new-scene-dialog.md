@@ -1,0 +1,1 @@
+- Studio's File menu has one New scene entry that opens a chooser of Blank and the ready scenes with pictures, asks before unsaved changes are replaced, and keeps an Open recent list (#3327)

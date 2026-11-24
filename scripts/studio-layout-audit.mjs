@@ -3,10 +3,11 @@
 // studio-layout-rules.mjs: unequal insets around the content of a padded container, a gap or padding off the spacing
 // scale, or a gap between groups smaller than the gap inside one. Every failure names the selector, the numbers and the fix.
 //
-//   node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover] [--records file.json]
+//   node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover|newscene] [--width pixels] [--records file.json]
 //
 // Without --origin it starts a Vite dev server on a free port and stops it (by its own PID) at the end. Screens: the Studio
-// page, each of its popover menus, and the five steps of the setup dialog, each in the dark and the light theme at 1280 by 720.
+// page, each of its popover menus, the five steps of the setup dialog, and the New scene chooser with its unsaved-changes
+// question, each in the dark and the light theme at 1280 by 720 (--width changes the width, for example 720).
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -21,7 +22,7 @@ const PREFERENCES_KEY = 'crucible-studio-preferences';
 const THEMES = ['dark', 'light'];
 const VIEWPORT = { width: 1280, height: 720 };
 const SERVER_START_TIMEOUT_MS = 60000;
-const USAGE = 'Usage: node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover] [--records file.json]';
+const USAGE = 'Usage: node scripts/studio-layout-audit.mjs [--json] [--origin url] [--only setup|studio|popover|newscene] [--width pixels] [--records file.json]';
 const CHROME_PATH = process.env.CHROME_PATH ?? (process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : undefined);
 const GPU_ARGUMENTS = ['--use-angle=d3d11', '--enable-gpu', '--ignore-gpu-blocklist', '--disable-audio-output'];
 const SOFTWARE_ARGUMENTS = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-webgl', '--ignore-gpu-blocklist', '--disable-audio-output'];
@@ -95,7 +96,7 @@ function parseArguments(argv) {
     const argument = argv[index];
     if (!argument.startsWith('--')) throw new Error(`Unknown argument ${argument}. ${USAGE}`);
     const name = argument.slice(2);
-    flags[name] = ['origin', 'only', 'records'].includes(name) ? argv[++index] : true;
+    flags[name] = ['origin', 'only', 'records', 'width'].includes(name) ? argv[++index] : true;
   }
   return flags;
 }
@@ -158,8 +159,8 @@ export async function launchBrowser() {
   return chromium.launch(options).catch(() => chromium.launch({ ...options, channel: 'chrome' }));
 }
 
-export async function openStudio(browser, origin, theme, extraCss = '') {
-  const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1 });
+export async function openStudio(browser, origin, theme, extraCss = '', viewport = VIEWPORT) {
+  const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
   await context.addInitScript(FAKE_POINTER_LOCK_SCRIPT);
   await context.addInitScript(([key, value]) => localStorage.setItem(key, value), [PREFERENCES_KEY, JSON.stringify({ theme, setupDone: true })]);
   const page = await context.newPage();
@@ -199,17 +200,55 @@ async function measureScreens(page, theme, only) {
     }
     await page.evaluate(() => document.querySelector('dialog.crucible-studio-setup-dialog').close());
   }
+  if (!only || only === 'newscene') screens.push(...await measureNewSceneScreens(page, theme));
+  return screens;
+}
+
+// The File menu with Open recent expanded over a few remembered scenes, which the page keeps in its own storage.
+async function measureRecentMenu(page, theme) {
+  await page.evaluate(() => {
+    const entries = ['porch.scene.json', 'a-long-scene-name-that-has-to-be-cut-by-the-menu-width.scene.json', 'trip.scene.json'].map((name, index) => ({ id: `seed-${index}`, name, kind: 'copy' }));
+    localStorage.setItem('crucible.studio.recent', JSON.stringify(entries));
+  });
+  await page.locator('.crucible-studio-menu-button', { hasText: 'File' }).click();
+  await page.locator('#crucible-studio-pop-new button[aria-controls="crucible-studio-recent-list"]:not([disabled])').click();
+  await page.waitForSelector('#crucible-studio-recent-list:not([hidden]) button');
+  await page.waitForTimeout(250);
+  const screen = { name: `file menu with recent scenes (${theme})`, records: await measure(page, '#crucible-studio-pop-new') };
+  await page.evaluate(() => {
+    localStorage.removeItem('crucible.studio.recent');
+    document.getElementById('crucible-studio-pop-new').hidePopover();
+  });
+  return screen;
+}
+
+// The chooser with every picture loaded, then the question about unsaved changes that a change to the scene brings up.
+async function measureNewSceneScreens(page, theme) {
+  const screens = [];
+  await page.evaluate(() => { window.__newSceneChoice = window.__studioPage.openNewScene(); });
+  await page.waitForSelector('dialog.crucible-studio-new-dialog[open]');
+  await page.waitForFunction(() => Array.from(document.querySelectorAll('.crucible-studio-new-card img')).every(picture => picture.complete && picture.naturalWidth > 0));
+  await page.waitForTimeout(200);
+  screens.push({ name: `new scene (${theme})`, records: await measure(page, 'dialog.crucible-studio-new-dialog') });
+  await page.evaluate(() => window.__studioPage.controller.updateNodeTransform('cube', { translation: [1.5, 0.5, 0] }));
+  await page.locator('.crucible-studio-new-card').nth(1).click();
+  await page.waitForSelector('dialog.crucible-studio-confirm-dialog[open]');
+  await page.waitForTimeout(200);
+  screens.push({ name: `unsaved changes (${theme})`, records: await measure(page, 'dialog.crucible-studio-confirm-dialog') });
+  await page.locator('dialog.crucible-studio-confirm-dialog button', { hasText: 'Cancel' }).click();
+  await page.evaluate(() => window.__newSceneChoice);
+  screens.push(await measureRecentMenu(page, theme));
   return screens;
 }
 
 // `extraCss` is added to the page before measuring: the test uses it to seed a spacing mistake the audit must catch.
-export async function runAudit({ origin, only, extraCss } = {}) {
+export async function runAudit({ origin, only, extraCss, viewport = VIEWPORT } = {}) {
   const server = origin ? { origin, stop: () => {} } : await startDevServer();
   const browser = await launchBrowser();
   try {
     const screens = [];
     for (const theme of THEMES) {
-      const { context, page } = await openStudio(browser, server.origin, theme, extraCss);
+      const { context, page } = await openStudio(browser, server.origin, theme, extraCss, viewport);
       screens.push(...await measureScreens(page, theme, only));
       await context.close();
     }
@@ -253,7 +292,7 @@ function countBySurface(findings) {
 
 async function main() {
   const flags = parseArguments(process.argv.slice(2));
-  const screens = await runAudit({ origin: flags.origin, only: flags.only });
+  const screens = await runAudit({ origin: flags.origin, only: flags.only, viewport: flags.width ? { ...VIEWPORT, width: Number(flags.width) } : VIEWPORT });
   if (flags.records) writeFileSync(flags.records, JSON.stringify(screens));
   const { findings, allowed } = summarize(screens);
   const bySurface = countBySurface(findings);

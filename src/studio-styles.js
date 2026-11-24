@@ -2125,13 +2125,18 @@ export const STUDIO_CSS = `
   gap: 2px;
 }
 .crucible-studio-recent-list[hidden] { display: none; }
-.crucible-studio-recent-list > button { gap: var(--studio-space-8); }
+.crucible-studio-recent-list > button { gap: 0; }
+.crucible-studio-recent-list > button > .crucible-studio-icon,
+.crucible-studio-recent-list > button > .crucible-studio-menu-gap { margin-inline-end: var(--studio-space-8); }
 .crucible-studio-recent-name {
   min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The row has three parts (icon, label, chevron), so its spacing is margin: a flex gap of 8 px here would read as a group gap. */
+.crucible-studio-popover > button[data-keeps-menu="true"] { gap: 0; }
+.crucible-studio-popover > button[data-keeps-menu="true"] > .crucible-studio-icon:first-child { margin-inline-end: var(--studio-space-8); }
 .crucible-studio-popover button[data-keeps-menu="true"] > .crucible-studio-icon[data-recent-chevron] {
   margin-inline-start: auto;
   transition: transform 120ms ease;
