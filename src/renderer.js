@@ -2386,6 +2386,7 @@ export class CrucibleRenderer {
     if (this.frameTexture) this.backend.deleteTexture(this.frameTexture);
     this.refractionChain?.release();
     this.refractionDepth?.release();
+    this.glassBackFaces?.release();
     if (this.depthTexture) this.backend.deleteTexture(this.depthTexture);
     for (const target of this.bloomTargets ?? []) {
       context.deleteTexture(target.texture);
