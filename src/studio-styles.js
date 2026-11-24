@@ -31,6 +31,8 @@ export const STUDIO_CSS = `
   --studio-motion-travel: 360ms;
   /* An opacity fade carries no movement, so reduced motion keeps it; the durations above go to 0ms there. */
   --studio-motion-fade: 100ms;
+  /* A menu leaves with an opacity fade alone, which carries no movement, so reduced motion keeps it. */
+  --studio-motion-exit: 80ms;
   --studio-ease-out: var(--site-ease-out, cubic-bezier(0.2, 0, 0, 1));
   --studio-ease-in: cubic-bezier(0.4, 0, 1, 1);
   background: var(--studio-bg);
@@ -546,10 +548,46 @@ export const STUDIO_CSS = `
   box-shadow: var(--studio-shadow);
   pointer-events: auto;
   -webkit-app-region: no-drag;
-}
-.crucible-studio-popover:popover-open {
-  display: grid;
+  /* On the closed rule too, so a menu keeps its layout while it fades out. */
   gap: 2px;
+}
+.crucible-studio-popover:popover-open { display: grid; }
+/* A menu grows from the corner nearest its trigger (the script writes the origin and the shift when it opens). The tree
+   flyout opens beside a row the pointer is on, so it only fades. */
+@supports (transition-behavior: allow-discrete) {
+  @media (prefers-reduced-motion: no-preference) {
+    .crucible-studio-popover {
+      opacity: 0;
+      transform-origin: var(--studio-popover-origin, 0 0);
+      transition: opacity var(--studio-motion-exit) var(--studio-ease-in), display var(--studio-motion-exit) var(--studio-ease-in) allow-discrete, overlay var(--studio-motion-exit) var(--studio-ease-in) allow-discrete;
+    }
+    .crucible-studio-popover:popover-open {
+      opacity: 1;
+      transition: opacity var(--studio-motion-quick) var(--studio-ease-out), scale var(--studio-motion-quick) var(--studio-ease-out), translate var(--studio-motion-quick) var(--studio-ease-out);
+    }
+    @starting-style {
+      .crucible-studio-popover:popover-open {
+        opacity: 0;
+        scale: var(--studio-popover-start-scale, 0.97);
+        translate: var(--studio-popover-shift, 0 -4px);
+      }
+    }
+    .crucible-studio-menubar[data-switching] .crucible-studio-popover { transition: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .crucible-studio-popover {
+      opacity: 0;
+      transition: opacity var(--studio-motion-fade) var(--studio-ease-in), display var(--studio-motion-fade) var(--studio-ease-in) allow-discrete, overlay var(--studio-motion-fade) var(--studio-ease-in) allow-discrete;
+    }
+    .crucible-studio-popover:popover-open {
+      opacity: 1;
+      transition: opacity var(--studio-motion-fade) var(--studio-ease-out);
+    }
+    @starting-style {
+      .crucible-studio-popover:popover-open { opacity: 0; }
+    }
+    .crucible-studio-menubar[data-switching] .crucible-studio-popover { transition: none; }
+  }
 }
 .crucible-studio-popover-grid {
   display: grid;
@@ -560,6 +598,8 @@ export const STUDIO_CSS = `
 #crucible-studio-pop-add { max-width: 348px; max-block-size: calc(100dvh - 16px); overflow-y: auto; }
 #crucible-studio-pop-add .crucible-studio-popover-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .crucible-studio-popover.crucible-studio-tree-picker {
+  --studio-popover-start-scale: none;
+  --studio-popover-shift: none;
   max-block-size: calc(100dvh - 16px);
   max-inline-size: none;
   overflow-y: auto;
@@ -1120,6 +1160,41 @@ export const STUDIO_CSS = `
   z-index: 7;
 }
 .crucible-studio-status:empty { display: none; }
+/* The box stays mounted and the script sets data-state: in while a message shows, out while it leaves. The individual
+   translate property leaves the centring transform alone. */
+@supports (transition-behavior: allow-discrete) {
+  @media (prefers-reduced-motion: no-preference) {
+    .crucible-studio-status {
+      opacity: 0;
+      translate: 0 -4px;
+      transition: opacity var(--studio-motion-quick) var(--studio-ease-in), translate var(--studio-motion-quick) var(--studio-ease-in);
+    }
+    .crucible-studio-status[data-state="in"] {
+      opacity: 1;
+      translate: 0 0;
+      transition: opacity var(--studio-motion-base) var(--studio-ease-out), translate var(--studio-motion-base) var(--studio-ease-out);
+    }
+    @starting-style {
+      .crucible-studio-status[data-state="in"] {
+        opacity: 0;
+        translate: 0 -6px;
+      }
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .crucible-studio-status {
+      opacity: 0;
+      transition: opacity var(--studio-motion-fade) var(--studio-ease-in);
+    }
+    .crucible-studio-status[data-state="in"] {
+      opacity: 1;
+      transition: opacity var(--studio-motion-fade) var(--studio-ease-out);
+    }
+    @starting-style {
+      .crucible-studio-status[data-state="in"] { opacity: 0; }
+    }
+  }
+}
 
 .crucible-studio-tablist {
   display: flex;

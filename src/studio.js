@@ -38,6 +38,7 @@ import { AXIS_COLORS, buildGridParts, cameraVisibleHeight, createViewWidget, des
 import './replace-textured-parts.js';
 import { clearStudioDraft, createDraftNotice, DRAFT_SAVE_DELAY_MILLISECONDS, draftDiffersFrom, loadStudioDraft, saveStudioDraft } from './studio-draft.js';
 import { createBakeMark } from './studio-bake-mark.js';
+import { longestTransitionMilliseconds, popoverOpeningStyle } from './studio-popover-motion.js';
 import { createPostPassNotice, createPostPassPlanner, installPostPasses, sceneHasPostPasses } from './studio-post-passes.js';
 import { CONTEXT_LOST_MESSAGE, createPausedPictureNotice, describeFrameFailure, watchContextLoss } from './studio-context-loss.js';
 import { assertAgentName, createAgentPresence, DEFAULT_AGENT_NAME, describeAgentEdit, diffRecipeNodes } from './studio-agent-presence.js';
@@ -77,6 +78,8 @@ export {
 
 const AXIS_NAMES = Object.freeze(['x', 'y', 'z']);
 const STATUS_DEFAULT_MILLISECONDS = 3400;
+// Past the exit transition, in case the browser never sends its transitionend.
+const STATUS_EXIT_SLACK_MILLISECONDS = 40;
 const DEGREE_PRECISION = 100;
 const ROUND_PRECISION = 10000;
 const LENS_CHIP_TOLERANCE_MILLIMETRES = 0.5;
@@ -1099,6 +1102,7 @@ export function createStudio(container, {
   let swallowContextMenu = false;
   let swallowClick = false;
   let statusTimer = 0;
+  let statusExitTimer = 0;
   let liveDeltaLabel = '';
 
   const root = createElement(documentReference, 'div', {
@@ -1591,12 +1595,24 @@ export function createStudio(container, {
     helpPopover,
   );
 
+  // A hover switch is instant: the bar says so while one menu hides and the next shows, until the next menu has had two frames.
+  let menuSwitchFrame = 0;
+  const markMenuSwitch = () => {
+    menubarElement.dataset.switching = 'true';
+    cancelAnimationFrame(menuSwitchFrame);
+    menuSwitchFrame = requestAnimationFrame(() => {
+      menuSwitchFrame = requestAnimationFrame(() => {
+        delete menubarElement.dataset.switching;
+      });
+    });
+  };
   // With one menu open, moving over the next one opens it, as a desktop menu bar does.
   const menuPairs = [[fileMenuButton, newPopover], [editMenuButton, editPopover], [viewMenuButton, viewPopover], [aiSyncMenuButton, aiSyncPopover], [helpMenuButton, helpPopover]];
   for (const [menuButton, menuPopover] of menuPairs) {
     menuButton.addEventListener('pointerenter', () => {
       const openPair = menuPairs.find(([, otherPopover]) => otherPopover !== menuPopover && otherPopover.matches?.(':popover-open'));
       if (openPair) {
+        markMenuSwitch();
         openPair[1].hidePopover?.();
         fileMenuAnchor = menuButton === fileMenuButton ? fileMenuButton : fileMenuAnchor;
         menuPopover.showPopover?.();
@@ -1626,6 +1642,9 @@ export function createStudio(container, {
       const opensUpward = beside && rectangle.top > viewportHeight / 2;
       popoverElement.style.top = opensUpward ? 'auto' : `${Math.round(clampedTop)}px`;
       popoverElement.style.bottom = opensUpward ? `${Math.round(Math.max(8, viewportHeight - rectangle.bottom - 8))}px` : 'auto';
+      const opening = popoverOpeningStyle({ beside, opensLeftward, opensUpward });
+      popoverElement.style.setProperty('--studio-popover-origin', opening.origin);
+      popoverElement.style.setProperty('--studio-popover-shift', opening.shift);
     });
   }
   bindPopoverAnchor(() => fileMenuAnchor, newPopover);
@@ -1727,12 +1746,36 @@ export function createStudio(container, {
   const hintBar = createElement(documentReference, 'div', { className: 'crucible-studio-hintbar' });
   const dropOverlay = createElement(documentReference, 'div', { className: 'crucible-studio-drop-overlay', textContent: canImport ? 'Drop a scene.json, GLB, HDR or image' : 'Drop a scene.json to open it' });
 
+  // The box keeps its text through its exit so the fade has something to show; screen readers get the text at once.
+  function clearStatus() {
+    clearTimeout(statusExitTimer);
+    statusRegion.textContent = '';
+    delete statusRegion.dataset.state;
+  }
+
+  function hideStatus() {
+    statusRegion.dataset.state = 'out';
+    const computedStyle = documentReference.defaultView?.getComputedStyle?.(statusRegion);
+    const exitMilliseconds = longestTransitionMilliseconds(computedStyle?.transitionDuration);
+    if (exitMilliseconds === 0) {
+      clearStatus();
+      return;
+    }
+    statusExitTimer = setTimeout(clearStatus, exitMilliseconds + STATUS_EXIT_SLACK_MILLISECONDS);
+  }
+
+  statusRegion.addEventListener('transitionend', event => {
+    if (event.propertyName === 'opacity' && statusRegion.dataset.state === 'out') {
+      clearStatus();
+    }
+  });
+
   function announce(message, durationMilliseconds = STATUS_DEFAULT_MILLISECONDS) {
-    statusRegion.textContent = message;
     clearTimeout(statusTimer);
-    statusTimer = setTimeout(() => {
-      statusRegion.textContent = '';
-    }, durationMilliseconds);
+    clearTimeout(statusExitTimer);
+    statusRegion.textContent = message;
+    statusRegion.dataset.state = 'in';
+    statusTimer = setTimeout(hideStatus, durationMilliseconds);
   }
 
   // Viewport Top-Left Toolbar (Modern Web Guidance: toolbar pattern)
@@ -4317,6 +4360,8 @@ export function createStudio(container, {
     dispose() {
       clearTimeout(draftTimer);
       clearTimeout(statusTimer);
+      clearTimeout(statusExitTimer);
+      if (menuSwitchFrame) cancelAnimationFrame(menuSwitchFrame);
       clearTimeout(awaitedProgramTimer);
       agentPresence.dispose();
       systemSchemeQuery?.removeEventListener?.('change', onSystemSchemeChange);
