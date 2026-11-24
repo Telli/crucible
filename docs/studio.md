@@ -263,7 +263,7 @@ When an agent edits the scene, Studio shows a pointer with the agent's name, the
 - `studio.loadExternalTextFile(text, { agent })` takes `agent: { name }` to name the agent for one edit, `agent: true` to mark any load as an agent edit, and `agent: false` to load without the pointer.
 - `studio.showAgentEdit({ name, nodeIds })` points at objects directly, for a host that hears about each agent step as it happens.
 
-Each agent gets its own colour, picked from its name out of five brand colours, so two agents are easy to tell apart; the pointer, the name tag and the outline share it. The pointer keeps to its object while you orbit, visits at most eight objects for one edit, and with reduced motion it steps from object to object without gliding.
+Each agent gets its own colour, picked from its name out of five brand colours, so two agents are easy to tell apart; the pointer, the name tag and the outline share it. The pointer glides between objects in about a third of a second and sits exactly on its object while you orbit, so it never trails it; a new target mid-glide turns from where the pointer stands. It visits at most eight objects for one edit, and with reduced motion it steps from object to object without gliding.
 
 ## Chat with an agent through the host
 
@@ -367,3 +367,5 @@ controller.setSunAngles({ azimuthDegrees: -40, elevationDegrees: 52 });
 3. Material and look controls update the active material, `environment` and `effects` sections directly. The Material tab has colour, roughness, metallic, clearcoat, clearcoat roughness, opacity, emission, glow colour and a Double sided switch.
 4. Saved camera bookmarks read and write named shots in `recipe.timeline.shots`.
 5. Every change exports cleanly with `exportRecipe()` so AI agents can continue from the same scene revision.
+
+A menu opens with a short fade and a small grow from the corner nearest its trigger, about a tenth of a second, and leaves with an 80 ms fade; sliding the pointer from one top bar menu to the next switches at once. The notice under the top bar drops in a few pixels and leaves a little faster than it came, and a second message while one shows only swaps the text. All of it uses opacity, scale and translate, so it stays on the compositor, and with reduced motion only the fade remains.
