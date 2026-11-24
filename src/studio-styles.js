@@ -2363,7 +2363,11 @@ export const STUDIO_CSS = `
   gap: var(--studio-space-8);
   min-inline-size: 0;
 }
-.crucible-studio-setup-sign-in[data-state="signed-in"] { font-weight: 600; }
+/* The signed-in status keeps the height of the button it replaces, so the card does not shrink at the moment of signing in. */
+.crucible-studio-setup-sign-in[data-state="signed-in"] {
+  min-block-size: 32px;
+  font-weight: 600;
+}
 .crucible-studio-setup-sign-in[data-state="signed-in"] > .crucible-studio-icon {
   flex: none;
   color: var(--studio-ok);
