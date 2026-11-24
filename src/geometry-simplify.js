@@ -17,6 +17,20 @@ import { findNonFiniteVertex } from './triangle-math.js';
 const PER_VERTEX_ATTRIBUTES = [['normals', 3], ['uvs', 2], ['lightUvs', 2], ['colors', 3], ['skyVisibility', 1], ['tangents', 4]];
 const MINIMUM_NORMAL_AGREEMENT = 0.2;
 const MINIMUM_TRIANGLES = 4;
+/**
+ * The steppable functions below are generators that yield after about this much work (a triangle, a corner or a
+ * collapse each), so a caller can run them in slices and stay responsive. The slicing only decides where a pause may
+ * fall: the work in between is the same, so the result is the same bytes however it is cut.
+ */
+export const SIMPLIFY_STEP_WORK = 256;
+
+/** Runs a steppable generator without pausing and returns its result. */
+export function finishSteps(steps) {
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
 /** A level counts as missed when it keeps more than this many times its target triangles (#2985). */
 export const SEAM_FALLBACK_OVERSHOOT = 1.25;
 /** The `blendSeams` choices of simplifyGeometry. */
@@ -180,8 +194,13 @@ function createEdgeCounter(indexCount) {
 
 /** Vertices that touch an edge used by other than two triangles: they stay exactly as they are. */
 export function findLockedVertices(indices, vertexCount) {
+  return finishSteps(findLockedVerticesSteps(indices, vertexCount));
+}
+
+function* findLockedVerticesSteps(indices, vertexCount) {
   const { counts, slotOf } = createEdgeCounter(indices.length);
   for (let corner = 0; corner < indices.length; corner += 3) {
+    if (corner % (3 * SIMPLIFY_STEP_WORK) === 0) yield;
     for (let side = 0; side < 3; side++) {
       const slot = slotOf(indices[corner + side], indices[corner + (side + 1) % 3]);
       if (counts[slot] < 255) counts[slot]++;
@@ -189,6 +208,7 @@ export function findLockedVertices(indices, vertexCount) {
   }
   const locked = new Uint8Array(vertexCount);
   for (let corner = 0; corner < indices.length; corner += 3) {
+    if (corner % (3 * SIMPLIFY_STEP_WORK) === 0) yield;
     for (let side = 0; side < 3; side++) {
       const first = indices[corner + side];
       const second = indices[corner + (side + 1) % 3];
@@ -226,9 +246,10 @@ function quadricError(quadrics, first, second, x, y, z) {
   return Math.max(0, value);
 }
 
-function buildQuadrics(positions, indices, vertexCount) {
+function* buildQuadricsSteps(positions, indices, vertexCount) {
   const quadrics = new Float64Array(vertexCount * 10);
   for (let corner = 0; corner < indices.length; corner += 3) {
+    if (corner % (3 * SIMPLIFY_STEP_WORK) === 0) yield;
     const [first, second, third] = [indices[corner], indices[corner + 1], indices[corner + 2]];
     const ax = positions[second * 3] - positions[first * 3];
     const ay = positions[second * 3 + 1] - positions[first * 3 + 1];
@@ -337,16 +358,22 @@ class Collapser {
     this.closestVertex = 0;
     this.triangleAlive = new Uint8Array(this.triangles.length / 3).fill(1);
     this.aliveCount = this.triangles.length / 3;
-    this.locked = findLockedVertices(this.triangles, this.vertexCount);
-    this.quadrics = buildQuadrics(this.positions, this.triangles, this.vertexCount);
     this.versions = new Uint32Array(this.vertexCount);
-    this.vertexTriangles = Array.from({ length: this.vertexCount }, () => []);
-    for (let triangle = 0; triangle < this.triangleAlive.length; triangle++) {
-      for (let side = 0; side < 3; side++) this.vertexTriangles[this.triangles[triangle * 3 + side]].push(triangle);
-    }
     this.queue = new CollapseQueue();
     this.worstError = 0;
+  }
+
+  /** The work the constructor leaves for steps: locked vertices, quadrics, the triangles around each vertex and the first queue. */
+  *prepare() {
+    this.locked = yield* findLockedVerticesSteps(this.triangles, this.vertexCount);
+    this.quadrics = yield* buildQuadricsSteps(this.positions, this.triangles, this.vertexCount);
+    this.vertexTriangles = Array.from({ length: this.vertexCount }, () => []);
     for (let triangle = 0; triangle < this.triangleAlive.length; triangle++) {
+      if (triangle % SIMPLIFY_STEP_WORK === 0) yield;
+      for (let side = 0; side < 3; side++) this.vertexTriangles[this.triangles[triangle * 3 + side]].push(triangle);
+    }
+    for (let triangle = 0; triangle < this.triangleAlive.length; triangle++) {
+      if (triangle % SIMPLIFY_STEP_WORK === 0) yield;
       for (let side = 0; side < 3; side++) {
         const [first, second] = [this.triangles[triangle * 3 + side], this.triangles[triangle * 3 + (side + 1) % 3]];
         // The welded path queues each edge once: the quadric and attribute costs it computes are what dominate its time.
@@ -354,6 +381,7 @@ class Collapser {
         this.pushEdge(first, second);
       }
     }
+    return this;
   }
 
   /** Whether an alive triangle around `from` runs from `from` to `to` (the partner of a shared edge runs the other way). */
@@ -573,9 +601,11 @@ class Collapser {
   }
 
   /** Collapse the cheapest edges until `targetTriangles` are left or no safe collapse remains. */
-  reduceTo(targetTriangles) {
+  *reduceTo(targetTriangles) {
     const queue = this.queue;
+    let popped = 0;
     while (this.aliveCount > targetTriangles && queue.size) {
+      if (++popped % SIMPLIFY_STEP_WORK === 0) yield;
       queue.pop();
       const { poppedRemoved: removed, poppedKept: kept } = queue;
       if (queue.poppedRemovedVersion !== this.versions[removed] || queue.poppedKeptVersion !== this.versions[kept]) continue;
@@ -620,12 +650,12 @@ function validateBlendSeams(blendSeams) {
   }
 }
 
-function runLevels(collapser, ratios, inputTriangles, levelIndexes) {
+function* runLevels(collapser, ratios, inputTriangles, levelIndexes) {
   const results = new Map();
   const lastIndex = Math.max(...levelIndexes);
   for (let index = 0; index <= lastIndex; index++) {
     const target = Math.max(MINIMUM_TRIANGLES, Math.ceil(inputTriangles * ratios[index]));
-    collapser.reduceTo(target);
+    yield* collapser.reduceTo(target);
     if (levelIndexes.includes(index)) {
       results.set(index, { ratio: ratios[index], target, triangles: collapser.aliveCount, error: Math.sqrt(collapser.worstError), geometry: collapser.snapshot() });
     }
@@ -645,6 +675,15 @@ function runLevels(collapser, ratios, inputTriangles, levelIndexes) {
  * than asked when the border vertices and the shape leave no safe collapse.
  */
 export function simplifyGeometry(geometry, options) {
+  return finishSteps(simplifyGeometrySteps(geometry, options));
+}
+
+/**
+ * `simplifyGeometry` as a generator that yields every `SIMPLIFY_STEP_WORK` units of work and returns the levels, so a
+ * viewer can run it in slices of a few milliseconds between frames (#2985). Same arguments, same bytes: errors in the
+ * arguments throw on the first `next()`.
+ */
+export function* simplifyGeometrySteps(geometry, options) {
   const { ratios = [0.25, 0.0625], blendSeams = 'auto' } = options ?? {};
   validateGeometry(geometry);
   validateRatios(ratios);
@@ -653,9 +692,9 @@ export function simplifyGeometry(geometry, options) {
   const allLevels = ratios.map((ratio, index) => index);
   const welded = blendSeams === 'auto' ? weldPositions(geometry.positions) : null;
   const seamHeavy = welded !== null && welded.sitePositions.length / 3 < geometry.positions.length / 3 * (1 - SEAM_HEAVY_SHARE);
-  const keptLevels = blendSeams === 'always' || seamHeavy ? new Map() : runLevels(new Collapser(geometry), ratios, inputTriangles, allLevels);
+  const keptLevels = blendSeams === 'always' || seamHeavy ? new Map() : yield* runLevels(yield* new Collapser(geometry).prepare(), ratios, inputTriangles, allLevels);
   const missed = allLevels.filter(index => blendSeams === 'always' || seamHeavy || (blendSeams === 'auto' && keptLevels.get(index).triangles > keptLevels.get(index).target * SEAM_FALLBACK_OVERSHOOT));
-  const blendedLevels = missed.length ? runLevels(new Collapser(geometry, { blendSeams: true, weld: welded }), ratios, inputTriangles, missed) : new Map();
+  const blendedLevels = missed.length ? yield* runLevels(yield* new Collapser(geometry, { blendSeams: true, weld: welded }).prepare(), ratios, inputTriangles, missed) : new Map();
   let largestError = 0;
   return allLevels.map(index => {
     const keepLevel = keptLevels.get(index);
